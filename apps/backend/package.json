@@ -2,26 +2,34 @@
   "name": "@nx/backend",
   "version": "0.0.1",
   "private": true,
+  "scripts": {
+    "build": "nx build backend",
+    "serve": "nx serve backend",
+    "start": "node dist/apps/backend/main.js",
+    "test:health": "node -e \"const { spawn } = require('child_process'); const path = require('path'); const server = spawn('node', [path.join('dist', 'apps', 'backend', 'main.js')], { stdio: 'ignore' }); setTimeout(async () => { try { const res = await fetch('http://localhost:3000/health'); if (res.status !== 200) throw new Error('Unexpected status: ' + res.status); const json = await res.json(); if (json.status !== 'ok') throw new Error('Bad status field: ' + json.status); if (!/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d+Z$/.test(json.timestamp)) throw new Error('Bad timestamp: ' + json.timestamp); console.log('✅ Health check passed', json); server.kill(); } catch (e) { console.error('❌ Health check failed:', e.message || e); server.kill(); process.exit(1); } }, 1000);\""
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.0"
+  },
   "nx": {
     "targets": {
       "build": {
         "executor": "@nx/esbuild:esbuild",
-        "outputs": [
-          "{options.outputPath}"
-        ],
+        "outputs": ["{options.outputPath}"],
         "defaultConfiguration": "production",
         "options": {
           "platform": "node",
-          "outputPath": "apps/backend/dist",
-          "format": [
-            "cjs"
-          ],
+          "outputPath": "dist/apps/backend",
+          "format": ["cjs"],
           "bundle": false,
           "main": "apps/backend/src/main.ts",
           "tsConfig": "apps/backend/tsconfig.app.json",
-          "assets": [
-            "apps/backend/src/assets"
-          ],
+          "assets": ["apps/backend/src/assets"],
           "esbuildOptions": {
             "sourcemap": true,
             "outExtension": {
@@ -46,9 +54,7 @@
         "continuous": true,
         "executor": "@nx/js:node",
         "defaultConfiguration": "development",
-        "dependsOn": [
-          "build"
-        ],
+        "dependsOn": ["build"],
         "options": {
           "buildTarget": "@nx/backend:build",
           "runBuildTargetDependencies": false
@@ -68,9 +74,7 @@
         }
       },
       "docker-build": {
-        "dependsOn": [
-          "build"
-        ],
+        "dependsOn": ["build"],
         "command": "docker build -f apps/backend/Dockerfile . -t nx-backend"
       }
     }
