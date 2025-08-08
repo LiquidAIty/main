@@ -2,11 +2,18 @@
   "name": "@nx/source",
   "version": "0.0.0",
   "license": "MIT",
-  "scripts": {},
+  "scripts": {
+    "prisma:generate": "prisma generate --schema=libs/prisma/schema.prisma",
+    "prisma:migrate": "prisma migrate dev --schema=libs/prisma/schema.prisma --name init",
+    "prisma:seed": "ts-node prisma/seed.ts",
+    "prisma:studio": "prisma studio"
+  },
   "private": true,
   "dependencies": {
+    "@prisma/client": "^6.13.0",
     "axios": "^1.6.0",
     "dotenv": "^17.2.1",
+    "ioredis": "^5.7.0",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "react-router-dom": "6.29.0"
