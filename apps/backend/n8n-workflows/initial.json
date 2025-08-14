@@ -1,0 +1,70 @@
+{
+  "nodes": [
+    {
+      "id": "1",
+      "parameters": {
+        "path": "/execute",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "name": "HTTP Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "initial-webhook"
+    },
+    {
+      "id": "2",
+      "parameters": {
+        "functionCode": "console.log('Received payload:', JSON.stringify($input.all()[0].json, null, 2));\nreturn $input.all();"
+      },
+      "name": "Log Payload",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "id": "3",
+      "parameters": {
+        "url": "={{$env.HOST_URL || 'http://localhost:3333'}}/webhooks/execute",
+        "options": {
+          "body": "={{$input.all()[0].json}}",
+          "headers": {
+            "content-type": "application/json"
+          }
+        },
+        "authentication": "none"
+      },
+      "name": "Forward to Backend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [650, 300]
+    }
+  ],
+  "connections": {
+    "1": {
+      "main": [
+        [
+          {
+            "node": "2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2": {
+      "main": [
+        [
+          {
+            "node": "3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {}
+}

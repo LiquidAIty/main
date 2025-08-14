@@ -1,0 +1,23 @@
+{
+  "models": { 
+    "primary": "kimi", 
+    "reviewer": "gpt-4o", 
+    "fallback": [] 
+  },
+  "tools": {
+    "mcp": { "enabled": false },
+    "n8n": { "enabled": false },
+    "openai": { "enabled": false },
+    "kimi": { "enabled": false },
+    "rag": { "enabled": false },
+    "python": { "enabled": false },
+    "google": { "enabled": false },
+    "ui": { "enabled": false },
+    "scraper": { "enabled": false }
+  },
+  "routingRules": [],
+  "safety": { 
+    "paperTradeDefault": true, 
+    "needsApproval": [] 
+  }
+}

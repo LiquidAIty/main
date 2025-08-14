@@ -12,6 +12,7 @@
     "@prisma/client": "^6.13.0",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
+    "googleapis": "^155.0.1",
     "ioredis": "^5.7.0"
   },
   "devDependencies": {
@@ -37,7 +38,12 @@
           "main": "apps/backend/src/main.ts",
           "tsConfig": "apps/backend/tsconfig.app.json",
           "assets": [
-            "apps/backend/src/assets"
+            "apps/backend/src/assets",
+            {
+              "input": "apps/backend/src/config",
+              "glob": "**/*.json",
+              "output": "apps/backend/src/config"
+            }
           ],
           "esbuildOptions": {
             "sourcemap": true,

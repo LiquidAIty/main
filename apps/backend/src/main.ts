@@ -2,29 +2,30 @@
 
 import 'dotenv/config';
 import express, { Request, Response } from 'express';
-
-import dbRouter from './routes/db.routes';
-import cacheRouter from './routes/cache.routes';
+import bodyParser from 'body-parser';
+import { healthRouter } from './routes/health.routes';
+import { solRouter } from './routes/sol.routes';
 
 const app = express();
-const port = Number(process.env.PORT) || 3000;
+const port = process.env.PORT ? Number(process.env.PORT) : 3333;
 
 // Middleware
-app.use(express.json());
+app.use(bodyParser.json());
 
-// Health endpoint
-app.get('/health', (_req: Request, res: Response) => {
-  res.status(200).json({
-    status: 'ok',
-    timestamp: new Date().toISOString()
-  });
+// Routes
+app.get('/health', (req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok' });
 });
 
-// Sprint 2 Endpoints
-app.use('/db-health', dbRouter);
-app.use('/cache-ping', cacheRouter);
+app.use('/health', healthRouter);
+app.use('/agents/sol', solRouter);
 
-// Start server
+// Error handling
+app.use((err: unknown, _req: Request, res: Response, _next: any) => {
+  const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+  res.status(500).json({ error: errorMessage });
+});
+
 app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}/health`);
+  console.log(`Backend listening on http://localhost:${port}`);
 });
