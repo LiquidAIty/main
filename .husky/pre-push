@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+. "$(dirname -- "$0")/_/husky.sh"
+
+set -e
+CHANGED=$(git diff --cached --name-only || true)
+if echo "$CHANGED" | grep -E 'create-nx-workspace|nx\.json\.new'; then
+  echo "Blocked: potential workspace re-init detected. Review before pushing."
+  exit 1
+fi
