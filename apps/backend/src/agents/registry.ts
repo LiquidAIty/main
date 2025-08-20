@@ -1,5 +1,6 @@
 import { mcpTool } from './tools/mcp';
 import { openaiTool } from './tools/openai';
+import { openaiAgentTool } from './tools/openai.agent';
 import { n8nTool } from './tools/n8n';
 import { googleTool } from './tools/google';
 import { pythonTool } from './tools/python';
@@ -28,6 +29,7 @@ function isTool(x: any): x is Tool {
 const TOOL_LIST: Tool[] = [
   mcpTool,
   openaiTool,
+  openaiAgentTool,
   n8nTool,
   googleTool,
   pythonTool,

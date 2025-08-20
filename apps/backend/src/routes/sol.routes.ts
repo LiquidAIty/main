@@ -4,6 +4,8 @@ import { processRequest } from '../agents/sol';
 import { solRun } from '../agents/orchestrator/sol';
 import { routeQuery } from '../agents/orchestrator/sol';
 import { listTools } from '../agents/registry';
+import { buildAgent0 } from '../agents/orchestrator/agent0.graph';
+import { getTool } from '../agents/registry';
 
 const router = Router();
 
@@ -36,16 +38,27 @@ router.get('/try', async (req: ExpressRequest, res: ExpressResponse) => {
   }
 });
 
-// POST /sol/run -> mounted under '/sol' in main.ts as '/sol/run'
+// POST /sol/run -> Agent-0 supervisor fan-out with fallback to routed single tool
 router.post('/run', async (req: ExpressRequest, res: ExpressResponse) => {
   try {
-    const body: any = req.body || {};
-    const question = (body.question ?? '').toString();
-    const use = (body.use ?? 'lc') as 'lc'|'mcp'|'n8n';
-    const params = body.params;
-    if (!question.trim()) return res.status(400).json({ ok: false, error: 'missing field: question' });
-    const r = await solRun({ question, use, params });
-    return res.status(200).json({ ok: true, mode: use, answer: r.text, decision: r.decision });
+    const { q, meta, params } = (req.body ?? {}) as { q?: string; meta?: Record<string, any>; params?: any };
+    if (typeof q !== 'string' || !q.trim()) return res.status(400).json({ ok: false, error: 'q required' });
+
+    // Agent-0 supervisor
+    const app = buildAgent0();
+    // Only provide required input; defaults for depts/results are provided by the annotation
+    const state: any = await app.invoke({ q } as any, { configurable: { thread_id: 'agent0' } });
+
+    if (!state?.results || Object.keys(state.results).length === 0) {
+      // fallback to single tool run using router
+      const routed = await routeQuery({ q, meta });
+      const tool = routed.tool?.id ? getTool(routed.tool.id) : undefined;
+      if (!tool || typeof tool.run !== 'function') return res.json({ ...routed, executed: false });
+      const result = await tool.run(params ?? { prompt: q, meta });
+      return res.json({ ...routed, executed: true, result });
+    }
+
+    return res.json({ ok: true, executed: true, results: state.results, combined: state.results.__final__ });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: e?.message ?? String(e) });
   }
