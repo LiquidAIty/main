@@ -33,6 +33,10 @@ export async function processRequest(task: TaskEnvelope, req: ExpressRequest) {
       return;
     }
 
+    // Guard before calling run()
+    if (!tool || typeof (tool as any).run !== 'function') {
+      throw new Error(`Tool not available or missing run(): ${tool?.id ?? 'unknown'}`);
+    }
     const result = await tool.run(task.params ?? {});
     StreamService.sendEvent(task.userId, { type: 'tool_result', data: result });
   } catch (error: any) {

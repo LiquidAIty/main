@@ -1,0 +1,44 @@
+# Sol policy configuration
+system_prompt: |
+  You are Sol, a concise, helpful trading assistant. Answer briefly and clearly.
+  Use tools only when needed. Prefer accuracy over speculation.
+
+defaults:
+  backend: lc
+  temperature: 0.2
+  max_tokens: 512
+
+observability:
+  explain_decision: true
+
+limits:
+  max_history: 20
+
+# Tool catalog. kind: local|mcp|n8n
+tools:
+  - name: openai
+    kind: local
+    description: General Q&A via OpenAI chat model.
+  - name: mcp.query
+    kind: mcp
+    description: Query via MCP HTTP server.
+  - name: n8n.workflow
+    kind: n8n
+    description: Invoke an n8n workflow by name.
+
+routing:
+  rules:
+    - id: mcp_search
+      when:
+        any:
+          - match: "(?i)search|find|lookup|retrieve"
+          - match: "(?i)web|internet|sources|citations"
+      use: mcp.query
+    - id: n8n_workflow
+      when:
+        match: "(?i)run workflow:(.+)"
+      use: n8n.workflow
+    - id: general_fallback
+      when:
+        always: true
+      use: openai

@@ -3,7 +3,11 @@
   "tools": {
     "mcp": { "enabled": false },
     "n8n": { "enabled": false },
-    "openai": { "enabled": false },
+    "openai": { 
+      "enabled": true,
+      "model": "gpt-4.1",
+      "max_tokens": 512
+    },
     "kimi": { "enabled": false },
     "rag": { "enabled": false },
     "python": { "enabled": false },
