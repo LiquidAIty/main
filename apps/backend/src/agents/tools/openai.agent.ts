@@ -27,8 +27,12 @@ export const openaiAgentTool = {
     const provider = p.provider ?? 'openai';
     const { apiKey, baseURL, model } = makeOpenAIChat(provider);
 
-    // LangChain ChatOpenAI – pass apiKey/baseURL/model
-    const modelLC = new ChatOpenAI({ model, temperature: 0, apiKey, ...(baseURL ? { baseURL } : {}) });
+    // LangChain ChatOpenAI – unified config (no temp), keyed via openAIApiKey and configuration.baseURL
+    const modelLC = new ChatOpenAI({
+      model,
+      ...(apiKey ? { openAIApiKey: apiKey } : {}),
+      ...(baseURL ? { configuration: { baseURL } } : {})
+    });
 
     // tools this department can call
     const tools = [
