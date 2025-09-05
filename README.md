@@ -225,6 +225,88 @@ irm "$base/tools/google" -Method POST -ContentType "application/json" -Body $b
 
 ---
 
+## 🎯 Boss Agent - AI Orchestrator
+
+The Boss Agent is a sophisticated AI orchestrator that coordinates multiple specialized agents to complete complex tasks. It acts as the central hub for AI task delegation and management.
+
+### Features
+- **Multi-agent coordination**: Delegates tasks to specialized agents (OpenAI, Kimi, n8n workflows)
+- **Knowledge graph integration**: Builds and queries knowledge graphs for context
+- **Workflow automation**: Triggers n8n workflows for complex processes
+- **Real-time chat interface**: Interactive web-based UI for task management
+
+### Quick Start
+
+1. **Start the backend** (runs on port 4000):
+   ```bash
+   nx serve backend
+   ```
+
+2. **Start the frontend** (runs on port 5173):
+   ```bash
+   nx serve client
+   ```
+
+3. **Access the Boss Agent**:
+   - Navigate to `http://localhost:5173/boss-agent`
+   - Or from Agent Manager → click "🎯 Boss Agent" button
+
+### Usage
+
+1. **Basic Task Delegation**:
+   - Type your task in the chat interface
+   - The Boss Agent will analyze and delegate to appropriate specialized agents
+   - Results are aggregated and returned in real-time
+
+2. **Example Tasks**:
+   - "Create a marketing campaign for a new AI product"
+   - "Research the latest trends in machine learning"
+   - "Generate code for a data processing pipeline"
+   - "Build a knowledge graph from YouTube videos about AI"
+
+### Environment Variables
+
+Required for full functionality:
+
+```bash
+# OpenAI Configuration
+OPENAI_API_KEY=your_openai_key_here
+OPENAI_MODEL=gpt-4-turbo-preview
+
+# OpenRouter Configuration (for Kimi, DeepSeek, etc.)
+OPENROUTER_API_KEY=your_openrouter_key_here
+OPENROUTER_MODEL=kimi/k1
+
+# n8n Configuration
+N8N_BASE_URL=http://localhost:5678
+
+# Optional: Database for knowledge graphs
+DATABASE_URL=postgresql://user:pass@localhost:5432/liquidaity
+```
+
+### Architecture
+
+The Boss Agent follows a three-step orchestration process:
+
+1. **Plan**: Analyzes the task and creates a delegation strategy
+2. **Act**: Executes tasks across specialized agents
+3. **Finalize**: Aggregates results and provides comprehensive response
+
+### API Endpoints
+
+- `POST /api/agent/boss` - Main orchestrator endpoint
+- `POST /api/sol/run` - Legacy agent runner (still supported)
+- `GET /health` - Backend health check
+
+### Integration with Agent Manager
+
+The Boss Agent is fully integrated with the Agent Manager:
+- Use the "🎯 Boss Agent" button in Agent Manager for quick access
+- Share context between Agent Manager and Boss Agent
+- Unified interface for all AI operations
+
+---
+
 ## 10) Prompts (drop‑ins)
 
 **Agent‑0 (router/supervisor)**

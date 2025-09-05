@@ -1,0 +1,34 @@
+[
+  {
+    "role": "user",
+    "content": "test"
+  },
+  {
+    "role": "assistant",
+    "content": "{\"ok\":true,\"provider\":\"stub\",\"model\":\"gpt-4.1-mini\",\"output\":\"STUB: SYSTEM: You are Sol, a concise, helpful trading assistant. Answer briefly and cl\"}"
+  },
+  {
+    "role": "user",
+    "content": "test2"
+  },
+  {
+    "role": "assistant",
+    "content": "{\"ok\":true,\"provider\":\"stub\",\"model\":\"gpt-4.1-mini\",\"output\":\"STUB: SYSTEM: You are Sol, a concise, helpful trading assistant. Answer briefly and cl\"}"
+  },
+  {
+    "role": "user",
+    "content": "Hello, how can you help me?"
+  },
+  {
+    "role": "assistant",
+    "content": "{\"ok\":true,\"provider\":\"stub\",\"model\":\"gpt-4.1-mini\",\"output\":\"STUB: SYSTEM: You are Sol, a concise, helpful trading assistant. Answer briefly and cl\"}"
+  },
+  {
+    "role": "user",
+    "content": "test"
+  },
+  {
+    "role": "assistant",
+    "content": "{\"ok\":true,\"provider\":\"openai\",\"model\":\"gpt-4.1-mini\",\"output\":\"{\\\"ok\\\":true,\\\"provider\\\":\\\"stub\\\",\\\"model\\\":\\\"gpt-4.1-mini\\\",\\\"output\\\":\\\"Hello! How can I assist you with trading today?\\\"}\"}"
+  }
+]

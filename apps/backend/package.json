@@ -9,17 +9,23 @@
     "test:health": "node -e \"const { spawn } = require('child_process'); const path = require('path'); const server = spawn('node', [path.join('dist', 'apps', 'backend', 'main.js')], { stdio: 'ignore' }); setTimeout(async () => { try { const res = await fetch('http://localhost:3000/health'); if (res.status !== 200) throw new Error('Unexpected status: ' + res.status); const json = await res.json(); if (json.status !== 'ok') throw new Error('Bad status field: ' + json.status); if (!/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d+Z$/.test(json.timestamp)) throw new Error('Bad timestamp: ' + json.timestamp); console.log('✅ Health check passed', json); server.kill(); } catch (e) { console.error('❌ Health check failed:', e.message || e); server.kill(); process.exit(1); } }, 1000);\""
   },
   "dependencies": {
+    "@langchain/core": "^0.3.15",
+    "@langchain/langgraph": "^0.2.19",
+    "@langchain/openai": "^0.3.11",
     "@prisma/client": "^6.13.0",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
     "googleapis": "^155.0.1",
     "ioredis": "^5.7.0",
     "redis": "^5.8.1"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
     "@types/ioredis": "^4.28.10",
-    "@types/node": "^20.11.0"
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.5"
   },
   "nx": {
     "targets": {

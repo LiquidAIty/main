@@ -4,8 +4,8 @@ import { getTool } from '../agents/registry';
 
 const router = Router();
 
-// POST /tools/:name
-router.post('/tools/:name', async (req: ExpressRequest, res: ExpressResponse) => {
+// POST /:name - Execute tool by name
+router.post('/:name', async (req: ExpressRequest, res: ExpressResponse) => {
   const name = String(req.params.name || '').trim();
 
   try {
@@ -28,7 +28,7 @@ router.post('/tools/:name', async (req: ExpressRequest, res: ExpressResponse) =>
   }
 });
 
-// GET /try/:name
+// GET /try/:name - Test tool with query parameter
 router.get('/try/:name', async (req: ExpressRequest, res: ExpressResponse) => {
   const name = String(req.params.name || '').trim();
   try {

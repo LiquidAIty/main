@@ -1,0 +1,21 @@
+{
+  "name": "client",
+  "sourceRoot": "client/src",
+  "projectType": "application",
+  "targets": {
+    "serve": {
+      "executor": "@nx/vite:dev-server",
+      "options": {
+        "buildTarget": "client:build",
+        "port": 5173
+      }
+    },
+    "build": {
+      "executor": "@nx/vite:build",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "outputPath": "dist/client"
+      }
+    }
+  }
+}
