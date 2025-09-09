@@ -4,6 +4,7 @@ import LabAgentChat from "./pages/labagentchat";
 import AgentManager from "./pages/agentmanager";
 import TradingUI from "./pages/tradingui";
 import BossAgent from "./pages/bossagent";
+import Chat from "./pages/chat";
 
 export default function App() {
   useEffect(() => {
@@ -17,6 +18,7 @@ export default function App() {
         <Route path="/agent-manager" element={<AgentManager />} />
         <Route path="/tradingui" element={<TradingUI />} />
         <Route path="/boss-agent" element={<BossAgent />} />
+        <Route path="/chat" element={<Chat />} />
       </Routes>
     </BrowserRouter>
   );

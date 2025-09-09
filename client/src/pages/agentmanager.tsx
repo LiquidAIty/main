@@ -142,13 +142,13 @@ export default function AgentManager() {
     });
   }, [agents]);
 
-  // Load available MCP tools
-  useEffect(() => {
-    fetch('/api/mcp/available-tools')
-      .then(res => res.json())
-      .then(data => setMcpTools(data.tools || []))
-      .catch(err => console.error('Failed to load MCP tools:', err));
-  }, []);
+  // Load available MCP tools - Commented out to prevent proxy errors
+  // useEffect(() => {
+  //   fetch('/api/mcp/available-tools')
+  //     .then(res => res.json())
+  //     .then(data => setMcpTools(data.tools || []))
+  //     .catch(err => console.error('Failed to load MCP tools:', err));
+  // }, []);
 
   const sendChatMessage = async () => {
     if (!chatInput.trim() || !selectedAgent) return;
