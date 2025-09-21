@@ -1,10 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import yaml from 'js-yaml';
-
-declare module 'js-yaml' {
-  export function load(src: string): any;
-}
 
 export type SolPolicy = {
   system_prompt?: string;
@@ -26,20 +21,17 @@ const DEFAULT_POLICY: SolPolicy = {
 
 export function loadPolicy(): SolPolicy {
   const root = process.cwd();
-  const y = path.join(root, 'sol.policy.yaml');
-  const j = path.join(root, 'sol.policy.json');
+  const policyPath = path.join(root, 'sol.policy.json');
+  
   try {
-    if (fs.existsSync(y)) {
-      const doc = yaml.load(fs.readFileSync(y, 'utf8')) as any;
+    if (fs.existsSync(policyPath)) {
+      const doc = JSON.parse(fs.readFileSync(policyPath, 'utf8')) as any;
       return normalizePolicy(doc);
     }
-  } catch {}
-  try {
-    if (fs.existsSync(j)) {
-      const doc = JSON.parse(fs.readFileSync(j, 'utf8')) as any;
-      return normalizePolicy(doc);
-    }
-  } catch {}
+  } catch (error) {
+    console.error('Error loading policy JSON:', error);
+  }
+  
   return DEFAULT_POLICY;
 }
 

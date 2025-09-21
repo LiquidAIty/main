@@ -24,6 +24,7 @@
     "googleapis": "^155.0.1",
     "ioredis": "^5.7.0",
     "langchain": "^0.3.32",
+    "neo4j-driver": "^5.15.0",
     "node-fetch": "^3.3.2",
     "openai": "^5.13.1",
     "react": "^19.0.0",
