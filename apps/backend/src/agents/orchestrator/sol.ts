@@ -83,13 +83,18 @@ export async function solRun({ question, agentMode = 'auto' }: { question: strin
 
 Key responsibilities:
 1. Analyze user requests and determine optimal approach
-2. Create knowledge graphs of key concepts and relationships  
+2. Create and query knowledge graphs of key concepts and relationships
 3. Provide detailed, actionable responses
 4. Suggest follow-up actions and next steps
 5. Route complex tasks to specialized agents when needed
 
+You have access to knowledge graph tools that allow you to:
+- Create nodes and relationships in a knowledge graph
+- Query existing knowledge graphs using natural language or Cypher
+- Visualize connections between concepts
+
 Always structure your responses with clear sections and actionable insights.`,
-          matchKeywords: ['orchestrate', 'manage', 'analyze', 'plan', 'coordinate']
+          matchKeywords: ['orchestrate', 'manage', 'analyze', 'plan', 'coordinate', 'knowledge graph']
         });
         break;
         
@@ -120,12 +125,17 @@ Always provide working code examples with explanations.`,
 Key responsibilities:
 1. Develop targeted marketing campaigns and content
 2. Map customer journeys and touchpoints
-3. Create brand positioning and messaging strategies
+3. Create and query knowledge graphs of marketing concepts and relationships
 4. Analyze market trends and competitive landscapes
-5. Generate knowledge graphs of marketing concepts and relationships
+5. Generate visual representations of marketing strategies
+
+You have access to knowledge graph tools that allow you to:
+- Create nodes and relationships for brands, customers, channels, and campaigns
+- Query existing knowledge graphs to find marketing insights
+- Build visual representations of market positioning and customer segments
 
 Always provide actionable marketing strategies with clear metrics and goals.`,
-          matchKeywords: ['marketing', 'content', 'campaign', 'brand', 'strategy']
+          matchKeywords: ['marketing', 'content', 'campaign', 'brand', 'strategy', 'knowledge graph']
         });
         break;
         
@@ -138,12 +148,17 @@ Always provide actionable marketing strategies with clear metrics and goals.`,
 Key responsibilities:
 1. Conduct comprehensive research and analysis
 2. Synthesize findings from multiple sources
-3. Create knowledge graphs of research findings and connections
+3. Create and query knowledge graphs of research findings and connections
 4. Identify trends, patterns, and insights
 5. Provide actionable recommendations based on data
 
+You have access to knowledge graph tools that allow you to:
+- Create nodes and relationships for concepts, sources, findings, and evidence
+- Query existing knowledge graphs to find connections between research topics
+- Build visual representations of research domains and their relationships
+
 Always cite sources and provide well-structured research findings.`,
-          matchKeywords: ['research', 'analysis', 'investigate', 'study', 'data']
+          matchKeywords: ['research', 'analysis', 'investigate', 'study', 'data', 'knowledge graph']
         });
         break;
         

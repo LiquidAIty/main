@@ -1,4 +1,3 @@
-
 param(
   [ValidateSet("None","Next")]
   [string]$Scaffold = "None"
@@ -31,14 +30,23 @@ try {
 
 # 2) Snapshot key files
 $includeGlobs = @(
+  # JS/TS
   "package.json","package-lock.json","pnpm-lock.yaml","yarn.lock",
   "nx.json","tsconfig.base.json","vite.config.*","tailwind.config.*",
   ".npmrc",".nvmrc",".tool-versions",".gitignore",
-  "docker-compose.*","Dockerfile","*.env*",
+  # Docker
+  "docker-compose.*","Dockerfile","docker\**\*",
+  # Apps/Libs TS/JS
   "apps\**\project.json","apps\**\src\**\*.ts","apps\**\src\**\*.tsx","apps\**\src\**\*.js","apps\**\src\**\*.json",
   "libs\**\project.json","libs\**\src\**\*.ts","libs\**\src\**\*.tsx","libs\**\src\**\*.js","libs\**\src\**\*.json",
+  # Prisma
   "prisma\schema.prisma","prisma\migrations\**\*.sql",
-  ".vscode\**\*","windsurf\**\*"
+  # Python bolt-ons
+  "python_models\**\*.py","python_boltons\**\*.py","scripts\**\*.py","scripts\**\*.sh",
+  # VSCode / Windsurf
+  ".vscode\**\*","windsurf\**\*",
+  # Other config
+  "*.env*","*.yml","*.yaml"
 )
 $exclusions = "\\node_modules\\|\\\.git\\|\\dist\\|\\build\\|\\out\\|\\coverage\\|\\\.next\\|\\tmp\\|\\\.cache\\"
 $files = @()
@@ -47,7 +55,7 @@ foreach ($glob in $includeGlobs) {
 }
 $files = $files | Where-Object { $_.FullName -notmatch $exclusions } | Sort-Object FullName -Unique
 foreach ($f in $files) {
-  $rel  = $f.FullName.Substring($PWD.Path.Length).TrimStart('\','/')
+  $rel  = $f.FullName.Substring($PWD.Path.Length).TrimStart('\','/','.')
   $dest = Join-Path $snapDir $rel
   New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
   Copy-Item -LiteralPath $f.FullName -Destination $dest -Force
@@ -56,7 +64,7 @@ foreach ($f in $files) {
 # 3) Env presence (no secrets)
 $envNames = @("N8N_BASE_URL","N8N_API_KEY","ALPACA_API_KEY_ID","ALPACA_API_SECRET_KEY",
               "OPENAI_API_KEY","DEEPSEEK_API_KEY","KIMI_API_KEY","POLYGON_API_KEY",
-              "TIINGO_API_KEY","DATABASE_URL")
+              "TIINGO_API_KEY","DATABASE_URL","PYTHON_MODELS_URL")
 $lines = foreach ($name in $envNames) {
   $val = [Environment]::GetEnvironmentVariable($name,"Process")
   if (-not $val) { $val = [Environment]::GetEnvironmentVariable($name,"User") }
@@ -77,7 +85,7 @@ Get-Content $envOut | Out-File -Encoding UTF8 -Append $mdOut
 "## Key Files (first 400 lines each)`n" | Out-File -Encoding UTF8 -Append $mdOut
 $maxLines = 400
 foreach ($f in $files) {
-  $rel = $f.FullName.Substring($PWD.Path.Length).TrimStart('\','/')
+  $rel = $f.FullName.Substring($PWD.Path.Length).TrimStart('\','/','.')
   "### $rel`n```$($f.Extension.TrimStart('.'))" | Out-File -Encoding UTF8 -Append $mdOut
   try {
     Get-Content -TotalCount $maxLines -LiteralPath $f.FullName | Out-File -Encoding UTF8 -Append $mdOut
@@ -87,7 +95,12 @@ foreach ($f in $files) {
   "````n" | Out-File -Encoding UTF8 -Append $mdOut
 }
 
-# 5) Zip result
+# 5) Capture Python deps if pip installed
+try {
+    pip freeze | Out-File -Encoding UTF8 (Join-Path $snapDir "requirements.txt")
+} catch { }
+
+# 6) Zip result
 $zip = "$outDir.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Add-Type -AssemblyName System.IO.Compression.FileSystem

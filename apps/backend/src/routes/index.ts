@@ -10,6 +10,7 @@ import artifacts from './artifacts.routes';
 import { webhookRouter as webhook } from './webhook.routes';
 import auth from './auth.routes';
 import { agentRoutes } from './agent.routes';
+import models from './models.routes';
 import { authMiddleware } from '../middleware/auth';
 
 const router = Router();
@@ -33,5 +34,6 @@ router.use('/tools', authMiddleware, tools);
 router.use('/artifacts', authMiddleware, artifacts);
 router.use('/webhook', authMiddleware, webhook);
 router.use('/agents', authMiddleware, agentRoutes);
+router.use('/models', authMiddleware, models);
 
 export default router;

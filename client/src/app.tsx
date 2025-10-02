@@ -7,6 +7,10 @@ import BossAgent from "./pages/bossagent";
 import Chat from "./pages/chat";
 import AgentChat from "./pages/agentchat";
 import Agentic from "./pages/agentic";
+import DetailedMode from "./pages/detailedmode";
+import AdminPanel from "./pages/adminpanel";
+import UserPanel from "./pages/userpanel";
+import agentknowledge from "./pages/agentknowledge";
 
 export default function App() {
   useEffect(() => {
@@ -23,6 +27,10 @@ export default function App() {
         <Route path="/chat" element={<Chat />} />
         <Route path="/agent-chat" element={<AgentChat />} />
         <Route path="/agentic" element={<Agentic />} />
+        <Route path="/detailed" element={<DetailedMode />} />
+        <Route path="/admin" element={<AdminPanel />} />
+        <Route path="/user-panel" element={<UserPanel />} />
+        <Route path="/agentknowledge" element={<agentknowledge />} />
       </Routes>
     </BrowserRouter>
   );

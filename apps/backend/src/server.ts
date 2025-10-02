@@ -5,6 +5,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import knowledgeGraphRouter from './api/kg/knowledge-graph.js';
+import agentKgRouter from './api/kg/agent-kg.js';
 import reportController from './api/reports/reportController.js';
 import solRouter from './api/sol/sol.js';
 
@@ -34,6 +35,7 @@ app.use((req, res, next) => {
 
 // API routes
 app.use('/api/kg', knowledgeGraphRouter);
+app.use('/api/kg/agent', agentKgRouter);
 app.use('/api/reports', reportController);
 app.use('/api/sol', solRouter);
 
@@ -53,6 +55,7 @@ app.listen(port, () => {
   console.log(`LiquidAIty backend server running on port ${port}`);
   console.log(`Health check available at http://localhost:${port}/health`);
   console.log(`Knowledge Graph API available at http://localhost:${port}/api/kg`);
+  console.log(`Agent Knowledge Graph API available at http://localhost:${port}/api/kg/agent`);
   console.log(`Reports API available at http://localhost:${port}/api/reports`);
   console.log(`SOL API available at http://localhost:${port}/api/sol`);
 });

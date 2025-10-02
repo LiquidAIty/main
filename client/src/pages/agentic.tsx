@@ -1,8 +1,10 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { ChatInterface, Message } from "../components/chat-interface";
 import { KnowledgePanel, Triple, HistoryItem } from "../components/knowledge-panel";
 import { TimeSeriesPoint, BandPoint, EventPoint } from "../components/timeseries-chart";
 import { solRun, callBossAgent } from "../lib/api";
+import { TradingModal } from "../components/trading-modal";
+import TradingUI from "./tradingui";
 
 // Theme colors
 const C = {
@@ -33,7 +35,7 @@ export default function Agentic() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelWidth, setPanelWidth] = useState(560);
   const [tab, setTab] = useState("Plan");
-  const tabs = ["Plan", "Workflow", "Knowledge", "Links", "Report"];
+  const tabs = ["Plan", "Workflow", "Knowledge", "Dashboard", "Links", "Report", "Code"];
 
   // Chat state
   const [messages, setMessages] = useState<Message[]>([
@@ -75,7 +77,13 @@ export default function Agentic() {
     
     // Open the panel
     setPanelOpen(true);
-    setTab("Plan");
+    
+    // If trading mode, switch to Dashboard tab
+    if (mode === 'trading') {
+      setTab("Dashboard");
+    } else {
+      setTab("Plan");
+    }
     
     // Set domain based on mode
     setCurrentDomain(mode);
@@ -289,6 +297,80 @@ export default function Agentic() {
     }
   }
 
+  // Detailed Mode state
+  const [code, setCode] = useState('// select a node or create a new snippet');
+  const [codeLanguage, setCodeLanguage] = useState<'javascript' | 'typescript' | 'python'>('javascript');
+  const [trainingStatus, setTrainingStatus] = useState<string | null>(null);
+  const [detailedSelection, setDetailedSelection] = useState<string | null>(null);
+  const [isTraining, setIsTraining] = useState(false);
+  const [editorVisible, setEditorVisible] = useState(false);
+
+  // Open Detailed Mode in a new window
+  const openDetailedMode = () => {
+    // Save current state to localStorage to pass to the detailed page
+    localStorage.setItem('agentic_code', code);
+    localStorage.setItem('agentic_language', codeLanguage);
+    if (detailedSelection) {
+      localStorage.setItem('agentic_selection', detailedSelection);
+    }
+    
+    // Open in a new tab with the correct path
+    window.open('/detailed', '_blank');
+  };
+
+  // Handle starting model training
+  async function startModelTraining() {
+    if (!code.trim()) return;
+    
+    setIsTraining(true);
+    setTrainingStatus('Queued');
+    
+    try {
+      const res = await fetch('/api/models/train', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ 
+          code, 
+          contextPath: detailedSelection,
+          // Include current knowledge graph context if available
+          knowledgeGraph: kgTriples.length > 0 ? { triples: kgTriples } : undefined
+        })
+      });
+      
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+      
+      const data = await res.json();
+      setTrainingStatus('Processing');
+      
+      // Poll for status
+      const jobId = data.jobId;
+      const interval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`/api/models/status/${jobId}`);
+          const statusData = await statusRes.json();
+          
+          setTrainingStatus(statusData.status);
+          
+          if (['finished', 'failed', 'error'].includes(statusData.status?.toLowerCase())) {
+            clearInterval(interval);
+            setIsTraining(false);
+          }
+        } catch (err) {
+          console.error('Error checking job status:', err);
+        }
+      }, 3000);
+    } catch (error) {
+      console.error('Error starting training:', error);
+      setTrainingStatus('Error');
+      setIsTraining(false);
+    }
+  }
+
+  // Trading modal state
+  const [isTradingModalOpen, setIsTradingModalOpen] = useState(false);
+
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden" style={{ background: C.bg, color: C.text }}>
       <style>{`
@@ -319,6 +401,20 @@ export default function Agentic() {
           />
         </div>
         <div className="flex items-center gap-3">
+          {/* Trading UI Button */}
+          <button 
+            onClick={() => setIsTradingModalOpen(true)} 
+            className="rounded-md font-medium" 
+            style={{ 
+              background: C.accent, 
+              color: '#0B0C0E', 
+              padding: '8px 14px', 
+              fontSize: 13 
+            }}
+          >
+            Trading UI
+          </button>
+          
           {!panelOpen ? (
             <button 
               onClick={() => setPanelOpen(true)} 
@@ -438,6 +534,61 @@ export default function Agentic() {
                   />
                 )}
 
+                {tab === 'Dashboard' && (
+                  <div className="h-full">
+                    {currentDomain === 'trading' ? (
+                      <div className="h-full overflow-hidden rounded-lg border" style={{ borderColor: C.border }}>
+                        <TradingUI />
+                      </div>
+                    ) : (
+                      <div className="p-4">
+                        <h2 className="text-lg font-semibold mb-4" style={{ color: C.text }}>Dashboard</h2>
+                        <p className="text-sm" style={{ color: C.muted }}>
+                          Select a specific domain to view its dashboard. The Trading domain provides a live trading interface.
+                        </p>
+                        
+                        <div className="mt-6 grid grid-cols-2 gap-4">
+                          <button
+                            onClick={() => chooseMode('trading')}
+                            className="p-4 rounded-lg flex flex-col items-center justify-center text-center"
+                            style={{ 
+                              background: C.bg, 
+                              border: `1px solid ${C.border}`,
+                              height: 140
+                            }}
+                          >
+                            <div className="p-3 rounded-full mb-2" style={{ background: `${C.accent}22` }}>
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" viewBox="0 0 20 20" fill={C.accent}>
+                                <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
+                              </svg>
+                            </div>
+                            <div className="font-medium" style={{ color: C.text }}>Trading Dashboard</div>
+                            <div className="text-xs mt-1" style={{ color: C.muted }}>Live charts and signals</div>
+                          </button>
+                          
+                          <button
+                            className="p-4 rounded-lg flex flex-col items-center justify-center text-center opacity-50"
+                            style={{ 
+                              background: C.bg, 
+                              border: `1px solid ${C.border}`,
+                              height: 140,
+                              cursor: 'not-allowed'
+                            }}
+                          >
+                            <div className="p-3 rounded-full mb-2" style={{ background: `${C.primary}22` }}>
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" viewBox="0 0 20 20" fill={C.primary}>
+                                <path fillRule="evenodd" d="M3 3a1 1 0 000 2v8a2 2 0 002 2h2.586l-1.293 1.293a1 1 0 101.414 1.414L10 15.414l2.293 2.293a1 1 0 001.414-1.414L12.414 15H15a2 2 0 002-2V5a1 1 0 100-2H3zm11 4a1 1 0 10-2 0v4a1 1 0 102 0V7zm-3 1a1 1 0 10-2 0v3a1 1 0 102 0V8zM8 9a1 1 0 00-2 0v2a1 1 0 102 0V9z" clipRule="evenodd" />
+                              </svg>
+                            </div>
+                            <div className="font-medium" style={{ color: C.text }}>Analytics Dashboard</div>
+                            <div className="text-xs mt-1" style={{ color: C.muted }}>Coming soon</div>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {tab === 'Plan' && (
                   <div className="p-4">
                     <h2 className="text-lg font-semibold mb-4" style={{ color: C.text }}>Project Plan</h2>
@@ -494,6 +645,124 @@ export default function Agentic() {
                   </div>
                 )}
 
+                {tab === 'Code' && (
+                  <div className="p-4 flex flex-col" style={{ height: 'calc(100% - 32px)' }}>
+                    {console.log('Code tab selected', { codeLanguage, code })}
+                    <div className="flex justify-between items-center mb-4">
+                      <h2 className="text-lg font-semibold" style={{ color: C.text }}>Code Generation</h2>
+                      <button
+                        onClick={openDetailedMode}
+                        className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium"
+                        style={{ 
+                          background: 'transparent', 
+                          color: C.primary,
+                          border: `1px solid ${C.primary}`,
+                        }}
+                      >
+                        <span>Open Detailed Mode</span>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M10 6H6C4.89543 6 4 6.89543 4 8V18C4 19.1046 4.89543 20 6 20H16C17.1046 20 18 19.1046 18 18V14M14 4H20M20 4V10M20 4L10 14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      </button>
+                    </div>
+                    
+                    <div className="flex gap-3 mb-4">
+                      <div className="flex-1">
+                        <label className="block text-sm font-medium mb-1" style={{ color: C.muted }}>Context</label>
+                        <select 
+                          value={detailedSelection || ''}
+                          onChange={e => setDetailedSelection(e.target.value)}
+                          className="w-full rounded-md focus:outline-none"
+                          style={{ 
+                            background: C.bg, 
+                            color: C.text, 
+                            padding: '6px 10px', 
+                            border: `1px solid ${C.border}`,
+                            fontSize: '13px'
+                          }}
+                        >
+                          <option value="">--select--</option>
+                          <option value="dash/alpha">dash/alpha</option>
+                          <option value="knowledge/graph">knowledge/graph</option>
+                          {kgTriples.length > 0 && <option value="current-kg">Current Knowledge Graph</option>}
+                        </select>
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium mb-1" style={{ color: C.muted }}>Language</label>
+                        <select 
+                          value={codeLanguage}
+                          onChange={e => setCodeLanguage(e.target.value as 'javascript' | 'typescript' | 'python')}
+                          className="rounded-md focus:outline-none"
+                          style={{ 
+                            background: C.bg, 
+                            color: C.text, 
+                            padding: '6px 10px', 
+                            border: `1px solid ${C.border}`,
+                            fontSize: '13px',
+                            width: '110px'
+                          }}
+                        >
+                          <option value="javascript">JavaScript</option>
+                          <option value="typescript">TypeScript</option>
+                          <option value="python">Python</option>
+                        </select>
+                      </div>
+                    </div>
+                    
+                    <div style={{ 
+                      height: '250px',
+                      border: `1px solid ${C.border}`, 
+                      marginBottom: '12px',
+                      borderRadius: '4px',
+                      overflow: 'hidden',
+                      position: 'relative'
+                    }}>
+                      <textarea
+                        value={code}
+                        onChange={(e) => setCode(e.target.value)}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          padding: '12px',
+                          backgroundColor: '#1e1e1e',
+                          color: '#d4d4d4',
+                          border: 'none',
+                          resize: 'none',
+                          fontFamily: 'monospace',
+                          fontSize: '13px',
+                          outline: 'none'
+                        }}
+                        placeholder="// Write your code here..."
+                      />
+                    </div>
+                    
+                    <div className="flex justify-between items-center">
+                      <button 
+                        onClick={startModelTraining}
+                        disabled={isTraining}
+                        className="px-3 py-1.5 rounded-md font-medium text-sm"
+                        style={{ 
+                          background: isTraining ? C.neutral : C.primary, 
+                          color: '#0B0C0E',
+                          cursor: isTraining ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        {isTraining ? 'Processing...' : 'Generate Model'}
+                      </button>
+                      
+                      <div style={{ color: C.muted, fontSize: '13px' }}>
+                        <strong style={{ color: C.primary }}>Status:</strong>{' '}
+                        <span style={{ 
+                          color: trainingStatus === 'Error' ? C.accent : C.text 
+                        }}>
+                          {trainingStatus || 'Idle'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {tab === 'Links' && (
                   <div className="text-[13px]" style={{ color: C.muted }}>
                     Content for Links can be wired to your backend later. (Left as placeholder to avoid breaking export.)
@@ -535,6 +804,12 @@ export default function Agentic() {
           </aside>
         )}
       </div>
+
+      {/* Trading Modal */}
+      <TradingModal 
+        isOpen={isTradingModalOpen} 
+        onClose={() => setIsTradingModalOpen(false)} 
+      />
     </div>
   );
 }

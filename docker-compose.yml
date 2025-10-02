@@ -1,119 +1,21 @@
-version: '3.8'
-
 services:
-  # Backend service - optimized for production
   backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    ports:
-      - "3000:3000"
+    build: .
+    image: liquidaity-backend
+    env_file: .env
     environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - NEO4J_URI=neo4j://neo4j:7687
-      - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-liquidaity}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - DEFAULT_MODEL=${DEFAULT_MODEL:-gpt-5-mini}
-      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:5173,https://*.oraclecloud.com}
-    depends_on:
-      - neo4j
-      - redis
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    networks:
-      - liquidaity-network
+      - PORT=4000
+    expose:
+      - "4000"
     restart: unless-stopped
-    command: ["node", "apps/backend/dist/main.js"]
 
-  # Frontend service - optimized for production
-  frontend:
-    build:
-      context: ./client
-      dockerfile: Dockerfile.prod
-    ports:
-      - "80:80"
+  web:
+    image: nginx:1.25-alpine
     depends_on:
       - backend
-    networks:
-      - liquidaity-network
-    restart: unless-stopped
-
-  # Neo4j service - optimized for Oracle Free Tier
-  neo4j:
-    image: neo4j:5.11.0
     ports:
-      - "7474:7474"
-      - "7687:7687"
-    environment:
-      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-liquidaity}
-      # Reduced memory settings for Oracle Free Tier
-      - NEO4J_dbms_memory_pagecache_size=512M
-      - NEO4J_dbms_memory_heap_initial__size=512M
-      - NEO4J_dbms_memory_heap_max__size=1G
+      - "80:80"
     volumes:
-      - neo4j-data:/data
-      - neo4j-logs:/logs
-      - neo4j-import:/var/lib/neo4j/import
-      - neo4j-plugins:/plugins
-    networks:
-      - liquidaity-network
+      - ./client/dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     restart: unless-stopped
-
-  # Redis service - for caching and message queuing
-  redis:
-    image: redis:6-alpine
-    ports: ['6379:6379']
-    volumes:
-      - redis-data:/data
-    command: redis-server --save 60 1 --loglevel warning
-    networks:
-      - liquidaity-network
-    restart: unless-stopped
-
-  # Python models service - for AI features
-  python-models:
-    build:
-      context: ./apps/python-models
-      dockerfile: Dockerfile
-    environment:
-      - REDIS_HOST=redis
-      - NODE_ENV=production
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8001
-    ports:
-      - "8001:8001"
-    depends_on:
-      - redis
-    networks:
-      - liquidaity-network
-    restart: unless-stopped
-
-  # rq-worker service - for task queuing
-  rq-worker:
-    image: python:3.11-slim
-    volumes:
-      - ./apps/python-models:/app
-    working_dir: /app
-    command: bash -lc "pip install -r requirements.txt && rq worker -u redis://redis:6379 models"
-    depends_on:
-      - redis
-      - python-models
-    networks:
-      - liquidaity-network
-    restart: unless-stopped
-
-networks:
-  liquidaity-network:
-    driver: bridge
-
-volumes:
-  neo4j-data:
-  neo4j-logs:
-  neo4j-import:
-  neo4j-plugins:
-  redis-data:
