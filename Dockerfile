@@ -3,8 +3,9 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 # Backend deps + build
-COPY apps/backend/package*.json apps/backend/
-RUN npm --prefix apps/backend ci || true
+COPY package.json package-lock.json ./
+COPY apps/backend/package.json apps/backend/
+RUN npm ci --workspace apps/backend --include-workspace-root=false || true
 COPY apps/backend/ apps/backend/
 # Try project build, else fall back to TypeScript compile
 RUN npm --prefix apps/backend run build || npx -y typescript -p apps/backend || true
@@ -22,8 +23,9 @@ ENV NODE_ENV=production
 ENV PORT=4000
 
 # Install backend production deps
-COPY apps/backend/package*.json apps/backend/
-RUN npm --prefix apps/backend ci --omit=dev
+COPY package.json package-lock.json ./
+COPY apps/backend/package.json apps/backend/
+RUN npm ci --omit=dev --workspace apps/backend --include-workspace-root=false || npm install --omit=dev --workspace apps/backend --include-workspace-root=false
 
 # Copy backend runtime files (built JS) and any runtime assets
 COPY --from=build /app/apps/backend /app/apps/backend
