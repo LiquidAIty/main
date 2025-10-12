@@ -1,10 +1,8 @@
 import { resolveModel } from "./models.config";
+import { safeFetch } from "../security/safeFetch";
 
-async function fetchWithTimeout(url: string, init: RequestInit, ms: number) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), ms);
-  try { return await fetch(url, { ...init, signal: ctrl.signal }); }
-  finally { clearTimeout(t); }
+async function fetchWithTimeout(url: string, init: RequestInit, ms: number, allowHosts: string[] = []) {
+  return safeFetch(url, { ...init, timeoutMs: ms, allowHosts });
 }
 
 export type InvokeOpts = { modelKey?: string; temperature?: number; maxTokens?: number; system?: string };
@@ -16,7 +14,10 @@ export async function runLLM(userContent: string, opts: InvokeOpts = {}) {
   const timeout = Number(process.env.REQUEST_TIMEOUT_MS ?? 20000);
 
   if (m.provider === "openai") {
-    const r = await fetchWithTimeout(`${process.env.OPENAI_BASE_URL}/chat/completions`, {
+    const base = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+    const url = `${base.replace(/\/+$/, "")}/chat/completions`;
+    const allowOpenAI = (process.env.ALLOW_HOSTS_OPENAI || "api.openai.com").split(",").map(h => h.trim()).filter(Boolean);
+    const r = await fetchWithTimeout(url, {
       method: "POST",
       headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -27,13 +28,16 @@ export async function runLLM(userContent: string, opts: InvokeOpts = {}) {
         ],
         temperature, max_tokens,
       }),
-    }, timeout);
+    }, timeout, allowOpenAI);
     const j = await r.json() as any;
     return { text: j?.choices?.[0]?.message?.content ?? "", model: m.id, provider: m.provider };
   }
 
   if (m.provider === "openrouter") {
-    const r = await fetchWithTimeout(`${process.env.OPENROUTER_BASE_URL}/chat/completions`, {
+    const base = process.env.OPENROUTER_BASE_URL || "https://api.openrouter.ai";
+    const url = `${base.replace(/\/+$/, "")}/chat/completions`;
+    const allowOpenRouter = (process.env.ALLOW_HOSTS_OPENROUTER || "api.openrouter.ai,openrouter.ai").split(",").map(h => h.trim()).filter(Boolean);
+    const r = await fetchWithTimeout(url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
@@ -47,7 +51,7 @@ export async function runLLM(userContent: string, opts: InvokeOpts = {}) {
         ],
         temperature, max_tokens,
       }),
-    }, timeout);
+    }, timeout, allowOpenRouter);
     const j = await r.json() as any;
     return { text: j?.choices?.[0]?.message?.content ?? "", model: m.id, provider: m.provider };
   }

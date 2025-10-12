@@ -139,4 +139,46 @@ router.post('/check-hallucination', async (req: ExpressRequest, res: ExpressResp
   }
 });
 
+// Proxy routes for Graphlit MCP
+router.post('/graphlit/ingest', async (req: ExpressRequest, res: ExpressResponse) => {
+  try {
+    const graphlit = await import('../connectors/graphlit.mcp.js');
+    const result = await graphlit.ingest(req.body);
+    return res.json(result);
+  } catch (error: unknown) {
+    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+router.post('/graphlit/retrieve', async (req: ExpressRequest, res: ExpressResponse) => {
+  try {
+    const graphlit = await import('../connectors/graphlit.mcp.js');
+    const result = await graphlit.retrieve(req.body);
+    return res.json(result);
+  } catch (error: unknown) {
+    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+// Proxy routes for InfraNodus MCP
+router.post('/infranodus/content-gaps', async (req: ExpressRequest, res: ExpressResponse) => {
+  try {
+    const infranodus = await import('../connectors/infranodus.mcp.js');
+    const result = await infranodus.contentGaps(req.body);
+    return res.json(result);
+  } catch (error: unknown) {
+    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+router.post('/infranodus/generate-questions', async (req: ExpressRequest, res: ExpressResponse) => {
+  try {
+    const infranodus = await import('../connectors/infranodus.mcp.js');
+    const result = await infranodus.generateQuestions(req.body);
+    return res.json(result);
+  } catch (error: unknown) {
+    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
 export default router;

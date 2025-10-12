@@ -3,6 +3,7 @@ import type { Request as ExpressRequest, Response as ExpressResponse } from 'exp
 import { z } from 'zod';
 import { solRun } from '../agents/orchestrator/sol';
 import { createDeptAgent } from '../agents/lang/agentFactory';
+import { runOrchestrator } from '../agents/lang/orchestratorGraph';
 
 const router = Router();
 
@@ -122,10 +123,31 @@ router.post('/run', async (req: ExpressRequest, res: ExpressResponse): Promise<v
     }
     
     console.error('[SOL] error:', error);
-    res.status(502).json({
-      error: 'UpstreamError',
-      message: error instanceof Error ? error.message : 'Unknown error'
+    console.error('[SOL] error stack:', error instanceof Error ? error.stack : 'No stack trace');
+    console.error('[SOL] error type:', error?.constructor?.name);
+    
+    res.status(500).json({
+      error: 'InternalError',
+      message: error instanceof Error ? error.message : 'Unknown error',
+      type: error?.constructor?.name
     });
+  }
+});
+
+// POST /api/sol/run-graph - LangGraph orchestrator with Zod tools
+router.post('/run-graph', async (req: ExpressRequest, res: ExpressResponse): Promise<void> => {
+  try {
+    const { goal } = req.body ?? {};
+    if (!goal) {
+      res.status(400).json({ ok: false, error: "goal required" });
+      return;
+    }
+    const threadId = `sol-${Date.now()}`;
+    const messages = [{ role: "user" as const, content: goal }];
+    const result = await runOrchestrator(threadId, messages);
+    res.json({ ok: true, result: result.result, status: result.status });
+  } catch (e: unknown) {
+    res.status(500).json({ ok: false, error: e instanceof Error ? e.message : "Unknown error" });
   }
 });
 

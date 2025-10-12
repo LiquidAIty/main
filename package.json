@@ -1,5 +1,5 @@
 {
-  "name": "@nx/source",
+  "name": "main",
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {
@@ -34,13 +34,13 @@
   "devDependencies": {
     "@eslint/js": "^9.8.0",
     "@nx/esbuild": "21.3.0",
-    "@nx/eslint": "^21.3.0",
+    "@nx/eslint": "21.3.0",
     "@nx/eslint-plugin": "21.3.0",
-    "@nx/jest": "^21.3.0",
+    "@nx/jest": "21.3.0",
     "@nx/js": "^21.3.0",
-    "@nx/node": "^21.3.0",
-    "@nx/react": "^21.3.0",
-    "@nx/vite": "^21.3.0",
+    "@nx/node": "21.3.0",
+    "@nx/react": "21.3.0",
+    "@nx/vite": "21.3.0",
     "@nx/web": "21.3.0",
     "@nx/workspace": "21.3.0",
     "@swc-node/register": "~1.9.1",

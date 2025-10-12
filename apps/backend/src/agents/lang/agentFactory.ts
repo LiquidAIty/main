@@ -3,18 +3,9 @@ import { StateGraph, MessagesAnnotation } from '@langchain/langgraph';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
 import { HumanMessage } from '@langchain/core/messages';
 import { resolve_model_by_role, type agent_role } from '../../llm/models.config';
-import neo4j from 'neo4j-driver';
+import { createAgentTools } from './tools/agentFactoryTools';
 
-// Neo4j connection
-const NEO4J_URI = process.env.NEO4J_URI || 'neo4j://localhost:7687';
-const NEO4J_USER = process.env.NEO4J_USER || 'neo4j';
-const NEO4J_PASSWORD = process.env.NEO4J_PASSWORD || 'password';
-
-// Create Neo4j driver instance
-const driver = neo4j.driver(
-  NEO4J_URI,
-  neo4j.auth.basic(NEO4J_USER, NEO4J_PASSWORD)
-);
+// TODO: Neo4j connection moved to agentFactoryTools.ts
 
 // Interface for knowledge graph nodes - used in type definitions for Neo4j results
 // Commented out as currently unused
@@ -62,16 +53,31 @@ export function createDeptAgent(spec: DeptAgentSpec) {
       const role = params.role ?? 'worker';
       const model = resolve_model_by_role(role);
       
+      console.log('[Agent Factory] Model config:', {
+        provider: model.provider,
+        id: model.id,
+        baseUrl: model.baseUrl,
+        hasApiKey: !!model.apiKey,
+        apiKeyPrefix: model.apiKey?.substring(0, 10)
+      });
+      
       const modelLC = new ChatOpenAI({
         model: model.id,
         openAIApiKey: model.apiKey,
         maxTokens: model.maxTokens,
-        ...(model.baseUrl !== 'https://api.openai.com/v1' ? { 
-          configuration: { baseURL: model.baseUrl } 
+        timeout: 30000,
+        ...(model.baseUrl !== 'https://api.openai.com/v1' ? {
+          configuration: {
+            baseURL: model.baseUrl
+          }
         } : {})
       });
 
-      const tools = [
+      // TODO: Legacy JSON schema tools below - converted to Zod in agentFactoryTools.ts
+      const tools = createAgentTools(spec.id, params.threadId);
+      
+      /* OLD JSON SCHEMA TOOLS - KEEPING FOR REFERENCE
+      const oldTools = [
         {
           name: 'memory_op',
           description: "Store or retrieve information. ops: put|get|all. Example: {op:'put', key:'project', value:'LiquidAIty'}",
@@ -430,9 +436,10 @@ export function createDeptAgent(spec: DeptAgentSpec) {
           }
         }
       ];
+      */
 
-      const toolNode = new ToolNode(tools as any);
-      const bound = modelLC.bindTools(tools as any);
+      const toolNode = new ToolNode(tools);
+      const bound = modelLC.bindTools(tools);
 
       function shouldContinue({ messages }: typeof MessagesAnnotation.State) {
         const last: any = messages[messages.length - 1];
@@ -453,19 +460,28 @@ export function createDeptAgent(spec: DeptAgentSpec) {
         .addConditionalEdges('agent', shouldContinue)
         .compile();
 
-      const final = await graph.invoke(
-        { messages: [new HumanMessage(params.prompt ?? 'Assist the user.')] },
-        { configurable: { thread_id: params.threadId ?? `dept:${spec.id}` } }
-      );
+      try {
+        console.log('[Agent Factory] Invoking graph with prompt:', params.prompt?.substring(0, 50));
+        
+        const final = await graph.invoke(
+          { messages: [new HumanMessage(params.prompt ?? 'Assist the user.')] },
+          { configurable: { thread_id: params.threadId ?? `dept:${spec.id}` } }
+        );
 
-      const last = (final as any).messages[(final as any).messages.length - 1] as any;
-      return { 
-        ok: true, 
-        provider: model.provider, 
-        model: model.id, 
-        output: last?.content, 
-        steps: (final as any).messages.length 
-      };
+        const last = (final as any).messages[(final as any).messages.length - 1] as any;
+        console.log('[Agent Factory] Graph completed successfully');
+        
+        return { 
+          ok: true, 
+          provider: model.provider, 
+          model: model.id, 
+          output: last?.content, 
+          steps: (final as any).messages.length 
+        };
+      } catch (error) {
+        console.error('[Agent Factory] Graph invocation failed:', error);
+        throw error;
+      }
     }
   };
 }

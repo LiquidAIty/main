@@ -1,38 +1,35 @@
-import { Router } from 'express';
-import type { Request as ExpressRequest, Response as ExpressResponse } from 'express';
-import { toolRegistry } from '../agents/registry';
+import { Router } from "express";
+import { pingNeo4j } from "../connectors/neo4j";
+import { pingEsn } from "../connectors/esn";
+import { getMcpTools } from "../agents/mcp/mcpClient";
 
 const router = Router();
 
-/**
- * Health check endpoint
- * @route GET /health
- * @returns {object} 200 - Health status information
- */
-router.get('/health', (_req: ExpressRequest, res: ExpressResponse) => {
-  const healthData = {
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    environment: process.env.NODE_ENV || 'development',
-    services: {
-      api: 'healthy',
-      database: process.env.DATABASE_URL ? 'connected' : 'not_configured',
-      pythonModels: process.env.PYTHON_MODELS_URL ? 'configured' : 'not_configured'
-    }
-  };
-  
-  res.status(200).json(healthData);
-});
+router.get("/health", async (_req, res) => {
+  const out: { ok: boolean; neo4j?: string; esn?: string; mcp?: { count: number; error?: string } } = { ok: true };
 
-router.get('/', (_req: ExpressRequest, res: ExpressResponse) => {
-  res.status(200).json({ status: 'ok' });
-});
+  try {
+    out.neo4j = await pingNeo4j();
+  } catch {
+    out.neo4j = "down";
+    out.ok = false;
+  }
 
-router.get('/tools', (_req: ExpressRequest, res: ExpressResponse) => {
-  const tools = Array.from(toolRegistry.keys());
-  res.status(200).json({ status: 'ok', tools });
+  try {
+    out.esn = await pingEsn();
+  } catch {
+    out.esn = "down";
+    out.ok = false;
+  }
+
+  try {
+    const tools = await getMcpTools();
+    out.mcp = { count: Array.isArray(tools) ? tools.length : 0 };
+  } catch {
+    out.mcp = { count: 0, error: "load-failed" };
+  }
+
+  res.json(out);
 });
 
 export default router;
-export { router as healthRouter };

@@ -6,9 +6,9 @@
   "targets": {
     "build": {
       "executor": "@nx/js:tsc",
-      "outputs": ["{workspaceRoot}/dist/apps/backend"],
+      "outputs": ["{workspaceRoot}/apps/backend/dist"],
       "options": {
-        "outputPath": "dist/apps/backend",
+        "outputPath": "apps/backend/dist",
         "main": "apps/backend/src/main.ts",
         "tsConfig": "apps/backend/tsconfig.app.json",
         "assets": ["apps/backend/src/assets"]

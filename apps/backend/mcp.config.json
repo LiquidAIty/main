@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "--root", "./"],
+      "restart": { "enabled": true, "maxAttempts": 3, "delayMs": 1000 }
+    },
+    "github": {
+      "transport": "sse",
+      "url": "${GITHUB_MCP_URL}",
+      "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" }
+    },
+    "supabase": {
+      "transport": "sse",
+      "url": "${SUPABASE_MCP_URL}",
+      "headers": {
+        "apikey": "${SUPABASE_SERVICE_KEY}",
+        "Authorization": "Bearer ${SUPABASE_SERVICE_KEY}"
+      }
+    }
+  }
+}

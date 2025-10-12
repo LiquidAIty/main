@@ -30,8 +30,11 @@ export const openaiAgentTool = {
     // LangChain ChatOpenAI – unified config (no temp), keyed via openAIApiKey and configuration.baseURL
     const modelLC = new ChatOpenAI({
       model,
+      timeout: 30000,
       ...(apiKey ? { openAIApiKey: apiKey } : {}),
-      ...(baseURL ? { configuration: { baseURL } } : {})
+      configuration: {
+        ...(baseURL ? { baseURL } : {}),
+      }
     });
 
     // tools this department can call

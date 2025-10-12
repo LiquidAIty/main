@@ -4,14 +4,14 @@ import configSchema from '../config/sol.config.schema.json';
 import type { TaskEnvelope } from '../types/agent';
 
 const ajv = new Ajv({ allErrors: true });
-addFormats(ajv);
+addFormats(ajv as any);
 
 const validateConfigFn = ajv.compile(configSchema);
 
 export const ValidationService = {
   validateConfig(config: any) {
     const ok = validateConfigFn(config);
-    return { ok: !!ok, errors: ok ? [] : (validateConfigFn.errors || []).map(e => `${e.instancePath} ${e.message}`) };
+    return { ok: !!ok, errors: ok ? [] : (validateConfigFn.errors || []).map((e: any) => `${e.instancePath} ${e.message}`) };
   },
   
   validateTask(task: any) {

@@ -36,4 +36,4 @@ RUN mkdir -p /app/apps/backend/public
 COPY --from=build /app/client/dist/ /app/apps/backend/public/
 
 EXPOSE 4000
-CMD ["node","apps/backend/dist/main.js"]
+CMD ["node","apps/backend/dist/src/main.js"]

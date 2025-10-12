@@ -5,6 +5,7 @@ import { TimeSeriesPoint, BandPoint, EventPoint } from "../components/timeseries
 import { solRun, callBossAgent } from "../lib/api";
 import { TradingModal } from "../components/trading-modal";
 import TradingUI from "./tradingui";
+import { PlaybookPanel } from "./components/playbook-panel";
 
 // Theme colors
 const C = {
@@ -608,6 +609,7 @@ export default function Agentic() {
                         No plan has been generated yet. Start a conversation to have BossAgent create a plan.
                       </div>
                     )}
+                    <PlaybookPanel />
                   </div>
                 )}
 

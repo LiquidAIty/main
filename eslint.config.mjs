@@ -1,4 +1,5 @@
 import nx from '@nx/eslint-plugin';
+import unusedImports from 'eslint-plugin-unused-imports';
 
 export default [
   ...nx.configs['flat/base'],
@@ -40,7 +41,12 @@ export default [
       '**/*.cjs',
       '**/*.mjs',
     ],
-    // Override or add rules here
-    rules: {},
+    plugins: {
+      'unused-imports': unusedImports,
+    },
+    rules: {
+      'unused-imports/no-unused-imports': 'error',
+      'unused-imports/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+    },
   },
 ];
