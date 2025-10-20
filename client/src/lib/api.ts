@@ -44,6 +44,69 @@ export async function solRunQuery(q: string): Promise<SolResponse> {
   }
 }
 
+export interface UPlaybookDescriptor {
+  id: string;
+  title: string;
+  description?: string;
+}
+
+export interface UPlaybookRunResponse {
+  ok: boolean;
+  data: unknown;
+  error: string | null;
+  meta: { id: string } | null;
+}
+
+export async function listUPlaybooks(): Promise<UPlaybookDescriptor[]> {
+  const res = await fetch(`${BASE}/u-playbooks/list`);
+  const payload = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  if (!payload?.ok) {
+    throw new Error(typeof payload?.error === 'string' ? payload.error : 'Failed to list playbooks');
+  }
+  const data = Array.isArray(payload.data) ? payload.data : [];
+  const mapped = data
+    .map((item: any): UPlaybookDescriptor | null => {
+      const id = typeof item?.id === 'string' ? item.id : item?.id != null ? String(item.id) : '';
+      if (!id) {
+        return null;
+      }
+      const title = typeof item?.title === 'string' ? item.title : id;
+      const description = typeof item?.description === 'string' ? item.description : undefined;
+      return { id, title, description };
+    })
+    .filter((item): item is UPlaybookDescriptor => item != null);
+  return mapped;
+}
+
+export async function runUPlaybook(
+  id: string,
+  params: Record<string, unknown>,
+  corrId?: string
+): Promise<UPlaybookRunResponse> {
+  const res = await fetch(`${BASE}/u-playbooks/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, params, corrId })
+  });
+  const payload = await res.json().catch(() => null);
+  if (!res.ok) {
+    const message = typeof payload?.error === 'string' ? payload.error : `HTTP ${res.status}`;
+    throw new Error(message);
+  }
+  if (!payload || typeof payload.ok !== 'boolean') {
+    throw new Error('Invalid response payload');
+  }
+  return {
+    ok: Boolean(payload.ok),
+    data: payload.data ?? null,
+    error: typeof payload.error === 'string' ? payload.error : null,
+    meta: payload.meta && typeof payload.meta === 'object' ? (payload.meta as { id: string }) : null
+  };
+}
+
 interface BossAgentResponse {
   ok: boolean;
   projectId: string;

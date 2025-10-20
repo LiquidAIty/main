@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { listUPlaybooks, runUPlaybook } from "../../lib/api.uPlaybooks";
+import { listUPlaybooks, runUPlaybook } from "../../lib/api";
 
 export function PlaybookPanel() {
   const [pbs, setPbs] = useState<{ id: string; title: string; description?: string }[]>([]);

@@ -38,26 +38,30 @@ export function resolve_model_by_role(role: agent_role) {
 
   if (role === 'orchestrator') {
     // force orchestrator to openai gpt-5
-    return {
+    const model = {
       provider: 'openai',
       id: 'gpt-4-turbo-preview',
       baseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
       apiKey: process.env.OPENAI_API_KEY || '',
       maxTokens: Number(process.env.DEFAULT_MAX_TOKENS ?? 2048),
     };
+    console.log('[LLM] provider=%s model=%s temp=%s', model.provider, model.id, 'default');
+    return model;
   }
 
   // worker: prefer openai gpt-5-mini/gpt-5-nano if SOL_PRIMARY=openai, else fall back to openrouter model
   if (via_openai) {
-    return {
+    const model = {
       provider: 'openai',
       id: 'gpt-4o-mini',
       baseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
       apiKey: process.env.OPENAI_API_KEY || '',
       maxTokens: Number(process.env.DEFAULT_MAX_TOKENS ?? 2048),
     };
+    console.log('[LLM] provider=%s model=%s temp=%s', model.provider, model.id, 'default');
+    return model;
   }
-  return {
+  const model = {
     provider: 'openrouter',
     id: process.env.OPENROUTER_DEFAULT_MODEL || 'moonshotai/kimi-k2:free',
     baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
@@ -65,4 +69,6 @@ export function resolve_model_by_role(role: agent_role) {
     temperature: Number(process.env.DEFAULT_TEMPERATURE ?? 0.2),
     maxTokens: Number(process.env.DEFAULT_MAX_TOKENS ?? 2048),
   };
+  console.log('[LLM] provider=%s model=%s temp=%s', model.provider, model.id, model.temperature);
+  return model;
 }

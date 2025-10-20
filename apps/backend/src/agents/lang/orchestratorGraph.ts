@@ -25,7 +25,12 @@ const StateAnnotation = Annotation.Root({
 
 // Build model with both local Zod tools and MCP tools
 async function buildModelWithTools() {
-  const mcpTools = await getMcpTools();   // MCP => LangChain tools (already structured)
+  let mcpTools: any[] = [];
+  try {
+    mcpTools = await getMcpTools();   // MCP => LangChain tools (already structured)
+  } catch (e) {
+    console.warn('[orchestratorGraph] Failed to load MCP tools, continuing without them:', e instanceof Error ? e.message : e);
+  }
   const localTools = [knowledgeGraphTool, knowledgeGraphQueryTool];
   
   const model = new ChatOpenAI({ 

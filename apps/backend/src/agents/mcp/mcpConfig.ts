@@ -25,5 +25,21 @@ export function loadMcpServersConfig(): McpServersConfig {
   const file = fs.existsSync(p1) ? p1 : (fs.existsSync(p2) ? p2 : "");
   if (!file) return {};
   const raw = JSON.parse(fs.readFileSync(file, "utf8"));
-  return resolveEnvPlaceholders(raw?.mcpServers ?? {});
+  const resolved = resolveEnvPlaceholders(raw?.mcpServers ?? {});
+  
+  // Filter out entries with invalid/empty URLs for SSE/HTTP transports
+  const filtered: McpServersConfig = {};
+  for (const [key, config] of Object.entries(resolved)) {
+    const typedConfig = config as any;
+    if ('url' in typedConfig) {
+      // Skip if URL is empty or still has unresolved placeholders
+      if (!typedConfig.url || typedConfig.url.includes('${')) {
+        console.warn(`[MCP Config] Skipping server '${key}': invalid or unresolved URL`);
+        continue;
+      }
+    }
+    filtered[key] = typedConfig;
+  }
+  
+  return filtered;
 }

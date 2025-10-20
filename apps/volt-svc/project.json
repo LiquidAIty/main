@@ -1,0 +1,13 @@
+{
+  "name": "volt-svc",
+  "sourceRoot": "apps/volt-svc/src",
+  "targets": {
+    "serve": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsx apps/volt-svc/src/index.ts",
+        "cwd": "./"
+      }
+    }
+  }
+}
