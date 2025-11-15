@@ -1,0 +1,238 @@
+RAG WEIGHTED SEARCH - FILES CREATED
+====================================
+
+Core Implementation:
+  ✓ apps/backend/src/routes/ragsearch.routes.ts (68 lines)
+    - POST /api/rag/search endpoint
+    - Connection pooling (max 5)
+    - Input validation & weight normalization
+    - Error handling with typed responses
+
+  ✓ apps/backend/agents/ragsearch.mcp.mjs (132 lines)
+    - MCP tool server (stdio)
+    - Tool: db.rag_search
+    - Full JSON schema with descriptions
+    - Async handler with error logging
+
+  ✓ apps/backend/src/tools/ragsearch.tool.ts (120 lines)
+    - Tool configuration (SIM pattern)
+    - TypeScript types for params/response
+    - Request builder & response transformer
+    - Full output schema documentation
+
+  ✓ apps/backend/src/types/tool.types.ts (30 lines)
+    - Generic ToolConfig<TParams, TResponse> interface
+    - Reusable for other tools
+    - Type definitions for params, outputs
+
+Integration:
+  ✓ apps/backend/src/routes/index.ts (modified)
+    - Added import: import ragSearch from './ragsearch.routes'
+    - Added mount: router.use('/rag', authMiddleware, ragSearch)
+
+  ✓ apps/backend/package.json (modified)
+    - Added dependency: "pg": "^8.11.3"
+
+  ✓ .env.example (modified)
+    - Added: DATABASE_URL=postgres://postgres:postgres@localhost:5432/liquidaity
+
+Documentation:
+  ✓ docs/RAG_SEARCH.md (350+ lines)
+    - Architecture diagram
+    - Setup instructions
+    - REST API reference
+    - MCP tool usage
+    - Weight tuning guide
+    - Testing procedures
+    - Integration examples
+    - Performance notes
+    - Troubleshooting
+
+  ✓ QUICKSTART_RAG.md (200+ lines)
+    - 5-minute setup
+    - Test commands
+    - API reference
+    - Weight tuning table
+    - Next steps
+
+  ✓ IMPLEMENTATION_SUMMARY.md (400+ lines)
+    - Complete overview
+    - Architecture diagram
+    - Key features
+    - Testing procedures
+    - Integration paths
+    - Production checklist
+    - Files summary
+
+  ✓ RAG_FILES.txt (this file)
+    - File structure reference
+
+Testing:
+  ✓ scripts/test-rag-search.ps1 (100+ lines)
+    - PowerShell smoke test
+    - Fetches real embedding from PostgreSQL
+    - Calls REST endpoint
+    - Validates response
+    - Usage: .\scripts\test-rag-search.ps1
+
+ENDPOINT DETAILS
+================
+
+REST API:
+  POST /api/rag/search
+  
+  Request:
+    {
+      "embedding": [number[], required],
+      "k": [1-50, optional, default 5],
+      "w_rec": [0.0+, optional, default 0.1],
+      "w_sig": [0.0+, optional, default 0.1]
+    }
+  
+  Response:
+    {
+      "ok": true,
+      "k": 5,
+      "weights": {
+        "w_cos": 0.8,
+        "w_rec": 0.1,
+        "w_sig": 0.1
+      },
+      "rows": [
+        {
+          "chunk_id": "doc-123-chunk-0",
+          "doc_id": "doc-123",
+          "src": "https://...",
+          "chunk": "Content...",
+          "model": "text-embedding-3-small",
+          "score": 0.92,
+          "cos_dist": 0.08,
+          "l2_dist": 0.15,
+          "scale": 1.0,
+          "days_old": 2,
+          "created_at": "2025-11-09T10:44:00Z"
+        }
+      ]
+    }
+
+MCP Tool:
+  Name: db.rag_search
+  Input: { embedding, k?, w_rec?, w_sig? }
+  Output: Same as REST response
+
+QUICK START
+===========
+
+1. Install dependencies:
+   cd apps/backend
+   npm install
+
+2. Configure environment:
+   Add to .env:
+   DATABASE_URL=postgres://postgres:postgres@localhost:5432/liquidaity
+
+3. Start backend:
+   npm run serve
+
+4. Test REST:
+   .\scripts\test-rag-search.ps1
+
+5. Test MCP (Windsurf):
+   - Open settings (Cmd+, / Ctrl+,)
+   - Search for "MCP"
+   - Add server with command: node
+   - Args: apps/backend/agents/ragsearch.mcp.mjs
+   - Env: DATABASE_URL=postgres://...
+
+DEPENDENCIES
+============
+
+Required:
+  - pg@^8.11.3 (PostgreSQL client)
+
+Already Present:
+  - @modelcontextprotocol/sdk@^1.2.0 (MCP SDK)
+  - express@^4.19.2 (REST framework)
+  - dotenv@^16.4.5 (Environment variables)
+
+DATABASE REQUIREMENTS
+=====================
+
+PostgreSQL must have:
+  - api.rag_topk_weighted(vector, k, w_cos, w_rec, w_sig) function
+  - ag_catalog.rag_embeddings table with embeddings
+
+Run setup scripts:
+  docker exec -it sim-pg psql -U postgres -d liquidaity -f 00_rag_core.sql
+  docker exec -it sim-pg psql -U postgres -d liquidaity -f 01_rag_weighted.sql
+
+WEIGHT TUNING
+=============
+
+Balanced (default):
+  w_rec: 0.1 (10% freshness)
+  w_sig: 0.1 (10% signal)
+  w_cos: 0.8 (80% semantic)
+
+Freshness-focused:
+  w_rec: 0.3 (30% freshness)
+  w_sig: 0.1 (10% signal)
+  w_cos: 0.6 (60% semantic)
+
+Signal-focused:
+  w_rec: 0.1 (10% freshness)
+  w_sig: 0.3 (30% signal)
+  w_cos: 0.6 (60% semantic)
+
+Pure semantic:
+  w_rec: 0.0
+  w_sig: 0.0
+  w_cos: 1.0
+
+TESTING COMMANDS
+================
+
+PowerShell (REST):
+  .\scripts\test-rag-search.ps1
+
+cURL (REST):
+  curl -X POST http://localhost:3000/api/rag/search \
+    -H "Content-Type: application/json" \
+    -d '{"embedding": [...], "k": 5, "w_rec": 0.1, "w_sig": 0.1}'
+
+PostgreSQL (Direct):
+  docker exec -it sim-pg psql -U postgres -d liquidaity -c "
+    WITH q AS (
+      SELECT emb AS v FROM ag_catalog.rag_embeddings
+      ORDER BY updated_at DESC NULLS LAST, created_at DESC LIMIT 1
+    )
+    SELECT chunk_id, doc_id, ROUND(score::numeric, 6) AS score
+    FROM api.rag_topk_weighted((SELECT v FROM q), 5, 0.8, 0.1, 0.1);"
+
+NEXT STEPS
+==========
+
+1. Verify pg package installed
+2. Test REST endpoint with real embeddings
+3. Register MCP server in IDE settings
+4. Add React UI with weight sliders
+5. Integrate with agent orchestrator
+6. Add Redis caching for hot queries
+7. Add bearer token validation (RLS role)
+8. Add metrics/logging
+9. Create db.rag_topk_cosine variant
+10. Create db.rag_topk_l2_mag variant
+
+DOCUMENTATION LINKS
+===================
+
+Full docs: docs/RAG_SEARCH.md
+Quick start: QUICKSTART_RAG.md
+Implementation: IMPLEMENTATION_SUMMARY.md
+This file: RAG_FILES.txt
+
+SIM Reference: https://github.com/simstudioai/sim/blob/main/apps/sim/tools/knowledge/search.ts
+MCP Spec: https://modelcontextprotocol.io/
+LangGraph: https://langchain-ai.github.io/langgraph/
+
+STATUS: ✅ Ready for testing and integration

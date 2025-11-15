@@ -20,7 +20,7 @@
     },
     "serve": {
       "executor": "@nx/js:node",
-      "dependsOn": ["build"],
+      "dependsOn": ["build", "^volt-svc:serve"],
       "options": {
         "buildTarget": "backend:build",
         "port": 4000,

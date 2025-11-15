@@ -11,6 +11,7 @@ import { webhookRouter as webhook } from './webhook.routes';
 import auth from './auth.routes';
 import { agentRoutes } from './agent.routes';
 import models from './models.routes';
+import ragSearch from './ragsearch.routes';
 import { authMiddleware } from '../middleware/auth';
 
 const router = Router();
@@ -35,5 +36,6 @@ router.use('/artifacts', authMiddleware, artifacts);
 router.use('/webhook', authMiddleware, webhook);
 router.use('/agents', authMiddleware, agentRoutes);
 router.use('/models', authMiddleware, models);
+router.use('/rag', authMiddleware, ragSearch);
 
 export default router;

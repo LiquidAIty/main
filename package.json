@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {
+    "sim": "npx simstudio -p 3000",
     "prisma:generate": "prisma generate --schema=libs/prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --schema=libs/prisma/schema.prisma --name init",
     "prisma:seed": "ts-node prisma/seed.ts",
