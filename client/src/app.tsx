@@ -11,6 +11,7 @@ import DetailedMode from "./pages/detailedmode";
 import AdminPanel from "./pages/adminpanel";
 import UserPanel from "./pages/userpanel";
 import agentknowledge from "./pages/agentknowledge";
+import AgentPage from "./pages/agentpage";
 
 export default function App() {
   useEffect(() => {
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/chat" element={<Chat />} />
         <Route path="/agent-chat" element={<AgentChat />} />
         <Route path="/agentic" element={<Agentic />} />
+        <Route path="/agentpage" element={<AgentPage />} />
         <Route path="/detailed" element={<DetailedMode />} />
         <Route path="/admin" element={<AdminPanel />} />
         <Route path="/user-panel" element={<UserPanel />} />
