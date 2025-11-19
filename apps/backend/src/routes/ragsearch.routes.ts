@@ -22,9 +22,9 @@ router.post("/search", async (req, res) => {
     `;
     const params = [JSON.stringify(embedding), kk, wCos, wRec, wSig];
     const { rows } = await pool.query(sql, params);
-    res.json({ ok: true, k: kk, weights: { w_cos: wCos, w_rec: wRec, w_sig: wSig }, rows });
+    return res.json({ ok: true, k: kk, weights: { w_cos: wCos, w_rec: wRec, w_sig: wSig }, rows });
   } catch (e: any) {
-    res.status(500).json({ error: "internal_error", detail: String(e?.message || e) });
+    return res.status(500).json({ error: "internal_error", detail: String(e?.message || e) });
   }
 });
 

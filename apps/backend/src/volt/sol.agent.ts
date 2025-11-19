@@ -1,22 +1,40 @@
-import { Agent } from "@voltagent/core";
+import OpenAI from "openai";
 
-const SYSTEM_PROMPT =
-  "Be concise. No placeholders. If something cannot be verified, say 'not verified'.";
+const apiKey = process.env.OPENAI_API_KEY;
 
-function createAgent(): Agent {
-  const modelName = process.env.OPENAI_MODEL || "gpt-4o-mini";
-  return new Agent({
-    name: "SOL",
-    instructions: SYSTEM_PROMPT,
-    model: modelName,
-  });
+if (!apiKey) {
+  console.warn("[SOL] OPENAI_API_KEY is not set – Sol will throw on use");
 }
 
-export async function runSol(goal: string): Promise<string> {
-  console.log("[VOLT] runSol start");
-  const agent = createAgent();
-  const result: any = await agent.generateText(goal);
-  const text = result?.response?.text ?? result?.text ?? "";
-  if (!text) throw new Error("VoltAgent returned empty text");
+const openai = apiKey ? new OpenAI({ apiKey }) : null;
+
+const SYSTEM_PROMPT = "You are Sol, a helpful assistant for LiquidAIty. Answer clearly and concisely.";
+
+export async function runSol(goal: string, _context?: any): Promise<string> {
+  if (!openai) {
+    throw new Error("OPENAI_API_KEY is not set");
+  }
+
+  const model = process.env.OPENAI_MODEL || "gpt-5.1-chat-latest";
+
+  console.log("[SOL] calling OpenAI", {
+    model,
+    goalPreview: goal.slice(0, 80)
+  });
+
+  const completion = await openai.chat.completions.create({
+    model,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: goal }
+    ]
+  });
+
+  const text = completion.choices?.[0]?.message?.content?.toString().trim() ?? "";
+
+  if (!text) {
+    throw new Error("Sol: empty response from OpenAI");
+  }
+
   return text;
 }

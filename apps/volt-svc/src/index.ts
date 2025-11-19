@@ -1,3 +1,4 @@
+// LEGACY: volt-svc is optional. /api/sol/run now calls Sol directly without this proxy.
 // Minimal VoltAgent HTTP service on :3141
 import { Agent } from "@voltagent/core";
 import { openai } from "@ai-sdk/openai";

@@ -9,7 +9,6 @@ import { googleTool } from "../tools/google";
 import { n8nTool } from "../tools/n8n";
 import { memoryTool } from "../tools/memory";
 import { pythonTool } from "../tools/python";
-import { ragTool } from "../tools/rag";
 import { scraperTool } from "../tools/scraper";
 import { uiTool } from "../tools/ui";
 import { playbookTool } from "./playbooks.tool";
@@ -38,10 +37,6 @@ const MemorySchema = z.object({
 const PythonSchema = z.object({
   script: z.string(),
   args: z.array(z.string()).default([]),
-});
-const RagSchema = z.object({
-  query: z.string(),
-  topK: z.number().default(5),
 });
 const ScrapeSchema = z.object({
   url: z.string(),
@@ -102,12 +97,6 @@ const entries: Record<string, StructuredToolInterface> = {
     description: "Execute python helper",
     schema: PythonSchema,
     run: pythonTool.run,
-  }),
-  rag_http: wrapHttpToolAsStructured({
-    name: "rag_http",
-    description: "Retrieve augmented generation",
-    schema: RagSchema,
-    run: ragTool.run,
   }),
   scraper_http: wrapHttpToolAsStructured({
     name: "scraper_http",

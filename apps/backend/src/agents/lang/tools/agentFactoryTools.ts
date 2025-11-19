@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { makeZodTool, Z } from "./zodTools";
 import neo4j, { Driver } from 'neo4j-driver';
+import { createRagTool } from '../../tools/rag';
 
 // Neo4j connection (lazy initialization)
 const NEO4J_URI = process.env.NEO4J_URI || 'neo4j://localhost:7687';
@@ -92,19 +93,53 @@ export function createAgentTools(specId: string, threadId?: string) {
   });
 
   const kgQueryTool = makeZodTool({
-    name: 'knowledge_graph_query',
-    description: 'Query the knowledge graph using Cypher or natural language.',
+    name: 'kg_neighborhood',
+    description: 'Explore the knowledge graph neighborhood around a specific entity. Returns connected nodes and relationships.',
     schema: z.object({
-      query: Z.str("Cypher query or natural language question"),
-      queryType: z.enum(['cypher', 'natural']).default('natural'),
-      graphId: Z.optStr("Optional specific graph ID"),
-      limit: z.number().int().min(1).max(1000).default(10)
+      uid: Z.str("Entity ID or unique identifier to explore around"),
+      depth: z.number().int().min(1).max(3).default(1).describe("How many hops away from the center node (1-3)"),
+      limit: z.number().int().min(1).max(100).default(20).describe("Maximum number of nodes to return")
     }),
-    func: async ({ query, queryType, graphId, limit }) => {
-      // Simplified stub - Neo4j query would use getDriver().session() if implemented
-      return { success: true, queryType, query, graphId, limit, rows: [] };
+    func: async ({ uid, depth, limit }) => {
+      try {
+        const res = await fetch('http://localhost:4000/api/kg/neighborhood', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uid, depth, limit })
+        });
+
+        if (!res.ok) {
+          return {
+            success: false,
+            error: `KG neighborhood failed: HTTP ${res.status}`,
+            nodes: [],
+            edges: []
+          };
+        }
+
+        const data = await res.json();
+        console.log(`[KG Tool] Neighborhood for "${uid}" | depth=${depth} | Found ${data.nodes?.length || 0} nodes, ${data.edges?.length || 0} edges`);
+        
+        return {
+          success: true,
+          center_uid: uid,
+          depth,
+          nodes: data.nodes || [],
+          edges: data.edges || []
+        };
+      } catch (err: any) {
+        console.error('[KG Tool] Error:', err?.message || err);
+        return {
+          success: false,
+          error: err?.message || 'KG neighborhood error',
+          nodes: [],
+          edges: []
+        };
+      }
     }
   });
 
-  return [memoryTool, kgTool, kgQueryTool];
+  const ragTool = createRagTool();
+
+  return [memoryTool, kgTool, kgQueryTool, ragTool];
 }

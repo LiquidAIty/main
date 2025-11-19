@@ -169,4 +169,79 @@ router.delete('/:graphId', async (req, res) => {
   }
 });
 
+/**
+ * Get neighborhood around a specific node
+ */
+router.post('/neighborhood', async (req, res) => {
+  const { uid, depth = 1, limit = 20 } = req.body;
+  
+  if (!uid) {
+    return res.status(400).json({ error: 'uid parameter required' });
+  }
+  
+  const session = driver.session();
+  
+  try {
+    // Get nodes within specified depth and their relationships
+    const query = `
+      MATCH path = (center)-[*1..${Math.min(depth, 3)}]-(neighbor)
+      WHERE center.id = $uid OR center.uid = $uid
+      WITH DISTINCT center, neighbor, relationships(path) as rels
+      LIMIT ${Math.min(limit, 100)}
+      RETURN center, neighbor, rels
+    `;
+    
+    const result = await session.run(query, { uid });
+    
+    const nodes = new Map();
+    const edges: Link[] = [];
+    
+    result.records.forEach((record) => {
+      const center = record.get('center');
+      const neighbor = record.get('neighbor');
+      const rels = record.get('rels');
+      
+      // Add center node
+      if (!nodes.has(center.properties.id || center.properties.uid)) {
+        nodes.set(center.properties.id || center.properties.uid, {
+          id: center.properties.id || center.properties.uid,
+          labels: center.labels,
+          properties: center.properties
+        });
+      }
+      
+      // Add neighbor node
+      if (!nodes.has(neighbor.properties.id || neighbor.properties.uid)) {
+        nodes.set(neighbor.properties.id || neighbor.properties.uid, {
+          id: neighbor.properties.id || neighbor.properties.uid,
+          labels: neighbor.labels,
+          properties: neighbor.properties
+        });
+      }
+      
+      // Add relationships
+      rels.forEach((rel: any) => {
+        edges.push({
+          source: center.properties.id || center.properties.uid,
+          target: neighbor.properties.id || neighbor.properties.uid,
+          type: rel.type,
+          properties: rel.properties
+        });
+      });
+    });
+    
+    return res.json({
+      center_uid: uid,
+      depth,
+      nodes: Array.from(nodes.values()),
+      edges
+    });
+  } catch (error) {
+    console.error(`Error fetching neighborhood for ${uid}:`, error);
+    return res.status(500).json({ error: `Error fetching neighborhood for ${uid}` });
+  } finally {
+    await session.close();
+  }
+});
+
 export default router;

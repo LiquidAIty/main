@@ -12,6 +12,9 @@
     "audit:tools": "ts-node --esm scripts/toolMap.ts",
     "audit:report": "ts-node --esm scripts/auditReport.ts",
     "graph:dev": "langgraph dev",
+    "mcp:auto": "node agents/03_mcp_autowrap.mjs",
+    "mcp:auto:smoke": "cross-env MCP_SMOKE=1 node agents/03_mcp_autowrap.mjs",
+    "agent:run": "node agents/05_goal_runner.mjs",
     "test:health": "node -e \"const { spawn } = require('child_process'); const path = require('path'); const server = spawn('node', [path.join('dist', 'src', 'main.js')], { stdio: 'ignore' }); setTimeout(async () => { try { const res = await fetch('http://localhost:3000/health'); if (res.status !== 200) throw new Error('Unexpected status: ' + res.status); const json = await res.json(); if (json.status !== 'ok') throw new Error('Bad status field: ' + json.status); if (!/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d+Z$/.test(json.timestamp)) throw new Error('Bad timestamp: ' + json.timestamp); console.log('✅ Health check passed', json); server.kill(); } catch (e) { console.error('❌ Health check failed:', e.message || e); server.kill(); process.exit(1); } }, 1000);\""
   },
   "dependencies": {
@@ -27,6 +30,7 @@
     "@voltagent/core": "^1.1.29",
     "abort-controller": "^3.0.0",
     "agentkeepalive": "^4.5.0",
+    "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
@@ -38,9 +42,12 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/cookie-parser": "^1.4.7",
     "@types/ioredis": "^4.28.10",
     "@types/node": "^20.11.0",
+    "@types/pg": "^8.11.0",
     "@typescript-eslint/parser": "^7.18.0",
+    "cross-env": "^7.0.3",
     "dependency-cruiser": "^16.1.0",
     "eslint-plugin-unused-imports": "^3.2.0",
     "express-list-endpoints": "^6.0.0",

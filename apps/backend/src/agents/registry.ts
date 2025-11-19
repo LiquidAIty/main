@@ -4,7 +4,6 @@ import { openaiAgentTool } from './tools/openai.agent';
 import { n8nTool } from './tools/n8n';
 import { googleTool } from './tools/google';
 import { pythonTool } from './tools/python';
-import { ragTool } from './tools/rag';
 import { scraperTool } from './tools/scraper';
 import { memoryTool } from './tools/memory';
 import { uiTool } from './tools/ui';
@@ -33,7 +32,6 @@ const TOOL_LIST: Tool[] = [
   n8nTool,
   googleTool,
   pythonTool,
-  ragTool,
   scraperTool,
   memoryTool,
   uiTool,

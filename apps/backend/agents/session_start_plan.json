@@ -1,0 +1,37 @@
+{
+  "goal": "Start productivity session: check repo state and surface current priorities",
+  "min_confidence": 0.1,
+  "steps": [
+    {
+      "id": "repo_check",
+      "kind": "mcp.call",
+      "tool": "git.status",
+      "args": { 
+        "cwd": "."
+      },
+      "expect": { "min_confidence": 0.1 }
+    },
+    {
+      "id": "list_projects",
+      "kind": "mcp.call",
+      "tool": "db.list_projects",
+      "args": { 
+        "query": "NULL",
+        "k": 10,
+        "min_confidence": 0.1
+      },
+      "expect": { "min_confidence": 0.1 }
+    },
+    {
+      "id": "active_tasks",
+      "kind": "mcp.call",
+      "tool": "db.get_active_tasks",
+      "args": { 
+        "query": "NULL",
+        "k": 8,
+        "min_confidence": 0.1
+      },
+      "expect": { "min_confidence": 0.1 }
+    }
+  ]
+}

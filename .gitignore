@@ -26,6 +26,7 @@ tmp/
 node_modules
 .pnp
 .pnp.js
+n8n_data
 
 # IDEs and editors
 /.idea
