@@ -23,6 +23,19 @@ One-file, idempotent install of a minimal RAG substrate:
 
 `scale = volume * confidence` (computed at ingest)
 
+### projects (MyAgent / Agent Builder)
+- Defined in `10_myagent_core.sql`.
+- Each row represents a user project and now doubles as an Agent Builder "agent card".
+- New fields from `20_agentbuilder_core.sql`:
+  - `agent_model TEXT` – preferred LLM for this agent.
+  - `agent_prompt_template TEXT` – prompt template used by the builder.
+  - `agent_tools JSONB DEFAULT '[]'` – list of allowed tool identifiers.
+  - `agent_io_schema JSONB DEFAULT '{}'` – input/output schema (free-form JSON).
+  - `agent_temperature REAL` – temperature override.
+  - `agent_max_tokens INTEGER` – max response tokens.
+  - `agent_permissions JSONB DEFAULT '{}'` – structured policy/permission metadata.
+- Agent Builder UI reads/writes these columns; historical project columns remain unchanged.
+
 ## Views
 - ag_catalog.rag_chunks_pk
   - Unifies primary key as `chunk_id` even if base table uses `id`

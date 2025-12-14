@@ -130,7 +130,7 @@ export interface BossAgentRequest {
  */
 export async function callBossAgent(params: BossAgentRequest): Promise<BossAgentResponse> {
   try {
-    const res = await fetch(`${BASE}/agent/boss`, {
+    const res = await fetch(`${BASE}/agents/boss`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -929,4 +929,85 @@ export async function feedESNWithModels(
       message: error instanceof Error ? error.message : 'Unknown error'
     };
   }
+}
+
+// Agent Builder API helpers
+import type { AgentCard, AgentConfig } from "../types/agentBuilder";
+
+/**
+ * List projects (Agent cards) with agent presence flag
+ */
+export async function listProjects(): Promise<AgentCard[]> {
+  try {
+    const res = await fetch(`${BASE}/projects`);
+    if (res.status === 404) {
+      // fallback to legacy cards route
+      const legacy = await fetch(`${BASE}/agents/projects`);
+      if (legacy.status === 404) {
+        return await getAgentCards();
+      }
+      const legacyData = await legacy.json();
+      return Array.isArray(legacyData) ? legacyData : [];
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`HTTP ${res.status} :: ${text}`);
+    }
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch (err: any) {
+    console.error('Error fetching projects:', err);
+    return [];
+  }
+}
+
+/**
+ * Get agent cards
+ */
+export async function getAgentCards(): Promise<AgentCard[]> {
+  try {
+    const res = await fetch(`${BASE}/agents/cards`);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch (err: any) {
+    console.error('Error fetching agent cards:', err);
+    return [];
+  }
+}
+
+/**
+ * Get agent configuration
+ */
+export async function getAgentConfig(id: string): Promise<AgentConfig | null> {
+  const res = await fetch(`${BASE}/agents/${id}`);
+  if (res.status === 204) {
+    return null;
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status} :: ${text}`);
+  }
+  const data = await res.json().catch(() => null);
+  if (!data) return null;
+  return data as AgentConfig;
+}
+
+/**
+ * Save agent configuration
+ */
+export async function saveAgentConfig(cfg: AgentConfig): Promise<AgentConfig> {
+  const res = await fetch(`${BASE}/agents/save`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg)
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status} :: ${text}`);
+  }
+  const data = await res.json();
+  return data as AgentConfig;
 }
