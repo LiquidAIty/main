@@ -19,7 +19,9 @@ BEGIN
     ADD COLUMN IF NOT EXISTS agent_io_schema jsonb NOT NULL DEFAULT ''{}''::jsonb,
     ADD COLUMN IF NOT EXISTS agent_temperature real,
     ADD COLUMN IF NOT EXISTS agent_max_tokens integer,
-    ADD COLUMN IF NOT EXISTS agent_permissions jsonb NOT NULL DEFAULT ''{}''::jsonb;
+    ADD COLUMN IF NOT EXISTS agent_permissions jsonb NOT NULL DEFAULT ''{}''::jsonb,
+    ADD COLUMN IF NOT EXISTS assist_main_agent_id uuid,
+    ADD COLUMN IF NOT EXISTS assist_kg_ingest_agent_id uuid;
   ', target_table);
   EXECUTE format('COMMENT ON COLUMN %s.agent_model IS ''Preferred model identifier for this agent card'';', target_table);
   EXECUTE format('COMMENT ON COLUMN %s.agent_prompt_template IS ''Prompt template used by Agent Builder when orchestrating this project'';', target_table);
@@ -28,4 +30,6 @@ BEGIN
   EXECUTE format('COMMENT ON COLUMN %s.agent_temperature IS ''Model temperature override for this agent'';', target_table);
   EXECUTE format('COMMENT ON COLUMN %s.agent_max_tokens IS ''Maximum tokens per response for this agent'';', target_table);
   EXECUTE format('COMMENT ON COLUMN %s.agent_permissions IS ''Structured permissions or policy metadata for this agent'';', target_table);
+  EXECUTE format('COMMENT ON COLUMN %s.assist_main_agent_id IS ''Project-level default Main Chat agent for Assist mode'';', target_table);
+  EXECUTE format('COMMENT ON COLUMN %s.assist_kg_ingest_agent_id IS ''Project-level default KG Ingest agent for Assist mode'';', target_table);
 END$$;

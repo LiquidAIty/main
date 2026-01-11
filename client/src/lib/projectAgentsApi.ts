@@ -60,6 +60,11 @@ export interface AgentRunResult {
   errors?: string[];
 }
 
+export interface ProjectAssistAssignments {
+  assist_main_agent_id: string | null;
+  assist_kg_ingest_agent_id: string | null;
+}
+
 /**
  * List all agents for a project
  */
@@ -182,6 +187,47 @@ export async function runProjectAgent(
     throw new Error(data.error || 'Failed to run agent');
   }
   return data;
+}
+
+/**
+ * Get assist-mode agent assignments for a project
+ */
+export async function getProjectAssistAssignments(projectId: string): Promise<ProjectAssistAssignments> {
+  if (!projectId) throw new Error('No projectId provided');
+  const res = await fetch(`${BASE}/projects/${projectId}/assist/assignments`);
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.ok) {
+    throw new Error(data?.error || `Failed to load assignments (HTTP ${res.status})`);
+  }
+  const assignments = data.assignments || {};
+  return {
+    assist_main_agent_id: assignments.assist_main_agent_id ?? null,
+    assist_kg_ingest_agent_id: assignments.assist_kg_ingest_agent_id ?? null,
+  };
+}
+
+/**
+ * Update assist-mode agent assignments for a project
+ */
+export async function setProjectAssistAssignments(
+  projectId: string,
+  assignments: Partial<ProjectAssistAssignments>
+): Promise<ProjectAssistAssignments> {
+  if (!projectId) throw new Error('No projectId provided');
+  const res = await fetch(`${BASE}/projects/${projectId}/assist/assignments`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(assignments),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.ok) {
+    throw new Error(data?.error || `Failed to save assignments (HTTP ${res.status})`);
+  }
+  const next = data.assignments || {};
+  return {
+    assist_main_agent_id: next.assist_main_agent_id ?? null,
+    assist_kg_ingest_agent_id: next.assist_kg_ingest_agent_id ?? null,
+  };
 }
 
 /**

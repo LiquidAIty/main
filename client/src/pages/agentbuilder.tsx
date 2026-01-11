@@ -52,6 +52,7 @@ type LinkRef = {
   accepted: boolean;
   ts: number;
 };
+
 type KNode = {
   id: string;
   label: string;
@@ -109,7 +110,6 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
 
   rows.forEach((row) => {
     if (!row || typeof row !== "object") return;
-
     // Handle common AGE return shapes
     if (row.n) addNode(row.n);
     if (row.a && row.b) {
@@ -121,255 +121,26 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
         edges.push({ a: aId, b: bId });
       }
     }
-    if (row.r && row.a && row.b) {
-      const aId = extractNodeId(row.a);
-      const bId = extractNodeId(row.b);
-      if (aId && bId && !edges.some((e) => e.a === aId && e.b === bId)) {
-        edges.push({ a: aId, b: bId });
-      }
+    if (Array.isArray(row)) {
+      row.forEach((cell) => {
+        if (cell && typeof cell === "object") {
+          if (cell.start && cell.end) {
+            const aId = extractNodeId(cell.start);
+            const bId = extractNodeId(cell.end);
+            addNode(cell.start);
+            addNode(cell.end);
+            if (aId && bId && !edges.some((e) => e.a === aId && e.b === bId)) {
+              edges.push({ a: aId, b: bId });
+            }
+          } else {
+            addNode(cell);
+          }
+        }
+      });
     }
-
-    // Handle other node properties in the row
-    Object.values(row).forEach((val) => {
-      if (val && typeof val === "object" && (val as any).properties) {
-        addNode(val);
-      }
-    });
   });
 
   return { nodes: Array.from(nodeMap.values()), edges };
-}
-
-// ---- small components ----
-function Icon({ d, size = 22 }: { d: string; size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d={d} />
-    </svg>
-  );
-}
-
-function Drawer({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    // clicking the dark background closes the drawer
-    <div
-      className="fixed inset-0"
-      style={{ background: "#0008" }}
-      onClick={onClose}
-    >
-      <div
-        className="absolute top-0 left-0 h-full"
-        style={{
-          width: 300,
-          background: C.panel,
-          borderRight: `1px solid ${C.border}`,
-        }}
-        // stop clicks inside the panel from bubbling to the background
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div
-          className="flex items-center justify-between px-4"
-          style={{ height: 52, borderBottom: `1px solid ${C.border}` }}
-        >
-          <div style={{ color: C.text, fontWeight: 600 }}>{title}</div>
-          <button
-            onClick={onClose}
-            className="px-2 py-1 rounded"
-            style={{ border: `1px solid ${C.border}`, color: C.neutral }}
-          >
-            ✕
-          </button>
-        </div>
-        <div className="p-4 text-sm" style={{ color: C.text }}>
-          {children}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CoachBar({
-  prompt,
-  options,
-  onChoose,
-}: {
-  prompt: string;
-  options: string[];
-  onChoose: (v: string) => void;
-}) {
-  if (!prompt) return null as any;
-  return (
-    <div
-      style={{
-        background: "rgba(255,255,255,0.04)",
-        borderTop: `1px solid ${C.border}`,
-        borderBottom: `1px solid ${C.border}`,
-        padding: "8px 12px",
-      }}
-    >
-      <div
-        style={{ fontSize: 12, color: C.neutral, marginBottom: 6 }}
-      >
-        {prompt}
-      </div>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {options.map((o) => (
-          <button
-            key={o}
-            onClick={() => onChoose(o)}
-            style={{
-              fontSize: 12,
-              padding: "6px 8px",
-              borderRadius: 8,
-              background: "rgba(79,162,173,0.18)",
-              border: `1px solid ${C.primary}`,
-              color: C.text,
-            }}
-          >
-            {o}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function Chat({
-  messages,
-  onSend,
-  disabled = false,
-}: {
-  messages: { role: "assistant" | "user"; text: string }[];
-  onSend: (t: string) => void;
-  disabled?: boolean;
-}) {
-  const [v, setV] = useState("");
-  const listRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    listRef.current?.scrollTo({ top: 999999, behavior: "smooth" });
-  }, [messages.length]);
-
-  const send = () => {
-    if (disabled) return;
-    const trimmed = v.trim();
-    if (!trimmed) return;
-    onSend(trimmed);
-    setV("");
-  };
-
-  return (
-    <div className="h-full flex flex-col" style={{ gap: 12 }}>
-      <div
-        ref={listRef}
-        className="flex-1 overflow-auto"
-        style={{
-          padding: "14px 18px",
-          display: "grid",
-          gap: 10,
-          alignContent: "start",
-        }}
-      >
-        {messages.map((m, i) => {
-          const right = m.role !== "assistant";
-          const bg = m.role === "user" ? C.panel : C.bg;
-          return (
-            <div
-              key={i}
-              style={{ justifySelf: right ? "end" : "start", maxWidth: "86%" }}
-            >
-              <div
-                style={{ fontSize: 11, color: C.neutral, marginBottom: 4 }}
-              >
-                {m.role === "assistant" ? "Assistant" : "You"}
-              </div>
-              <div
-                style={{
-                  background: bg,
-                  border: `1px solid ${C.border}`,
-                  borderRadius: 12,
-                  padding: "10px 12px",
-                  color: C.text,
-                  whiteSpace: "pre-wrap",
-                }}
-              >
-                {m.text}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <CoachBar
-        prompt={"What should we do next?"}
-        options={["Refine plan", "Research", "Add to plan"]}
-        onChoose={(o) => {
-          onSend("/coach " + o);
-        }}
-      />
-      <div className="px-4 pb-4 flex items-center gap-2">
-        <input
-          value={v}
-          onChange={(e) => setV(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") send();
-          }}
-          placeholder="Type a message…"
-          className="flex-1"
-          style={{
-            background: C.panel,
-            border: `1px solid ${C.border}`,
-            borderRadius: 10,
-            padding: "12px 14px",
-            color: C.text,
-          }}
-          disabled={disabled}
-        />
-        <button
-          onClick={send}
-          aria-label="Send"
-          className="rounded-full flex items-center justify-center"
-          style={{
-            width: 42,
-            height: 42,
-            background: C.primary,
-            boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
-          }}
-          disabled={disabled}
-        >
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="#FFFFFF"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M12 19V5" />
-            <path d="M5 12l7-7 7 7" />
-          </svg>
-        </button>
-      </div>
-    </div>
-  );
 }
 
 // -------- Knowledge: tiny force-layout canvas --------
@@ -381,9 +152,7 @@ function MiniForce({
   edges: { a: string; b: string }[];
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const pos = useRef<
-    Record<string, { x: number; y: number; vx: number; vy: number }>
-  >({});
+  const pos = useRef<Record<string, { x: number; y: number; vx: number; vy: number }>>({});
   const size = 2; // node radius
 
   useEffect(() => {
@@ -494,6 +263,185 @@ function cResize(cvs: HTMLCanvasElement) {
   return W;
 }
 
+// ---- small components ----
+function Icon({ d, size = 22 }: { d: string; size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d={d} />
+    </svg>
+  );
+}
+
+function Drawer({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    // clicking the dark background closes the drawer
+    <div
+      className="fixed inset-0"
+      style={{ background: "#0008" }}
+      onClick={onClose}
+    >
+      <div
+        className="absolute top-0 left-0 h-full"
+        style={{
+          width: 300,
+          background: C.panel,
+          borderRight: `1px solid ${C.border}`,
+        }}
+        // stop clicks inside the panel from bubbling to the background
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          className="flex items-center justify-between px-4"
+          style={{ height: 52, borderBottom: `1px solid ${C.border}` }}
+        >
+          <div style={{ color: C.text, fontWeight: 600 }}>{title}</div>
+          <button
+            onClick={onClose}
+            className="px-2 py-1 rounded"
+            style={{ border: `1px solid ${C.border}`, color: C.neutral }}
+          >
+            ✕
+          </button>
+        </div>
+        <div className="p-4 text-sm" style={{ color: C.text }}>
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Chat({
+  messages,
+  onSend,
+  disabled = false,
+}: {
+  messages: { role: "assistant" | "user"; text: string }[];
+  onSend: (t: string) => void;
+  disabled?: boolean;
+}) {
+  const [v, setV] = useState("");
+  const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: 999999, behavior: "smooth" });
+  }, [messages.length]);
+
+  const send = () => {
+    if (disabled) return;
+    const trimmed = v.trim();
+    if (!trimmed) return;
+    onSend(trimmed);
+    setV("");
+  };
+
+  return (
+    <div className="h-full flex flex-col" style={{ gap: 12 }}>
+      <div
+        ref={listRef}
+        className="flex-1 overflow-auto"
+        style={{
+          padding: "14px 18px",
+          display: "grid",
+          gap: 10,
+          alignContent: "start",
+        }}
+      >
+        {messages.map((m, i) => {
+          const right = m.role !== "assistant";
+          const bg = m.role === "user" ? C.panel : C.bg;
+          return (
+            <div
+              key={i}
+              style={{ justifySelf: right ? "end" : "start", maxWidth: "86%" }}
+            >
+              <div
+                style={{ fontSize: 11, color: C.neutral, marginBottom: 4 }}
+              >
+                {m.role === "assistant" ? "Assistant" : "You"}
+              </div>
+              <div
+                style={{
+                  background: bg,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 12,
+                  padding: "10px 12px",
+                  color: C.text,
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {m.text}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="px-4 pb-4 flex items-center gap-2">
+        <input
+          value={v}
+          onChange={(e) => setV(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") send();
+          }}
+          placeholder="Type a message…"
+          className="flex-1"
+          style={{
+            background: C.panel,
+            border: `1px solid ${C.border}`,
+            borderRadius: 10,
+            padding: "12px 14px",
+            color: C.text,
+          }}
+          disabled={disabled}
+        />
+        <button
+          onClick={send}
+          aria-label="Send"
+          className="rounded-full flex items-center justify-center"
+          style={{
+            width: 42,
+            height: 42,
+            background: C.primary,
+            boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
+          }}
+          disabled={disabled}
+        >
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#FFFFFF"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M12 19V5" />
+            <path d="M5 12l7-7 7 7" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // -------- Main page --------
 export default function AgentBuilder() {
   const [activeProject, setActiveProject] = useState("");
@@ -518,8 +466,6 @@ export default function AgentBuilder() {
     },
     [activeProject],
   );
-
-  // No mode-specific width clamp; match Assist layout.
 
   const tabs = ["Plan", "Links", "Knowledge", "Dashboard"] as const;
   const activeTabs = tabs;
@@ -602,6 +548,11 @@ export default function AgentBuilder() {
   const [links, setLinks] = useState<LinkRef[]>(
     () => loadProjectState(activeProject, mode).links,
   );
+  // knowledge graph
+  const [cypher, setCypher] = useState("");
+  const [graphResult, setGraphResult] = useState<any[]>([]);
+  const [graphError, setGraphError] = useState<string | null>(null);
+  const [graphLoading, setGraphLoading] = useState(false);
   const scopeKey = `${mode}:${activeProject || ""}`;
 
   useEffect(() => {
@@ -652,14 +603,6 @@ export default function AgentBuilder() {
     }
     void refreshProjects();
   }, [refreshProjects]);
-
-  // In Agent Builder mode, keep the right panel open so the agent selector
-  // (dropdown + New/Delete) is always visible.
-  useEffect(() => {
-    if (mode === "agents" && !panelOpen) {
-      setPanelOpen(true);
-    }
-  }, [mode, panelOpen]);
 
   // Load boss agent prompt config when project changes
   useEffect(() => {
@@ -772,17 +715,6 @@ export default function AgentBuilder() {
         assistantText = fallback.text;
       }
       setMessages((prev) => [...prev, { role: "assistant", text: assistantText }]);
-      
-      // Auto-ingest complete chat turn (user + assistant) into knowledge graph
-      fetch(`/api/projects/${activeProject}/kg/ingest_chat_turn`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          user_text: userText, 
-          assistant_text: assistantText, 
-          src: "chat.auto" 
-        }),
-      }).catch((err) => console.warn("[KG Auto-ingest]", err));
     } catch (error: any) {
       setMessages((prev) => [
         ...prev,
@@ -796,216 +728,13 @@ export default function AgentBuilder() {
     }
   };
 
-  const runKgIngestFromChat = async () => {
-    if (!kgExtractText.trim()) {
-      setKgIngestStatus("No chat text to ingest.");
-      return;
-    }
-    await runKgIngest();
-  };
-
-  const runKgExtract = async () => {
-    if (!activeProject) {
-      setKgCommitStatus("Select a project first.");
-      return;
-    }
-    setKgCommitStatus(null);
-    setKgPreview(null);
-    try {
-      const res = await fetch(`/api/projects/${activeProject}/kg/extract`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: kgExtractText }),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.ok) {
-        setKgCommitStatus(
-          (data && data.error) || `Extract failed: HTTP ${res.status}`,
-        );
-        return;
-      }
-      setKgPreview(data.preview || null);
-    } catch (err: any) {
-      setKgCommitStatus(err?.message || "Extract failed");
-    }
-  };
-
-  const runKgCommit = async () => {
-    if (!activeProject) {
-      setKgCommitStatus("Select a project first.");
-      return;
-    }
-    if (!kgPreview) {
-      setKgCommitStatus("Nothing to commit");
-      return;
-    }
-    setKgCommitStatus("Committing...");
-    try {
-      const res = await fetch(`/api/projects/${activeProject}/kg/commit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(kgPreview),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.ok) {
-        setKgCommitStatus(
-          (data && data.error) || `Commit failed: HTTP ${res.status}`,
-        );
-        return;
-      }
-      setKgCommitStatus(
-        `Committed: entities +${data.entities_upserted ?? 0}, relations +${data.relations_upserted ?? 0}`,
-      );
-    } catch (err: any) {
-      setKgCommitStatus(err?.message || "Commit failed");
-    }
-  };
-
-  // Stage A: File upload handler
-  const runFileUpload = async () => {
-    if (!activeProject) {
-      setUploadStatus('Select a project first.');
-      return;
-    }
-    if (!uploadFile) {
-      setUploadStatus('Choose a file first.');
-      return;
-    }
-
-    setUploadStatus('Uploading and ingesting...');
-    setUploadResult(null);
-
-    try {
-      const formData = new FormData();
-      formData.append('file', uploadFile);
-      
-      // Add optional fields if provided
-      if (kgDocId.trim()) formData.append('doc_id', kgDocId.trim());
-      if (kgSrc.trim()) formData.append('src', kgSrc.trim());
-      if (kgLlmModel.trim()) formData.append('llm_model', kgLlmModel.trim());
-      if (kgEmbedModel.trim()) formData.append('embed_model', kgEmbedModel.trim());
-      
-      const options: any = {};
-      if (kgChunkChars !== '') options.chunk_chars = kgChunkChars;
-      if (kgChunkOverlap !== '') options.chunk_overlap = kgChunkOverlap;
-      options.language_hint = kgLanguageHint;
-      options.normalize_text = kgNormalizeText;
-      formData.append('options', JSON.stringify(options));
-
-      const res = await fetch(`/api/projects/${activeProject}/kg/upload`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.ok) {
-        setUploadStatus((data && data.error) || `Upload failed: HTTP ${res.status}`);
-        return;
-      }
-
-      setUploadResult(data);
-      if (data.skipped) {
-        setUploadStatus(`Skipped: ${data.reason} (${data.filename})`);
-      } else {
-        setUploadStatus(
-          `Uploaded ${data.filename}: chunks ${data.chunks_written}, embeddings ${data.embeddings_written}, entities ${data.entities_upserted}, relations ${data.relations_upserted}`
-        );
-      }
-    } catch (err: any) {
-      setUploadStatus(err?.message || 'Upload failed');
-    }
-  };
-
-  const runKgIngest = async () => {
-    if (!activeProject) {
-      setKgIngestStatus("Select a project first.");
-      return;
-    }
-    const trimmed = (kgExtractText || "").trim();
-    if (!trimmed) {
-      setKgIngestStatus("Paste some text first.");
-      return;
-    }
-    // Backend auto-generates doc_id and src if missing
-    const docId = (kgDocId || "").trim() || undefined;
-    const src = (kgSrc || "").trim() || undefined;
-    setKgIngestStatus("Ingesting (chunk → embed → extract → write)...");
-    setKgIngestResult(null);
-    try {
-      const res = await fetch(`/api/projects/${activeProject}/kg/ingest`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-          doc_id: docId,
-          src,
-          text: trimmed,
-          ...(kgLlmModel.trim() ? { llm_model: kgLlmModel.trim() } : {}),
-          ...(kgEmbedModel.trim() ? { embed_model: kgEmbedModel.trim() } : {}),
-          options: {
-            ...(kgChunkChars !== '' ? { chunk_chars: kgChunkChars } : {}),
-            ...(kgChunkOverlap !== '' ? { chunk_overlap: kgChunkOverlap } : {}),
-            language_hint: kgLanguageHint,
-            normalize_text: kgNormalizeText,
-          },
-        }),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.ok) {
-        setKgIngestStatus(
-          (data && data.error) || `Ingest failed: HTTP ${res.status}`,
-        );
-        return;
-      }
-      setKgIngestResult(data);
-      setKgIngestStatus(
-        `Ingested: chunks ${data.chunks_written}, embeddings ${data.embeddings_written}, entities ${data.entities_upserted}, relations ${data.relations_upserted}`,
-      );
-      void refreshKgIngests();
-      void refreshKgSummary();
-      void refreshKgErrors();
-      
-      // Auto-refresh graph visualization if on Knowledge tab
-      if (tab === "Knowledge") {
-        if (!cypher.trim()) {
-          // Load default project subgraph if no query exists
-          setCypher(
-            "MATCH (a:Entity { project_id: $projectId })-[r:REL { project_id: $projectId }]->(b:Entity { project_id: $projectId }) RETURN a,b,r LIMIT 100"
-          );
-        }
-        setTimeout(() => runGraphQuery(), 500);
-      }
-    } catch (err: any) {
-      setKgIngestStatus(err?.message || "Ingest failed");
-    }
-  };
-
   const handleSend = (t: string) => {
     const trimmed = t.trim();
     if (!trimmed) return;
-    const isCoachCommand = trimmed.startsWith("/coach ");
-    if (!isCoachCommand && sending) return;
+    if (sending) return;
 
     setMessages((m) => [...m, { role: "user", text: trimmed }]);
-    setKgExtractText(trimmed);
-    setKgDocId((prev) => prev || `chat-${Date.now()}`);
-    setKgSrc("agentbuilder:chat");
 
-    if (isCoachCommand) {
-      if (trimmed.includes("Research")) runResearch();
-      if (trimmed.includes("Add to plan")) addTask("New task from coach");
-      setTimeout(() => {
-        setMessages((m) => [
-          ...m,
-          {
-            role: "assistant",
-            text: trimmed.slice(7) ? `OK: ${trimmed.slice(7)}` : "OK",
-          },
-        ]);
-      }, 250);
-      return;
-    }
-
-    // Store user text for chat turn ingestion
     const userText = trimmed;
     void sendToBossAgent(userText);
   };
@@ -1043,129 +772,6 @@ export default function AgentBuilder() {
   const reject = (id: string) =>
     setLinks((ls) => ls.filter((x) => x.id !== id));
 
-  // project graph console
-  const [cypher, setCypher] = useState("MATCH (n:Entity { project_id: $projectId }) RETURN n LIMIT 10");
-  const [graphResult, setGraphResult] = useState<any[]>([]);
-  const [graphError, setGraphError] = useState<string | null>(null);
-  const [graphLoading, setGraphLoading] = useState(false);
-  const [kgExtractText, setKgExtractText] = useState("");
-  const [kgDocId, setKgDocId] = useState(() => `agentbuilder-${Date.now()}`);
-  const [kgSrc, setKgSrc] = useState("agentbuilder:manual");
-  const [kgLlmModel, setKgLlmModel] = useState("");
-  const [kgEmbedModel, setKgEmbedModel] = useState("");
-  const [kgPreview, setKgPreview] = useState<any | null>(null);
-  const [kgCommitStatus, setKgCommitStatus] = useState<string | null>(null);
-  const [kgIngestStatus, setKgIngestStatus] = useState<string | null>(null);
-  const [kgIngestResult, setKgIngestResult] = useState<any | null>(null);
-  const [recentIngests, setRecentIngests] = useState<any[]>([]);
-  const [kgSummary, setKgSummary] = useState<any | null>(null);
-  // Stage A: File upload state
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
-  const [uploadResult, setUploadResult] = useState<any>(null);
-  const [kgErrors, setKgErrors] = useState<any[]>([]);
-  const [kgChunkChars, setKgChunkChars] = useState<number | ''>(1500);
-  const [kgChunkOverlap, setKgChunkOverlap] = useState<number | ''>(200);
-  const [kgLanguageHint, setKgLanguageHint] = useState<'auto' | 'en' | 'zh' | 'mixed'>('auto');
-  const [kgNormalizeText, setKgNormalizeText] = useState<boolean>(true);
-  const [showKgAdvanced, setShowKgAdvanced] = useState(false);
-
-  const refreshKgIngests = useCallback(async () => {
-    if (!activeProject) return;
-    try {
-      const res = await fetch(`/api/projects/${activeProject}/kg/recent`);
-      const data = await res.json().catch(() => null);
-      if (res.ok && data?.ok && Array.isArray(data.rows)) {
-        setRecentIngests(data.rows);
-      }
-    } catch {
-      // ignore
-    }
-  }, [activeProject]);
-
-  const refreshKgSummary = useCallback(async () => {
-    if (!activeProject) return;
-    try {
-      const res = await fetch(`/api/projects/${activeProject}/kg/summary`);
-      const data = await res.json().catch(() => null);
-      if (res.ok && data?.ok) setKgSummary(data);
-    } catch {
-      // ignore
-    }
-  }, [activeProject]);
-
-  const refreshKgErrors = useCallback(async () => {
-    if (!activeProject) return;
-    try {
-      const res = await fetch(`/api/projects/${activeProject}/kg/errors`);
-      const data = await res.json().catch(() => null);
-      if (res.ok && data?.ok && Array.isArray(data.rows)) setKgErrors(data.rows);
-    } catch {
-      // ignore
-    }
-  }, [activeProject]);
-
-  useEffect(() => {
-    setGraphResult([]);
-    setGraphError(null);
-    setKgPreview(null);
-    setKgCommitStatus(null);
-    setKgIngestStatus(null);
-    setKgIngestResult(null);
-    setKgDocId(`agentbuilder-${Date.now()}`);
-    setRecentIngests([]);
-    setKgSummary(null);
-    setKgErrors([]);
-  }, [activeProject]);
-
-  useEffect(() => {
-    void refreshKgIngests();
-    void refreshKgSummary();
-    void refreshKgErrors();
-  }, [refreshKgIngests, refreshKgSummary, refreshKgErrors]);
-
-  useEffect(() => {
-    if (!activeProject || !stateLoaded) return;
-    fetch(`/api/projects/${activeProject}/state`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        plan,
-        links,
-      }),
-    })
-      .then(async (res) => {
-        // Phase 2: Auto-refresh KG summary after state save
-        const data = await res.json().catch(() => null);
-        if (data?.ingest && !data.ingest.skipped) {
-          // Knowledge was ingested, refresh the graph view
-          console.log('[auto-ingest] triggered:', data.ingest);
-          // Optionally refresh summary or run default query
-          if (cypher.trim()) {
-            // Re-run current query if one exists
-            runGraphQuery();
-          }
-        }
-      })
-      .catch(() => undefined);
-  }, [plan, links, activeProject, stateLoaded]);
-
-  useEffect(() => {
-    if (!activeProject || messages.length === 0) return;
-    const lastMsg = messages[messages.length - 1];
-    if (lastMsg.role !== "assistant") return;
-    
-    setTimeout(() => {
-      if (!cypher.trim()) {
-        setCypher(
-          "MATCH (a:Entity { project_id: $projectId })-[r:REL { project_id: $projectId }]->(b:Entity { project_id: $projectId }) RETURN a,b,r LIMIT 100"
-        );
-      }
-      runGraphQuery();
-    }, 500);
-  }, [messages, activeProject]);
-
-
   const runGraphQuery = async () => {
     if (!cypher.trim()) {
       setGraphError("Enter a Cypher query first.");
@@ -1195,19 +801,11 @@ export default function AgentBuilder() {
     }
   };
 
+  const graphViz = ageRowsToGraph(graphResult);
+
   // derive counts
   const approved = plan.filter((p) => p.status === "approved");
   const accepted = links.filter((l) => l.accepted);
-
-  // Derive graph visualization from AGE query results
-  const graphViz = ageRowsToGraph(graphResult);
-
-  const runResearch = () => {
-    setMessages((m) => [
-      ...m,
-      { role: "assistant", text: "Research backend is not connected yet." },
-    ]);
-  };
 
   const createProjectPrompt = async () => {
     const name = window.prompt("New project name?");
@@ -1359,16 +957,12 @@ export default function AgentBuilder() {
                 style={{ color: C.neutral }}
               >
                 <>
-                  {/* Phase 3: Agent Manager for agents mode */}
-                  {mode === "agents" && (
+                  {mode === "agents" && tab === "Plan" && (
                     <AgentManager
                       projectId={activeProject}
                       activeTab={tab}
                       onGraphRefresh={() => {
-                        // Trigger graph refresh after kg_ingest
-                        if (tab === "Knowledge") {
-                          runGraphQuery();
-                        }
+                        // no-op
                       }}
                     />
                   )}
@@ -1376,33 +970,6 @@ export default function AgentBuilder() {
                   {/* Plan tab for assist mode - task management only */}
                   {mode === "assist" && tab === "Plan" && (
                     <div className="space-y-3">
-                      <div className="flex gap-2">
-                        <input
-                          placeholder="Add task"
-                          className="flex-1"
-                          style={{
-                            background: C.bg,
-                            border: `1px solid ${C.border}`,
-                            borderRadius: 8,
-                            padding: "8px",
-                            color: C.text,
-                          }}
-                          onKeyDown={(e) => {
-                            const target = e.target as HTMLInputElement;
-                            if (e.key === "Enter" && target.value.trim()) {
-                              addTask(target.value.trim());
-                              target.value = "";
-                            }
-                          }}
-                        />
-                        <button
-                          onClick={runResearch}
-                          className="px-3 py-2 rounded"
-                          style={{ background: C.primary, color: "#0F0F0F" }}
-                        >
-                          Create tasks → Research
-                        </button>
-                      </div>
                       <div className="space-y-2">
                         {plan.map((p) => (
                           <div
@@ -1486,7 +1053,7 @@ export default function AgentBuilder() {
                       ))}
                       {links.length === 0 && (
                         <div>
-                          No links yet. Run research from Plan or the coach bar.
+                          No links yet.
                         </div>
                       )}
                     </div>
@@ -1506,12 +1073,12 @@ export default function AgentBuilder() {
                         style={{ opacity: 0.8 }}
                       >
                         <span>
-                          Nodes: {graphViz.nodes.length} • Edges: {graphViz.edges.length}
+                          Nodes: {graphViz.nodes.length} · Edges: {graphViz.edges.length}
                         </span>
                         <button
                           onClick={() => {
                             setCypher(
-                              "MATCH (a:Entity { project_id: $projectId })-[r:REL { project_id: $projectId }]->(b:Entity { project_id: $projectId }) RETURN a,b,r LIMIT 100"
+                              "MATCH (a:Entity { project_id: $projectId })-[r:REL { project_id: $projectId }]->(b:Entity { project_id: $projectId }) RETURN a,b,r LIMIT 100",
                             );
                             setTimeout(() => runGraphQuery(), 100);
                           }}
@@ -1531,10 +1098,7 @@ export default function AgentBuilder() {
                         </div>
                       )}
 
-                      <div
-                        className="border-t pt-3"
-                        style={{ borderColor: C.border }}
-                      >
+                      <div className="border-t pt-3" style={{ borderColor: C.border }}>
                         <div
                           className="text-xs font-semibold mb-2"
                           style={{ color: C.text }}
@@ -1562,18 +1126,13 @@ export default function AgentBuilder() {
                             style={{
                               border: `1px solid ${C.border}`,
                               color: C.text,
-                              background: graphLoading
-                                ? "rgba(255,255,255,0.06)"
-                                : "transparent",
+                              background: graphLoading ? "rgba(255,255,255,0.06)" : "transparent",
                               opacity: graphLoading ? 0.7 : 1,
                             }}
                           >
                             {graphLoading ? "Running..." : "Run"}
                           </button>
-                          <div
-                            className="text-[11px]"
-                            style={{ color: C.neutral }}
-                          >
+                          <div className="text-[11px]" style={{ color: C.neutral }}>
                             Endpoint: /api/projects/{activeProject}/kg/query
                           </div>
                         </div>
@@ -1594,447 +1153,11 @@ export default function AgentBuilder() {
                             color: C.neutral,
                           }}
                         >
-                          {graphResult.length
-                            ? JSON.stringify(graphResult, null, 2)
-                            : "Results will appear here"}
+                          {graphResult.length ? JSON.stringify(graphResult, null, 2) : "Results will appear here"}
                         </pre>
-                        <div className="mt-4 space-y-2">
-                          <div
-                          className="text-xs font-semibold"
-                          style={{ color: C.text }}
-                        >
-                            {"KG Extract (preview -> commit)"}
-                          </div>
-                          <textarea
-                            value={kgExtractText}
-                            onChange={(e) => setKgExtractText(e.target.value)}
-                            rows={3}
-                            className="w-full text-xs resize-y"
-                          style={{
-                            background: C.bg,
-                            border: `1px solid ${C.border}`,
-                            borderRadius: 6,
-                            padding: "8px 10px",
-                            color: C.text,
-                          }}
-                          placeholder="Paste text to extract entities/relations"
-                        />
-                        <div className="flex items-center gap-2 mt-2 text-[11px]" style={{ color: C.neutral }}>
-                          <span>Using last chat message as source text. You can edit below.</span>
-                          <button
-                            onClick={() => setShowKgAdvanced((v) => !v)}
-                            className="px-2 py-1 rounded text-[11px]"
-                            style={{ border: `1px solid ${C.border}`, color: C.text }}
-                          >
-                            {showKgAdvanced ? "Hide details" : "Details"}
-                          </button>
-                        </div>
-                        {showKgAdvanced && (
-                          <div
-                            className="grid"
-                            style={{ gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}
-                          >
-                            <details style={{ gridColumn: "1 / -1", marginBottom: 8 }}>
-                              <summary style={{ 
-                                cursor: "pointer", 
-                                color: C.neutral, 
-                                fontSize: "11px",
-                                userSelect: "none",
-                                padding: "4px 0"
-                              }}>
-                                Advanced Options (doc_id / src)
-                              </summary>
-                              <div style={{ 
-                                marginTop: 8, 
-                                paddingLeft: 12,
-                                display: "grid",
-                                gridTemplateColumns: "1fr 1fr",
-                                gap: 8
-                              }}>
-                                <div className="space-y-1">
-                                  <div className="text-[10px]" style={{ color: C.neutral }}>
-                                    doc_id (optional - auto-generated if empty)
-                                  </div>
-                                  <input
-                                    value={kgDocId}
-                                    onChange={(e) => setKgDocId(e.target.value)}
-                                    placeholder="Leave empty for auto-generation"
-                                    className="text-[11px] w-full"
-                                    style={{
-                                      background: C.bg,
-                                      border: `1px solid ${C.border}`,
-                                      borderRadius: 6,
-                                      padding: "6px 8px",
-                                      color: C.text,
-                                    }}
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <div className="text-[10px]" style={{ color: C.neutral }}>
-                                    src (optional - auto-generated if empty)
-                                  </div>
-                                  <input
-                                    value={kgSrc}
-                                    onChange={(e) => setKgSrc(e.target.value)}
-                                    placeholder="Leave empty for auto-generation"
-                                    className="text-[11px] w-full"
-                                    style={{
-                                      background: C.bg,
-                                      border: `1px solid ${C.border}`,
-                                      borderRadius: 6,
-                                      padding: "6px 8px",
-                                      color: C.text,
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            </details>
-                            <div className="space-y-1">
-                              <div className="text-[10px]" style={{ color: C.neutral }}>llm_model (OpenRouter key)</div>
-                              <input
-                                value={kgLlmModel}
-                                onChange={(e) => setKgLlmModel(e.target.value)}
-                                placeholder="e.g., deepseek-chat"
-                                className="text-[11px] w-full"
-                                style={{
-                                  background: C.bg,
-                                  border: `1px solid ${C.border}`,
-                                  borderRadius: 6,
-                                  padding: "6px 8px",
-                                  color: C.text,
-                                }}
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <div className="text-[10px]" style={{ color: C.neutral }}>embed_model (OpenRouter id)</div>
-                              <input
-                                value={kgEmbedModel}
-                                onChange={(e) => setKgEmbedModel(e.target.value)}
-                                placeholder="e.g., openai/text-embedding-3-small"
-                                className="text-[11px] w-full"
-                                style={{
-                                  background: C.bg,
-                                  border: `1px solid ${C.border}`,
-                                  borderRadius: 6,
-                                  padding: "6px 8px",
-                                  color: C.text,
-                                }}
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <div className="text-[10px]" style={{ color: C.neutral }}>
-                                chunk_chars
-                              </div>
-                              <input
-                                type="number"
-                                value={kgChunkChars}
-                                onChange={(e) => setKgChunkChars(e.target.value ? Number(e.target.value) : '')}
-                                className="text-[11px] w-full"
-                                style={{
-                                  background: C.bg,
-                                  border: `1px solid ${C.border}`,
-                                  borderRadius: 6,
-                                  padding: "6px 8px",
-                                  color: C.text,
-                                }}
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <div className="text-[10px]" style={{ color: C.neutral }}>
-                                chunk_overlap
-                              </div>
-                              <input
-                                type="number"
-                                value={kgChunkOverlap}
-                                onChange={(e) => setKgChunkOverlap(e.target.value ? Number(e.target.value) : '')}
-                                className="text-[11px] w-full"
-                                style={{
-                                  background: C.bg,
-                                  border: `1px solid ${C.border}`,
-                                  borderRadius: 6,
-                                  padding: "6px 8px",
-                                  color: C.text,
-                                }}
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <div className="text-[10px]" style={{ color: C.neutral }}>
-                                language_hint
-                              </div>
-                              <select
-                                value={kgLanguageHint}
-                                onChange={(e) =>
-                                  setKgLanguageHint(e.target.value as 'auto' | 'en' | 'zh' | 'mixed')
-                                }
-                                className="text-[11px] w-full"
-                                style={{
-                                  background: C.bg,
-                                  border: `1px solid ${C.border}`,
-                                  borderRadius: 6,
-                                  padding: "6px 8px",
-                                  color: C.text,
-                                }}
-                              >
-                                <option value="auto">auto</option>
-                                <option value="en">en</option>
-                                <option value="zh">zh</option>
-                                <option value="mixed">mixed</option>
-                              </select>
-                            </div>
-                            <div className="space-y-1">
-                              <div className="text-[10px]" style={{ color: C.neutral }}>
-                                normalize_text
-                              </div>
-                              <label className="flex items-center gap-2 text-[11px]" style={{ color: C.text }}>
-                                <input
-                                  type="checkbox"
-                                  checked={kgNormalizeText}
-                                  onChange={(e) => setKgNormalizeText(e.target.checked)}
-                                />
-                                <span>Trim + clean</span>
-                              </label>
-                            </div>
-                          </div>
-                        )}
-                        
-                        {/* Stage A: File Upload UI */}
-                        <div className="mt-4 space-y-3" style={{ borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
-                          <div className="text-xs font-semibold" style={{ color: C.text }}>
-                            File Upload (md, txt, pdf)
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <input
-                              type="file"
-                              accept=".md,.txt,.pdf"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0] || null;
-                                setUploadFile(file);
-                                if (file && !kgDocId.trim()) {
-                                  setKgDocId(file.name.replace(/\.[^.]+$/, ''));
-                                }
-                                if (file && !kgSrc.trim()) {
-                                  setKgSrc(`upload.${file.name}`);
-                                }
-                              }}
-                              className="text-xs"
-                              style={{ color: C.text }}
-                            />
-                            {uploadFile && (
-                              <span className="text-[11px]" style={{ color: C.neutral }}>
-                                {uploadFile.name} ({Math.round(uploadFile.size / 1024)}KB)
-                              </span>
-                            )}
-                          </div>
-                          <button
-                            onClick={runFileUpload}
-                            disabled={!activeProject || !uploadFile}
-                            className="px-3 py-2 text-xs rounded"
-                            style={{
-                              background: activeProject && uploadFile ? C.primary : C.bg,
-                              border: `1px solid ${C.border}`,
-                              color: activeProject && uploadFile ? '#fff' : C.neutral,
-                              opacity: activeProject && uploadFile ? 1 : 0.6,
-                              fontWeight: 600,
-                            }}
-                          >
-                            Upload + Ingest
-                          </button>
-                          {uploadStatus && (
-                            <div className="text-[11px]" style={{ color: C.neutral }}>
-                              {uploadStatus}
-                            </div>
-                          )}
-                          {uploadResult && (
-                            <pre
-                              className="text-[10px] max-h-32 overflow-auto rounded"
-                              style={{
-                                background: C.bg,
-                                border: `1px solid ${C.border}`,
-                                padding: "8px",
-                                color: C.neutral,
-                              }}
-                            >
-                              {JSON.stringify(uploadResult, null, 2)}
-                            </pre>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-3 mt-3">
-                          <button
-                            onClick={runKgIngestFromChat}
-                            disabled={!activeProject}
-                            className="px-3 py-2 text-xs rounded"
-                            style={{
-                              border: `1px solid ${C.primary}`,
-                              background: "rgba(79,162,173,0.18)",
-                              color: C.text,
-                              opacity: activeProject ? 1 : 0.6,
-                              fontWeight: 600,
-                            }}
-                          >
-                            One-click ingest (last chat)
-                          </button>
-                          <button
-                            onClick={runKgIngest}
-                            disabled={!activeProject}
-                            className="px-3 py-2 text-xs rounded"
-                            style={{
-                              border: `1px solid ${C.border}`,
-                              color: C.text,
-                              opacity: activeProject ? 1 : 0.6,
-                            }}
-                          >
-                            Ingest edited text
-                          </button>
-                          {kgIngestStatus && (
-                            <div className="text-[11px]" style={{ color: C.neutral }}>
-                              {kgIngestStatus}
-                            </div>
-                          )}
-                        </div>
-                        {kgIngestResult && (
-                          <pre
-                            className="text-[10px] max-h-48 overflow-auto rounded mt-2"
-                            style={{
-                              background: C.bg,
-                              border: `1px solid ${C.border}`,
-                              padding: "8px",
-                              color: C.neutral,
-                            }}
-                          >
-                            {JSON.stringify(kgIngestResult, null, 2)}
-                          </pre>
-                        )}
-                        <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
-                          <div
-                            style={{
-                              border: `1px solid ${C.border}`,
-                              borderRadius: 8,
-                              padding: 10,
-                              background: "rgba(255,255,255,0.02)",
-                            }}
-                          >
-                            <div className="text-xs font-semibold mb-2" style={{ color: C.text }}>
-                              Recent ingests
-                            </div>
-                            <div className="space-y-2 text-[11px]" style={{ color: C.neutral }}>
-                              {recentIngests.length === 0 && <div>None yet.</div>}
-                              {recentIngests.map((r) => (
-                                <button
-                                  key={`${r.doc_id}-${r.created_at}`}
-                                  onClick={() => {
-                                    setKgDocId(r.doc_id || "");
-                                    setKgSrc(r.src || "");
-                                  }}
-                                  className="w-full text-left"
-                                  style={{
-                                    border: `1px solid ${C.border}`,
-                                    borderRadius: 6,
-                                    padding: "6px 8px",
-                                    background: "transparent",
-                                    color: C.text,
-                                  }}
-                                >
-                                  <div style={{ fontWeight: 600 }}>{r.doc_id}</div>
-                                  <div className="text-[10px]" style={{ opacity: 0.8 }}>
-                                    {r.src || "src: n/a"} · {r.chunks || 0} chunks · {r.embeddings || 0} embeddings ·
-                                    {r.entities || 0} entities · {r.relations || 0} relations
-                                  </div>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                          <div
-                            style={{
-                              border: `1px solid ${C.border}`,
-                              borderRadius: 8,
-                              padding: 10,
-                              background: "rgba(255,255,255,0.02)",
-                            }}
-                          >
-                            <div className="text-xs font-semibold mb-2" style={{ color: C.text }}>
-                              Project summary
-                            </div>
-                            {kgSummary ? (
-                              <div className="space-y-2 text-[11px]" style={{ color: C.neutral }}>
-                                <div>Docs: {kgSummary.totals?.docs ?? 0}</div>
-                                <div>Chunks: {kgSummary.totals?.chunks ?? 0}</div>
-                                <div>Embeddings: {kgSummary.totals?.embeddings ?? 0}</div>
-                                <div>Entities: {kgSummary.totals?.entities ?? 0}</div>
-                                <div>Relationships: {kgSummary.totals?.relations ?? 0}</div>
-                                <div className="mt-2 font-semibold" style={{ color: C.text }}>
-                                  Top entities
-                                </div>
-                                <div className="space-y-1">
-                                  {(kgSummary.top_entities || []).map((t: any, i: number) => (
-                                    <div key={i}>
-                                      {t.name} ({t.type}) · {t.count}
-                                    </div>
-                                  ))}
-                                  {(kgSummary.top_entities || []).length === 0 && <div>None</div>}
-                                </div>
-                                <div className="mt-2 font-semibold" style={{ color: C.text }}>
-                                  Top relationship types
-                                </div>
-                                <div className="space-y-1">
-                                  {(kgSummary.top_rel_types || []).map((t: any, i: number) => (
-                                    <div key={i}>
-                                      {t.type || "REL"} · {t.count}
-                                    </div>
-                                  ))}
-                                  {(kgSummary.top_rel_types || []).length === 0 && <div>None</div>}
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="text-[11px]" style={{ color: C.neutral }}>
-                                No summary yet.
-                              </div>
-                            )}
-                            <div className="text-xs font-semibold mb-2" style={{ color: C.text }}>
-                              Quick queries (project-scoped)
-                            </div>
-                            <div className="flex flex-wrap gap-2 text-[11px]">
-                              {[
-                                {
-                                  label: "Entities sample",
-                                  cy: "MATCH (n:Entity { project_id: $projectId }) RETURN n LIMIT 25",
-                                },
-                                {
-                                  label: "Relationships sample",
-                                  cy:
-                                    "MATCH (a:Entity { project_id: $projectId })-[r:REL { project_id: $projectId }]->(b:Entity { project_id: $projectId }) RETURN a,b,r LIMIT 25",
-                                },
-                                {
-                                  label: "Most connected entities",
-                                  cy:
-                                    "MATCH (n:Entity { project_id: $projectId })-[r:REL { project_id: $projectId }]-() RETURN n, count(r) AS deg ORDER BY deg DESC LIMIT 25",
-                                },
-                                {
-                                  label: "Relationships by type",
-                                  cy:
-                                    "MATCH (:Entity { project_id: $projectId })-[r:REL { project_id: $projectId }]->(:Entity { project_id: $projectId }) RETURN r.rtype AS type, count(*) AS c ORDER BY c DESC LIMIT 25",
-                                },
-                              ].map((q) => (
-                                <button
-                                  key={q.label}
-                                  onClick={() => setCypher(q.cy)}
-                                  className="px-2 py-1 rounded"
-                                  style={{
-                                    border: `1px solid ${C.border}`,
-                                    color: C.text,
-                                    background: "transparent",
-                                  }}
-                                >
-                                  {q.label}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
                   {tab === "Dashboard" && (
                     <div

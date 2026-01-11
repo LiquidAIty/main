@@ -221,7 +221,7 @@ export async function getAgentConfig(projectId: string): Promise<AgentConfig | n
   }
 
   return {
-    id: row.id,
+    id: trimmed,
     name: row.name,
     agent_model: row.agent_model ?? null,
     agent_prompt_template: row.agent_prompt_template ?? null,
@@ -377,4 +377,63 @@ export async function saveProjectState(projectId: string, state: ProjectState): 
     [...params, JSON.stringify(nextSchema)]
   );
   return state;
+}
+
+export async function getAssistAssignments(projectId: string): Promise<{
+  assist_main_agent_id: string | null;
+  assist_kg_ingest_agent_id: string | null;
+}> {
+  const { clause, params } = projectLookup(projectId);
+  const { rows } = await pool.query(
+    `SELECT assist_main_agent_id, assist_kg_ingest_agent_id FROM ${PROJECTS_TABLE} WHERE ${clause} LIMIT 1`,
+    params,
+  );
+  if (!rows.length) {
+    throw new Error('project not found');
+  }
+  const row = rows[0];
+  return {
+    assist_main_agent_id: row.assist_main_agent_id || null,
+    assist_kg_ingest_agent_id: row.assist_kg_ingest_agent_id || null,
+  };
+}
+
+export async function setAssistAssignments(
+  projectId: string,
+  assignments: { assist_main_agent_id?: string | null; assist_kg_ingest_agent_id?: string | null },
+): Promise<{
+  assist_main_agent_id: string | null;
+  assist_kg_ingest_agent_id: string | null;
+}> {
+  const updates: string[] = [];
+  const updateParams: any[] = [];
+
+  if ('assist_main_agent_id' in assignments) {
+    updates.push(`assist_main_agent_id = $${updateParams.length + 1}`);
+    updateParams.push(assignments.assist_main_agent_id ?? null);
+  }
+  if ('assist_kg_ingest_agent_id' in assignments) {
+    updates.push(`assist_kg_ingest_agent_id = $${updateParams.length + 1}`);
+    updateParams.push(assignments.assist_kg_ingest_agent_id ?? null);
+  }
+
+  if (!updates.length) {
+    return getAssistAssignments(projectId);
+  }
+
+  // projectLookup for WHERE clause; append project param last
+  const { clause, params } = projectLookup(projectId);
+  const whereParamIndex = updateParams.length + 1;
+  const whereClause = clause.replace('$1', `$${whereParamIndex}`);
+
+  const sql = `UPDATE ${PROJECTS_TABLE} SET ${updates.join(', ')} WHERE ${whereClause} RETURNING assist_main_agent_id, assist_kg_ingest_agent_id`;
+  const { rows } = await pool.query(sql, [...updateParams, ...params]);
+  if (!rows.length) {
+    throw new Error('project not found');
+  }
+  const row = rows[0];
+  return {
+    assist_main_agent_id: row.assist_main_agent_id || null,
+    assist_kg_ingest_agent_id: row.assist_kg_ingest_agent_id || null,
+  };
 }
