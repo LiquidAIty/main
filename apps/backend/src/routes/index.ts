@@ -13,7 +13,10 @@ import { agentRoutes } from './agent.routes';
 import models from './models.routes';
 import ragSearch from './ragsearch.routes';
 import kg from '../api/kg/agent-kg';
+import graph from './graph.routes';
 import { authMiddleware } from '../middleware/auth';
+import projects from './projects.routes';
+import projectAgents from './projectAgents.routes';
 
 /**
  * /api/sol/run is the primary Sol chat endpoint. It can run with or without auth
@@ -49,6 +52,10 @@ router.use('/artifacts', authMiddleware, artifacts);
 router.use('/webhook', authMiddleware, webhook);
 // TODO: Restore auth middleware for /agents after testing
 router.use('/agents', agentRoutes);
+router.use('/graph', graph);
+router.use('/projects', projects);
+// Phase 1: Multi-agent routes (nested under /projects/:projectId/agents)
+router.use('/projects', projectAgents);
 router.use('/models', authMiddleware, models);
 router.use('/rag', authMiddleware, ragSearch);
 router.use('/kg', authMiddleware, kg);

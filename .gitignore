@@ -109,3 +109,5 @@ neo4j-plugins/
 
 # Audit files
 audit-*/
+/data/prompt-sources/leaked-system-prompts/
+
