@@ -17,6 +17,7 @@ import graph from './graph.routes';
 import { authMiddleware } from '../middleware/auth';
 import projects from './projects.routes';
 import projectAgents from './projectAgents.routes';
+import { diagnosticRoutes } from './diagnostic.routes';
 
 /**
  * /api/sol/run is the primary Sol chat endpoint. It can run with or without auth
@@ -33,6 +34,7 @@ router.use('/auth', auth);
 
 // Mount children exactly once. Preserve existing concrete paths.
 router.use('/health', health);
+router.use('/diagnostic', diagnosticRoutes);
 
 // /sol route: auth in prod, automatic bypass in dev (toggle via SOL_AUTH_DISABLED)
 if (SOL_AUTH_DISABLED) {

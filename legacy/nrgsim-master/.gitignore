@@ -1,0 +1,6 @@
+node_modules/
+.monitor
+Makefile
+*.sublime-workspace
+public/app/temp/
+npm-debug.log

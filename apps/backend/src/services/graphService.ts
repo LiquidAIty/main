@@ -1,7 +1,7 @@
 import { Pool } from 'pg';
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: process.env.DATABASE_URL || 'postgresql://liquidaity-user:LiquidAIty@localhost:5433/liquidaity',
   max: 5,
 });
 
@@ -20,7 +20,8 @@ export async function ensureGraph(graphName: string): Promise<void> {
   await ensureAgeExtension();
 
   try {
-    await pool.query('SELECT ag_catalog.create_graph($1)', [graphName]);
+    // AGE requires graph name as literal identifier, not parameter
+    await pool.query(`SELECT ag_catalog.create_graph('${graphName}')`);
   } catch (err: any) {
     const msg = (err?.message || '').toLowerCase();
     if (msg.includes('already exists')) {
@@ -50,13 +51,21 @@ export async function runCypherOnGraph(
   // AGE rejects trailing semicolons inside cypher()
   const cleaned = cypher.trim().replace(/;$/, '');
 
+  // Prevent $$ injection in Cypher query
+  if (cleaned.includes('$$')) {
+    throw new Error('cypher query cannot contain $$');
+  }
+
+  // CRITICAL: Both graphName AND cypher must be literals for AGE
+  // AGE expects: ag_catalog.cypher('graph_name', $$ MATCH ... $$, $1)
+  // Using $$ for the Cypher query prevents "dollar-quoted string constant" error
   const sql = params
-    ? 'SELECT * FROM ag_catalog.cypher($1, $2, $3) AS (row agtype)'
-    : 'SELECT * FROM ag_catalog.cypher($1, $2) AS (row agtype)';
+    ? `SELECT * FROM ag_catalog.cypher('${graphName}', $$ ${cleaned} $$, $1) AS (row agtype)`
+    : `SELECT * FROM ag_catalog.cypher('${graphName}', $$ ${cleaned} $$) AS (row agtype)`;
 
   const res = await pool.query(
     sql,
-    params ? [graphName, cleaned, JSON.stringify(params)] : [graphName, cleaned]
+    params ? [JSON.stringify(params)] : []
   );
   return res.rows.map((r) => r.row);
 }

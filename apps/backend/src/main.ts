@@ -2,6 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import cookieParser = require("cookie-parser");
 import routes from "./routes";
+import { logModelConfiguration } from "./startup/modelConfig";
 
 dotenv.config({ path: "apps/backend/.env" });
 
@@ -34,11 +35,31 @@ function logStartupBanner() {
   const apiKey = process.env.OPENAI_API_KEY || "";
   const redactedKey = apiKey.length > 8 ? `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}` : "(not set)";
 
+  // Parse DATABASE_URL to show connection details
+  const dbUrl = process.env.DATABASE_URL || 'postgresql://liquidaity-user:***@localhost:5433/liquidaity';
+  let dbHost = 'localhost';
+  let dbPort = '5433';
+  let dbName = 'liquidaity';
+  let dbUser = 'liquidaity-user';
+  try {
+    const url = new URL(dbUrl);
+    dbHost = url.hostname;
+    dbPort = url.port || '5432';
+    dbName = url.pathname.slice(1).split('?')[0];
+    dbUser = url.username;
+  } catch {
+    // fallback already set
+  }
+
   console.log("──────────────── SOL BACKEND START ────────────────");
   console.log(`NODE_ENV:         ${nodeEnv}`);
   console.log(`SOL model:        ${model}`);
   console.log(`OPENAI_BASE_URL:  ${baseUrl}`);
   console.log(`OPENAI_API_KEY:   ${redactedKey}`);
+  console.log(`DB_HOST:          ${dbHost}`);
+  console.log(`DB_PORT:          ${dbPort}`);
+  console.log(`DB_NAME:          ${dbName}`);
+  console.log(`DB_USER:          ${dbUser}`);
   console.log("───────────────────────────────────────────────────");
 }
 
@@ -68,4 +89,5 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 
 const PORT = Number(process.env.PORT || 4000);
 logStartupBanner();
+logModelConfiguration();
 app.listen(PORT, () => console.log("[BOOT] listening on :" + PORT));

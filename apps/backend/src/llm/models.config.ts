@@ -14,6 +14,7 @@ export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   "gpt-5":      { label: "GPT-5 Full", provider: "openai", id: "gpt-5",      context: 32768 },
 
   // --- OpenRouter ---
+  "kimi-k2-thinking": { label: "Kimi K2 Thinking", provider: "openrouter", id: "moonshotai/kimi-k2-thinking", context: 262144 },
   "kimi-k2-free": { label: "Kimi K2 Free", provider: "openrouter", id: "moonshotai/kimi-k2:free" },
   "deepseek-chat":{ label: "DeepSeek Chat", provider: "openrouter", id: "deepseek/deepseek-chat" },
   "phi-4":        { label: "Phi-4", provider: "openrouter", id: "microsoft/phi-4" }
@@ -61,9 +62,13 @@ export function resolve_model_by_role(role: agent_role) {
     console.log('[LLM] provider=%s model=%s temp=%s', model.provider, model.id, 'default');
     return model;
   }
+  // No fallback - require explicit env var
+  if (!process.env.OPENROUTER_DEFAULT_MODEL) {
+    throw new Error('OPENROUTER_DEFAULT_MODEL env var required when SOL_PRIMARY is not openai');
+  }
   const model = {
     provider: 'openrouter',
-    id: process.env.OPENROUTER_DEFAULT_MODEL || 'moonshotai/kimi-k2:free',
+    id: process.env.OPENROUTER_DEFAULT_MODEL,
     baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
     apiKey: process.env.OPENROUTER_API_KEY || '',
     temperature: Number(process.env.DEFAULT_TEMPERATURE ?? 0.2),

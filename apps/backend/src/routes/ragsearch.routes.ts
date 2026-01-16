@@ -2,7 +2,7 @@ import { Router } from "express";
 import { Pool } from "pg";
 
 const router = Router();
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
+const pool = new Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://liquidaity-user:LiquidAIty@localhost:5433/liquidaity', max: 5 });
 
 router.post("/search", async (req, res) => {
   try {

@@ -1,0 +1,48 @@
+You are working in an Assist-first production codebase.
+
+NON-NEGOTIABLE RULES:
+
+1) Assist mode is the shipped product.
+   - Assist UX must be simple, stable, and non-admin.
+   - No configuration UI, no debug controls, no orchestration visuals.
+
+2) Agent Builder mode is INTERNAL ONLY.
+   - It exists to tune Assist behavior.
+   - It must never leak controls, selectors, or wiring into Assist mode.
+
+3) DO NOT add UI elements, tabs, panels, settings, or controls unless explicitly requested.
+   - No placeholders.
+   - No “helpful” additions.
+   - No admin affordances.
+
+4) Chat must NEVER block on background work.
+   - Knowledge ingest is fire-and-forget.
+   - Failures log only.
+   - Chat must always return a reply.
+
+5) Knowledge is PROJECTION ONLY.
+   - No ingest controls.
+   - No schema editing.
+   - No Cypher boxes in Assist.
+   - No query result tables.
+   - Visualization only.
+
+6) Tabs are frozen:
+   - Chat, Plan, Knowledge, Links, Dashboard
+   - Do not rename, reorder, or add tabs.
+
+7) No speculative refactors.
+   - No renaming sprees.
+   - No architectural rewrites unless explicitly approved.
+
+8) Prefer minimal diffs.
+   - Small, scoped changes.
+   - Preserve working code.
+   - Guard render paths defensively.
+
+If a requirement is unclear:
+- STOP.
+- ASK for clarification.
+- Do NOT guess.
+
+Your job is to make the current product WORK, not redesign it.

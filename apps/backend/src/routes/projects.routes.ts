@@ -1,25 +1,29 @@
 import { Router } from 'express';
 import {
-  createProject,
-  getAgentConfig,
   getProjectState,
-  listAgentCards,
-  saveAgentConfig,
   saveProjectState,
+  createProject,
+  listAgentCards,
+  getAssistAssignments,
+} from '../services/agentBuilderStore';
+import {
+  getAgentConfig,
+  saveAgentConfig,
 } from '../services/agentBuilderStore';
 import { runCypherOnGraph } from '../services/graphService';
 import { runLLM } from '../llm/client';
 import { createOpenRouterEmbedding } from '../llm/openrouterEmbeddings';
+import { MODEL_REGISTRY, listModels } from '../llm/models.config';
 import { Pool } from 'pg';
 import { createHash } from 'crypto';
+import { getLastTrace, getTraces } from '../services/ingestTrace';
 const router = Router();
 const GRAPH_NAME = 'graph_liq';
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
+const pool = new Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://liquidaity-user:LiquidAIty@localhost:5433/liquidaity', max: 5 });
 
-const DEFAULT_KG_LLM_MODEL_KEY = process.env.OPENROUTER_DEFAULT_KG_MODEL_KEY || 'deepseek-chat';
+const DEFAULT_KG_LLM_MODEL_KEY = process.env.OPENROUTER_DEFAULT_KG_MODEL_KEY || 'kimi-k2-thinking';
 const DEFAULT_EMBED_MODEL =
   process.env.OPENROUTER_DEFAULT_EMBED_MODEL || 'openai/text-embedding-3-small';
-const OPENROUTER_KG_MODEL_KEYS = new Set(['kimi-k2-free', 'deepseek-chat', 'phi-4']);
 const DEFAULT_MAX_CHUNK_CHARS = Math.max(500, Number(process.env.KG_INGEST_MAX_CHARS ?? 4500));
 const CHUNK_CHAR_TARGET = Math.min(
   DEFAULT_MAX_CHUNK_CHARS,
@@ -188,6 +192,7 @@ async function llmSemanticChunking(
     chunkTarget: number;
     languageHint: string;
     llmModelKey: string;
+    debugTrace?: any;
   }
 ): Promise<{
   chunks: Array<{
@@ -198,28 +203,57 @@ async function llmSemanticChunking(
     topics: string[];
     confidence: number;
   }>;
+  prompt_system: string;
+  prompt_user_preview: string;
+  prompt_user_sha1: string;
+  raw_output_preview: string;
+  raw_output_sha1: string;
 }> {
-  const { chunkTarget, languageHint, llmModelKey } = options;
+  const { chunkTarget, languageHint, llmModelKey, debugTrace } = options;
 
-  const system = `You are a semantic chunking expert. Split the provided text into semantically coherent chunks.
-Each chunk should represent a complete thought, section, or topic.
-Return STRICT JSON ONLY. No markdown, no explanations.`;
+  const system = `You are a strict JSON generator.
+
+You MUST return ONLY valid JSON.
+Do NOT wrap in markdown.
+Do NOT include commentary.
+Do NOT include trailing commas.
+Do NOT include extra keys.
+Do NOT return partial JSON.
+
+If you cannot comply, return this exact JSON:
+{"chunks":[]}
+
+Schema (MUST match exactly):
+{
+  "chunks": [
+    {
+      "chunk_index": 0,
+      "title": "",
+      "text": ""
+    }
+  ]
+}
+
+Rules:
+- "chunks" MUST be an array.
+- Each chunk MUST include "chunk_index", "title", "text".
+- chunk_index MUST be integers starting at 0.
+- title MUST be <= 80 chars.
+- text MUST be non-empty plain text.
+- Output MUST be parseable by JSON.parse() with no cleanup.
+
+Now extract chunks from this input text:`;
 
   const prompt = [
-    'Split this text into semantic chunks. Each chunk should:',
-    '- Be semantically coherent (complete thoughts/sections)',
-    `- Target ~${chunkTarget} characters (soft limit, prioritize semantic boundaries)`,
-    '- Include the EXACT original text (no summarizing, no paraphrasing)',
-    '- Have a descriptive title',
-    '- List main topics',
+    'Split this text into semantic chunks.',
     '',
-    'Return STRICT JSON with this exact shape:',
+    'REQUIRED OUTPUT FORMAT (valid JSON only):',
     '{',
     '  "chunks": [',
     '    {',
     '      "chunk_index": 0,',
-    '      "title": "Introduction to Topic",',
-    '      "text": "exact original text here...",',
+    '      "title": "Brief title",',
+    '      "text": "EXACT original text from input - do not summarize or paraphrase",',
     `      "language": "${languageHint}",`,
     '      "topics": ["topic1", "topic2"],',
     '      "confidence": 0.9',
@@ -227,22 +261,78 @@ Return STRICT JSON ONLY. No markdown, no explanations.`;
     '  ]',
     '}',
     '',
+    'RULES:',
+    '- Each chunk.text must contain EXACT original text (no summarizing)',
+    `- Target ~${chunkTarget} characters per chunk (soft limit)`,
+    '- Prioritize semantic boundaries over character count',
+    '- You MUST include at least 1 chunk with non-empty text',
+    '- Return ONLY the JSON object, nothing else',
+    '',
     'Text to chunk:',
     '---',
     text,
     '---',
   ].join('\n');
 
+  const promptUserSha1 = sha1(prompt);
+  const promptUserPreview = prompt.slice(0, 2000);
+
+  if (debugTrace) {
+    debugTrace.model_key = llmModelKey;
+    debugTrace.prompt_preview = prompt.slice(0, 300);
+    debugTrace.prompt_user_sha1 = promptUserSha1;
+  }
+
+  console.log('[LLM chunking] model_key=%s prompt_sha1=%s', llmModelKey, promptUserSha1);
+  console.log('[LLM chunking] prompt_preview (first 400 chars):', promptUserPreview.slice(0, 400));
+  
   const llmRes = await runLLM(prompt, {
     modelKey: llmModelKey,
     system,
     temperature: 0,
     maxTokens: 4096,
+    jsonMode: true,
   });
 
-  const parsed = tryParseJsonLoose(llmRes.text);
+  const rawOutputText = String(llmRes.text || '');
+  const rawOutputSha1 = sha1(rawOutputText);
+  const rawOutputPreview = rawOutputText.slice(0, 4000);
+
+  if (debugTrace) {
+    debugTrace.raw_output_preview = rawOutputPreview;
+    debugTrace.raw_output_sha1 = rawOutputSha1;
+  }
+
+  console.log('[LLM chunking] raw_output_sha1=%s raw_len=%d', rawOutputSha1, rawOutputText.length);
+  console.log('[LLM chunking] raw_output_preview (first 400 chars):', rawOutputPreview.slice(0, 400));
+
+  // Check for empty response first
+  if (!llmRes.text || !llmRes.text.trim()) {
+    console.error('[LLM chunking] empty response from model:', llmModelKey);
+    throw new Error('LLM chunking returned empty response');
+  }
+
+  let parsed: any;
+  let parseError: string | undefined;
+  try {
+    parsed = tryParseJsonLoose(llmRes.text);
+  } catch (e: any) {
+    parseError = e?.message || String(e);
+  }
+  
   if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.chunks)) {
-    throw new Error('LLM chunking returned invalid JSON');
+    const errorMsg = `chunking_invalid_json: LLM returned ${rawOutputText.length} chars but not valid JSON. Preview: ${rawOutputPreview.slice(0, 200)}`;
+    console.error('[LLM chunking] invalid JSON. raw_len=%d preview=%s', rawOutputText.length, rawOutputPreview.slice(0, 200));
+    
+    // Store evidence in error object for trace capture
+    const err: any = new Error(errorMsg);
+    err.prompt_system = system;
+    err.prompt_user_preview = promptUserPreview;
+    err.prompt_user_sha1 = promptUserSha1;
+    err.raw_output_preview = rawOutputPreview;
+    err.raw_output_sha1 = rawOutputSha1;
+    err.parse_error = parseError || 'JSON parse failed or missing chunks array';
+    throw err;
   }
 
   // Validate chunks
@@ -263,10 +353,19 @@ Return STRICT JSON ONLY. No markdown, no explanations.`;
   }));
 
   if (chunks.length === 0 || chunks.every((c: any) => !c.text.trim())) {
-    throw new Error('LLM chunking produced no valid chunks');
+    const rawLen = String(llmRes.text || '').length;
+    console.error('[LLM chunking] parsed JSON but no valid chunks. raw_len=%d chunk_count=%d', rawLen, chunks.length);
+    throw new Error(`chunking_invalid_json: LLM chunking produced no valid chunks (raw_len=${rawLen}, parsed_chunks=${chunks.length})`);
   }
 
-  return { chunks };
+  return { 
+    chunks,
+    prompt_system: system,
+    prompt_user_preview: promptUserPreview,
+    prompt_user_sha1: promptUserSha1,
+    raw_output_preview: rawOutputPreview,
+    raw_output_sha1: rawOutputSha1,
+  };
 }
 
 async function buildRecentIngests(projectId: string, limit: number) {
@@ -381,6 +480,14 @@ function tryParseJsonLoose(raw: string) {
 async function commitKgBatch(projectId: string, entities: any[], relations: any[], provenance: any) {
   let entitiesUpserted = 0;
   let relationsUpserted = 0;
+  
+  console.log('[KG_INGEST] commitKgBatch start:', {
+    projectId,
+    graphName: GRAPH_NAME,
+    entities_count: entities.length,
+    relations_count: relations.length,
+  });
+  
   await runCypherOnGraph(GRAPH_NAME, 'MATCH (n) RETURN 1 LIMIT 1'); // ensure graph exists
 
   for (const e of entities) {
@@ -390,24 +497,31 @@ async function commitKgBatch(projectId: string, entities: any[], relations: any[
     if (!name) continue;
     const attrs = (e as any).attrs || {};
     const confidence = Number((e as any).confidence ?? 0.5);
-    await runCypherOnGraph(
-      GRAPH_NAME,
-      `
-        MERGE (n:Entity { project_id: $projectId, etype: $etype, name: $name })
-        ON CREATE SET n.attrs = $attrs, n.confidence = $confidence, n.created_at = datetime(), n.source = $source
-        ON MATCH SET n.attrs = coalesce(n.attrs, {}) + $attrs
-        RETURN n
-      `,
-      {
-        projectId,
-        etype: type,
-        name,
-        attrs,
-        confidence,
-        source: provenance || null,
-      },
-    );
-    entitiesUpserted += 1;
+    try {
+      await runCypherOnGraph(
+        GRAPH_NAME,
+        `
+          MERGE (n:Entity { project_id: $projectId, etype: $etype, name: $name })
+          ON CREATE SET n.attrs = $attrs, n.confidence = $confidence, n.created_at = datetime(), n.source = $source
+          ON MATCH SET n.attrs = coalesce(n.attrs, {}) + $attrs
+          RETURN n
+        `,
+        {
+          projectId,
+          etype: type,
+          name,
+          attrs,
+          confidence,
+          source: provenance || null,
+        },
+      );
+      entitiesUpserted += 1;
+    } catch (err: any) {
+      console.error('[KG_INGEST] Entity upsert failed:', {
+        entity: { type, name },
+        error: err?.message,
+      });
+    }
   }
 
   for (const r of relations) {
@@ -430,22 +544,68 @@ async function commitKgBatch(projectId: string, entities: any[], relations: any[
       ON MATCH SET r.attrs = coalesce(r.attrs, {}) + $attrs
       RETURN r
     `;
-    await runCypherOnGraph(GRAPH_NAME, cypher, {
-      projectId,
-      fromType,
-      fromName,
-      toType,
-      toName,
-      attrs,
-      confidence,
-      rtype: relTypeProp,
-      source: provenance || null,
-    });
-    relationsUpserted += 1;
+    try {
+      await runCypherOnGraph(GRAPH_NAME, cypher, {
+        projectId,
+        fromType,
+        fromName,
+        toType,
+        toName,
+        attrs,
+        confidence,
+        rtype: relTypeProp,
+        source: provenance || null,
+      });
+      relationsUpserted += 1;
+    } catch (err: any) {
+      console.error('[KG_INGEST] Relation upsert failed:', {
+        relation: { fromName, toName, type: relTypeProp },
+        error: err?.message,
+      });
+    }
   }
+
+  console.log('[KG_INGEST] commitKgBatch complete:', {
+    projectId,
+    entitiesUpserted,
+    relationsUpserted,
+  });
 
   return { entitiesUpserted, relationsUpserted };
 }
+
+// Expose model registry to frontend
+router.get('/models', async (_req, res) => {
+  try {
+    const models = listModels();
+    return res.json({ ok: true, models });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err?.message || 'failed to list models' });
+  }
+});
+
+// Get last ingest trace for Dashboard
+router.get('/:projectId/kg/last-trace', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const trace = getLastTrace(projectId);
+    return res.json({ ok: true, trace });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err?.message || 'failed to get last trace' });
+  }
+});
+
+// Get ingest trace history
+router.get('/:projectId/kg/traces', async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const limit = Number(req.query.limit) || 20;
+    const traces = getTraces(projectId, limit);
+    return res.json({ ok: true, traces });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err?.message || 'failed to get traces' });
+  }
+});
 
 router.get('/', async (_req, res) => {
   try {
@@ -537,6 +697,12 @@ router.post('/:projectId/kg/query', async (req, res) => {
   }
   try {
     const rows = await runCypherOnGraph(GRAPH_NAME, cypher, params);
+    console.log('[KG_QUERY]', {
+      projectId: req.params.projectId,
+      graphName: GRAPH_NAME,
+      cypher_preview: cypher.slice(0, 120),
+      rows_returned: Array.isArray(rows) ? rows.length : 0,
+    });
     return res.json({ ok: true, rows });
   } catch (err: any) {
     const status = (err?.message || '').toLowerCase().includes('age') ? 503 : 500;
@@ -678,8 +844,18 @@ export async function runIngestPipeline(params: {
   llm_model?: string;
   embed_model?: string;
   options?: any;
+  debug?: boolean;
+  trace?: any;
 }) {
-  const { projectId, doc_id, src, text, llm_model, embed_model, options } = params;
+  const { projectId, doc_id, src, text, llm_model, embed_model, options, debug, trace } = params;
+  
+  const debugTrace: any = debug ? {
+    input: { text_length: text?.length || 0, projectId, doc_id, src },
+    config: {},
+    chunking: {},
+    extraction: {},
+    results: {},
+  } : null;
 
   try {
     await getProjectState(projectId);
@@ -687,19 +863,16 @@ export async function runIngestPipeline(params: {
     throw new Error(err?.message || 'project not found');
   }
 
-  // kg_ingest agents ALWAYS use OpenRouter models (DeepSeek/Kimi/Phi)
   const llmModelKey = llm_model || DEFAULT_KG_LLM_MODEL_KEY;
   const embedModel = embed_model || DEFAULT_EMBED_MODEL;
 
-  let llmModelKeyEnforced = llmModelKey;
-  if (!OPENROUTER_KG_MODEL_KEYS.has(llmModelKeyEnforced)) {
-    console.log('[KG][ingest] ignoring llm_model=%s (non-OpenRouter key); using %s', llmModelKeyEnforced, DEFAULT_KG_LLM_MODEL_KEY);
-    llmModelKeyEnforced = DEFAULT_KG_LLM_MODEL_KEY;
+  if (debugTrace) {
+    debugTrace.config = { llmModelKey, embedModel };
   }
 
-  if (!llm_model) console.log('[KG][ingest] default llm_model=%s (modelKey)', llmModelKeyEnforced);
+  if (!llm_model) console.log('[KG][ingest] default llm_model=%s (modelKey)', llmModelKey);
   if (!embed_model) console.log('[KG][ingest] default embed_model=%s (OpenRouter model id)', embedModel);
-  console.log('[KG][ingest] using llm_model_key=%s embed_model=%s', llmModelKeyEnforced, embedModel);
+  console.log('[KG][ingest] using llm_model_key=%s embed_model=%s', llmModelKey, embedModel);
 
   const optChunkChars = Number(options?.chunk_chars) || CHUNK_CHAR_TARGET;
   const optOverlap = Number(options?.chunk_overlap) || CHUNK_CHAR_OVERLAP;
@@ -718,21 +891,76 @@ export async function runIngestPipeline(params: {
   let chunks: string[] = [];
   
   if (useLlmChunking) {
+    // Resolve model to get provider details for logging
+    let modelEntry;
     try {
-      const llmChunkResult = await llmSemanticChunking(normalizedText, {
+      modelEntry = MODEL_REGISTRY[llmModelKey];
+      if (!modelEntry) {
+        throw new Error(`Unknown model key: ${llmModelKey}`);
+      }
+    } catch (err: any) {
+      throw new Error(`model_not_configured: ${err.message}`);
+    }
+    
+    console.log('[KG][chunking] model_key=%s provider=%s provider_model_id=%s', 
+      llmModelKey, modelEntry.provider, modelEntry.id);
+    
+    const chunkStartTime = Date.now();
+    try {
+      const chunkingResult = await llmSemanticChunking(normalizedText, {
         chunkTarget,
         languageHint,
-        llmModelKey: llmModelKeyEnforced,
+        llmModelKey: llmModelKey,
+        debugTrace: debugTrace?.chunking,
       });
-      chunks = llmChunkResult.chunks.map((c) => c.text);
+      chunks = chunkingResult.chunks.map((c: any) => c.text);
       console.log('[LLM chunking] produced %d semantic chunks', chunks.length);
+      
+      if (trace) {
+        trace.step_states.chunking = {
+          ok: true,
+          t_ms: Date.now() - chunkStartTime,
+          chunk_count: chunks.length,
+          raw_len: normalizedText.length,
+          model_key: llmModelKey,
+          prompt_system: chunkingResult.prompt_system,
+          prompt_user_preview: chunkingResult.prompt_user_preview,
+          prompt_user_sha1: chunkingResult.prompt_user_sha1,
+          raw_output_preview: chunkingResult.raw_output_preview,
+          raw_output_sha1: chunkingResult.raw_output_sha1,
+        };
+      }
+      
+      if (debugTrace) {
+        debugTrace.chunking.chunk_count = chunks.length;
+        debugTrace.chunking.parse_result = 'ok';
+      }
     } catch (err: any) {
-      console.error('[LLM chunking] failed:', err?.message || err);
-      errors.push({ stage: 'chunk_llm_fallback', error: err?.message || String(err) });
-      // Fallback to deterministic chunking
-      const chunksAll = splitDeterministicChunks(normalizedText, chunkTarget, chunkOverlap);
-      chunks = maxChunks && maxChunks > 0 ? chunksAll.slice(0, maxChunks) : chunksAll;
-      console.log('[LLM chunking] fallback to deterministic: %d chunks', chunks.length);
+      const errorMsg = err?.message || String(err);
+      console.error('[LLM chunking] FAILED:', errorMsg);
+      
+      if (trace) {
+        trace.step_states.chunking = {
+          ok: false,
+          t_ms: Date.now() - chunkStartTime,
+          error: errorMsg,
+          model_key: llmModelKey,
+          prompt_system: err.prompt_system,
+          prompt_user_preview: err.prompt_user_preview,
+          prompt_user_sha1: err.prompt_user_sha1,
+          raw_output_preview: err.raw_output_preview,
+          raw_output_sha1: err.raw_output_sha1,
+          parse_error: err.parse_error || (errorMsg.includes('invalid_json') ? errorMsg : undefined),
+        };
+      }
+      
+      if (debugTrace) {
+        debugTrace.chunking.error = errorMsg;
+      }
+
+      // NO FALLBACK: chunking failure means ingest failure
+      errors.push({ stage: 'chunking', error: errorMsg });
+      throw new Error(`chunking_failed: ${errorMsg}`);
     }
   } else {
     // Deterministic chunking (optional preprocessing or explicit choice)
@@ -744,6 +972,12 @@ export async function runIngestPipeline(params: {
   let embeddingsWritten = 0;
   let entitiesUpserted = 0;
   let relationsUpserted = 0;
+
+  console.log('[KG][embed] chunk_count=%d embedding_model=%s', chunks.length, embedModel);
+  console.log('[KG][write] writing entities/relations...');
+
+  const embedStartTime = Date.now();
+  const writeStartTime = Date.now();
 
   for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
     const chunk = chunks[chunkIndex];
@@ -810,24 +1044,28 @@ export async function runIngestPipeline(params: {
       ].join('\n');
 
       const llmRes = await runLLM(prompt, {
-        modelKey: llmModelKeyEnforced,
+        modelKey: llmModelKey,
         system,
         temperature: 0,
         maxTokens: 2048,
       });
       llmModelId = llmRes.model;
-      if (llmRes.provider !== 'openrouter') {
-        console.log('[KG][ingest] WARNING provider=%s model=%s (expected openrouter)', llmRes.provider, llmModelId);
-      } else {
-        console.log('[KG][ingest] chat provider=%s model=%s', llmRes.provider, llmModelId);
-      }
+      console.log('[KG][ingest] extraction provider=%s model=%s', llmRes.provider, llmModelId);
 
       parsed = tryParseJsonLoose(llmRes.text);
       if (!parsed || typeof parsed !== 'object') {
-        throw new Error('LLM parse failed');
+        console.error('[KG][ingest] extraction invalid JSON, raw response (first 500 chars):', llmRes.text.slice(0, 500));
+        throw new Error('extraction_invalid_json');
       }
     } catch (err: any) {
-      errors.push({ chunk_index: chunkIndex, stage: 'extract', error: err?.message || String(err) });
+      const errorMsg = err?.message || String(err);
+      
+      // Fail fast on config errors
+      if (errorMsg.includes('provider_key_missing') || errorMsg.includes('model_not_configured')) {
+        throw new Error(`extraction_config_error: ${errorMsg}`);
+      }
+      
+      errors.push({ chunk_index: chunkIndex, stage: 'extract', error: errorMsg });
       continue;
     }
 
@@ -837,12 +1075,20 @@ export async function runIngestPipeline(params: {
       const relsFromRelationships = Array.isArray((parsed as any).relationships) ? (parsed as any).relationships : [];
       const rels = relsFromRelations.length ? relsFromRelations : relsFromRelationships;
 
+      // Check for empty extraction (debugging mode)
+      if (ents.length === 0 && rels.length === 0) {
+        const errorMsg = `extraction_empty: chunk ${chunkIndex} produced 0 entities and 0 relations`;
+        console.warn('[KG][ingest]', errorMsg);
+        errors.push({ chunk_index: chunkIndex, stage: 'extract_empty', error: errorMsg });
+        continue;
+      }
+
       const provenance = {
         ...(typeof (parsed as any).provenance === 'object' ? (parsed as any).provenance : {}),
         doc_id,
         src: src ?? null,
         chunk_index: chunkIndex,
-        llm_model_key: llmModelKeyEnforced,
+        llm_model_key: llmModelKey,
         llm_model_id: llmModelId,
         embed_model: embedModel,
         chunk_id: chunkId,
@@ -854,8 +1100,26 @@ export async function runIngestPipeline(params: {
       entitiesUpserted += committed.entitiesUpserted;
       relationsUpserted += committed.relationsUpserted;
     } catch (err: any) {
-      errors.push({ chunk_index: chunkIndex, stage: 'write_graph', error: err?.message || String(err) });
+      const errorMsg = err?.message || String(err);
+      
+      // Check for AGE-specific errors
+      if (errorMsg.includes('name constant') || errorMsg.includes('ag_catalog')) {
+        console.error('[KG][ingest] AGE write failed:', errorMsg);
+        errors.push({ chunk_index: chunkIndex, stage: 'age_write_failed', error: errorMsg });
+      } else {
+        errors.push({ chunk_index: chunkIndex, stage: 'write_graph', error: errorMsg });
+      }
     }
+  }
+
+  if (debugTrace) {
+    debugTrace.results = {
+      chunks_written: chunksWritten,
+      embeddings_written: embeddingsWritten,
+      entities_upserted: entitiesUpserted,
+      relations_upserted: relationsUpserted,
+      first_error: errors.length > 0 ? errors[0].error : null,
+    };
   }
 
   const response = {
@@ -867,6 +1131,7 @@ export async function runIngestPipeline(params: {
     entities_upserted: entitiesUpserted,
     relations_upserted: relationsUpserted,
     errors,
+    ...(debugTrace ? { debug_trace: debugTrace } : {}),
   };
 
   // keep a small in-memory log of ingest errors for quick visibility
@@ -889,6 +1154,67 @@ export async function runIngestPipeline(params: {
   });
   while (INGEST_DOC_LOG.length > INGEST_DOC_LOG_MAX) INGEST_DOC_LOG.shift();
 
+  console.log('[KG][write] done entities=%d relations=%d', entitiesUpserted, relationsUpserted);
+  
+  if (trace) {
+    trace.step_states.embed = {
+      ok: embeddingsWritten > 0,
+      t_ms: Date.now() - embedStartTime,
+      vectors_count: embeddingsWritten,
+    };
+    trace.step_states.write = {
+      ok: true,
+      t_ms: Date.now() - writeStartTime,
+      entity_count: entitiesUpserted,
+      relation_count: relationsUpserted,
+    };
+  }
+  
+  console.log('[KG_INGEST]', {
+    projectId,
+    graphName: GRAPH_NAME,
+    doc_id,
+    src: src ?? null,
+    entities_upserted: entitiesUpserted,
+    relations_upserted: relationsUpserted,
+    chunks_written: chunksWritten,
+    embeddings_written: embeddingsWritten,
+    errors_count: errors.length,
+  });
+
+  return response;
+}
+
+export async function ingestChatTurnInternal(params: {
+  projectId: string;
+  doc_id: string;
+  src: string;
+  textToIngest: string;
+  user_text?: string;
+  assistant_text?: string;
+  llm_model?: string;
+  debug?: boolean;
+  trace?: any;
+}) {
+  const { projectId, doc_id, src, textToIngest, llm_model, debug, trace } = params;
+  let response: any;
+  try {
+    response = await runIngestPipeline({
+      projectId,
+      doc_id,
+      src,
+      text: textToIngest,
+      llm_model,
+      options: {},
+      debug,
+      trace,
+    });
+  } catch (err: any) {
+    console.error('[KG_INGEST_ERR]', err?.stack ? err.stack.split('\n')[0] : err?.message || err);
+    response = { ok: false, error: 'kg_ingest_failed', message: err?.message || 'chat ingest failed' };
+  }
+
+  // No fallback - broken fallback is worse than none
   return response;
 }
 
@@ -898,6 +1224,15 @@ router.post('/:projectId/kg/ingest', async (req, res) => {
 
   if (!projectId || typeof projectId !== 'string') {
     return res.status(400).json({ ok: false, error: 'projectId is required' });
+  }
+
+  // Validate: model key must NOT contain '/' (provider IDs not allowed)
+  if (llm_model && llm_model.includes('/')) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: 'invalid_model_key_format', 
+      message: `Model key cannot be a provider ID (got: ${llm_model}). Use internal keys like 'kimi-k2-thinking'.` 
+    });
   }
   if (!text || typeof text !== 'string' || !text.trim()) {
     return res.status(400).json({ ok: false, error: 'text is required' });
@@ -932,9 +1267,11 @@ router.post('/:projectId/kg/ingest', async (req, res) => {
   }
 
   try {
+    const debug = Boolean(req.body.debug);
     const response = await runIngestPipeline({
       projectId,
       doc_id,
+      debug,
       src,
       text,
       llm_model,
@@ -943,13 +1280,14 @@ router.post('/:projectId/kg/ingest', async (req, res) => {
     });
     return res.json(response);
   } catch (err: any) {
+    console.error('[KG_INGEST_ERR]', err?.stack ? err.stack.split('\n')[0] : err?.message || err);
     return res.status(500).json({ ok: false, error: err?.message || 'ingest failed' });
   }
 });
 
 router.post('/:projectId/kg/ingest_chat_turn', async (req, res) => {
   const projectId = req.params.projectId;
-  const { turn_id, user_text, assistant_text, src } = req.body || {};
+  const { turn_id, user_text, assistant_text, src, llm_model } = req.body || {};
 
   if (!projectId) {
     return res.status(400).json({ ok: false, error: 'projectId is required' });
@@ -985,17 +1323,19 @@ router.post('/:projectId/kg/ingest_chat_turn', async (req, res) => {
   }
 
   try {
-    const response = await runIngestPipeline({
+    const response = await ingestChatTurnInternal({
       projectId,
       doc_id,
       src: finalSrc,
-      text: textToIngest,
-      options: {},
+      textToIngest,
+      user_text,
+      assistant_text,
+      llm_model,
     });
-    return res.json(response);
+    return res.status(response?.ok === false ? 200 : 200).json(response);
   } catch (err: any) {
-    console.error('[CHAT_INGEST] failed:', err);
-    return res.status(500).json({ ok: false, error: err?.message || 'chat ingest failed' });
+    console.error('[KG_INGEST_ERR]', err?.stack ? err.stack.split('\n')[0] : err?.message || err);
+    return res.status(200).json({ ok: false, error: 'kg_ingest_failed', message: err?.message || 'chat ingest failed' });
   }
 });
 
@@ -1138,10 +1478,78 @@ router.get('/:projectId/agent', async (req, res) => {
 
 router.put('/:projectId/agent', async (req, res) => {
   try {
+    console.log('[SAVE_AGENT] projectId=%s body=%o', req.params.projectId, req.body);
     const saved = await saveAgentConfig({ ...(req.body || {}), id: req.params.projectId });
-    return res.json(saved);
+    console.log('[SAVE_AGENT] success, returning agent config');
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(200).json({ ok: true, agent: saved });
   } catch (err: any) {
+    console.error('[SAVE_AGENT] error:', err?.message || err);
+    res.setHeader('Content-Type', 'application/json');
     return res.status(500).json({ ok: false, error: err?.message || 'failed to save agent config' });
+  }
+});
+
+router.get('/:projectId/runtime-config', async (req, res) => {
+  try {
+    const projectId = req.params.projectId;
+    const { assist_main_agent_id, assist_kg_ingest_agent_id } = await getAssistAssignments(projectId);
+    
+    // Resolve assist main agent
+    let assistMainModel = { provider: 'unknown', model_key: 'not_configured' };
+    if (assist_main_agent_id) {
+      try {
+        const assistAgent = await getAgentConfig(assist_main_agent_id);
+        if (assistAgent?.agent_model) {
+          const modelEntry = MODEL_REGISTRY[assistAgent.agent_model];
+          if (modelEntry) {
+            assistMainModel = { provider: modelEntry.provider, model_key: assistAgent.agent_model };
+          } else {
+            assistMainModel = { provider: 'unknown', model_key: assistAgent.agent_model };
+          }
+        }
+      } catch (err) {
+        console.warn('[RUNTIME_CONFIG] failed to resolve assist main agent:', err);
+      }
+    }
+    
+    // Resolve KG ingest agent
+    let kgIngestModel = { provider: 'unknown', model_key: 'not_configured' };
+    if (assist_kg_ingest_agent_id) {
+      try {
+        const kgAgent = await getAgentConfig(assist_kg_ingest_agent_id);
+        if (kgAgent?.agent_model) {
+          const modelEntry = MODEL_REGISTRY[kgAgent.agent_model];
+          if (modelEntry) {
+            kgIngestModel = { provider: modelEntry.provider, model_key: kgAgent.agent_model };
+          } else {
+            kgIngestModel = { provider: 'unknown', model_key: kgAgent.agent_model };
+          }
+        }
+      } catch (err) {
+        console.warn('[RUNTIME_CONFIG] failed to resolve KG ingest agent:', err);
+      }
+    }
+    
+    // KG chunking model = KG ingest model (no hidden routing)
+    const kgChunkingModel = kgIngestModel;
+    
+    // Embedding model (hardcoded default for now)
+    const embedModel = { provider: 'openrouter', model_key: DEFAULT_EMBED_MODEL };
+    
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(200).json({
+      ok: true,
+      projectId,
+      assist_main_agent: assistMainModel,
+      kg_ingest_agent: kgIngestModel,
+      kg_chunking_model: kgChunkingModel,
+      embed_model: embedModel,
+    });
+  } catch (err: any) {
+    console.error('[RUNTIME_CONFIG] error:', err?.message || err);
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(500).json({ ok: false, error: err?.message || 'failed to load runtime config' });
   }
 });
 

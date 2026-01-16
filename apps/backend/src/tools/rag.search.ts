@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 3 });
+const pool = new Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://liquidaity-user:LiquidAIty@localhost:5433/liquidaity', max: 3 });
 
 export async function ragSearchDirect(embedding: number[], k = 5, w_rec = 0.1, w_sig = 0.1) {
   if (!Array.isArray(embedding) || embedding.length === 0) throw new Error("embedding required");

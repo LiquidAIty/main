@@ -83,7 +83,7 @@ export async function kimiRun(query: string): Promise<string> {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'moonshotai/kimi-k2:free',
+      model: process.env.OPENROUTER_DEFAULT_MODEL || 'moonshotai/kimi-k2-thinking',
       messages: [{ role: 'user', content: query }],
     }),
     timeoutMs: KIMI_TIMEOUT_MS,

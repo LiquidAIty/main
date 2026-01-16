@@ -8,7 +8,7 @@ type ProjectState = {
 };
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: process.env.DATABASE_URL || 'postgresql://liquidaity-user:LiquidAIty@localhost:5433/liquidaity',
   max: 5,
 });
 
@@ -384,8 +384,19 @@ export async function getAssistAssignments(projectId: string): Promise<{
   assist_kg_ingest_agent_id: string | null;
 }> {
   const { clause, params } = projectLookup(projectId);
+  
+  // Check which columns exist in the schema
+  const columns = await getProjectColumns();
+  const hasMainAgent = columns.has('assist_main_agent_id');
+  const hasKgAgent = columns.has('assist_kg_ingest_agent_id');
+  
+  // Build SELECT clause with only existing columns
+  const selectCols: string[] = ['id'];
+  if (hasMainAgent) selectCols.push('assist_main_agent_id');
+  if (hasKgAgent) selectCols.push('assist_kg_ingest_agent_id');
+  
   const { rows } = await pool.query(
-    `SELECT assist_main_agent_id, assist_kg_ingest_agent_id FROM ${PROJECTS_TABLE} WHERE ${clause} LIMIT 1`,
+    `SELECT ${selectCols.join(', ')} FROM ${PROJECTS_TABLE} WHERE ${clause} LIMIT 1`,
     params,
   );
   if (!rows.length) {
@@ -393,8 +404,8 @@ export async function getAssistAssignments(projectId: string): Promise<{
   }
   const row = rows[0];
   return {
-    assist_main_agent_id: row.assist_main_agent_id || null,
-    assist_kg_ingest_agent_id: row.assist_kg_ingest_agent_id || null,
+    assist_main_agent_id: hasMainAgent ? (row.assist_main_agent_id || null) : null,
+    assist_kg_ingest_agent_id: hasKgAgent ? (row.assist_kg_ingest_agent_id || null) : null,
   };
 }
 

@@ -5,7 +5,6 @@ import {
   updateProjectAgent,
   deleteProjectAgent,
   runProjectAgent,
-  getAvailableModels,
   getAgentTypes,
   type ProjectAgent,
   type AgentRunResult,
@@ -67,6 +66,9 @@ export function AgentManager({ projectId, activeTab, onGraphRefresh }: AgentMana
   const [loading, setLoading] = useState(false);
   const [showNewAgentModal, setShowNewAgentModal] = useState(false);
   
+  // Model registry from backend
+  const [availableModels, setAvailableModels] = useState<Array<{key: string; label: string; provider: string}>>([]);
+  
   // New agent form
   const [newAgentName, setNewAgentName] = useState('');
   const [newAgentKind, setNewAgentKind] = useState<'openai_main_chat' | 'openrouter_agent'>('openai_main_chat');
@@ -85,6 +87,18 @@ export function AgentManager({ projectId, activeTab, onGraphRefresh }: AgentMana
   const [testInput, setTestInput] = useState('');
   const [testRunning, setTestRunning] = useState(false);
   const [testResult, setTestResult] = useState<AgentRunResult | null>(null);
+
+  // Load model registry on mount
+  useEffect(() => {
+    fetch('/api/projects/models')
+      .then(res => res.json())
+      .then(data => {
+        if (data.ok && Array.isArray(data.models)) {
+          setAvailableModels(data.models);
+        }
+      })
+      .catch(err => console.error('[AgentManager] Failed to load models:', err));
+  }, []);
 
   // Load agents when project changes
   useEffect(() => {
@@ -108,7 +122,7 @@ export function AgentManager({ projectId, activeTab, onGraphRefresh }: AgentMana
       setConstraintsText(nextConstraints);
       setIoSchemaText(nextIoSchema);
       setMemoryPolicyText(nextMemoryPolicy);
-      setSelectedModel(selectedAgent.model || (selectedAgent.agent_type === 'llm_chat' ? 'gpt-5.1-chat-latest' : 'deepseek-chat'));
+      setSelectedModel(selectedAgent.model || (selectedAgent.agent_type === 'llm_chat' ? 'gpt-5.1-chat-latest' : 'kimi-k2-thinking'));
       setTemperature(selectedAgent.temperature ?? 0);
       setMaxTokens(selectedAgent.max_tokens ?? 2048);
     }
@@ -156,7 +170,7 @@ export function AgentManager({ projectId, activeTab, onGraphRefresh }: AgentMana
 
       const isMainChat = newAgentKind === 'openai_main_chat';
       const agentType: 'kg_ingest' | 'kg_read' | 'llm_chat' = isMainChat ? 'llm_chat' : 'kg_ingest';
-      const model = isMainChat ? 'gpt-5.1-chat-latest' : 'deepseek-chat';
+      const model = isMainChat ? 'gpt-5.1-chat-latest' : 'kimi-k2-thinking';
       const agent = await createProjectAgent(projectId, {
         name: newAgentName,
         agent_type: agentType,
@@ -373,18 +387,13 @@ export function AgentManager({ projectId, activeTab, onGraphRefresh }: AgentMana
                 borderRadius: '4px',
               }}
             >
-              {selectedAgent?.agent_type === 'llm_chat' ? (
-                <>
-                  <option value="gpt-5.1-chat-latest">GPT-5.1 Chat Latest (OpenAI)</option>
-                  <option value="gpt-5.2-chat-latest">GPT-5.2 Chat Latest (OpenAI)</option>
-                </>
-              ) : (
-                <>
-                  <option value="deepseek-chat">DeepSeek Chat (OpenRouter)</option>
-                  <option value="moonshotai/kimi-k2:free">Kimi K2 Free (OpenRouter)</option>
-                  <option value="microsoft/phi-4">Phi-4 (OpenRouter)</option>
-                </>
-              )}
+              {availableModels
+                .filter(m => selectedAgent?.agent_type === 'llm_chat' ? m.provider === 'openai' : m.provider === 'openrouter')
+                .map(m => (
+                  <option key={m.key} value={m.key}>
+                    {m.label} ({m.provider === 'openai' ? 'OpenAI' : 'OpenRouter'})
+                  </option>
+                ))}
             </select>
           </div>
 

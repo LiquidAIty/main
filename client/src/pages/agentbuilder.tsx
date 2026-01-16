@@ -5,7 +5,7 @@ import { callBossAgent, getAgentConfig, listProjects, saveAgentConfig, solRun } 
 import { AgentManager } from "../components/AgentManager";
 
 // AgentPage (MVP): left icon rail + main chat + right tabs (Plan, Links, Knowledge, Dashboard)
-// No external deps. Persists per-project to localStorage. Includes CoachBar and mini force-graph.
+// No external deps. Persists per-project to localStorage. Includes mini force-graph.
 
 const C = {
   primary: "#4FA2AD", // teal
@@ -21,23 +21,6 @@ const C = {
 // ---- utils ----
 function clamp(x: number, a: number, b: number) {
   return Math.min(b, Math.max(a, x));
-}
-
-function jget<T>(k: string, fallback: T): T {
-  try {
-    const v = localStorage.getItem(k);
-    return v ? (JSON.parse(v) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function jset<T>(k: string, v: T) {
-  try {
-    localStorage.setItem(k, JSON.stringify(v));
-  } catch {
-    // ignore
-  }
 }
 
 const uid = () => Math.random().toString(36).slice(2, 8);
@@ -68,6 +51,9 @@ type AgentPrompt = {
   objectives: string;
   style: string;
 };
+
+type WorkbenchOutputMap = Record<"Plan" | "Links" | "Knowledge" | "Dashboard", string>;
+type WorkbenchRating = { stars: number; note: string };
 
 // helper: load all project-local state (defaults only; real data is fetched from backend)
 function loadProjectState(_projectId: string, _mode: "assist" | "agents" = "assist") {
@@ -153,7 +139,12 @@ function MiniForce({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pos = useRef<Record<string, { x: number; y: number; vx: number; vy: number }>>({});
-  const size = 2; // node radius
+  const baseRadius = 3.5;
+  const bgColor = "#0b0d10";
+  const nodeCold = "#6c7380";
+  const nodeWarm = "#5ee8a6";
+  const nodeGlow = "#8ae2ff";
+  const edgeColor = "rgba(94, 232, 166, 0.6)";
 
   useEffect(() => {
     const cvs = canvasRef.current!;
@@ -212,8 +203,10 @@ function MiniForce({
       });
       // draw
       ctx.clearRect(0, 0, W, W);
-      ctx.strokeStyle = C.border;
-      ctx.lineWidth = 1;
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, W, W);
+      ctx.strokeStyle = edgeColor;
+      ctx.lineWidth = 0.9;
       edges.forEach((e) => {
         const a = P[e.a];
         const b = P[e.b];
@@ -224,12 +217,22 @@ function MiniForce({
           ctx.stroke();
         }
       });
-      ctx.fillStyle = C.primary;
-      nodes.forEach((n) => {
+      nodes.forEach((n, idx) => {
         const a = P[n.id];
+        const r = baseRadius + ((n.id.length + idx) % 4);
+        const fill =
+          idx % 5 === 0
+            ? nodeGlow
+            : idx % 3 === 0
+              ? nodeWarm
+              : nodeCold;
+        ctx.fillStyle = fill;
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = fill;
         ctx.beginPath();
-        ctx.arc(a.x, a.y, size, 0, Math.PI * 2);
+        ctx.arc(a.x, a.y, r, 0, Math.PI * 2);
         ctx.fill();
+        ctx.shadowBlur = 0;
       });
       raf = requestAnimationFrame(tick);
     }
@@ -245,7 +248,7 @@ function MiniForce({
       style={{
         width: "100%",
         height: 320,
-        background: C.bg,
+        background: bgColor,
         border: `1px solid ${C.border}`,
         borderRadius: 8,
       }}
@@ -448,7 +451,12 @@ export default function AgentBuilder() {
   const [panelOpen, setPanelOpen] = useState(true);
   const [panelWidth, setPanelWidth] = useState(480);
   const [mode, setMode] = useState<"assist" | "agents">("assist");
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
   const messagesByScopeRef = useRef<Record<string, { role: "assistant" | "user"; text: string }[]>>({});
+  const [projectLoading, setProjectLoading] = useState(false);
+  const [projectSaveStatus, setProjectSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [projectSaveError, setProjectSaveError] = useState<string | null>(null);
+  const [assistStarted, setAssistStarted] = useState(true);
   const setActiveProjectWithUrl = useCallback(
     (projectId: string) => {
       const currentSearch = window.location.search.replace(/^\?/, "");
@@ -470,7 +478,7 @@ export default function AgentBuilder() {
   const tabs = ["Plan", "Links", "Knowledge", "Dashboard"] as const;
   const activeTabs = tabs;
 
-  const [tab, setTab] = useState<string>("Plan");
+  const [tab, setTab] = useState<string>("Knowledge");
   const [openDrawer, setOpenDrawer] = useState<
     null | "project" | "apps" | "settings" | "admin"
   >(null);
@@ -523,8 +531,15 @@ export default function AgentBuilder() {
 
   // Reset tab when mode changes
   useEffect(() => {
-    setTab(activeTabs[0]);
+    setTab(mode === "assist" ? "Knowledge" : "Plan");
   }, [mode]);
+
+  // Enforce panel visibility by mode
+  useEffect(() => {
+    if (!panelOpen) {
+      setPanelOpen(true);
+    }
+  }, [mode, panelOpen]);
 
   // Load agent config when in agents mode and activeProject changes
   useEffect(() => {
@@ -553,24 +568,54 @@ export default function AgentBuilder() {
   const [graphResult, setGraphResult] = useState<any[]>([]);
   const [graphError, setGraphError] = useState<string | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
+  const [kgDebugTrace, setKgDebugTrace] = useState<any>(null);
+  const [lastIngestTrace, setLastIngestTrace] = useState<any>(null);
+  const [runtimeConfig, setRuntimeConfig] = useState<any>(null);
   const scopeKey = `${mode}:${activeProject || ""}`;
 
+  // Fetch runtime config when project changes (Agent Builder mode only)
   useEffect(() => {
-    const scoped = messagesByScopeRef.current[scopeKey];
-    if (DEBUG) {
-      console.log("[AB] scope sync effect (scope change)", { scopeKey, hasScoped: Boolean(scoped), scopedSize: scoped?.length });
+    if (mode === 'agents' && activeProject) {
+      fetch(`/api/projects/${activeProject}/runtime-config`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.ok) {
+            setRuntimeConfig(data);
+          }
+        })
+        .catch(err => console.error('[RUNTIME_CONFIG] fetch failed:', err));
     }
-    setMessages(scoped ? scoped : []);
-  }, [scopeKey]);
+  }, [mode, activeProject]);
 
-  useEffect(() => {
-    const current = messagesByScopeRef.current[scopeKey];
-    if (current === messages) return;
-    messagesByScopeRef.current[scopeKey] = messages;
-    if (DEBUG) {
-      console.log("[AB] write scope map", { scopeKey, msgSize: messages.length });
+  const runGraphQuery = async (query?: string) => {
+    const q = (query ?? cypher).trim();
+    if (!q) {
+      setGraphError("Enter a Cypher query first.");
+      return;
     }
-  }, [messages, scopeKey]);
+    setGraphError(null);
+    setGraphLoading(true);
+    try {
+      const res = await fetch(`/api/projects/${activeProject}/kg/query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cypher: q, params: { projectId: activeProject } }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok) {
+        const msg =
+          (data && typeof data.error === "string" && data.error) ||
+          `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+      const rows = Array.isArray(data.rows) ? data.rows : [];
+      setGraphResult(rows);
+    } catch (err: any) {
+      setGraphError(err?.message || "Graph error");
+    } finally {
+      setGraphLoading(false);
+    }
+  };
 
   // When switching projects, reload all per-project state from storage
   useEffect(() => {
@@ -603,6 +648,50 @@ export default function AgentBuilder() {
     }
     void refreshProjects();
   }, [refreshProjects]);
+
+  const loadProjectSubgraph = useCallback(() => {
+    const q = [
+      "MATCH (a { project_id: $projectId })-[r { project_id: $projectId }]->(b { project_id: $projectId })",
+      "RETURN a,b,r",
+      "LIMIT 200",
+    ].join(" ");
+    setCypher(q);
+    runGraphQuery(q);
+  }, [runGraphQuery]);
+
+  // Auto-load project subgraph when Knowledge tab opens or project changes
+  useEffect(() => {
+    if (tab === 'Knowledge' && activeProject && panelOpen) {
+      loadProjectSubgraph();
+    }
+  }, [tab, activeProject, panelOpen, loadProjectSubgraph]);
+
+  // Poll for last ingest trace when Dashboard tab is active
+  useEffect(() => {
+    if (tab !== 'Dashboard' || !activeProject) return;
+    
+    const fetchIngestTrace = async () => {
+      try {
+        const res = await fetch(`/api/projects/${activeProject}/kg/last-trace`);
+        const data = await res.json();
+        if (data.ok && data.trace) {
+          setLastIngestTrace(data.trace);
+        }
+      } catch (err) {
+        console.error('[Dashboard] Failed to fetch ingest trace:', err);
+      }
+    };
+    
+    fetchIngestTrace();
+    const interval = setInterval(fetchIngestTrace, 3000); // Poll every 3s
+    return () => clearInterval(interval);
+  }, [tab, activeProject]);
+
+  const markAssistStarted = useCallback(() => {
+    setAssistStarted(true);
+    setPanelOpen(true);
+    setTab("Knowledge");
+  }, []);
 
   // Load boss agent prompt config when project changes
   useEffect(() => {
@@ -715,6 +804,26 @@ export default function AgentBuilder() {
         assistantText = fallback.text;
       }
       setMessages((prev) => [...prev, { role: "assistant", text: assistantText }]);
+      if (assistantText) {
+        markAssistStarted();
+      }
+      if (mode === "assist" && activeProject && userText && assistantText) {
+        void (async () => {
+          try {
+            await fetch(`/api/projects/${activeProject}/kg/ingest_chat_turn`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                user_text: userText,
+                assistant_text: assistantText,
+                src: "chat.auto",
+              }),
+            });
+          } catch (err) {
+            console.warn("[KG][auto_ingest] failed", err);
+          }
+        })();
+      }
     } catch (error: any) {
       setMessages((prev) => [
         ...prev,
@@ -771,35 +880,6 @@ export default function AgentBuilder() {
 
   const reject = (id: string) =>
     setLinks((ls) => ls.filter((x) => x.id !== id));
-
-  const runGraphQuery = async () => {
-    if (!cypher.trim()) {
-      setGraphError("Enter a Cypher query first.");
-      return;
-    }
-    setGraphError(null);
-    setGraphLoading(true);
-    try {
-      const res = await fetch(`/api/projects/${activeProject}/kg/query`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cypher, params: { projectId: activeProject } }),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.ok) {
-        const msg =
-          (data && typeof data.error === "string" && data.error) ||
-          `HTTP ${res.status}`;
-        throw new Error(msg);
-      }
-      const rows = Array.isArray(data.rows) ? data.rows : [];
-      setGraphResult(rows);
-    } catch (err: any) {
-      setGraphError(err?.message || "Graph error");
-    } finally {
-      setGraphLoading(false);
-    }
-  };
 
   const graphViz = ageRowsToGraph(graphResult);
 
@@ -916,7 +996,7 @@ export default function AgentBuilder() {
         </div>
 
         {/* RIGHT panel */}
-        {panelOpen && (
+        {panelOpen && (mode === "agents" || assistStarted) && (
           <aside
             className="h-full relative"
             style={{
@@ -1002,6 +1082,30 @@ export default function AgentBuilder() {
 
                   {tab === "Links" && (
                     <div className="space-y-3">
+                      {/* Runtime Wiring - resolved config for this project */}
+                      <div
+                        className="text-xs p-2 rounded"
+                        style={{
+                          background: C.bg,
+                          border: `1px solid ${C.border}`,
+                          marginBottom: 12,
+                        }}
+                      >
+                        <div style={{ color: C.primary, fontWeight: 600, marginBottom: 4 }}>Runtime Wiring</div>
+                        {runtimeConfig ? (
+                          <div style={{ color: C.neutral, fontSize: 10, lineHeight: 1.5 }}>
+                            <div>Assist Main: {runtimeConfig.assist_main_agent.provider}/{runtimeConfig.assist_main_agent.model_key}</div>
+                            <div>KG Ingest: {runtimeConfig.kg_ingest_agent.provider}/{runtimeConfig.kg_ingest_agent.model_key}</div>
+                            <div>KG Chunking: {runtimeConfig.kg_chunking_model.provider}/{runtimeConfig.kg_chunking_model.model_key}</div>
+                            <div>Embedding: {runtimeConfig.embed_model.provider}/{runtimeConfig.embed_model.model_key}</div>
+                            <div style={{ opacity: 0.7 }}>Graph: graph_liq</div>
+                          </div>
+                        ) : (
+                          <div style={{ color: '#f87171', fontSize: 10 }}>Failed to resolve runtime config - check agent assignments</div>
+                        )}
+                      </div>
+
+                      {/* Sources/Links */}
                       {links.map((l) => (
                         <div
                           key={l.id}
@@ -1051,123 +1155,154 @@ export default function AgentBuilder() {
                           </div>
                         </div>
                       ))}
-                      {links.length === 0 && (
-                        <div>
-                          No links yet.
-                        </div>
-                      )}
                     </div>
                   )}
 
                   {tab === "Knowledge" && (
                     <div className="space-y-3">
-                      <div
-                        className="text-xs font-semibold mb-2"
-                        style={{ color: C.text }}
-                      >
-                        Graph View (Apache AGE)
+                      {/* Force-directed graph visualization */}
+                      <div style={{ display: "flex", justifyContent: "center" }}>
+                        <MiniForce nodes={graphViz.nodes} edges={graphViz.edges} />
                       </div>
-                      <MiniForce nodes={graphViz.nodes} edges={graphViz.edges} />
-                      <div
-                        className="flex items-center justify-between text-xs"
-                        style={{ opacity: 0.8 }}
-                      >
-                        <span>
-                          Nodes: {graphViz.nodes.length} · Edges: {graphViz.edges.length}
-                        </span>
-                        <button
-                          onClick={() => {
-                            setCypher(
-                              "MATCH (a:Entity { project_id: $projectId })-[r:REL { project_id: $projectId }]->(b:Entity { project_id: $projectId }) RETURN a,b,r LIMIT 100",
-                            );
-                            setTimeout(() => runGraphQuery(), 100);
-                          }}
-                          className="px-2 py-1 rounded text-[11px]"
-                          style={{
-                            border: `1px solid ${C.primary}`,
-                            background: "rgba(79,162,173,0.18)",
-                            color: C.text,
-                          }}
-                        >
-                          Load project subgraph
-                        </button>
-                      </div>
-                      {graphViz.nodes.length === 0 && (
-                        <div className="text-xs" style={{ opacity: 0.8, padding: "12px 0" }}>
-                          No graph data loaded. Click "Load project subgraph" or run a Cypher query below.
-                        </div>
-                      )}
 
-                      <div className="border-t pt-3" style={{ borderColor: C.border }}>
-                        <div
-                          className="text-xs font-semibold mb-2"
-                          style={{ color: C.text }}
-                        >
-                          Knowledge Graph for this Project (Cypher)
-                        </div>
-                        <textarea
-                          value={cypher}
-                          onChange={(e) => setCypher(e.target.value)}
-                          rows={4}
-                          className="w-full text-xs resize-y"
-                          style={{
-                            background: C.bg,
-                            border: `1px solid ${C.border}`,
-                            borderRadius: 6,
-                            padding: "8px 10px",
-                            color: C.text,
-                          }}
-                        />
-                        <div className="flex items-center gap-3 mt-2">
-                          <button
-                            onClick={runGraphQuery}
-                            disabled={graphLoading}
-                            className="px-3 py-1 text-xs rounded"
-                            style={{
-                              border: `1px solid ${C.border}`,
-                              color: C.text,
-                              background: graphLoading ? "rgba(255,255,255,0.06)" : "transparent",
-                              opacity: graphLoading ? 0.7 : 1,
-                            }}
-                          >
-                            {graphLoading ? "Running..." : "Run"}
-                          </button>
-                          <div className="text-[11px]" style={{ color: C.neutral }}>
-                            Endpoint: /api/projects/{activeProject}/kg/query
-                          </div>
-                        </div>
-                        {graphError && (
-                          <div
-                            className="mt-2 text-[11px]"
-                            style={{ color: "#f87171" }}
-                          >
-                            {graphError}
-                          </div>
-                        )}
-                        <pre
-                          className="mt-2 text-[10px] max-h-48 overflow-auto rounded"
-                          style={{
-                            background: C.bg,
-                            border: `1px solid ${C.border}`,
-                            padding: "8px",
-                            color: C.neutral,
-                          }}
-                        >
-                          {graphResult.length ? JSON.stringify(graphResult, null, 2) : "Results will appear here"}
-                        </pre>
-                      </div>
+                      {/* Cypher console removed - graph auto-loads */}
                     </div>
                   )}
 
                   {tab === "Dashboard" && (
-                    <div
-                      className="grid"
-                      style={{ gridTemplateColumns: "1fr 1fr", gap: 12 }}
-                    >
-                      <StatCard title="Plan items" value={plan.length.toString()} />
-                      <StatCard title="Approved" value={approved.length.toString()} />
-                      <StatCard title="Links" value={links.length.toString()} />
-                      <StatCard title="Accepted" value={accepted.length.toString()} />
+                    <div className="space-y-3">
+                      {/* KG Ingest Results - auto-populated from Assist chat */}
+                      <div className="space-y-2">
+                        <div
+                          className="text-xs font-semibold"
+                          style={{ color: C.text }}
+                        >
+                          Last KG Ingest
+                        </div>
+                        <div className="text-xs" style={{ color: C.neutral, marginBottom: 8 }}>
+                          Auto-populated when Assist chat triggers ingest.
+                        </div>
+                        {lastIngestTrace ? (
+                            <div
+                              className="text-xs space-y-2 p-3 rounded"
+                              style={{
+                                background: C.bg,
+                                border: `1px solid ${C.border}`,
+                                maxHeight: 400,
+                                overflow: 'auto',
+                              }}
+                            >
+                              {lastIngestTrace.error ? (
+                                <div style={{ color: '#f87171' }}>
+                                  <div style={{ fontWeight: 600, marginBottom: 4 }}>❌ Ingest Failed</div>
+                                  <div style={{ marginBottom: 4 }}>Step: {lastIngestTrace.error.step}</div>
+                                  <div style={{ marginBottom: 4 }}>Code: {lastIngestTrace.error.code}</div>
+                                  <div style={{ marginBottom: 8 }}>{lastIngestTrace.error.message}</div>
+                                  
+                                  {lastIngestTrace.step_states.chunking && !lastIngestTrace.step_states.chunking.ok && (
+                                    <div style={{ marginTop: 12, padding: 8, background: '#1a1a1a', borderRadius: 4, fontSize: '11px' }}>
+                                      <div style={{ fontWeight: 600, marginBottom: 4, color: '#f87171' }}>CHUNKING EVIDENCE</div>
+                                      {lastIngestTrace.step_states.chunking.model_key && (
+                                        <div style={{ marginBottom: 4 }}>Model: {lastIngestTrace.step_states.chunking.model_key}</div>
+                                      )}
+                                      {lastIngestTrace.step_states.chunking.prompt_user_sha1 && (
+                                        <div style={{ marginBottom: 4 }}>Prompt SHA1: {lastIngestTrace.step_states.chunking.prompt_user_sha1.slice(0, 12)}...</div>
+                                      )}
+                                      {lastIngestTrace.step_states.chunking.raw_output_sha1 && (
+                                        <div style={{ marginBottom: 4 }}>Output SHA1: {lastIngestTrace.step_states.chunking.raw_output_sha1.slice(0, 12)}...</div>
+                                      )}
+                                      {lastIngestTrace.step_states.chunking.parse_error && (
+                                        <div style={{ marginBottom: 4, color: '#fca5a5' }}>Parse Error: {lastIngestTrace.step_states.chunking.parse_error}</div>
+                                      )}
+                                      {lastIngestTrace.step_states.chunking.raw_output_preview && (
+                                        <div style={{ marginTop: 8 }}>
+                                          <div style={{ fontWeight: 600, marginBottom: 4 }}>Raw Output Preview:</div>
+                                          <pre style={{ 
+                                            whiteSpace: 'pre-wrap', 
+                                            wordBreak: 'break-all',
+                                            fontSize: '10px',
+                                            maxHeight: 200,
+                                            overflow: 'auto',
+                                            background: '#0a0a0a',
+                                            padding: 8,
+                                            borderRadius: 4,
+                                            margin: 0
+                                          }}>{lastIngestTrace.step_states.chunking.raw_output_preview}</pre>
+                                        </div>
+                                      )}
+                                      {lastIngestTrace.step_states.chunking.prompt_user_preview && (
+                                        <div style={{ marginTop: 8 }}>
+                                          <div style={{ fontWeight: 600, marginBottom: 4 }}>Prompt Preview:</div>
+                                          <pre style={{ 
+                                            whiteSpace: 'pre-wrap', 
+                                            wordBreak: 'break-all',
+                                            fontSize: '10px',
+                                            maxHeight: 200,
+                                            overflow: 'auto',
+                                            background: '#0a0a0a',
+                                            padding: 8,
+                                            borderRadius: 4,
+                                            margin: 0
+                                          }}>{lastIngestTrace.step_states.chunking.prompt_user_preview}</pre>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <>
+                                  <div>
+                                    <div style={{ color: C.primary, fontWeight: 600 }}>✅ LAST INGEST</div>
+                                    <div style={{ color: C.neutral }}>Time: {new Date(lastIngestTrace.created_at).toLocaleString()}</div>
+                                    <div style={{ color: C.neutral }}>Trace ID: {lastIngestTrace.trace_id}</div>
+                                    <div style={{ color: C.neutral }}>Model: {lastIngestTrace.model_key}</div>
+                                    <div style={{ color: C.neutral }}>Source: {lastIngestTrace.src}</div>
+                                  </div>
+                                  <div style={{ marginTop: 8 }}>
+                                    <div style={{ color: C.primary, fontWeight: 600 }}>STEP CHECKSUMS</div>
+                                    <div style={{ color: C.neutral }}>Start: {lastIngestTrace.step_states.start?.ok ? '✅' : '❌'}</div>
+                                    {lastIngestTrace.step_states.chunking && (
+                                      <>
+                                        <div style={{ color: C.neutral }}>Chunking: {lastIngestTrace.step_states.chunking.ok ? '✅' : '❌'} {lastIngestTrace.step_states.chunking.chunk_count ? `(${lastIngestTrace.step_states.chunking.chunk_count} chunks)` : ''}</div>
+                                        {lastIngestTrace.step_states.chunking.ok && (
+                                          <div style={{ marginLeft: 16, marginTop: 4, fontSize: '11px', color: C.neutral }}>
+                                            {lastIngestTrace.step_states.chunking.model_key && (
+                                              <div>Model: {lastIngestTrace.step_states.chunking.model_key}</div>
+                                            )}
+                                            {lastIngestTrace.step_states.chunking.prompt_user_sha1 && (
+                                              <div>Prompt SHA1: {lastIngestTrace.step_states.chunking.prompt_user_sha1.slice(0, 12)}...</div>
+                                            )}
+                                            {lastIngestTrace.step_states.chunking.raw_output_sha1 && (
+                                              <div>Output SHA1: {lastIngestTrace.step_states.chunking.raw_output_sha1.slice(0, 12)}...</div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </>
+                                    )}
+                                    {lastIngestTrace.step_states.embed && (
+                                      <div style={{ color: C.neutral }}>Embed: {lastIngestTrace.step_states.embed.ok ? '✅' : '❌'} {lastIngestTrace.step_states.embed.vectors_count ? `(${lastIngestTrace.step_states.embed.vectors_count} vectors)` : ''}</div>
+                                    )}
+                                    {lastIngestTrace.step_states.write && (
+                                      <div style={{ color: C.neutral }}>Write: {lastIngestTrace.step_states.write.ok ? '✅' : '❌'} {lastIngestTrace.step_states.write.entity_count ? `(${lastIngestTrace.step_states.write.entity_count} entities, ${lastIngestTrace.step_states.write.relation_count} relations)` : ''}</div>
+                                    )}
+                                    {lastIngestTrace.step_states.done && (
+                                      <div style={{ color: lastIngestTrace.step_states.done.ok ? '#10b981' : '#f87171', fontWeight: 600 }}>
+                                        Done: {lastIngestTrace.step_states.done.ok ? '✅' : '❌'} ({lastIngestTrace.step_states.done.t_ms}ms)
+                                        {lastIngestTrace.step_states.done.entity_count !== undefined && (
+                                          <div style={{ fontWeight: 400 }}>Entities: {lastIngestTrace.step_states.done.entity_count}, Relations: {lastIngestTrace.step_states.done.relation_count}, Chunks: {lastIngestTrace.step_states.done.chunk_count}</div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                        ) : (
+                          <div className="text-xs" style={{ color: C.neutral, fontStyle: 'italic' }}>
+                            No ingest activity yet. Send a chat message to trigger auto-ingest.
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </>
@@ -1223,12 +1358,17 @@ export default function AgentBuilder() {
               </button>
             </div>
             <div className="space-y-2">
+              {!Array.isArray(projects) && (
+                <div className="text-xs" style={{ color: C.neutral }}>
+                  No projects available.
+                </div>
+              )}
               {projectsError && (
                 <div className="text-xs" style={{ color: C.neutral }}>
                   {projectsError}
                 </div>
               )}
-              {projects.map((project) => (
+              {(Array.isArray(projects) ? projects : []).map((project) => (
                 <button
                   key={project.id}
                   onClick={() => {
@@ -1262,7 +1402,7 @@ export default function AgentBuilder() {
                 </button>
               ))}
 
-              {projects.length === 0 && !projectsError && (
+              {Array.isArray(projects) && projects.length === 0 && !projectsError && (
                 <div className="text-xs" style={{ color: C.neutral }}>
                   No projects available.
                 </div>
