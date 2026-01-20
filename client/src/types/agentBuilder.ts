@@ -6,6 +6,7 @@ export interface AgentCard {
   slug?: string | null;
   status?: string | null;
   hasAgentConfig: boolean;
+  project_type?: 'assist' | 'agent';
 }
 
 export interface AgentIOSchema {

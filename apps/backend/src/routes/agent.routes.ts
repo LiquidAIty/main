@@ -14,6 +14,8 @@ import { resolveModel } from '../llm/models.config';
 import { runLLM } from '../llm/client';
 import { ingestChatTurnInternal } from './projects.routes';
 import { createTrace, storeTrace } from '../services/ingestTrace';
+import { captureProbability } from '../lib/receiptCapture';
+import { resolveKgIngestAgent } from '../services/resolveAgents';
 
 export const agentRoutes = Router();
 
@@ -32,56 +34,38 @@ async function resolveAssistMainAgent(projectId: string) {
   }
 
   const systemParts: string[] = [];
-  if (agent.role_text?.trim()) systemParts.push(agent.role_text.trim());
-  if (agent.goal_text?.trim()) systemParts.push(`Goal: ${agent.goal_text.trim()}`);
-  if (agent.constraints_text?.trim()) systemParts.push(`Constraints:\n${agent.constraints_text.trim()}`);
-  if (agent.memory_policy_text?.trim()) systemParts.push(`Memory Policy:\n${agent.memory_policy_text.trim()}`);
-  if (agent.prompt_template?.trim()) systemParts.push(agent.prompt_template.trim());
+  if (agent.prompt_template?.trim()) {
+    systemParts.push(agent.prompt_template.trim());
+  } else {
+    if (agent.role_text?.trim()) systemParts.push(agent.role_text.trim());
+    if (agent.goal_text?.trim()) systemParts.push(agent.goal_text.trim());
+    if (agent.constraints_text?.trim()) systemParts.push(agent.constraints_text.trim());
+    if (agent.memory_policy_text?.trim()) systemParts.push(agent.memory_policy_text.trim());
+  }
 
   const systemPrompt = systemParts.join('\n\n').trim();
-  const modelKey = agent.model || process.env.DEFAULT_MODEL || 'gpt-5-nano';
-
-  const systemPromptFinal = systemPrompt
-    ? `${systemPrompt}\n\nYou can store and retrieve info for this project when Knowledge Graph ingest is enabled.`
-    : 'You can store and retrieve info for this project when Knowledge Graph ingest is enabled.';
-
-  return { agent, systemPrompt: systemPromptFinal, modelKey };
-}
-
-async function resolveKgIngestAgent(projectId: string) {
-  const { assist_kg_ingest_agent_id } = await getAssistAssignments(projectId);
-  let agent = null;
-  if (assist_kg_ingest_agent_id) {
-    agent = await getProjectAgent(assist_kg_ingest_agent_id);
+  const modelKey = agent.model;
+  if (!modelKey || !String(modelKey).trim()) {
+    console.error('[ASSIST_CHAT] missing model on assist main agent', {
+      projectId,
+      agent_id: agent.agent_id,
+    });
+    throw new Error('assist_main_agent_missing_model');
   }
-  if (!agent) {
-    const agents = await listProjectAgents(projectId);
-    agent =
-      agents.find(
-        (a) =>
-          a.agent_type === 'kg_ingest' ||
-          a.name?.toLowerCase() === 'kg ingest' ||
-          a.name?.toLowerCase() === 'knowledge ingest',
-      ) || null;
-  }
-  if (!agent) return null;
-
-  const systemParts: string[] = [];
-  if (agent.role_text?.trim()) systemParts.push(agent.role_text.trim());
-  if (agent.goal_text?.trim()) systemParts.push(`Goal: ${agent.goal_text.trim()}`);
-  if (agent.constraints_text?.trim()) systemParts.push(`Constraints:\n${agent.constraints_text.trim()}`);
-  if (agent.memory_policy_text?.trim()) systemParts.push(`Memory Policy:\n${agent.memory_policy_text.trim()}`);
-  if (agent.prompt_template?.trim()) systemParts.push(agent.prompt_template.trim());
-  const systemPrompt = systemParts.join('\n\n').trim();
-  const modelKey = agent.model || process.env.OPENROUTER_DEFAULT_KG_MODEL_KEY || 'kimi-k2-thinking';
-
-  // Validate: model key must NOT contain '/' (provider IDs not allowed)
   if (modelKey.includes('/')) {
-    throw new Error(`invalid_model_key_format: model key cannot be a provider ID (got: ${modelKey}). Use internal keys like 'kimi-k2-thinking'.`);
+    console.error('[ASSIST_CHAT] invalid model key format', {
+      projectId,
+      agent_id: agent.agent_id,
+      modelKey,
+    });
+    throw new Error(
+      `invalid_model_key_format: model key cannot be a provider ID (got: ${modelKey}). Use internal keys like 'kimi-k2-thinking'.`,
+    );
   }
 
-  return { agent, modelKey, systemPrompt, provider: 'openrouter' as const };
+  return { agent, systemPrompt, modelKey };
 }
+
 
 agentRoutes.post('/boss', async (req, res) => {
   const body = req.body || {};
@@ -119,18 +103,23 @@ agentRoutes.post('/boss', async (req, res) => {
       return res.status(502).json({ ok: false, error: 'model_resolution_failed', message: err?.message || 'model resolution failed' });
     }
 
-    console.log('[ASSIST_CHAT]', {
+    console.log('[ASSIST_CHAT] CONFIG RESOLUTION:', {
       projectId: project,
       assist_main_agent_id: resolved.agent.agent_id,
       agent_name: resolved.agent.name,
+      agent_type: resolved.agent.agent_type,
       model_key: resolved.modelKey,
       provider: modelEntry.provider,
-      system_prompt_attached: Boolean(resolved.systemPrompt),
-      system_prompt_preview: (resolved.systemPrompt || '').slice(0, 60),
+      temperature: resolved.agent.temperature,
+      max_tokens: resolved.agent.max_tokens,
+      system_prompt_length: (resolved.systemPrompt || '').length,
+      system_prompt_preview: (resolved.systemPrompt || '').slice(0, 80),
+      system_prompt_hash: require('crypto').createHash('sha256').update(resolved.systemPrompt || '').digest('hex').substring(0, 12)
     });
 
     let llmRes;
     try {
+      console.log('[RUNTIME_MODEL] role=assist_chat projectId=%s agent_id=%s provider=%s model_key=%s provider_model_id=%s', project, resolved.agent.agent_id, modelEntry.provider, resolved.modelKey, modelEntry.id);
       llmRes = await runLLM(userText, {
         modelKey: resolved.modelKey,
         temperature: resolved.agent.temperature ?? undefined,
@@ -147,7 +136,13 @@ agentRoutes.post('/boss', async (req, res) => {
       return res.status(502).json({ ok: false, error: 'empty_assistant_reply', message: 'assistant returned empty text' });
     }
 
-    // Fire-and-forget ingest with trace
+    // Capture probability (fire-and-forget)
+    void captureProbability({
+      projectId: project,
+      outputText: finalText
+    }).catch(err => console.error('[ASSIST_CHAT] probability capture failed:', err));
+
+    // Fire-and-forget KG ingest with trace
     void (async () => {
       const doc_id = `chat:${Date.now()}`;
       const src = `assist.${ingestResolved.agent?.name || 'kg_ingest'}`;

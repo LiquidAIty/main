@@ -22,6 +22,14 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser() as any);
 
+// Debug logging for non-GET requests to /api/projects
+app.use((req, _res, next) => {
+  if (req.path.includes('/api/projects') && req.method !== 'GET') {
+    console.log('[REQ]', req.method, req.path);
+  }
+  next();
+});
+
 // Ensure all responses are JSON
 app.use((req, res, next) => {
   res.setHeader('Content-Type', 'application/json');
@@ -89,5 +97,5 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 
 const PORT = Number(process.env.PORT || 4000);
 logStartupBanner();
-logModelConfiguration();
+void logModelConfiguration();
 app.listen(PORT, () => console.log("[BOOT] listening on :" + PORT));

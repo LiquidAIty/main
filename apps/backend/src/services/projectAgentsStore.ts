@@ -122,9 +122,10 @@ function rowToAgent(row: any): ProjectAgent {
  */
 export async function listProjectAgents(projectId: string): Promise<ProjectAgent[]> {
   const { rows } = await pool.query(
-    `SELECT * FROM ag_catalog.project_agents 
+    `SELECT DISTINCT ON (agent_type) *
+     FROM ag_catalog.project_agents 
      WHERE project_id = $1 AND is_active = true
-     ORDER BY created_at ASC`,
+     ORDER BY agent_type, updated_at DESC, created_at DESC`,
     [projectId]
   );
   return rows.map(rowToAgent);

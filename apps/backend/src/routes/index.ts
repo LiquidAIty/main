@@ -18,6 +18,9 @@ import { authMiddleware } from '../middleware/auth';
 import projects from './projects.routes';
 import projectAgents from './projectAgents.routes';
 import { diagnosticRoutes } from './diagnostic.routes';
+import receipts from './receipts.routes';
+import config from './config.routes';
+import v2Config from './v2/config.routes';
 
 /**
  * /api/sol/run is the primary Sol chat endpoint. It can run with or without auth
@@ -61,5 +64,8 @@ router.use('/projects', projectAgents);
 router.use('/models', authMiddleware, models);
 router.use('/rag', authMiddleware, ragSearch);
 router.use('/kg', authMiddleware, kg);
+router.use('/receipts', authMiddleware, receipts);
+router.use('/config', config);
+router.use('/v2/projects', v2Config);
 
 export default router;

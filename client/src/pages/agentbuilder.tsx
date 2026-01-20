@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
-import type { AgentCard, AgentConfig } from "../types/agentBuilder";
-import { callBossAgent, getAgentConfig, listProjects, saveAgentConfig, solRun } from "../lib/api";
+import type { AgentCard } from "../types/agentBuilder";
+import { callBossAgent, solRun } from "../lib/api";
 import { AgentManager } from "../components/AgentManager";
 
 // AgentPage (MVP): left icon rail + main chat + right tabs (Plan, Links, Knowledge, Dashboard)
@@ -54,6 +54,7 @@ type AgentPrompt = {
 
 type WorkbenchOutputMap = Record<"Plan" | "Links" | "Knowledge" | "Dashboard", string>;
 type WorkbenchRating = { stars: number; note: string };
+type AgentType = 'llm_chat' | 'kg_ingest';
 
 // helper: load all project-local state (defaults only; real data is fetched from backend)
 function loadProjectState(_projectId: string, _mode: "assist" | "agents" = "assist") {
@@ -456,7 +457,6 @@ export default function AgentBuilder() {
   const [projectLoading, setProjectLoading] = useState(false);
   const [projectSaveStatus, setProjectSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [projectSaveError, setProjectSaveError] = useState<string | null>(null);
-  const [assistStarted, setAssistStarted] = useState(true);
   const setActiveProjectWithUrl = useCallback(
     (projectId: string) => {
       const currentSearch = window.location.search.replace(/^\?/, "");
@@ -476,17 +476,24 @@ export default function AgentBuilder() {
   );
 
   const tabs = ["Plan", "Links", "Knowledge", "Dashboard"] as const;
-  const activeTabs = tabs;
+  const activeTabs = mode === "assist" ? ["Knowledge"] : tabs;
 
   const [tab, setTab] = useState<string>("Knowledge");
+  
+  // Force tab by mode
+  useEffect(() => {
+    if (mode === "agents") setTab("Plan");
+    if (mode === "assist") setTab("Knowledge");
+  }, [mode]);
   const [openDrawer, setOpenDrawer] = useState<
     null | "project" | "apps" | "settings" | "admin"
   >(null);
   const [sending, setSending] = useState(false);
 
   // agent builder state
-  const [agentConfig, setAgentConfig] = useState<AgentConfig | null>(null);
-  const [projects, setProjects] = useState<AgentCard[]>([]);
+  const [projects, setProjects] = useState<any[]>([]);
+  const refreshInFlight = useRef(false);
+  const refreshSeq = useRef(0);
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [agentPrompt, setAgentPrompt] = useState<AgentPrompt>({
     role: "",
@@ -494,7 +501,7 @@ export default function AgentBuilder() {
     objectives: "",
     style: "",
   });
-  
+
   // Boss agent prompt configuration (per project)
   const [bossPromptConfig, setBossPromptConfig] = useState({
     role: "You are Sol, the primary assistant inside LiquidAIty.\nYou talk with the user to help them build their system.\nYou are direct and practical.\nYou do not invent features that don't exist.\nWhen something is broken, you help debug it using the UI and logs.\nYou remember project facts only when they appear in retrieved context (KG/RAG).\nIf no retrieved context is provided, you do not pretend to remember.",
@@ -502,37 +509,67 @@ export default function AgentBuilder() {
     constraints: "- Do not claim something works unless it is wired and verified.\n- Prefer the smallest change that restores functionality.\n- When diagnosing errors, ask for the exact error message or stack trace.\n- Do not suggest new UI controls unless required for the core loop.\n- When referring to acronyms, expand them the first time (e.g., KG (Knowledge Graph), RAG (Retrieval-Augmented Generation)).",
     ioSchema: "Input: user message text + optional retrieved context block.\nOutput: normal conversational text.\nIf you need structured output, ask before switching formats.",
     memoryPolicy: "No hidden memory.\nOnly use:\n- the visible chat history in this session, and\n- any explicit retrieved context provided from KG/RAG.\nIf context is missing, say so plainly.",
-    model: "gpt-5.1-chat-latest",
+    model: "gpt-5-nano",
     temperature: 0.7,
   });
-  const refreshProjects = useCallback(async (preferredId?: string) => {
+  const refreshProjects = useCallback(async (preferredId?: string, filterType?: 'assist' | 'agent', reason?: string) => {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
+    const seq = ++refreshSeq.current;
+
     try {
       setProjectsError(null);
-      const cards = await listProjects();
+      const projectType = filterType || (mode === 'assist' ? 'assist' : 'agent');
+      
+      console.debug('[refreshProjects]', { reason: reason || 'unknown', mode, project_type_filter: projectType, seq });
+      
+      const response = await fetch(`/api/projects/list?project_type=${projectType}`);
+      const data = await response.json();
+      
+      if (seq !== refreshSeq.current) return;
+      
+      let cards = data.ok ? data.projects : [];
+      
+      // Pin canonical agent decks to top in agent mode
+      if (projectType === 'agent') {
+        const PINNED_CODES = ['main-chat', 'kg-ingest'];
+        const pinned = cards.filter((c: any) => PINNED_CODES.includes(c.code));
+        const others = cards.filter((c: any) => !PINNED_CODES.includes(c.code));
+        pinned.sort((a: any, b: any) => PINNED_CODES.indexOf(a.code) - PINNED_CODES.indexOf(b.code));
+        cards = [...pinned, ...others];
+      }
+      
       setProjects(cards);
       const search = new URLSearchParams(window.location.search);
       const urlId = search.get("projectId") || "";
+      const urlIdValid = urlId && cards.some((c: any) => c.id === urlId);
+      
       const current = preferredId || activeProject || "";
-      const hasCurrent = current && cards.some((c) => c.id === current);
-      const nextId = urlId || (hasCurrent ? current : cards[0]?.id || "");
+      const hasCurrent = current && cards.some((c: any) => c.id === current);
+      
+      // In Agent mode, prefer main-chat or kg-ingest
+      const isAgents = projectType === "agent";
+      const main = isAgents ? cards.find((c: any) => c.code === "main-chat") : null;
+      const kg = isAgents ? cards.find((c: any) => c.code === "kg-ingest") : null;
+      const fallbackPinned = main?.id || kg?.id || "";
+      
+      const nextId = urlIdValid ? urlId : (hasCurrent ? current : "") || fallbackPinned || cards[0]?.id || "";
       if (nextId) {
         setActiveProjectWithUrl(nextId);
       }
     } catch (err: any) {
       console.error("Error loading projects:", err);
+      if (seq !== refreshSeq.current) return;
       setProjectsError(err?.message || 'Error loading projects');
+    } finally {
+      if (seq === refreshSeq.current) refreshInFlight.current = false;
     }
-  }, [activeProject, setActiveProjectWithUrl]);
+  }, [setActiveProjectWithUrl]);
 
   // chat state
   const [messages, setMessages] = useState<
     { role: "assistant" | "user"; text: string }[]
   >(() => loadProjectState(activeProject, mode).messages);
-
-  // Reset tab when mode changes
-  useEffect(() => {
-    setTab(mode === "assist" ? "Knowledge" : "Plan");
-  }, [mode]);
 
   // Enforce panel visibility by mode
   useEffect(() => {
@@ -541,17 +578,6 @@ export default function AgentBuilder() {
     }
   }, [mode, panelOpen]);
 
-  // Load agent config when in agents mode and activeProject changes
-  useEffect(() => {
-    if (mode === "agents" && activeProject) {
-      getAgentConfig(activeProject)
-        .then((config) => setAgentConfig(config))
-        .catch((err) => {
-          console.error("Error loading agent config:", err);
-          setAgentConfig(null);
-        });
-    }
-  }, [mode, activeProject]);
 
   // plan
   const [plan, setPlan] = useState<PlanItem[]>(
@@ -587,7 +613,7 @@ export default function AgentBuilder() {
     }
   }, [mode, activeProject]);
 
-  const runGraphQuery = async (query?: string) => {
+  const runGraphQuery = useCallback(async (query?: string) => {
     const q = (query ?? cypher).trim();
     if (!q) {
       setGraphError("Enter a Cypher query first.");
@@ -615,7 +641,7 @@ export default function AgentBuilder() {
     } finally {
       setGraphLoading(false);
     }
-  };
+  }, [activeProject, cypher]);
 
   // When switching projects, reload all per-project state from storage
   useEffect(() => {
@@ -638,16 +664,18 @@ export default function AgentBuilder() {
       });
   }, [activeProject, mode]);
 
-  // Load projects on mount
+  // Load projects on mount ONLY
   useEffect(() => {
     const search = new URLSearchParams(window.location.search);
     const urlId = search.get("projectId") || "";
     if (urlId) {
       setActiveProjectWithUrl(urlId);
-      setMode("agents");
     }
-    void refreshProjects();
-  }, [refreshProjects]);
+    void refreshProjects(undefined, mode === "assist" ? "assist" : "agent", 'mount');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  
+  // Mode is user-chosen via Assist/Agent toggle - do not auto-switch based on project
 
   const loadProjectSubgraph = useCallback(() => {
     const q = [
@@ -661,10 +689,11 @@ export default function AgentBuilder() {
 
   // Auto-load project subgraph when Knowledge tab opens or project changes
   useEffect(() => {
+    if (mode !== 'agents') return;
     if (tab === 'Knowledge' && activeProject && panelOpen) {
       loadProjectSubgraph();
     }
-  }, [tab, activeProject, panelOpen, loadProjectSubgraph]);
+  }, [mode, tab, activeProject, panelOpen, loadProjectSubgraph]);
 
   // Poll for last ingest trace when Dashboard tab is active
   useEffect(() => {
@@ -687,11 +716,6 @@ export default function AgentBuilder() {
     return () => clearInterval(interval);
   }, [tab, activeProject]);
 
-  const markAssistStarted = useCallback(() => {
-    setAssistStarted(true);
-    setPanelOpen(true);
-    setTab("Knowledge");
-  }, []);
 
   // Load boss agent prompt config when project changes
   useEffect(() => {
@@ -730,58 +754,17 @@ export default function AgentBuilder() {
   const sendToBossAgent = async (userText: string) => {
     setSending(true);
     try {
-      // Load main agent config from Agent Builder mode (project_agents table)
-      let mainAgentConfig = null;
-      try {
-        const payload = await fetch(`/api/projects/${activeProject}/agents`).then(r => r.json());
-        const agents = Array.isArray(payload)
-          ? payload
-          : Array.isArray((payload as any)?.agents)
-            ? (payload as any).agents
-            : [];
-        const mainAgent = agents.find((a: any) => a?.name === 'Main Chat' || a?.agent_type === 'llm_chat');
-        if (mainAgent) {
-          mainAgentConfig = {
-            role: mainAgent.role_text || bossPromptConfig.role,
-            goal: mainAgent.goal_text || bossPromptConfig.goal,
-            constraints: mainAgent.constraints_text || bossPromptConfig.constraints,
-            ioSchema: mainAgent.io_schema_text || bossPromptConfig.ioSchema,
-            memoryPolicy: mainAgent.memory_policy_text || bossPromptConfig.memoryPolicy,
-            model: mainAgent.model || bossPromptConfig.model,
-          };
-        }
-      } catch (err) {
-        // Fallback: use AgentManager cache so chat still uses your edited config
-        try {
-          const cached = localStorage.getItem(`agent-manager:agents:${activeProject}`);
-          const parsed = cached ? JSON.parse(cached) : null;
-          const agents = Array.isArray(parsed) ? parsed : [];
-          const mainAgent = agents.find((a: any) => a?.name === 'Main Chat' || a?.agent_type === 'llm_chat');
-          if (mainAgent) {
-            mainAgentConfig = {
-              role: mainAgent.role_text || bossPromptConfig.role,
-              goal: mainAgent.goal_text || bossPromptConfig.goal,
-              constraints: mainAgent.constraints_text || bossPromptConfig.constraints,
-              ioSchema: mainAgent.io_schema_text || bossPromptConfig.ioSchema,
-              memoryPolicy: mainAgent.memory_policy_text || bossPromptConfig.memoryPolicy,
-              model: mainAgent.model || bossPromptConfig.model,
-            };
-          }
-        } catch {
-          // ignore
-        }
-      }
-
+      // Simple payload - let backend pick runtime model
       const payload: any = { 
         goal: userText, 
         projectId: activeProject,
-        agentConfig: mainAgentConfig || {
+        agentConfig: {
           role: bossPromptConfig.role,
           goal: bossPromptConfig.goal,
           constraints: bossPromptConfig.constraints,
           ioSchema: bossPromptConfig.ioSchema,
           memoryPolicy: bossPromptConfig.memoryPolicy,
-          model: bossPromptConfig.model,
+          // Don't send model - let backend pick from its registry
         }
       };
       
@@ -804,9 +787,6 @@ export default function AgentBuilder() {
         assistantText = fallback.text;
       }
       setMessages((prev) => [...prev, { role: "assistant", text: assistantText }]);
-      if (assistantText) {
-        markAssistStarted();
-      }
       if (mode === "assist" && activeProject && userText && assistantText) {
         void (async () => {
           try {
@@ -881,6 +861,15 @@ export default function AgentBuilder() {
   const reject = (id: string) =>
     setLinks((ls) => ls.filter((x) => x.id !== id));
 
+  const activeProjectCode =
+    projects.find((project) => project.id === activeProject)?.code || "";
+  const agentType: AgentType =
+    activeProjectCode === "kg-ingest"
+      ? "kg_ingest"
+      : activeProjectCode === "main-chat"
+        ? "llm_chat"
+        : "llm_chat";
+
   const graphViz = ageRowsToGraph(graphResult);
 
   // derive counts
@@ -895,11 +884,18 @@ export default function AgentBuilder() {
     if (!code) {
       code = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
     }
+    
+    const projectType = mode === 'assist' ? 'assist' : 'agent';
+    
     try {
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), code }),
+        body: JSON.stringify({ 
+          name: name.trim(), 
+          code,
+          project_type: projectType
+        }),
       });
       if (!res.ok) {
         const text = await res.text().catch(() => "");
@@ -907,9 +903,24 @@ export default function AgentBuilder() {
       }
       const data = await res.json().catch(() => null);
       const newId = (data && data.id) || "";
-      await refreshProjects(newId);
-    } catch (err) {
+      
+      // Refresh projects with the correct type filter
+      await refreshProjects(newId, projectType, 'after-create');
+      
+      // Set mode based on project type
+      if (projectType === 'assist') {
+        setMode('assist');
+      } else {
+        setMode('agents');
+      }
+      
+      // Select the new project
+      if (newId) {
+        setActiveProjectWithUrl(newId);
+      }
+    } catch (err: any) {
       console.error("Create project failed", err);
+      setProjectsError(`Failed to create project: ${err?.message || 'Unknown error'}`);
     }
   };
 
@@ -996,7 +1007,7 @@ export default function AgentBuilder() {
         </div>
 
         {/* RIGHT panel */}
-        {panelOpen && (mode === "agents" || assistStarted) && (
+        {panelOpen && (
           <aside
             className="h-full relative"
             style={{
@@ -1036,142 +1047,117 @@ export default function AgentBuilder() {
                 className="flex-1 overflow-auto px-1 pr-3 pb-6 text-sm"
                 style={{ color: C.neutral }}
               >
-                <>
-                  {mode === "agents" && tab === "Plan" && (
-                    <AgentManager
-                      projectId={activeProject}
-                      activeTab={tab}
-                      onGraphRefresh={() => {
-                        // no-op
-                      }}
-                    />
-                  )}
-
-                  {/* Plan tab for assist mode - task management only */}
-                  {mode === "assist" && tab === "Plan" && (
-                    <div className="space-y-3">
-                      <div className="space-y-2">
-                        {plan.map((p) => (
+                {mode === "agents" && (
+                  <>
+                    {tab === "Plan" && (
+                      <div className="space-y-3">
+                        {activeProject ? (
+                          <AgentManager
+                            key={`${activeProject}:${agentType}`}
+                            projectId={activeProject}
+                            agentType={agentType}
+                            activeTab={tab}
+                            onGraphRefresh={() => {
+                              // no-op
+                            }}
+                          />
+                        ) : (
                           <div
-                            key={p.id}
-                            className="flex items-center justify-between"
+                            style={{
+                              padding: '16px',
+                              border: `1px dashed ${C.border}`,
+                              borderRadius: '8px',
+                              color: C.neutral,
+                              background: '#1a1a1a',
+                            }}
+                          >
+                            Select a project to edit its agent configuration.
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {tab === "Links" && (
+                      <div className="space-y-3">
+                        {/* Runtime Wiring - resolved config for this project */}
+                        <div
+                          className="text-xs p-2 rounded"
+                          style={{
+                            background: C.bg,
+                            border: `1px solid ${C.border}`,
+                            marginBottom: 12,
+                          }}
+                        >
+                          <div style={{ color: C.primary, fontWeight: 600, marginBottom: 4 }}>Runtime Wiring</div>
+                          {runtimeConfig ? (
+                            <div style={{ color: C.neutral, fontSize: 10, lineHeight: 1.5 }}>
+                              <div>Assist Main: {runtimeConfig.assist_main_agent.provider}/{runtimeConfig.assist_main_agent.model_key}</div>
+                              <div>KG Ingest: {runtimeConfig.kg_ingest_agent.provider}/{runtimeConfig.kg_ingest_agent.model_key}</div>
+                              <div>KG Chunking: {runtimeConfig.kg_chunking_model.provider}/{runtimeConfig.kg_chunking_model.model_key}</div>
+                              <div>Embedding: {runtimeConfig.embed_model.provider}/{runtimeConfig.embed_model.model_key}</div>
+                              <div style={{ opacity: 0.7 }}>Graph: graph_liq</div>
+                            </div>
+                          ) : (
+                            <div style={{ color: '#f87171', fontSize: 10 }}>Failed to resolve runtime config - check agent assignments</div>
+                          )}
+                        </div>
+
+                        {/* Sources/Links */}
+                        {links.map((l) => (
+                          <div
+                            key={l.id}
                             style={{
                               border: `1px solid ${C.border}`,
                               borderRadius: 8,
-                              padding: "8px 10px",
+                              padding: "8px",
                             }}
                           >
-                            <div style={{ color: C.text }}>{p.text}</div>
-                            <button
-                              onClick={() => approve(p.id)}
-                              className="px-2 py-1 text-xs rounded"
+                            <div
                               style={{
-                                background:
-                                  p.status === "approved" ? C.primary : "transparent",
-                                border: `1px solid ${C.primary}`,
-                                color: p.status === "approved" ? "#0F0F0F" : C.text,
+                                color: C.text,
+                                fontWeight: 600,
                               }}
                             >
-                              {p.status === "approved" ? "Approved" : "Approve"}
-                            </button>
+                              {l.title}
+                            </div>
+                            <div
+                              className="text-xs"
+                              style={{ opacity: 0.8, margin: "4px 0 8px" }}
+                            >
+                              {l.url}
+                            </div>
+                            <div className="flex gap-6 text-sm">
+                              {!l.accepted && (
+                                <button
+                                  onClick={() => accept(l.id)}
+                                  style={{ color: C.primary }}
+                                >
+                                  Accept
+                                </button>
+                              )}
+                              <button
+                                onClick={() => reject(l.id)}
+                                style={{ color: C.warn }}
+                              >
+                                Reject
+                              </button>
+                              <a
+                                href={l.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{ color: C.neutral }}
+                              >
+                                open
+                              </a>
+                            </div>
                           </div>
                         ))}
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                  {tab === "Links" && (
-                    <div className="space-y-3">
-                      {/* Runtime Wiring - resolved config for this project */}
-                      <div
-                        className="text-xs p-2 rounded"
-                        style={{
-                          background: C.bg,
-                          border: `1px solid ${C.border}`,
-                          marginBottom: 12,
-                        }}
-                      >
-                        <div style={{ color: C.primary, fontWeight: 600, marginBottom: 4 }}>Runtime Wiring</div>
-                        {runtimeConfig ? (
-                          <div style={{ color: C.neutral, fontSize: 10, lineHeight: 1.5 }}>
-                            <div>Assist Main: {runtimeConfig.assist_main_agent.provider}/{runtimeConfig.assist_main_agent.model_key}</div>
-                            <div>KG Ingest: {runtimeConfig.kg_ingest_agent.provider}/{runtimeConfig.kg_ingest_agent.model_key}</div>
-                            <div>KG Chunking: {runtimeConfig.kg_chunking_model.provider}/{runtimeConfig.kg_chunking_model.model_key}</div>
-                            <div>Embedding: {runtimeConfig.embed_model.provider}/{runtimeConfig.embed_model.model_key}</div>
-                            <div style={{ opacity: 0.7 }}>Graph: graph_liq</div>
-                          </div>
-                        ) : (
-                          <div style={{ color: '#f87171', fontSize: 10 }}>Failed to resolve runtime config - check agent assignments</div>
-                        )}
-                      </div>
-
-                      {/* Sources/Links */}
-                      {links.map((l) => (
-                        <div
-                          key={l.id}
-                          style={{
-                            border: `1px solid ${C.border}`,
-                            borderRadius: 8,
-                            padding: "8px",
-                          }}
-                        >
-                          <div
-                            style={{
-                              color: C.text,
-                              fontWeight: 600,
-                            }}
-                          >
-                            {l.title}
-                          </div>
-                          <div
-                            className="text-xs"
-                            style={{ opacity: 0.8, margin: "4px 0 8px" }}
-                          >
-                            {l.url}
-                          </div>
-                          <div className="flex gap-6 text-sm">
-                            {!l.accepted && (
-                              <button
-                                onClick={() => accept(l.id)}
-                                style={{ color: C.primary }}
-                              >
-                                Accept
-                              </button>
-                            )}
-                            <button
-                              onClick={() => reject(l.id)}
-                              style={{ color: C.warn }}
-                            >
-                              Reject
-                            </button>
-                            <a
-                              href={l.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              style={{ color: C.neutral }}
-                            >
-                              open
-                            </a>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {tab === "Knowledge" && (
-                    <div className="space-y-3">
-                      {/* Force-directed graph visualization */}
-                      <div style={{ display: "flex", justifyContent: "center" }}>
-                        <MiniForce nodes={graphViz.nodes} edges={graphViz.edges} />
-                      </div>
-
-                      {/* Cypher console removed - graph auto-loads */}
-                    </div>
-                  )}
-
-                  {tab === "Dashboard" && (
-                    <div className="space-y-3">
-                      {/* KG Ingest Results - auto-populated from Assist chat */}
+                    {tab === "Dashboard" && (
+                      <div className="space-y-3">
+                        {/* KG Ingest Results - auto-populated from Assist chat */}
                       <div className="space-y-2">
                         <div
                           className="text-xs font-semibold"
@@ -1304,8 +1290,19 @@ export default function AgentBuilder() {
                         )}
                       </div>
                     </div>
-                  )}
-                </>
+                    )}
+                  </>
+                )}
+
+                {/* Knowledge tab - available in both modes */}
+                {tab === "Knowledge" && (
+                  <div className="space-y-3">
+                    {/* Force-directed graph visualization */}
+                    <div style={{ display: "flex", justifyContent: "center" }}>
+                      <MiniForce nodes={graphViz.nodes} edges={graphViz.edges} />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* resize handle */}
@@ -1344,20 +1341,52 @@ export default function AgentBuilder() {
       {openDrawer === "project" && (
         <Drawer title="Project" onClose={() => setOpenDrawer(null)}>
           <div className="space-y-3">
+            {/* Mode Selector */}
+            <div className="flex gap-2 mb-3">
+              <button
+                onClick={() => {
+                  setMode('assist');
+                  refreshProjects(undefined, 'assist', 'mode-change');
+                }}
+                className="flex-1 px-3 py-2 rounded text-sm font-medium transition-colors"
+                style={{
+                  background: mode === 'assist' ? C.primary : 'transparent',
+                  color: mode === 'assist' ? '#0B0C0E' : C.text,
+                  border: `1px solid ${mode === 'assist' ? C.primary : C.border}`,
+                }}
+              >
+                Assist
+              </button>
+              <button
+                onClick={() => {
+                  setMode('agents');
+                  refreshProjects(undefined, 'agent', 'mode-change');
+                }}
+                className="flex-1 px-3 py-2 rounded text-sm font-medium transition-colors"
+                style={{
+                  background: mode === 'agents' ? C.primary : 'transparent',
+                  color: mode === 'agents' ? '#0B0C0E' : C.text,
+                  border: `1px solid ${mode === 'agents' ? C.primary : C.border}`,
+                }}
+              >
+                Agent
+              </button>
+            </div>
+            
             <div
               className="text-xs uppercase mb-2 flex items-center justify-between"
               style={{ color: C.neutral }}
             >
-              <span>Projects</span>
+              <span>{mode === 'assist' ? 'Assist Projects' : 'Agent Projects'}</span>
               <button
                 onClick={createProjectPrompt}
                 className="text-[11px] px-2 py-1 rounded"
                 style={{ border: `1px solid ${C.border}`, color: C.text }}
               >
-                New Project
+                {mode === 'assist' ? 'New Project' : 'New Agent'}
               </button>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-2" style={{ maxHeight: '400px', overflowY: 'auto' }}>
               {!Array.isArray(projects) && (
                 <div className="text-xs" style={{ color: C.neutral }}>
                   No projects available.
@@ -1369,37 +1398,77 @@ export default function AgentBuilder() {
                 </div>
               )}
               {(Array.isArray(projects) ? projects : []).map((project) => (
-                <button
+                <div
                   key={project.id}
-                  onClick={() => {
-                    setActiveProjectWithUrl(project.id);
-                    setOpenDrawer(null);
-                  }}
-                  className="w-full text-left p-3 rounded"
-                  style={{
-                    background:
-                      activeProject === project.id
-                        ? "rgba(79,162,173,0.18)"
-                        : "transparent",
-                    border: `1px solid ${
-                      activeProject === project.id ? C.primary : C.border
-                    }`,
-                    color: C.text,
-                  }}
+                  className="flex items-center gap-2"
                 >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="font-medium">
-                        {project.name || project.id}
-                      </div>
-                      {project.slug && (
-                        <div className="opacity-60 text-xs">
-                          {project.slug}
+                  <button
+                    onClick={() => {
+                      setActiveProjectWithUrl(project.id);
+                      setOpenDrawer(null);
+                    }}
+                    className="flex-1 text-left p-3 rounded"
+                    style={{
+                      background:
+                        activeProject === project.id
+                          ? "rgba(79,162,173,0.18)"
+                          : "transparent",
+                      border: `1px solid ${
+                        activeProject === project.id ? C.primary : C.border
+                      }`,
+                      color: C.text,
+                    }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-medium">
+                          {project.name || project.id}
                         </div>
-                      )}
+                        {project.code && (
+                          <div className="opacity-60 text-xs">
+                            {project.code}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </button>
+                  </button>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      const PROTECTED_AGENT_CODES = new Set(["main-chat", "kg-ingest"]);
+                      const isProtectedAgent = mode === "agents" && PROTECTED_AGENT_CODES.has(project.code);
+                      if (isProtectedAgent) {
+                        alert("Main Chat and KG Ingest are protected system decks.");
+                        return;
+                      }
+                      if (!confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
+                      try {
+                        const res = await fetch(`/api/projects/${project.id}`, { method: 'DELETE' });
+                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                        await refreshProjects(undefined, undefined, 'after-delete');
+                        if (activeProject === project.id) {
+                          const remaining = projects.filter(p => p.id !== project.id);
+                          if (remaining.length > 0) {
+                            setActiveProjectWithUrl(remaining[0].id);
+                          } else {
+                            setActiveProject('');
+                          }
+                        }
+                      } catch (err: any) {
+                        alert(`Failed to delete project: ${err.message}`);
+                      }
+                    }}
+                    className="p-2 rounded"
+                    style={{
+                      background: 'transparent',
+                      border: `1px solid ${C.border}`,
+                      color: C.warn,
+                    }}
+                    title="Delete project"
+                  >
+                    ×
+                  </button>
+                </div>
               ))}
 
               {Array.isArray(projects) && projects.length === 0 && !projectsError && (
@@ -1409,7 +1478,7 @@ export default function AgentBuilder() {
               )}
             </div>
             <div className="text-xs mt-4" style={{ color: C.neutral }}>
-              Admin toggles live under Admin drawer.
+              {mode === 'assist' ? 'Assist projects are shipped product workspaces.' : 'Agent projects are builder/expert workspaces.'}
             </div>
           </div>
         </Drawer>
@@ -1424,29 +1493,8 @@ export default function AgentBuilder() {
 
       {openDrawer === "admin" && (
         <Drawer title="Admin" onClose={() => setOpenDrawer(null)}>
-          <div className="space-y-3 text-sm">
-            <button
-              onClick={() => setMode("assist")}
-              className="px-3 py-2 rounded w-full text-left"
-              style={{
-                border: `1px solid ${C.border}`,
-                color: C.text,
-                background: mode === "assist" ? C.primary : "transparent",
-              }}
-            >
-              Assist mode
-            </button>
-            <button
-              onClick={() => setMode("agents")}
-              className="px-3 py-2 rounded w-full text-left"
-              style={{
-                border: `1px solid ${C.border}`,
-                color: C.text,
-                background: mode === "agents" ? C.primary : "transparent",
-              }}
-            >
-              Agent Builder mode
-            </button>
+          <div className="text-sm" style={{ color: C.text }}>
+            Admin controls placeholder.
           </div>
         </Drawer>
       )}

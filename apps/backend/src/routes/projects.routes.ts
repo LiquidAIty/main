@@ -17,11 +17,12 @@ import { MODEL_REGISTRY, listModels } from '../llm/models.config';
 import { Pool } from 'pg';
 import { createHash } from 'crypto';
 import { getLastTrace, getTraces } from '../services/ingestTrace';
+import { captureProbability } from '../lib/receiptCapture';
+import { resolveKgIngestAgent } from '../services/resolveAgents';
 const router = Router();
 const GRAPH_NAME = 'graph_liq';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://liquidaity-user:LiquidAIty@localhost:5433/liquidaity', max: 5 });
 
-const DEFAULT_KG_LLM_MODEL_KEY = process.env.OPENROUTER_DEFAULT_KG_MODEL_KEY || 'kimi-k2-thinking';
 const DEFAULT_EMBED_MODEL =
   process.env.OPENROUTER_DEFAULT_EMBED_MODEL || 'openai/text-embedding-3-small';
 const DEFAULT_MAX_CHUNK_CHARS = Math.max(500, Number(process.env.KG_INGEST_MAX_CHARS ?? 4500));
@@ -158,7 +159,7 @@ async function checkDocIdExists(docId: string): Promise<boolean> {
       [docId]
     );
     return rows.length > 0;
-  } catch (err) {
+  } catch (err: any) {
     console.error('[idempotency] check failed:', err);
     return false;
   }
@@ -192,6 +193,8 @@ async function llmSemanticChunking(
     chunkTarget: number;
     languageHint: string;
     llmModelKey: string;
+    provider: string;
+    providerModelId: string;
     debugTrace?: any;
   }
 ): Promise<{
@@ -209,7 +212,7 @@ async function llmSemanticChunking(
   raw_output_preview: string;
   raw_output_sha1: string;
 }> {
-  const { chunkTarget, languageHint, llmModelKey, debugTrace } = options;
+  const { chunkTarget, languageHint, llmModelKey, provider, providerModelId, debugTrace } = options;
 
   const system = `You are a strict JSON generator.
 
@@ -283,15 +286,46 @@ Now extract chunks from this input text:`;
     debugTrace.prompt_user_sha1 = promptUserSha1;
   }
 
-  console.log('[LLM chunking] model_key=%s prompt_sha1=%s', llmModelKey, promptUserSha1);
-  console.log('[LLM chunking] prompt_preview (first 400 chars):', promptUserPreview.slice(0, 400));
+  if (!provider || !providerModelId) {
+    throw new Error('kg_ingest_model_resolution_failed: missing provider data');
+  }
+  const useStructuredOutput = provider === 'openai';
+  
+  // Define strict JSON schema for OpenAI structured output
+  const chunkSchema = {
+    type: 'object',
+    properties: {
+      chunks: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            chunk_index: { type: 'integer' },
+            title: { type: 'string', maxLength: 80 },
+            text: { type: 'string', minLength: 1 },
+            language: { type: 'string' },
+            topics: { type: 'array', items: { type: 'string' } },
+            confidence: { type: 'number', minimum: 0, maximum: 1 }
+          },
+          required: ['chunk_index', 'title', 'text'],
+          additionalProperties: false
+        }
+      }
+    },
+    required: ['chunks'],
+    additionalProperties: false
+  };
   
   const llmRes = await runLLM(prompt, {
     modelKey: llmModelKey,
     system,
     temperature: 0,
     maxTokens: 4096,
-    jsonMode: true,
+    ...(useStructuredOutput ? {
+      jsonSchema: { name: 'semantic_chunks', schema: chunkSchema, strict: true }
+    } : {
+      jsonMode: true
+    })
   });
 
   const rawOutputText = String(llmRes.text || '');
@@ -303,36 +337,69 @@ Now extract chunks from this input text:`;
     debugTrace.raw_output_sha1 = rawOutputSha1;
   }
 
-  console.log('[LLM chunking] raw_output_sha1=%s raw_len=%d', rawOutputSha1, rawOutputText.length);
+  console.log('[LLM chunking] raw_output_sha1=%s raw_len=%d provider=%s', rawOutputSha1, rawOutputText.length, provider);
   console.log('[LLM chunking] raw_output_preview (first 400 chars):', rawOutputPreview.slice(0, 400));
 
-  // Check for empty response first
-  if (!llmRes.text || !llmRes.text.trim()) {
-    console.error('[LLM chunking] empty response from model:', llmModelKey);
-    throw new Error('LLM chunking returned empty response');
-  }
-
-  let parsed: any;
-  let parseError: string | undefined;
-  try {
-    parsed = tryParseJsonLoose(llmRes.text);
-  } catch (e: any) {
-    parseError = e?.message || String(e);
-  }
+  let parsed: any = null;
+  let parseError: string | null = null;
   
-  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.chunks)) {
-    const errorMsg = `chunking_invalid_json: LLM returned ${rawOutputText.length} chars but not valid JSON. Preview: ${rawOutputPreview.slice(0, 200)}`;
-    console.error('[LLM chunking] invalid JSON. raw_len=%d preview=%s', rawOutputText.length, rawOutputPreview.slice(0, 200));
+  try {
+    parsed = JSON.parse(rawOutputText);
+  } catch (err: any) {
+    parseError = `JSON parse failed: ${err.message}`;
+    console.error('[LLM chunking] invalid JSON. raw_len=%d preview=%s error=%s', rawOutputText.length, rawOutputText.slice(0, 200), parseError);
+    
+    if (debugTrace) {
+      debugTrace.parse_error = parseError;
+    }
     
     // Store evidence in error object for trace capture
-    const err: any = new Error(errorMsg);
-    err.prompt_system = system;
-    err.prompt_user_preview = promptUserPreview;
-    err.prompt_user_sha1 = promptUserSha1;
-    err.raw_output_preview = rawOutputPreview;
-    err.raw_output_sha1 = rawOutputSha1;
-    err.parse_error = parseError || 'JSON parse failed or missing chunks array';
-    throw err;
+    const error: any = new Error(`chunking_invalid_json: LLM returned ${rawOutputText.length} chars but not valid JSON. Preview: ${rawOutputText.slice(0, 200)}`);
+    error.prompt_system = system;
+    error.prompt_user_preview = promptUserPreview;
+    error.prompt_user_sha1 = promptUserSha1;
+    error.raw_output_preview = rawOutputPreview;
+    error.raw_output_sha1 = rawOutputSha1;
+    error.parse_error = parseError;
+    throw error;
+  }
+  
+  // Validate schema
+  if (!parsed || typeof parsed !== 'object') {
+    parseError = 'Response is not an object';
+    if (debugTrace) debugTrace.parse_error = parseError;
+    throw new Error(`chunking_invalid_schema: ${parseError}`);
+  }
+  
+  if (!Array.isArray(parsed.chunks)) {
+    parseError = 'Missing or invalid "chunks" array';
+    if (debugTrace) debugTrace.parse_error = parseError;
+    throw new Error(`chunking_invalid_schema: ${parseError}`);
+  }
+  
+  // Validate each chunk
+  for (let i = 0; i < parsed.chunks.length; i++) {
+    const chunk = parsed.chunks[i];
+    if (typeof chunk !== 'object' || chunk === null) {
+      parseError = `Chunk ${i} is not an object`;
+      if (debugTrace) debugTrace.parse_error = parseError;
+      throw new Error(`chunking_invalid_schema: ${parseError}`);
+    }
+    if (typeof chunk.chunk_index !== 'number') {
+      parseError = `Chunk ${i} missing or invalid chunk_index`;
+      if (debugTrace) debugTrace.parse_error = parseError;
+      throw new Error(`chunking_invalid_schema: ${parseError}`);
+    }
+    if (typeof chunk.title !== 'string') {
+      parseError = `Chunk ${i} missing or invalid title`;
+      if (debugTrace) debugTrace.parse_error = parseError;
+      throw new Error(`chunking_invalid_schema: ${parseError}`);
+    }
+    if (typeof chunk.text !== 'string' || chunk.text.length === 0) {
+      parseError = `Chunk ${i} missing or empty text`;
+      if (debugTrace) debugTrace.parse_error = parseError;
+      throw new Error(`chunking_invalid_schema: ${parseError}`);
+    }
   }
 
   // Validate chunks
@@ -352,10 +419,16 @@ Now extract chunks from this input text:`;
     confidence: typeof c.confidence === 'number' ? c.confidence : 0.5,
   }));
 
+  // No fallback - fail explicitly if chunks are empty or invalid
   if (chunks.length === 0 || chunks.every((c: any) => !c.text.trim())) {
-    const rawLen = String(llmRes.text || '').length;
-    console.error('[LLM chunking] parsed JSON but no valid chunks. raw_len=%d chunk_count=%d', rawLen, chunks.length);
-    throw new Error(`chunking_invalid_json: LLM chunking produced no valid chunks (raw_len=${rawLen}, parsed_chunks=${chunks.length})`);
+    const error: any = new Error(`chunking_empty_result: LLM returned ${chunks.length} chunks but all empty/invalid`);
+    error.provider = provider;
+    error.model_key = llmModelKey;
+    error.provider_model_id = providerModelId;
+    error.raw_output_preview = rawOutputPreview;
+    error.raw_output_sha1 = rawOutputSha1;
+    console.error('[KG][chunking] FAILED - empty chunks. provider=%s model=%s raw_output_length=%d', provider, llmModelKey, rawOutputText.length);
+    throw error;
   }
 
   return { 
@@ -607,6 +680,42 @@ router.get('/:projectId/kg/traces', async (req, res) => {
   }
 });
 
+router.get('/models', async (req, res) => {
+  try {
+    const models = listModels();
+    
+    // Group by provider
+    const grouped: Record<string, Array<{key: string; label: string; providerModelId: string}>> = {
+      openai: [],
+      openrouter: []
+    };
+    
+    models.forEach(m => {
+      grouped[m.provider].push({
+        key: m.key,
+        label: m.label,
+        providerModelId: m.id
+      });
+    });
+    
+    return res.json(grouped);
+  } catch (err: any) {
+    console.error('Error listing models:', err);
+    return res.status(500).json({ ok: false, error: err?.message || 'Failed to list models' });
+  }
+});
+
+router.get('/list', async (req, res) => {
+  try {
+    const projectType = req.query.project_type as 'assist' | 'agent' | undefined;
+    const cards = await listAgentCards(null, projectType);
+    return res.json({ ok: true, projects: cards });
+  } catch (err: any) {
+    console.error('[projects/list] error:', err);
+    return res.status(500).json({ ok: false, error: err?.message || 'failed to list projects' });
+  }
+});
+
 router.get('/', async (_req, res) => {
   try {
     const projects = await listAgentCards();
@@ -617,15 +726,180 @@ router.get('/', async (_req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const { name, code } = req.body || {};
+  const { name, code, project_type } = req.body || {};
   if (!name || typeof name !== 'string') {
     return res.status(400).json({ ok: false, error: 'name is required' });
   }
+  const projectType = (project_type === 'assist' || project_type === 'agent') ? project_type : 'agent';
   try {
-    const project = await createProject(name, typeof code === 'string' ? code : null);
+    const project = await createProject(name, typeof code === 'string' ? code : null, projectType);
     return res.json(project);
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || 'failed to create project' });
+  }
+});
+
+router.get('/:projectId/config', async (req, res) => {
+  const projectId = req.params.projectId;
+  const agentType = (req.query.agent_type || '').toString().trim();
+
+  if (!agentType || !['llm_chat', 'kg_ingest'].includes(agentType)) {
+    return res.status(400).json({ ok: false, error: 'invalid_agent_type' });
+  }
+
+  try {
+    const assignments = await getAssistAssignments(projectId);
+    const agentId =
+      agentType === 'llm_chat'
+        ? assignments.assist_main_agent_id
+        : assignments.assist_kg_ingest_agent_id;
+
+    if (!agentId) {
+      return res
+        .status(409)
+        .json({ ok: false, error: 'missing_agent_assignment', agent_type: agentType });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT agent_id, model, provider, temperature, max_tokens, prompt_template
+       FROM ag_catalog.project_agents
+       WHERE project_id = $1 AND agent_id = $2 AND is_active = true
+       LIMIT 1`,
+      [projectId, agentId],
+    );
+
+    const agentRow = rows[0];
+    if (!agentRow) {
+      return res.status(404).json({ ok: false, error: 'agent_not_found', agent_id: agentId });
+    }
+
+    const missing: string[] = [];
+    if (!agentRow.provider) missing.push('provider');
+    if (!agentRow.model) missing.push('model');
+    if (agentRow.temperature == null) missing.push('temperature');
+    if (agentRow.max_tokens == null) missing.push('max_tokens');
+    if (!agentRow.prompt_template) missing.push('prompt_template');
+
+    if (missing.length) {
+      return res
+        .status(409)
+        .json({ ok: false, error: 'missing_config', missing, agent_type: agentType });
+    }
+
+    return res.json({
+      ok: true,
+      config: {
+        agent_id: agentRow.agent_id,
+        agent_type: agentType,
+        provider: agentRow.provider,
+        model_key: agentRow.model,
+        temperature: agentRow.temperature,
+        max_tokens: agentRow.max_tokens,
+        prompt_template: agentRow.prompt_template,
+      },
+    });
+  } catch (err: any) {
+    console.error('Get project config failed:', err);
+    return res.status(500).json({ ok: false, error: err?.message || 'Failed to get project config' });
+  }
+});
+
+router.put('/:projectId/config', async (req, res) => {
+  const projectId = req.params.projectId;
+  const {
+    agent_type: rawAgentType,
+    model_key,
+    provider,
+    temperature,
+    max_tokens,
+    prompt_template,
+  } = req.body || {};
+
+  const agentType = typeof rawAgentType === 'string' ? rawAgentType.trim() : '';
+  if (!agentType || !['llm_chat', 'kg_ingest'].includes(agentType)) {
+    return res.status(400).json({ ok: false, error: 'invalid_agent_type' });
+  }
+
+  const missing: string[] = [];
+  if (!provider) missing.push('provider');
+  if (!model_key) missing.push('model_key');
+  if (temperature == null) missing.push('temperature');
+  if (max_tokens == null) missing.push('max_tokens');
+  if (!prompt_template || !prompt_template.toString().trim()) missing.push('prompt_template');
+
+  if (missing.length) {
+    return res.status(400).json({ ok: false, error: 'invalid_config', missing, agent_type: agentType });
+  }
+
+  try {
+    const assignments = await getAssistAssignments(projectId);
+    const agentId =
+      agentType === 'llm_chat'
+        ? assignments.assist_main_agent_id
+        : assignments.assist_kg_ingest_agent_id;
+
+    if (!agentId) {
+      return res
+        .status(409)
+        .json({ ok: false, error: 'missing_agent_assignment', agent_type: agentType });
+    }
+
+    console.log(
+      '[SAVE_CONFIG] projectId=%s agent_type=%s agent_id=%s model_key=%s provider=%s',
+      projectId,
+      agentType,
+      agentId,
+      model_key,
+      provider,
+    );
+
+    const { rowCount } = await pool.query(
+      `UPDATE ag_catalog.project_agents
+       SET provider = $3,
+           model = $4,
+           temperature = $5,
+           max_tokens = $6,
+           prompt_template = $7
+       WHERE project_id = $1 AND agent_id = $2 AND is_active = true`,
+      [projectId, agentId, provider ?? null, model_key ?? null, temperature ?? null, max_tokens ?? null, prompt_template ?? null],
+    );
+
+    if (rowCount === 0) {
+      return res.status(404).json({ ok: false, error: 'agent_not_found', agent_id: agentId });
+    }
+
+    return res.json({ ok: true, agent_id: agentId, agent_type: agentType });
+  } catch (err) {
+    console.error('[SAVE_CONFIG] error for projectId=%s agent_type=%s:', projectId, agentType, err);
+    return res.status(500).json({ ok: false, error: 'internal_error', message: 'Failed to save configuration' });
+  }
+});
+
+router.delete('/:projectId', async (req, res) => {
+  const projectId = req.params.projectId;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    
+    // Delete related data first (only project_agents has project_id FK)
+    await client.query('DELETE FROM ag_catalog.project_agents WHERE project_id = $1', [projectId]);
+    
+    // Delete the project itself (projects table uses 'id' as PK)
+    const result = await client.query('DELETE FROM ag_catalog.projects WHERE id = $1 RETURNING id', [projectId]);
+    
+    if (result.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, error: 'Project not found' });
+    }
+    
+    await client.query('COMMIT');
+    return res.json({ ok: true, deleted: projectId });
+  } catch (err: any) {
+    await client.query('ROLLBACK');
+    console.error('Delete project failed:', err);
+    return res.status(500).json({ ok: false, error: err?.message || 'Failed to delete project' });
+  } finally {
+    client.release();
   }
 });
 
@@ -669,7 +943,6 @@ router.put('/:projectId/state', async (req, res) => {
             doc_id: docId,
             src,
             text: canonicalText,
-            llm_model: DEFAULT_KG_LLM_MODEL_KEY,
             embed_model: DEFAULT_EMBED_MODEL,
             options: {},
           });
@@ -847,7 +1120,7 @@ export async function runIngestPipeline(params: {
   debug?: boolean;
   trace?: any;
 }) {
-  const { projectId, doc_id, src, text, llm_model, embed_model, options, debug, trace } = params;
+  const { projectId, doc_id, src, text, embed_model, options, debug, trace } = params;
   
   const debugTrace: any = debug ? {
     input: { text_length: text?.length || 0, projectId, doc_id, src },
@@ -863,15 +1136,29 @@ export async function runIngestPipeline(params: {
     throw new Error(err?.message || 'project not found');
   }
 
-  const llmModelKey = llm_model || DEFAULT_KG_LLM_MODEL_KEY;
+  // Resolve KG ingest agent from DB
+  let llmModelKey: string;
+  let kgAgentId: string | null = null;
+  let kgProvider: string | null = null;
+  let kgProviderModelId: string | null = null;
+  let kgSystemPrompt = '';
+  
+  const resolved = await resolveKgIngestAgent(projectId);
+  if (!resolved) {
+    throw new Error('kg_ingest_agent_not_configured: No KG ingest agent found for project');
+  }
+  llmModelKey = resolved.modelKey;
+  kgAgentId = resolved.agent.agent_id;
+  kgProvider = resolved.provider;
+  kgProviderModelId = resolved.providerModelId;
+  kgSystemPrompt = resolved.systemPrompt || '';
+
   const embedModel = embed_model || DEFAULT_EMBED_MODEL;
 
   if (debugTrace) {
-    debugTrace.config = { llmModelKey, embedModel };
+    debugTrace.config = { llmModelKey, embedModel, kgAgentId };
   }
 
-  if (!llm_model) console.log('[KG][ingest] default llm_model=%s (modelKey)', llmModelKey);
-  if (!embed_model) console.log('[KG][ingest] default embed_model=%s (OpenRouter model id)', embedModel);
   console.log('[KG][ingest] using llm_model_key=%s embed_model=%s', llmModelKey, embedModel);
 
   const optChunkChars = Number(options?.chunk_chars) || CHUNK_CHAR_TARGET;
@@ -891,26 +1178,16 @@ export async function runIngestPipeline(params: {
   let chunks: string[] = [];
   
   if (useLlmChunking) {
-    // Resolve model to get provider details for logging
-    let modelEntry;
-    try {
-      modelEntry = MODEL_REGISTRY[llmModelKey];
-      if (!modelEntry) {
-        throw new Error(`Unknown model key: ${llmModelKey}`);
-      }
-    } catch (err: any) {
-      throw new Error(`model_not_configured: ${err.message}`);
-    }
-    
-    console.log('[KG][chunking] model_key=%s provider=%s provider_model_id=%s', 
-      llmModelKey, modelEntry.provider, modelEntry.id);
-    
     const chunkStartTime = Date.now();
     try {
+      console.log('[RUNTIME_MODEL] role=kg_chunking projectId=%s agent_id=%s provider=%s model_key=%s provider_model_id=%s', projectId, kgAgentId, kgProvider, llmModelKey, kgProviderModelId);
+      // llmSemanticChunking will force OpenAI internally for structured JSON
       const chunkingResult = await llmSemanticChunking(normalizedText, {
         chunkTarget,
         languageHint,
-        llmModelKey: llmModelKey,
+        llmModelKey,
+        provider: kgProvider || '',
+        providerModelId: kgProviderModelId || '',
         debugTrace: debugTrace?.chunking,
       });
       chunks = chunkingResult.chunks.map((c: any) => c.text);
@@ -1032,8 +1309,8 @@ export async function runIngestPipeline(params: {
     let parsed: any = null;
     let llmModelId = '';
     try {
-      const system =
-        'Extract KG entities and relations from the provided text chunk. Return STRICT JSON ONLY. No markdown. Keep entity names in original language. Relationship labels in English if possible.';
+      const system = kgSystemPrompt;
+      
       const prompt = [
         'Return STRICT JSON ONLY with shape:',
         '{"entities":[{"type":"", "name":"", "attrs":{}, "confidence":0.0}], "relations":[{"type":"", "from":{"type":"","name":""}, "to":{"type":"","name":""}, "attrs":{}, "confidence":0.0}], "provenance":{"method":"llm_extract"}}',
@@ -1043,6 +1320,8 @@ export async function runIngestPipeline(params: {
         chunk,
       ].join('\n');
 
+      console.log('[RUNTIME_MODEL] role=kg_extract   projectId=%s agent_id=%s provider=%s model_key=%s provider_model_id=%s', projectId, kgAgentId, kgProvider, llmModelKey, kgProviderModelId);
+
       const llmRes = await runLLM(prompt, {
         modelKey: llmModelKey,
         system,
@@ -1050,7 +1329,12 @@ export async function runIngestPipeline(params: {
         maxTokens: 2048,
       });
       llmModelId = llmRes.model;
-      console.log('[KG][ingest] extraction provider=%s model=%s', llmRes.provider, llmModelId);
+
+      // Capture probability (fire-and-forget)
+      void captureProbability({
+        projectId,
+        outputText: llmRes.text
+      }).catch(err => console.error('[KG_INGEST] probability capture failed:', err));
 
       parsed = tryParseJsonLoose(llmRes.text);
       if (!parsed || typeof parsed !== 'object') {
@@ -1403,7 +1687,7 @@ router.get('/:projectId/kg/summary', async (req, res) => {
         `,
         { projectId },
       );
-      entities = Number((eRow as any)?.c || 0);
+      entities = Number((eRow as any)?.c ?? 0);
 
       const [rRow] = await runCypherOnGraph(
         GRAPH_NAME,
@@ -1413,7 +1697,7 @@ router.get('/:projectId/kg/summary', async (req, res) => {
         `,
         { projectId },
       );
-      relations = Number((rRow as any)?.c || 0);
+      relations = Number((rRow as any)?.c ?? 0);
 
       const topEntRows = await runCypherOnGraph(
         GRAPH_NAME,
@@ -1482,11 +1766,16 @@ router.put('/:projectId/agent', async (req, res) => {
     const saved = await saveAgentConfig({ ...(req.body || {}), id: req.params.projectId });
     console.log('[SAVE_AGENT] success, returning agent config');
     res.setHeader('Content-Type', 'application/json');
-    return res.status(200).json({ ok: true, agent: saved });
+    const response = { ok: true, agent: saved };
+    return res.status(response?.ok === false ? 200 : 200).json(response);
   } catch (err: any) {
     console.error('[SAVE_AGENT] error:', err?.message || err);
     res.setHeader('Content-Type', 'application/json');
-    return res.status(500).json({ ok: false, error: err?.message || 'failed to save agent config' });
+    return res.status(200).json({
+      ok: false,
+      error: 'save_agent_failed',
+      message: err?.message || 'failed to save agent config',
+    });
   }
 });
 

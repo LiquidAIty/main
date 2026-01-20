@@ -134,40 +134,131 @@ function normalizeState(value: unknown): ProjectState {
   };
 }
 
-export async function createProject(name: string, code?: string | null): Promise<AgentCard> {
+export async function createProject(name: string, code?: string | null, projectType: 'assist' | 'agent' = 'agent'): Promise<AgentCard> {
   const columns = await getProjectColumns();
   const hasOwnerColumn = columns.has('owner_user_id');
+  const hasProjectType = columns.has('project_type');
   const ownerNullable = columns.get('owner_user_id') ?? true;
   const ownerId = pickOwnerId() ?? (ownerNullable ? null : NIL_UUID);
   const projectId = randomUUID();
   const projectCode = code?.trim() || null;
+  
+  const cols = ['id', 'name', 'code', 'status', 'agent_tools', 'agent_io_schema', 'agent_permissions'];
+  const vals = ['$1', '$2', '$3', "'active'", "'[]'::jsonb", "'{}'::jsonb", "'{}'::jsonb"];
+  const params: any[] = [projectId, name, projectCode];
+  
+  if (hasOwnerColumn) {
+    cols.push('owner_user_id');
+    vals.push(`$${params.length + 1}`);
+    params.push(ownerId);
+  }
+  
+  if (hasProjectType) {
+    cols.push('project_type');
+    vals.push(`$${params.length + 1}`);
+    params.push(projectType);
+  }
+  
   const sql = `
-    INSERT INTO ${PROJECTS_TABLE} (
-      id, name, code, status,
-      agent_tools, agent_io_schema, agent_permissions${hasOwnerColumn ? ', owner_user_id' : ''}
-    )
-    VALUES ($1, $2, $3, 'active', '[]'::jsonb, '{}'::jsonb, '{}'::jsonb${hasOwnerColumn ? ', $4' : ''})
+    INSERT INTO ${PROJECTS_TABLE} (${cols.join(', ')})
+    VALUES (${vals.join(', ')})
     ON CONFLICT (id) DO NOTHING
-    RETURNING id, name, code, status
+    RETURNING id, name, code, status, ${hasProjectType ? 'project_type' : "'agent' as project_type"}
   `;
-  const params = hasOwnerColumn ? [projectId, name, projectCode, ownerId] : [projectId, name, projectCode];
+  
   const { rows } = await pool.query(sql, params);
-  const row = rows[0] || { id: projectId, name, code: projectCode, status: 'active' };
-  return { id: row.id, name: row.name, slug: row.code ?? null, status: row.status ?? null, hasAgentConfig: false };
+  const row = rows[0] || { id: projectId, name, code: projectCode, status: 'active', project_type: projectType };
+  
+  // Seed default agents for Agent projects
+  if (projectType === 'agent') {
+    try {
+      // Create Main Chat agent
+      await pool.query(
+        `INSERT INTO ag_catalog.project_agents (
+          agent_id, project_id, name, agent_type, model,
+          role_text, goal_text, constraints_text, io_schema_text, memory_policy_text,
+          tools, io_schema, permissions, is_active
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true)
+        ON CONFLICT DO NOTHING`,
+        [
+          randomUUID(),
+          projectId,
+          'Main Chat',
+          'llm_chat',
+          'gpt-5.1-chat-latest',
+          'You are the main chat assistant for this project.',
+          'Help users accomplish their goals through conversation.',
+          'Be helpful, accurate, and concise.',
+          'Input: user message text. Output: conversational response.',
+          'Use conversation history and retrieved knowledge graph context.',
+          JSON.stringify([]),
+          JSON.stringify({}),
+          JSON.stringify({})
+        ]
+      );
+      
+      // Create KG Ingest agent
+      await pool.query(
+        `INSERT INTO ag_catalog.project_agents (
+          agent_id, project_id, name, agent_type, model,
+          role_text, goal_text, constraints_text, io_schema_text, memory_policy_text,
+          tools, io_schema, permissions, is_active
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true)
+        ON CONFLICT DO NOTHING`,
+        [
+          randomUUID(),
+          projectId,
+          'KG Ingest',
+          'kg_ingest',
+          'gpt-5-nano',
+          'You extract entities and relationships from conversation text.',
+          'Build a knowledge graph from chat conversations.',
+          'Extract only factual information. Use strict JSON output.',
+          'Input: conversation text. Output: entities and relationships in JSON.',
+          'No memory - process each conversation turn independently.',
+          JSON.stringify([]),
+          JSON.stringify({}),
+          JSON.stringify({})
+        ]
+      );
+      
+      console.log('[createProject] Seeded default agents for agent project:', projectId);
+    } catch (err) {
+      console.error('[createProject] Failed to seed agents:', err);
+      // Don't fail project creation if agent seeding fails
+    }
+  }
+  
+  return { id: row.id, name: row.name, code: row.code ?? null, status: row.status ?? null, hasAgentConfig: false, project_type: row.project_type || 'agent' };
 }
 
-export async function listAgentCards(userId?: string | null): Promise<AgentCard[]> {
+export async function listAgentCards(userId?: string | null, projectType?: 'assist' | 'agent' | null): Promise<AgentCard[]> {
+  const columns = await getProjectColumns();
+  const hasProjectType = columns.has('project_type');
+  
   const params: any[] = [];
+  const whereClauses: string[] = [];
+  
   let sql = `
     SELECT id, name, code, status,
            agent_model, agent_prompt_template, agent_tools,
-           agent_io_schema, agent_temperature, agent_max_tokens, agent_permissions
+           agent_io_schema, agent_temperature, agent_max_tokens, agent_permissions,
+           ${hasProjectType ? 'project_type' : "'agent' as project_type"}
     FROM ${PROJECTS_TABLE}
   `;
 
   if (userId) {
-    sql += ' WHERE owner_user_id = $1';
+    whereClauses.push(`owner_user_id = $${params.length + 1}`);
     params.push(userId);
+  }
+  
+  if (projectType && hasProjectType) {
+    whereClauses.push(`project_type = $${params.length + 1}`);
+    params.push(projectType);
+  }
+  
+  if (whereClauses.length > 0) {
+    sql += ' WHERE ' + whereClauses.join(' AND ');
   }
 
   sql += ' ORDER BY updated_at DESC';
@@ -185,9 +276,10 @@ export async function listAgentCards(userId?: string | null): Promise<AgentCard[
     return rows.map((row) => ({
       id: row.id,
       name: row.name,
-      slug: row.code ?? null,
+      code: row.code ?? null,
       status: row.status ?? null,
       hasAgentConfig: hasConfig(row),
+      project_type: row.project_type || 'agent',
     }));
   } catch (err: any) {
     console.error('[listAgentCards] Query failed:', {

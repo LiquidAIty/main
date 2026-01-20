@@ -5,7 +5,14 @@ async function fetchWithTimeout(url: string, init: RequestInit, ms: number, allo
   return safeFetch(url, { ...init, timeoutMs: ms, allowHosts });
 }
 
-export type InvokeOpts = { modelKey?: string; temperature?: number; maxTokens?: number; system?: string; jsonMode?: boolean };
+export type InvokeOpts = { 
+  modelKey?: string; 
+  temperature?: number; 
+  maxTokens?: number; 
+  system?: string; 
+  jsonMode?: boolean;
+  jsonSchema?: { name: string; schema: any; strict?: boolean };
+};
 
 export async function runLLM(userContent: string, opts: InvokeOpts = {}) {
   let m;
@@ -37,7 +44,16 @@ export async function runLLM(userContent: string, opts: InvokeOpts = {}) {
           { role: "user", content: userContent },
         ],
         temperature, max_tokens,
-        ...(opts.jsonMode ? { response_format: { type: "json_object" } } : {}),
+        ...(opts.jsonSchema ? { 
+          response_format: { 
+            type: "json_schema",
+            json_schema: {
+              name: opts.jsonSchema.name,
+              schema: opts.jsonSchema.schema,
+              strict: opts.jsonSchema.strict ?? true
+            }
+          } 
+        } : opts.jsonMode ? { response_format: { type: "json_object" } } : {}),
       }),
     }, timeout, allowOpenAI);
     const j = await r.json() as any;

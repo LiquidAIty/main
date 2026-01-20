@@ -1,9 +1,10 @@
 export interface AgentCard {
   id: string;
   name: string;
-  slug?: string | null;
+  code?: string | null;
   status?: string | null;
   hasAgentConfig: boolean;
+  project_type?: 'assist' | 'agent';
 }
 
 export interface AgentConfig {

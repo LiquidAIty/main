@@ -12,6 +12,7 @@ export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   "gpt-5-nano": { label: "GPT-5 Nano", provider: "openai", id: "gpt-5-nano", context: 16384 },
   "gpt-5-mini": { label: "GPT-5 Mini", provider: "openai", id: "gpt-5-mini", context: 32768 },
   "gpt-5":      { label: "GPT-5 Full", provider: "openai", id: "gpt-5",      context: 32768 },
+  "gpt-5.1-chat-latest": { label: "GPT-5.1 Chat Latest", provider: "openai", id: "gpt-5.1-chat-latest", context: 32768 },
 
   // --- OpenRouter ---
   "kimi-k2-thinking": { label: "Kimi K2 Thinking", provider: "openrouter", id: "moonshotai/kimi-k2-thinking", context: 262144 },

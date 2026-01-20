@@ -2,6 +2,9 @@ You are working in an Assist-first production codebase.
 
 NON-NEGOTIABLE RULES:
 
+Never reconstruct or invent default prompts unless the DB field is empty.
+If DB prompt exists, always use it verbatim.![alt text](image.png)
+
 1) Assist mode is the shipped product.
    - Assist UX must be simple, stable, and non-admin.
    - No configuration UI, no debug controls, no orchestration visuals.
