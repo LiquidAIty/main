@@ -1,49 +1,63 @@
 import { getAssistAssignments } from './agentBuilderStore';
 import {
-  getProjectAgent,
-  listProjectAgents,
+  getProjectAgentByProjectId,
 } from './projectAgentsStore';
 import { resolveModel } from '../llm/models.config';
 
 export async function resolveKgIngestAgent(projectId: string) {
-  const { assist_kg_ingest_agent_id } = await getAssistAssignments(projectId);
-  let agent = null;
-  if (assist_kg_ingest_agent_id) {
-    agent = await getProjectAgent(assist_kg_ingest_agent_id);
+  // RESOLUTION PATH LOGGING
+  console.log('[KG_RESOLVE] Starting resolution for projectId=%s', projectId);
+  
+  const assignments = await getAssistAssignments(projectId);
+  console.log('[KG_RESOLVE] Assignments loaded:', {
+    assist_kg_ingest_agent_id: assignments.assist_kg_ingest_agent_id,
+    assist_main_agent_id: assignments.assist_main_agent_id,
+  });
+  
+  const { assist_kg_ingest_agent_id } = assignments;
+  
+  if (!assist_kg_ingest_agent_id) {
+    console.error('[KG_RESOLVE] FAILED: assist_kg_ingest_agent_id not set');
+    throw new Error('kg_ingest_agent_missing_assist_assignment');
   }
+  
+  console.log('[KG_RESOLVE] Looking up agent by projectId=%s agent_type=kg_ingest', assist_kg_ingest_agent_id);
+  const agent = await getProjectAgentByProjectId(assist_kg_ingest_agent_id, 'kg_ingest');
+  
   if (!agent) {
-    const agents = await listProjectAgents(projectId);
-    agent =
-      agents.find(
-        (a) =>
-          a.agent_type === 'kg_ingest' ||
-          a.name?.toLowerCase() === 'kg ingest' ||
-          a.name?.toLowerCase() === 'knowledge ingest',
-      ) || null;
+    console.error('[KG_RESOLVE] FAILED: Agent row not found for projectId=%s agent_type=kg_ingest', assist_kg_ingest_agent_id);
+    return null;
   }
-  if (!agent) return null;
+  
+  console.log('[KG_RESOLVE] Agent found:', {
+    agent_id: agent.agent_id,
+    agent_type: agent.agent_type,
+    model: agent.model,
+    prompt_template_len: agent.prompt_template?.length || 0,
+  });
 
   const systemParts: string[] = [];
   if (agent.prompt_template?.trim()) {
     systemParts.push(agent.prompt_template.trim());
-  } else {
-    if (agent.role_text?.trim()) systemParts.push(agent.role_text.trim());
-    if (agent.goal_text?.trim()) systemParts.push(agent.goal_text.trim());
-    if (agent.constraints_text?.trim()) systemParts.push(agent.constraints_text.trim());
-    if (agent.memory_policy_text?.trim()) systemParts.push(agent.memory_policy_text.trim());
   }
   const systemPrompt = systemParts.join('\n\n').trim();
   const modelKey = agent.model;
+  
+  if (!systemPrompt) {
+    console.error('[KG_RESOLVE] FAILED: prompt_template missing or empty');
+    throw new Error('kg_ingest_prompt_missing');
+  }
+  
   if (!modelKey || !String(modelKey).trim()) {
-    console.error('[KG_INGEST] missing model on kg ingest agent', {
+    console.error('[KG_RESOLVE] FAILED: model missing', {
       projectId,
       agent_id: agent.agent_id,
     });
-    throw new Error('kg_ingest_agent_missing_model');
+    throw new Error('kg_ingest_model_missing');
   }
 
   if (modelKey.includes('/')) {
-    console.error('[KG_INGEST] invalid model key format', {
+    console.error('[KG_RESOLVE] FAILED: invalid model key format', {
       projectId,
       agent_id: agent.agent_id,
       modelKey,
@@ -57,7 +71,7 @@ export async function resolveKgIngestAgent(projectId: string) {
   try {
     modelEntry = resolveModel(modelKey);
   } catch (err: any) {
-    console.error('[KG_INGEST] model resolution failed', {
+    console.error('[KG_RESOLVE] FAILED: model resolution failed', {
       projectId,
       agent_id: agent.agent_id,
       modelKey,
@@ -68,6 +82,15 @@ export async function resolveKgIngestAgent(projectId: string) {
 
   const provider = modelEntry.provider;
   const providerModelId = modelEntry.id;
+  
+  console.log('[KG_RESOLVE] SUCCESS:', {
+    projectId,
+    assignedAgentId: assist_kg_ingest_agent_id,
+    agentId: agent.agent_id,
+    provider,
+    modelKey,
+    prompt_len: systemPrompt.length,
+  });
 
   return { agentId: agent.agent_id, agent, modelKey, systemPrompt, provider, providerModelId };
 }

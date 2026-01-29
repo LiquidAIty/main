@@ -146,6 +146,23 @@ export async function getProjectAgent(agentId: string): Promise<ProjectAgent | n
 }
 
 /**
+ * Get agent by project_id and agent_type (for assignment resolution)
+ */
+export async function getProjectAgentByProjectId(projectId: string, agentType: 'kg_ingest' | 'llm_chat'): Promise<ProjectAgent | null> {
+  console.log('[STORE] Looking up agent by projectId=%s agentType=%s', projectId, agentType);
+  const { rows } = await pool.query(
+    `SELECT * FROM ag_catalog.project_agents 
+     WHERE project_id = $1 AND agent_type = $2 AND is_active = true
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [projectId, agentType]
+  );
+  console.log('[STORE] Found %d rows', rows.length);
+  if (!rows.length) return null;
+  return rowToAgent(rows[0]);
+}
+
+/**
  * Create a new agent
  */
 export async function createProjectAgent(input: CreateAgentInput): Promise<ProjectAgent> {

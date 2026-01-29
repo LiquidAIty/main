@@ -169,66 +169,6 @@ export async function createProject(name: string, code?: string | null, projectT
   const { rows } = await pool.query(sql, params);
   const row = rows[0] || { id: projectId, name, code: projectCode, status: 'active', project_type: projectType };
   
-  // Seed default agents for Agent projects
-  if (projectType === 'agent') {
-    try {
-      // Create Main Chat agent
-      await pool.query(
-        `INSERT INTO ag_catalog.project_agents (
-          agent_id, project_id, name, agent_type, model,
-          role_text, goal_text, constraints_text, io_schema_text, memory_policy_text,
-          tools, io_schema, permissions, is_active
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true)
-        ON CONFLICT DO NOTHING`,
-        [
-          randomUUID(),
-          projectId,
-          'Main Chat',
-          'llm_chat',
-          'gpt-5.1-chat-latest',
-          'You are the main chat assistant for this project.',
-          'Help users accomplish their goals through conversation.',
-          'Be helpful, accurate, and concise.',
-          'Input: user message text. Output: conversational response.',
-          'Use conversation history and retrieved knowledge graph context.',
-          JSON.stringify([]),
-          JSON.stringify({}),
-          JSON.stringify({})
-        ]
-      );
-      
-      // Create KG Ingest agent
-      await pool.query(
-        `INSERT INTO ag_catalog.project_agents (
-          agent_id, project_id, name, agent_type, model,
-          role_text, goal_text, constraints_text, io_schema_text, memory_policy_text,
-          tools, io_schema, permissions, is_active
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true)
-        ON CONFLICT DO NOTHING`,
-        [
-          randomUUID(),
-          projectId,
-          'KG Ingest',
-          'kg_ingest',
-          'gpt-5-nano',
-          'You extract entities and relationships from conversation text.',
-          'Build a knowledge graph from chat conversations.',
-          'Extract only factual information. Use strict JSON output.',
-          'Input: conversation text. Output: entities and relationships in JSON.',
-          'No memory - process each conversation turn independently.',
-          JSON.stringify([]),
-          JSON.stringify({}),
-          JSON.stringify({})
-        ]
-      );
-      
-      console.log('[createProject] Seeded default agents for agent project:', projectId);
-    } catch (err) {
-      console.error('[createProject] Failed to seed agents:', err);
-      // Don't fail project creation if agent seeding fails
-    }
-  }
-  
   return { id: row.id, name: row.name, code: row.code ?? null, status: row.status ?? null, hasAgentConfig: false, project_type: row.project_type || 'agent' };
 }
 

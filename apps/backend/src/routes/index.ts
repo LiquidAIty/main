@@ -20,7 +20,7 @@ import projectAgents from './projectAgents.routes';
 import { diagnosticRoutes } from './diagnostic.routes';
 import receipts from './receipts.routes';
 import config from './config.routes';
-import v2Config from './v2/config.routes';
+import v2Routes from './v2';
 
 /**
  * /api/sol/run is the primary Sol chat endpoint. It can run with or without auth
@@ -66,6 +66,6 @@ router.use('/rag', authMiddleware, ragSearch);
 router.use('/kg', authMiddleware, kg);
 router.use('/receipts', authMiddleware, receipts);
 router.use('/config', config);
-router.use('/v2/projects', v2Config);
+router.use('/v2', v2Routes);
 
 export default router;

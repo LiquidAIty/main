@@ -26,6 +26,24 @@ function clamp(x: number, a: number, b: number) {
 const uid = () => Math.random().toString(36).slice(2, 8);
 const DEBUG = false;
 
+async function safeJson(res: Response): Promise<any | null> {
+  if (res.status === 204 || res.status === 304) return null;
+  let text = '';
+  try {
+    text = await res.text();
+  } catch (err) {
+    console.warn('[safeJson] failed to read body', { status: res.status, url: res.url });
+    return null;
+  }
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (err: any) {
+    console.warn('[safeJson] invalid JSON', { status: res.status, url: res.url, error: err?.message || err });
+    return null;
+  }
+}
+
 type PlanItem = { id: string; text: string; status: "draft" | "approved" | "done" };
 type LinkRef = {
   id: string;
@@ -54,8 +72,6 @@ type AgentPrompt = {
 
 type WorkbenchOutputMap = Record<"Plan" | "Links" | "Knowledge" | "Dashboard", string>;
 type WorkbenchRating = { stars: number; note: string };
-type AgentType = 'llm_chat' | 'kg_ingest';
-
 // helper: load all project-local state (defaults only; real data is fetched from backend)
 function loadProjectState(_projectId: string, _mode: "assist" | "agents" = "assist") {
   return {
@@ -452,11 +468,25 @@ export default function AgentBuilder() {
   const [panelOpen, setPanelOpen] = useState(true);
   const [panelWidth, setPanelWidth] = useState(480);
   const [mode, setMode] = useState<"assist" | "agents">("assist");
+  const [assistProjectId, setAssistProjectId] = useState<string>("");
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const messagesByScopeRef = useRef<Record<string, { role: "assistant" | "user"; text: string }[]>>({});
   const [projectLoading, setProjectLoading] = useState(false);
   const [projectSaveStatus, setProjectSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [projectSaveError, setProjectSaveError] = useState<string | null>(null);
+  const [kgStatus, setKgStatus] = useState<{
+    totals: { chunks: number; entities: number; rels: number };
+    last_ingest: {
+      ts?: string | null;
+      last_ts?: string | null;
+      ok: boolean;
+      error_code?: string | null;
+      error_message?: string | null;
+      chunks: number;
+      entities: number;
+      rels: number;
+    };
+  } | null>(null);
   const setActiveProjectWithUrl = useCallback(
     (projectId: string) => {
       const currentSearch = window.location.search.replace(/^\?/, "");
@@ -485,6 +515,18 @@ export default function AgentBuilder() {
     if (mode === "agents") setTab("Plan");
     if (mode === "assist") setTab("Knowledge");
   }, [mode]);
+  useEffect(() => {
+    const stored = localStorage.getItem("last_assist_project_id") || "";
+    if (stored) {
+      setAssistProjectId(stored);
+    }
+  }, []);
+  useEffect(() => {
+    if (mode === "assist" && activeProject) {
+      localStorage.setItem("last_assist_project_id", activeProject);
+      setAssistProjectId(activeProject);
+    }
+  }, [mode, activeProject]);
   const [openDrawer, setOpenDrawer] = useState<
     null | "project" | "apps" | "settings" | "admin"
   >(null);
@@ -494,6 +536,8 @@ export default function AgentBuilder() {
   const [projects, setProjects] = useState<any[]>([]);
   const refreshInFlight = useRef(false);
   const refreshSeq = useRef(0);
+  const autoCreatedAssistRef = useRef(false);
+  const loggedProjectRef = useRef<string | null>(null);
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [agentPrompt, setAgentPrompt] = useState<AgentPrompt>({
     role: "",
@@ -524,10 +568,18 @@ export default function AgentBuilder() {
       console.debug('[refreshProjects]', { reason: reason || 'unknown', mode, project_type_filter: projectType, seq });
       
       const response = await fetch(`/api/projects/list?project_type=${projectType}`);
-      const data = await response.json();
+      const data = await safeJson(response);
       
       if (seq !== refreshSeq.current) return;
-      
+      if (!data) {
+        console.warn('[refreshProjects] empty response', { status: response.status, url: response.url });
+        if (response.status !== 304 && response.status !== 204) {
+          setProjectsError(`Error loading projects (HTTP ${response.status})`);
+          setProjects([]);
+        }
+        return;
+      }
+
       let cards = data.ok ? data.projects : [];
       
       // Pin canonical agent decks to top in agent mode
@@ -539,6 +591,33 @@ export default function AgentBuilder() {
         cards = [...pinned, ...others];
       }
       
+      if (cards.length === 0 && projectType === 'assist' && !autoCreatedAssistRef.current) {
+        autoCreatedAssistRef.current = true;
+        try {
+          const createRes = await fetch('/api/projects', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: 'Default Project',
+              project_type: 'assist',
+            }),
+          });
+          const created = await safeJson(createRes);
+          const newId = created?.id || '';
+          if (newId) {
+            const reloadRes = await fetch(`/api/projects/list?project_type=${projectType}`);
+            const reload = await safeJson(reloadRes);
+            if (seq !== refreshSeq.current) return;
+            cards = reload?.ok ? reload.projects : [];
+            setProjects(cards);
+            setActiveProjectWithUrl(newId);
+            return;
+          }
+        } catch (err: any) {
+          console.error('[refreshProjects] auto-create failed:', err?.message || err);
+        }
+      }
+
       setProjects(cards);
       const search = new URLSearchParams(window.location.search);
       const urlId = search.get("projectId") || "";
@@ -565,6 +644,13 @@ export default function AgentBuilder() {
       if (seq === refreshSeq.current) refreshInFlight.current = false;
     }
   }, [setActiveProjectWithUrl]);
+
+  useEffect(() => {
+    if (activeProject && loggedProjectRef.current !== activeProject) {
+      console.log('[AgentBuilder] selected projectId=%s', activeProject);
+      loggedProjectRef.current = activeProject;
+    }
+  }, [activeProject]);
 
   // chat state
   const [messages, setMessages] = useState<
@@ -597,21 +683,57 @@ export default function AgentBuilder() {
   const [kgDebugTrace, setKgDebugTrace] = useState<any>(null);
   const [lastIngestTrace, setLastIngestTrace] = useState<any>(null);
   const [runtimeConfig, setRuntimeConfig] = useState<any>(null);
+  const [kgStatusPolledAt, setKgStatusPolledAt] = useState<Date | null>(null);
   const scopeKey = `${mode}:${activeProject || ""}`;
 
   // Fetch runtime config when project changes (Agent Builder mode only)
   useEffect(() => {
     if (mode === 'agents' && activeProject) {
       fetch(`/api/projects/${activeProject}/runtime-config`)
-        .then(res => res.json())
+        .then(res => safeJson(res))
         .then(data => {
-          if (data.ok) {
+          if (data?.ok) {
             setRuntimeConfig(data);
           }
         })
         .catch(err => console.error('[RUNTIME_CONFIG] fetch failed:', err));
     }
   }, [mode, activeProject]);
+
+  useEffect(() => {
+    if (!activeProject) {
+      setKgStatus(null);
+      return;
+    }
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/v2/projects/${activeProject}/kg/status`);
+        const data = await res.json().catch(() => null);
+        if (!cancelled && res.ok && data?.ok) {
+          setKgStatus({
+            totals: data.totals || { chunks: 0, entities: 0, rels: 0 },
+            last_ingest: data.last_ingest || { ts: null, last_ts: null, ok: false, error_code: null, error_message: null, chunks: 0, entities: 0, rels: 0 },
+          });
+          setKgStatusPolledAt(new Date());
+        }
+      } catch {
+        if (!cancelled) {
+          setKgStatus(null);
+        }
+      }
+    };
+
+    void poll();
+    timer = window.setInterval(poll, 3000);
+
+    return () => {
+      cancelled = true;
+      if (timer) window.clearInterval(timer);
+    };
+  }, [activeProject]);
 
   const runGraphQuery = useCallback(async (query?: string) => {
     const q = (query ?? cypher).trim();
@@ -622,7 +744,7 @@ export default function AgentBuilder() {
     setGraphError(null);
     setGraphLoading(true);
     try {
-      const res = await fetch(`/api/projects/${activeProject}/kg/query`, {
+      const res = await fetch(`/api/v2/projects/${activeProject}/kg/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cypher: q, params: { projectId: activeProject } }),
@@ -644,17 +766,17 @@ export default function AgentBuilder() {
   }, [activeProject, cypher]);
 
   // When switching projects, reload all per-project state from storage
-  useEffect(() => {
-    if (!activeProject) return;
-    setStateLoaded(false);
-    fetch(`/api/projects/${activeProject}/state`)
-      .then((r) => r.json())
-      .then((data) => {
-        setMessages(Array.isArray(data?.messages) ? data.messages : loadProjectState("", mode).messages);
-        setPlan(Array.isArray(data?.plan) ? data.plan : []);
-        setLinks(Array.isArray(data?.links) ? data.links : []);
-        setStateLoaded(true);
-      })
+    useEffect(() => {
+      if (!activeProject) return;
+      setStateLoaded(false);
+      fetch(`/api/projects/${activeProject}/state`)
+        .then((r) => safeJson(r))
+        .then((data) => {
+          setMessages(Array.isArray(data?.messages) ? data.messages : loadProjectState("", mode).messages);
+          setPlan(Array.isArray(data?.plan) ? data.plan : []);
+          setLinks(Array.isArray(data?.links) ? data.links : []);
+          setStateLoaded(true);
+        })
       .catch(() => {
         const next = loadProjectState(activeProject, mode);
         setMessages(next.messages);
@@ -699,16 +821,16 @@ export default function AgentBuilder() {
   useEffect(() => {
     if (tab !== 'Dashboard' || !activeProject) return;
     
-    const fetchIngestTrace = async () => {
-      try {
-        const res = await fetch(`/api/projects/${activeProject}/kg/last-trace`);
-        const data = await res.json();
-        if (data.ok && data.trace) {
-          setLastIngestTrace(data.trace);
+      const fetchIngestTrace = async () => {
+        try {
+          const res = await fetch(`/api/projects/${activeProject}/kg/last-trace`);
+          const data = await safeJson(res);
+          if (data?.ok && data.trace) {
+            setLastIngestTrace(data.trace);
+          }
+        } catch (err) {
+          console.error('[Dashboard] Failed to fetch ingest trace:', err);
         }
-      } catch (err) {
-        console.error('[Dashboard] Failed to fetch ingest trace:', err);
-      }
     };
     
     fetchIngestTrace();
@@ -790,7 +912,7 @@ export default function AgentBuilder() {
       if (mode === "assist" && activeProject && userText && assistantText) {
         void (async () => {
           try {
-            await fetch(`/api/projects/${activeProject}/kg/ingest_chat_turn`, {
+            await fetch(`/api/v2/projects/${activeProject}/kg/ingest_chat_turn`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -861,20 +983,19 @@ export default function AgentBuilder() {
   const reject = (id: string) =>
     setLinks((ls) => ls.filter((x) => x.id !== id));
 
-  const activeProjectCode =
-    projects.find((project) => project.id === activeProject)?.code || "";
-  const agentType: AgentType =
-    activeProjectCode === "kg-ingest"
-      ? "kg_ingest"
-      : activeProjectCode === "main-chat"
-        ? "llm_chat"
-        : "llm_chat";
-
   const graphViz = ageRowsToGraph(graphResult);
 
   // derive counts
   const approved = plan.filter((p) => p.status === "approved");
   const accepted = links.filter((l) => l.accepted);
+  const activeCard = projects.find((p: any) => p.id === activeProject);
+  const rawCode = typeof activeCard?.code === 'string' ? activeCard.code.toLowerCase() : '';
+  const rawName = typeof activeCard?.name === 'string' ? activeCard.name.toLowerCase() : '';
+  const activeCode = rawCode || rawName;
+  const isMainChatCard = activeCode === 'main-chat' || rawName === 'main chat';
+  const isKgIngestCard = activeCode === 'kg-ingest' || rawName === 'kg ingest' || rawName === 'knowledge ingest';
+  const showMainChat = isMainChatCard || (!isMainChatCard && !isKgIngestCard);
+  const showKgIngest = isKgIngestCard;
 
   const createProjectPrompt = async () => {
     const name = window.prompt("New project name?");
@@ -1052,15 +1173,38 @@ export default function AgentBuilder() {
                     {tab === "Plan" && (
                       <div className="space-y-3">
                         {activeProject ? (
-                          <AgentManager
-                            key={`${activeProject}:${agentType}`}
-                            projectId={activeProject}
-                            agentType={agentType}
-                            activeTab={tab}
-                            onGraphRefresh={() => {
-                              // no-op
-                            }}
-                          />
+                          <div className="space-y-4">
+                            {showMainChat && (
+                              <div>
+                                <div style={{ color: C.primary, fontWeight: 600, marginBottom: 6 }}>Main Chat</div>
+                                <AgentManager
+                                  key={`${activeProject}:llm_chat`}
+                                  projectId={activeProject}
+                                  agentType="llm_chat"
+                                  activeTab={tab}
+                                  assistProjectId={assistProjectId}
+                                  onGraphRefresh={() => {
+                                    // no-op
+                                  }}
+                                />
+                              </div>
+                            )}
+                            {showKgIngest && (
+                              <div>
+                                <div style={{ color: C.primary, fontWeight: 600, marginBottom: 6 }}>KG Ingest</div>
+                                <AgentManager
+                                  key={`${activeProject}:kg_ingest`}
+                                  projectId={activeProject}
+                                  agentType="kg_ingest"
+                                  activeTab={tab}
+                                  assistProjectId={assistProjectId}
+                                  onGraphRefresh={() => {
+                                    // no-op
+                                  }}
+                                />
+                              </div>
+                            )}
+                          </div>
                         ) : (
                           <div
                             style={{
@@ -1297,6 +1441,54 @@ export default function AgentBuilder() {
                 {/* Knowledge tab - available in both modes */}
                 {tab === "Knowledge" && (
                   <div className="space-y-3">
+                    {activeProject && (
+                      <div
+                        className="text-xs p-3 rounded"
+                        style={{
+                          background: C.bg,
+                          border: `1px solid ${C.border}`,
+                          color: C.neutral,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                          <div style={{ color: C.primary, fontWeight: 600 }}>KG Status</div>
+                          <div
+                            style={{
+                              fontSize: 10,
+                              color: C.neutral,
+                              border: `1px solid ${C.border}`,
+                              borderRadius: 999,
+                              padding: '2px 8px',
+                              background: '#141414',
+                            }}
+                          >
+                            {kgStatusPolledAt ? `refreshed ${kgStatusPolledAt.toLocaleTimeString()}` : 'refreshing…'}
+                          </div>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+                          <div>Chunks: {kgStatus?.totals?.chunks ?? 0}</div>
+                          <div>Entities: {kgStatus?.totals?.entities ?? 0}</div>
+                          <div>Rels: {kgStatus?.totals?.rels ?? 0}</div>
+                        </div>
+                        {kgStatus?.totals && kgStatus.totals.chunks === 0 && kgStatus.totals.entities === 0 && kgStatus.totals.rels === 0 && (
+                          <div style={{ marginBottom: 8, fontStyle: 'italic' }}>No data yet.</div>
+                        )}
+                        {kgStatus?.last_ingest ? (
+                          <div>
+                            <div>Last: {kgStatus.last_ingest.ts || kgStatus.last_ingest.last_ts ? new Date((kgStatus.last_ingest.ts || kgStatus.last_ingest.last_ts) as string).toLocaleString() : 'never'}</div>
+                            <div>
+                              Status: {kgStatus.last_ingest.ok ? 'ok' : 'error'}{' '}
+                              {kgStatus.last_ingest.ok ? '' : (kgStatus.last_ingest.error_code || 'unknown')}
+                            </div>
+                            {!kgStatus.last_ingest.ok && kgStatus.last_ingest.error_message && (
+                              <div style={{ marginTop: 4 }}>{kgStatus.last_ingest.error_message}</div>
+                            )}
+                          </div>
+                        ) : (
+                          <div>Last: never</div>
+                        )}
+                      </div>
+                    )}
                     {/* Force-directed graph visualization */}
                     <div style={{ display: "flex", justifyContent: "center" }}>
                       <MiniForce nodes={graphViz.nodes} edges={graphViz.edges} />

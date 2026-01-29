@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { getProjectAssistAssignments, setProjectAssistAssignments } from '../lib/projectAgentsApi';
 
 // Parse tagged block format from prompt_template
 function parsePromptTemplate(template: string): {
@@ -69,13 +70,30 @@ interface AgentManagerProps {
   agentType: 'llm_chat' | 'kg_ingest';
   activeTab: string;
   onGraphRefresh?: () => void;
+  assistProjectId?: string;
 }
 
-export function AgentManager({ projectId, agentType, activeTab }: AgentManagerProps) {
+export function AgentManager({ projectId, agentType, activeTab, assistProjectId }: AgentManagerProps) {
+  const urlProjectId = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    const params = new URLSearchParams(window.location.search);
+    return params.get('projectId')?.trim() || '';
+  }, []);
+  const urlAssistProjectId = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    const params = new URLSearchParams(window.location.search);
+    return params.get('assistProjectId')?.trim() || '';
+  }, []);
+  const resolvedProjectId = projectId || urlProjectId;
+  const resolvedAssistProjectId = assistProjectId || urlAssistProjectId;
+  const isAgentBuilder = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    return window.location.pathname.includes('agentbuilder');
+  }, []);
   const [loading, setLoading] = useState(false);
   
   // Model registry from backend (grouped by provider)
-  const [modelsByProvider, setModelsByProvider] = useState<Record<string, Array<{key: string; label: string; providerModelId: string}>>>([]);
+  const [modelsByProvider, setModelsByProvider] = useState<Record<string, Array<{key: string; label: string; providerModelId: string}>>>({});
   
   // Project config form
   const [provider, setProvider] = useState<'openai' | 'openrouter' | ''>('');
@@ -100,6 +118,17 @@ export function AgentManager({ projectId, agentType, activeTab }: AgentManagerPr
   const [testResult, setTestResult] = useState<any>(null);
 
   const [configError, setConfigError] = useState<string | null>(null);
+  const [versions, setVersions] = useState<any[]>([]);
+  const [versionsEnabled, setVersionsEnabled] = useState<boolean>(true);
+  const [versionNote, setVersionNote] = useState('');
+  const [agentId, setAgentId] = useState<string>('');
+  const [assistAssignments, setAssistAssignments] = useState<{
+    assist_main_agent_id: string | null;
+    assist_kg_ingest_agent_id: string | null;
+  } | null>(null);
+  const [assistAssignError, setAssistAssignError] = useState<string | null>(null);
+  const [assistAssignLoading, setAssistAssignLoading] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
 
   // Load model registry on mount
   useEffect(() => {
@@ -131,19 +160,23 @@ export function AgentManager({ projectId, agentType, activeTab }: AgentManagerPr
 
   // Load project config when project changes
   useEffect(() => {
-    if (projectId && agentType) {
+    console.log('[AgentManager] useEffect triggered - projectId:', resolvedProjectId, 'agentType:', agentType);
+    if (resolvedProjectId && agentType) {
+      console.log('[AgentManager] Loading config for projectId:', resolvedProjectId, 'agentType:', agentType);
       loadProjectConfig();
+    } else {
+      console.log('[AgentManager] Skipping config load - missing projectId or agentType');
     }
-  }, [projectId, agentType]);
+  }, [resolvedProjectId, agentType]);
 
   const loadProjectConfig = async () => {
-    if (!projectId || !agentType) {
+    if (!resolvedProjectId || !agentType) {
       return;
     }
     try {
       setLoading(true);
       setConfigError(null);
-      const res = await fetch(`/api/v2/projects/${projectId}/agents/${agentType}/config`);
+      const res = await fetch(`/api/v2/projects/${resolvedProjectId}/agents/${agentType}/config`);
       const data = await res.json().catch(() => null);
 
       if (!res.ok || !data?.ok) {
@@ -164,11 +197,13 @@ export function AgentManager({ projectId, agentType, activeTab }: AgentManagerPr
           setPromptParts({ role: '', goal: '', constraints: '', ioSchema: '', memoryPolicy: '' });
           setCreditStats(null);
           setDeckVersion(1);
+          setVersions([]);
         }
         return;
       }
 
-      const { provider: fetchedProvider, model_key, temperature: fetchedTemp, max_tokens: fetchedMax, prompt_template } = data.config;
+      const { agent_id, provider: fetchedProvider, model_key, temperature: fetchedTemp, max_tokens: fetchedMax, prompt_template } = data.config;
+      setAgentId(typeof agent_id === 'string' ? agent_id : '');
       setProvider(fetchedProvider || '');
       setModelKey(model_key || '');
       setTemperature(typeof fetchedTemp === 'number' ? fetchedTemp : '');
@@ -177,7 +212,25 @@ export function AgentManager({ projectId, agentType, activeTab }: AgentManagerPr
       setDeckVersion(1);
       const template = prompt_template || '';
       setPromptParts(parsePromptTemplate(template));
-      setConfigError(null);
+      if (Array.isArray(data?.missing) && data.missing.length) {
+        setConfigError(`Configuration incomplete for ${agentType}: missing ${data.missing.join(', ')}.`);
+      } else {
+        setConfigError(null);
+      }
+      try {
+        const versionsRes = await fetch(`/api/v2/projects/${resolvedProjectId}/agents/${agentType}/config/versions?limit=20`);
+        const versionsJson = await versionsRes.json().catch(() => null);
+        if (versionsRes.ok && versionsJson?.ok) {
+          setVersions(Array.isArray(versionsJson.versions) ? versionsJson.versions : []);
+          setVersionsEnabled(versionsJson.versions_enabled !== false);
+        } else {
+          setVersions([]);
+          setVersionsEnabled(true);
+        }
+      } catch {
+        setVersions([]);
+        setVersionsEnabled(true);
+      }
     } catch (err: any) {
       console.error('[AgentManager] Failed to load project config:', err);
       setConfigError(err?.message || 'Failed to load configuration');
@@ -186,29 +239,66 @@ export function AgentManager({ projectId, agentType, activeTab }: AgentManagerPr
       setTemperature('');
       setMaxTokens('');
       setPromptParts({ role: '', goal: '', constraints: '', ioSchema: '', memoryPolicy: '' });
+      setAgentId('');
     } finally {
       setLoading(false);
     }
   };
 
+  useEffect(() => {
+    console.log('[AgentManager] assistProjectId effect - assistProjectId:', resolvedAssistProjectId);
+    if (!resolvedAssistProjectId) {
+      console.log('[AgentManager] Clearing assignments - no assistProjectId');
+      setAssistAssignments(null);
+      return;
+    }
+    let canceled = false;
+    (async () => {
+      try {
+        console.log('[AgentManager] Fetching assignments for assistProjectId:', resolvedAssistProjectId);
+        const assignments = await getProjectAssistAssignments(resolvedAssistProjectId);
+        console.log('[AgentManager] Assignments loaded:', assignments);
+        if (!canceled) {
+          setAssistAssignments(assignments);
+        }
+      } catch (err: any) {
+        console.error('[AgentManager] Failed to load assignments:', err);
+        if (!canceled) {
+          setAssistAssignments(null);
+        }
+      }
+    })();
+    return () => {
+      canceled = true;
+    };
+  }, [resolvedAssistProjectId]);
+
   const saveConfig = async () => {
     try {
       setLoading(true);
+      setSaveSuccess(null);
       
       // Serialize prompt_parts to prompt_template
       const composedTemplate = serializePromptFields(promptParts);
       
-      const url = `/api/v2/projects/${projectId}/agents/${agentType}/config`;
-      const payload = {
+      const url = `/api/v2/projects/${resolvedProjectId}/agents/${agentType}/config`;
+      const payload: any = {
         provider: provider,
         model_key: modelKey,
-        temperature,
         max_tokens: maxTokens,
-        prompt_template: composedTemplate
+        prompt_template: composedTemplate,
+        version_note: versionNote || null,
       };
+      if (modelKey && modelKey.startsWith('gpt-5')) {
+        if (typeof temperature === 'number') {
+          payload.temperature = temperature;
+        }
+      } else {
+        payload.temperature = temperature;
+      }
       
       console.log('[AgentManager] Saving config:', { url, payload });
-      console.log('[SAVE_V2] PUT', { projectId, agentType });
+      console.log('[SAVE_V2] PUT', { projectId: resolvedProjectId, agentType });
       
       const res = await fetch(url, {
         method: 'PUT',
@@ -232,6 +322,10 @@ export function AgentManager({ projectId, agentType, activeTab }: AgentManagerPr
         return;
       }
       setConfigError(null);
+      setVersionNote('');
+      setSaveSuccess('Saved');
+      // Clear success message after 3 seconds
+      setTimeout(() => setSaveSuccess(null), 3000);
       loadProjectConfig();
     } catch (err: any) {
       console.error('[AgentManager] Save error:', err);
@@ -269,13 +363,21 @@ export function AgentManager({ projectId, agentType, activeTab }: AgentManagerPr
     loading ||
     !provider ||
     !modelKey ||
-    typeof temperature !== 'number' ||
+    (!modelKey.startsWith('gpt-5') && typeof temperature !== 'number') ||
+    (modelKey.startsWith('gpt-5') && typeof temperature !== 'number' && temperature !== '') ||
     typeof maxTokens !== 'number' ||
     !promptParts.role.trim() ||
     !promptParts.goal.trim() ||
     !promptParts.constraints.trim() ||
     !promptParts.ioSchema.trim() ||
     !promptParts.memoryPolicy.trim();
+  const assignLabel = agentType === 'llm_chat' ? 'Assist Chat' : 'Assist KG Ingest';
+  const assignedId =
+    assistAssignments &&
+    (agentType === 'llm_chat'
+      ? assistAssignments.assist_main_agent_id
+      : assistAssignments.assist_kg_ingest_agent_id);
+  const isAssigned = Boolean(assignedId && resolvedProjectId && assignedId === resolvedProjectId);
 
   return (
     <div style={{ padding: '16px' }}>
@@ -299,8 +401,6 @@ export function AgentManager({ projectId, agentType, activeTab }: AgentManagerPr
       {/* Tab Content */}
       {activeTab === 'Plan' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <h3 style={{ margin: 0, color: '#4FA2AD' }}>Agent Configuration</h3>
-
           <div>
             <label style={{ display: 'block', marginBottom: '4px', color: '#E0DED5' }}>Provider</label>
             <select
@@ -386,6 +486,24 @@ export function AgentManager({ projectId, agentType, activeTab }: AgentManagerPr
                 }}
               />
             </div>
+          </div>
+
+          <div>
+            <label style={{ display: 'block', marginBottom: '4px', color: '#E0DED5' }}>Version Note (optional)</label>
+            <input
+              type="text"
+              value={versionNote}
+              onChange={(e) => setVersionNote(e.target.value)}
+              placeholder="What changed?"
+              style={{
+                width: '100%',
+                padding: '8px',
+                background: '#2B2B2B',
+                color: '#FFF',
+                border: '1px solid #3A3A3A',
+                borderRadius: '4px',
+              }}
+            />
           </div>
 
           <div>
@@ -546,22 +664,168 @@ export function AgentManager({ projectId, agentType, activeTab }: AgentManagerPr
             </div>
           </div>
 
-          <button
-            onClick={saveConfig}
-            disabled={saveDisabled}
-            style={{
-              padding: '12px',
-              background: loading ? '#666' : '#4FA2AD',
-              color: '#FFF',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              fontSize: '16px',
-              fontWeight: 'bold',
-            }}
-          >
-            {loading ? 'Saving...' : 'Save Agent'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <button
+              onClick={saveConfig}
+              disabled={saveDisabled}
+              style={{
+                padding: '12px',
+                background: loading ? '#666' : '#4FA2AD',
+                color: '#FFF',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: loading ? 'not-allowed' : 'pointer',
+                fontSize: '16px',
+                fontWeight: 'bold',
+              }}
+            >
+              {loading ? 'Saving...' : 'Save Agent'}
+            </button>
+            {saveSuccess && (
+              <div style={{ color: '#4FA2AD', fontSize: '14px', fontWeight: 'bold' }}>
+                {saveSuccess}
+              </div>
+            )}
+          </div>
+          {isAgentBuilder && resolvedAssistProjectId && (
+            <div
+              style={{
+                padding: '10px 12px',
+                border: '1px solid #3A3A3A',
+                borderRadius: '6px',
+                background: '#1A1A1A',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                flexWrap: 'wrap',
+              }}
+            >
+              <div style={{ color: '#E0DED5', fontSize: 12 }}>
+                Assignments
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  onClick={async () => {
+                    if (!resolvedAssistProjectId || !resolvedProjectId) return;
+                    setAssistAssignLoading(true);
+                    setAssistAssignError(null);
+                    try {
+                      // Build payload conditionally to avoid sending undefined fields
+                      const payload: any = {};
+                      if (agentType === 'llm_chat') {
+                        payload.assist_main_agent_id = resolvedProjectId;
+                      } else {
+                        payload.assist_kg_ingest_agent_id = resolvedProjectId;
+                      }
+                      console.log('[UI_ASSIGN] assistProjectId=%s payload=%o', resolvedAssistProjectId, payload);
+                      const next = await setProjectAssistAssignments(resolvedAssistProjectId, payload);
+                      // Immediately re-fetch assignments to ensure UI is in sync
+                      const refreshed = await getProjectAssistAssignments(resolvedAssistProjectId);
+                      setAssistAssignments(refreshed);
+                      console.log('[UI_ASSIGN] Refreshed assignments:', refreshed);
+                    } catch (err: any) {
+                      setAssistAssignError(err?.message || 'Failed to update assignment');
+                    } finally {
+                      setAssistAssignLoading(false);
+                    }
+                  }}
+                  disabled={assistAssignLoading || !resolvedProjectId || isAssigned}
+                  style={{
+                    padding: '6px 10px',
+                    background: isAssigned ? '#1f403f' : '#2B2B2B',
+                    color: '#FFF',
+                    border: '1px solid #3A3A3A',
+                    borderRadius: 4,
+                    fontSize: 12,
+                    cursor: assistAssignLoading || isAssigned ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {isAssigned ? `Assigned to ${assignLabel}` : `Use for ${assignLabel}`}
+                </button>
+                {!resolvedProjectId && (
+                  <div style={{ color: '#D98458', fontSize: 12 }}>
+                    Select an agent project to assign.
+                  </div>
+                )}
+              </div>
+              {assistAssignError && (
+                <div style={{ color: '#D98458', fontSize: 12 }}>
+                  {assistAssignError}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'Plan' && (
+        <div style={{ marginTop: '16px' }}>
+          <h4 style={{ margin: '8px 0', color: '#4FA2AD' }}>Versions</h4>
+          {versions.length === 0 && (
+            <div style={{ color: '#E0DED5', fontSize: '12px', fontStyle: 'italic' }}>
+              {versionsEnabled === false ? 'Versions disabled (table missing)' : 'No versions yet.'}
+            </div>
+          )}
+          {versions.map((v: any) => {
+            const preview = String(v.prompt_template || '').slice(0, 140);
+            const when = v.created_at ? new Date(v.created_at).toLocaleString() : 'unknown';
+            return (
+              <div
+                key={v.id}
+                style={{
+                  border: '1px solid #3A3A3A',
+                  borderRadius: 6,
+                  padding: '8px',
+                  marginBottom: '8px',
+                  background: '#1a1a1a',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <div style={{ color: '#E0DED5', fontSize: 11 }}>{when}</div>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const res = await fetch(`/api/v2/projects/${resolvedProjectId}/agents/${agentType}/config/restore`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ version_id: v.id }),
+                        });
+                        const data = await res.json().catch(() => null);
+                        if (!res.ok || !data?.ok) {
+                          const err = data?.error || `HTTP ${res.status}`;
+                          throw new Error(err);
+                        }
+                        loadProjectConfig();
+                      } catch (err: any) {
+                        alert(`Restore failed: ${err?.message || 'unknown error'}`);
+                      }
+                    }}
+                    style={{
+                      padding: '4px 8px',
+                      background: 'transparent',
+                      color: '#FFF',
+                      border: '1px solid #3A3A3A',
+                      borderRadius: 4,
+                      fontSize: 11,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Restore
+                  </button>
+                </div>
+                {v.version_note && (
+                  <div style={{ color: '#E0DED5', fontSize: 12, marginBottom: 6 }}>
+                    {v.version_note}
+                  </div>
+                )}
+                <div style={{ color: '#A0A0A0', fontSize: 11, whiteSpace: 'pre-wrap' }}>
+                  {preview}
+                  {String(v.prompt_template || '').length > 140 ? '…' : ''}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 

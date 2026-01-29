@@ -8,7 +8,6 @@ import {
 } from '../services/agentBuilderStore';
 import {
   getProjectAgent,
-  listProjectAgents,
 } from '../services/projectAgentsStore';
 import { resolveModel } from '../llm/models.config';
 import { runLLM } from '../llm/client';
@@ -26,24 +25,18 @@ async function resolveAssistMainAgent(projectId: string) {
     agent = await getProjectAgent(assist_main_agent_id);
   }
   if (!agent) {
-    const agents = await listProjectAgents(projectId);
-    agent = agents.find((a) => a.agent_type === 'llm_chat') || null;
-  }
-  if (!agent) {
     return null;
   }
 
   const systemParts: string[] = [];
   if (agent.prompt_template?.trim()) {
     systemParts.push(agent.prompt_template.trim());
-  } else {
-    if (agent.role_text?.trim()) systemParts.push(agent.role_text.trim());
-    if (agent.goal_text?.trim()) systemParts.push(agent.goal_text.trim());
-    if (agent.constraints_text?.trim()) systemParts.push(agent.constraints_text.trim());
-    if (agent.memory_policy_text?.trim()) systemParts.push(agent.memory_policy_text.trim());
   }
 
   const systemPrompt = systemParts.join('\n\n').trim();
+  if (!systemPrompt) {
+    throw new Error('assist_main_prompt_missing');
+  }
   const modelKey = agent.model;
   if (!modelKey || !String(modelKey).trim()) {
     console.error('[ASSIST_CHAT] missing model on assist main agent', {
@@ -94,6 +87,16 @@ agentRoutes.post('/boss', async (req, res) => {
         .status(409)
         .json({ ok: false, error: 'kg_ingest_agent_missing', message: 'kg ingest agent not configured for project' });
     }
+
+    // DEBUG: Log current assignments state
+    const assignments = await getAssistAssignments(project);
+    console.log('[ASSIGNMENTS_DEBUG] Current state for Assist project:', {
+      projectId: project,
+      assist_main_agent_id: assignments.assist_main_agent_id,
+      assist_kg_ingest_agent_id: assignments.assist_kg_ingest_agent_id,
+      main_agent_resolved: !!resolved,
+      kg_agent_resolved: !!ingestResolved,
+    });
 
     let modelEntry;
     try {
@@ -222,11 +225,25 @@ agentRoutes.post('/boss', async (req, res) => {
       provider: llmRes.provider,
     });
   } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      message.includes('assist_main_prompt_missing') ||
+      message.includes('kg_ingest_prompt_missing') ||
+      message.includes('kg_ingest_model_missing') ||
+      message.includes('kg_ingest_agent_missing_assist_assignment') ||
+      message.includes('assist_main_agent_missing_model')
+    ) {
+      return res.status(409).json({
+        ok: false,
+        error: message,
+        message,
+      });
+    }
     console.error('[ASSIST_CHAT] unexpected failure', error);
     return res.status(502).json({
       ok: false,
       error: 'assist_boss_failed',
-      message: error instanceof Error ? error.message : 'agent failed',
+      message,
     });
   }
 });

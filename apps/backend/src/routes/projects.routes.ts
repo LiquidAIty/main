@@ -5,6 +5,7 @@ import {
   createProject,
   listAgentCards,
   getAssistAssignments,
+  setAssistAssignments,
 } from '../services/agentBuilderStore';
 import {
   getAgentConfig,
@@ -19,6 +20,7 @@ import { createHash } from 'crypto';
 import { getLastTrace, getTraces } from '../services/ingestTrace';
 import { captureProbability } from '../lib/receiptCapture';
 import { resolveKgIngestAgent } from '../services/resolveAgents';
+import { runKgQuery } from './v2/query';
 const router = Router();
 const GRAPH_NAME = 'graph_liq';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://liquidaity-user:LiquidAIty@localhost:5433/liquidaity', max: 5 });
@@ -319,8 +321,10 @@ Now extract chunks from this input text:`;
   const llmRes = await runLLM(prompt, {
     modelKey: llmModelKey,
     system,
-    temperature: 0,
-    maxTokens: 4096,
+    ...(llmModelKey.startsWith('gpt-5')
+      ? { maxTokens: 4096 }
+      : { temperature: 0, maxTokens: 4096 }
+    ),
     ...(useStructuredOutput ? {
       jsonSchema: { name: 'semantic_chunks', schema: chunkSchema, strict: true }
     } : {
@@ -804,6 +808,77 @@ router.get('/:projectId/config', async (req, res) => {
   }
 });
 
+router.get('/:projectId/assist/assignments', async (req, res) => {
+  try {
+    const assignments = await getAssistAssignments(req.params.projectId);
+    return res.json({ ok: true, assignments });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err?.message || 'failed_to_load_assignments' });
+  }
+});
+
+router.put('/:projectId/assist/assignments', async (req, res) => {
+  const assistProjectId = req.params.projectId;
+  
+  // Build patch object with only fields that are explicitly provided
+  const patch: Record<string, any> = {};
+  
+  if (Object.prototype.hasOwnProperty.call(req.body, 'assist_main_agent_id')) {
+    patch.assist_main_agent_id = req.body.assist_main_agent_id;
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'assist_kg_ingest_agent_id')) {
+    patch.assist_kg_ingest_agent_id = req.body.assist_kg_ingest_agent_id;
+  }
+
+  // Validation: Ensure IDs are valid UUIDs if provided
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (Object.prototype.hasOwnProperty.call(patch, 'assist_main_agent_id') && patch.assist_main_agent_id) {
+    if (!uuidRegex.test(patch.assist_main_agent_id)) {
+      console.error('[ASSIGNMENTS] Invalid UUID format for assist_main_agent_id:', patch.assist_main_agent_id);
+      return res.status(400).json({ ok: false, error: 'invalid_uuid_format', field: 'assist_main_agent_id' });
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'assist_kg_ingest_agent_id') && patch.assist_kg_ingest_agent_id) {
+    if (!uuidRegex.test(patch.assist_kg_ingest_agent_id)) {
+      console.error('[ASSIGNMENTS] Invalid UUID format for assist_kg_ingest_agent_id:', patch.assist_kg_ingest_agent_id);
+      return res.status(400).json({ ok: false, error: 'invalid_uuid_format', field: 'assist_kg_ingest_agent_id' });
+    }
+  }
+
+  // Check if patch is empty
+  const updatedFields = Object.keys(patch);
+  if (updatedFields.length === 0) {
+    console.error('[ASSIGNMENTS] No fields provided in request body');
+    return res.status(400).json({ ok: false, error: 'assignments_empty_patch' });
+  }
+
+  console.log('[ASSIGNMENTS] PUT request received:', {
+    assistProjectId,
+    updatedFields,
+    payload: patch,
+  });
+
+  try {
+    const assignments = await setAssistAssignments(assistProjectId, patch);
+
+    console.log('[ASSIGNMENTS] DB update successful:', {
+      assistProjectId,
+      updatedFields,
+      assignments,
+    });
+
+    return res.json({ ok: true, assignments });
+  } catch (err: any) {
+    console.error('[ASSIGNMENTS] DB update failed:', {
+      assistProjectId,
+      updatedFields,
+      error: err?.message,
+      stack: err?.stack,
+    });
+    return res.status(500).json({ ok: false, error: err?.message || 'failed_to_save_assignments' });
+  }
+});
+
 router.put('/:projectId/config', async (req, res) => {
   const projectId = req.params.projectId;
   const {
@@ -961,24 +1036,19 @@ router.put('/:projectId/state', async (req, res) => {
 });
 
 router.post('/:projectId/kg/query', async (req, res) => {
-  const { cypher, params } = req.body || {};
-  if (!cypher || typeof cypher !== 'string') {
-    return res.status(400).json({ ok: false, error: 'cypher is required' });
-  }
-  if (!/project_id/i.test(cypher)) {
-    return res.status(400).json({ ok: false, error: 'cypher must filter by project_id' });
-  }
   try {
-    const rows = await runCypherOnGraph(GRAPH_NAME, cypher, params);
-    console.log('[KG_QUERY]', {
-      projectId: req.params.projectId,
+    const { cypher, params } = req.body || {};
+    const rows = await runKgQuery({
       graphName: GRAPH_NAME,
-      cypher_preview: cypher.slice(0, 120),
-      rows_returned: Array.isArray(rows) ? rows.length : 0,
+      projectId: req.params.projectId,
+      cypher,
+      queryParams: params,
     });
     return res.json({ ok: true, rows });
   } catch (err: any) {
-    const status = (err?.message || '').toLowerCase().includes('age') ? 503 : 500;
+    const status =
+      err?.status ??
+      ((err?.message || '').toLowerCase().includes('age') ? 503 : 500);
     return res.status(status).json({ ok: false, error: err?.message || 'graph query failed' });
   }
 });
@@ -1130,9 +1200,20 @@ export async function runIngestPipeline(params: {
     results: {},
   } : null;
 
+  // Build meta info early
+  const meta: any = {
+    raw_len: text?.length || 0,
+    provider: 'unresolved',
+    model: 'unresolved',
+    projectId,
+    doc_id,
+    src,
+  };
+
   try {
     await getProjectState(projectId);
   } catch (err: any) {
+    console.log('[KG_INGEST_META] project not found:', meta);
     throw new Error(err?.message || 'project not found');
   }
 
@@ -1143,15 +1224,48 @@ export async function runIngestPipeline(params: {
   let kgProviderModelId: string | null = null;
   let kgSystemPrompt = '';
   
-  const resolved = await resolveKgIngestAgent(projectId);
-  if (!resolved) {
-    throw new Error('kg_ingest_agent_not_configured: No KG ingest agent found for project');
+  try {
+    const resolved = await resolveKgIngestAgent(projectId);
+    if (!resolved) {
+      console.log('[KG_INGEST_META] agent resolution failed:', meta);
+      throw new Error('kg_ingest_agent_not_configured: No KG ingest agent found for project');
+    }
+    llmModelKey = resolved.modelKey;
+    kgAgentId = resolved.agent.agent_id;
+    kgProvider = resolved.provider;
+    kgProviderModelId = resolved.providerModelId;
+    kgSystemPrompt = resolved.systemPrompt || '';
+
+    // Update meta with resolved values
+    meta.provider = kgProvider || 'unknown';
+    meta.model = llmModelKey || 'unknown';
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    console.error('[KG_RESOLVE] Resolution failed:', { projectId, error: errorMsg });
+    
+    // Standardize error response
+    let error_code = 'kg_ingest_resolution_failed';
+    let message = errorMsg;
+    
+    if (errorMsg.includes('kg_ingest_agent_missing_assist_assignment')) {
+      error_code = 'kg_ingest_agent_missing_assist_assignment';
+      message = `KG ingest agent not assigned for project ${projectId}. Assign a KG Ingest agent in Agent Builder.`;
+    } else if (errorMsg.includes('kg_ingest_prompt_missing')) {
+      error_code = 'kg_ingest_prompt_missing';
+      message = `KG ingest agent missing prompt_template for project ${projectId}`;
+    } else if (errorMsg.includes('kg_ingest_model_missing')) {
+      error_code = 'kg_ingest_model_missing';
+      message = `KG ingest agent missing model configuration for project ${projectId}`;
+    } else if (errorMsg.includes('invalid_model_key_format')) {
+      error_code = 'invalid_model_key_format';
+      message = errorMsg;
+    } else if (errorMsg.includes('kg_ingest_model_resolution_failed')) {
+      error_code = 'kg_ingest_model_resolution_failed';
+      message = errorMsg;
+    }
+    
+    throw { error_code, message, projectId, meta };
   }
-  llmModelKey = resolved.modelKey;
-  kgAgentId = resolved.agent.agent_id;
-  kgProvider = resolved.provider;
-  kgProviderModelId = resolved.providerModelId;
-  kgSystemPrompt = resolved.systemPrompt || '';
 
   const embedModel = embed_model || DEFAULT_EMBED_MODEL;
 
@@ -1415,6 +1529,7 @@ export async function runIngestPipeline(params: {
     entities_upserted: entitiesUpserted,
     relations_upserted: relationsUpserted,
     errors,
+    meta, // Include meta in successful response
     ...(debugTrace ? { debug_trace: debugTrace } : {}),
   };
 
@@ -1464,6 +1579,7 @@ export async function runIngestPipeline(params: {
     chunks_written: chunksWritten,
     embeddings_written: embeddingsWritten,
     errors_count: errors.length,
+    meta,
   });
 
   return response;
@@ -1481,6 +1597,17 @@ export async function ingestChatTurnInternal(params: {
   trace?: any;
 }) {
   const { projectId, doc_id, src, textToIngest, llm_model, debug, trace } = params;
+  
+  // Build meta info early, before config resolution
+  const meta = {
+    raw_len: textToIngest?.length || 0,
+    provider: 'unresolved',
+    model: 'unresolved',
+    projectId,
+    doc_id,
+    src,
+  };
+  
   let response: any;
   try {
     response = await runIngestPipeline({
@@ -1495,7 +1622,27 @@ export async function ingestChatTurnInternal(params: {
     });
   } catch (err: any) {
     console.error('[KG_INGEST_ERR]', err?.stack ? err.stack.split('\n')[0] : err?.message || err);
-    response = { ok: false, error: 'kg_ingest_failed', message: err?.message || 'chat ingest failed' };
+    console.log('[KG_INGEST_META] failure meta:', meta);
+    
+    // Handle standardized error objects
+    if (err.error_code) {
+      response = {
+        ok: false,
+        error_code: err.error_code,
+        message: err.message,
+        projectId: err.projectId,
+        meta: err.meta || meta,
+      };
+    } else {
+      // Fallback for unexpected errors
+      response = {
+        ok: false,
+        error_code: 'kg_ingest_failed',
+        message: err?.message || 'chat ingest failed',
+        projectId,
+        meta,
+      };
+    }
   }
 
   // No fallback - broken fallback is worse than none
@@ -1571,7 +1718,7 @@ router.post('/:projectId/kg/ingest', async (req, res) => {
 
 router.post('/:projectId/kg/ingest_chat_turn', async (req, res) => {
   const projectId = req.params.projectId;
-  const { turn_id, user_text, assistant_text, src, llm_model } = req.body || {};
+  const { turn_id, user_text, assistant_text, src } = req.body || {};
 
   if (!projectId) {
     return res.status(400).json({ ok: false, error: 'projectId is required' });
@@ -1606,20 +1753,276 @@ router.post('/:projectId/kg/ingest_chat_turn', async (req, res) => {
     });
   }
 
+  // Use V2 ingest pipeline
   try {
-    const response = await ingestChatTurnInternal({
-      projectId,
+    console.log('[KG_V2][route] using V2 chunker for ingest_chat_turn');
+    // Import V2 functions
+    const { chunkTextStrictJSON, extractKgFromChunks } = await import('./v2/chunking.js');
+    const { getAssistAssignments } = await import('../services/agentBuilderStore.js');
+    const { resolveKgIngestAgent } = await import('../services/resolveAgents.js');
+    
+    const assignments = await getAssistAssignments(projectId).catch(() => ({
+      assist_main_agent_id: null,
+      assist_kg_ingest_agent_id: null,
+    }));
+
+    let resolved = null;
+    if (assignments.assist_kg_ingest_agent_id) {
+      try {
+        resolved = await resolveKgIngestAgent(projectId);
+      } catch (err: any) {
+        const code = err?.message || 'kg_ingest_resolve_failed';
+        console.warn('[KG_V2][ingest] resolve failed:', code);
+        resolved = { error_code: code };
+      }
+    }
+
+    const errors: string[] = [];
+    const errorMessages: string[] = [];
+    if (!assignments.assist_kg_ingest_agent_id) {
+      errors.push('kg_ingest_agent_missing_assist_assignment');
+      errorMessages.push('assist_kg_ingest_agent_id not set for project');
+    } else if (!resolved || (resolved as any).error_code) {
+      const code = (resolved as any)?.error_code || 'kg_ingest_agent_missing';
+      errors.push(code);
+      errorMessages.push(code);
+    }
+
+    const provider = resolved?.provider ?? null;
+    const modelKey = resolved?.modelKey ?? null;
+    const systemPrompt = resolved?.systemPrompt ?? null;
+
+    if (!errors.length && provider !== 'openai') {
+      errors.push(`kg_ingest_provider_not_openai:${provider}`);
+      errorMessages.push(`kg_ingest provider must be openai (got ${provider})`);
+    }
+    if (!errors.length && !modelKey) {
+      errors.push('kg_ingest_model_missing');
+      errorMessages.push('kg_ingest model_key missing');
+    }
+    if (!errors.length && !systemPrompt) {
+      errors.push('kg_ingest_prompt_missing');
+      errorMessages.push('kg_ingest prompt_template missing');
+    }
+    if (errors.length) {
+      console.error('[KG_V2][ingest] config error for projectId=%s: %s', projectId, errorMessages.join('; '));
+    }
+
+    const rawLen = textToIngest.length;
+    console.log('[KG_V2][ingest] start projectId=%s doc_id=%s src=%s raw_len=%d', projectId, doc_id, finalSrc, rawLen);
+
+    let chunkMeta: any = null;
+    let chunks: { chunk_id: string; text: string; start: number; end: number }[] = [];
+
+    if (!errors.length && modelKey && systemPrompt) {
+      try {
+        console.log(
+          '[KG_V2][ingest] using model=%s prompt_len=%d',
+          modelKey,
+          systemPrompt.length,
+        );
+        const chunked = await chunkTextStrictJSON({
+          modelKey: modelKey as string,
+          text: textToIngest,
+          systemPrompt: systemPrompt ?? undefined,
+        });
+        chunks = chunked.chunks;
+        chunkMeta = chunked.meta;
+        console.log('[KG_V2][chunk] chunks=%d token_param=%s temperature_param=%s',
+          chunks.length,
+          chunkMeta?.token_param || 'unknown',
+          chunkMeta?.temperature_param || 'unknown'
+        );
+      } catch (err: any) {
+        const code = err?.code || 'chunking_failed';
+        console.error(
+          '[KG_V2][chunk] failed provider=%s model=%s error=%s',
+          provider || 'unknown',
+          modelKey || 'unknown',
+          err?.message || err,
+        );
+        errors.push(code);
+        errorMessages.push(err?.message || String(err));
+      }
+    }
+
+    if (chunks.length === 0 && errors.length === 0) {
+      errors.push('chunking_invalid_json');
+      errorMessages.push('chunking returned 0 chunks');
+    }
+
+    // Insert chunks into DB
+    let chunksWritten = 0;
+    for (const chunk of chunks) {
+      try {
+        await pool.query(
+          'INSERT INTO ag_catalog.rag_chunks (doc_id, src, chunk) VALUES ($1, $2, $3)',
+          [doc_id, finalSrc, chunk.text],
+        );
+        chunksWritten += 1;
+      } catch (err: any) {
+        console.error('[KG_V2][ingest] chunk insert failed:', err?.message || err);
+      }
+    }
+
+    const provenance = {
       doc_id,
       src: finalSrc,
-      textToIngest,
-      user_text,
-      assistant_text,
-      llm_model,
+      method: 'kg_v2_ingest',
+      createdAt: new Date().toISOString(),
+    };
+
+    // Extract entities and relationships
+    let entitiesWritten = 0;
+    let relationshipsWritten = 0;
+    let entities: any[] = [];
+    let relationships: any[] = [];
+
+    let extractMeta: any = null;
+    if (!errors.length && chunks.length > 0 && modelKey && systemPrompt) {
+      try {
+        const extracted = await extractKgFromChunks({
+          modelKey: modelKey as string,
+          chunks,
+          systemPrompt: systemPrompt ?? undefined,
+        });
+        entities = extracted.entities;
+        relationships = extracted.relationships;
+        extractMeta = extracted.meta;
+        console.log('[KG_V2][extract] entities=%d rels=%d', entities.length, relationships.length);
+      } catch (err: any) {
+        const code = err?.code || 'extract_failed';
+        console.error('[KG_V2][extract] failed:', err?.message || err);
+        errors.push(code);
+        errorMessages.push(err?.message || String(err));
+      }
+    }
+
+    // Upsert to graph
+    if (entities.length || relationships.length) {
+      const entityLookup = new Map(entities.map((e: any) => [e.id, e]));
+      
+      // Simple entity upsert
+      for (const e of entities) {
+        if (!e?.name) continue;
+        try {
+          await runCypherOnGraph(
+            GRAPH_NAME,
+            `
+              MERGE (n:Entity { project_id: $projectId, etype: $etype, name: $name })
+              ON CREATE SET n.attrs = $attrs, n.confidence = $confidence, n.created_at = datetime(), n.source = $source
+              ON MATCH SET n.attrs = coalesce(n.attrs, {}) + $attrs
+              RETURN n
+            `,
+            {
+              projectId,
+              etype: e.type || 'Unknown',
+              name: e.name,
+              attrs: { aliases: e.aliases, evidence_chunk_ids: e.evidence_chunk_ids },
+              confidence: 0.5,
+              source: { ...provenance, evidence_chunk_ids: e.evidence_chunk_ids },
+            },
+          );
+          entitiesWritten += 1;
+        } catch (err: any) {
+          console.error('[KG_V2][ingest] entity upsert failed:', err?.message || err);
+        }
+      }
+
+      // Simple relationship upsert
+      for (const r of relationships) {
+        if (!r?.from || !r?.to) continue;
+        const fromEntity = entityLookup.get(r.from);
+        const toEntity = entityLookup.get(r.to);
+        if (!fromEntity || !toEntity) continue;
+        
+        try {
+          await runCypherOnGraph(
+            GRAPH_NAME,
+            `
+              MATCH (a:Entity { project_id: $projectId, etype: $fromType, name: $fromName })
+              MATCH (b:Entity { project_id: $projectId, etype: $toType, name: $toName })
+              MERGE (a)-[rel:REL { project_id: $projectId, rtype: $rtype }]->(b)
+              ON CREATE SET rel.attrs = $attrs, rel.confidence = $confidence, rel.created_at = datetime(), rel.source = $source
+              ON MATCH SET rel.attrs = coalesce(rel.attrs, {}) + $attrs
+              RETURN rel
+            `,
+            {
+              projectId,
+              fromType: fromEntity.type || 'Unknown',
+              fromName: fromEntity.name,
+              toType: toEntity.type || 'Unknown',
+              toName: toEntity.name,
+              rtype: r.type || 'REL',
+              attrs: { evidence_chunk_ids: r.evidence_chunk_ids },
+              confidence: typeof r.confidence === 'number' ? r.confidence : 0.5,
+              source: { ...provenance, evidence_chunk_ids: r.evidence_chunk_ids },
+            },
+          );
+          relationshipsWritten += 1;
+        } catch (err: any) {
+          console.error('[KG_V2][ingest] relation upsert failed:', err?.message || err);
+        }
+      }
+      
+      console.log('[KG_V2][graph] upserts ok');
+    }
+
+    console.log('[KG_V2][ingest] done ok=%s chunks=%d entities=%d rels=%d',
+      errors.length === 0,
+      chunksWritten,
+      entitiesWritten,
+      relationshipsWritten,
+    );
+
+    const errorCode = errors.length ? errors[0] : null;
+    const errorMessage = errorMessages.length ? errorMessages.join('; ') : null;
+
+    // Meta logging for diagnostics
+    const requestId = extractMeta?.request_id || chunkMeta?.request_id || null;
+    const elapsedMs = extractMeta?.elapsed_ms || chunkMeta?.elapsed_ms || null;
+    const finishReason = extractMeta?.finish_reason || chunkMeta?.finish_reason || null;
+    const usage = extractMeta?.usage || chunkMeta?.usage || null;
+    const providerForLog = provider ?? null;
+    const modelKeyForLog = modelKey ?? null;
+    
+    const usageSummary = (() => {
+      if (!usage || typeof usage !== 'object') return null;
+      const summary: Record<string, number> = {};
+      if (typeof usage.prompt_tokens === 'number') summary.prompt = usage.prompt_tokens;
+      if (typeof usage.completion_tokens === 'number') summary.completion = usage.completion_tokens;
+      if (typeof usage.total_tokens === 'number') summary.total = usage.total_tokens;
+      if (typeof usage.input_tokens === 'number') summary.input = usage.input_tokens;
+      if (typeof usage.output_tokens === 'number') summary.output = usage.output_tokens;
+      return Object.keys(summary).length ? JSON.stringify(summary) : null;
+    })();
+    
+    console.log(
+      '[KG_V2][ingest][meta] projectId=%s doc_id=%s raw_len=%d provider=%s model=%s request_id=%s elapsed_ms=%s finish=%s usage=%s',
+      projectId,
+      doc_id,
+      rawLen,
+      providerForLog || 'unknown',
+      modelKeyForLog || 'unknown',
+      requestId || 'n/a',
+      elapsedMs ?? 'n/a',
+      finishReason || 'n/a',
+      usageSummary || 'n/a',
+    );
+
+    return res.status(errors.length === 0 ? 200 : 409).json({
+      ok: errors.length === 0,
+      error_code: errorCode,
+      error_message: errorMessage,
+      counts: {
+        chunks: chunksWritten,
+        entities: entitiesWritten,
+        rels: relationshipsWritten,
+      },
     });
-    return res.status(response?.ok === false ? 200 : 200).json(response);
   } catch (err: any) {
-    console.error('[KG_INGEST_ERR]', err?.stack ? err.stack.split('\n')[0] : err?.message || err);
-    return res.status(200).json({ ok: false, error: 'kg_ingest_failed', message: err?.message || 'chat ingest failed' });
+    console.error('[KG_V2][ingest] unexpected error:', err);
+    return res.status(500).json({ ok: false, error: 'kg_ingest_failed', message: err?.message || 'ingest failed' });
   }
 });
 

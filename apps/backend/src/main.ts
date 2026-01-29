@@ -7,6 +7,7 @@ import { logModelConfiguration } from "./startup/modelConfig";
 dotenv.config({ path: "apps/backend/.env" });
 
 const app = express();
+app.set('etag', false);
 
 // CORS middleware
 app.use((req, res, next) => {
@@ -21,6 +22,12 @@ app.use((req, res, next) => {
 
 app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser() as any);
+
+// Disable caching for API responses to avoid 304/empty body JSON issues
+app.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  return next();
+});
 
 // Debug logging for non-GET requests to /api/projects
 app.use((req, _res, next) => {
