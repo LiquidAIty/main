@@ -1,9 +1,4 @@
-import { Pool } from 'pg';
-
-const pool = new Pool({ 
-  connectionString: process.env.DATABASE_URL || 'postgresql://liquidaity-user:LiquidAIty@localhost:5433/liquidaity',
-  max: 5 
-});
+import { pool } from '../db/pool';
 
 export interface IngestStatus {
   id: string;
@@ -94,3 +89,4 @@ export async function getLastIngestStatus(projectId: string): Promise<IngestStat
   const history = await getIngestHistory(projectId, 1);
   return history[0] || null;
 }
+

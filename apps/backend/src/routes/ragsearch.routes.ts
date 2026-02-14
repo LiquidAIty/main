@@ -1,9 +1,7 @@
 import { Router } from "express";
-import { Pool } from "pg";
+import { pool } from '../db/pool';
 
 const router = Router();
-const pool = new Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://liquidaity-user:LiquidAIty@localhost:5433/liquidaity', max: 5 });
-
 router.post("/search", async (req, res) => {
   try {
     const { embedding, k = 5, w_rec = 0.1, w_sig = 0.1 } = req.body || {};
@@ -29,3 +27,6 @@ router.post("/search", async (req, res) => {
 });
 
 export default router;
+
+
+

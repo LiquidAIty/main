@@ -1,7 +1,6 @@
 import { Router } from 'express';
-import { Pool } from 'pg';
+import { pool } from '../../db/pool';
 import { createHash } from 'crypto';
-import { getAssistAssignments } from '../../services/agentBuilderStore';
 import { resolveKgIngestAgent } from '../../services/resolveAgents';
 import { runCypherOnGraph } from '../../services/graphService';
 import { chunkTextStrictJSON, extractKgFromChunks, type KgEntity, type KgRelationship, type LlmMeta } from './chunking';
@@ -9,11 +8,7 @@ import { runKgQuery } from './query';
 
 const router = Router({ mergeParams: true });
 const GRAPH_NAME = 'graph_liq';
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://liquidaity-user:LiquidAIty@localhost:5433/liquidaity',
-  max: 5,
-});
-
+const inflightDocs = new Set<string>();
 function formatUsage(usage: any) {
   if (!usage || typeof usage !== 'object') return null;
   const summary: Record<string, number> = {};
@@ -172,187 +167,223 @@ router.post('/ingest_chat_turn', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'No text to ingest' });
   }
 
-  const assignments = await getAssistAssignments(projectId).catch(() => ({
-    assist_main_agent_id: null,
-    assist_kg_ingest_agent_id: null,
-  }));
-
-  let resolved = null;
-  if (assignments.assist_kg_ingest_agent_id) {
-    try {
-      resolved = await resolveKgIngestAgent(projectId);
-    } catch (err: any) {
-      const code = err?.message || 'kg_ingest_resolve_failed';
-      console.warn('[KG_V2][ingest] resolve failed:', code);
-      resolved = { error_code: code };
-    }
-  }
-
   const docId = buildDocId(projectId, typeof turn_id === 'string' ? turn_id : null, `${user_text ?? ''}${assistant_text ?? ''}`);
   const finalSrc = typeof src === 'string' && src.trim() ? src.trim() : 'chat.auto';
 
-  const errors: string[] = [];
-  const errorMessages: string[] = [];
-  if (!assignments.assist_kg_ingest_agent_id) {
-    errors.push('kg_ingest_agent_missing_assist_assignment');
-    errorMessages.push('assist_kg_ingest_agent_id not set for project');
-  } else if (!resolved || (resolved as any).error_code) {
-    const code = (resolved as any)?.error_code || 'kg_ingest_agent_missing';
-    errors.push(code);
-    errorMessages.push(code);
-  }
+  const ingestCore = async () => {
+    if (inflightDocs.has(docId)) {
+      return { status: 202, body: { ok: true, skipped: true, reason: 'inflight', doc_id: docId } };
+    }
+    inflightDocs.add(docId);
+    let aborted = false;
+    try {
+      let resolved = null;
+      try {
+      resolved = await resolveKgIngestAgent(projectId, '/api/v2/projects/:projectId/kg/ingest_chat_turn');
+      } catch (err: any) {
+        const code = err?.message || 'kg_ingest_resolve_failed';
+        console.warn('[KG_V2][ingest] resolve failed:', code);
+        resolved = { error_code: code };
+      }
 
-  const provider = resolved?.provider ?? null;
-  const modelKey = resolved?.modelKey ?? null;
-  const systemPrompt = resolved?.systemPrompt ?? null;
-  const agentId = resolved?.agentId ?? null;
+    const errors: string[] = [];
+    const errorMessages: string[] = [];
+    if (!resolved || (resolved as any).error_code) {
+      const code = (resolved as any)?.error_code || 'kg_ingest_agent_missing';
+      errors.push(code);
+      errorMessages.push(code);
+    }
 
-  if (!errors.length && provider !== 'openai') {
-    errors.push(`kg_ingest_provider_not_openai:${provider}`);
-    errorMessages.push(`kg_ingest provider must be openai (got ${provider})`);
-  }
-  if (!errors.length && !modelKey) {
-    errors.push('kg_ingest_model_missing');
-    errorMessages.push('kg_ingest model_key missing');
-  }
-  if (!errors.length && !systemPrompt) {
-    errors.push('kg_ingest_prompt_missing');
-    errorMessages.push('kg_ingest prompt_template missing');
-  }
-  if (errors.length) {
-    console.error('[KG_V2][ingest] config error for projectId=%s: %s', projectId, errorMessages.join('; '));
-  }
+    const provider = resolved?.provider ?? null;
+    const modelKey = resolved?.modelKey ?? null;
+    const systemPrompt = resolved?.systemPrompt ?? null;
+    const agentId = resolved?.agentId ?? null;
+    const responseFormat = (resolved as any)?.responseFormat ?? null;
+    const topP = (resolved as any)?.topP ?? null;
+    const previousResponseId = (resolved as any)?.previousResponseId ?? null;
+    const temperature = (resolved as any)?.temperature ?? null;
+    const maxTokens = (resolved as any)?.maxTokens ?? null;
 
-  console.log('[KG_V2][ingest] start projectId=%s doc_id=%s src=%s', projectId, docId, finalSrc);
+    if (!errors.length && provider !== 'openai') {
+      errors.push(`kg_ingest_provider_not_openai:${provider}`);
+      errorMessages.push(`kg_ingest provider must be openai (got ${provider})`);
+    }
+    if (!errors.length && !modelKey) {
+      errors.push('kg_ingest_model_missing');
+      errorMessages.push('kg_ingest model_key missing');
+    }
+    if (!errors.length && !systemPrompt) {
+      errors.push('kg_ingest_prompt_missing');
+      errorMessages.push('kg_ingest prompt_template missing');
+    }
+    if (!errors.length && typeof maxTokens !== 'number') {
+      errors.push('kg_ingest_max_tokens_missing');
+      errorMessages.push('kg_ingest max_output_tokens missing');
+    }
+    if (errors.length) {
+      console.error('[KG_V2][ingest] config error for projectId=%s: %s', projectId, errorMessages.join('; '));
+    }
 
-  const textToIngest = `Q:
+    console.log('[KG_V2][ingest] start projectId=%s doc_id=%s src=%s', projectId, docId, finalSrc);
+
+    const textToIngest = `Q:
 ${String(user_text ?? '').trim()}
 
 A:
 ${String(assistant_text ?? '').trim()}`.trim();
-  const rawLen = textToIngest.length;
+    const rawLen = textToIngest.length;
 
-  let chunkMeta: LlmMeta | null = null;
-  let extractMeta: LlmMeta | null = null;
-  let chunks: { chunk_id: string; text: string; start: number; end: number }[] = [];
+    let chunkMeta: LlmMeta | null = null;
+    let extractMeta: LlmMeta | null = null;
+    let lastError: any = null;
+    let chunks: { chunk_id: string; text: string; start: number; end: number }[] = [];
 
-  if (!errors.length && modelKey && systemPrompt) {
-    try {
-      console.log(
-        '[KG_V2][ingest] using agent_id=%s prompt_len=%d model=%s',
-        agentId || 'unknown',
-        systemPrompt.length,
-        modelKey,
-      );
-      const chunked = await chunkTextStrictJSON({
-        modelKey: modelKey as string,
-        text: textToIngest,
-        systemPrompt: systemPrompt ?? undefined,
-      });
-      chunks = chunked.chunks;
-      chunkMeta = chunked.meta;
-      // chunkingRawLen = chunked.meta.raw_len || 0; // Not used, we use rawLen from textToIngest
-      console.log('[KG_V2][chunk] chunks=%d', chunks.length);
-    } catch (err: any) {
-      const code = err?.code || 'chunking_failed';
-      console.error('[KG_V2][chunk] failed:', err?.message || err);
-      errors.push(code);
-      errorMessages.push(err?.message || String(err));
-    }
-  }
-
-  if (chunks.length === 0 && errors.length === 0) {
-    errors.push('chunking_invalid_json');
-    errorMessages.push('chunking returned 0 chunks');
-  }
-
-  const chunksWritten = await insertChunks(docId, finalSrc, chunks);
-  const provenance = {
-    doc_id: docId,
-    src: finalSrc,
-    method: 'kg_v2_ingest',
-    createdAt: new Date().toISOString(),
-  };
-
-  let entitiesWritten = 0;
-  let relationshipsWritten = 0;
-  let entities: KgEntity[] = [];
-  let relationships: KgRelationship[] = [];
-
-  if (!errors.length && chunks.length > 0 && modelKey && systemPrompt) {
-    try {
-      const extracted = await extractKgFromChunks({
-        modelKey: modelKey as string,
-        chunks,
-        systemPrompt: systemPrompt ?? undefined,
-      });
-      entities = extracted.entities;
-      relationships = extracted.relationships;
-      extractMeta = extracted.meta;
-      console.log('[KG_V2][extract] entities=%d rels=%d', entities.length, relationships.length);
-    } catch (err: any) {
-      const code = err?.code || 'extract_failed';
-      console.error('[KG_V2][extract] failed:', err?.message || err);
-      errors.push(code);
-      errorMessages.push(err?.message || String(err));
-    }
-  }
-
-  if (entities.length || relationships.length) {
-    const entityLookup = new Map(entities.map((e) => [e.id, e]));
-    entitiesWritten = await upsertEntities(projectId, entities, provenance);
-    relationshipsWritten = await upsertRelationships(projectId, relationships, entityLookup, provenance);
-    console.log('[KG_V2][graph] upserts ok');
-  }
-
-  let ingestId: string | null = null;
-  const requestId = extractMeta?.request_id || chunkMeta?.request_id || null;
-  const elapsedMs = extractMeta?.elapsed_ms || chunkMeta?.elapsed_ms || null;
-  const finishReason = extractMeta?.finish_reason || chunkMeta?.finish_reason || null;
-  const usage = extractMeta?.usage || chunkMeta?.usage || null;
-  const providerForLog = provider ?? null;
-  const modelKeyForLog = modelKey ?? null;
-
-  try {
-    // main ingest flow already ran; always attempt to log below
-  } finally {
-    const errorCode = errors.length ? errors[0] : null;
-    const errorMessage = errorMessages.length ? errorMessages.join('; ') : null;
-    try {
-      const { rows } = await pool.query(
-        `INSERT INTO ag_catalog.kg_ingest_log
-          (project_id, doc_id, src, raw_len, chunks, entities, rels, ok, error_code, error_message, provider, model_key, request_id, elapsed_ms, finish_reason, usage)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-         RETURNING id`,
-        [
-          projectId,
-          docId,
-          finalSrc,
-          rawLen,
-          chunksWritten,
-          entitiesWritten,
-          relationshipsWritten,
-          errors.length === 0,
-          errorCode,
-          errorMessage,
-          providerForLog,
-          modelKeyForLog,
-          requestId,
-          elapsedMs,
-          finishReason,
-          usage,
-        ],
-      );
-      ingestId = rows?.[0]?.id ?? null;
-    } catch (err: any) {
-      const msg = err?.message || String(err);
-      console.error('[KG_V2][ingest] failed to write ingest log:', msg);
-      if (msg.includes('kg_ingest_log') && msg.includes('does not exist')) {
-        errors.push('kg_ingest_log_missing');
-        errorMessages.push('kg_ingest_log table missing');
+    if (!errors.length && modelKey && systemPrompt && typeof maxTokens === 'number') {
+      try {
+        console.log(
+          '[KG_V2][ingest] using agent_id=%s prompt_len=%d model=%s',
+          agentId || 'unknown',
+          systemPrompt.length,
+          modelKey,
+        );
+        const chunked = await chunkTextStrictJSON({
+          modelKey: modelKey as string,
+          text: textToIngest,
+          systemPrompt: systemPrompt ?? undefined,
+          responseFormat: responseFormat ?? undefined,
+          temperature: typeof temperature === 'number' ? temperature : undefined,
+          topP: typeof topP === 'number' ? topP : undefined,
+          previousResponseId: typeof previousResponseId === 'string' ? previousResponseId : undefined,
+          maxTokens,
+        });
+        chunks = chunked.chunks;
+        chunkMeta = chunked.meta;
+        console.log('[KG_V2][chunk] chunks=%d', chunks.length);
+      } catch (err: any) {
+        if (err?.code === 'openai_request_aborted') {
+          aborted = true;
+          console.info('[KG_V2][chunk] aborted');
+        } else {
+          const code = err?.code || 'chunking_failed';
+          console.error('[KG_V2][chunk] failed:', err?.message || err);
+          lastError = err;
+          errors.push(code);
+          errorMessages.push(err?.message || String(err));
+        }
       }
     }
-  }
+
+    if (aborted) {
+      return { status: 204, body: { ok: true, aborted: true, doc_id: docId } };
+    }
+
+    if (chunks.length === 0 && errors.length === 0) {
+      errors.push('chunking_invalid_json');
+      errorMessages.push('chunking returned 0 chunks');
+    }
+
+    const chunksWritten = await insertChunks(docId, finalSrc, chunks);
+    const provenance = {
+      doc_id: docId,
+      src: finalSrc,
+      method: 'kg_v2_ingest',
+      createdAt: new Date().toISOString(),
+    };
+
+    let entitiesWritten = 0;
+    let relationshipsWritten = 0;
+    let entities: KgEntity[] = [];
+    let relationships: KgRelationship[] = [];
+
+    if (!errors.length && chunks.length > 0 && modelKey && systemPrompt && typeof maxTokens === 'number') {
+      try {
+        const extracted = await extractKgFromChunks({
+          modelKey: modelKey as string,
+          chunks,
+          systemPrompt: systemPrompt ?? undefined,
+          responseFormat: responseFormat ?? undefined,
+          temperature: typeof temperature === 'number' ? temperature : undefined,
+          topP: typeof topP === 'number' ? topP : undefined,
+          previousResponseId: typeof previousResponseId === 'string' ? previousResponseId : undefined,
+          maxTokens,
+        });
+        entities = extracted.entities;
+        relationships = extracted.relationships;
+        extractMeta = extracted.meta;
+        console.log('[KG_V2][extract] entities=%d rels=%d', entities.length, relationships.length);
+      } catch (err: any) {
+        if (err?.code === 'openai_request_aborted') {
+          aborted = true;
+          console.info('[KG_V2][extract] aborted');
+        } else {
+          const code = err?.code || 'extract_failed';
+          console.error('[KG_V2][extract] failed:', err?.message || err);
+          lastError = err;
+          errors.push(code);
+          errorMessages.push(err?.message || String(err));
+        }
+      }
+    }
+
+    if (aborted) {
+      return { status: 204, body: { ok: true, aborted: true, doc_id: docId } };
+    }
+
+    if (entities.length || relationships.length) {
+      const entityLookup = new Map(entities.map((e) => [e.id, e]));
+      entitiesWritten = await upsertEntities(projectId, entities, provenance);
+      relationshipsWritten = await upsertRelationships(projectId, relationships, entityLookup, provenance);
+      console.log('[KG_V2][graph] upserts ok');
+    }
+
+    let ingestId: string | null = null;
+    const requestId = extractMeta?.request_id || chunkMeta?.request_id || null;
+    const elapsedMs = extractMeta?.elapsed_ms || chunkMeta?.elapsed_ms || null;
+    const finishReason = extractMeta?.finish_reason || chunkMeta?.finish_reason || null;
+    const usage = extractMeta?.usage || chunkMeta?.usage || null;
+    const providerForLog = provider ?? null;
+    const modelKeyForLog = modelKey ?? null;
+
+    try {
+      // main ingest flow already ran; always attempt to log below
+    } finally {
+      const errorCode = errors.length ? errors[0] : null;
+      const errorMessage = errorMessages.length ? errorMessages.join('; ') : null;
+      try {
+        const { rows } = await pool.query(
+          `INSERT INTO ag_catalog.kg_ingest_log
+            (project_id, doc_id, src, raw_len, chunks, entities, rels, ok, error_code, error_message, provider, model_key, request_id, elapsed_ms, finish_reason, usage)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+           RETURNING id`,
+          [
+            projectId,
+            docId,
+            finalSrc,
+            rawLen,
+            chunksWritten,
+            entitiesWritten,
+            relationshipsWritten,
+            errors.length === 0,
+            errorCode,
+            errorMessage,
+            providerForLog,
+            modelKeyForLog,
+            requestId,
+            elapsedMs,
+            finishReason,
+            usage,
+          ],
+        );
+        ingestId = rows?.[0]?.id ?? null;
+      } catch (err: any) {
+        const msg = err?.message || String(err);
+        console.error('[KG_V2][ingest] failed to write ingest log:', msg);
+        if (msg.includes('kg_ingest_log') && msg.includes('does not exist')) {
+          errors.push('kg_ingest_log_missing');
+          errorMessages.push('kg_ingest_log table missing');
+        }
+      }
+    }
 
   console.log(
     '[KG_V2][ingest] done ok=%s chunks=%d entities=%d rels=%d',
@@ -384,29 +415,63 @@ ${String(assistant_text ?? '').trim()}`.trim();
     usageSummary || 'n/a',
   );
 
-  const errorCode = errors.length ? errors[0] : null;
+  const errorCodeRaw = errors.length ? errors[0] : null;
+  const errorCode = typeof errorCodeRaw === 'string' ? errorCodeRaw : errorCodeRaw ? String(errorCodeRaw) : null;
   const errorMessage = errorMessages.length ? errorMessages.join('; ') : null;
 
   const isConfigError =
-    errorCode &&
+    typeof errorCode === 'string' &&
     (errorCode.startsWith('kg_ingest_prompt_missing') ||
       errorCode.startsWith('kg_ingest_model_missing') ||
       errorCode.startsWith('kg_ingest_provider_not_openai') ||
-      errorCode.startsWith('kg_ingest_agent_missing_assist_assignment') ||
       errorCode.startsWith('kg_ingest_agent_missing'));
   const status = errors.length === 0 ? 200 : isConfigError ? 409 : 502;
 
-  return res.status(status).json({
-    ok: errors.length === 0,
-    ingest_id: ingestId,
-    error_code: errorCode,
-    error_message: errorMessage,
-    counts: {
-      chunks: chunksWritten,
-      entities: entitiesWritten,
-      rels: relationshipsWritten,
-    },
-  });
+      return {
+        status,
+        body: {
+          ok: errors.length === 0,
+          ingest_id: ingestId,
+          error_code: errorCode,
+          error_message: errorMessage,
+          debug: {
+            provider: providerForLog,
+            model: modelKeyForLog,
+            endpoint: providerForLog === 'openai' ? '/responses' : null,
+            request_id: requestId,
+            elapsed_ms: elapsedMs,
+            finish_reason: finishReason,
+            usage,
+            error: errors.length ? (lastError ?? { error_code: errorCode, error_message: errorMessage }) : null,
+            steps: {
+              chunk: chunkMeta,
+              extract: extractMeta,
+            },
+          },
+          counts: {
+            chunks: chunksWritten,
+            entities: entitiesWritten,
+            rels: relationshipsWritten,
+          },
+        },
+      };
+    } finally {
+      inflightDocs.delete(docId);
+    }
+  };
+
+  if (finalSrc === 'chat.auto') {
+    setImmediate(() => {
+      console.log('[KG_V2][ingest] background queued projectId=%s doc_id=%s src=%s', projectId, docId, finalSrc);
+      void ingestCore().catch((err) => {
+        console.error('[KG_V2][ingest] background failed:', err?.message || err);
+      });
+    });
+    return res.json({ ok: true, queued: true, doc_id: docId, src: finalSrc });
+  }
+
+  const result = await ingestCore();
+  return res.status(result.status).json(result.body);
 });
 
 router.post('/query', async (req, res) => {
@@ -559,3 +624,4 @@ router.get('/status', async (req, res) => {
 });
 
 export default router;
+

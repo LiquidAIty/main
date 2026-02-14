@@ -72,6 +72,7 @@ type AgentPrompt = {
 
 type WorkbenchOutputMap = Record<"Plan" | "Links" | "Knowledge" | "Dashboard", string>;
 type WorkbenchRating = { stars: number; note: string };
+type AgentTypeKey = "agent_builder" | "llm_chat" | "kg_ingest";
 // helper: load all project-local state (defaults only; real data is fetched from backend)
 function loadProjectState(_projectId: string, _mode: "assist" | "agents" = "assist") {
   return {
@@ -468,6 +469,7 @@ export default function AgentBuilder() {
   const [panelOpen, setPanelOpen] = useState(true);
   const [panelWidth, setPanelWidth] = useState(480);
   const [mode, setMode] = useState<"assist" | "agents">("assist");
+  const [selectedAgentType, setSelectedAgentType] = useState<AgentTypeKey>("llm_chat");
   const [assistProjectId, setAssistProjectId] = useState<string>("");
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const messagesByScopeRef = useRef<Record<string, { role: "assistant" | "user"; text: string }[]>>({});
@@ -516,6 +518,9 @@ export default function AgentBuilder() {
     if (mode === "assist") setTab("Knowledge");
   }, [mode]);
   useEffect(() => {
+    if (mode === "agents") setSelectedAgentType("llm_chat");
+  }, [mode]);
+  useEffect(() => {
     const stored = localStorage.getItem("last_assist_project_id") || "";
     if (stored) {
       setAssistProjectId(stored);
@@ -545,6 +550,15 @@ export default function AgentBuilder() {
     objectives: "",
     style: "",
   });
+  useEffect(() => {
+    if (mode !== "agents" || !activeProject) return;
+    const match = (Array.isArray(projects) ? projects : []).find((p) => p.id === activeProject);
+    if (!match) return;
+    const code = String(match.code || "").toLowerCase();
+    if (code === "kg-ingest" || code === "kg_ingest") setSelectedAgentType("kg_ingest");
+    else if (code === "agent-builder" || code === "agent_builder") setSelectedAgentType("agent_builder");
+    else setSelectedAgentType("llm_chat");
+  }, [mode, activeProject, projects]);
 
   // Boss agent prompt configuration (per project)
   const [bossPromptConfig, setBossPromptConfig] = useState({
@@ -643,7 +657,13 @@ export default function AgentBuilder() {
     } finally {
       if (seq === refreshSeq.current) refreshInFlight.current = false;
     }
-  }, [setActiveProjectWithUrl]);
+  }, [setActiveProjectWithUrl, mode]);
+
+  useEffect(() => {
+    // Prevent stale list when switching modes
+    setProjects([]);
+    setActiveProject('');
+  }, [mode]);
 
   useEffect(() => {
     if (activeProject && loggedProjectRef.current !== activeProject) {
@@ -682,23 +702,8 @@ export default function AgentBuilder() {
   const [graphLoading, setGraphLoading] = useState(false);
   const [kgDebugTrace, setKgDebugTrace] = useState<any>(null);
   const [lastIngestTrace, setLastIngestTrace] = useState<any>(null);
-  const [runtimeConfig, setRuntimeConfig] = useState<any>(null);
   const [kgStatusPolledAt, setKgStatusPolledAt] = useState<Date | null>(null);
   const scopeKey = `${mode}:${activeProject || ""}`;
-
-  // Fetch runtime config when project changes (Agent Builder mode only)
-  useEffect(() => {
-    if (mode === 'agents' && activeProject) {
-      fetch(`/api/projects/${activeProject}/runtime-config`)
-        .then(res => safeJson(res))
-        .then(data => {
-          if (data?.ok) {
-            setRuntimeConfig(data);
-          }
-        })
-        .catch(err => console.error('[RUNTIME_CONFIG] fetch failed:', err));
-    }
-  }, [mode, activeProject]);
 
   useEffect(() => {
     if (!activeProject) {
@@ -877,9 +882,11 @@ export default function AgentBuilder() {
     setSending(true);
     try {
       // Simple payload - let backend pick runtime model
+      const runtimeMode = mode === "agents" ? "agent" : "assist";
       const payload: any = { 
         goal: userText, 
         projectId: activeProject,
+        mode: runtimeMode,
         agentConfig: {
           role: bossPromptConfig.role,
           goal: bossPromptConfig.goal,
@@ -919,6 +926,7 @@ export default function AgentBuilder() {
                 user_text: userText,
                 assistant_text: assistantText,
                 src: "chat.auto",
+                mode: runtimeMode,
               }),
             });
           } catch (err) {
@@ -988,14 +996,12 @@ export default function AgentBuilder() {
   // derive counts
   const approved = plan.filter((p) => p.status === "approved");
   const accepted = links.filter((l) => l.accepted);
-  const activeCard = projects.find((p: any) => p.id === activeProject);
-  const rawCode = typeof activeCard?.code === 'string' ? activeCard.code.toLowerCase() : '';
-  const rawName = typeof activeCard?.name === 'string' ? activeCard.name.toLowerCase() : '';
-  const activeCode = rawCode || rawName;
-  const isMainChatCard = activeCode === 'main-chat' || rawName === 'main chat';
-  const isKgIngestCard = activeCode === 'kg-ingest' || rawName === 'kg ingest' || rawName === 'knowledge ingest';
-  const showMainChat = isMainChatCard || (!isMainChatCard && !isKgIngestCard);
-  const showKgIngest = isKgIngestCard;
+  const selectedAgentLabel =
+    selectedAgentType === "agent_builder"
+      ? "Agent Builder"
+      : selectedAgentType === "kg_ingest"
+        ? "KG Ingest"
+        : "Main Chat";
 
   const createProjectPrompt = async () => {
     const name = window.prompt("New project name?");
@@ -1174,36 +1180,21 @@ export default function AgentBuilder() {
                       <div className="space-y-3">
                         {activeProject ? (
                           <div className="space-y-4">
-                            {showMainChat && (
-                              <div>
-                                <div style={{ color: C.primary, fontWeight: 600, marginBottom: 6 }}>Main Chat</div>
-                                <AgentManager
-                                  key={`${activeProject}:llm_chat`}
-                                  projectId={activeProject}
-                                  agentType="llm_chat"
-                                  activeTab={tab}
-                                  assistProjectId={assistProjectId}
-                                  onGraphRefresh={() => {
-                                    // no-op
-                                  }}
-                                />
+                            <div>
+                              <div style={{ color: C.primary, fontWeight: 600, marginBottom: 6 }}>
+                                {selectedAgentLabel}
                               </div>
-                            )}
-                            {showKgIngest && (
-                              <div>
-                                <div style={{ color: C.primary, fontWeight: 600, marginBottom: 6 }}>KG Ingest</div>
-                                <AgentManager
-                                  key={`${activeProject}:kg_ingest`}
-                                  projectId={activeProject}
-                                  agentType="kg_ingest"
-                                  activeTab={tab}
-                                  assistProjectId={assistProjectId}
-                                  onGraphRefresh={() => {
-                                    // no-op
-                                  }}
-                                />
-                              </div>
-                            )}
+                              <AgentManager
+                                key={`${activeProject}:${selectedAgentType}`}
+                                projectId={activeProject}
+                                agentType={selectedAgentType}
+                                activeTab={tab}
+                                workspaceProjectId={assistProjectId || undefined}
+                                onGraphRefresh={() => {
+                                  // no-op
+                                }}
+                              />
+                            </div>
                           </div>
                         ) : (
                           <div
@@ -1223,29 +1214,6 @@ export default function AgentBuilder() {
 
                     {tab === "Links" && (
                       <div className="space-y-3">
-                        {/* Runtime Wiring - resolved config for this project */}
-                        <div
-                          className="text-xs p-2 rounded"
-                          style={{
-                            background: C.bg,
-                            border: `1px solid ${C.border}`,
-                            marginBottom: 12,
-                          }}
-                        >
-                          <div style={{ color: C.primary, fontWeight: 600, marginBottom: 4 }}>Runtime Wiring</div>
-                          {runtimeConfig ? (
-                            <div style={{ color: C.neutral, fontSize: 10, lineHeight: 1.5 }}>
-                              <div>Assist Main: {runtimeConfig.assist_main_agent.provider}/{runtimeConfig.assist_main_agent.model_key}</div>
-                              <div>KG Ingest: {runtimeConfig.kg_ingest_agent.provider}/{runtimeConfig.kg_ingest_agent.model_key}</div>
-                              <div>KG Chunking: {runtimeConfig.kg_chunking_model.provider}/{runtimeConfig.kg_chunking_model.model_key}</div>
-                              <div>Embedding: {runtimeConfig.embed_model.provider}/{runtimeConfig.embed_model.model_key}</div>
-                              <div style={{ opacity: 0.7 }}>Graph: graph_liq</div>
-                            </div>
-                          ) : (
-                            <div style={{ color: '#f87171', fontSize: 10 }}>Failed to resolve runtime config - check agent assignments</div>
-                          )}
-                        </div>
-
                         {/* Sources/Links */}
                         {links.map((l) => (
                           <div
@@ -1589,79 +1557,94 @@ export default function AgentBuilder() {
                   {projectsError}
                 </div>
               )}
-              {(Array.isArray(projects) ? projects : []).map((project) => (
-                <div
-                  key={project.id}
-                  className="flex items-center gap-2"
-                >
-                  <button
-                    onClick={() => {
-                      setActiveProjectWithUrl(project.id);
-                      setOpenDrawer(null);
-                    }}
-                    className="flex-1 text-left p-3 rounded"
-                    style={{
-                      background:
-                        activeProject === project.id
-                          ? "rgba(79,162,173,0.18)"
-                          : "transparent",
-                      border: `1px solid ${
-                        activeProject === project.id ? C.primary : C.border
-                      }`,
-                      color: C.text,
-                    }}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="font-medium">
-                          {project.name || project.id}
-                        </div>
-                        {project.code && (
-                          <div className="opacity-60 text-xs">
-                            {project.code}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </button>
-                  <button
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      const PROTECTED_AGENT_CODES = new Set(["main-chat", "kg-ingest"]);
-                      const isProtectedAgent = mode === "agents" && PROTECTED_AGENT_CODES.has(project.code);
-                      if (isProtectedAgent) {
-                        alert("Main Chat and KG Ingest are protected system decks.");
-                        return;
-                      }
-                      if (!confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
-                      try {
-                        const res = await fetch(`/api/projects/${project.id}`, { method: 'DELETE' });
-                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                        await refreshProjects(undefined, undefined, 'after-delete');
-                        if (activeProject === project.id) {
-                          const remaining = projects.filter(p => p.id !== project.id);
-                          if (remaining.length > 0) {
-                            setActiveProjectWithUrl(remaining[0].id);
-                          } else {
-                            setActiveProject('');
+              {Array.from(
+                new Map(
+                  (Array.isArray(projects) ? projects : []).map((p) => {
+                    const codeKey = String(p.code || '').toLowerCase();
+                    const key = codeKey ? `code:${codeKey}` : `id:${p.id}`;
+                    return [key, p];
+                  }),
+                ).values(),
+              ).map((project) => {
+                return (
+                  <React.Fragment key={project.id}>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setActiveProjectWithUrl(project.id);
+                          if (mode === 'agents') {
+                            const code = String(project.code || '').toLowerCase();
+                            if (code === 'kg-ingest' || code === 'kg_ingest') setSelectedAgentType('kg_ingest');
+                            else if (code === 'agent-builder' || code === 'agent_builder') setSelectedAgentType('agent_builder');
+                            else setSelectedAgentType('llm_chat');
                           }
-                        }
-                      } catch (err: any) {
-                        alert(`Failed to delete project: ${err.message}`);
-                      }
-                    }}
-                    className="p-2 rounded"
-                    style={{
-                      background: 'transparent',
-                      border: `1px solid ${C.border}`,
-                      color: C.warn,
-                    }}
-                    title="Delete project"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
+                          setOpenDrawer(null);
+                        }}
+                        className="flex-1 text-left p-3 rounded"
+                        style={{
+                          background:
+                            activeProject === project.id
+                              ? "rgba(79,162,173,0.18)"
+                              : "transparent",
+                          border: `1px solid ${
+                            activeProject === project.id ? C.primary : C.border
+                          }`,
+                          color: C.text,
+                        }}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="font-medium">
+                              {project.name || project.id}
+                            </div>
+                            {project.code && (
+                              <div className="opacity-60 text-xs">
+                                {project.code}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const PROTECTED_AGENT_CODES = new Set(["main-chat", "kg-ingest"]);
+                          const isProtectedAgent = mode === "agents" && PROTECTED_AGENT_CODES.has(project.code);
+                          if (isProtectedAgent) {
+                            alert("Main Chat and KG Ingest are protected system decks.");
+                            return;
+                          }
+                          if (!confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
+                          try {
+                            const res = await fetch(`/api/projects/${project.id}`, { method: 'DELETE' });
+                            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                            await refreshProjects(undefined, undefined, 'after-delete');
+                            if (activeProject === project.id) {
+                              const remaining = projects.filter(p => p.id !== project.id);
+                              if (remaining.length > 0) {
+                                setActiveProjectWithUrl(remaining[0].id);
+                              } else {
+                                setActiveProject('');
+                              }
+                            }
+                          } catch (err: any) {
+                            alert(`Failed to delete project: ${err.message}`);
+                          }
+                        }}
+                        className="p-2 rounded"
+                        style={{
+                          background: 'transparent',
+                          border: `1px solid ${C.border}`,
+                          color: C.warn,
+                        }}
+                        title="Delete project"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </React.Fragment>
+                );
+              })}
 
               {Array.isArray(projects) && projects.length === 0 && !projectsError && (
                 <div className="text-xs" style={{ color: C.neutral }}>

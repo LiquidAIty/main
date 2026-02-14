@@ -1,12 +1,7 @@
 import { Router } from 'express';
-import { Pool } from 'pg';
+import { pool } from '../db/pool';
 
 const router = Router();
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://liquidaity-user:LiquidAIty@localhost:5433/liquidaity',
-  max: 5,
-});
 
 router.get('/schema-check', async (_req, res) => {
   try {
@@ -63,15 +58,15 @@ router.get('/schema-check', async (_req, res) => {
       })
     );
 
-    // Check for specific columns in projects table
-    const requiredColumns = ['assist_main_agent_id', 'assist_kg_ingest_agent_id'];
+    // Check for specific columns in project_agents table
+    const requiredColumns = ['project_id', 'agent_type', 'model', 'prompt_template', 'is_active'];
     const columnStatuses = await Promise.all(
       requiredColumns.map(async (colName) => {
         const result = await pool.query(
           `SELECT EXISTS (
             SELECT FROM information_schema.columns
             WHERE table_schema = 'ag_catalog' 
-            AND table_name = 'projects'
+            AND table_name = 'project_agents'
             AND column_name = $1
           ) AS exists`,
           [colName]
@@ -88,7 +83,7 @@ router.get('/schema-check', async (_req, res) => {
       all_projects_columns: columns,
       diagnosis: columnStatuses.every(c => c.exists) 
         ? 'SCHEMA_OK' 
-        : 'SCHEMA_MISMATCH: missing columns in ag_catalog.projects',
+        : 'SCHEMA_MISMATCH: missing columns in ag_catalog.project_agents',
     });
   } catch (error: any) {
     return res.status(500).json({
@@ -101,3 +96,4 @@ router.get('/schema-check', async (_req, res) => {
 });
 
 export const diagnosticRoutes = router;
+

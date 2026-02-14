@@ -4,18 +4,9 @@
 // ============================================================================
 
 import { Router } from 'express';
-import { Pool } from 'pg';
+import { pool } from '../db/pool';
 
 const router = Router();
-
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5433', 10),
-  database: process.env.DB_NAME || 'liquidaity',
-  user: process.env.DB_USER || 'liquidaity-user',
-  password: process.env.DB_PASSWORD || 'liquidaity-pass',
-  max: 5,
-});
 
 /**
  * POST /api/probability/:run_id/rate
@@ -87,3 +78,4 @@ router.get('/latest', async (req, res) => {
 });
 
 export default router;
+

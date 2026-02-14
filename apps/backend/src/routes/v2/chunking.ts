@@ -1,5 +1,11 @@
 import { resolveModel } from '../../llm/models.config';
 import { safeFetch } from '../../security/safeFetch';
+import {
+  buildResponsesInput,
+  buildResponsesPayload,
+  extractResponsesFinishReason,
+  extractResponsesText,
+} from '../../llm/responses';
 
 export type KgChunk = {
   chunk_id: string;
@@ -27,6 +33,63 @@ export type KgRelationship = {
 const CHUNK_TEXT_MAX = 2000;
 const MAX_ENTITIES = 50;
 const MAX_RELATIONSHIPS = 80;
+
+const DEFAULT_KG_RESPONSE_FORMAT = {
+  type: 'json_schema',
+  name: 'kg_extract',
+  strict: true,
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      chunks: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            chunk_id: { type: 'string' },
+            text: { type: 'string' },
+            start: { type: 'number' },
+            end: { type: 'number' },
+          },
+          required: ['chunk_id', 'text', 'start', 'end'],
+        },
+      },
+      entities: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            id: { type: 'string' },
+            type: { type: 'string' },
+            name: { type: 'string' },
+            aliases: { type: 'array', items: { type: 'string' } },
+            evidence_chunk_ids: { type: 'array', items: { type: 'string' } },
+          },
+          required: ['id', 'type', 'name', 'aliases', 'evidence_chunk_ids'],
+        },
+      },
+      relations: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            from: { type: 'string' },
+            to: { type: 'string' },
+            type: { type: 'string' },
+            evidence_chunk_ids: { type: 'array', items: { type: 'string' } },
+            confidence: { type: 'number' },
+          },
+          required: ['from', 'to', 'type', 'evidence_chunk_ids', 'confidence'],
+        },
+      },
+    },
+    required: ['chunks', 'entities', 'relations'],
+  },
+};
 
 export type LlmMeta = {
   provider: 'openai';
@@ -76,44 +139,88 @@ async function callOpenAiJsonSchema(opts: {
   modelKey: string;
   system: string;
   prompt: string;
-  schema: any;
   maxTokens: number;
   logTag: string;
   emptyCode: string;
+  responseFormat?: any;
+  temperature?: number | null;
+  topP?: number | null;
+  previousResponseId?: string | null;
 }) {
-  const { modelKey, system, prompt, schema, maxTokens, logTag, emptyCode } = opts;
+  const {
+    modelKey,
+    system,
+    prompt,
+    maxTokens,
+    logTag,
+    emptyCode,
+    responseFormat,
+    temperature,
+    topP,
+    previousResponseId,
+  } = opts;
   const cfg = getOpenAiConfig(modelKey);
-  const url = `${cfg.base.replace(/\/+$/, '')}/chat/completions`;
+  const url = `${cfg.base.replace(/\/+$/, '')}/responses`;
   const started = Date.now();
-
-  const res = await safeFetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${cfg.apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: cfg.modelId,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: prompt },
-      ],
-      ...(modelKey.startsWith('gpt-5')
-        ? { max_completion_tokens: maxTokens }
-        : { max_tokens: maxTokens, temperature: 0 }
-      ),
-      response_format: {
-        type: 'json_schema',
-        json_schema: { name: 'kg_v2', schema, strict: true },
-      },
-    }),
-    timeoutMs: Number(process.env.REQUEST_TIMEOUT_MS ?? 20000),
-    allowHosts: cfg.allowHosts,
+  const input = buildResponsesInput(system, prompt);
+  const requestBody: any = buildResponsesPayload({
+    model: cfg.modelId,
+    input,
+    response_format: responseFormat ?? DEFAULT_KG_RESPONSE_FORMAT,
+    temperature: typeof temperature === 'number' ? temperature : undefined,
+    top_p: typeof topP === 'number' ? topP : undefined,
+    max_output_tokens: maxTokens,
+    previous_response_id: previousResponseId ?? undefined,
   });
+
+  console.log(`[KG_V2][${logTag}] request`, {
+    model: cfg.modelId,
+    max_output_tokens: maxTokens,
+    body_keys: Object.keys(requestBody),
+  });
+
+  const rawTimeout =
+    process.env.KG_INGEST_REQUEST_TIMEOUT_MS ??
+    process.env.REQUEST_TIMEOUT_MS ??
+    90000;
+  const parsedTimeout = Number(rawTimeout);
+  const timeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout > 1000
+    ? parsedTimeout
+    : 90000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await safeFetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${cfg.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+      timeoutMs: 0,
+      signal: controller.signal,
+      allowHosts: cfg.allowHosts,
+    });
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    if (err?.name === 'AbortError' || msg.toLowerCase().includes('aborted')) {
+      throw createTypedError('openai_request_aborted', 'OpenAI request aborted');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   const elapsed_ms = Date.now() - started;
   const request_id = res.headers.get('x-request-id') || res.headers.get('request-id') || '';
-  const raw = await res.json().catch(() => ({}));
+  const rawText = await res.text().catch(() => '');
+  let raw: any = {};
+  try {
+    raw = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    raw = rawText;
+  }
   if (!res.ok) {
     console.error(`[KG_V2][${logTag}] openai error`, {
       status: res.status,
@@ -126,45 +233,38 @@ async function callOpenAiJsonSchema(opts: {
 
   // Debug response shape
   console.log('[KG_V2][response-shape] keys:', Object.keys(raw));
-  console.log('[KG_V2][response-shape] has_choices:', Boolean(raw?.choices));
-  console.log('[KG_V2][response-shape] has_message:', Boolean(raw?.choices?.[0]?.message));
-  const choice = raw?.choices?.[0] ?? {};
-  const msg = choice?.message ?? {};
-  console.log('[KG_V2][response-shape] content_type:', typeof msg?.content);
-  console.log('[KG_V2][response-shape] content_len:', String(msg?.content || '').length);
-  console.log('[KG_V2][response-shape] message_keys:', Object.keys(msg || {}));
-  console.log('[KG_V2][response-shape] tool_calls_len:', msg?.tool_calls?.length || 0);
-  if (msg?.tool_calls?.length) {
-    console.log('[KG_V2][response-shape] tool_call_name:', msg.tool_calls[0]?.function?.name);
-    console.log('[KG_V2][response-shape] tool_args_len:', (msg.tool_calls[0]?.function?.arguments || '').length);
-  }
+  console.log('[KG_V2][response-shape] has_output:', Array.isArray(raw?.output));
+  console.log('[KG_V2][response-shape] output_len:', Array.isArray(raw?.output) ? raw.output.length : 0);
 
-  const finish_reason = choice?.finish_reason ?? null;
+  const finish_reason = extractResponsesFinishReason(raw);
   const usage = raw?.usage ?? null;
-  const content =
-    typeof msg?.content === 'string'
-      ? msg.content
-      : Array.isArray(msg?.content)
-        ? msg.content.map((p: any) => p?.text ?? '').join('')
-        : '';
-  const toolArgs =
-    msg?.tool_calls?.[0]?.function?.arguments &&
-    typeof msg.tool_calls[0].function.arguments === 'string'
-      ? msg.tool_calls[0].function.arguments
-      : '';
-  const rawContent = content && content.trim().length ? content : toolArgs;
+  if (usage) {
+    console.log(`[KG_V2][${logTag}] usage`, {
+      prompt_tokens: usage.prompt_tokens ?? usage.input_tokens ?? null,
+      completion_tokens: usage.completion_tokens ?? usage.output_tokens ?? null,
+      total_tokens: usage.total_tokens ?? null,
+    });
+  }
+  const rawContent = extractResponsesText(raw);
+  const branch = rawContent.trim().length > 0 ? 'content' : 'none';
   const preview = String(rawContent || JSON.stringify(raw)).slice(0, 200);
   const raw_len = typeof rawContent === 'string' ? rawContent.length : 0;
   const preview_len = preview.length;
 
+  console.log(`[KG_V2][${logTag}] output_branch=%s raw_len=%d`, branch, raw_len);
+  console.log(`[KG_V2][${logTag}] response_meta`, {
+    request_id,
+    finish_reason,
+    elapsed_ms,
+    content_len: String(rawContent || '').length,
+    raw_len,
+  });
+
   if (!rawContent || !String(rawContent).trim()) {
-    const tokenParam = modelKey.startsWith('gpt-5') ? 'max_completion_tokens' : 'max_tokens';
-    const temperatureParam = modelKey.startsWith('gpt-5') ? 'omitted' : '0';
     console.error(`[KG_V2][${logTag}] empty output`, {
       provider: 'openai',
       model: cfg.modelId,
-      token_param: tokenParam,
-      temperature_param: temperatureParam,
+      max_output_tokens: maxTokens,
       finish_reason,
       usage,
       request_id,
@@ -197,48 +297,39 @@ async function callOpenAiJsonSchema(opts: {
   };
 }
 
-export async function chunkTextStrictJSON(opts: { modelKey: string; text: string; systemPrompt?: string }) {
+export async function chunkTextStrictJSON(opts: {
+  modelKey: string;
+  text: string;
+  systemPrompt?: string;
+  responseFormat?: any;
+  temperature?: number | null;
+  topP?: number | null;
+  previousResponseId?: string | null;
+  maxTokens: number;
+}) {
   const baseSystem = 'Return strict JSON only. Output MUST match the schema.';
   const system = opts.systemPrompt ? `${opts.systemPrompt}\n\n${baseSystem}` : baseSystem;
   const prompt = [
     'Split the input into semantic chunks.',
-    'Return a JSON array of chunks only.',
+    'Return JSON with keys: chunks, entities, relations.',
     'Each chunk must include chunk_id, text, start, end.',
+    'If no chunks can be produced, return {"chunks": [], "entities": [], "relations": []}.',
     '',
     'Input:',
     opts.text,
   ].join('\n');
 
-  const schema = {
-    type: 'object',
-    additionalProperties: false,
-    required: ['chunks'],
-    properties: {
-      chunks: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['chunk_id', 'text', 'start', 'end'],
-          properties: {
-            chunk_id: { type: 'string' },
-            text: { type: 'string' },
-            start: { type: 'integer' },
-            end: { type: 'integer' },
-          },
-        },
-      },
-    },
-  };
-
   const { content, meta } = await callOpenAiJsonSchema({
     modelKey: opts.modelKey,
     system,
     prompt,
-    schema,
-    maxTokens: 1024,
+    maxTokens: opts.maxTokens,
     logTag: 'chunk',
     emptyCode: 'chunking_empty_output',
+    responseFormat: opts.responseFormat,
+    temperature: opts.temperature ?? null,
+    topP: opts.topP ?? null,
+    previousResponseId: opts.previousResponseId ?? null,
   });
 
   let parsed: any;
@@ -280,7 +371,16 @@ export async function chunkTextStrictJSON(opts: { modelKey: string; text: string
   return { chunks, meta };
 }
 
-export async function extractKgFromChunks(opts: { modelKey: string; chunks: KgChunk[]; systemPrompt?: string }) {
+export async function extractKgFromChunks(opts: {
+  modelKey: string;
+  chunks: KgChunk[];
+  systemPrompt?: string;
+  responseFormat?: any;
+  temperature?: number | null;
+  topP?: number | null;
+  previousResponseId?: string | null;
+  maxTokens: number;
+}) {
   const chunkIds = opts.chunks.map((c) => c.chunk_id);
   const chunkBlock = opts.chunks
     .map((c) => `(${c.chunk_id}) ${c.text}`)
@@ -293,6 +393,8 @@ export async function extractKgFromChunks(opts: { modelKey: string; chunks: KgCh
     'Extract entities and relationships from the chunks.',
     'Only use evidence_chunk_ids that exist in the input chunk list.',
     'Keep the output small.',
+    'Return JSON with keys: chunks, entities, relations.',
+    'If none are found, return {"chunks": [], "entities": [], "relations": []}.',
     '',
     `Chunk IDs: ${chunkIds.join(', ')}`,
     '',
@@ -300,52 +402,17 @@ export async function extractKgFromChunks(opts: { modelKey: string; chunks: KgCh
     chunkBlock,
   ].join('\n');
 
-  const schema = {
-    type: 'object',
-    properties: {
-      entities: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            type: { type: 'string' },
-            name: { type: 'string' },
-            aliases: { type: 'array', items: { type: 'string' } },
-            evidence_chunk_ids: { type: 'array', items: { type: 'string' } },
-          },
-          required: ['id', 'type', 'name', 'aliases', 'evidence_chunk_ids'],
-          additionalProperties: false,
-        },
-      },
-      relationships: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            from: { type: 'string' },
-            to: { type: 'string' },
-            type: { type: 'string' },
-            evidence_chunk_ids: { type: 'array', items: { type: 'string' } },
-            confidence: { type: 'number' },
-          },
-          required: ['from', 'to', 'type', 'evidence_chunk_ids', 'confidence'],
-          additionalProperties: false,
-        },
-      },
-    },
-    required: ['entities', 'relationships'],
-    additionalProperties: false,
-  };
-
   const { content, meta } = await callOpenAiJsonSchema({
     modelKey: opts.modelKey,
     system,
     prompt,
-    schema,
-    maxTokens: 1024,
+    maxTokens: opts.maxTokens,
     logTag: 'extract',
     emptyCode: 'extract_empty_output',
+    responseFormat: opts.responseFormat,
+    temperature: opts.temperature ?? null,
+    topP: opts.topP ?? null,
+    previousResponseId: opts.previousResponseId ?? null,
   });
 
   let parsed: any;
@@ -360,7 +427,9 @@ export async function extractKgFromChunks(opts: { modelKey: string; chunks: KgCh
     throw createTypedError('extract_invalid_json', 'Extraction returned invalid JSON');
   }
 
-  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.entities) || !Array.isArray(parsed.relationships)) {
+  const parsedRelations = Array.isArray(parsed?.relations) ? parsed.relations : null;
+
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.entities) || !Array.isArray(parsedRelations)) {
     console.error('[KG_V2][extract] invalid json shape', { model: opts.modelKey, preview: content.slice(0, 200) });
     throw createTypedError('extract_invalid_json', 'Extraction returned invalid JSON');
   }
@@ -388,7 +457,7 @@ export async function extractKgFromChunks(opts: { modelKey: string; chunks: KgCh
     .filter(Boolean) as KgEntity[];
 
   const entityIdSet = new Set(entities.map((e) => e.id));
-  const relationships = parsed.relationships
+  const relationships = parsedRelations
     .slice(0, MAX_RELATIONSHIPS)
     .map((r: any): KgRelationship | null => {
       const from = typeof r?.from === 'string' ? r.from : '';

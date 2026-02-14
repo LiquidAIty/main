@@ -1,16 +1,11 @@
 import { randomUUID } from 'crypto';
-import { Pool } from 'pg';
+import { pool } from '../db/pool';
 import type { AgentCard, AgentConfig } from '../types/agentBuilder';
 type ProjectState = {
   plan: any[];
   links: any[];
   knowledge: { nodes: any[]; edges: any[] };
 };
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://liquidaity-user:LiquidAIty@localhost:5433/liquidaity',
-  max: 5,
-});
 
 // Projects table lives in ag_catalog schema in your DB
 const PROJECTS_TABLE = 'ag_catalog.projects';
@@ -203,15 +198,19 @@ export async function listAgentCards(userId?: string | null, projectType?: 'assi
 
   sql += ' ORDER BY updated_at DESC';
 
-  console.log('[listAgentCards] Querying DB:', {
-    table: PROJECTS_TABLE,
-    hasUserId: !!userId,
-    dbUrl: process.env.DATABASE_URL ? 'set' : 'NOT SET',
-  });
+  if (process.env.LOG_LEVEL === 'debug') {
+    console.log('[listAgentCards] Querying DB:', {
+      table: PROJECTS_TABLE,
+      hasUserId: !!userId,
+      dbUrl: process.env.DATABASE_URL ? 'set' : 'NOT SET',
+    });
+  }
 
   try {
     const { rows } = await pool.query(sql, params);
-    console.log('[listAgentCards] Query success, rows:', rows.length);
+    if (process.env.LOG_LEVEL === 'debug') {
+      console.log('[listAgentCards] Query success, rows:', rows.length);
+    }
     
     return rows.map((row) => ({
       id: row.id,
@@ -411,72 +410,3 @@ export async function saveProjectState(projectId: string, state: ProjectState): 
   return state;
 }
 
-export async function getAssistAssignments(projectId: string): Promise<{
-  assist_main_agent_id: string | null;
-  assist_kg_ingest_agent_id: string | null;
-}> {
-  const { clause, params } = projectLookup(projectId);
-  
-  // Check which columns exist in the schema
-  const columns = await getProjectColumns();
-  const hasMainAgent = columns.has('assist_main_agent_id');
-  const hasKgAgent = columns.has('assist_kg_ingest_agent_id');
-  
-  // Build SELECT clause with only existing columns
-  const selectCols: string[] = ['id'];
-  if (hasMainAgent) selectCols.push('assist_main_agent_id');
-  if (hasKgAgent) selectCols.push('assist_kg_ingest_agent_id');
-  
-  const { rows } = await pool.query(
-    `SELECT ${selectCols.join(', ')} FROM ${PROJECTS_TABLE} WHERE ${clause} LIMIT 1`,
-    params,
-  );
-  if (!rows.length) {
-    throw new Error('project not found');
-  }
-  const row = rows[0];
-  return {
-    assist_main_agent_id: hasMainAgent ? (row.assist_main_agent_id || null) : null,
-    assist_kg_ingest_agent_id: hasKgAgent ? (row.assist_kg_ingest_agent_id || null) : null,
-  };
-}
-
-export async function setAssistAssignments(
-  projectId: string,
-  assignments: { assist_main_agent_id?: string | null; assist_kg_ingest_agent_id?: string | null },
-): Promise<{
-  assist_main_agent_id: string | null;
-  assist_kg_ingest_agent_id: string | null;
-}> {
-  const updates: string[] = [];
-  const updateParams: any[] = [];
-
-  if ('assist_main_agent_id' in assignments) {
-    updates.push(`assist_main_agent_id = $${updateParams.length + 1}`);
-    updateParams.push(assignments.assist_main_agent_id ?? null);
-  }
-  if ('assist_kg_ingest_agent_id' in assignments) {
-    updates.push(`assist_kg_ingest_agent_id = $${updateParams.length + 1}`);
-    updateParams.push(assignments.assist_kg_ingest_agent_id ?? null);
-  }
-
-  if (!updates.length) {
-    return getAssistAssignments(projectId);
-  }
-
-  // projectLookup for WHERE clause; append project param last
-  const { clause, params } = projectLookup(projectId);
-  const whereParamIndex = updateParams.length + 1;
-  const whereClause = clause.replace('$1', `$${whereParamIndex}`);
-
-  const sql = `UPDATE ${PROJECTS_TABLE} SET ${updates.join(', ')} WHERE ${whereClause} RETURNING assist_main_agent_id, assist_kg_ingest_agent_id`;
-  const { rows } = await pool.query(sql, [...updateParams, ...params]);
-  if (!rows.length) {
-    throw new Error('project not found');
-  }
-  const row = rows[0];
-  return {
-    assist_main_agent_id: row.assist_main_agent_id || null,
-    assist_kg_ingest_agent_id: row.assist_kg_ingest_agent_id || null,
-  };
-}

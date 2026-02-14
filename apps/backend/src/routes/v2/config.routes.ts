@@ -1,33 +1,51 @@
 import { Router } from 'express';
-import { Pool } from 'pg';
+import { pool } from '../../db/pool';
 import { getAgentConfig, updateAgentConfig, type AgentType } from '../../services/v2/agentConfigStore';
+import { MODEL_REGISTRY } from '../../llm/models.config';
+import { DEFAULT_AGENT_BUILDER_PROMPT_TEMPLATE } from '../../prompts/agentBuilderPrompt';
 
 const router = Router();
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://liquidaity-user:LiquidAIty@localhost:5433/liquidaity',
-  max: 5,
-});
 let warnedMissingVersionsTable = false;
-const VALID_AGENT_TYPES: AgentType[] = ['llm_chat', 'kg_ingest'];
-const REQUIRED_FIELDS: Array<'provider' | 'model_key' | 'prompt_template'> = [
+const VALID_AGENT_TYPES: AgentType[] = ['llm_chat', 'kg_ingest', 'agent_builder'];
+const REQUIRED_FIELDS: Array<'provider' | 'model_key' | 'prompt_template' | 'max_tokens'> = [
   'provider',
   'model_key',
   'prompt_template',
+  'max_tokens',
 ];
 
 function isValidAgentType(agentType: string): agentType is AgentType {
   return VALID_AGENT_TYPES.includes(agentType as AgentType);
 }
 
-function pickMissing(config: { provider: string | null; model_key: string | null; prompt_template: string | null }): string[] {
+function pickMissing(config: {
+  provider: string | null;
+  model_key: string | null;
+  prompt_template: string | null;
+  max_tokens?: number | null;
+}): string[] {
   const missing: string[] = [];
   REQUIRED_FIELDS.forEach((field) => {
-    const value = config[field];
+    const value = config[field as keyof typeof config] as any;
     if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
       missing.push(field);
     }
   });
   return missing;
+}
+
+function pickDefaultOpenAiModelKey(): string | null {
+  const envCandidates = [
+    process.env.OPENAI_MODEL,
+    process.env.OPENAI_DEFAULT_MODEL,
+    process.env.OPENAI_MODEL_GPT5_MINI,
+    process.env.OPENAI_MODEL_GPT5,
+  ];
+  for (const candidate of envCandidates) {
+    if (candidate && MODEL_REGISTRY[candidate]) return candidate;
+  }
+  const firstOpenAi = Object.entries(MODEL_REGISTRY).find(([, m]) => m.provider === 'openai');
+  return firstOpenAi ? firstOpenAi[0] : null;
 }
 
 router.get('/:projectId/agents/:agentType/config', async (req, res) => {
@@ -50,6 +68,7 @@ router.get('/:projectId/agents/:agentType/config', async (req, res) => {
       provider: config.provider,
       model_key: config.model_key,
       prompt_template: config.prompt_template,
+      max_tokens: config.max_tokens,
     });
 
     return res.json({
@@ -59,7 +78,12 @@ router.get('/:projectId/agents/:agentType/config', async (req, res) => {
         provider: config.provider,
         model_key: config.model_key,
         temperature: config.temperature,
+        top_p: config.top_p ?? null,
         max_tokens: config.max_tokens,
+        max_output_tokens: config.max_tokens,
+        previous_response_id: config.previous_response_id ?? null,
+        response_format: config.response_format ?? null,
+        tools: config.tools ?? [],
         prompt_template: config.prompt_template,
       },
       missing,
@@ -83,7 +107,25 @@ router.put('/:projectId/agents/:agentType/config', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'invalid_agent_type' });
   }
 
-  const { provider, model_key, temperature, max_tokens, prompt_template, version_note } = req.body || {};
+  const {
+    provider,
+    model_key,
+    temperature,
+    top_p,
+    max_output_tokens,
+    max_tokens,
+    previous_response_id,
+    response_format,
+    tools,
+    prompt_template,
+    version_note,
+  } = req.body || {};
+  const resolvedMaxTokens =
+    typeof max_output_tokens === 'number'
+      ? max_output_tokens
+      : typeof max_tokens === 'number'
+        ? max_tokens
+        : max_output_tokens;
   const normalizedPrompt = typeof prompt_template === 'string' ? prompt_template.trim() : '';
 
   try {
@@ -100,7 +142,11 @@ router.put('/:projectId/agents/:agentType/config', async (req, res) => {
       provider,
       model_key,
       temperature,
-      max_tokens,
+      top_p,
+      max_tokens: resolvedMaxTokens,
+      previous_response_id,
+      response_format,
+      tools,
       prompt_template: normalizedPrompt,
     });
 
@@ -150,6 +196,50 @@ router.put('/:projectId/agents/:agentType/config', async (req, res) => {
   } catch (err: any) {
     console.error('[CONFIG_V2][PUT] failed', err);
     return res.status(500).json({ ok: false, error: err?.message || 'failed_to_save_config' });
+  }
+});
+
+router.post('/:projectId/agents/:agentType/config/create', async (req, res) => {
+  const projectId = req.params.projectId;
+  const agentType = req.params.agentType;
+
+  if (!isValidAgentType(agentType)) {
+    return res.status(400).json({ ok: false, error: 'invalid_agent_type' });
+  }
+
+  try {
+    const existing = await getAgentConfig(projectId, agentType);
+    if (existing) {
+      return res.json({ ok: true, created: false, agent_id: existing.agent_id });
+    }
+
+    const modelKey = pickDefaultOpenAiModelKey();
+    if (!modelKey) {
+      return res.status(500).json({ ok: false, error: 'default_model_missing' });
+    }
+
+    const promptTemplate =
+      agentType === 'agent_builder' ? DEFAULT_AGENT_BUILDER_PROMPT_TEMPLATE : '';
+    const responseFormat = agentType === 'agent_builder' ? { type: 'text' } : null;
+    const temperature = agentType === 'agent_builder' ? 0.2 : null;
+
+    const created = await updateAgentConfig(projectId, agentType, {
+      provider: MODEL_REGISTRY[modelKey]?.provider ?? 'openai',
+      model_key: modelKey,
+      temperature,
+      max_tokens: 2048,
+      response_format: responseFormat,
+      prompt_template: promptTemplate,
+    });
+
+    if (!created) {
+      return res.status(500).json({ ok: false, error: 'agent_create_failed' });
+    }
+
+    return res.json({ ok: true, created: true, agent_id: created.agent_id });
+  } catch (err: any) {
+    console.error('[CONFIG_V2][CREATE] failed', err);
+    return res.status(500).json({ ok: false, error: err?.message || 'failed_to_create_config' });
   }
 });
 
@@ -232,3 +322,4 @@ router.get('/:projectId/agents/:agentType/config/versions', async (req, res) => 
 });
 
 export default router;
+

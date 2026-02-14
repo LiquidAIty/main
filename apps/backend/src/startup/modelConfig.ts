@@ -1,10 +1,5 @@
-import { Pool } from 'pg';
+import { pool } from '../db/pool';
 import { resolveModel } from '../llm/models.config';
-
-const pool = new Pool({ 
-  connectionString: process.env.DATABASE_URL || 'postgresql://liquidaity-user:LiquidAIty@localhost:5433/liquidaity',
-  max: 5 
-});
 
 export async function logModelConfiguration() {
   console.log('\n╔════════════════════════════════════════════════════════════════╗');
@@ -57,7 +52,10 @@ export async function logModelConfiguration() {
 
     console.log('════════════════════════════════════════════════════════════════\n');
   } catch (err: any) {
-    console.error('  ❌ Failed to load configs:', err.message);
+    const msg = err?.message || String(err);
+    const code = err?.code ? ` (${err.code})` : '';
+    console.error(`  ❌ Failed to load configs${code}: ${msg}`);
     console.log('');
   }
 }
+

@@ -4,8 +4,6 @@ import {
   saveProjectState,
   createProject,
   listAgentCards,
-  getAssistAssignments,
-  setAssistAssignments,
 } from '../services/agentBuilderStore';
 import {
   getAgentConfig,
@@ -14,8 +12,8 @@ import {
 import { runCypherOnGraph } from '../services/graphService';
 import { runLLM } from '../llm/client';
 import { createOpenRouterEmbedding } from '../llm/openrouterEmbeddings';
-import { MODEL_REGISTRY, listModels } from '../llm/models.config';
-import { Pool } from 'pg';
+import { listModels } from '../llm/models.config';
+import { pool } from '../db/pool';
 import { createHash } from 'crypto';
 import { getLastTrace, getTraces } from '../services/ingestTrace';
 import { captureProbability } from '../lib/receiptCapture';
@@ -23,8 +21,6 @@ import { resolveKgIngestAgent } from '../services/resolveAgents';
 import { runKgQuery } from './v2/query';
 const router = Router();
 const GRAPH_NAME = 'graph_liq';
-const pool = new Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://liquidaity-user:LiquidAIty@localhost:5433/liquidaity', max: 5 });
-
 const DEFAULT_EMBED_MODEL =
   process.env.OPENROUTER_DEFAULT_EMBED_MODEL || 'openai/text-embedding-3-small';
 const DEFAULT_MAX_CHUNK_CHARS = Math.max(500, Number(process.env.KG_INGEST_MAX_CHARS ?? 4500));
@@ -752,29 +748,20 @@ router.get('/:projectId/config', async (req, res) => {
   }
 
   try {
-    const assignments = await getAssistAssignments(projectId);
-    const agentId =
-      agentType === 'llm_chat'
-        ? assignments.assist_main_agent_id
-        : assignments.assist_kg_ingest_agent_id;
-
-    if (!agentId) {
-      return res
-        .status(409)
-        .json({ ok: false, error: 'missing_agent_assignment', agent_type: agentType });
-    }
+    const agentProjectId = projectId;
 
     const { rows } = await pool.query(
-      `SELECT agent_id, model, provider, temperature, max_tokens, prompt_template
+      `SELECT agent_id, model, provider, temperature, max_tokens, prompt_template, project_id
        FROM ag_catalog.project_agents
-       WHERE project_id = $1 AND agent_id = $2 AND is_active = true
+       WHERE project_id = $1 AND agent_type = $2 AND is_active = true
+       ORDER BY updated_at DESC
        LIMIT 1`,
-      [projectId, agentId],
+      [agentProjectId, agentType],
     );
 
     const agentRow = rows[0];
     if (!agentRow) {
-      return res.status(404).json({ ok: false, error: 'agent_not_found', agent_id: agentId });
+      return res.status(404).json({ ok: false, error: 'agent_not_found', agent_project_id: agentProjectId });
     }
 
     const missing: string[] = [];
@@ -795,6 +782,7 @@ router.get('/:projectId/config', async (req, res) => {
       config: {
         agent_id: agentRow.agent_id,
         agent_type: agentType,
+        agent_project_id: agentRow.project_id,
         provider: agentRow.provider,
         model_key: agentRow.model,
         temperature: agentRow.temperature,
@@ -808,76 +796,6 @@ router.get('/:projectId/config', async (req, res) => {
   }
 });
 
-router.get('/:projectId/assist/assignments', async (req, res) => {
-  try {
-    const assignments = await getAssistAssignments(req.params.projectId);
-    return res.json({ ok: true, assignments });
-  } catch (err: any) {
-    return res.status(500).json({ ok: false, error: err?.message || 'failed_to_load_assignments' });
-  }
-});
-
-router.put('/:projectId/assist/assignments', async (req, res) => {
-  const assistProjectId = req.params.projectId;
-  
-  // Build patch object with only fields that are explicitly provided
-  const patch: Record<string, any> = {};
-  
-  if (Object.prototype.hasOwnProperty.call(req.body, 'assist_main_agent_id')) {
-    patch.assist_main_agent_id = req.body.assist_main_agent_id;
-  }
-  if (Object.prototype.hasOwnProperty.call(req.body, 'assist_kg_ingest_agent_id')) {
-    patch.assist_kg_ingest_agent_id = req.body.assist_kg_ingest_agent_id;
-  }
-
-  // Validation: Ensure IDs are valid UUIDs if provided
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (Object.prototype.hasOwnProperty.call(patch, 'assist_main_agent_id') && patch.assist_main_agent_id) {
-    if (!uuidRegex.test(patch.assist_main_agent_id)) {
-      console.error('[ASSIGNMENTS] Invalid UUID format for assist_main_agent_id:', patch.assist_main_agent_id);
-      return res.status(400).json({ ok: false, error: 'invalid_uuid_format', field: 'assist_main_agent_id' });
-    }
-  }
-  if (Object.prototype.hasOwnProperty.call(patch, 'assist_kg_ingest_agent_id') && patch.assist_kg_ingest_agent_id) {
-    if (!uuidRegex.test(patch.assist_kg_ingest_agent_id)) {
-      console.error('[ASSIGNMENTS] Invalid UUID format for assist_kg_ingest_agent_id:', patch.assist_kg_ingest_agent_id);
-      return res.status(400).json({ ok: false, error: 'invalid_uuid_format', field: 'assist_kg_ingest_agent_id' });
-    }
-  }
-
-  // Check if patch is empty
-  const updatedFields = Object.keys(patch);
-  if (updatedFields.length === 0) {
-    console.error('[ASSIGNMENTS] No fields provided in request body');
-    return res.status(400).json({ ok: false, error: 'assignments_empty_patch' });
-  }
-
-  console.log('[ASSIGNMENTS] PUT request received:', {
-    assistProjectId,
-    updatedFields,
-    payload: patch,
-  });
-
-  try {
-    const assignments = await setAssistAssignments(assistProjectId, patch);
-
-    console.log('[ASSIGNMENTS] DB update successful:', {
-      assistProjectId,
-      updatedFields,
-      assignments,
-    });
-
-    return res.json({ ok: true, assignments });
-  } catch (err: any) {
-    console.error('[ASSIGNMENTS] DB update failed:', {
-      assistProjectId,
-      updatedFields,
-      error: err?.message,
-      stack: err?.stack,
-    });
-    return res.status(500).json({ ok: false, error: err?.message || 'failed_to_save_assignments' });
-  }
-});
 
 router.put('/:projectId/config', async (req, res) => {
   const projectId = req.params.projectId;
@@ -907,22 +825,26 @@ router.put('/:projectId/config', async (req, res) => {
   }
 
   try {
-    const assignments = await getAssistAssignments(projectId);
-    const agentId =
-      agentType === 'llm_chat'
-        ? assignments.assist_main_agent_id
-        : assignments.assist_kg_ingest_agent_id;
+    const agentProjectId = projectId;
 
+    const targetAgent = await pool.query(
+      `SELECT agent_id
+       FROM ag_catalog.project_agents
+       WHERE project_id = $1 AND agent_type = $2 AND is_active = true
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [agentProjectId, agentType],
+    );
+    const agentId = targetAgent.rows?.[0]?.agent_id;
     if (!agentId) {
-      return res
-        .status(409)
-        .json({ ok: false, error: 'missing_agent_assignment', agent_type: agentType });
+      return res.status(404).json({ ok: false, error: 'agent_not_found', agent_project_id: agentProjectId });
     }
 
     console.log(
-      '[SAVE_CONFIG] projectId=%s agent_type=%s agent_id=%s model_key=%s provider=%s',
+      '[SAVE_CONFIG] projectId=%s agent_type=%s agent_project_id=%s agent_id=%s model_key=%s provider=%s',
       projectId,
       agentType,
+      agentProjectId,
       agentId,
       model_key,
       provider,
@@ -936,14 +858,14 @@ router.put('/:projectId/config', async (req, res) => {
            max_tokens = $6,
            prompt_template = $7
        WHERE project_id = $1 AND agent_id = $2 AND is_active = true`,
-      [projectId, agentId, provider ?? null, model_key ?? null, temperature ?? null, max_tokens ?? null, prompt_template ?? null],
+      [agentProjectId, agentId, provider ?? null, model_key ?? null, temperature ?? null, max_tokens ?? null, prompt_template ?? null],
     );
 
     if (rowCount === 0) {
       return res.status(404).json({ ok: false, error: 'agent_not_found', agent_id: agentId });
     }
 
-    return res.json({ ok: true, agent_id: agentId, agent_type: agentType });
+    return res.json({ ok: true, agent_id: agentId, agent_project_id: agentProjectId, agent_type: agentType });
   } catch (err) {
     console.error('[SAVE_CONFIG] error for projectId=%s agent_type=%s:', projectId, agentType, err);
     return res.status(500).json({ ok: false, error: 'internal_error', message: 'Failed to save configuration' });
@@ -1225,13 +1147,13 @@ export async function runIngestPipeline(params: {
   let kgSystemPrompt = '';
   
   try {
-    const resolved = await resolveKgIngestAgent(projectId);
+    const resolved = await resolveKgIngestAgent(projectId, '/api/projects/:projectId/kg/ingest');
     if (!resolved) {
       console.log('[KG_INGEST_META] agent resolution failed:', meta);
       throw new Error('kg_ingest_agent_not_configured: No KG ingest agent found for project');
     }
     llmModelKey = resolved.modelKey;
-    kgAgentId = resolved.agent.agent_id;
+    kgAgentId = resolved.agentId;
     kgProvider = resolved.provider;
     kgProviderModelId = resolved.providerModelId;
     kgSystemPrompt = resolved.systemPrompt || '';
@@ -1247,10 +1169,7 @@ export async function runIngestPipeline(params: {
     let error_code = 'kg_ingest_resolution_failed';
     let message = errorMsg;
     
-    if (errorMsg.includes('kg_ingest_agent_missing_assist_assignment')) {
-      error_code = 'kg_ingest_agent_missing_assist_assignment';
-      message = `KG ingest agent not assigned for project ${projectId}. Assign a KG Ingest agent in Agent Builder.`;
-    } else if (errorMsg.includes('kg_ingest_prompt_missing')) {
+    if (errorMsg.includes('kg_ingest_prompt_missing')) {
       error_code = 'kg_ingest_prompt_missing';
       message = `KG ingest agent missing prompt_template for project ${projectId}`;
     } else if (errorMsg.includes('kg_ingest_model_missing')) {
@@ -1758,39 +1677,32 @@ router.post('/:projectId/kg/ingest_chat_turn', async (req, res) => {
     console.log('[KG_V2][route] using V2 chunker for ingest_chat_turn');
     // Import V2 functions
     const { chunkTextStrictJSON, extractKgFromChunks } = await import('./v2/chunking.js');
-    const { getAssistAssignments } = await import('../services/agentBuilderStore.js');
     const { resolveKgIngestAgent } = await import('../services/resolveAgents.js');
-    
-    const assignments = await getAssistAssignments(projectId).catch(() => ({
-      assist_main_agent_id: null,
-      assist_kg_ingest_agent_id: null,
-    }));
 
     let resolved = null;
-    if (assignments.assist_kg_ingest_agent_id) {
-      try {
-        resolved = await resolveKgIngestAgent(projectId);
-      } catch (err: any) {
-        const code = err?.message || 'kg_ingest_resolve_failed';
-        console.warn('[KG_V2][ingest] resolve failed:', code);
-        resolved = { error_code: code };
-      }
+    try {
+      resolved = await resolveKgIngestAgent(projectId, '/api/projects/:projectId/kg/ingest_chat_turn');
+    } catch (err: any) {
+      const code = err?.message || 'kg_ingest_resolve_failed';
+      console.warn('[KG_V2][ingest] resolve failed:', code);
+      resolved = { error_code: code };
     }
 
     const errors: string[] = [];
     const errorMessages: string[] = [];
-    if (!assignments.assist_kg_ingest_agent_id) {
-      errors.push('kg_ingest_agent_missing_assist_assignment');
-      errorMessages.push('assist_kg_ingest_agent_id not set for project');
-    } else if (!resolved || (resolved as any).error_code) {
+    if (!resolved || (resolved as any).error_code) {
       const code = (resolved as any)?.error_code || 'kg_ingest_agent_missing';
       errors.push(code);
       errorMessages.push(code);
     }
-
     const provider = resolved?.provider ?? null;
     const modelKey = resolved?.modelKey ?? null;
     const systemPrompt = resolved?.systemPrompt ?? null;
+    const responseFormat = (resolved as any)?.responseFormat ?? null;
+    const topP = (resolved as any)?.topP ?? null;
+    const previousResponseId = (resolved as any)?.previousResponseId ?? null;
+    const temperature = (resolved as any)?.temperature ?? null;
+    const maxTokens = (resolved as any)?.maxTokens ?? null;
 
     if (!errors.length && provider !== 'openai') {
       errors.push(`kg_ingest_provider_not_openai:${provider}`);
@@ -1804,6 +1716,10 @@ router.post('/:projectId/kg/ingest_chat_turn', async (req, res) => {
       errors.push('kg_ingest_prompt_missing');
       errorMessages.push('kg_ingest prompt_template missing');
     }
+    if (!errors.length && typeof maxTokens !== 'number') {
+      errors.push('kg_ingest_max_tokens_missing');
+      errorMessages.push('kg_ingest max_output_tokens missing');
+    }
     if (errors.length) {
       console.error('[KG_V2][ingest] config error for projectId=%s: %s', projectId, errorMessages.join('; '));
     }
@@ -1814,7 +1730,7 @@ router.post('/:projectId/kg/ingest_chat_turn', async (req, res) => {
     let chunkMeta: any = null;
     let chunks: { chunk_id: string; text: string; start: number; end: number }[] = [];
 
-    if (!errors.length && modelKey && systemPrompt) {
+    if (!errors.length && modelKey && systemPrompt && typeof maxTokens === 'number') {
       try {
         console.log(
           '[KG_V2][ingest] using model=%s prompt_len=%d',
@@ -1825,13 +1741,17 @@ router.post('/:projectId/kg/ingest_chat_turn', async (req, res) => {
           modelKey: modelKey as string,
           text: textToIngest,
           systemPrompt: systemPrompt ?? undefined,
+          responseFormat: responseFormat ?? undefined,
+          temperature: typeof temperature === 'number' ? temperature : undefined,
+          topP: typeof topP === 'number' ? topP : undefined,
+          previousResponseId: typeof previousResponseId === 'string' ? previousResponseId : undefined,
+          maxTokens,
         });
         chunks = chunked.chunks;
         chunkMeta = chunked.meta;
-        console.log('[KG_V2][chunk] chunks=%d token_param=%s temperature_param=%s',
+        console.log('[KG_V2][chunk] chunks=%d max_output_tokens=%s',
           chunks.length,
-          chunkMeta?.token_param || 'unknown',
-          chunkMeta?.temperature_param || 'unknown'
+          maxTokens
         );
       } catch (err: any) {
         const code = err?.code || 'chunking_failed';
@@ -1879,12 +1799,17 @@ router.post('/:projectId/kg/ingest_chat_turn', async (req, res) => {
     let relationships: any[] = [];
 
     let extractMeta: any = null;
-    if (!errors.length && chunks.length > 0 && modelKey && systemPrompt) {
+    if (!errors.length && chunks.length > 0 && modelKey && systemPrompt && typeof maxTokens === 'number') {
       try {
         const extracted = await extractKgFromChunks({
           modelKey: modelKey as string,
           chunks,
           systemPrompt: systemPrompt ?? undefined,
+          responseFormat: responseFormat ?? undefined,
+          temperature: typeof temperature === 'number' ? temperature : undefined,
+          topP: typeof topP === 'number' ? topP : undefined,
+          previousResponseId: typeof previousResponseId === 'string' ? previousResponseId : undefined,
+          maxTokens,
         });
         entities = extracted.entities;
         relationships = extracted.relationships;
@@ -2182,67 +2107,5 @@ router.put('/:projectId/agent', async (req, res) => {
   }
 });
 
-router.get('/:projectId/runtime-config', async (req, res) => {
-  try {
-    const projectId = req.params.projectId;
-    const { assist_main_agent_id, assist_kg_ingest_agent_id } = await getAssistAssignments(projectId);
-    
-    // Resolve assist main agent
-    let assistMainModel = { provider: 'unknown', model_key: 'not_configured' };
-    if (assist_main_agent_id) {
-      try {
-        const assistAgent = await getAgentConfig(assist_main_agent_id);
-        if (assistAgent?.agent_model) {
-          const modelEntry = MODEL_REGISTRY[assistAgent.agent_model];
-          if (modelEntry) {
-            assistMainModel = { provider: modelEntry.provider, model_key: assistAgent.agent_model };
-          } else {
-            assistMainModel = { provider: 'unknown', model_key: assistAgent.agent_model };
-          }
-        }
-      } catch (err) {
-        console.warn('[RUNTIME_CONFIG] failed to resolve assist main agent:', err);
-      }
-    }
-    
-    // Resolve KG ingest agent
-    let kgIngestModel = { provider: 'unknown', model_key: 'not_configured' };
-    if (assist_kg_ingest_agent_id) {
-      try {
-        const kgAgent = await getAgentConfig(assist_kg_ingest_agent_id);
-        if (kgAgent?.agent_model) {
-          const modelEntry = MODEL_REGISTRY[kgAgent.agent_model];
-          if (modelEntry) {
-            kgIngestModel = { provider: modelEntry.provider, model_key: kgAgent.agent_model };
-          } else {
-            kgIngestModel = { provider: 'unknown', model_key: kgAgent.agent_model };
-          }
-        }
-      } catch (err) {
-        console.warn('[RUNTIME_CONFIG] failed to resolve KG ingest agent:', err);
-      }
-    }
-    
-    // KG chunking model = KG ingest model (no hidden routing)
-    const kgChunkingModel = kgIngestModel;
-    
-    // Embedding model (hardcoded default for now)
-    const embedModel = { provider: 'openrouter', model_key: DEFAULT_EMBED_MODEL };
-    
-    res.setHeader('Content-Type', 'application/json');
-    return res.status(200).json({
-      ok: true,
-      projectId,
-      assist_main_agent: assistMainModel,
-      kg_ingest_agent: kgIngestModel,
-      kg_chunking_model: kgChunkingModel,
-      embed_model: embedModel,
-    });
-  } catch (err: any) {
-    console.error('[RUNTIME_CONFIG] error:', err?.message || err);
-    res.setHeader('Content-Type', 'application/json');
-    return res.status(500).json({ ok: false, error: err?.message || 'failed to load runtime config' });
-  }
-});
-
 export default router;
+

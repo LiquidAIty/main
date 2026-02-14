@@ -15,18 +15,31 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOpts = {}) {
     policy,
     maxBytes,
     follow = 3,
+    signal: externalSignal,
     ...rest
   } = opts;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const hasTimeout = typeof timeoutMs === "number" && timeoutMs > 0;
+  const controller = hasTimeout ? new AbortController() : null;
+  const timer = hasTimeout ? setTimeout(() => controller!.abort(), timeoutMs) : null;
+  let signal: AbortSignal | undefined = controller ? controller.signal : undefined;
+  if (externalSignal) {
+    if (controller && typeof (AbortSignal as any)?.any === "function") {
+      signal = (AbortSignal as any).any([controller.signal, externalSignal]);
+    } else if (controller) {
+      externalSignal.addEventListener("abort", () => controller.abort(), { once: true });
+      signal = controller.signal;
+    } else {
+      signal = externalSignal;
+    }
+  }
 
   const fetchWithRedirects = async (url: string, redirectsRemaining: number): Promise<Response> => {
     await assertUrlAllowed(url, { allowHosts, policy });
 
     const response = await fetch(url, {
       ...rest,
-      signal: controller.signal,
+      ...(signal ? { signal } : {}),
       redirect: "manual",
     });
 
@@ -64,6 +77,6 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOpts = {}) {
   try {
     return await fetchWithRedirects(rawUrl, follow);
   } finally {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
   }
 }

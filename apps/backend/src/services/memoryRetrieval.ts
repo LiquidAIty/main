@@ -1,9 +1,4 @@
-import { Pool } from 'pg';
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://liquidaity-user:LiquidAIty@localhost:5433/liquidaity',
-  max: 5,
-});
+import { pool } from '../db/pool';
 
 export interface ProjectContext {
   rag_chunks: Array<{
@@ -108,3 +103,4 @@ export function formatContextForPrompt(context: ProjectContext): string {
   
   return `# Project Context\n\n${sections.join('\n\n')}\n\n---\n\n`;
 }
+

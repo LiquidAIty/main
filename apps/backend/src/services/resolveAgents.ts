@@ -1,67 +1,55 @@
-import { getAssistAssignments } from './agentBuilderStore';
-import {
-  getProjectAgentByProjectId,
-} from './projectAgentsStore';
 import { resolveModel } from '../llm/models.config';
+import { getAgentConfig, type AgentType } from './v2/agentConfigStore';
 
-export async function resolveKgIngestAgent(projectId: string) {
-  // RESOLUTION PATH LOGGING
-  console.log('[KG_RESOLVE] Starting resolution for projectId=%s', projectId);
-  
-  const assignments = await getAssistAssignments(projectId);
-  console.log('[KG_RESOLVE] Assignments loaded:', {
-    assist_kg_ingest_agent_id: assignments.assist_kg_ingest_agent_id,
-    assist_main_agent_id: assignments.assist_main_agent_id,
+export type RuntimeAgentType = AgentType;
+
+export type ResolvedAgentConfig = {
+  agentId: string;
+  agentType: RuntimeAgentType;
+  modelKey: string;
+  systemPrompt: string;
+  provider: string;
+  providerModelId: string;
+  responseFormat: any | null;
+  topP: number | null;
+  previousResponseId: string | null;
+  temperature: number | null;
+  maxTokens: number | null;
+  tools: any[];
+};
+
+function logRouteResolution(route: string, projectId: string, agentType: RuntimeAgentType, resolvedAgentId: string | null) {
+  console.log('[AGENT_RESOLVE]', {
+    route,
+    projectId,
+    agentType,
+    resolvedAgentId,
   });
-  
-  const { assist_kg_ingest_agent_id } = assignments;
-  
-  if (!assist_kg_ingest_agent_id) {
-    console.error('[KG_RESOLVE] FAILED: assist_kg_ingest_agent_id not set');
-    throw new Error('kg_ingest_agent_missing_assist_assignment');
-  }
-  
-  console.log('[KG_RESOLVE] Looking up agent by projectId=%s agent_type=kg_ingest', assist_kg_ingest_agent_id);
-  const agent = await getProjectAgentByProjectId(assist_kg_ingest_agent_id, 'kg_ingest');
-  
-  if (!agent) {
-    console.error('[KG_RESOLVE] FAILED: Agent row not found for projectId=%s agent_type=kg_ingest', assist_kg_ingest_agent_id);
+}
+
+export async function resolveAgentConfig(
+  projectId: string,
+  agentType: RuntimeAgentType,
+  route = 'unknown',
+): Promise<ResolvedAgentConfig | null> {
+  const config = await getAgentConfig(projectId, agentType);
+  if (!config) {
+    logRouteResolution(route, projectId, agentType, null);
     return null;
   }
-  
-  console.log('[KG_RESOLVE] Agent found:', {
-    agent_id: agent.agent_id,
-    agent_type: agent.agent_type,
-    model: agent.model,
-    prompt_template_len: agent.prompt_template?.length || 0,
-  });
 
-  const systemParts: string[] = [];
-  if (agent.prompt_template?.trim()) {
-    systemParts.push(agent.prompt_template.trim());
-  }
-  const systemPrompt = systemParts.join('\n\n').trim();
-  const modelKey = agent.model;
-  
+  const systemPrompt = String(config.prompt_template || '').trim();
+  const modelKey = String(config.model_key || '').trim();
+  logRouteResolution(route, projectId, agentType, config.agent_id);
+
   if (!systemPrompt) {
-    console.error('[KG_RESOLVE] FAILED: prompt_template missing or empty');
-    throw new Error('kg_ingest_prompt_missing');
-  }
-  
-  if (!modelKey || !String(modelKey).trim()) {
-    console.error('[KG_RESOLVE] FAILED: model missing', {
-      projectId,
-      agent_id: agent.agent_id,
-    });
-    throw new Error('kg_ingest_model_missing');
+    throw new Error(`${agentType}_prompt_missing`);
   }
 
+  if (!modelKey) {
+    throw new Error(`${agentType}_model_missing`);
+  }
   if (modelKey.includes('/')) {
-    console.error('[KG_RESOLVE] FAILED: invalid model key format', {
-      projectId,
-      agent_id: agent.agent_id,
-      modelKey,
-    });
     throw new Error(
       `invalid_model_key_format: model key cannot be a provider ID (got: ${modelKey}). Use internal keys like 'kimi-k2-thinking'.`,
     );
@@ -71,26 +59,25 @@ export async function resolveKgIngestAgent(projectId: string) {
   try {
     modelEntry = resolveModel(modelKey);
   } catch (err: any) {
-    console.error('[KG_RESOLVE] FAILED: model resolution failed', {
-      projectId,
-      agent_id: agent.agent_id,
-      modelKey,
-      error: err?.message || String(err),
-    });
-    throw new Error(`kg_ingest_model_resolution_failed: ${err?.message || 'unknown_error'}`);
+    throw new Error(`${agentType}_model_resolution_failed: ${err?.message || 'unknown_error'}`);
   }
-
-  const provider = modelEntry.provider;
-  const providerModelId = modelEntry.id;
-  
-  console.log('[KG_RESOLVE] SUCCESS:', {
-    projectId,
-    assignedAgentId: assist_kg_ingest_agent_id,
-    agentId: agent.agent_id,
-    provider,
+  return {
+    agentId: config.agent_id,
+    agentType,
     modelKey,
-    prompt_len: systemPrompt.length,
-  });
+    systemPrompt,
+    provider: modelEntry.provider,
+    providerModelId: modelEntry.id,
+    responseFormat: config.response_format ?? null,
+    topP: typeof config.top_p === 'number' ? config.top_p : null,
+    previousResponseId:
+      typeof config.previous_response_id === 'string' ? String(config.previous_response_id) : null,
+    temperature: typeof config.temperature === 'number' ? config.temperature : null,
+    maxTokens: typeof config.max_tokens === 'number' ? config.max_tokens : null,
+    tools: Array.isArray(config.tools) ? config.tools : [],
+  };
+}
 
-  return { agentId: agent.agent_id, agent, modelKey, systemPrompt, provider, providerModelId };
+export async function resolveKgIngestAgent(projectId: string, route = 'unknown') {
+  return resolveAgentConfig(projectId, 'kg_ingest', route);
 }

@@ -1,9 +1,4 @@
-import { Pool } from 'pg';
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://liquidaity-user:LiquidAIty@localhost:5433/liquidaity',
-  max: 5,
-});
+import { pool } from '../db/pool';
 
 async function ensureAgeExtension() {
   await pool.query('CREATE EXTENSION IF NOT EXISTS age');
@@ -119,3 +114,4 @@ export async function addRelation(
   const [row] = await runCypherOnGraph(projectId, cypher, params);
   return row;
 }
+
