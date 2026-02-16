@@ -87,6 +87,7 @@ function loadProjectState(_projectId: string, _mode: "assist" | "agents" = "assi
 function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
   const nodeMap = new Map<string, KNode>();
   const edges: KEdge[] = [];
+  const edgeSet = new Set<string>();
 
   const extractNodeId = (obj: any): string => {
     if (!obj) return "";
@@ -113,8 +114,48 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
     nodeMap.set(id, { id, label });
   };
 
-  rows.forEach((row) => {
+  const addNodeById = (id: unknown, label?: unknown) => {
+    const sid = String(id ?? "").trim();
+    if (!sid || nodeMap.has(sid)) return;
+    nodeMap.set(sid, {
+      id: sid,
+      label: typeof label === "string" && label.trim() ? label.trim() : sid.slice(0, 12),
+    });
+  };
+
+  const addEdge = (aId: string, bId: string) => {
+    if (!aId || !bId) return;
+    const key = `${aId}->${bId}`;
+    if (edgeSet.has(key)) return;
+    edgeSet.add(key);
+    edges.push({ a: aId, b: bId });
+  };
+
+  const parseRow = (raw: any) => {
+    if (typeof raw === "string") {
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    }
+    return raw;
+  };
+
+  rows.forEach((rawRow) => {
+    const row = parseRow(rawRow);
     if (!row || typeof row !== "object") return;
+
+    // Shape emitted by the default KG subgraph query.
+    if (row.a_id != null && row.b_id != null) {
+      const aId = String(row.a_id);
+      const bId = String(row.b_id);
+      addNodeById(aId, row.a_name);
+      addNodeById(bId, row.b_name);
+      addEdge(aId, bId);
+      return;
+    }
+
     // Handle common AGE return shapes
     if (row.n) addNode(row.n);
     if (row.a && row.b) {
@@ -122,9 +163,7 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
       addNode(row.b);
       const aId = extractNodeId(row.a);
       const bId = extractNodeId(row.b);
-      if (aId && bId && !edges.some((e) => e.a === aId && e.b === bId)) {
-        edges.push({ a: aId, b: bId });
-      }
+      addEdge(aId, bId);
     }
     if (Array.isArray(row)) {
       row.forEach((cell) => {
@@ -134,14 +173,17 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
             const bId = extractNodeId(cell.end);
             addNode(cell.start);
             addNode(cell.end);
-            if (aId && bId && !edges.some((e) => e.a === aId && e.b === bId)) {
-              edges.push({ a: aId, b: bId });
-            }
+            addEdge(aId, bId);
           } else {
             addNode(cell);
           }
         }
       });
+    }
+
+    // Single-node rows such as RETURN n
+    if (row.id || row._id || row.vid) {
+      addNode(row);
     }
   });
 
@@ -808,7 +850,7 @@ export default function AgentBuilder() {
   const loadProjectSubgraph = useCallback(() => {
     const q = [
       "MATCH (a { project_id: $projectId })-[r { project_id: $projectId }]->(b { project_id: $projectId })",
-      "RETURN a,b,r",
+      "RETURN {a_id: id(a), a_name: a.name, b_id: id(b), b_name: b.name, r_type: r.rtype} AS row",
       "LIMIT 200",
     ].join(" ");
     setCypher(q);
@@ -817,11 +859,10 @@ export default function AgentBuilder() {
 
   // Auto-load project subgraph when Knowledge tab opens or project changes
   useEffect(() => {
-    if (mode !== 'agents') return;
     if (tab === 'Knowledge' && activeProject && panelOpen) {
       loadProjectSubgraph();
     }
-  }, [mode, tab, activeProject, panelOpen, loadProjectSubgraph]);
+  }, [tab, activeProject, panelOpen, loadProjectSubgraph]);
 
   // Poll for last ingest trace when Dashboard tab is active
   useEffect(() => {
@@ -1459,6 +1500,11 @@ export default function AgentBuilder() {
                       </div>
                     )}
                     {/* Force-directed graph visualization */}
+                    {graphError && (
+                      <div className="text-xs" style={{ color: C.warn }}>
+                        Graph query error: {graphError}
+                      </div>
+                    )}
                     <div style={{ display: "flex", justifyContent: "center" }}>
                       <MiniForce nodes={graphViz.nodes} edges={graphViz.edges} />
                     </div>

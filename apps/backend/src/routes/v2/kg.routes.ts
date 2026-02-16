@@ -65,6 +65,37 @@ function buildDocId(projectId: string, turnId: string | null, text: string): str
   return `chat:${projectId}:${sha1(text).slice(0, 12)}`;
 }
 
+function parseCountValue(row: unknown): number {
+  if (typeof row === 'number' && Number.isFinite(row)) {
+    return row;
+  }
+  if (typeof row === 'string') {
+    const asNum = Number(row);
+    if (Number.isFinite(asNum)) {
+      return asNum;
+    }
+    try {
+      const parsed = JSON.parse(row);
+      if (typeof parsed?.c === 'number' && Number.isFinite(parsed.c)) {
+        return parsed.c;
+      }
+      const parsedNum = Number(parsed);
+      if (Number.isFinite(parsedNum)) {
+        return parsedNum;
+      }
+    } catch {
+      // ignore parse errors; fall through to 0
+    }
+  }
+  if (row && typeof row === 'object') {
+    const maybeC = Number((row as any).c);
+    if (Number.isFinite(maybeC)) {
+      return maybeC;
+    }
+  }
+  return 0;
+}
+
 async function insertChunks(docId: string, src: string, chunks: { text: string }[]) {
   let written = 0;
   for (const chunk of chunks) {
@@ -190,8 +221,8 @@ async function verifyGraphCounts(projectId: string) {
     );
     console.log('[KG_V2][VERIFY]', {
       projectId,
-      node_count: Number((nodeRow as any)?.c ?? 0),
-      edge_count: Number((edgeRow as any)?.c ?? 0),
+      node_count: parseCountValue(nodeRow),
+      edge_count: parseCountValue(edgeRow),
     });
   } catch (err: any) {
     console.warn('[KG_V2][VERIFY] failed:', err?.message || err);
@@ -548,7 +579,7 @@ router.get('/status', async (req, res) => {
       'MATCH (n:Entity { project_id: $projectId }) RETURN count(n) AS c',
       { projectId },
     );
-    entities = Number((eRow as any)?.c ?? 0);
+    entities = parseCountValue(eRow);
 
     const [rRow] = await runCypherOnGraph(
       GRAPH_NAME,
@@ -556,7 +587,7 @@ router.get('/status', async (req, res) => {
        RETURN count(r) AS c`,
       { projectId },
     );
-    rels = Number((rRow as any)?.c ?? 0);
+    rels = parseCountValue(rRow);
   } catch (err: any) {
     console.warn('[KG_V2][status] graph count failed:', err?.message || err);
   }
