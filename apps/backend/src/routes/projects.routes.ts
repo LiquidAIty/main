@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { NextFunction, Request, Response, Router } from 'express';
 import {
   getProjectState,
   saveProjectState,
@@ -570,13 +570,19 @@ async function commitKgBatch(projectId: string, entities: any[], relations: any[
     if (!name) continue;
     const attrs = (e as any).attrs || {};
     const confidence = Number((e as any).confidence ?? 0.5);
+    const createdAt =
+      typeof provenance?.createdAt === 'string'
+        ? String(provenance.createdAt)
+        : new Date().toISOString();
     try {
       await runCypherOnGraph(
         GRAPH_NAME,
         `
           MERGE (n:Entity { project_id: $projectId, etype: $etype, name: $name })
-          ON CREATE SET n.attrs = $attrs, n.confidence = $confidence, n.created_at = datetime(), n.source = $source
-          ON MATCH SET n.attrs = coalesce(n.attrs, {}) + $attrs
+          SET n.attrs = $attrs
+          SET n.confidence = $confidence
+          SET n.source = $source
+          SET n.created_at = coalesce(n.created_at, $createdAt)
           RETURN n
         `,
         {
@@ -586,6 +592,7 @@ async function commitKgBatch(projectId: string, entities: any[], relations: any[
           attrs,
           confidence,
           source: provenance || null,
+          createdAt,
         },
       );
       entitiesUpserted += 1;
@@ -609,12 +616,18 @@ async function commitKgBatch(projectId: string, entities: any[], relations: any[
     if (!fromName || !toName) continue;
     const attrs = (r as any).attrs || {};
     const confidence = Number((r as any).confidence ?? 0.5);
+    const createdAt =
+      typeof provenance?.createdAt === 'string'
+        ? String(provenance.createdAt)
+        : new Date().toISOString();
     const cypher = `
       MATCH (a:Entity { project_id: $projectId, etype: $fromType, name: $fromName })
       MATCH (b:Entity { project_id: $projectId, etype: $toType, name: $toName })
       MERGE (a)-[r:REL { project_id: $projectId, rtype: $rtype }]->(b)
-      ON CREATE SET r.attrs = $attrs, r.confidence = $confidence, r.created_at = datetime(), r.source = $source
-      ON MATCH SET r.attrs = coalesce(r.attrs, {}) + $attrs
+      SET r.attrs = $attrs
+      SET r.confidence = $confidence
+      SET r.source = $source
+      SET r.created_at = coalesce(r.created_at, $createdAt)
       RETURN r
     `;
     try {
@@ -628,6 +641,7 @@ async function commitKgBatch(projectId: string, entities: any[], relations: any[
         confidence,
         rtype: relTypeProp,
         source: provenance || null,
+        createdAt,
       });
       relationsUpserted += 1;
     } catch (err: any) {
@@ -1040,12 +1054,18 @@ router.post('/:projectId/kg/commit', async (req, res) => {
       if (!name) continue;
       const attrs = (e as any).attrs || {};
       const confidence = Number((e as any).confidence ?? 0.5);
+      const createdAt =
+        typeof provenance?.createdAt === 'string'
+          ? String(provenance.createdAt)
+          : new Date().toISOString();
       await runCypherOnGraph(
         GRAPH_NAME,
         `
           MERGE (n:Entity { project_id: $projectId, etype: $etype, name: $name })
-          ON CREATE SET n.attrs = $attrs, n.confidence = $confidence, n.created_at = datetime(), n.source = $source
-          ON MATCH SET n.attrs = coalesce(n.attrs, {}) + $attrs
+          SET n.attrs = $attrs
+          SET n.confidence = $confidence
+          SET n.source = $source
+          SET n.created_at = coalesce(n.created_at, $createdAt)
           RETURN n
         `,
         {
@@ -1055,6 +1075,7 @@ router.post('/:projectId/kg/commit', async (req, res) => {
           attrs,
           confidence,
           source: provenance || null,
+          createdAt,
         },
       );
       entitiesUpserted += 1;
@@ -1071,12 +1092,18 @@ router.post('/:projectId/kg/commit', async (req, res) => {
       if (!fromName || !toName) continue;
       const attrs = (r as any).attrs || {};
       const confidence = Number((r as any).confidence ?? 0.5);
+      const createdAt =
+        typeof provenance?.createdAt === 'string'
+          ? String(provenance.createdAt)
+          : new Date().toISOString();
       const cypher = `
         MATCH (a:Entity { project_id: $projectId, etype: $fromType, name: $fromName })
         MATCH (b:Entity { project_id: $projectId, etype: $toType, name: $toName })
         MERGE (a)-[r:REL { project_id: $projectId, rtype: $rtype }]->(b)
-        ON CREATE SET r.attrs = $attrs, r.confidence = $confidence, r.created_at = datetime(), r.source = $source
-        ON MATCH SET r.attrs = coalesce(r.attrs, {}) + $attrs
+        SET r.attrs = $attrs
+        SET r.confidence = $confidence
+        SET r.source = $source
+        SET r.created_at = coalesce(r.created_at, $createdAt)
         RETURN r
       `;
       await runCypherOnGraph(GRAPH_NAME, cypher, {
@@ -1089,6 +1116,7 @@ router.post('/:projectId/kg/commit', async (req, res) => {
         confidence,
         rtype: relTypeProp,
         source: provenance || null,
+        createdAt,
       });
       relationsUpserted += 1;
     }
@@ -1635,320 +1663,19 @@ router.post('/:projectId/kg/ingest', async (req, res) => {
   }
 });
 
-router.post('/:projectId/kg/ingest_chat_turn', async (req, res) => {
-  const projectId = req.params.projectId;
-  const { turn_id, user_text, assistant_text, src } = req.body || {};
-
-  if (!projectId) {
-    return res.status(400).json({ ok: false, error: 'projectId is required' });
+router.use('/:projectId/kg/ingest_chat_turn', (err: any, _req: Request, res: Response, next: NextFunction) => {
+  if (err?.type === 'entity.parse.failed') {
+    return res.status(400).json({ ok: false, error: 'invalid_json' });
   }
+  return next(err);
+});
 
-  // Combine user and assistant text for ingestion
-  const textToIngest = [
-    user_text ? `User: ${user_text}` : null,
-    assistant_text ? `Assistant: ${assistant_text}` : null,
-  ].filter(Boolean).join('\n\n');
-
-  if (!textToIngest.trim()) {
-    return res.status(400).json({ ok: false, error: 'No text to ingest' });
-  }
-
-  // Generate doc_id from turn_id or hash
-  const doc_id = turn_id || `chat:${projectId}:${sha1(textToIngest).slice(0, 12)}`;
-  const finalSrc = src || 'chat.auto';
-
-  // Check if already ingested
-  const exists = await checkDocIdExists(doc_id);
-  if (exists) {
-    return res.json({
-      ok: true,
-      skipped: true,
-      reason: 'already_ingested',
-      doc_id,
-      chunks_written: 0,
-      embeddings_written: 0,
-      entities_upserted: 0,
-      relations_upserted: 0,
-    });
-  }
-
-  // Use V2 ingest pipeline
-  try {
-    console.log('[KG_V2][route] using V2 chunker for ingest_chat_turn');
-    // Import V2 functions
-    const { chunkTextStrictJSON, extractKgFromChunks } = await import('./v2/chunking.js');
-    const { resolveKgIngestAgent } = await import('../services/resolveAgents.js');
-
-    let resolved = null;
-    try {
-      resolved = await resolveKgIngestAgent(projectId, '/api/projects/:projectId/kg/ingest_chat_turn');
-    } catch (err: any) {
-      const code = err?.message || 'kg_ingest_resolve_failed';
-      console.warn('[KG_V2][ingest] resolve failed:', code);
-      resolved = { error_code: code };
-    }
-
-    const errors: string[] = [];
-    const errorMessages: string[] = [];
-    if (!resolved || (resolved as any).error_code) {
-      const code = (resolved as any)?.error_code || 'kg_ingest_agent_missing';
-      errors.push(code);
-      errorMessages.push(code);
-    }
-    const provider = resolved?.provider ?? null;
-    const modelKey = resolved?.modelKey ?? null;
-    const systemPrompt = resolved?.systemPrompt ?? null;
-    const responseFormat = (resolved as any)?.responseFormat ?? null;
-    const topP = (resolved as any)?.topP ?? null;
-    const previousResponseId = (resolved as any)?.previousResponseId ?? null;
-    const temperature = (resolved as any)?.temperature ?? null;
-    const maxTokens = (resolved as any)?.maxTokens ?? null;
-
-    if (!errors.length && provider !== 'openai') {
-      errors.push(`kg_ingest_provider_not_openai:${provider}`);
-      errorMessages.push(`kg_ingest provider must be openai (got ${provider})`);
-    }
-    if (!errors.length && !modelKey) {
-      errors.push('kg_ingest_model_missing');
-      errorMessages.push('kg_ingest model_key missing');
-    }
-    if (!errors.length && !systemPrompt) {
-      errors.push('kg_ingest_prompt_missing');
-      errorMessages.push('kg_ingest prompt_template missing');
-    }
-    if (!errors.length && typeof maxTokens !== 'number') {
-      errors.push('kg_ingest_max_tokens_missing');
-      errorMessages.push('kg_ingest max_output_tokens missing');
-    }
-    if (errors.length) {
-      console.error('[KG_V2][ingest] config error for projectId=%s: %s', projectId, errorMessages.join('; '));
-    }
-
-    const rawLen = textToIngest.length;
-    console.log('[KG_V2][ingest] start projectId=%s doc_id=%s src=%s raw_len=%d', projectId, doc_id, finalSrc, rawLen);
-
-    let chunkMeta: any = null;
-    let chunks: { chunk_id: string; text: string; start: number; end: number }[] = [];
-
-    if (!errors.length && modelKey && systemPrompt && typeof maxTokens === 'number') {
-      try {
-        console.log(
-          '[KG_V2][ingest] using model=%s prompt_len=%d',
-          modelKey,
-          systemPrompt.length,
-        );
-        const chunked = await chunkTextStrictJSON({
-          modelKey: modelKey as string,
-          text: textToIngest,
-          systemPrompt: systemPrompt ?? undefined,
-          responseFormat: responseFormat ?? undefined,
-          temperature: typeof temperature === 'number' ? temperature : undefined,
-          topP: typeof topP === 'number' ? topP : undefined,
-          previousResponseId: typeof previousResponseId === 'string' ? previousResponseId : undefined,
-          maxTokens,
-        });
-        chunks = chunked.chunks;
-        chunkMeta = chunked.meta;
-        console.log('[KG_V2][chunk] chunks=%d max_output_tokens=%s',
-          chunks.length,
-          maxTokens
-        );
-      } catch (err: any) {
-        const code = err?.code || 'chunking_failed';
-        console.error(
-          '[KG_V2][chunk] failed provider=%s model=%s error=%s',
-          provider || 'unknown',
-          modelKey || 'unknown',
-          err?.message || err,
-        );
-        errors.push(code);
-        errorMessages.push(err?.message || String(err));
-      }
-    }
-
-    if (chunks.length === 0 && errors.length === 0) {
-      errors.push('chunking_invalid_json');
-      errorMessages.push('chunking returned 0 chunks');
-    }
-
-    // Insert chunks into DB
-    let chunksWritten = 0;
-    for (const chunk of chunks) {
-      try {
-        await pool.query(
-          'INSERT INTO ag_catalog.rag_chunks (doc_id, src, chunk) VALUES ($1, $2, $3)',
-          [doc_id, finalSrc, chunk.text],
-        );
-        chunksWritten += 1;
-      } catch (err: any) {
-        console.error('[KG_V2][ingest] chunk insert failed:', err?.message || err);
-      }
-    }
-
-    const provenance = {
-      doc_id,
-      src: finalSrc,
-      method: 'kg_v2_ingest',
-      createdAt: new Date().toISOString(),
-    };
-
-    // Extract entities and relationships
-    let entitiesWritten = 0;
-    let relationshipsWritten = 0;
-    let entities: any[] = [];
-    let relationships: any[] = [];
-
-    let extractMeta: any = null;
-    if (!errors.length && chunks.length > 0 && modelKey && systemPrompt && typeof maxTokens === 'number') {
-      try {
-        const extracted = await extractKgFromChunks({
-          modelKey: modelKey as string,
-          chunks,
-          systemPrompt: systemPrompt ?? undefined,
-          responseFormat: responseFormat ?? undefined,
-          temperature: typeof temperature === 'number' ? temperature : undefined,
-          topP: typeof topP === 'number' ? topP : undefined,
-          previousResponseId: typeof previousResponseId === 'string' ? previousResponseId : undefined,
-          maxTokens,
-        });
-        entities = extracted.entities;
-        relationships = extracted.relationships;
-        extractMeta = extracted.meta;
-        console.log('[KG_V2][extract] entities=%d rels=%d', entities.length, relationships.length);
-      } catch (err: any) {
-        const code = err?.code || 'extract_failed';
-        console.error('[KG_V2][extract] failed:', err?.message || err);
-        errors.push(code);
-        errorMessages.push(err?.message || String(err));
-      }
-    }
-
-    // Upsert to graph
-    if (entities.length || relationships.length) {
-      const entityLookup = new Map(entities.map((e: any) => [e.id, e]));
-      
-      // Simple entity upsert
-      for (const e of entities) {
-        if (!e?.name) continue;
-        try {
-          await runCypherOnGraph(
-            GRAPH_NAME,
-            `
-              MERGE (n:Entity { project_id: $projectId, etype: $etype, name: $name })
-              ON CREATE SET n.attrs = $attrs, n.confidence = $confidence, n.created_at = datetime(), n.source = $source
-              ON MATCH SET n.attrs = coalesce(n.attrs, {}) + $attrs
-              RETURN n
-            `,
-            {
-              projectId,
-              etype: e.type || 'Unknown',
-              name: e.name,
-              attrs: { aliases: e.aliases, evidence_chunk_ids: e.evidence_chunk_ids },
-              confidence: 0.5,
-              source: { ...provenance, evidence_chunk_ids: e.evidence_chunk_ids },
-            },
-          );
-          entitiesWritten += 1;
-        } catch (err: any) {
-          console.error('[KG_V2][ingest] entity upsert failed:', err?.message || err);
-        }
-      }
-
-      // Simple relationship upsert
-      for (const r of relationships) {
-        if (!r?.from || !r?.to) continue;
-        const fromEntity = entityLookup.get(r.from);
-        const toEntity = entityLookup.get(r.to);
-        if (!fromEntity || !toEntity) continue;
-        
-        try {
-          await runCypherOnGraph(
-            GRAPH_NAME,
-            `
-              MATCH (a:Entity { project_id: $projectId, etype: $fromType, name: $fromName })
-              MATCH (b:Entity { project_id: $projectId, etype: $toType, name: $toName })
-              MERGE (a)-[rel:REL { project_id: $projectId, rtype: $rtype }]->(b)
-              ON CREATE SET rel.attrs = $attrs, rel.confidence = $confidence, rel.created_at = datetime(), rel.source = $source
-              ON MATCH SET rel.attrs = coalesce(rel.attrs, {}) + $attrs
-              RETURN rel
-            `,
-            {
-              projectId,
-              fromType: fromEntity.type || 'Unknown',
-              fromName: fromEntity.name,
-              toType: toEntity.type || 'Unknown',
-              toName: toEntity.name,
-              rtype: r.type || 'REL',
-              attrs: { evidence_chunk_ids: r.evidence_chunk_ids },
-              confidence: typeof r.confidence === 'number' ? r.confidence : 0.5,
-              source: { ...provenance, evidence_chunk_ids: r.evidence_chunk_ids },
-            },
-          );
-          relationshipsWritten += 1;
-        } catch (err: any) {
-          console.error('[KG_V2][ingest] relation upsert failed:', err?.message || err);
-        }
-      }
-      
-      console.log('[KG_V2][graph] upserts ok');
-    }
-
-    console.log('[KG_V2][ingest] done ok=%s chunks=%d entities=%d rels=%d',
-      errors.length === 0,
-      chunksWritten,
-      entitiesWritten,
-      relationshipsWritten,
-    );
-
-    const errorCode = errors.length ? errors[0] : null;
-    const errorMessage = errorMessages.length ? errorMessages.join('; ') : null;
-
-    // Meta logging for diagnostics
-    const requestId = extractMeta?.request_id || chunkMeta?.request_id || null;
-    const elapsedMs = extractMeta?.elapsed_ms || chunkMeta?.elapsed_ms || null;
-    const finishReason = extractMeta?.finish_reason || chunkMeta?.finish_reason || null;
-    const usage = extractMeta?.usage || chunkMeta?.usage || null;
-    const providerForLog = provider ?? null;
-    const modelKeyForLog = modelKey ?? null;
-    
-    const usageSummary = (() => {
-      if (!usage || typeof usage !== 'object') return null;
-      const summary: Record<string, number> = {};
-      if (typeof usage.prompt_tokens === 'number') summary.prompt = usage.prompt_tokens;
-      if (typeof usage.completion_tokens === 'number') summary.completion = usage.completion_tokens;
-      if (typeof usage.total_tokens === 'number') summary.total = usage.total_tokens;
-      if (typeof usage.input_tokens === 'number') summary.input = usage.input_tokens;
-      if (typeof usage.output_tokens === 'number') summary.output = usage.output_tokens;
-      return Object.keys(summary).length ? JSON.stringify(summary) : null;
-    })();
-    
-    console.log(
-      '[KG_V2][ingest][meta] projectId=%s doc_id=%s raw_len=%d provider=%s model=%s request_id=%s elapsed_ms=%s finish=%s usage=%s',
-      projectId,
-      doc_id,
-      rawLen,
-      providerForLog || 'unknown',
-      modelKeyForLog || 'unknown',
-      requestId || 'n/a',
-      elapsedMs ?? 'n/a',
-      finishReason || 'n/a',
-      usageSummary || 'n/a',
-    );
-
-    return res.status(errors.length === 0 ? 200 : 409).json({
-      ok: errors.length === 0,
-      error_code: errorCode,
-      error_message: errorMessage,
-      counts: {
-        chunks: chunksWritten,
-        entities: entitiesWritten,
-        rels: relationshipsWritten,
-      },
-    });
-  } catch (err: any) {
-    console.error('[KG_V2][ingest] unexpected error:', err);
-    return res.status(500).json({ ok: false, error: 'kg_ingest_failed', message: err?.message || 'ingest failed' });
-  }
+router.post('/:projectId/kg/ingest_chat_turn', async (_req, res) => {
+  return res.status(410).json({
+    ok: false,
+    error: 'use_v2_endpoint',
+    v2: '/api/v2/projects/:projectId/kg/ingest_chat_turn',
+  });
 });
 
 router.get('/:projectId/kg/ingests', async (req, res) => {

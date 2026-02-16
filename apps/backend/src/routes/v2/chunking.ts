@@ -115,6 +115,14 @@ function clampText(text: string, maxChars: number) {
   return text.slice(0, maxChars);
 }
 
+function slug(input: string): string {
+  return String(input || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80);
+}
+
 function getOpenAiConfig(modelKey: string) {
   const model = resolveModel(modelKey);
   if (model.provider !== 'openai') {
@@ -374,6 +382,7 @@ export async function chunkTextStrictJSON(opts: {
 export async function extractKgFromChunks(opts: {
   modelKey: string;
   chunks: KgChunk[];
+  docId?: string;
   systemPrompt?: string;
   responseFormat?: any;
   temperature?: number | null;
@@ -427,24 +436,39 @@ export async function extractKgFromChunks(opts: {
     throw createTypedError('extract_invalid_json', 'Extraction returned invalid JSON');
   }
 
-  const parsedRelations = Array.isArray(parsed?.relations) ? parsed.relations : null;
+  const parsedEntities = Array.isArray(parsed?.entities)
+    ? parsed.entities
+    : Array.isArray(parsed?.nodes)
+      ? parsed.nodes
+      : null;
+  const parsedRelations = Array.isArray(parsed?.relations)
+    ? parsed.relations
+    : Array.isArray(parsed?.rels)
+      ? parsed.rels
+      : Array.isArray(parsed?.relationships)
+        ? parsed.relationships
+        : null;
 
-  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.entities) || !Array.isArray(parsedRelations)) {
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsedEntities) || !Array.isArray(parsedRelations)) {
     console.error('[KG_V2][extract] invalid json shape', { model: opts.modelKey, preview: content.slice(0, 200) });
     throw createTypedError('extract_invalid_json', 'Extraction returned invalid JSON');
   }
 
   const chunkIdSet = new Set(chunkIds);
-  const entities = parsed.entities
+  const defaultEvidence = chunkIds.length ? [chunkIds[0]] : [];
+  const entities = parsedEntities
     .slice(0, MAX_ENTITIES)
     .map((e: any, idx: number): KgEntity | null => {
-      const id = typeof e?.id === 'string' ? e.id : `e${idx + 1}`;
       const type = typeof e?.type === 'string' ? e.type : 'UNKNOWN';
       const name = typeof e?.name === 'string' ? e.name : '';
+      const id =
+        typeof e?.id === 'string' && e.id.trim()
+          ? e.id
+          : `${slug(type) || 'entity'}:${slug(name) || `e${idx + 1}`}`;
       const aliases = Array.isArray(e?.aliases) ? e.aliases.map((a: any) => String(a)).slice(0, 10) : [];
       const evidence_chunk_ids = Array.isArray(e?.evidence_chunk_ids)
         ? e.evidence_chunk_ids.map((c: any) => String(c)).filter((c: string) => chunkIdSet.has(c))
-        : [];
+        : defaultEvidence;
       if (!name.trim() || evidence_chunk_ids.length === 0) return null;
       return {
         id,
@@ -457,21 +481,36 @@ export async function extractKgFromChunks(opts: {
     .filter(Boolean) as KgEntity[];
 
   const entityIdSet = new Set(entities.map((e) => e.id));
+  const entityNameToId = new Map(entities.map((e) => [e.name.toLowerCase(), e.id]));
   const relationships = parsedRelations
     .slice(0, MAX_RELATIONSHIPS)
     .map((r: any): KgRelationship | null => {
-      const from = typeof r?.from === 'string' ? r.from : '';
-      const to = typeof r?.to === 'string' ? r.to : '';
+      let from = typeof r?.from === 'string' ? r.from : '';
+      let to = typeof r?.to === 'string' ? r.to : '';
+      if (from && !entityIdSet.has(from)) {
+        from = entityNameToId.get(from.toLowerCase()) ?? from;
+      }
+      if (to && !entityIdSet.has(to)) {
+        to = entityNameToId.get(to.toLowerCase()) ?? to;
+      }
       const type = typeof r?.type === 'string' ? r.type : 'REL';
       const evidence_chunk_ids = Array.isArray(r?.evidence_chunk_ids)
         ? r.evidence_chunk_ids.map((c: any) => String(c)).filter((c: string) => chunkIdSet.has(c))
-        : [];
+        : defaultEvidence;
       const confidence = typeof r?.confidence === 'number' ? r.confidence : 0.5;
       if (!from || !to || evidence_chunk_ids.length === 0) return null;
       if (!entityIdSet.has(from) || !entityIdSet.has(to)) return null;
       return { from, to, type: type.slice(0, 80), evidence_chunk_ids, confidence };
     })
     .filter(Boolean) as KgRelationship[];
+
+  if (entities.length === 0 && relationships.length === 0) {
+    console.error('[KG_V2][extract][ZERO]', {
+      doc_id: opts.docId || null,
+      model: opts.modelKey,
+      raw: content.slice(0, 600),
+    });
+  }
 
   return { entities, relationships, meta };
 }

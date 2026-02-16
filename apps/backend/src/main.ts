@@ -83,6 +83,16 @@ app.use("/api", routes);
 
 // Add final error middleware to surface stack as JSON (must be after routes)
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const isJsonParseError =
+    err?.type === 'entity.parse.failed' ||
+    (err instanceof SyntaxError && typeof err?.message === 'string' && /json/i.test(err.message));
+  if (isJsonParseError) {
+    return res.status(400).json({
+      ok: false,
+      error: 'invalid_json',
+    });
+  }
+
   const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   console.error(`[ERROR] ${requestId}`, {
     method: req.method,
@@ -92,7 +102,7 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
     name: err?.name,
     stack: err?.stack,
   });
-  res.status(500).json({ 
+  return res.status(500).json({ 
     ok: false, 
     error: { 
       message: err?.message || 'Internal server error', 

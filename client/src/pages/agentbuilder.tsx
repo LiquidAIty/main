@@ -25,6 +25,7 @@ function clamp(x: number, a: number, b: number) {
 
 const uid = () => Math.random().toString(36).slice(2, 8);
 const DEBUG = false;
+const V2_PROJECTS_API = "/api/v2/projects";
 
 async function safeJson(res: Response): Promise<any | null> {
   if (res.status === 204 || res.status === 304) return null;
@@ -581,7 +582,7 @@ export default function AgentBuilder() {
       
       console.debug('[refreshProjects]', { reason: reason || 'unknown', mode, project_type_filter: projectType, seq });
       
-      const response = await fetch(`/api/projects/list?project_type=${projectType}`);
+      const response = await fetch(`${V2_PROJECTS_API}?project_type=${encodeURIComponent(projectType)}`);
       const data = await safeJson(response);
       
       if (seq !== refreshSeq.current) return;
@@ -594,7 +595,7 @@ export default function AgentBuilder() {
         return;
       }
 
-      let cards = data.ok ? data.projects : [];
+      let cards = Array.isArray(data?.projects) ? data.projects : [];
       
       // Pin canonical agent decks to top in agent mode
       if (projectType === 'agent') {
@@ -608,7 +609,7 @@ export default function AgentBuilder() {
       if (cards.length === 0 && projectType === 'assist' && !autoCreatedAssistRef.current) {
         autoCreatedAssistRef.current = true;
         try {
-          const createRes = await fetch('/api/projects', {
+          const createRes = await fetch(V2_PROJECTS_API, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -619,10 +620,10 @@ export default function AgentBuilder() {
           const created = await safeJson(createRes);
           const newId = created?.id || '';
           if (newId) {
-            const reloadRes = await fetch(`/api/projects/list?project_type=${projectType}`);
+            const reloadRes = await fetch(`${V2_PROJECTS_API}?project_type=${encodeURIComponent(projectType)}`);
             const reload = await safeJson(reloadRes);
             if (seq !== refreshSeq.current) return;
-            cards = reload?.ok ? reload.projects : [];
+            cards = Array.isArray(reload?.projects) ? reload.projects : [];
             setProjects(cards);
             setActiveProjectWithUrl(newId);
             return;
@@ -774,7 +775,7 @@ export default function AgentBuilder() {
     useEffect(() => {
       if (!activeProject) return;
       setStateLoaded(false);
-      fetch(`/api/projects/${activeProject}/state`)
+      fetch(`${V2_PROJECTS_API}/${activeProject}/state`)
         .then((r) => safeJson(r))
         .then((data) => {
           setMessages(Array.isArray(data?.messages) ? data.messages : loadProjectState("", mode).messages);
@@ -828,7 +829,7 @@ export default function AgentBuilder() {
     
       const fetchIngestTrace = async () => {
         try {
-          const res = await fetch(`/api/projects/${activeProject}/kg/last-trace`);
+          const res = await fetch(`${V2_PROJECTS_API}/${activeProject}/kg/last-trace`);
           const data = await safeJson(res);
           if (data?.ok && data.trace) {
             setLastIngestTrace(data.trace);
@@ -1015,7 +1016,7 @@ export default function AgentBuilder() {
     const projectType = mode === 'assist' ? 'assist' : 'agent';
     
     try {
-      const res = await fetch("/api/projects", {
+      const res = await fetch(V2_PROJECTS_API, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
@@ -1616,7 +1617,7 @@ export default function AgentBuilder() {
                           }
                           if (!confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
                           try {
-                            const res = await fetch(`/api/projects/${project.id}`, { method: 'DELETE' });
+                            const res = await fetch(`${V2_PROJECTS_API}/${project.id}`, { method: 'DELETE' });
                             if (!res.ok) throw new Error(`HTTP ${res.status}`);
                             await refreshProjects(undefined, undefined, 'after-delete');
                             if (activeProject === project.id) {
