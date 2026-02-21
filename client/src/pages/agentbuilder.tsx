@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentCard } from "../types/agentBuilder";
 import { callBossAgent, solRun } from "../lib/api";
 import { AgentManager } from "../components/AgentManager";
+import KGCytoscapeGraph, { type KgViewEdge, type KgViewNode } from "../components/KGCytoscapeGraph";
 
 // AgentPage (MVP): left icon rail + main chat + right tabs (Plan, Links, Knowledge, Dashboard)
 // No external deps. Persists per-project to localStorage. Includes mini force-graph.
@@ -21,6 +22,70 @@ const C = {
 // ---- utils ----
 function clamp(x: number, a: number, b: number) {
   return Math.min(b, Math.max(a, x));
+}
+
+function safeText(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    const json = JSON.stringify(value);
+    if (typeof json === "string") return json;
+  } catch {
+    // fallback below
+  }
+  return String(value);
+}
+
+function normalizeMessages(input: unknown): { role: "assistant" | "user"; text: string }[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((m: any) => ({
+      role: m?.role === "assistant" ? "assistant" : "user",
+      text: safeText(m?.text),
+    }))
+    .filter((m) => m.text.length > 0);
+}
+
+function normalizePlanItems(input: unknown): PlanItem[] {
+  if (!Array.isArray(input)) return [];
+  const out: PlanItem[] = [];
+  input.forEach((item: any, idx) => {
+    const text = safeText(item?.text).trim();
+    if (!text) return;
+    const statusRaw = safeText(item?.status).toLowerCase();
+    const status: PlanItem["status"] =
+      statusRaw === "approved" || statusRaw === "done" ? (statusRaw as PlanItem["status"]) : "draft";
+    out.push({
+      id: safeText(item?.id).trim() || `plan_${idx}_${uid()}`,
+      text,
+      status,
+    });
+  });
+  return out;
+}
+
+function normalizeLinks(input: unknown): LinkRef[] {
+  if (!Array.isArray(input)) return [];
+  const out: LinkRef[] = [];
+  input.forEach((item: any, idx) => {
+    const id = safeText(item?.id).trim() || `link_${idx}_${uid()}`;
+    const title = safeText(item?.title).trim() || "Untitled";
+    const url = safeText(item?.url).trim();
+    if (!url) return;
+    const src = safeText(item?.src).trim();
+    const accepted = Boolean(item?.accepted);
+    const tsNum = Number(item?.ts);
+    out.push({
+      id,
+      title,
+      url,
+      src,
+      accepted,
+      ts: Number.isFinite(tsNum) ? tsNum : Date.now(),
+    });
+  });
+  return out;
 }
 
 const uid = () => Math.random().toString(36).slice(2, 8);
@@ -58,11 +123,76 @@ type LinkRef = {
 type KNode = {
   id: string;
   label: string;
-  ts?: number;
+  type?: string;
+  last_seen_ts?: string;
+  degree?: number;
+  createdAtMs?: number;
   confidence?: number;
-  location?: string;
 };
-type KEdge = { a: string; b: string };
+
+type KEdge = {
+  a: string;
+  b: string;
+  id?: string;
+  source?: string;
+  target?: string;
+  type?: string;
+  weight?: number;
+  confidence?: number;
+  last_seen_ts?: string;
+  lastSeenMs?: number;
+  evidence_doc_id?: string;
+  evidence_snippet?: string;
+};
+
+const STRONG_RELATIONS = new Set(["part_of", "member_of", "instance_of"]);
+const MEDIUM_RELATIONS = new Set(["works_at", "created_by", "uses"]);
+const WEAK_RELATIONS = new Set(["mentions", "related_to"]);
+const KG_SEED_QUERY = [
+  "MATCH (a:Entity { project_id: $projectId })-[r:REL { project_id: $projectId }]->(b:Entity { project_id: $projectId })",
+  "WHERE ($typeFilter IS NULL OR toLower(coalesce(a.etype, 'unknown')) = $typeFilter OR toLower(coalesce(b.etype, 'unknown')) = $typeFilter)",
+  "AND ($sinceTs IS NULL OR coalesce(r.created_at, a.created_at, b.created_at) >= $sinceTs)",
+  "AND ($minConfidence IS NULL OR coalesce(r.confidence, 0.0) >= $minConfidence)",
+  "RETURN {",
+  "  a_id: id(a), a_name: coalesce(a.name, toString(id(a))), a_type: coalesce(a.etype, 'unknown'), a_ts: coalesce(a.created_at, r.created_at, b.created_at), a_doc_id: coalesce(a.source.doc_id, a.source.docId, r.source.doc_id, r.source.docId),",
+  "  r_type: coalesce(r.rtype, 'related_to'), r_weight: coalesce(r.weight, r.confidence, 0.5), r_confidence: coalesce(r.confidence, r.weight, 0.5), r_ts: coalesce(r.created_at, a.created_at, b.created_at), r_doc_id: coalesce(r.source.doc_id, r.source.docId, a.source.doc_id, b.source.doc_id), r_snippet: coalesce(r.source.snippet, r.attrs.snippet),",
+  "  b_id: id(b), b_name: coalesce(b.name, toString(id(b))), b_type: coalesce(b.etype, 'unknown'), b_ts: coalesce(b.created_at, r.created_at, a.created_at), b_doc_id: coalesce(b.source.doc_id, b.source.docId, r.source.doc_id, r.source.docId)",
+  "} AS row",
+  "ORDER BY coalesce(r.created_at, a.created_at, b.created_at) DESC",
+  "LIMIT toInteger($limit)",
+].join(" ");
+const KG_EXPAND_QUERY = [
+  "MATCH (n:Entity { project_id: $projectId })",
+  "WHERE id(n) = toInteger($nodeId)",
+  "MATCH (n)-[r:REL { project_id: $projectId }]-(m:Entity { project_id: $projectId })",
+  "WHERE ($typeFilter IS NULL OR toLower(coalesce(n.etype, 'unknown')) = $typeFilter OR toLower(coalesce(m.etype, 'unknown')) = $typeFilter)",
+  "AND ($sinceTs IS NULL OR coalesce(r.created_at, n.created_at, m.created_at) >= $sinceTs)",
+  "AND ($minConfidence IS NULL OR coalesce(r.confidence, 0.0) >= $minConfidence)",
+  "RETURN {",
+  "  a_id: id(n), a_name: coalesce(n.name, toString(id(n))), a_type: coalesce(n.etype, 'unknown'), a_ts: coalesce(n.created_at, r.created_at, m.created_at), a_doc_id: coalesce(n.source.doc_id, n.source.docId, r.source.doc_id, r.source.docId),",
+  "  r_type: coalesce(r.rtype, 'related_to'), r_weight: coalesce(r.weight, r.confidence, 0.5), r_confidence: coalesce(r.confidence, r.weight, 0.5), r_ts: coalesce(r.created_at, n.created_at, m.created_at), r_doc_id: coalesce(r.source.doc_id, r.source.docId, n.source.doc_id, m.source.doc_id), r_snippet: coalesce(r.source.snippet, r.attrs.snippet),",
+  "  b_id: id(m), b_name: coalesce(m.name, toString(id(m))), b_type: coalesce(m.etype, 'unknown'), b_ts: coalesce(m.created_at, r.created_at, n.created_at), b_doc_id: coalesce(m.source.doc_id, m.source.docId, r.source.doc_id, r.source.docId)",
+  "} AS row",
+  "ORDER BY coalesce(r.created_at, n.created_at, m.created_at) DESC",
+  "LIMIT toInteger($limit)",
+].join(" ");
+
+function normalizeRelationType(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function parseTimestampMs(value: unknown): number | undefined {
+  if (value == null) return undefined;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const s = String(value).trim();
+  if (!s) return undefined;
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? t : undefined;
+}
 
 type AgentPrompt = {
   role: string;
@@ -86,246 +216,1419 @@ function loadProjectState(_projectId: string, _mode: "assist" | "agents" = "assi
 // helper: convert AGE query results to graph nodes/edges for visualization
 function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
   const nodeMap = new Map<string, KNode>();
-  const edges: KEdge[] = [];
-  const edgeSet = new Set<string>();
+  const edgeMap = new Map<string, KEdge>();
 
-  const extractNodeId = (obj: any): string => {
-    if (!obj) return "";
-    if (obj.id) return String(obj.id);
-    if (obj._id) return String(obj._id);
-    if (obj.vid) return String(obj.vid);
-    return JSON.stringify(obj).slice(0, 32);
+  const asObject = (raw: any): Record<string, any> | null => {
+    const parsed =
+      typeof raw === "string"
+        ? (() => {
+            try {
+              return JSON.parse(raw);
+            } catch {
+              return null;
+            }
+          })()
+        : raw;
+    if (!parsed || typeof parsed !== "object") return null;
+    if (parsed.row && typeof parsed.row === "object") return parsed.row as Record<string, any>;
+    return parsed as Record<string, any>;
   };
 
-  const extractNodeLabel = (obj: any, id: string): string => {
-    if (!obj) return id;
-    const props = obj.properties || obj;
-    if (props.name) return String(props.name);
-    if (props.label) return String(props.label);
-    if (props.type) return `${props.type}:${id.slice(0, 8)}`;
-    return id.slice(0, 12);
+  const normalizeType = (value: unknown): string => {
+    const normalized = String(value ?? "").trim().toLowerCase();
+    return normalized || "unknown";
   };
 
-  const addNode = (obj: any) => {
-    if (!obj || typeof obj !== "object") return;
-    const id = extractNodeId(obj);
-    if (!id || nodeMap.has(id)) return;
-    const label = extractNodeLabel(obj, id);
-    nodeMap.set(id, { id, label });
+  const toNum = (value: unknown): number | undefined => {
+    if (value == null) return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
   };
 
-  const addNodeById = (id: unknown, label?: unknown) => {
-    const sid = String(id ?? "").trim();
-    if (!sid || nodeMap.has(sid)) return;
-    nodeMap.set(sid, {
-      id: sid,
-      label: typeof label === "string" && label.trim() ? label.trim() : sid.slice(0, 12),
-    });
+  const toIsoTs = (value: unknown): string | undefined => {
+    const ms = parseTimestampMs(value);
+    if (typeof ms !== "number") return undefined;
+    return new Date(ms).toISOString();
   };
 
-  const addEdge = (aId: string, bId: string) => {
-    if (!aId || !bId) return;
-    const key = `${aId}->${bId}`;
-    if (edgeSet.has(key)) return;
-    edgeSet.add(key);
-    edges.push({ a: aId, b: bId });
-  };
+  const upsertNode = (idRaw: unknown, labelRaw: unknown, typeRaw: unknown, tsRaw: unknown) => {
+    const id = String(idRaw ?? "").trim();
+    if (!id) return;
 
-  const parseRow = (raw: any) => {
-    if (typeof raw === "string") {
-      try {
-        return JSON.parse(raw);
-      } catch {
-        return null;
-      }
-    }
-    return raw;
-  };
+    const label = String(labelRaw ?? "").trim() || id.slice(0, 12);
+    const type = normalizeType(typeRaw);
+    const nextMs = parseTimestampMs(tsRaw);
+    const nextTs = typeof nextMs === "number" ? new Date(nextMs).toISOString() : undefined;
 
-  rows.forEach((rawRow) => {
-    const row = parseRow(rawRow);
-    if (!row || typeof row !== "object") return;
-
-    // Shape emitted by the default KG subgraph query.
-    if (row.a_id != null && row.b_id != null) {
-      const aId = String(row.a_id);
-      const bId = String(row.b_id);
-      addNodeById(aId, row.a_name);
-      addNodeById(bId, row.b_name);
-      addEdge(aId, bId);
+    const existing = nodeMap.get(id);
+    if (!existing) {
+      nodeMap.set(id, {
+        id,
+        label,
+        type,
+        createdAtMs: nextMs,
+        last_seen_ts: nextTs,
+      });
       return;
     }
 
-    // Handle common AGE return shapes
-    if (row.n) addNode(row.n);
-    if (row.a && row.b) {
-      addNode(row.a);
-      addNode(row.b);
-      const aId = extractNodeId(row.a);
-      const bId = extractNodeId(row.b);
-      addEdge(aId, bId);
+    if (!existing.label || existing.label === existing.id.slice(0, 12)) {
+      existing.label = label;
     }
-    if (Array.isArray(row)) {
-      row.forEach((cell) => {
-        if (cell && typeof cell === "object") {
-          if (cell.start && cell.end) {
-            const aId = extractNodeId(cell.start);
-            const bId = extractNodeId(cell.end);
-            addNode(cell.start);
-            addNode(cell.end);
-            addEdge(aId, bId);
-          } else {
-            addNode(cell);
-          }
-        }
+    if ((!existing.type || existing.type === "unknown") && type !== "unknown") {
+      existing.type = type;
+    }
+    if (typeof nextMs === "number" && (!existing.createdAtMs || nextMs > existing.createdAtMs)) {
+      existing.createdAtMs = nextMs;
+      existing.last_seen_ts = nextTs;
+    }
+  };
+
+  const upsertEdge = (
+    sourceRaw: unknown,
+    targetRaw: unknown,
+    relTypeRaw: unknown,
+    row: Record<string, any>,
+  ) => {
+    const source = String(sourceRaw ?? "").trim();
+    const target = String(targetRaw ?? "").trim();
+    if (!source || !target) return;
+
+    const relType = normalizeRelationType(relTypeRaw) || "related_to";
+    const evidenceDocId = String(row.r_doc_id ?? row.doc_id ?? "").trim() || undefined;
+    const evidenceSnippet = String(row.r_snippet ?? row.snippet ?? "").trim() || undefined;
+    const edgeTs = toIsoTs(row.r_ts ?? row.r_created_at ?? row.created_at);
+    const edgeWeight = toNum(row.r_weight ?? row.weight ?? row.confidence);
+    const edgeConfidence = toNum(row.r_confidence ?? row.confidence ?? row.r_weight ?? row.weight);
+    const explicitEdgeId = String(row.r_id ?? row.edge_id ?? "").trim();
+    const edgeId =
+      explicitEdgeId ||
+      `${source}->${target}:${relType}:${evidenceDocId || ""}:${edgeTs || ""}`;
+
+    const existing = edgeMap.get(edgeId);
+    if (!existing) {
+      edgeMap.set(edgeId, {
+        id: edgeId,
+        source,
+        target,
+        a: source,
+        b: target,
+        type: relType,
+        weight: edgeWeight,
+        confidence: edgeConfidence,
+        last_seen_ts: edgeTs,
+        lastSeenMs: parseTimestampMs(edgeTs),
+        evidence_doc_id: evidenceDocId,
+        evidence_snippet: evidenceSnippet,
       });
+      return;
     }
 
-    // Single-node rows such as RETURN n
-    if (row.id || row._id || row.vid) {
-      addNode(row);
+    if (typeof edgeWeight === "number") {
+      existing.weight = Math.max(existing.weight ?? 0, edgeWeight);
+    }
+    if (typeof edgeConfidence === "number") {
+      existing.confidence = Math.max(existing.confidence ?? 0, edgeConfidence);
+    }
+    if (!existing.evidence_doc_id && evidenceDocId) {
+      existing.evidence_doc_id = evidenceDocId;
+    }
+    if (!existing.evidence_snippet && evidenceSnippet) {
+      existing.evidence_snippet = evidenceSnippet;
+    }
+    const nextMs = parseTimestampMs(edgeTs);
+    if (typeof nextMs === "number" && (!existing.lastSeenMs || nextMs > existing.lastSeenMs)) {
+      existing.lastSeenMs = nextMs;
+      existing.last_seen_ts = edgeTs;
+    }
+  };
+
+  const extractNodeId = (obj: any): string => {
+    if (!obj) return "";
+    if (obj.id != null) return String(obj.id);
+    if (obj._id != null) return String(obj._id);
+    if (obj.vid != null) return String(obj.vid);
+    return "";
+  };
+
+  rows.forEach((rawRow) => {
+    const row = asObject(rawRow);
+    if (!row) return;
+
+    if (row.a_id != null && row.b_id != null) {
+      upsertNode(
+        row.a_id,
+        row.a_name,
+        row.a_type ?? row.a_etype ?? row.a_category,
+        row.a_ts ?? row.a_created_at,
+      );
+      upsertNode(
+        row.b_id,
+        row.b_name,
+        row.b_type ?? row.b_etype ?? row.b_category,
+        row.b_ts ?? row.b_created_at,
+      );
+      upsertEdge(row.a_id, row.b_id, row.r_type ?? row.rel_type, row);
+      return;
+    }
+
+    if (row.a && row.b) {
+      const aId = extractNodeId(row.a);
+      const bId = extractNodeId(row.b);
+      const aProps = row.a?.properties || row.a;
+      const bProps = row.b?.properties || row.b;
+      upsertNode(aId, aProps?.name ?? aProps?.label, aProps?.etype ?? aProps?.type, aProps?.created_at);
+      upsertNode(bId, bProps?.name ?? bProps?.label, bProps?.etype ?? bProps?.type, bProps?.created_at);
+      upsertEdge(aId, bId, row.r?.rtype ?? row.r?.type ?? row.rtype, {
+        ...row,
+        r_ts: row.r?.created_at,
+        r_weight: row.r?.weight,
+        r_confidence: row.r?.confidence,
+        r_doc_id: row.r?.source?.doc_id,
+        r_snippet: row.r?.source?.snippet,
+      });
     }
   });
 
-  return { nodes: Array.from(nodeMap.values()), edges };
+  const edges = Array.from(edgeMap.values());
+  const degreeByNode = new Map<string, number>();
+  edges.forEach((e) => {
+    const source = e.source || e.a;
+    const target = e.target || e.b;
+    if (!source || !target) return;
+    degreeByNode.set(source, (degreeByNode.get(source) || 0) + 1);
+    degreeByNode.set(target, (degreeByNode.get(target) || 0) + 1);
+    if (!nodeMap.has(source)) {
+      upsertNode(source, source, "unknown", e.last_seen_ts);
+    }
+    if (!nodeMap.has(target)) {
+      upsertNode(target, target, "unknown", e.last_seen_ts);
+    }
+  });
+
+  const nodes = Array.from(nodeMap.values()).map((n) => ({
+    ...n,
+    degree: degreeByNode.get(n.id) || 0,
+    type: normalizeType(n.type),
+  }));
+
+  return { nodes, edges };
 }
 
-// -------- Knowledge: tiny force-layout canvas --------
+// -------- Knowledge: interactive force-layout canvas --------
+type CameraState = { x: number; y: number; scale: number };
+type SimNodeState = { x: number; y: number; vx: number; vy: number; mass: number };
+type XY = { x: number; y: number };
+
+function pointToSegmentDistance(px: number, py: number, ax: number, ay: number, bx: number, by: number) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(px - ax, py - ay);
+  const t = clamp(((px - ax) * dx + (py - ay) * dy) / lenSq, 0, 1);
+  const cx = ax + t * dx;
+  const cy = ay + t * dy;
+  return Math.hypot(px - cx, py - cy);
+}
+
+function hashString(text: string): number {
+  let h = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    h = (h * 31 + text.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
+function relationForceConfig(relationType?: string) {
+  const rel = normalizeRelationType(relationType);
+  if (STRONG_RELATIONS.has(rel)) return { spring: 0.013, length: 92, alpha: 0.75 };
+  if (MEDIUM_RELATIONS.has(rel)) return { spring: 0.008, length: 132, alpha: 0.55 };
+  if (WEAK_RELATIONS.has(rel)) return { spring: 0.0045, length: 178, alpha: 0.34 };
+  return { spring: 0.0058, length: 156, alpha: 0.45 };
+}
+
+function relationColor(relationType?: string): string {
+  const rel = normalizeRelationType(relationType);
+  if (STRONG_RELATIONS.has(rel)) return "110, 233, 172";
+  if (MEDIUM_RELATIONS.has(rel)) return "126, 189, 255";
+  if (WEAK_RELATIONS.has(rel)) return "138, 148, 168";
+  return "122, 172, 214";
+}
+
+function edgeControlPoint(ax: number, ay: number, bx: number, by: number, seed: string, cameraScale: number): XY {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const d = Math.max(1, Math.hypot(dx, dy));
+  const nx = -dy / d;
+  const ny = dx / d;
+  const hash = hashString(seed);
+  const sign = hash % 2 === 0 ? 1 : -1;
+  const bendBase = (14 + (hash % 11)) / Math.max(cameraScale, 0.22);
+  const bend = Math.min(bendBase, d * 0.35) * sign;
+  return { x: (ax + bx) / 2 + nx * bend, y: (ay + by) / 2 + ny * bend };
+}
+
+function quadPoint(ax: number, ay: number, cx: number, cy: number, bx: number, by: number, t: number): XY {
+  const mt = 1 - t;
+  return {
+    x: mt * mt * ax + 2 * mt * t * cx + t * t * bx,
+    y: mt * mt * ay + 2 * mt * t * cy + t * t * by,
+  };
+}
+
+function pointToQuadraticDistance(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  cx: number,
+  cy: number,
+  bx: number,
+  by: number,
+): number {
+  const steps = 14;
+  let prev = { x: ax, y: ay };
+  let best = Number.POSITIVE_INFINITY;
+  for (let i = 1; i <= steps; i += 1) {
+    const t = i / steps;
+    const next = quadPoint(ax, ay, cx, cy, bx, by, t);
+    best = Math.min(best, pointToSegmentDistance(px, py, prev.x, prev.y, next.x, next.y));
+    prev = next;
+  }
+  return best;
+}
+
+function convexHull(points: XY[]): XY[] {
+  if (points.length <= 2) return points;
+  const sorted = [...points].sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
+  const cross = (o: XY, a: XY, b: XY) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lower: XY[] = [];
+  sorted.forEach((p) => {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  });
+  const upper: XY[] = [];
+  for (let i = sorted.length - 1; i >= 0; i -= 1) {
+    const p = sorted[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
+}
+
+function detectCommunities(nodeIds: string[], edges: KEdge[]): Map<string, number> {
+  const out = new Map<string, number>();
+  if (!nodeIds.length) return out;
+
+  const sortedIds = [...nodeIds].sort();
+  const neighbors = new Map<string, Set<string>>();
+  sortedIds.forEach((id) => neighbors.set(id, new Set()));
+  edges.forEach((e) => {
+    if (!neighbors.has(e.a) || !neighbors.has(e.b)) return;
+    neighbors.get(e.a)!.add(e.b);
+    neighbors.get(e.b)!.add(e.a);
+  });
+
+  sortedIds.forEach((id, idx) => out.set(id, idx));
+  for (let iter = 0; iter < 8; iter += 1) {
+    let changed = false;
+    sortedIds.forEach((id) => {
+      const local = neighbors.get(id);
+      if (!local || local.size === 0) return;
+      const counts = new Map<number, number>();
+      local.forEach((nb) => {
+        const label = out.get(nb);
+        if (label == null) return;
+        counts.set(label, (counts.get(label) || 0) + 1);
+      });
+      if (!counts.size) return;
+      const currentLabel = out.get(id)!;
+      let bestLabel = currentLabel;
+      let bestCount = -1;
+      Array.from(counts.entries())
+        .sort((a, b) => a[0] - b[0])
+        .forEach(([label, count]) => {
+          if (count > bestCount || (count === bestCount && label < bestLabel)) {
+            bestCount = count;
+            bestLabel = label;
+          }
+        });
+      if (bestLabel !== currentLabel) {
+        out.set(id, bestLabel);
+        changed = true;
+      }
+    });
+    if (!changed) break;
+  }
+
+  const relabel = new Map<number, number>();
+  let next = 0;
+  sortedIds.forEach((id) => {
+    const label = out.get(id)!;
+    if (!relabel.has(label)) relabel.set(label, next++);
+    out.set(id, relabel.get(label)!);
+  });
+  return out;
+}
+
+function approximateBetweennessCentrality(
+  nodeIds: string[],
+  adjacency: Map<string, Set<string>>,
+  maxSources = 18,
+): Map<string, number> {
+  const scores = new Map<string, number>();
+  nodeIds.forEach((id) => scores.set(id, 0));
+  if (nodeIds.length <= 2) return scores;
+
+  const sorted = [...nodeIds].sort();
+  const sourceCount = Math.max(1, Math.min(maxSources, sorted.length));
+  const step = sorted.length / sourceCount;
+  const sources = Array.from(new Set(Array.from({ length: sourceCount }, (_, i) => sorted[Math.floor(i * step)])));
+
+  sources.forEach((source) => {
+    const stack: string[] = [];
+    const pred = new Map<string, string[]>();
+    const sigma = new Map<string, number>();
+    const dist = new Map<string, number>();
+    nodeIds.forEach((v) => {
+      pred.set(v, []);
+      sigma.set(v, 0);
+      dist.set(v, -1);
+    });
+    sigma.set(source, 1);
+    dist.set(source, 0);
+
+    const queue: string[] = [source];
+    while (queue.length) {
+      const v = queue.shift()!;
+      stack.push(v);
+      const neighbors = adjacency.get(v);
+      if (!neighbors) continue;
+      neighbors.forEach((w) => {
+        if (!dist.has(w)) return;
+        if ((dist.get(w) ?? -1) < 0) {
+          queue.push(w);
+          dist.set(w, (dist.get(v) ?? 0) + 1);
+        }
+        if ((dist.get(w) ?? -1) === (dist.get(v) ?? 0) + 1) {
+          sigma.set(w, (sigma.get(w) ?? 0) + (sigma.get(v) ?? 0));
+          pred.get(w)!.push(v);
+        }
+      });
+    }
+
+    const delta = new Map<string, number>();
+    nodeIds.forEach((v) => delta.set(v, 0));
+    while (stack.length) {
+      const w = stack.pop()!;
+      const sigmaW = sigma.get(w) ?? 0;
+      pred.get(w)!.forEach((v) => {
+        if (sigmaW <= 0) return;
+        const contrib = ((sigma.get(v) ?? 0) / sigmaW) * (1 + (delta.get(w) ?? 0));
+        delta.set(v, (delta.get(v) ?? 0) + contrib);
+      });
+      if (w !== source) {
+        scores.set(w, (scores.get(w) ?? 0) + (delta.get(w) ?? 0));
+      }
+    }
+  });
+
+  const denom = Math.max(1, sources.length);
+  nodeIds.forEach((v) => scores.set(v, (scores.get(v) ?? 0) / denom));
+  return scores;
+}
+
 function MiniForce({
   nodes,
   edges,
+  onNodeClick,
+  onNodeDoubleClick,
+  expandingNodeId,
+  resetViewToken,
 }: {
-  nodes: { id: string; label: string }[];
-  edges: { a: string; b: string }[];
+  nodes: { id: string; label: string; degree?: number; createdAtMs?: number }[];
+  edges: { a: string; b: string; type?: string }[];
+  onNodeClick?: (nodeId: string) => void;
+  onNodeDoubleClick?: (nodeId: string) => void;
+  expandingNodeId?: string | null;
+  resetViewToken?: number;
 }) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const pos = useRef<Record<string, { x: number; y: number; vx: number; vy: number }>>({});
-  const baseRadius = 3.5;
+  const posRef = useRef<Record<string, SimNodeState>>({});
+  const cameraRef = useRef<CameraState>({ x: 0, y: 0, scale: 1 });
+  const viewportRef = useRef({ width: 1, height: 1, dpr: 1 });
+  const pendingAutoFitRef = useRef(true);
+  const lastResetTokenRef = useRef<number | undefined>(undefined);
+  const hoverNodeRef = useRef<string | null>(null);
+  const hoverEdgeRef = useRef<KEdge | null>(null);
+  const lastClickRef = useRef<{ nodeId: string; ts: number }>({ nodeId: "", ts: 0 });
+  const simAlphaRef = useRef(1);
+  const simStartedAtRef = useRef(Date.now());
+  const simActiveRef = useRef(true);
+  const firstSeenRef = useRef<Map<string, number>>(new Map());
+  const [hoverEdgeType, setHoverEdgeType] = useState<string | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [revealDepth, setRevealDepth] = useState(1);
+  const [cursor, setCursor] = useState<"grab" | "grabbing" | "default">("grab");
+  const interactionRef = useRef<{
+    mode: "none" | "pan" | "node";
+    nodeId: string | null;
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startCamX: number;
+    startCamY: number;
+    moved: boolean;
+  }>({
+    mode: "none",
+    nodeId: null,
+    pointerId: -1,
+    startClientX: 0,
+    startClientY: 0,
+    startCamX: 0,
+    startCamY: 0,
+    moved: false,
+  });
+
+  const baseRadius = 4.5;
   const bgColor = "#0b0d10";
-  const nodeCold = "#6c7380";
-  const nodeWarm = "#5ee8a6";
-  const nodeGlow = "#8ae2ff";
-  const edgeColor = "rgba(94, 232, 166, 0.6)";
+  const nodeGlow = "#d8f6ff";
+  const labelZoomThreshold = 1.35;
+  const clusterPalette = ["#34d399", "#60a5fa", "#f59e0b", "#fb7185", "#a78bfa", "#22d3ee"];
 
-  useEffect(() => {
-    const cvs = canvasRef.current!;
-    const ctx = cvs.getContext("2d")!;
-    const W = cResize(cvs);
+  const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
-    const ensure = (id: string) =>
-      pos.current[id] ||
-      (pos.current[id] = {
-        x: Math.random() * W,
-        y: Math.random() * W,
+  const adjacency = useMemo(() => {
+    const map = new Map<string, Set<string>>(nodes.map((n) => [n.id, new Set<string>()]));
+    edges.forEach((e) => {
+      if (!map.has(e.a)) map.set(e.a, new Set<string>());
+      if (!map.has(e.b)) map.set(e.b, new Set<string>());
+      map.get(e.a)!.add(e.b);
+      map.get(e.b)!.add(e.a);
+    });
+    return map;
+  }, [edges, nodes]);
+
+  const degreeByNode = useMemo(() => {
+    const map = new Map<string, number>();
+    nodes.forEach((n) => map.set(n.id, n.degree || 0));
+    edges.forEach((e) => {
+      map.set(e.a, (map.get(e.a) || 0) + 1);
+      map.set(e.b, (map.get(e.b) || 0) + 1);
+    });
+    return map;
+  }, [edges, nodes]);
+  const degreeCentralityByNode = useMemo(() => {
+    const map = new Map<string, number>();
+    const denom = Math.max(1, nodes.length - 1);
+    nodes.forEach((n) => {
+      const degree = degreeByNode.get(n.id) || 0;
+      map.set(n.id, clamp(degree / denom, 0, 1));
+    });
+    return map;
+  }, [nodes, degreeByNode]);
+
+  const focusNodeId = useMemo(() => {
+    if (!nodes.length) return null;
+    if (expandingNodeId && nodeById.has(expandingNodeId)) return expandingNodeId;
+    let bestId = nodes[0].id;
+    let bestScore = -1;
+    nodes.forEach((n) => {
+      const score = degreeCentralityByNode.get(n.id) || 0;
+      if (score > bestScore) {
+        bestScore = score;
+        bestId = n.id;
+      }
+    });
+    return bestId;
+  }, [nodes, degreeCentralityByNode, expandingNodeId, nodeById]);
+
+  const depthByNode = useMemo(() => {
+    const depth = new Map<string, number>();
+    nodes.forEach((n) => depth.set(n.id, 3));
+    if (!focusNodeId) return depth;
+
+    const q: string[] = [focusNodeId];
+    depth.set(focusNodeId, 0);
+    while (q.length) {
+      const id = q.shift()!;
+      const d = depth.get(id) || 0;
+      if (d >= 3) continue;
+      const neigh = adjacency.get(id);
+      if (!neigh) continue;
+      neigh.forEach((nb) => {
+        const prev = depth.get(nb);
+        if (prev == null || prev > d + 1) {
+          depth.set(nb, d + 1);
+          q.push(nb);
+        }
+      });
+    }
+    return depth;
+  }, [nodes, adjacency, focusNodeId]);
+
+  const visibleNodeIds = useMemo(() => {
+    const out = new Set<string>();
+    nodes.forEach((n) => {
+      const d = depthByNode.get(n.id) ?? 3;
+      if (d <= revealDepth) out.add(n.id);
+    });
+    if (focusNodeId) out.add(focusNodeId);
+    if (selectedNodeId) {
+      out.add(selectedNodeId);
+      (adjacency.get(selectedNodeId) || new Set<string>()).forEach((id) => out.add(id));
+    }
+    return out;
+  }, [nodes, depthByNode, revealDepth, focusNodeId, selectedNodeId, adjacency]);
+
+  const visibleNodes = useMemo(() => nodes.filter((n) => visibleNodeIds.has(n.id)), [nodes, visibleNodeIds]);
+  const visibleEdges = useMemo(
+    () => edges.filter((e) => visibleNodeIds.has(e.a) && visibleNodeIds.has(e.b)),
+    [edges, visibleNodeIds],
+  );
+
+  const visibleAdjacency = useMemo(() => {
+    const map = new Map<string, Set<string>>(visibleNodes.map((n) => [n.id, new Set<string>()]));
+    visibleEdges.forEach((e) => {
+      if (!map.has(e.a)) map.set(e.a, new Set<string>());
+      if (!map.has(e.b)) map.set(e.b, new Set<string>());
+      map.get(e.a)!.add(e.b);
+      map.get(e.b)!.add(e.a);
+    });
+    return map;
+  }, [visibleEdges, visibleNodes]);
+
+  const communityByNode = useMemo(() => detectCommunities(nodes.map((n) => n.id), edges), [nodes, edges]);
+  const betweennessByNode = useMemo(
+    () => approximateBetweennessCentrality(nodes.map((n) => n.id), adjacency, 16),
+    [nodes, adjacency],
+  );
+  const bridgeThreshold = useMemo(() => {
+    const vals = Array.from(betweennessByNode.values()).filter((v) => Number.isFinite(v) && v > 0);
+    if (!vals.length) return Number.POSITIVE_INFINITY;
+    vals.sort((a, b) => a - b);
+    return vals[Math.floor(vals.length * 0.8)] ?? vals[vals.length - 1];
+  }, [betweennessByNode]);
+  const recentCutoffMs = useMemo(() => {
+    const timestamps = nodes
+      .map((n) => n.createdAtMs)
+      .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+    if (timestamps.length) {
+      const newest = Math.max(...timestamps);
+      return newest - 30 * 60 * 1000;
+    }
+    return Date.now() - 20 * 1000;
+  }, [nodes]);
+
+  const selectedInfo = useMemo(() => {
+    if (!selectedNodeId) return null;
+    const node = nodeById.get(selectedNodeId);
+    if (!node) return null;
+    const relationCounts = new Map<string, number>();
+    edges.forEach((e) => {
+      if (e.a !== selectedNodeId && e.b !== selectedNodeId) return;
+      const rel = normalizeRelationType(e.type) || "related_to";
+      relationCounts.set(rel, (relationCounts.get(rel) || 0) + 1);
+    });
+    const topRelations = Array.from(relationCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6);
+    return {
+      node,
+      degree: degreeByNode.get(selectedNodeId) || 0,
+      degreeCentrality: degreeCentralityByNode.get(selectedNodeId) || 0,
+      neighbors: adjacency.get(selectedNodeId)?.size || 0,
+      betweenness: betweennessByNode.get(selectedNodeId) || 0,
+      cluster: communityByNode.get(selectedNodeId) ?? 0,
+      topRelations,
+    };
+  }, [selectedNodeId, nodeById, edges, degreeByNode, degreeCentralityByNode, adjacency, betweennessByNode, communityByNode]);
+
+  const kickSimulation = useCallback((alpha = 1) => {
+    simAlphaRef.current = Math.max(simAlphaRef.current, alpha);
+    simStartedAtRef.current = Date.now();
+    simActiveRef.current = true;
+  }, []);
+
+  const toScreen = useCallback((wx: number, wy: number) => {
+    const cam = cameraRef.current;
+    return {
+      x: wx * cam.scale + cam.x,
+      y: wy * cam.scale + cam.y,
+    };
+  }, []);
+
+  const toWorld = useCallback((sx: number, sy: number) => {
+    const cam = cameraRef.current;
+    return {
+      x: (sx - cam.x) / cam.scale,
+      y: (sy - cam.y) / cam.scale,
+    };
+  }, []);
+
+  const ensureNodePositions = useCallback(() => {
+    const P = posRef.current;
+    const firstSeen = firstSeenRef.current;
+    const ids = new Set(nodes.map((n) => n.id));
+
+    Object.keys(P).forEach((id) => {
+      if (!ids.has(id)) {
+        delete P[id];
+      }
+    });
+    Array.from(firstSeen.keys()).forEach((id) => {
+      if (!ids.has(id)) {
+        firstSeen.delete(id);
+      }
+    });
+
+    const existing = Object.values(P);
+    const center =
+      existing.length > 0
+        ? {
+            x: existing.reduce((s, p) => s + p.x, 0) / existing.length,
+            y: existing.reduce((s, p) => s + p.y, 0) / existing.length,
+          }
+        : { x: 0, y: 0 };
+
+    nodes.forEach((n, idx) => {
+      if (!firstSeen.has(n.id)) {
+        firstSeen.set(n.id, Date.now());
+      }
+      const centrality = degreeCentralityByNode.get(n.id) || 0;
+      const mass = 1 + centrality * 7.5;
+      if (P[n.id]) {
+        P[n.id].mass = mass;
+        return;
+      }
+      const neigh = Array.from(adjacency.get(n.id) || []);
+      const anchored = neigh.map((id) => P[id]).filter((p): p is SimNodeState => Boolean(p));
+      let x = center.x;
+      let y = center.y;
+      if (anchored.length) {
+        x = anchored.reduce((sum, p) => sum + p.x, 0) / anchored.length + (Math.random() - 0.5) * 32;
+        y = anchored.reduce((sum, p) => sum + p.y, 0) / anchored.length + (Math.random() - 0.5) * 32;
+      } else {
+        const angle = (idx / Math.max(nodes.length, 1)) * Math.PI * 2;
+        const radius = 150 + Math.random() * 72;
+        x = center.x + Math.cos(angle) * radius;
+        y = center.y + Math.sin(angle) * radius;
+      }
+      P[n.id] = {
+        x,
+        y,
         vx: 0,
         vy: 0,
+        mass,
+      };
+    });
+  }, [nodes, degreeCentralityByNode, adjacency]);
+
+  const fitGraphToViewport = useCallback(() => {
+    const targetNodes = visibleNodes.length ? visibleNodes : nodes;
+    if (!targetNodes.length) return;
+    ensureNodePositions();
+
+    const { width, height } = viewportRef.current;
+    if (width <= 1 || height <= 1) return;
+
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    const P = posRef.current;
+
+    targetNodes.forEach((n) => {
+      const p = P[n.id];
+      if (!p) return;
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x);
+      maxY = Math.max(maxY, p.y);
+    });
+
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      return;
+    }
+
+    const padding = 48;
+    const spanX = Math.max(maxX - minX, 1);
+    const spanY = Math.max(maxY - minY, 1);
+    const nextScale = clamp(
+      Math.min((width - padding * 2) / spanX, (height - padding * 2) / spanY),
+      0.15,
+      2.8,
+    );
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+
+    cameraRef.current = {
+      x: width / 2 - cx * nextScale,
+      y: height / 2 - cy * nextScale,
+      scale: nextScale,
+    };
+  }, [ensureNodePositions, visibleNodes, nodes]);
+
+  useEffect(() => {
+    if (!nodes.length) return;
+    if (lastResetTokenRef.current === resetViewToken) return;
+    lastResetTokenRef.current = resetViewToken;
+    setRevealDepth(1);
+    setSelectedNodeId(null);
+    hoverNodeRef.current = null;
+    hoverEdgeRef.current = null;
+    setHoverEdgeType(null);
+    pendingAutoFitRef.current = true;
+    kickSimulation(1);
+    const t = window.setTimeout(() => setRevealDepth((d) => Math.max(d, 2)), 150);
+    return () => window.clearTimeout(t);
+  }, [resetViewToken, nodes.length, kickSimulation]);
+
+  useEffect(() => {
+    ensureNodePositions();
+    kickSimulation(0.85);
+  }, [ensureNodePositions, visibleNodes.length, visibleEdges.length, kickSimulation]);
+
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    const canvas = canvasRef.current;
+    if (!wrapper || !canvas) return;
+
+    const syncCanvasSize = () => {
+      const rect = wrapper.getBoundingClientRect();
+      const width = Math.max(1, Math.floor(rect.width));
+      const height = Math.max(1, Math.floor(rect.height));
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      viewportRef.current = { width, height, dpr };
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+
+      if (pendingAutoFitRef.current && (visibleNodes.length > 0 || nodes.length > 0)) {
+        fitGraphToViewport();
+        pendingAutoFitRef.current = false;
+      }
+    };
+
+    syncCanvasSize();
+    const ro = new ResizeObserver(syncCanvasSize);
+    ro.observe(wrapper);
+    window.addEventListener("resize", syncCanvasSize);
+
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", syncCanvasSize);
+    };
+  }, [fitGraphToViewport, nodes.length, visibleNodes.length]);
+
+  const centerOnNode = useCallback((nodeId: string) => {
+    const p = posRef.current[nodeId];
+    if (!p) return;
+    const { width, height } = viewportRef.current;
+    const cam = cameraRef.current;
+    cameraRef.current = {
+      ...cam,
+      x: width / 2 - p.x * cam.scale,
+      y: height / 2 - p.y * cam.scale,
+    };
+  }, []);
+
+  const edgeControlWorld = useCallback((a: SimNodeState, b: SimNodeState, edge: KEdge) => {
+    return edgeControlPoint(a.x, a.y, b.x, b.y, `${edge.a}|${edge.b}|${edge.type || ""}`, cameraRef.current.scale);
+  }, []);
+
+  const findNodeAt = useCallback(
+    (wx: number, wy: number): string | null => {
+      const P = posRef.current;
+      for (let i = visibleNodes.length - 1; i >= 0; i -= 1) {
+        const node = visibleNodes[i];
+        const p = P[node.id];
+        if (!p) continue;
+        const centrality = degreeCentralityByNode.get(node.id) || 0;
+        const radius = baseRadius + 2 + centrality * 13;
+        const hitRadius = (radius + 4) / cameraRef.current.scale;
+        const d = Math.hypot(wx - p.x, wy - p.y);
+        if (d <= hitRadius) {
+          return node.id;
+        }
+      }
+      return null;
+    },
+    [visibleNodes, degreeCentralityByNode],
+  );
+
+  const findEdgeAt = useCallback(
+    (wx: number, wy: number): KEdge | null => {
+      const P = posRef.current;
+      const threshold = 10 / cameraRef.current.scale;
+      let bestEdge: KEdge | null = null;
+      let bestDist = Number.POSITIVE_INFINITY;
+      for (const e of visibleEdges) {
+        const a = P[e.a];
+        const b = P[e.b];
+        if (!a || !b) continue;
+        const c = edgeControlWorld(a, b, e);
+        const dist = pointToQuadraticDistance(wx, wy, a.x, a.y, c.x, c.y, b.x, b.y);
+        if (dist > threshold) continue;
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestEdge = e;
+        }
+      }
+      return bestEdge;
+    },
+    [visibleEdges, edgeControlWorld],
+  );
+
+  useEffect(() => {
+    ensureNodePositions();
+    let raf = 0;
+    const tick = () => {
+      const canvas = canvasRef.current;
+      if (!canvas) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+
+      const P = posRef.current;
+      if (simActiveRef.current && visibleNodes.length > 0) {
+        const alpha = Math.max(0.01, simAlphaRef.current);
+        const repulsionBase = 270;
+        for (let i = 0; i < visibleNodes.length; i += 1) {
+          const aNode = visibleNodes[i];
+          const a = P[aNode.id];
+          if (!a) continue;
+          for (let j = i + 1; j < visibleNodes.length; j += 1) {
+            const bNode = visibleNodes[j];
+            const b = P[bNode.id];
+            if (!b) continue;
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const d2 = dx * dx + dy * dy + 0.01;
+            const d = Math.sqrt(d2);
+            const force = (repulsionBase * alpha * a.mass * b.mass) / d2;
+            const fx = (dx / d) * force;
+            const fy = (dy / d) * force;
+            a.vx -= fx / a.mass;
+            a.vy -= fy / a.mass;
+            b.vx += fx / b.mass;
+            b.vy += fy / b.mass;
+          }
+        }
+
+        visibleEdges.forEach((e) => {
+          const a = P[e.a];
+          const b = P[e.b];
+          if (!a || !b) return;
+          const cfg = relationForceConfig(e.type);
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const d = Math.max(0.01, Math.hypot(dx, dy));
+          const hubStretch = ((degreeByNode.get(e.a) || 0) + (degreeByNode.get(e.b) || 0)) * 1.8;
+          const targetLen = cfg.length + hubStretch;
+          const force = (d - targetLen) * cfg.spring * alpha;
+          const fx = (dx / d) * force;
+          const fy = (dy / d) * force;
+          a.vx += fx / a.mass;
+          a.vy += fy / a.mass;
+          b.vx -= fx / b.mass;
+          b.vy -= fy / b.mass;
+        });
+
+        let kinetic = 0;
+        const damping = 0.85 + (1 - alpha) * 0.1;
+        visibleNodes.forEach((n) => {
+          const p = P[n.id];
+          if (!p) return;
+          p.vx *= damping;
+          p.vy *= damping;
+          p.x += p.vx;
+          p.y += p.vy;
+          kinetic += Math.abs(p.vx) + Math.abs(p.vy);
+        });
+
+        simAlphaRef.current = Math.max(0, simAlphaRef.current * 0.986 - 0.0008);
+        if (kinetic < 0.05 || simAlphaRef.current < 0.015 || Date.now() - simStartedAtRef.current > 6500) {
+          simActiveRef.current = false;
+          visibleNodes.forEach((n) => {
+            const p = P[n.id];
+            if (!p) return;
+            p.vx = Math.abs(p.vx) < 0.0005 ? 0 : p.vx * 0.3;
+            p.vy = Math.abs(p.vy) < 0.0005 ? 0 : p.vy * 0.3;
+          });
+        }
+      }
+
+      const { width, height, dpr } = viewportRef.current;
+      const hoveredNodeId = hoverNodeRef.current;
+      const hoveredNeighbors = hoveredNodeId
+        ? visibleAdjacency.get(hoveredNodeId) || new Set<string>()
+        : new Set<string>();
+      const hoveredEdge = hoverEdgeRef.current;
+      const selectedNeighbors = selectedNodeId
+        ? visibleAdjacency.get(selectedNodeId) || new Set<string>()
+        : new Set<string>();
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, width, height);
+
+      const clusters = new Map<number, XY[]>();
+      visibleNodes.forEach((n) => {
+        const p = P[n.id];
+        if (!p) return;
+        const cid = communityByNode.get(n.id);
+        if (cid == null) return;
+        if (!clusters.has(cid)) clusters.set(cid, []);
+        clusters.get(cid)!.push(toScreen(p.x, p.y));
       });
 
-    let raf = 0;
-    function tick() {
-      const P = pos.current;
-      // physics
-      nodes.forEach((n) => ensure(n.id));
-      // repulsion
-      nodes.forEach((n) =>
-        nodes.forEach((m) => {
-          if (n === m) return;
-          const a = P[n.id];
-          const b = P[m.id];
-          const dx = a.x - b.x;
-          const dy = a.y - b.y;
-          const d = Math.hypot(dx, dy) + 0.01;
-          const rep = 30 / (d * d);
-          a.vx += dx * rep;
-          a.vy += dy * rep;
-        }),
-      );
-      // springs
-      edges.forEach((e) => {
+      clusters.forEach((pts, cid) => {
+        const color = clusterPalette[cid % clusterPalette.length];
+        if (pts.length >= 3) {
+          const hull = convexHull(pts);
+          if (hull.length >= 3) {
+            ctx.beginPath();
+            ctx.moveTo(hull[0].x, hull[0].y);
+            for (let i = 1; i < hull.length; i += 1) {
+              ctx.lineTo(hull[i].x, hull[i].y);
+            }
+            ctx.closePath();
+            ctx.fillStyle = `${color}1E`;
+            ctx.strokeStyle = `${color}4F`;
+            ctx.lineWidth = 1;
+            ctx.fill();
+            ctx.stroke();
+          }
+        } else if (pts.length === 2) {
+          ctx.beginPath();
+          ctx.moveTo(pts[0].x, pts[0].y);
+          ctx.lineTo(pts[1].x, pts[1].y);
+          ctx.strokeStyle = `${color}33`;
+          ctx.lineWidth = 18;
+          ctx.stroke();
+        } else if (pts.length === 1) {
+          ctx.beginPath();
+          ctx.arc(pts[0].x, pts[0].y, 16, 0, Math.PI * 2);
+          ctx.fillStyle = `${color}22`;
+          ctx.fill();
+        }
+      });
+
+      visibleEdges.forEach((e) => {
         const a = P[e.a];
         const b = P[e.b];
         if (!a || !b) return;
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        a.vx += dx * 0.002;
-        a.vy += dy * 0.002;
-        b.vx -= dx * 0.002;
-        b.vy -= dy * 0.002;
-      });
-      // integrate
-      nodes.forEach((n) => {
-        const a = P[n.id];
-        a.vx *= 0.9;
-        a.vy *= 0.9;
-        a.x += a.vx;
-        a.y += a.vy;
-        a.x = clamp(a.x, 10, W - 10);
-        a.y = clamp(a.y, 10, W - 10);
-      });
-      // draw
-      ctx.clearRect(0, 0, W, W);
-      ctx.fillStyle = bgColor;
-      ctx.fillRect(0, 0, W, W);
-      ctx.strokeStyle = edgeColor;
-      ctx.lineWidth = 0.9;
-      edges.forEach((e) => {
-        const a = P[e.a];
-        const b = P[e.b];
-        if (a && b) {
-          ctx.beginPath();
-          ctx.moveTo(a.x, a.y);
-          ctx.lineTo(b.x, b.y);
-          ctx.stroke();
-        }
-      });
-      nodes.forEach((n, idx) => {
-        const a = P[n.id];
-        const r = baseRadius + ((n.id.length + idx) % 4);
-        const fill =
-          idx % 5 === 0
-            ? nodeGlow
-            : idx % 3 === 0
-              ? nodeWarm
-              : nodeCold;
-        ctx.fillStyle = fill;
-        ctx.shadowBlur = 12;
-        ctx.shadowColor = fill;
+        const c = edgeControlWorld(a, b, e);
+        const sa = toScreen(a.x, a.y);
+        const sc = toScreen(c.x, c.y);
+        const sb = toScreen(b.x, b.y);
+        const cfg = relationForceConfig(e.type);
+        const isSelectedEdge = selectedNodeId ? e.a === selectedNodeId || e.b === selectedNodeId : true;
+        const edgeIsHoveredNode = hoveredNodeId ? e.a === hoveredNodeId || e.b === hoveredNodeId : false;
+        const isHoveredEdge =
+          hoveredEdge && hoveredEdge.a === e.a && hoveredEdge.b === e.b && hoveredEdge.type === e.type;
+        let alpha = selectedNodeId ? (isSelectedEdge ? 0.92 : 0.08) : cfg.alpha;
+        if (edgeIsHoveredNode) alpha = Math.max(alpha, 0.88);
+        if (isHoveredEdge) alpha = 0.97;
+
         ctx.beginPath();
-        ctx.arc(a.x, a.y, r, 0, Math.PI * 2);
+        ctx.moveTo(sa.x, sa.y);
+        ctx.quadraticCurveTo(sc.x, sc.y, sb.x, sb.y);
+        ctx.strokeStyle = `rgba(${relationColor(e.type)}, ${alpha})`;
+        ctx.lineWidth = isHoveredEdge ? 2.1 : STRONG_RELATIONS.has(normalizeRelationType(e.type)) ? 1.6 : 1.1;
+        ctx.stroke();
+      });
+
+      if (hoveredEdge?.type) {
+        const a = P[hoveredEdge.a];
+        const b = P[hoveredEdge.b];
+        if (a && b) {
+          const c = edgeControlWorld(a, b, hoveredEdge);
+          const mid = quadPoint(a.x, a.y, c.x, c.y, b.x, b.y, 0.5);
+          const sm = toScreen(mid.x, mid.y);
+          const txt = hoveredEdge.type;
+          ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI";
+          const w = ctx.measureText(txt).width + 10;
+          const h = 18;
+          ctx.fillStyle = "rgba(5, 9, 14, 0.9)";
+          ctx.fillRect(sm.x - w / 2, sm.y - h / 2, w, h);
+          ctx.strokeStyle = "rgba(138, 226, 255, 0.8)";
+          ctx.strokeRect(sm.x - w / 2, sm.y - h / 2, w, h);
+          ctx.fillStyle = "#d9f6ff";
+          ctx.textBaseline = "middle";
+          ctx.fillText(txt, sm.x - w / 2 + 5, sm.y);
+        }
+      }
+
+      visibleNodes.forEach((n) => {
+        const p = P[n.id];
+        if (!p) return;
+        const s = toScreen(p.x, p.y);
+        const centrality = degreeCentralityByNode.get(n.id) || 0;
+        const radius = baseRadius + 2 + centrality * 14;
+        const isHover = hoveredNodeId === n.id;
+        const isSelected = selectedNodeId === n.id;
+        const isSelectedNeighbor = selectedNodeId ? selectedNeighbors.has(n.id) : false;
+        const isHoverNeighbor = hoveredNeighbors.has(n.id);
+        const inContext = !selectedNodeId || isSelected || isSelectedNeighbor;
+        const clusterId = communityByNode.get(n.id) ?? 0;
+        const fill = clusterPalette[clusterId % clusterPalette.length];
+        const bridgeScore = betweennessByNode.get(n.id) || 0;
+        const isBridge = bridgeScore >= bridgeThreshold && bridgeScore > 0;
+        const createdMs = n.createdAtMs ?? firstSeenRef.current.get(n.id);
+        const isRecent = typeof createdMs === "number" && createdMs >= recentCutoffMs;
+        const pulse = isRecent ? 1 + 0.14 * Math.sin(Date.now() / 220 + (hashString(n.id) % 37)) : 1;
+        const drawRadius = (isSelected ? radius + 2 : radius) * pulse;
+        const alpha = inContext ? 1 : 0.25;
+
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = fill;
+        ctx.shadowBlur = isBridge ? 22 : isSelected ? 18 : isHover ? 16 : isHoverNeighbor ? 12 : 8;
+        ctx.shadowColor = isBridge ? "rgba(255, 236, 153, 0.95)" : isHover ? nodeGlow : fill;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, drawRadius, 0, Math.PI * 2);
         ctx.fill();
         ctx.shadowBlur = 0;
+        ctx.lineWidth = isBridge ? 2.4 : isSelected ? 2 : 1;
+        ctx.strokeStyle = isBridge
+          ? "rgba(255, 236, 153, 0.95)"
+          : isSelected
+            ? "rgba(230, 247, 255, 0.95)"
+            : "rgba(10, 15, 22, 0.55)";
+        ctx.stroke();
       });
+      ctx.globalAlpha = 1;
+
+      const showLabelsByZoom = cameraRef.current.scale > labelZoomThreshold;
+      ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI";
+      ctx.textBaseline = "middle";
+      visibleNodes.forEach((n) => {
+        const p = P[n.id];
+        if (!p) return;
+        const isHover = hoveredNodeId === n.id;
+        const isNeighbor = hoveredNeighbors.has(n.id);
+        const isSelected = selectedNodeId === n.id;
+        const isSelectedNeighbor = selectedNodeId ? selectedNeighbors.has(n.id) : false;
+        if (!showLabelsByZoom && !isHover && !isNeighbor && !isSelected && !isSelectedNeighbor) return;
+        const s = toScreen(p.x, p.y);
+        const label = n.label || n.id.slice(0, 10);
+        const m = ctx.measureText(label);
+        const w = m.width + 10;
+        const h = 18;
+        const x = s.x + 9;
+        const y = s.y - h / 2;
+        ctx.fillStyle = "rgba(5, 9, 14, 0.86)";
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = isSelected
+          ? "rgba(225, 246, 255, 0.88)"
+          : isHover
+            ? "rgba(138, 226, 255, 0.8)"
+            : "rgba(145, 160, 180, 0.35)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y, w, h);
+        ctx.fillStyle = isSelected || isHover ? "#d7f8ff" : "#cfd6e2";
+        ctx.fillText(label, x + 5, y + h / 2);
+      });
+
       raf = requestAnimationFrame(tick);
-    }
+    };
+
     tick();
     return () => cancelAnimationFrame(raf);
-  }, [nodes, edges]);
+  }, [
+    communityByNode,
+    degreeByNode,
+    degreeCentralityByNode,
+    edgeControlWorld,
+    ensureNodePositions,
+    visibleAdjacency,
+    visibleEdges,
+    visibleNodes,
+    selectedNodeId,
+    toScreen,
+  ]);
+
+  const getLocalPoint = useCallback((clientX: number, clientY: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const r = canvas.getBoundingClientRect();
+    return { x: clientX - r.left, y: clientY - r.top };
+  }, []);
+
+  const handlePointerDown = useCallback(
+    (ev: React.PointerEvent<HTMLCanvasElement>) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      canvas.setPointerCapture(ev.pointerId);
+
+      const { x, y } = getLocalPoint(ev.clientX, ev.clientY);
+      const world = toWorld(x, y);
+      const nodeId = findNodeAt(world.x, world.y);
+      interactionRef.current = {
+        mode: nodeId ? "node" : "pan",
+        nodeId,
+        pointerId: ev.pointerId,
+        startClientX: ev.clientX,
+        startClientY: ev.clientY,
+        startCamX: cameraRef.current.x,
+        startCamY: cameraRef.current.y,
+        moved: false,
+      };
+      setRevealDepth((d) => Math.max(d, 3));
+      kickSimulation(0.45);
+      setCursor("grabbing");
+      ev.preventDefault();
+    },
+    [findNodeAt, getLocalPoint, toWorld, kickSimulation],
+  );
+
+  const handlePointerMove = useCallback(
+    (ev: React.PointerEvent<HTMLCanvasElement>) => {
+      const interaction = interactionRef.current;
+      const { x, y } = getLocalPoint(ev.clientX, ev.clientY);
+      const world = toWorld(x, y);
+
+      if (interaction.mode === "pan") {
+        const dx = ev.clientX - interaction.startClientX;
+        const dy = ev.clientY - interaction.startClientY;
+        if (Math.abs(dx) + Math.abs(dy) > 3) interaction.moved = true;
+        cameraRef.current.x = interaction.startCamX + dx;
+        cameraRef.current.y = interaction.startCamY + dy;
+        setCursor("grabbing");
+        ev.preventDefault();
+        return;
+      }
+
+      if (interaction.mode === "node" && interaction.nodeId) {
+        const p = posRef.current[interaction.nodeId];
+        if (p) {
+          p.x = world.x;
+          p.y = world.y;
+          p.vx = 0;
+          p.vy = 0;
+        }
+        if (
+          Math.abs(ev.clientX - interaction.startClientX) + Math.abs(ev.clientY - interaction.startClientY) >
+          3
+        ) {
+          interaction.moved = true;
+        }
+        setCursor("grabbing");
+        kickSimulation(0.62);
+        ev.preventDefault();
+        return;
+      }
+
+      const hitNode = findNodeAt(world.x, world.y);
+      hoverNodeRef.current = hitNode;
+      if (hitNode) {
+        hoverEdgeRef.current = null;
+        setHoverEdgeType(null);
+        setCursor("default");
+        return;
+      }
+
+      const hitEdge = findEdgeAt(world.x, world.y);
+      hoverEdgeRef.current = hitEdge;
+      setHoverEdgeType(hitEdge?.type || null);
+      setCursor(hitEdge ? "default" : "grab");
+    },
+    [findEdgeAt, findNodeAt, getLocalPoint, toWorld, kickSimulation],
+  );
+
+  const handlePointerUp = useCallback(
+    (ev: React.PointerEvent<HTMLCanvasElement>) => {
+      const canvas = canvasRef.current;
+      const interaction = interactionRef.current;
+      if (interaction.mode === "node" && interaction.nodeId && !interaction.moved) {
+        const nodeId = interaction.nodeId;
+        setRevealDepth((d) => Math.max(d, 3));
+        setSelectedNodeId(nodeId);
+        centerOnNode(nodeId);
+        const now = performance.now();
+        const isDouble = lastClickRef.current.nodeId === nodeId && now - lastClickRef.current.ts < 280;
+        if (isDouble && typeof onNodeDoubleClick === "function") {
+          onNodeDoubleClick(nodeId);
+        } else if (!isDouble && typeof onNodeClick === "function") {
+          onNodeClick(nodeId);
+        }
+        lastClickRef.current = { nodeId, ts: now };
+      }
+      interactionRef.current = {
+        mode: "none",
+        nodeId: null,
+        pointerId: -1,
+        startClientX: 0,
+        startClientY: 0,
+        startCamX: cameraRef.current.x,
+        startCamY: cameraRef.current.y,
+        moved: false,
+      };
+      if (canvas && canvas.hasPointerCapture(ev.pointerId)) {
+        canvas.releasePointerCapture(ev.pointerId);
+      }
+      kickSimulation(0.34);
+      setCursor("grab");
+    },
+    [centerOnNode, onNodeClick, onNodeDoubleClick, kickSimulation],
+  );
+
+  const handlePointerLeave = useCallback(() => {
+    if (interactionRef.current.mode !== "none") return;
+    hoverNodeRef.current = null;
+    hoverEdgeRef.current = null;
+    setHoverEdgeType(null);
+    setCursor(selectedNodeId ? "default" : "grab");
+  }, [selectedNodeId]);
+
+  const handleWheel = useCallback(
+    (ev: React.WheelEvent<HTMLCanvasElement>) => {
+      const { x, y } = getLocalPoint(ev.clientX, ev.clientY);
+      const before = toWorld(x, y);
+      const cam = cameraRef.current;
+      const factor = Math.exp(-ev.deltaY * 0.0015);
+      const nextScale = clamp(cam.scale * factor, 0.12, 4.5);
+      cameraRef.current.scale = nextScale;
+      cameraRef.current.x = x - before.x * nextScale;
+      cameraRef.current.y = y - before.y * nextScale;
+      setRevealDepth((d) => Math.max(d, 3));
+      kickSimulation(0.25);
+      ev.preventDefault();
+    },
+    [getLocalPoint, toWorld, kickSimulation],
+  );
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={320}
-      height={320}
+    <div
+      ref={wrapperRef}
       style={{
+        position: "relative",
         width: "100%",
-        height: 320,
+        height: "100%",
+        minHeight: 260,
         background: bgColor,
         border: `1px solid ${C.border}`,
         borderRadius: 8,
+        overflow: "hidden",
       }}
-    />
+    >
+      <canvas
+        ref={canvasRef}
+        style={{
+          width: "100%",
+          height: "100%",
+          display: "block",
+          cursor,
+        }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerLeave={handlePointerLeave}
+        onWheel={handleWheel}
+      />
+      {hoverEdgeType && (
+        <div
+          className="text-xs"
+          style={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            padding: "6px 8px",
+            borderRadius: 6,
+            background: "rgba(10, 14, 20, 0.9)",
+            border: `1px solid ${C.border}`,
+            color: "#d9f6ff",
+            pointerEvents: "none",
+          }}
+        >
+          Relation: {hoverEdgeType}
+        </div>
+      )}
+      {selectedInfo && (
+        <div
+          className="text-xs"
+          style={{
+            position: "absolute",
+            top: 8,
+            left: 8,
+            minWidth: 190,
+            maxWidth: 260,
+            padding: "8px 10px",
+            borderRadius: 8,
+            background: "rgba(10, 14, 20, 0.92)",
+            border: `1px solid ${C.border}`,
+            color: C.neutral,
+            pointerEvents: "none",
+          }}
+        >
+          <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>{selectedInfo.node.label}</div>
+          <div style={{ marginBottom: 2 }}>degree: {selectedInfo.degree}</div>
+          <div style={{ marginBottom: 2 }}>degree centrality: {selectedInfo.degreeCentrality.toFixed(3)}</div>
+          <div style={{ marginBottom: 6 }}>neighbors: {selectedInfo.neighbors}</div>
+          <div style={{ marginBottom: 2 }}>cluster: {selectedInfo.cluster}</div>
+          <div style={{ marginBottom: 6 }}>bridge score: {selectedInfo.betweenness.toFixed(2)}</div>
+          {selectedInfo.topRelations.length > 0 &&
+            selectedInfo.topRelations.map(([rel, count]) => (
+              <div key={rel}>
+                {rel}: {count}
+              </div>
+            ))}
+        </div>
+      )}
+      <div
+        className="text-xs"
+        style={{
+          position: "absolute",
+          right: 8,
+          bottom: 8,
+          padding: "6px 8px",
+          borderRadius: 6,
+          background: "rgba(10, 14, 20, 0.8)",
+          border: `1px solid ${C.border}`,
+          color: C.neutral,
+          pointerEvents: "none",
+        }}
+      >
+        <div>Core Topic: large central nodes</div>
+        <div>Bridge Concept: outlined nodes</div>
+        <div>Topic Cluster: color groups</div>
+        <div>New Info: pulsing nodes</div>
+      </div>
+      {expandingNodeId && (
+        <div
+          className="text-xs"
+          style={{
+            position: "absolute",
+            bottom: 8,
+            left: 8,
+            padding: "6px 8px",
+            borderRadius: 6,
+            background: "rgba(10, 14, 20, 0.9)",
+            border: `1px solid ${C.border}`,
+            color: C.neutral,
+            pointerEvents: "none",
+          }}
+        >
+          Expanding node {expandingNodeId}...
+        </div>
+      )}
+    </div>
   );
 }
 
-function cResize(cvs: HTMLCanvasElement) {
-  const r = cvs.getBoundingClientRect();
-  cvs.width = Math.floor(r.width * 2);
-  cvs.height = Math.floor(320 * 2);
-  const W = cvs.width / 2;
-  const ctx = cvs.getContext("2d")!;
-  ctx.scale(2, 2);
-  return W;
-}
+const LEGACY_MINI_FORCE_COMPONENT = MiniForce;
+void LEGACY_MINI_FORCE_COMPONENT;
 
 // ---- small components ----
 function Icon({ d, size = 22 }: { d: string; size?: number }) {
@@ -451,7 +1754,7 @@ function Chat({
                   whiteSpace: "pre-wrap",
                 }}
               >
-                {m.text}
+                {safeText(m.text)}
               </div>
             </div>
           );
@@ -743,6 +2046,14 @@ export default function AgentBuilder() {
   const [graphResult, setGraphResult] = useState<any[]>([]);
   const [graphError, setGraphError] = useState<string | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
+  const [graphResetToken, setGraphResetToken] = useState(0);
+  const [expandingNodeId, setExpandingNodeId] = useState<string | null>(null);
+  const [graphTypeFilter, setGraphTypeFilter] = useState<string>("all");
+  const [graphRecencyFilter, setGraphRecencyFilter] = useState<"all" | "24h" | "7d" | "30d">("all");
+  const [graphMinConfidence, setGraphMinConfidence] = useState<number>(0);
+  const [graphSearchText, setGraphSearchText] = useState("");
+  const [graphSearchToken, setGraphSearchToken] = useState(0);
+  const [selectedEdgeEvidence, setSelectedEdgeEvidence] = useState<KgViewEdge | null>(null);
   const [kgDebugTrace, setKgDebugTrace] = useState<any>(null);
   const [lastIngestTrace, setLastIngestTrace] = useState<any>(null);
   const [kgStatusPolledAt, setKgStatusPolledAt] = useState<Date | null>(null);
@@ -783,7 +2094,7 @@ export default function AgentBuilder() {
     };
   }, [activeProject]);
 
-  const runGraphQuery = useCallback(async (query?: string) => {
+  const runGraphQuery = useCallback(async (query?: string, opts?: { merge?: boolean; queryParams?: Record<string, unknown> }) => {
     const q = (query ?? cypher).trim();
     if (!q) {
       setGraphError("Enter a Cypher query first.");
@@ -795,7 +2106,7 @@ export default function AgentBuilder() {
       const res = await fetch(`/api/v2/projects/${activeProject}/kg/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cypher: q, params: { projectId: activeProject } }),
+        body: JSON.stringify({ cypher: q, params: { projectId: activeProject, ...(opts?.queryParams || {}) } }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.ok) {
@@ -805,13 +2116,126 @@ export default function AgentBuilder() {
         throw new Error(msg);
       }
       const rows = Array.isArray(data.rows) ? data.rows : [];
-      setGraphResult(rows);
+      if (opts?.merge) {
+        setGraphResult((prev) => {
+          const seen = new Set(
+            prev.map((row: any) => (typeof row === "string" ? row : JSON.stringify(row))),
+          );
+          const merged = [...prev];
+          rows.forEach((row: any) => {
+            const key = typeof row === "string" ? row : JSON.stringify(row);
+            if (!seen.has(key)) {
+              seen.add(key);
+              merged.push(row);
+            }
+          });
+          return merged;
+        });
+      } else {
+        setGraphResult(rows);
+      }
     } catch (err: any) {
       setGraphError(err?.message || "Graph error");
     } finally {
       setGraphLoading(false);
     }
   }, [activeProject, cypher]);
+
+  const buildRecencySinceTs = useCallback((): string | null => {
+    if (graphRecencyFilter === "all") return null;
+    const now = Date.now();
+    const deltaMs =
+      graphRecencyFilter === "24h"
+        ? 24 * 60 * 60 * 1000
+        : graphRecencyFilter === "7d"
+          ? 7 * 24 * 60 * 60 * 1000
+          : 30 * 24 * 60 * 60 * 1000;
+    return new Date(now - deltaMs).toISOString();
+  }, [graphRecencyFilter]);
+
+  const runGraphPresetQuery = useCallback(async (
+    preset: "SEED" | "EXPAND",
+    opts?: { merge?: boolean; nodeId?: string; limit?: number },
+  ) => {
+    if (!activeProject) return;
+
+    const limit = opts?.limit ?? (preset === "SEED" ? 220 : 120);
+    const sinceTs = buildRecencySinceTs();
+    const queryParams: Record<string, unknown> = {
+      projectId: activeProject,
+      limit,
+      typeFilter: graphTypeFilter !== "all" ? graphTypeFilter : null,
+      sinceTs,
+      minConfidence: graphMinConfidence > 0 ? graphMinConfidence : null,
+    };
+    if (preset === "EXPAND") {
+      queryParams.nodeId = opts?.nodeId ?? null;
+    }
+
+    const search = new URLSearchParams();
+    search.set("query", preset);
+    search.set("limit", String(limit));
+
+    if (preset === "EXPAND" && opts?.nodeId) {
+      search.set("nodeId", opts.nodeId);
+    }
+    if (graphTypeFilter !== "all") {
+      search.set("type", graphTypeFilter);
+    }
+    if (sinceTs) {
+      search.set("sinceTs", sinceTs);
+    }
+    if (graphMinConfidence > 0) {
+      search.set("minConfidence", String(graphMinConfidence));
+    }
+
+    setGraphError(null);
+    setGraphLoading(true);
+    try {
+      const res = await fetch(`/api/v2/projects/${activeProject}/kg/query?${search.toString()}`, {
+        method: "GET",
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok) {
+        const msg = (data && typeof data.error === "string" && data.error) || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+      if (typeof data?.cypher === "string") {
+        setCypher(data.cypher);
+      }
+
+      const rows = Array.isArray(data.rows) ? data.rows : [];
+      if (opts?.merge) {
+        setGraphResult((prev) => {
+          const seen = new Set(prev.map((row: any) => (typeof row === "string" ? row : JSON.stringify(row))));
+          const merged = [...prev];
+          rows.forEach((row: any) => {
+            const key = typeof row === "string" ? row : JSON.stringify(row);
+            if (!seen.has(key)) {
+              seen.add(key);
+              merged.push(row);
+            }
+          });
+          return merged;
+        });
+      } else {
+        setGraphResult(rows);
+      }
+    } catch (err: any) {
+      const msg = String(err?.message || "Graph query failed");
+      if (msg.includes("HTTP 404") || msg.includes("HTTP 405")) {
+        const fallbackCypher = preset === "SEED" ? KG_SEED_QUERY : KG_EXPAND_QUERY;
+        await runGraphQuery(fallbackCypher, {
+          merge: opts?.merge,
+          queryParams,
+        });
+        return;
+      }
+      setGraphError(msg);
+    } finally {
+      setGraphLoading(false);
+    }
+  }, [activeProject, graphTypeFilter, graphMinConfidence, buildRecencySinceTs, runGraphQuery]);
 
   // When switching projects, reload all per-project state from storage
     useEffect(() => {
@@ -820,16 +2244,16 @@ export default function AgentBuilder() {
       fetch(`${V2_PROJECTS_API}/${activeProject}/state`)
         .then((r) => safeJson(r))
         .then((data) => {
-          setMessages(Array.isArray(data?.messages) ? data.messages : loadProjectState("", mode).messages);
-          setPlan(Array.isArray(data?.plan) ? data.plan : []);
-          setLinks(Array.isArray(data?.links) ? data.links : []);
+          setMessages(normalizeMessages(data?.messages));
+          setPlan(normalizePlanItems(data?.plan));
+          setLinks(normalizeLinks(data?.links));
           setStateLoaded(true);
         })
       .catch(() => {
         const next = loadProjectState(activeProject, mode);
-        setMessages(next.messages);
-        setPlan(next.plan);
-        setLinks(next.links);
+        setMessages(normalizeMessages(next.messages));
+        setPlan(normalizePlanItems(next.plan));
+        setLinks(normalizeLinks(next.links));
         setStateLoaded(true);
       });
   }, [activeProject, mode]);
@@ -848,14 +2272,28 @@ export default function AgentBuilder() {
   // Mode is user-chosen via Assist/Agent toggle - do not auto-switch based on project
 
   const loadProjectSubgraph = useCallback(() => {
-    const q = [
-      "MATCH (a { project_id: $projectId })-[r { project_id: $projectId }]->(b { project_id: $projectId })",
-      "RETURN {a_id: id(a), a_name: a.name, b_id: id(b), b_name: b.name, r_type: r.rtype} AS row",
-      "LIMIT 200",
-    ].join(" ");
-    setCypher(q);
-    runGraphQuery(q);
-  }, [runGraphQuery]);
+    setGraphResetToken((v) => v + 1);
+    setSelectedEdgeEvidence(null);
+    void runGraphPresetQuery("SEED", { limit: 220 });
+  }, [runGraphPresetQuery]);
+
+  const expandGraphFromNode = useCallback(
+    async (nodeId: string) => {
+      const trimmed = String(nodeId || "").trim();
+      if (!trimmed || !activeProject) return;
+      setExpandingNodeId(trimmed);
+      try {
+        await runGraphPresetQuery("EXPAND", {
+          merge: true,
+          nodeId: trimmed,
+          limit: 120,
+        });
+      } finally {
+        setExpandingNodeId(null);
+      }
+    },
+    [activeProject, runGraphPresetQuery],
+  );
 
   // Auto-load project subgraph when Knowledge tab opens or project changes
   useEffect(() => {
@@ -863,6 +2301,10 @@ export default function AgentBuilder() {
       loadProjectSubgraph();
     }
   }, [tab, activeProject, panelOpen, loadProjectSubgraph]);
+
+  useEffect(() => {
+    setSelectedEdgeEvidence(null);
+  }, [activeProject, tab]);
 
   // Poll for last ingest trace when Dashboard tab is active
   useEffect(() => {
@@ -1033,7 +2475,115 @@ export default function AgentBuilder() {
   const reject = (id: string) =>
     setLinks((ls) => ls.filter((x) => x.id !== id));
 
-  const graphViz = ageRowsToGraph(graphResult);
+  const graphViz = useMemo(() => ageRowsToGraph(graphResult), [graphResult]);
+
+  const graphTypeOptions = useMemo(() => {
+    const s = new Set<string>();
+    graphViz.nodes.forEach((n) => s.add(safeText(n.type || "unknown").toLowerCase()));
+    return Array.from(s).sort();
+  }, [graphViz.nodes]);
+
+  const graphVizFiltered = useMemo(() => {
+    const sinceTs = buildRecencySinceTs();
+    const sinceMs = sinceTs ? Date.parse(sinceTs) : null;
+    const nodeById = new Map(graphViz.nodes.map((n) => [n.id, n]));
+
+    const edgePasses = (e: KEdge): boolean => {
+      const source = e.source || e.a;
+      const target = e.target || e.b;
+      const sourceNode = source ? nodeById.get(source) : undefined;
+      const targetNode = target ? nodeById.get(target) : undefined;
+      const score = Number(e.confidence ?? e.weight ?? 0);
+      if (graphMinConfidence > 0 && Number.isFinite(score) && score < graphMinConfidence) {
+        return false;
+      }
+      if (sinceMs != null) {
+        const edgeTs = parseTimestampMs(e.last_seen_ts);
+        if (typeof edgeTs === "number" && edgeTs < sinceMs) {
+          return false;
+        }
+      }
+      if (graphTypeFilter !== "all") {
+        const sourceType = String(sourceNode?.type || "unknown").toLowerCase();
+        const targetType = String(targetNode?.type || "unknown").toLowerCase();
+        if (sourceType !== graphTypeFilter && targetType !== graphTypeFilter) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    const keptEdges = graphViz.edges.filter(edgePasses);
+    const keptNodeIds = new Set<string>();
+    keptEdges.forEach((e) => {
+      const source = e.source || e.a;
+      const target = e.target || e.b;
+      if (source) keptNodeIds.add(source);
+      if (target) keptNodeIds.add(target);
+    });
+
+    graphViz.nodes.forEach((n) => {
+      const nodeType = String(n.type || "unknown").toLowerCase();
+      if (graphTypeFilter !== "all" && nodeType !== graphTypeFilter) return;
+      if (sinceMs != null) {
+        const nodeTs = parseTimestampMs(n.last_seen_ts) ?? n.createdAtMs;
+        if (typeof nodeTs === "number" && nodeTs < sinceMs) return;
+      }
+      keptNodeIds.add(n.id);
+    });
+
+    const degreeByNode = new Map<string, number>();
+    keptEdges.forEach((e) => {
+      const source = e.source || e.a;
+      const target = e.target || e.b;
+      if (source) degreeByNode.set(source, (degreeByNode.get(source) || 0) + 1);
+      if (target) degreeByNode.set(target, (degreeByNode.get(target) || 0) + 1);
+    });
+
+    const keptNodes = graphViz.nodes
+      .filter((n) => keptNodeIds.has(n.id))
+      .map((n) => ({
+        ...n,
+        degree: degreeByNode.get(n.id) || 0,
+      }));
+
+    return { nodes: keptNodes, edges: keptEdges };
+  }, [graphViz, graphTypeFilter, graphMinConfidence, buildRecencySinceTs]);
+
+  const runGraphSearch = useCallback(() => {
+    if (!graphSearchText.trim()) return;
+    setGraphSearchToken((v) => v + 1);
+  }, [graphSearchText]);
+
+  const graphVizForCytoscape = useMemo(() => {
+    const nodes: KgViewNode[] = graphVizFiltered.nodes.map((n) => ({
+      id: n.id,
+      label: n.label || n.id,
+      type: String(n.type || "unknown").toLowerCase(),
+      last_seen_ts: n.last_seen_ts,
+      degree: n.degree || 0,
+    }));
+
+    const edges: KgViewEdge[] = [];
+    graphVizFiltered.edges.forEach((e) => {
+      const source = e.source || e.a;
+      const target = e.target || e.b;
+      if (!source || !target) return;
+      edges.push({
+        id: e.id || `${source}->${target}:${e.type || "related_to"}`,
+        source,
+        target,
+        type: e.type || "related_to",
+        weight: e.weight,
+        confidence: e.confidence,
+        last_seen_ts: e.last_seen_ts,
+        evidence_doc_id: e.evidence_doc_id,
+        evidence_snippet: e.evidence_snippet,
+      });
+    });
+
+    return { nodes, edges };
+  }, [graphVizFiltered]);
 
   // derive counts
   const approved = plan.filter((p) => p.status === "approved");
@@ -1272,13 +2822,13 @@ export default function AgentBuilder() {
                                 fontWeight: 600,
                               }}
                             >
-                              {l.title}
+                              {safeText(l.title)}
                             </div>
                             <div
                               className="text-xs"
                               style={{ opacity: 0.8, margin: "4px 0 8px" }}
                             >
-                              {l.url}
+                              {safeText(l.url)}
                             </div>
                             <div className="flex gap-6 text-sm">
                               {!l.accepted && (
@@ -1296,7 +2846,7 @@ export default function AgentBuilder() {
                                 Reject
                               </button>
                               <a
-                                href={l.url}
+                                href={safeText(l.url)}
                                 target="_blank"
                                 rel="noreferrer"
                                 style={{ color: C.neutral }}
@@ -1335,24 +2885,24 @@ export default function AgentBuilder() {
                               {lastIngestTrace.error ? (
                                 <div style={{ color: '#f87171' }}>
                                   <div style={{ fontWeight: 600, marginBottom: 4 }}>❌ Ingest Failed</div>
-                                  <div style={{ marginBottom: 4 }}>Step: {lastIngestTrace.error.step}</div>
-                                  <div style={{ marginBottom: 4 }}>Code: {lastIngestTrace.error.code}</div>
-                                  <div style={{ marginBottom: 8 }}>{lastIngestTrace.error.message}</div>
+                                  <div style={{ marginBottom: 4 }}>Step: {safeText(lastIngestTrace.error.step)}</div>
+                                  <div style={{ marginBottom: 4 }}>Code: {safeText(lastIngestTrace.error.code)}</div>
+                                  <div style={{ marginBottom: 8 }}>{safeText(lastIngestTrace.error.message)}</div>
                                   
                                   {lastIngestTrace.step_states.chunking && !lastIngestTrace.step_states.chunking.ok && (
                                     <div style={{ marginTop: 12, padding: 8, background: '#1a1a1a', borderRadius: 4, fontSize: '11px' }}>
                                       <div style={{ fontWeight: 600, marginBottom: 4, color: '#f87171' }}>CHUNKING EVIDENCE</div>
                                       {lastIngestTrace.step_states.chunking.model_key && (
-                                        <div style={{ marginBottom: 4 }}>Model: {lastIngestTrace.step_states.chunking.model_key}</div>
+                                        <div style={{ marginBottom: 4 }}>Model: {safeText(lastIngestTrace.step_states.chunking.model_key)}</div>
                                       )}
                                       {lastIngestTrace.step_states.chunking.prompt_user_sha1 && (
-                                        <div style={{ marginBottom: 4 }}>Prompt SHA1: {lastIngestTrace.step_states.chunking.prompt_user_sha1.slice(0, 12)}...</div>
+                                        <div style={{ marginBottom: 4 }}>Prompt SHA1: {safeText(lastIngestTrace.step_states.chunking.prompt_user_sha1).slice(0, 12)}...</div>
                                       )}
                                       {lastIngestTrace.step_states.chunking.raw_output_sha1 && (
-                                        <div style={{ marginBottom: 4 }}>Output SHA1: {lastIngestTrace.step_states.chunking.raw_output_sha1.slice(0, 12)}...</div>
+                                        <div style={{ marginBottom: 4 }}>Output SHA1: {safeText(lastIngestTrace.step_states.chunking.raw_output_sha1).slice(0, 12)}...</div>
                                       )}
                                       {lastIngestTrace.step_states.chunking.parse_error && (
-                                        <div style={{ marginBottom: 4, color: '#fca5a5' }}>Parse Error: {lastIngestTrace.step_states.chunking.parse_error}</div>
+                                        <div style={{ marginBottom: 4, color: '#fca5a5' }}>Parse Error: {safeText(lastIngestTrace.step_states.chunking.parse_error)}</div>
                                       )}
                                       {lastIngestTrace.step_states.chunking.raw_output_preview && (
                                         <div style={{ marginTop: 8 }}>
@@ -1367,7 +2917,7 @@ export default function AgentBuilder() {
                                             padding: 8,
                                             borderRadius: 4,
                                             margin: 0
-                                          }}>{lastIngestTrace.step_states.chunking.raw_output_preview}</pre>
+                                          }}>{safeText(lastIngestTrace.step_states.chunking.raw_output_preview)}</pre>
                                         </div>
                                       )}
                                       {lastIngestTrace.step_states.chunking.prompt_user_preview && (
@@ -1383,7 +2933,7 @@ export default function AgentBuilder() {
                                             padding: 8,
                                             borderRadius: 4,
                                             margin: 0
-                                          }}>{lastIngestTrace.step_states.chunking.prompt_user_preview}</pre>
+                                          }}>{safeText(lastIngestTrace.step_states.chunking.prompt_user_preview)}</pre>
                                         </div>
                                       )}
                                     </div>
@@ -1394,9 +2944,9 @@ export default function AgentBuilder() {
                                   <div>
                                     <div style={{ color: C.primary, fontWeight: 600 }}>✅ LAST INGEST</div>
                                     <div style={{ color: C.neutral }}>Time: {new Date(lastIngestTrace.created_at).toLocaleString()}</div>
-                                    <div style={{ color: C.neutral }}>Trace ID: {lastIngestTrace.trace_id}</div>
-                                    <div style={{ color: C.neutral }}>Model: {lastIngestTrace.model_key}</div>
-                                    <div style={{ color: C.neutral }}>Source: {lastIngestTrace.src}</div>
+                                    <div style={{ color: C.neutral }}>Trace ID: {safeText(lastIngestTrace.trace_id)}</div>
+                                    <div style={{ color: C.neutral }}>Model: {safeText(lastIngestTrace.model_key)}</div>
+                                    <div style={{ color: C.neutral }}>Source: {safeText(lastIngestTrace.src)}</div>
                                   </div>
                                   <div style={{ marginTop: 8 }}>
                                     <div style={{ color: C.primary, fontWeight: 600 }}>STEP CHECKSUMS</div>
@@ -1407,13 +2957,13 @@ export default function AgentBuilder() {
                                         {lastIngestTrace.step_states.chunking.ok && (
                                           <div style={{ marginLeft: 16, marginTop: 4, fontSize: '11px', color: C.neutral }}>
                                             {lastIngestTrace.step_states.chunking.model_key && (
-                                              <div>Model: {lastIngestTrace.step_states.chunking.model_key}</div>
+                                              <div>Model: {safeText(lastIngestTrace.step_states.chunking.model_key)}</div>
                                             )}
                                             {lastIngestTrace.step_states.chunking.prompt_user_sha1 && (
-                                              <div>Prompt SHA1: {lastIngestTrace.step_states.chunking.prompt_user_sha1.slice(0, 12)}...</div>
+                                              <div>Prompt SHA1: {safeText(lastIngestTrace.step_states.chunking.prompt_user_sha1).slice(0, 12)}...</div>
                                             )}
                                             {lastIngestTrace.step_states.chunking.raw_output_sha1 && (
-                                              <div>Output SHA1: {lastIngestTrace.step_states.chunking.raw_output_sha1.slice(0, 12)}...</div>
+                                              <div>Output SHA1: {safeText(lastIngestTrace.step_states.chunking.raw_output_sha1).slice(0, 12)}...</div>
                                             )}
                                           </div>
                                         )}
@@ -1450,7 +3000,7 @@ export default function AgentBuilder() {
 
                 {/* Knowledge tab - available in both modes */}
                 {tab === "Knowledge" && (
-                  <div className="space-y-3">
+                  <div className="space-y-3 h-full flex flex-col">
                     {activeProject && (
                       <div
                         className="text-xs p-3 rounded"
@@ -1488,10 +3038,10 @@ export default function AgentBuilder() {
                             <div>Last: {kgStatus.last_ingest.ts || kgStatus.last_ingest.last_ts ? new Date((kgStatus.last_ingest.ts || kgStatus.last_ingest.last_ts) as string).toLocaleString() : 'never'}</div>
                             <div>
                               Status: {kgStatus.last_ingest.ok ? 'ok' : 'error'}{' '}
-                              {kgStatus.last_ingest.ok ? '' : (kgStatus.last_ingest.error_code || 'unknown')}
+                              {kgStatus.last_ingest.ok ? '' : safeText(kgStatus.last_ingest.error_code || 'unknown')}
                             </div>
                             {!kgStatus.last_ingest.ok && kgStatus.last_ingest.error_message && (
-                              <div style={{ marginTop: 4 }}>{kgStatus.last_ingest.error_message}</div>
+                              <div style={{ marginTop: 4 }}>{safeText(kgStatus.last_ingest.error_message)}</div>
                             )}
                           </div>
                         ) : (
@@ -1499,15 +3049,154 @@ export default function AgentBuilder() {
                         )}
                       </div>
                     )}
-                    {/* Force-directed graph visualization */}
+                    <div
+                      className="text-xs p-3 rounded"
+                      style={{
+                        background: C.bg,
+                        border: `1px solid ${C.border}`,
+                        color: C.neutral,
+                        display: "grid",
+                        gap: 8,
+                      }}
+                    >
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1.2fr auto", gap: 8 }}>
+                        <select
+                          value={graphTypeFilter}
+                          onChange={(e) => setGraphTypeFilter(e.target.value)}
+                          style={{
+                            background: C.panel,
+                            border: `1px solid ${C.border}`,
+                            color: C.text,
+                            borderRadius: 6,
+                            padding: "6px 8px",
+                          }}
+                        >
+                          <option value="all">All types</option>
+                          {graphTypeOptions.map((t) => (
+                            <option key={safeText(t)} value={safeText(t)}>
+                              {safeText(t)}
+                            </option>
+                          ))}
+                        </select>
+
+                        <select
+                          value={graphRecencyFilter}
+                          onChange={(e) => setGraphRecencyFilter(e.target.value as "all" | "24h" | "7d" | "30d")}
+                          style={{
+                            background: C.panel,
+                            border: `1px solid ${C.border}`,
+                            color: C.text,
+                            borderRadius: 6,
+                            padding: "6px 8px",
+                          }}
+                        >
+                          <option value="all">All time</option>
+                          <option value="24h">Last 24h</option>
+                          <option value="7d">Last 7d</option>
+                          <option value="30d">Last 30d</option>
+                        </select>
+
+                        <input
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={graphMinConfidence}
+                          onChange={(e) => setGraphMinConfidence(clamp(Number(e.target.value || 0), 0, 1))}
+                          placeholder="Min confidence"
+                          style={{
+                            background: C.panel,
+                            border: `1px solid ${C.border}`,
+                            color: C.text,
+                            borderRadius: 6,
+                            padding: "6px 8px",
+                          }}
+                        />
+
+                        <input
+                          value={graphSearchText}
+                          onChange={(e) => setGraphSearchText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") runGraphSearch();
+                          }}
+                          placeholder="Find node label..."
+                          style={{
+                            background: C.panel,
+                            border: `1px solid ${C.border}`,
+                            color: C.text,
+                            borderRadius: 6,
+                            padding: "6px 8px",
+                          }}
+                        />
+                        <button
+                          onClick={runGraphSearch}
+                          style={{
+                            border: `1px solid ${C.border}`,
+                            color: C.text,
+                            background: C.panel,
+                            borderRadius: 6,
+                            padding: "6px 10px",
+                          }}
+                        >
+                          Search
+                        </button>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", color: C.neutral }}>
+                        <span>
+                          Nodes: {graphVizFiltered.nodes.length} | Edges: {graphVizFiltered.edges.length}
+                        </span>
+                        <span style={{ opacity: 0.9 }}>Click node to expand neighbors</span>
+                      </div>
+                    </div>
+
                     {graphError && (
                       <div className="text-xs" style={{ color: C.warn }}>
-                        Graph query error: {graphError}
+                        Graph query error: {safeText(graphError)}
                       </div>
                     )}
-                    <div style={{ display: "flex", justifyContent: "center" }}>
-                      <MiniForce nodes={graphViz.nodes} edges={graphViz.edges} />
+                    <div style={{ display: "flex", justifyContent: "center", flex: 1, minHeight: 280 }}>
+                      <KGCytoscapeGraph
+                        key={`kg-cy-${graphResetToken}`}
+                        nodes={graphVizForCytoscape.nodes}
+                        edges={graphVizForCytoscape.edges}
+                        loading={graphLoading}
+                        expandingNodeId={expandingNodeId}
+                        onNodeExpand={expandGraphFromNode}
+                        onEdgeInspect={setSelectedEdgeEvidence}
+                        searchText={graphSearchText}
+                        focusSearchToken={graphSearchToken}
+                      />
                     </div>
+                    {selectedEdgeEvidence && (
+                      <div
+                        className="text-xs p-3 rounded"
+                        style={{
+                          background: C.bg,
+                          border: `1px solid ${C.border}`,
+                          color: C.neutral,
+                        }}
+                      >
+                        <div style={{ color: C.primary, fontWeight: 600, marginBottom: 6 }}>Relationship Evidence</div>
+                        <div>type: {safeText(selectedEdgeEvidence.type)}</div>
+                        <div>source: {safeText(selectedEdgeEvidence.source)}</div>
+                        <div>target: {safeText(selectedEdgeEvidence.target)}</div>
+                        {typeof selectedEdgeEvidence.weight === "number" && (
+                          <div>weight: {selectedEdgeEvidence.weight.toFixed(2)}</div>
+                        )}
+                        {typeof selectedEdgeEvidence.confidence === "number" && (
+                          <div>confidence: {selectedEdgeEvidence.confidence.toFixed(2)}</div>
+                        )}
+                        {selectedEdgeEvidence.last_seen_ts && <div>last_seen: {safeText(selectedEdgeEvidence.last_seen_ts)}</div>}
+                        {selectedEdgeEvidence.evidence_doc_id && (
+                          <div>doc_id: {safeText(selectedEdgeEvidence.evidence_doc_id)}</div>
+                        )}
+                        {selectedEdgeEvidence.evidence_snippet && (
+                          <div style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>
+                            snippet: {safeText(selectedEdgeEvidence.evidence_snippet)}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1601,7 +3290,7 @@ export default function AgentBuilder() {
               )}
               {projectsError && (
                 <div className="text-xs" style={{ color: C.neutral }}>
-                  {projectsError}
+                  {safeText(projectsError)}
                 </div>
               )}
               {Array.from(
@@ -1642,11 +3331,11 @@ export default function AgentBuilder() {
                         <div className="flex items-center justify-between">
                           <div>
                             <div className="font-medium">
-                              {project.name || project.id}
+                              {safeText(project.name || project.id)}
                             </div>
                             {project.code && (
                               <div className="opacity-60 text-xs">
-                                {project.code}
+                                {safeText(project.code)}
                               </div>
                             )}
                           </div>

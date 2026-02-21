@@ -5,6 +5,7 @@ import { resolveKgIngestAgent } from '../../services/resolveAgents';
 import { runCypherOnGraph } from '../../services/graphService';
 import { chunkTextStrictJSON, extractKgFromChunks, type KgEntity, type KgRelationship, type LlmMeta } from './chunking';
 import { runKgQuery } from './query';
+import { syncKgToNeo4j } from '../../services/v2/kgNeo4jSink';
 import {
   enqueueKgIngestJob,
   registerKgIngestWorker,
@@ -13,6 +14,63 @@ import {
 
 const router = Router({ mergeParams: true });
 const GRAPH_NAME = 'graph_liq';
+const DEFAULT_SEED_LIMIT = 220;
+const DEFAULT_EXPAND_LIMIT = 120;
+const MAX_QUERY_LIMIT = 1000;
+const KG_VIEW_SEED_CYPHER = `
+  MATCH (a:Entity { project_id: $projectId })-[r:REL { project_id: $projectId }]->(b:Entity { project_id: $projectId })
+  WHERE ($typeFilter IS NULL OR toLower(coalesce(a.etype, 'unknown')) = $typeFilter OR toLower(coalesce(b.etype, 'unknown')) = $typeFilter)
+    AND ($sinceTs IS NULL OR coalesce(r.created_at, a.created_at, b.created_at) >= $sinceTs)
+    AND ($minConfidence IS NULL OR coalesce(r.confidence, 0.0) >= $minConfidence)
+  RETURN {
+    a_id: id(a),
+    a_name: coalesce(a.name, toString(id(a))),
+    a_type: coalesce(a.etype, 'unknown'),
+    a_ts: coalesce(a.created_at, r.created_at, b.created_at),
+    a_doc_id: coalesce(a.source.doc_id, a.source.docId, r.source.doc_id, r.source.docId),
+    r_type: coalesce(r.rtype, 'related_to'),
+    r_weight: coalesce(r.weight, r.confidence, 0.5),
+    r_confidence: coalesce(r.confidence, r.weight, 0.5),
+    r_ts: coalesce(r.created_at, a.created_at, b.created_at),
+    r_doc_id: coalesce(r.source.doc_id, r.source.docId, a.source.doc_id, b.source.doc_id),
+    r_snippet: coalesce(r.source.snippet, r.attrs.snippet),
+    b_id: id(b),
+    b_name: coalesce(b.name, toString(id(b))),
+    b_type: coalesce(b.etype, 'unknown'),
+    b_ts: coalesce(b.created_at, r.created_at, a.created_at),
+    b_doc_id: coalesce(b.source.doc_id, b.source.docId, r.source.doc_id, r.source.docId)
+  } AS row
+  ORDER BY coalesce(r.created_at, a.created_at, b.created_at) DESC
+  LIMIT toInteger($limit)
+`;
+const KG_VIEW_EXPAND_CYPHER = `
+  MATCH (n:Entity { project_id: $projectId })
+  WHERE id(n) = toInteger($nodeId)
+  MATCH (n)-[r:REL { project_id: $projectId }]-(m:Entity { project_id: $projectId })
+  WHERE ($typeFilter IS NULL OR toLower(coalesce(n.etype, 'unknown')) = $typeFilter OR toLower(coalesce(m.etype, 'unknown')) = $typeFilter)
+    AND ($sinceTs IS NULL OR coalesce(r.created_at, n.created_at, m.created_at) >= $sinceTs)
+    AND ($minConfidence IS NULL OR coalesce(r.confidence, 0.0) >= $minConfidence)
+  RETURN {
+    a_id: id(n),
+    a_name: coalesce(n.name, toString(id(n))),
+    a_type: coalesce(n.etype, 'unknown'),
+    a_ts: coalesce(n.created_at, r.created_at, m.created_at),
+    a_doc_id: coalesce(n.source.doc_id, n.source.docId, r.source.doc_id, r.source.docId),
+    r_type: coalesce(r.rtype, 'related_to'),
+    r_weight: coalesce(r.weight, r.confidence, 0.5),
+    r_confidence: coalesce(r.confidence, r.weight, 0.5),
+    r_ts: coalesce(r.created_at, n.created_at, m.created_at),
+    r_doc_id: coalesce(r.source.doc_id, r.source.docId, n.source.doc_id, m.source.doc_id),
+    r_snippet: coalesce(r.source.snippet, r.attrs.snippet),
+    b_id: id(m),
+    b_name: coalesce(m.name, toString(id(m))),
+    b_type: coalesce(m.etype, 'unknown'),
+    b_ts: coalesce(m.created_at, r.created_at, n.created_at),
+    b_doc_id: coalesce(m.source.doc_id, m.source.docId, r.source.doc_id, r.source.docId)
+  } AS row
+  ORDER BY coalesce(r.created_at, n.created_at, m.created_at) DESC
+  LIMIT toInteger($limit)
+`;
 const inflightDocs = new Set<string>();
 function formatUsage(usage: any) {
   if (!usage || typeof usage !== 'object') return null;
@@ -94,6 +152,26 @@ function parseCountValue(row: unknown): number {
     }
   }
   return 0;
+}
+
+function parseOptionalNumber(value: unknown): number | null {
+  if (value == null) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseOptionalString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function parseLimit(value: unknown, fallback: number): number {
+  const raw = parseOptionalNumber(value);
+  if (raw == null) return fallback;
+  const intVal = Math.floor(raw);
+  if (!Number.isFinite(intVal) || intVal <= 0) return fallback;
+  return Math.min(intVal, MAX_QUERY_LIMIT);
 }
 
 async function insertChunks(docId: string, src: string, chunks: { text: string }[]) {
@@ -257,6 +335,9 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
   let chunksWritten = 0;
   let entitiesWritten = 0;
   let relationshipsWritten = 0;
+  let neo4jEntitiesWritten = 0;
+  let neo4jRelationshipsWritten = 0;
+  let neo4jStatus: string | null = null;
 
   try {
     let resolved = null;
@@ -398,10 +479,25 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
       }
     }
 
-    if (!aborted && (entities.length || relationships.length)) {
+    if (!aborted && errors.length === 0 && (entities.length || relationships.length)) {
       const entityLookup = new Map(entities.map((e) => [e.id, e]));
       entitiesWritten = await upsertEntities(projectId, entities, provenance);
       relationshipsWritten = await upsertRelationships(projectId, relationships, entityLookup, provenance);
+
+      try {
+        const neo4j = await syncKgToNeo4j({
+          projectId,
+          entities,
+          relationships,
+          provenance,
+        });
+        neo4jEntitiesWritten = neo4j.entities;
+        neo4jRelationshipsWritten = neo4j.rels;
+        neo4jStatus = neo4j.enabled ? 'ok' : neo4j.reason || 'disabled';
+      } catch (err: any) {
+        neo4jStatus = 'error';
+        console.warn('[KG_V2][NEO4J] dual-write failed:', err?.message || err);
+      }
     }
 
     const requestId = extractMeta?.request_id || chunkMeta?.request_id || null;
@@ -464,6 +560,9 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
       chunks: chunksWritten,
       entities: entitiesWritten,
       rels: relationshipsWritten,
+      neo4j_entities: neo4jEntitiesWritten,
+      neo4j_rels: neo4jRelationshipsWritten,
+      neo4j: neo4jStatus,
       error: errors.length ? (lastError?.message || errorCode) : null,
     });
   } finally {
@@ -512,6 +611,70 @@ router.post('/ingest_chat_turn', async (req, res) => {
     doc_id: docId,
     src: finalSrc,
   });
+});
+
+router.get('/query', async (req, res) => {
+  const projectId = String((req.params as any).projectId || '');
+  const mode = String((req.query as any)?.query || '').trim().toUpperCase();
+  const rawCypher = parseOptionalString((req.query as any)?.cypher);
+
+  if (!projectId) {
+    return res.status(400).json({ ok: false, error: 'projectId is required' });
+  }
+
+  let cypher = rawCypher || '';
+  const queryParams: Record<string, unknown> = { projectId };
+
+  if (mode === 'SEED' || mode === 'EXPAND') {
+    const typeFilter = parseOptionalString((req.query as any)?.type);
+    const sinceTs = parseOptionalString((req.query as any)?.sinceTs);
+    const minConfidence = parseOptionalNumber((req.query as any)?.minConfidence);
+    const limit = parseLimit(
+      (req.query as any)?.limit,
+      mode === 'SEED' ? DEFAULT_SEED_LIMIT : DEFAULT_EXPAND_LIMIT,
+    );
+
+    queryParams.limit = limit;
+    queryParams.typeFilter = typeFilter ? typeFilter.toLowerCase() : null;
+    queryParams.sinceTs = sinceTs;
+    queryParams.minConfidence = minConfidence;
+
+    if (mode === 'EXPAND') {
+      const nodeId = parseOptionalString((req.query as any)?.nodeId);
+      if (!nodeId) {
+        return res.status(400).json({ ok: false, error: 'nodeId is required for EXPAND query' });
+      }
+      queryParams.nodeId = nodeId;
+    }
+
+    cypher = mode === 'SEED' ? KG_VIEW_SEED_CYPHER : KG_VIEW_EXPAND_CYPHER;
+  }
+
+  if (!cypher) {
+    return res.status(400).json({ ok: false, error: 'query preset or cypher is required' });
+  }
+
+  console.log(
+    '[KG_V2][QUERY][GET] projectId=%s mode=%s qlen=%d',
+    projectId,
+    mode || 'raw',
+    cypher.length,
+  );
+
+  try {
+    const rows = await runKgQuery({
+      graphName: GRAPH_NAME,
+      projectId,
+      cypher,
+      queryParams,
+    });
+    return res.json({ ok: true, mode: mode || null, cypher, rows });
+  } catch (err: any) {
+    const status =
+      err?.status ??
+      ((err?.message || '').toLowerCase().includes('age') ? 503 : 500);
+    return res.status(status).json({ ok: false, error: err?.message || 'graph query failed' });
+  }
 });
 
 router.post('/query', async (req, res) => {

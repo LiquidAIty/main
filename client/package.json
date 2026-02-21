@@ -23,6 +23,7 @@
     "@remix-run/router": "^1.21.0",
     "attr-accept": "^2.2.5",
     "css-mediaquery": "^0.1.2",
+    "cytoscape": "^3.33.1",
     "d3": "^7.9.0",
     "date-fns": "^2.30.0",
     "decode-uri-component": "^0.4.1",
