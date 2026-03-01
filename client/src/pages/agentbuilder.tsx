@@ -3,7 +3,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { AgentCard } from "../types/agentBuilder";
 import { callBossAgent, solRun } from "../lib/api";
 import { AgentManager } from "../components/AgentManager";
-import KGCytoscapeGraph, { type KgViewEdge, type KgViewNode } from "../components/KGCytoscapeGraph";
+import KnowledgeGraphNVL, {
+  type KnowledgeGraphRelationship,
+  type KnowledgeGraphNode,
+} from "../components/knowledge/KnowledgeGraphNVL";
+import UploadAttachment from "../components/knowledge/UploadAttachment";
 
 // AgentPage (MVP): left icon rail + main chat + right tabs (Plan, Links, Knowledge, Dashboard)
 // No external deps. Persists per-project to localStorage. Includes mini force-graph.
@@ -110,6 +114,29 @@ async function safeJson(res: Response): Promise<any | null> {
   }
 }
 
+async function readJsonAndText(res: Response): Promise<{ data: any | null; text: string }> {
+  let text = "";
+  try {
+    text = await res.text();
+  } catch {
+    return { data: null, text: "" };
+  }
+  if (!text) return { data: null, text: "" };
+  try {
+    return { data: JSON.parse(text), text };
+  } catch {
+    return { data: null, text };
+  }
+}
+
+function formatRequestErrorLine(endpoint: string, status: number, bodyPreview: string): string {
+  const compactBody = String(bodyPreview || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
+  return `${endpoint} | ${status} | ${compactBody || "no response body"}`;
+}
+
 type PlanItem = { id: string; text: string; status: "draft" | "approved" | "done" };
 type LinkRef = {
   id: string;
@@ -122,8 +149,10 @@ type LinkRef = {
 
 type KNode = {
   id: string;
+  rawId?: string;
   label: string;
   type?: string;
+  graphSource?: "think" | "know";
   last_seen_ts?: string;
   degree?: number;
   createdAtMs?: number;
@@ -134,6 +163,8 @@ type KEdge = {
   a: string;
   b: string;
   id?: string;
+  rawId?: string;
+  graphSource?: "think" | "know";
   source?: string;
   target?: string;
   type?: string;
@@ -408,11 +439,181 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
 
   const nodes = Array.from(nodeMap.values()).map((n) => ({
     ...n,
+    rawId: n.id,
+    graphSource: "think" as const,
     degree: degreeByNode.get(n.id) || 0,
     type: normalizeType(n.type),
   }));
 
+  return {
+    nodes,
+    edges: edges.map((e) => ({
+      ...e,
+      rawId: e.id,
+      graphSource: "think" as const,
+    })),
+  };
+}
+
+function safeRecord(input: unknown): Record<string, any> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  return input as Record<string, any>;
+}
+
+function normalizeKnowGraphResponseToGraph(payload: any): { nodes: KNode[]; edges: KEdge[] } {
+  const rawNodes = Array.isArray(payload?.nodes) ? payload.nodes : [];
+  const rawRels = Array.isArray(payload?.relationships) ? payload.relationships : [];
+
+  const nodes: KNode[] = [];
+  const edges: KEdge[] = [];
+  const seenNodeIds = new Set<string>();
+  const seenEdgeIds = new Set<string>();
+
+  rawNodes.forEach((raw: any) => {
+    const rawId = String(raw?.id ?? "").trim();
+    if (!rawId) return;
+    const id = `kg:${rawId}`;
+    if (seenNodeIds.has(id)) return;
+    seenNodeIds.add(id);
+
+    const props = safeRecord(raw?.properties);
+    const ts = props.last_seen_ts ?? props.created_at ?? props.updated_at ?? undefined;
+    nodes.push({
+      id,
+      rawId,
+      graphSource: "know",
+      label: safeText(raw?.label || props.name || props.title || rawId),
+      type: safeText(raw?.type || (Array.isArray(raw?.labels) ? raw.labels[0] : "") || "NeoEntity").toLowerCase(),
+      last_seen_ts: typeof ts === "string" ? ts : undefined,
+      createdAtMs: parseTimestampMs(ts),
+      degree: 0,
+    });
+  });
+
+  rawRels.forEach((raw: any) => {
+    const rawId = String(raw?.id ?? "").trim() || `${raw?.from ?? ""}->${raw?.to ?? ""}:${raw?.type ?? "RELATED_TO"}`;
+    const fromRaw = String(raw?.from ?? "").trim();
+    const toRaw = String(raw?.to ?? "").trim();
+    if (!fromRaw || !toRaw) return;
+
+    const id = `kg:${rawId}`;
+    if (seenEdgeIds.has(id)) return;
+    seenEdgeIds.add(id);
+
+    const props = safeRecord(raw?.properties);
+    const source = `kg:${fromRaw}`;
+    const target = `kg:${toRaw}`;
+    const lastSeen =
+      props.last_seen_ts ??
+      props.created_at ??
+      props.updated_at ??
+      undefined;
+    const confidenceNum = Number(props.confidence ?? props.score ?? NaN);
+    const weightNum = Number(props.weight ?? props.score ?? props.confidence ?? NaN);
+
+    edges.push({
+      id,
+      rawId,
+      graphSource: "know",
+      a: source,
+      b: target,
+      source,
+      target,
+      type: safeText(raw?.type || "RELATED_TO").toLowerCase(),
+      weight: Number.isFinite(weightNum) ? weightNum : undefined,
+      confidence: Number.isFinite(confidenceNum) ? confidenceNum : undefined,
+      last_seen_ts: typeof lastSeen === "string" ? lastSeen : undefined,
+      lastSeenMs: parseTimestampMs(lastSeen),
+      evidence_doc_id: safeText(props.document_id || props.doc_id || ""),
+      evidence_snippet: safeText(props.snippet || props.evidence_snippet || ""),
+    });
+  });
+
+  const degreeByNode = new Map<string, number>();
+  edges.forEach((e) => {
+    const s = e.source || e.a;
+    const t = e.target || e.b;
+    if (s) degreeByNode.set(s, (degreeByNode.get(s) || 0) + 1);
+    if (t) degreeByNode.set(t, (degreeByNode.get(t) || 0) + 1);
+  });
+
+  return {
+    nodes: nodes.map((n) => ({
+      ...n,
+      degree: degreeByNode.get(n.id) || n.degree || 0,
+    })),
+    edges,
+  };
+}
+
+function prefixThinkGraphIds(graph: { nodes: KNode[]; edges: KEdge[] }): { nodes: KNode[]; edges: KEdge[] } {
+  const rawToPrefixed = new Map<string, string>();
+  graph.nodes.forEach((n) => {
+    rawToPrefixed.set(n.id, `tg:${n.id}`);
+  });
+
+  const nodes = graph.nodes.map((n) => ({
+    ...n,
+    rawId: n.rawId || n.id,
+    id: rawToPrefixed.get(n.id) || `tg:${n.id}`,
+    graphSource: "think" as const,
+  }));
+
+  const edges = graph.edges.map((e) => {
+    const rawSource = String(e.source || e.a || "").trim();
+    const rawTarget = String(e.target || e.b || "").trim();
+    const prefSource = rawToPrefixed.get(rawSource) || `tg:${rawSource}`;
+    const prefTarget = rawToPrefixed.get(rawTarget) || `tg:${rawTarget}`;
+    return {
+      ...e,
+      rawId: e.rawId || e.id,
+      graphSource: "think" as const,
+      id: e.id ? `tg:${e.id}` : `${prefSource}->${prefTarget}:${e.type || "related_to"}`,
+      a: prefSource,
+      b: prefTarget,
+      source: prefSource,
+      target: prefTarget,
+    };
+  });
+
   return { nodes, edges };
+}
+
+function mergeKnowledgeGraphs(...graphs: Array<{ nodes: KNode[]; edges: KEdge[] }>): { nodes: KNode[]; edges: KEdge[] } {
+  const nodeMap = new Map<string, KNode>();
+  const edgeMap = new Map<string, KEdge>();
+
+  graphs.forEach((graph) => {
+    graph.nodes.forEach((node) => {
+      if (!node?.id) return;
+      if (!nodeMap.has(node.id)) {
+        nodeMap.set(node.id, node);
+      }
+    });
+    graph.edges.forEach((edge) => {
+      const edgeId = String(edge?.id || "").trim();
+      if (!edgeId) return;
+      if (!edgeMap.has(edgeId)) {
+        edgeMap.set(edgeId, edge);
+      }
+    });
+  });
+
+  const degreeByNode = new Map<string, number>();
+  Array.from(edgeMap.values()).forEach((e) => {
+    const s = e.source || e.a;
+    const t = e.target || e.b;
+    if (s) degreeByNode.set(s, (degreeByNode.get(s) || 0) + 1);
+    if (t) degreeByNode.set(t, (degreeByNode.get(t) || 0) + 1);
+  });
+
+  return {
+    nodes: Array.from(nodeMap.values()).map((n) => ({
+      ...n,
+      degree: degreeByNode.get(n.id) || n.degree || 0,
+    })),
+    edges: Array.from(edgeMap.values()),
+  };
 }
 
 // -------- Knowledge: interactive force-layout canvas --------
@@ -1698,10 +1899,12 @@ function Drawer({
 function Chat({
   messages,
   onSend,
+  projectId,
   disabled = false,
 }: {
   messages: { role: "assistant" | "user"; text: string }[];
   onSend: (t: string) => void;
+  projectId: string;
   disabled?: boolean;
 }) {
   const [v, setV] = useState("");
@@ -1761,6 +1964,10 @@ function Chat({
         })}
       </div>
       <div className="px-4 pb-4 flex items-center gap-2">
+        <UploadAttachment
+          projectId={projectId}
+          disabled={disabled || !projectId}
+        />
         <input
           value={v}
           onChange={(e) => setV(e.target.value)}
@@ -1822,19 +2029,6 @@ export default function AgentBuilder() {
   const [projectLoading, setProjectLoading] = useState(false);
   const [projectSaveStatus, setProjectSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [projectSaveError, setProjectSaveError] = useState<string | null>(null);
-  const [kgStatus, setKgStatus] = useState<{
-    totals: { chunks: number; entities: number; rels: number };
-    last_ingest: {
-      ts?: string | null;
-      last_ts?: string | null;
-      ok: boolean;
-      error_code?: string | null;
-      error_message?: string | null;
-      chunks: number;
-      entities: number;
-      rels: number;
-    };
-  } | null>(null);
   const setActiveProjectWithUrl = useCallback(
     (projectId: string) => {
       const currentSearch = window.location.search.replace(/^\?/, "");
@@ -2051,48 +2245,39 @@ export default function AgentBuilder() {
   const [graphTypeFilter, setGraphTypeFilter] = useState<string>("all");
   const [graphRecencyFilter, setGraphRecencyFilter] = useState<"all" | "24h" | "7d" | "30d">("all");
   const [graphMinConfidence, setGraphMinConfidence] = useState<number>(0);
-  const [graphSearchText, setGraphSearchText] = useState("");
-  const [graphSearchToken, setGraphSearchToken] = useState(0);
-  const [selectedEdgeEvidence, setSelectedEdgeEvidence] = useState<KgViewEdge | null>(null);
+  const [, setSelectedEdgeEvidence] = useState<KnowledgeGraphRelationship | null>(null);
+  const [knowGraphData, setKnowGraphData] = useState<{ nodes: any[]; relationships: any[] }>({
+    nodes: [],
+    relationships: [],
+  });
   const [kgDebugTrace, setKgDebugTrace] = useState<any>(null);
   const [lastIngestTrace, setLastIngestTrace] = useState<any>(null);
-  const [kgStatusPolledAt, setKgStatusPolledAt] = useState<Date | null>(null);
   const scopeKey = `${mode}:${activeProject || ""}`;
 
   useEffect(() => {
-    if (!activeProject) {
-      setKgStatus(null);
-      return;
-    }
     let cancelled = false;
-    let timer: number | null = null;
-
-    const poll = async () => {
+    const endpoint = "/api/health";
+    const check = async () => {
       try {
-        const res = await fetch(`/api/v2/projects/${activeProject}/kg/status`);
-        const data = await res.json().catch(() => null);
-        if (!cancelled && res.ok && data?.ok) {
-          setKgStatus({
-            totals: data.totals || { chunks: 0, entities: 0, rels: 0 },
-            last_ingest: data.last_ingest || { ts: null, last_ts: null, ok: false, error_code: null, error_message: null, chunks: 0, entities: 0, rels: 0 },
-          });
-          setKgStatusPolledAt(new Date());
+        const res = await fetch(endpoint, { credentials: "include" });
+        const { data, text } = await readJsonAndText(res);
+        if (!res.ok) {
+          throw new Error(formatRequestErrorLine(endpoint, res.status, (data && safeText(data)) || text));
         }
-      } catch {
         if (!cancelled) {
-          setKgStatus(null);
+          setGraphError((prev) => (prev && prev.includes(endpoint) ? null : prev));
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setGraphError(formatRequestErrorLine(endpoint, 0, err?.message || "Failed to fetch"));
         }
       }
     };
-
-    void poll();
-    timer = window.setInterval(poll, 3000);
-
+    void check();
     return () => {
       cancelled = true;
-      if (timer) window.clearInterval(timer);
     };
-  }, [activeProject]);
+  }, []);
 
   const runGraphQuery = useCallback(async (query?: string, opts?: { merge?: boolean; queryParams?: Record<string, unknown> }) => {
     const q = (query ?? cypher).trim();
@@ -2108,11 +2293,14 @@ export default function AgentBuilder() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cypher: q, params: { projectId: activeProject, ...(opts?.queryParams || {}) } }),
       });
-      const data = await res.json().catch(() => null);
+      const endpoint = `/api/v2/projects/${activeProject}/kg/query`;
+      const { data, text } = await readJsonAndText(res);
       if (!res.ok || !data?.ok) {
-        const msg =
-          (data && typeof data.error === "string" && data.error) ||
-          `HTTP ${res.status}`;
+        const msg = formatRequestErrorLine(
+          endpoint,
+          res.status,
+          (data && safeText(data?.error || data?.message)) || text,
+        );
         throw new Error(msg);
       }
       const rows = Array.isArray(data.rows) ? data.rows : [];
@@ -2192,12 +2380,17 @@ export default function AgentBuilder() {
     setGraphError(null);
     setGraphLoading(true);
     try {
-      const res = await fetch(`/api/v2/projects/${activeProject}/kg/query?${search.toString()}`, {
+      const endpoint = `/api/v2/projects/${activeProject}/kg/query?${search.toString()}`;
+      const res = await fetch(endpoint, {
         method: "GET",
       });
-      const data = await res.json().catch(() => null);
+      const { data, text } = await readJsonAndText(res);
       if (!res.ok || !data?.ok) {
-        const msg = (data && typeof data.error === "string" && data.error) || `HTTP ${res.status}`;
+        const msg = formatRequestErrorLine(
+          endpoint,
+          res.status,
+          (data && safeText(data?.error || data?.message)) || text,
+        );
         throw new Error(msg);
       }
       if (typeof data?.cypher === "string") {
@@ -2223,7 +2416,7 @@ export default function AgentBuilder() {
       }
     } catch (err: any) {
       const msg = String(err?.message || "Graph query failed");
-      if (msg.includes("HTTP 404") || msg.includes("HTTP 405")) {
+      if (msg.includes("| 404 |") || msg.includes("| 405 |") || msg.includes("HTTP 404") || msg.includes("HTTP 405")) {
         const fallbackCypher = preset === "SEED" ? KG_SEED_QUERY : KG_EXPAND_QUERY;
         await runGraphQuery(fallbackCypher, {
           merge: opts?.merge,
@@ -2236,6 +2429,98 @@ export default function AgentBuilder() {
       setGraphLoading(false);
     }
   }, [activeProject, graphTypeFilter, graphMinConfidence, buildRecencySinceTs, runGraphQuery]);
+
+  const loadKnowGraphData = useCallback(async () => {
+    if (!activeProject) {
+      setKnowGraphData({ nodes: [], relationships: [] });
+      return;
+    }
+
+    try {
+      const endpoint = `/api/knowgraph/graph?projectId=${encodeURIComponent(activeProject)}`;
+      const res = await fetch(endpoint, {
+        credentials: "include",
+      });
+      const { data, text } = await readJsonAndText(res);
+      if (!res.ok) {
+        throw new Error(
+          formatRequestErrorLine(endpoint, res.status, (data && safeText(data?.error?.message || data?.error)) || text),
+        );
+      }
+      setKnowGraphData({
+        nodes: Array.isArray(data?.nodes) ? data.nodes : [],
+        relationships: Array.isArray(data?.relationships) ? data.relationships : [],
+      });
+      setGraphError((prev) => (prev && prev.includes("/api/knowgraph/graph") ? null : prev));
+    } catch (err: any) {
+      console.warn("[KnowGraph] graph fetch failed:", err?.message || err);
+      setKnowGraphData({ nodes: [], relationships: [] });
+      setGraphError(err?.message || "KnowGraph graph fetch failed");
+    }
+  }, [activeProject]);
+
+  const loadKnowGraphHealth = useCallback(async (): Promise<boolean> => {
+    const endpoint = "/api/knowgraph/health";
+    try {
+      const res = await fetch(endpoint, { credentials: "include" });
+      const { data, text } = await readJsonAndText(res);
+      if (!res.ok) {
+        throw new Error(
+          formatRequestErrorLine(endpoint, res.status, (data && safeText(data?.error?.message || data?.error)) || text),
+        );
+      }
+      setGraphError((prev) => (prev && prev.includes(endpoint) ? null : prev));
+      return true;
+    } catch (err: any) {
+      setGraphError(err?.message || `${endpoint} | 0 | request failed`);
+      return false;
+    }
+  }, []);
+
+  const expandKnowGraphFromEntity = useCallback(
+    async (entity: KnowledgeGraphNode) => {
+      if (!activeProject) return;
+      const rawId = String(entity.rawId || entity.id || "").trim();
+      if (!rawId) return;
+
+      const endpoint = `/api/knowgraph/expand?projectId=${encodeURIComponent(activeProject)}&nodeId=${encodeURIComponent(rawId)}&depth=1&limit=50`;
+      setExpandingNodeId(entity.label || entity.id);
+      try {
+        const res = await fetch(endpoint, { credentials: "include" });
+        const { data, text } = await readJsonAndText(res);
+        if (!res.ok) {
+          throw new Error(
+            formatRequestErrorLine(endpoint, res.status, (data && safeText(data?.error?.message || data?.error)) || text),
+          );
+        }
+
+        const nextNodes = Array.isArray(data?.nodes) ? data.nodes : [];
+        const nextRelationships = Array.isArray(data?.relationships) ? data.relationships : [];
+        setKnowGraphData((prev) => {
+          const nodeMap = new Map<string, any>();
+          const relationshipMap = new Map<string, any>();
+          [...(Array.isArray(prev.nodes) ? prev.nodes : []), ...nextNodes].forEach((n: any) => {
+            const id = String(n?.id ?? "").trim();
+            if (id && !nodeMap.has(id)) nodeMap.set(id, n);
+          });
+          [...(Array.isArray(prev.relationships) ? prev.relationships : []), ...nextRelationships].forEach((r: any) => {
+            const id = String(r?.id ?? "").trim();
+            if (id && !relationshipMap.has(id)) relationshipMap.set(id, r);
+          });
+          return {
+            nodes: Array.from(nodeMap.values()),
+            relationships: Array.from(relationshipMap.values()),
+          };
+        });
+        setGraphError((prev) => (prev && prev.includes("/api/knowgraph/expand") ? null : prev));
+      } catch (err: any) {
+        setGraphError(err?.message || "KnowGraph expand failed");
+      } finally {
+        setExpandingNodeId(null);
+      }
+    },
+    [activeProject],
+  );
 
   // When switching projects, reload all per-project state from storage
     useEffect(() => {
@@ -2274,8 +2559,22 @@ export default function AgentBuilder() {
   const loadProjectSubgraph = useCallback(() => {
     setGraphResetToken((v) => v + 1);
     setSelectedEdgeEvidence(null);
-    void runGraphPresetQuery("SEED", { limit: 220 });
-  }, [runGraphPresetQuery]);
+    setGraphError(null);
+    void (async () => {
+      const knowHealthOk = await loadKnowGraphHealth();
+      await runGraphPresetQuery("SEED", { limit: 220 });
+      if (!knowHealthOk) {
+        setKnowGraphData({ nodes: [], relationships: [] });
+        return;
+      }
+      await loadKnowGraphData();
+    })();
+  }, [loadKnowGraphData, loadKnowGraphHealth, runGraphPresetQuery]);
+
+  const loadGraphData = useCallback(() => {
+    if (!activeProject) return;
+    loadProjectSubgraph();
+  }, [activeProject, loadProjectSubgraph]);
 
   const expandGraphFromNode = useCallback(
     async (nodeId: string) => {
@@ -2301,6 +2600,14 @@ export default function AgentBuilder() {
       loadProjectSubgraph();
     }
   }, [tab, activeProject, panelOpen, loadProjectSubgraph]);
+
+  useEffect(() => {
+    const refresh = () => {
+      loadGraphData();
+    };
+    window.addEventListener("knowledge:refresh", refresh);
+    return () => window.removeEventListener("knowledge:refresh", refresh);
+  }, [loadGraphData]);
 
   useEffect(() => {
     setSelectedEdgeEvidence(null);
@@ -2475,13 +2782,20 @@ export default function AgentBuilder() {
   const reject = (id: string) =>
     setLinks((ls) => ls.filter((x) => x.id !== id));
 
-  const graphViz = useMemo(() => ageRowsToGraph(graphResult), [graphResult]);
+  const thinkGraphViz = useMemo(
+    () => prefixThinkGraphIds(ageRowsToGraph(graphResult)),
+    [graphResult],
+  );
 
-  const graphTypeOptions = useMemo(() => {
-    const s = new Set<string>();
-    graphViz.nodes.forEach((n) => s.add(safeText(n.type || "unknown").toLowerCase()));
-    return Array.from(s).sort();
-  }, [graphViz.nodes]);
+  const knowGraphViz = useMemo(
+    () => normalizeKnowGraphResponseToGraph(knowGraphData),
+    [knowGraphData],
+  );
+
+  const graphViz = useMemo(
+    () => mergeKnowledgeGraphs(thinkGraphViz, knowGraphViz),
+    [thinkGraphViz, knowGraphViz],
+  );
 
   const graphVizFiltered = useMemo(() => {
     const sinceTs = buildRecencySinceTs();
@@ -2550,30 +2864,45 @@ export default function AgentBuilder() {
     return { nodes: keptNodes, edges: keptEdges };
   }, [graphViz, graphTypeFilter, graphMinConfidence, buildRecencySinceTs]);
 
-  const runGraphSearch = useCallback(() => {
-    if (!graphSearchText.trim()) return;
-    setGraphSearchToken((v) => v + 1);
-  }, [graphSearchText]);
+  const graphVizForNVL = useMemo(() => {
+    const sourcesBySignature = new Map<string, Set<"think" | "know">>();
+    graphVizFiltered.nodes.forEach((n) => {
+      const source = n.graphSource === "know" ? "know" : "think";
+      const key = `${String(n.label || "").trim().toLowerCase()}::${String(n.type || "unknown").trim().toLowerCase()}`;
+      if (!sourcesBySignature.has(key)) {
+        sourcesBySignature.set(key, new Set());
+      }
+      sourcesBySignature.get(key)?.add(source);
+    });
 
-  const graphVizForCytoscape = useMemo(() => {
-    const nodes: KgViewNode[] = graphVizFiltered.nodes.map((n) => ({
-      id: n.id,
-      label: n.label || n.id,
-      type: String(n.type || "unknown").toLowerCase(),
-      last_seen_ts: n.last_seen_ts,
-      degree: n.degree || 0,
-    }));
+    const entities: KnowledgeGraphNode[] = graphVizFiltered.nodes.map((n) => {
+      const source = n.graphSource === "know" ? "know" : "think";
+      const key = `${String(n.label || "").trim().toLowerCase()}::${String(n.type || "unknown").trim().toLowerCase()}`;
+      const isMixed = (sourcesBySignature.get(key)?.size || 0) > 1;
+      return {
+        id: n.id,
+        rawId: n.rawId || n.id,
+        label: n.label || n.id,
+        type: String(n.type || "unknown").toLowerCase(),
+        source: isMixed ? "mixed" : source,
+        originSource: source,
+        last_seen_ts: n.last_seen_ts,
+        degree: n.degree || 0,
+      };
+    });
 
-    const edges: KgViewEdge[] = [];
+    const relationships: KnowledgeGraphRelationship[] = [];
     graphVizFiltered.edges.forEach((e) => {
       const source = e.source || e.a;
       const target = e.target || e.b;
       if (!source || !target) return;
-      edges.push({
+      relationships.push({
         id: e.id || `${source}->${target}:${e.type || "related_to"}`,
-        source,
-        target,
+        rawId: e.rawId || e.id || `${source}->${target}:${e.type || "related_to"}`,
+        from: source,
+        to: target,
         type: e.type || "related_to",
+        source: e.graphSource === "know" ? "know" : "think",
         weight: e.weight,
         confidence: e.confidence,
         last_seen_ts: e.last_seen_ts,
@@ -2582,7 +2911,7 @@ export default function AgentBuilder() {
       });
     });
 
-    return { nodes, edges };
+    return { entities, relationships };
   }, [graphVizFiltered]);
 
   // derive counts
@@ -2722,7 +3051,12 @@ export default function AgentBuilder() {
             width: panelOpen ? `calc(100% - ${panelWidth}px)` : "100%",
           }}
         >
-          <Chat messages={messages} onSend={handleSend} disabled={sending} />
+          <Chat
+            messages={messages}
+            onSend={handleSend}
+            projectId={activeProject}
+            disabled={sending}
+          />
         </div>
 
         {/* RIGHT panel */}
@@ -3001,202 +3335,67 @@ export default function AgentBuilder() {
                 {/* Knowledge tab - available in both modes */}
                 {tab === "Knowledge" && (
                   <div className="space-y-3 h-full flex flex-col">
-                    {activeProject && (
-                      <div
-                        className="text-xs p-3 rounded"
-                        style={{
-                          background: C.bg,
-                          border: `1px solid ${C.border}`,
-                          color: C.neutral,
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                          <div style={{ color: C.primary, fontWeight: 600 }}>KG Status</div>
-                          <div
-                            style={{
-                              fontSize: 10,
-                              color: C.neutral,
-                              border: `1px solid ${C.border}`,
-                              borderRadius: 999,
-                              padding: '2px 8px',
-                              background: '#141414',
-                            }}
-                          >
-                            {kgStatusPolledAt ? `refreshed ${kgStatusPolledAt.toLocaleTimeString()}` : 'refreshing…'}
-                          </div>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
-                          <div>Chunks: {kgStatus?.totals?.chunks ?? 0}</div>
-                          <div>Entities: {kgStatus?.totals?.entities ?? 0}</div>
-                          <div>Rels: {kgStatus?.totals?.rels ?? 0}</div>
-                        </div>
-                        {kgStatus?.totals && kgStatus.totals.chunks === 0 && kgStatus.totals.entities === 0 && kgStatus.totals.rels === 0 && (
-                          <div style={{ marginBottom: 8, fontStyle: 'italic' }}>No data yet.</div>
-                        )}
-                        {kgStatus?.last_ingest ? (
-                          <div>
-                            <div>Last: {kgStatus.last_ingest.ts || kgStatus.last_ingest.last_ts ? new Date((kgStatus.last_ingest.ts || kgStatus.last_ingest.last_ts) as string).toLocaleString() : 'never'}</div>
-                            <div>
-                              Status: {kgStatus.last_ingest.ok ? 'ok' : 'error'}{' '}
-                              {kgStatus.last_ingest.ok ? '' : safeText(kgStatus.last_ingest.error_code || 'unknown')}
-                            </div>
-                            {!kgStatus.last_ingest.ok && kgStatus.last_ingest.error_message && (
-                              <div style={{ marginTop: 4 }}>{safeText(kgStatus.last_ingest.error_message)}</div>
-                            )}
-                          </div>
-                        ) : (
-                          <div>Last: never</div>
-                        )}
-                      </div>
-                    )}
                     <div
                       className="text-xs p-3 rounded"
                       style={{
                         background: C.bg,
                         border: `1px solid ${C.border}`,
                         color: C.neutral,
-                        display: "grid",
-                        gap: 8,
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 12,
                       }}
                     >
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1.2fr auto", gap: 8 }}>
-                        <select
-                          value={graphTypeFilter}
-                          onChange={(e) => setGraphTypeFilter(e.target.value)}
-                          style={{
-                            background: C.panel,
-                            border: `1px solid ${C.border}`,
-                            color: C.text,
-                            borderRadius: 6,
-                            padding: "6px 8px",
-                          }}
-                        >
-                          <option value="all">All types</option>
-                          {graphTypeOptions.map((t) => (
-                            <option key={safeText(t)} value={safeText(t)}>
-                              {safeText(t)}
-                            </option>
-                          ))}
-                        </select>
-
-                        <select
-                          value={graphRecencyFilter}
-                          onChange={(e) => setGraphRecencyFilter(e.target.value as "all" | "24h" | "7d" | "30d")}
-                          style={{
-                            background: C.panel,
-                            border: `1px solid ${C.border}`,
-                            color: C.text,
-                            borderRadius: 6,
-                            padding: "6px 8px",
-                          }}
-                        >
-                          <option value="all">All time</option>
-                          <option value="24h">Last 24h</option>
-                          <option value="7d">Last 7d</option>
-                          <option value="30d">Last 30d</option>
-                        </select>
-
-                        <input
-                          type="number"
-                          min={0}
-                          max={1}
-                          step={0.05}
-                          value={graphMinConfidence}
-                          onChange={(e) => setGraphMinConfidence(clamp(Number(e.target.value || 0), 0, 1))}
-                          placeholder="Min confidence"
-                          style={{
-                            background: C.panel,
-                            border: `1px solid ${C.border}`,
-                            color: C.text,
-                            borderRadius: 6,
-                            padding: "6px 8px",
-                          }}
-                        />
-
-                        <input
-                          value={graphSearchText}
-                          onChange={(e) => setGraphSearchText(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") runGraphSearch();
-                          }}
-                          placeholder="Find node label..."
-                          style={{
-                            background: C.panel,
-                            border: `1px solid ${C.border}`,
-                            color: C.text,
-                            borderRadius: 6,
-                            padding: "6px 8px",
-                          }}
-                        />
-                        <button
-                          onClick={runGraphSearch}
-                          style={{
-                            border: `1px solid ${C.border}`,
-                            color: C.text,
-                            background: C.panel,
-                            borderRadius: 6,
-                            padding: "6px 10px",
-                          }}
-                        >
-                          Search
-                        </button>
-                      </div>
-                      <div style={{ display: "flex", justifyContent: "space-between", color: C.neutral }}>
-                        <span>
-                          Nodes: {graphVizFiltered.nodes.length} | Edges: {graphVizFiltered.edges.length}
+                      <span>
+                        Entities: {graphVizFiltered.nodes.length} | Relationships: {graphVizFiltered.edges.length}
+                      </span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 12, opacity: 0.95 }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: 999, background: C.primary, display: "inline-block" }} />
+                          ThinkGraph
                         </span>
-                        <span style={{ opacity: 0.9 }}>Click node to expand neighbors</span>
-                      </div>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: 999, background: C.accent, display: "inline-block" }} />
+                          KnowGraph
+                        </span>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                          <span style={{ fontSize: 12, lineHeight: 1, color: C.neutral }}>◐</span>
+                          Mixed
+                        </span>
+                      </span>
                     </div>
 
                     {graphError && (
-                      <div className="text-xs" style={{ color: C.warn }}>
-                        Graph query error: {safeText(graphError)}
+                      <div
+                        className="text-xs"
+                        style={{
+                          color: C.warn,
+                          border: `1px solid rgba(217,132,88,0.35)`,
+                          background: "rgba(217,132,88,0.08)",
+                          borderRadius: 8,
+                          padding: "6px 8px",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                        title={safeText(graphError)}
+                      >
+                        {safeText(graphError)}
                       </div>
                     )}
                     <div style={{ display: "flex", justifyContent: "center", flex: 1, minHeight: 280 }}>
-                      <KGCytoscapeGraph
-                        key={`kg-cy-${graphResetToken}`}
-                        nodes={graphVizForCytoscape.nodes}
-                        edges={graphVizForCytoscape.edges}
+                      <KnowledgeGraphNVL
+                        key={`kg-nvl-${graphResetToken}`}
+                        entities={graphVizForNVL.entities}
+                        relationships={graphVizForNVL.relationships}
                         loading={graphLoading}
-                        expandingNodeId={expandingNodeId}
-                        onNodeExpand={expandGraphFromNode}
-                        onEdgeInspect={setSelectedEdgeEvidence}
-                        searchText={graphSearchText}
-                        focusSearchToken={graphSearchToken}
+                        expandingEntityId={expandingNodeId}
+                        onThinkGraphExpand={expandGraphFromNode}
+                        onKnowGraphExpand={expandKnowGraphFromEntity}
+                        onRelationshipInspect={setSelectedEdgeEvidence}
                       />
                     </div>
-                    {selectedEdgeEvidence && (
-                      <div
-                        className="text-xs p-3 rounded"
-                        style={{
-                          background: C.bg,
-                          border: `1px solid ${C.border}`,
-                          color: C.neutral,
-                        }}
-                      >
-                        <div style={{ color: C.primary, fontWeight: 600, marginBottom: 6 }}>Relationship Evidence</div>
-                        <div>type: {safeText(selectedEdgeEvidence.type)}</div>
-                        <div>source: {safeText(selectedEdgeEvidence.source)}</div>
-                        <div>target: {safeText(selectedEdgeEvidence.target)}</div>
-                        {typeof selectedEdgeEvidence.weight === "number" && (
-                          <div>weight: {selectedEdgeEvidence.weight.toFixed(2)}</div>
-                        )}
-                        {typeof selectedEdgeEvidence.confidence === "number" && (
-                          <div>confidence: {selectedEdgeEvidence.confidence.toFixed(2)}</div>
-                        )}
-                        {selectedEdgeEvidence.last_seen_ts && <div>last_seen: {safeText(selectedEdgeEvidence.last_seen_ts)}</div>}
-                        {selectedEdgeEvidence.evidence_doc_id && (
-                          <div>doc_id: {safeText(selectedEdgeEvidence.evidence_doc_id)}</div>
-                        )}
-                        {selectedEdgeEvidence.evidence_snippet && (
-                          <div style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>
-                            snippet: {safeText(selectedEdgeEvidence.evidence_snippet)}
-                          </div>
-                        )}
-                      </div>
-                    )}
                   </div>
                 )}
               </div>

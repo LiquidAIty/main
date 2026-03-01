@@ -1,0 +1,6 @@
+neo4j-graphrag[openai]
+neo4j
+fastapi
+uvicorn
+python-multipart
+python-dotenv

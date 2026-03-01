@@ -174,6 +174,237 @@ function parseLimit(value: unknown, fallback: number): number {
   return Math.min(intVal, MAX_QUERY_LIMIT);
 }
 
+type MergedGraphEntity = {
+  id: string;
+  label: string;
+  type: string;
+};
+
+type MergedGraphRelationship = {
+  id: string;
+  from: string;
+  to: string;
+  type: string;
+};
+
+type MergedGraphPayload = {
+  entities: MergedGraphEntity[];
+  relationships: MergedGraphRelationship[];
+};
+
+function asGraphRowObject(raw: unknown): Record<string, any> | null {
+  const parsed =
+    typeof raw === 'string'
+      ? (() => {
+          try {
+            return JSON.parse(raw);
+          } catch {
+            return null;
+          }
+        })()
+      : raw;
+  if (!parsed || typeof parsed !== 'object') return null;
+  if ((parsed as any).row && typeof (parsed as any).row === 'object') {
+    return (parsed as any).row as Record<string, any>;
+  }
+  return parsed as Record<string, any>;
+}
+
+function normalizeAgeRowsToMergedGraph(rows: unknown[]): MergedGraphPayload {
+  const entityMap = new Map<string, MergedGraphEntity>();
+  const relationships: MergedGraphRelationship[] = [];
+
+  const ensureEntity = (idRaw: unknown, labelRaw: unknown, typeRaw: unknown) => {
+    const id = String(idRaw ?? '').trim();
+    if (!id) return;
+    if (entityMap.has(id)) return;
+    entityMap.set(id, {
+      id,
+      label: String(labelRaw ?? '').trim() || id,
+      type: String(typeRaw ?? '').trim() || 'Entity',
+    });
+  };
+
+  const pushRelationship = (idRaw: unknown, fromRaw: unknown, toRaw: unknown, typeRaw: unknown, idx: number) => {
+    const from = String(fromRaw ?? '').trim();
+    const to = String(toRaw ?? '').trim();
+    if (!from || !to) return;
+    const type = String(typeRaw ?? '').trim() || 'REL';
+    const id = String(idRaw ?? '').trim() || `age:${from}:${type}:${to}:${idx}`;
+    relationships.push({ id, from, to, type });
+  };
+
+  const extractNodeId = (obj: any): string => {
+    if (!obj || typeof obj !== 'object') return '';
+    if (obj.id != null) return String(obj.id);
+    if (obj._id != null) return String(obj._id);
+    if (obj.vid != null) return String(obj.vid);
+    return '';
+  };
+
+  rows.forEach((rawRow, idx) => {
+    const row = asGraphRowObject(rawRow);
+    if (!row) return;
+
+    if (row.a_id != null && row.b_id != null) {
+      ensureEntity(row.a_id, row.a_name, row.a_type ?? row.a_etype ?? row.a_category);
+      ensureEntity(row.b_id, row.b_name, row.b_type ?? row.b_etype ?? row.b_category);
+      pushRelationship(row.r_id ?? row.edge_id, row.a_id, row.b_id, row.r_type ?? row.rel_type, idx);
+      return;
+    }
+
+    if (row.a && row.b) {
+      const aId = extractNodeId(row.a);
+      const bId = extractNodeId(row.b);
+      const aProps = (row.a as any)?.properties || row.a;
+      const bProps = (row.b as any)?.properties || row.b;
+      ensureEntity(aId, aProps?.name ?? aProps?.label, aProps?.etype ?? aProps?.type);
+      ensureEntity(bId, bProps?.name ?? bProps?.label, bProps?.etype ?? bProps?.type);
+      pushRelationship(row.r?.id ?? row.r_id ?? row.edge_id, aId, bId, row.r?.rtype ?? row.r?.type ?? row.rtype, idx);
+    }
+  });
+
+  return {
+    entities: Array.from(entityMap.values()),
+    relationships,
+  };
+}
+
+function normalizeKnowgraphServiceGraph(payload: any): MergedGraphPayload {
+  if (payload && Array.isArray(payload.entities) && Array.isArray(payload.relationships)) {
+    return {
+      entities: payload.entities
+        .map((e: any) => ({
+          id: String(e?.id ?? '').trim(),
+          label: String(e?.label ?? e?.name ?? e?.title ?? e?.id ?? '').trim(),
+          type: String(e?.type ?? e?.labels?.[0] ?? 'NeoEntity').trim() || 'NeoEntity',
+        }))
+        .filter((e: MergedGraphEntity) => e.id),
+      relationships: payload.relationships
+        .map((r: any, idx: number) => ({
+          id: String(r?.id ?? `neo:rel:${idx}`).trim(),
+          from: String(r?.from ?? r?.startId ?? '').trim(),
+          to: String(r?.to ?? r?.endId ?? '').trim(),
+          type: String(r?.type ?? 'RELATED_TO').trim() || 'RELATED_TO',
+        }))
+        .filter((r: MergedGraphRelationship) => r.from && r.to),
+    };
+  }
+  return { entities: [], relationships: [] };
+}
+
+async function fetchKnowgraphViaService(projectId: string): Promise<MergedGraphPayload> {
+  const baseUrl = String(process.env.KNOWGRAPH_URL || 'http://localhost:8001').replace(/\/+$/, '');
+  const url = `${baseUrl}/graph?project_id=${encodeURIComponent(projectId)}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`knowgraph_service_http_${res.status}`);
+  }
+  const payload = await res.json();
+  return normalizeKnowgraphServiceGraph(payload);
+}
+
+async function fetchKnowgraphViaNeo4j(projectId: string): Promise<MergedGraphPayload> {
+  const uri = process.env.NEO4J_URI;
+  const user = process.env.NEO4J_USER;
+  const password = process.env.NEO4J_PASSWORD;
+  if (!uri || !user || !password) {
+    throw new Error('knowgraph_neo4j_env_missing');
+  }
+
+  const neo4jModule: any = await import('neo4j-driver');
+  const neo4j: any = neo4jModule?.default ?? neo4jModule;
+  const driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
+  const database = process.env.NEO4J_DATABASE || undefined;
+  const session = driver.session(database ? { database } : undefined);
+
+  try {
+    const nodeResult = await session.run(
+      `
+        MATCH (n)
+        WHERE coalesce(n.project_id, '') = $projectId
+        RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS props
+      `,
+      { projectId },
+    );
+
+    const relResult = await session.run(
+      `
+        MATCH (a)-[r]->(b)
+        WHERE coalesce(a.project_id, '') = $projectId
+          AND coalesce(b.project_id, '') = $projectId
+        RETURN elementId(r) AS id,
+               type(r) AS type,
+               elementId(a) AS startId,
+               elementId(b) AS endId
+      `,
+      { projectId },
+    );
+
+    const neoEntities: MergedGraphEntity[] = nodeResult.records.map((record: any) => {
+      const originalId = String(record.get('id'));
+      const labels = Array.isArray(record.get('labels')) ? (record.get('labels') as string[]) : [];
+      const props = (record.get('props') || {}) as Record<string, unknown>;
+      const label = String(props.name ?? props.title ?? props.id ?? originalId);
+      return {
+        id: `neo:${originalId}`,
+        label,
+        type: String(labels[0] || 'NeoEntity'),
+      };
+    });
+
+    const neoRelationships: MergedGraphRelationship[] = relResult.records.map((record: any) => {
+      const originalRelId = String(record.get('id'));
+      const startId = String(record.get('startId'));
+      const endId = String(record.get('endId'));
+      const relType = String(record.get('type') || 'RELATED_TO');
+      return {
+        id: `neo:${originalRelId}`,
+        from: `neo:${startId}`,
+        to: `neo:${endId}`,
+        type: relType,
+      };
+    });
+
+    return {
+      entities: neoEntities,
+      relationships: neoRelationships,
+    };
+  } finally {
+    await session.close();
+    await driver.close();
+  }
+}
+
+async function fetchKnowgraphMergedGraph(projectId: string): Promise<MergedGraphPayload> {
+  try {
+    return await fetchKnowgraphViaService(projectId);
+  } catch (serviceErr: any) {
+    // No /graph route yet is expected; fall back to direct Neo4j.
+    return await fetchKnowgraphViaNeo4j(projectId).catch((neoErr: any) => {
+      const serviceMsg = serviceErr?.message || String(serviceErr);
+      const neoMsg = neoErr?.message || String(neoErr);
+      throw new Error(`knowgraph_merge_failed service=${serviceMsg} neo=${neoMsg}`);
+    });
+  }
+}
+
+async function buildMergedAgeAndNeoGraph(projectId: string, rows: unknown[]): Promise<MergedGraphPayload> {
+  const ageGraph = normalizeAgeRowsToMergedGraph(rows);
+  let neoGraph: MergedGraphPayload = { entities: [], relationships: [] };
+
+  try {
+    neoGraph = await fetchKnowgraphMergedGraph(projectId);
+  } catch (err: any) {
+    console.warn('[KG_V2][QUERY] knowgraph merge skipped:', err?.message || err);
+  }
+
+  return {
+    entities: [...ageGraph.entities, ...neoGraph.entities],
+    relationships: [...ageGraph.relationships, ...neoGraph.relationships],
+  };
+}
+
 async function insertChunks(docId: string, src: string, chunks: { text: string }[]) {
   let written = 0;
   for (const chunk of chunks) {
@@ -668,7 +899,8 @@ router.get('/query', async (req, res) => {
       cypher,
       queryParams,
     });
-    return res.json({ ok: true, mode: mode || null, cypher, rows });
+    const mergedGraph = await buildMergedAgeAndNeoGraph(projectId, rows);
+    return res.json({ ok: true, mode: mode || null, cypher, rows, ...mergedGraph });
   } catch (err: any) {
     const status =
       err?.status ??
@@ -690,7 +922,8 @@ router.post('/query', async (req, res) => {
       cypher,
       queryParams: params,
     });
-    return res.json({ ok: true, rows });
+    const mergedGraph = await buildMergedAgeAndNeoGraph(projectId, rows);
+    return res.json({ ok: true, rows, ...mergedGraph });
   } catch (err: any) {
     const status =
       err?.status ??

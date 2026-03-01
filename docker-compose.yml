@@ -18,13 +18,27 @@ services:
   backend:
     build: .
     image: liquidaity-backend
-    env_file: .env
+    env_file:
+      - ./apps/backend/.env
     environment:
       - PORT=4000
+      - KNOWGRAPH_URL=http://knowgraph:8001
     depends_on:
       - neo4j
     expose:
       - "4000"
+    restart: unless-stopped
+
+  knowgraph:
+    build: ./services/knowgraph
+    ports:
+      - "8001:8001"
+    env_file:
+      - ./apps/backend/.env
+    environment:
+      - NEO4J_URI=neo4j://neo4j:7687
+    depends_on:
+      - neo4j
     restart: unless-stopped
 
   web:

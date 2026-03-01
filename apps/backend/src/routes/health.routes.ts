@@ -5,6 +5,10 @@ import { getMcpTools } from "../agents/mcp/mcpClient";
 
 const router = Router();
 
+router.get("/", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
 router.get("/health", async (_req, res) => {
   const out: { ok: boolean; neo4j?: string; esn?: string; mcp?: { count: number; error?: string } } = { ok: true };
 
