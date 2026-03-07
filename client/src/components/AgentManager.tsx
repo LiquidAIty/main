@@ -82,12 +82,11 @@ ${fields.memoryPolicy}`;
 
 interface AgentManagerProps {
   projectId: string;
-  agentType: 'agent_builder' | 'llm_chat' | 'kg_ingest';
+  agentType: 'agent_builder' | 'llm_chat' | 'kg_ingest' | 'knowgraph';
   activeTab: string;
-  workspaceProjectId?: string;
   onGraphRefresh?: () => void;
   onLastRun?: (lastRun: {
-    agentType: 'agent_builder' | 'llm_chat' | 'kg_ingest';
+    agentType: 'agent_builder' | 'llm_chat' | 'kg_ingest' | 'knowgraph';
     request: any;
     responseOrError: any;
     elapsedMs: number;
@@ -159,13 +158,14 @@ const DEFAULT_KG_RESPONSE_FORMAT = {
   schema: DEFAULT_KG_RESPONSE_SCHEMA,
 };
 
-export function AgentManager({ projectId, agentType, activeTab, workspaceProjectId, onLastRun }: AgentManagerProps) {
+export function AgentManager({ projectId, agentType, activeTab, onLastRun }: AgentManagerProps) {
+  const isGraphExtractionAgent = agentType === 'kg_ingest' || agentType === 'knowgraph';
   const urlProjectId = useMemo(() => {
     if (typeof window === 'undefined') return '';
     const params = new URLSearchParams(window.location.search);
     return params.get('projectId')?.trim() || '';
   }, []);
-  const resolvedProjectId = projectId || urlProjectId;
+  const resolvedProjectId = String(projectId || '').trim() || urlProjectId;
   const [loading, setLoading] = useState(false);
   
   // Model registry from backend (grouped by provider)
@@ -205,7 +205,7 @@ export function AgentManager({ projectId, agentType, activeTab, workspaceProject
   const [testRunning, setTestRunning] = useState(false);
   const [testResult, setTestResult] = useState<any>(null);
   const [, setLastRun] = useState<{
-    agentType: 'agent_builder' | 'llm_chat' | 'kg_ingest';
+    agentType: 'agent_builder' | 'llm_chat' | 'kg_ingest' | 'knowgraph';
     request: any;
     responseOrError: any;
     elapsedMs: number;
@@ -352,7 +352,7 @@ export function AgentManager({ projectId, agentType, activeTab, workspaceProject
           setResponseFormatSchema('');
         }
         setResponseFormatHasConfig(true);
-      } else if (agentType === 'kg_ingest') {
+      } else if (isGraphExtractionAgent) {
         setResponseFormatType('json_schema');
         setResponseFormatName(DEFAULT_KG_RESPONSE_FORMAT.name);
         setResponseFormatSchema(JSON.stringify(DEFAULT_KG_RESPONSE_FORMAT.schema, null, 2));
@@ -367,7 +367,7 @@ export function AgentManager({ projectId, agentType, activeTab, workspaceProject
         setToolsJson(JSON.stringify(fetchedTools, null, 2));
         setToolsHasConfig(true);
       } else {
-        setToolsJson(agentType === 'kg_ingest' ? '[]' : '');
+        setToolsJson(isGraphExtractionAgent ? '[]' : '');
         setToolsHasConfig(false);
       }
       setToolsError(null);
@@ -684,6 +684,14 @@ export function AgentManager({ projectId, agentType, activeTab, workspaceProject
               onChange={(e) => {
                 const newProvider = e.target.value as 'openai' | 'openrouter' | '';
                 setProvider(newProvider);
+                setModelKey((prev) => {
+                  if (!newProvider) return '';
+                  const nextModels = modelsByProvider[newProvider] || [];
+                  if (nextModels.some((m) => m.key === prev)) {
+                    return prev;
+                  }
+                  return nextModels[0]?.key || '';
+                });
               }}
               style={{
                 width: '100%',

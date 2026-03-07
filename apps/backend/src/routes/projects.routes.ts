@@ -316,6 +316,8 @@ Now extract chunks from this input text:`;
   
   const llmRes = await runLLM(prompt, {
     modelKey: llmModelKey,
+    provider,
+    providerModelId,
     system,
     ...(llmModelKey.startsWith('gpt-5')
       ? { maxTokens: 4096 }
@@ -1385,6 +1387,8 @@ export async function runIngestPipeline(params: {
 
       const llmRes = await runLLM(prompt, {
         modelKey: llmModelKey,
+        provider: kgProvider || undefined,
+        providerModelId: kgProviderModelId || undefined,
         system,
         temperature: 0,
         maxTokens: 2048,
@@ -1604,14 +1608,6 @@ router.post('/:projectId/kg/ingest', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'projectId is required' });
   }
 
-  // Validate: model key must NOT contain '/' (provider IDs not allowed)
-  if (llm_model && llm_model.includes('/')) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: 'invalid_model_key_format', 
-      message: `Model key cannot be a provider ID (got: ${llm_model}). Use internal keys like 'kimi-k2-thinking'.` 
-    });
-  }
   if (!text || typeof text !== 'string' || !text.trim()) {
     return res.status(400).json({ ok: false, error: 'text is required' });
   }

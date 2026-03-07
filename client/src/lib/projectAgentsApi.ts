@@ -8,7 +8,7 @@ export interface ProjectAgent {
   agent_id: string;
   project_id: string;
   name: string;
-  agent_type: 'kg_ingest' | 'kg_read' | 'llm_chat';
+  agent_type: 'kg_ingest' | 'knowgraph' | 'kg_read' | 'llm_chat';
   
   model?: string | null;
   prompt_template?: string | null;
@@ -31,7 +31,7 @@ export interface ProjectAgent {
 
 export interface CreateAgentInput {
   name: string;
-  agent_type: 'kg_ingest' | 'kg_read' | 'llm_chat';
+  agent_type: 'kg_ingest' | 'knowgraph' | 'kg_read' | 'llm_chat';
   model?: string;
   prompt_template?: string;
   tools?: string[];
@@ -204,8 +204,13 @@ export function getAgentTypes(): Array<{ value: string; label: string; descripti
   return [
     {
       value: 'kg_ingest',
-      label: 'Knowledge Builder',
-      description: 'Ingests text and extracts entities/relationships into knowledge graph',
+      label: 'ThinkGraph',
+      description: 'Ingests text and extracts entities/relationships into the ThinkGraph (AGE) layer',
+    },
+    {
+      value: 'knowgraph',
+      label: 'KnowGraph',
+      description: 'Extracts Neo4j-oriented entities/relationships for the KnowGraph sink',
     },
     {
       value: 'kg_read',
@@ -221,11 +226,12 @@ export function getAgentTypes(): Array<{ value: string; label: string; descripti
 }
 
 /**
- * Ensure default agents exist for a project (Main Chat + KG Ingest)
+ * Ensure default agents exist for a project (Main Chat + ThinkGraph + KnowGraph)
  */
 export async function ensureDefaultAgents(projectId: string): Promise<{
   mainChat: ProjectAgent;
   kgIngest: ProjectAgent;
+  knowgraph: ProjectAgent;
 }> {
   const res = await fetch(`${BASE}/projects/${projectId}/agents/ensure-defaults`, {
     method: 'POST',

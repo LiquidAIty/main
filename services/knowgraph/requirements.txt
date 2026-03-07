@@ -1,4 +1,4 @@
-neo4j-graphrag[openai]
+neo4j-graphrag[openai,sentence-transformers]
 neo4j
 fastapi
 uvicorn

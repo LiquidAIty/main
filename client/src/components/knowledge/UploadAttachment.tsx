@@ -17,6 +17,12 @@ function buildDocumentId(file: File): string {
   return `${base || "attachment"}-${stamp}`;
 }
 
+function isPdfFile(file: File): boolean {
+  const name = String(file.name || "").toLowerCase();
+  const type = String(file.type || "").toLowerCase();
+  return name.endsWith(".pdf") || type.includes("pdf");
+}
+
 async function readJsonSafely(res: Response): Promise<any | null> {
   try {
     return await res.json();
@@ -47,6 +53,28 @@ function formatUploadError(endpoint: string, status: number, body: string): stri
     .trim()
     .slice(0, 200);
   return `${endpoint} | ${status} | ${compact || "no response body"}`;
+}
+
+function normalizeIngestErrorMessage(payload: any, status: number): string {
+  const raw = String(
+    payload?.error?.message ||
+      payload?.message ||
+      payload?.error ||
+      "",
+  ).trim();
+  if (!raw) {
+    return formatUploadError("/api/knowgraph/ingest", status, "");
+  }
+  const lower = raw.toLowerCase();
+  if (
+    lower.includes("ratelimiterror") ||
+    lower.includes("rate limit") ||
+    lower.includes("insufficient_quota") ||
+    lower.includes("quota")
+  ) {
+    return "KnowGraph ingest failed: configured provider/model is rate limited or out of quota. No provider fallback was used.";
+  }
+  return raw;
 }
 
 async function ensureAnonymousSession(): Promise<void> {
@@ -91,6 +119,13 @@ export default function UploadAttachment({
     const file = event.target.files?.[0];
     if (!file) return;
 
+    if (!isPdfFile(file)) {
+      setToastType("error");
+      setToast("Only PDF attachments are supported for KnowGraph ingest.");
+      clearInput();
+      return;
+    }
+
     if (!projectId) {
       setToastType("error");
       setToast("Select a project before uploading an attachment.");
@@ -113,10 +148,7 @@ export default function UploadAttachment({
           setToast("Unauthorized: missing auth header/cookie");
           return;
         }
-        const message =
-          payload?.error?.message ||
-          payload?.message ||
-          formatUploadError("/api/knowgraph/ingest", response.status, "");
+        const message = normalizeIngestErrorMessage(payload, response.status);
         setToastType("error");
         setToast(message);
         return;
@@ -158,6 +190,7 @@ export default function UploadAttachment({
       <input
         ref={inputRef}
         type="file"
+        accept=".pdf,application/pdf"
         style={{ display: "none" }}
         onChange={handleFileSelected}
       />

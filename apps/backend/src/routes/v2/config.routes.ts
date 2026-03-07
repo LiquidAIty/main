@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import { pool } from '../../db/pool';
-import { getAgentConfig, updateAgentConfig, type AgentType } from '../../services/v2/agentConfigStore';
+import { getAgentConfig, repairSystemAgentConfigs, updateAgentConfig, type AgentType } from '../../services/v2/agentConfigStore';
 import { MODEL_REGISTRY } from '../../llm/models.config';
 import { DEFAULT_AGENT_BUILDER_PROMPT_TEMPLATE } from '../../prompts/agentBuilderPrompt';
 
 const router = Router();
 let warnedMissingVersionsTable = false;
-const VALID_AGENT_TYPES: AgentType[] = ['llm_chat', 'kg_ingest', 'agent_builder'];
+const VALID_AGENT_TYPES: AgentType[] = ['llm_chat', 'kg_ingest', 'knowgraph', 'agent_builder'];
 const REQUIRED_FIELDS: Array<'provider' | 'model_key' | 'prompt_template' | 'max_tokens'> = [
   'provider',
   'model_key',
@@ -47,6 +47,30 @@ function pickDefaultOpenAiModelKey(): string | null {
   const firstOpenAi = Object.entries(MODEL_REGISTRY).find(([, m]) => m.provider === 'openai');
   return firstOpenAi ? firstOpenAi[0] : null;
 }
+
+router.post('/:projectId/agents/system/repair', async (req, res) => {
+  const projectId = req.params.projectId;
+  try {
+    const repaired = await repairSystemAgentConfigs(projectId);
+    console.log(
+      '[AGENT_CONFIG_REPAIR] projectId=%s repaired=%s',
+      projectId,
+      JSON.stringify(repaired),
+    );
+    return res.json({
+      ok: true,
+      projectId,
+      repaired,
+    });
+  } catch (err: any) {
+    console.error('[CONFIG_V2][REPAIR] failed', {
+      projectId,
+      error: err?.message || String(err),
+      stack: err?.stack,
+    });
+    return res.status(500).json({ ok: false, error: err?.message || 'failed_to_repair_config' });
+  }
+});
 
 router.get('/:projectId/agents/:agentType/config', async (req, res) => {
   const projectId = req.params.projectId;

@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from ingest import ingest_pdf
@@ -25,6 +25,7 @@ def _sanitize_filename(name: str) -> str:
 
 @app.post("/ingest")
 async def ingest(
+    request: Request,
     project_id: str = Form(...),
     document_id: str = Form(...),
     file: UploadFile = File(...),
@@ -36,19 +37,39 @@ async def ingest(
         with saved_path.open("wb") as out:
             shutil.copyfileobj(file.file, out)
 
-        await ingest_pdf(str(saved_path), project_id, document_id)
+        agent_id = (request.headers.get("x-agent-id") or "").strip() or None
+        agent_provider = (request.headers.get("x-agent-provider") or "").strip() or None
+        agent_model_key = (request.headers.get("x-agent-model-key") or "").strip() or None
+        agent_model_id = (request.headers.get("x-agent-model-id") or "").strip() or None
+
+        await ingest_pdf(
+            str(saved_path),
+            project_id,
+            document_id,
+            provider=agent_provider,
+            model_key=agent_model_key,
+            model_id=agent_model_id,
+            agent_id=agent_id,
+        )
         return JSONResponse(
             status_code=200,
             content={
                 "ok": True,
                 "project_id": project_id,
                 "document_id": document_id,
+                "provider": agent_provider,
+                "model": agent_model_id or agent_model_key,
             },
         )
     except Exception as exc:
         return JSONResponse(
             status_code=500,
-            content={"ok": False, "error": {"message": str(exc)}},
+            content={
+                "ok": False,
+                "error": {
+                    "message": str(exc),
+                },
+            },
         )
     finally:
         await file.close()

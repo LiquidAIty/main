@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { Router } from 'express';
 import multer from 'multer';
+import { resolveKnowgraphAgent } from '../services/resolveAgents';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -422,6 +423,44 @@ function buildMultipartForm(projectId: string, documentId: string, file: Uploade
   return form;
 }
 
+async function readResponseDataSafe(response: Response): Promise<any> {
+  const text = await response.text().catch(() => '');
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { ok: response.ok, message: text };
+  }
+}
+
+function pickErrorMessage(payload: any): string {
+  const candidate =
+    payload?.error?.message ??
+    payload?.message ??
+    payload?.error ??
+    '';
+  return String(candidate || '').trim();
+}
+
+function normalizeKnowgraphIngestError(message: string, provider: string, providerModelId: string): string {
+  const raw = String(message || '').trim();
+  const providerLabel = provider || 'unknown';
+  const modelLabel = providerModelId || 'unknown';
+  const lower = raw.toLowerCase();
+  if (
+    lower.includes('ratelimiterror') ||
+    lower.includes('rate limit') ||
+    lower.includes('insufficient_quota') ||
+    lower.includes('quota')
+  ) {
+    return `KnowGraph ingest failed for configured provider/model (${providerLabel} / ${modelLabel}): rate limit or quota exceeded. No provider fallback was used.`;
+  }
+  if (!raw) {
+    return `KnowGraph ingest failed for configured provider/model (${providerLabel} / ${modelLabel}). No provider fallback was used.`;
+  }
+  return `KnowGraph ingest failed for configured provider/model (${providerLabel} / ${modelLabel}). ${raw}`;
+}
+
 router.post('/ingest', upload.single('file') as any, async (req, res) => {
   try {
     const projectId = typeof req.body?.project_id === 'string' ? req.body.project_id.trim() : '';
@@ -435,28 +474,83 @@ router.post('/ingest', upload.single('file') as any, async (req, res) => {
       });
     }
 
+    const fileName = String(file.originalname || '').toLowerCase();
+    const fileType = String(file.mimetype || '').toLowerCase();
+    const isPdf = fileName.endsWith('.pdf') || fileType.includes('pdf');
+    if (!isPdf) {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'Only PDF attachments are supported by the KnowGraph ingest pipeline.' },
+      });
+    }
+
+    const resolved = await resolveKnowgraphAgent(projectId, '/api/knowgraph/ingest');
+    if (!resolved) {
+      return res.status(409).json({
+        ok: false,
+        error: { message: 'knowgraph_agent_not_configured' },
+      });
+    }
+    console.log(
+      '[RUNTIME_MODEL] route=/api/knowgraph/ingest projectId=%s agentType=%s agent_id=%s provider=%s model_key=%s provider_model_id=%s',
+      projectId,
+      'knowgraph',
+      resolved.agentId,
+      resolved.provider,
+      resolved.modelKey,
+      resolved.providerModelId,
+    );
+    console.log(
+      '[KNOWGRAPH_INGEST] projectId=%s documentId=%s agentType=knowgraph agentId=%s provider=%s model=%s',
+      projectId,
+      documentId,
+      resolved.agentId,
+      resolved.provider,
+      resolved.providerModelId,
+    );
+
     const baseUrls = buildKnowgraphBaseUrls();
     let lastError: any;
 
     for (const baseUrl of baseUrls) {
       try {
         const form = buildMultipartForm(projectId, documentId, file);
-        const response = await axios.post(`${baseUrl}/ingest`, form, {
-          headers:
-            typeof (form as any).getHeaders === 'function'
-              ? (form as any).getHeaders()
-              : undefined,
-          maxBodyLength: Infinity,
-          maxContentLength: Infinity,
-          validateStatus: () => true,
+        const response = await fetch(`${baseUrl}/ingest`, {
+          method: 'POST',
+          headers: {
+            'x-agent-id': resolved.agentId,
+            'x-agent-provider': resolved.provider,
+            'x-agent-model-key': resolved.modelKey,
+            'x-agent-model-id': resolved.providerModelId,
+          },
+          body: form,
         });
+        const data = await readResponseDataSafe(response);
+        if (response.ok) {
+          return res.status(response.status).json(data);
+        }
 
-        return res.status(response.status).json(response.data);
+        const upstreamMessage = pickErrorMessage(data);
+        return res.status(response.status).json({
+          ok: false,
+          error: {
+            code: `knowgraph_ingest_upstream_${response.status}`,
+            message: normalizeKnowgraphIngestError(
+              upstreamMessage,
+              resolved.provider,
+              resolved.providerModelId,
+            ),
+            provider: resolved.provider,
+            model_key: resolved.modelKey,
+            provider_model_id: resolved.providerModelId,
+          },
+          upstream: data,
+        });
       } catch (error: any) {
         lastError = error;
-        const code = String(error?.code || '');
+        const code = String(error?.cause?.code || error?.code || '');
         const canRetryNetworkLookup =
-          !error?.response && (code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN');
+          code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN';
         if (!canRetryNetworkLookup) {
           break;
         }
@@ -465,14 +559,12 @@ router.post('/ingest', upload.single('file') as any, async (req, res) => {
 
     throw lastError;
   } catch (error: any) {
-    const status = Number(error?.response?.status) || 502;
     const message =
-      error?.response?.data?.error?.message ||
       error?.cause?.message ||
       (typeof error?.toString === 'function' ? error.toString() : undefined) ||
       error?.message ||
       'KnowGraph proxy request failed';
-    return res.status(status).json({ ok: false, error: { message } });
+    return res.status(502).json({ ok: false, error: { message } });
   }
 });
 

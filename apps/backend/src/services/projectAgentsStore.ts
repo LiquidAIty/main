@@ -10,7 +10,7 @@ export interface ProjectAgent {
   agent_id: string;
   project_id: string;
   name: string;
-  agent_type: 'kg_ingest' | 'kg_read' | 'llm_chat';
+  agent_type: 'kg_ingest' | 'knowgraph' | 'kg_read' | 'llm_chat';
   
   // Agent configuration
   model?: string | null;
@@ -37,7 +37,7 @@ export interface ProjectAgent {
 export interface CreateAgentInput {
   project_id: string;
   name: string;
-  agent_type: 'kg_ingest' | 'kg_read' | 'llm_chat';
+  agent_type: 'kg_ingest' | 'knowgraph' | 'kg_read' | 'llm_chat';
   model?: string;
   prompt_template?: string;
   tools?: string[];
@@ -143,7 +143,7 @@ export async function getProjectAgent(agentId: string): Promise<ProjectAgent | n
 /**
  * Get agent by project_id and agent_type (for assignment resolution)
  */
-export async function getProjectAgentByProjectId(projectId: string, agentType: 'kg_ingest' | 'llm_chat'): Promise<ProjectAgent | null> {
+export async function getProjectAgentByProjectId(projectId: string, agentType: 'kg_ingest' | 'knowgraph' | 'llm_chat'): Promise<ProjectAgent | null> {
   console.log('[STORE] Looking up agent by projectId=%s agentType=%s', projectId, agentType);
   const { rows } = await pool.query(
     `SELECT * FROM ag_catalog.project_agents 
@@ -307,17 +307,19 @@ export function assembleSectionedPrompt(agent: ProjectAgent): string {
 }
 
 /**
- * Ensure default agents exist for a project (Main Chat + KG Ingest)
+ * Ensure default agents exist for a project (Main Chat + ThinkGraph + KnowGraph)
  * Creates them if missing, returns existing ones otherwise
  */
 export async function ensureDefaultAgents(projectId: string): Promise<{
   mainChat: ProjectAgent;
   kgIngest: ProjectAgent;
+  knowgraph: ProjectAgent;
 }> {
   const agents = await listProjectAgents(projectId);
   
   let mainChat = agents.find(a => a.agent_type === 'llm_chat');
   let kgIngest = agents.find(a => a.agent_type === 'kg_ingest');
+  let knowgraph = agents.find(a => a.agent_type === 'knowgraph');
   
   if (!mainChat) {
     mainChat = await createProjectAgent({
@@ -336,7 +338,7 @@ export async function ensureDefaultAgents(projectId: string): Promise<{
   if (!kgIngest) {
     kgIngest = await createProjectAgent({
       project_id: projectId,
-      name: 'KG Ingest',
+      name: 'ThinkGraph',
       agent_type: 'kg_ingest',
       model: 'deepseek-chat',
       temperature: 0,
@@ -347,7 +349,22 @@ export async function ensureDefaultAgents(projectId: string): Promise<{
       io_schema_text: 'Output valid JSON with entities and relations arrays.',
     });
   }
+
+  if (!knowgraph) {
+    knowgraph = await createProjectAgent({
+      project_id: projectId,
+      name: 'KnowGraph',
+      agent_type: 'knowgraph',
+      model: 'deepseek-chat',
+      temperature: 0,
+      max_tokens: 2048,
+      role_text: 'You extract Neo4j-oriented graph facts from chunks.',
+      goal_text: 'Produce stable entities and relations for the KnowGraph (Neo4j) sink.',
+      constraints_text: 'Return strict JSON with entities and relations using evidence chunk ids.',
+      io_schema_text: 'Output valid JSON with entities and relations arrays.',
+    });
+  }
   
-  return { mainChat, kgIngest };
+  return { mainChat, kgIngest, knowgraph };
 }
 

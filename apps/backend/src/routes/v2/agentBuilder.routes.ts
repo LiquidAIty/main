@@ -12,7 +12,7 @@ import {
 
 const router = Router();
 
-const VALID_AGENT_TYPES: AgentType[] = ['llm_chat', 'kg_ingest', 'agent_builder'];
+const VALID_AGENT_TYPES: AgentType[] = ['llm_chat', 'kg_ingest', 'knowgraph', 'agent_builder'];
 
 type LlmDebug = {
   provider: string;
@@ -77,8 +77,8 @@ function missingFromResolveError(message: string): string[] | null {
   const missing: string[] = [];
   if (message.includes('_prompt_missing')) missing.push('prompt_template');
   if (message.includes('_model_missing')) missing.push('model_key');
+  if (message.includes('_provider_missing')) missing.push('provider');
   if (missing.length) {
-    missing.push('provider');
     return missing;
   }
   return null;
@@ -87,6 +87,8 @@ function missingFromResolveError(message: string): string[] | null {
 
 async function invokeLlmWithDebug(params: {
   modelKey: string;
+  provider?: string | null;
+  providerModelId?: string | null;
   system: string;
   userContent: string;
   temperature?: number | null;
@@ -96,7 +98,15 @@ async function invokeLlmWithDebug(params: {
   responseFormat?: any | null;
   tools?: any[] | null;
 }): Promise<{ text: string; debug: LlmDebug }> {
-  const model = resolveModel(params.modelKey);
+  const normalizedProvider = String(params.provider || '').trim().toLowerCase();
+  const explicitProvider =
+    normalizedProvider === 'openai' || normalizedProvider === 'openrouter'
+      ? (normalizedProvider as 'openai' | 'openrouter')
+      : null;
+  const explicitProviderModelId = String(params.providerModelId || '').trim() || null;
+  const model = explicitProvider && explicitProviderModelId
+    ? { provider: explicitProvider, id: explicitProviderModelId }
+    : resolveModel(params.modelKey);
   const temperature = params.temperature;
   const topP = params.topP;
   const max_tokens = params.maxTokens;
@@ -300,6 +310,8 @@ router.post('/:projectId/agent_builder/chat', async (req, res) => {
 
     const { text, debug } = await invokeLlmWithDebug({
       modelKey: resolved.modelKey,
+      provider: resolved.provider,
+      providerModelId: resolved.providerModelId,
       system: resolved.systemPrompt,
       userContent: message,
       temperature: resolved.temperature ?? undefined,
@@ -348,6 +360,8 @@ router.post('/:projectId/agents/:agentType/test', async (req, res) => {
 
     const { text, debug } = await invokeLlmWithDebug({
       modelKey: resolved.modelKey,
+      provider: resolved.provider,
+      providerModelId: resolved.providerModelId,
       system: resolved.systemPrompt,
       userContent: input,
       temperature: resolved.temperature ?? undefined,

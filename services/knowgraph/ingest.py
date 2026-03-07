@@ -11,6 +11,9 @@ from typing import Any
 from dotenv import load_dotenv
 from neo4j import Driver, GraphDatabase
 from neo4j_graphrag.embeddings.openai import OpenAIEmbeddings
+from neo4j_graphrag.embeddings.sentence_transformers import (
+    SentenceTransformerEmbeddings,
+)
 from neo4j_graphrag.experimental.components.text_splitters.base import TextSplitter
 from neo4j_graphrag.experimental.components.types import (
     LexicalGraphConfig,
@@ -39,6 +42,39 @@ class ChunkSpan:
     start_char: int
     end_char: int
     text: str
+
+
+@dataclass(frozen=True)
+class RuntimeModelConfig:
+    provider: str
+    model_key: str | None
+    model_id: str
+    llm_client_kwargs: dict[str, Any]
+    embedding_backend: str
+    embedding_model: str
+    embedding_dimensions: int
+    embedding_client_kwargs: dict[str, Any]
+
+
+def _optional_env(name: str) -> str | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    trimmed = value.strip()
+    return trimmed or None
+
+
+def _optional_int_env(name: str) -> int | None:
+    raw = _optional_env(name)
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except Exception:
+        return None
+    if value <= 0:
+        return None
+    return value
 
 
 def _adjust_chunk_start(text: str, approximate_start: int) -> int:
@@ -158,6 +194,152 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _normalize_provider(provider: str | None) -> str:
+    normalized = (provider or "").strip().lower()
+    if not normalized:
+        return "openai"
+    if normalized in ("openai", "openrouter"):
+        return normalized
+    raise RuntimeError(f"Unsupported provider: {provider}")
+
+
+def _normalize_base_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    trimmed = url.strip().rstrip("/")
+    return trimmed or None
+
+
+def _resolve_openrouter_openai_base_url() -> str:
+    explicit = _normalize_base_url(_optional_env("OPENROUTER_OPENAI_BASE_URL"))
+    if explicit:
+        return explicit
+    configured = _normalize_base_url(_optional_env("OPENROUTER_BASE_URL"))
+    if not configured:
+        return "https://openrouter.ai/api/v1"
+    if configured.endswith("/v1"):
+        return configured
+    if configured.endswith("/api"):
+        return f"{configured}/v1"
+    return f"{configured}/api/v1"
+
+
+def _build_openrouter_client_kwargs(api_key: str, base_url: str) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {"api_key": api_key, "base_url": base_url}
+    default_headers: dict[str, str] = {}
+    referer = _optional_env("OPENROUTER_HTTP_REFERER")
+    title = _optional_env("OPENROUTER_X_TITLE") or _optional_env("OPENROUTER_APP_TITLE")
+    if referer:
+        default_headers["HTTP-Referer"] = referer
+    if title:
+        default_headers["X-Title"] = title
+    if default_headers:
+        kwargs["default_headers"] = default_headers
+    return kwargs
+
+
+def _normalize_embedding_backend(value: str | None, *, default: str) -> str:
+    normalized = (value or "").strip().lower()
+    if not normalized:
+        return default
+    if normalized in ("openai", "openai_compatible", "openai-compatible"):
+        return "openai_compatible"
+    if normalized in ("sentence_transformers", "sentence-transformers", "sentence"):
+        return "sentence_transformers"
+    raise RuntimeError(f"Unsupported embedding backend: {value}")
+
+
+def _resolve_runtime_model_config(
+    *,
+    provider: str | None,
+    model_key: str | None,
+    model_id: str | None,
+) -> RuntimeModelConfig:
+    normalized_provider = _normalize_provider(provider)
+    requested_model_key = (model_key or "").strip() or None
+    resolved_model_id = (
+        (model_id or "").strip()
+        or requested_model_key
+        or _optional_env("KNOWGRAPH_LLM_MODEL")
+        or "gpt-4o-mini"
+    )
+    global_embedding_backend = _normalize_embedding_backend(
+        _optional_env("KNOWGRAPH_EMBEDDING_BACKEND"),
+        default="openai_compatible",
+    )
+    global_embedding_model = _optional_env("KNOWGRAPH_EMBEDDING_MODEL") or "text-embedding-3-large"
+    global_embedding_dim = _optional_int_env("KNOWGRAPH_EMBEDDING_DIM") or 3072
+
+    if normalized_provider == "openai":
+        api_key = _required_env("OPENAI_API_KEY")
+        base_url = _normalize_base_url(_optional_env("OPENAI_BASE_URL"))
+        llm_kwargs: dict[str, Any] = {"api_key": api_key}
+        embedding_kwargs: dict[str, Any] = {}
+        openai_embedding_backend = _normalize_embedding_backend(
+            _optional_env("KNOWGRAPH_OPENAI_EMBEDDING_BACKEND"),
+            default=global_embedding_backend,
+        )
+        openai_embedding_model = (
+            _optional_env("KNOWGRAPH_OPENAI_EMBEDDING_MODEL")
+            or global_embedding_model
+        )
+        openai_embedding_dim = (
+            _optional_int_env("KNOWGRAPH_OPENAI_EMBEDDING_DIM")
+            or global_embedding_dim
+        )
+        if openai_embedding_backend == "openai_compatible":
+            embedding_kwargs = {"api_key": api_key}
+        elif openai_embedding_backend == "sentence_transformers":
+            # local embedding model; no API key/base URL required
+            embedding_kwargs = {}
+        if base_url:
+            llm_kwargs["base_url"] = base_url
+            if openai_embedding_backend == "openai_compatible":
+                embedding_kwargs["base_url"] = base_url
+        return RuntimeModelConfig(
+            provider=normalized_provider,
+            model_key=requested_model_key,
+            model_id=resolved_model_id,
+            llm_client_kwargs=llm_kwargs,
+            embedding_backend=openai_embedding_backend,
+            embedding_model=openai_embedding_model,
+            embedding_dimensions=openai_embedding_dim,
+            embedding_client_kwargs=embedding_kwargs,
+        )
+
+    if normalized_provider == "openrouter":
+        api_key = _required_env("OPENROUTER_API_KEY")
+        base_url = _resolve_openrouter_openai_base_url()
+        openrouter_embedding_backend = _normalize_embedding_backend(
+            _optional_env("KNOWGRAPH_OPENROUTER_EMBEDDING_BACKEND"),
+            default="sentence_transformers",
+        )
+        openrouter_embedding_model = (
+            _optional_env("KNOWGRAPH_OPENROUTER_EMBEDDING_MODEL")
+            or _optional_env("KNOWGRAPH_SENTENCE_TRANSFORMERS_MODEL")
+            or ("all-MiniLM-L6-v2" if openrouter_embedding_backend == "sentence_transformers" else global_embedding_model)
+        )
+        openrouter_embedding_dim = (
+            _optional_int_env("KNOWGRAPH_OPENROUTER_EMBEDDING_DIM")
+            or _optional_int_env("KNOWGRAPH_SENTENCE_TRANSFORMERS_DIM")
+            or (384 if openrouter_embedding_backend == "sentence_transformers" else global_embedding_dim)
+        )
+        client_kwargs = _build_openrouter_client_kwargs(api_key, base_url)
+        embedding_kwargs = dict(client_kwargs) if openrouter_embedding_backend == "openai_compatible" else {}
+        return RuntimeModelConfig(
+            provider=normalized_provider,
+            model_key=requested_model_key,
+            model_id=resolved_model_id,
+            llm_client_kwargs=dict(client_kwargs),
+            embedding_backend=openrouter_embedding_backend,
+            embedding_model=openrouter_embedding_model,
+            embedding_dimensions=openrouter_embedding_dim,
+            embedding_client_kwargs=embedding_kwargs,
+        )
+
+    raise RuntimeError(f"Unsupported provider: {provider}")
+
+
 def _merge_ingested_graph(
     driver: Driver,
     *,
@@ -238,25 +420,52 @@ def _merge_ingested_graph(
     )
 
 
-async def ingest_pdf(file_path: str, project_id: str, document_id: str) -> dict[str, Any]:
+async def ingest_pdf(
+    file_path: str,
+    project_id: str,
+    document_id: str,
+    *,
+    provider: str | None = None,
+    model_key: str | None = None,
+    model_id: str | None = None,
+    agent_id: str | None = None,
+) -> dict[str, Any]:
     """Run GraphRAG KG Builder ingestion for a PDF file."""
     source = Path(file_path)
     if not source.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
 
-    _required_env("OPENAI_API_KEY")
     uri = _required_env("NEO4J_URI")
     user = _required_env("NEO4J_USER")
     password = _required_env("NEO4J_PASSWORD")
     neo4j_database = os.getenv("NEO4J_DATABASE") or None
 
-    llm_model = os.getenv("KNOWGRAPH_LLM_MODEL", "gpt-4o-mini")
+    runtime = _resolve_runtime_model_config(
+        provider=provider,
+        model_key=model_key,
+        model_id=model_id,
+    )
+    print(
+        f"[KNOWGRAPH_RUNTIME] project_id={project_id} document_id={document_id} provider={runtime.provider} "
+        f"model={runtime.model_id} embedding_backend={runtime.embedding_backend} "
+        f"embedding_model={runtime.embedding_model} embedding_dim={runtime.embedding_dimensions} "
+        f"agent_id={agent_id or 'n/a'}"
+    )
     llm = OpenAILLM(
-        model_name=llm_model,
+        model_name=runtime.model_id,
         # KG Builder extraction uses structured response_format under the hood.
         model_params={"temperature": 0},
+        **runtime.llm_client_kwargs,
     )
-    embedder = OpenAIEmbeddings(model="text-embedding-3-large")
+    if runtime.embedding_backend == "sentence_transformers":
+        embedder = SentenceTransformerEmbeddings(model=runtime.embedding_model)
+    elif runtime.embedding_backend == "openai_compatible":
+        embedder = OpenAIEmbeddings(
+            model=runtime.embedding_model,
+            **runtime.embedding_client_kwargs,
+        )
+    else:
+        raise RuntimeError(f"Unsupported embedding backend: {runtime.embedding_backend}")
     splitter = DeterministicFixedSizeSplitter(
         project_id=project_id,
         document_id=document_id,
@@ -279,7 +488,11 @@ async def ingest_pdf(file_path: str, project_id: str, document_id: str) -> dict[
     driver = GraphDatabase.driver(uri, auth=(user, password))
     try:
         driver.verify_connectivity()
-        ensure_vector_index(driver, neo4j_database)
+        ensure_vector_index(
+            driver,
+            neo4j_database,
+            dimensions=runtime.embedding_dimensions,
+        )
 
         pipeline = SimpleKGPipeline(
             llm=llm,
@@ -311,12 +524,20 @@ async def ingest_pdf(file_path: str, project_id: str, document_id: str) -> dict[
             document_id=document_id,
             file_path=str(source.resolve()),
         )
-        ensure_vector_index(driver, neo4j_database)
+        ensure_vector_index(
+            driver,
+            neo4j_database,
+            dimensions=runtime.embedding_dimensions,
+        )
 
         return {
             "run_id": result.run_id,
             "project_id": project_id,
             "document_id": document_id,
+            "provider": runtime.provider,
+            "model_key": runtime.model_key,
+            "model": runtime.model_id,
+            "agent_id": agent_id,
         }
     finally:
         driver.close()

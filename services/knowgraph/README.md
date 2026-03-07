@@ -11,7 +11,8 @@ KnowGraph is a Python microservice that ingests attachment PDFs into Neo4j using
    - `NEO4J_URI`
    - `NEO4J_USER`
    - `NEO4J_PASSWORD`
-   - `OPENAI_API_KEY`
+   - `OPENAI_API_KEY` (for provider `openai`)
+   - `OPENROUTER_API_KEY` (for provider `openrouter`)
 5. `uvicorn app:app --host 0.0.0.0 --port 8001`
 
 ## Smoke Test (Direct)
@@ -21,6 +22,14 @@ curl -X POST "http://localhost:8001/ingest" \
   -F "project_id=test" \
   -F "document_id=doc1" \
   -F "file=@./some.pdf"
+```
+
+To force runtime provider/model from Agent Builder, pass headers:
+
+```bash
+  -H "x-agent-provider: openrouter" \
+  -H "x-agent-model-key: openai/gpt-5-mini" \
+  -H "x-agent-model-id: openai/gpt-5-mini"
 ```
 
 ## Acceptance Test (End-to-End)

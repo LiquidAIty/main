@@ -49,6 +49,8 @@ agentRoutes.post('/boss', async (req, res) => {
       );
       llmRes = await runLLM(userText, {
         modelKey: resolved.modelKey,
+        provider: resolved.provider,
+        providerModelId: resolved.providerModelId,
         temperature: resolved.temperature ?? undefined,
         maxTokens: resolved.maxTokens ?? undefined,
         system: resolved.systemPrompt,

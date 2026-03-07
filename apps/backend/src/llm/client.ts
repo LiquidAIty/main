@@ -7,6 +7,8 @@ async function fetchWithTimeout(url: string, init: RequestInit, ms: number, allo
 
 export type InvokeOpts = { 
   modelKey?: string; 
+  provider?: string;
+  providerModelId?: string;
   temperature?: number; 
   maxTokens?: number; 
   system?: string; 
@@ -14,19 +16,86 @@ export type InvokeOpts = {
   jsonSchema?: { name: string; schema: any; strict?: boolean };
 };
 
+function providerErrorMessage(provider: string, status: number, payload: any): string {
+  const code =
+    payload?.error?.code ||
+    payload?.error?.type ||
+    payload?.code ||
+    'unknown_error';
+  const message =
+    payload?.error?.message ||
+    payload?.message ||
+    `HTTP ${status}`;
+  return `${provider}_error:${code}: ${message}`;
+}
+
 export async function runLLM(userContent: string, opts: InvokeOpts = {}) {
-  let m;
-  try {
-    m = resolveModel(opts.modelKey);
-  } catch (err: any) {
-    throw new Error(`model_not_configured: ${err.message}`);
+  const normalizedProvider = String(opts.provider || '').trim().toLowerCase();
+  const explicitProvider = normalizedProvider === 'openai' || normalizedProvider === 'openrouter'
+    ? (normalizedProvider as 'openai' | 'openrouter')
+    : null;
+  const explicitProviderModelId = String(opts.providerModelId || '').trim() || null;
+  const modelKey = String(opts.modelKey || '').trim() || null;
+
+  let provider: 'openai' | 'openrouter';
+  let modelId: string;
+  if (explicitProvider && explicitProviderModelId) {
+    provider = explicitProvider;
+    modelId = explicitProviderModelId;
+  } else {
+    let modelEntry;
+    try {
+      modelEntry = resolveModel(modelKey || undefined);
+    } catch (err: any) {
+      throw new Error(`model_not_configured: ${err.message}`);
+    }
+    provider = modelEntry.provider;
+    modelId = modelEntry.id;
   }
 
   const temperature = opts.temperature ?? Number(process.env.DEFAULT_TEMPERATURE ?? 0.2);
   const max_tokens = opts.maxTokens ?? Number(process.env.DEFAULT_MAX_TOKENS ?? 2048);
   const timeout = Number(process.env.REQUEST_TIMEOUT_MS ?? 20000);
 
-  if (m.provider === "openai") {
+  const callOpenRouter = async (modelId: string) => {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey || !apiKey.trim()) {
+      throw new Error(`provider_key_missing: provider=openrouter`);
+    }
+    const base = process.env.OPENROUTER_BASE_URL || "https://api.openrouter.ai";
+    const url = `${base.replace(/\/+$/, "")}/chat/completions`;
+    const allowOpenRouter = (process.env.ALLOW_HOSTS_OPENROUTER || "api.openrouter.ai,openrouter.ai").split(",").map(h => h.trim()).filter(Boolean);
+    const r = await fetchWithTimeout(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: modelId,
+        messages: [
+          { role: "system", content: opts.system ?? "You are a LiquidAIty agent." },
+          { role: "user", content: userContent },
+        ],
+        temperature, max_tokens,
+        ...(opts.jsonMode ? { response_format: { type: "json_object" } } : {}),
+      }),
+    }, timeout, allowOpenRouter);
+    const j = await r.json() as any;
+
+    if (!r.ok || j?.error) {
+      throw new Error(providerErrorMessage("openrouter", r.status, j));
+    }
+
+    const text = j?.choices?.[0]?.message?.content ?? "";
+    if (!text || !text.trim()) {
+      throw new Error("openrouter_error:empty_response");
+    }
+
+    return { text, model: modelId, provider: "openrouter" as const };
+  };
+
+  if (provider === "openai") {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey || !apiKey.trim()) {
       throw new Error(`provider_key_missing: provider=openai`);
@@ -38,7 +107,7 @@ export async function runLLM(userContent: string, opts: InvokeOpts = {}) {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: m.id,
+        model: modelId,
         messages: [
           { role: "system", content: opts.system ?? "You are a LiquidAIty agent." },
           { role: "user", content: userContent },
@@ -57,50 +126,21 @@ export async function runLLM(userContent: string, opts: InvokeOpts = {}) {
       }),
     }, timeout, allowOpenAI);
     const j = await r.json() as any;
-    return { text: j?.choices?.[0]?.message?.content ?? "", model: m.id, provider: m.provider };
-  }
 
-  if (m.provider === "openrouter") {
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey || !apiKey.trim()) {
-      throw new Error(`provider_key_missing: provider=openrouter`);
+    if (!r.ok || j?.error) {
+      throw new Error(providerErrorMessage("openai", r.status, j));
     }
-    const base = process.env.OPENROUTER_BASE_URL || "https://api.openrouter.ai";
-    const url = `${base.replace(/\/+$/, "")}/chat/completions`;
-    const allowOpenRouter = (process.env.ALLOW_HOSTS_OPENROUTER || "api.openrouter.ai,openrouter.ai").split(",").map(h => h.trim()).filter(Boolean);
-    const r = await fetchWithTimeout(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: m.id,
-        messages: [
-          { role: "system", content: opts.system ?? "You are a LiquidAIty agent." },
-          { role: "user", content: userContent },
-        ],
-        temperature, max_tokens,
-        ...(opts.jsonMode ? { response_format: { type: "json_object" } } : {}),
-      }),
-    }, timeout, allowOpenRouter);
-    const j = await r.json() as any;
+
     const text = j?.choices?.[0]?.message?.content ?? "";
-    
-    // Log empty responses to help diagnose model issues
     if (!text || !text.trim()) {
-      console.error('[LLM] empty response from OpenRouter', {
-        model: m.id,
-        status: r.status,
-        has_choices: Boolean(j?.choices),
-        choice_count: j?.choices?.length || 0,
-        error: j?.error,
-        response_preview: JSON.stringify(j).slice(0, 200)
-      });
+      throw new Error("openai_error:empty_response");
     }
-    
-    return { text, model: m.id, provider: m.provider };
+    return { text, model: modelId, provider };
   }
 
-  throw new Error(`provider_not_supported: ${m.provider}`);
+  if (provider === "openrouter") {
+    return callOpenRouter(modelId);
+  }
+
+  throw new Error(`provider_not_supported: ${provider}`);
 }

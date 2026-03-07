@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { pool } from '../../db/pool';
 import { createProject, getProjectState, listAgentCards, saveProjectState } from '../../services/agentBuilderStore';
 import { getLastTrace } from '../../services/ingestTrace';
+import { ensureSystemAgentConfigs } from '../../services/v2/agentConfigStore';
 
 const router = Router();
 
@@ -30,6 +31,14 @@ router.post('/', async (req, res) => {
   const projectType = project_type === 'assist' || project_type === 'agent' ? project_type : 'agent';
   try {
     const project = await createProject(name, typeof code === 'string' ? code : null, projectType);
+    try {
+      await ensureSystemAgentConfigs(project.id);
+    } catch (ensureErr: any) {
+      console.warn('[V2][projects] ensureSystemAgentConfigs failed', {
+        projectId: project.id,
+        error: ensureErr?.message || String(ensureErr),
+      });
+    }
     return res.json(project);
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || 'failed to create project' });

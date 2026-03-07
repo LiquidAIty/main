@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentCard } from "../types/agentBuilder";
-import { callBossAgent, solRun } from "../lib/api";
+import { callBossAgent } from "../lib/api";
 import { AgentManager } from "../components/AgentManager";
 import KnowledgeGraphNVL, {
   type KnowledgeGraphRelationship,
@@ -137,6 +137,152 @@ function formatRequestErrorLine(endpoint: string, status: number, bodyPreview: s
   return `${endpoint} | ${status} | ${compactBody || "no response body"}`;
 }
 
+type GuardedRequestOptions<T> = {
+  key: string;
+  method?: string;
+  ttlMs?: number;
+  dedupe?: boolean;
+  signal?: AbortSignal;
+  fetcher: (signal: AbortSignal) => Promise<T>;
+};
+
+const requestGuardInFlight = new Map<string, Promise<any>>();
+const requestGuardCache = new Map<string, { expiresAt: number; value: any }>();
+const requestGuardSeq = new Map<string, number>();
+
+function makeAbortError() {
+  const error = new Error("Request aborted") as Error & { name: string };
+  error.name = "AbortError";
+  return error;
+}
+
+function isAbortLikeError(err: any): boolean {
+  const name = String(err?.name || "");
+  const message = String(err?.message || "");
+  return name === "AbortError" || message.toLowerCase().includes("aborted");
+}
+
+function withAbortSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(makeAbortError());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(makeAbortError());
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise
+      .then(resolve, reject)
+      .finally(() => {
+        signal.removeEventListener("abort", onAbort);
+      });
+  });
+}
+
+function linkAbortSignal(externalSignal?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  if (!externalSignal) return { signal: controller.signal, cleanup: () => {} };
+  if (externalSignal.aborted) {
+    controller.abort();
+    return { signal: controller.signal, cleanup: () => {} };
+  }
+  const onAbort = () => controller.abort();
+  externalSignal.addEventListener("abort", onAbort, { once: true });
+  return {
+    signal: controller.signal,
+    cleanup: () => externalSignal.removeEventListener("abort", onAbort),
+  };
+}
+
+async function guardedRequest<T>(options: GuardedRequestOptions<T>): Promise<T> {
+  const method = (options.method || "GET").toUpperCase();
+  const ttlMs = options.ttlMs || 0;
+  const canCache = method === "GET" && ttlMs > 0;
+  if (canCache) {
+    const cached = requestGuardCache.get(options.key);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value as T;
+    }
+  }
+
+  const shouldDedupe = options.dedupe !== false;
+  if (shouldDedupe) {
+    const existing = requestGuardInFlight.get(options.key) as Promise<T> | undefined;
+    if (existing) {
+      return withAbortSignal(existing, options.signal);
+    }
+  }
+
+  const linked = linkAbortSignal(options.signal);
+  const requestPromise = (async () => {
+    try {
+      const value = await options.fetcher(linked.signal);
+      if (canCache) {
+        requestGuardCache.set(options.key, {
+          expiresAt: Date.now() + ttlMs,
+          value,
+        });
+      }
+      return value;
+    } finally {
+      requestGuardInFlight.delete(options.key);
+      linked.cleanup();
+    }
+  })();
+  requestGuardInFlight.set(options.key, requestPromise);
+  return withAbortSignal(requestPromise, options.signal);
+}
+
+function nextRequestSequence(requestType: string): number {
+  const next = (requestGuardSeq.get(requestType) || 0) + 1;
+  requestGuardSeq.set(requestType, next);
+  return next;
+}
+
+function isLatestRequestSequence(requestType: string, sequence: number): boolean {
+  return (requestGuardSeq.get(requestType) || 0) === sequence;
+}
+
+const KG_CACHE_PREFIX = "agentbuilder:kg-cache:v1";
+const KG_CACHE_TTL_MS = 60_000;
+
+type CachedGraphPayload = {
+  updatedAt: number;
+  cypher: string;
+  graphResult: any[];
+  knowGraphData: { nodes: any[]; relationships: any[] };
+};
+
+function readCachedGraphPayload(cacheKey: string): CachedGraphPayload | null {
+  try {
+    const raw = window.localStorage.getItem(cacheKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      updatedAt: Number(parsed.updatedAt) || 0,
+      cypher: typeof parsed.cypher === "string" ? parsed.cypher : "",
+      graphResult: Array.isArray(parsed.graphResult) ? parsed.graphResult : [],
+      knowGraphData: {
+        nodes: Array.isArray(parsed?.knowGraphData?.nodes) ? parsed.knowGraphData.nodes : [],
+        relationships: Array.isArray(parsed?.knowGraphData?.relationships) ? parsed.knowGraphData.relationships : [],
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedGraphPayload(cacheKey: string, payload: CachedGraphPayload): void {
+  try {
+    window.localStorage.setItem(cacheKey, JSON.stringify(payload));
+  } catch {
+    // best-effort cache
+  }
+}
+
+function isCachedGraphFresh(payload: CachedGraphPayload | null, ttlMs: number): boolean {
+  if (!payload?.updatedAt) return false;
+  return Date.now() - payload.updatedAt <= ttlMs;
+}
+
 type PlanItem = { id: string; text: string; status: "draft" | "approved" | "done" };
 type LinkRef = {
   id: string;
@@ -234,7 +380,16 @@ type AgentPrompt = {
 
 type WorkbenchOutputMap = Record<"Plan" | "Links" | "Knowledge" | "Dashboard", string>;
 type WorkbenchRating = { stars: number; note: string };
-type AgentTypeKey = "agent_builder" | "llm_chat" | "kg_ingest";
+type AgentTypeKey = "agent_builder" | "llm_chat" | "kg_ingest" | "knowgraph";
+
+function agentTypeFromProjectCode(projectCode: string): AgentTypeKey {
+  const code = String(projectCode || "").toLowerCase();
+  if (code === "main-chat" || code === "main_chat" || code === "llm-chat" || code === "llm_chat") return "llm_chat";
+  if (code === "kg-ingest" || code === "kg_ingest" || code === "thinkgraph") return "kg_ingest";
+  if (code === "knowgraph") return "knowgraph";
+  if (code === "agent-builder" || code === "agent_builder") return "agent_builder";
+  return "agent_builder";
+}
 // helper: load all project-local state (defaults only; real data is fetched from backend)
 function loadProjectState(_projectId: string, _mode: "assist" | "agents" = "assist") {
   return {
@@ -2023,7 +2178,6 @@ export default function AgentBuilder() {
   const [panelWidth, setPanelWidth] = useState(480);
   const [mode, setMode] = useState<"assist" | "agents">("assist");
   const [selectedAgentType, setSelectedAgentType] = useState<AgentTypeKey>("llm_chat");
-  const [assistProjectId, setAssistProjectId] = useState<string>("");
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const messagesByScopeRef = useRef<Record<string, { role: "assistant" | "user"; text: string }[]>>({});
   const [projectLoading, setProjectLoading] = useState(false);
@@ -2060,18 +2214,6 @@ export default function AgentBuilder() {
   useEffect(() => {
     if (mode === "agents") setSelectedAgentType("llm_chat");
   }, [mode]);
-  useEffect(() => {
-    const stored = localStorage.getItem("last_assist_project_id") || "";
-    if (stored) {
-      setAssistProjectId(stored);
-    }
-  }, []);
-  useEffect(() => {
-    if (mode === "assist" && activeProject) {
-      localStorage.setItem("last_assist_project_id", activeProject);
-      setAssistProjectId(activeProject);
-    }
-  }, [mode, activeProject]);
   const [openDrawer, setOpenDrawer] = useState<
     null | "project" | "apps" | "settings" | "admin"
   >(null);
@@ -2079,9 +2221,24 @@ export default function AgentBuilder() {
 
   // agent builder state
   const [projects, setProjects] = useState<any[]>([]);
-  const refreshInFlight = useRef(false);
   const refreshSeq = useRef(0);
-  const autoCreatedAssistRef = useRef(false);
+  const refreshAbortRef = useRef<AbortController | null>(null);
+  const mountRefreshRanRef = useRef(false);
+  const activeProjectLatestRef = useRef("");
+  const stateLoadKeyRef = useRef("");
+  const stateLoadAbortRef = useRef<AbortController | null>(null);
+  const stateLoadProjectRef = useRef("");
+  const healthCheckScheduledRef = useRef(false);
+  const kgAutoLoadKeyRef = useRef("");
+  const kgLoadAbortRef = useRef<AbortController | null>(null);
+  const kgLoadProjectRef = useRef("");
+  const kgExpandAbortRef = useRef<AbortController | null>(null);
+  const kgExpandProjectRef = useRef("");
+  const graphHydrateKeyRef = useRef("");
+  const dashboardPollRunRef = useRef(0);
+  const dashboardPollTimerRef = useRef<number | null>(null);
+  const dashboardPollAbortRef = useRef<AbortController | null>(null);
+  const dashboardPollProjectRef = useRef("");
   const loggedProjectRef = useRef<string | null>(null);
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [agentPrompt, setAgentPrompt] = useState<AgentPrompt>({
@@ -2094,10 +2251,7 @@ export default function AgentBuilder() {
     if (mode !== "agents" || !activeProject) return;
     const match = (Array.isArray(projects) ? projects : []).find((p) => p.id === activeProject);
     if (!match) return;
-    const code = String(match.code || "").toLowerCase();
-    if (code === "kg-ingest" || code === "kg_ingest") setSelectedAgentType("kg_ingest");
-    else if (code === "agent-builder" || code === "agent_builder") setSelectedAgentType("agent_builder");
-    else setSelectedAgentType("llm_chat");
+    setSelectedAgentType(agentTypeFromProjectCode(String(match.code || "")));
   }, [mode, activeProject, projects]);
 
   // Boss agent prompt configuration (per project)
@@ -2111,9 +2265,12 @@ export default function AgentBuilder() {
     temperature: 0.7,
   });
   const refreshProjects = useCallback(async (preferredId?: string, filterType?: 'assist' | 'agent', reason?: string) => {
-    if (refreshInFlight.current) return;
-    refreshInFlight.current = true;
     const seq = ++refreshSeq.current;
+    const requestType = "projects-refresh";
+    const requestSeq = nextRequestSequence(requestType);
+    refreshAbortRef.current?.abort();
+    const controller = new AbortController();
+    refreshAbortRef.current = controller;
 
     try {
       setProjectsError(null);
@@ -2121,10 +2278,21 @@ export default function AgentBuilder() {
       
       console.debug('[refreshProjects]', { reason: reason || 'unknown', mode, project_type_filter: projectType, seq });
       
-      const response = await fetch(`${V2_PROJECTS_API}?project_type=${encodeURIComponent(projectType)}`);
-      const data = await safeJson(response);
+      const endpoint = `${V2_PROJECTS_API}?project_type=${encodeURIComponent(projectType)}`;
+      const payload = await guardedRequest({
+        key: `projects:list:${projectType}`,
+        method: "GET",
+        ttlMs: 3_000,
+        signal: controller.signal,
+        fetcher: async (signal) => {
+          const response = await fetch(endpoint, { signal });
+          const data = await safeJson(response);
+          return { response, data };
+        },
+      });
+      const { response, data } = payload;
       
-      if (seq !== refreshSeq.current) return;
+      if (controller.signal.aborted || seq !== refreshSeq.current || !isLatestRequestSequence(requestType, requestSeq)) return;
       if (!data) {
         console.warn('[refreshProjects] empty response', { status: response.status, url: response.url });
         if (response.status !== 304 && response.status !== 204) {
@@ -2138,38 +2306,11 @@ export default function AgentBuilder() {
       
       // Pin canonical agent decks to top in agent mode
       if (projectType === 'agent') {
-        const PINNED_CODES = ['main-chat', 'kg-ingest'];
+        const PINNED_CODES = ['main-chat', 'kg-ingest', 'thinkgraph', 'knowgraph'];
         const pinned = cards.filter((c: any) => PINNED_CODES.includes(c.code));
         const others = cards.filter((c: any) => !PINNED_CODES.includes(c.code));
         pinned.sort((a: any, b: any) => PINNED_CODES.indexOf(a.code) - PINNED_CODES.indexOf(b.code));
         cards = [...pinned, ...others];
-      }
-      
-      if (cards.length === 0 && projectType === 'assist' && !autoCreatedAssistRef.current) {
-        autoCreatedAssistRef.current = true;
-        try {
-          const createRes = await fetch(V2_PROJECTS_API, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name: 'Default Project',
-              project_type: 'assist',
-            }),
-          });
-          const created = await safeJson(createRes);
-          const newId = created?.id || '';
-          if (newId) {
-            const reloadRes = await fetch(`${V2_PROJECTS_API}?project_type=${encodeURIComponent(projectType)}`);
-            const reload = await safeJson(reloadRes);
-            if (seq !== refreshSeq.current) return;
-            cards = Array.isArray(reload?.projects) ? reload.projects : [];
-            setProjects(cards);
-            setActiveProjectWithUrl(newId);
-            return;
-          }
-        } catch (err: any) {
-          console.error('[refreshProjects] auto-create failed:', err?.message || err);
-        }
       }
 
       setProjects(cards);
@@ -2180,30 +2321,30 @@ export default function AgentBuilder() {
       const current = preferredId || activeProject || "";
       const hasCurrent = current && cards.some((c: any) => c.id === current);
       
-      // In Agent mode, prefer main-chat or kg-ingest
+      // In Agent mode, prefer main-chat or ThinkGraph/KnowGraph decks
       const isAgents = projectType === "agent";
       const main = isAgents ? cards.find((c: any) => c.code === "main-chat") : null;
-      const kg = isAgents ? cards.find((c: any) => c.code === "kg-ingest") : null;
-      const fallbackPinned = main?.id || kg?.id || "";
+      const kg = isAgents ? cards.find((c: any) => c.code === "kg-ingest" || c.code === "thinkgraph") : null;
+      const knowgraph = isAgents ? cards.find((c: any) => c.code === "knowgraph") : null;
+      const fallbackPinned = main?.id || kg?.id || knowgraph?.id || "";
       
       const nextId = urlIdValid ? urlId : (hasCurrent ? current : "") || fallbackPinned || cards[0]?.id || "";
       if (nextId) {
         setActiveProjectWithUrl(nextId);
+      } else {
+        setActiveProject('');
       }
     } catch (err: any) {
+      if (isAbortLikeError(err)) return;
       console.error("Error loading projects:", err);
-      if (seq !== refreshSeq.current) return;
+      if (seq !== refreshSeq.current || !isLatestRequestSequence(requestType, requestSeq)) return;
       setProjectsError(err?.message || 'Error loading projects');
-    } finally {
-      if (seq === refreshSeq.current) refreshInFlight.current = false;
     }
   }, [setActiveProjectWithUrl, mode]);
 
   useEffect(() => {
-    // Prevent stale list when switching modes
-    setProjects([]);
-    setActiveProject('');
-  }, [mode]);
+    activeProjectLatestRef.current = activeProject;
+  }, [activeProject]);
 
   useEffect(() => {
     if (activeProject && loggedProjectRef.current !== activeProject) {
@@ -2253,57 +2394,120 @@ export default function AgentBuilder() {
   const [kgDebugTrace, setKgDebugTrace] = useState<any>(null);
   const [lastIngestTrace, setLastIngestTrace] = useState<any>(null);
   const scopeKey = `${mode}:${activeProject || ""}`;
+  const graphCacheScope = `${scopeKey}:${graphTypeFilter}:${graphRecencyFilter}:${graphMinConfidence}`;
+  const graphCacheKey = `${KG_CACHE_PREFIX}:${graphCacheScope}`;
 
   useEffect(() => {
+    if (healthCheckScheduledRef.current) return;
+    healthCheckScheduledRef.current = true;
     let cancelled = false;
+    let timeoutId: number | null = null;
+    let idleId: number | null = null;
     const endpoint = "/api/health";
-    const check = async () => {
+    const requestType = "health-check";
+    const runCheck = async () => {
+      const requestSeq = nextRequestSequence(requestType);
       try {
-        const res = await fetch(endpoint, { credentials: "include" });
-        const { data, text } = await readJsonAndText(res);
-        if (!res.ok) {
-          throw new Error(formatRequestErrorLine(endpoint, res.status, (data && safeText(data)) || text));
+        const payload = await guardedRequest({
+          key: endpoint,
+          method: "GET",
+          ttlMs: 20_000,
+          fetcher: async (signal) => {
+            const res = await fetch(endpoint, { credentials: "include", signal });
+            const { data, text } = await readJsonAndText(res);
+            return { res, data, text };
+          },
+        });
+        if (cancelled || !isLatestRequestSequence(requestType, requestSeq)) return;
+        if (!payload.res.ok) {
+          throw new Error(formatRequestErrorLine(endpoint, payload.res.status, (payload.data && safeText(payload.data)) || payload.text));
         }
-        if (!cancelled) {
-          setGraphError((prev) => (prev && prev.includes(endpoint) ? null : prev));
-        }
+        setGraphError((prev) => (prev && prev.includes(endpoint) ? null : prev));
       } catch (err: any) {
-        if (!cancelled) {
-          setGraphError(formatRequestErrorLine(endpoint, 0, err?.message || "Failed to fetch"));
-        }
+        if (cancelled || isAbortLikeError(err) || !isLatestRequestSequence(requestType, requestSeq)) return;
+        setGraphError(formatRequestErrorLine(endpoint, 0, err?.message || "Failed to fetch"));
       }
     };
-    void check();
+    const schedule = () => {
+      const maybeWindow = window as Window & {
+        requestIdleCallback?: (cb: () => void, options?: { timeout: number }) => number;
+        cancelIdleCallback?: (id: number) => void;
+      };
+      if (typeof maybeWindow.requestIdleCallback === "function") {
+        idleId = maybeWindow.requestIdleCallback(() => {
+          void runCheck();
+        }, { timeout: 1500 });
+        return;
+      }
+      timeoutId = window.setTimeout(() => {
+        void runCheck();
+      }, 0);
+    };
+    schedule();
     return () => {
       cancelled = true;
+      if (timeoutId != null) window.clearTimeout(timeoutId);
+      const maybeWindow = window as Window & { cancelIdleCallback?: (id: number) => void };
+      if (idleId != null && typeof maybeWindow.cancelIdleCallback === "function") {
+        maybeWindow.cancelIdleCallback(idleId);
+      }
     };
   }, []);
 
-  const runGraphQuery = useCallback(async (query?: string, opts?: { merge?: boolean; queryParams?: Record<string, unknown> }) => {
+  const runGraphQuery = useCallback(async (
+    query?: string,
+    opts?: {
+      merge?: boolean;
+      queryParams?: Record<string, unknown>;
+      signal?: AbortSignal;
+      requestType?: string;
+      requestSeq?: number;
+      manageLoading?: boolean;
+    },
+  ): Promise<boolean> => {
+    const projectId = activeProject;
     const q = (query ?? cypher).trim();
+    const requestType = opts?.requestType || "kg-query";
+    const requestSeq = opts?.requestSeq ?? nextRequestSequence(requestType);
+    if (!projectId) return false;
     if (!q) {
       setGraphError("Enter a Cypher query first.");
-      return;
+      return false;
     }
-    setGraphError(null);
-    setGraphLoading(true);
+    if (isLatestRequestSequence(requestType, requestSeq)) {
+      setGraphError(null);
+      if (opts?.manageLoading !== false) setGraphLoading(true);
+    }
     try {
-      const res = await fetch(`/api/v2/projects/${activeProject}/kg/query`, {
+      const endpoint = `/api/v2/projects/${projectId}/kg/query`;
+      const requestParams = { projectId, ...(opts?.queryParams || {}) };
+      const requestBody = JSON.stringify({ cypher: q, params: requestParams });
+      const payload = await guardedRequest({
+        key: `kg:post:${projectId}:${q}:${JSON.stringify(requestParams)}`,
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cypher: q, params: { projectId: activeProject, ...(opts?.queryParams || {}) } }),
+        signal: opts?.signal,
+        fetcher: async (signal) => {
+          const res = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: requestBody,
+            signal,
+          });
+          const { data, text } = await readJsonAndText(res);
+          return { res, data, text, endpoint };
+        },
       });
-      const endpoint = `/api/v2/projects/${activeProject}/kg/query`;
-      const { data, text } = await readJsonAndText(res);
-      if (!res.ok || !data?.ok) {
+      if (!payload.res.ok || !payload.data?.ok) {
         const msg = formatRequestErrorLine(
-          endpoint,
-          res.status,
-          (data && safeText(data?.error || data?.message)) || text,
+          payload.endpoint,
+          payload.res.status,
+          (payload.data && safeText(payload.data?.error || payload.data?.message)) || payload.text,
         );
         throw new Error(msg);
       }
-      const rows = Array.isArray(data.rows) ? data.rows : [];
+      if (activeProjectLatestRef.current !== projectId) return false;
+      if (!isLatestRequestSequence(requestType, requestSeq)) return false;
+      const rows = Array.isArray(payload.data.rows) ? payload.data.rows : [];
       if (opts?.merge) {
         setGraphResult((prev) => {
           const seen = new Set(
@@ -2322,10 +2526,21 @@ export default function AgentBuilder() {
       } else {
         setGraphResult(rows);
       }
+      return true;
     } catch (err: any) {
+      if (isAbortLikeError(err)) return false;
+      if (activeProjectLatestRef.current !== projectId) return false;
+      if (!isLatestRequestSequence(requestType, requestSeq)) return false;
       setGraphError(err?.message || "Graph error");
+      return false;
     } finally {
-      setGraphLoading(false);
+      if (
+        opts?.manageLoading !== false &&
+        activeProjectLatestRef.current === projectId &&
+        isLatestRequestSequence(requestType, requestSeq)
+      ) {
+        setGraphLoading(false);
+      }
     }
   }, [activeProject, cypher]);
 
@@ -2343,14 +2558,25 @@ export default function AgentBuilder() {
 
   const runGraphPresetQuery = useCallback(async (
     preset: "SEED" | "EXPAND",
-    opts?: { merge?: boolean; nodeId?: string; limit?: number },
-  ) => {
-    if (!activeProject) return;
+    opts?: {
+      merge?: boolean;
+      nodeId?: string;
+      limit?: number;
+      signal?: AbortSignal;
+      requestType?: string;
+      requestSeq?: number;
+      allowPostFallback?: boolean;
+    },
+  ): Promise<boolean> => {
+    const projectId = activeProject;
+    if (!projectId) return false;
+    const requestType = opts?.requestType || "kg-query";
+    const requestSeq = opts?.requestSeq ?? nextRequestSequence(requestType);
 
     const limit = opts?.limit ?? (preset === "SEED" ? 220 : 120);
     const sinceTs = buildRecencySinceTs();
     const queryParams: Record<string, unknown> = {
-      projectId: activeProject,
+      projectId,
       limit,
       typeFilter: graphTypeFilter !== "all" ? graphTypeFilter : null,
       sinceTs,
@@ -2377,27 +2603,41 @@ export default function AgentBuilder() {
       search.set("minConfidence", String(graphMinConfidence));
     }
 
-    setGraphError(null);
-    setGraphLoading(true);
+    if (isLatestRequestSequence(requestType, requestSeq)) {
+      setGraphError(null);
+      setGraphLoading(true);
+    }
     try {
-      const endpoint = `/api/v2/projects/${activeProject}/kg/query?${search.toString()}`;
-      const res = await fetch(endpoint, {
+      const endpoint = `/api/v2/projects/${projectId}/kg/query?${search.toString()}`;
+      const payload = await guardedRequest({
+        key: `kg:get:${endpoint}`,
         method: "GET",
+        ttlMs: preset === "SEED" ? KG_CACHE_TTL_MS : 12_000,
+        signal: opts?.signal,
+        fetcher: async (signal) => {
+          const res = await fetch(endpoint, {
+            method: "GET",
+            signal,
+          });
+          const { data, text } = await readJsonAndText(res);
+          return { res, data, text, endpoint };
+        },
       });
-      const { data, text } = await readJsonAndText(res);
-      if (!res.ok || !data?.ok) {
+      if (!payload.res.ok || !payload.data?.ok) {
         const msg = formatRequestErrorLine(
-          endpoint,
-          res.status,
-          (data && safeText(data?.error || data?.message)) || text,
+          payload.endpoint,
+          payload.res.status,
+          (payload.data && safeText(payload.data?.error || payload.data?.message)) || payload.text,
         );
         throw new Error(msg);
       }
-      if (typeof data?.cypher === "string") {
-        setCypher(data.cypher);
+      if (activeProjectLatestRef.current !== projectId) return false;
+      if (!isLatestRequestSequence(requestType, requestSeq)) return false;
+      if (typeof payload.data?.cypher === "string") {
+        setCypher(payload.data.cypher);
       }
 
-      const rows = Array.isArray(data.rows) ? data.rows : [];
+      const rows = Array.isArray(payload.data.rows) ? payload.data.rows : [];
       if (opts?.merge) {
         setGraphResult((prev) => {
           const seen = new Set(prev.map((row: any) => (typeof row === "string" ? row : JSON.stringify(row))));
@@ -2414,64 +2654,124 @@ export default function AgentBuilder() {
       } else {
         setGraphResult(rows);
       }
+      return true;
     } catch (err: any) {
       const msg = String(err?.message || "Graph query failed");
-      if (msg.includes("| 404 |") || msg.includes("| 405 |") || msg.includes("HTTP 404") || msg.includes("HTTP 405")) {
+      const allowPostFallback = opts?.allowPostFallback !== false;
+      if (
+        allowPostFallback &&
+        (msg.includes("| 404 |") || msg.includes("| 405 |") || msg.includes("HTTP 404") || msg.includes("HTTP 405"))
+      ) {
         const fallbackCypher = preset === "SEED" ? KG_SEED_QUERY : KG_EXPAND_QUERY;
-        await runGraphQuery(fallbackCypher, {
+        return runGraphQuery(fallbackCypher, {
           merge: opts?.merge,
           queryParams,
+          signal: opts?.signal,
+          requestType,
+          requestSeq,
+          manageLoading: false,
         });
-        return;
       }
+      if (isAbortLikeError(err)) return false;
+      if (activeProjectLatestRef.current !== projectId) return false;
+      if (!isLatestRequestSequence(requestType, requestSeq)) return false;
       setGraphError(msg);
+      return false;
     } finally {
-      setGraphLoading(false);
+      if (activeProjectLatestRef.current === projectId && isLatestRequestSequence(requestType, requestSeq)) {
+        setGraphLoading(false);
+      }
     }
   }, [activeProject, graphTypeFilter, graphMinConfidence, buildRecencySinceTs, runGraphQuery]);
 
-  const loadKnowGraphData = useCallback(async () => {
-    if (!activeProject) {
+  const loadKnowGraphData = useCallback(async (
+    opts?: { signal?: AbortSignal; requestType?: string; requestSeq?: number },
+  ): Promise<boolean> => {
+    const projectId = activeProject;
+    if (!projectId) {
       setKnowGraphData({ nodes: [], relationships: [] });
-      return;
+      return false;
     }
+    const requestType = opts?.requestType || "knowgraph-data";
+    const requestSeq = opts?.requestSeq ?? nextRequestSequence(requestType);
 
     try {
-      const endpoint = `/api/knowgraph/graph?projectId=${encodeURIComponent(activeProject)}`;
-      const res = await fetch(endpoint, {
-        credentials: "include",
+      const endpoint = `/api/knowgraph/graph?projectId=${encodeURIComponent(projectId)}`;
+      const payload = await guardedRequest({
+        key: `knowgraph:data:${projectId}`,
+        method: "GET",
+        ttlMs: KG_CACHE_TTL_MS,
+        signal: opts?.signal,
+        fetcher: async (signal) => {
+          const res = await fetch(endpoint, {
+            credentials: "include",
+            signal,
+          });
+          const { data, text } = await readJsonAndText(res);
+          return { res, data, text, endpoint };
+        },
       });
-      const { data, text } = await readJsonAndText(res);
-      if (!res.ok) {
+      if (!payload.res.ok) {
         throw new Error(
-          formatRequestErrorLine(endpoint, res.status, (data && safeText(data?.error?.message || data?.error)) || text),
+          formatRequestErrorLine(
+            payload.endpoint,
+            payload.res.status,
+            (payload.data && safeText(payload.data?.error?.message || payload.data?.error)) || payload.text,
+          ),
         );
       }
+      if (activeProjectLatestRef.current !== projectId) return false;
+      if (!isLatestRequestSequence(requestType, requestSeq)) return false;
       setKnowGraphData({
-        nodes: Array.isArray(data?.nodes) ? data.nodes : [],
-        relationships: Array.isArray(data?.relationships) ? data.relationships : [],
+        nodes: Array.isArray(payload.data?.nodes) ? payload.data.nodes : [],
+        relationships: Array.isArray(payload.data?.relationships) ? payload.data.relationships : [],
       });
       setGraphError((prev) => (prev && prev.includes("/api/knowgraph/graph") ? null : prev));
+      return true;
     } catch (err: any) {
+      if (isAbortLikeError(err)) return false;
+      if (activeProjectLatestRef.current !== projectId) return false;
+      if (!isLatestRequestSequence(requestType, requestSeq)) return false;
       console.warn("[KnowGraph] graph fetch failed:", err?.message || err);
       setKnowGraphData({ nodes: [], relationships: [] });
       setGraphError(err?.message || "KnowGraph graph fetch failed");
+      return false;
     }
   }, [activeProject]);
 
-  const loadKnowGraphHealth = useCallback(async (): Promise<boolean> => {
+  const loadKnowGraphHealth = useCallback(async (
+    opts?: { signal?: AbortSignal; requestType?: string; requestSeq?: number },
+  ): Promise<boolean> => {
     const endpoint = "/api/knowgraph/health";
+    const requestType = opts?.requestType || "knowgraph-health";
+    const requestSeq = opts?.requestSeq ?? nextRequestSequence(requestType);
     try {
-      const res = await fetch(endpoint, { credentials: "include" });
-      const { data, text } = await readJsonAndText(res);
-      if (!res.ok) {
+      const payload = await guardedRequest({
+        key: endpoint,
+        method: "GET",
+        ttlMs: 20_000,
+        signal: opts?.signal,
+        fetcher: async (signal) => {
+          const res = await fetch(endpoint, { credentials: "include", signal });
+          const { data, text } = await readJsonAndText(res);
+          return { res, data, text, endpoint };
+        },
+      });
+      if (!payload.res.ok) {
         throw new Error(
-          formatRequestErrorLine(endpoint, res.status, (data && safeText(data?.error?.message || data?.error)) || text),
+          formatRequestErrorLine(
+            payload.endpoint,
+            payload.res.status,
+            (payload.data && safeText(payload.data?.error?.message || payload.data?.error)) || payload.text,
+          ),
         );
       }
+      if (!isLatestRequestSequence(requestType, requestSeq)) return false;
       setGraphError((prev) => (prev && prev.includes(endpoint) ? null : prev));
       return true;
     } catch (err: any) {
+      if (isAbortLikeError(err)) return false;
+      if (!isLatestRequestSequence(requestType, requestSeq)) return false;
       setGraphError(err?.message || `${endpoint} | 0 | request failed`);
       return false;
     }
@@ -2479,23 +2779,50 @@ export default function AgentBuilder() {
 
   const expandKnowGraphFromEntity = useCallback(
     async (entity: KnowledgeGraphNode) => {
-      if (!activeProject) return;
+      const projectId = activeProject;
+      if (!projectId) return;
+      const requestType = "kg-expand";
+      const requestSeq = nextRequestSequence(requestType);
       const rawId = String(entity.rawId || entity.id || "").trim();
       if (!rawId) return;
 
-      const endpoint = `/api/knowgraph/expand?projectId=${encodeURIComponent(activeProject)}&nodeId=${encodeURIComponent(rawId)}&depth=1&limit=50`;
+      const endpoint = `/api/knowgraph/expand?projectId=${encodeURIComponent(projectId)}&nodeId=${encodeURIComponent(rawId)}&depth=1&limit=50`;
+      kgExpandAbortRef.current?.abort();
+      const controller = new AbortController();
+      kgExpandAbortRef.current = controller;
+      kgExpandProjectRef.current = projectId;
       setExpandingNodeId(entity.label || entity.id);
       try {
-        const res = await fetch(endpoint, { credentials: "include" });
-        const { data, text } = await readJsonAndText(res);
-        if (!res.ok) {
+        const payload = await guardedRequest({
+          key: `knowgraph:expand:${projectId}:${rawId}`,
+          method: "GET",
+          ttlMs: 12_000,
+          signal: controller.signal,
+          fetcher: async (signal) => {
+            const res = await fetch(endpoint, { credentials: "include", signal });
+            const { data, text } = await readJsonAndText(res);
+            return { res, data, text, endpoint };
+          },
+        });
+        if (!payload.res.ok) {
           throw new Error(
-            formatRequestErrorLine(endpoint, res.status, (data && safeText(data?.error?.message || data?.error)) || text),
+            formatRequestErrorLine(
+              payload.endpoint,
+              payload.res.status,
+              (payload.data && safeText(payload.data?.error?.message || payload.data?.error)) || payload.text,
+            ),
           );
         }
+        if (
+          !isLatestRequestSequence(requestType, requestSeq) ||
+          controller.signal.aborted ||
+          activeProjectLatestRef.current !== projectId
+        ) {
+          return;
+        }
 
-        const nextNodes = Array.isArray(data?.nodes) ? data.nodes : [];
-        const nextRelationships = Array.isArray(data?.relationships) ? data.relationships : [];
+        const nextNodes = Array.isArray(payload.data?.nodes) ? payload.data.nodes : [];
+        const nextRelationships = Array.isArray(payload.data?.relationships) ? payload.data.relationships : [];
         setKnowGraphData((prev) => {
           const nodeMap = new Map<string, any>();
           const relationshipMap = new Map<string, any>();
@@ -2514,81 +2841,271 @@ export default function AgentBuilder() {
         });
         setGraphError((prev) => (prev && prev.includes("/api/knowgraph/expand") ? null : prev));
       } catch (err: any) {
+        if (
+          isAbortLikeError(err) ||
+          !isLatestRequestSequence(requestType, requestSeq) ||
+          activeProjectLatestRef.current !== projectId
+        ) {
+          return;
+        }
         setGraphError(err?.message || "KnowGraph expand failed");
       } finally {
-        setExpandingNodeId(null);
+        if (activeProjectLatestRef.current === projectId && isLatestRequestSequence(requestType, requestSeq)) {
+          setExpandingNodeId(null);
+        }
+        if (kgExpandAbortRef.current === controller) {
+          kgExpandAbortRef.current = null;
+        }
+        if (kgExpandProjectRef.current === projectId) {
+          kgExpandProjectRef.current = "";
+        }
       }
     },
     [activeProject],
   );
 
-  // When switching projects, reload all per-project state from storage
-    useEffect(() => {
-      if (!activeProject) return;
-      setStateLoaded(false);
-      fetch(`${V2_PROJECTS_API}/${activeProject}/state`)
-        .then((r) => safeJson(r))
-        .then((data) => {
-          setMessages(normalizeMessages(data?.messages));
-          setPlan(normalizePlanItems(data?.plan));
-          setLinks(normalizeLinks(data?.links));
-          setStateLoaded(true);
-        })
-      .catch(() => {
-        const next = loadProjectState(activeProject, mode);
+  // When switching projects, reload all per-project state from storage.
+  useEffect(() => {
+    if (!activeProject) {
+      stateLoadKeyRef.current = "";
+      stateLoadProjectRef.current = "";
+      return;
+    }
+    const projectId = activeProject;
+    const stateKey = `${mode}:${activeProject}`;
+    if (stateLoadKeyRef.current === stateKey) return; // Guard duplicate load cascades.
+    stateLoadKeyRef.current = stateKey;
+    const requestType = "project-state-load";
+    const requestSeq = nextRequestSequence(requestType);
+    stateLoadAbortRef.current?.abort();
+    const controller = new AbortController();
+    stateLoadAbortRef.current = controller;
+    stateLoadProjectRef.current = projectId;
+    setStateLoaded(false);
+
+    void (async () => {
+      try {
+        const endpoint = `${V2_PROJECTS_API}/${projectId}/state`;
+        const payload = await guardedRequest({
+          key: `project-state:${projectId}`,
+          method: "GET",
+          ttlMs: 3_000,
+          signal: controller.signal,
+          fetcher: async (signal) => {
+            const response = await fetch(endpoint, { signal });
+            const data = await safeJson(response);
+            return { response, data };
+          },
+        });
+        if (
+          controller.signal.aborted ||
+          !isLatestRequestSequence(requestType, requestSeq) ||
+          activeProjectLatestRef.current !== projectId
+        ) {
+          return;
+        }
+        setMessages(normalizeMessages(payload.data?.messages));
+        setPlan(normalizePlanItems(payload.data?.plan));
+        setLinks(normalizeLinks(payload.data?.links));
+        setStateLoaded(true);
+      } catch (err) {
+        if (
+          isAbortLikeError(err) ||
+          !isLatestRequestSequence(requestType, requestSeq) ||
+          activeProjectLatestRef.current !== projectId
+        ) {
+          return;
+        }
+        const next = loadProjectState(projectId, mode);
         setMessages(normalizeMessages(next.messages));
         setPlan(normalizePlanItems(next.plan));
         setLinks(normalizeLinks(next.links));
         setStateLoaded(true);
-      });
+      } finally {
+        if (stateLoadAbortRef.current === controller) {
+          stateLoadAbortRef.current = null;
+        }
+        if (stateLoadProjectRef.current === projectId) {
+          stateLoadProjectRef.current = "";
+        }
+      }
+    })();
   }, [activeProject, mode]);
 
   // Load projects on mount ONLY
   useEffect(() => {
-    const search = new URLSearchParams(window.location.search);
-    const urlId = search.get("projectId") || "";
-    if (urlId) {
-      setActiveProjectWithUrl(urlId);
-    }
-    void refreshProjects(undefined, mode === "assist" ? "assist" : "agent", 'mount');
+    if (mountRefreshRanRef.current) return;
+    let cancelled = false;
+    const timerId = window.setTimeout(() => {
+      if (cancelled || mountRefreshRanRef.current) return;
+      mountRefreshRanRef.current = true;
+      const search = new URLSearchParams(window.location.search);
+      const urlId = search.get("projectId") || "";
+      if (urlId) {
+        setActiveProjectWithUrl(urlId);
+      }
+      void refreshProjects(undefined, mode === "assist" ? "assist" : "agent", "mount");
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timerId);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   
   // Mode is user-chosen via Assist/Agent toggle - do not auto-switch based on project
 
-  const loadProjectSubgraph = useCallback(() => {
+  useEffect(() => {
+    return () => {
+      refreshAbortRef.current?.abort();
+      stateLoadAbortRef.current?.abort();
+      kgLoadAbortRef.current?.abort();
+      kgExpandAbortRef.current?.abort();
+      dashboardPollAbortRef.current?.abort();
+      if (dashboardPollTimerRef.current != null) {
+        window.clearTimeout(dashboardPollTimerRef.current);
+        dashboardPollTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const loadProjectSubgraph = useCallback((opts?: { force?: boolean }) => {
+    const projectId = activeProject;
+    if (!projectId) return;
+    const cacheKey = graphCacheKey;
+    const requestType = "kg-subgraph-load";
+    const requestSeq = nextRequestSequence(requestType);
     setGraphResetToken((v) => v + 1);
     setSelectedEdgeEvidence(null);
+    const cached = readCachedGraphPayload(cacheKey);
+    if (cached) {
+      // Show cached graph immediately while refresh decision is made.
+      setCypher(cached.cypher || "");
+      setGraphResult(Array.isArray(cached.graphResult) ? cached.graphResult : []);
+      setKnowGraphData({
+        nodes: Array.isArray(cached.knowGraphData?.nodes) ? cached.knowGraphData.nodes : [],
+        relationships: Array.isArray(cached.knowGraphData?.relationships) ? cached.knowGraphData.relationships : [],
+      });
+      graphHydrateKeyRef.current = cacheKey;
+    }
+    const shouldRefresh = opts?.force || !isCachedGraphFresh(cached, KG_CACHE_TTL_MS);
+    if (!shouldRefresh) {
+      setGraphLoading(false);
+      setGraphError(null);
+      return;
+    }
+    kgLoadAbortRef.current?.abort();
+    const controller = new AbortController();
+    kgLoadAbortRef.current = controller;
+    kgLoadProjectRef.current = projectId;
     setGraphError(null);
     void (async () => {
-      const knowHealthOk = await loadKnowGraphHealth();
-      await runGraphPresetQuery("SEED", { limit: 220 });
+      const knowHealthOk = await loadKnowGraphHealth({
+        signal: controller.signal,
+        requestType,
+        requestSeq,
+      });
+      await runGraphPresetQuery("SEED", {
+        limit: 220,
+        signal: controller.signal,
+        requestType,
+        requestSeq,
+        allowPostFallback: false,
+      });
+      if (
+        controller.signal.aborted ||
+        !isLatestRequestSequence(requestType, requestSeq) ||
+        activeProjectLatestRef.current !== projectId
+      ) {
+        return;
+      }
       if (!knowHealthOk) {
         setKnowGraphData({ nodes: [], relationships: [] });
         return;
       }
-      await loadKnowGraphData();
-    })();
-  }, [loadKnowGraphData, loadKnowGraphHealth, runGraphPresetQuery]);
+      await loadKnowGraphData({
+        signal: controller.signal,
+        requestType,
+        requestSeq,
+      });
+    })().finally(() => {
+      if (kgLoadAbortRef.current === controller) {
+        kgLoadAbortRef.current = null;
+      }
+      if (kgLoadProjectRef.current === projectId) {
+        kgLoadProjectRef.current = "";
+      }
+    });
+  }, [activeProject, graphCacheKey, loadKnowGraphData, loadKnowGraphHealth, runGraphPresetQuery]);
+
+  useEffect(() => {
+    if (!activeProject) {
+      graphHydrateKeyRef.current = "";
+      return;
+    }
+    if (graphHydrateKeyRef.current === graphCacheKey) return;
+    const cached = readCachedGraphPayload(graphCacheKey);
+    if (!cached) return;
+    setCypher(cached.cypher || "");
+    setGraphResult(Array.isArray(cached.graphResult) ? cached.graphResult : []);
+    setKnowGraphData({
+      nodes: Array.isArray(cached.knowGraphData?.nodes) ? cached.knowGraphData.nodes : [],
+      relationships: Array.isArray(cached.knowGraphData?.relationships) ? cached.knowGraphData.relationships : [],
+    });
+    graphHydrateKeyRef.current = graphCacheKey;
+  }, [activeProject, graphCacheKey]);
+
+  useEffect(() => {
+    if (!activeProject) return;
+    const hasGraphData =
+      graphResult.length > 0 ||
+      knowGraphData.nodes.length > 0 ||
+      knowGraphData.relationships.length > 0;
+    if (!hasGraphData) return;
+    writeCachedGraphPayload(graphCacheKey, {
+      updatedAt: Date.now(),
+      cypher,
+      graphResult,
+      knowGraphData,
+    });
+  }, [activeProject, graphCacheKey, cypher, graphResult, knowGraphData]);
 
   const loadGraphData = useCallback(() => {
     if (!activeProject) return;
-    loadProjectSubgraph();
+    loadProjectSubgraph({ force: true });
   }, [activeProject, loadProjectSubgraph]);
 
   const expandGraphFromNode = useCallback(
     async (nodeId: string) => {
+      const projectId = activeProject;
       const trimmed = String(nodeId || "").trim();
-      if (!trimmed || !activeProject) return;
+      if (!trimmed || !projectId) return;
+      const requestType = "kg-expand";
+      const requestSeq = nextRequestSequence(requestType);
+      kgExpandAbortRef.current?.abort();
+      const controller = new AbortController();
+      kgExpandAbortRef.current = controller;
+      kgExpandProjectRef.current = projectId;
       setExpandingNodeId(trimmed);
       try {
         await runGraphPresetQuery("EXPAND", {
           merge: true,
           nodeId: trimmed,
           limit: 120,
+          signal: controller.signal,
+          requestType,
+          requestSeq,
         });
       } finally {
-        setExpandingNodeId(null);
+        if (activeProjectLatestRef.current === projectId && isLatestRequestSequence(requestType, requestSeq)) {
+          setExpandingNodeId(null);
+        }
+        if (kgExpandAbortRef.current === controller) {
+          kgExpandAbortRef.current = null;
+        }
+        if (kgExpandProjectRef.current === projectId) {
+          kgExpandProjectRef.current = "";
+        }
       }
     },
     [activeProject, runGraphPresetQuery],
@@ -2596,10 +3113,15 @@ export default function AgentBuilder() {
 
   // Auto-load project subgraph when Knowledge tab opens or project changes
   useEffect(() => {
-    if (tab === 'Knowledge' && activeProject && panelOpen) {
-      loadProjectSubgraph();
+    if (tab !== 'Knowledge' || !activeProject || !panelOpen) {
+      kgAutoLoadKeyRef.current = "";
+      return;
     }
-  }, [tab, activeProject, panelOpen, loadProjectSubgraph]);
+    const autoLoadKey = graphCacheScope;
+    if (kgAutoLoadKeyRef.current === autoLoadKey) return; // StrictMode/effect-cascade guard.
+    kgAutoLoadKeyRef.current = autoLoadKey;
+    loadProjectSubgraph();
+  }, [tab, activeProject, panelOpen, graphCacheScope, loadProjectSubgraph]);
 
   useEffect(() => {
     const refresh = () => {
@@ -2613,25 +3135,142 @@ export default function AgentBuilder() {
     setSelectedEdgeEvidence(null);
   }, [activeProject, tab]);
 
+  useEffect(() => {
+    if (
+      stateLoadAbortRef.current &&
+      stateLoadProjectRef.current &&
+      stateLoadProjectRef.current !== activeProject
+    ) {
+      stateLoadAbortRef.current.abort();
+    }
+    if (
+      kgLoadAbortRef.current &&
+      kgLoadProjectRef.current &&
+      kgLoadProjectRef.current !== activeProject
+    ) {
+      kgLoadAbortRef.current.abort();
+    }
+    if (
+      kgExpandAbortRef.current &&
+      kgExpandProjectRef.current &&
+      kgExpandProjectRef.current !== activeProject
+    ) {
+      kgExpandAbortRef.current.abort();
+    }
+    if (
+      dashboardPollAbortRef.current &&
+      dashboardPollProjectRef.current &&
+      dashboardPollProjectRef.current !== activeProject
+    ) {
+      dashboardPollAbortRef.current.abort();
+    }
+    if (
+      dashboardPollTimerRef.current != null &&
+      dashboardPollProjectRef.current &&
+      dashboardPollProjectRef.current !== activeProject
+    ) {
+      window.clearTimeout(dashboardPollTimerRef.current);
+      dashboardPollTimerRef.current = null;
+    }
+  }, [activeProject]);
+
   // Poll for last ingest trace when Dashboard tab is active
   useEffect(() => {
-    if (tab !== 'Dashboard' || !activeProject) return;
-    
-      const fetchIngestTrace = async () => {
-        try {
-          const res = await fetch(`${V2_PROJECTS_API}/${activeProject}/kg/last-trace`);
-          const data = await safeJson(res);
-          if (data?.ok && data.trace) {
-            setLastIngestTrace(data.trace);
-          }
-        } catch (err) {
-          console.error('[Dashboard] Failed to fetch ingest trace:', err);
-        }
+    const projectId = activeProject;
+    if (tab !== "Dashboard" || !projectId) return;
+
+    if (dashboardPollTimerRef.current != null) {
+      window.clearTimeout(dashboardPollTimerRef.current);
+      dashboardPollTimerRef.current = null;
+    }
+    dashboardPollAbortRef.current?.abort();
+    const controller = new AbortController();
+    dashboardPollAbortRef.current = controller;
+    dashboardPollProjectRef.current = projectId;
+
+    const runId = ++dashboardPollRunRef.current;
+    let cancelled = false;
+    let failureCount = 0;
+    const schedule = (baseMs: number) => {
+      if (cancelled || controller.signal.aborted || runId !== dashboardPollRunRef.current) return;
+      if (dashboardPollTimerRef.current != null) {
+        window.clearTimeout(dashboardPollTimerRef.current);
+      }
+      const jitter = Math.floor(Math.random() * 300);
+      dashboardPollTimerRef.current = window.setTimeout(() => {
+        void fetchIngestTrace();
+      }, baseMs + jitter);
     };
-    
-    fetchIngestTrace();
-    const interval = setInterval(fetchIngestTrace, 3000); // Poll every 3s
-    return () => clearInterval(interval);
+    const fetchIngestTrace = async () => {
+      if (
+        cancelled ||
+        controller.signal.aborted ||
+        runId !== dashboardPollRunRef.current ||
+        activeProjectLatestRef.current !== projectId
+      ) {
+        return;
+      }
+      if (document.visibilityState !== "visible") {
+        schedule(3_000);
+        return;
+      }
+      try {
+        const endpoint = `${V2_PROJECTS_API}/${projectId}/kg/last-trace`;
+        const payload = await guardedRequest({
+          key: `dashboard:last-trace:${projectId}`,
+          method: "GET",
+          ttlMs: 1_200,
+          signal: controller.signal,
+          fetcher: async (signal) => {
+            const res = await fetch(endpoint, { signal });
+            const data = await safeJson(res);
+            return { data };
+          },
+        });
+        if (
+          cancelled ||
+          controller.signal.aborted ||
+          runId !== dashboardPollRunRef.current ||
+          activeProjectLatestRef.current !== projectId
+        ) {
+          return;
+        }
+        if (payload.data?.ok && payload.data.trace) {
+          setLastIngestTrace(payload.data.trace);
+        }
+        failureCount = 0;
+        schedule(3_000);
+      } catch (err) {
+        if (
+          cancelled ||
+          controller.signal.aborted ||
+          runId !== dashboardPollRunRef.current ||
+          activeProjectLatestRef.current !== projectId ||
+          isAbortLikeError(err)
+        ) {
+          return;
+        }
+        console.error("[Dashboard] Failed to fetch ingest trace:", err);
+        failureCount = Math.min(failureCount + 1, 4);
+        schedule(3_000 * Math.pow(2, failureCount));
+      }
+    };
+
+    void fetchIngestTrace();
+    return () => {
+      cancelled = true;
+      if (dashboardPollTimerRef.current != null) {
+        window.clearTimeout(dashboardPollTimerRef.current);
+        dashboardPollTimerRef.current = null;
+      }
+      if (dashboardPollAbortRef.current === controller) {
+        dashboardPollAbortRef.current.abort();
+        dashboardPollAbortRef.current = null;
+      }
+      if (dashboardPollProjectRef.current === projectId) {
+        dashboardPollProjectRef.current = "";
+      }
+    };
   }, [tab, activeProject]);
 
 
@@ -2700,11 +3339,9 @@ export default function AgentBuilder() {
         assistantText =
           typeof finalText === "string" && finalText.length > 0 ? finalText : JSON.stringify(data);
       } else {
-        const fallback = await solRun(userText);
-        if (!fallback?.ok) {
-          throw new Error(fallback?.text || "Sol chat failed");
-        }
-        assistantText = fallback.text;
+        throw new Error(
+          safeText((data as any)?.message || (data as any)?.error || "Boss agent failed"),
+        );
       }
       setMessages((prev) => [...prev, { role: "assistant", text: assistantText }]);
       if (mode === "assist" && activeProject && userText && assistantText) {
@@ -2914,16 +3551,6 @@ export default function AgentBuilder() {
     return { entities, relationships };
   }, [graphVizFiltered]);
 
-  // derive counts
-  const approved = plan.filter((p) => p.status === "approved");
-  const accepted = links.filter((l) => l.accepted);
-  const selectedAgentLabel =
-    selectedAgentType === "agent_builder"
-      ? "Agent Builder"
-      : selectedAgentType === "kg_ingest"
-        ? "KG Ingest"
-        : "Main Chat";
-
   const createProjectPrompt = async () => {
     const name = window.prompt("New project name?");
     if (!name || !name.trim()) return;
@@ -3107,15 +3734,11 @@ export default function AgentBuilder() {
                         {activeProject ? (
                           <div className="space-y-4">
                             <div>
-                              <div style={{ color: C.primary, fontWeight: 600, marginBottom: 6 }}>
-                                {selectedAgentLabel}
-                              </div>
                               <AgentManager
                                 key={`${activeProject}:${selectedAgentType}`}
                                 projectId={activeProject}
                                 agentType={selectedAgentType}
                                 activeTab={tab}
-                                workspaceProjectId={assistProjectId || undefined}
                                 onGraphRefresh={() => {
                                   // no-op
                                 }}
@@ -3195,13 +3818,13 @@ export default function AgentBuilder() {
 
                     {tab === "Dashboard" && (
                       <div className="space-y-3">
-                        {/* KG Ingest Results - auto-populated from Assist chat */}
+                        {/* ThinkGraph ingest results - auto-populated from Assist chat */}
                       <div className="space-y-2">
                         <div
                           className="text-xs font-semibold"
                           style={{ color: C.text }}
                         >
-                          Last KG Ingest
+                          Last ThinkGraph Ingest
                         </div>
                         <div className="text-xs" style={{ color: C.neutral, marginBottom: 8 }}>
                           Auto-populated when Assist chat triggers ingest.
@@ -3508,10 +4131,7 @@ export default function AgentBuilder() {
                         onClick={() => {
                           setActiveProjectWithUrl(project.id);
                           if (mode === 'agents') {
-                            const code = String(project.code || '').toLowerCase();
-                            if (code === 'kg-ingest' || code === 'kg_ingest') setSelectedAgentType('kg_ingest');
-                            else if (code === 'agent-builder' || code === 'agent_builder') setSelectedAgentType('agent_builder');
-                            else setSelectedAgentType('llm_chat');
+                            setSelectedAgentType(agentTypeFromProjectCode(String(project.code || '')));
                           }
                           setOpenDrawer(null);
                         }}
@@ -3543,10 +4163,10 @@ export default function AgentBuilder() {
                       <button
                         onClick={async (e) => {
                           e.stopPropagation();
-                          const PROTECTED_AGENT_CODES = new Set(["main-chat", "kg-ingest"]);
+                          const PROTECTED_AGENT_CODES = new Set(["main-chat", "kg-ingest", "thinkgraph", "knowgraph"]);
                           const isProtectedAgent = mode === "agents" && PROTECTED_AGENT_CODES.has(project.code);
                           if (isProtectedAgent) {
-                            alert("Main Chat and KG Ingest are protected system decks.");
+                            alert("Main Chat, ThinkGraph, and KnowGraph are protected system decks.");
                             return;
                           }
                           if (!confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;

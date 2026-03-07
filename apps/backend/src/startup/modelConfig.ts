@@ -1,54 +1,124 @@
 import { pool } from '../db/pool';
 import { resolveModel } from '../llm/models.config';
 
+type SystemAgentType = 'llm_chat' | 'kg_ingest' | 'knowgraph';
+
+function systemAgentLabel(agentType: SystemAgentType): string {
+  if (agentType === 'llm_chat') return 'Main Chat';
+  if (agentType === 'kg_ingest') return 'ThinkGraph';
+  return 'KnowGraph';
+}
+
+function resolveProviderModelId(modelKey: string): string {
+  if (!modelKey) return '(not set)';
+  if (modelKey.includes('/')) return modelKey;
+  try {
+    return resolveModel(modelKey).id;
+  } catch {
+    return modelKey;
+  }
+}
+
+function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
+  const provider = String(value ?? '').trim().toLowerCase();
+  if (provider === 'openai' || provider === 'openrouter') return provider;
+  return null;
+}
+
+function deriveProviderFromModel(modelKey: string): 'openai' | 'openrouter' | null {
+  const key = String(modelKey || '').trim();
+  if (!key) return null;
+  try {
+    return resolveModel(key).provider;
+  } catch {
+    if (key.includes('/')) return 'openrouter';
+    if (/^gpt-|^o\d|^text-embedding/i.test(key)) return 'openai';
+    return null;
+  }
+}
+
+function scoreRow(row: any): number {
+  const modelKey = String(row?.model_key ?? row?.model ?? '').trim();
+  const provider = normalizeProvider(row?.provider) ?? deriveProviderFromModel(modelKey);
+  const prompt = String(row?.prompt_template ?? '').trim();
+  let score = 0;
+  if (provider) score += 4;
+  if (modelKey) score += 4;
+  if (prompt) score += 2;
+  if (typeof row?.max_tokens === 'number') score += 1;
+  return score;
+}
+
+function rowTimeMs(row: any, key: 'updated_at' | 'created_at'): number {
+  const raw = row?.[key];
+  if (!raw) return 0;
+  const ms = Date.parse(String(raw));
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function pickCanonicalRow(rows: any[]): any | null {
+  if (!rows.length) return null;
+  const sorted = [...rows].sort((a, b) => {
+    const scoreDiff = scoreRow(b) - scoreRow(a);
+    if (scoreDiff !== 0) return scoreDiff;
+    const updatedDiff = rowTimeMs(b, 'updated_at') - rowTimeMs(a, 'updated_at');
+    if (updatedDiff !== 0) return updatedDiff;
+    const createdDiff = rowTimeMs(b, 'created_at') - rowTimeMs(a, 'created_at');
+    if (createdDiff !== 0) return createdDiff;
+    return String(a?.agent_id ?? '').localeCompare(String(b?.agent_id ?? ''));
+  });
+  return sorted[0];
+}
+
 export async function logModelConfiguration() {
   console.log('\n╔════════════════════════════════════════════════════════════════╗');
   console.log('║              AGENT MODELS (from Agent Builder)                 ║');
   console.log('╚════════════════════════════════════════════════════════════════╝\n');
 
   try {
-    const { rows } = await pool.query(`
-      SELECT 
-        name,
-        model,
-        temperature,
-        max_tokens
-      FROM ag_catalog.project_agents
-      WHERE is_active = true
-        AND name IN ('Main Chat', 'KG Ingest')
-      ORDER BY 
-        CASE name 
-          WHEN 'Main Chat' THEN 1
-          WHEN 'KG Ingest' THEN 2
-          ELSE 3
-        END
-    `);
+    const { rows } = await pool.query(
+      `SELECT project_id,
+              agent_id,
+              agent_type,
+              provider,
+              COALESCE(model_key, model) AS model_key,
+              temperature,
+              max_tokens,
+              prompt_template,
+              updated_at,
+              created_at
+       FROM ag_catalog.project_agents
+       WHERE is_active = true
+         AND agent_type::text IN ('llm_chat', 'kg_ingest', 'knowgraph')`,
+    );
 
-    if (rows.length === 0) {
-      console.log('  ⚠️  No agents configured');
-      console.log('');
-      return;
-    }
-
-    for (const agent of rows) {
-      const modelKey = agent.model || '(not set)';
-      let providerInfo = '';
-      
-      if (modelKey !== '(not set)') {
-        try {
-          const resolved = resolveModel(modelKey);
-          providerInfo = ` (${resolved.provider}/${resolved.id})`;
-        } catch {
-          providerInfo = ' (invalid)';
-        }
+    const byType = new Map<string, any[]>();
+    rows.forEach((row: any) => {
+      const type = String(row.agent_type || '').trim();
+      if (!byType.has(type)) byType.set(type, []);
+      byType.get(type)?.push(row);
+    });
+    const ordered: SystemAgentType[] = ['llm_chat', 'kg_ingest', 'knowgraph'];
+    ordered.forEach((agentType) => {
+      const row = pickCanonicalRow(byType.get(agentType) || []);
+      const label = systemAgentLabel(agentType);
+      if (!row) {
+        console.log(`  ${label}:`);
+        console.log('    Provider:    (not configured)');
+        console.log('    Model:       (not configured)');
+        console.log('    Max Tokens:  (not configured)');
+        console.log('');
+        return;
       }
-
-      console.log(`  ${agent.name}:`);
-      console.log(`    Model:       ${modelKey}${providerInfo}`);
-      console.log(`    Temperature: ${agent.temperature ?? 'default'}`);
-      console.log(`    Max Tokens:  ${agent.max_tokens ?? 'default'}`);
+      const modelKey = String(row.model_key || '').trim();
+      const provider = normalizeProvider(row.provider) ?? deriveProviderFromModel(modelKey) ?? 'unknown';
+      const providerModelId = resolveProviderModelId(modelKey);
+      console.log(`  ${label}:`);
+      console.log(`    Provider:    ${provider}`);
+      console.log(`    Model:       ${modelKey || '(not set)'} (${providerModelId})`);
+      console.log(`    Max Tokens:  ${row.max_tokens ?? 'default'}`);
       console.log('');
-    }
+    });
 
     console.log('════════════════════════════════════════════════════════════════\n');
   } catch (err: any) {

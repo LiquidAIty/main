@@ -92,7 +92,7 @@ const DEFAULT_KG_RESPONSE_FORMAT = {
 };
 
 export type LlmMeta = {
-  provider: 'openai';
+  provider: 'openai' | 'openrouter';
   model_key: string;
   model_id: string;
   request_id?: string;
@@ -123,28 +123,109 @@ function slug(input: string): string {
     .slice(0, 80);
 }
 
-function getOpenAiConfig(modelKey: string) {
-  const model = resolveModel(modelKey);
-  if (model.provider !== 'openai') {
-    throw createTypedError(
-      'kg_ingest_provider_not_openai',
-      `kg_ingest provider must be openai (got ${model.provider})`,
-    );
+function normalizeChatCompletionsResponseFormat(responseFormat: any): any {
+  if (!responseFormat || typeof responseFormat !== 'object') return undefined;
+  const format = responseFormat;
+  if (format.type === 'json_object') {
+    return { type: 'json_object' };
   }
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey || !apiKey.trim()) {
-    throw createTypedError('provider_key_missing', 'OPENAI_API_KEY missing');
+  if (format.type === 'text') {
+    return { type: 'text' };
   }
-  const base = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-  const allowHosts = (process.env.ALLOW_HOSTS_OPENAI || 'api.openai.com')
-    .split(',')
-    .map((h) => h.trim())
-    .filter(Boolean);
-  return { modelId: model.id, apiKey, base, allowHosts };
+  const legacy = format.json_schema && typeof format.json_schema === 'object'
+    ? format.json_schema
+    : null;
+  const isJsonSchemaLike =
+    format.type === 'json_schema' ||
+    legacy !== null ||
+    Object.prototype.hasOwnProperty.call(format, 'schema');
+  if (!isJsonSchemaLike) return undefined;
+  const name =
+    (typeof format.name === 'string' && format.name.trim()) ||
+    (typeof legacy?.name === 'string' && legacy.name.trim()) ||
+    'kg_extract';
+  const schema = format.schema ?? legacy?.schema ?? {};
+  const strict =
+    typeof format.strict === 'boolean'
+      ? format.strict
+      : typeof legacy?.strict === 'boolean'
+        ? legacy.strict
+        : true;
+  return {
+    type: 'json_schema',
+    json_schema: { name, schema, strict },
+  };
 }
 
-async function callOpenAiJsonSchema(opts: {
+function getProviderConfig(opts: {
   modelKey: string;
+  provider?: string | null;
+  providerModelId?: string | null;
+}) {
+  const normalizedProvider = String(opts.provider || '').trim().toLowerCase();
+  const explicitProvider =
+    normalizedProvider === 'openai' || normalizedProvider === 'openrouter'
+      ? (normalizedProvider as 'openai' | 'openrouter')
+      : null;
+  const explicitProviderModelId = String(opts.providerModelId || '').trim() || null;
+  let provider: 'openai' | 'openrouter';
+  let modelId: string;
+  if (explicitProvider && explicitProviderModelId) {
+    provider = explicitProvider;
+    modelId = explicitProviderModelId;
+  } else {
+    const model = resolveModel(opts.modelKey);
+    provider = model.provider;
+    modelId = model.id;
+  }
+
+  if (provider === 'openai') {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey || !apiKey.trim()) {
+      throw createTypedError('provider_key_missing', 'OPENAI_API_KEY missing');
+    }
+    const base = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+    const allowHosts = (process.env.ALLOW_HOSTS_OPENAI || 'api.openai.com')
+      .split(',')
+      .map((h) => h.trim())
+      .filter(Boolean);
+    return {
+      provider: 'openai' as const,
+      modelId,
+      apiKey,
+      base,
+      allowHosts,
+      endpoint: `${base.replace(/\/+$/, '')}/responses`,
+      providerLabel: 'OpenAI',
+    };
+  }
+  if (provider === 'openrouter') {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey || !apiKey.trim()) {
+      throw createTypedError('provider_key_missing', 'OPENROUTER_API_KEY missing');
+    }
+    const base = process.env.OPENROUTER_BASE_URL || 'https://api.openrouter.ai';
+    const allowHosts = (process.env.ALLOW_HOSTS_OPENROUTER || 'api.openrouter.ai,openrouter.ai')
+      .split(',')
+      .map((h) => h.trim())
+      .filter(Boolean);
+    return {
+      provider: 'openrouter' as const,
+      modelId,
+      apiKey,
+      base,
+      allowHosts,
+      endpoint: `${base.replace(/\/+$/, '')}/chat/completions`,
+      providerLabel: 'OpenRouter',
+    };
+  }
+  throw createTypedError('provider_not_supported', `provider_not_supported:${provider}`);
+}
+
+async function callProviderJsonSchema(opts: {
+  modelKey: string;
+  provider?: string | null;
+  providerModelId?: string | null;
   system: string;
   prompt: string;
   maxTokens: number;
@@ -157,6 +238,8 @@ async function callOpenAiJsonSchema(opts: {
 }) {
   const {
     modelKey,
+    provider,
+    providerModelId,
     system,
     prompt,
     maxTokens,
@@ -167,21 +250,38 @@ async function callOpenAiJsonSchema(opts: {
     topP,
     previousResponseId,
   } = opts;
-  const cfg = getOpenAiConfig(modelKey);
-  const url = `${cfg.base.replace(/\/+$/, '')}/responses`;
+  const cfg = getProviderConfig({ modelKey, provider, providerModelId });
+  const url = cfg.endpoint;
   const started = Date.now();
-  const input = buildResponsesInput(system, prompt);
-  const requestBody: any = buildResponsesPayload({
-    model: cfg.modelId,
-    input,
-    response_format: responseFormat ?? DEFAULT_KG_RESPONSE_FORMAT,
-    temperature: typeof temperature === 'number' ? temperature : undefined,
-    top_p: typeof topP === 'number' ? topP : undefined,
-    max_output_tokens: maxTokens,
-    previous_response_id: previousResponseId ?? undefined,
-  });
+  const requestBody: any =
+    cfg.provider === 'openai'
+      ? buildResponsesPayload({
+          model: cfg.modelId,
+          input: buildResponsesInput(system, prompt),
+          response_format: responseFormat ?? DEFAULT_KG_RESPONSE_FORMAT,
+          temperature: typeof temperature === 'number' ? temperature : undefined,
+          top_p: typeof topP === 'number' ? topP : undefined,
+          max_output_tokens: maxTokens,
+          previous_response_id: previousResponseId ?? undefined,
+        })
+      : (() => {
+          const payload: any = {
+            model: cfg.modelId,
+            messages: [
+              { role: 'system', content: system },
+              { role: 'user', content: prompt },
+            ],
+            max_tokens: maxTokens,
+          };
+          if (typeof temperature === 'number') payload.temperature = temperature;
+          if (typeof topP === 'number') payload.top_p = topP;
+          const chatFormat = normalizeChatCompletionsResponseFormat(responseFormat ?? DEFAULT_KG_RESPONSE_FORMAT);
+          if (chatFormat) payload.response_format = chatFormat;
+          return payload;
+        })();
 
   console.log(`[KG_V2][${logTag}] request`, {
+    provider: cfg.provider,
     model: cfg.modelId,
     max_output_tokens: maxTokens,
     body_keys: Object.keys(requestBody),
@@ -213,7 +313,7 @@ async function callOpenAiJsonSchema(opts: {
   } catch (err: any) {
     const msg = err?.message || String(err);
     if (err?.name === 'AbortError' || msg.toLowerCase().includes('aborted')) {
-      throw createTypedError('openai_request_aborted', 'OpenAI request aborted');
+      throw createTypedError('provider_request_aborted', `${cfg.providerLabel} request aborted`);
     }
     throw err;
   } finally {
@@ -230,21 +330,20 @@ async function callOpenAiJsonSchema(opts: {
     raw = rawText;
   }
   if (!res.ok) {
-    console.error(`[KG_V2][${logTag}] openai error`, {
+    console.error(`[KG_V2][${logTag}] ${cfg.provider} error`, {
       status: res.status,
       request_id,
       elapsed_ms,
       error: raw?.error,
     });
-    throw createTypedError('openai_request_failed', `OpenAI request failed (${res.status})`);
+    const code = cfg.provider === 'openrouter' ? 'openrouter_request_failed' : 'openai_request_failed';
+    throw createTypedError(code, `${cfg.providerLabel} request failed (${res.status})`);
   }
 
-  // Debug response shape
-  console.log('[KG_V2][response-shape] keys:', Object.keys(raw));
-  console.log('[KG_V2][response-shape] has_output:', Array.isArray(raw?.output));
-  console.log('[KG_V2][response-shape] output_len:', Array.isArray(raw?.output) ? raw.output.length : 0);
-
-  const finish_reason = extractResponsesFinishReason(raw);
+  const finish_reason =
+    cfg.provider === 'openai'
+      ? extractResponsesFinishReason(raw)
+      : raw?.choices?.[0]?.finish_reason ?? null;
   const usage = raw?.usage ?? null;
   if (usage) {
     console.log(`[KG_V2][${logTag}] usage`, {
@@ -253,7 +352,23 @@ async function callOpenAiJsonSchema(opts: {
       total_tokens: usage.total_tokens ?? null,
     });
   }
-  const rawContent = extractResponsesText(raw);
+  const rawContent =
+    cfg.provider === 'openai'
+      ? extractResponsesText(raw)
+      : (() => {
+          const c = raw?.choices?.[0]?.message?.content;
+          if (typeof c === 'string') return c;
+          if (Array.isArray(c)) {
+            return c
+              .map((part: any) => {
+                if (typeof part === 'string') return part;
+                if (part && typeof part.text === 'string') return part.text;
+                return '';
+              })
+              .join('');
+          }
+          return '';
+        })();
   const branch = rawContent.trim().length > 0 ? 'content' : 'none';
   const preview = String(rawContent || JSON.stringify(raw)).slice(0, 200);
   const raw_len = typeof rawContent === 'string' ? rawContent.length : 0;
@@ -261,6 +376,7 @@ async function callOpenAiJsonSchema(opts: {
 
   console.log(`[KG_V2][${logTag}] output_branch=%s raw_len=%d`, branch, raw_len);
   console.log(`[KG_V2][${logTag}] response_meta`, {
+    provider: cfg.provider,
     request_id,
     finish_reason,
     elapsed_ms,
@@ -270,7 +386,7 @@ async function callOpenAiJsonSchema(opts: {
 
   if (!rawContent || !String(rawContent).trim()) {
     console.error(`[KG_V2][${logTag}] empty output`, {
-      provider: 'openai',
+      provider: cfg.provider,
       model: cfg.modelId,
       max_output_tokens: maxTokens,
       finish_reason,
@@ -279,8 +395,8 @@ async function callOpenAiJsonSchema(opts: {
       elapsed_ms,
       preview_len,
     });
-    throw createTypedError(emptyCode, 'OpenAI returned empty output', {
-      provider: 'openai',
+    throw createTypedError(emptyCode, `${cfg.providerLabel} returned empty output`, {
+      provider: cfg.provider,
       model: cfg.modelId,
       finish_reason,
       usage,
@@ -292,7 +408,7 @@ async function callOpenAiJsonSchema(opts: {
   return {
     content: String(rawContent),
     meta: {
-      provider: 'openai',
+      provider: cfg.provider,
       model_key: modelKey,
       model_id: cfg.modelId,
       request_id,
@@ -305,8 +421,27 @@ async function callOpenAiJsonSchema(opts: {
   };
 }
 
+async function callOpenAiJsonSchema(opts: {
+  modelKey: string;
+  provider?: string | null;
+  providerModelId?: string | null;
+  system: string;
+  prompt: string;
+  maxTokens: number;
+  logTag: string;
+  emptyCode: string;
+  responseFormat?: any;
+  temperature?: number | null;
+  topP?: number | null;
+  previousResponseId?: string | null;
+}) {
+  return callProviderJsonSchema(opts);
+}
+
 export async function chunkTextStrictJSON(opts: {
   modelKey: string;
+  provider?: string | null;
+  providerModelId?: string | null;
   text: string;
   systemPrompt?: string;
   responseFormat?: any;
@@ -329,6 +464,8 @@ export async function chunkTextStrictJSON(opts: {
 
   const { content, meta } = await callOpenAiJsonSchema({
     modelKey: opts.modelKey,
+    provider: opts.provider ?? null,
+    providerModelId: opts.providerModelId ?? null,
     system,
     prompt,
     maxTokens: opts.maxTokens,
@@ -381,6 +518,8 @@ export async function chunkTextStrictJSON(opts: {
 
 export async function extractKgFromChunks(opts: {
   modelKey: string;
+  provider?: string | null;
+  providerModelId?: string | null;
   chunks: KgChunk[];
   docId?: string;
   systemPrompt?: string;
@@ -413,6 +552,8 @@ export async function extractKgFromChunks(opts: {
 
   const { content, meta } = await callOpenAiJsonSchema({
     modelKey: opts.modelKey,
+    provider: opts.provider ?? null,
+    providerModelId: opts.providerModelId ?? null,
     system,
     prompt,
     maxTokens: opts.maxTokens,

@@ -1,5 +1,5 @@
 import { resolveModel } from '../llm/models.config';
-import { getAgentConfig, type AgentType } from './v2/agentConfigStore';
+import { ensureAgentConfig, getAgentConfig, type AgentType } from './v2/agentConfigStore';
 
 export type RuntimeAgentType = AgentType;
 
@@ -19,12 +19,53 @@ export type ResolvedAgentConfig = {
 };
 
 function logRouteResolution(route: string, projectId: string, agentType: RuntimeAgentType, resolvedAgentId: string | null) {
-  console.log('[AGENT_RESOLVE]', {
+  console.log(
+    '[AGENT_RESOLVE] route=%s projectId=%s agentType=%s resolvedAgentId=%s',
     route,
     projectId,
     agentType,
-    resolvedAgentId,
-  });
+    resolvedAgentId ?? 'null',
+  );
+}
+
+function normalizeProvider(value: unknown, agentType: RuntimeAgentType): 'openai' | 'openrouter' {
+  const provider = String(value ?? '').trim().toLowerCase();
+  if (provider === 'openai' || provider === 'openrouter') {
+    return provider;
+  }
+  throw new Error(`${agentType}_provider_missing`);
+}
+
+function resolveProviderModelId(
+  provider: 'openai' | 'openrouter',
+  modelKey: string,
+  agentType: RuntimeAgentType,
+): string {
+  const normalizedModelKey = String(modelKey || '').trim();
+  if (!normalizedModelKey) {
+    throw new Error(`${agentType}_model_missing`);
+  }
+
+  if (normalizedModelKey.includes('/')) {
+    return normalizedModelKey;
+  }
+
+  try {
+    const modelEntry = resolveModel(normalizedModelKey);
+    if (modelEntry.provider !== provider) {
+      throw new Error(
+        `${agentType}_provider_model_mismatch: provider=${provider} model_key=${normalizedModelKey} expects_provider=${modelEntry.provider}`,
+      );
+    }
+    return modelEntry.id;
+  } catch (err: any) {
+    const msg = String(err?.message || '');
+    if (msg.includes('provider_model_mismatch')) {
+      throw err;
+    }
+    // Allow direct provider model IDs without registry entries.
+    return normalizedModelKey;
+  }
 }
 
 export async function resolveAgentConfig(
@@ -32,7 +73,10 @@ export async function resolveAgentConfig(
   agentType: RuntimeAgentType,
   route = 'unknown',
 ): Promise<ResolvedAgentConfig | null> {
-  const config = await getAgentConfig(projectId, agentType);
+  let config = await getAgentConfig(projectId, agentType);
+  if (!config) {
+    config = await ensureAgentConfig(projectId, agentType);
+  }
   if (!config) {
     logRouteResolution(route, projectId, agentType, null);
     return null;
@@ -40,6 +84,8 @@ export async function resolveAgentConfig(
 
   const systemPrompt = String(config.prompt_template || '').trim();
   const modelKey = String(config.model_key || '').trim();
+  const provider = normalizeProvider(config.provider, agentType);
+  const providerModelId = resolveProviderModelId(provider, modelKey, agentType);
   logRouteResolution(route, projectId, agentType, config.agent_id);
 
   if (!systemPrompt) {
@@ -49,25 +95,13 @@ export async function resolveAgentConfig(
   if (!modelKey) {
     throw new Error(`${agentType}_model_missing`);
   }
-  if (modelKey.includes('/')) {
-    throw new Error(
-      `invalid_model_key_format: model key cannot be a provider ID (got: ${modelKey}). Use internal keys like 'kimi-k2-thinking'.`,
-    );
-  }
-
-  let modelEntry;
-  try {
-    modelEntry = resolveModel(modelKey);
-  } catch (err: any) {
-    throw new Error(`${agentType}_model_resolution_failed: ${err?.message || 'unknown_error'}`);
-  }
   return {
     agentId: config.agent_id,
     agentType,
     modelKey,
     systemPrompt,
-    provider: modelEntry.provider,
-    providerModelId: modelEntry.id,
+    provider,
+    providerModelId,
     responseFormat: config.response_format ?? null,
     topP: typeof config.top_p === 'number' ? config.top_p : null,
     previousResponseId:
@@ -80,4 +114,8 @@ export async function resolveAgentConfig(
 
 export async function resolveKgIngestAgent(projectId: string, route = 'unknown') {
   return resolveAgentConfig(projectId, 'kg_ingest', route);
+}
+
+export async function resolveKnowgraphAgent(projectId: string, route = 'unknown') {
+  return resolveAgentConfig(projectId, 'knowgraph', route);
 }
