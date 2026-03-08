@@ -18,6 +18,14 @@
         "apikey": "${SUPABASE_SERVICE_KEY}",
         "Authorization": "Bearer ${SUPABASE_SERVICE_KEY}"
       }
+    },
+    "tavily": {
+      "transport": "sse",
+      "url": "${TAVILY_MCP_URL}",
+      "headers": {
+        "Authorization": "Bearer ${TAVILY_API_KEY}",
+        "DEFAULT_PARAMETERS": "${TAVILY_MCP_DEFAULT_PARAMETERS}"
+      }
     }
   }
 }

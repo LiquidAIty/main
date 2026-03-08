@@ -8,7 +8,7 @@ export interface ProjectAgent {
   agent_id: string;
   project_id: string;
   name: string;
-  agent_type: 'kg_ingest' | 'knowgraph' | 'kg_read' | 'llm_chat';
+  agent_type: 'kg_ingest' | 'knowgraph' | 'neo4j' | 'kg_read' | 'llm_chat';
   
   model?: string | null;
   prompt_template?: string | null;
@@ -31,7 +31,7 @@ export interface ProjectAgent {
 
 export interface CreateAgentInput {
   name: string;
-  agent_type: 'kg_ingest' | 'knowgraph' | 'kg_read' | 'llm_chat';
+  agent_type: 'kg_ingest' | 'knowgraph' | 'neo4j' | 'kg_read' | 'llm_chat';
   model?: string;
   prompt_template?: string;
   tools?: string[];
@@ -213,6 +213,11 @@ export function getAgentTypes(): Array<{ value: string; label: string; descripti
       description: 'Extracts Neo4j-oriented entities/relationships for the KnowGraph sink',
     },
     {
+      value: 'neo4j',
+      label: 'Neo4j',
+      description: 'Extracts Neo4j-oriented entities/relationships for the local Neo4j dual-write sink',
+    },
+    {
       value: 'kg_read',
       label: 'Knowledge Reader',
       description: 'Queries knowledge graph and returns context packets',
@@ -232,6 +237,7 @@ export async function ensureDefaultAgents(projectId: string): Promise<{
   mainChat: ProjectAgent;
   kgIngest: ProjectAgent;
   knowgraph: ProjectAgent;
+  neo4j: ProjectAgent;
 }> {
   const res = await fetch(`${BASE}/projects/${projectId}/agents/ensure-defaults`, {
     method: 'POST',

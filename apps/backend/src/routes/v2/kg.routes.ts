@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { pool } from '../../db/pool';
 import { createHash } from 'crypto';
-import { resolveKgIngestAgent, resolveKnowgraphAgent } from '../../services/resolveAgents';
+import { resolveKgIngestAgent, resolveNeo4jAgent, resolveResearchAgent } from '../../services/resolveAgents';
 import { runCypherOnGraph } from '../../services/graphService';
 import { chunkTextStrictJSON, extractKgFromChunks, type KgEntity, type KgRelationship, type LlmMeta } from './chunking';
 import { runKgQuery } from './query';
 import { syncKgToNeo4j } from '../../services/v2/kgNeo4jSink';
+import { normalizeResearchTargetPacket, runResearchIngest } from '../../services/research/researchService';
 import {
   enqueueKgIngestJob,
   registerKgIngestWorker,
@@ -572,7 +573,7 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
 
   try {
     let resolved = null;
-    let knowgraphResolved = null;
+    let neo4jResolved = null;
     try {
       resolved = await resolveKgIngestAgent(projectId, '/api/v2/projects/:projectId/kg/ingest_chat_turn');
     } catch (err: any) {
@@ -581,11 +582,11 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
       resolved = { error_code: code };
     }
     try {
-      knowgraphResolved = await resolveKnowgraphAgent(projectId, '/api/v2/projects/:projectId/kg/ingest_chat_turn');
+      neo4jResolved = await resolveNeo4jAgent(projectId, '/api/v2/projects/:projectId/kg/ingest_chat_turn');
     } catch (err: any) {
-      const code = err?.message || 'knowgraph_resolve_failed';
-      console.warn('[KG_V2][ingest] knowgraph resolve failed:', code);
-      knowgraphResolved = null;
+      const code = err?.message || 'neo4j_resolve_failed';
+      console.warn('[KG_V2][ingest] neo4j resolve failed:', code);
+      neo4jResolved = null;
     }
 
     const errors: string[] = [];
@@ -607,25 +608,25 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
     const temperature = (resolved as any)?.temperature ?? null;
     const maxTokens = (resolved as any)?.maxTokens ?? null;
 
-    const knowgraphProvider = knowgraphResolved?.provider ?? null;
-    const knowgraphModelKey = knowgraphResolved?.modelKey ?? null;
-    const knowgraphProviderModelId = knowgraphResolved?.providerModelId ?? null;
-    const knowgraphSystemPrompt = knowgraphResolved?.systemPrompt ?? null;
-    const knowgraphAgentId = knowgraphResolved?.agentId ?? null;
-    const knowgraphResponseFormat = (knowgraphResolved as any)?.responseFormat ?? null;
-    const knowgraphTopP = (knowgraphResolved as any)?.topP ?? null;
-    const knowgraphPreviousResponseId = (knowgraphResolved as any)?.previousResponseId ?? null;
-    const knowgraphTemperature = (knowgraphResolved as any)?.temperature ?? null;
-    const knowgraphMaxTokens = (knowgraphResolved as any)?.maxTokens ?? null;
+    const neo4jAgentProvider = neo4jResolved?.provider ?? null;
+    const neo4jAgentModelKey = neo4jResolved?.modelKey ?? null;
+    const neo4jAgentProviderModelId = neo4jResolved?.providerModelId ?? null;
+    const neo4jAgentSystemPrompt = neo4jResolved?.systemPrompt ?? null;
+    const neo4jAgentId = neo4jResolved?.agentId ?? null;
+    const neo4jAgentResponseFormat = (neo4jResolved as any)?.responseFormat ?? null;
+    const neo4jAgentTopP = (neo4jResolved as any)?.topP ?? null;
+    const neo4jAgentPreviousResponseId = (neo4jResolved as any)?.previousResponseId ?? null;
+    const neo4jAgentTemperature = (neo4jResolved as any)?.temperature ?? null;
+    const neo4jAgentMaxTokens = (neo4jResolved as any)?.maxTokens ?? null;
 
     console.log('[KG_V2][WORK] start', {
       projectId,
       doc_id: docId,
       agent_id: agentId,
       thinkgraph_model: modelKey,
-      knowgraph_agent_id: knowgraphAgentId,
-      knowgraph_model: knowgraphModelKey,
-      knowgraph_provider: knowgraphProvider,
+      neo4j_agent_id: neo4jAgentId,
+      neo4j_model: neo4jAgentModelKey,
+      neo4j_provider: neo4jAgentProvider,
       model: modelKey,
     });
 
@@ -764,50 +765,50 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
       }
     }
 
-    const hasKnowgraphConfig =
-      !!knowgraphProvider &&
-      !!knowgraphModelKey &&
-      !!knowgraphProviderModelId &&
-      !!knowgraphSystemPrompt &&
-      typeof knowgraphMaxTokens === 'number';
+    const hasNeo4jAgentConfig =
+      !!neo4jAgentProvider &&
+      !!neo4jAgentModelKey &&
+      !!neo4jAgentProviderModelId &&
+      !!neo4jAgentSystemPrompt &&
+      typeof neo4jAgentMaxTokens === 'number';
 
-    if (!aborted && !errors.length && hasKnowgraphConfig && chunks.length > 0) {
+    if (!aborted && !errors.length && hasNeo4jAgentConfig && chunks.length > 0) {
       try {
         console.log(
           '[RUNTIME_MODEL] route=/api/v2/projects/:projectId/kg/ingest_chat_turn projectId=%s agentType=%s agent_id=%s provider=%s model_key=%s provider_model_id=%s',
           projectId,
-          'knowgraph',
-          knowgraphAgentId,
-          knowgraphProvider,
-          knowgraphModelKey,
-          knowgraphProviderModelId,
+          'neo4j',
+          neo4jAgentId,
+          neo4jAgentProvider,
+          neo4jAgentModelKey,
+          neo4jAgentProviderModelId,
         );
         console.log(
-          '[KNOWGRAPH_INGEST] projectId=%s documentId=%s agentType=knowgraph agentId=%s provider=%s model=%s',
+          '[NEO4J_EXTRACT] projectId=%s documentId=%s agentType=neo4j agentId=%s provider=%s model=%s',
           projectId,
           docId,
-          knowgraphAgentId ?? 'null',
-          knowgraphProvider ?? 'null',
-          knowgraphProviderModelId ?? knowgraphModelKey ?? 'null',
+          neo4jAgentId ?? 'null',
+          neo4jAgentProvider ?? 'null',
+          neo4jAgentProviderModelId ?? neo4jAgentModelKey ?? 'null',
         );
         const extractedForNeo4j = await extractKgFromChunks({
-          modelKey: knowgraphModelKey as string,
-          provider: knowgraphProvider as string,
-          providerModelId: knowgraphProviderModelId as string,
+          modelKey: neo4jAgentModelKey as string,
+          provider: neo4jAgentProvider as string,
+          providerModelId: neo4jAgentProviderModelId as string,
           chunks,
-          systemPrompt: knowgraphSystemPrompt ?? undefined,
-          responseFormat: knowgraphResponseFormat ?? undefined,
-          temperature: typeof knowgraphTemperature === 'number' ? knowgraphTemperature : undefined,
-          topP: typeof knowgraphTopP === 'number' ? knowgraphTopP : undefined,
+          systemPrompt: neo4jAgentSystemPrompt ?? undefined,
+          responseFormat: neo4jAgentResponseFormat ?? undefined,
+          temperature: typeof neo4jAgentTemperature === 'number' ? neo4jAgentTemperature : undefined,
+          topP: typeof neo4jAgentTopP === 'number' ? neo4jAgentTopP : undefined,
           previousResponseId:
-            typeof knowgraphPreviousResponseId === 'string' ? knowgraphPreviousResponseId : undefined,
-          maxTokens: knowgraphMaxTokens as number,
+            typeof neo4jAgentPreviousResponseId === 'string' ? neo4jAgentPreviousResponseId : undefined,
+          maxTokens: neo4jAgentMaxTokens as number,
         });
         neo4jEntities = extractedForNeo4j.entities;
         neo4jRelationships = extractedForNeo4j.relationships;
         neo4jExtractMeta = extractedForNeo4j.meta;
       } catch (err: any) {
-        console.warn('[KG_V2][NEO4J] knowgraph extraction failed, using thinkgraph output:', err?.message || err);
+        console.warn('[KG_V2][NEO4J] neo4j agent extraction failed, using thinkgraph output:', err?.message || err);
       }
     }
 
@@ -838,7 +839,7 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
       neo4jExtractMeta?.finish_reason || extractMeta?.finish_reason || chunkMeta?.finish_reason || null;
     const usage = neo4jExtractMeta?.usage || extractMeta?.usage || chunkMeta?.usage || null;
     const providerForLog = neo4jExtractMeta?.provider ?? provider ?? null;
-    const modelKeyForLog = neo4jExtractMeta ? (knowgraphModelKey ?? modelKey ?? null) : (modelKey ?? null);
+    const modelKeyForLog = neo4jExtractMeta ? (neo4jAgentModelKey ?? modelKey ?? null) : (modelKey ?? null);
     const errorCode = errors.length ? errors[0] : null;
     const errorMessage = errorMessages.length ? errorMessages.join('; ') : null;
 
@@ -907,9 +908,56 @@ registerKgIngestWorker(async (job) => {
   await runQueuedIngestJob(job);
 });
 
+async function runResearchPacketForProject(projectId: string, rawBody: any, fallbackTurnId?: string | null) {
+  const packet = normalizeResearchTargetPacket(projectId, {
+    ...(rawBody && typeof rawBody === 'object' ? rawBody : {}),
+    turnId:
+      rawBody?.turnId ??
+      rawBody?.turn_id ??
+      fallbackTurnId ??
+      '',
+  });
+
+  if (!packet.projectId) {
+    throw new Error('research_project_id_required');
+  }
+  if (!packet.turnId) {
+    throw new Error('research_turn_id_required');
+  }
+  if (!packet.query) {
+    throw new Error('research_query_required');
+  }
+
+  const resolved = await resolveResearchAgent(projectId, '/api/v2/projects/:projectId/kg/research');
+  if (!resolved) {
+    throw new Error('research_agent_not_configured');
+  }
+
+  console.log(
+    '[RUNTIME_MODEL] route=/api/v2/projects/:projectId/kg/research projectId=%s agentType=%s agent_id=%s provider=%s model_key=%s provider_model_id=%s',
+    projectId,
+    'research_agent',
+    resolved.agentId,
+    resolved.provider,
+    resolved.modelKey,
+    resolved.providerModelId,
+  );
+  console.log(
+    '[RESEARCH_AGENT] projectId=%s turnId=%s query=%s agentType=research_agent agentId=%s provider=%s model=%s',
+    projectId,
+    packet.turnId,
+    packet.query,
+    resolved.agentId,
+    resolved.provider,
+    resolved.providerModelId,
+  );
+
+  return runResearchIngest(packet, resolved);
+}
+
 router.post('/ingest_chat_turn', async (req, res) => {
   const projectId = String((req.params as any).projectId || '');
-  const { turn_id, user_text, assistant_text, src, mode } = req.body || {};
+  const { turn_id, user_text, assistant_text, src, mode, research_target } = req.body || {};
 
   if (!projectId) {
     return res.status(400).json({ ok: false, error: 'projectId is required' });
@@ -938,12 +986,51 @@ router.post('/ingest_chat_turn', async (req, res) => {
     assistant_text: String(assistant_text ?? ''),
   });
 
+  let autoResearchStarted = false;
+  if (research_target && typeof research_target === 'object') {
+    autoResearchStarted = true;
+    void runResearchPacketForProject(projectId, research_target, typeof turn_id === 'string' ? turn_id : docId)
+      .then((result) => {
+        console.log('[KG_V2][RESEARCH][AUTO] ok', {
+          projectId,
+          turn_id: result.turn_id,
+          query: result.query,
+          ingested_document_count: result.ingested_document_count,
+        });
+      })
+      .catch((err: any) => {
+        console.warn('[KG_V2][RESEARCH][AUTO] failed', {
+          projectId,
+          turn_id: turn_id || docId,
+          error: err?.message || String(err),
+        });
+      });
+  }
+
   return res.status(202).json({
     ok: true,
     queued: queued.queued,
     doc_id: docId,
     src: finalSrc,
+    research_started: autoResearchStarted,
   });
+});
+
+router.post('/research', async (req, res) => {
+  const projectId = String((req.params as any).projectId || '').trim();
+  if (!projectId) {
+    return res.status(400).json({ ok: false, error: 'projectId is required' });
+  }
+
+  try {
+    const result = await runResearchPacketForProject(projectId, req.body || {});
+    return res.status(200).json(result);
+  } catch (err: any) {
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || 'research_ingest_failed',
+    });
+  }
 });
 
 router.get('/query', async (req, res) => {

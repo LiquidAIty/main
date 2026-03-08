@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,7 @@ from neo4j_graphrag.experimental.components.types import (
     TextChunks,
 )
 from neo4j_graphrag.experimental.pipeline.kg_builder import SimpleKGPipeline
+from neo4j_graphrag.generation.prompts import ERExtractionTemplate
 from neo4j_graphrag.llm.openai_llm import OpenAILLM
 
 from neo4j_index import ensure_vector_index
@@ -194,6 +196,80 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _normalize_optional_json_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            return json.loads(stripped)
+        except Exception:
+            return stripped
+    return value
+
+
+def _serialize_metadata_json(value: Any) -> str | None:
+    normalized = _normalize_optional_json_value(value)
+    if normalized is None:
+        return None
+    try:
+        return json.dumps(normalized, sort_keys=True)
+    except Exception:
+        return str(normalized)
+
+
+def _format_prompt_guidance_block(title: str, value: Any) -> str | None:
+    normalized = _normalize_optional_json_value(value)
+    if normalized is None:
+        return None
+    if isinstance(normalized, str):
+        body = normalized.strip()
+    else:
+        body = json.dumps(normalized, indent=2, sort_keys=True)
+    if not body:
+        return None
+    escaped_body = body.replace("{", "{{").replace("}", "}}")
+    return f"{title}:\n{escaped_body}"
+
+
+def _build_prompt_template(
+    *,
+    prompt_template: str | None = None,
+    organizing_principle: Any = None,
+    entity_taxonomy: Any = None,
+    relationship_taxonomy: Any = None,
+    extraction_policy: Any = None,
+    research_focus: Any = None,
+) -> Any | None:
+    sections: list[str] = []
+    base_prompt = (prompt_template or "").strip().replace("{", "{{").replace("}", "}}")
+    if base_prompt:
+        sections.append(base_prompt)
+
+    guidance_blocks = [
+        _format_prompt_guidance_block("Organizing principle", organizing_principle),
+        _format_prompt_guidance_block("Entity taxonomy", entity_taxonomy),
+        _format_prompt_guidance_block("Relationship taxonomy", relationship_taxonomy),
+        _format_prompt_guidance_block("Extraction policy", extraction_policy),
+        _format_prompt_guidance_block("Research focus", research_focus),
+    ]
+    guidance_blocks = [block for block in guidance_blocks if block]
+    if guidance_blocks:
+        sections.append(
+            "Use the following extraction guidance to organize nodes and relationships while staying grounded in the provided source evidence.\n\n"
+            + "\n\n".join(guidance_blocks)
+        )
+
+    if not sections:
+        return None
+    custom_instructions = "\n\n".join(sections).strip()
+    return ERExtractionTemplate(
+        template=f"{custom_instructions}\n\n{ERExtractionTemplate.DEFAULT_TEMPLATE}"
+    )
+
+
 def _normalize_provider(provider: str | None) -> str:
     normalized = (provider or "").strip().lower()
     if not normalized:
@@ -346,13 +422,24 @@ def _merge_ingested_graph(
     database: str | None,
     project_id: str,
     document_id: str,
-    file_path: str,
+    source_path: str,
+    source_name: str,
+    source_type: str,
+    source_url: str | None = None,
+    fetched_at: str | None = None,
+    snippet: str | None = None,
+    metadata_json: str | None = None,
 ) -> None:
     merge_cypher = """
     MERGE (doc:Document {project_id: $project_id, document_id: $document_id})
     ON CREATE SET doc.created_at = datetime()
-    SET doc.path = $file_path,
+    SET doc.path = $source_path,
         doc.source_name = $source_name,
+        doc.source_type = $source_type,
+        doc.source_url = coalesce($source_url, doc.source_url),
+        doc.fetched_at = coalesce($fetched_at, doc.fetched_at),
+        doc.snippet = coalesce($snippet, doc.snippet),
+        doc.metadata_json = coalesce($metadata_json, doc.metadata_json),
         doc.ingested_at = datetime(),
         doc.project_id = $project_id,
         doc.document_id = $document_id
@@ -368,6 +455,11 @@ def _merge_ingested_graph(
         chunk.end_char = coalesce(raw_chunk.end_char, chunk.end_char),
         chunk.text_hash = coalesce(raw_chunk.text_hash, chunk.text_hash),
         chunk.embedding = coalesce(raw_chunk.embedding, chunk.embedding),
+        chunk.source_name = $source_name,
+        chunk.source_type = $source_type,
+        chunk.source_url = coalesce($source_url, chunk.source_url),
+        chunk.fetched_at = coalesce($fetched_at, chunk.fetched_at),
+        chunk.metadata_json = coalesce($metadata_json, chunk.metadata_json),
         chunk.project_id = $project_id,
         chunk.document_id = $document_id
     MERGE (doc)-[:HAS_CHUNK]->(chunk)
@@ -376,8 +468,13 @@ def _merge_ingested_graph(
         merge_cypher,
         project_id=project_id,
         document_id=document_id,
-        file_path=file_path,
-        source_name=Path(file_path).name,
+        source_path=source_path,
+        source_name=source_name,
+        source_type=source_type,
+        source_url=source_url,
+        fetched_at=fetched_at,
+        snippet=snippet,
+        metadata_json=metadata_json,
         database_=database,
     )
 
@@ -390,16 +487,28 @@ def _merge_ingested_graph(
     MATCH (entity)-[:MENTIONS]->(raw_chunk)
     WHERE NOT entity:Chunk AND NOT entity:Document
     SET entity.project_id = $project_id,
-        entity.document_id = $document_id
+        entity.document_id = $document_id,
+        entity.source_name = $source_name,
+        entity.source_type = $source_type,
+        entity.source_url = coalesce($source_url, entity.source_url),
+        entity.fetched_at = coalesce($fetched_at, entity.fetched_at)
     MERGE (chunk)-[m:MENTIONS]->(entity)
     SET m.project_id = $project_id,
         m.document_id = $document_id,
-        m.chunk_id = chunk.chunk_id
+        m.chunk_id = chunk.chunk_id,
+        m.source_name = $source_name,
+        m.source_type = $source_type,
+        m.source_url = coalesce($source_url, m.source_url),
+        m.fetched_at = coalesce($fetched_at, m.fetched_at)
     """
     driver.execute_query(
         provenance_cypher,
         project_id=project_id,
         document_id=document_id,
+        source_name=source_name,
+        source_type=source_type,
+        source_url=source_url,
+        fetched_at=fetched_at,
         database_=database,
     )
 
@@ -410,31 +519,35 @@ def _merge_ingested_graph(
       AND NOT target:Chunk
       AND NOT target:Document
     SET rel.project_id = $project_id,
-        rel.document_id = $document_id
+        rel.document_id = $document_id,
+        rel.source_name = $source_name,
+        rel.source_type = $source_type,
+        rel.source_url = coalesce($source_url, rel.source_url),
+        rel.fetched_at = coalesce($fetched_at, rel.fetched_at)
     """
     driver.execute_query(
         relationship_provenance_cypher,
         project_id=project_id,
         document_id=document_id,
+        source_name=source_name,
+        source_type=source_type,
+        source_url=source_url,
+        fetched_at=fetched_at,
         database_=database,
     )
 
 
-async def ingest_pdf(
-    file_path: str,
+def _create_runtime_pipeline(
+    *,
     project_id: str,
     document_id: str,
-    *,
-    provider: str | None = None,
-    model_key: str | None = None,
-    model_id: str | None = None,
-    agent_id: str | None = None,
-) -> dict[str, Any]:
-    """Run GraphRAG KG Builder ingestion for a PDF file."""
-    source = Path(file_path)
-    if not source.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
-
+    provider: str | None,
+    model_key: str | None,
+    model_id: str | None,
+    agent_id: str | None,
+    from_pdf: bool,
+    prompt_template: Any = None,
+) -> tuple[RuntimeModelConfig, Driver, str | None, SimpleKGPipeline]:
     uri = _required_env("NEO4J_URI")
     user = _required_env("NEO4J_USER")
     password = _required_env("NEO4J_PASSWORD")
@@ -453,7 +566,6 @@ async def ingest_pdf(
     )
     llm = OpenAILLM(
         model_name=runtime.model_id,
-        # KG Builder extraction uses structured response_format under the hood.
         model_params={"temperature": 0},
         **runtime.llm_client_kwargs,
     )
@@ -466,6 +578,7 @@ async def ingest_pdf(
         )
     else:
         raise RuntimeError(f"Unsupported embedding backend: {runtime.embedding_backend}")
+
     splitter = DeterministicFixedSizeSplitter(
         project_id=project_id,
         document_id=document_id,
@@ -486,27 +599,67 @@ async def ingest_pdf(
     )
 
     driver = GraphDatabase.driver(uri, auth=(user, password))
+    driver.verify_connectivity()
+    ensure_vector_index(
+        driver,
+        neo4j_database,
+        dimensions=runtime.embedding_dimensions,
+    )
+
+    pipeline_kwargs: dict[str, Any] = {
+        "llm": llm,
+        "driver": driver,
+        "embedder": embedder,
+        "schema": KNOWGRAPH_SCHEMA,
+        "from_pdf": from_pdf,
+        "text_splitter": splitter,
+        "on_error": "RAISE",
+        "perform_entity_resolution": True,
+        "lexical_graph_config": lexical_graph_config,
+        "neo4j_database": neo4j_database,
+    }
+    if prompt_template:
+        pipeline_kwargs["prompt_template"] = prompt_template
+
+    pipeline = SimpleKGPipeline(**pipeline_kwargs)
+    return runtime, driver, neo4j_database, pipeline
+
+
+async def ingest_pdf(
+    file_path: str,
+    project_id: str,
+    document_id: str,
+    *,
+    provider: str | None = None,
+    model_key: str | None = None,
+    model_id: str | None = None,
+    agent_id: str | None = None,
+    organizing_principle: Any = None,
+    entity_taxonomy_json: Any = None,
+    relationship_taxonomy_json: Any = None,
+    extraction_policy_json: Any = None,
+) -> dict[str, Any]:
+    """Run GraphRAG KG Builder ingestion for a PDF file."""
+    source = Path(file_path)
+    if not source.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+    prompt_template = _build_prompt_template(
+        organizing_principle=organizing_principle,
+        entity_taxonomy=entity_taxonomy_json,
+        relationship_taxonomy=relationship_taxonomy_json,
+        extraction_policy=extraction_policy_json,
+    )
+    runtime, driver, neo4j_database, pipeline = _create_runtime_pipeline(
+        project_id=project_id,
+        document_id=document_id,
+        provider=provider,
+        model_key=model_key,
+        model_id=model_id,
+        agent_id=agent_id,
+        from_pdf=True,
+        prompt_template=prompt_template,
+    )
     try:
-        driver.verify_connectivity()
-        ensure_vector_index(
-            driver,
-            neo4j_database,
-            dimensions=runtime.embedding_dimensions,
-        )
-
-        pipeline = SimpleKGPipeline(
-            llm=llm,
-            driver=driver,
-            embedder=embedder,
-            schema=KNOWGRAPH_SCHEMA,
-            from_pdf=True,
-            text_splitter=splitter,
-            on_error="RAISE",
-            perform_entity_resolution=True,
-            lexical_graph_config=lexical_graph_config,
-            neo4j_database=neo4j_database,
-        )
-
         result = await pipeline.run_async(
             file_path=str(source),
             document_metadata={
@@ -522,7 +675,9 @@ async def ingest_pdf(
             database=neo4j_database,
             project_id=project_id,
             document_id=document_id,
-            file_path=str(source.resolve()),
+            source_path=str(source.resolve()),
+            source_name=source.name,
+            source_type="pdf_upload",
         )
         ensure_vector_index(
             driver,
@@ -541,3 +696,163 @@ async def ingest_pdf(
         }
     finally:
         driver.close()
+
+
+async def ingest_text_document(
+    *,
+    project_id: str,
+    document_id: str,
+    text: str,
+    title: str | None = None,
+    source_url: str | None = None,
+    fetched_at: str | None = None,
+    snippet: str | None = None,
+    metadata: Any = None,
+    provider: str | None = None,
+    model_key: str | None = None,
+    model_id: str | None = None,
+    agent_id: str | None = None,
+    prompt_template: str | None = None,
+    organizing_principle: Any = None,
+    entity_taxonomy: Any = None,
+    relationship_taxonomy: Any = None,
+    extraction_policy: Any = None,
+    research_focus: Any = None,
+) -> dict[str, Any]:
+    normalized_text = text.strip()
+    if not normalized_text:
+        raise ValueError("text is required")
+
+    effective_prompt_template = _build_prompt_template(
+        prompt_template=prompt_template,
+        organizing_principle=organizing_principle,
+        entity_taxonomy=entity_taxonomy,
+        relationship_taxonomy=relationship_taxonomy,
+        extraction_policy=extraction_policy,
+        research_focus=research_focus,
+    )
+    runtime, driver, neo4j_database, pipeline = _create_runtime_pipeline(
+        project_id=project_id,
+        document_id=document_id,
+        provider=provider,
+        model_key=model_key,
+        model_id=model_id,
+        agent_id=agent_id,
+        from_pdf=False,
+        prompt_template=effective_prompt_template,
+    )
+    source_name = (title or source_url or f"{document_id}.txt").strip() or f"{document_id}.txt"
+    source_path = source_url or f"web://{document_id}"
+    metadata_json = _serialize_metadata_json(metadata)
+
+    try:
+        result = await pipeline.run_async(
+            text=normalized_text,
+            document_metadata={
+                "project_id": project_id,
+                "document_id": document_id,
+                "source_path": source_path,
+                "source_name": source_name,
+                "source_url": source_url,
+                "fetched_at": fetched_at,
+                "snippet": snippet,
+                "metadata_json": metadata_json,
+                "source_type": "web_research",
+            },
+        )
+
+        _merge_ingested_graph(
+            driver,
+            database=neo4j_database,
+            project_id=project_id,
+            document_id=document_id,
+            source_path=source_path,
+            source_name=source_name,
+            source_type="web_research",
+            source_url=source_url,
+            fetched_at=fetched_at,
+            snippet=snippet,
+            metadata_json=metadata_json,
+        )
+        ensure_vector_index(
+            driver,
+            neo4j_database,
+            dimensions=runtime.embedding_dimensions,
+        )
+
+        return {
+            "run_id": result.run_id,
+            "project_id": project_id,
+            "document_id": document_id,
+            "provider": runtime.provider,
+            "model_key": runtime.model_key,
+            "model": runtime.model_id,
+            "agent_id": agent_id,
+            "source_url": source_url,
+            "source_name": source_name,
+        }
+    finally:
+        driver.close()
+
+
+async def ingest_web_documents(
+    *,
+    project_id: str,
+    documents: list[dict[str, Any]],
+    provider: str | None = None,
+    model_key: str | None = None,
+    model_id: str | None = None,
+    agent_id: str | None = None,
+    prompt_template: str | None = None,
+    organizing_principle: Any = None,
+    entity_taxonomy: Any = None,
+    relationship_taxonomy: Any = None,
+    extraction_policy: Any = None,
+    research_focus: Any = None,
+) -> dict[str, Any]:
+    results: list[dict[str, Any]] = []
+    failures: list[dict[str, str]] = []
+
+    for raw_doc in documents:
+        try:
+            result = await ingest_text_document(
+                project_id=project_id,
+                document_id=str(raw_doc.get("document_id") or "").strip(),
+                text=str(raw_doc.get("text") or raw_doc.get("full_text") or raw_doc.get("snippet") or "").strip(),
+                title=str(raw_doc.get("title") or "").strip() or None,
+                source_url=str(raw_doc.get("source_url") or "").strip() or None,
+                fetched_at=str(raw_doc.get("fetched_at") or "").strip() or None,
+                snippet=str(raw_doc.get("snippet") or raw_doc.get("summary") or "").strip() or None,
+                metadata=raw_doc.get("metadata") or {},
+                provider=provider,
+                model_key=model_key,
+                model_id=model_id,
+                agent_id=agent_id,
+                prompt_template=prompt_template,
+                organizing_principle=organizing_principle,
+                entity_taxonomy=entity_taxonomy,
+                relationship_taxonomy=relationship_taxonomy,
+                extraction_policy=extraction_policy,
+                research_focus=research_focus,
+            )
+            results.append(result)
+        except Exception as exc:
+            failures.append(
+                {
+                    "document_id": str(raw_doc.get("document_id") or "").strip() or "unknown",
+                    "error": str(exc),
+                }
+            )
+
+    if not results:
+        raise RuntimeError(
+            f"web_research_ingest_failed: {failures[0]['error'] if failures else 'no_results'}"
+        )
+
+    return {
+        "project_id": project_id,
+        "ingested_document_count": len(results),
+        "document_ids": [entry["document_id"] for entry in results],
+        "results": results,
+        "failures": failures,
+    }

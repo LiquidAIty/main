@@ -1,12 +1,14 @@
 import { pool } from '../db/pool';
 import { resolveModel } from '../llm/models.config';
 
-type SystemAgentType = 'llm_chat' | 'kg_ingest' | 'knowgraph';
+type SystemAgentType = 'llm_chat' | 'kg_ingest' | 'knowgraph' | 'neo4j' | 'research_agent';
 
 function systemAgentLabel(agentType: SystemAgentType): string {
   if (agentType === 'llm_chat') return 'Main Chat';
   if (agentType === 'kg_ingest') return 'ThinkGraph';
-  return 'KnowGraph';
+  if (agentType === 'knowgraph') return 'KnowGraph';
+  if (agentType === 'research_agent') return 'Research Agent';
+  return 'Neo4j';
 }
 
 function resolveProviderModelId(modelKey: string): string {
@@ -89,7 +91,7 @@ export async function logModelConfiguration() {
               created_at
        FROM ag_catalog.project_agents
        WHERE is_active = true
-         AND agent_type::text IN ('llm_chat', 'kg_ingest', 'knowgraph')`,
+         AND agent_type::text IN ('llm_chat', 'kg_ingest', 'knowgraph', 'neo4j', 'research_agent')`,
     );
 
     const byType = new Map<string, any[]>();
@@ -98,7 +100,7 @@ export async function logModelConfiguration() {
       if (!byType.has(type)) byType.set(type, []);
       byType.get(type)?.push(row);
     });
-    const ordered: SystemAgentType[] = ['llm_chat', 'kg_ingest', 'knowgraph'];
+    const ordered: SystemAgentType[] = ['llm_chat', 'kg_ingest', 'knowgraph', 'neo4j', 'research_agent'];
     ordered.forEach((agentType) => {
       const row = pickCanonicalRow(byType.get(agentType) || []);
       const label = systemAgentLabel(agentType);

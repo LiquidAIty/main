@@ -411,7 +411,17 @@ router.get('/expand', async (req, res) => {
   }
 });
 
-function buildMultipartForm(projectId: string, documentId: string, file: UploadedFile): FormData {
+function buildMultipartForm(
+  projectId: string,
+  documentId: string,
+  file: UploadedFile,
+  guidance?: {
+    organizingPrinciple?: string | null;
+    entityTaxonomy?: any | null;
+    relationshipTaxonomy?: any | null;
+    extractionPolicy?: any | null;
+  },
+): FormData {
   const form = new FormData();
   form.append('project_id', projectId);
   form.append('document_id', documentId);
@@ -420,6 +430,18 @@ function buildMultipartForm(projectId: string, documentId: string, file: Uploade
     new Blob([file.buffer], { type: file.mimetype || 'application/pdf' }),
     file.originalname || `${documentId}.pdf`,
   );
+  if (guidance?.organizingPrinciple) {
+    form.append('organizing_principle', guidance.organizingPrinciple);
+  }
+  if (guidance?.entityTaxonomy != null) {
+    form.append('entity_taxonomy_json', JSON.stringify(guidance.entityTaxonomy));
+  }
+  if (guidance?.relationshipTaxonomy != null) {
+    form.append('relationship_taxonomy_json', JSON.stringify(guidance.relationshipTaxonomy));
+  }
+  if (guidance?.extractionPolicy != null) {
+    form.append('extraction_policy_json', JSON.stringify(guidance.extractionPolicy));
+  }
   return form;
 }
 
@@ -514,7 +536,12 @@ router.post('/ingest', upload.single('file') as any, async (req, res) => {
 
     for (const baseUrl of baseUrls) {
       try {
-        const form = buildMultipartForm(projectId, documentId, file);
+        const form = buildMultipartForm(projectId, documentId, file, {
+          organizingPrinciple: resolved.organizingPrinciple ?? null,
+          entityTaxonomy: resolved.entityTaxonomy ?? null,
+          relationshipTaxonomy: resolved.relationshipTaxonomy ?? null,
+          extractionPolicy: resolved.extractionPolicy ?? null,
+        });
         const response = await fetch(`${baseUrl}/ingest`, {
           method: 'POST',
           headers: {

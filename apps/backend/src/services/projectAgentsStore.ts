@@ -10,7 +10,7 @@ export interface ProjectAgent {
   agent_id: string;
   project_id: string;
   name: string;
-  agent_type: 'kg_ingest' | 'knowgraph' | 'kg_read' | 'llm_chat';
+  agent_type: 'kg_ingest' | 'knowgraph' | 'neo4j' | 'kg_read' | 'llm_chat';
   
   // Agent configuration
   model?: string | null;
@@ -37,7 +37,7 @@ export interface ProjectAgent {
 export interface CreateAgentInput {
   project_id: string;
   name: string;
-  agent_type: 'kg_ingest' | 'knowgraph' | 'kg_read' | 'llm_chat';
+  agent_type: 'kg_ingest' | 'knowgraph' | 'neo4j' | 'kg_read' | 'llm_chat';
   model?: string;
   prompt_template?: string;
   tools?: string[];
@@ -143,7 +143,7 @@ export async function getProjectAgent(agentId: string): Promise<ProjectAgent | n
 /**
  * Get agent by project_id and agent_type (for assignment resolution)
  */
-export async function getProjectAgentByProjectId(projectId: string, agentType: 'kg_ingest' | 'knowgraph' | 'llm_chat'): Promise<ProjectAgent | null> {
+export async function getProjectAgentByProjectId(projectId: string, agentType: 'kg_ingest' | 'knowgraph' | 'neo4j' | 'llm_chat'): Promise<ProjectAgent | null> {
   console.log('[STORE] Looking up agent by projectId=%s agentType=%s', projectId, agentType);
   const { rows } = await pool.query(
     `SELECT * FROM ag_catalog.project_agents 
@@ -314,12 +314,14 @@ export async function ensureDefaultAgents(projectId: string): Promise<{
   mainChat: ProjectAgent;
   kgIngest: ProjectAgent;
   knowgraph: ProjectAgent;
+  neo4j: ProjectAgent;
 }> {
   const agents = await listProjectAgents(projectId);
   
   let mainChat = agents.find(a => a.agent_type === 'llm_chat');
   let kgIngest = agents.find(a => a.agent_type === 'kg_ingest');
   let knowgraph = agents.find(a => a.agent_type === 'knowgraph');
+  let neo4j = agents.find(a => a.agent_type === 'neo4j');
   
   if (!mainChat) {
     mainChat = await createProjectAgent({
@@ -364,7 +366,22 @@ export async function ensureDefaultAgents(projectId: string): Promise<{
       io_schema_text: 'Output valid JSON with entities and relations arrays.',
     });
   }
+
+  if (!neo4j) {
+    neo4j = await createProjectAgent({
+      project_id: projectId,
+      name: 'Neo4j',
+      agent_type: 'neo4j',
+      model: 'deepseek-chat',
+      temperature: 0,
+      max_tokens: 2048,
+      role_text: 'You extract Neo4j-oriented graph facts for the local dual-write sink.',
+      goal_text: 'Produce stable entities and relations for the Neo4j sync pipeline.',
+      constraints_text: 'Return strict JSON with entities and relations using evidence chunk ids.',
+      io_schema_text: 'Output valid JSON with entities and relations arrays.',
+    });
+  }
   
-  return { mainChat, kgIngest, knowgraph };
+  return { mainChat, kgIngest, knowgraph, neo4j };
 }
 

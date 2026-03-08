@@ -6,7 +6,14 @@ import { DEFAULT_AGENT_BUILDER_PROMPT_TEMPLATE } from '../../prompts/agentBuilde
 
 const router = Router();
 let warnedMissingVersionsTable = false;
-const VALID_AGENT_TYPES: AgentType[] = ['llm_chat', 'kg_ingest', 'knowgraph', 'agent_builder'];
+const VALID_AGENT_TYPES: AgentType[] = [
+  'llm_chat',
+  'kg_ingest',
+  'knowgraph',
+  'neo4j',
+  'research_agent',
+  'agent_builder',
+];
 const REQUIRED_FIELDS: Array<'provider' | 'model_key' | 'prompt_template' | 'max_tokens'> = [
   'provider',
   'model_key',
@@ -109,6 +116,10 @@ router.get('/:projectId/agents/:agentType/config', async (req, res) => {
         response_format: config.response_format ?? null,
         tools: config.tools ?? [],
         prompt_template: config.prompt_template,
+        organizing_principle: config.organizing_principle ?? null,
+        entity_taxonomy: config.entity_taxonomy ?? null,
+        relationship_taxonomy: config.relationship_taxonomy ?? null,
+        extraction_policy: config.extraction_policy ?? null,
       },
       missing,
     });
@@ -142,6 +153,10 @@ router.put('/:projectId/agents/:agentType/config', async (req, res) => {
     response_format,
     tools,
     prompt_template,
+    organizing_principle,
+    entity_taxonomy,
+    relationship_taxonomy,
+    extraction_policy,
     version_note,
   } = req.body || {};
   const resolvedMaxTokens =
@@ -172,6 +187,10 @@ router.put('/:projectId/agents/:agentType/config', async (req, res) => {
       response_format,
       tools,
       prompt_template: normalizedPrompt,
+      organizing_principle,
+      entity_taxonomy,
+      relationship_taxonomy,
+      extraction_policy,
     });
 
     if (!updated) {

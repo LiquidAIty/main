@@ -16,6 +16,10 @@ export type ResolvedAgentConfig = {
   temperature: number | null;
   maxTokens: number | null;
   tools: any[];
+  organizingPrinciple: string | null;
+  entityTaxonomy: any | null;
+  relationshipTaxonomy: any | null;
+  extractionPolicy: any | null;
 };
 
 function logRouteResolution(route: string, projectId: string, agentType: RuntimeAgentType, resolvedAgentId: string | null) {
@@ -109,6 +113,11 @@ export async function resolveAgentConfig(
     temperature: typeof config.temperature === 'number' ? config.temperature : null,
     maxTokens: typeof config.max_tokens === 'number' ? config.max_tokens : null,
     tools: Array.isArray(config.tools) ? config.tools : [],
+    organizingPrinciple:
+      typeof config.organizing_principle === 'string' ? String(config.organizing_principle) : null,
+    entityTaxonomy: config.entity_taxonomy ?? null,
+    relationshipTaxonomy: config.relationship_taxonomy ?? null,
+    extractionPolicy: config.extraction_policy ?? null,
   };
 }
 
@@ -118,4 +127,12 @@ export async function resolveKgIngestAgent(projectId: string, route = 'unknown')
 
 export async function resolveKnowgraphAgent(projectId: string, route = 'unknown') {
   return resolveAgentConfig(projectId, 'knowgraph', route);
+}
+
+export async function resolveNeo4jAgent(projectId: string, route = 'unknown') {
+  return resolveAgentConfig(projectId, 'neo4j', route);
+}
+
+export async function resolveResearchAgent(projectId: string, route = 'unknown') {
+  return resolveAgentConfig(projectId, 'research_agent', route);
 }

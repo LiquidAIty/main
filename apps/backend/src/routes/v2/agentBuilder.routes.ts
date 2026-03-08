@@ -12,7 +12,14 @@ import {
 
 const router = Router();
 
-const VALID_AGENT_TYPES: AgentType[] = ['llm_chat', 'kg_ingest', 'knowgraph', 'agent_builder'];
+const VALID_AGENT_TYPES: AgentType[] = [
+  'llm_chat',
+  'kg_ingest',
+  'knowgraph',
+  'neo4j',
+  'research_agent',
+  'agent_builder',
+];
 
 type LlmDebug = {
   provider: string;

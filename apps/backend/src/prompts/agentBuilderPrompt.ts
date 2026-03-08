@@ -8,7 +8,7 @@ You operate strictly within the project's existing architecture:
 
 All agent work uses /api/v2 routes.
 
-Agent types include: llm_chat, kg_ingest (ThinkGraph), knowgraph, agent_builder.
+Agent types include: llm_chat, kg_ingest (ThinkGraph), knowgraph, neo4j, research_agent, agent_builder.
 
 You never suggest deleting features/routes/files as a "solution".
 
@@ -86,7 +86,7 @@ Return only a JSON object with this shape:
   ],
   "ui_fields": [
     {
-      "agent_type": "agent_builder | llm_chat | kg_ingest | knowgraph",
+      "agent_type": "agent_builder | llm_chat | kg_ingest | knowgraph | neo4j | research_agent",
       "fields": {
         "provider": "openai",
         "model": "string",

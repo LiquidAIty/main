@@ -80,13 +80,40 @@ ${fields.ioSchema}
 ${fields.memoryPolicy}`;
 }
 
+function stringifyConfigJson(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function parseConfigJsonField(
+  label: string,
+  raw: string,
+  opts?: { allowPlainText?: boolean },
+): { ok: true; value: any } | { ok: false; error: string } {
+  const text = raw.trim();
+  if (!text) return { ok: true, value: null };
+  try {
+    return { ok: true, value: JSON.parse(text) };
+  } catch (err: any) {
+    if (opts?.allowPlainText) {
+      return { ok: true, value: text };
+    }
+    return { ok: false, error: `${label} is not valid JSON: ${err?.message || 'invalid JSON'}` };
+  }
+}
+
 interface AgentManagerProps {
   projectId: string;
-  agentType: 'agent_builder' | 'llm_chat' | 'kg_ingest' | 'knowgraph';
+  agentType: 'agent_builder' | 'llm_chat' | 'kg_ingest' | 'knowgraph' | 'neo4j' | 'research_agent';
   activeTab: string;
   onGraphRefresh?: () => void;
   onLastRun?: (lastRun: {
-    agentType: 'agent_builder' | 'llm_chat' | 'kg_ingest' | 'knowgraph';
+    agentType: 'agent_builder' | 'llm_chat' | 'kg_ingest' | 'knowgraph' | 'neo4j' | 'research_agent';
     request: any;
     responseOrError: any;
     elapsedMs: number;
@@ -159,13 +186,10 @@ const DEFAULT_KG_RESPONSE_FORMAT = {
 };
 
 export function AgentManager({ projectId, agentType, activeTab, onLastRun }: AgentManagerProps) {
-  const isGraphExtractionAgent = agentType === 'kg_ingest' || agentType === 'knowgraph';
-  const urlProjectId = useMemo(() => {
-    if (typeof window === 'undefined') return '';
-    const params = new URLSearchParams(window.location.search);
-    return params.get('projectId')?.trim() || '';
-  }, []);
-  const resolvedProjectId = String(projectId || '').trim() || urlProjectId;
+  const isGraphExtractionAgent =
+    agentType === 'kg_ingest' || agentType === 'knowgraph' || agentType === 'neo4j';
+  const supportsKnowledgeGuidance = isGraphExtractionAgent || agentType === 'research_agent';
+  const resolvedProjectId = String(projectId || '').trim();
   const [loading, setLoading] = useState(false);
   
   // Model registry from backend (grouped by provider)
@@ -188,6 +212,10 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
   const [toolsJson, setToolsJson] = useState('');
   const [toolsTouched, setToolsTouched] = useState(false);
   const [toolsHasConfig, setToolsHasConfig] = useState(false);
+  const [organizingPrinciple, setOrganizingPrinciple] = useState('');
+  const [entityTaxonomyJson, setEntityTaxonomyJson] = useState('');
+  const [relationshipTaxonomyJson, setRelationshipTaxonomyJson] = useState('');
+  const [extractionPolicyText, setExtractionPolicyText] = useState('');
   const [promptParts, setPromptParts] = useState({
     role: '',
     goal: '',
@@ -205,7 +233,7 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
   const [testRunning, setTestRunning] = useState(false);
   const [testResult, setTestResult] = useState<any>(null);
   const [, setLastRun] = useState<{
-    agentType: 'agent_builder' | 'llm_chat' | 'kg_ingest' | 'knowgraph';
+    agentType: 'agent_builder' | 'llm_chat' | 'kg_ingest' | 'knowgraph' | 'neo4j' | 'research_agent';
     request: any;
     responseOrError: any;
     elapsedMs: number;
@@ -305,6 +333,10 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
           setToolsError(null);
           setToolsTouched(false);
           setToolsHasConfig(false);
+          setOrganizingPrinciple('');
+          setEntityTaxonomyJson('');
+          setRelationshipTaxonomyJson('');
+          setExtractionPolicyText('');
           setPromptParts({ role: '', goal: '', constraints: '', ioSchema: '', memoryPolicy: '' });
           setCreditStats(null);
           setDeckVersion(1);
@@ -324,6 +356,10 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
         response_format: fetchedResponseFormat,
         tools: fetchedTools,
         prompt_template,
+        organizing_principle: fetchedOrganizingPrinciple,
+        entity_taxonomy: fetchedEntityTaxonomy,
+        relationship_taxonomy: fetchedRelationshipTaxonomy,
+        extraction_policy: fetchedExtractionPolicy,
       } = data.config;
       setProvider(fetchedProvider || '');
       setModelKey(model_key || '');
@@ -373,6 +409,10 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
       setToolsError(null);
       setResponseFormatTouched(false);
       setToolsTouched(false);
+      setOrganizingPrinciple(typeof fetchedOrganizingPrinciple === 'string' ? fetchedOrganizingPrinciple : '');
+      setEntityTaxonomyJson(stringifyConfigJson(fetchedEntityTaxonomy));
+      setRelationshipTaxonomyJson(stringifyConfigJson(fetchedRelationshipTaxonomy));
+      setExtractionPolicyText(stringifyConfigJson(fetchedExtractionPolicy));
       setCreditStats(null);
       setDeckVersion(1);
       const template = prompt_template || '';
@@ -420,6 +460,10 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
       setToolsError(null);
       setToolsTouched(false);
       setToolsHasConfig(false);
+      setOrganizingPrinciple('');
+      setEntityTaxonomyJson('');
+      setRelationshipTaxonomyJson('');
+      setExtractionPolicyText('');
       setPromptParts({ role: '', goal: '', constraints: '', ioSchema: '', memoryPolicy: '' });
     } finally {
       setLoading(false);
@@ -507,6 +551,24 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
         return;
       }
 
+      const parsedEntityTaxonomy = parseConfigJsonField('Entity taxonomy', entityTaxonomyJson);
+      if (!parsedEntityTaxonomy.ok) {
+        setToolsError(parsedEntityTaxonomy.error);
+        return;
+      }
+      const parsedRelationshipTaxonomy = parseConfigJsonField('Relationship taxonomy', relationshipTaxonomyJson);
+      if (!parsedRelationshipTaxonomy.ok) {
+        setToolsError(parsedRelationshipTaxonomy.error);
+        return;
+      }
+      const parsedExtractionPolicy = parseConfigJsonField('Extraction policy', extractionPolicyText, {
+        allowPlainText: true,
+      });
+      if (!parsedExtractionPolicy.ok) {
+        setToolsError(parsedExtractionPolicy.error);
+        return;
+      }
+
       const url = `/api/v2/projects/${resolvedProjectId}/agents/${agentType}/config`;
       const payload: any = {
         provider: provider,
@@ -532,9 +594,21 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
       if (toolsPayload !== undefined && (toolsTouched || toolsHasConfig)) {
         payload.tools = toolsPayload;
       }
+      if (supportsKnowledgeGuidance) {
+        payload.organizing_principle = organizingPrinciple.trim() || null;
+        payload.entity_taxonomy = parsedEntityTaxonomy.value;
+        payload.relationship_taxonomy = parsedRelationshipTaxonomy.value;
+        payload.extraction_policy = parsedExtractionPolicy.value;
+      }
       
       console.log('[AgentManager] Saving config:', { url, payload });
-      console.log('[SAVE_V2] PUT', { projectId: resolvedProjectId, agentType });
+      console.log(
+        '[SAVE_CONFIG_V2] projectId=%s agent_type=%s model_key=%s provider=%s',
+        resolvedProjectId || 'unset',
+        agentType,
+        modelKey || 'unset',
+        provider || 'unset',
+      );
       
       const res = await fetch(url, {
         method: 'PUT',
@@ -677,6 +751,21 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
       {/* Tab Content */}
       {activeTab === 'Plan' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div
+            style={{
+              padding: '10px 12px',
+              border: '1px solid #3A3A3A',
+              borderRadius: '6px',
+              background: '#1F1F1F',
+              color: '#E0DED5',
+              fontSize: '12px',
+            }}
+          >
+            <div style={{ color: '#FFFFFF', fontWeight: 600, marginBottom: '4px' }}>Debug Binding</div>
+            <div>current projectId: {resolvedProjectId || '(unset)'}</div>
+            <div>current agentType: {agentType}</div>
+          </div>
+
           <div>
             <label style={{ display: 'block', marginBottom: '4px', color: '#E0DED5' }}>Provider</label>
             <select
@@ -929,6 +1018,103 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
               </div>
             )}
           </div>
+
+          {supportsKnowledgeGuidance && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div
+                style={{
+                  padding: '10px 12px',
+                  border: '1px solid #3A3A3A',
+                  borderRadius: '6px',
+                  background: '#1F1F1F',
+                  color: '#E0DED5',
+                  fontSize: '12px',
+                }}
+              >
+                These fields are forwarded into knowledge extraction guidance. They shape organization and taxonomy, but they are not treated as evidence.
+              </div>
+
+              <div>
+                <label style={{ display: 'block', marginBottom: '4px', color: '#E0DED5' }}>Organizing Principle</label>
+                <textarea
+                  value={organizingPrinciple}
+                  onChange={(e) => setOrganizingPrinciple(e.target.value)}
+                  placeholder="Organize this mission around decisions, evidence, assumptions, options, plans, tasks, outcomes, risks, and dependencies."
+                  rows={4}
+                  style={{
+                    width: '100%',
+                    padding: '8px',
+                    background: '#2B2B2B',
+                    color: '#FFF',
+                    border: '1px solid #3A3A3A',
+                    borderRadius: '4px',
+                    fontFamily: 'monospace',
+                    fontSize: '12px',
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', marginBottom: '4px', color: '#E0DED5' }}>Entity Taxonomy (JSON)</label>
+                <textarea
+                  value={entityTaxonomyJson}
+                  onChange={(e) => setEntityTaxonomyJson(e.target.value)}
+                  placeholder='["Decision", "Evidence", "Risk"] or {"core":["Decision","Evidence"]}'
+                  rows={4}
+                  style={{
+                    width: '100%',
+                    padding: '8px',
+                    background: '#2B2B2B',
+                    color: '#FFF',
+                    border: '1px solid #3A3A3A',
+                    borderRadius: '4px',
+                    fontFamily: 'monospace',
+                    fontSize: '12px',
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', marginBottom: '4px', color: '#E0DED5' }}>Relationship Taxonomy (JSON)</label>
+                <textarea
+                  value={relationshipTaxonomyJson}
+                  onChange={(e) => setRelationshipTaxonomyJson(e.target.value)}
+                  placeholder='["supports", "blocks", "depends_on"]'
+                  rows={4}
+                  style={{
+                    width: '100%',
+                    padding: '8px',
+                    background: '#2B2B2B',
+                    color: '#FFF',
+                    border: '1px solid #3A3A3A',
+                    borderRadius: '4px',
+                    fontFamily: 'monospace',
+                    fontSize: '12px',
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', marginBottom: '4px', color: '#E0DED5' }}>Extraction Policy</label>
+                <textarea
+                  value={extractionPolicyText}
+                  onChange={(e) => setExtractionPolicyText(e.target.value)}
+                  placeholder='Use plain text or JSON. Example: {"grounding":"evidence_first","allow_cross_doc_merge":true}'
+                  rows={4}
+                  style={{
+                    width: '100%',
+                    padding: '8px',
+                    background: '#2B2B2B',
+                    color: '#FFF',
+                    border: '1px solid #3A3A3A',
+                    borderRadius: '4px',
+                    fontFamily: 'monospace',
+                    fontSize: '12px',
+                  }}
+                />
+              </div>
+            </div>
+          )}
 
           <div>
             <label style={{ display: 'block', marginBottom: '4px', color: '#E0DED5' }}>Version Note (optional)</label>

@@ -380,13 +380,16 @@ type AgentPrompt = {
 
 type WorkbenchOutputMap = Record<"Plan" | "Links" | "Knowledge" | "Dashboard", string>;
 type WorkbenchRating = { stars: number; note: string };
-type AgentTypeKey = "agent_builder" | "llm_chat" | "kg_ingest" | "knowgraph";
+type AgentTypeKey = "agent_builder" | "llm_chat" | "kg_ingest" | "knowgraph" | "neo4j" | "research_agent";
+const SYSTEM_AGENT_TYPES = new Set<AgentTypeKey>(["llm_chat", "kg_ingest", "knowgraph", "neo4j", "research_agent"]);
 
 function agentTypeFromProjectCode(projectCode: string): AgentTypeKey {
   const code = String(projectCode || "").toLowerCase();
   if (code === "main-chat" || code === "main_chat" || code === "llm-chat" || code === "llm_chat") return "llm_chat";
   if (code === "kg-ingest" || code === "kg_ingest" || code === "thinkgraph") return "kg_ingest";
   if (code === "knowgraph") return "knowgraph";
+  if (code === "neo4j") return "neo4j";
+  if (code === "research-agent" || code === "research_agent" || code === "web-research") return "research_agent";
   if (code === "agent-builder" || code === "agent_builder") return "agent_builder";
   return "agent_builder";
 }
@@ -2178,6 +2181,7 @@ export default function AgentBuilder() {
   const [panelWidth, setPanelWidth] = useState(480);
   const [mode, setMode] = useState<"assist" | "agents">("assist");
   const [selectedAgentType, setSelectedAgentType] = useState<AgentTypeKey>("llm_chat");
+  const [selectedAgentProjectId, setSelectedAgentProjectId] = useState("");
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const messagesByScopeRef = useRef<Record<string, { role: "assistant" | "user"; text: string }[]>>({});
   const [projectLoading, setProjectLoading] = useState(false);
@@ -2212,8 +2216,8 @@ export default function AgentBuilder() {
     if (mode === "assist") setTab("Knowledge");
   }, [mode]);
   useEffect(() => {
-    if (mode === "agents") setSelectedAgentType("llm_chat");
-  }, [mode]);
+    if (mode === "agents" && !selectedAgentProjectId) setSelectedAgentType("llm_chat");
+  }, [mode, selectedAgentProjectId]);
   const [openDrawer, setOpenDrawer] = useState<
     null | "project" | "apps" | "settings" | "admin"
   >(null);
@@ -2248,11 +2252,21 @@ export default function AgentBuilder() {
     style: "",
   });
   useEffect(() => {
-    if (mode !== "agents" || !activeProject) return;
-    const match = (Array.isArray(projects) ? projects : []).find((p) => p.id === activeProject);
+    if (mode !== "agents" || !selectedAgentProjectId) return;
+    const match = (Array.isArray(projects) ? projects : []).find((p) => p.id === selectedAgentProjectId);
     if (!match) return;
     setSelectedAgentType(agentTypeFromProjectCode(String(match.code || "")));
-  }, [mode, activeProject, projects]);
+  }, [mode, selectedAgentProjectId, projects]);
+
+  const activeConfigProjectId =
+    selectedAgentType === "agent_builder"
+      ? String(selectedAgentProjectId || "").trim()
+      : String(activeProject || "").trim();
+  const selectedAgentProject = useMemo(
+    () =>
+      (Array.isArray(projects) ? projects : []).find((p) => p.id === selectedAgentProjectId) || null,
+    [projects, selectedAgentProjectId],
+  );
 
   // Boss agent prompt configuration (per project)
   const [bossPromptConfig, setBossPromptConfig] = useState({
@@ -2306,33 +2320,67 @@ export default function AgentBuilder() {
       
       // Pin canonical agent decks to top in agent mode
       if (projectType === 'agent') {
-        const PINNED_CODES = ['main-chat', 'kg-ingest', 'thinkgraph', 'knowgraph'];
+        const PINNED_CODES = ['main-chat', 'kg-ingest', 'thinkgraph', 'knowgraph', 'neo4j', 'research-agent'];
         const pinned = cards.filter((c: any) => PINNED_CODES.includes(c.code));
         const others = cards.filter((c: any) => !PINNED_CODES.includes(c.code));
+        if (!pinned.some((c: any) => String(c?.code || '').toLowerCase() === 'neo4j')) {
+          pinned.push({
+            id: 'system:neo4j',
+            name: 'Neo4j',
+            code: 'neo4j',
+            status: 'active',
+            project_type: 'agent',
+            syntheticSystemDeck: true,
+          });
+        }
+        if (!pinned.some((c: any) => String(c?.code || '').toLowerCase() === 'research-agent')) {
+          pinned.push({
+            id: 'system:research-agent',
+            name: 'Research Agent',
+            code: 'research-agent',
+            status: 'active',
+            project_type: 'agent',
+            syntheticSystemDeck: true,
+          });
+        }
         pinned.sort((a: any, b: any) => PINNED_CODES.indexOf(a.code) - PINNED_CODES.indexOf(b.code));
         cards = [...pinned, ...others];
       }
 
       setProjects(cards);
+
+      if (projectType === "agent") {
+        const currentAgentProjectId = preferredId || selectedAgentProjectId || "";
+        const hasCurrentAgentProject =
+          currentAgentProjectId && cards.some((c: any) => c.id === currentAgentProjectId);
+        const main = cards.find((c: any) => c.code === "main-chat") || null;
+        const kg = cards.find((c: any) => c.code === "kg-ingest" || c.code === "thinkgraph") || null;
+        const knowgraph = cards.find((c: any) => c.code === "knowgraph") || null;
+        const neo4j = cards.find((c: any) => c.code === "neo4j") || null;
+        const researchAgent = cards.find((c: any) => c.code === "research-agent") || null;
+        const fallbackPinned = main?.id || kg?.id || knowgraph?.id || neo4j?.id || researchAgent?.id || "";
+        const nextAgentProjectId =
+          (hasCurrentAgentProject ? currentAgentProjectId : "") || fallbackPinned || cards[0]?.id || "";
+        setSelectedAgentProjectId(nextAgentProjectId);
+        if (nextAgentProjectId) {
+          const nextAgentProject = cards.find((c: any) => c.id === nextAgentProjectId);
+          setSelectedAgentType(agentTypeFromProjectCode(String(nextAgentProject?.code || "")));
+        } else {
+          setSelectedAgentType("llm_chat");
+        }
+        return;
+      }
+
       const search = new URLSearchParams(window.location.search);
       const urlId = search.get("projectId") || "";
       const urlIdValid = urlId && cards.some((c: any) => c.id === urlId);
-      
       const current = preferredId || activeProject || "";
       const hasCurrent = current && cards.some((c: any) => c.id === current);
-      
-      // In Agent mode, prefer main-chat or ThinkGraph/KnowGraph decks
-      const isAgents = projectType === "agent";
-      const main = isAgents ? cards.find((c: any) => c.code === "main-chat") : null;
-      const kg = isAgents ? cards.find((c: any) => c.code === "kg-ingest" || c.code === "thinkgraph") : null;
-      const knowgraph = isAgents ? cards.find((c: any) => c.code === "knowgraph") : null;
-      const fallbackPinned = main?.id || kg?.id || knowgraph?.id || "";
-      
-      const nextId = urlIdValid ? urlId : (hasCurrent ? current : "") || fallbackPinned || cards[0]?.id || "";
+      const nextId = urlIdValid ? urlId : (hasCurrent ? current : "") || cards[0]?.id || "";
       if (nextId) {
         setActiveProjectWithUrl(nextId);
       } else {
-        setActiveProject('');
+        setActiveProject("");
       }
     } catch (err: any) {
       if (isAbortLikeError(err)) return;
@@ -2340,7 +2388,7 @@ export default function AgentBuilder() {
       if (seq !== refreshSeq.current || !isLatestRequestSequence(requestType, requestSeq)) return;
       setProjectsError(err?.message || 'Error loading projects');
     }
-  }, [setActiveProjectWithUrl, mode]);
+  }, [setActiveProjectWithUrl, mode, activeProject, selectedAgentProjectId]);
 
   useEffect(() => {
     activeProjectLatestRef.current = activeProject;
@@ -3591,7 +3639,12 @@ export default function AgentBuilder() {
       
       // Select the new project
       if (newId) {
-        setActiveProjectWithUrl(newId);
+        if (projectType === "assist") {
+          setActiveProjectWithUrl(newId);
+        } else {
+          setSelectedAgentProjectId(newId);
+          setSelectedAgentType("agent_builder");
+        }
       }
     } catch (err: any) {
       console.error("Create project failed", err);
@@ -3731,12 +3784,33 @@ export default function AgentBuilder() {
                   <>
                     {tab === "Plan" && (
                       <div className="space-y-3">
-                        {activeProject ? (
+                        {activeConfigProjectId ? (
                           <div className="space-y-4">
+                            <div
+                              className="text-xs"
+                              style={{
+                                padding: "10px 12px",
+                                borderRadius: 8,
+                                border: `1px solid ${C.border}`,
+                                background: C.bg,
+                                color: C.neutral,
+                              }}
+                            >
+                              <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>
+                                Config Binding
+                              </div>
+                              <div>current projectId: {activeConfigProjectId}</div>
+                              <div>current agentType: {selectedAgentType}</div>
+                              {SYSTEM_AGENT_TYPES.has(selectedAgentType) && (
+                                <div style={{ opacity: 0.8 }}>
+                                  selected deck: {safeText(selectedAgentProject?.name || selectedAgentProject?.id || "system")}
+                                </div>
+                              )}
+                            </div>
                             <div>
                               <AgentManager
-                                key={`${activeProject}:${selectedAgentType}`}
-                                projectId={activeProject}
+                                key={`${activeConfigProjectId}:${selectedAgentProjectId}:${selectedAgentType}`}
+                                projectId={activeConfigProjectId}
                                 agentType={selectedAgentType}
                                 activeTab={tab}
                                 onGraphRefresh={() => {
@@ -3755,7 +3829,7 @@ export default function AgentBuilder() {
                               background: '#1a1a1a',
                             }}
                           >
-                            Select a project to edit its agent configuration.
+                            Select an Assist project for system agents or an Agent workspace for Agent Builder config.
                           </div>
                         )}
                       </div>
@@ -4129,20 +4203,24 @@ export default function AgentBuilder() {
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => {
-                          setActiveProjectWithUrl(project.id);
-                          if (mode === 'agents') {
-                            setSelectedAgentType(agentTypeFromProjectCode(String(project.code || '')));
+                          if (mode === "agents") {
+                            setSelectedAgentProjectId(project.id);
+                            setSelectedAgentType(agentTypeFromProjectCode(String(project.code || "")));
+                          } else {
+                            setActiveProjectWithUrl(project.id);
                           }
                           setOpenDrawer(null);
                         }}
                         className="flex-1 text-left p-3 rounded"
                         style={{
                           background:
-                            activeProject === project.id
+                            (mode === "agents" ? selectedAgentProjectId === project.id : activeProject === project.id)
                               ? "rgba(79,162,173,0.18)"
                               : "transparent",
                           border: `1px solid ${
-                            activeProject === project.id ? C.primary : C.border
+                            (mode === "agents" ? selectedAgentProjectId === project.id : activeProject === project.id)
+                              ? C.primary
+                              : C.border
                           }`,
                           color: C.text,
                         }}
@@ -4163,10 +4241,10 @@ export default function AgentBuilder() {
                       <button
                         onClick={async (e) => {
                           e.stopPropagation();
-                          const PROTECTED_AGENT_CODES = new Set(["main-chat", "kg-ingest", "thinkgraph", "knowgraph"]);
+                          const PROTECTED_AGENT_CODES = new Set(["main-chat", "kg-ingest", "thinkgraph", "knowgraph", "neo4j", "research-agent"]);
                           const isProtectedAgent = mode === "agents" && PROTECTED_AGENT_CODES.has(project.code);
                           if (isProtectedAgent) {
-                            alert("Main Chat, ThinkGraph, and KnowGraph are protected system decks.");
+                            alert("Main Chat, ThinkGraph, KnowGraph, Neo4j, and Research Agent are protected system decks.");
                             return;
                           }
                           if (!confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
@@ -4174,7 +4252,7 @@ export default function AgentBuilder() {
                             const res = await fetch(`${V2_PROJECTS_API}/${project.id}`, { method: 'DELETE' });
                             if (!res.ok) throw new Error(`HTTP ${res.status}`);
                             await refreshProjects(undefined, undefined, 'after-delete');
-                            if (activeProject === project.id) {
+                            if (mode === "assist" && activeProject === project.id) {
                               const remaining = projects.filter(p => p.id !== project.id);
                               if (remaining.length > 0) {
                                 setActiveProjectWithUrl(remaining[0].id);
@@ -4208,7 +4286,9 @@ export default function AgentBuilder() {
               )}
             </div>
             <div className="text-xs mt-4" style={{ color: C.neutral }}>
-              {mode === 'assist' ? 'Assist projects are shipped product workspaces.' : 'Agent projects are builder/expert workspaces.'}
+              {mode === 'assist'
+                ? 'Assist projects are shipped product workspaces.'
+                : `System decks save to the active Assist project (${activeProject || "unset"}). Agent Builder workspaces save to their own project.`}
             </div>
           </div>
         </Drawer>

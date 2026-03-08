@@ -37,6 +37,14 @@ export function loadMcpServersConfig(): McpServersConfig {
         console.warn(`[MCP Config] Skipping server '${key}': invalid or unresolved URL`);
         continue;
       }
+      if (typedConfig.headers && typeof typedConfig.headers === "object") {
+        typedConfig.headers = Object.fromEntries(
+          Object.entries(typedConfig.headers).filter(([, value]) => {
+            const text = String(value ?? "").trim();
+            return text.length > 0 && !text.includes("${");
+          }),
+        );
+      }
     }
     filtered[key] = typedConfig;
   }
