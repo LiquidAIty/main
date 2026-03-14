@@ -4,6 +4,7 @@ WORKDIR /app
 
 # Backend deps + build
 COPY package.json package-lock.json ./
+COPY tsconfig.base.json tsconfig.json ./
 COPY apps/backend/package.json apps/backend/
 RUN npm ci --workspace apps/backend --include-workspace-root=false || true
 COPY apps/backend/ apps/backend/
@@ -24,6 +25,7 @@ ENV PORT=4000
 
 # Install backend production deps
 COPY package.json package-lock.json ./
+COPY tsconfig.base.json tsconfig.json ./
 COPY apps/backend/package.json apps/backend/
 RUN npm ci --omit=dev --workspace apps/backend --include-workspace-root=false || npm install --omit=dev --workspace apps/backend --include-workspace-root=false
 

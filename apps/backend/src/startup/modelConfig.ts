@@ -11,13 +11,28 @@ function systemAgentLabel(agentType: SystemAgentType): string {
   return 'Neo4j';
 }
 
+function remapOpenAiModelKeyToOpenRouter(modelKeyRaw: unknown): string | null {
+  const modelKey = String(modelKeyRaw ?? '').trim();
+  if (!modelKey) return null;
+
+  const openRouterAliases: Record<string, string> = {
+    'gpt-5.1-chat-latest': 'or-openai-gpt-5.1-chat-latest',
+    'gpt-5-mini': 'or-openai-gpt-5-mini',
+    'gpt-5': 'or-openai-gpt-5',
+    'gpt-5-nano': 'or-openai-gpt-5-nano',
+  };
+
+  return openRouterAliases[modelKey] || null;
+}
+
 function resolveProviderModelId(modelKey: string): string {
-  if (!modelKey) return '(not set)';
-  if (modelKey.includes('/')) return modelKey;
+  const normalizedModelKey = remapOpenAiModelKeyToOpenRouter(modelKey) || String(modelKey || '').trim();
+  if (!normalizedModelKey) return '(not set)';
+  if (normalizedModelKey.includes('/')) return normalizedModelKey;
   try {
-    return resolveModel(modelKey).id;
+    return resolveModel(normalizedModelKey).id;
   } catch {
-    return modelKey;
+    return normalizedModelKey;
   }
 }
 
@@ -28,7 +43,7 @@ function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
 }
 
 function deriveProviderFromModel(modelKey: string): 'openai' | 'openrouter' | null {
-  const key = String(modelKey || '').trim();
+  const key = remapOpenAiModelKeyToOpenRouter(modelKey) || String(modelKey || '').trim();
   if (!key) return null;
   try {
     return resolveModel(key).provider;
@@ -113,11 +128,18 @@ export async function logModelConfiguration() {
         return;
       }
       const modelKey = String(row.model_key || '').trim();
-      const provider = normalizeProvider(row.provider) ?? deriveProviderFromModel(modelKey) ?? 'unknown';
-      const providerModelId = resolveProviderModelId(modelKey);
+      const effectiveModelKey = remapOpenAiModelKeyToOpenRouter(modelKey) || modelKey;
+      const derivedProvider = deriveProviderFromModel(effectiveModelKey);
+      const provider =
+        remapOpenAiModelKeyToOpenRouter(modelKey)
+          ? 'openrouter'
+          : derivedProvider === 'openrouter'
+            ? 'openrouter'
+            : normalizeProvider(row.provider) ?? derivedProvider ?? 'unknown';
+      const providerModelId = resolveProviderModelId(effectiveModelKey);
       console.log(`  ${label}:`);
       console.log(`    Provider:    ${provider}`);
-      console.log(`    Model:       ${modelKey || '(not set)'} (${providerModelId})`);
+      console.log(`    Model:       ${effectiveModelKey || '(not set)'} (${providerModelId})`);
       console.log(`    Max Tokens:  ${row.max_tokens ?? 'default'}`);
       console.log('');
     });

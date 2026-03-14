@@ -2,9 +2,19 @@ import axios from 'axios';
 import { Router } from 'express';
 import multer from 'multer';
 import { resolveKnowgraphAgent } from '../services/resolveAgents';
+import { isDevTestModeEnabled } from '../services/devTest';
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage() });
+// DEV TEST LIMIT RAISED: allow large real-document uploads during development and loop testing.
+const KNOWGRAPH_UPLOAD_MAX_FILE_SIZE_BYTES = isDevTestModeEnabled()
+  ? 512 * 1024 * 1024
+  : 100 * 1024 * 1024;
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: KNOWGRAPH_UPLOAD_MAX_FILE_SIZE_BYTES,
+  },
+});
 
 type UploadedFile = {
   buffer: Buffer;
@@ -111,7 +121,8 @@ async function queryKnowGraphProject(projectId: string): Promise<{
       `
         MATCH (a)-[r]->(b)
         WHERE coalesce(r.project_id, '') = $projectId
-           OR (coalesce(a.project_id, '') = $projectId AND coalesce(b.project_id, '') = $projectId)
+          AND coalesce(a.project_id, '') = $projectId
+          AND coalesce(b.project_id, '') = $projectId
         RETURN DISTINCT
           elementId(r) AS rel_id,
           type(r) AS rel_type,
@@ -248,7 +259,7 @@ async function queryKnowGraphExpand(
         WHERE (a = center OR b = center)
           AND coalesce(a.project_id, '') = $projectId
           AND coalesce(b.project_id, '') = $projectId
-          AND (coalesce(r.project_id, '') = $projectId OR coalesce(r.project_id, '') = '')
+          AND coalesce(r.project_id, '') = $projectId
         RETURN DISTINCT
           elementId(r) AS rel_id,
           type(r) AS rel_type,

@@ -1,6 +1,19 @@
-import type { StructuredToolInterface } from '@langchain/core/tools';
-import { getMcpTools } from './mcpClient';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { CallToolResultSchema, ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import { loadMcpServersConfig } from './mcpConfig';
 import type { ResearchTargetPacket, TavilySearchResult } from '../../services/research/types';
+
+type TavilyTransport =
+  | StreamableHTTPClientTransport
+  | SSEClientTransport;
+
+type TavilyRemoteConfig = {
+  transport?: 'http' | 'sse';
+  url: string;
+  headers?: Record<string, string>;
+};
 
 function safeJsonParse(text: string): any | null {
   try {
@@ -35,6 +48,12 @@ function normalizeContentBlocks(content: unknown): any {
     if (block.type === 'tool_result' && block.content && Array.isArray(block.content)) {
       const nested = normalizeContentBlocks(block.content);
       if (nested) return nested;
+    }
+    if (block.type === 'resource' && block.resource && typeof block.resource === 'object') {
+      const resource = asRecord(block.resource);
+      if (resource && typeof resource.text === 'string') {
+        return safeJsonParse(resource.text) ?? { text: resource.text };
+      }
     }
   }
 
@@ -109,7 +128,7 @@ function coerceResults(payload: any): TavilySearchResult[] {
   return out;
 }
 
-function findTavilySearchTool(tools: StructuredToolInterface[], preferredToolNames: string[] = []): StructuredToolInterface | null {
+function findTavilySearchTool(tools: Array<{ name?: string; description?: string }>, preferredToolNames: string[] = []): { name: string; description?: string } | null {
   const preferredSet = new Set(
     preferredToolNames
       .map((name) => normalizeToolName(name))
@@ -117,12 +136,12 @@ function findTavilySearchTool(tools: StructuredToolInterface[], preferredToolNam
   );
   if (preferredSet.size > 0) {
     const preferred = tools.find((tool) => preferredSet.has(normalizeToolName(tool.name || '')));
-    if (preferred) return preferred;
+    if (preferred?.name) return preferred as { name: string; description?: string };
   }
 
-  const exactNames = new Set(['tavily_search', 'tavily_search_results_json', 'tavily-search']);
+  const exactNames = new Set(['tavily_search', 'tavily_search_results_json', 'tavily_search_results', 'tavily-search']);
   const exact = tools.find((tool) => exactNames.has(normalizeToolName(tool.name || '')));
-  if (exact) return exact;
+  if (exact?.name) return exact as { name: string; description?: string };
 
   const heuristic = tools.find((tool) => {
     const normalizedName = normalizeToolName(tool.name || '');
@@ -130,7 +149,7 @@ function findTavilySearchTool(tools: StructuredToolInterface[], preferredToolNam
     const joined = `${normalizedName} ${description}`;
     return joined.includes('tavily') && joined.includes('search');
   });
-  return heuristic ?? null;
+  return heuristic?.name ? (heuristic as { name: string; description?: string }) : null;
 }
 
 function extractToolNameHints(toolsConfig: any[] = []): string[] {
@@ -144,32 +163,162 @@ function extractToolNameHints(toolsConfig: any[] = []): string[] {
     });
 }
 
+function resolveTavilyConfig(): TavilyRemoteConfig {
+  const config = loadMcpServersConfig();
+  const entry = config.tavily as TavilyRemoteConfig | undefined;
+  if (!entry || !entry.url) {
+    throw new Error('tavily_mcp_config_missing');
+  }
+  return {
+    transport: entry.transport === 'sse' ? 'sse' : 'http',
+    url: String(entry.url).trim(),
+    headers:
+      entry.headers && typeof entry.headers === 'object'
+        ? Object.fromEntries(
+            Object.entries(entry.headers)
+              .map(([key, value]) => [String(key), String(value ?? '').trim()])
+              .filter(([, value]) => value.length > 0),
+          )
+        : undefined,
+  };
+}
+
+async function withTimeout<T>(label: string, ms: number, fn: () => Promise<T>): Promise<T> {
+  let timeoutId: NodeJS.Timeout | null = null;
+  try {
+    return await Promise.race([
+      fn(),
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`${label}_timeout_${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+async function createTavilyClient(config: TavilyRemoteConfig): Promise<{ client: Client; transport: TavilyTransport }> {
+  const client = new Client({ name: 'research-agent-tavily', version: '1.0.0' });
+  const requestInit = config.headers ? { headers: config.headers } : undefined;
+  const eventSourceInit = config.headers
+    ? {
+        fetch: (input: RequestInfo | URL, init?: RequestInit) =>
+          fetch(input, {
+            ...init,
+            headers: {
+              ...(init?.headers && typeof init.headers === 'object' ? init.headers : {}),
+              ...config.headers,
+            },
+          }),
+      }
+    : undefined;
+  const transport =
+    config.transport === 'sse'
+      ? new SSEClientTransport(new URL(config.url), {
+          eventSourceInit,
+          requestInit,
+        })
+      : new StreamableHTTPClientTransport(new URL(config.url), {
+          requestInit,
+        });
+
+  await withTimeout('tavily_connect', 20_000, () => client.connect(transport));
+  return { client, transport };
+}
+
 export async function tavilySearch(
   packet: ResearchTargetPacket,
   opts?: { toolsConfig?: any[] },
 ): Promise<{ toolName: string; results: TavilySearchResult[]; raw: any }> {
-  const tools = await getMcpTools().catch(() => [] as StructuredToolInterface[]);
   const preferredToolNames = extractToolNameHints(opts?.toolsConfig ?? []);
-  const searchTool = findTavilySearchTool(tools, preferredToolNames);
-  if (!searchTool) {
-    const available = tools.map((tool) => tool.name).filter(Boolean).join(', ');
-    throw new Error(`tavily_mcp_tool_missing: ${available || 'no_mcp_tools_loaded'}`);
+  const config = resolveTavilyConfig();
+  const { client, transport } = await createTavilyClient(config);
+
+  try {
+    const list = await withTimeout('tavily_tools_list', 20_000, () =>
+      client.request({ method: 'tools/list', params: {} }, ListToolsResultSchema),
+    );
+    const searchTool = findTavilySearchTool(Array.isArray(list?.tools) ? list.tools : [], preferredToolNames);
+    if (!searchTool?.name) {
+      const available = Array.isArray(list?.tools)
+        ? list.tools.map((tool) => tool?.name).filter(Boolean).join(', ')
+        : '';
+      throw new Error(`tavily_mcp_tool_missing: ${available || 'no_tavily_tools_loaded'}`);
+    }
+
+    const attempts = [
+      {
+        query: packet.query,
+        max_results: packet.maxResults,
+        search_depth: packet.searchDepth,
+        topic: 'general',
+        include_raw_content: true,
+      },
+      {
+        query: packet.query,
+        max_results: packet.maxResults,
+        search_depth: packet.searchDepth,
+        topic: 'general',
+        include_raw_content: false,
+      },
+      {
+        query: packet.query,
+        max_results: packet.maxResults,
+        search_depth: packet.searchDepth,
+      },
+      {
+        query: packet.query,
+      },
+    ];
+
+    let rawResponse: any = null;
+    let lastSchemaError: any = null;
+    for (const input of attempts) {
+      try {
+        rawResponse = await withTimeout('tavily_call', 30_000, () =>
+          client.request(
+            {
+              method: 'tools/call',
+              params: {
+                name: searchTool.name,
+                arguments: input,
+              },
+            },
+            CallToolResultSchema,
+          ),
+        );
+        lastSchemaError = null;
+        break;
+      } catch (err: any) {
+        const message = String(err?.message || err);
+        if (!message.toLowerCase().includes('schema')) {
+          throw err;
+        }
+        lastSchemaError = err;
+      }
+    }
+    if (lastSchemaError) {
+      throw lastSchemaError;
+    }
+
+    if (rawResponse?.isError) {
+      const normalizedError = normalizeToolOutput(rawResponse);
+      const errorMessage =
+        coerceString(normalizedError?.error) ||
+        coerceString(normalizedError?.message) ||
+        coerceString(normalizedError?.text) ||
+        'tavily_tool_call_failed';
+      throw new Error(errorMessage);
+    }
+
+    const normalized = normalizeToolOutput(rawResponse);
+    const results = coerceResults(normalized);
+    return {
+      toolName: String(searchTool.name || 'tavily_search'),
+      results,
+      raw: normalized,
+    };
+  } finally {
+    await transport.close().catch(() => undefined);
   }
-
-  const rawResponse = await searchTool.invoke({
-    query: packet.query,
-    max_results: packet.maxResults,
-    search_depth: packet.searchDepth,
-    topic: 'general',
-    include_answer: true,
-    include_raw_content: true,
-  } as any);
-
-  const normalized = normalizeToolOutput(rawResponse);
-  const results = coerceResults(normalized);
-  return {
-    toolName: String(searchTool.name || 'tavily_search'),
-    results,
-    raw: normalized,
-  };
 }

@@ -91,6 +91,33 @@ const DEFAULT_KG_RESPONSE_FORMAT = {
   },
 };
 
+const DEFAULT_KG_CHUNK_RESPONSE_FORMAT = {
+  type: 'json_schema',
+  name: 'kg_chunk_extract',
+  strict: true,
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      chunks: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            chunk_id: { type: 'string' },
+            text: { type: 'string' },
+            start: { type: 'number' },
+            end: { type: 'number' },
+          },
+          required: ['chunk_id', 'text', 'start', 'end'],
+        },
+      },
+    },
+    required: ['chunks'],
+  },
+};
+
 export type LlmMeta = {
   provider: 'openai' | 'openrouter';
   model_key: string;
@@ -155,6 +182,28 @@ function normalizeChatCompletionsResponseFormat(responseFormat: any): any {
     type: 'json_schema',
     json_schema: { name, schema, strict },
   };
+}
+
+function openRouterAllowsReasoningDisable(modelIdRaw: string): boolean {
+  const modelId = String(modelIdRaw || '').trim().toLowerCase();
+  if (!modelId) return true;
+  if (
+    modelId === 'openai/gpt-5' ||
+    modelId.startsWith('openai/gpt-5-') ||
+    modelId.startsWith('openai/gpt-5.')
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function getStructuredOpenRouterMaxTokens(modelIdRaw: string, requestedMaxTokens: number): number {
+  const parsedRequested = Number(requestedMaxTokens);
+  const baseMaxTokens = Number.isFinite(parsedRequested) && parsedRequested > 0 ? parsedRequested : 2048;
+  if (!openRouterAllowsReasoningDisable(modelIdRaw)) {
+    return Math.max(baseMaxTokens, 4096);
+  }
+  return baseMaxTokens;
 }
 
 function getProviderConfig(opts: {
@@ -253,6 +302,10 @@ async function callProviderJsonSchema(opts: {
   const cfg = getProviderConfig({ modelKey, provider, providerModelId });
   const url = cfg.endpoint;
   const started = Date.now();
+  const requestMaxTokens =
+    cfg.provider === 'openrouter'
+      ? getStructuredOpenRouterMaxTokens(cfg.modelId, maxTokens)
+      : maxTokens;
   const requestBody: any =
     cfg.provider === 'openai'
       ? buildResponsesPayload({
@@ -261,7 +314,7 @@ async function callProviderJsonSchema(opts: {
           response_format: responseFormat ?? DEFAULT_KG_RESPONSE_FORMAT,
           temperature: typeof temperature === 'number' ? temperature : undefined,
           top_p: typeof topP === 'number' ? topP : undefined,
-          max_output_tokens: maxTokens,
+          max_output_tokens: requestMaxTokens,
           previous_response_id: previousResponseId ?? undefined,
         })
       : (() => {
@@ -271,19 +324,23 @@ async function callProviderJsonSchema(opts: {
               { role: 'system', content: system },
               { role: 'user', content: prompt },
             ],
-            max_tokens: maxTokens,
+            max_tokens: requestMaxTokens,
           };
           if (typeof temperature === 'number') payload.temperature = temperature;
           if (typeof topP === 'number') payload.top_p = topP;
           const chatFormat = normalizeChatCompletionsResponseFormat(responseFormat ?? DEFAULT_KG_RESPONSE_FORMAT);
           if (chatFormat) payload.response_format = chatFormat;
+          if (openRouterAllowsReasoningDisable(cfg.modelId)) {
+            payload.reasoning = { effort: 'none', exclude: true };
+          }
+          payload.plugins = [{ id: 'response-healing' }];
           return payload;
         })();
 
   console.log(`[KG_V2][${logTag}] request`, {
     provider: cfg.provider,
     model: cfg.modelId,
-    max_output_tokens: maxTokens,
+    max_output_tokens: requestMaxTokens,
     body_keys: Object.keys(requestBody),
   });
 
@@ -454,9 +511,10 @@ export async function chunkTextStrictJSON(opts: {
   const system = opts.systemPrompt ? `${opts.systemPrompt}\n\n${baseSystem}` : baseSystem;
   const prompt = [
     'Split the input into semantic chunks.',
-    'Return JSON with keys: chunks, entities, relations.',
+    'Return JSON with key: chunks.',
     'Each chunk must include chunk_id, text, start, end.',
-    'If no chunks can be produced, return {"chunks": [], "entities": [], "relations": []}.',
+    'Do not return entities or relations in this step.',
+    'If no chunks can be produced, return {"chunks": []}.',
     '',
     'Input:',
     opts.text,
@@ -471,7 +529,7 @@ export async function chunkTextStrictJSON(opts: {
     maxTokens: opts.maxTokens,
     logTag: 'chunk',
     emptyCode: 'chunking_empty_output',
-    responseFormat: opts.responseFormat,
+    responseFormat: opts.responseFormat ?? DEFAULT_KG_CHUNK_RESPONSE_FORMAT,
     temperature: opts.temperature ?? null,
     topP: opts.topP ?? null,
     previousResponseId: opts.previousResponseId ?? null,

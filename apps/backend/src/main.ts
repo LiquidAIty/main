@@ -1,8 +1,10 @@
 import express from "express";
 import dotenv from "dotenv";
+import type { Server } from "node:http";
 import cookieParser = require("cookie-parser");
 import routes from "./routes";
 import { logModelConfiguration } from "./startup/modelConfig";
+import { getDevTestJsonBodyLimit } from "./services/devTest";
 
 dotenv.config({ path: "apps/backend/.env" });
 
@@ -20,7 +22,7 @@ app.use((req, res, next) => {
   return next();
 });
 
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: getDevTestJsonBodyLimit() }));
 app.use(cookieParser() as any);
 
 // Disable caching for API responses to avoid 304/empty body JSON issues
@@ -78,6 +80,77 @@ function logStartupBanner() {
   console.log("───────────────────────────────────────────────────");
 }
 
+declare global {
+  // Preserve a single backend listener across in-process watch reloads.
+  var __liquidaityBackendServer__: Server | undefined;
+  var __liquidaityBackendShutdownHooksInstalled__: boolean | undefined;
+}
+
+function closeServer(server: Server): Promise<void> {
+  if (!server.listening) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    server.close((err) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function installShutdownHooks() {
+  if (globalThis.__liquidaityBackendShutdownHooksInstalled__) {
+    return;
+  }
+  globalThis.__liquidaityBackendShutdownHooksInstalled__ = true;
+
+  const shutdown = async () => {
+    const activeServer = globalThis.__liquidaityBackendServer__;
+    if (!activeServer) return;
+    try {
+      await closeServer(activeServer);
+    } catch {
+      // ignore shutdown close errors
+    } finally {
+      if (globalThis.__liquidaityBackendServer__ === activeServer) {
+        globalThis.__liquidaityBackendServer__ = undefined;
+      }
+    }
+  };
+
+  process.once('SIGINT', () => {
+    void shutdown();
+  });
+  process.once('SIGTERM', () => {
+    void shutdown();
+  });
+}
+
+async function startServer() {
+  const existingServer = globalThis.__liquidaityBackendServer__;
+  if (existingServer) {
+    await closeServer(existingServer).catch(() => undefined);
+    if (globalThis.__liquidaityBackendServer__ === existingServer) {
+      globalThis.__liquidaityBackendServer__ = undefined;
+    }
+  }
+
+  logStartupBanner();
+  void logModelConfiguration();
+
+  const server = app.listen(PORT, () => console.log("[BOOT] listening on :" + PORT));
+  server.on('close', () => {
+    if (globalThis.__liquidaityBackendServer__ === server) {
+      globalThis.__liquidaityBackendServer__ = undefined;
+    }
+  });
+  globalThis.__liquidaityBackendServer__ = server;
+  installShutdownHooks();
+}
+
 // Mount all routes under /api
 app.use("/api", routes);
 
@@ -113,6 +186,4 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 });
 
 const PORT = Number(process.env.PORT || 4000);
-logStartupBanner();
-void logModelConfiguration();
-app.listen(PORT, () => console.log("[BOOT] listening on :" + PORT));
+void startServer();

@@ -69,6 +69,39 @@ function hasConfig(row: any): boolean {
   );
 }
 
+function normalizeProjectKey(value: unknown): string {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function inferProjectType(row: any): 'assist' | 'agent' {
+  const explicit = String(row?.project_type ?? '').trim().toLowerCase();
+  if (explicit === 'assist' || explicit === 'agent') {
+    return explicit;
+  }
+
+  const codeKey = normalizeProjectKey(row?.code);
+  const nameKey = normalizeProjectKey(row?.name);
+  const legacyAgentKeys = new Set([
+    'main-chat',
+    'kg-ingest',
+    'thinkgraph',
+    'knowgraph',
+    'neo4j',
+    'research-agent',
+    'agent-builder',
+  ]);
+
+  if (legacyAgentKeys.has(codeKey) || legacyAgentKeys.has(nameKey) || hasConfig(row)) {
+    return 'agent';
+  }
+
+  return 'assist';
+}
+
 function normalizeJson<TDefault>(value: unknown, fallback: TDefault): TDefault {
   if (typeof value === 'string') {
     try {
@@ -187,11 +220,6 @@ export async function listAgentCards(userId?: string | null, projectType?: 'assi
     params.push(userId);
   }
   
-  if (projectType && hasProjectType) {
-    whereClauses.push(`project_type = $${params.length + 1}`);
-    params.push(projectType);
-  }
-  
   if (whereClauses.length > 0) {
     sql += ' WHERE ' + whereClauses.join(' AND ');
   }
@@ -211,15 +239,21 @@ export async function listAgentCards(userId?: string | null, projectType?: 'assi
     if (process.env.LOG_LEVEL === 'debug') {
       console.log('[listAgentCards] Query success, rows:', rows.length);
     }
-    
-    return rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      code: row.code ?? null,
-      status: row.status ?? null,
-      hasAgentConfig: hasConfig(row),
-      project_type: row.project_type || 'agent',
-    }));
+
+    return rows
+      .map((row) => {
+        const effectiveProjectType =
+          hasProjectType ? inferProjectType(row) : 'agent';
+        return {
+          id: row.id,
+          name: row.name,
+          code: row.code ?? null,
+          status: row.status ?? null,
+          hasAgentConfig: hasConfig(row),
+          project_type: effectiveProjectType,
+        };
+      })
+      .filter((row) => !projectType || row.project_type === projectType);
   } catch (err: any) {
     console.error('[listAgentCards] Query failed:', {
       message: err?.message,

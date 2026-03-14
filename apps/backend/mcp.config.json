@@ -3,7 +3,7 @@
     "filesystem": {
       "transport": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "--root", "./"],
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "./"],
       "restart": { "enabled": true, "maxAttempts": 3, "delayMs": 1000 }
     },
     "github": {
@@ -20,7 +20,7 @@
       }
     },
     "tavily": {
-      "transport": "sse",
+      "transport": "http",
       "url": "${TAVILY_MCP_URL}",
       "headers": {
         "Authorization": "Bearer ${TAVILY_API_KEY}",

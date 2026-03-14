@@ -152,32 +152,55 @@ function defaultAgentName(agentType: AgentType): string {
   }
 }
 
-function pickDefaultModelKey(agentType: AgentType): string {
+function pickDefaultOpenRouterModelKey(agentType: AgentType): string {
   const candidatesByAgent: Record<AgentType, string[]> = {
-    llm_chat: ['gpt-5.1-chat-latest', 'gpt-5-mini', 'gpt-5-nano'],
-    kg_ingest: ['gpt-5-mini', 'gpt-5.1-chat-latest', 'gpt-5-nano'],
-    knowgraph: ['gpt-5-mini', 'gpt-5.1-chat-latest', 'gpt-5-nano'],
-    neo4j: ['gpt-5-mini', 'gpt-5.1-chat-latest', 'gpt-5-nano'],
-    research_agent: ['gpt-5-mini', 'gpt-5.1-chat-latest', 'gpt-5-nano'],
-    agent_builder: ['gpt-5-mini', 'gpt-5.1-chat-latest', 'gpt-5-nano'],
+    llm_chat: ['or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5-mini', 'or-openai-gpt-5', 'or-openai-gpt-5-nano'],
+    kg_ingest: ['or-openai-gpt-5-mini', 'or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5-nano', 'or-openai-gpt-5'],
+    knowgraph: ['or-openai-gpt-5-mini', 'or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5-nano', 'or-openai-gpt-5'],
+    neo4j: ['or-openai-gpt-5-mini', 'or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5-nano', 'or-openai-gpt-5'],
+    research_agent: ['or-openai-gpt-5-mini', 'or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5-nano', 'or-openai-gpt-5'],
+    agent_builder: ['or-openai-gpt-5-mini', 'or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5-nano', 'or-openai-gpt-5'],
   };
   const envCandidates = [
+    process.env.OPENROUTER_DEFAULT_MODEL,
+    process.env.OPENROUTER_MODEL,
     process.env.OPENAI_MODEL,
     process.env.OPENAI_DEFAULT_MODEL,
-  ].filter((v): v is string => Boolean(v && v.trim()));
+  ].filter((value): value is string => Boolean(value && value.trim()));
+  const directOpenRouterAliases: Record<string, string> = {
+    'gpt-5.1-chat-latest': 'or-openai-gpt-5.1-chat-latest',
+    'gpt-5-mini': 'or-openai-gpt-5-mini',
+    'gpt-5': 'or-openai-gpt-5',
+    'gpt-5-nano': 'or-openai-gpt-5-nano',
+  };
   const options = [...candidatesByAgent[agentType], ...envCandidates];
   const seen = new Set<string>();
-  for (const key of options) {
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    const m = MODEL_REGISTRY[key];
-    if (m?.provider === 'openai') return key;
+
+  for (const rawOption of options) {
+    const option = String(rawOption || '').trim();
+    if (!option || seen.has(option)) continue;
+    seen.add(option);
+
+    if (option.includes('/')) {
+      return option;
+    }
+
+    const remappedOption = directOpenRouterAliases[option] || option;
+    const model = MODEL_REGISTRY[remappedOption];
+    if (model?.provider === 'openrouter') {
+      return remappedOption;
+    }
   }
-  const firstOpenAi = Object.entries(MODEL_REGISTRY).find(([, m]) => m.provider === 'openai');
-  if (!firstOpenAi) {
-    throw new Error('default_openai_model_missing');
+
+  const firstOpenRouter = Object.entries(MODEL_REGISTRY).find(([, model]) => model.provider === 'openrouter');
+  if (!firstOpenRouter) {
+    throw new Error('default_openrouter_model_missing');
   }
-  return firstOpenAi[0];
+  return firstOpenRouter[0];
+}
+
+function pickDefaultModelKey(agentType: AgentType): string {
+  return pickDefaultOpenRouterModelKey(agentType);
 }
 
 function defaultPromptTemplate(agentType: AgentType): string {
@@ -271,8 +294,22 @@ function normalizeProviderValue(value: unknown): 'openai' | 'openrouter' | null 
   return null;
 }
 
-function deriveProviderFromModelKey(modelKeyRaw: unknown): 'openai' | 'openrouter' | null {
+function remapOpenAiModelKeyToOpenRouterAlias(modelKeyRaw: unknown): string | null {
   const modelKey = String(modelKeyRaw ?? '').trim();
+  if (!modelKey) return null;
+
+  const openRouterAliases: Record<string, string> = {
+    'gpt-5.1-chat-latest': 'or-openai-gpt-5.1-chat-latest',
+    'gpt-5-mini': 'or-openai-gpt-5-mini',
+    'gpt-5': 'or-openai-gpt-5',
+    'gpt-5-nano': 'or-openai-gpt-5-nano',
+  };
+
+  return openRouterAliases[modelKey] || null;
+}
+
+function deriveProviderFromModelKey(modelKeyRaw: unknown): 'openai' | 'openrouter' | null {
+  const modelKey = remapOpenAiModelKeyToOpenRouterAlias(modelKeyRaw) || String(modelKeyRaw ?? '').trim();
   if (!modelKey) return null;
   const entry = MODEL_REGISTRY[modelKey];
   if (entry?.provider === 'openai' || entry?.provider === 'openrouter') {
@@ -288,8 +325,14 @@ function deriveProviderFromModelKey(modelKeyRaw: unknown): 'openai' | 'openroute
 }
 
 function rowToConfig(row: any): AgentConfigRecord {
-  const modelKey = row.model_key ?? row.model ?? null;
-  const provider = normalizeProviderValue(row.provider) ?? deriveProviderFromModelKey(modelKey);
+  const storedModelKey = row.model_key ?? row.model ?? null;
+  const modelKey = remapOpenAiModelKeyToOpenRouterAlias(storedModelKey) || storedModelKey;
+  const storedProvider = normalizeProviderValue(row.provider);
+  const derivedProvider = deriveProviderFromModelKey(modelKey);
+  const provider =
+    derivedProvider === 'openrouter' || remapOpenAiModelKeyToOpenRouterAlias(storedModelKey)
+      ? 'openrouter'
+      : storedProvider ?? derivedProvider;
   const promptTemplate = String(row.prompt_template ?? '').trim() || sectionPromptFallback(row);
   const maxTokens = typeof row.max_tokens === 'number' ? row.max_tokens : 2048;
   const permissions = normalizeJson(row.permissions, {} as Record<string, unknown>);
@@ -428,7 +471,7 @@ export async function ensureAgentConfig(projectId: string, agentType: AgentType)
     agentType === 'llm_chat' ? 0.7 : agentType === 'agent_builder' ? 0.2 : 0;
 
   return updateAgentConfig(projectId, agentType, {
-    provider: 'openai',
+    provider: 'openrouter',
     model_key,
     temperature,
     max_tokens: 2048,

@@ -88,6 +88,10 @@ async function ensureAnonymousSession(): Promise<void> {
   }
 }
 
+function knowledgeImportButtonLabel(uploading: boolean): string {
+  return uploading ? "Importing…" : "Import Knowledge";
+}
+
 export default function UploadAttachment({
   projectId,
   disabled = false,
@@ -121,14 +125,14 @@ export default function UploadAttachment({
 
     if (!isPdfFile(file)) {
       setToastType("error");
-      setToast("Only PDF attachments are supported for KnowGraph ingest.");
+      setToast("Only PDF files are supported for knowledge import.");
       clearInput();
       return;
     }
 
     if (!projectId) {
       setToastType("error");
-      setToast("Select a project before uploading an attachment.");
+      setToast("Select a project before importing knowledge.");
       clearInput();
       return;
     }
@@ -155,7 +159,7 @@ export default function UploadAttachment({
       }
 
       setToastType("ok");
-      setToast("Attachment uploaded");
+      setToast("Knowledge imported");
       window.dispatchEvent(new CustomEvent("knowledge:refresh"));
       onUploaded?.();
     } catch (error: any) {
@@ -185,7 +189,7 @@ export default function UploadAttachment({
           opacity: disabled || uploading ? 0.65 : 1,
         }}
       >
-        {uploading ? "Uploading…" : "Attach File"}
+        {knowledgeImportButtonLabel(uploading)}
       </button>
       <input
         ref={inputRef}

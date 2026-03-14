@@ -2,12 +2,58 @@ export type ResearchMode = 'web_research';
 
 export type ResearchSearchDepth = 'basic' | 'advanced';
 
+export type CandidateEdge = {
+  entityA: string;
+  relationshipType: string;
+  entityB: string;
+  confidence?: number | null;
+  source?: 'thinkgraph' | 'fallback' | 'manual';
+};
+
+export type KnowGraphGapType =
+  | 'missing_evidence'
+  | 'weak_evidence'
+  | 'conflict'
+  | 'stale_evidence';
+
+export type KnowGraphGapPriority = 'high' | 'medium' | 'low';
+
+export type KnowGraphGap = {
+  entityA: string;
+  relationshipType: string;
+  entityB: string;
+  gapType: KnowGraphGapType;
+  evidenceCount: number;
+  contradictionCount: number;
+  priority: KnowGraphGapPriority;
+  reason: string;
+  existingRelationTypes?: string[];
+  lastEvidenceAt?: string | null;
+};
+
+export type ResearchIntent =
+  | 'explain'
+  | 'compare'
+  | 'verify'
+  | 'resolve_conflict'
+  | 'deepen_evidence';
+
+export type ResearchSearchTask = {
+  query: string;
+  intent: ResearchIntent;
+  priority: KnowGraphGapPriority;
+  gap: KnowGraphGap | null;
+};
+
 export type ResearchTargetPacket = {
   projectId: string;
   turnId: string;
   query: string;
   priorityEntities: string[];
   priorityRelationships: string[];
+  attentionEdges: CandidateEdge[];
+  gaps: KnowGraphGap[];
+  searchTasks: ResearchSearchTask[];
   openQuestions: string[];
   maxResults: number;
   searchDepth: ResearchSearchDepth;
@@ -44,6 +90,8 @@ export type ResearchIngestResult = {
   project_id: string;
   turn_id: string;
   query: string;
+  planned_task_count: number;
+  gap_count: number;
   tool_name: string;
   search_result_count: number;
   ingested_document_count: number;

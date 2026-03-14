@@ -81,8 +81,12 @@ function sourceForNode(node: KnowledgeGraphNode): KnowledgeGraphSource {
 }
 
 function sourceBadge(source: KnowledgeGraphSource): string {
-  if (source === "mixed") return "ThinkGraph + KnowGraph";
+  if (source === "mixed") return "Both Sources";
   return source === "know" ? "KnowGraph" : "ThinkGraph";
+}
+
+function sourceFilterOptionLabel(source: "think" | "know"): string {
+  return source === "think" ? "ThinkGraph" : "KnowGraph";
 }
 
 function relationColor(source: KnowledgeGraphSource): string {
@@ -497,8 +501,8 @@ export default function KnowledgeGraphNVL({
               }}
             >
               <option value="all">All</option>
-              <option value="think">Think + Mixed</option>
-              <option value="know">Know + Mixed</option>
+              <option value="think">{sourceFilterOptionLabel("think")}</option>
+              <option value="know">{sourceFilterOptionLabel("know")}</option>
             </select>
           </label>
           <label style={{ color: "#94a3b8", fontSize: 11 }}>

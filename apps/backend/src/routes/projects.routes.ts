@@ -17,10 +17,15 @@ import { pool } from '../db/pool';
 import { createHash } from 'crypto';
 import { getLastTrace, getTraces } from '../services/ingestTrace';
 import { captureProbability } from '../lib/receiptCapture';
+import { isDevTestModeEnabled } from '../services/devTest';
 import { resolveKgIngestAgent } from '../services/resolveAgents';
 import { runKgQuery } from './v2/query';
 const router = Router();
 const GRAPH_NAME = 'graph_liq';
+const ACTIVE_ASSIST_RUNTIME = '/api/agents/boss + /api/v2/projects/:projectId/kg/*';
+const LEGACY_PROJECT_KG_RUNTIME_ENABLED =
+  isDevTestModeEnabled() &&
+  /^(1|true|yes|on)$/i.test(String(process.env.LEGACY_ENABLE_PROJECT_KG_RUNTIME ?? '0'));
 const DEFAULT_EMBED_MODEL =
   process.env.OPENROUTER_DEFAULT_EMBED_MODEL || 'openai/text-embedding-3-small';
 const DEFAULT_MAX_CHUNK_CHARS = Math.max(500, Number(process.env.KG_INGEST_MAX_CHARS ?? 4500));
@@ -47,6 +52,21 @@ const INGEST_DOC_LOG: {
   created_at: string;
 }[] = [];
 const INGEST_DOC_LOG_MAX = 100;
+
+function respondLegacyRuntimeDisabled(res: Response, route: string) {
+  console.warn('[LegacyRuntime] route=%s LEGACY PATH - not part of active Assist runtime', route);
+  return res.status(410).json({
+    ok: false,
+    error: 'legacy_path_disabled',
+    message: 'LEGACY PATH - not part of active Assist runtime',
+    route,
+    active_runtime: ACTIVE_ASSIST_RUNTIME,
+  });
+}
+
+function warnLegacyRuntimeUse(route: string) {
+  console.warn('[LegacyRuntime] route=%s LEGACY PATH - not part of active Assist runtime', route);
+}
 
 // ============================================================================
 // Phase 2: Canonicalization + Auto-Ingest Helpers
@@ -939,26 +959,37 @@ router.put('/:projectId/state', async (req, res) => {
       
       // Only ingest if plan or links exist
       if (plan || links) {
-        const canonicalText = canonicalizePlanLinks(plan, links);
-        const sourceId = sha1(canonicalText);
-        const docId = `state:${projectId}:${sourceId.slice(0, 12)}`;
-        const src = 'state.plan_links';
-        
-        // Idempotency: skip if already ingested
-        const exists = await checkDocIdExists(docId);
-        if (exists) {
-          ingestResult = { skipped: true, reason: 'already_ingested', doc_id: docId };
+        if (!LEGACY_PROJECT_KG_RUNTIME_ENABLED) {
+          warnLegacyRuntimeUse('/api/projects/:projectId/state auto-ingest');
+          ingestResult = {
+            skipped: true,
+            reason: 'legacy_state_auto_ingest_disabled',
+            message: 'LEGACY PATH - not part of active Assist runtime',
+            active_runtime: ACTIVE_ASSIST_RUNTIME,
+          };
         } else {
-          // Call internal ingest logic (reuse existing pipeline)
-          // We'll extract the ingest logic into a helper function below
-          ingestResult = await runIngestPipeline({
-            projectId,
-            doc_id: docId,
-            src,
-            text: canonicalText,
-            embed_model: DEFAULT_EMBED_MODEL,
-            options: {},
-          });
+          warnLegacyRuntimeUse('/api/projects/:projectId/state auto-ingest');
+          const canonicalText = canonicalizePlanLinks(plan, links);
+          const sourceId = sha1(canonicalText);
+          const docId = `state:${projectId}:${sourceId.slice(0, 12)}`;
+          const src = 'state.plan_links';
+          
+          // Idempotency: skip if already ingested
+          const exists = await checkDocIdExists(docId);
+          if (exists) {
+            ingestResult = { skipped: true, reason: 'already_ingested', doc_id: docId };
+          } else {
+            // Call internal ingest logic (reuse existing pipeline)
+            // We'll extract the ingest logic into a helper function below
+            ingestResult = await runIngestPipeline({
+              projectId,
+              doc_id: docId,
+              src,
+              text: canonicalText,
+              embed_model: DEFAULT_EMBED_MODEL,
+              options: {},
+            });
+          }
         }
       }
     } catch (ingestErr: any) {
@@ -992,6 +1023,10 @@ router.post('/:projectId/kg/query', async (req, res) => {
 });
 
 router.post('/:projectId/kg/extract', async (req, res) => {
+  if (!LEGACY_PROJECT_KG_RUNTIME_ENABLED) {
+    return respondLegacyRuntimeDisabled(res, '/api/projects/:projectId/kg/extract');
+  }
+  warnLegacyRuntimeUse('/api/projects/:projectId/kg/extract');
   const { text, source } = req.body || {};
   if (!text || typeof text !== 'string') {
     return res.status(400).json({ ok: false, error: 'text is required' });
@@ -1040,6 +1075,10 @@ router.post('/:projectId/kg/extract', async (req, res) => {
 });
 
 router.post('/:projectId/kg/commit', async (req, res) => {
+  if (!LEGACY_PROJECT_KG_RUNTIME_ENABLED) {
+    return respondLegacyRuntimeDisabled(res, '/api/projects/:projectId/kg/commit');
+  }
+  warnLegacyRuntimeUse('/api/projects/:projectId/kg/commit');
   const { entities, relations, provenance } = req.body || {};
   if (!Array.isArray(entities) || !Array.isArray(relations)) {
     return res.status(400).json({ ok: false, error: 'entities and relations arrays required' });
@@ -1129,7 +1168,8 @@ router.post('/:projectId/kg/commit', async (req, res) => {
 });
 
 // ============================================================================
-// Phase 2: Extracted ingest pipeline (reusable for auto-ingest and manual)
+// LEGACY PATH - not part of active Assist runtime.
+// Extracted ingest pipeline remains only for quarantined manual/dev flows.
 // ============================================================================
 export async function runIngestPipeline(params: {
   projectId: string;
@@ -1601,6 +1641,10 @@ export async function ingestChatTurnInternal(params: {
 }
 
 router.post('/:projectId/kg/ingest', async (req, res) => {
+  if (!LEGACY_PROJECT_KG_RUNTIME_ENABLED) {
+    return respondLegacyRuntimeDisabled(res, '/api/projects/:projectId/kg/ingest');
+  }
+  warnLegacyRuntimeUse('/api/projects/:projectId/kg/ingest');
   const projectId = req.params.projectId;
   let { doc_id, src, text, llm_model, embed_model, options } = req.body || {};
 
@@ -1670,6 +1714,8 @@ router.post('/:projectId/kg/ingest_chat_turn', async (_req, res) => {
   return res.status(410).json({
     ok: false,
     error: 'use_v2_endpoint',
+    message: 'LEGACY PATH - not part of active Assist runtime',
+    active_runtime: ACTIVE_ASSIST_RUNTIME,
     v2: '/api/v2/projects/:projectId/kg/ingest_chat_turn',
   });
 });

@@ -32,12 +32,41 @@ function logRouteResolution(route: string, projectId: string, agentType: Runtime
   );
 }
 
-function normalizeProvider(value: unknown, agentType: RuntimeAgentType): 'openai' | 'openrouter' {
+function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
   const provider = String(value ?? '').trim().toLowerCase();
   if (provider === 'openai' || provider === 'openrouter') {
     return provider;
   }
-  throw new Error(`${agentType}_provider_missing`);
+  return null;
+}
+
+function remapOpenAiModelKeyToOpenRouter(modelKeyRaw: unknown): string | null {
+  const modelKey = String(modelKeyRaw ?? '').trim();
+  if (!modelKey) return null;
+
+  const openRouterAliases: Record<string, string> = {
+    'gpt-5.1-chat-latest': 'or-openai-gpt-5.1-chat-latest',
+    'gpt-5-mini': 'or-openai-gpt-5-mini',
+    'gpt-5': 'or-openai-gpt-5',
+    'gpt-5-nano': 'or-openai-gpt-5-nano',
+  };
+
+  return openRouterAliases[modelKey] || null;
+}
+
+function deriveProviderFromModelKey(modelKeyRaw: unknown): 'openai' | 'openrouter' | null {
+  const modelKey = String(modelKeyRaw ?? '').trim();
+  if (!modelKey) return null;
+
+  if (modelKey.includes('/')) {
+    return 'openrouter';
+  }
+
+  try {
+    return resolveModel(modelKey).provider;
+  } catch {
+    return null;
+  }
 }
 
 function resolveProviderModelId(
@@ -87,10 +116,15 @@ export async function resolveAgentConfig(
   }
 
   const systemPrompt = String(config.prompt_template || '').trim();
-  const modelKey = String(config.model_key || '').trim();
-  const provider = normalizeProvider(config.provider, agentType);
-  const providerModelId = resolveProviderModelId(provider, modelKey, agentType);
-  logRouteResolution(route, projectId, agentType, config.agent_id);
+  const storedModelKey = String(config.model_key || '').trim();
+  const storedProvider = normalizeProvider(config.provider);
+  const openRouterModelKey = remapOpenAiModelKeyToOpenRouter(storedModelKey);
+  const modelKey = openRouterModelKey || storedModelKey;
+  const derivedProvider = deriveProviderFromModelKey(modelKey);
+  const provider =
+    derivedProvider === 'openrouter' || storedProvider === 'openrouter'
+      ? 'openrouter'
+      : storedProvider ?? derivedProvider;
 
   if (!systemPrompt) {
     throw new Error(`${agentType}_prompt_missing`);
@@ -99,6 +133,11 @@ export async function resolveAgentConfig(
   if (!modelKey) {
     throw new Error(`${agentType}_model_missing`);
   }
+  if (!provider) {
+    throw new Error(`${agentType}_provider_missing`);
+  }
+  const providerModelId = resolveProviderModelId(provider, modelKey, agentType);
+  logRouteResolution(route, projectId, agentType, config.agent_id);
   return {
     agentId: config.agent_id,
     agentType,

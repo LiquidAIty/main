@@ -1,12 +1,20 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { Router } from 'express';
 import { pool } from '../../db/pool';
 import { createHash } from 'crypto';
-import { resolveKgIngestAgent, resolveNeo4jAgent, resolveResearchAgent } from '../../services/resolveAgents';
+import {
+  resolveKgIngestAgent,
+  resolveKnowgraphAgent,
+  resolveNeo4jAgent,
+  resolveResearchAgent,
+} from '../../services/resolveAgents';
 import { runCypherOnGraph } from '../../services/graphService';
 import { chunkTextStrictJSON, extractKgFromChunks, type KgEntity, type KgRelationship, type LlmMeta } from './chunking';
 import { runKgQuery } from './query';
 import { syncKgToNeo4j } from '../../services/v2/kgNeo4jSink';
 import { normalizeResearchTargetPacket, runResearchIngest } from '../../services/research/researchService';
+import { isDevTestModeEnabled, requireDevTestMode, resolveAllowedDevLocalFile } from '../../services/devTest';
 import {
   enqueueKgIngestJob,
   registerKgIngestWorker,
@@ -18,6 +26,7 @@ const GRAPH_NAME = 'graph_liq';
 const DEFAULT_SEED_LIMIT = 220;
 const DEFAULT_EXPAND_LIMIT = 120;
 const MAX_QUERY_LIMIT = 1000;
+const DEFAULT_KNOWGRAPH_URL = 'http://localhost:8001';
 const KG_VIEW_SEED_CYPHER = `
   MATCH (a:Entity { project_id: $projectId })-[r:REL { project_id: $projectId }]->(b:Entity { project_id: $projectId })
   WHERE ($typeFilter IS NULL OR toLower(coalesce(a.etype, 'unknown')) = $typeFilter OR toLower(coalesce(b.etype, 'unknown')) = $typeFilter)
@@ -73,6 +82,297 @@ const KG_VIEW_EXPAND_CYPHER = `
   LIMIT toInteger($limit)
 `;
 const inflightDocs = new Set<string>();
+const HEURISTIC_STOPWORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'can', 'compare', 'does', 'evidence',
+  'for', 'from', 'how', 'if', 'in', 'into', 'is', 'it', 'of', 'on', 'or', 'the', 'their',
+  'there', 'this', 'to', 'use', 'using', 'vs', 'what', 'when', 'with',
+]);
+const LEGACY_THINKGRAPH_NEO4J_DUAL_WRITE_ENABLED =
+  isDevTestModeEnabled() &&
+  /^(1|true|yes|on)$/i.test(String(process.env.LEGACY_ENABLE_THINKGRAPH_NEO4J_DUAL_WRITE ?? '0'));
+
+type KnowgraphDocumentProof = {
+  documents: number;
+  chunks: number;
+  entities: number;
+};
+
+function trimBaseUrl(value: string): string {
+  return value.replace(/\/+$/, '');
+}
+
+function buildKnowgraphBaseUrls(): string[] {
+  const configured = String(process.env.KNOWGRAPH_URL || '').trim();
+  if (!configured) return [DEFAULT_KNOWGRAPH_URL];
+
+  const primary = trimBaseUrl(configured);
+  const urls = [primary];
+  if (/^https?:\/\/knowgraph(?::\d+)?(?:\/|$)/i.test(primary)) {
+    urls.push(DEFAULT_KNOWGRAPH_URL);
+  }
+  return Array.from(new Set(urls));
+}
+
+async function readResponseDataSafe(response: Response): Promise<any> {
+  const text = await response.text().catch(() => '');
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { ok: response.ok, message: text };
+  }
+}
+
+function pickErrorMessage(payload: any): string {
+  const candidate =
+    payload?.error?.message ??
+    payload?.message ??
+    payload?.error ??
+    '';
+  return String(candidate || '').trim();
+}
+
+function normalizeKnowgraphIngestError(message: string, provider: string, providerModelId: string): string {
+  const raw = String(message || '').trim();
+  const providerLabel = provider || 'unknown';
+  const modelLabel = providerModelId || 'unknown';
+  const lower = raw.toLowerCase();
+  if (
+    lower.includes('ratelimiterror') ||
+    lower.includes('rate limit') ||
+    lower.includes('insufficient_quota') ||
+    lower.includes('quota')
+  ) {
+    return `KnowGraph ingest failed for configured provider/model (${providerLabel} / ${modelLabel}): rate limit or quota exceeded. No provider fallback was used.`;
+  }
+  if (!raw) {
+    return `KnowGraph ingest failed for configured provider/model (${providerLabel} / ${modelLabel}). No provider fallback was used.`;
+  }
+  return `KnowGraph ingest failed for configured provider/model (${providerLabel} / ${modelLabel}). ${raw}`;
+}
+
+function sanitizeLocalSourceFilename(sourceName: string | null, resolvedFilePath: string, documentId: string): string {
+  const fileExt = path.extname(resolvedFilePath).trim() || '.pdf';
+  const rawBase = String(sourceName || '').trim() || path.basename(resolvedFilePath, fileExt) || documentId;
+  const safeBase = rawBase
+    .replace(/[^A-Za-z0-9._ -]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+  return `${safeBase || documentId}${fileExt.toLowerCase()}`;
+}
+
+function buildKnowgraphPdfForm(
+  projectId: string,
+  documentId: string,
+  fileBuffer: Buffer,
+  filename: string,
+  guidance?: {
+    organizingPrinciple?: string | null;
+    entityTaxonomy?: any | null;
+    relationshipTaxonomy?: any | null;
+    extractionPolicy?: any | null;
+  },
+): FormData {
+  const form = new FormData();
+  form.append('project_id', projectId);
+  form.append('document_id', documentId);
+  form.append(
+    'file',
+    new Blob([fileBuffer], { type: 'application/pdf' }),
+    filename,
+  );
+  if (guidance?.organizingPrinciple) {
+    form.append('organizing_principle', guidance.organizingPrinciple);
+  }
+  if (guidance?.entityTaxonomy != null) {
+    form.append('entity_taxonomy_json', JSON.stringify(guidance.entityTaxonomy));
+  }
+  if (guidance?.relationshipTaxonomy != null) {
+    form.append('relationship_taxonomy_json', JSON.stringify(guidance.relationshipTaxonomy));
+  }
+  if (guidance?.extractionPolicy != null) {
+    form.append('extraction_policy_json', JSON.stringify(guidance.extractionPolicy));
+  }
+  return form;
+}
+
+function neoIntToNumber(value: any): number {
+  if (typeof value === 'number') return value;
+  if (value && typeof value.toNumber === 'function') {
+    try {
+      return value.toNumber();
+    } catch {
+      return Number(value) || 0;
+    }
+  }
+  return Number(value) || 0;
+}
+
+async function queryKnowgraphDocumentProof(projectId: string, documentId: string): Promise<KnowgraphDocumentProof> {
+  const uri = String(process.env.NEO4J_URI || '').trim();
+  const user = String(process.env.NEO4J_USER || '').trim();
+  const password = String(process.env.NEO4J_PASSWORD || '').trim();
+  if (!uri || !user || !password) {
+    throw new Error('NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD are required');
+  }
+
+  const neo4jModule: any = await import('neo4j-driver');
+  const neo4j: any = neo4jModule?.default ?? neo4jModule;
+  const driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
+  const database = String(process.env.NEO4J_DATABASE || '').trim();
+  const session = driver.session(database ? { database } : undefined);
+
+  try {
+    const result = await session.run(
+      `
+        MATCH (doc:Document {project_id: $projectId, document_id: $documentId})
+        OPTIONAL MATCH (doc)-[:HAS_CHUNK]->(chunk:Chunk)
+        WITH count(DISTINCT doc) AS documents, count(DISTINCT chunk) AS chunks
+        OPTIONAL MATCH (entity)
+        WHERE coalesce(entity.project_id, '') = $projectId
+          AND coalesce(entity.document_id, '') = $documentId
+          AND NOT entity:Document
+          AND NOT entity:Chunk
+        RETURN documents, chunks, count(DISTINCT entity) AS entities
+      `,
+      { projectId, documentId },
+    );
+    const record = result.records[0];
+    if (!record) {
+      return { documents: 0, chunks: 0, entities: 0 };
+    }
+    return {
+      documents: neoIntToNumber(record.get('documents')),
+      chunks: neoIntToNumber(record.get('chunks')),
+      entities: neoIntToNumber(record.get('entities')),
+    };
+  } finally {
+    await session.close();
+    await driver.close();
+  }
+}
+
+function heuristicSlug(value: string): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80);
+}
+
+function normalizeHeuristicPhrase(value: string): string {
+  return String(value || '')
+    .replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildHeuristicThinkGraph(
+  text: string,
+  chunks: Array<{ chunk_id: string; text: string }>,
+): { entities: KgEntity[]; relationships: KgRelationship[] } {
+  const chunkId = chunks[0]?.chunk_id || 'c1';
+  const combinedText = String(text || '').trim();
+  if (!combinedText) {
+    return { entities: [], relationships: [] };
+  }
+
+  const candidates: Array<{ phrase: string; score: number }> = [];
+  const seen = new Set<string>();
+  const pushCandidate = (rawPhrase: string) => {
+    const phrase = normalizeHeuristicPhrase(rawPhrase);
+    if (!phrase) return;
+    const lower = phrase.toLowerCase();
+    if (seen.has(lower)) return;
+    if (HEURISTIC_STOPWORDS.has(lower)) return;
+    if (phrase.length < 3) return;
+    const score = combinedText.toLowerCase().lastIndexOf(lower);
+    seen.add(lower);
+    candidates.push({ phrase, score });
+  };
+
+  for (const match of combinedText.matchAll(/\b(?:[A-Z][a-z0-9]+(?:\s+[A-Z][a-z0-9]+)*)\b/g)) {
+    pushCandidate(match[0]);
+  }
+
+  const words = Array.from(combinedText.matchAll(/[A-Za-z][A-Za-z0-9-]*/g)).map((match) => match[0]);
+  for (let size = 4; size >= 2; size -= 1) {
+    for (let i = 0; i <= words.length - size; i += 1) {
+      const slice = words.slice(i, i + size);
+      const lowerWords = slice.map((word) => word.toLowerCase());
+      if (lowerWords.some((word) => HEURISTIC_STOPWORDS.has(word) || word.length < 3)) continue;
+      pushCandidate(slice.join(' ').toLowerCase());
+    }
+  }
+
+  candidates.sort((a, b) => b.score - a.score || b.phrase.length - a.phrase.length);
+  const entities = candidates.slice(0, 5).map((candidate, index) => {
+    const name = candidate.phrase;
+    const lower = name.toLowerCase();
+    const type =
+      /^[A-Z]/.test(name) && !name.includes(' ')
+        ? 'topic'
+        : lower.includes('forecast') || lower.includes('comput') || lower.includes('model')
+          ? 'concept'
+          : 'term';
+    return {
+      id: `heur:${heuristicSlug(name) || `entity_${index + 1}`}`,
+      type,
+      name,
+      aliases: [],
+      evidence_chunk_ids: [chunkId],
+    };
+  });
+
+  const relationships: KgRelationship[] = [];
+  const loweredText = combinedText.toLowerCase();
+  if (entities.length >= 2) {
+    relationships.push({
+      from: entities[0].id,
+      to: entities[1].id,
+      type: loweredText.includes('compare') || loweredText.includes(' vs ') ? 'compares_with' : 'related_to',
+      evidence_chunk_ids: [chunkId],
+      confidence: 0.35,
+    });
+  }
+  if (entities.length >= 3) {
+    relationships.push({
+      from: entities[0].id,
+      to: entities[2].id,
+      type: 'related_to',
+      evidence_chunk_ids: [chunkId],
+      confidence: 0.25,
+    });
+  }
+
+  return { entities, relationships };
+}
+
+export type KgChatTurnIngestResult = {
+  projectId: string;
+  docId: string;
+  ok: boolean;
+  chunksWritten: number;
+  entitiesWritten: number;
+  relationshipsWritten: number;
+  entities: KgEntity[];
+  relationships: KgRelationship[];
+  neo4jEntities: KgEntity[];
+  neo4jRelationships: KgRelationship[];
+  errors: string[];
+  skipped?: string;
+};
+
+export type RunKgChatTurnNowInput = {
+  projectId: string;
+  turnId?: string | null;
+  src?: string | null;
+  mode?: string | null;
+  userText: string;
+  assistantText?: string | null;
+};
 function formatUsage(usage: any) {
   if (!usage || typeof usage !== 'object') return null;
   const summary: Record<string, number> = {};
@@ -271,27 +571,68 @@ function normalizeAgeRowsToMergedGraph(rows: unknown[]): MergedGraphPayload {
   };
 }
 
-function normalizeKnowgraphServiceGraph(payload: any): MergedGraphPayload {
-  if (payload && Array.isArray(payload.entities) && Array.isArray(payload.relationships)) {
-    return {
-      entities: payload.entities
-        .map((e: any) => ({
-          id: String(e?.id ?? '').trim(),
-          label: String(e?.label ?? e?.name ?? e?.title ?? e?.id ?? '').trim(),
-          type: String(e?.type ?? e?.labels?.[0] ?? 'NeoEntity').trim() || 'NeoEntity',
-        }))
-        .filter((e: MergedGraphEntity) => e.id),
-      relationships: payload.relationships
-        .map((r: any, idx: number) => ({
-          id: String(r?.id ?? `neo:rel:${idx}`).trim(),
-          from: String(r?.from ?? r?.startId ?? '').trim(),
-          to: String(r?.to ?? r?.endId ?? '').trim(),
-          type: String(r?.type ?? 'RELATED_TO').trim() || 'RELATED_TO',
-        }))
-        .filter((r: MergedGraphRelationship) => r.from && r.to),
-    };
+function readGraphRecordProjectId(value: any): string {
+  if (!value || typeof value !== 'object') return '';
+  const props =
+    (value as any).properties ??
+    (value as any).props ??
+    (value as any).metadata ??
+    value;
+  return String((props as any)?.project_id ?? (props as any)?.projectId ?? '').trim();
+}
+
+function normalizeKnowgraphServiceGraph(projectId: string, payload: any): MergedGraphPayload {
+  type ScopedMergedGraphEntity = MergedGraphEntity & { projectId: string };
+  type ScopedMergedGraphRelationship = MergedGraphRelationship & { projectId: string };
+  const rawEntities = Array.isArray(payload?.entities)
+    ? payload.entities
+    : Array.isArray(payload?.nodes)
+      ? payload.nodes
+      : [];
+  const rawRelationships = Array.isArray(payload?.relationships) ? payload.relationships : [];
+
+  if (!rawEntities.length && !rawRelationships.length) {
+    return { entities: [], relationships: [] };
   }
-  return { entities: [], relationships: [] };
+
+  const scopedEntities: ScopedMergedGraphEntity[] = rawEntities
+    .map((e: any) => ({
+      id: String(e?.id ?? '').trim(),
+      label: String(e?.label ?? e?.name ?? e?.title ?? e?.id ?? '').trim(),
+      type: String(e?.type ?? e?.labels?.[0] ?? 'NeoEntity').trim() || 'NeoEntity',
+      projectId: readGraphRecordProjectId(e),
+    }))
+    .filter((e: ScopedMergedGraphEntity) => e.id && e.projectId === projectId);
+
+  const scopedEntityIds = new Set(scopedEntities.map((entity: ScopedMergedGraphEntity) => entity.id));
+  const scopedRelationships: MergedGraphRelationship[] = rawRelationships
+    .map((r: any, idx: number) => ({
+      id: String(r?.id ?? `neo:rel:${idx}`).trim(),
+      from: String(r?.from ?? r?.startId ?? '').trim(),
+      to: String(r?.to ?? r?.endId ?? '').trim(),
+      type: String(r?.type ?? 'RELATED_TO').trim() || 'RELATED_TO',
+      projectId: readGraphRecordProjectId(r),
+    }))
+    .filter(
+      (r: ScopedMergedGraphRelationship) =>
+        r.from &&
+        r.to &&
+        r.projectId === projectId &&
+        scopedEntityIds.has(r.from) &&
+        scopedEntityIds.has(r.to),
+    )
+    .map((relationship: ScopedMergedGraphRelationship) => {
+      const { projectId: _projectId, ...scopedRelationship } = relationship;
+      return scopedRelationship;
+    });
+
+  return {
+    entities: scopedEntities.map((entity: ScopedMergedGraphEntity) => {
+      const { projectId: _projectId, ...scopedEntity } = entity;
+      return scopedEntity;
+    }),
+    relationships: scopedRelationships,
+  };
 }
 
 async function fetchKnowgraphViaService(projectId: string): Promise<MergedGraphPayload> {
@@ -302,7 +643,17 @@ async function fetchKnowgraphViaService(projectId: string): Promise<MergedGraphP
     throw new Error(`knowgraph_service_http_${res.status}`);
   }
   const payload = await res.json();
-  return normalizeKnowgraphServiceGraph(payload);
+  const normalized = normalizeKnowgraphServiceGraph(projectId, payload);
+  const rawEntityCount = Array.isArray(payload?.entities)
+    ? payload.entities.length
+    : Array.isArray(payload?.nodes)
+      ? payload.nodes.length
+      : 0;
+  const rawRelationshipCount = Array.isArray(payload?.relationships) ? payload.relationships.length : 0;
+  if ((rawEntityCount > 0 || rawRelationshipCount > 0) && normalized.entities.length === 0 && normalized.relationships.length === 0) {
+    throw new Error('knowgraph_service_unscoped_payload');
+  }
+  return normalized;
 }
 
 async function fetchKnowgraphViaNeo4j(projectId: string): Promise<MergedGraphPayload> {
@@ -334,6 +685,7 @@ async function fetchKnowgraphViaNeo4j(projectId: string): Promise<MergedGraphPay
         MATCH (a)-[r]->(b)
         WHERE coalesce(a.project_id, '') = $projectId
           AND coalesce(b.project_id, '') = $projectId
+          AND coalesce(r.project_id, '') = $projectId
         RETURN elementId(r) AS id,
                type(r) AS type,
                elementId(a) AS startId,
@@ -539,10 +891,15 @@ async function verifyGraphCounts(projectId: string) {
   }
 }
 
-async function runQueuedIngestJob(job: KgIngestQueueJob) {
+async function runQueuedIngestJob(job: KgIngestQueueJob): Promise<KgChatTurnIngestResult> {
   const projectId = job.projectId;
   const docId = job.doc_id;
   const finalSrc = job.src;
+  const finalMode = typeof job.mode === 'string' && job.mode.trim() ? job.mode.trim() : 'unknown';
+  const normalizedMode = finalMode.toLowerCase();
+  const normalizedSrc = String(finalSrc || '').trim().toLowerCase();
+  const isChatDerivedTurn = normalizedMode === 'assist' || normalizedSrc.startsWith('chat');
+  const allowNeo4jDualWrite = LEGACY_THINKGRAPH_NEO4J_DUAL_WRITE_ENABLED && !isChatDerivedTurn;
   const textToIngest = `Q:
 ${String(job.user_text ?? '').trim()}
 
@@ -559,7 +916,20 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
       rels: 0,
       skipped: 'inflight',
     });
-    return;
+    return {
+      projectId,
+      docId,
+      ok: true,
+      chunksWritten: 0,
+      entitiesWritten: 0,
+      relationshipsWritten: 0,
+      entities: [],
+      relationships: [],
+      neo4jEntities: [],
+      neo4jRelationships: [],
+      errors: [],
+      skipped: 'inflight',
+    };
   }
 
   inflightDocs.add(docId);
@@ -569,11 +939,32 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
   let relationshipsWritten = 0;
   let neo4jEntitiesWritten = 0;
   let neo4jRelationshipsWritten = 0;
-  let neo4jStatus: string | null = null;
+  let neo4jStatus: string | null = allowNeo4jDualWrite
+    ? null
+    : isChatDerivedTurn
+      ? 'disabled_chat_boundary'
+      : 'disabled_boundary';
 
   try {
     let resolved = null;
     let neo4jResolved = null;
+    if (!allowNeo4jDualWrite) {
+      if (isChatDerivedTurn) {
+        console.log(
+          '[Boundary] ThinkGraph chat extraction cannot write directly to Neo4j projectId=%s docId=%s mode=%s src=%s',
+          projectId,
+          docId,
+          finalMode,
+          finalSrc,
+        );
+      } else {
+        console.log(
+          '[Boundary] ThinkGraph direct Neo4j write disabled in active loop projectId=%s docId=%s',
+          projectId,
+          docId,
+        );
+      }
+    }
     try {
       resolved = await resolveKgIngestAgent(projectId, '/api/v2/projects/:projectId/kg/ingest_chat_turn');
     } catch (err: any) {
@@ -581,12 +972,14 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
       console.warn('[KG_V2][ingest] resolve failed:', code);
       resolved = { error_code: code };
     }
-    try {
-      neo4jResolved = await resolveNeo4jAgent(projectId, '/api/v2/projects/:projectId/kg/ingest_chat_turn');
-    } catch (err: any) {
-      const code = err?.message || 'neo4j_resolve_failed';
-      console.warn('[KG_V2][ingest] neo4j resolve failed:', code);
-      neo4jResolved = null;
+    if (allowNeo4jDualWrite) {
+      try {
+        neo4jResolved = await resolveNeo4jAgent(projectId, '/api/v2/projects/:projectId/kg/ingest_chat_turn');
+      } catch (err: any) {
+        const code = err?.message || 'neo4j_resolve_failed';
+        console.warn('[KG_V2][ingest] neo4j resolve failed:', code);
+        neo4jResolved = null;
+      }
     }
 
     const errors: string[] = [];
@@ -627,6 +1020,7 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
       neo4j_agent_id: neo4jAgentId,
       neo4j_model: neo4jAgentModelKey,
       neo4j_provider: neo4jAgentProvider,
+      legacy_neo4j_dual_write: allowNeo4jDualWrite,
       model: modelKey,
     });
 
@@ -709,6 +1103,25 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
       errors.push('provider_request_aborted');
       errorMessages.push('provider request aborted');
     }
+    if (!aborted && chunks.length === 0 && modelKey && systemPrompt && typeof maxTokens === 'number') {
+      console.warn(
+        '[ThinkGraph] chunk fallback projectId=%s docId=%s reason=%s',
+        projectId,
+        docId,
+        errorMessages.join('; ') || 'chunking returned 0 chunks',
+      );
+      chunks = [
+        {
+          chunk_id: `${docId}:c1`,
+          text: textToIngest,
+          start: 0,
+          end: textToIngest.length,
+        },
+      ];
+      errors.length = 0;
+      errorMessages.length = 0;
+      lastError = null;
+    }
     if (!aborted && chunks.length === 0 && errors.length === 0) {
       errors.push('chunking_invalid_json');
       errorMessages.push('chunking returned 0 chunks');
@@ -746,8 +1159,10 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
         });
         entities = extracted.entities;
         relationships = extracted.relationships;
-        neo4jEntities = extracted.entities;
-        neo4jRelationships = extracted.relationships;
+        if (allowNeo4jDualWrite) {
+          neo4jEntities = extracted.entities;
+          neo4jRelationships = extracted.relationships;
+        }
         extractMeta = extracted.meta;
       } catch (err: any) {
         if (err?.code === 'openai_request_aborted' || err?.code === 'provider_request_aborted') {
@@ -757,15 +1172,36 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
             errorMessages.push('provider request aborted');
           }
         } else {
-          const code = err?.code || 'extract_failed';
-          lastError = err;
-          errors.push(code);
-          errorMessages.push(err?.message || String(err));
+          const fallback = buildHeuristicThinkGraph(textToIngest, chunks);
+          if (fallback.entities.length > 0 || fallback.relationships.length > 0) {
+            console.warn(
+              '[ThinkGraph] heuristic fallback projectId=%s docId=%s entities=%d relationships=%d reason=%s',
+              projectId,
+              docId,
+              fallback.entities.length,
+              fallback.relationships.length,
+              err?.message || String(err),
+            );
+            entities = fallback.entities;
+            relationships = fallback.relationships;
+            if (allowNeo4jDualWrite) {
+              neo4jEntities = fallback.entities;
+              neo4jRelationships = fallback.relationships;
+            }
+            extractMeta = null;
+            lastError = null;
+          } else {
+            const code = err?.code || 'extract_failed';
+            lastError = err;
+            errors.push(code);
+            errorMessages.push(err?.message || String(err));
+          }
         }
       }
     }
 
     const hasNeo4jAgentConfig =
+      allowNeo4jDualWrite &&
       !!neo4jAgentProvider &&
       !!neo4jAgentModelKey &&
       !!neo4jAgentProviderModelId &&
@@ -817,29 +1253,52 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
       entitiesWritten = await upsertEntities(projectId, entities, provenance);
       relationshipsWritten = await upsertRelationships(projectId, relationships, entityLookup, provenance);
 
-      try {
-        const neo4j = await syncKgToNeo4j({
-          projectId,
-          entities: neo4jEntities,
-          relationships: neo4jRelationships,
-          provenance,
-        });
-        neo4jEntitiesWritten = neo4j.entities;
-        neo4jRelationshipsWritten = neo4j.rels;
-        neo4jStatus = neo4j.enabled ? 'ok' : neo4j.reason || 'disabled';
-      } catch (err: any) {
-        neo4jStatus = 'error';
-        console.warn('[KG_V2][NEO4J] dual-write failed:', err?.message || err);
+      if (allowNeo4jDualWrite) {
+        try {
+          const neo4j = await syncKgToNeo4j({
+            projectId,
+            entities: neo4jEntities,
+            relationships: neo4jRelationships,
+            provenance,
+          });
+          neo4jEntitiesWritten = neo4j.entities;
+          neo4jRelationshipsWritten = neo4j.rels;
+          neo4jStatus = neo4j.enabled ? 'ok' : neo4j.reason || 'disabled';
+        } catch (err: any) {
+          neo4jStatus = 'error';
+          console.warn('[KG_V2][NEO4J] dual-write failed:', err?.message || err);
+        }
       }
     }
 
-    const requestId = neo4jExtractMeta?.request_id || extractMeta?.request_id || chunkMeta?.request_id || null;
-    const elapsedMs = neo4jExtractMeta?.elapsed_ms || extractMeta?.elapsed_ms || chunkMeta?.elapsed_ms || null;
+    const requestId =
+      (allowNeo4jDualWrite ? neo4jExtractMeta?.request_id : null) ||
+      extractMeta?.request_id ||
+      chunkMeta?.request_id ||
+      null;
+    const elapsedMs =
+      (allowNeo4jDualWrite ? neo4jExtractMeta?.elapsed_ms : null) ||
+      extractMeta?.elapsed_ms ||
+      chunkMeta?.elapsed_ms ||
+      null;
     const finishReason =
-      neo4jExtractMeta?.finish_reason || extractMeta?.finish_reason || chunkMeta?.finish_reason || null;
-    const usage = neo4jExtractMeta?.usage || extractMeta?.usage || chunkMeta?.usage || null;
-    const providerForLog = neo4jExtractMeta?.provider ?? provider ?? null;
-    const modelKeyForLog = neo4jExtractMeta ? (neo4jAgentModelKey ?? modelKey ?? null) : (modelKey ?? null);
+      (allowNeo4jDualWrite ? neo4jExtractMeta?.finish_reason : null) ||
+      extractMeta?.finish_reason ||
+      chunkMeta?.finish_reason ||
+      null;
+    const usage =
+      (allowNeo4jDualWrite ? neo4jExtractMeta?.usage : null) ||
+      extractMeta?.usage ||
+      chunkMeta?.usage ||
+      null;
+    const providerForLog =
+      (allowNeo4jDualWrite ? neo4jExtractMeta?.provider : null) ??
+      provider ??
+      null;
+    const modelKeyForLog =
+      allowNeo4jDualWrite && neo4jExtractMeta
+        ? (neo4jAgentModelKey ?? modelKey ?? null)
+        : (modelKey ?? null);
     const errorCode = errors.length ? errors[0] : null;
     const errorMessage = errorMessages.length ? errorMessages.join('; ') : null;
 
@@ -887,6 +1346,17 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
       finishReason || 'n/a',
       usageSummary || 'n/a',
     );
+    console.log(
+      '[Ingest] projectId=%s source=thinkgraph docId=%s chunks=%d entities=%d relationships=%d neo4j_entities=%d neo4j_relationships=%d ok=%s',
+      projectId,
+      docId,
+      chunksWritten,
+      entitiesWritten,
+      relationshipsWritten,
+      neo4jEntitiesWritten,
+      neo4jRelationshipsWritten,
+      errors.length === 0 ? 'true' : 'false',
+    );
     console.log('[KG_V2][WORK] done', {
       projectId,
       doc_id: docId,
@@ -899,6 +1369,19 @@ ${String(job.assistant_text ?? '').trim()}`.trim();
       neo4j: neo4jStatus,
       error: errors.length ? (lastError?.message || errorCode) : null,
     });
+    return {
+      projectId,
+      docId,
+      ok: errors.length === 0,
+      chunksWritten,
+      entitiesWritten,
+      relationshipsWritten,
+      entities,
+      relationships,
+      neo4jEntities,
+      neo4jRelationships,
+      errors: [...errors],
+    };
   } finally {
     inflightDocs.delete(docId);
   }
@@ -908,7 +1391,34 @@ registerKgIngestWorker(async (job) => {
   await runQueuedIngestJob(job);
 });
 
-async function runResearchPacketForProject(projectId: string, rawBody: any, fallbackTurnId?: string | null) {
+export async function runKgChatTurnNow(input: RunKgChatTurnNowInput): Promise<KgChatTurnIngestResult> {
+  const projectId = String(input.projectId || '').trim();
+  if (!projectId) {
+    throw new Error('projectId is required');
+  }
+  const userText = String(input.userText ?? '');
+  const assistantText = String(input.assistantText ?? '');
+  if (!userText.trim() && !assistantText.trim()) {
+    throw new Error('No text to ingest');
+  }
+  const docId = buildDocId(
+    projectId,
+    typeof input.turnId === 'string' ? input.turnId : null,
+    `${userText}${assistantText}`,
+  );
+  const finalSrc = typeof input.src === 'string' && input.src.trim() ? input.src.trim() : 'chat.auto';
+  const finalMode = typeof input.mode === 'string' && input.mode.trim() ? input.mode.trim() : 'unknown';
+  return runQueuedIngestJob({
+    projectId,
+    doc_id: docId,
+    src: finalSrc,
+    mode: finalMode,
+    user_text: userText,
+    assistant_text: assistantText,
+  });
+}
+
+export async function runResearchPacketForProject(projectId: string, rawBody: any, fallbackTurnId?: string | null) {
   const packet = normalizeResearchTargetPacket(projectId, {
     ...(rawBody && typeof rawBody === 'object' ? rawBody : {}),
     turnId:
@@ -1014,6 +1524,160 @@ router.post('/ingest_chat_turn', async (req, res) => {
     src: finalSrc,
     research_started: autoResearchStarted,
   });
+});
+
+// DEV ONLY: allows local large-file KnowGraph ingest for real loop testing.
+router.post('/ingest_local_file', async (req, res) => {
+  const projectId = String((req.params as any).projectId || '').trim();
+  if (!projectId) {
+    return res.status(400).json({ ok: false, error: 'projectId is required' });
+  }
+
+  try {
+    requireDevTestMode();
+    const filePathRaw = String(req.body?.file_path || '').trim();
+    const sourceTypeRaw = String(req.body?.source_type || 'pdf').trim().toLowerCase();
+    const sourceNameRaw = String(req.body?.source_name || '').trim();
+    if (!filePathRaw) {
+      return res.status(400).json({ ok: false, error: 'file_path is required' });
+    }
+    if (sourceTypeRaw && sourceTypeRaw !== 'pdf' && sourceTypeRaw !== 'application/pdf') {
+      return res.status(400).json({ ok: false, error: 'Only PDF local ingest is supported by this dev route' });
+    }
+
+    const resolvedFilePath = resolveAllowedDevLocalFile(filePathRaw);
+    const stat = await fs.stat(resolvedFilePath);
+    if (!stat.isFile()) {
+      return res.status(400).json({ ok: false, error: 'file_path must point to a file' });
+    }
+    if (path.extname(resolvedFilePath).toLowerCase() !== '.pdf') {
+      return res.status(400).json({ ok: false, error: 'Only PDF local ingest is supported by this dev route' });
+    }
+
+    const fileBuffer = await fs.readFile(resolvedFilePath);
+    const sourceName = sourceNameRaw || path.basename(resolvedFilePath, path.extname(resolvedFilePath));
+    const documentId = String(req.body?.document_id || '').trim() || [
+      'devlocal',
+      projectId,
+      Date.now().toString(36),
+      createHash('sha1').update(`${projectId}:${resolvedFilePath}:${stat.size}:${stat.mtimeMs}`).digest('hex').slice(0, 12),
+    ].join(':');
+    const uploadFilename = sanitizeLocalSourceFilename(sourceName, resolvedFilePath, documentId);
+
+    const resolved = await resolveKnowgraphAgent(projectId, '/api/v2/projects/:projectId/kg/ingest_local_file');
+    if (!resolved) {
+      return res.status(409).json({ ok: false, error: 'knowgraph_agent_not_configured' });
+    }
+
+    console.log(
+      '[RUNTIME_MODEL] route=/api/v2/projects/:projectId/kg/ingest_local_file projectId=%s agentType=%s agent_id=%s provider=%s model_key=%s provider_model_id=%s',
+      projectId,
+      'knowgraph',
+      resolved.agentId,
+      resolved.provider,
+      resolved.modelKey,
+      resolved.providerModelId,
+    );
+    console.log(
+      '[KnowGraph] local file ingest start projectId=%s documentId=%s filePath=%s sizeBytes=%d',
+      projectId,
+      documentId,
+      resolvedFilePath,
+      stat.size,
+    );
+
+    const baseUrls = buildKnowgraphBaseUrls();
+    let lastError: any;
+
+    for (const baseUrl of baseUrls) {
+      try {
+        const form = buildKnowgraphPdfForm(projectId, documentId, fileBuffer, uploadFilename, {
+          organizingPrinciple: resolved.organizingPrinciple ?? null,
+          entityTaxonomy: resolved.entityTaxonomy ?? null,
+          relationshipTaxonomy: resolved.relationshipTaxonomy ?? null,
+          extractionPolicy: resolved.extractionPolicy ?? null,
+        });
+        const response = await fetch(`${baseUrl}/ingest`, {
+          method: 'POST',
+          headers: {
+            'x-agent-id': resolved.agentId,
+            'x-agent-provider': resolved.provider,
+            'x-agent-model-key': resolved.modelKey,
+            'x-agent-model-id': resolved.providerModelId,
+          },
+          body: form,
+        });
+        const data = await readResponseDataSafe(response);
+        if (!response.ok) {
+          const upstreamMessage = pickErrorMessage(data);
+          return res.status(response.status).json({
+            ok: false,
+            error: {
+              code: `knowgraph_ingest_upstream_${response.status}`,
+              message: normalizeKnowgraphIngestError(
+                upstreamMessage,
+                resolved.provider,
+                resolved.providerModelId,
+              ),
+              provider: resolved.provider,
+              model_key: resolved.modelKey,
+              provider_model_id: resolved.providerModelId,
+            },
+            upstream: data,
+          });
+        }
+
+        const documentProof = await queryKnowgraphDocumentProof(projectId, documentId);
+        console.log(
+          '[KnowGraph] local file ingest complete projectId=%s documentId=%s sourceName=%s',
+          projectId,
+          documentId,
+          sourceName,
+        );
+        console.log(
+          '[KnowGraph] document proof docs=%d chunks=%d entities=%d',
+          documentProof.documents,
+          documentProof.chunks,
+          documentProof.entities,
+        );
+
+        return res.status(200).json({
+          ok: true,
+          project_id: projectId,
+          document_id: documentId,
+          file_path: resolvedFilePath,
+          source_name: sourceName,
+          source_type: 'pdf',
+          python_status: response.status,
+          python_response: data,
+          document_proof: documentProof,
+        });
+      } catch (err: any) {
+        lastError = err;
+        const code = String(err?.cause?.code || err?.code || '');
+        const canRetryNetworkLookup =
+          code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN';
+        if (!canRetryNetworkLookup) {
+          break;
+        }
+      }
+    }
+
+    throw lastError;
+  } catch (err: any) {
+    const message = err?.message || err?.cause?.message || 'knowgraph_local_file_ingest_failed';
+    const lower = String(message).toLowerCase();
+    const status =
+      lower.includes('dev_test_route_disabled') ? 403
+      : lower.includes('not_allowed')
+        ? 403
+      : lower.includes('file_path_required') || lower.includes('must point to a file') || lower.includes('only pdf')
+        ? 400
+      : lower.includes('enoent')
+        ? 404
+      : 502;
+    return res.status(status).json({ ok: false, error: message });
+  }
 });
 
 router.post('/research', async (req, res) => {

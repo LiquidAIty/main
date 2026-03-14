@@ -59,8 +59,10 @@ router.use('/webhook', authMiddleware, webhook);
 // TODO: Restore auth middleware for /agents after testing
 router.use('/agents', agentRoutes);
 router.use('/graph', graph);
+// /projects continues to host project CRUD plus quarantined legacy/manual KG routes.
+// The authoritative Assist runtime is /api/agents/boss + /api/v2/projects/:projectId/kg/*.
 router.use('/projects', projects);
-// Phase 1: Multi-agent routes (nested under /projects/:projectId/agents)
+// /projects/:projectId/agents remains for config CRUD; the old agent runner path is legacy-only.
 router.use('/projects', projectAgents);
 router.use('/models', authMiddleware, models);
 router.use('/rag', authMiddleware, ragSearch);

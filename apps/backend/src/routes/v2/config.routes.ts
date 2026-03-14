@@ -43,16 +43,28 @@ function pickMissing(config: {
 
 function pickDefaultOpenAiModelKey(): string | null {
   const envCandidates = [
+    process.env.OPENROUTER_DEFAULT_MODEL,
+    process.env.OPENROUTER_MODEL,
     process.env.OPENAI_MODEL,
     process.env.OPENAI_DEFAULT_MODEL,
     process.env.OPENAI_MODEL_GPT5_MINI,
     process.env.OPENAI_MODEL_GPT5,
   ];
+  const directOpenRouterAliases: Record<string, string> = {
+    'gpt-5.1-chat-latest': 'or-openai-gpt-5.1-chat-latest',
+    'gpt-5-mini': 'or-openai-gpt-5-mini',
+    'gpt-5': 'or-openai-gpt-5',
+    'gpt-5-nano': 'or-openai-gpt-5-nano',
+  };
   for (const candidate of envCandidates) {
-    if (candidate && MODEL_REGISTRY[candidate]) return candidate;
+    const normalizedCandidate = String(candidate || '').trim();
+    if (!normalizedCandidate) continue;
+    if (normalizedCandidate.includes('/')) return normalizedCandidate;
+    const remappedCandidate = directOpenRouterAliases[normalizedCandidate] || normalizedCandidate;
+    if (MODEL_REGISTRY[remappedCandidate]) return remappedCandidate;
   }
-  const firstOpenAi = Object.entries(MODEL_REGISTRY).find(([, m]) => m.provider === 'openai');
-  return firstOpenAi ? firstOpenAi[0] : null;
+  const firstOpenRouter = Object.entries(MODEL_REGISTRY).find(([, m]) => m.provider === 'openrouter');
+  return firstOpenRouter ? firstOpenRouter[0] : null;
 }
 
 router.post('/:projectId/agents/system/repair', async (req, res) => {
@@ -267,7 +279,7 @@ router.post('/:projectId/agents/:agentType/config/create', async (req, res) => {
     const temperature = agentType === 'agent_builder' ? 0.2 : null;
 
     const created = await updateAgentConfig(projectId, agentType, {
-      provider: MODEL_REGISTRY[modelKey]?.provider ?? 'openai',
+      provider: modelKey.includes('/') ? 'openrouter' : MODEL_REGISTRY[modelKey]?.provider ?? 'openrouter',
       model_key: modelKey,
       temperature,
       max_tokens: 2048,

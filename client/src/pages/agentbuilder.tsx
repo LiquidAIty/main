@@ -383,6 +383,85 @@ type WorkbenchRating = { stars: number; note: string };
 type AgentTypeKey = "agent_builder" | "llm_chat" | "kg_ingest" | "knowgraph" | "neo4j" | "research_agent";
 const SYSTEM_AGENT_TYPES = new Set<AgentTypeKey>(["llm_chat", "kg_ingest", "knowgraph", "neo4j", "research_agent"]);
 
+function normalizeProjectCardKey(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function inferProjectCardType(card: any): "assist" | "agent" {
+  const explicit = String(card?.project_type ?? "").trim().toLowerCase();
+  if (explicit === "assist" || explicit === "agent") {
+    return explicit;
+  }
+
+  const codeKey = normalizeProjectCardKey(card?.code);
+  const nameKey = normalizeProjectCardKey(card?.name);
+  const legacyAgentKeys = new Set([
+    "main-chat",
+    "kg-ingest",
+    "thinkgraph",
+    "knowgraph",
+    "neo4j",
+    "research-agent",
+    "agent-builder",
+  ]);
+
+  if (legacyAgentKeys.has(codeKey) || legacyAgentKeys.has(nameKey) || Boolean(card?.hasAgentConfig)) {
+    return "agent";
+  }
+
+  return "assist";
+}
+
+function dedupeProjectCards(cards: any[]): any[] {
+  const byKey = new Map<string, any>();
+
+  cards.forEach((card: any) => {
+    const codeKey = normalizeProjectCardKey(card?.code);
+    const nameKey = normalizeProjectCardKey(card?.name);
+    const idKey = String(card?.id ?? "").trim();
+    const key = codeKey ? `code:${codeKey}` : nameKey ? `name:${nameKey}` : `id:${idKey}`;
+    if (!key) return;
+
+    const next = {
+      ...card,
+      project_type: inferProjectCardType(card),
+    };
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, next);
+      return;
+    }
+
+    const existingSynthetic = Boolean(existing?.syntheticSystemDeck);
+    const nextSynthetic = Boolean(next?.syntheticSystemDeck);
+    if (existingSynthetic && !nextSynthetic) {
+      byKey.set(key, next);
+      return;
+    }
+    if (!existing?.project_type && next?.project_type) {
+      byKey.set(key, next);
+    }
+  });
+
+  return Array.from(byKey.values());
+}
+
+function buildAgentManagerRenderKey(
+  activeConfigProjectId: string,
+  selectedAgentProjectId: string,
+  selectedAgentType: AgentTypeKey,
+): string {
+  const configProjectId = String(activeConfigProjectId || "").trim();
+  const selectedProjectId = selectedAgentType === "agent_builder"
+    ? String(selectedAgentProjectId || "").trim()
+    : "";
+  return `${configProjectId}:${selectedProjectId}:${selectedAgentType}`;
+}
+
 function agentTypeFromProjectCode(projectCode: string): AgentTypeKey {
   const code = String(projectCode || "").toLowerCase();
   if (code === "main-chat" || code === "main_chat" || code === "llm-chat" || code === "llm_chat") return "llm_chat";
@@ -772,6 +851,48 @@ function mergeKnowledgeGraphs(...graphs: Array<{ nodes: KNode[]; edges: KEdge[] 
     })),
     edges: Array.from(edgeMap.values()),
   };
+}
+
+function buildGraphVizForNVL(graph: { nodes: KNode[]; edges: KEdge[] }) {
+  const entities: KnowledgeGraphNode[] = graph.nodes.map((n) => {
+    const source = n.graphSource === "know" ? "know" : "think";
+    return {
+      id: n.id,
+      rawId: n.rawId || n.id,
+      label: n.label || n.id,
+      type: String(n.type || "unknown").toLowerCase(),
+      source,
+      originSource: source,
+      last_seen_ts: n.last_seen_ts,
+      degree: n.degree || 0,
+    };
+  });
+
+  const relationships: KnowledgeGraphRelationship[] = [];
+  graph.edges.forEach((e) => {
+    const source = e.source || e.a;
+    const target = e.target || e.b;
+    if (!source || !target) return;
+    relationships.push({
+      id: e.id || `${source}->${target}:${e.type || "related_to"}`,
+      rawId: e.rawId || e.id || `${source}->${target}:${e.type || "related_to"}`,
+      from: source,
+      to: target,
+      type: e.type || "related_to",
+      source: e.graphSource === "know" ? "know" : "think",
+      weight: e.weight,
+      confidence: e.confidence,
+      last_seen_ts: e.last_seen_ts,
+      evidence_doc_id: e.evidence_doc_id,
+      evidence_snippet: e.evidence_snippet,
+    });
+  });
+
+  return { entities, relationships };
+}
+
+function knowledgePanelSummaryText(graph: { nodes: KNode[]; edges: KEdge[] }): string {
+  return `Entities: ${graph.nodes.length} | Relationships: ${graph.edges.length}`;
 }
 
 // -------- Knowledge: interactive force-layout canvas --------
@@ -2267,6 +2388,11 @@ export default function AgentBuilder() {
       (Array.isArray(projects) ? projects : []).find((p) => p.id === selectedAgentProjectId) || null,
     [projects, selectedAgentProjectId],
   );
+  const agentManagerRenderKey = buildAgentManagerRenderKey(
+    activeConfigProjectId,
+    selectedAgentProjectId,
+    selectedAgentType,
+  );
 
   // Boss agent prompt configuration (per project)
   const [bossPromptConfig, setBossPromptConfig] = useState({
@@ -2292,9 +2418,9 @@ export default function AgentBuilder() {
       
       console.debug('[refreshProjects]', { reason: reason || 'unknown', mode, project_type_filter: projectType, seq });
       
-      const endpoint = `${V2_PROJECTS_API}?project_type=${encodeURIComponent(projectType)}`;
+      const endpoint = V2_PROJECTS_API;
       const payload = await guardedRequest({
-        key: `projects:list:${projectType}`,
+        key: "projects:list:all",
         method: "GET",
         ttlMs: 3_000,
         signal: controller.signal,
@@ -2316,14 +2442,15 @@ export default function AgentBuilder() {
         return;
       }
 
-      let cards = Array.isArray(data?.projects) ? data.projects : [];
+      const rawCards = Array.isArray(data?.projects) ? data.projects : [];
+      let cards = dedupeProjectCards(rawCards).filter((card: any) => inferProjectCardType(card) === projectType);
       
       // Pin canonical agent decks to top in agent mode
       if (projectType === 'agent') {
-        const PINNED_CODES = ['main-chat', 'kg-ingest', 'thinkgraph', 'knowgraph', 'neo4j', 'research-agent'];
-        const pinned = cards.filter((c: any) => PINNED_CODES.includes(c.code));
-        const others = cards.filter((c: any) => !PINNED_CODES.includes(c.code));
-        if (!pinned.some((c: any) => String(c?.code || '').toLowerCase() === 'neo4j')) {
+        const PINNED_CODES = ['main-chat', 'kg-ingest', 'thinkgraph', 'knowgraph', 'neo4j', 'research-agent', 'agent-builder'];
+        const pinned = cards.filter((c: any) => PINNED_CODES.includes(normalizeProjectCardKey(c?.code)));
+        const others = cards.filter((c: any) => !PINNED_CODES.includes(normalizeProjectCardKey(c?.code)));
+        if (!pinned.some((c: any) => normalizeProjectCardKey(c?.code) === 'neo4j')) {
           pinned.push({
             id: 'system:neo4j',
             name: 'Neo4j',
@@ -2333,7 +2460,7 @@ export default function AgentBuilder() {
             syntheticSystemDeck: true,
           });
         }
-        if (!pinned.some((c: any) => String(c?.code || '').toLowerCase() === 'research-agent')) {
+        if (!pinned.some((c: any) => normalizeProjectCardKey(c?.code) === 'research-agent')) {
           pinned.push({
             id: 'system:research-agent',
             name: 'Research Agent',
@@ -2343,8 +2470,12 @@ export default function AgentBuilder() {
             syntheticSystemDeck: true,
           });
         }
-        pinned.sort((a: any, b: any) => PINNED_CODES.indexOf(a.code) - PINNED_CODES.indexOf(b.code));
-        cards = [...pinned, ...others];
+        pinned.sort(
+          (a: any, b: any) =>
+            PINNED_CODES.indexOf(normalizeProjectCardKey(a?.code)) -
+            PINNED_CODES.indexOf(normalizeProjectCardKey(b?.code)),
+        );
+        cards = dedupeProjectCards([...pinned, ...others]);
       }
 
       setProjects(cards);
@@ -2353,12 +2484,20 @@ export default function AgentBuilder() {
         const currentAgentProjectId = preferredId || selectedAgentProjectId || "";
         const hasCurrentAgentProject =
           currentAgentProjectId && cards.some((c: any) => c.id === currentAgentProjectId);
-        const main = cards.find((c: any) => c.code === "main-chat") || null;
-        const kg = cards.find((c: any) => c.code === "kg-ingest" || c.code === "thinkgraph") || null;
-        const knowgraph = cards.find((c: any) => c.code === "knowgraph") || null;
-        const neo4j = cards.find((c: any) => c.code === "neo4j") || null;
-        const researchAgent = cards.find((c: any) => c.code === "research-agent") || null;
-        const fallbackPinned = main?.id || kg?.id || knowgraph?.id || neo4j?.id || researchAgent?.id || "";
+        const main = cards.find((c: any) => normalizeProjectCardKey(c?.code) === "main-chat") || null;
+        const kg =
+          cards.find((c: any) => {
+            const code = normalizeProjectCardKey(c?.code);
+            return code === "kg-ingest" || code === "thinkgraph";
+          }) || null;
+        const knowgraph = cards.find((c: any) => normalizeProjectCardKey(c?.code) === "knowgraph") || null;
+        const neo4j = cards.find((c: any) => normalizeProjectCardKey(c?.code) === "neo4j") || null;
+        const researchAgent =
+          cards.find((c: any) => normalizeProjectCardKey(c?.code) === "research-agent") || null;
+        const agentBuilder =
+          cards.find((c: any) => normalizeProjectCardKey(c?.code) === "agent-builder") || null;
+        const fallbackPinned =
+          main?.id || kg?.id || knowgraph?.id || neo4j?.id || researchAgent?.id || agentBuilder?.id || "";
         const nextAgentProjectId =
           (hasCurrentAgentProject ? currentAgentProjectId : "") || fallbackPinned || cards[0]?.id || "";
         setSelectedAgentProjectId(nextAgentProjectId);
@@ -2444,6 +2583,29 @@ export default function AgentBuilder() {
   const scopeKey = `${mode}:${activeProject || ""}`;
   const graphCacheScope = `${scopeKey}:${graphTypeFilter}:${graphRecencyFilter}:${graphMinConfidence}`;
   const graphCacheKey = `${KG_CACHE_PREFIX}:${graphCacheScope}`;
+
+  const resetKnowledgePanelState = useCallback(() => {
+    kgLoadAbortRef.current?.abort();
+    kgLoadAbortRef.current = null;
+    kgLoadProjectRef.current = "";
+    kgExpandAbortRef.current?.abort();
+    kgExpandAbortRef.current = null;
+    kgExpandProjectRef.current = "";
+    graphHydrateKeyRef.current = "";
+    kgAutoLoadKeyRef.current = "";
+    setCypher("");
+    setGraphResult([]);
+    setKnowGraphData({ nodes: [], relationships: [] });
+    setGraphError(null);
+    setGraphLoading(false);
+    setExpandingNodeId(null);
+    setGraphResetToken((v) => v + 1);
+    setSelectedEdgeEvidence(null);
+  }, []);
+
+  useEffect(() => {
+    resetKnowledgePanelState();
+  }, [activeProject, resetKnowledgePanelState]);
 
   useEffect(() => {
     if (healthCheckScheduledRef.current) return;
@@ -2912,17 +3074,15 @@ export default function AgentBuilder() {
     [activeProject],
   );
 
-  // When switching projects, reload all per-project state from storage.
-  useEffect(() => {
+  const loadActiveProjectState = useCallback(async () => {
     if (!activeProject) {
       stateLoadKeyRef.current = "";
       stateLoadProjectRef.current = "";
       return;
     }
     const projectId = activeProject;
-    const stateKey = `${mode}:${activeProject}`;
-    if (stateLoadKeyRef.current === stateKey) return; // Guard duplicate load cascades.
-    stateLoadKeyRef.current = stateKey;
+    if (stateLoadKeyRef.current === projectId) return; // Guard duplicate load cascades for the same project selection.
+    stateLoadKeyRef.current = projectId;
     const requestType = "project-state-load";
     const requestSeq = nextRequestSequence(requestType);
     stateLoadAbortRef.current?.abort();
@@ -2964,7 +3124,7 @@ export default function AgentBuilder() {
         ) {
           return;
         }
-        const next = loadProjectState(projectId, mode);
+        const next = loadProjectState(projectId);
         setMessages(normalizeMessages(next.messages));
         setPlan(normalizePlanItems(next.plan));
         setLinks(normalizeLinks(next.links));
@@ -2978,7 +3138,12 @@ export default function AgentBuilder() {
         }
       }
     })();
-  }, [activeProject, mode]);
+  }, [activeProject]);
+
+  // When switching projects, reload all per-project state from storage.
+  useEffect(() => {
+    void loadActiveProjectState();
+  }, [loadActiveProjectState]);
 
   // Load projects on mount ONLY
   useEffect(() => {
@@ -3019,7 +3184,10 @@ export default function AgentBuilder() {
 
   const loadProjectSubgraph = useCallback((opts?: { force?: boolean }) => {
     const projectId = activeProject;
-    if (!projectId) return;
+    if (!projectId) {
+      resetKnowledgePanelState();
+      return;
+    }
     const cacheKey = graphCacheKey;
     const requestType = "kg-subgraph-load";
     const requestSeq = nextRequestSequence(requestType);
@@ -3084,7 +3252,7 @@ export default function AgentBuilder() {
         kgLoadProjectRef.current = "";
       }
     });
-  }, [activeProject, graphCacheKey, loadKnowGraphData, loadKnowGraphHealth, runGraphPresetQuery]);
+  }, [activeProject, graphCacheKey, loadKnowGraphData, loadKnowGraphHealth, resetKnowledgePanelState, runGraphPresetQuery]);
 
   useEffect(() => {
     if (!activeProject) {
@@ -3392,23 +3560,8 @@ export default function AgentBuilder() {
         );
       }
       setMessages((prev) => [...prev, { role: "assistant", text: assistantText }]);
-      if (mode === "assist" && activeProject && userText && assistantText) {
-        void (async () => {
-          try {
-            await fetch(`/api/v2/projects/${activeProject}/kg/ingest_chat_turn`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                user_text: userText,
-                assistant_text: assistantText,
-                src: "chat.auto",
-                mode: runtimeMode,
-              }),
-            });
-          } catch (err) {
-            console.warn("[KG][auto_ingest] failed", err);
-          }
-        })();
+      if (mode === "assist" && activeProject) {
+        window.dispatchEvent(new CustomEvent("knowledge:refresh"));
       }
     } catch (error: any) {
       setMessages((prev) => [
@@ -3549,55 +3702,10 @@ export default function AgentBuilder() {
     return { nodes: keptNodes, edges: keptEdges };
   }, [graphViz, graphTypeFilter, graphMinConfidence, buildRecencySinceTs]);
 
-  const graphVizForNVL = useMemo(() => {
-    const sourcesBySignature = new Map<string, Set<"think" | "know">>();
-    graphVizFiltered.nodes.forEach((n) => {
-      const source = n.graphSource === "know" ? "know" : "think";
-      const key = `${String(n.label || "").trim().toLowerCase()}::${String(n.type || "unknown").trim().toLowerCase()}`;
-      if (!sourcesBySignature.has(key)) {
-        sourcesBySignature.set(key, new Set());
-      }
-      sourcesBySignature.get(key)?.add(source);
-    });
-
-    const entities: KnowledgeGraphNode[] = graphVizFiltered.nodes.map((n) => {
-      const source = n.graphSource === "know" ? "know" : "think";
-      const key = `${String(n.label || "").trim().toLowerCase()}::${String(n.type || "unknown").trim().toLowerCase()}`;
-      const isMixed = (sourcesBySignature.get(key)?.size || 0) > 1;
-      return {
-        id: n.id,
-        rawId: n.rawId || n.id,
-        label: n.label || n.id,
-        type: String(n.type || "unknown").toLowerCase(),
-        source: isMixed ? "mixed" : source,
-        originSource: source,
-        last_seen_ts: n.last_seen_ts,
-        degree: n.degree || 0,
-      };
-    });
-
-    const relationships: KnowledgeGraphRelationship[] = [];
-    graphVizFiltered.edges.forEach((e) => {
-      const source = e.source || e.a;
-      const target = e.target || e.b;
-      if (!source || !target) return;
-      relationships.push({
-        id: e.id || `${source}->${target}:${e.type || "related_to"}`,
-        rawId: e.rawId || e.id || `${source}->${target}:${e.type || "related_to"}`,
-        from: source,
-        to: target,
-        type: e.type || "related_to",
-        source: e.graphSource === "know" ? "know" : "think",
-        weight: e.weight,
-        confidence: e.confidence,
-        last_seen_ts: e.last_seen_ts,
-        evidence_doc_id: e.evidence_doc_id,
-        evidence_snippet: e.evidence_snippet,
-      });
-    });
-
-    return { entities, relationships };
-  }, [graphVizFiltered]);
+  const graphVizForNVL = useMemo(
+    () => buildGraphVizForNVL(graphVizFiltered),
+    [graphVizFiltered],
+  );
 
   const createProjectPrompt = async () => {
     const name = window.prompt("New project name?");
@@ -3809,7 +3917,7 @@ export default function AgentBuilder() {
                             </div>
                             <div>
                               <AgentManager
-                                key={`${activeConfigProjectId}:${selectedAgentProjectId}:${selectedAgentType}`}
+                                key={agentManagerRenderKey}
                                 projectId={activeConfigProjectId}
                                 agentType={selectedAgentType}
                                 activeTab={tab}
@@ -4038,28 +4146,10 @@ export default function AgentBuilder() {
                         background: C.bg,
                         border: `1px solid ${C.border}`,
                         color: C.neutral,
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        gap: 12,
                       }}
                     >
                       <span>
-                        Entities: {graphVizFiltered.nodes.length} | Relationships: {graphVizFiltered.edges.length}
-                      </span>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 12, opacity: 0.95 }}>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                          <span style={{ width: 8, height: 8, borderRadius: 999, background: C.primary, display: "inline-block" }} />
-                          ThinkGraph
-                        </span>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                          <span style={{ width: 8, height: 8, borderRadius: 999, background: C.accent, display: "inline-block" }} />
-                          KnowGraph
-                        </span>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                          <span style={{ fontSize: 12, lineHeight: 1, color: C.neutral }}>◐</span>
-                          Mixed
-                        </span>
+                        {knowledgePanelSummaryText(graphVizFiltered)}
                       </span>
                     </div>
 

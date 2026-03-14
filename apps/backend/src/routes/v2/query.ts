@@ -13,13 +13,21 @@ export async function runKgQuery(params: {
     err.status = 400;
     throw err;
   }
-  if (!/project_id/i.test(cypher)) {
-    const err: any = new Error('cypher must filter by project_id');
+  const hasProjectField = /project_id/i.test(cypher);
+  const hasScopedProjectParam =
+    /project_id\s*:\s*\$projectId/i.test(cypher) ||
+    /project_id\s*=\s*\$projectId/i.test(cypher) ||
+    /coalesce\([^)]*project_id[^)]*\)\s*=\s*\$projectId/i.test(cypher);
+  if (!hasProjectField || !hasScopedProjectParam) {
+    const err: any = new Error('cypher must scope reads with the current $projectId');
     err.status = 400;
     throw err;
   }
 
-  const rows = await runCypherOnGraph(graphName, cypher, queryParams);
+  const rows = await runCypherOnGraph(graphName, cypher, {
+    ...(queryParams || {}),
+    projectId,
+  });
   console.log('[KG_QUERY]', {
     projectId,
     graphName,

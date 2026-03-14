@@ -9,11 +9,30 @@ import {
   type CreateAgentInput,
   type UpdateAgentInput,
 } from '../services/projectAgentsStore';
+import { isDevTestModeEnabled } from '../services/devTest';
 import { runIngestPipeline } from './projects.routes';
 import { runCypherOnGraph } from '../services/graphService';
 
 const router = Router();
 const GRAPH_NAME = 'graph_liq';
+const ACTIVE_ASSIST_RUNTIME = '/api/agents/boss + /api/v2/projects/:projectId/kg/*';
+const LEGACY_PROJECT_AGENT_RUNNER_ENABLED =
+  isDevTestModeEnabled() &&
+  /^(1|true|yes|on)$/i.test(String(process.env.LEGACY_ENABLE_PROJECT_AGENT_RUNNER ?? '0'));
+
+function respondLegacyRunnerDisabled(res: any) {
+  console.warn(
+    '[LegacyRuntime] route=%s LEGACY PATH - not part of active Assist runtime',
+    '/api/projects/:projectId/agents/:agentId/run',
+  );
+  return res.status(410).json({
+    ok: false,
+    error: 'legacy_path_disabled',
+    message: 'LEGACY PATH - not part of active Assist runtime',
+    route: '/api/projects/:projectId/agents/:agentId/run',
+    active_runtime: ACTIVE_ASSIST_RUNTIME,
+  });
+}
 
 // ============================================================================
 // Phase 1: Multi-Agent CRUD APIs
@@ -166,7 +185,8 @@ router.delete('/:projectId/agents/:agentId', async (req, res) => {
 });
 
 // ============================================================================
-// Phase 2: Agent Runner (Test Harness)
+// LEGACY PATH - not part of active Assist runtime.
+// This agent runner stays available only behind an explicit legacy/dev flag.
 // ============================================================================
 
 /**
@@ -174,6 +194,13 @@ router.delete('/:projectId/agents/:agentId', async (req, res) => {
  * POST /api/projects/:projectId/agents/:agentId/run
  */
 router.post('/:projectId/agents/:agentId/run', async (req, res) => {
+  if (!LEGACY_PROJECT_AGENT_RUNNER_ENABLED) {
+    return respondLegacyRunnerDisabled(res);
+  }
+  console.warn(
+    '[LegacyRuntime] route=%s LEGACY PATH - not part of active Assist runtime',
+    '/api/projects/:projectId/agents/:agentId/run',
+  );
   const { projectId, agentId } = req.params;
   const { input } = req.body;
 
