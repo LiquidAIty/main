@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { runLLM } from '../../llm/client';
 import type { ResolvedAgentConfig } from '../resolveAgents';
 import { tavilySearch } from '../../agents/mcp/tavilyClient';
 import { getConfiguredPositiveInt, isDevTestModeEnabled } from '../devTest';
@@ -11,6 +12,7 @@ import type {
   ResearchSearchTask,
   ResearchTargetPacket,
   TavilySearchResult,
+  ThinkGraphTriplet,
 } from './types';
 
 const DEFAULT_KNOWGRAPH_URL = 'http://localhost:8001';
@@ -39,6 +41,47 @@ const TEMP_STABILIZATION_MAX_PACKET_RESULTS = getConfiguredPositiveInt(
   'RESEARCH_MAX_PACKET_RESULTS',
   isDevTestModeEnabled() ? 12 : 10,
 );
+const TEMP_STABILIZATION_MAX_AGENT_GENERATED_SEARCH_TASKS = getConfiguredPositiveInt(
+  'RESEARCH_MAX_AGENT_GENERATED_SEARCH_TASKS',
+  isDevTestModeEnabled() ? 10 : 6,
+);
+
+const RESEARCH_AGENT_QUERY_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    searchTasks: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          query: { type: 'string' },
+          intent: {
+            type: 'string',
+            enum: ['explain', 'compare', 'verify', 'resolve_conflict', 'deepen_evidence'],
+          },
+          priority: {
+            type: 'string',
+            enum: ['high', 'medium', 'low'],
+          },
+          triplet: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              entityA: { type: 'string' },
+              relationshipType: { type: 'string' },
+              entityB: { type: 'string' },
+            },
+            required: ['entityA', 'relationshipType', 'entityB'],
+          },
+        },
+        required: ['query', 'intent', 'priority'],
+      },
+    },
+  },
+  required: ['searchTasks'],
+};
 
 function trimBaseUrl(value: string): string {
   return value.replace(/\/+$/, '');
@@ -101,6 +144,16 @@ function coerceCandidateEdges(value: unknown): CandidateEdge[] {
     });
   }
   return out;
+}
+
+function coerceTriplets(value: unknown): ThinkGraphTriplet[] {
+  return coerceCandidateEdges(value).map((edge) => ({
+    entityA: edge.entityA,
+    relationshipType: edge.relationshipType,
+    entityB: edge.entityB,
+    confidence: edge.confidence ?? null,
+    source: edge.source ?? 'thinkgraph',
+  }));
 }
 
 function coerceGaps(value: unknown): KnowGraphGap[] {
@@ -173,6 +226,7 @@ function coerceSearchTasks(value: unknown): ResearchSearchTask[] {
       intent,
       priority: priorityRaw === 'low' || priorityRaw === 'medium' ? priorityRaw : 'high',
       gap,
+      triplet: coerceTriplets([(raw as any).triplet])[0] ?? null,
     });
   }
   return out;
@@ -188,6 +242,7 @@ export function normalizeResearchTargetPacket(projectId: string, body: any): Res
     ? Math.max(1, Math.min(TEMP_STABILIZATION_MAX_PACKET_RESULTS, Math.floor(maxResultsRaw)))
     : 5;
   const normalizedProjectId = String(body?.projectId ?? body?.project_id ?? (projectId || '')).trim();
+  const attentionEdges = coerceCandidateEdges(body?.attentionEdges ?? body?.attention_edges ?? body?.edges);
 
   return {
     projectId: normalizedProjectId,
@@ -197,7 +252,8 @@ export function normalizeResearchTargetPacket(projectId: string, body: any): Res
     priorityRelationships: coerceStringList(
       body?.priorityRelationships ?? body?.priority_relationships ?? body?.relationships,
     ),
-    attentionEdges: coerceCandidateEdges(body?.attentionEdges ?? body?.attention_edges ?? body?.edges),
+    attentionEdges,
+    triplets: coerceTriplets(body?.triplets ?? attentionEdges),
     gaps: coerceGaps(body?.gaps),
     searchTasks: coerceSearchTasks(body?.searchTasks ?? body?.search_tasks),
     openQuestions: coerceStringList(body?.openQuestions ?? body?.open_questions),
@@ -275,6 +331,7 @@ function normalizeResearchDocuments(
         priority_entities: packet.priorityEntities,
         priority_relationships: packet.priorityRelationships,
         attention_edges: packet.attentionEdges,
+        triplets: packet.triplets,
         gaps: packet.gaps,
         search_tasks: packet.searchTasks,
         open_questions: packet.openQuestions,
@@ -327,6 +384,7 @@ async function postKnowgraphWebIngest(
       priority_entities: packet.priorityEntities,
       priority_relationships: packet.priorityRelationships,
       attention_edges: packet.attentionEdges,
+      triplets: packet.triplets,
       gaps: packet.gaps,
       search_tasks: packet.searchTasks,
       open_questions: packet.openQuestions,
@@ -382,6 +440,96 @@ function pickIntentForGap(edge: CandidateEdge | null, gap: KnowGraphGap | null):
   return 'verify';
 }
 
+function buildTripletKey(
+  value: { entityA?: string | null; relationshipType?: string | null; entityB?: string | null } | null,
+): string {
+  const entityA = String(value?.entityA || '').trim().toLowerCase();
+  const relationshipType = normalizeRelationText(value?.relationshipType);
+  const entityB = String(value?.entityB || '').trim().toLowerCase();
+  if (!entityA || !relationshipType || !entityB) return '';
+  return `${entityA}::${relationshipType}::${entityB}`;
+}
+
+function findMatchingTriplet(
+  packet: ResearchTargetPacket,
+  value: { entityA?: string | null; relationshipType?: string | null; entityB?: string | null } | null,
+): ThinkGraphTriplet | null {
+  const key = buildTripletKey(value);
+  if (!key) return null;
+  return packet.triplets.find((triplet) => buildTripletKey(triplet) === key) || null;
+}
+
+function findMatchingGap(
+  packet: ResearchTargetPacket,
+  value: { entityA?: string | null; relationshipType?: string | null; entityB?: string | null } | null,
+): KnowGraphGap | null {
+  const key = buildTripletKey(value);
+  if (!key) return null;
+  return packet.gaps.find((gap) => buildTripletKey(gap) === key) || null;
+}
+
+function inferTripletFromQuery(packet: ResearchTargetPacket, query: string): ThinkGraphTriplet | null {
+  const loweredQuery = String(query || '').toLowerCase();
+  return (
+    packet.triplets.find((triplet) => {
+      const entityA = triplet.entityA.toLowerCase();
+      const entityB = triplet.entityB.toLowerCase();
+      const relationshipText = humanizeRelationText(triplet.relationshipType);
+      return loweredQuery.includes(entityA) && loweredQuery.includes(entityB) && loweredQuery.includes(relationshipText);
+    }) ||
+    packet.triplets.find((triplet) => {
+      const entityA = triplet.entityA.toLowerCase();
+      const entityB = triplet.entityB.toLowerCase();
+      return loweredQuery.includes(entityA) && loweredQuery.includes(entityB);
+    }) ||
+    null
+  );
+}
+
+function hydrateResearchTasks(packet: ResearchTargetPacket, tasks: ResearchSearchTask[]): ResearchSearchTask[] {
+  const seen = new Set<string>();
+  const hydrated: ResearchSearchTask[] = [];
+  for (const task of tasks) {
+    const query = String(task.query || '').trim();
+    if (!query) continue;
+    const key = query.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const triplet = findMatchingTriplet(packet, task.triplet || task.gap) || inferTripletFromQuery(packet, query);
+    const gap = findMatchingGap(packet, task.gap || triplet) || null;
+    hydrated.push({
+      query,
+      intent: task.intent,
+      priority: task.priority,
+      gap,
+      triplet,
+    });
+    if (hydrated.length >= TEMP_STABILIZATION_MAX_RESEARCH_SEARCH_TASKS) break;
+  }
+  return hydrated;
+}
+
+function tryParseJsonObject(text: string): any {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const candidates = [raw];
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) candidates.push(fenced[1].trim());
+  const firstBrace = raw.indexOf('{');
+  const lastBrace = raw.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(raw.slice(firstBrace, lastBrace + 1));
+  }
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Keep trying looser JSON extracts.
+    }
+  }
+  return null;
+}
+
 function buildTaskQueries(task: ResearchSearchTask, packet: ResearchTargetPacket): string[] {
   const baseGoal = packet.query.trim();
   const gap = task.gap;
@@ -414,7 +562,10 @@ function buildTaskQueries(task: ResearchSearchTask, packet: ResearchTargetPacket
 
 function planGapResearchTasks(packet: ResearchTargetPacket): ResearchSearchTask[] {
   if (packet.searchTasks.length > 0) {
-    return packet.searchTasks.slice(0, TEMP_STABILIZATION_MAX_RESEARCH_SEARCH_TASKS);
+    return hydrateResearchTasks(
+      packet,
+      packet.searchTasks.slice(0, TEMP_STABILIZATION_MAX_RESEARCH_SEARCH_TASKS),
+    );
   }
 
   const tasks: ResearchSearchTask[] = [];
@@ -435,6 +586,7 @@ function planGapResearchTasks(packet: ResearchTargetPacket): ResearchSearchTask[
       intent,
       priority: gap.priority,
       gap,
+      triplet: findMatchingTriplet(packet, gap),
     };
     for (const query of buildTaskQueries(task, packet)) {
       const key = query.toLowerCase();
@@ -442,45 +594,175 @@ function planGapResearchTasks(packet: ResearchTargetPacket): ResearchSearchTask[
       seen.add(key);
       tasks.push({ ...task, query });
       if (tasks.length >= TEMP_STABILIZATION_MAX_RESEARCH_SEARCH_TASKS) {
-        return tasks;
+        return hydrateResearchTasks(packet, tasks);
       }
     }
   }
 
   if (tasks.length === 0) {
-    const fallbackQueries = Array.from(
-      new Set(
-        [
-          ...packet.priorityRelationships,
-          ...packet.priorityEntities.map((entity) => `${entity} ${packet.query}`.trim()),
-          packet.query,
-        ]
-          .map((entry) => String(entry || '').trim())
-          .filter(Boolean),
-      ),
-    ).slice(0, TEMP_STABILIZATION_MAX_RESEARCH_SEARCH_TASKS);
+    const fallbackQueries = Array.from(new Set(
+      [
+        ...packet.triplets.flatMap((triplet) => [
+          `${triplet.entityA} ${humanizeRelationText(triplet.relationshipType)} ${triplet.entityB} evidence`.trim(),
+          `${triplet.entityA} ${triplet.entityB} ${packet.query}`.trim(),
+        ]),
+        ...packet.priorityRelationships,
+        ...packet.priorityEntities.map((entity) => `${entity} ${packet.query}`.trim()),
+        packet.query,
+      ]
+        .map((entry) => String(entry || '').trim())
+        .filter(Boolean),
+    )).slice(0, TEMP_STABILIZATION_MAX_RESEARCH_SEARCH_TASKS);
     fallbackQueries.forEach((query) => {
       tasks.push({
         query,
         intent: 'verify',
         priority: 'medium',
         gap: null,
+        triplet: inferTripletFromQuery(packet, query),
       });
     });
   }
 
-  return tasks;
+  return hydrateResearchTasks(packet, tasks);
+}
+
+async function generateTripletGuidedSearchTasks(
+  packet: ResearchTargetPacket,
+  resolvedAgent: ResolvedAgentConfig,
+  draftTasks: ResearchSearchTask[],
+): Promise<ResearchSearchTask[]> {
+  const hydratedDraftTasks = hydrateResearchTasks(packet, draftTasks);
+  console.log(
+    '[ResearchTriplets] projectId=%s turnId=%s triplet_count=%d sample=%s',
+    packet.projectId,
+    packet.turnId,
+    packet.triplets.length,
+    JSON.stringify(packet.triplets.slice(0, 5)),
+  );
+
+  if (!packet.triplets.length) {
+    console.log(
+      '[ResearchAgent] projectId=%s turnId=%s skipped=no_triplets fallback=heuristic',
+      packet.projectId,
+      packet.turnId,
+    );
+    return hydratedDraftTasks;
+  }
+
+  const promptPayload = {
+    raw_user_request: packet.query,
+    thinkgraph_triplets: packet.triplets.slice(0, TEMP_STABILIZATION_MAX_RESEARCH_SEARCH_TASKS),
+    knowgraph_gaps: packet.gaps.slice(0, TEMP_STABILIZATION_MAX_RESEARCH_SEARCH_TASKS),
+    priority_entities: packet.priorityEntities.slice(0, TEMP_STABILIZATION_MAX_RESEARCH_SEARCH_TASKS),
+    priority_relationships: packet.priorityRelationships.slice(0, TEMP_STABILIZATION_MAX_RESEARCH_SEARCH_TASKS),
+    open_questions: packet.openQuestions.slice(0, TEMP_STABILIZATION_MAX_RESEARCH_SEARCH_TASKS),
+    draft_search_tasks: hydratedDraftTasks.slice(0, TEMP_STABILIZATION_MAX_RESEARCH_SEARCH_TASKS).map((task) => ({
+      query: task.query,
+      intent: task.intent,
+      priority: task.priority,
+      triplet: task.triplet
+        ? {
+            entityA: task.triplet.entityA,
+            relationshipType: task.triplet.relationshipType,
+            entityB: task.triplet.entityB,
+          }
+        : null,
+      gap: task.gap
+        ? {
+            entityA: task.gap.entityA,
+            relationshipType: task.gap.relationshipType,
+            entityB: task.gap.entityB,
+            gapType: task.gap.gapType,
+            priority: task.gap.priority,
+            reason: task.gap.reason,
+          }
+        : null,
+    })),
+  };
+
+  try {
+    const llmRes = await runLLM(
+      [
+        'Generate web research search tasks from the supplied ThinkGraph triplets.',
+        'Use the triplets as the primary structure for search decisions.',
+        'Refine the draft search tasks when they are too literal, but stay anchored to the triplets.',
+        'Prefer concrete source-seeking queries that can verify, compare, explain, or deepen evidence for the entities and relationships.',
+        'When KnowGraph gaps are present, prioritize the highest-priority missing, weak, stale, or conflicting evidence.',
+        'Each search task should map to one of the provided triplets whenever possible.',
+        '',
+        'Return JSON only with a top-level "searchTasks" array.',
+        'Each search task must contain: query, intent, priority.',
+        'Include a "triplet" object when the query is anchored to a specific triplet.',
+        '',
+        'Research input:',
+        JSON.stringify(promptPayload, null, 2),
+      ].join('\n'),
+      {
+        modelKey: resolvedAgent.modelKey,
+        provider: resolvedAgent.provider,
+        providerModelId: resolvedAgent.providerModelId,
+        temperature: resolvedAgent.temperature ?? 0.1,
+        maxTokens: Math.min(resolvedAgent.maxTokens ?? 1200, 1600),
+        useResponsesApi: resolvedAgent.provider === 'openai',
+        jsonMode: resolvedAgent.provider !== 'openai',
+        jsonSchema:
+          resolvedAgent.provider === 'openai'
+            ? { name: 'research_search_tasks', schema: RESEARCH_AGENT_QUERY_SCHEMA, strict: true }
+            : undefined,
+        system: [
+          resolvedAgent.systemPrompt,
+          'You are the graph-guided research agent for the live Assist loop.',
+          'Do not ignore the ThinkGraph triplets.',
+          'Do not return generic search planning.',
+          'Turn the triplets into stronger search queries than a literal string match would produce.',
+          'Return only JSON.',
+        ].filter(Boolean).join('\n\n'),
+      },
+    );
+    const parsed = tryParseJsonObject(llmRes.text);
+    const agentTasks = hydrateResearchTasks(
+      packet,
+      coerceSearchTasks(parsed?.searchTasks ?? parsed?.tasks),
+    ).slice(0, TEMP_STABILIZATION_MAX_AGENT_GENERATED_SEARCH_TASKS);
+    if (!agentTasks.length) {
+      console.warn(
+        '[ResearchAgent] projectId=%s turnId=%s fallback=heuristic reason=empty_agent_tasks',
+        packet.projectId,
+        packet.turnId,
+      );
+      return hydratedDraftTasks;
+    }
+    console.log(
+      '[ResearchAgent] projectId=%s turnId=%s generated_queries=%s',
+      packet.projectId,
+      packet.turnId,
+      JSON.stringify(agentTasks.map((task) => task.query)),
+    );
+    return agentTasks;
+  } catch (error: any) {
+    console.warn(
+      '[ResearchAgent] projectId=%s turnId=%s fallback=heuristic reason=%s',
+      packet.projectId,
+      packet.turnId,
+      error?.message || String(error),
+    );
+    return hydratedDraftTasks;
+  }
 }
 
 export async function runResearchIngest(
   packet: ResearchTargetPacket,
   resolvedAgent: ResolvedAgentConfig,
 ): Promise<ResearchIngestResult> {
-  const plannedTasks = planGapResearchTasks(packet);
+  const heuristicTasks = planGapResearchTasks(packet);
+  const plannedTasks = await generateTripletGuidedSearchTasks(packet, resolvedAgent, heuristicTasks);
   console.log(
-    '[ResearchPlanner] projectId=%s gaps=%d tasks=%d',
+    '[ResearchPlanner] projectId=%s gaps=%d triplets=%d heuristic_tasks=%d agent_tasks=%d',
     packet.projectId,
     packet.gaps.length,
+    packet.triplets.length,
+    heuristicTasks.length,
     plannedTasks.length,
   );
   if (!plannedTasks.length) {

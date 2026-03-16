@@ -56,6 +56,9 @@ function formatUploadError(endpoint: string, status: number, body: string): stri
 }
 
 function normalizeIngestErrorMessage(payload: any, status: number): string {
+  if (status === 413) {
+    return "Upload too large: the server rejected the PDF request body before KnowGraph ingest could start.";
+  }
   const raw = String(
     payload?.error?.message ||
       payload?.message ||

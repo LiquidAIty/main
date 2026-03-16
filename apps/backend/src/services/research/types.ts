@@ -10,6 +10,14 @@ export type CandidateEdge = {
   source?: 'thinkgraph' | 'fallback' | 'manual';
 };
 
+export type ThinkGraphTriplet = {
+  entityA: string;
+  relationshipType: string;
+  entityB: string;
+  confidence?: number | null;
+  source?: 'thinkgraph' | 'fallback' | 'manual';
+};
+
 export type KnowGraphGapType =
   | 'missing_evidence'
   | 'weak_evidence'
@@ -43,6 +51,7 @@ export type ResearchSearchTask = {
   intent: ResearchIntent;
   priority: KnowGraphGapPriority;
   gap: KnowGraphGap | null;
+  triplet?: ThinkGraphTriplet | null;
 };
 
 export type ResearchTargetPacket = {
@@ -52,6 +61,7 @@ export type ResearchTargetPacket = {
   priorityEntities: string[];
   priorityRelationships: string[];
   attentionEdges: CandidateEdge[];
+  triplets: ThinkGraphTriplet[];
   gaps: KnowGraphGap[];
   searchTasks: ResearchSearchTask[];
   openQuestions: string[];

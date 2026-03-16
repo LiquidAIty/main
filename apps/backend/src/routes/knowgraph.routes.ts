@@ -16,7 +16,7 @@ const upload = multer({
   },
 });
 
-type UploadedFile = {
+export type UploadedFile = {
   buffer: Buffer;
   mimetype?: string;
   originalname?: string;
@@ -494,82 +494,100 @@ function normalizeKnowgraphIngestError(message: string, provider: string, provid
   return `KnowGraph ingest failed for configured provider/model (${providerLabel} / ${modelLabel}). ${raw}`;
 }
 
-router.post('/ingest', upload.single('file') as any, async (req, res) => {
-  try {
-    const projectId = typeof req.body?.project_id === 'string' ? req.body.project_id.trim() : '';
-    const documentId = typeof req.body?.document_id === 'string' ? req.body.document_id.trim() : '';
-    const file = (req as any).file as UploadedFile | undefined;
+export async function proxyKnowgraphPdfIngest(input: {
+  projectId: string;
+  documentId: string;
+  file?: UploadedFile | null;
+  route?: string;
+}): Promise<{ status: number; data: any }> {
+  const projectId = String(input.projectId || '').trim();
+  const documentId = String(input.documentId || '').trim();
+  const file = input.file || undefined;
+  const route = String(input.route || '/api/knowgraph/ingest').trim() || '/api/knowgraph/ingest';
 
-    if (!projectId || !documentId || !file) {
-      return res.status(400).json({
+  if (!projectId || !documentId || !file) {
+    return {
+      status: 400,
+      data: {
         ok: false,
         error: { message: 'project_id, document_id, and file are required' },
-      });
-    }
+      },
+    };
+  }
 
-    const fileName = String(file.originalname || '').toLowerCase();
-    const fileType = String(file.mimetype || '').toLowerCase();
-    const isPdf = fileName.endsWith('.pdf') || fileType.includes('pdf');
-    if (!isPdf) {
-      return res.status(400).json({
+  const fileName = String(file.originalname || '').toLowerCase();
+  const fileType = String(file.mimetype || '').toLowerCase();
+  const isPdf = fileName.endsWith('.pdf') || fileType.includes('pdf');
+  if (!isPdf) {
+    return {
+      status: 400,
+      data: {
         ok: false,
         error: { message: 'Only PDF attachments are supported by the KnowGraph ingest pipeline.' },
-      });
-    }
+      },
+    };
+  }
 
-    const resolved = await resolveKnowgraphAgent(projectId, '/api/knowgraph/ingest');
-    if (!resolved) {
-      return res.status(409).json({
+  const resolved = await resolveKnowgraphAgent(projectId, route);
+  if (!resolved) {
+    return {
+      status: 409,
+      data: {
         ok: false,
         error: { message: 'knowgraph_agent_not_configured' },
+      },
+    };
+  }
+  console.log(
+    '[RUNTIME_MODEL] route=%s projectId=%s agentType=%s agent_id=%s provider=%s model_key=%s provider_model_id=%s',
+    route,
+    projectId,
+    'knowgraph',
+    resolved.agentId,
+    resolved.provider,
+    resolved.modelKey,
+    resolved.providerModelId,
+  );
+  console.log(
+    '[KNOWGRAPH_INGEST] route=%s projectId=%s documentId=%s agentType=knowgraph agentId=%s provider=%s model=%s',
+    route,
+    projectId,
+    documentId,
+    resolved.agentId,
+    resolved.provider,
+    resolved.providerModelId,
+  );
+
+  const baseUrls = buildKnowgraphBaseUrls();
+  let lastError: any;
+
+  for (const baseUrl of baseUrls) {
+    try {
+      const form = buildMultipartForm(projectId, documentId, file, {
+        organizingPrinciple: resolved.organizingPrinciple ?? null,
+        entityTaxonomy: resolved.entityTaxonomy ?? null,
+        relationshipTaxonomy: resolved.relationshipTaxonomy ?? null,
+        extractionPolicy: resolved.extractionPolicy ?? null,
       });
-    }
-    console.log(
-      '[RUNTIME_MODEL] route=/api/knowgraph/ingest projectId=%s agentType=%s agent_id=%s provider=%s model_key=%s provider_model_id=%s',
-      projectId,
-      'knowgraph',
-      resolved.agentId,
-      resolved.provider,
-      resolved.modelKey,
-      resolved.providerModelId,
-    );
-    console.log(
-      '[KNOWGRAPH_INGEST] projectId=%s documentId=%s agentType=knowgraph agentId=%s provider=%s model=%s',
-      projectId,
-      documentId,
-      resolved.agentId,
-      resolved.provider,
-      resolved.providerModelId,
-    );
+      const response = await fetch(`${baseUrl}/ingest`, {
+        method: 'POST',
+        headers: {
+          'x-agent-id': resolved.agentId,
+          'x-agent-provider': resolved.provider,
+          'x-agent-model-key': resolved.modelKey,
+          'x-agent-model-id': resolved.providerModelId,
+        },
+        body: form,
+      });
+      const data = await readResponseDataSafe(response);
+      if (response.ok) {
+        return { status: response.status, data };
+      }
 
-    const baseUrls = buildKnowgraphBaseUrls();
-    let lastError: any;
-
-    for (const baseUrl of baseUrls) {
-      try {
-        const form = buildMultipartForm(projectId, documentId, file, {
-          organizingPrinciple: resolved.organizingPrinciple ?? null,
-          entityTaxonomy: resolved.entityTaxonomy ?? null,
-          relationshipTaxonomy: resolved.relationshipTaxonomy ?? null,
-          extractionPolicy: resolved.extractionPolicy ?? null,
-        });
-        const response = await fetch(`${baseUrl}/ingest`, {
-          method: 'POST',
-          headers: {
-            'x-agent-id': resolved.agentId,
-            'x-agent-provider': resolved.provider,
-            'x-agent-model-key': resolved.modelKey,
-            'x-agent-model-id': resolved.providerModelId,
-          },
-          body: form,
-        });
-        const data = await readResponseDataSafe(response);
-        if (response.ok) {
-          return res.status(response.status).json(data);
-        }
-
-        const upstreamMessage = pickErrorMessage(data);
-        return res.status(response.status).json({
+      const upstreamMessage = pickErrorMessage(data);
+      return {
+        status: response.status,
+        data: {
           ok: false,
           error: {
             code: `knowgraph_ingest_upstream_${response.status}`,
@@ -583,19 +601,34 @@ router.post('/ingest', upload.single('file') as any, async (req, res) => {
             provider_model_id: resolved.providerModelId,
           },
           upstream: data,
-        });
-      } catch (error: any) {
-        lastError = error;
-        const code = String(error?.cause?.code || error?.code || '');
-        const canRetryNetworkLookup =
-          code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN';
-        if (!canRetryNetworkLookup) {
-          break;
-        }
+        },
+      };
+    } catch (error: any) {
+      lastError = error;
+      const code = String(error?.cause?.code || error?.code || '');
+      const canRetryNetworkLookup =
+        code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN';
+      if (!canRetryNetworkLookup) {
+        break;
       }
     }
+  }
 
-    throw lastError;
+  throw lastError;
+}
+
+router.post('/ingest', upload.single('file') as any, async (req, res) => {
+  try {
+    const projectId = typeof req.body?.project_id === 'string' ? req.body.project_id.trim() : '';
+    const documentId = typeof req.body?.document_id === 'string' ? req.body.document_id.trim() : '';
+    const file = (req as any).file as UploadedFile | undefined;
+    const upstream = await proxyKnowgraphPdfIngest({
+      projectId,
+      documentId,
+      file,
+      route: '/api/knowgraph/ingest',
+    });
+    return res.status(upstream.status).json(upstream.data);
   } catch (error: any) {
     const message =
       error?.cause?.message ||

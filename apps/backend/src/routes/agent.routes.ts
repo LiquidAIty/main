@@ -1,22 +1,38 @@
+import { createHash } from 'crypto';
 import { Router } from 'express';
+import multer from 'multer';
 import type { AgentConfig } from '../types/agentBuilder';
 import {
   listAgentCards,
   saveAgentConfig as persistAgentConfig,
   getAgentConfig as fetchAgentConfig,
+  getProjectState,
+  saveProjectState,
 } from '../services/agentBuilderStore';
 import { runLLM } from '../llm/client';
 import { createOpenRouterEmbedding } from '../llm/openrouterEmbeddings';
 import { captureProbability } from '../lib/receiptCapture';
 import { resolveAgentConfig } from '../services/resolveAgents';
+import type { ResolvedAgentConfig } from '../services/resolveAgents';
 import { getConfiguredPositiveInt, isDevTestModeEnabled } from '../services/devTest';
 import { ragSearchDirect } from '../tools/rag.search';
+import { proxyKnowgraphPdfIngest, type UploadedFile } from './knowgraph.routes';
 import type { KgEntity, KgRelationship } from './v2/chunking';
 import { runKgChatTurnNow, runResearchPacketForProject } from './v2/kg.routes';
-import type { CandidateEdge, KnowGraphGap, ResearchSearchTask } from '../services/research/types';
+import type { CandidateEdge, KnowGraphGap, ResearchSearchTask, ThinkGraphTriplet } from '../services/research/types';
 
 export const agentRoutes = Router();
 const lastResponseIdByProject = new Map<string, string>();
+const lastAssistantTextByProject = new Map<string, string>();
+const BOSS_UPLOAD_MAX_FILE_SIZE_BYTES = isDevTestModeEnabled()
+  ? 512 * 1024 * 1024
+  : 100 * 1024 * 1024;
+const bossUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: BOSS_UPLOAD_MAX_FILE_SIZE_BYTES,
+  },
+});
 // DEV TEST LIMIT RAISED: keep more candidate edges during real document loop testing.
 const TEMP_STABILIZATION_MAX_CANDIDATE_EDGES = getConfiguredPositiveInt(
   'LOOP_MAX_CANDIDATE_EDGES',
@@ -51,6 +67,10 @@ const TEMP_STABILIZATION_REPLY_WEIGHTED_QUERY_LIMIT = getConfiguredPositiveInt(
   'LOOP_REPLY_WEIGHTED_QUERY_LIMIT',
   isDevTestModeEnabled() ? 32 : 10,
 );
+const TEMP_STABILIZATION_MAX_REPLY_GRAPH_FACTS = getConfiguredPositiveInt(
+  'LOOP_MAX_REPLY_GRAPH_FACTS',
+  isDevTestModeEnabled() ? 12 : 6,
+);
 // DEV TEST LIMIT RAISED: carry larger evidence snippets from real technical documents.
 const TEMP_STABILIZATION_REPLY_SNIPPET_CHARS = getConfiguredPositiveInt(
   'LOOP_REPLY_SNIPPET_CHARS',
@@ -84,11 +104,83 @@ type RetrievedEvidence = {
   fetchedAt: string | null;
 };
 
+type RetrievedGraphFact = {
+  entityA: string;
+  relationshipType: string;
+  entityB: string;
+  confidence: number | null;
+  documentId: string;
+  sourceName: string;
+  fetchedAt: string | null;
+};
+
 type RetrievedEvidenceBundle = {
   evidence: RetrievedEvidence[];
+  graphFacts: RetrievedGraphFact[];
   mode: 'graph' | 'hybrid' | 'weighted_fallback' | 'disabled';
   weightedResults: number;
   graphResults: number;
+};
+
+type TurnIngestedDocument = {
+  documentId: string;
+  fileName: string;
+};
+
+type PlanWikiRewriteResult = {
+  planWikiMarkdown: string;
+  deltaSummary: string;
+  status: 'draft' | 'grounded' | 'revised';
+  whatChanged: string[];
+  openQuestions: string[];
+  sources: string[];
+};
+
+type StoredPlanWiki = {
+  anchor: string;
+  whatChanged: string[];
+  openQuestions: string[];
+  sources: string[];
+  deltaSummary: string;
+  status: 'draft' | 'grounded' | 'revised';
+  updatedAt: string;
+  turnId: string;
+  lastUserMessage: string;
+};
+
+const TEMP_STABILIZATION_MAX_PLANWIKI_TRIPLETS = getConfiguredPositiveInt(
+  'LOOP_MAX_PLANWIKI_TRIPLETS',
+  isDevTestModeEnabled() ? 10 : 5,
+);
+const TEMP_STABILIZATION_MAX_PLANWIKI_FACTS = getConfiguredPositiveInt(
+  'LOOP_MAX_PLANWIKI_FACTS',
+  isDevTestModeEnabled() ? 10 : 5,
+);
+const TEMP_STABILIZATION_MAX_PLANWIKI_EVIDENCE = getConfiguredPositiveInt(
+  'LOOP_MAX_PLANWIKI_EVIDENCE',
+  isDevTestModeEnabled() ? 8 : 4,
+);
+const PLANWIKI_REWRITE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    planWikiMarkdown: { type: 'string' },
+    deltaSummary: { type: 'string' },
+    status: { type: 'string', enum: ['draft', 'grounded', 'revised'] },
+    whatChanged: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    openQuestions: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    sources: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+  },
+  required: ['planWikiMarkdown', 'deltaSummary', 'status', 'whatChanged', 'openQuestions', 'sources'],
 };
 
 function normalizeRelationType(value: unknown): string {
@@ -110,6 +202,356 @@ function normalizeHeuristicPhrase(value: string): string {
     .replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function isPdfUpload(file: UploadedFile | null | undefined): boolean {
+  if (!file) return false;
+  const fileName = String(file.originalname || '').toLowerCase();
+  const fileType = String(file.mimetype || '').toLowerCase();
+  return fileName.endsWith('.pdf') || fileType.includes('pdf');
+}
+
+function buildAssistUploadDocumentId(
+  projectId: string,
+  turnId: string,
+  file: UploadedFile,
+  requestedDocumentId?: string | null,
+): string {
+  const explicit = String(requestedDocumentId || '').trim();
+  if (explicit) return explicit;
+
+  const fileHash = createHash('sha1').update(file.buffer).digest('hex').slice(0, 12);
+  return `assist-upload:${projectId}:${turnId}:${fileHash}`;
+}
+
+function coerceStringList(value: unknown, limit = 8): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((entry) => String((entry as any)?.text ?? entry ?? '').trim())
+        .filter(Boolean),
+    ),
+  ).slice(0, limit);
+}
+
+function tryParseJsonObject(text: string): any {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const candidates = [raw];
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) candidates.push(fenced[1].trim());
+  const firstBrace = raw.indexOf('{');
+  const lastBrace = raw.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(raw.slice(firstBrace, lastBrace + 1));
+  }
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Keep trying looser extracts.
+    }
+  }
+  return null;
+}
+
+function extractExistingPlanWiki(plan: unknown): Partial<StoredPlanWiki> {
+  if (typeof plan === 'string') {
+    return {
+      anchor: plan.trim(),
+      whatChanged: [],
+      openQuestions: [],
+      sources: [],
+      deltaSummary: '',
+      status: 'draft',
+    };
+  }
+  if (!plan || typeof plan !== 'object' || Array.isArray(plan)) {
+    return {
+      anchor: '',
+      whatChanged: [],
+      openQuestions: [],
+      sources: [],
+      deltaSummary: '',
+      status: 'draft',
+    };
+  }
+  const obj = plan as any;
+  const statusRaw = String(obj.status ?? '').trim().toLowerCase();
+  return {
+    anchor: String(
+      obj.anchor ??
+      obj.anchorText ??
+      obj.anchor_text ??
+      obj.planWiki ??
+      obj.plan_wiki ??
+      obj.memo ??
+      obj.article ??
+      obj.summary ??
+      obj.body ??
+      obj.text ??
+      '',
+    ).trim(),
+    whatChanged: coerceStringList(obj.whatChanged ?? obj.what_changed ?? obj.recentChanges ?? obj.recent_changes),
+    openQuestions: coerceStringList(obj.openQuestions ?? obj.open_questions ?? obj.unknowns ?? obj.questions),
+    sources: coerceStringList(obj.sources),
+    deltaSummary: String(obj.deltaSummary ?? obj.delta_summary ?? '').trim(),
+    status:
+      statusRaw === 'grounded' || statusRaw === 'revised'
+        ? (statusRaw as StoredPlanWiki['status'])
+        : 'draft',
+  };
+}
+
+function buildThinkGraphPlanWikiSummary(
+  entities: KgEntity[],
+  relationships: KgRelationship[],
+  triplets: ThinkGraphTriplet[],
+): Record<string, unknown> {
+  return {
+    entityCount: entities.length,
+    relationshipCount: relationships.length,
+    entities: entities
+      .map((entity) => String(entity?.name || '').trim())
+      .filter(Boolean)
+      .slice(0, TEMP_STABILIZATION_MAX_PRIORITY_ENTITIES),
+    triplets: triplets.slice(0, TEMP_STABILIZATION_MAX_PLANWIKI_TRIPLETS).map((triplet) => ({
+      entityA: triplet.entityA,
+      relationshipType: triplet.relationshipType,
+      entityB: triplet.entityB,
+      confidence: triplet.confidence ?? null,
+      source: triplet.source ?? 'thinkgraph',
+    })),
+  };
+}
+
+function buildKnowGraphPlanWikiSummary(
+  graphFacts: RetrievedGraphFact[],
+  evidence: RetrievedEvidence[],
+  gaps: KnowGraphGap[],
+  researchDocumentCount: number,
+  ingestedDocuments: TurnIngestedDocument[],
+): Record<string, unknown> {
+  return {
+    researchDocumentCount,
+    ingestedDocuments: ingestedDocuments.map((item) => ({
+      documentId: item.documentId,
+      fileName: item.fileName,
+    })),
+    graphFacts: graphFacts.slice(0, TEMP_STABILIZATION_MAX_PLANWIKI_FACTS).map((fact) => ({
+      entityA: fact.entityA,
+      relationshipType: fact.relationshipType,
+      entityB: fact.entityB,
+      confidence: fact.confidence ?? null,
+      sourceName: fact.sourceName,
+      documentId: fact.documentId,
+    })),
+    evidence: evidence.slice(0, TEMP_STABILIZATION_MAX_PLANWIKI_EVIDENCE).map((item) => ({
+      title: item.title,
+      url: item.url,
+      snippet: item.snippet,
+      documentId: item.documentId,
+    })),
+    gaps: gaps.slice(0, TEMP_STABILIZATION_MAX_GAPS_PER_TURN).map((gap) => ({
+      entityA: gap.entityA,
+      relationshipType: gap.relationshipType,
+      entityB: gap.entityB,
+      gapType: gap.gapType,
+      priority: gap.priority,
+      reason: gap.reason,
+    })),
+  };
+}
+
+function buildPlanWikiFallback(
+  userText: string,
+  priorAssistantText: string,
+  previousPlanWiki: Partial<StoredPlanWiki>,
+  thinkGraphSummary: Record<string, unknown>,
+  knowGraphSummary: Record<string, unknown>,
+): PlanWikiRewriteResult {
+  const entities = Array.isArray(thinkGraphSummary.entities) ? thinkGraphSummary.entities as string[] : [];
+  const triplets = Array.isArray(thinkGraphSummary.triplets) ? thinkGraphSummary.triplets as any[] : [];
+  const graphFacts = Array.isArray(knowGraphSummary.graphFacts) ? knowGraphSummary.graphFacts as any[] : [];
+  const evidence = Array.isArray(knowGraphSummary.evidence) ? knowGraphSummary.evidence as any[] : [];
+  const gaps = Array.isArray(knowGraphSummary.gaps) ? knowGraphSummary.gaps as any[] : [];
+  const sources = Array.from(new Set(
+    [
+      ...(previousPlanWiki.sources || []),
+      ...evidence.map((item) => String(item?.title || item?.url || '').trim()),
+      ...graphFacts.map((item) => String(item?.sourceName || item?.documentId || '').trim()),
+    ].filter(Boolean),
+  )).slice(0, TEMP_STABILIZATION_MAX_PLANWIKI_EVIDENCE);
+  const status: PlanWikiRewriteResult['status'] =
+    graphFacts.length > 0 || evidence.length > 0
+      ? previousPlanWiki.anchor
+        ? 'revised'
+        : 'grounded'
+      : previousPlanWiki.anchor
+        ? 'revised'
+        : 'draft';
+  const whatChanged = [
+    userText ? `The current user request is: ${userText}` : '',
+    triplets.length > 0 ? `ThinkGraph attention is centered on ${triplets.length} entity/relationship triplets.` : '',
+    evidence.length > 0 ? `KnowGraph retrieval produced ${evidence.length} supporting evidence excerpts.` : '',
+    gaps.length > 0 ? `Open grounding gaps remain for ${gaps.length} candidate relationships.` : '',
+  ].filter(Boolean).slice(0, 4);
+  const openQuestions = gaps.length > 0
+    ? gaps.map((gap) => String(gap?.reason || '').trim()).filter(Boolean).slice(0, 4)
+    : previousPlanWiki.openQuestions?.slice(0, 4) || [];
+  const currentTruths = [
+    entities.length > 0 ? `ThinkGraph currently highlights: ${entities.slice(0, 6).join(', ')}.` : '',
+    graphFacts.length > 0
+      ? `Grounded graph context includes relationships such as ${graphFacts.slice(0, 3).map((fact) => `${fact.entityA} ${String(fact.relationshipType || '').replace(/_/g, ' ')} ${fact.entityB}`).join('; ')}.`
+      : '',
+    priorAssistantText ? `The previous assistant reply was steering toward: ${priorAssistantText}` : '',
+  ].filter(Boolean);
+  const planWikiMarkdown = [
+    '# What this is',
+    previousPlanWiki.anchor
+      ? previousPlanWiki.anchor.split('\n\n')[0].replace(/^# .+$/gm, '').trim() || `This is the current working page for ${userText}.`
+      : `This is the current working page for ${userText}.`,
+    '',
+    '# Current understanding',
+    currentTruths.length > 0
+      ? currentTruths.join('\n\n')
+      : 'The current turn did not produce enough grounded context to sharpen the working understanding beyond the user request itself.',
+    '',
+    '# What changed this run',
+    whatChanged.length > 0 ? whatChanged.map((item) => `- ${item}`).join('\n') : '- No material change was established this run.',
+    '',
+    '# Current direction',
+    graphFacts.length > 0 || evidence.length > 0
+      ? 'Use the newly grounded graph and research context to keep the working direction evidence-backed and narrow.'
+      : 'Keep the direction provisional until stronger grounded evidence is available.',
+    '',
+    '# Open questions',
+    openQuestions.length > 0 ? openQuestions.map((item) => `- ${item}`).join('\n') : '- No explicit open questions were extracted this run.',
+    '',
+    '# Next move',
+    userText
+      ? `Use the current request "${userText}" as the next concrete move, while preserving continuity from the prior anchor.`
+      : 'Continue by grounding the next turn and rewriting this page with stronger evidence.',
+  ].join('\n');
+
+  return {
+    planWikiMarkdown,
+    deltaSummary: whatChanged[0] || 'The PlanWiki was refreshed to preserve continuity for the current turn.',
+    status,
+    whatChanged,
+    openQuestions,
+    sources,
+  };
+}
+
+async function rewriteAssistPlanWiki(input: {
+  projectId: string;
+  turnId: string;
+  domain?: unknown;
+  userText: string;
+  priorAssistantText: string;
+  finalAssistantText: string;
+  previousPlanWiki: Partial<StoredPlanWiki>;
+  thinkGraphSummary: Record<string, unknown>;
+  knowGraphSummary: Record<string, unknown>;
+  resolved: ResolvedAgentConfig;
+}): Promise<PlanWikiRewriteResult> {
+  const { projectId, turnId, domain, userText, priorAssistantText, finalAssistantText, previousPlanWiki, thinkGraphSummary, knowGraphSummary, resolved } = input;
+  const promptPayload = {
+    current_user_message: userText,
+    previous_assistant_reply: priorAssistantText,
+    previous_planwiki: previousPlanWiki.anchor || '',
+    thinkgraph_summary: thinkGraphSummary,
+    knowgraph_research_summary: knowGraphSummary,
+    project_metadata: {
+      projectId,
+      turnId,
+      domain: String(domain ?? 'general').trim() || 'general',
+    },
+    assistant_reply_generated_this_turn: finalAssistantText,
+  };
+
+  try {
+    const llmRes = await runLLM(
+      [
+        'Rewrite the full PlanWiki for the current thing.',
+        'The PlanWiki is the directional working page for the current project, idea, product, or topic being developed.',
+        'It is rewritten in full each turn.',
+        'Preserve continuity in meaning unless new context clearly changes it.',
+        'Integrate new evidence explicitly.',
+        'Do not invent unsupported facts.',
+        'Do not add filler or vague fluff.',
+        'Do not turn unresolved issues into false certainty.',
+        'Keep the writing readable, compact, and useful.',
+        'Write the full PlanWiki with exactly these markdown sections:',
+        '# What this is',
+        '# Current understanding',
+        '# What changed this run',
+        '# Current direction',
+        '# Open questions',
+        '# Next move',
+        '',
+        'Then return a short delta summary and a status label.',
+        'Return JSON only.',
+        '',
+        'PlanWiki rewrite input:',
+        JSON.stringify(promptPayload, null, 2),
+      ].join('\n'),
+      {
+        modelKey: resolved.modelKey,
+        provider: resolved.provider,
+        providerModelId: resolved.providerModelId,
+        temperature: Math.min(resolved.temperature ?? 0.2, 0.4),
+        maxTokens: Math.min(resolved.maxTokens ?? 2200, 2600),
+        useResponsesApi: resolved.provider === 'openai',
+        jsonMode: resolved.provider !== 'openai',
+        jsonSchema:
+          resolved.provider === 'openai'
+            ? { name: 'assist_planwiki_rewrite', schema: PLANWIKI_REWRITE_SCHEMA, strict: true }
+            : undefined,
+        system: [
+          resolved.systemPrompt,
+          'You rewrite the PlanWiki for the current thing.',
+          'The PlanWiki is not a generic summary, not a fake PM form, and not motivational filler.',
+          'It must preserve continuity, integrate grounded context, and leave a useful next move.',
+          'Return only JSON.',
+        ].filter(Boolean).join('\n\n'),
+      },
+    );
+    const parsed = tryParseJsonObject(llmRes.text);
+    const statusRaw = String(parsed?.status ?? '').trim().toLowerCase();
+    const planWikiMarkdown = String(parsed?.planWikiMarkdown ?? '').trim();
+    const deltaSummary = String(parsed?.deltaSummary ?? '').trim();
+    if (!planWikiMarkdown || !deltaSummary) {
+      throw new Error('planwiki_invalid_model_output');
+    }
+    return {
+      planWikiMarkdown,
+      deltaSummary,
+      status:
+        statusRaw === 'grounded' || statusRaw === 'revised'
+          ? (statusRaw as PlanWikiRewriteResult['status'])
+          : 'draft',
+      whatChanged: coerceStringList(parsed?.whatChanged, 6),
+      openQuestions: coerceStringList(parsed?.openQuestions, 6),
+      sources: coerceStringList(parsed?.sources, 8),
+    };
+  } catch (error: any) {
+    console.warn(
+      '[PlanWiki] projectId=%s turnId=%s fallback=deterministic reason=%s',
+      projectId,
+      turnId,
+      error?.message || String(error),
+    );
+    return buildPlanWikiFallback(
+      userText,
+      priorAssistantText,
+      previousPlanWiki,
+      thinkGraphSummary,
+      knowGraphSummary,
+    );
+  }
 }
 
 function pickRecentEntityNames(userText: string, entities: KgEntity[], limit = 5): string[] {
@@ -244,6 +686,29 @@ function buildCandidateEdges(userText: string, entities: KgEntity[], relationshi
     .map(({ recency: _recency, order: _order, ...edge }) => edge);
 }
 
+function buildThinkGraphTriplets(candidateEdges: CandidateEdge[]): ThinkGraphTriplet[] {
+  const seen = new Set<string>();
+  const triplets: ThinkGraphTriplet[] = [];
+  for (const edge of candidateEdges) {
+    const entityA = String(edge.entityA || '').trim();
+    const entityB = String(edge.entityB || '').trim();
+    const relationshipType = normalizeRelationType(edge.relationshipType);
+    if (!entityA || !entityB || !relationshipType) continue;
+    const key = `${entityA.toLowerCase()}::${relationshipType}::${entityB.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    triplets.push({
+      entityA,
+      relationshipType,
+      entityB,
+      confidence: typeof edge.confidence === 'number' ? edge.confidence : null,
+      source: edge.source || 'thinkgraph',
+    });
+    if (triplets.length >= TEMP_STABILIZATION_MAX_CANDIDATE_EDGES) break;
+  }
+  return triplets;
+}
+
 function humanizeResearchRelation(value: string): string {
   return normalizeRelationType(value).replace(/_/g, ' ').trim() || 'related to';
 }
@@ -283,6 +748,15 @@ function buildResearchSearchTasks(
       intent: inferResearchIntent(userText, edge),
       priority,
       gap: null,
+      triplet: edge
+        ? {
+            entityA: edge.entityA,
+            relationshipType: normalizeRelationType(edge.relationshipType),
+            entityB: edge.entityB,
+            confidence: typeof edge.confidence === 'number' ? edge.confidence : null,
+            source: edge.source || 'thinkgraph',
+          }
+        : null,
     });
   };
 
@@ -315,12 +789,14 @@ function buildDebugResearchPacket(
   turnId: string,
   userText: string,
   candidateEdges: CandidateEdge[],
+  triplets: ThinkGraphTriplet[],
   entityNames: string[],
+  gaps: KnowGraphGap[] = [],
 ) {
   const priorityRelationships = Array.from(
     new Set(candidateEdges.map((edge) => normalizeRelationType(edge.relationshipType)).filter(Boolean)),
   );
-  const searchTasks = buildResearchSearchTasks(userText, candidateEdges, entityNames);
+  const searchTasks = gaps.length > 0 ? [] : buildResearchSearchTasks(userText, candidateEdges, entityNames);
 
   return {
     projectId,
@@ -329,7 +805,8 @@ function buildDebugResearchPacket(
     priorityEntities: entityNames,
     priorityRelationships,
     attentionEdges: candidateEdges,
-    gaps: [],
+    triplets,
+    gaps,
     searchTasks,
     openQuestions: buildResearchOpenQuestions(candidateEdges),
   };
@@ -565,6 +1042,117 @@ function appendEvidenceRows(
   }
 }
 
+function appendGraphFacts(
+  rows: RetrievedGraphFact[],
+  kept: RetrievedGraphFact[],
+  seenFacts: Set<string>,
+): void {
+  for (const row of rows) {
+    if (!row.entityA || !row.entityB || !row.relationshipType) continue;
+    const key = [
+      row.entityA.toLowerCase(),
+      normalizeRelationType(row.relationshipType),
+      row.entityB.toLowerCase(),
+      String(row.documentId || '').toLowerCase(),
+    ].join('::');
+    if (seenFacts.has(key)) continue;
+    seenFacts.add(key);
+    kept.push(row);
+    if (kept.length >= TEMP_STABILIZATION_MAX_REPLY_GRAPH_FACTS) return;
+  }
+}
+
+async function retrieveGraphFactsForTurn(
+  session: any,
+  projectId: string,
+  attentionEdges: CandidateEdge[],
+  entityNames: string[],
+): Promise<RetrievedGraphFact[]> {
+  const kept: RetrievedGraphFact[] = [];
+  const seenFacts = new Set<string>();
+
+  if (attentionEdges.length > 0) {
+    const edgeResult = await session.run(
+      `
+        UNWIND $edges AS edge
+        MATCH (a)-[r]-(b)
+        WHERE coalesce(a.project_id, '') = $projectId
+          AND coalesce(b.project_id, '') = $projectId
+          AND coalesce(r.project_id, '') = $projectId
+          AND toLower(coalesce(a.name, '')) = edge.entity_a
+          AND toLower(coalesce(b.name, '')) = edge.entity_b
+        RETURN
+          coalesce(a.name, '') AS entity_a,
+          coalesce(r.r_type, type(r), 'related_to') AS relationship_type,
+          coalesce(b.name, '') AS entity_b,
+          coalesce(r.confidence, r.weight) AS confidence,
+          coalesce(r.document_id, a.document_id, b.document_id, '') AS document_id,
+          coalesce(r.source_name, a.source_name, b.source_name, '') AS source_name,
+          coalesce(r.fetched_at, a.fetched_at, b.fetched_at, '') AS fetched_at
+        ORDER BY coalesce(r.fetched_at, a.fetched_at, b.fetched_at, toString(r.created_at), toString(a.created_at)) DESC
+        LIMIT toInteger($limit)
+      `,
+      {
+        projectId,
+        limit: TEMP_STABILIZATION_MAX_REPLY_GRAPH_FACTS,
+        edges: attentionEdges.map((edge) => ({
+          entity_a: edge.entityA.toLowerCase(),
+          entity_b: edge.entityB.toLowerCase(),
+        })),
+      },
+    );
+    const mappedRows = edgeResult.records.map((record: any) => ({
+      entityA: String(record.get('entity_a') || '').trim(),
+      relationshipType: String(record.get('relationship_type') || '').trim(),
+      entityB: String(record.get('entity_b') || '').trim(),
+      confidence: Number.isFinite(Number(record.get('confidence'))) ? Number(record.get('confidence')) : null,
+      documentId: String(record.get('document_id') || '').trim(),
+      sourceName: String(record.get('source_name') || '').trim(),
+      fetchedAt: String(record.get('fetched_at') || '').trim() || null,
+    }));
+    appendGraphFacts(mappedRows, kept, seenFacts);
+  }
+
+  if (kept.length < TEMP_STABILIZATION_MAX_REPLY_GRAPH_FACTS && entityNames.length > 0) {
+    const entityResult = await session.run(
+      `
+        MATCH (a)-[r]-(b)
+        WHERE coalesce(a.project_id, '') = $projectId
+          AND coalesce(b.project_id, '') = $projectId
+          AND coalesce(r.project_id, '') = $projectId
+          AND toLower(coalesce(a.name, '')) IN $entityNames
+        RETURN
+          coalesce(a.name, '') AS entity_a,
+          coalesce(r.r_type, type(r), 'related_to') AS relationship_type,
+          coalesce(b.name, '') AS entity_b,
+          coalesce(r.confidence, r.weight) AS confidence,
+          coalesce(r.document_id, a.document_id, b.document_id, '') AS document_id,
+          coalesce(r.source_name, a.source_name, b.source_name, '') AS source_name,
+          coalesce(r.fetched_at, a.fetched_at, b.fetched_at, '') AS fetched_at
+        ORDER BY coalesce(r.fetched_at, a.fetched_at, b.fetched_at, toString(r.created_at), toString(a.created_at)) DESC
+        LIMIT toInteger($limit)
+      `,
+      {
+        projectId,
+        limit: TEMP_STABILIZATION_MAX_REPLY_GRAPH_FACTS,
+        entityNames: entityNames.map((name) => name.toLowerCase()),
+      },
+    );
+    const mappedRows = entityResult.records.map((record: any) => ({
+      entityA: String(record.get('entity_a') || '').trim(),
+      relationshipType: String(record.get('relationship_type') || '').trim(),
+      entityB: String(record.get('entity_b') || '').trim(),
+      confidence: Number.isFinite(Number(record.get('confidence'))) ? Number(record.get('confidence')) : null,
+      documentId: String(record.get('document_id') || '').trim(),
+      sourceName: String(record.get('source_name') || '').trim(),
+      fetchedAt: String(record.get('fetched_at') || '').trim() || null,
+    }));
+    appendGraphFacts(mappedRows, kept, seenFacts);
+  }
+
+  return kept.slice(0, TEMP_STABILIZATION_MAX_REPLY_GRAPH_FACTS);
+}
+
 function buildWeightedEvidenceQuery(
   userMessage: string,
   attentionEdges: CandidateEdge[],
@@ -670,6 +1258,7 @@ async function retrieveKnowGraphEvidenceForTurn(
   if (!projectId) {
     return {
       evidence: [],
+      graphFacts: [],
       mode: 'disabled',
       weightedResults: 0,
       graphResults: 0,
@@ -677,9 +1266,10 @@ async function retrieveKnowGraphEvidenceForTurn(
   }
 
   const kept: RetrievedEvidence[] = [];
+  const graphFacts = await retrieveGraphFactsForTurn(session, projectId, attentionEdges, entityNames);
   const seenDocs = new Set<string>();
   let weightedResults = 0;
-  let graphResults = 0;
+  let graphResults = graphFacts.length;
 
   if (attentionEdges.length > 0) {
     const edgeRowsResult = await session.run(
@@ -829,16 +1419,36 @@ async function retrieveKnowGraphEvidenceForTurn(
 
   return {
     evidence,
+    graphFacts,
     mode,
     weightedResults,
     graphResults,
   };
 }
 
-function buildReplyContext(userMessage: string, previousResponseId: string | null, evidence: RetrievedEvidence[]) {
+function buildReplyContext(
+  userMessage: string,
+  previousResponseId: string | null,
+  evidence: RetrievedEvidence[],
+  graphFacts: RetrievedGraphFact[],
+  ingestedDocuments: TurnIngestedDocument[] = [],
+) {
   return {
     user_message: userMessage,
     previous_response_id: previousResponseId,
+    ingested_documents: ingestedDocuments.map((item) => ({
+      document_id: item.documentId,
+      file_name: item.fileName,
+    })),
+    graph_context: graphFacts.map((item) => ({
+      entity_a: item.entityA,
+      relationship_type: item.relationshipType,
+      entity_b: item.entityB,
+      confidence: item.confidence,
+      document_id: item.documentId,
+      source_name: item.sourceName,
+      fetched_at: item.fetchedAt,
+    })),
     evidence: evidence.map((item) => ({
       source_title: item.title,
       snippet: item.snippet,
@@ -847,10 +1457,11 @@ function buildReplyContext(userMessage: string, previousResponseId: string | nul
   };
 }
 
-agentRoutes.post('/boss', async (req, res) => {
+agentRoutes.post('/boss', bossUpload.single('file') as any, async (req, res) => {
   const body = req.body || {};
   const { goal, query, q, domain } = body;
   const userText = typeof goal === 'string' ? goal : typeof query === 'string' ? query : typeof q === 'string' ? q : '';
+  const attachedFile = (req as any).file as UploadedFile | undefined;
 
   if (!userText || typeof userText !== 'string') {
     return res.status(400).json({ ok: false, error: "missing_goal", message: "Missing 'goal' (or 'query'/'q') in body" });
@@ -882,8 +1493,95 @@ agentRoutes.post('/boss', async (req, res) => {
     let evidenceMode: RetrievedEvidenceBundle['mode'] = 'disabled';
     let weightedEvidenceResults = 0;
     let graphEvidenceResults = 0;
+    let graphFacts: RetrievedGraphFact[] = [];
+    let knowGraphGaps: KnowGraphGap[] = [];
     let researchDocumentCount = 0;
+    let ingestedDocuments: TurnIngestedDocument[] = [];
+    let projectState: { plan: unknown; links: unknown[]; knowledge: { nodes: unknown[]; edges: unknown[] } } = {
+      plan: [],
+      links: [],
+      knowledge: { nodes: [], edges: [] },
+    };
+    let previousPlanWiki: Partial<StoredPlanWiki> = extractExistingPlanWiki(null);
+    let thinkGraphSummary: Record<string, unknown> = buildThinkGraphPlanWikiSummary([], [], []);
+    let knowGraphSummary: Record<string, unknown> = buildKnowGraphPlanWikiSummary([], [], [], 0, []);
     const previousResponseId = lastResponseIdByProject.get(project) || resolved.previousResponseId || null;
+    const priorAssistantText = lastAssistantTextByProject.get(project) || '';
+    try {
+      projectState = await getProjectState(project);
+      previousPlanWiki = extractExistingPlanWiki(projectState.plan);
+      console.log(
+        '[PlanWiki] projectId=%s loaded_existing status=%s anchor_chars=%d',
+        project,
+        previousPlanWiki.status || 'draft',
+        (previousPlanWiki.anchor || '').length,
+      );
+    } catch (err: any) {
+      console.warn('[PlanWiki] projectId=%s load_failed: %s', project, err?.message || String(err));
+    }
+    console.log(
+      '[TurnPair] projectId=%s turnId=%s prior_assistant_chars=%d user_chars=%d',
+      project,
+      turnId,
+      priorAssistantText.length,
+      userText.length,
+    );
+    if (attachedFile) {
+      if (!isPdfUpload(attachedFile)) {
+        return res.status(400).json({
+          ok: false,
+          error: 'invalid_file_type',
+          message: 'Only PDF attachments are supported by the Assist KnowGraph bridge.',
+        });
+      }
+
+      const requestedDocumentId =
+        typeof body.document_id === 'string' && body.document_id.trim()
+          ? body.document_id.trim()
+          : null;
+      const assistDocumentId = buildAssistUploadDocumentId(project, turnId, attachedFile, requestedDocumentId);
+      try {
+        const upstream = await proxyKnowgraphPdfIngest({
+          projectId: project,
+          documentId: assistDocumentId,
+          file: attachedFile,
+          route: '/api/agents/boss',
+        });
+        if (upstream.status >= 200 && upstream.status < 300 && upstream.data?.ok !== false) {
+          const finalDocumentId = String(upstream.data?.document_id || assistDocumentId).trim() || assistDocumentId;
+          ingestedDocuments = [
+            {
+              documentId: finalDocumentId,
+              fileName: String(attachedFile.originalname || `${finalDocumentId}.pdf`),
+            },
+          ];
+          console.log(
+            '[ASSIST_CHAT][FILE_INGEST] projectId=%s turnId=%s documentId=%s fileName=%s status=ok',
+            project,
+            turnId,
+            finalDocumentId,
+            attachedFile.originalname || `${finalDocumentId}.pdf`,
+          );
+        } else {
+          console.warn(
+            '[ASSIST_CHAT][FILE_INGEST] projectId=%s turnId=%s documentId=%s status=%d message=%s',
+            project,
+            turnId,
+            assistDocumentId,
+            upstream.status,
+            upstream.data?.error?.message || upstream.data?.message || 'ingest_failed',
+          );
+        }
+      } catch (err: any) {
+        console.warn(
+          '[ASSIST_CHAT][FILE_INGEST] projectId=%s turnId=%s documentId=%s failed: %s',
+          project,
+          turnId,
+          assistDocumentId,
+          err?.message || String(err),
+        );
+      }
+    }
     try {
       const thinkGraph = await runKgChatTurnNow({
         projectId: project,
@@ -891,7 +1589,7 @@ agentRoutes.post('/boss', async (req, res) => {
         src: 'chat.auto',
         mode: 'assist',
         userText,
-        assistantText: '',
+        assistantText: priorAssistantText,
       });
       console.log(
         '[ThinkGraph] projectId=%s entities=%d relationships=%d',
@@ -901,6 +1599,12 @@ agentRoutes.post('/boss', async (req, res) => {
       );
 
       const candidateEdges = buildCandidateEdges(userText, thinkGraph.entities, thinkGraph.relationships);
+      const thinkGraphTriplets = buildThinkGraphTriplets(candidateEdges);
+      thinkGraphSummary = buildThinkGraphPlanWikiSummary(
+        thinkGraph.entities,
+        thinkGraph.relationships,
+        thinkGraphTriplets,
+      );
       researchEntityNames = Array.from(
         new Set([
           ...pickRecentEntityNames(userText, thinkGraph.entities, TEMP_STABILIZATION_MAX_PRIORITY_ENTITIES),
@@ -913,40 +1617,82 @@ agentRoutes.post('/boss', async (req, res) => {
         candidateEdges.length,
         researchEntityNames.length,
       );
+      console.log(
+        '[ThinkGraphAttention] projectId=%s turnId=%s edge_sample=%s entity_sample=%s',
+        project,
+        turnId,
+        JSON.stringify(candidateEdges.slice(0, 3)),
+        JSON.stringify(researchEntityNames.slice(0, 6)),
+      );
+      console.log(
+        '[ThinkGraphTriplets] projectId=%s turnId=%s triplets=%d sample=%s',
+        project,
+        turnId,
+        thinkGraphTriplets.length,
+        JSON.stringify(thinkGraphTriplets.slice(0, 4)),
+      );
       if (thinkGraph.relationships.length === 0 && candidateEdges.some((edge) => edge.source === 'fallback')) {
         console.log('[ThinkGraph] fallback synthesized %d candidate edges', candidateEdges.length);
       }
 
-      const researchPacket = buildDebugResearchPacket(
-        project,
-        turnId,
-        userText,
-        candidateEdges,
-        researchEntityNames,
-      );
-      console.log(
-        '[ResearchPacket] projectId=%s edges=%d entities=%d tasks=%d',
-        project,
-        researchPacket.attentionEdges.length,
-        researchPacket.priorityEntities.length,
-        researchPacket.searchTasks.length,
-      );
-
-      try {
-        const researchResult = await runResearchPacketForProject(project, researchPacket, turnId);
-        researchDocumentCount = researchResult.ingested_document_count;
-        console.log(
-          '[Research] projectId=%s turnId=%s ingested_documents=%d',
-          project,
-          researchResult.turn_id,
-          researchResult.ingested_document_count,
-        );
-      } catch (err: any) {
-        console.warn('[Research] projectId=%s turnId=%s failed: %s', project, turnId, err?.message || String(err));
-      }
-
       const neo4jCtx = await openNeo4jSession();
       try {
+        if (neo4jCtx) {
+          knowGraphGaps = candidateEdges.length > 0
+            ? await checkKnowGraphGaps(neo4jCtx.session, project, candidateEdges)
+            : [];
+          console.log(
+            '[GapCheck] projectId=%s turnId=%s candidate_edges=%d gaps=%d',
+            project,
+            turnId,
+            candidateEdges.length,
+            knowGraphGaps.length,
+          );
+          if (knowGraphGaps.length > 0) {
+            console.log(
+              '[GapCheck] projectId=%s turnId=%s gap_sample=%s',
+              project,
+              turnId,
+              JSON.stringify(knowGraphGaps.slice(0, 3)),
+            );
+          }
+        } else {
+          console.log('[GapCheck] projectId=%s turnId=%s skipped=no_neo4j_session', project, turnId);
+        }
+
+        const researchPacket = buildDebugResearchPacket(
+          project,
+          turnId,
+          userText,
+          candidateEdges,
+          thinkGraphTriplets,
+          researchEntityNames,
+          knowGraphGaps,
+        );
+        console.log(
+          '[ResearchPacket] projectId=%s edges=%d triplets=%d entities=%d gaps=%d tasks=%d',
+          project,
+          researchPacket.attentionEdges.length,
+          researchPacket.triplets.length,
+          researchPacket.priorityEntities.length,
+          researchPacket.gaps.length,
+          researchPacket.searchTasks.length,
+        );
+
+        try {
+          const researchResult = await runResearchPacketForProject(project, researchPacket, turnId);
+          researchDocumentCount = researchResult.ingested_document_count;
+          console.log(
+            '[Research] projectId=%s turnId=%s ingested_documents=%d document_ids=%s',
+            project,
+            researchResult.turn_id,
+            researchResult.ingested_document_count,
+            JSON.stringify((researchResult.document_ids || []).slice(0, 6)),
+          );
+        } catch (err: any) {
+          console.warn('[Research] projectId=%s turnId=%s failed: %s', project, turnId, err?.message || String(err));
+        }
+
         if (neo4jCtx) {
           console.log(
             '[KnowGraphQuery] projectId=%s traversal=post_research candidate_edges=%d research_docs=%d',
@@ -963,11 +1709,29 @@ agentRoutes.post('/boss', async (req, res) => {
             turnId,
           );
           evidence = evidenceBundle.evidence;
+          graphFacts = evidenceBundle.graphFacts;
           evidenceMode = evidenceBundle.mode;
           weightedEvidenceResults = evidenceBundle.weightedResults;
           graphEvidenceResults = evidenceBundle.graphResults;
+          console.log(
+            '[KnowGraphRetrieval] projectId=%s turnId=%s graph_facts=%d evidence=%d mode=%s',
+            project,
+            turnId,
+            graphFacts.length,
+            evidence.length,
+            evidenceMode,
+          );
+          if (graphFacts.length > 0) {
+            console.log(
+              '[KnowGraphRetrieval] projectId=%s turnId=%s graph_fact_sample=%s',
+              project,
+              turnId,
+              JSON.stringify(graphFacts.slice(0, 4)),
+            );
+          }
         } else {
           evidence = [];
+          graphFacts = [];
           evidenceMode = 'disabled';
         }
       } finally {
@@ -985,6 +1749,13 @@ agentRoutes.post('/boss', async (req, res) => {
         graphEvidenceResults,
         new Set(evidence.map((item) => item.documentId).filter(Boolean)).size,
       );
+      knowGraphSummary = buildKnowGraphPlanWikiSummary(
+        graphFacts,
+        evidence,
+        knowGraphGaps,
+        researchDocumentCount,
+        ingestedDocuments,
+      );
     } catch (err: any) {
       console.warn('[ASSIST_CHAT] pre-reply loop failed', {
         projectId: project,
@@ -993,7 +1764,13 @@ agentRoutes.post('/boss', async (req, res) => {
       });
     }
 
-    const replyContext = buildReplyContext(userText, previousResponseId, evidence);
+    const replyContext = buildReplyContext(
+      userText,
+      previousResponseId,
+      evidence,
+      graphFacts,
+      ingestedDocuments,
+    );
     try {
       console.log(
         '[RUNTIME_MODEL] route=/api/agents/boss projectId=%s agentType=%s agent_id=%s provider=%s model_key=%s provider_model_id=%s',
@@ -1006,7 +1783,8 @@ agentRoutes.post('/boss', async (req, res) => {
       );
       llmRes = await runLLM(
         [
-          'Answer the user using the provided evidence when relevant.',
+          'Answer the user using the provided graph context and evidence when relevant.',
+          'Treat graph_context as grounded entity/relationship context and evidence as supporting source excerpts.',
           'If the evidence is insufficient or only partially relevant, say so plainly.',
           '',
           'Reply context bundle:',
@@ -1022,6 +1800,7 @@ agentRoutes.post('/boss', async (req, res) => {
           useResponsesApi: resolved.provider === 'openai',
           system: [
             resolved.systemPrompt,
+            'Use graph-grounded entity and relationship context when it is available.',
             'Use retrieved evidence snippets when relevant.',
             'Do not claim unsupported facts.',
             'When you rely on evidence, mention the source title or URL naturally.',
@@ -1036,6 +1815,7 @@ agentRoutes.post('/boss', async (req, res) => {
       console.log('[Reply] generated response', {
         projectId: project,
         evidence: evidence.length,
+        graphFacts: graphFacts.length,
         used_previous_response_id: Boolean(previousResponseId),
       });
     } catch (err: any) {
@@ -1046,6 +1826,60 @@ agentRoutes.post('/boss', async (req, res) => {
     const finalText = (llmRes.text || '').trim();
     if (!finalText) {
       return res.status(502).json({ ok: false, error: 'empty_assistant_reply', message: 'assistant returned empty text' });
+    }
+    lastAssistantTextByProject.set(project, finalText);
+    knowGraphSummary = buildKnowGraphPlanWikiSummary(
+      graphFacts,
+      evidence,
+      knowGraphGaps,
+      researchDocumentCount,
+      ingestedDocuments,
+    );
+    try {
+      const rewrittenPlanWiki = await rewriteAssistPlanWiki({
+        projectId: project,
+        turnId,
+        domain,
+        userText,
+        priorAssistantText,
+        finalAssistantText: finalText,
+        previousPlanWiki,
+        thinkGraphSummary,
+        knowGraphSummary,
+        resolved,
+      });
+      const existingPlanObject =
+        projectState.plan && typeof projectState.plan === 'object' && !Array.isArray(projectState.plan)
+          ? (projectState.plan as Record<string, unknown>)
+          : {};
+      const nextPlanState: StoredPlanWiki & Record<string, unknown> = {
+        ...existingPlanObject,
+        anchor: rewrittenPlanWiki.planWikiMarkdown,
+        whatChanged: rewrittenPlanWiki.whatChanged,
+        openQuestions: rewrittenPlanWiki.openQuestions,
+        sources: rewrittenPlanWiki.sources,
+        deltaSummary: rewrittenPlanWiki.deltaSummary,
+        status: rewrittenPlanWiki.status,
+        updatedAt: new Date().toISOString(),
+        turnId,
+        lastUserMessage: userText,
+      };
+      projectState = await saveProjectState(project, {
+        ...projectState,
+        plan: nextPlanState,
+      });
+      console.log(
+        '[PlanWiki] projectId=%s turnId=%s status=%s anchor_chars=%d what_changed=%d open_questions=%d sources=%d',
+        project,
+        turnId,
+        rewrittenPlanWiki.status,
+        rewrittenPlanWiki.planWikiMarkdown.length,
+        rewrittenPlanWiki.whatChanged.length,
+        rewrittenPlanWiki.openQuestions.length,
+        rewrittenPlanWiki.sources.length,
+      );
+    } catch (err: any) {
+      console.warn('[PlanWiki] projectId=%s turnId=%s save_failed: %s', project, turnId, err?.message || String(err));
     }
 
     // Capture probability (fire-and-forget)

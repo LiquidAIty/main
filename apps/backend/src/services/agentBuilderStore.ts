@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { pool } from '../db/pool';
 import type { AgentCard, AgentConfig } from '../types/agentBuilder';
 type ProjectState = {
-  plan: any[];
+  plan: any;
   links: any[];
   knowledge: { nodes: any[]; edges: any[] };
 };
@@ -156,7 +156,10 @@ function normalizeState(value: unknown): ProjectState {
       }
     : { nodes: [], edges: [] };
   return {
-    plan: Array.isArray(obj.plan) ? obj.plan : [],
+    plan:
+      Array.isArray(obj.plan) || typeof obj.plan === 'string' || (obj.plan && typeof obj.plan === 'object')
+        ? obj.plan
+        : [],
     links: Array.isArray(obj.links) ? obj.links : [],
     knowledge,
   };

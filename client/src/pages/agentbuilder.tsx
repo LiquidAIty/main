@@ -1,13 +1,46 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentCard } from "../types/agentBuilder";
 import { callBossAgent } from "../lib/api";
-import { AgentManager } from "../components/AgentManager";
-import KnowledgeGraphNVL, {
-  type KnowledgeGraphRelationship,
-  type KnowledgeGraphNode,
+import type {
+  KnowledgeGraphRelationship,
+  KnowledgeGraphNode,
 } from "../components/knowledge/KnowledgeGraphNVL";
 import UploadAttachment from "../components/knowledge/UploadAttachment";
+
+const AgentManager = lazy(async () => {
+  const mod = await import("../components/AgentManager");
+  return { default: mod.AgentManager };
+});
+const KnowledgeGraphNVL = lazy(() => import("../components/knowledge/KnowledgeGraphNVL"));
+const PlanWikiLexicalView = lazy(async () => {
+  try {
+    return await import("../components/assist/PlanWikiLexicalView");
+  } catch (error) {
+    console.error("[PlanWikiLexical] lazy import failed", error);
+    return {
+      default: function PlanWikiLexicalFallback(props: {
+        fallbackText: string;
+        textColor: string;
+        emptyText?: string;
+      }) {
+        return (
+          <div
+            style={{
+              color: props.textColor,
+              whiteSpace: "pre-wrap",
+              lineHeight: 1.65,
+              fontSize: 14,
+              minHeight: 120,
+            }}
+          >
+            {safeText(props.fallbackText).trim() || props.emptyText || "No plan text yet."}
+          </div>
+        );
+      },
+    };
+  }
+});
 
 // AgentPage (MVP): left icon rail + main chat + right tabs (Plan, Links, Knowledge, Dashboard)
 // No external deps. Persists per-project to localStorage. Includes mini force-graph.
@@ -52,12 +85,20 @@ function normalizeMessages(input: unknown): { role: "assistant" | "user"; text: 
 }
 
 function normalizePlanItems(input: unknown): PlanItem[] {
-  if (!Array.isArray(input)) return [];
+  const source = Array.isArray(input)
+    ? input
+    : input && typeof input === "object"
+      ? Array.isArray((input as any).tasks)
+        ? (input as any).tasks
+        : Array.isArray((input as any).items)
+          ? (input as any).items
+          : []
+      : [];
   const out: PlanItem[] = [];
-  input.forEach((item: any, idx) => {
-    const text = safeText(item?.text).trim();
+  source.forEach((item: any, idx) => {
+    const text = safeText(item?.text ?? item?.title ?? item).trim();
     if (!text) return;
-    const statusRaw = safeText(item?.status).toLowerCase();
+    const statusRaw = safeText(item?.status ?? item?.state).toLowerCase();
     const status: PlanItem["status"] =
       statusRaw === "approved" || statusRaw === "done" ? (statusRaw as PlanItem["status"]) : "draft";
     out.push({
@@ -292,6 +333,167 @@ type LinkRef = {
   accepted: boolean;
   ts: number;
 };
+
+type AnchorSurface = {
+  anchor: string;
+  whatChanged: string[];
+  openQuestions: string[];
+  sources: string[];
+};
+
+function normalizeTextList(input: unknown): string[] {
+  if (Array.isArray(input)) {
+    return input
+      .map((item: any) => safeText(item?.text ?? item?.title ?? item).trim())
+      .filter(Boolean);
+  }
+  if (typeof input === "string") {
+    return input
+      .split(/\r?\n+/)
+      .map((line) => line.replace(/^[-*]\s*/, "").trim())
+      .filter(Boolean);
+  }
+  if (input && typeof input === "object") {
+    const text = safeText((input as any).text ?? (input as any).title).trim();
+    return text ? [text] : [];
+  }
+  return [];
+}
+
+function buildDerivedAnchorText(
+  input: unknown,
+  context: {
+    messages?: { role: "assistant" | "user"; text: string }[];
+    planItems?: PlanItem[];
+    links?: LinkRef[];
+  } = {},
+): string {
+  const planObj = input && typeof input === "object" && !Array.isArray(input) ? (input as any) : null;
+  const fallbackItems = context.planItems && context.planItems.length > 0
+    ? context.planItems
+    : normalizePlanItems(input);
+  const explicitGoal = safeText(
+    planObj?.goal ??
+    planObj?.title ??
+    planObj?.objective ??
+    (typeof input === "string" ? input : ""),
+  ).trim();
+  const stableNotes = normalizeTextList(
+    planObj?.whatWeKnow ??
+    planObj?.what_we_know ??
+    planObj?.knowledge ??
+    planObj?.knownFacts ??
+    planObj?.facts,
+  );
+  const bestPaths = normalizeTextList(
+    planObj?.bestPaths ??
+    planObj?.best_paths ??
+    planObj?.paths,
+  );
+  const currentBet = safeText(planObj?.currentBet ?? planObj?.current_bet).trim();
+  const nextTry = safeText(planObj?.nextTry ?? planObj?.next_try).trim();
+  const lastUserMessage =
+    [...(Array.isArray(context.messages) ? context.messages : [])]
+      .reverse()
+      .find((message) => message.role === "user")
+      ?.text
+      ?.trim() || "";
+  const lastAssistantMessage =
+    [...(Array.isArray(context.messages) ? context.messages : [])]
+      .reverse()
+      .find((message) => message.role === "assistant")
+      ?.text
+      ?.trim() || "";
+  const sourceCount = Array.isArray(context.links) ? context.links.length : 0;
+  const paragraphs: string[] = [];
+
+  if (explicitGoal) {
+    paragraphs.push(`This pass is anchored on ${explicitGoal}.`);
+  } else if (lastUserMessage) {
+    paragraphs.push(`This pass is anchored on the user's latest request: ${lastUserMessage}`);
+  } else {
+    paragraphs.push("No saved anchor text exists for this Assist project yet.");
+  }
+
+  if (stableNotes.length > 0) {
+    paragraphs.push(`What currently appears stable: ${stableNotes.slice(0, 3).join("; ")}.`);
+  } else if (fallbackItems.length > 0) {
+    paragraphs.push(`Active working threads: ${fallbackItems.slice(0, 3).map((item) => item.text).join("; ")}.`);
+  }
+
+  if (bestPaths.length > 0 || currentBet || nextTry) {
+    const strategyBits = [
+      bestPaths.length > 0 ? `best paths in play: ${bestPaths.slice(0, 3).join("; ")}` : "",
+      currentBet ? `current bet: ${currentBet}` : "",
+      nextTry ? `next try: ${nextTry}` : "",
+    ].filter(Boolean);
+    if (strategyBits.length > 0) {
+      paragraphs.push(`Working direction: ${strategyBits.join(". ")}.`);
+    }
+  }
+
+  if (lastAssistantMessage) {
+    paragraphs.push(`Latest assistant direction: ${lastAssistantMessage}`);
+  }
+
+  if (sourceCount > 0) {
+    paragraphs.push(`This project currently has ${sourceCount} saved source link${sourceCount === 1 ? "" : "s"} available for grounding.`);
+  }
+
+  return paragraphs.join("\n\n");
+}
+
+function normalizeAnchorSurface(
+  input: unknown,
+  context: {
+    messages?: { role: "assistant" | "user"; text: string }[];
+    planItems?: PlanItem[];
+    links?: LinkRef[];
+  } = {},
+): AnchorSurface {
+  const planObj = input && typeof input === "object" && !Array.isArray(input) ? (input as any) : null;
+  const whatChanged = normalizeTextList(
+    planObj?.whatChanged ??
+    planObj?.what_changed ??
+    planObj?.recentChanges ??
+    planObj?.recent_changes ??
+    planObj?.changes ??
+    planObj?.updates,
+  );
+  const openQuestions = normalizeTextList(
+    planObj?.openQuestions ??
+    planObj?.open_questions ??
+    planObj?.unknowns ??
+    planObj?.questions,
+  );
+  const explicitSources = normalizeTextList(planObj?.sources);
+  const derivedSources = Array.isArray(context.links)
+    ? context.links
+        .slice(0, 6)
+        .map((link) => safeText(link.title || link.url).trim())
+        .filter(Boolean)
+    : [];
+  const explicitAnchor = safeText(
+    planObj?.anchor ??
+    planObj?.anchorText ??
+    planObj?.anchor_text ??
+    planObj?.planWiki ??
+    planObj?.plan_wiki ??
+    planObj?.memo ??
+    planObj?.article ??
+    planObj?.summary ??
+    planObj?.body ??
+    planObj?.text ??
+    (typeof input === "string" ? input : ""),
+  ).trim();
+
+  return {
+    anchor: explicitAnchor || buildDerivedAnchorText(input, context),
+    whatChanged,
+    openQuestions,
+    sources: explicitSources.length > 0 ? explicitSources : derivedSources,
+  };
+}
 
 type KNode = {
   id: string;
@@ -2327,14 +2529,15 @@ export default function AgentBuilder() {
   );
 
   const tabs = ["Plan", "Links", "Knowledge", "Dashboard"] as const;
-  const activeTabs = mode === "assist" ? ["Knowledge"] : tabs;
+  const assistTabs = ["Plan", "Links", "Knowledge"] as const;
+  const activeTabs = mode === "assist" ? assistTabs : tabs;
 
-  const [tab, setTab] = useState<string>("Knowledge");
+  const [tab, setTab] = useState<string>("Plan");
   
   // Force tab by mode
   useEffect(() => {
     if (mode === "agents") setTab("Plan");
-    if (mode === "assist") setTab("Knowledge");
+    if (mode === "assist") setTab("Plan");
   }, [mode]);
   useEffect(() => {
     if (mode === "agents" && !selectedAgentProjectId) setSelectedAgentType("llm_chat");
@@ -2554,6 +2757,9 @@ export default function AgentBuilder() {
 
 
   // plan
+  const [planSource, setPlanSource] = useState<unknown>(
+    () => loadProjectState(activeProject, mode).plan,
+  );
   const [plan, setPlan] = useState<PlanItem[]>(
     () => loadProjectState(activeProject, mode).plan,
   );
@@ -2562,6 +2768,10 @@ export default function AgentBuilder() {
   // links
   const [links, setLinks] = useState<LinkRef[]>(
     () => loadProjectState(activeProject, mode).links,
+  );
+  const assistAnchorSurface = useMemo(
+    () => normalizeAnchorSurface(planSource, { messages, planItems: plan, links }),
+    [planSource, messages, plan, links],
   );
   // knowledge graph
   const [cypher, setCypher] = useState("");
@@ -3113,6 +3323,7 @@ export default function AgentBuilder() {
           return;
         }
         setMessages(normalizeMessages(payload.data?.messages));
+        setPlanSource(payload.data?.plan);
         setPlan(normalizePlanItems(payload.data?.plan));
         setLinks(normalizeLinks(payload.data?.links));
         setStateLoaded(true);
@@ -3126,6 +3337,7 @@ export default function AgentBuilder() {
         }
         const next = loadProjectState(projectId);
         setMessages(normalizeMessages(next.messages));
+        setPlanSource(next.plan);
         setPlan(normalizePlanItems(next.plan));
         setLinks(normalizeLinks(next.links));
         setStateLoaded(true);
@@ -3561,6 +3773,7 @@ export default function AgentBuilder() {
       }
       setMessages((prev) => [...prev, { role: "assistant", text: assistantText }]);
       if (mode === "assist" && activeProject) {
+        void loadActiveProjectState();
         window.dispatchEvent(new CustomEvent("knowledge:refresh"));
       }
     } catch (error: any) {
@@ -3916,15 +4129,31 @@ export default function AgentBuilder() {
                               )}
                             </div>
                             <div>
-                              <AgentManager
-                                key={agentManagerRenderKey}
-                                projectId={activeConfigProjectId}
-                                agentType={selectedAgentType}
-                                activeTab={tab}
-                                onGraphRefresh={() => {
-                                  // no-op
-                                }}
-                              />
+                              <Suspense
+                                fallback={
+                                  <div
+                                    style={{
+                                      padding: "12px 14px",
+                                      borderRadius: 8,
+                                      border: `1px solid ${C.border}`,
+                                      background: C.bg,
+                                      color: C.neutral,
+                                    }}
+                                  >
+                                    Loading agent configuration…
+                                  </div>
+                                }
+                              >
+                                <AgentManager
+                                  key={agentManagerRenderKey}
+                                  projectId={activeConfigProjectId}
+                                  agentType={selectedAgentType}
+                                  activeTab={tab}
+                                  onGraphRefresh={() => {
+                                    // no-op
+                                  }}
+                                />
+                              </Suspense>
                             </div>
                           </div>
                         ) : (
@@ -4137,6 +4366,273 @@ export default function AgentBuilder() {
                   </>
                 )}
 
+                {mode === "assist" && tab === "Plan" && (
+                  <div className="space-y-3">
+                    {!activeProject ? (
+                      <div
+                        style={{
+                          padding: "16px",
+                          border: `1px dashed ${C.border}`,
+                          borderRadius: "8px",
+                          color: C.neutral,
+                          background: "#1a1a1a",
+                        }}
+                      >
+                        Select an Assist project to view its plan.
+                      </div>
+                    ) : !stateLoaded ? (
+                      <div
+                        style={{
+                          padding: "16px",
+                          border: `1px solid ${C.border}`,
+                          borderRadius: "8px",
+                          color: C.neutral,
+                          background: C.bg,
+                        }}
+                      >
+                        Loading plan...
+                      </div>
+                    ) : (
+                      <>
+                        <div
+                          style={{
+                            border: `1px solid ${C.border}`,
+                            borderRadius: 8,
+                            padding: "14px 16px",
+                            background: C.bg,
+                          }}
+                        >
+                          <div
+                            className="text-xs"
+                            style={{ color: C.text, fontWeight: 700, marginBottom: 10 }}
+                          >
+                            Plan
+                          </div>
+                          <div style={{ color: C.text }}>
+                            <Suspense
+                              fallback={
+                                <div
+                                  style={{
+                                    color: C.text,
+                                    whiteSpace: "pre-wrap",
+                                    lineHeight: 1.65,
+                                    fontSize: 14,
+                                    minHeight: 120,
+                                  }}
+                                >
+                                  {safeText(assistAnchorSurface.anchor).trim() || "Loading plan document..."}
+                                </div>
+                              }
+                            >
+                              <PlanWikiLexicalView
+                                source={planSource}
+                                fallbackText={safeText(assistAnchorSurface.anchor).trim()}
+                                textColor={C.text}
+                                mutedColor={C.neutral}
+                                emptyText="No plan text yet."
+                              />
+                            </Suspense>
+                          </div>
+                        </div>
+
+                        {assistAnchorSurface.whatChanged.length > 0 && (
+                          <div
+                            style={{
+                              border: `1px solid ${C.border}`,
+                              borderRadius: 8,
+                              padding: "10px 12px",
+                              background: C.bg,
+                            }}
+                          >
+                            <div
+                              className="text-xs"
+                              style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
+                            >
+                              What Changed
+                            </div>
+                            <div className="space-y-2">
+                              {assistAnchorSurface.whatChanged.map((item, index) => (
+                                <div
+                                  key={`what-changed-${index}`}
+                                  style={{
+                                    color: C.neutral,
+                                    lineHeight: 1.45,
+                                    paddingLeft: 10,
+                                    position: "relative",
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      position: "absolute",
+                                      left: 0,
+                                      color: C.primary,
+                                    }}
+                                  >
+                                    •
+                                  </span>
+                                  {safeText(item)}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {assistAnchorSurface.openQuestions.length > 0 && (
+                          <div
+                            style={{
+                              border: `1px solid ${C.border}`,
+                              borderRadius: 8,
+                              padding: "10px 12px",
+                              background: C.bg,
+                            }}
+                          >
+                            <div
+                              className="text-xs"
+                              style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
+                            >
+                              Open Questions
+                            </div>
+                            <div className="space-y-2">
+                              {assistAnchorSurface.openQuestions.map((item, index) => (
+                                <div
+                                  key={`open-question-${index}`}
+                                  style={{
+                                    color: C.neutral,
+                                    lineHeight: 1.45,
+                                    paddingLeft: 10,
+                                    position: "relative",
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      position: "absolute",
+                                      left: 0,
+                                      color: C.primary,
+                                    }}
+                                  >
+                                    •
+                                  </span>
+                                  {safeText(item)}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {assistAnchorSurface.sources.length > 0 && (
+                          <div
+                            style={{
+                              border: `1px solid ${C.border}`,
+                              borderRadius: 8,
+                              padding: "10px 12px",
+                              background: C.bg,
+                            }}
+                          >
+                            <div
+                              className="text-xs"
+                              style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
+                            >
+                              Sources
+                            </div>
+                            <div className="space-y-2">
+                              {assistAnchorSurface.sources.map((item, index) => (
+                                <div
+                                  key={`anchor-source-${index}`}
+                                  style={{
+                                    color: C.neutral,
+                                    lineHeight: 1.45,
+                                    paddingLeft: 10,
+                                    position: "relative",
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      position: "absolute",
+                                      left: 0,
+                                      color: C.primary,
+                                    }}
+                                  >
+                                    •
+                                  </span>
+                                  {safeText(item)}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {mode === "assist" && tab === "Links" && (
+                  <div className="space-y-3">
+                    {links.length > 0 ? (
+                      links.map((l) => (
+                        <div
+                          key={l.id}
+                          style={{
+                            border: `1px solid ${C.border}`,
+                            borderRadius: 8,
+                            padding: "8px",
+                          }}
+                        >
+                          <div
+                            style={{
+                              color: C.text,
+                              fontWeight: 600,
+                            }}
+                          >
+                            {safeText(l.title)}
+                          </div>
+                          <div
+                            className="text-xs"
+                            style={{ opacity: 0.8, margin: "4px 0 8px" }}
+                          >
+                            {safeText(l.url)}
+                          </div>
+                          <div className="flex gap-6 text-sm">
+                            {!l.accepted && (
+                              <button
+                                onClick={() => accept(l.id)}
+                                style={{ color: C.primary }}
+                              >
+                                Accept
+                              </button>
+                            )}
+                            <button
+                              onClick={() => reject(l.id)}
+                              style={{ color: C.warn }}
+                            >
+                              Reject
+                            </button>
+                            <a
+                              href={safeText(l.url)}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{ color: C.neutral }}
+                            >
+                              open
+                            </a>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div
+                        style={{
+                          padding: "16px",
+                          border: `1px solid ${C.border}`,
+                          borderRadius: 8,
+                          color: C.neutral,
+                          background: C.bg,
+                        }}
+                      >
+                        No links in this Assist project yet.
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Knowledge tab - available in both modes */}
                 {tab === "Knowledge" && (
                   <div className="space-y-3 h-full flex flex-col">
@@ -4172,16 +4668,36 @@ export default function AgentBuilder() {
                       </div>
                     )}
                     <div style={{ display: "flex", justifyContent: "center", flex: 1, minHeight: 280 }}>
-                      <KnowledgeGraphNVL
-                        key={`kg-nvl-${graphResetToken}`}
-                        entities={graphVizForNVL.entities}
-                        relationships={graphVizForNVL.relationships}
-                        loading={graphLoading}
-                        expandingEntityId={expandingNodeId}
-                        onThinkGraphExpand={expandGraphFromNode}
-                        onKnowGraphExpand={expandKnowGraphFromEntity}
-                        onRelationshipInspect={setSelectedEdgeEvidence}
-                      />
+                      <Suspense
+                        fallback={
+                          <div
+                            style={{
+                              width: "100%",
+                              minHeight: 280,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              border: `1px solid ${C.border}`,
+                              borderRadius: 8,
+                              background: C.bg,
+                              color: C.neutral,
+                            }}
+                          >
+                            Loading knowledge graph…
+                          </div>
+                        }
+                      >
+                        <KnowledgeGraphNVL
+                          key={`kg-nvl-${graphResetToken}`}
+                          entities={graphVizForNVL.entities}
+                          relationships={graphVizForNVL.relationships}
+                          loading={graphLoading}
+                          expandingEntityId={expandingNodeId}
+                          onThinkGraphExpand={expandGraphFromNode}
+                          onKnowGraphExpand={expandKnowGraphFromEntity}
+                          onRelationshipInspect={setSelectedEdgeEvidence}
+                        />
+                      </Suspense>
                     </div>
                   </div>
                 )}
