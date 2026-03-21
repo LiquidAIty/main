@@ -219,15 +219,15 @@ export default function PlanWikiLexicalView({
             aria-label="Assist PlanWiki document"
             style={{
               color: textColor,
-              lineHeight: 1.65,
-              fontSize: 14,
+              lineHeight: 1.55,
+              fontSize: 13,
               outline: "none",
-              minHeight: 120,
+              minHeight: 72,
             }}
           />
         }
         placeholder={
-          <div style={{ color: mutedColor, fontSize: 14 }}>
+          <div style={{ color: mutedColor, fontSize: 13, lineHeight: 1.5 }}>
             {emptyText}
           </div>
         }

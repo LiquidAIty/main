@@ -55,14 +55,9 @@ Documentation:
     - Weight tuning table
     - Next steps
 
-  ✓ IMPLEMENTATION_SUMMARY.md (400+ lines)
-    - Complete overview
-    - Architecture diagram
-    - Key features
-    - Testing procedures
-    - Integration paths
-    - Production checklist
-    - Files summary
+  ✓ old/IMPLEMENTATION_SUMMARY.md (archived)
+    - Historical implementation summary
+    - Kept for archive/reference
 
   ✓ RAG_FILES.txt (this file)
     - File structure reference
@@ -228,7 +223,7 @@ DOCUMENTATION LINKS
 
 Full docs: docs/RAG_SEARCH.md
 Quick start: QUICKSTART_RAG.md
-Implementation: IMPLEMENTATION_SUMMARY.md
+Implementation: old/IMPLEMENTATION_SUMMARY.md
 This file: RAG_FILES.txt
 
 SIM Reference: https://github.com/simstudioai/sim/blob/main/apps/sim/tools/knowledge/search.ts

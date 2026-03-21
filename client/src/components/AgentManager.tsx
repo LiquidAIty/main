@@ -124,7 +124,19 @@ interface AgentManagerProps {
     finishReason?: string | null;
     usage?: any | null;
   }) => void;
+  localConfig?: AgentManagerLocalConfig | null;
+  onSaveLocalConfig?: (config: AgentManagerLocalConfig) => void;
 }
+
+export type AgentManagerLocalConfig = {
+  provider?: 'openai' | 'openrouter' | '' | null;
+  model_key?: string | null;
+  temperature?: number | null;
+  max_tokens?: number | null;
+  prompt_template?: string | null;
+  tools?: unknown[];
+  response_format?: any | null;
+};
 
 const DEFAULT_KG_RESPONSE_SCHEMA = {
   type: 'object',
@@ -185,11 +197,19 @@ const DEFAULT_KG_RESPONSE_FORMAT = {
   schema: DEFAULT_KG_RESPONSE_SCHEMA,
 };
 
-export function AgentManager({ projectId, agentType, activeTab, onLastRun }: AgentManagerProps) {
+export function AgentManager({
+  projectId,
+  agentType,
+  activeTab,
+  onLastRun,
+  localConfig,
+  onSaveLocalConfig,
+}: AgentManagerProps) {
   const isGraphExtractionAgent =
     agentType === 'kg_ingest' || agentType === 'knowgraph' || agentType === 'neo4j';
   const supportsKnowledgeGuidance = isGraphExtractionAgent || agentType === 'research_agent';
   const resolvedProjectId = String(projectId || '').trim();
+  const isLocalConfigMode = Boolean(localConfig);
   const [loading, setLoading] = useState(false);
   
   // Model registry from backend (grouped by provider)
@@ -281,8 +301,85 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
       .catch(err => console.error('[AgentManager] Failed to load models:', err));
   }, []);
 
+  useEffect(() => {
+    if (!isLocalConfigMode || !localConfig) return;
+
+    const nextProvider =
+      localConfig.provider === 'openai' || localConfig.provider === 'openrouter'
+        ? localConfig.provider
+        : '';
+    const nextResponseFormat = localConfig.response_format;
+
+    setConfigError(null);
+    setConfigErrorCode(null);
+    setProvider(nextProvider);
+    setModelKey(localConfig.model_key || '');
+    setTemperature(typeof localConfig.temperature === 'number' ? localConfig.temperature : '');
+    setTopP('');
+    setMaxTokens(typeof localConfig.max_tokens === 'number' ? localConfig.max_tokens : '');
+    setPreviousResponseIdEnabled(false);
+    setPreviousResponseId('');
+    setPreviousResponseTouched(false);
+    setVersionNote('');
+    setSaveSuccess(null);
+
+    if (nextResponseFormat && typeof nextResponseFormat === 'object') {
+      if (nextResponseFormat.type === 'text') {
+        setResponseFormatType('text');
+        setResponseFormatName('');
+        setResponseFormatSchema('');
+      } else if (nextResponseFormat.type === 'json_schema') {
+        setResponseFormatType('json_schema');
+        setResponseFormatName(
+          nextResponseFormat.name ||
+            nextResponseFormat?.json_schema?.name ||
+            'structured_output',
+        );
+        setResponseFormatSchema(
+          JSON.stringify(
+            nextResponseFormat.schema ?? nextResponseFormat?.json_schema?.schema ?? {},
+            null,
+            2,
+          ),
+        );
+      } else {
+        setResponseFormatType('unset');
+        setResponseFormatName('');
+        setResponseFormatSchema('');
+      }
+      setResponseFormatHasConfig(true);
+    } else {
+      setResponseFormatType('unset');
+      setResponseFormatName('');
+      setResponseFormatSchema('');
+      setResponseFormatHasConfig(false);
+    }
+
+    if (Array.isArray(localConfig.tools)) {
+      setToolsJson(JSON.stringify(localConfig.tools, null, 2));
+      setToolsHasConfig(true);
+    } else {
+      setToolsJson('[]');
+      setToolsHasConfig(false);
+    }
+
+    setToolsError(null);
+    setResponseFormatTouched(false);
+    setToolsTouched(false);
+    setOrganizingPrinciple('');
+    setEntityTaxonomyJson('');
+    setRelationshipTaxonomyJson('');
+    setExtractionPolicyText('');
+    setPromptParts(parsePromptTemplate(localConfig.prompt_template || ''));
+    setCreditStats(null);
+    setDeckVersion(1);
+    setVersions([]);
+    setVersionsEnabled(false);
+  }, [isLocalConfigMode, localConfig]);
+
   // Load project config when project changes
   useEffect(() => {
+    if (isLocalConfigMode) return;
     console.log('[AgentManager] useEffect triggered - projectId:', resolvedProjectId, 'agentType:', agentType);
     if (resolvedProjectId && agentType) {
       console.log('[AgentManager] Loading config for projectId:', resolvedProjectId, 'agentType:', agentType);
@@ -290,7 +387,7 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
     } else {
       console.log('[AgentManager] Skipping config load - missing projectId or agentType');
     }
-  }, [resolvedProjectId, agentType]);
+  }, [resolvedProjectId, agentType, isLocalConfigMode]);
 
   const loadProjectConfig = async () => {
     if (!resolvedProjectId || !agentType) {
@@ -569,6 +666,21 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
         return;
       }
 
+      if (isLocalConfigMode) {
+        onSaveLocalConfig?.({
+          provider: provider || null,
+          model_key: modelKey || null,
+          temperature: typeof temperature === 'number' ? temperature : null,
+          max_tokens: typeof maxTokens === 'number' ? maxTokens : null,
+          prompt_template: composedTemplate,
+          tools: toolsPayload ?? [],
+          response_format: responseFormatPayload,
+        });
+        setSaveSuccess('Card updated');
+        setTimeout(() => setSaveSuccess(null), 3000);
+        return;
+      }
+
       const url = `/api/v2/projects/${resolvedProjectId}/agents/${agentType}/config`;
       const payload: any = {
         provider: provider,
@@ -700,6 +812,18 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
     if (!provider) return [] as Array<{key: string; label: string; providerModelId: string}>;
     return modelsByProvider[provider] || [];
   }, [provider, modelsByProvider]);
+  const modelOptions = useMemo(() => {
+    if (!modelKey) return availableModels;
+    if (availableModels.some((model) => model.key === modelKey)) return availableModels;
+    return [
+      {
+        key: modelKey,
+        label: modelKey,
+        providerModelId: modelKey,
+      },
+      ...availableModels,
+    ];
+  }, [availableModels, modelKey]);
   const supportsSamplingControls = useMemo(() => {
     if (provider !== 'openai') return true;
     const selected = availableModels.find((m) => m.key === modelKey);
@@ -707,7 +831,12 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
     return !/^gpt-5(?:[.-]|$)/.test(modelId);
   }, [provider, availableModels, modelKey]);
 
-  const saveDisabled = loading || !resolvedProjectId || !provider || !modelKey || typeof maxTokens !== 'number';
+  const saveDisabled =
+    loading ||
+    (!isLocalConfigMode && !resolvedProjectId) ||
+    !provider ||
+    !modelKey ||
+    typeof maxTokens !== 'number';
 
   return (
     <div style={{ padding: '16px' }}>
@@ -762,7 +891,7 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
             }}
           >
             <div style={{ color: '#FFFFFF', fontWeight: 600, marginBottom: '4px' }}>Debug Binding</div>
-            <div>current projectId: {resolvedProjectId || '(unset)'}</div>
+            <div>current projectId: {isLocalConfigMode ? '(local selected card)' : resolvedProjectId || '(unset)'}</div>
             <div>current agentType: {agentType}</div>
           </div>
 
@@ -812,7 +941,7 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
               }}
             >
               <option value="">Select model</option>
-              {availableModels.map(m => (
+              {modelOptions.map(m => (
                 <option key={m.key} value={m.key}>
                   {m.label}
                 </option>
@@ -1318,7 +1447,7 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
         </div>
       )}
 
-      {activeTab === 'Plan' && (
+      {!isLocalConfigMode && activeTab === 'Plan' && (
         <div style={{ marginTop: '16px' }}>
           <h4 style={{ margin: '8px 0', color: '#4FA2AD' }}>Versions</h4>
           {versions.length === 0 && (
@@ -1388,7 +1517,7 @@ export function AgentManager({ projectId, agentType, activeTab, onLastRun }: Age
         </div>
       )}
 
-      {activeTab === 'Plan' && (
+      {!isLocalConfigMode && activeTab === 'Plan' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <h3 style={{ margin: 0, color: '#4FA2AD' }}>Test Agent</h3>
           

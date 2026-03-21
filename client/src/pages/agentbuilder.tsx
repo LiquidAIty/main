@@ -1,7 +1,29 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentCard } from "../types/agentBuilder";
+import type { AgentManagerLocalConfig } from "../components/AgentManager";
+import BuilderCanvas from "../components/builder/BuilderCanvas";
+import {
+  buildExecutionPlan,
+  type DeckExecutionPlan,
+} from "../components/builder/deckExecution";
+import {
+  executeSimpleDeck,
+  resolveEffectiveAgent,
+} from "../components/builder/deckRuntime";
+import {
+  validateDeckDocument,
+  type DeckValidationResult,
+} from "../components/builder/deckValidation";
 import { callBossAgent } from "../lib/api";
+import type {
+  AgentCardInstance,
+  AgentTemplate,
+  DeckEdge,
+  DeckDocument,
+  DeckRun,
+  PromptTemplate,
+} from "../types/agentgraph";
 import type {
   KnowledgeGraphRelationship,
   KnowledgeGraphNode,
@@ -341,6 +363,22 @@ type AnchorSurface = {
   sources: string[];
 };
 
+type StructuredAssistPlanSurface = {
+  goal: string;
+  whatMattersNow: string[];
+  nextMove: string[];
+  assumptions: string[];
+  research: string[];
+  openQuestions: string[];
+  humanTasks: string[];
+  agentTasks: string[];
+  pathOptions: string[];
+  explicitPlanText: string;
+  hasExplicitPlanDocument: boolean;
+  whatChanged: string[];
+  sources: string[];
+};
+
 function normalizeTextList(input: unknown): string[] {
   if (Array.isArray(input)) {
     return input
@@ -358,6 +396,156 @@ function normalizeTextList(input: unknown): string[] {
     return text ? [text] : [];
   }
   return [];
+}
+
+function matchesExplicitTaskExecutor(value: unknown, expected: "human" | "agent"): boolean {
+  const normalized = safeText(value).trim().toLowerCase();
+  if (!normalized) return false;
+  if (expected === "human") {
+    return normalized === "human" || normalized === "user" || normalized === "person";
+  }
+  return (
+    normalized === "agent" ||
+    normalized === "assistant" ||
+    normalized === "ai" ||
+    normalized === "automation" ||
+    normalized === "system"
+  );
+}
+
+function normalizeTypedTaskList(input: unknown, expected: "human" | "agent"): string[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((item: any) => {
+      const executor =
+        item?.executorType ??
+        item?.executor_type ??
+        item?.executor ??
+        item?.ownerType ??
+        item?.owner_type;
+      if (!matchesExplicitTaskExecutor(executor, expected)) return "";
+      return safeText(item?.text ?? item?.title ?? item).trim();
+    })
+    .filter(Boolean);
+}
+
+function pickExplicitPlanText(input: unknown): string {
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    const planObj = input as any;
+    return safeText(
+      planObj.anchor ??
+      planObj.anchorText ??
+      planObj.anchor_text ??
+      planObj.planWiki ??
+      planObj.plan_wiki ??
+      planObj.memo ??
+      planObj.article ??
+      planObj.summary ??
+      planObj.body ??
+      planObj.text,
+    ).trim();
+  }
+  if (typeof input === "string") {
+    return input.trim();
+  }
+  return "";
+}
+
+function hasExplicitPlanDocument(input: unknown): boolean {
+  if (pickExplicitPlanText(input)) return true;
+  if (!input || typeof input !== "object" || Array.isArray(input)) return false;
+  const planObj = input as any;
+  return Boolean(
+    planObj.editorState ??
+    planObj.editor_state ??
+    planObj.lexical ??
+    planObj.lexicalState ??
+    planObj.lexical_state ??
+    planObj.planWikiState ??
+    planObj.plan_wiki_state ??
+    planObj.documentState ??
+    planObj.document_state ??
+    planObj.document,
+  );
+}
+
+function buildStructuredAssistPlanSurface(
+  input: unknown,
+  context: {
+    planItems?: PlanItem[];
+    anchorSurface?: AnchorSurface;
+  } = {},
+): StructuredAssistPlanSurface {
+  const planObj = input && typeof input === "object" && !Array.isArray(input) ? (input as any) : null;
+  const planItems = Array.isArray(context.planItems) ? context.planItems : [];
+  const explicitNextMove = normalizeTextList(
+    planObj?.nextMove ??
+    planObj?.next_move ??
+    planObj?.nextTry ??
+    planObj?.next_try,
+  );
+  const explicitHumanTasks = normalizeTextList(planObj?.humanTasks ?? planObj?.human_tasks);
+  const explicitAgentTasks = normalizeTextList(planObj?.agentTasks ?? planObj?.agent_tasks);
+
+  return {
+    goal: safeText(planObj?.goal ?? planObj?.title ?? planObj?.objective).trim(),
+    whatMattersNow: normalizeTextList(
+      planObj?.whatMattersNow ??
+      planObj?.what_matters_now ??
+      planObj?.whatWeKnow ??
+      planObj?.what_we_know ??
+      planObj?.knowledge ??
+      planObj?.knownFacts ??
+      planObj?.facts,
+    ),
+    nextMove:
+      explicitNextMove.length > 0
+        ? explicitNextMove
+        : planItems
+            .filter((item) => item.status !== "done")
+            .slice(0, 3)
+            .map((item) => safeText(item.text).trim())
+            .filter(Boolean),
+    assumptions: normalizeTextList(
+      planObj?.assumptions ??
+      planObj?.assumptionList ??
+      planObj?.assumption_list,
+    ),
+    research: normalizeTextList(
+      planObj?.research ??
+      planObj?.researchSection ??
+      planObj?.research_section ??
+      planObj?.researchTracks ??
+      planObj?.research_tracks,
+    ),
+    openQuestions:
+      context.anchorSurface?.openQuestions ??
+      normalizeTextList(
+        planObj?.openQuestions ??
+        planObj?.open_questions ??
+        planObj?.unknowns ??
+        planObj?.questions,
+      ),
+    humanTasks:
+      explicitHumanTasks.length > 0
+        ? explicitHumanTasks
+        : normalizeTypedTaskList(planObj?.tasks ?? planObj?.items, "human"),
+    agentTasks:
+      explicitAgentTasks.length > 0
+        ? explicitAgentTasks
+        : normalizeTypedTaskList(planObj?.tasks ?? planObj?.items, "agent"),
+    pathOptions: normalizeTextList(
+      planObj?.pathOptions ??
+      planObj?.path_options ??
+      planObj?.bestPaths ??
+      planObj?.best_paths ??
+      planObj?.paths,
+    ),
+    explicitPlanText: pickExplicitPlanText(input),
+    hasExplicitPlanDocument: hasExplicitPlanDocument(input),
+    whatChanged: context.anchorSurface?.whatChanged ?? [],
+    sources: context.anchorSurface?.sources ?? [],
+  };
 }
 
 function buildDerivedAnchorText(
@@ -674,6 +862,205 @@ function agentTypeFromProjectCode(projectCode: string): AgentTypeKey {
   if (code === "agent-builder" || code === "agent_builder") return "agent_builder";
   return "agent_builder";
 }
+
+function buildSeedPromptTemplate(parts: {
+  role: string;
+  goal: string;
+  constraints: string;
+  ioSchema: string;
+  memoryPolicy: string;
+}): string {
+  return `# LIQUIDAITY_PROMPT_V1
+[ROLE]
+${parts.role}
+
+[GOAL]
+${parts.goal}
+
+[CONSTRAINTS]
+${parts.constraints}
+
+[IO_SCHEMA]
+${parts.ioSchema}
+
+[MEMORY_POLICY]
+${parts.memoryPolicy}`;
+}
+
+const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
+  {
+    id: "prompt_research",
+    content: buildSeedPromptTemplate({
+      role: "You gather the most relevant inputs for the deck.",
+      goal: "Collect concrete facts, requirements, and open questions before synthesis.",
+      constraints: "Stay concise. Prefer primary evidence. Flag uncertainty clearly.",
+      ioSchema: "Input: task brief. Output: bullet list of findings and gaps.",
+      memoryPolicy: "Use only the current deck context.",
+    }),
+  },
+  {
+    id: "prompt_synthesis",
+    content: buildSeedPromptTemplate({
+      role: "You synthesize the gathered material into a draft answer.",
+      goal: "Turn the upstream findings into a coherent response structure.",
+      constraints: "Preserve source claims. Do not invent missing evidence.",
+      ioSchema: "Input: research findings. Output: structured draft response.",
+      memoryPolicy: "Rely on upstream cards in this deck.",
+    }),
+  },
+  {
+    id: "prompt_review",
+    content: buildSeedPromptTemplate({
+      role: "You review the draft for correctness and completeness.",
+      goal: "Catch weak claims, missing assumptions, and schema problems.",
+      constraints: "Prefer precise corrections over rewrites.",
+      ioSchema: "Input: synthesized draft. Output: corrections and final pass notes.",
+      memoryPolicy: "Inspect the current draft only.",
+    }),
+  },
+];
+
+const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
+  {
+    id: "template_research",
+    name: "Research",
+    promptTemplate: "prompt_research",
+    model: "gpt-5-mini",
+    provider: "openai",
+    temperature: 0.2,
+    maxTokens: 1400,
+    tools: ["web_search"],
+  },
+  {
+    id: "template_synthesis",
+    name: "Synthesis",
+    promptTemplate: "prompt_synthesis",
+    model: "gpt-5-mini",
+    provider: "openai",
+    temperature: 0.4,
+    maxTokens: 1800,
+    tools: ["response_formatter"],
+  },
+  {
+    id: "template_review",
+    name: "Review",
+    promptTemplate: "prompt_review",
+    model: "gpt-5-mini",
+    provider: "openai",
+    temperature: 0.1,
+    maxTokens: 900,
+    tools: ["validator"],
+  },
+];
+
+const INITIAL_DECK: DeckDocument = {
+  id: "deck_builder",
+  name: "Agent Card Deck",
+  version: 1,
+  nodes: [
+    {
+      id: "card_research",
+      templateId: "template_research",
+      title: "Research",
+      subtitle: "Gather upstream inputs",
+      position: { x: 120, y: 180 },
+      status: "ready",
+      cloneConfig: { enabled: false, seeds: [] },
+    },
+    {
+      id: "card_synthesis",
+      templateId: "template_synthesis",
+      title: "Synthesis",
+      subtitle: "Assemble response draft",
+      position: { x: 430, y: 180 },
+      status: "idle",
+      cloneConfig: { enabled: false, seeds: [] },
+    },
+    {
+      id: "card_review",
+      templateId: "template_review",
+      title: "Review",
+      subtitle: "Check quality and schema",
+      position: { x: 740, y: 180 },
+      status: "idle",
+      cloneConfig: { enabled: false, seeds: [] },
+    },
+  ],
+  edges: [
+    {
+      id: "edge_research_synthesis",
+      source: "card_research",
+      target: "card_synthesis",
+      routeType: "default",
+      priority: 0,
+    },
+    {
+      id: "edge_synthesis_review",
+      source: "card_synthesis",
+      target: "card_review",
+      routeType: "default",
+      priority: 0,
+    },
+  ],
+};
+
+function resolvePromptTemplateContent(
+  promptTemplateId: string | null | undefined,
+  promptTemplates: PromptTemplate[],
+): string {
+  if (!promptTemplateId) return "";
+  return promptTemplates.find((template) => template.id === promptTemplateId)?.content || "";
+}
+
+function resolveAgentTemplate(
+  card: AgentCardInstance | null,
+  templates: AgentTemplate[],
+): AgentTemplate | null {
+  if (!card) return null;
+  return templates.find((template) => template.id === card.templateId) || null;
+}
+
+function mergeTemplateAndOverrides(
+  card: AgentCardInstance | null,
+  templates: AgentTemplate[],
+): AgentTemplate | null {
+  const template = resolveAgentTemplate(card, templates);
+  if (!template) return null;
+  const overrides = card?.overrides || {};
+  return {
+    ...template,
+    ...overrides,
+    tools: overrides.tools || template.tools,
+    skills: overrides.skills || template.skills,
+    personas: overrides.personas || template.personas,
+    knowledgeSources: overrides.knowledgeSources || template.knowledgeSources,
+    ioSchema: overrides.ioSchema || template.ioSchema,
+  };
+}
+
+function sameStringArray(left: string[] | undefined, right: string[] | undefined): boolean {
+  const a = Array.isArray(left) ? left : [];
+  const b = Array.isArray(right) ? right : [];
+  if (a.length !== b.length) return false;
+  return a.every((value, index) => value === b[index]);
+}
+
+function sameObjectShape(
+  left: Record<string, unknown> | null | undefined,
+  right: Record<string, unknown> | null | undefined,
+): boolean {
+  return JSON.stringify(left || null) === JSON.stringify(right || null);
+}
+
+function compactAgentOverrides(
+  overrides: Partial<AgentTemplate>,
+): Partial<AgentTemplate> | undefined {
+  const filtered = Object.fromEntries(
+    Object.entries(overrides).filter(([, value]) => value !== undefined),
+  ) as Partial<AgentTemplate>;
+  return Object.keys(filtered).length > 0 ? filtered : undefined;
+}
+
 // helper: load all project-local state (defaults only; real data is fetched from backend)
 function loadProjectState(_projectId: string, _mode: "assist" | "agents" = "assist") {
   return {
@@ -2497,6 +2884,355 @@ function Chat({
   );
 }
 
+function DeckEdgeInspector({
+  edge,
+  onChange,
+}: {
+  edge: DeckEdge;
+  onChange: (patch: Partial<DeckEdge>) => void;
+}) {
+  return (
+    <div
+      style={{
+        padding: "12px 14px",
+        borderRadius: 8,
+        border: `1px solid ${C.border}`,
+        background: C.bg,
+      }}
+    >
+      <div
+        className="text-xs"
+        style={{ color: C.text, fontWeight: 700, marginBottom: 12 }}
+      >
+        Edge Inspector
+      </div>
+      <div className="space-y-3">
+        <div>
+          <label
+            style={{
+              display: "block",
+              marginBottom: 4,
+              color: C.neutral,
+              fontSize: 12,
+            }}
+          >
+            Route Type
+          </label>
+          <select
+            value={edge.routeType}
+            onChange={(event) =>
+              onChange({
+                routeType: event.target.value as DeckEdge["routeType"],
+              })
+            }
+            style={{
+              width: "100%",
+              padding: "8px",
+              background: C.panel,
+              color: C.text,
+              border: `1px solid ${C.border}`,
+              borderRadius: 4,
+            }}
+          >
+            <option value="default">default</option>
+            <option value="success">success</option>
+            <option value="error">error</option>
+            <option value="conditional">conditional</option>
+          </select>
+        </div>
+
+        <div>
+          <label
+            style={{
+              display: "block",
+              marginBottom: 4,
+              color: C.neutral,
+              fontSize: 12,
+            }}
+          >
+            Condition
+          </label>
+          <input
+            type="text"
+            value={edge.condition || ""}
+            onChange={(event) =>
+              onChange({
+                condition: event.target.value.trim() || undefined,
+              })
+            }
+            placeholder="route condition"
+            style={{
+              width: "100%",
+              padding: "8px",
+              background: C.panel,
+              color: C.text,
+              border: `1px solid ${C.border}`,
+              borderRadius: 4,
+            }}
+          />
+        </div>
+
+        <div>
+          <label
+            style={{
+              display: "block",
+              marginBottom: 4,
+              color: C.neutral,
+              fontSize: 12,
+            }}
+          >
+            Priority
+          </label>
+          <input
+            type="number"
+            value={typeof edge.priority === "number" ? edge.priority : 0}
+            onChange={(event) =>
+              onChange({
+                priority: (() => {
+                  if (event.target.value === "") return undefined;
+                  const nextPriority = Number.parseInt(event.target.value, 10);
+                  return Number.isFinite(nextPriority) ? nextPriority : undefined;
+                })(),
+              })
+            }
+            style={{
+              width: "100%",
+              padding: "8px",
+              background: C.panel,
+              color: C.text,
+              border: `1px solid ${C.border}`,
+              borderRadius: 4,
+            }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BuilderDebugReadout({
+  validationResult,
+  executionPlan,
+  selectedCardId,
+  selectedEdgeId,
+  run,
+}: {
+  validationResult: DeckValidationResult;
+  executionPlan: DeckExecutionPlan;
+  selectedCardId: string | null;
+  selectedEdgeId: string | null;
+  run: DeckRun | null;
+}) {
+  const validationMessages = Array.from(
+    new Set([
+      ...validationResult.errors.map((issue) => `error: ${issue.message}`),
+      ...validationResult.warnings.map((issue) => `warning: ${issue.message}`),
+      ...executionPlan.issues.map((issue) => `plan: ${issue}`),
+    ]),
+  );
+  const latestStep =
+    run && selectedCardId
+      ? [...run.steps].reverse().find((step) => step.cardId === selectedCardId) || null
+      : run
+        ? run.steps[run.steps.length - 1] || null
+        : null;
+
+  return (
+    <div
+      style={{
+        padding: "12px 14px",
+        borderRadius: 8,
+        border: `1px solid ${C.border}`,
+        background: C.bg,
+      }}
+    >
+      <div
+        className="text-xs"
+        style={{ color: C.text, fontWeight: 700, marginBottom: 10 }}
+      >
+        Builder Debug
+      </div>
+      <div className="space-y-2 text-xs">
+        <div>selected card: {selectedCardId || "(none)"}</div>
+        <div>selected edge: {selectedEdgeId || "(none)"}</div>
+        <div>validation: {validationResult.ok ? "ok" : "issues detected"}</div>
+        <div>
+          start cards:{" "}
+          {validationResult.summary.startCardIds.length > 0
+            ? validationResult.summary.startCardIds.join(", ")
+            : "(none)"}
+        </div>
+        <div>
+          simple order:{" "}
+          {executionPlan.simpleOrderCardIds.length > 0
+            ? executionPlan.simpleOrderCardIds.join(" -> ")
+            : "(unavailable)"}
+        </div>
+        <div>expanded steps: {executionPlan.expandedSteps.length}</div>
+        {latestStep && (
+          <>
+            <div>contract: {safeText(latestStep.contract?.task || "(none)")}</div>
+            <div>
+              score:{" "}
+              {typeof latestStep.score === "number"
+                ? `${latestStep.score}/${latestStep.scoreDetail?.maxScore ?? "?"}`
+                : "(unscored)"}
+            </div>
+            <div>passed: {latestStep.passed ? "yes" : "no"}</div>
+          </>
+        )}
+        {validationMessages.length > 0 && (
+          <div
+            style={{
+              maxHeight: 120,
+              overflowY: "auto",
+              paddingTop: 6,
+              borderTop: `1px solid ${C.border}`,
+            }}
+          >
+            {validationMessages.map((message, index) => (
+              <div key={`${message}-${index}`} style={{ marginBottom: 4 }}>
+                {message}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DeckRunReadout({
+  run,
+  selectedCardId,
+}: {
+  run: DeckRun | null;
+  selectedCardId: string | null;
+}) {
+  const selectedCardStep =
+    run && selectedCardId
+      ? [...run.steps].reverse().find((step) => step.cardId === selectedCardId) || null
+      : null;
+
+  return (
+    <div
+      style={{
+        padding: "12px 14px",
+        borderRadius: 8,
+        border: `1px solid ${C.border}`,
+        background: C.bg,
+      }}
+    >
+      <div
+        className="text-xs"
+        style={{ color: C.text, fontWeight: 700, marginBottom: 10 }}
+      >
+        Deck Run
+      </div>
+      {!run ? (
+        <div className="text-xs" style={{ color: C.neutral }}>
+          No deck runs yet.
+        </div>
+      ) : (
+        <div className="space-y-3 text-xs" style={{ color: C.neutral }}>
+          <div>status: {run.status}</div>
+          <div>steps: {run.steps.length}</div>
+          <div>
+            simple order:{" "}
+            {run.executionPlanSummary.simpleOrderCardIds.length > 0
+              ? run.executionPlanSummary.simpleOrderCardIds.join(" -> ")
+              : "(unavailable)"}
+          </div>
+          {run.error && <div style={{ color: C.warn }}>error: {run.error}</div>}
+          {selectedCardStep && (
+            <div
+              style={{
+                paddingTop: 8,
+                borderTop: `1px solid ${C.border}`,
+              }}
+            >
+              <div style={{ color: C.text, fontWeight: 600, marginBottom: 6 }}>
+                Selected Card Output
+              </div>
+              <div>card: {safeText(selectedCardStep.title)}</div>
+              <div>contract: {safeText(selectedCardStep.contract?.task || "(none)")}</div>
+              <div>
+                score:{" "}
+                {typeof selectedCardStep.score === "number"
+                  ? `${selectedCardStep.score}/${selectedCardStep.scoreDetail?.maxScore ?? "?"}`
+                  : "(unscored)"}
+              </div>
+              <div>passed: {selectedCardStep.passed ? "yes" : "no"}</div>
+              {selectedCardStep.seed && <div>seed: {safeText(selectedCardStep.seed)}</div>}
+              <div
+                style={{
+                  marginTop: 6,
+                  maxHeight: 140,
+                  overflowY: "auto",
+                  whiteSpace: "pre-wrap",
+                  fontFamily: "monospace",
+                  background: "#181818",
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 6,
+                  padding: "8px 10px",
+                  color: C.text,
+                }}
+              >
+                {safeText(selectedCardStep.output || selectedCardStep.error || "(no output)")}
+              </div>
+            </div>
+          )}
+          <div
+            style={{
+              maxHeight: 220,
+              overflowY: "auto",
+              paddingTop: 8,
+              borderTop: `1px solid ${C.border}`,
+            }}
+          >
+            {run.steps.length === 0 ? (
+              <div>No execution steps recorded.</div>
+            ) : (
+              run.steps.map((step) => (
+                <div
+                  key={step.id}
+                  style={{
+                    padding: "8px 0",
+                    borderBottom: `1px solid ${C.border}`,
+                  }}
+                >
+                  <div style={{ color: C.text, fontWeight: 600 }}>
+                    {safeText(step.title)} · {safeText(step.status)}
+                  </div>
+                  <div>card: {safeText(step.cardId)}</div>
+                  <div>contract: {safeText(step.contract?.task || "(none)")}</div>
+                  <div>
+                    score:{" "}
+                    {typeof step.score === "number"
+                      ? `${step.score}/${step.scoreDetail?.maxScore ?? "?"}`
+                      : "(unscored)"}
+                  </div>
+                  <div>passed: {step.passed ? "yes" : "no"}</div>
+                  {step.seed && <div>seed: {safeText(step.seed)}</div>}
+                  <div
+                    style={{
+                      marginTop: 4,
+                      whiteSpace: "pre-wrap",
+                      color: C.neutral,
+                    }}
+                  >
+                    {safeText(step.output || step.error || "(no output)").slice(0, 280)}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // -------- Main page --------
 export default function AgentBuilder() {
   const [activeProject, setActiveProject] = useState("");
@@ -2505,6 +3241,15 @@ export default function AgentBuilder() {
   const [mode, setMode] = useState<"assist" | "agents">("assist");
   const [selectedAgentType, setSelectedAgentType] = useState<AgentTypeKey>("llm_chat");
   const [selectedAgentProjectId, setSelectedAgentProjectId] = useState("");
+  const [promptTemplates, setPromptTemplates] = useState<PromptTemplate[]>(INITIAL_PROMPT_TEMPLATES);
+  const [deck, setDeck] = useState<DeckDocument>(INITIAL_DECK);
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [showLegacyAgentConfig, setShowLegacyAgentConfig] = useState(false);
+  // TODO: replace manual deck input with plan-driven execution input.
+  const [deckRunInput, setDeckRunInput] = useState("");
+  const [latestDeckRun, setLatestDeckRun] = useState<DeckRun | null>(null);
+  const [deckRunBusy, setDeckRunBusy] = useState(false);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const messagesByScopeRef = useRef<Record<string, { role: "assistant" | "user"; text: string }[]>>({});
   const [projectLoading, setProjectLoading] = useState(false);
@@ -2596,6 +3341,57 @@ export default function AgentBuilder() {
     selectedAgentProjectId,
     selectedAgentType,
   );
+  const showDeckBuilder = mode === "agents";
+  const selectedCard = useMemo(
+    () => deck.nodes.find((node) => node.id === selectedCardId) || null,
+    [deck.nodes, selectedCardId],
+  );
+  const selectedEdge = useMemo(
+    () => deck.edges.find((edge) => edge.id === selectedEdgeId) || null,
+    [deck.edges, selectedEdgeId],
+  );
+  const selectedTemplate = useMemo(
+    () => resolveAgentTemplate(selectedCard, INITIAL_AGENT_TEMPLATES),
+    [selectedCard],
+  );
+  const effectiveAgent = useMemo(
+    () => (selectedCard ? resolveEffectiveAgent(selectedCard, INITIAL_AGENT_TEMPLATES) : null),
+    [selectedCard],
+  );
+  const selectedCardConfig = useMemo<AgentManagerLocalConfig | null>(() => {
+    if (!effectiveAgent) return null;
+    // TODO: expose skills, personas, and knowledge sources in the existing AgentManager surface.
+    return {
+      provider:
+        effectiveAgent.provider === "openai" || effectiveAgent.provider === "openrouter"
+          ? effectiveAgent.provider
+          : "",
+      model_key: effectiveAgent.model || null,
+      temperature: effectiveAgent.temperature ?? null,
+      max_tokens: effectiveAgent.maxTokens ?? null,
+      prompt_template: resolvePromptTemplateContent(effectiveAgent.promptTemplate, promptTemplates),
+      tools: effectiveAgent.tools,
+      response_format: effectiveAgent.ioSchema
+        ? {
+            type: "json_schema",
+            name: "card_schema",
+            schema: effectiveAgent.ioSchema,
+          }
+        : null,
+    };
+  }, [effectiveAgent, promptTemplates]);
+  const deckValidation = useMemo(
+    () => validateDeckDocument(deck, { enforceStartCard: true }),
+    [deck],
+  );
+  const deckExecutionPlan = useMemo(() => buildExecutionPlan(deck), [deck]);
+  const selectedCardLatestRunStep = useMemo(
+    () =>
+      latestDeckRun && selectedCardId
+        ? [...latestDeckRun.steps].reverse().find((step) => step.cardId === selectedCardId) || null
+        : null,
+    [latestDeckRun, selectedCardId],
+  );
 
   // Boss agent prompt configuration (per project)
   const [bossPromptConfig, setBossPromptConfig] = useState({
@@ -2607,6 +3403,205 @@ export default function AgentBuilder() {
     model: "gpt-5-nano",
     temperature: 0.7,
   });
+
+  useEffect(() => {
+    if (!selectedCardId) return;
+    if (deck.nodes.some((node) => node.id === selectedCardId)) return;
+    setSelectedCardId(null);
+  }, [deck.nodes, selectedCardId]);
+
+  useEffect(() => {
+    if (!selectedEdgeId) return;
+    if (deck.edges.some((edge) => edge.id === selectedEdgeId)) return;
+    setSelectedEdgeId(null);
+  }, [deck.edges, selectedEdgeId]);
+
+  useEffect(() => {
+    setShowLegacyAgentConfig(false);
+  }, [mode, selectedAgentProjectId, selectedAgentType]);
+
+  const handleSelectCard = useCallback((cardId: string | null) => {
+    setSelectedCardId(cardId);
+    if (cardId) {
+      setSelectedEdgeId(null);
+    }
+  }, []);
+
+  const handleSelectEdge = useCallback((edgeId: string | null) => {
+    setSelectedEdgeId(edgeId);
+    if (edgeId) {
+      setSelectedCardId(null);
+    }
+  }, []);
+
+  const handleUpdateSelectedEdge = useCallback((patch: Partial<DeckEdge>) => {
+    if (!selectedEdgeId) return;
+    setDeck((currentDeck) => ({
+      ...currentDeck,
+      version: currentDeck.version + 1,
+      edges: currentDeck.edges.map((edge) =>
+        edge.id === selectedEdgeId
+          ? {
+              ...edge,
+              ...patch,
+            }
+          : edge,
+      ),
+    }));
+  }, [selectedEdgeId]);
+
+  const handleRunDeck = useCallback(async () => {
+    setDeckRunBusy(true);
+    setLatestDeckRun(null);
+
+    try {
+      const run = await executeSimpleDeck(deck, INITIAL_AGENT_TEMPLATES, {
+        input: deckRunInput,
+        promptTemplates,
+        onStep: (_step, snapshot) => {
+          setLatestDeckRun(snapshot);
+        },
+      });
+
+      setLatestDeckRun(run);
+    } catch (err: any) {
+      const now = new Date().toISOString();
+      setLatestDeckRun({
+        id: `deck_run_${uid()}`,
+        deckId: deck.id,
+        startedAt: now,
+        endedAt: now,
+        status: "error",
+        input: deckRunInput,
+        error: err?.message || "Deck run failed.",
+        steps: [],
+        validationSummary: {
+          ok: deckValidation.ok,
+          errors: deckValidation.errors.map((issue) => issue.message),
+          warnings: deckValidation.warnings.map((issue) => issue.message),
+        },
+        executionPlanSummary: {
+          startCardIds: deckExecutionPlan.startCardIds,
+          simpleOrderCardIds: deckExecutionPlan.simpleOrderCardIds,
+          expandedStepIds: deckExecutionPlan.expandedSteps.map((step) => step.executionId),
+        },
+      });
+    } finally {
+      setDeckRunBusy(false);
+    }
+  }, [deck, deckExecutionPlan, deckRunInput, deckValidation, promptTemplates]);
+
+  const handleSaveSelectedCardConfig = useCallback(
+    (nextConfig: AgentManagerLocalConfig) => {
+      if (!selectedCard || !selectedTemplate) return;
+
+      setPromptTemplates((currentPromptTemplates) => {
+        const basePromptTemplateId = selectedTemplate.promptTemplate ?? null;
+        const existingOverridePromptTemplateId = selectedCard.overrides?.promptTemplate ?? null;
+        const basePromptContent = resolvePromptTemplateContent(
+          basePromptTemplateId,
+          currentPromptTemplates,
+        ).trim();
+        const nextPromptContent = String(nextConfig.prompt_template || "").trim();
+        let nextPromptTemplates = currentPromptTemplates;
+        let nextPromptTemplateId: string | null = basePromptTemplateId;
+
+        if (!nextPromptContent) {
+          nextPromptTemplateId = null;
+        } else if (nextPromptContent === basePromptContent) {
+          nextPromptTemplateId = basePromptTemplateId;
+        } else if (
+          existingOverridePromptTemplateId &&
+          existingOverridePromptTemplateId !== basePromptTemplateId &&
+          currentPromptTemplates.some((template) => template.id === existingOverridePromptTemplateId)
+        ) {
+          nextPromptTemplateId = existingOverridePromptTemplateId;
+          nextPromptTemplates = currentPromptTemplates.map((template) =>
+            template.id === existingOverridePromptTemplateId
+              ? { ...template, content: nextPromptContent }
+              : template,
+          );
+        } else {
+          const reusableTemplate = currentPromptTemplates.find(
+            (template) => template.content.trim() === nextPromptContent,
+          );
+          if (reusableTemplate) {
+            nextPromptTemplateId = reusableTemplate.id;
+          } else {
+            nextPromptTemplateId = `prompt_${uid()}`;
+            nextPromptTemplates = [
+              ...currentPromptTemplates,
+              {
+                id: nextPromptTemplateId,
+                content: nextPromptContent,
+              },
+            ];
+          }
+        }
+
+        const nextProvider =
+          nextConfig.provider === "openai" || nextConfig.provider === "openrouter"
+            ? nextConfig.provider
+            : null;
+        const nextModel = String(nextConfig.model_key || "").trim() || null;
+        const nextTemperature =
+          typeof nextConfig.temperature === "number" ? nextConfig.temperature : null;
+        const nextMaxTokens =
+          typeof nextConfig.max_tokens === "number" ? nextConfig.max_tokens : null;
+        const nextTools = Array.isArray(nextConfig.tools)
+          ? nextConfig.tools
+              .filter((tool): tool is string => typeof tool === "string")
+              .map((tool) => tool.trim())
+              .filter(Boolean)
+          : [];
+        const nextIoSchema =
+          nextConfig.response_format?.type === "json_schema" &&
+          nextConfig.response_format?.schema &&
+          typeof nextConfig.response_format.schema === "object"
+            ? (nextConfig.response_format.schema as Record<string, unknown>)
+            : null;
+
+        const nextOverrides = compactAgentOverrides({
+          promptTemplate:
+            nextPromptTemplateId !== (selectedTemplate.promptTemplate ?? null)
+              ? nextPromptTemplateId
+              : undefined,
+          provider:
+            nextProvider !== (selectedTemplate.provider ?? null) ? nextProvider : undefined,
+          model: nextModel !== (selectedTemplate.model ?? null) ? nextModel : undefined,
+          temperature:
+            nextTemperature !== (selectedTemplate.temperature ?? null)
+              ? nextTemperature
+              : undefined,
+          maxTokens:
+            nextMaxTokens !== (selectedTemplate.maxTokens ?? null) ? nextMaxTokens : undefined,
+          tools: !sameStringArray(nextTools, selectedTemplate.tools) ? nextTools : undefined,
+          ioSchema:
+            !sameObjectShape(nextIoSchema, selectedTemplate.ioSchema)
+              ? nextIoSchema || undefined
+              : undefined,
+        });
+
+        setDeck((currentDeck) => ({
+          ...currentDeck,
+          version: currentDeck.version + 1,
+          nodes: currentDeck.nodes.map((node) =>
+            node.id === selectedCard.id
+              ? {
+                  ...node,
+                  overrides: nextOverrides,
+                }
+              : node,
+          ),
+        }));
+
+        return nextPromptTemplates;
+      });
+    },
+    [selectedCard, selectedTemplate],
+  );
+
+  // TODO: persist to backend project_state.workflow_board
   const refreshProjects = useCallback(async (preferredId?: string, filterType?: 'assist' | 'agent', reason?: string) => {
     const seq = ++refreshSeq.current;
     const requestType = "projects-refresh";
@@ -2772,6 +3767,10 @@ export default function AgentBuilder() {
   const assistAnchorSurface = useMemo(
     () => normalizeAnchorSurface(planSource, { messages, planItems: plan, links }),
     [planSource, messages, plan, links],
+  );
+  const structuredAssistPlan = useMemo(
+    () => buildStructuredAssistPlanSurface(planSource, { planItems: plan, anchorSurface: assistAnchorSurface }),
+    [planSource, plan, assistAnchorSurface],
   );
   // knowledge graph
   const [cypher, setCypher] = useState("");
@@ -4011,7 +5010,7 @@ export default function AgentBuilder() {
           }}
         >
           <button
-            title="Project"
+            title={mode === "agents" ? "Deck Workspaces" : "Project"}
             onClick={() => setOpenDrawer("project")}
             className="p-2 rounded"
             style={{ color: C.text }}
@@ -4045,19 +5044,28 @@ export default function AgentBuilder() {
           </button>
         </aside>
 
-        {/* CENTER chat */}
+        {/* CENTER content */}
         <div
           className="h-full transition-[width] duration-300 ease-out min-w-0"
           style={{
             width: panelOpen ? `calc(100% - ${panelWidth}px)` : "100%",
           }}
         >
-          <Chat
-            messages={messages}
-            onSend={handleSend}
-            projectId={activeProject}
-            disabled={sending}
-          />
+          {showDeckBuilder ? (
+            <BuilderCanvas
+              document={deck}
+              setDocument={setDeck}
+              onSelectCard={handleSelectCard}
+              onSelectEdge={handleSelectEdge}
+            />
+          ) : (
+            <Chat
+              messages={messages}
+              onSend={handleSend}
+              projectId={activeProject}
+              disabled={sending}
+            />
+          )}
         </div>
 
         {/* RIGHT panel */}
@@ -4105,7 +5113,7 @@ export default function AgentBuilder() {
                   <>
                     {tab === "Plan" && (
                       <div className="space-y-3">
-                        {activeConfigProjectId ? (
+                        {showDeckBuilder ? (
                           <div className="space-y-4">
                             <div
                               className="text-xs"
@@ -4118,43 +5126,320 @@ export default function AgentBuilder() {
                               }}
                             >
                               <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>
-                                Config Binding
+                                Deck Workspace
                               </div>
-                              <div>current projectId: {activeConfigProjectId}</div>
-                              <div>current agentType: {selectedAgentType}</div>
-                              {SYSTEM_AGENT_TYPES.has(selectedAgentType) && (
-                                <div style={{ opacity: 0.8 }}>
-                                  selected deck: {safeText(selectedAgentProject?.name || selectedAgentProject?.id || "system")}
+                              <div>
+                                workspace:{" "}
+                                {safeText(selectedAgentProject?.name || selectedAgentProject?.id || "(unselected)")}
+                              </div>
+                              <div>
+                                authoring surface: visual deck builder
+                              </div>
+                              {activeConfigProjectId && (
+                                <div style={{ opacity: 0.8, marginTop: 6 }}>
+                                  Legacy config remains available below while drawer-first authoring is retired.
                                 </div>
                               )}
                             </div>
-                            <div>
-                              <Suspense
-                                fallback={
+                            <div
+                              style={{
+                                padding: "12px 14px",
+                                borderRadius: 8,
+                                border: `1px solid ${C.border}`,
+                                background: C.bg,
+                                color: C.neutral,
+                              }}
+                            >
+                              <div
+                                className="text-xs"
+                                style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
+                              >
+                                Deck Runtime
+                              </div>
+                              <textarea
+                                value={deckRunInput}
+                                onChange={(event) => setDeckRunInput(event.target.value)}
+                                placeholder="Manual deck input"
+                                rows={4}
+                                style={{
+                                  width: "100%",
+                                  padding: "10px 12px",
+                                  borderRadius: 8,
+                                  border: `1px solid ${C.border}`,
+                                  background: "#181818",
+                                  color: C.text,
+                                  resize: "vertical",
+                                }}
+                              />
+                              <div
+                                className="flex items-center justify-between gap-3 text-xs"
+                                style={{ marginTop: 10 }}
+                              >
+                                <button
+                                  onClick={handleRunDeck}
+                                  disabled={deckRunBusy || deck.nodes.length === 0}
+                                  style={{
+                                    padding: "8px 12px",
+                                    borderRadius: 8,
+                                    border: `1px solid ${deckRunBusy ? C.border : C.primary}`,
+                                    background: deckRunBusy ? C.panel : "rgba(79,162,173,0.18)",
+                                    color: C.text,
+                                    cursor:
+                                      deckRunBusy || deck.nodes.length === 0
+                                        ? "not-allowed"
+                                        : "pointer",
+                                  }}
+                                >
+                                  {deckRunBusy ? "Running..." : "Run Deck"}
+                                </button>
+                                <div>
+                                  status: {deckRunBusy ? "running" : latestDeckRun?.status || "idle"}
+                                </div>
+                              </div>
+                              {latestDeckRun?.error && (
+                                <div className="text-xs" style={{ marginTop: 8, color: C.warn }}>
+                                  {latestDeckRun.error}
+                                </div>
+                              )}
+                            </div>
+                            {selectedEdge ? (
+                              <>
+                                <div
+                                  className="text-xs"
+                                  style={{
+                                    padding: "10px 12px",
+                                    borderRadius: 8,
+                                    border: `1px solid ${C.border}`,
+                                    background: C.bg,
+                                    color: C.neutral,
+                                  }}
+                                >
+                                  <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>
+                                    Edge Binding
+                                  </div>
+                                  <div>selected edge: {safeText(selectedEdge.id)}</div>
+                                  <div>
+                                    route: {safeText(selectedEdge.source)} {"->"} {safeText(selectedEdge.target)}
+                                  </div>
+                                </div>
+                                <DeckEdgeInspector
+                                  edge={selectedEdge}
+                                  onChange={handleUpdateSelectedEdge}
+                                />
+                              </>
+                            ) : selectedCard && selectedCardConfig ? (
+                              <>
+                                <div
+                                  className="text-xs"
+                                  style={{
+                                    padding: "10px 12px",
+                                    borderRadius: 8,
+                                    border: `1px solid ${C.border}`,
+                                    background: C.bg,
+                                    color: C.neutral,
+                                  }}
+                                >
+                                  <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>
+                                    Card Binding
+                                  </div>
+                                  <div>selected card: {safeText(selectedCard.title)}</div>
+                                  <div>
+                                    template: {safeText(selectedTemplate?.name || selectedCard.templateId)}
+                                  </div>
+                                  <div>deck: {safeText(deck.name)}</div>
+                                </div>
+                                {selectedCardLatestRunStep && (
                                   <div
+                                    className="text-xs"
                                     style={{
-                                      padding: "12px 14px",
+                                      padding: "10px 12px",
                                       borderRadius: 8,
                                       border: `1px solid ${C.border}`,
                                       background: C.bg,
                                       color: C.neutral,
                                     }}
                                   >
-                                    Loading agent configuration…
+                                    <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>
+                                      Latest Card Run
+                                    </div>
+                                    <div>contract: {safeText(selectedCardLatestRunStep.contract?.task || "(none)")}</div>
+                                    <div>
+                                      score:{" "}
+                                      {typeof selectedCardLatestRunStep.score === "number"
+                                        ? `${selectedCardLatestRunStep.score}/${selectedCardLatestRunStep.scoreDetail?.maxScore ?? "?"}`
+                                        : "(unscored)"}
+                                    </div>
+                                    <div>passed: {selectedCardLatestRunStep.passed ? "yes" : "no"}</div>
+                                    {selectedCardLatestRunStep.seed && (
+                                      <div>seed: {safeText(selectedCardLatestRunStep.seed)}</div>
+                                    )}
+                                    <div
+                                      style={{
+                                        marginTop: 6,
+                                        maxHeight: 120,
+                                        overflowY: "auto",
+                                        whiteSpace: "pre-wrap",
+                                        fontFamily: "monospace",
+                                        color: C.text,
+                                      }}
+                                    >
+                                      {safeText(
+                                        selectedCardLatestRunStep.output ||
+                                          selectedCardLatestRunStep.error ||
+                                          "(no output)",
+                                      )}
+                                    </div>
                                   </div>
-                                }
+                                )}
+                                <div>
+                                  <Suspense
+                                    fallback={
+                                      <div
+                                        style={{
+                                          padding: "12px 14px",
+                                          borderRadius: 8,
+                                          border: `1px solid ${C.border}`,
+                                          background: C.bg,
+                                          color: C.neutral,
+                                        }}
+                                      >
+                                        Loading agent configuration…
+                                      </div>
+                                    }
+                                  >
+                                    <AgentManager
+                                      key={`deck-card:${selectedCard.id}`}
+                                      projectId={selectedAgentProjectId || "deck-card"}
+                                      agentType="agent_builder"
+                                      activeTab={tab}
+                                      localConfig={selectedCardConfig}
+                                      onSaveLocalConfig={handleSaveSelectedCardConfig}
+                                      onGraphRefresh={() => {
+                                        // no-op
+                                      }}
+                                    />
+                                  </Suspense>
+                                </div>
+                              </>
+                            ) : (
+                              <div
+                                style={{
+                                  padding: "16px",
+                                  border: `1px dashed ${C.border}`,
+                                  borderRadius: "8px",
+                                  color: C.neutral,
+                                  background: "#1a1a1a",
+                                }}
                               >
-                                <AgentManager
-                                  key={agentManagerRenderKey}
-                                  projectId={activeConfigProjectId}
-                                  agentType={selectedAgentType}
-                                  activeTab={tab}
-                                  onGraphRefresh={() => {
-                                    // no-op
-                                  }}
-                                />
-                              </Suspense>
-                            </div>
+                                Select an agent card or edge on the canvas to edit it in the existing right panel.
+                              </div>
+                            )}
+                            <BuilderDebugReadout
+                              validationResult={deckValidation}
+                              executionPlan={deckExecutionPlan}
+                              selectedCardId={selectedCardId}
+                              selectedEdgeId={selectedEdgeId}
+                              run={latestDeckRun}
+                            />
+                            <DeckRunReadout
+                              run={latestDeckRun}
+                              selectedCardId={selectedCardId}
+                            />
+                            {activeConfigProjectId && (
+                              <div
+                                style={{
+                                  padding: "12px 14px",
+                                  borderRadius: 8,
+                                  border: `1px solid ${C.border}`,
+                                  background: C.bg,
+                                }}
+                              >
+                                <div
+                                  className="flex items-center justify-between gap-3"
+                                  style={{ marginBottom: showLegacyAgentConfig ? 10 : 0 }}
+                                >
+                                  <div
+                                    className="text-xs"
+                                    style={{ color: C.text, fontWeight: 700 }}
+                                  >
+                                    Legacy Config
+                                  </div>
+                                  <button
+                                    onClick={() => setShowLegacyAgentConfig((current) => !current)}
+                                    className="text-xs"
+                                    style={{
+                                      padding: "6px 10px",
+                                      borderRadius: 8,
+                                      border: `1px solid ${C.border}`,
+                                      background: "transparent",
+                                      color: C.text,
+                                    }}
+                                  >
+                                    {showLegacyAgentConfig ? "Hide Legacy Config" : "Open Legacy Config"}
+                                  </button>
+                                </div>
+                                {!showLegacyAgentConfig ? (
+                                  <div className="text-xs" style={{ color: C.neutral }}>
+                                    Deck authoring now happens on the canvas. This fallback stays available temporarily
+                                    for legacy system-agent config.
+                                  </div>
+                                ) : (
+                                  <>
+                                    {/* TODO: remove this legacy AgentManager fallback once all agent workspace authoring is deck-native. */}
+                                    <div className="space-y-4">
+                                    <div
+                                      className="text-xs"
+                                      style={{
+                                        padding: "10px 12px",
+                                        borderRadius: 8,
+                                        border: `1px solid ${C.border}`,
+                                        background: "#1a1a1a",
+                                        color: C.neutral,
+                                      }}
+                                    >
+                                      <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>
+                                        Config Binding
+                                      </div>
+                                      <div>current projectId: {activeConfigProjectId}</div>
+                                      <div>current agentType: {selectedAgentType}</div>
+                                      {SYSTEM_AGENT_TYPES.has(selectedAgentType) && (
+                                        <div style={{ opacity: 0.8 }}>
+                                          selected deck: {safeText(selectedAgentProject?.name || selectedAgentProject?.id || "system")}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div>
+                                      <Suspense
+                                        fallback={
+                                          <div
+                                            style={{
+                                              padding: "12px 14px",
+                                              borderRadius: 8,
+                                              border: `1px solid ${C.border}`,
+                                              background: "#1a1a1a",
+                                              color: C.neutral,
+                                            }}
+                                          >
+                                            Loading legacy configuration…
+                                          </div>
+                                        }
+                                      >
+                                        <AgentManager
+                                          key={agentManagerRenderKey}
+                                          projectId={activeConfigProjectId}
+                                          agentType={selectedAgentType}
+                                          activeTab={tab}
+                                          onGraphRefresh={() => {
+                                            // no-op
+                                          }}
+                                        />
+                                      </Suspense>
+                                    </div>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <div
@@ -4394,48 +5679,182 @@ export default function AgentBuilder() {
                       </div>
                     ) : (
                       <>
+                      <div
+                        style={{
+                          border: `1px solid ${C.border}`,
+                          borderRadius: 8,
+                          padding: "14px 16px",
+                          background: C.bg,
+                        }}
+                      >
                         <div
-                          style={{
-                            border: `1px solid ${C.border}`,
-                            borderRadius: 8,
-                            padding: "14px 16px",
-                            background: C.bg,
-                          }}
+                          className="text-xs"
+                          style={{ color: C.text, fontWeight: 700, marginBottom: 12 }}
                         >
-                          <div
-                            className="text-xs"
-                            style={{ color: C.text, fontWeight: 700, marginBottom: 10 }}
-                          >
-                            Plan
-                          </div>
-                          <div style={{ color: C.text }}>
-                            <Suspense
-                              fallback={
+                          Plan
+                        </div>
+                        <div className="space-y-3">
+                          {[
+                            {
+                              key: "goal",
+                              title: "Goal",
+                              items: structuredAssistPlan.goal ? [structuredAssistPlan.goal] : [],
+                              emptyText: "No goal saved yet.",
+                            },
+                            {
+                              key: "what-matters-now",
+                              title: "What matters now",
+                              items: structuredAssistPlan.whatMattersNow,
+                              emptyText: "No current priorities saved yet.",
+                            },
+                            {
+                              key: "next-move",
+                              title: "Next move",
+                              items: structuredAssistPlan.nextMove,
+                              emptyText: "No next move saved yet.",
+                            },
+                            {
+                              key: "assumptions",
+                              title: "Assumptions",
+                              items: structuredAssistPlan.assumptions,
+                              emptyText: "No assumptions saved yet.",
+                            },
+                            {
+                              key: "research",
+                              title: "Research",
+                              items: structuredAssistPlan.research,
+                              emptyText: "No research section saved yet.",
+                            },
+                            {
+                              key: "open-questions",
+                              title: "Open questions",
+                              items: structuredAssistPlan.openQuestions,
+                              emptyText: "No open questions saved yet.",
+                            },
+                            {
+                              key: "human-tasks",
+                              title: "Human tasks",
+                              items: structuredAssistPlan.humanTasks,
+                              emptyText: "No human tasks saved yet.",
+                            },
+                            {
+                              key: "agent-tasks",
+                              title: "Agent tasks",
+                              items: structuredAssistPlan.agentTasks,
+                              emptyText: "No agent tasks saved yet.",
+                            },
+                            {
+                              key: "path-options",
+                              title: "Path options",
+                              items: structuredAssistPlan.pathOptions,
+                              emptyText: "No path options saved yet.",
+                            },
+                          ].map((section, index) => (
+                            <div
+                              key={section.key}
+                              style={{
+                                paddingTop: index === 0 ? 0 : 10,
+                                borderTop: index === 0 ? "none" : `1px solid ${C.border}`,
+                              }}
+                            >
+                              <div
+                                className="text-[11px]"
+                                style={{
+                                  color: C.text,
+                                  fontWeight: 700,
+                                  marginBottom: 6,
+                                  letterSpacing: "0.03em",
+                                }}
+                              >
+                                {section.title}
+                              </div>
+                              {section.items.length > 0 ? (
+                                <div className="space-y-1.5">
+                                  {section.items.map((item, itemIndex) => (
+                                    <div
+                                      key={`${section.key}-${itemIndex}`}
+                                      style={{
+                                        color: C.neutral,
+                                        lineHeight: 1.45,
+                                        fontSize: 13,
+                                        paddingLeft: 10,
+                                        position: "relative",
+                                      }}
+                                    >
+                                      <span
+                                        style={{
+                                          position: "absolute",
+                                          left: 0,
+                                          color: C.primary,
+                                        }}
+                                      >
+                                        •
+                                      </span>
+                                      {safeText(item)}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
                                 <div
                                   style={{
-                                    color: C.text,
-                                    whiteSpace: "pre-wrap",
-                                    lineHeight: 1.65,
-                                    fontSize: 14,
-                                    minHeight: 120,
+                                    color: C.neutral,
+                                    opacity: 0.75,
+                                    fontSize: 12,
+                                    lineHeight: 1.4,
                                   }}
                                 >
-                                  {safeText(assistAnchorSurface.anchor).trim() || "Loading plan document..."}
+                                  {section.emptyText}
                                 </div>
-                              }
-                            >
-                              <PlanWikiLexicalView
-                                source={planSource}
-                                fallbackText={safeText(assistAnchorSurface.anchor).trim()}
-                                textColor={C.text}
-                                mutedColor={C.neutral}
-                                emptyText="No plan text yet."
-                              />
-                            </Suspense>
-                          </div>
+                              )}
+                            </div>
+                          ))}
                         </div>
+                      </div>
 
-                        {assistAnchorSurface.whatChanged.length > 0 && (
+                        {structuredAssistPlan.hasExplicitPlanDocument && (
+                          <div
+                            style={{
+                              border: `1px solid ${C.border}`,
+                              borderRadius: 8,
+                              padding: "12px 14px",
+                              background: C.bg,
+                            }}
+                          >
+                            <div
+                              className="text-xs"
+                              style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
+                            >
+                              Plan Notes
+                            </div>
+                            <div style={{ color: C.text }}>
+                              <Suspense
+                                fallback={
+                                  <div
+                                    style={{
+                                      color: C.text,
+                                      whiteSpace: "pre-wrap",
+                                      lineHeight: 1.55,
+                                      fontSize: 13,
+                                      minHeight: 72,
+                                    }}
+                                  >
+                                    {structuredAssistPlan.explicitPlanText || "Loading plan notes..."}
+                                  </div>
+                                }
+                              >
+                                <PlanWikiLexicalView
+                                  source={planSource}
+                                  fallbackText=""
+                                  textColor={C.text}
+                                  mutedColor={C.neutral}
+                                  emptyText="No saved plan notes."
+                                />
+                              </Suspense>
+                            </div>
+                          </div>
+                        )}
+
+                        {structuredAssistPlan.whatChanged.length > 0 && (
                           <div
                             style={{
                               border: `1px solid ${C.border}`,
@@ -4451,7 +5870,7 @@ export default function AgentBuilder() {
                               What Changed
                             </div>
                             <div className="space-y-2">
-                              {assistAnchorSurface.whatChanged.map((item, index) => (
+                              {structuredAssistPlan.whatChanged.map((item, index) => (
                                 <div
                                   key={`what-changed-${index}`}
                                   style={{
@@ -4477,49 +5896,7 @@ export default function AgentBuilder() {
                           </div>
                         )}
 
-                        {assistAnchorSurface.openQuestions.length > 0 && (
-                          <div
-                            style={{
-                              border: `1px solid ${C.border}`,
-                              borderRadius: 8,
-                              padding: "10px 12px",
-                              background: C.bg,
-                            }}
-                          >
-                            <div
-                              className="text-xs"
-                              style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
-                            >
-                              Open Questions
-                            </div>
-                            <div className="space-y-2">
-                              {assistAnchorSurface.openQuestions.map((item, index) => (
-                                <div
-                                  key={`open-question-${index}`}
-                                  style={{
-                                    color: C.neutral,
-                                    lineHeight: 1.45,
-                                    paddingLeft: 10,
-                                    position: "relative",
-                                  }}
-                                >
-                                  <span
-                                    style={{
-                                      position: "absolute",
-                                      left: 0,
-                                      color: C.primary,
-                                    }}
-                                  >
-                                    •
-                                  </span>
-                                  {safeText(item)}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {assistAnchorSurface.sources.length > 0 && (
+                        {structuredAssistPlan.sources.length > 0 && (
                           <div
                             style={{
                               border: `1px solid ${C.border}`,
@@ -4535,7 +5912,7 @@ export default function AgentBuilder() {
                               Sources
                             </div>
                             <div className="space-y-2">
-                              {assistAnchorSurface.sources.map((item, index) => (
+                              {structuredAssistPlan.sources.map((item, index) => (
                                 <div
                                   key={`anchor-source-${index}`}
                                   style={{
@@ -4737,7 +6114,7 @@ export default function AgentBuilder() {
 
       {/* drawers */}
       {openDrawer === "project" && (
-        <Drawer title="Project" onClose={() => setOpenDrawer(null)}>
+        <Drawer title={mode === "agents" ? "Deck Workspaces" : "Project"} onClose={() => setOpenDrawer(null)}>
           <div className="space-y-3">
             {/* Mode Selector */}
             <div className="flex gap-2 mb-3">
@@ -4775,13 +6152,13 @@ export default function AgentBuilder() {
               className="text-xs uppercase mb-2 flex items-center justify-between"
               style={{ color: C.neutral }}
             >
-              <span>{mode === 'assist' ? 'Assist Projects' : 'Agent Projects'}</span>
+              <span>{mode === 'assist' ? 'Assist Projects' : 'Deck Workspaces'}</span>
               <button
                 onClick={createProjectPrompt}
                 className="text-[11px] px-2 py-1 rounded"
                 style={{ border: `1px solid ${C.border}`, color: C.text }}
               >
-                {mode === 'assist' ? 'New Project' : 'New Agent'}
+                {mode === 'assist' ? 'New Project' : 'New Workspace'}
               </button>
             </div>
             <div className="space-y-2" style={{ maxHeight: '400px', overflowY: 'auto' }}>
@@ -4841,6 +6218,11 @@ export default function AgentBuilder() {
                                 {safeText(project.code)}
                               </div>
                             )}
+                            {mode === "agents" && (
+                              <div className="opacity-60 text-xs" style={{ marginTop: 4 }}>
+                                Opens in the visual deck builder
+                              </div>
+                            )}
                           </div>
                         </div>
                       </button>
@@ -4894,7 +6276,7 @@ export default function AgentBuilder() {
             <div className="text-xs mt-4" style={{ color: C.neutral }}>
               {mode === 'assist'
                 ? 'Assist projects are shipped product workspaces.'
-                : `System decks save to the active Assist project (${activeProject || "unset"}). Agent Builder workspaces save to their own project.`}
+                : `Agent workspaces open directly in the visual deck builder. Legacy config remains temporarily available in the right panel.`}
             </div>
           </div>
         </Drawer>

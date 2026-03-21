@@ -2,6 +2,11 @@
 
 # LiquidAIty — Agentic AI Core
 
+Current v0 docs:
+- `PROJECT_FULL_SCOPE_V0.md` is the current project source of truth.
+- `REPO_AUDIT_CURRENT_STATE.md` describes what in this repo is active, stale, or should stay untouched for now.
+- Historical markdown notes have been moved to `/old`.
+
 **One backend. Multi‑head frontends. Agent‑0 orchestration. Department agents with tools, memory, and automation.**
 
 This document is the canonical, developer‑focused README for the current system. It covers runtime architecture, agent patterns, math & evaluation, data viz, multi‑head UX, and how to extend every layer without breaking what’s working.
