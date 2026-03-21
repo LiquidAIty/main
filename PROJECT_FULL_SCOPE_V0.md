@@ -1,119 +1,372 @@
-# PROJECT_FULL_SCOPE_V0
+# LIQUIDAIty — PROJECT FULL SCOPE (v0)
 
-This file is the current v0 source of truth for the project.
-It intentionally favors the smallest practical product shape over broader future architecture.
+## Status
+Current
+Owner: Jeremiah
+Purpose: Authoritative project scope and system definition for v0
 
-## What The Product Is
+---
 
-LiquidAIty v0 is a project-based AI workspace.
+# What This System Is
 
-It is not primarily a transcript chatbot.
-It is not primarily a collection of disconnected agent experiments.
+This is not:
 
-For v0, the product is:
-- one project workspace
-- one main working page
-- one assist/reasoning path
-- one visual deck builder for agent-card workflows
-- one right-panel editor for selected card configuration
-- one project state surface that holds the plan/wiki/knowledge context already present in the repo
+- a chatbot
+- a workflow tool
+- a basic multi-agent system
 
-## The v0 Loop
+This is:
 
-The v0 loop should be kept simple:
+**A project-based, contract-driven, graph-informed AI system that improves decisions, plans, and execution quality on every loop.**
 
-1. A user opens a project.
-2. The user works inside the main workspace.
-3. The user can use Assist through the current backend runtime.
-4. The user can create or edit agent-card decks visually in the builder.
-5. The selected card is edited in the existing right panel.
-6. A simple deck can be validated and run locally for inspection.
-7. The project state, plan/wiki, and graph context remain the durable working context.
+Everything else, including trading, research, simulations, and business operations, sits on top of this.
 
-That is enough for v0.
+---
 
-## Main System Parts For v0
+# Core Philosophy
 
-Frontend:
-- `client/src/pages/agentbuilder.tsx` as the main workspace
-- `client/src/components/AgentManager.tsx` as the right-panel editor
-- `client/src/components/builder/*` as the visual deck builder and simple deck runtime
+## 1. Data-Driven Decisions
 
-Backend:
-- `apps/backend/src/routes/agent.routes.ts` as the active Assist runtime path
-- `apps/backend/src/routes/projects.routes.ts` and `projectAgents.routes.ts` for existing project and agent config storage
-- `apps/backend/src/routes/knowgraph.routes.ts` and `apps/backend/src/routes/v2/*` for graph-related work
-- `apps/backend/src/routes/sol.routes.ts` for separate Sol chat paths that still exist
+All decisions move toward:
 
-Supporting services:
-- `services/knowgraph` for Neo4j ingest
-- database-backed project state and agent config stores
+- evidence-backed conclusions through KnowGraph
+- measured outputs through contract scoring
+- reduced reliance on intuition alone
 
-## What Is In Scope Now
+Subjective ideas are allowed, but they must be tested, grounded, and refined.
 
-In scope for v0:
-- keep one main working UI surface
-- keep the visual builder as the primary card/deck authoring path inside Agents mode
-- keep the existing right panel as the only real card editor
-- keep simple deck validation and execution planning
-- keep simple contract-based local deck execution
-- keep the current Assist runtime path alive
-- keep project state and graph-backed context paths that already work
-- reduce repo confusion and markdown sprawl
+## 2. Objective + Subjective Synthesis
 
-## What Is Explicitly Out Of Scope For v0
+The system intentionally combines:
 
-Out of scope for now:
-- full branch or loop deck runtime
-- a second builder or second inspector system
-- large repo-wide refactors
-- replacing the current right-panel editor
-- new orchestration frameworks
-- full graph synthesis and graph-everything expansion
-- full research-deck-to-plan automation if it requires a parallel hidden runtime
-- advanced swarm orchestration
-- speculative abstractions added only for future flexibility
+- **ThinkGraph** for subjective ideas, hypotheses, and plans
+- **KnowGraph** for objective research and evidence
 
-## What v0 Should Preserve
+The system improves by continuously comparing the two and resolving gaps.
 
-v0 should preserve working behavior first:
-- the current main page
-- project selection
-- Assist runtime through the current backend
-- graph visibility and graph ingest paths
-- builder canvas rendering
-- card and edge selection
-- right-panel card editing
-- simple deck runtime debug path
+## 3. Prompt Shaping as the Intelligence Layer
 
-If a cleanup does not directly reduce confusion or stabilize the active path, it is probably not a v0 task.
+AI quality improves through:
 
-## Immediate Build Order
+- `improvementPromptBit`
+- `passforward`
+- issuer-based scoring
 
-The immediate build order should stay narrow:
+This replaces model retraining with runtime learning through prompt shaping.
 
-1. Untangle the repo structure and archive stale docs.
-2. Keep one current source of truth for what v0 is.
-3. Stabilize the active workspace path in `agentbuilder.tsx`.
-4. Keep the React Flow builder path as the only active deck authoring direction.
-5. Keep `AgentManager` as the only active card editor.
-6. Keep `/api/agents/boss` as the active Assist path.
-7. Only after that, decide how deck persistence and deck-to-Assist integration should be tightened.
+## 4. Planning Is the Core Control Surface
 
-## Practical v0 Rules
+Better execution comes from:
 
-- Prefer one working path over multiple partial paths.
-- Prefer existing storage and routes over new systems.
-- Prefer archiving stale ideas over deleting history.
-- Prefer local, explicit cleanup over deep refactors.
-- Prefer stabilizing the current workspace over inventing a cleaner future one.
+- better plans
+- better structured research
+- better decomposition into tasks
 
-## v0 Bottom Line
+The plan is the control layer for downstream execution.
 
-For v0, LiquidAIty should behave like a single project workspace with:
-- a live Assist/runtime path
-- a live graph-backed project context
-- a live visual deck builder
-- a single right-panel editing flow
+## 5. Recursive Improvement
 
-That is the minimum product shape worth stabilizing now.
+### Agent-Level
+
+Each agent run:
+
+- is scored
+- produces improvement signals
+- persists lineage
+
+Future runs improve from past runs.
+
+### Plan-Level
+
+Each loop is:
+
+idea -> research -> compare -> refine -> plan -> execute -> improve -> repeat
+
+---
+
+# Core System Loop
+
+INPUT
+-> CONTRACT
+-> SUBAGENTS (DECK)
+-> SCORED OUTPUTS
+-> GRAPH UPDATE
+-> THINK vs KNOW COMPARISON
+-> PLAN UPDATE
+-> HUMAN REVIEW
+-> DECISION (research loop OR plan ready)
+-> TASK DECOMPOSITION (if ready)
+-> NEXT LOOP
+
+Important:
+
+- research loops still run agents
+- planning loops still run agents
+- execution is continuous
+
+---
+
+# Core System Components
+
+## 1. Project
+
+Projects replace chat as the main container.
+
+A project contains:
+
+- plan
+- scratch state
+- decks
+- runs
+- graphs
+- decisions
+- tasks
+
+This is the container of truth.
+
+## 2. Plan / Wiki Surface
+
+The plan/wiki surface should contain:
+
+- Idea
+- Current Goal
+- ThinkGraph
+- KnowGraph
+- Research Findings
+- Convergences
+- Gaps / Contradictions
+- Recommended Improvements
+- Next Move
+- Tasks
+
+This is the human-readable system brain.
+
+## 3. Deck System
+
+Decks are the execution layer.
+
+- Card = atomic agent step
+- Deck = ordered execution chain
+
+Examples:
+
+- Research Deck
+- Extraction Deck
+- Synthesis Deck
+- Plan Writer Deck
+
+## 4. Contract Runtime
+
+Every card runs through:
+
+contract -> handshake -> execute -> score -> result
+
+Contracts define:
+
+- task
+- constraints
+- output schema
+- scoring
+
+## 5. Graph System
+
+### ThinkGraph
+
+- ideas
+- hypotheses
+- subjective structure
+
+### KnowGraph
+
+- validated research
+- evidence
+
+### AgentGraph
+
+- lineage
+- scores
+- improvements
+
+For v0, AgentGraph is emerging and does not need a large standalone UI yet.
+
+---
+
+# Graph Flow
+
+User Input -> ThinkGraph
+ThinkGraph -> entity/relationship extraction
+-> research agents
+-> KnowGraph
+KnowGraph <-> ThinkGraph comparison
+-> plan refinement
+-> new hypotheses
+
+---
+
+# Context Shaping
+
+Context should be shaped from project state, not raw transcript history.
+
+The working packet should use:
+
+- current input
+- plan summary
+- graph summaries
+- improvement signals
+- next moves
+
+---
+
+# Front Door Reasoner
+
+The front door is a decision engine, not loose chat.
+
+It determines whether the next move is:
+
+- research
+- refine
+- plan
+- execute
+- ask human
+
+---
+
+# Universal Improvement Substrate
+
+Every run should eventually produce:
+
+- `score`
+- `probabilityRight`
+- `improvementPromptBit`
+- `passforward`
+- `lineage`
+
+Rules:
+
+- issuer scores subagents
+- `improvementPromptBit` stays minimal
+- `passforward` carries constraints and context forward
+- runs should persist when the runtime path is ready
+
+For v0, this is the target runtime shape even if parts are still being completed.
+
+---
+
+# Agent Identity
+
+Agent identity is accumulated, evaluated execution history.
+
+---
+
+# Research Process
+
+1. ThinkGraph produces entities and relationships.
+2. Research agents are generated or selected.
+3. Evidence is gathered.
+4. Evidence is written into KnowGraph.
+
+---
+
+# Comparison Layer
+
+The comparison layer should produce:
+
+- confirmed
+- contradicted
+- missing
+- improved
+- next steps
+
+---
+
+# Human Review
+
+At the end of each meaningful turn, the system should support human review:
+
+- continue research
+- plan ready
+- revise assumptions
+
+---
+
+# Plan Formation
+
+The plan should include:
+
+- goal
+- state
+- constraints
+- next steps
+- open questions
+
+---
+
+# Task Decomposition
+
+### Agent Tasks
+
+Executed through decks.
+
+### Human Tasks
+
+Agent-managed or manual.
+
+### Prompt Tasks
+
+Embedded in the plan when needed.
+
+---
+
+# v0 Scope
+
+## In Scope
+
+- contract runtime
+- deck execution
+- research loop
+- ThinkGraph / KnowGraph
+- plan generation
+- human review
+- basic tasking
+- improvement signals
+
+## Out of Scope
+
+- advanced AgentGraph UI
+- complex branching runtime
+- full automation systems
+- domain apps layered on top
+
+---
+
+# Build Order
+
+1. Research Deck
+2. Structured output
+3. Plan transform
+4. Assist trigger
+5. Plan UI
+6. Human review
+7. Tasking
+8. Improvement signals
+
+---
+
+# System Rules
+
+- project state is more important than chat history
+- contracts are required
+- all runs should be scored
+- improvement signals are required
+- ThinkGraph and KnowGraph are distinct
+- plans drive execution
+- humans approve meaningful decisions
+- no uncontrolled agents
+
+---
+
+# Final Definition
+
+LiquidAIty v0 is a recursive, data-grounded decision and execution engine that improves plans, agents, and outcomes through structured research, comparison, and prompt-based learning.
+
+---
