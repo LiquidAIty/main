@@ -2,13 +2,14 @@ import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useStat
 
 import type { AgentCard } from "../types/agentBuilder";
 import type { AgentManagerLocalConfig } from "../components/AgentManager";
-import BuilderCanvas from "../components/builder/BuilderCanvas";
+import BuilderCanvas, {
+  type BuilderCanvasFocusRequest,
+} from "../components/builder/BuilderCanvas";
 import {
   buildExecutionPlan,
   type DeckExecutionPlan,
 } from "../components/builder/deckExecution";
 import {
-  executeSimpleDeck,
   resolveEffectiveAgent,
 } from "../components/builder/deckRuntime";
 import {
@@ -19,10 +20,12 @@ import { callBossAgent } from "../lib/api";
 import type {
   AgentCardInstance,
   AgentTemplate,
+  CardRunResult,
   DeckEdge,
   DeckDocument,
   DeckRun,
   PromptTemplate,
+  RuntimeBinding,
 } from "../types/agentgraph";
 import type {
   KnowledgeGraphRelationship,
@@ -158,6 +161,7 @@ function normalizeLinks(input: unknown): LinkRef[] {
 const uid = () => Math.random().toString(36).slice(2, 8);
 const DEBUG = false;
 const V2_PROJECTS_API = "/api/v2/projects";
+const V3_PROJECTS_API = "/api/v3/projects";
 
 async function safeJson(res: Response): Promise<any | null> {
   if (res.status === 204 || res.status === 304) return null;
@@ -889,6 +893,16 @@ ${parts.memoryPolicy}`;
 
 const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   {
+    id: "prompt_main_chat",
+    content: buildSeedPromptTemplate({
+      role: "You are LiquidAIty main chat. You help the user move the project forward with direct, practical answers.",
+      goal: "Understand the request, answer clearly, and suggest the next useful move when it helps.",
+      constraints: "Do not invent features or hidden state. If context is missing, say so plainly. Do not expose runtime plumbing unless asked.",
+      ioSchema: "Input: user message plus current card context. Output: normal conversational text.",
+      memoryPolicy: "Use only the current input and any explicit deck context passed into this card.",
+    }),
+  },
+  {
     id: "prompt_research",
     content: buildSeedPromptTemplate({
       role: "You gather the most relevant inputs for the deck.",
@@ -921,6 +935,16 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
 ];
 
 const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
+  {
+    id: "template_main_chat",
+    name: "Main Chat",
+    promptTemplate: "prompt_main_chat",
+    model: "gpt-5-mini",
+    provider: "openai",
+    temperature: 0.5,
+    maxTokens: 1600,
+    tools: ["response_formatter"],
+  },
   {
     id: "template_research",
     name: "Research",
@@ -956,8 +980,19 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
 const INITIAL_DECK: DeckDocument = {
   id: "deck_builder",
   name: "Agent Card Deck",
+  promptTemplates: cloneDeckDocument(INITIAL_PROMPT_TEMPLATES),
   version: 1,
   nodes: [
+    {
+      id: "card_main_chat",
+      templateId: "template_main_chat",
+      runtimeBinding: "main_chat",
+      title: "Main Chat",
+      subtitle: "User-facing control response",
+      position: { x: -190, y: 180 },
+      status: "ready",
+      cloneConfig: { enabled: false, seeds: [] },
+    },
     {
       id: "card_research",
       templateId: "template_research",
@@ -988,6 +1023,13 @@ const INITIAL_DECK: DeckDocument = {
   ],
   edges: [
     {
+      id: "edge_main_chat_research",
+      source: "card_main_chat",
+      target: "card_research",
+      routeType: "default",
+      priority: 0,
+    },
+    {
       id: "edge_research_synthesis",
       source: "card_research",
       target: "card_synthesis",
@@ -1002,6 +1044,117 @@ const INITIAL_DECK: DeckDocument = {
       priority: 0,
     },
   ],
+};
+
+const BUILDER_DECK_ID = INITIAL_DECK.id;
+const RUNTIME_BINDING_OPTIONS: Array<{ value: RuntimeBinding | ""; label: string }> = [
+  { value: "", label: "(generic)" },
+  { value: "main_chat", label: "main_chat" },
+];
+
+function cloneDeckDocument<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
+  return value === "main_chat" ? "main_chat" : null;
+}
+
+function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
+  if (!Array.isArray(value)) {
+    return cloneDeckDocument(INITIAL_DECK.nodes);
+  }
+  const nextNodes = value.filter(
+    (node): node is AgentCardInstance =>
+      Boolean(
+        node &&
+          typeof node === "object" &&
+          typeof (node as AgentCardInstance).id === "string" &&
+          typeof (node as AgentCardInstance).templateId === "string",
+      ),
+  );
+  return nextNodes.length > 0
+    ? nextNodes.map((node) => ({
+        ...cloneDeckDocument(node),
+        runtimeBinding: normalizeRuntimeBinding(node.runtimeBinding),
+      }))
+    : cloneDeckDocument(INITIAL_DECK.nodes);
+}
+
+function normalizeDeckPromptTemplates(value: unknown): PromptTemplate[] {
+  if (!Array.isArray(value)) {
+    return cloneDeckDocument(INITIAL_PROMPT_TEMPLATES);
+  }
+  const nextPromptTemplates = value.filter(
+    (template): template is PromptTemplate =>
+      Boolean(
+        template &&
+          typeof template === "object" &&
+          typeof (template as PromptTemplate).id === "string" &&
+          typeof (template as PromptTemplate).content === "string",
+      ),
+  );
+  return nextPromptTemplates.length > 0
+    ? cloneDeckDocument(nextPromptTemplates)
+    : cloneDeckDocument(INITIAL_PROMPT_TEMPLATES);
+}
+
+function seedMainChatIntoLegacyDeck(deck: DeckDocument): DeckDocument {
+  const hasMainChat = deck.nodes.some((node) => node.id === "card_main_chat");
+  const isLegacySeedDeck = ["card_research", "card_synthesis", "card_review"].every((nodeId) =>
+    deck.nodes.some((node) => node.id === nodeId),
+  );
+
+  if (hasMainChat || !isLegacySeedDeck) {
+    return deck;
+  }
+
+  const mainChatNode = INITIAL_DECK.nodes.find((node) => node.id === "card_main_chat");
+  const mainChatEdge = INITIAL_DECK.edges.find((edge) => edge.id === "edge_main_chat_research");
+  const mainChatPromptTemplate = INITIAL_PROMPT_TEMPLATES.find(
+    (template) => template.id === "prompt_main_chat",
+  );
+  if (!mainChatNode || !mainChatEdge || !mainChatPromptTemplate) {
+    return deck;
+  }
+
+  return {
+    ...deck,
+    version: Math.max(deck.version, INITIAL_DECK.version),
+    promptTemplates: deck.promptTemplates.some((template) => template.id === mainChatPromptTemplate.id)
+      ? deck.promptTemplates
+      : [cloneDeckDocument(mainChatPromptTemplate), ...deck.promptTemplates],
+    nodes: [cloneDeckDocument(mainChatNode), ...deck.nodes],
+    edges: deck.edges.some((edge) => edge.id === mainChatEdge.id)
+      ? deck.edges
+      : [cloneDeckDocument(mainChatEdge), ...deck.edges],
+  };
+}
+
+function hydrateDeckDocument(value: Partial<DeckDocument> | null | undefined): DeckDocument {
+  if (!value || typeof value !== "object") {
+    return cloneDeckDocument(INITIAL_DECK);
+  }
+  return seedMainChatIntoLegacyDeck({
+    ...cloneDeckDocument(INITIAL_DECK),
+    ...value,
+    id: String(value.id || INITIAL_DECK.id).trim() || INITIAL_DECK.id,
+    name: String(value.name || INITIAL_DECK.name).trim() || INITIAL_DECK.name,
+    version: Number.isFinite(Number(value.version)) ? Number(value.version) : INITIAL_DECK.version,
+    nodes: normalizeDeckNodes(value.nodes),
+    edges: Array.isArray(value.edges) ? cloneDeckDocument(value.edges) : cloneDeckDocument(INITIAL_DECK.edges),
+    promptTemplates: normalizeDeckPromptTemplates(value.promptTemplates),
+  });
+}
+
+type LatestCardRunRecord = {
+  cardId: string;
+  title: string;
+  templateId: string;
+  runtimeBinding?: RuntimeBinding | null;
+  input: string;
+  effectiveAgent: AgentTemplate;
+  result: CardRunResult;
 };
 
 function resolvePromptTemplateContent(
@@ -3079,6 +3232,11 @@ function BuilderDebugReadout({
                 : "(unscored)"}
             </div>
             <div>passed: {latestStep.passed ? "yes" : "no"}</div>
+            {latestStep.improvementPromptBit && (
+              <div>improvement: {safeText(latestStep.improvementPromptBit)}</div>
+            )}
+            {latestStep.inputSummary && <div>input: {safeText(latestStep.inputSummary)}</div>}
+            {latestStep.outputSummary && <div>output: {safeText(latestStep.outputSummary)}</div>}
           </>
         )}
         {validationMessages.length > 0 && (
@@ -3163,6 +3321,11 @@ function DeckRunReadout({
                   : "(unscored)"}
               </div>
               <div>passed: {selectedCardStep.passed ? "yes" : "no"}</div>
+              {selectedCardStep.improvementPromptBit && (
+                <div>improvement: {safeText(selectedCardStep.improvementPromptBit)}</div>
+              )}
+              {selectedCardStep.inputSummary && <div>input: {safeText(selectedCardStep.inputSummary)}</div>}
+              {selectedCardStep.outputSummary && <div>output: {safeText(selectedCardStep.outputSummary)}</div>}
               {selectedCardStep.seed && <div>seed: {safeText(selectedCardStep.seed)}</div>}
               <div
                 style={{
@@ -3213,6 +3376,11 @@ function DeckRunReadout({
                       : "(unscored)"}
                   </div>
                   <div>passed: {step.passed ? "yes" : "no"}</div>
+                  {step.improvementPromptBit && (
+                    <div>improvement: {safeText(step.improvementPromptBit)}</div>
+                  )}
+                  {step.inputSummary && <div>input: {safeText(step.inputSummary)}</div>}
+                  {step.outputSummary && <div>output: {safeText(step.outputSummary)}</div>}
                   {step.seed && <div>seed: {safeText(step.seed)}</div>}
                   <div
                     style={{
@@ -3241,15 +3409,21 @@ export default function AgentBuilder() {
   const [mode, setMode] = useState<"assist" | "agents">("assist");
   const [selectedAgentType, setSelectedAgentType] = useState<AgentTypeKey>("llm_chat");
   const [selectedAgentProjectId, setSelectedAgentProjectId] = useState("");
-  const [promptTemplates, setPromptTemplates] = useState<PromptTemplate[]>(INITIAL_PROMPT_TEMPLATES);
-  const [deck, setDeck] = useState<DeckDocument>(INITIAL_DECK);
+  const [deck, setDeck] = useState<DeckDocument>(() => hydrateDeckDocument(INITIAL_DECK));
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [builderCanvasFocusRequest, setBuilderCanvasFocusRequest] =
+    useState<BuilderCanvasFocusRequest | null>(null);
   const [showLegacyAgentConfig, setShowLegacyAgentConfig] = useState(false);
   // TODO: replace manual deck input with plan-driven execution input.
   const [deckRunInput, setDeckRunInput] = useState("");
   const [latestDeckRun, setLatestDeckRun] = useState<DeckRun | null>(null);
+  const [latestCardRun, setLatestCardRun] = useState<LatestCardRunRecord | null>(null);
   const [deckRunBusy, setDeckRunBusy] = useState(false);
+  const [cardRunBusy, setCardRunBusy] = useState(false);
+  const [deckLoadBusy, setDeckLoadBusy] = useState(false);
+  const [deckSaveBusy, setDeckSaveBusy] = useState(false);
+  const [deckStatusMessage, setDeckStatusMessage] = useState<string | null>(null);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const messagesByScopeRef = useRef<Record<string, { role: "assistant" | "user"; text: string }[]>>({});
   const [projectLoading, setProjectLoading] = useState(false);
@@ -3336,6 +3510,72 @@ export default function AgentBuilder() {
       (Array.isArray(projects) ? projects : []).find((p) => p.id === selectedAgentProjectId) || null,
     [projects, selectedAgentProjectId],
   );
+
+  useEffect(() => {
+    if (mode !== "agents") return;
+    if (!selectedAgentProjectId) {
+      setDeck(hydrateDeckDocument(INITIAL_DECK));
+      setLatestDeckRun(null);
+      setLatestCardRun(null);
+      setDeckStatusMessage(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    setDeckLoadBusy(true);
+    setDeckStatusMessage("Loading deck workspace...");
+
+    void (async () => {
+      try {
+        const endpoint = `${V3_PROJECTS_API}/${selectedAgentProjectId}/decks/${BUILDER_DECK_ID}`;
+        const payload = await guardedRequest({
+          key: `v3-deck:${selectedAgentProjectId}:${BUILDER_DECK_ID}`,
+          method: "GET",
+          ttlMs: 1_000,
+          signal: controller.signal,
+          fetcher: async (signal) => {
+            const response = await fetch(endpoint, { signal });
+            const data = await safeJson(response);
+            return { response, data };
+          },
+        });
+
+        if (controller.signal.aborted) return;
+        if (!payload.response.ok) {
+          throw new Error(safeText(payload.data?.error || "deck_load_failed"));
+        }
+
+        const nextDeck =
+          payload.data?.deck && typeof payload.data.deck === "object"
+            ? hydrateDeckDocument({ ...(payload.data.deck as DeckDocument), id: BUILDER_DECK_ID })
+            : hydrateDeckDocument(INITIAL_DECK);
+
+        setDeck(nextDeck);
+        setLatestDeckRun(
+          payload.data?.latestRun && typeof payload.data.latestRun === "object"
+            ? (payload.data.latestRun as DeckRun)
+            : null,
+        );
+        setLatestCardRun(null);
+        setDeckStatusMessage(payload.data?.deck ? "Deck loaded." : "Using default deck.");
+      } catch (err: any) {
+        if (controller.signal.aborted) return;
+        setDeck(hydrateDeckDocument(INITIAL_DECK));
+        setLatestDeckRun(null);
+        setLatestCardRun(null);
+        setDeckStatusMessage(err?.message || "Using default deck.");
+      } finally {
+        if (!controller.signal.aborted) {
+          setDeckLoadBusy(false);
+        }
+      }
+    })();
+
+    return () => {
+      controller.abort();
+    };
+  }, [mode, selectedAgentProjectId]);
+
   const agentManagerRenderKey = buildAgentManagerRenderKey(
     activeConfigProjectId,
     selectedAgentProjectId,
@@ -3357,6 +3597,10 @@ export default function AgentBuilder() {
   const effectiveAgent = useMemo(
     () => (selectedCard ? resolveEffectiveAgent(selectedCard, INITIAL_AGENT_TEMPLATES) : null),
     [selectedCard],
+  );
+  const promptTemplates = useMemo(
+    () => normalizeDeckPromptTemplates(deck.promptTemplates),
+    [deck.promptTemplates],
   );
   const selectedCardConfig = useMemo<AgentManagerLocalConfig | null>(() => {
     if (!effectiveAgent) return null;
@@ -3385,12 +3629,21 @@ export default function AgentBuilder() {
     [deck],
   );
   const deckExecutionPlan = useMemo(() => buildExecutionPlan(deck), [deck]);
-  const selectedCardLatestRunStep = useMemo(
+  const drawerBoardCards = useMemo(() => {
+    const orderedIds = deckExecutionPlan.simpleOrderCardIds;
+    const orderedCards = orderedIds
+      .map((cardId) => deck.nodes.find((node) => node.id === cardId) || null)
+      .filter((node): node is AgentCardInstance => Boolean(node));
+    const orderedCardIds = new Set(orderedCards.map((node) => node.id));
+    const remainingCards = deck.nodes.filter((node) => !orderedCardIds.has(node.id));
+    return [...orderedCards, ...remainingCards];
+  }, [deck.nodes, deckExecutionPlan.simpleOrderCardIds]);
+  const selectedCardLatestRun = useMemo(
     () =>
-      latestDeckRun && selectedCardId
-        ? [...latestDeckRun.steps].reverse().find((step) => step.cardId === selectedCardId) || null
+      latestCardRun && selectedCardId && latestCardRun.cardId === selectedCardId
+        ? latestCardRun
         : null,
-    [latestDeckRun, selectedCardId],
+    [latestCardRun, selectedCardId],
   );
 
   // Boss agent prompt configuration (per project)
@@ -3434,6 +3687,38 @@ export default function AgentBuilder() {
     }
   }, []);
 
+  const queueBuilderCanvasFocus = useCallback(
+    (kind: BuilderCanvasFocusRequest["kind"], cardId?: string | null) => {
+      setBuilderCanvasFocusRequest((current) => ({
+        kind,
+        cardId: cardId ?? null,
+        nonce: (current?.nonce || 0) + 1,
+      }));
+    },
+    [],
+  );
+
+  const handleOpenBoardCardFromDrawer = useCallback(
+    (cardId: string) => {
+      setPanelOpen(true);
+      setTab("Plan");
+      setSelectedEdgeId(null);
+      setSelectedCardId(cardId);
+      queueBuilderCanvasFocus("card", cardId);
+      setOpenDrawer(null);
+    },
+    [queueBuilderCanvasFocus],
+  );
+
+  const handleOpenDeckFromDrawer = useCallback(() => {
+    setPanelOpen(true);
+    setTab("Plan");
+    setSelectedCardId(null);
+    setSelectedEdgeId(null);
+    queueBuilderCanvasFocus("deck");
+    setOpenDrawer(null);
+  }, [queueBuilderCanvasFocus]);
+
   const handleUpdateSelectedEdge = useCallback((patch: Partial<DeckEdge>) => {
     if (!selectedEdgeId) return;
     setDeck((currentDeck) => ({
@@ -3450,25 +3735,204 @@ export default function AgentBuilder() {
     }));
   }, [selectedEdgeId]);
 
-  const handleRunDeck = useCallback(async () => {
-    setDeckRunBusy(true);
-    setLatestDeckRun(null);
+  const handleUpdateSelectedCardRuntimeBinding = useCallback(
+    (nextBinding: RuntimeBinding | null) => {
+      if (!selectedCardId) return;
+      setLatestCardRun(null);
+      setLatestDeckRun(null);
+      setDeck((currentDeck) => ({
+        ...currentDeck,
+        version: currentDeck.version + 1,
+        nodes: currentDeck.nodes.map((node) =>
+          node.id === selectedCardId
+            ? {
+                ...node,
+                runtimeBinding: nextBinding,
+              }
+            : node,
+        ),
+      }));
+    },
+    [selectedCardId],
+  );
+
+  const handleSaveDeck = useCallback(async () => {
+    if (!selectedAgentProjectId) {
+      setDeckStatusMessage("Select an Agent workspace before saving.");
+      return;
+    }
+
+    setDeckSaveBusy(true);
+    setDeckStatusMessage("Saving deck...");
 
     try {
-      const run = await executeSimpleDeck(deck, INITIAL_AGENT_TEMPLATES, {
+      const endpoint = `${V3_PROJECTS_API}/${selectedAgentProjectId}/decks/${BUILDER_DECK_ID}`;
+      const response = await fetch(endpoint, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          document: {
+            ...deck,
+            id: BUILDER_DECK_ID,
+          },
+        }),
+      });
+      const data = await safeJson(response);
+
+      if (!response.ok) {
+        throw new Error(safeText(data?.error || "deck_save_failed"));
+      }
+
+      if (data?.deck && typeof data.deck === "object") {
+        setDeck(hydrateDeckDocument({ ...(data.deck as DeckDocument), id: BUILDER_DECK_ID }));
+      }
+      setDeckStatusMessage("Deck saved.");
+    } catch (err: any) {
+      setDeckStatusMessage(err?.message || "Deck save failed.");
+    } finally {
+      setDeckSaveBusy(false);
+    }
+  }, [deck, selectedAgentProjectId]);
+
+  const handleRunSelectedCard = useCallback(async () => {
+    if (!selectedAgentProjectId) {
+      setDeckStatusMessage("Select an Agent workspace before running a card.");
+      return;
+    }
+    if (!selectedCard || !effectiveAgent) {
+      setDeckStatusMessage("Select a card before running it.");
+      return;
+    }
+
+    setCardRunBusy(true);
+    setLatestCardRun(null);
+    setDeckStatusMessage("Running selected card...");
+
+    try {
+      const endpoint = `${V3_PROJECTS_API}/${selectedAgentProjectId}/cards/run`;
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          card: selectedCard,
+          templates: INITIAL_AGENT_TEMPLATES,
+          promptTemplates,
+          input: deckRunInput,
+        }),
+      });
+      const data = await safeJson(response);
+
+      if (!response.ok || !data?.result || typeof data.result !== "object") {
+        throw new Error(safeText(data?.error || "Card run failed."));
+      }
+
+      setLatestCardRun({
+        cardId: selectedCard.id,
+        title: selectedCard.title,
+        templateId: selectedCard.templateId,
+        runtimeBinding: selectedCard.runtimeBinding ?? null,
         input: deckRunInput,
-        promptTemplates,
-        onStep: (_step, snapshot) => {
-          setLatestDeckRun(snapshot);
+        effectiveAgent,
+        result: data.result as CardRunResult,
+      });
+      setDeckStatusMessage("Selected card run complete.");
+    } catch (err: any) {
+      setLatestCardRun({
+        cardId: selectedCard.id,
+        title: selectedCard.title,
+        templateId: selectedCard.templateId,
+        runtimeBinding: selectedCard.runtimeBinding ?? null,
+        input: deckRunInput,
+        effectiveAgent,
+        result: {
+          output: null,
+          status: "error",
+          error: err?.message || "Card run failed.",
+          startedAt: new Date().toISOString(),
+          endedAt: new Date().toISOString(),
         },
       });
+      setDeckStatusMessage(err?.message || "Card run failed.");
+    } finally {
+      setCardRunBusy(false);
+    }
+  }, [
+    deckRunInput,
+    effectiveAgent,
+    promptTemplates,
+    selectedAgentProjectId,
+    selectedCard,
+  ]);
 
-      setLatestDeckRun(run);
+  const handleRunDeck = useCallback(async () => {
+    if (!selectedAgentProjectId) {
+      const now = new Date().toISOString();
+      setLatestDeckRun({
+        id: `deck_run_${uid()}`,
+        deckId: BUILDER_DECK_ID,
+        startedAt: now,
+        endedAt: now,
+        status: "error",
+        input: deckRunInput,
+        error: "Select an Agent workspace before running the deck.",
+        steps: [],
+        validationSummary: {
+          ok: deckValidation.ok,
+          errors: deckValidation.errors.map((issue) => issue.message),
+          warnings: deckValidation.warnings.map((issue) => issue.message),
+        },
+        executionPlanSummary: {
+          startCardIds: deckExecutionPlan.startCardIds,
+          simpleOrderCardIds: deckExecutionPlan.simpleOrderCardIds,
+          expandedStepIds: deckExecutionPlan.expandedSteps.map((step) => step.executionId),
+        },
+      });
+      return;
+    }
+
+    setDeckRunBusy(true);
+    setLatestCardRun(null);
+    setLatestDeckRun(null);
+    setDeckStatusMessage("Running deck...");
+
+    try {
+      const endpoint = `${V3_PROJECTS_API}/${selectedAgentProjectId}/decks/run`;
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          deckId: BUILDER_DECK_ID,
+          document: {
+            ...deck,
+            id: BUILDER_DECK_ID,
+          },
+          templates: INITIAL_AGENT_TEMPLATES,
+          promptTemplates,
+          input: deckRunInput,
+        }),
+      });
+      const data = await safeJson(response);
+
+      if (!response.ok || !data?.run) {
+        throw new Error(safeText(data?.error || "Deck run failed."));
+      }
+
+      setLatestDeckRun(data.run as DeckRun);
+      if (data?.deck && typeof data.deck === "object") {
+        setDeck(hydrateDeckDocument({ ...(data.deck as DeckDocument), id: BUILDER_DECK_ID }));
+      }
+      setDeckStatusMessage("Deck run complete.");
     } catch (err: any) {
       const now = new Date().toISOString();
       setLatestDeckRun({
         id: `deck_run_${uid()}`,
-        deckId: deck.id,
+        deckId: BUILDER_DECK_ID,
         startedAt: now,
         endedAt: now,
         status: "error",
@@ -3486,16 +3950,20 @@ export default function AgentBuilder() {
           expandedStepIds: deckExecutionPlan.expandedSteps.map((step) => step.executionId),
         },
       });
+      setDeckStatusMessage(err?.message || "Deck run failed.");
     } finally {
       setDeckRunBusy(false);
     }
-  }, [deck, deckExecutionPlan, deckRunInput, deckValidation, promptTemplates]);
+  }, [deck, deckExecutionPlan, deckRunInput, deckValidation, promptTemplates, selectedAgentProjectId]);
 
   const handleSaveSelectedCardConfig = useCallback(
     (nextConfig: AgentManagerLocalConfig) => {
       if (!selectedCard || !selectedTemplate) return;
 
-      setPromptTemplates((currentPromptTemplates) => {
+      setLatestCardRun(null);
+      setLatestDeckRun(null);
+      setDeck((currentDeck) => {
+        const currentPromptTemplates = normalizeDeckPromptTemplates(currentDeck.promptTemplates);
         const basePromptTemplateId = selectedTemplate.promptTemplate ?? null;
         const existingOverridePromptTemplateId = selectedCard.overrides?.promptTemplate ?? null;
         const basePromptContent = resolvePromptTemplateContent(
@@ -3582,9 +4050,10 @@ export default function AgentBuilder() {
               : undefined,
         });
 
-        setDeck((currentDeck) => ({
+        return {
           ...currentDeck,
           version: currentDeck.version + 1,
+          promptTemplates: nextPromptTemplates,
           nodes: currentDeck.nodes.map((node) =>
             node.id === selectedCard.id
               ? {
@@ -3593,9 +4062,7 @@ export default function AgentBuilder() {
                 }
               : node,
           ),
-        }));
-
-        return nextPromptTemplates;
+        };
       });
     },
     [selectedCard, selectedTemplate],
@@ -5055,8 +5522,10 @@ export default function AgentBuilder() {
             <BuilderCanvas
               document={deck}
               setDocument={setDeck}
+              selectedCardId={selectedCardId}
               onSelectCard={handleSelectCard}
               onSelectEdge={handleSelectEdge}
+              focusRequest={builderCanvasFocusRequest}
             />
           ) : (
             <Chat
@@ -5175,27 +5644,64 @@ export default function AgentBuilder() {
                                 className="flex items-center justify-between gap-3 text-xs"
                                 style={{ marginTop: 10 }}
                               >
-                                <button
-                                  onClick={handleRunDeck}
-                                  disabled={deckRunBusy || deck.nodes.length === 0}
-                                  style={{
-                                    padding: "8px 12px",
-                                    borderRadius: 8,
-                                    border: `1px solid ${deckRunBusy ? C.border : C.primary}`,
-                                    background: deckRunBusy ? C.panel : "rgba(79,162,173,0.18)",
-                                    color: C.text,
-                                    cursor:
-                                      deckRunBusy || deck.nodes.length === 0
-                                        ? "not-allowed"
-                                        : "pointer",
-                                  }}
-                                >
-                                  {deckRunBusy ? "Running..." : "Run Deck"}
-                                </button>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={handleSaveDeck}
+                                    disabled={deckSaveBusy || deckLoadBusy || !selectedAgentProjectId}
+                                    style={{
+                                      padding: "8px 12px",
+                                      borderRadius: 8,
+                                      border: `1px solid ${deckSaveBusy ? C.border : C.border}`,
+                                      background: deckSaveBusy ? C.panel : "#222222",
+                                      color: C.text,
+                                      cursor:
+                                        deckSaveBusy || deckLoadBusy || !selectedAgentProjectId
+                                          ? "not-allowed"
+                                          : "pointer",
+                                    }}
+                                  >
+                                    {deckSaveBusy ? "Saving..." : "Save Deck"}
+                                  </button>
+                                  <button
+                                    onClick={handleRunDeck}
+                                    disabled={
+                                      deckRunBusy ||
+                                      deckLoadBusy ||
+                                      deck.nodes.length === 0 ||
+                                      !selectedAgentProjectId
+                                    }
+                                    style={{
+                                      padding: "8px 12px",
+                                      borderRadius: 8,
+                                      border: `1px solid ${deckRunBusy ? C.border : C.primary}`,
+                                      background: deckRunBusy ? C.panel : "rgba(79,162,173,0.18)",
+                                      color: C.text,
+                                      cursor:
+                                        deckRunBusy ||
+                                        deckLoadBusy ||
+                                        deck.nodes.length === 0 ||
+                                        !selectedAgentProjectId
+                                          ? "not-allowed"
+                                          : "pointer",
+                                    }}
+                                  >
+                                    {deckRunBusy ? "Running..." : "Run Deck"}
+                                  </button>
+                                </div>
                                 <div>
-                                  status: {deckRunBusy ? "running" : latestDeckRun?.status || "idle"}
+                                  status:{" "}
+                                  {deckLoadBusy
+                                    ? "loading"
+                                    : deckRunBusy
+                                      ? "running"
+                                      : latestDeckRun?.status || "idle"}
                                 </div>
                               </div>
+                              {deckStatusMessage && (
+                                <div className="text-xs" style={{ marginTop: 8, color: C.neutral }}>
+                                  {deckStatusMessage}
+                                </div>
+                              )}
                               {latestDeckRun?.error && (
                                 <div className="text-xs" style={{ marginTop: 8, color: C.warn }}>
                                   {latestDeckRun.error}
@@ -5247,8 +5753,70 @@ export default function AgentBuilder() {
                                     template: {safeText(selectedTemplate?.name || selectedCard.templateId)}
                                   </div>
                                   <div>deck: {safeText(deck.name)}</div>
+                                  <div
+                                    className="flex items-center justify-between gap-3"
+                                    style={{ marginTop: 10 }}
+                                  >
+                                    <label htmlFor="builder-runtime-binding" style={{ color: C.text }}>
+                                      runtime binding
+                                    </label>
+                                    <select
+                                      id="builder-runtime-binding"
+                                      value={selectedCard.runtimeBinding || ""}
+                                      onChange={(event) =>
+                                        handleUpdateSelectedCardRuntimeBinding(
+                                          normalizeRuntimeBinding(event.target.value),
+                                        )
+                                      }
+                                      style={{
+                                        minWidth: 160,
+                                        padding: "6px 8px",
+                                        borderRadius: 8,
+                                        border: `1px solid ${C.border}`,
+                                        background: C.panel,
+                                        color: C.text,
+                                      }}
+                                    >
+                                      {RUNTIME_BINDING_OPTIONS.map((option) => (
+                                        <option key={option.label} value={option.value}>
+                                          {option.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div
+                                    className="flex items-center justify-between gap-3"
+                                    style={{ marginTop: 10 }}
+                                  >
+                                    <div>
+                                      dispatch: {safeText(selectedCard.runtimeBinding || "(generic)")} {"->"} backend v3 /cards/run
+                                    </div>
+                                    <button
+                                      onClick={handleRunSelectedCard}
+                                      disabled={
+                                        cardRunBusy ||
+                                        deckLoadBusy ||
+                                        !selectedAgentProjectId
+                                      }
+                                      style={{
+                                        padding: "8px 12px",
+                                        borderRadius: 8,
+                                        border: `1px solid ${cardRunBusy ? C.border : C.primary}`,
+                                        background: cardRunBusy ? C.panel : "rgba(79,162,173,0.18)",
+                                        color: C.text,
+                                        cursor:
+                                          cardRunBusy ||
+                                          deckLoadBusy ||
+                                          !selectedAgentProjectId
+                                            ? "not-allowed"
+                                            : "pointer",
+                                      }}
+                                    >
+                                      {cardRunBusy ? "Running..." : "Run Card"}
+                                    </button>
+                                  </div>
                                 </div>
-                                {selectedCardLatestRunStep && (
+                                {selectedCardLatestRun && (
                                   <div
                                     className="text-xs"
                                     style={{
@@ -5262,16 +5830,32 @@ export default function AgentBuilder() {
                                     <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>
                                       Latest Card Run
                                     </div>
-                                    <div>contract: {safeText(selectedCardLatestRunStep.contract?.task || "(none)")}</div>
+                                    <div>source: backend v3 /cards/run</div>
+                                    <div>
+                                      binding: {safeText(selectedCardLatestRun.runtimeBinding || "(generic)")}
+                                    </div>
+                                    <div>status: {safeText(selectedCardLatestRun.result.status)}</div>
+                                    <div>contract: {safeText(selectedCardLatestRun.result.contract?.task || "(none)")}</div>
                                     <div>
                                       score:{" "}
-                                      {typeof selectedCardLatestRunStep.score === "number"
-                                        ? `${selectedCardLatestRunStep.score}/${selectedCardLatestRunStep.scoreDetail?.maxScore ?? "?"}`
+                                      {typeof selectedCardLatestRun.result.score === "number"
+                                        ? `${selectedCardLatestRun.result.score}/${selectedCardLatestRun.result.scoreDetail?.maxScore ?? "?"}`
                                         : "(unscored)"}
                                     </div>
-                                    <div>passed: {selectedCardLatestRunStep.passed ? "yes" : "no"}</div>
-                                    {selectedCardLatestRunStep.seed && (
-                                      <div>seed: {safeText(selectedCardLatestRunStep.seed)}</div>
+                                    <div>passed: {selectedCardLatestRun.result.passed ? "yes" : "no"}</div>
+                                    {selectedCardLatestRun.result.improvementPromptBit && (
+                                      <div>
+                                        improvement: {safeText(selectedCardLatestRun.result.improvementPromptBit)}
+                                      </div>
+                                    )}
+                                    {selectedCardLatestRun.result.inputSummary && (
+                                      <div>input: {safeText(selectedCardLatestRun.result.inputSummary)}</div>
+                                    )}
+                                    {selectedCardLatestRun.result.outputSummary && (
+                                      <div>output: {safeText(selectedCardLatestRun.result.outputSummary)}</div>
+                                    )}
+                                    {selectedCardLatestRun.result.seed && (
+                                      <div>seed: {safeText(selectedCardLatestRun.result.seed)}</div>
                                     )}
                                     <div
                                       style={{
@@ -5284,8 +5868,8 @@ export default function AgentBuilder() {
                                       }}
                                     >
                                       {safeText(
-                                        selectedCardLatestRunStep.output ||
-                                          selectedCardLatestRunStep.error ||
+                                        selectedCardLatestRun.result.output ||
+                                          selectedCardLatestRun.result.error ||
                                           "(no output)",
                                       )}
                                     </div>
@@ -6273,6 +6857,80 @@ export default function AgentBuilder() {
                 </div>
               )}
             </div>
+            {mode === "agents" && (
+              <div
+                style={{
+                  marginTop: 16,
+                  paddingTop: 12,
+                  borderTop: `1px solid ${C.border}`,
+                }}
+              >
+                <div
+                  className="text-xs uppercase mb-2"
+                  style={{ color: C.neutral }}
+                >
+                  Board-backed deck
+                </div>
+                {!selectedAgentProjectId ? (
+                  <div className="text-xs" style={{ color: C.neutral }}>
+                    Select a deck workspace to navigate the board from this drawer.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <button
+                      onClick={handleOpenDeckFromDrawer}
+                      className="w-full text-left p-3 rounded"
+                      style={{
+                        background: "rgba(79,162,173,0.08)",
+                        border: `1px solid ${C.border}`,
+                        color: C.text,
+                      }}
+                    >
+                      <div className="font-medium">{safeText(deck.name)}</div>
+                      <div className="opacity-60 text-xs" style={{ marginTop: 4 }}>
+                        Jump to deck on board · {deck.nodes.length} card{deck.nodes.length === 1 ? "" : "s"}
+                      </div>
+                    </button>
+                    <div className="space-y-2" style={{ maxHeight: 260, overflowY: "auto" }}>
+                      {drawerBoardCards.map((card) => (
+                        <button
+                          key={card.id}
+                          onClick={() => handleOpenBoardCardFromDrawer(card.id)}
+                          className="w-full text-left p-3 rounded"
+                          style={{
+                            background:
+                              selectedCardId === card.id
+                                ? "rgba(79,162,173,0.18)"
+                                : "transparent",
+                            border: `1px solid ${
+                              selectedCardId === card.id ? C.primary : C.border
+                            }`,
+                            color: C.text,
+                          }}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <div className="font-medium">{safeText(card.title || card.id)}</div>
+                              {card.subtitle && (
+                                <div className="opacity-60 text-xs" style={{ marginTop: 4 }}>
+                                  {safeText(card.subtitle)}
+                                </div>
+                              )}
+                            </div>
+                            <div
+                              className="text-[11px]"
+                              style={{ color: selectedCardId === card.id ? C.primary : C.neutral }}
+                            >
+                              {safeText(card.runtimeBinding || "card")}
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="text-xs mt-4" style={{ color: C.neutral }}>
               {mode === 'assist'
                 ? 'Assist projects are shipped product workspaces.'

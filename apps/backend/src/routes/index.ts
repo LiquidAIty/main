@@ -22,6 +22,7 @@ import receipts from './receipts.routes';
 import config from './config.routes';
 import v2Routes from './v2';
 import knowgraphRoutes from './knowgraph.routes';
+import { mountV3 } from '../v3';
 
 /**
  * /api/sol/run is the primary Sol chat endpoint. It can run with or without auth
@@ -71,5 +72,6 @@ router.use('/receipts', authMiddleware, receipts);
 router.use('/config', config);
 router.use('/knowgraph', authMiddleware, knowgraphRoutes);
 router.use('/v2', v2Routes);
+mountV3(router);
 
 export default router;

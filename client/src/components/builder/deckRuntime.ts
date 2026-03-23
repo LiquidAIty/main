@@ -121,6 +121,9 @@ async function executeCardOutput(
     return context.backendInvoker(card, effectiveAgent, input, context);
   }
 
+  // Transitional fallback: Builder mode now executes through backend v3 routes.
+  // Keep this local path only as a temporary reference/debug fallback until the
+  // frontend no longer needs any local-only execution helper.
   const promptText = resolvePromptTemplateContent(
     effectiveAgent.promptTemplate,
     context.promptTemplates,
@@ -199,6 +202,8 @@ export async function executeSimpleDeck(
   templates: AgentTemplate[],
   options: ExecuteSimpleDeckOptions = {},
 ): Promise<DeckRun> {
+  // Transitional runtime: the Builder page now treats backend v3 deck execution
+  // as the source of truth and only uses this local runner as a fallback path.
   const runId = `deck_run_${Math.random().toString(36).slice(2, 10)}`;
   const startedAt = new Date().toISOString();
   const input = String(options.input || '');

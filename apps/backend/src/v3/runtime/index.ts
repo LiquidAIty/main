@@ -1,0 +1,1 @@
+export { executeDeck } from './deckRuntime';

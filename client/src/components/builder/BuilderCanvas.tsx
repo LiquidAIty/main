@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import {
   Background,
@@ -14,6 +14,7 @@ import {
   type EdgeChange,
   type Node,
   type NodeChange,
+  type ReactFlowInstance,
 } from '@xyflow/react';
 
 import '@xyflow/react/dist/style.css';
@@ -26,12 +27,19 @@ const nodeTypes = {
   agentCard: AgentCardNode,
 };
 
-function toFlowNodes(document: DeckDocument): Node[] {
+export type BuilderCanvasFocusRequest = {
+  kind: 'deck' | 'card';
+  cardId?: string | null;
+  nonce: number;
+};
+
+function toFlowNodes(document: DeckDocument, selectedCardId: string | null): Node[] {
   return document.nodes.map((node) => ({
     id: node.id,
     type: 'agentCard',
     position: node.position,
     data: node,
+    selected: node.id === selectedCardId,
   }));
 }
 
@@ -71,24 +79,50 @@ function toDeckEdges(edges: Edge[]): DeckEdge[] {
 export default function BuilderCanvas({
   document,
   setDocument,
+  selectedCardId,
   onSelectCard,
   onSelectEdge,
+  focusRequest,
 }: {
   document: DeckDocument;
   setDocument: Dispatch<SetStateAction<DeckDocument>>;
+  selectedCardId: string | null;
   onSelectCard: (cardId: string | null) => void;
   onSelectEdge: (edgeId: string | null) => void;
+  focusRequest: BuilderCanvasFocusRequest | null;
 }) {
-  const [nodes, setNodes] = useNodesState(toFlowNodes(document));
-  const [edges, setEdges] = useEdgesState(toFlowEdges(document));
+  const flowNodes = useMemo(
+    () => toFlowNodes(document, selectedCardId),
+    [document, selectedCardId],
+  );
+  const flowEdges = useMemo(() => toFlowEdges(document), [document]);
+  const [nodes, setNodes] = useNodesState(flowNodes);
+  const [edges, setEdges] = useEdgesState(flowEdges);
+  const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
 
   useEffect(() => {
-    setNodes(toFlowNodes(document));
-  }, [document, setNodes]);
+    setNodes(flowNodes);
+  }, [flowNodes, setNodes]);
 
   useEffect(() => {
-    setEdges(toFlowEdges(document));
-  }, [document, setEdges]);
+    setEdges(flowEdges);
+  }, [flowEdges, setEdges]);
+
+  useEffect(() => {
+    if (!reactFlowInstance || !focusRequest) return;
+    if (focusRequest.kind === 'deck') {
+      reactFlowInstance.fitView({ duration: 260, padding: 0.22 });
+      return;
+    }
+    const targetNode = nodes.find((node) => node.id === focusRequest.cardId);
+    if (!targetNode) return;
+    reactFlowInstance.fitView({
+      nodes: [targetNode],
+      duration: 260,
+      padding: 1.1,
+      maxZoom: 1.15,
+    });
+  }, [focusRequest, nodes, reactFlowInstance]);
 
   const onNodesChange = (changes: NodeChange[]) => {
     setNodes((current) => {
@@ -159,6 +193,7 @@ export default function BuilderCanvas({
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        onInit={setReactFlowInstance}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}

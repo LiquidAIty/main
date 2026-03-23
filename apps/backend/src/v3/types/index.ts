@@ -8,20 +8,15 @@ export type RuntimeBinding = 'main_chat';
 export type AgentTemplate = {
   id: string;
   name: string;
-
   promptTemplate?: string | null;
-
   model?: string | null;
   provider?: string | null;
   temperature?: number | null;
   maxTokens?: number | null;
-
   tools: string[];
-
   skills?: string[];
   personas?: string[];
   knowledgeSources?: string[];
-
   ioSchema?: Record<string, unknown>;
 };
 
@@ -37,17 +32,12 @@ export type DeckEdgeMapping = {
 
 export type AgentCardInstance = {
   id: string;
-
   templateId: string;
   runtimeBinding?: RuntimeBinding | null;
-
   title: string;
   subtitle?: string;
-
   position: { x: number; y: number };
-
   overrides?: Partial<AgentTemplate>;
-
   status?: 'idle' | 'ready' | 'running' | 'error';
   cloneConfig?: CloneConfig;
 };
@@ -56,9 +46,7 @@ export type DeckEdge = {
   id: string;
   source: string;
   target: string;
-
   routeType: 'default' | 'success' | 'error' | 'conditional';
-
   condition?: string;
   mapping?: DeckEdgeMapping[];
   priority?: number;
@@ -68,10 +56,8 @@ export type DeckDocument = {
   id: string;
   name: string;
   promptTemplates: PromptTemplate[];
-
   nodes: AgentCardInstance[];
   edges: DeckEdge[];
-
   version: number;
 };
 
@@ -181,4 +167,10 @@ export type DeckRun = {
     simpleOrderCardIds: string[];
     expandedStepIds: string[];
   };
+};
+
+export type V3ProjectBlob = {
+  decks: Record<string, DeckDocument>;
+  deckRuns: Record<string, DeckRun[]>;
+  hiddenTelemetry: Record<string, unknown>;
 };
