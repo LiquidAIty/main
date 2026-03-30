@@ -1,11 +1,13 @@
 import { Router } from 'express';
-import { resolveEffectiveAgent, runCardWithContract } from '../cards/runtime';
-import type { AgentCardInstance, AgentTemplate, PromptTemplate } from '../types';
+import { executeDeck } from '../runtime/deckRuntime';
+import { saveProjectBlackboard } from '../decks';
+import { getV3ProjectBlob } from '../decks/store';
+import type { AgentCardInstance, AgentTemplate } from '../types';
 
 const router = Router();
 
 router.post('/:projectId/cards/run', async (req, res) => {
-  const { card, templates, promptTemplates, input } = req.body || {};
+  const { card, templates, input } = req.body || {};
   if (!card || typeof card !== 'object') {
     return res.status(400).json({ ok: false, error: 'card_required' });
   }
@@ -14,23 +16,53 @@ router.post('/:projectId/cards/run', async (req, res) => {
   }
 
   try {
+    const projectBlob = await getV3ProjectBlob(req.params.projectId);
     const typedCard = card as AgentCardInstance;
     const typedTemplates = templates as AgentTemplate[];
-    const typedPromptTemplates = Array.isArray(promptTemplates)
-      ? (promptTemplates as PromptTemplate[])
-      : [];
-    const effectiveAgent = resolveEffectiveAgent(typedCard, typedTemplates);
+    const singleCardDocument = {
+      id: `card_run_${typedCard.id}`,
+      name: typedCard.title || typedCard.id,
+      promptTemplates: [],
+      version: 1,
+      nodes: [typedCard],
+      edges: [],
+    };
 
-    if (!effectiveAgent) {
-      return res.status(400).json({ ok: false, error: 'template_not_found' });
+    const run = await executeDeck(singleCardDocument, typedTemplates, {
+      input: String(input || ''),
+      blackboard: projectBlob.blackboard,
+    });
+    const step = run.steps[0];
+    if (!step) {
+      return res.status(500).json({ ok: false, error: 'card_run_failed' });
     }
 
-    const result = await runCardWithContract(typedCard, effectiveAgent, String(input || ''), {
-      userInput: String(input || ''),
-      promptTemplates: typedPromptTemplates,
-    });
+    const result = {
+      output: step.output,
+      status: step.status,
+      error: step.error,
+      startedAt: step.startedAt,
+      endedAt: step.endedAt,
+      runtimeBinding: step.runtimeBinding,
+      seed: step.seed,
+      contract: step.contract,
+      handshake: step.handshake,
+      score: step.score,
+      passed: step.passed,
+      scoreDetail: step.scoreDetail,
+      improvementPromptBit: step.improvementPromptBit,
+      inputSummary: step.inputSummary,
+      outputSummary: step.outputSummary,
+      blackboardWrite: step.blackboardWrite,
+      blackboard: run.blackboard,
+    };
 
-    return res.json({ ok: true, result });
+    const blackboard = await saveProjectBlackboard(
+      req.params.projectId,
+      run.blackboard || projectBlob.blackboard,
+    );
+
+    return res.json({ ok: true, result: { ...result, blackboard }, blackboard });
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || 'card_run_failed' });
   }

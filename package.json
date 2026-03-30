@@ -109,5 +109,12 @@
     "apps/*",
     "client"
   ],
-  "type": "module"
+  "type": "module",
+  "description": "# LiquidAIty — Agentic AI Core",
+  "main": "jest.config.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "keywords": [],
+  "author": ""
 }

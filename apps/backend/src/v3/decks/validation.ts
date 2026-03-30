@@ -1,4 +1,4 @@
-import type { DeckDocument, DeckEdge } from '../types';
+import type { AgentCardInstance, DeckDocument, DeckEdge } from '../types';
 
 export type DeckValidationIssueLevel = 'error' | 'warning';
 
@@ -34,18 +34,14 @@ export type DeckValidationResult = {
   };
 };
 
-function normalizeEdgeCondition(condition: string | undefined): string {
-  return String(condition || '').trim().toLowerCase();
+function isRunnableNode(node: AgentCardInstance | undefined | null): boolean {
+  return Boolean(node && node.kind !== 'blackboard');
 }
 
-export function buildDeckEdgeIdentityKey(
-  edge: Pick<DeckEdge, 'source' | 'target' | 'routeType' | 'condition'>,
-): string {
+export function buildDeckEdgeIdentityKey(edge: Pick<DeckEdge, 'source' | 'target'>): string {
   return [
     String(edge.source || '').trim(),
     String(edge.target || '').trim(),
-    String(edge.routeType || 'default').trim(),
-    normalizeEdgeCondition(edge.condition),
   ].join('::');
 }
 
@@ -60,6 +56,7 @@ export function validateDeckDocument(
   const invalidEdgeIds: string[] = [];
   const duplicateEdgeIds: string[] = [];
   const connectedCardIds = new Set<string>();
+  const nodeMap = new Map<string, AgentCardInstance>();
 
   document.nodes.forEach((node) => {
     const nodeId = String(node.id || '').trim();
@@ -81,6 +78,7 @@ export function validateDeckDocument(
       return;
     }
     nodeIdSet.add(nodeId);
+    nodeMap.set(nodeId, node);
   });
 
   const edgeIdentityMap = new Map<string, string>();
@@ -102,8 +100,6 @@ export function validateDeckDocument(
     const edgeKey = buildDeckEdgeIdentityKey({
       source: sourceId,
       target: targetId,
-      routeType: edge.routeType || 'default',
-      condition: edge.condition,
     });
 
     if (edgeIdentityMap.has(edgeKey)) {
@@ -124,12 +120,18 @@ export function validateDeckDocument(
   });
 
   const incomingCounts = new Map<string, number>();
-  nodeIdSet.forEach((nodeId) => incomingCounts.set(nodeId, 0));
+  document.nodes
+    .filter((node) => isRunnableNode(node))
+    .forEach((node) => incomingCounts.set(node.id, 0));
   validEdges.forEach((edge) => {
+    const sourceNode = nodeMap.get(edge.source);
+    const targetNode = nodeMap.get(edge.target);
+    if (!isRunnableNode(sourceNode) || !isRunnableNode(targetNode)) return;
     incomingCounts.set(edge.target, (incomingCounts.get(edge.target) || 0) + 1);
   });
 
   const startCardIds = document.nodes
+    .filter((node) => isRunnableNode(node))
     .map((node) => String(node.id || '').trim())
     .filter((nodeId) => nodeId && (incomingCounts.get(nodeId) || 0) === 0);
 
@@ -146,7 +148,8 @@ export function validateDeckDocument(
     });
   });
 
-  if (options.enforceStartCard && document.nodes.length > 0 && startCardIds.length === 0) {
+  const runnableNodeCount = document.nodes.filter((node) => isRunnableNode(node)).length;
+  if (options.enforceStartCard && runnableNodeCount > 0 && startCardIds.length === 0) {
     errors.push({
       level: 'error',
       code: 'missing_start_card',

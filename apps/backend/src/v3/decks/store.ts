@@ -1,5 +1,17 @@
 import { pool } from '../../db/pool';
-import type { DeckDocument, DeckRun, PromptTemplate, V3ProjectBlob } from '../types';
+import {
+  createEmptyV3Blackboard,
+  normalizeV3Blackboard,
+  resolveRuntimeBinding,
+} from '../blackboard';
+import type {
+  AgentCardInstance,
+  DeckDocument,
+  DeckEdge,
+  DeckRun,
+  PromptTemplate,
+  V3ProjectBlob,
+} from '../types';
 
 const PROJECTS_TABLE = 'ag_catalog.projects';
 const V3_STATE_KEY = 'v3_state';
@@ -29,16 +41,50 @@ function normalizeJson<TDefault>(value: unknown, fallback: TDefault): TDefault {
   return fallback;
 }
 
-function normalizeRuntimeBinding(value: unknown): 'main_chat' | null {
-  return value === 'main_chat' ? 'main_chat' : null;
+function normalizeDeckNode(value: unknown): AgentCardInstance | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const kind = String(raw.kind || '').trim() === 'blackboard' ? 'blackboard' : 'agent';
+  const prompt = typeof raw.prompt === 'string' ? raw.prompt : '';
+  const title = String(raw.title || '').trim();
+  const subtitle = typeof raw.subtitle === 'string' ? raw.subtitle : undefined;
+  const status =
+    raw.status === 'idle' || raw.status === 'ready' || raw.status === 'running' || raw.status === 'error'
+      ? raw.status
+      : undefined;
+  const cloneConfig =
+    raw.cloneConfig && typeof raw.cloneConfig === 'object' ? raw.cloneConfig : undefined;
+  const overrides =
+    raw.overrides && typeof raw.overrides === 'object' ? raw.overrides : undefined;
+  const position =
+    raw.position && typeof raw.position === 'object'
+      ? {
+          x: Number((raw.position as Record<string, unknown>).x) || 0,
+          y: Number((raw.position as Record<string, unknown>).y) || 0,
+        }
+      : { x: 0, y: 0 };
+  return {
+    id: String(raw.id || '').trim(),
+    kind,
+    templateId: String(raw.templateId || '').trim(),
+    prompt,
+    runtimeBinding: resolveRuntimeBinding(raw.runtimeBinding, raw.id),
+    title: title || String(raw.id || '').trim(),
+    subtitle,
+    position,
+    overrides: overrides as AgentCardInstance['overrides'],
+    status,
+    cloneConfig: cloneConfig as AgentCardInstance['cloneConfig'],
+  };
 }
 
-function normalizeDeckNode(value: unknown): Record<string, unknown> | null {
+function normalizeDeckEdge(value: unknown): DeckEdge | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Record<string, unknown>;
   return {
-    ...raw,
-    runtimeBinding: normalizeRuntimeBinding(raw.runtimeBinding),
+    id: String(raw.id || '').trim(),
+    source: String(raw.source || '').trim(),
+    target: String(raw.target || '').trim(),
   };
 }
 
@@ -61,9 +107,13 @@ function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument
     nodes: Array.isArray(raw.nodes)
       ? raw.nodes
           .map((node: unknown) => normalizeDeckNode(node))
-          .filter((node: Record<string, unknown> | null): node is Record<string, unknown> => Boolean(node))
+          .filter((node: AgentCardInstance | null): node is AgentCardInstance => Boolean(node))
       : [],
-    edges: Array.isArray(raw.edges) ? raw.edges : [],
+    edges: Array.isArray(raw.edges)
+      ? raw.edges
+          .map((edge: unknown) => normalizeDeckEdge(edge))
+          .filter((edge: DeckEdge | null): edge is DeckEdge => Boolean(edge))
+      : [],
   };
 }
 
@@ -94,6 +144,7 @@ function normalizeProjectBlob(value: unknown): V3ProjectBlob {
   return {
     decks,
     deckRuns,
+    blackboard: normalizeV3Blackboard(raw.blackboard),
     hiddenTelemetry:
       raw.hiddenTelemetry && typeof raw.hiddenTelemetry === 'object'
         ? (raw.hiddenTelemetry as Record<string, unknown>)
@@ -139,6 +190,7 @@ export async function getDeckDocument(projectId: string, deckId: string): Promis
   deck: DeckDocument | null;
   latestRun: DeckRun | null;
   runs: DeckRun[];
+  blackboard: V3ProjectBlob['blackboard'];
 }> {
   const blob = await getV3ProjectBlob(projectId);
   const runs = blob.deckRuns[deckId] || [];
@@ -146,6 +198,7 @@ export async function getDeckDocument(projectId: string, deckId: string): Promis
     deck: blob.decks[deckId] || null,
     latestRun: runs[0] || null,
     runs,
+    blackboard: blob.blackboard || createEmptyV3Blackboard(),
   };
 }
 
@@ -168,5 +221,16 @@ export async function saveDeckRun(projectId: string, deckId: string, run: DeckRu
   const blob = await getV3ProjectBlob(projectId);
   const currentRuns = blob.deckRuns[deckId] || [];
   blob.deckRuns[deckId] = [run, ...currentRuns].slice(0, 12);
+  blob.blackboard = normalizeV3Blackboard(run.blackboard);
   await writeV3ProjectBlob(projectId, blob);
+}
+
+export async function saveProjectBlackboard(
+  projectId: string,
+  blackboard: V3ProjectBlob['blackboard'],
+): Promise<V3ProjectBlob['blackboard']> {
+  const blob = await getV3ProjectBlob(projectId);
+  blob.blackboard = normalizeV3Blackboard(blackboard);
+  await writeV3ProjectBlob(projectId, blob);
+  return blob.blackboard;
 }

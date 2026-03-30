@@ -25,7 +25,7 @@ const NODE_COLORS: Record<BuilderCanvasNode["type"], TLGeoShape["props"]["color"
   thinkgraph: "yellow",
   research: "green",
   knowgraph: "blue",
-  review: "grey",
+  neo4j: "grey",
 };
 
 type BuilderAdminCanvasProps = {
@@ -258,8 +258,7 @@ function readCanvasState(editor: Editor, previousState: BuilderCanvasState): Bui
         id: String(meta?.edgeId || `${fromNodeId}:${toNodeId}`),
         from: fromNodeId,
         to: toNodeId,
-        type:
-          meta?.edgeType === "updates" || meta?.edgeType === "reviews" ? (meta.edgeType as BuilderCanvasEdge["type"]) : "feeds",
+        type: meta?.edgeType === "updates" ? (meta.edgeType as BuilderCanvasEdge["type"]) : "feeds",
       } satisfies BuilderCanvasEdge;
     })
     .filter((edge): edge is BuilderCanvasEdge => Boolean(edge))
@@ -409,7 +408,7 @@ export function BuilderAdminCanvas({
         if (!editor) return;
         const shape = shapeAtEvent(editor, event);
         const nodeId = getNodeIdFromShape(shape);
-        if (!nodeId) return;
+        if (!shape || !nodeId) return;
         event.preventDefault();
         event.stopPropagation();
         editor.cancelDoubleClick();

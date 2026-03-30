@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 
 export type KnowledgeGraphSource = "think" | "know" | "mixed";
@@ -320,7 +320,7 @@ export default function KnowledgeGraphNVL({
 
     const nodeLayer = root.append("g");
     const nodeSelection = nodeLayer
-      .selectAll("g")
+      .selectAll<SVGGElement, SimNode>("g")
       .data(nodes)
       .join("g")
       .style("cursor", "pointer")

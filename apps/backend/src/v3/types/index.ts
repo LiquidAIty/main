@@ -3,7 +3,14 @@ export type PromptTemplate = {
   content: string;
 };
 
-export type RuntimeBinding = 'main_chat';
+export type RuntimeBinding =
+  | 'main_chat'
+  | 'kg_ingest'
+  | 'research_agent'
+  | 'knowgraph'
+  | 'neo4j';
+
+export type DeckNodeKind = 'agent' | 'blackboard';
 
 export type AgentTemplate = {
   id: string;
@@ -25,14 +32,20 @@ export type CloneConfig = {
   seeds?: string[];
 };
 
-export type DeckEdgeMapping = {
-  from: string;
-  to: string;
-};
+export type V3BlackboardField =
+  | 'current_goal'
+  | 'what_matters_now'
+  | 'open_questions'
+  | 'findings'
+  | 'suggestions'
+  | 'next_options'
+  | 'next_move';
 
 export type AgentCardInstance = {
   id: string;
+  kind?: DeckNodeKind;
   templateId: string;
+  prompt?: string | null;
   runtimeBinding?: RuntimeBinding | null;
   title: string;
   subtitle?: string;
@@ -46,10 +59,6 @@ export type DeckEdge = {
   id: string;
   source: string;
   target: string;
-  routeType: 'default' | 'success' | 'error' | 'conditional';
-  condition?: string;
-  mapping?: DeckEdgeMapping[];
-  priority?: number;
 };
 
 export type DeckDocument = {
@@ -113,6 +122,7 @@ export type CardRunResult = {
   error?: string;
   startedAt: string;
   endedAt: string;
+  runtimeBinding?: RuntimeBinding | null;
   seed?: string;
   contract?: TaskContract;
   handshake?: AgentHandshake;
@@ -122,6 +132,8 @@ export type CardRunResult = {
   improvementPromptBit?: string;
   inputSummary?: string;
   outputSummary?: string;
+  blackboardWrite?: V3Blackboard | null;
+  blackboard?: V3Blackboard | null;
 };
 
 export type DeckRunStep = {
@@ -131,6 +143,7 @@ export type DeckRunStep = {
   templateId: string;
   title: string;
   input: string;
+  runtimeBinding?: RuntimeBinding | null;
   effectiveAgent: AgentTemplate;
   output: string | null;
   status: DeckRunStatus;
@@ -146,6 +159,8 @@ export type DeckRunStep = {
   improvementPromptBit?: string;
   inputSummary?: string;
   outputSummary?: string;
+  blackboardWrite?: V3Blackboard | null;
+  blackboard?: V3Blackboard | null;
 };
 
 export type DeckRun = {
@@ -162,6 +177,7 @@ export type DeckRun = {
     errors: string[];
     warnings: string[];
   };
+  blackboard?: V3Blackboard | null;
   executionPlanSummary: {
     startCardIds: string[];
     simpleOrderCardIds: string[];
@@ -169,8 +185,21 @@ export type DeckRun = {
   };
 };
 
+export type V3Blackboard = {
+  store?: Record<string, string>;
+  current_goal: string | null;
+  what_matters_now: string[];
+  open_questions: string[];
+  findings: string[];
+  suggestions: string[];
+  next_options: string[];
+  next_move: string | null;
+  updated_at?: string | null;
+};
+
 export type V3ProjectBlob = {
   decks: Record<string, DeckDocument>;
   deckRuns: Record<string, DeckRun[]>;
+  blackboard: V3Blackboard;
   hiddenTelemetry: Record<string, unknown>;
 };

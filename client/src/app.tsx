@@ -1,6 +1,6 @@
-import React, { useEffect } from "react";
+import { useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import labagentchat from "./pages/labagentchat";
+import LabAgentChat from "./pages/labagentchat";
 import AgentManager from "./pages/agentmanager";
 import TradingUI from "./pages/tradingui";
 import BossAgent from "./pages/bossagent";
@@ -10,7 +10,7 @@ import Agentic from "./pages/agentic";
 import DetailedMode from "./pages/detailedmode";
 import AdminPanel from "./pages/adminpanel";
 import UserPanel from "./pages/userpanel";
-import agentknowledge from "./pages/agentknowledge";
+import AgentKnowledge from "./pages/agentknowledge";
 import AgentBuilder from "./pages/agentbuilder";
 
 export default function App() {
@@ -21,7 +21,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Navigate to="/agent-manager" replace />} />
-        <Route path="/lab/agent" element={<labagentchat />} />
+        <Route path="/lab/agent" element={<LabAgentChat />} />
         <Route path="/agent-manager" element={<AgentManager />} />
         <Route path="/tradingui" element={<TradingUI />} />
         <Route path="/boss-agent" element={<BossAgent />} />
@@ -33,7 +33,7 @@ export default function App() {
         <Route path="/detailed" element={<DetailedMode />} />
         <Route path="/admin" element={<AdminPanel />} />
         <Route path="/user-panel" element={<UserPanel />} />
-        <Route path="/agentknowledge" element={<agentknowledge />} />
+        <Route path="/agentknowledge" element={<AgentKnowledge />} />
       </Routes>
     </BrowserRouter>
   );

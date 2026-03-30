@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import { useMemo } from "react";
 import { LinkNode } from "@lexical/link";
 import { $createListItemNode, $createListNode, ListItemNode, ListNode } from "@lexical/list";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";

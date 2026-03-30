@@ -417,34 +417,11 @@ export default function AgentPage() {
   const sendToBossAgent = async (goal: string) => {
     setSending(true);
     try {
-      const response = await fetch("/api/agents/boss", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goal, projectId: activeProject }),
-      });
-      if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        throw new Error(text || `HTTP ${response.status}`);
-      }
-      const data = await response.json();
-      const finalText =
-        (typeof data?.result === "string" && data.result.trim()) ||
-        (typeof data?.answer === "string" && data.answer.trim()) ||
-        (typeof data?.text === "string" && data.text.trim());
-      const assistantText =
-        typeof finalText === "string" && finalText.length > 0
-          ? finalText
-          : JSON.stringify(data);
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", text: assistantText },
-      ]);
-    } catch (error: any) {
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          text: `Error: ${error?.message || "Request failed"}`,
+          text: "Legacy BossAgent orchestration has been removed. Use the Builder canvas runtime instead.",
         },
       ]);
     } finally {

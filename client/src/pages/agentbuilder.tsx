@@ -1,22 +1,53 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { AgentCard } from "../types/agentBuilder";
 import type { AgentManagerLocalConfig } from "../components/AgentManager";
 import BuilderCanvas, {
   type BuilderCanvasFocusRequest,
 } from "../components/builder/BuilderCanvas";
 import {
+  buildStructuredAssistPlanSurface,
+  type AnchorSurface,
+  type LinkRef,
+  normalizeAnchorSurface,
+  normalizeLinks,
+  normalizePlanItems,
+  type PlanItem,
+  type StructuredAssistPlanSurface,
+} from "../components/builder/assistPlanSurface";
+import {
+  createEmptyBlackboard,
+  normalizeV3Blackboard,
+} from "../components/builder/blackboardState";
+import {
   buildExecutionPlan,
-  type DeckExecutionPlan,
 } from "../components/builder/deckExecution";
+import {
+  DECK_NODE_PRESETS,
+  findDeckNodePreset,
+  getAssistStarterRecipe,
+  getCommonAssistNextPresetKeys,
+  type AssistStarterRecipe,
+  type DeckNodePreset,
+} from "../components/builder/deckPresets";
 import {
   resolveEffectiveAgent,
 } from "../components/builder/deckRuntime";
 import {
+  sanitizeDeckEdges,
   validateDeckDocument,
-  type DeckValidationResult,
 } from "../components/builder/deckValidation";
-import { callBossAgent } from "../lib/api";
+import {
+  formatRequestErrorLine,
+  guardedRequest,
+  isAbortLikeError,
+  isCachedGraphFresh,
+  isLatestRequestSequence,
+  nextRequestSequence,
+  readCachedGraphPayload,
+  readJsonAndText,
+  safeJson,
+  writeCachedGraphPayload,
+} from "../components/builder/requestGuards";
 import type {
   AgentCardInstance,
   AgentTemplate,
@@ -26,6 +57,7 @@ import type {
   DeckRun,
   PromptTemplate,
   RuntimeBinding,
+  V3Blackboard,
 } from "../types/agentgraph";
 import type {
   KnowledgeGraphRelationship,
@@ -81,9 +113,42 @@ const C = {
   warn: "#D98458",
 };
 
+const ASSIST_TABS = ["Plan", "Links", "Knowledge"] as const;
+const BUILDER_PROJECT_TABS = ["Plan"] as const;
+const BUILDER_NODE_TABS = ["Prompt", "Knowledge", "Tools", "Runtime"] as const;
+const BUILDER_BLACKBOARD_TABS = ["Blackboard"] as const;
+const BUILDER_EDGE_TABS = ["Edge"] as const;
+
 // ---- utils ----
 function clamp(x: number, a: number, b: number) {
   return Math.min(b, Math.max(a, x));
+}
+
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        border: `1px solid ${C.border}`,
+        borderRadius: 8,
+        padding: "12px 14px",
+        background: C.bg,
+      }}
+    >
+      <div
+        className="text-xs"
+        style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
+      >
+        {title}
+      </div>
+      {children}
+    </div>
+  );
 }
 
 function safeText(value: unknown): string {
@@ -99,593 +164,49 @@ function safeText(value: unknown): string {
   return String(value);
 }
 
+function buildSingleCardRunDocument(
+  document: DeckDocument,
+  cardId: string,
+): DeckDocument | null {
+  const selectedNode = document.nodes.find((node) => node.id === cardId);
+  if (!selectedNode) return null;
+  const relatedNodeIds = new Set<string>([cardId]);
+  const blackboardNode = document.nodes.find((node) => node.kind === "blackboard");
+  if (
+    blackboardNode &&
+    document.edges.some(
+      (edge) =>
+        (edge.source === cardId && edge.target === blackboardNode.id) ||
+        (edge.source === blackboardNode.id && edge.target === cardId),
+    )
+  ) {
+    relatedNodeIds.add(blackboardNode.id);
+  }
+  return {
+    ...document,
+    nodes: document.nodes.filter((node) => relatedNodeIds.has(node.id)),
+    edges: document.edges.filter(
+      (edge) => relatedNodeIds.has(edge.source) && relatedNodeIds.has(edge.target),
+    ),
+  };
+}
+
 function normalizeMessages(input: unknown): { role: "assistant" | "user"; text: string }[] {
   if (!Array.isArray(input)) return [];
   return input
-    .map((m: any) => ({
+    .map((m: any): { role: "assistant" | "user"; text: string } => ({
       role: m?.role === "assistant" ? "assistant" : "user",
       text: safeText(m?.text),
     }))
     .filter((m) => m.text.length > 0);
 }
 
-function normalizePlanItems(input: unknown): PlanItem[] {
-  const source = Array.isArray(input)
-    ? input
-    : input && typeof input === "object"
-      ? Array.isArray((input as any).tasks)
-        ? (input as any).tasks
-        : Array.isArray((input as any).items)
-          ? (input as any).items
-          : []
-      : [];
-  const out: PlanItem[] = [];
-  source.forEach((item: any, idx) => {
-    const text = safeText(item?.text ?? item?.title ?? item).trim();
-    if (!text) return;
-    const statusRaw = safeText(item?.status ?? item?.state).toLowerCase();
-    const status: PlanItem["status"] =
-      statusRaw === "approved" || statusRaw === "done" ? (statusRaw as PlanItem["status"]) : "draft";
-    out.push({
-      id: safeText(item?.id).trim() || `plan_${idx}_${uid()}`,
-      text,
-      status,
-    });
-  });
-  return out;
-}
-
-function normalizeLinks(input: unknown): LinkRef[] {
-  if (!Array.isArray(input)) return [];
-  const out: LinkRef[] = [];
-  input.forEach((item: any, idx) => {
-    const id = safeText(item?.id).trim() || `link_${idx}_${uid()}`;
-    const title = safeText(item?.title).trim() || "Untitled";
-    const url = safeText(item?.url).trim();
-    if (!url) return;
-    const src = safeText(item?.src).trim();
-    const accepted = Boolean(item?.accepted);
-    const tsNum = Number(item?.ts);
-    out.push({
-      id,
-      title,
-      url,
-      src,
-      accepted,
-      ts: Number.isFinite(tsNum) ? tsNum : Date.now(),
-    });
-  });
-  return out;
-}
-
 const uid = () => Math.random().toString(36).slice(2, 8);
-const DEBUG = false;
 const V2_PROJECTS_API = "/api/v2/projects";
 const V3_PROJECTS_API = "/api/v3/projects";
 
-async function safeJson(res: Response): Promise<any | null> {
-  if (res.status === 204 || res.status === 304) return null;
-  let text = '';
-  try {
-    text = await res.text();
-  } catch (err) {
-    console.warn('[safeJson] failed to read body', { status: res.status, url: res.url });
-    return null;
-  }
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch (err: any) {
-    console.warn('[safeJson] invalid JSON', { status: res.status, url: res.url, error: err?.message || err });
-    return null;
-  }
-}
-
-async function readJsonAndText(res: Response): Promise<{ data: any | null; text: string }> {
-  let text = "";
-  try {
-    text = await res.text();
-  } catch {
-    return { data: null, text: "" };
-  }
-  if (!text) return { data: null, text: "" };
-  try {
-    return { data: JSON.parse(text), text };
-  } catch {
-    return { data: null, text };
-  }
-}
-
-function formatRequestErrorLine(endpoint: string, status: number, bodyPreview: string): string {
-  const compactBody = String(bodyPreview || "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 200);
-  return `${endpoint} | ${status} | ${compactBody || "no response body"}`;
-}
-
-type GuardedRequestOptions<T> = {
-  key: string;
-  method?: string;
-  ttlMs?: number;
-  dedupe?: boolean;
-  signal?: AbortSignal;
-  fetcher: (signal: AbortSignal) => Promise<T>;
-};
-
-const requestGuardInFlight = new Map<string, Promise<any>>();
-const requestGuardCache = new Map<string, { expiresAt: number; value: any }>();
-const requestGuardSeq = new Map<string, number>();
-
-function makeAbortError() {
-  const error = new Error("Request aborted") as Error & { name: string };
-  error.name = "AbortError";
-  return error;
-}
-
-function isAbortLikeError(err: any): boolean {
-  const name = String(err?.name || "");
-  const message = String(err?.message || "");
-  return name === "AbortError" || message.toLowerCase().includes("aborted");
-}
-
-function withAbortSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
-  if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(makeAbortError());
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(makeAbortError());
-    signal.addEventListener("abort", onAbort, { once: true });
-    promise
-      .then(resolve, reject)
-      .finally(() => {
-        signal.removeEventListener("abort", onAbort);
-      });
-  });
-}
-
-function linkAbortSignal(externalSignal?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
-  const controller = new AbortController();
-  if (!externalSignal) return { signal: controller.signal, cleanup: () => {} };
-  if (externalSignal.aborted) {
-    controller.abort();
-    return { signal: controller.signal, cleanup: () => {} };
-  }
-  const onAbort = () => controller.abort();
-  externalSignal.addEventListener("abort", onAbort, { once: true });
-  return {
-    signal: controller.signal,
-    cleanup: () => externalSignal.removeEventListener("abort", onAbort),
-  };
-}
-
-async function guardedRequest<T>(options: GuardedRequestOptions<T>): Promise<T> {
-  const method = (options.method || "GET").toUpperCase();
-  const ttlMs = options.ttlMs || 0;
-  const canCache = method === "GET" && ttlMs > 0;
-  if (canCache) {
-    const cached = requestGuardCache.get(options.key);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.value as T;
-    }
-  }
-
-  const shouldDedupe = options.dedupe !== false;
-  if (shouldDedupe) {
-    const existing = requestGuardInFlight.get(options.key) as Promise<T> | undefined;
-    if (existing) {
-      return withAbortSignal(existing, options.signal);
-    }
-  }
-
-  const linked = linkAbortSignal(options.signal);
-  const requestPromise = (async () => {
-    try {
-      const value = await options.fetcher(linked.signal);
-      if (canCache) {
-        requestGuardCache.set(options.key, {
-          expiresAt: Date.now() + ttlMs,
-          value,
-        });
-      }
-      return value;
-    } finally {
-      requestGuardInFlight.delete(options.key);
-      linked.cleanup();
-    }
-  })();
-  requestGuardInFlight.set(options.key, requestPromise);
-  return withAbortSignal(requestPromise, options.signal);
-}
-
-function nextRequestSequence(requestType: string): number {
-  const next = (requestGuardSeq.get(requestType) || 0) + 1;
-  requestGuardSeq.set(requestType, next);
-  return next;
-}
-
-function isLatestRequestSequence(requestType: string, sequence: number): boolean {
-  return (requestGuardSeq.get(requestType) || 0) === sequence;
-}
-
 const KG_CACHE_PREFIX = "agentbuilder:kg-cache:v1";
 const KG_CACHE_TTL_MS = 60_000;
-
-type CachedGraphPayload = {
-  updatedAt: number;
-  cypher: string;
-  graphResult: any[];
-  knowGraphData: { nodes: any[]; relationships: any[] };
-};
-
-function readCachedGraphPayload(cacheKey: string): CachedGraphPayload | null {
-  try {
-    const raw = window.localStorage.getItem(cacheKey);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return null;
-    return {
-      updatedAt: Number(parsed.updatedAt) || 0,
-      cypher: typeof parsed.cypher === "string" ? parsed.cypher : "",
-      graphResult: Array.isArray(parsed.graphResult) ? parsed.graphResult : [],
-      knowGraphData: {
-        nodes: Array.isArray(parsed?.knowGraphData?.nodes) ? parsed.knowGraphData.nodes : [],
-        relationships: Array.isArray(parsed?.knowGraphData?.relationships) ? parsed.knowGraphData.relationships : [],
-      },
-    };
-  } catch {
-    return null;
-  }
-}
-
-function writeCachedGraphPayload(cacheKey: string, payload: CachedGraphPayload): void {
-  try {
-    window.localStorage.setItem(cacheKey, JSON.stringify(payload));
-  } catch {
-    // best-effort cache
-  }
-}
-
-function isCachedGraphFresh(payload: CachedGraphPayload | null, ttlMs: number): boolean {
-  if (!payload?.updatedAt) return false;
-  return Date.now() - payload.updatedAt <= ttlMs;
-}
-
-type PlanItem = { id: string; text: string; status: "draft" | "approved" | "done" };
-type LinkRef = {
-  id: string;
-  title: string;
-  url: string;
-  src: string;
-  accepted: boolean;
-  ts: number;
-};
-
-type AnchorSurface = {
-  anchor: string;
-  whatChanged: string[];
-  openQuestions: string[];
-  sources: string[];
-};
-
-type StructuredAssistPlanSurface = {
-  goal: string;
-  whatMattersNow: string[];
-  nextMove: string[];
-  assumptions: string[];
-  research: string[];
-  openQuestions: string[];
-  humanTasks: string[];
-  agentTasks: string[];
-  pathOptions: string[];
-  explicitPlanText: string;
-  hasExplicitPlanDocument: boolean;
-  whatChanged: string[];
-  sources: string[];
-};
-
-function normalizeTextList(input: unknown): string[] {
-  if (Array.isArray(input)) {
-    return input
-      .map((item: any) => safeText(item?.text ?? item?.title ?? item).trim())
-      .filter(Boolean);
-  }
-  if (typeof input === "string") {
-    return input
-      .split(/\r?\n+/)
-      .map((line) => line.replace(/^[-*]\s*/, "").trim())
-      .filter(Boolean);
-  }
-  if (input && typeof input === "object") {
-    const text = safeText((input as any).text ?? (input as any).title).trim();
-    return text ? [text] : [];
-  }
-  return [];
-}
-
-function matchesExplicitTaskExecutor(value: unknown, expected: "human" | "agent"): boolean {
-  const normalized = safeText(value).trim().toLowerCase();
-  if (!normalized) return false;
-  if (expected === "human") {
-    return normalized === "human" || normalized === "user" || normalized === "person";
-  }
-  return (
-    normalized === "agent" ||
-    normalized === "assistant" ||
-    normalized === "ai" ||
-    normalized === "automation" ||
-    normalized === "system"
-  );
-}
-
-function normalizeTypedTaskList(input: unknown, expected: "human" | "agent"): string[] {
-  if (!Array.isArray(input)) return [];
-  return input
-    .map((item: any) => {
-      const executor =
-        item?.executorType ??
-        item?.executor_type ??
-        item?.executor ??
-        item?.ownerType ??
-        item?.owner_type;
-      if (!matchesExplicitTaskExecutor(executor, expected)) return "";
-      return safeText(item?.text ?? item?.title ?? item).trim();
-    })
-    .filter(Boolean);
-}
-
-function pickExplicitPlanText(input: unknown): string {
-  if (input && typeof input === "object" && !Array.isArray(input)) {
-    const planObj = input as any;
-    return safeText(
-      planObj.anchor ??
-      planObj.anchorText ??
-      planObj.anchor_text ??
-      planObj.planWiki ??
-      planObj.plan_wiki ??
-      planObj.memo ??
-      planObj.article ??
-      planObj.summary ??
-      planObj.body ??
-      planObj.text,
-    ).trim();
-  }
-  if (typeof input === "string") {
-    return input.trim();
-  }
-  return "";
-}
-
-function hasExplicitPlanDocument(input: unknown): boolean {
-  if (pickExplicitPlanText(input)) return true;
-  if (!input || typeof input !== "object" || Array.isArray(input)) return false;
-  const planObj = input as any;
-  return Boolean(
-    planObj.editorState ??
-    planObj.editor_state ??
-    planObj.lexical ??
-    planObj.lexicalState ??
-    planObj.lexical_state ??
-    planObj.planWikiState ??
-    planObj.plan_wiki_state ??
-    planObj.documentState ??
-    planObj.document_state ??
-    planObj.document,
-  );
-}
-
-function buildStructuredAssistPlanSurface(
-  input: unknown,
-  context: {
-    planItems?: PlanItem[];
-    anchorSurface?: AnchorSurface;
-  } = {},
-): StructuredAssistPlanSurface {
-  const planObj = input && typeof input === "object" && !Array.isArray(input) ? (input as any) : null;
-  const planItems = Array.isArray(context.planItems) ? context.planItems : [];
-  const explicitNextMove = normalizeTextList(
-    planObj?.nextMove ??
-    planObj?.next_move ??
-    planObj?.nextTry ??
-    planObj?.next_try,
-  );
-  const explicitHumanTasks = normalizeTextList(planObj?.humanTasks ?? planObj?.human_tasks);
-  const explicitAgentTasks = normalizeTextList(planObj?.agentTasks ?? planObj?.agent_tasks);
-
-  return {
-    goal: safeText(planObj?.goal ?? planObj?.title ?? planObj?.objective).trim(),
-    whatMattersNow: normalizeTextList(
-      planObj?.whatMattersNow ??
-      planObj?.what_matters_now ??
-      planObj?.whatWeKnow ??
-      planObj?.what_we_know ??
-      planObj?.knowledge ??
-      planObj?.knownFacts ??
-      planObj?.facts,
-    ),
-    nextMove:
-      explicitNextMove.length > 0
-        ? explicitNextMove
-        : planItems
-            .filter((item) => item.status !== "done")
-            .slice(0, 3)
-            .map((item) => safeText(item.text).trim())
-            .filter(Boolean),
-    assumptions: normalizeTextList(
-      planObj?.assumptions ??
-      planObj?.assumptionList ??
-      planObj?.assumption_list,
-    ),
-    research: normalizeTextList(
-      planObj?.research ??
-      planObj?.researchSection ??
-      planObj?.research_section ??
-      planObj?.researchTracks ??
-      planObj?.research_tracks,
-    ),
-    openQuestions:
-      context.anchorSurface?.openQuestions ??
-      normalizeTextList(
-        planObj?.openQuestions ??
-        planObj?.open_questions ??
-        planObj?.unknowns ??
-        planObj?.questions,
-      ),
-    humanTasks:
-      explicitHumanTasks.length > 0
-        ? explicitHumanTasks
-        : normalizeTypedTaskList(planObj?.tasks ?? planObj?.items, "human"),
-    agentTasks:
-      explicitAgentTasks.length > 0
-        ? explicitAgentTasks
-        : normalizeTypedTaskList(planObj?.tasks ?? planObj?.items, "agent"),
-    pathOptions: normalizeTextList(
-      planObj?.pathOptions ??
-      planObj?.path_options ??
-      planObj?.bestPaths ??
-      planObj?.best_paths ??
-      planObj?.paths,
-    ),
-    explicitPlanText: pickExplicitPlanText(input),
-    hasExplicitPlanDocument: hasExplicitPlanDocument(input),
-    whatChanged: context.anchorSurface?.whatChanged ?? [],
-    sources: context.anchorSurface?.sources ?? [],
-  };
-}
-
-function buildDerivedAnchorText(
-  input: unknown,
-  context: {
-    messages?: { role: "assistant" | "user"; text: string }[];
-    planItems?: PlanItem[];
-    links?: LinkRef[];
-  } = {},
-): string {
-  const planObj = input && typeof input === "object" && !Array.isArray(input) ? (input as any) : null;
-  const fallbackItems = context.planItems && context.planItems.length > 0
-    ? context.planItems
-    : normalizePlanItems(input);
-  const explicitGoal = safeText(
-    planObj?.goal ??
-    planObj?.title ??
-    planObj?.objective ??
-    (typeof input === "string" ? input : ""),
-  ).trim();
-  const stableNotes = normalizeTextList(
-    planObj?.whatWeKnow ??
-    planObj?.what_we_know ??
-    planObj?.knowledge ??
-    planObj?.knownFacts ??
-    planObj?.facts,
-  );
-  const bestPaths = normalizeTextList(
-    planObj?.bestPaths ??
-    planObj?.best_paths ??
-    planObj?.paths,
-  );
-  const currentBet = safeText(planObj?.currentBet ?? planObj?.current_bet).trim();
-  const nextTry = safeText(planObj?.nextTry ?? planObj?.next_try).trim();
-  const lastUserMessage =
-    [...(Array.isArray(context.messages) ? context.messages : [])]
-      .reverse()
-      .find((message) => message.role === "user")
-      ?.text
-      ?.trim() || "";
-  const lastAssistantMessage =
-    [...(Array.isArray(context.messages) ? context.messages : [])]
-      .reverse()
-      .find((message) => message.role === "assistant")
-      ?.text
-      ?.trim() || "";
-  const sourceCount = Array.isArray(context.links) ? context.links.length : 0;
-  const paragraphs: string[] = [];
-
-  if (explicitGoal) {
-    paragraphs.push(`This pass is anchored on ${explicitGoal}.`);
-  } else if (lastUserMessage) {
-    paragraphs.push(`This pass is anchored on the user's latest request: ${lastUserMessage}`);
-  } else {
-    paragraphs.push("No saved anchor text exists for this Assist project yet.");
-  }
-
-  if (stableNotes.length > 0) {
-    paragraphs.push(`What currently appears stable: ${stableNotes.slice(0, 3).join("; ")}.`);
-  } else if (fallbackItems.length > 0) {
-    paragraphs.push(`Active working threads: ${fallbackItems.slice(0, 3).map((item) => item.text).join("; ")}.`);
-  }
-
-  if (bestPaths.length > 0 || currentBet || nextTry) {
-    const strategyBits = [
-      bestPaths.length > 0 ? `best paths in play: ${bestPaths.slice(0, 3).join("; ")}` : "",
-      currentBet ? `current bet: ${currentBet}` : "",
-      nextTry ? `next try: ${nextTry}` : "",
-    ].filter(Boolean);
-    if (strategyBits.length > 0) {
-      paragraphs.push(`Working direction: ${strategyBits.join(". ")}.`);
-    }
-  }
-
-  if (lastAssistantMessage) {
-    paragraphs.push(`Latest assistant direction: ${lastAssistantMessage}`);
-  }
-
-  if (sourceCount > 0) {
-    paragraphs.push(`This project currently has ${sourceCount} saved source link${sourceCount === 1 ? "" : "s"} available for grounding.`);
-  }
-
-  return paragraphs.join("\n\n");
-}
-
-function normalizeAnchorSurface(
-  input: unknown,
-  context: {
-    messages?: { role: "assistant" | "user"; text: string }[];
-    planItems?: PlanItem[];
-    links?: LinkRef[];
-  } = {},
-): AnchorSurface {
-  const planObj = input && typeof input === "object" && !Array.isArray(input) ? (input as any) : null;
-  const whatChanged = normalizeTextList(
-    planObj?.whatChanged ??
-    planObj?.what_changed ??
-    planObj?.recentChanges ??
-    planObj?.recent_changes ??
-    planObj?.changes ??
-    planObj?.updates,
-  );
-  const openQuestions = normalizeTextList(
-    planObj?.openQuestions ??
-    planObj?.open_questions ??
-    planObj?.unknowns ??
-    planObj?.questions,
-  );
-  const explicitSources = normalizeTextList(planObj?.sources);
-  const derivedSources = Array.isArray(context.links)
-    ? context.links
-        .slice(0, 6)
-        .map((link) => safeText(link.title || link.url).trim())
-        .filter(Boolean)
-    : [];
-  const explicitAnchor = safeText(
-    planObj?.anchor ??
-    planObj?.anchorText ??
-    planObj?.anchor_text ??
-    planObj?.planWiki ??
-    planObj?.plan_wiki ??
-    planObj?.memo ??
-    planObj?.article ??
-    planObj?.summary ??
-    planObj?.body ??
-    planObj?.text ??
-    (typeof input === "string" ? input : ""),
-  ).trim();
-
-  return {
-    anchor: explicitAnchor || buildDerivedAnchorText(input, context),
-    whatChanged,
-    openQuestions,
-    sources: explicitSources.length > 0 ? explicitSources : derivedSources,
-  };
-}
 
 type KNode = {
   id: string;
@@ -765,18 +286,6 @@ function parseTimestampMs(value: unknown): number | undefined {
   return Number.isFinite(t) ? t : undefined;
 }
 
-type AgentPrompt = {
-  role: string;
-  context: string;
-  objectives: string;
-  style: string;
-};
-
-type WorkbenchOutputMap = Record<"Plan" | "Links" | "Knowledge" | "Dashboard", string>;
-type WorkbenchRating = { stars: number; note: string };
-type AgentTypeKey = "agent_builder" | "llm_chat" | "kg_ingest" | "knowgraph" | "neo4j" | "research_agent";
-const SYSTEM_AGENT_TYPES = new Set<AgentTypeKey>(["llm_chat", "kg_ingest", "knowgraph", "neo4j", "research_agent"]);
-
 function normalizeProjectCardKey(value: unknown): string {
   return String(value ?? "")
     .trim()
@@ -844,29 +353,6 @@ function dedupeProjectCards(cards: any[]): any[] {
   return Array.from(byKey.values());
 }
 
-function buildAgentManagerRenderKey(
-  activeConfigProjectId: string,
-  selectedAgentProjectId: string,
-  selectedAgentType: AgentTypeKey,
-): string {
-  const configProjectId = String(activeConfigProjectId || "").trim();
-  const selectedProjectId = selectedAgentType === "agent_builder"
-    ? String(selectedAgentProjectId || "").trim()
-    : "";
-  return `${configProjectId}:${selectedProjectId}:${selectedAgentType}`;
-}
-
-function agentTypeFromProjectCode(projectCode: string): AgentTypeKey {
-  const code = String(projectCode || "").toLowerCase();
-  if (code === "main-chat" || code === "main_chat" || code === "llm-chat" || code === "llm_chat") return "llm_chat";
-  if (code === "kg-ingest" || code === "kg_ingest" || code === "thinkgraph") return "kg_ingest";
-  if (code === "knowgraph") return "knowgraph";
-  if (code === "neo4j") return "neo4j";
-  if (code === "research-agent" || code === "research_agent" || code === "web-research") return "research_agent";
-  if (code === "agent-builder" || code === "agent_builder") return "agent_builder";
-  return "agent_builder";
-}
-
 function buildSeedPromptTemplate(parts: {
   role: string;
   goal: string;
@@ -903,33 +389,43 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     }),
   },
   {
+    id: "prompt_kg_ingest",
+    content: buildSeedPromptTemplate({
+      role: "You act as the KG ingest / ThinkGraph extraction stage.",
+      goal: "Turn the current input into candidate entities, relationships, facts, and explicit gaps worth researching.",
+      constraints: "Stay close to the source. Separate grounded facts from hypotheses. Keep the structure concise and useful downstream.",
+      ioSchema: "Input: user or upstream card input. Output: compact graph-style findings and gaps.",
+      memoryPolicy: "Use only the current input passed into this card.",
+    }),
+  },
+  {
     id: "prompt_research",
     content: buildSeedPromptTemplate({
-      role: "You gather the most relevant inputs for the deck.",
-      goal: "Collect concrete facts, requirements, and open questions before synthesis.",
+      role: "You are the research agent for the current deck.",
+      goal: "Investigate the current gaps, find useful evidence, and return concrete findings with uncertainty called out.",
       constraints: "Stay concise. Prefer primary evidence. Flag uncertainty clearly.",
       ioSchema: "Input: task brief. Output: bullet list of findings and gaps.",
-      memoryPolicy: "Use only the current deck context.",
+      memoryPolicy: "Use upstream deck context and the current run input only.",
     }),
   },
   {
-    id: "prompt_synthesis",
+    id: "prompt_knowgraph",
     content: buildSeedPromptTemplate({
-      role: "You synthesize the gathered material into a draft answer.",
-      goal: "Turn the upstream findings into a coherent response structure.",
-      constraints: "Preserve source claims. Do not invent missing evidence.",
-      ioSchema: "Input: research findings. Output: structured draft response.",
-      memoryPolicy: "Rely on upstream cards in this deck.",
+      role: "You are the grounded knowledge normalization stage.",
+      goal: "Take researched findings and rewrite them into stable, evidence-backed knowledge that is safe to carry forward.",
+      constraints: "Prefer grounded claims. Remove unsupported leaps. Preserve citations or evidence cues when present.",
+      ioSchema: "Input: research findings. Output: normalized grounded knowledge summary.",
+      memoryPolicy: "Use upstream research output only.",
     }),
   },
   {
-    id: "prompt_review",
+    id: "prompt_neo4j",
     content: buildSeedPromptTemplate({
-      role: "You review the draft for correctness and completeness.",
-      goal: "Catch weak claims, missing assumptions, and schema problems.",
-      constraints: "Prefer precise corrections over rewrites.",
-      ioSchema: "Input: synthesized draft. Output: corrections and final pass notes.",
-      memoryPolicy: "Inspect the current draft only.",
+      role: "You represent the graph persistence / relationship-shaping layer.",
+      goal: "Prepare graph-ready relationships and persistence notes from grounded knowledge.",
+      constraints: "Stay structured. Prefer explicit entities and relationship language. Do not invent graph facts.",
+      ioSchema: "Input: grounded knowledge. Output: graph-write oriented summary and relationship candidates.",
+      memoryPolicy: "Use upstream grounded knowledge only.",
     }),
   },
 ];
@@ -946,8 +442,18 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     tools: ["response_formatter"],
   },
   {
+    id: "template_kg_ingest",
+    name: "KG Ingest / ThinkGraph",
+    promptTemplate: "prompt_kg_ingest",
+    model: "gpt-5-mini",
+    provider: "openai",
+    temperature: 0.2,
+    maxTokens: 1400,
+    tools: ["entity_extractor"],
+  },
+  {
     id: "template_research",
-    name: "Research",
+    name: "Research Agent",
     promptTemplate: "prompt_research",
     model: "gpt-5-mini",
     provider: "openai",
@@ -956,24 +462,24 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     tools: ["web_search"],
   },
   {
-    id: "template_synthesis",
-    name: "Synthesis",
-    promptTemplate: "prompt_synthesis",
+    id: "template_knowgraph",
+    name: "KnowGraph",
+    promptTemplate: "prompt_knowgraph",
     model: "gpt-5-mini",
     provider: "openai",
-    temperature: 0.4,
-    maxTokens: 1800,
-    tools: ["response_formatter"],
+    temperature: 0.2,
+    maxTokens: 1400,
+    tools: ["knowledge_ingest"],
   },
   {
-    id: "template_review",
-    name: "Review",
-    promptTemplate: "prompt_review",
+    id: "template_neo4j",
+    name: "Neo4j",
+    promptTemplate: "prompt_neo4j",
     model: "gpt-5-mini",
     provider: "openai",
     temperature: 0.1,
-    maxTokens: 900,
-    tools: ["validator"],
+    maxTokens: 1200,
+    tools: ["graph_write"],
   },
 ];
 
@@ -985,79 +491,159 @@ const INITIAL_DECK: DeckDocument = {
   nodes: [
     {
       id: "card_main_chat",
+      kind: "agent",
       templateId: "template_main_chat",
+      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_main_chat")?.content || "",
       runtimeBinding: "main_chat",
       title: "Main Chat",
       subtitle: "User-facing control response",
-      position: { x: -190, y: 180 },
+      position: { x: -220, y: 170 },
+      status: "ready",
+      cloneConfig: { enabled: false, seeds: [] },
+    },
+    {
+      id: "card_kg_ingest",
+      kind: "agent",
+      templateId: "template_kg_ingest",
+      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_kg_ingest")?.content || "",
+      runtimeBinding: "kg_ingest",
+      title: "KG Ingest / ThinkGraph",
+      subtitle: "Extract entities, relations, and gaps",
+      position: { x: 80, y: 40 },
       status: "ready",
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
       id: "card_research",
+      kind: "agent",
       templateId: "template_research",
-      title: "Research",
-      subtitle: "Gather upstream inputs",
-      position: { x: 120, y: 180 },
+      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_research")?.content || "",
+      runtimeBinding: "research_agent",
+      title: "Research Agent",
+      subtitle: "Investigate gaps and sources",
+      position: { x: 380, y: 40 },
       status: "ready",
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
-      id: "card_synthesis",
-      templateId: "template_synthesis",
-      title: "Synthesis",
-      subtitle: "Assemble response draft",
-      position: { x: 430, y: 180 },
-      status: "idle",
+      id: "card_knowgraph",
+      kind: "agent",
+      templateId: "template_knowgraph",
+      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_knowgraph")?.content || "",
+      runtimeBinding: "knowgraph",
+      title: "KnowGraph",
+      subtitle: "Ground and normalize evidence",
+      position: { x: 680, y: 40 },
+      status: "ready",
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
-      id: "card_review",
-      templateId: "template_review",
-      title: "Review",
-      subtitle: "Check quality and schema",
-      position: { x: 740, y: 180 },
-      status: "idle",
+      id: "card_neo4j",
+      kind: "agent",
+      templateId: "template_neo4j",
+      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_neo4j")?.content || "",
+      runtimeBinding: "neo4j",
+      title: "Neo4j",
+      subtitle: "Graph persistence and relationship pass",
+      position: { x: 980, y: 40 },
+      status: "ready",
+      cloneConfig: { enabled: false, seeds: [] },
+    },
+    {
+      id: "node_blackboard",
+      kind: "blackboard",
+      templateId: "template_blackboard",
+      prompt: "",
+      runtimeBinding: null,
+      title: "Blackboard",
+      subtitle: "Explicit shared store",
+      position: { x: 380, y: 320 },
+      status: "ready",
       cloneConfig: { enabled: false, seeds: [] },
     },
   ],
   edges: [
     {
-      id: "edge_main_chat_research",
+      id: "edge_main_chat_kg_ingest",
       source: "card_main_chat",
+      target: "card_kg_ingest",
+    },
+    {
+      id: "edge_kg_ingest_research",
+      source: "card_kg_ingest",
       target: "card_research",
-      routeType: "default",
-      priority: 0,
     },
     {
-      id: "edge_research_synthesis",
+      id: "edge_research_knowgraph",
       source: "card_research",
-      target: "card_synthesis",
-      routeType: "default",
-      priority: 0,
+      target: "card_knowgraph",
     },
     {
-      id: "edge_synthesis_review",
-      source: "card_synthesis",
-      target: "card_review",
-      routeType: "default",
-      priority: 0,
+      id: "edge_knowgraph_neo4j",
+      source: "card_knowgraph",
+      target: "card_neo4j",
+    },
+    {
+      id: "edge_main_chat_blackboard",
+      source: "card_main_chat",
+      target: "node_blackboard",
+    },
+    {
+      id: "edge_kg_ingest_blackboard",
+      source: "card_kg_ingest",
+      target: "node_blackboard",
+    },
+    {
+      id: "edge_research_blackboard",
+      source: "card_research",
+      target: "node_blackboard",
+    },
+    {
+      id: "edge_knowgraph_blackboard",
+      source: "card_knowgraph",
+      target: "node_blackboard",
+    },
+    {
+      id: "edge_neo4j_blackboard",
+      source: "card_neo4j",
+      target: "node_blackboard",
+    },
+    {
+      id: "edge_blackboard_main_chat",
+      source: "node_blackboard",
+      target: "card_main_chat",
     },
   ],
 };
 
 const BUILDER_DECK_ID = INITIAL_DECK.id;
-const RUNTIME_BINDING_OPTIONS: Array<{ value: RuntimeBinding | ""; label: string }> = [
-  { value: "", label: "(generic)" },
-  { value: "main_chat", label: "main_chat" },
-];
-
+const CURRENT_SYSTEM_CARD_IDS = [
+  "card_main_chat",
+  "card_kg_ingest",
+  "card_research",
+  "card_knowgraph",
+  "card_neo4j",
+  "node_blackboard",
+] as const;
+const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
+  card_main_chat: "main_chat",
+  card_kg_ingest: "kg_ingest",
+  card_research: "research_agent",
+  card_knowgraph: "knowgraph",
+  card_neo4j: "neo4j",
+};
 function cloneDeckDocument<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
-  return value === "main_chat" ? "main_chat" : null;
+  const normalized = safeText(value).trim().toLowerCase();
+  if (normalized === "main_chat") return "main_chat";
+  if (normalized === "kg_ingest") return "kg_ingest";
+  if (normalized === "research_agent") return "research_agent";
+  if (normalized === "knowgraph") return "knowgraph";
+  if (normalized === "neo4j") return "neo4j";
+  return null;
 }
 
 function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
@@ -1075,8 +661,34 @@ function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
   );
   return nextNodes.length > 0
     ? nextNodes.map((node) => ({
-        ...cloneDeckDocument(node),
-        runtimeBinding: normalizeRuntimeBinding(node.runtimeBinding),
+        id: safeText(node.id).trim(),
+        kind: safeText(node.kind).trim() === "blackboard" ? "blackboard" : "agent",
+        templateId: safeText(node.templateId).trim(),
+        prompt: typeof node.prompt === "string" ? node.prompt : "",
+        runtimeBinding: normalizeRuntimeBinding(
+          node.runtimeBinding ?? SYSTEM_CARD_RUNTIME_BINDINGS[safeText(node.id).trim()] ?? null,
+        ),
+        title: safeText(node.title || node.id).trim() || safeText(node.id).trim(),
+        subtitle: typeof node.subtitle === "string" ? node.subtitle : undefined,
+        position:
+          node.position && typeof node.position === "object"
+            ? {
+                x: Number((node.position as { x?: unknown }).x) || 0,
+                y: Number((node.position as { y?: unknown }).y) || 0,
+              }
+            : { x: 0, y: 0 },
+        overrides: node.overrides,
+        status:
+          node.status === "idle" ||
+          node.status === "ready" ||
+          node.status === "running" ||
+          node.status === "error"
+            ? node.status
+            : undefined,
+        cloneConfig:
+          node.cloneConfig && typeof node.cloneConfig === "object"
+            ? node.cloneConfig
+            : undefined,
       }))
     : cloneDeckDocument(INITIAL_DECK.nodes);
 }
@@ -1099,35 +711,284 @@ function normalizeDeckPromptTemplates(value: unknown): PromptTemplate[] {
     : cloneDeckDocument(INITIAL_PROMPT_TEMPLATES);
 }
 
-function seedMainChatIntoLegacyDeck(deck: DeckDocument): DeckDocument {
-  const hasMainChat = deck.nodes.some((node) => node.id === "card_main_chat");
-  const isLegacySeedDeck = ["card_research", "card_synthesis", "card_review"].every((nodeId) =>
+function normalizeDeckEdges(value: unknown): DeckEdge[] {
+  const nextEdges = sanitizeDeckEdges(value);
+  return nextEdges.length > 0 ? cloneDeckDocument(nextEdges) : cloneDeckDocument(INITIAL_DECK.edges);
+}
+
+function slugifyDeckIdPart(value: string): string {
+  return safeText(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "card";
+}
+
+function buildDeckNodeFromPreset(
+  preset: DeckNodePreset,
+  promptTemplates: PromptTemplate[],
+  position: { x: number; y: number },
+): AgentCardInstance {
+  const promptTemplateContent =
+    preset.promptTemplateId
+      ? promptTemplates.find((template) => template.id === preset.promptTemplateId)?.content ||
+        INITIAL_PROMPT_TEMPLATES.find((template) => template.id === preset.promptTemplateId)?.content ||
+        ""
+      : "";
+  const slug = slugifyDeckIdPart(preset.key);
+
+  return {
+    id:
+      preset.kind === "blackboard"
+        ? `node_${slug}_${uid()}`
+        : `card_${slug}_${uid()}`,
+    kind: preset.kind,
+    templateId: preset.templateId,
+    prompt: promptTemplateContent,
+    runtimeBinding: preset.runtimeBinding,
+    title: preset.title,
+    subtitle: preset.subtitle,
+    position,
+    status: "ready",
+    cloneConfig: { enabled: false, seeds: [] },
+  };
+}
+
+function getSuggestedDeckNodePosition(
+  deck: DeckDocument,
+  preset: DeckNodePreset,
+  anchorNode: AgentCardInstance | null,
+): { x: number; y: number } {
+  if (anchorNode) {
+    const outgoingCount = deck.edges.filter((edge) => edge.source === anchorNode.id).length;
+    if (preset.kind === "blackboard") {
+      return {
+        x: anchorNode.position.x + 40,
+        y: anchorNode.position.y + 220 + outgoingCount * 28,
+      };
+    }
+
+    return {
+      x: anchorNode.position.x + 320,
+      y: anchorNode.position.y + outgoingCount * 180,
+    };
+  }
+
+  if (preset.kind === "blackboard") {
+    const agentNodes = deck.nodes.filter((node) => node.kind !== "blackboard");
+    const averageX =
+      agentNodes.length > 0
+        ? Math.round(agentNodes.reduce((sum, node) => sum + node.position.x, 0) / agentNodes.length)
+        : 120;
+    const maxY = deck.nodes.reduce((max, node) => Math.max(max, node.position.y), 0);
+    return { x: averageX + 120, y: maxY + 260 };
+  }
+
+  const rightMostX = deck.nodes.reduce((max, node) => Math.max(max, node.position.x), -220);
+  const nextColumnX = rightMostX + 320;
+  const occupiedInNextColumn = deck.nodes.filter((node) => Math.abs(node.position.x - nextColumnX) < 72).length;
+  return {
+    x: nextColumnX,
+    y: 40 + occupiedInNextColumn * 180,
+  };
+}
+
+export function buildQuickAddDeckMutation(
+  deck: DeckDocument,
+  preset: DeckNodePreset,
+  anchorNodeId: string | null,
+): { nextDeck: DeckDocument; nextNode: AgentCardInstance; nextEdge: DeckEdge | null } {
+  const anchorNode = deck.nodes.find((node) => node.id === anchorNodeId) || null;
+  const nextNode = buildDeckNodeFromPreset(
+    preset,
+    deck.promptTemplates,
+    getSuggestedDeckNodePosition(deck, preset, anchorNode),
+  );
+  const shouldConnectFromAnchor =
+    Boolean(anchorNode) &&
+    !(anchorNode?.kind === "blackboard" && nextNode.kind === "blackboard");
+  const nextEdge =
+    anchorNode && shouldConnectFromAnchor
+      ? {
+          id: `edge_${slugifyDeckIdPart(anchorNode.id)}_${slugifyDeckIdPart(nextNode.id)}_${uid()}`,
+          source: anchorNode.id,
+          target: nextNode.id,
+        }
+      : null;
+
+  return {
+    nextDeck: {
+      ...deck,
+      version: deck.version + 1,
+      nodes: [...deck.nodes, nextNode],
+      edges: nextEdge ? [...deck.edges, nextEdge] : [...deck.edges],
+    },
+    nextNode,
+    nextEdge,
+  };
+}
+
+export type AssistStarterDeckMutation = {
+  nextDeck: DeckDocument;
+  createdNodes: AgentCardInstance[];
+  createdEdges: DeckEdge[];
+  focusNodeId: string | null;
+  recipe: AssistStarterRecipe;
+};
+
+export function buildAssistStarterDeckMutation(
+  deck: DeckDocument,
+  anchorNodeId: string | null,
+): AssistStarterDeckMutation | null {
+  const anchorNode = deck.nodes.find((node) => node.id === anchorNodeId) || null;
+  const recipe = getAssistStarterRecipe(anchorNode);
+  if (!recipe) return null;
+
+  let workingDeck = deck;
+  let workingAnchorId = anchorNodeId;
+  const createdNodes: AgentCardInstance[] = [];
+  const createdEdges: DeckEdge[] = [];
+
+  recipe.presetKeys.forEach((presetKey) => {
+    const preset = findDeckNodePreset(presetKey);
+    if (!preset) return;
+
+    const mutation = buildQuickAddDeckMutation(workingDeck, preset, workingAnchorId);
+    workingDeck = mutation.nextDeck;
+    workingAnchorId = mutation.nextNode.id;
+    createdNodes.push(mutation.nextNode);
+    if (mutation.nextEdge) {
+      createdEdges.push(mutation.nextEdge);
+    }
+  });
+
+  return {
+    nextDeck: workingDeck,
+    createdNodes,
+    createdEdges,
+    focusNodeId: createdNodes[recipe.focusNodeIndex]?.id || createdNodes[0]?.id || null,
+    recipe,
+  };
+}
+
+function formatBuilderStatusMessage(message: unknown, fallback: string): string {
+  const text = String(message || "").trim();
+  const lower = text.toLowerCase();
+  if (!text) return fallback;
+  if (text === "project_not_found") return "Canvas data is unavailable for this selection.";
+  if (text === "deck_load_failed") return "Canvas data could not be loaded.";
+  if (text === "deck_save_failed") return "Could not save the current board.";
+  if (text === "card_run_failed") return "Card run failed.";
+  if (text === "deck_run_failed") return "Board run failed.";
+  if (text === "template_not_found") return "The selected card template could not be resolved.";
+  if (text === "templates_required") return "The selected card could not be run because its template set was missing.";
+  if (text === "card_required") return "No card was provided to the backend run path.";
+  if (
+    lower.includes("insufficient_quota") ||
+    lower.includes("quota exceeded") ||
+    (lower.includes("quota") && lower.includes("billing"))
+  ) {
+    return "The configured model could not run because provider quota or billing is unavailable right now.";
+  }
+  if (lower.includes("rate limit") || lower.includes("too many requests")) {
+    return "The configured model is rate-limited right now. Try this card again shortly.";
+  }
+  if (
+    lower.includes("unauthorized") ||
+    lower.includes("authentication") ||
+    lower.includes("invalid api key") ||
+    lower.includes("incorrect api key")
+  ) {
+    return "The configured model request was rejected by the provider. Check the backend credentials for this card.";
+  }
+  if (
+    lower.includes("failed to fetch") ||
+    lower.includes("networkerror") ||
+    lower.includes("econnrefused") ||
+    lower.includes("load failed")
+  ) {
+    return "The Builder backend is unavailable right now.";
+  }
+  if (lower.includes("timed out") || lower.includes("timeout")) {
+    return "The configured model timed out before the card completed.";
+  }
+  return text;
+}
+
+function seedCurrentSystemCardsIntoLegacyDeck(deck: DeckDocument): DeckDocument {
+  const defaultNodeIds = new Set(INITIAL_DECK.nodes.map((node) => node.id));
+  const hasLegacyCore = ["card_research"].every((nodeId) =>
     deck.nodes.some((node) => node.id === nodeId),
   );
-
-  if (hasMainChat || !isLegacySeedDeck) {
-    return deck;
-  }
-
-  const mainChatNode = INITIAL_DECK.nodes.find((node) => node.id === "card_main_chat");
-  const mainChatEdge = INITIAL_DECK.edges.find((edge) => edge.id === "edge_main_chat_research");
-  const mainChatPromptTemplate = INITIAL_PROMPT_TEMPLATES.find(
-    (template) => template.id === "prompt_main_chat",
+  const hasOnlyDefaultShape = deck.nodes.every((node) => defaultNodeIds.has(node.id));
+  const missingCurrentSystemCards = CURRENT_SYSTEM_CARD_IDS.filter(
+    (nodeId) => !deck.nodes.some((node) => node.id === nodeId),
   );
-  if (!mainChatNode || !mainChatEdge || !mainChatPromptTemplate) {
+
+  if (!hasLegacyCore || !hasOnlyDefaultShape || missingCurrentSystemCards.length === 0) {
     return deck;
   }
+
+  const existingNodesById = new Map(deck.nodes.map((node) => [node.id, node] as const));
+  const existingPromptTemplatesById = new Map(
+    deck.promptTemplates.map((template) => [template.id, template] as const),
+  );
+  const initialPromptTemplateIds = new Set(INITIAL_PROMPT_TEMPLATES.map((template) => template.id));
+  const upgradedNodes = INITIAL_DECK.nodes.map((seedNode) => {
+    const existingNode = existingNodesById.get(seedNode.id);
+    if (!existingNode) {
+      return cloneDeckDocument(seedNode);
+    }
+
+    const nextTitle =
+      seedNode.id === "card_research" && String(existingNode.title || "").trim() === "Research"
+        ? seedNode.title
+        : existingNode.title || seedNode.title;
+  const nextSubtitle =
+      seedNode.id === "card_research" &&
+      String(existingNode.subtitle || "").trim() === "Gather upstream inputs"
+        ? seedNode.subtitle
+        : existingNode.subtitle || seedNode.subtitle;
+    const nextKind: AgentCardInstance["kind"] =
+      safeText((existingNode as any).kind || seedNode.kind).trim() === "blackboard"
+        ? "blackboard"
+        : "agent";
+
+    return {
+      ...cloneDeckDocument(seedNode),
+      ...cloneDeckDocument(existingNode),
+      kind: nextKind,
+      prompt:
+        typeof (existingNode as any).prompt === "string"
+          ? (existingNode as any).prompt
+          : seedNode.prompt || "",
+      title: nextTitle,
+      subtitle: nextSubtitle,
+      runtimeBinding: normalizeRuntimeBinding(
+        existingNode.runtimeBinding ?? seedNode.runtimeBinding ?? null,
+      ),
+      position: existingNode.position || seedNode.position,
+      overrides: existingNode.overrides,
+      status: existingNode.status ?? seedNode.status,
+      cloneConfig: existingNode.cloneConfig ?? seedNode.cloneConfig,
+    };
+  });
+
+  const upgradedPromptTemplates = [
+    ...INITIAL_PROMPT_TEMPLATES.map((seedTemplate) =>
+      cloneDeckDocument(existingPromptTemplatesById.get(seedTemplate.id) || seedTemplate),
+    ),
+    ...deck.promptTemplates
+      .filter((template) => !initialPromptTemplateIds.has(template.id))
+      .map((template) => cloneDeckDocument(template)),
+  ];
 
   return {
     ...deck,
     version: Math.max(deck.version, INITIAL_DECK.version),
-    promptTemplates: deck.promptTemplates.some((template) => template.id === mainChatPromptTemplate.id)
-      ? deck.promptTemplates
-      : [cloneDeckDocument(mainChatPromptTemplate), ...deck.promptTemplates],
-    nodes: [cloneDeckDocument(mainChatNode), ...deck.nodes],
-    edges: deck.edges.some((edge) => edge.id === mainChatEdge.id)
-      ? deck.edges
-      : [cloneDeckDocument(mainChatEdge), ...deck.edges],
+    promptTemplates: upgradedPromptTemplates,
+    nodes: upgradedNodes,
+    edges: cloneDeckDocument(INITIAL_DECK.edges),
   };
 }
 
@@ -1135,16 +996,28 @@ function hydrateDeckDocument(value: Partial<DeckDocument> | null | undefined): D
   if (!value || typeof value !== "object") {
     return cloneDeckDocument(INITIAL_DECK);
   }
-  return seedMainChatIntoLegacyDeck({
+  const hydratedDeck = seedCurrentSystemCardsIntoLegacyDeck({
     ...cloneDeckDocument(INITIAL_DECK),
     ...value,
     id: String(value.id || INITIAL_DECK.id).trim() || INITIAL_DECK.id,
     name: String(value.name || INITIAL_DECK.name).trim() || INITIAL_DECK.name,
     version: Number.isFinite(Number(value.version)) ? Number(value.version) : INITIAL_DECK.version,
     nodes: normalizeDeckNodes(value.nodes),
-    edges: Array.isArray(value.edges) ? cloneDeckDocument(value.edges) : cloneDeckDocument(INITIAL_DECK.edges),
+    edges: normalizeDeckEdges(value.edges),
     promptTemplates: normalizeDeckPromptTemplates(value.promptTemplates),
   });
+  const bannedNodeIds = new Set(["card_synthesis", "card_review"]);
+  const bannedPromptTemplateIds = new Set(["prompt_synthesis", "prompt_review"]);
+  return {
+    ...hydratedDeck,
+    nodes: hydratedDeck.nodes.filter((node) => !bannedNodeIds.has(node.id)),
+    edges: hydratedDeck.edges.filter(
+      (edge) => !bannedNodeIds.has(edge.source) && !bannedNodeIds.has(edge.target),
+    ),
+    promptTemplates: hydratedDeck.promptTemplates.filter((template) =>
+      !bannedPromptTemplateIds.has(template.id),
+    ),
+  };
 }
 
 type LatestCardRunRecord = {
@@ -1157,38 +1030,12 @@ type LatestCardRunRecord = {
   result: CardRunResult;
 };
 
-function resolvePromptTemplateContent(
-  promptTemplateId: string | null | undefined,
-  promptTemplates: PromptTemplate[],
-): string {
-  if (!promptTemplateId) return "";
-  return promptTemplates.find((template) => template.id === promptTemplateId)?.content || "";
-}
-
 function resolveAgentTemplate(
   card: AgentCardInstance | null,
   templates: AgentTemplate[],
 ): AgentTemplate | null {
   if (!card) return null;
   return templates.find((template) => template.id === card.templateId) || null;
-}
-
-function mergeTemplateAndOverrides(
-  card: AgentCardInstance | null,
-  templates: AgentTemplate[],
-): AgentTemplate | null {
-  const template = resolveAgentTemplate(card, templates);
-  if (!template) return null;
-  const overrides = card?.overrides || {};
-  return {
-    ...template,
-    ...overrides,
-    tools: overrides.tools || template.tools,
-    skills: overrides.skills || template.skills,
-    personas: overrides.personas || template.personas,
-    knowledgeSources: overrides.knowledgeSources || template.knowledgeSources,
-    ioSchema: overrides.ioSchema || template.ioSchema,
-  };
 }
 
 function sameStringArray(left: string[] | undefined, right: string[] | undefined): boolean {
@@ -3039,11 +2886,22 @@ function Chat({
 
 function DeckEdgeInspector({
   edge,
-  onChange,
+  onDelete,
+  sourceLabel,
+  targetLabel,
 }: {
   edge: DeckEdge;
-  onChange: (patch: Partial<DeckEdge>) => void;
+  onDelete: () => void;
+  sourceLabel: string;
+  targetLabel: string;
 }) {
+  const isBlackboardWrite = safeText(edge.target).trim() === "node_blackboard";
+  const isBlackboardRead = safeText(edge.source).trim() === "node_blackboard";
+  const connectionMeaning = isBlackboardWrite
+    ? "send output to blackboard"
+    : isBlackboardRead
+      ? "run using blackboard context"
+      : "run next";
   return (
     <div
       style={{
@@ -3057,138 +2915,78 @@ function DeckEdgeInspector({
         className="text-xs"
         style={{ color: C.text, fontWeight: 700, marginBottom: 12 }}
       >
-        Edge Inspector
+        Edge
       </div>
       <div className="space-y-3">
-        <div>
-          <label
-            style={{
-              display: "block",
-              marginBottom: 4,
-              color: C.neutral,
-              fontSize: 12,
-            }}
-          >
-            Route Type
-          </label>
-          <select
-            value={edge.routeType}
-            onChange={(event) =>
-              onChange({
-                routeType: event.target.value as DeckEdge["routeType"],
-              })
-            }
-            style={{
-              width: "100%",
-              padding: "8px",
-              background: C.panel,
-              color: C.text,
-              border: `1px solid ${C.border}`,
-              borderRadius: 4,
-            }}
-          >
-            <option value="default">default</option>
-            <option value="success">success</option>
-            <option value="error">error</option>
-            <option value="conditional">conditional</option>
-          </select>
+        <div
+          className="text-xs"
+          style={{
+            padding: "10px 12px",
+            borderRadius: 8,
+            border: `1px solid ${C.border}`,
+            background: C.panel,
+            color: C.neutral,
+            lineHeight: 1.5,
+          }}
+        >
+          <div>source: {sourceLabel}</div>
+          <div>target: {targetLabel}</div>
+          <div>meaning: {connectionMeaning}</div>
         </div>
-
-        <div>
-          <label
-            style={{
-              display: "block",
-              marginBottom: 4,
-              color: C.neutral,
-              fontSize: 12,
-            }}
-          >
-            Condition
-          </label>
-          <input
-            type="text"
-            value={edge.condition || ""}
-            onChange={(event) =>
-              onChange({
-                condition: event.target.value.trim() || undefined,
-              })
-            }
-            placeholder="route condition"
-            style={{
-              width: "100%",
-              padding: "8px",
-              background: C.panel,
-              color: C.text,
-              border: `1px solid ${C.border}`,
-              borderRadius: 4,
-            }}
-          />
+        <div
+          className="text-xs"
+          style={{
+            padding: "10px 12px",
+            borderRadius: 8,
+            border: `1px solid ${C.border}`,
+            background: C.panel,
+            color: C.neutral,
+            lineHeight: 1.5,
+          }}
+        >
+          This line is the real saved connection between these two nodes.
+          <div style={{ marginTop: 6 }}>
+            Drag either end of the selected line on the canvas to rewire it.
+          </div>
         </div>
-
-        <div>
-          <label
-            style={{
-              display: "block",
-              marginBottom: 4,
-              color: C.neutral,
-              fontSize: 12,
-            }}
-          >
-            Priority
-          </label>
-          <input
-            type="number"
-            value={typeof edge.priority === "number" ? edge.priority : 0}
-            onChange={(event) =>
-              onChange({
-                priority: (() => {
-                  if (event.target.value === "") return undefined;
-                  const nextPriority = Number.parseInt(event.target.value, 10);
-                  return Number.isFinite(nextPriority) ? nextPriority : undefined;
-                })(),
-              })
-            }
-            style={{
-              width: "100%",
-              padding: "8px",
-              background: C.panel,
-              color: C.text,
-              border: `1px solid ${C.border}`,
-              borderRadius: 4,
-            }}
-          />
-        </div>
+        <button
+          onClick={onDelete}
+          style={{
+            width: "100%",
+            padding: "10px 12px",
+            borderRadius: 8,
+            border: `1px solid ${C.warn}`,
+            background: "rgba(217,132,88,0.12)",
+            color: C.text,
+            cursor: "pointer",
+            fontWeight: 600,
+          }}
+        >
+          Delete Connection
+        </button>
       </div>
     </div>
   );
 }
 
-function BuilderDebugReadout({
-  validationResult,
-  executionPlan,
-  selectedCardId,
-  selectedEdgeId,
-  run,
+function DeckQuickAddPanel({
+  anchorCard,
+  onAddPreset,
+  onCreateAssistStarter,
 }: {
-  validationResult: DeckValidationResult;
-  executionPlan: DeckExecutionPlan;
-  selectedCardId: string | null;
-  selectedEdgeId: string | null;
-  run: DeckRun | null;
+  anchorCard: AgentCardInstance | null;
+  onAddPreset: (presetKey: string) => void;
+  onCreateAssistStarter: () => void;
 }) {
-  const validationMessages = Array.from(
-    new Set([
-      ...validationResult.errors.map((issue) => `error: ${issue.message}`),
-      ...validationResult.warnings.map((issue) => `warning: ${issue.message}`),
-      ...executionPlan.issues.map((issue) => `plan: ${issue}`),
-    ]),
-  );
-  const latestStep =
-    run && selectedCardId
-      ? [...run.steps].reverse().find((step) => step.cardId === selectedCardId) || null
-      : run
-        ? run.steps[run.steps.length - 1] || null
-        : null;
+  const commonPresets = getCommonAssistNextPresetKeys(anchorCard)
+    .map((presetKey) => findDeckNodePreset(presetKey))
+    .filter((preset): preset is DeckNodePreset => Boolean(preset));
+  const assistStarterRecipe = getAssistStarterRecipe(anchorCard);
+  const helperText = anchorCard
+    ? anchorCard.kind === "blackboard"
+      ? "New agent cards appear beside Blackboard and connect from it. New blackboards stay disconnected."
+      : "New cards appear beside the selected node and connect from it so the new link is immediately visible."
+    : "Start with the common Assist roles below, then wire the rest with visible links only.";
 
   return (
     <div
@@ -3203,232 +3001,308 @@ function BuilderDebugReadout({
         className="text-xs"
         style={{ color: C.text, fontWeight: 700, marginBottom: 10 }}
       >
-        Builder Debug
+        Quick Add
       </div>
-      <div className="space-y-2 text-xs">
-        <div>selected card: {selectedCardId || "(none)"}</div>
-        <div>selected edge: {selectedEdgeId || "(none)"}</div>
-        <div>validation: {validationResult.ok ? "ok" : "issues detected"}</div>
-        <div>
-          start cards:{" "}
-          {validationResult.summary.startCardIds.length > 0
-            ? validationResult.summary.startCardIds.join(", ")
-            : "(none)"}
-        </div>
-        <div>
-          simple order:{" "}
-          {executionPlan.simpleOrderCardIds.length > 0
-            ? executionPlan.simpleOrderCardIds.join(" -> ")
-            : "(unavailable)"}
-        </div>
-        <div>expanded steps: {executionPlan.expandedSteps.length}</div>
-        {latestStep && (
-          <>
-            <div>contract: {safeText(latestStep.contract?.task || "(none)")}</div>
-            <div>
-              score:{" "}
-              {typeof latestStep.score === "number"
-                ? `${latestStep.score}/${latestStep.scoreDetail?.maxScore ?? "?"}`
-                : "(unscored)"}
-            </div>
-            <div>passed: {latestStep.passed ? "yes" : "no"}</div>
-            {latestStep.improvementPromptBit && (
-              <div>improvement: {safeText(latestStep.improvementPromptBit)}</div>
-            )}
-            {latestStep.inputSummary && <div>input: {safeText(latestStep.inputSummary)}</div>}
-            {latestStep.outputSummary && <div>output: {safeText(latestStep.outputSummary)}</div>}
-          </>
-        )}
-        {validationMessages.length > 0 && (
-          <div
+      {assistStarterRecipe && (
+        <div
+          style={{
+            marginBottom: 10,
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: `1px solid ${C.primary}`,
+            background: "rgba(79,162,173,0.08)",
+          }}
+        >
+          <div className="text-xs" style={{ color: C.text, fontWeight: 700, marginBottom: 6 }}>
+            Assist Starter
+          </div>
+          <div className="text-xs" style={{ color: C.neutral, lineHeight: 1.5, marginBottom: 8 }}>
+            {assistStarterRecipe.presetKeys
+              .map((presetKey) => findDeckNodePreset(presetKey)?.label || presetKey)
+              .join(" -> ")}
+          </div>
+          <button
+            onClick={onCreateAssistStarter}
             style={{
-              maxHeight: 120,
-              overflowY: "auto",
-              paddingTop: 6,
-              borderTop: `1px solid ${C.border}`,
+              width: "100%",
+              padding: "9px 12px",
+              borderRadius: 8,
+              border: `1px solid ${C.primary}`,
+              background: "rgba(79,162,173,0.16)",
+              color: C.text,
+              cursor: "pointer",
+              fontWeight: 700,
             }}
           >
-            {validationMessages.map((message, index) => (
-              <div key={`${message}-${index}`} style={{ marginBottom: 4 }}>
-                {message}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function DeckRunReadout({
-  run,
-  selectedCardId,
-}: {
-  run: DeckRun | null;
-  selectedCardId: string | null;
-}) {
-  const selectedCardStep =
-    run && selectedCardId
-      ? [...run.steps].reverse().find((step) => step.cardId === selectedCardId) || null
-      : null;
-
-  return (
-    <div
-      style={{
-        padding: "12px 14px",
-        borderRadius: 8,
-        border: `1px solid ${C.border}`,
-        background: C.bg,
-      }}
-    >
-      <div
-        className="text-xs"
-        style={{ color: C.text, fontWeight: 700, marginBottom: 10 }}
-      >
-        Deck Run
-      </div>
-      {!run ? (
-        <div className="text-xs" style={{ color: C.neutral }}>
-          No deck runs yet.
+            {assistStarterRecipe.label}
+          </button>
         </div>
-      ) : (
-        <div className="space-y-3 text-xs" style={{ color: C.neutral }}>
-          <div>status: {run.status}</div>
-          <div>steps: {run.steps.length}</div>
-          <div>
-            simple order:{" "}
-            {run.executionPlanSummary.simpleOrderCardIds.length > 0
-              ? run.executionPlanSummary.simpleOrderCardIds.join(" -> ")
-              : "(unavailable)"}
+      )}
+      {commonPresets.length > 0 && (
+        <div style={{ marginBottom: 10 }}>
+          <div className="text-xs" style={{ color: C.neutral, marginBottom: 8 }}>
+            {anchorCard ? "Common Next" : "Assist MVP Roles"}
           </div>
-          {run.error && <div style={{ color: C.warn }}>error: {run.error}</div>}
-          {selectedCardStep && (
-            <div
-              style={{
-                paddingTop: 8,
-                borderTop: `1px solid ${C.border}`,
-              }}
-            >
-              <div style={{ color: C.text, fontWeight: 600, marginBottom: 6 }}>
-                Selected Card Output
-              </div>
-              <div>card: {safeText(selectedCardStep.title)}</div>
-              <div>contract: {safeText(selectedCardStep.contract?.task || "(none)")}</div>
-              <div>
-                score:{" "}
-                {typeof selectedCardStep.score === "number"
-                  ? `${selectedCardStep.score}/${selectedCardStep.scoreDetail?.maxScore ?? "?"}`
-                  : "(unscored)"}
-              </div>
-              <div>passed: {selectedCardStep.passed ? "yes" : "no"}</div>
-              {selectedCardStep.improvementPromptBit && (
-                <div>improvement: {safeText(selectedCardStep.improvementPromptBit)}</div>
-              )}
-              {selectedCardStep.inputSummary && <div>input: {safeText(selectedCardStep.inputSummary)}</div>}
-              {selectedCardStep.outputSummary && <div>output: {safeText(selectedCardStep.outputSummary)}</div>}
-              {selectedCardStep.seed && <div>seed: {safeText(selectedCardStep.seed)}</div>}
-              <div
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {commonPresets.map((preset) => (
+              <button
+                key={`common:${preset.key}`}
+                onClick={() => onAddPreset(preset.key)}
                 style={{
-                  marginTop: 6,
-                  maxHeight: 140,
-                  overflowY: "auto",
-                  whiteSpace: "pre-wrap",
-                  fontFamily: "monospace",
-                  background: "#181818",
-                  border: `1px solid ${C.border}`,
-                  borderRadius: 6,
                   padding: "8px 10px",
+                  borderRadius: 999,
+                  border: `1px solid ${preset.kind === "blackboard" ? C.primary : C.border}`,
+                  background:
+                    preset.kind === "blackboard"
+                      ? "rgba(79,162,173,0.12)"
+                      : "rgba(255,255,255,0.04)",
                   color: C.text,
+                  cursor: "pointer",
+                  fontSize: 12,
+                  fontWeight: 700,
                 }}
               >
-                {safeText(selectedCardStep.output || selectedCardStep.error || "(no output)")}
-              </div>
-            </div>
-          )}
-          <div
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+          gap: 8,
+        }}
+      >
+        {DECK_NODE_PRESETS.map((preset) => (
+          <button
+            key={preset.key}
+            onClick={() => onAddPreset(preset.key)}
             style={{
-              maxHeight: 220,
-              overflowY: "auto",
-              paddingTop: 8,
-              borderTop: `1px solid ${C.border}`,
+              textAlign: "left",
+              padding: "10px 12px",
+              borderRadius: 8,
+              border: `1px solid ${C.border}`,
+              background:
+                preset.kind === "blackboard" ? "rgba(79,162,173,0.12)" : "#202020",
+              color: C.text,
+              cursor: "pointer",
             }}
           >
-            {run.steps.length === 0 ? (
-              <div>No execution steps recorded.</div>
-            ) : (
-              run.steps.map((step) => (
-                <div
-                  key={step.id}
-                  style={{
-                    padding: "8px 0",
-                    borderBottom: `1px solid ${C.border}`,
-                  }}
-                >
-                  <div style={{ color: C.text, fontWeight: 600 }}>
-                    {safeText(step.title)} · {safeText(step.status)}
-                  </div>
-                  <div>card: {safeText(step.cardId)}</div>
-                  <div>contract: {safeText(step.contract?.task || "(none)")}</div>
-                  <div>
-                    score:{" "}
-                    {typeof step.score === "number"
-                      ? `${step.score}/${step.scoreDetail?.maxScore ?? "?"}`
-                      : "(unscored)"}
-                  </div>
-                  <div>passed: {step.passed ? "yes" : "no"}</div>
-                  {step.improvementPromptBit && (
-                    <div>improvement: {safeText(step.improvementPromptBit)}</div>
-                  )}
-                  {step.inputSummary && <div>input: {safeText(step.inputSummary)}</div>}
-                  {step.outputSummary && <div>output: {safeText(step.outputSummary)}</div>}
-                  {step.seed && <div>seed: {safeText(step.seed)}</div>}
-                  <div
-                    style={{
-                      marginTop: 4,
-                      whiteSpace: "pre-wrap",
-                      color: C.neutral,
-                    }}
-                  >
-                    {safeText(step.output || step.error || "(no output)").slice(0, 280)}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
+            <div style={{ fontSize: 12, fontWeight: 700 }}>{preset.label}</div>
+            <div
+              className="text-xs"
+              style={{ color: C.neutral, marginTop: 4, lineHeight: 1.45, opacity: 0.9 }}
+            >
+              {preset.subtitle}
+            </div>
+          </button>
+        ))}
+      </div>
+      <div className="text-xs" style={{ color: C.neutral, marginTop: 10, lineHeight: 1.5 }}>
+        {helperText}
+      </div>
+    </div>
+  );
+}
+
+function DeckExecutionPathSummary({
+  deck,
+  executionPlan,
+}: {
+  deck: DeckDocument;
+  executionPlan: ReturnType<typeof buildExecutionPlan>;
+}) {
+  const nodeLabel = new Map(deck.nodes.map((node) => [node.id, safeText(node.title || node.id)] as const));
+  const orderedLabels = executionPlan.simpleOrderCardIds
+    .map((cardId) => nodeLabel.get(cardId) || cardId)
+    .filter(Boolean);
+  const hasLoopIssue = executionPlan.issues.some((issue) => issue.toLowerCase().includes("cycle"));
+
+  return (
+    <div
+      style={{
+        padding: "12px 14px",
+        borderRadius: 8,
+        border: `1px solid ${C.border}`,
+        background: C.bg,
+        marginBottom: 12,
+      }}
+    >
+      <div
+        className="text-xs"
+        style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
+      >
+        Visible Execution Path
+      </div>
+      <div className="text-xs" style={{ color: C.neutral, lineHeight: 1.55 }}>
+        {orderedLabels.length > 0 ? orderedLabels.join(" -> ") : "No runnable path yet."}
+      </div>
+      <div className="text-xs" style={{ color: C.neutral, marginTop: 8, opacity: 0.85 }}>
+        This order comes directly from the drawn links on the canvas.
+      </div>
+      {hasLoopIssue && (
+        <div
+          className="text-xs"
+          style={{
+            color: C.warn,
+            marginTop: 8,
+            lineHeight: 1.55,
+            padding: "8px 10px",
+            borderRadius: 8,
+            border: `1px solid rgba(217,132,88,0.34)`,
+            background: "rgba(217,132,88,0.08)",
+          }}
+        >
+          Loop detected in the drawn graph. The runtime does not invent a fake simple order through cycles.
         </div>
       )}
     </div>
   );
 }
 
+function BlackboardStatePanel({
+  title,
+  blackboard,
+}: {
+  title: string;
+  blackboard: V3Blackboard;
+}) {
+  const sections: Array<{ label: string; value: string }> = [
+    { label: "Current Goal", value: safeText(blackboard.current_goal) },
+    { label: "What Matters Now", value: blackboard.what_matters_now.join("\n") },
+    { label: "Open Questions", value: blackboard.open_questions.join("\n") },
+    { label: "Findings", value: blackboard.findings.join("\n") },
+    { label: "Suggestions", value: blackboard.suggestions.join("\n") },
+    { label: "Next Options", value: blackboard.next_options.join("\n") },
+    { label: "Next Move", value: safeText(blackboard.next_move) },
+  ];
+  const storeEntries = Object.entries(blackboard.store || {});
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${C.border}`,
+        borderRadius: 8,
+        padding: "12px 14px",
+        background: C.bg,
+      }}
+    >
+      <div
+        className="text-xs"
+        style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
+      >
+        {title}
+      </div>
+      <div className="space-y-3">
+        {sections.map((section) => (
+          <div key={section.label}>
+            <div className="text-xs" style={{ color: C.neutral, marginBottom: 6 }}>
+              {section.label}
+            </div>
+            <div
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: 8,
+                border: `1px solid ${C.border}`,
+                background: "#181818",
+                color: C.text,
+                whiteSpace: "pre-wrap",
+                fontFamily: "monospace",
+                fontSize: 12,
+                lineHeight: 1.55,
+                minHeight: 44,
+              }}
+            >
+              {section.value || "(empty)"}
+            </div>
+          </div>
+        ))}
+        <div>
+          <div className="text-xs" style={{ color: C.neutral, marginBottom: 6 }}>
+            Store
+          </div>
+          {storeEntries.length === 0 ? (
+            <div
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: 8,
+                border: `1px solid ${C.border}`,
+                background: "#181818",
+                color: C.neutral,
+                fontFamily: "monospace",
+                fontSize: 12,
+                lineHeight: 1.55,
+                minHeight: 44,
+              }}
+            >
+              (empty)
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {storeEntries.map(([key, value]) => (
+                <div
+                  key={key}
+                  style={{
+                    borderRadius: 8,
+                    border: `1px solid ${C.border}`,
+                    background: "#181818",
+                    padding: "10px 12px",
+                  }}
+                >
+                  <div
+                    className="text-xs"
+                    style={{ color: C.neutral, marginBottom: 6, fontFamily: "monospace" }}
+                  >
+                    {key}
+                  </div>
+                  <div
+                    style={{
+                      color: C.text,
+                      whiteSpace: "pre-wrap",
+                      fontFamily: "monospace",
+                      fontSize: 12,
+                      lineHeight: 1.55,
+                    }}
+                  >
+                    {safeText(value) || "(empty)"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // -------- Main page --------
-export default function AgentBuilder() {
+export default function AgentBuilder(): React.ReactElement {
+  const BUILDER_DEV = import.meta.env.DEV;
   const [activeProject, setActiveProject] = useState("");
   const [panelOpen, setPanelOpen] = useState(true);
   const [panelWidth, setPanelWidth] = useState(480);
   const [mode, setMode] = useState<"assist" | "agents">("assist");
-  const [selectedAgentType, setSelectedAgentType] = useState<AgentTypeKey>("llm_chat");
   const [selectedAgentProjectId, setSelectedAgentProjectId] = useState("");
-  const [deck, setDeck] = useState<DeckDocument>(() => hydrateDeckDocument(INITIAL_DECK));
+  const [deck, setDeckState] = useState<DeckDocument>(() => hydrateDeckDocument(INITIAL_DECK));
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [builderCanvasFocusRequest, setBuilderCanvasFocusRequest] =
     useState<BuilderCanvasFocusRequest | null>(null);
-  const [showLegacyAgentConfig, setShowLegacyAgentConfig] = useState(false);
   // TODO: replace manual deck input with plan-driven execution input.
   const [deckRunInput, setDeckRunInput] = useState("");
   const [latestDeckRun, setLatestDeckRun] = useState<DeckRun | null>(null);
-  const [latestCardRun, setLatestCardRun] = useState<LatestCardRunRecord | null>(null);
+  const [, setLatestCardRun] = useState<LatestCardRunRecord | null>(null);
+  const [v3Blackboard, setV3Blackboard] = useState<V3Blackboard>(() => createEmptyBlackboard());
   const [deckRunBusy, setDeckRunBusy] = useState(false);
   const [cardRunBusy, setCardRunBusy] = useState(false);
   const [deckLoadBusy, setDeckLoadBusy] = useState(false);
   const [deckSaveBusy, setDeckSaveBusy] = useState(false);
   const [deckStatusMessage, setDeckStatusMessage] = useState<string | null>(null);
-  const [projectsLoaded, setProjectsLoaded] = useState(false);
-  const messagesByScopeRef = useRef<Record<string, { role: "assistant" | "user"; text: string }[]>>({});
-  const [projectLoading, setProjectLoading] = useState(false);
-  const [projectSaveStatus, setProjectSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [projectSaveError, setProjectSaveError] = useState<string | null>(null);
   const setActiveProjectWithUrl = useCallback(
     (projectId: string) => {
       const currentSearch = window.location.search.replace(/^\?/, "");
@@ -3447,24 +3321,11 @@ export default function AgentBuilder() {
     [activeProject],
   );
 
-  const tabs = ["Plan", "Links", "Knowledge", "Dashboard"] as const;
-  const assistTabs = ["Plan", "Links", "Knowledge"] as const;
-  const activeTabs = mode === "assist" ? assistTabs : tabs;
-
   const [tab, setTab] = useState<string>("Plan");
-  
-  // Force tab by mode
-  useEffect(() => {
-    if (mode === "agents") setTab("Plan");
-    if (mode === "assist") setTab("Plan");
-  }, [mode]);
-  useEffect(() => {
-    if (mode === "agents" && !selectedAgentProjectId) setSelectedAgentType("llm_chat");
-  }, [mode, selectedAgentProjectId]);
   const [openDrawer, setOpenDrawer] = useState<
     null | "project" | "apps" | "settings" | "admin"
   >(null);
-  const [sending, setSending] = useState(false);
+  const sending = false;
 
   // agent builder state
   const [projects, setProjects] = useState<any[]>([]);
@@ -3487,43 +3348,65 @@ export default function AgentBuilder() {
   const dashboardPollAbortRef = useRef<AbortController | null>(null);
   const dashboardPollProjectRef = useRef("");
   const loggedProjectRef = useRef<string | null>(null);
+  const lastBuilderDeckWriteReasonRef = useRef<string | null>(null);
+  const lastBuilderUiOnlyActionRef = useRef<string | null>(null);
+  const lastBuilderDeckFingerprintRef = useRef<string | null>(null);
   const [projectsError, setProjectsError] = useState<string | null>(null);
-  const [agentPrompt, setAgentPrompt] = useState<AgentPrompt>({
-    role: "",
-    context: "",
-    objectives: "",
-    style: "",
-  });
-  useEffect(() => {
-    if (mode !== "agents" || !selectedAgentProjectId) return;
-    const match = (Array.isArray(projects) ? projects : []).find((p) => p.id === selectedAgentProjectId);
-    if (!match) return;
-    setSelectedAgentType(agentTypeFromProjectCode(String(match.code || "")));
-  }, [mode, selectedAgentProjectId, projects]);
 
-  const activeConfigProjectId =
-    selectedAgentType === "agent_builder"
-      ? String(selectedAgentProjectId || "").trim()
-      : String(activeProject || "").trim();
-  const selectedAgentProject = useMemo(
-    () =>
-      (Array.isArray(projects) ? projects : []).find((p) => p.id === selectedAgentProjectId) || null,
-    [projects, selectedAgentProjectId],
+  const recordDeckWriteReason = useCallback(
+    (reason: string) => {
+      if (!BUILDER_DEV) return;
+      lastBuilderDeckWriteReasonRef.current = reason;
+      lastBuilderUiOnlyActionRef.current = null;
+    },
+    [BUILDER_DEV],
+  );
+
+  const recordUiOnlyAction = useCallback(
+    (action: string) => {
+      if (!BUILDER_DEV) return;
+      lastBuilderUiOnlyActionRef.current = action;
+    },
+    [BUILDER_DEV],
+  );
+
+  const setDeck = useCallback<React.Dispatch<React.SetStateAction<DeckDocument>>>(
+    (update) => {
+      setDeckState((prev) => {
+        const next =
+          typeof update === "function"
+            ? (update as (prevState: DeckDocument) => DeckDocument)(prev)
+            : update;
+        if (BUILDER_DEV) {
+          const prevFingerprint = JSON.stringify(prev);
+          const nextFingerprint = JSON.stringify(next);
+          if (prevFingerprint === nextFingerprint) {
+            console.warn("[builder] ignored deck write without persisted graph mutation", {
+              reason: lastBuilderDeckWriteReasonRef.current || "unknown",
+            });
+          }
+        }
+        return next;
+      });
+    },
+    [BUILDER_DEV],
   );
 
   useEffect(() => {
     if (mode !== "agents") return;
     if (!selectedAgentProjectId) {
+      recordDeckWriteReason("builder-reset");
       setDeck(hydrateDeckDocument(INITIAL_DECK));
       setLatestDeckRun(null);
       setLatestCardRun(null);
+      setV3Blackboard(createEmptyBlackboard());
       setDeckStatusMessage(null);
       return;
     }
 
     const controller = new AbortController();
     setDeckLoadBusy(true);
-    setDeckStatusMessage("Loading deck workspace...");
+      setDeckStatusMessage("Loading canvas...");
 
     void (async () => {
       try {
@@ -3550,20 +3433,28 @@ export default function AgentBuilder() {
             ? hydrateDeckDocument({ ...(payload.data.deck as DeckDocument), id: BUILDER_DECK_ID })
             : hydrateDeckDocument(INITIAL_DECK);
 
+        recordDeckWriteReason(payload.data?.deck ? "deck-load" : "deck-load-default");
         setDeck(nextDeck);
         setLatestDeckRun(
           payload.data?.latestRun && typeof payload.data.latestRun === "object"
             ? (payload.data.latestRun as DeckRun)
             : null,
         );
+        setV3Blackboard(
+          normalizeV3Blackboard(
+            payload.data?.blackboard ?? payload.data?.latestRun?.blackboard ?? createEmptyBlackboard(),
+          ),
+        );
         setLatestCardRun(null);
-        setDeckStatusMessage(payload.data?.deck ? "Deck loaded." : "Using default deck.");
+        setDeckStatusMessage(payload.data?.deck ? "Canvas loaded." : "Using default canvas.");
       } catch (err: any) {
         if (controller.signal.aborted) return;
+        recordDeckWriteReason("deck-load-fallback");
         setDeck(hydrateDeckDocument(INITIAL_DECK));
         setLatestDeckRun(null);
         setLatestCardRun(null);
-        setDeckStatusMessage(err?.message || "Using default deck.");
+        setV3Blackboard(createEmptyBlackboard());
+        setDeckStatusMessage(formatBuilderStatusMessage(err?.message, "Using default canvas."));
       } finally {
         if (!controller.signal.aborted) {
           setDeckLoadBusy(false);
@@ -3574,13 +3465,8 @@ export default function AgentBuilder() {
     return () => {
       controller.abort();
     };
-  }, [mode, selectedAgentProjectId]);
+  }, [mode, recordDeckWriteReason, selectedAgentProjectId]);
 
-  const agentManagerRenderKey = buildAgentManagerRenderKey(
-    activeConfigProjectId,
-    selectedAgentProjectId,
-    selectedAgentType,
-  );
   const showDeckBuilder = mode === "agents";
   const selectedCard = useMemo(
     () => deck.nodes.find((node) => node.id === selectedCardId) || null,
@@ -3598,14 +3484,17 @@ export default function AgentBuilder() {
     () => (selectedCard ? resolveEffectiveAgent(selectedCard, INITIAL_AGENT_TEMPLATES) : null),
     [selectedCard],
   );
-  const promptTemplates = useMemo(
-    () => normalizeDeckPromptTemplates(deck.promptTemplates),
-    [deck.promptTemplates],
-  );
+  const builderTabs = useMemo(() => {
+    if (selectedEdge) return [...BUILDER_EDGE_TABS];
+    if (selectedCard?.kind === "blackboard") return [...BUILDER_BLACKBOARD_TABS];
+    if (selectedCard) return [...BUILDER_NODE_TABS];
+    return [...BUILDER_PROJECT_TABS];
+  }, [selectedCard, selectedEdge]);
+  const activeTabs = mode === "assist" ? [...ASSIST_TABS] : builderTabs;
   const selectedCardConfig = useMemo<AgentManagerLocalConfig | null>(() => {
-    if (!effectiveAgent) return null;
-    // TODO: expose skills, personas, and knowledge sources in the existing AgentManager surface.
+    if (!effectiveAgent || !selectedCard) return null;
     return {
+      runtime_binding: selectedCard.runtimeBinding ?? null,
       provider:
         effectiveAgent.provider === "openai" || effectiveAgent.provider === "openrouter"
           ? effectiveAgent.provider
@@ -3613,8 +3502,9 @@ export default function AgentBuilder() {
       model_key: effectiveAgent.model || null,
       temperature: effectiveAgent.temperature ?? null,
       max_tokens: effectiveAgent.maxTokens ?? null,
-      prompt_template: resolvePromptTemplateContent(effectiveAgent.promptTemplate, promptTemplates),
+      prompt_template: selectedCard.prompt || "",
       tools: effectiveAgent.tools,
+      knowledge_sources: effectiveAgent.knowledgeSources || [],
       response_format: effectiveAgent.ioSchema
         ? {
             type: "json_schema",
@@ -3623,7 +3513,7 @@ export default function AgentBuilder() {
           }
         : null,
     };
-  }, [effectiveAgent, promptTemplates]);
+  }, [effectiveAgent, selectedCard]);
   const deckValidation = useMemo(
     () => validateDeckDocument(deck, { enforceStartCard: true }),
     [deck],
@@ -3638,24 +3528,33 @@ export default function AgentBuilder() {
     const remainingCards = deck.nodes.filter((node) => !orderedCardIds.has(node.id));
     return [...orderedCards, ...remainingCards];
   }, [deck.nodes, deckExecutionPlan.simpleOrderCardIds]);
-  const selectedCardLatestRun = useMemo(
-    () =>
-      latestCardRun && selectedCardId && latestCardRun.cardId === selectedCardId
-        ? latestCardRun
-        : null,
-    [latestCardRun, selectedCardId],
+
+  const deckPersistFingerprint = useMemo(
+    () => (BUILDER_DEV ? JSON.stringify(deck) : ""),
+    [BUILDER_DEV, deck],
   );
 
-  // Boss agent prompt configuration (per project)
-  const [bossPromptConfig, setBossPromptConfig] = useState({
-    role: "You are Sol, the primary assistant inside LiquidAIty.\nYou talk with the user to help them build their system.\nYou are direct and practical.\nYou do not invent features that don't exist.\nWhen something is broken, you help debug it using the UI and logs.\nYou remember project facts only when they appear in retrieved context (KG/RAG).\nIf no retrieved context is provided, you do not pretend to remember.",
-    goal: "Help the user make progress building LiquidAIty.\nPriorities:\n- Keep Assist chat working reliably.\n- Capture durable facts into knowledge (through the KG ingest pipeline).\n- Use retrieved knowledge to answer with better continuity and less repetition.\n- Keep solutions minimal and avoid UI bloat.",
-    constraints: "- Do not claim something works unless it is wired and verified.\n- Prefer the smallest change that restores functionality.\n- When diagnosing errors, ask for the exact error message or stack trace.\n- Do not suggest new UI controls unless required for the core loop.\n- When referring to acronyms, expand them the first time (e.g., KG (Knowledge Graph), RAG (Retrieval-Augmented Generation)).",
-    ioSchema: "Input: user message text + optional retrieved context block.\nOutput: normal conversational text.\nIf you need structured output, ask before switching formats.",
-    memoryPolicy: "No hidden memory.\nOnly use:\n- the visible chat history in this session, and\n- any explicit retrieved context provided from KG/RAG.\nIf context is missing, say so plainly.",
-    model: "gpt-5-nano",
-    temperature: 0.7,
-  });
+  useEffect(() => {
+    if (!BUILDER_DEV) return;
+    const previousFingerprint = lastBuilderDeckFingerprintRef.current;
+    lastBuilderDeckFingerprintRef.current = deckPersistFingerprint;
+    if (previousFingerprint === null || previousFingerprint === deckPersistFingerprint) return;
+
+    const writeReason = lastBuilderDeckWriteReasonRef.current;
+    const uiOnlyAction = lastBuilderUiOnlyActionRef.current;
+    if (!writeReason) {
+      console.warn("[builder] deck payload changed without an explicit write reason", {
+        action: uiOnlyAction || "unknown",
+      });
+    } else if (uiOnlyAction) {
+      console.warn("[builder] deck payload changed after a UI-only action", {
+        action: uiOnlyAction,
+        reason: writeReason,
+      });
+    }
+    lastBuilderDeckWriteReasonRef.current = null;
+    lastBuilderUiOnlyActionRef.current = null;
+  }, [BUILDER_DEV, deckPersistFingerprint]);
 
   useEffect(() => {
     if (!selectedCardId) return;
@@ -3670,22 +3569,57 @@ export default function AgentBuilder() {
   }, [deck.edges, selectedEdgeId]);
 
   useEffect(() => {
-    setShowLegacyAgentConfig(false);
-  }, [mode, selectedAgentProjectId, selectedAgentType]);
+    if (mode !== "agents") return;
+    if (selectedCardId || selectedEdgeId) return;
+    if (deck.nodes.length === 0) return;
+    const preferredNode =
+      deck.nodes.find((node) => node.kind !== "blackboard") ||
+      deck.nodes[0] ||
+      null;
+    if (!preferredNode) return;
+    setSelectedCardId(preferredNode.id);
+    setTab(preferredNode.kind === "blackboard" ? "Blackboard" : "Prompt");
+  }, [deck.nodes, mode, selectedCardId, selectedEdgeId]);
+
+  useEffect(() => {
+    if (activeTabs.some((entry) => entry === tab)) return;
+    setTab(activeTabs[0] || "Plan");
+  }, [activeTabs, tab]);
+
+  useEffect(() => {
+    if (mode !== "agents") return;
+    recordUiOnlyAction("tab-switch");
+  }, [mode, recordUiOnlyAction, tab]);
+
+  useEffect(() => {
+    if (mode !== "agents") return;
+    recordUiOnlyAction("drawer-toggle");
+  }, [mode, openDrawer, recordUiOnlyAction]);
 
   const handleSelectCard = useCallback((cardId: string | null) => {
+    recordUiOnlyAction("node-selection");
+    setPanelOpen(true);
     setSelectedCardId(cardId);
     if (cardId) {
       setSelectedEdgeId(null);
+      const selectedNode = deck.nodes.find((node) => node.id === cardId) || null;
+      if (selectedNode?.kind === "blackboard") {
+        setTab("Blackboard");
+      } else if (!BUILDER_NODE_TABS.some((entry) => entry === tab)) {
+        setTab("Prompt");
+      }
     }
-  }, []);
+  }, [deck.nodes, recordUiOnlyAction, tab]);
 
   const handleSelectEdge = useCallback((edgeId: string | null) => {
+    recordUiOnlyAction("edge-selection");
+    setPanelOpen(true);
     setSelectedEdgeId(edgeId);
     if (edgeId) {
       setSelectedCardId(null);
+      setTab("Edge");
     }
-  }, []);
+  }, [recordUiOnlyAction]);
 
   const queueBuilderCanvasFocus = useCallback(
     (kind: BuilderCanvasFocusRequest["kind"], cardId?: string | null) => {
@@ -3700,68 +3634,94 @@ export default function AgentBuilder() {
 
   const handleOpenBoardCardFromDrawer = useCallback(
     (cardId: string) => {
+      const selectedNode = deck.nodes.find((node) => node.id === cardId) || null;
       setPanelOpen(true);
-      setTab("Plan");
+      setTab(selectedNode?.kind === "blackboard" ? "Blackboard" : "Prompt");
       setSelectedEdgeId(null);
       setSelectedCardId(cardId);
       queueBuilderCanvasFocus("card", cardId);
       setOpenDrawer(null);
     },
-    [queueBuilderCanvasFocus],
+    [deck.nodes, queueBuilderCanvasFocus],
   );
 
-  const handleOpenDeckFromDrawer = useCallback(() => {
-    setPanelOpen(true);
-    setTab("Plan");
-    setSelectedCardId(null);
-    setSelectedEdgeId(null);
-    queueBuilderCanvasFocus("deck");
-    setOpenDrawer(null);
-  }, [queueBuilderCanvasFocus]);
-
-  const handleUpdateSelectedEdge = useCallback((patch: Partial<DeckEdge>) => {
+  const handleDeleteSelectedEdge = useCallback(() => {
     if (!selectedEdgeId) return;
+    recordDeckWriteReason("edge-delete");
     setDeck((currentDeck) => ({
       ...currentDeck,
       version: currentDeck.version + 1,
-      edges: currentDeck.edges.map((edge) =>
-        edge.id === selectedEdgeId
-          ? {
-              ...edge,
-              ...patch,
-            }
-          : edge,
-      ),
+      edges: currentDeck.edges.filter((edge) => edge.id !== selectedEdgeId),
     }));
-  }, [selectedEdgeId]);
+    setSelectedEdgeId(null);
+  }, [recordDeckWriteReason, selectedEdgeId]);
 
-  const handleUpdateSelectedCardRuntimeBinding = useCallback(
-    (nextBinding: RuntimeBinding | null) => {
-      if (!selectedCardId) return;
+  const handleQuickAddDeckNode = useCallback(
+    (presetKey: string) => {
+      const preset = findDeckNodePreset(presetKey);
+      if (!preset) return;
+
+      const mutation = buildQuickAddDeckMutation(deck, preset, selectedCardId);
+      const anchorNode = selectedCardId
+        ? deck.nodes.find((node) => node.id === selectedCardId) || null
+        : null;
+
       setLatestCardRun(null);
       setLatestDeckRun(null);
-      setDeck((currentDeck) => ({
-        ...currentDeck,
-        version: currentDeck.version + 1,
-        nodes: currentDeck.nodes.map((node) =>
-          node.id === selectedCardId
-            ? {
-                ...node,
-                runtimeBinding: nextBinding,
-              }
-            : node,
-        ),
-      }));
+      recordDeckWriteReason("deck-quick-add");
+      setDeck(mutation.nextDeck);
+      setPanelOpen(true);
+      setSelectedEdgeId(null);
+      setSelectedCardId(mutation.nextNode.id);
+      setTab(preset.kind === "blackboard" ? "Blackboard" : "Prompt");
+      queueBuilderCanvasFocus("card", mutation.nextNode.id);
+      setDeckStatusMessage(
+        mutation.nextEdge && anchorNode
+          ? `Added ${preset.label} and connected it from ${safeText(anchorNode.title || anchorNode.id)}.`
+          : `Added ${preset.label} to the canvas.`,
+      );
     },
-    [selectedCardId],
+    [deck, queueBuilderCanvasFocus, recordDeckWriteReason, selectedCardId],
   );
 
-  const handleSaveDeck = useCallback(async () => {
-    if (!selectedAgentProjectId) {
-      setDeckStatusMessage("Select an Agent workspace before saving.");
+  const handleCreateAssistStarter = useCallback(() => {
+    const mutation = buildAssistStarterDeckMutation(deck, selectedCardId);
+    if (!mutation) {
+      setDeckStatusMessage("Assist starter is not available for this selection.");
       return;
     }
 
+    setLatestCardRun(null);
+    setLatestDeckRun(null);
+    recordDeckWriteReason("deck-assist-starter");
+    setDeck(mutation.nextDeck);
+    setPanelOpen(true);
+    setSelectedEdgeId(null);
+    setSelectedCardId(mutation.focusNodeId);
+    if (mutation.focusNodeId) {
+      const focusNode = mutation.nextDeck.nodes.find((node) => node.id === mutation.focusNodeId) || null;
+      setTab(focusNode?.kind === "blackboard" ? "Blackboard" : "Prompt");
+      queueBuilderCanvasFocus("card", mutation.focusNodeId);
+    }
+    setDeckStatusMessage(
+      `${mutation.recipe.label}: ${mutation.recipe.presetKeys
+        .map((presetKey) => findDeckNodePreset(presetKey)?.label || presetKey)
+        .join(" -> ")}`,
+    );
+  }, [deck, queueBuilderCanvasFocus, recordDeckWriteReason, selectedCardId]);
+
+  const handleSaveDeck = useCallback(async () => {
+    if (!selectedAgentProjectId) {
+      setDeckStatusMessage("Open a canvas before saving.");
+      return;
+    }
+
+    const requestedDeckVersion = deck.version;
+
+    // Persist contract:
+    // - canvas/deck state is the only persisted graph source of truth
+    // - right-panel edits write only explicit node/edge fields into that deck state
+    // - selection, tab, drawer, and blackboard inspect UI are non-persisted view state only
     setDeckSaveBusy(true);
     setDeckStatusMessage("Saving deck...");
 
@@ -3786,23 +3746,46 @@ export default function AgentBuilder() {
       }
 
       if (data?.deck && typeof data.deck === "object") {
-        setDeck(hydrateDeckDocument({ ...(data.deck as DeckDocument), id: BUILDER_DECK_ID }));
+        recordDeckWriteReason("deck-save-merge");
+        setDeck((currentDeck) => {
+          if (currentDeck.version !== requestedDeckVersion) {
+            if (BUILDER_DEV) {
+              console.warn("[builder] skipped stale deck save merge", {
+                requestVersion: requestedDeckVersion,
+                currentVersion: currentDeck.version,
+              });
+            }
+            return currentDeck;
+          }
+          return hydrateDeckDocument({ ...(data.deck as DeckDocument), id: BUILDER_DECK_ID });
+        });
       }
-      setDeckStatusMessage("Deck saved.");
+      setV3Blackboard(normalizeV3Blackboard(data?.blackboard ?? v3Blackboard));
+      setDeckStatusMessage("Board saved.");
     } catch (err: any) {
-      setDeckStatusMessage(err?.message || "Deck save failed.");
+      setDeckStatusMessage(formatBuilderStatusMessage(err?.message, "Could not save the current board."));
     } finally {
       setDeckSaveBusy(false);
     }
-  }, [deck, selectedAgentProjectId]);
+  }, [BUILDER_DEV, deck, recordDeckWriteReason, selectedAgentProjectId, v3Blackboard]);
 
   const handleRunSelectedCard = useCallback(async () => {
     if (!selectedAgentProjectId) {
-      setDeckStatusMessage("Select an Agent workspace before running a card.");
+      setDeckStatusMessage("Canvas data is unavailable for this selection.");
       return;
     }
     if (!selectedCard || !effectiveAgent) {
       setDeckStatusMessage("Select a card before running it.");
+      return;
+    }
+    if (selectedCard.kind === "blackboard") {
+      setDeckStatusMessage("Blackboard is a storage node and cannot run directly.");
+      return;
+    }
+
+    const singleCardDeck = buildSingleCardRunDocument(deck, selectedCard.id);
+    if (!singleCardDeck) {
+      setDeckStatusMessage("Selected card could not be isolated for execution.");
       return;
     }
 
@@ -3811,24 +3794,56 @@ export default function AgentBuilder() {
     setDeckStatusMessage("Running selected card...");
 
     try {
-      const endpoint = `${V3_PROJECTS_API}/${selectedAgentProjectId}/cards/run`;
+      const selectedCardRunAgent = resolveEffectiveAgent(selectedCard, INITIAL_AGENT_TEMPLATES);
+      const endpoint = `${V3_PROJECTS_API}/${selectedAgentProjectId}/decks/run`;
       const response = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          card: selectedCard,
+          deckId: BUILDER_DECK_ID,
+          document: {
+            ...singleCardDeck,
+            id: BUILDER_DECK_ID,
+          },
           templates: INITIAL_AGENT_TEMPLATES,
-          promptTemplates,
           input: deckRunInput,
         }),
       });
       const data = await safeJson(response);
 
-      if (!response.ok || !data?.result || typeof data.result !== "object") {
-        throw new Error(safeText(data?.error || "Card run failed."));
+      if (!response.ok || !data?.run || typeof data.run !== "object") {
+        throw new Error(safeText(data?.message || data?.error || "Card run failed."));
       }
+
+      const run = data.run as DeckRun;
+      const step = run.steps.find((entry) => entry.cardId === selectedCard.id);
+      if (!step) {
+        throw new Error("Selected card did not produce a run step.");
+      }
+      const result: CardRunResult = {
+        output: step.output,
+        status: step.status,
+        error: step.error,
+        startedAt: step.startedAt,
+        endedAt: step.endedAt,
+        runtimeBinding: step.runtimeBinding,
+        seed: step.seed,
+        contract: step.contract,
+        handshake: step.handshake,
+        score: step.score,
+        passed: step.passed,
+        scoreDetail: step.scoreDetail,
+        improvementPromptBit: step.improvementPromptBit,
+        inputSummary: step.inputSummary,
+        outputSummary: step.outputSummary,
+        blackboardWrite: step.blackboardWrite,
+        blackboard: step.blackboard,
+      };
+      const nextBlackboard = normalizeV3Blackboard(
+        data?.blackboard ?? result.blackboard ?? v3Blackboard,
+      );
 
       setLatestCardRun({
         cardId: selectedCard.id,
@@ -3836,10 +3851,17 @@ export default function AgentBuilder() {
         templateId: selectedCard.templateId,
         runtimeBinding: selectedCard.runtimeBinding ?? null,
         input: deckRunInput,
-        effectiveAgent,
-        result: data.result as CardRunResult,
+        effectiveAgent: selectedCardRunAgent || effectiveAgent,
+        result,
       });
-      setDeckStatusMessage("Selected card run complete.");
+      setLatestDeckRun(run);
+      setV3Blackboard(nextBlackboard);
+
+      if (result.status === "error") {
+        setDeckStatusMessage(formatBuilderStatusMessage(result.error, "Card run failed."));
+      } else {
+        setDeckStatusMessage("Selected card run complete.");
+      }
     } catch (err: any) {
       setLatestCardRun({
         cardId: selectedCard.id,
@@ -3856,16 +3878,17 @@ export default function AgentBuilder() {
           endedAt: new Date().toISOString(),
         },
       });
-      setDeckStatusMessage(err?.message || "Card run failed.");
+      setDeckStatusMessage(formatBuilderStatusMessage(err?.message, "Card run failed."));
     } finally {
       setCardRunBusy(false);
     }
   }, [
+    deck,
     deckRunInput,
     effectiveAgent,
-    promptTemplates,
     selectedAgentProjectId,
     selectedCard,
+    v3Blackboard,
   ]);
 
   const handleRunDeck = useCallback(async () => {
@@ -3894,6 +3917,8 @@ export default function AgentBuilder() {
       return;
     }
 
+    const requestedDeckVersion = deck.version;
+
     setDeckRunBusy(true);
     setLatestCardRun(null);
     setLatestDeckRun(null);
@@ -3913,7 +3938,6 @@ export default function AgentBuilder() {
             id: BUILDER_DECK_ID,
           },
           templates: INITIAL_AGENT_TEMPLATES,
-          promptTemplates,
           input: deckRunInput,
         }),
       });
@@ -3923,12 +3947,27 @@ export default function AgentBuilder() {
         throw new Error(safeText(data?.error || "Deck run failed."));
       }
 
-      setLatestDeckRun(data.run as DeckRun);
+      const run = data.run as DeckRun;
+      setLatestDeckRun(run);
+      setV3Blackboard(normalizeV3Blackboard(data?.blackboard ?? data?.run?.blackboard ?? v3Blackboard));
       if (data?.deck && typeof data.deck === "object") {
-        setDeck(hydrateDeckDocument({ ...(data.deck as DeckDocument), id: BUILDER_DECK_ID }));
+        recordDeckWriteReason("deck-run-merge");
+        setDeck((currentDeck) => {
+          if (currentDeck.version !== requestedDeckVersion) {
+            if (BUILDER_DEV) {
+              console.warn("[builder] skipped stale deck run merge", {
+                requestVersion: requestedDeckVersion,
+                currentVersion: currentDeck.version,
+              });
+            }
+            return currentDeck;
+          }
+          return hydrateDeckDocument({ ...(data.deck as DeckDocument), id: BUILDER_DECK_ID });
+        });
       }
-      setDeckStatusMessage("Deck run complete.");
+      setDeckStatusMessage("Board run complete.");
     } catch (err: any) {
+      const friendlyError = formatBuilderStatusMessage(err?.message, "Board run failed.");
       const now = new Date().toISOString();
       setLatestDeckRun({
         id: `deck_run_${uid()}`,
@@ -3937,7 +3976,7 @@ export default function AgentBuilder() {
         endedAt: now,
         status: "error",
         input: deckRunInput,
-        error: err?.message || "Deck run failed.",
+        error: friendlyError,
         steps: [],
         validationSummary: {
           ok: deckValidation.ok,
@@ -3950,11 +3989,20 @@ export default function AgentBuilder() {
           expandedStepIds: deckExecutionPlan.expandedSteps.map((step) => step.executionId),
         },
       });
-      setDeckStatusMessage(err?.message || "Deck run failed.");
+      setDeckStatusMessage(friendlyError);
     } finally {
       setDeckRunBusy(false);
     }
-  }, [deck, deckExecutionPlan, deckRunInput, deckValidation, promptTemplates, selectedAgentProjectId]);
+  }, [
+    BUILDER_DEV,
+    deck,
+    deckExecutionPlan,
+    deckRunInput,
+    deckValidation,
+    recordDeckWriteReason,
+    selectedAgentProjectId,
+    v3Blackboard,
+  ]);
 
   const handleSaveSelectedCardConfig = useCallback(
     (nextConfig: AgentManagerLocalConfig) => {
@@ -3962,51 +4010,9 @@ export default function AgentBuilder() {
 
       setLatestCardRun(null);
       setLatestDeckRun(null);
+      recordDeckWriteReason("card-editor");
       setDeck((currentDeck) => {
-        const currentPromptTemplates = normalizeDeckPromptTemplates(currentDeck.promptTemplates);
-        const basePromptTemplateId = selectedTemplate.promptTemplate ?? null;
-        const existingOverridePromptTemplateId = selectedCard.overrides?.promptTemplate ?? null;
-        const basePromptContent = resolvePromptTemplateContent(
-          basePromptTemplateId,
-          currentPromptTemplates,
-        ).trim();
-        const nextPromptContent = String(nextConfig.prompt_template || "").trim();
-        let nextPromptTemplates = currentPromptTemplates;
-        let nextPromptTemplateId: string | null = basePromptTemplateId;
-
-        if (!nextPromptContent) {
-          nextPromptTemplateId = null;
-        } else if (nextPromptContent === basePromptContent) {
-          nextPromptTemplateId = basePromptTemplateId;
-        } else if (
-          existingOverridePromptTemplateId &&
-          existingOverridePromptTemplateId !== basePromptTemplateId &&
-          currentPromptTemplates.some((template) => template.id === existingOverridePromptTemplateId)
-        ) {
-          nextPromptTemplateId = existingOverridePromptTemplateId;
-          nextPromptTemplates = currentPromptTemplates.map((template) =>
-            template.id === existingOverridePromptTemplateId
-              ? { ...template, content: nextPromptContent }
-              : template,
-          );
-        } else {
-          const reusableTemplate = currentPromptTemplates.find(
-            (template) => template.content.trim() === nextPromptContent,
-          );
-          if (reusableTemplate) {
-            nextPromptTemplateId = reusableTemplate.id;
-          } else {
-            nextPromptTemplateId = `prompt_${uid()}`;
-            nextPromptTemplates = [
-              ...currentPromptTemplates,
-              {
-                id: nextPromptTemplateId,
-                content: nextPromptContent,
-              },
-            ];
-          }
-        }
-
+        const nextRuntimeBinding = normalizeRuntimeBinding(nextConfig.runtime_binding);
         const nextProvider =
           nextConfig.provider === "openai" || nextConfig.provider === "openrouter"
             ? nextConfig.provider
@@ -4022,6 +4028,12 @@ export default function AgentBuilder() {
               .map((tool) => tool.trim())
               .filter(Boolean)
           : [];
+        const nextKnowledgeSources = Array.isArray(nextConfig.knowledge_sources)
+          ? nextConfig.knowledge_sources
+              .filter((entry): entry is string => typeof entry === "string")
+              .map((entry) => entry.trim())
+              .filter(Boolean)
+          : [];
         const nextIoSchema =
           nextConfig.response_format?.type === "json_schema" &&
           nextConfig.response_format?.schema &&
@@ -4030,10 +4042,6 @@ export default function AgentBuilder() {
             : null;
 
         const nextOverrides = compactAgentOverrides({
-          promptTemplate:
-            nextPromptTemplateId !== (selectedTemplate.promptTemplate ?? null)
-              ? nextPromptTemplateId
-              : undefined,
           provider:
             nextProvider !== (selectedTemplate.provider ?? null) ? nextProvider : undefined,
           model: nextModel !== (selectedTemplate.model ?? null) ? nextModel : undefined,
@@ -4044,6 +4052,10 @@ export default function AgentBuilder() {
           maxTokens:
             nextMaxTokens !== (selectedTemplate.maxTokens ?? null) ? nextMaxTokens : undefined,
           tools: !sameStringArray(nextTools, selectedTemplate.tools) ? nextTools : undefined,
+          knowledgeSources:
+            !sameStringArray(nextKnowledgeSources, selectedTemplate.knowledgeSources)
+              ? nextKnowledgeSources
+              : undefined,
           ioSchema:
             !sameObjectShape(nextIoSchema, selectedTemplate.ioSchema)
               ? nextIoSchema || undefined
@@ -4053,11 +4065,12 @@ export default function AgentBuilder() {
         return {
           ...currentDeck,
           version: currentDeck.version + 1,
-          promptTemplates: nextPromptTemplates,
           nodes: currentDeck.nodes.map((node) =>
             node.id === selectedCard.id
               ? {
                   ...node,
+                  prompt: String(nextConfig.prompt_template || ""),
+                  runtimeBinding: nextRuntimeBinding,
                   overrides: nextOverrides,
                 }
               : node,
@@ -4065,8 +4078,194 @@ export default function AgentBuilder() {
         };
       });
     },
-    [selectedCard, selectedTemplate],
+    [recordDeckWriteReason, selectedCard, selectedTemplate],
   );
+
+  const renderAgentBuilderPanel = () => {
+    if (!showDeckBuilder) {
+      return (
+        <div
+          style={{
+            padding: "16px",
+            border: `1px dashed ${C.border}`,
+            borderRadius: "8px",
+            color: C.neutral,
+            background: "#1a1a1a",
+          }}
+        >
+          Select an Assist project for system agents or an Agent workspace for Agent Builder config.
+        </div>
+      );
+    }
+
+    if (selectedEdge && tab === "Edge") {
+      const sourceNode = deck.nodes.find((node) => node.id === selectedEdge.source) || null;
+      const targetNode = deck.nodes.find((node) => node.id === selectedEdge.target) || null;
+      return (
+        <div className="space-y-3">
+          <DeckEdgeInspector
+            edge={selectedEdge}
+            onDelete={handleDeleteSelectedEdge}
+            sourceLabel={safeText(sourceNode?.title || selectedEdge.source)}
+            targetLabel={safeText(targetNode?.title || selectedEdge.target)}
+          />
+        </div>
+      );
+    }
+
+    if (selectedCard && selectedCard.kind === "blackboard") {
+      if (tab === "Blackboard") {
+        return (
+          <div className="space-y-3">
+            <BlackboardStatePanel title="Blackboard Node" blackboard={v3Blackboard} />
+          </div>
+        );
+      }
+    }
+
+    if (selectedCard && selectedCardConfig) {
+      if (tab === "Prompt" || tab === "Knowledge" || tab === "Tools" || tab === "Runtime") {
+        return (
+          <div>
+            <Suspense
+              fallback={
+                <div
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: 8,
+                    border: `1px solid ${C.border}`,
+                    background: C.bg,
+                    color: C.neutral,
+                  }}
+                >
+                  Loading card configuration…
+                </div>
+              }
+            >
+              <AgentManager
+                key={`deck-card:${selectedCard.id}:${tab}`}
+                projectId={selectedAgentProjectId || "deck-card"}
+                agentType="agent_builder"
+                activeTab={tab}
+                promptTestInput={deckRunInput}
+                onChangePromptTestInput={setDeckRunInput}
+                onRunPromptTest={handleRunSelectedCard}
+                promptTestBusy={cardRunBusy}
+                promptTestDisabled={cardRunBusy || deckLoadBusy || !selectedAgentProjectId}
+                localConfig={selectedCardConfig}
+                onSaveLocalConfig={handleSaveSelectedCardConfig}
+                onGraphRefresh={() => {
+                  // no-op
+                }}
+              />
+            </Suspense>
+          </div>
+        );
+      }
+    }
+
+    if (!selectedCard && !selectedEdge && tab === "Plan") {
+      return (
+        <div className="space-y-3">
+          <DeckQuickAddPanel
+            anchorCard={null}
+            onAddPreset={handleQuickAddDeckNode}
+            onCreateAssistStarter={handleCreateAssistStarter}
+          />
+          <DeckExecutionPathSummary deck={deck} executionPlan={deckExecutionPlan} />
+          <div
+            style={{
+              padding: "12px 14px",
+              borderRadius: 8,
+              border: `1px solid ${C.border}`,
+              background: C.bg,
+            }}
+          >
+            <div
+              className="text-xs"
+              style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
+            >
+              Run Input
+            </div>
+            <textarea
+              value={deckRunInput}
+              onChange={(event) => setDeckRunInput(event.target.value)}
+              rows={6}
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: 8,
+                border: `1px solid ${C.border}`,
+                background: "#181818",
+                color: C.text,
+                resize: "vertical",
+                fontFamily: "monospace",
+                fontSize: 12,
+              }}
+            />
+            <div className="flex items-center gap-2" style={{ marginTop: 10 }}>
+              <button
+                onClick={handleSaveDeck}
+                disabled={deckSaveBusy || deckLoadBusy || !selectedAgentProjectId}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: `1px solid ${C.border}`,
+                  background: deckSaveBusy ? C.panel : "#222222",
+                  color: C.text,
+                  cursor:
+                    deckSaveBusy || deckLoadBusy || !selectedAgentProjectId ? "not-allowed" : "pointer",
+                }}
+              >
+                {deckSaveBusy ? "Saving..." : "Save Deck"}
+              </button>
+              <button
+                onClick={handleRunDeck}
+                disabled={deckRunBusy || deckLoadBusy || deck.nodes.length === 0 || !selectedAgentProjectId}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: `1px solid ${deckRunBusy ? C.border : C.primary}`,
+                  background: deckRunBusy ? C.panel : "rgba(79,162,173,0.18)",
+                  color: C.text,
+                  cursor:
+                    deckRunBusy || deckLoadBusy || deck.nodes.length === 0 || !selectedAgentProjectId
+                      ? "not-allowed"
+                      : "pointer",
+                }}
+              >
+                {deckRunBusy ? "Running..." : "Run Deck"}
+              </button>
+            </div>
+            {deckStatusMessage && (
+              <div className="text-xs" style={{ marginTop: 8, color: C.neutral }}>
+                {deckStatusMessage}
+              </div>
+            )}
+            {latestDeckRun?.error && (
+              <div className="text-xs" style={{ marginTop: 8, color: C.warn }}>
+                {latestDeckRun.error}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        style={{
+          padding: "16px",
+          border: `1px dashed ${C.border}`,
+          borderRadius: "8px",
+          color: C.neutral,
+          background: "#1a1a1a",
+        }}
+      >
+        Select a node or edge on the canvas to edit it. Clear the selection to return to project-level tabs.
+      </div>
+    );
+  };
 
   // TODO: persist to backend project_state.workflow_board
   const refreshProjects = useCallback(async (preferredId?: string, filterType?: 'assist' | 'agent', reason?: string) => {
@@ -4162,16 +4361,10 @@ export default function AgentBuilder() {
         const agentBuilder =
           cards.find((c: any) => normalizeProjectCardKey(c?.code) === "agent-builder") || null;
         const fallbackPinned =
-          main?.id || kg?.id || knowgraph?.id || neo4j?.id || researchAgent?.id || agentBuilder?.id || "";
+          agentBuilder?.id || main?.id || kg?.id || knowgraph?.id || neo4j?.id || researchAgent?.id || "";
         const nextAgentProjectId =
           (hasCurrentAgentProject ? currentAgentProjectId : "") || fallbackPinned || cards[0]?.id || "";
         setSelectedAgentProjectId(nextAgentProjectId);
-        if (nextAgentProjectId) {
-          const nextAgentProject = cards.find((c: any) => c.id === nextAgentProjectId);
-          setSelectedAgentType(agentTypeFromProjectCode(String(nextAgentProject?.code || "")));
-        } else {
-          setSelectedAgentType("llm_chat");
-        }
         return;
       }
 
@@ -4246,16 +4439,15 @@ export default function AgentBuilder() {
   const [graphLoading, setGraphLoading] = useState(false);
   const [graphResetToken, setGraphResetToken] = useState(0);
   const [expandingNodeId, setExpandingNodeId] = useState<string | null>(null);
-  const [graphTypeFilter, setGraphTypeFilter] = useState<string>("all");
-  const [graphRecencyFilter, setGraphRecencyFilter] = useState<"all" | "24h" | "7d" | "30d">("all");
-  const [graphMinConfidence, setGraphMinConfidence] = useState<number>(0);
+  const [graphTypeFilter] = useState<string>("all");
+  const [graphRecencyFilter] = useState<"all" | "24h" | "7d" | "30d">("all");
+  const [graphMinConfidence] = useState<number>(0);
   const [, setSelectedEdgeEvidence] = useState<KnowledgeGraphRelationship | null>(null);
   const [knowGraphData, setKnowGraphData] = useState<{ nodes: any[]; relationships: any[] }>({
     nodes: [],
     relationships: [],
   });
-  const [kgDebugTrace, setKgDebugTrace] = useState<any>(null);
-  const [lastIngestTrace, setLastIngestTrace] = useState<any>(null);
+  const [, setLastIngestTrace] = useState<any>(null);
   const scopeKey = `${mode}:${activeProject || ""}`;
   const graphCacheScope = `${scopeKey}:${graphTypeFilter}:${graphRecencyFilter}:${graphMinConfidence}`;
   const graphCacheKey = `${KG_CACHE_PREFIX}:${graphCacheScope}`;
@@ -5167,126 +5359,17 @@ export default function AgentBuilder() {
     };
   }, [tab, activeProject]);
 
-
-  // Load boss agent prompt config when project changes
-  useEffect(() => {
-    if (mode === "assist" && activeProject) {
-      const saved = localStorage.getItem(`boss-prompt:${activeProject}`);
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          setBossPromptConfig({
-            role: parsed.role || "",
-            goal: parsed.goal || "",
-            constraints: parsed.constraints || "",
-            ioSchema: parsed.ioSchema || "",
-            memoryPolicy: parsed.memoryPolicy || "",
-            model: parsed.model || "gpt-5.1-chat-latest",
-            temperature: parsed.temperature ?? 0.7,
-          });
-        } catch (err) {
-          console.warn("Failed to load boss prompt config:", err);
-        }
-      } else {
-        // Reset to defaults if no saved config
-        setBossPromptConfig({
-          role: "",
-          goal: "",
-          constraints: "",
-          ioSchema: "",
-          memoryPolicy: "",
-          model: "gpt-5.1-chat-latest",
-          temperature: 0.7,
-        });
-      }
-    }
-  }, [mode, activeProject]);
-
-  const sendToBossAgent = async (userText: string) => {
-    setSending(true);
-    try {
-      // Simple payload - let backend pick runtime model
-      const runtimeMode = mode === "agents" ? "agent" : "assist";
-      const payload: any = { 
-        goal: userText, 
-        projectId: activeProject,
-        mode: runtimeMode,
-        agentConfig: {
-          role: bossPromptConfig.role,
-          goal: bossPromptConfig.goal,
-          constraints: bossPromptConfig.constraints,
-          ioSchema: bossPromptConfig.ioSchema,
-          memoryPolicy: bossPromptConfig.memoryPolicy,
-          // Don't send model - let backend pick from its registry
-        }
-      };
-      
-      const data = await callBossAgent(payload);
-
-      let assistantText = "";
-      if (data?.ok) {
-        const finalText =
-          (typeof data?.result?.final === "string" && data.result.final.trim()) ||
-          (typeof (data as any)?.result === "string" && (data as any).result.trim()) ||
-          (typeof (data as any)?.answer === "string" && (data as any).answer.trim()) ||
-          (typeof (data as any)?.text === "string" && (data as any).text.trim());
-        assistantText =
-          typeof finalText === "string" && finalText.length > 0 ? finalText : JSON.stringify(data);
-      } else {
-        throw new Error(
-          safeText((data as any)?.message || (data as any)?.error || "Boss agent failed"),
-        );
-      }
-      setMessages((prev) => [...prev, { role: "assistant", text: assistantText }]);
-      if (mode === "assist" && activeProject) {
-        void loadActiveProjectState();
-        window.dispatchEvent(new CustomEvent("knowledge:refresh"));
-      }
-    } catch (error: any) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          text: `Error: ${error?.message || "Request failed"}`,
-        },
-      ]);
-    } finally {
-      setSending(false);
-    }
-  };
-
   const handleSend = (t: string) => {
     const trimmed = t.trim();
     if (!trimmed) return;
     if (sending) return;
 
     setMessages((m) => [...m, { role: "user", text: trimmed }]);
-
-    const userText = trimmed;
-    void sendToBossAgent(userText);
-  };
-
-  const approve = (id: string) =>
-    setPlan((p) =>
-      p.map((it) =>
-        it.id === id
-          ? {
-              ...it,
-              status: it.status === "approved" ? "draft" : "approved",
-            }
-          : it,
-      ),
-    );
-
-  const addTask = (text: string) =>
-    setPlan((p) => [{ id: uid(), text, status: "draft" }, ...p]);
-
-  const addLinks = (seed: string) => {
     setMessages((m) => [
       ...m,
       {
         role: "assistant",
-        text: `Link search for "${seed}" is not connected to the backend yet.`,
+        text: "Assist chat runtime has been removed from Builder. Use the canvas run controls.",
       },
     ]);
   };
@@ -5430,7 +5513,6 @@ export default function AgentBuilder() {
           setActiveProjectWithUrl(newId);
         } else {
           setSelectedAgentProjectId(newId);
-          setSelectedAgentType("agent_builder");
         }
       }
     } catch (err: any) {
@@ -5477,7 +5559,7 @@ export default function AgentBuilder() {
           }}
         >
           <button
-            title={mode === "agents" ? "Deck Workspaces" : "Project"}
+            title={mode === "agents" ? "Agents" : "Project"}
             onClick={() => setOpenDrawer("project")}
             className="p-2 rounded"
             style={{ color: C.text }}
@@ -5522,9 +5604,13 @@ export default function AgentBuilder() {
             <BuilderCanvas
               document={deck}
               setDocument={setDeck}
+              onPersistGraphMutation={recordDeckWriteReason}
+              executionPlan={deckExecutionPlan}
               selectedCardId={selectedCardId}
+              selectedEdgeId={selectedEdgeId}
               onSelectCard={handleSelectCard}
               onSelectEdge={handleSelectEdge}
+              onDeleteSelectedEdge={handleDeleteSelectedEdge}
               focusRequest={builderCanvasFocusRequest}
             />
           ) : (
@@ -5578,662 +5664,7 @@ export default function AgentBuilder() {
                 className="flex-1 overflow-auto px-1 pr-3 pb-6 text-sm"
                 style={{ color: C.neutral }}
               >
-                {mode === "agents" && (
-                  <>
-                    {tab === "Plan" && (
-                      <div className="space-y-3">
-                        {showDeckBuilder ? (
-                          <div className="space-y-4">
-                            <div
-                              className="text-xs"
-                              style={{
-                                padding: "10px 12px",
-                                borderRadius: 8,
-                                border: `1px solid ${C.border}`,
-                                background: C.bg,
-                                color: C.neutral,
-                              }}
-                            >
-                              <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>
-                                Deck Workspace
-                              </div>
-                              <div>
-                                workspace:{" "}
-                                {safeText(selectedAgentProject?.name || selectedAgentProject?.id || "(unselected)")}
-                              </div>
-                              <div>
-                                authoring surface: visual deck builder
-                              </div>
-                              {activeConfigProjectId && (
-                                <div style={{ opacity: 0.8, marginTop: 6 }}>
-                                  Legacy config remains available below while drawer-first authoring is retired.
-                                </div>
-                              )}
-                            </div>
-                            <div
-                              style={{
-                                padding: "12px 14px",
-                                borderRadius: 8,
-                                border: `1px solid ${C.border}`,
-                                background: C.bg,
-                                color: C.neutral,
-                              }}
-                            >
-                              <div
-                                className="text-xs"
-                                style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
-                              >
-                                Deck Runtime
-                              </div>
-                              <textarea
-                                value={deckRunInput}
-                                onChange={(event) => setDeckRunInput(event.target.value)}
-                                placeholder="Manual deck input"
-                                rows={4}
-                                style={{
-                                  width: "100%",
-                                  padding: "10px 12px",
-                                  borderRadius: 8,
-                                  border: `1px solid ${C.border}`,
-                                  background: "#181818",
-                                  color: C.text,
-                                  resize: "vertical",
-                                }}
-                              />
-                              <div
-                                className="flex items-center justify-between gap-3 text-xs"
-                                style={{ marginTop: 10 }}
-                              >
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    onClick={handleSaveDeck}
-                                    disabled={deckSaveBusy || deckLoadBusy || !selectedAgentProjectId}
-                                    style={{
-                                      padding: "8px 12px",
-                                      borderRadius: 8,
-                                      border: `1px solid ${deckSaveBusy ? C.border : C.border}`,
-                                      background: deckSaveBusy ? C.panel : "#222222",
-                                      color: C.text,
-                                      cursor:
-                                        deckSaveBusy || deckLoadBusy || !selectedAgentProjectId
-                                          ? "not-allowed"
-                                          : "pointer",
-                                    }}
-                                  >
-                                    {deckSaveBusy ? "Saving..." : "Save Deck"}
-                                  </button>
-                                  <button
-                                    onClick={handleRunDeck}
-                                    disabled={
-                                      deckRunBusy ||
-                                      deckLoadBusy ||
-                                      deck.nodes.length === 0 ||
-                                      !selectedAgentProjectId
-                                    }
-                                    style={{
-                                      padding: "8px 12px",
-                                      borderRadius: 8,
-                                      border: `1px solid ${deckRunBusy ? C.border : C.primary}`,
-                                      background: deckRunBusy ? C.panel : "rgba(79,162,173,0.18)",
-                                      color: C.text,
-                                      cursor:
-                                        deckRunBusy ||
-                                        deckLoadBusy ||
-                                        deck.nodes.length === 0 ||
-                                        !selectedAgentProjectId
-                                          ? "not-allowed"
-                                          : "pointer",
-                                    }}
-                                  >
-                                    {deckRunBusy ? "Running..." : "Run Deck"}
-                                  </button>
-                                </div>
-                                <div>
-                                  status:{" "}
-                                  {deckLoadBusy
-                                    ? "loading"
-                                    : deckRunBusy
-                                      ? "running"
-                                      : latestDeckRun?.status || "idle"}
-                                </div>
-                              </div>
-                              {deckStatusMessage && (
-                                <div className="text-xs" style={{ marginTop: 8, color: C.neutral }}>
-                                  {deckStatusMessage}
-                                </div>
-                              )}
-                              {latestDeckRun?.error && (
-                                <div className="text-xs" style={{ marginTop: 8, color: C.warn }}>
-                                  {latestDeckRun.error}
-                                </div>
-                              )}
-                            </div>
-                            {selectedEdge ? (
-                              <>
-                                <div
-                                  className="text-xs"
-                                  style={{
-                                    padding: "10px 12px",
-                                    borderRadius: 8,
-                                    border: `1px solid ${C.border}`,
-                                    background: C.bg,
-                                    color: C.neutral,
-                                  }}
-                                >
-                                  <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>
-                                    Edge Binding
-                                  </div>
-                                  <div>selected edge: {safeText(selectedEdge.id)}</div>
-                                  <div>
-                                    route: {safeText(selectedEdge.source)} {"->"} {safeText(selectedEdge.target)}
-                                  </div>
-                                </div>
-                                <DeckEdgeInspector
-                                  edge={selectedEdge}
-                                  onChange={handleUpdateSelectedEdge}
-                                />
-                              </>
-                            ) : selectedCard && selectedCardConfig ? (
-                              <>
-                                <div
-                                  className="text-xs"
-                                  style={{
-                                    padding: "10px 12px",
-                                    borderRadius: 8,
-                                    border: `1px solid ${C.border}`,
-                                    background: C.bg,
-                                    color: C.neutral,
-                                  }}
-                                >
-                                  <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>
-                                    Card Binding
-                                  </div>
-                                  <div>selected card: {safeText(selectedCard.title)}</div>
-                                  <div>
-                                    template: {safeText(selectedTemplate?.name || selectedCard.templateId)}
-                                  </div>
-                                  <div>deck: {safeText(deck.name)}</div>
-                                  <div
-                                    className="flex items-center justify-between gap-3"
-                                    style={{ marginTop: 10 }}
-                                  >
-                                    <label htmlFor="builder-runtime-binding" style={{ color: C.text }}>
-                                      runtime binding
-                                    </label>
-                                    <select
-                                      id="builder-runtime-binding"
-                                      value={selectedCard.runtimeBinding || ""}
-                                      onChange={(event) =>
-                                        handleUpdateSelectedCardRuntimeBinding(
-                                          normalizeRuntimeBinding(event.target.value),
-                                        )
-                                      }
-                                      style={{
-                                        minWidth: 160,
-                                        padding: "6px 8px",
-                                        borderRadius: 8,
-                                        border: `1px solid ${C.border}`,
-                                        background: C.panel,
-                                        color: C.text,
-                                      }}
-                                    >
-                                      {RUNTIME_BINDING_OPTIONS.map((option) => (
-                                        <option key={option.label} value={option.value}>
-                                          {option.label}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                  <div
-                                    className="flex items-center justify-between gap-3"
-                                    style={{ marginTop: 10 }}
-                                  >
-                                    <div>
-                                      dispatch: {safeText(selectedCard.runtimeBinding || "(generic)")} {"->"} backend v3 /cards/run
-                                    </div>
-                                    <button
-                                      onClick={handleRunSelectedCard}
-                                      disabled={
-                                        cardRunBusy ||
-                                        deckLoadBusy ||
-                                        !selectedAgentProjectId
-                                      }
-                                      style={{
-                                        padding: "8px 12px",
-                                        borderRadius: 8,
-                                        border: `1px solid ${cardRunBusy ? C.border : C.primary}`,
-                                        background: cardRunBusy ? C.panel : "rgba(79,162,173,0.18)",
-                                        color: C.text,
-                                        cursor:
-                                          cardRunBusy ||
-                                          deckLoadBusy ||
-                                          !selectedAgentProjectId
-                                            ? "not-allowed"
-                                            : "pointer",
-                                      }}
-                                    >
-                                      {cardRunBusy ? "Running..." : "Run Card"}
-                                    </button>
-                                  </div>
-                                </div>
-                                {selectedCardLatestRun && (
-                                  <div
-                                    className="text-xs"
-                                    style={{
-                                      padding: "10px 12px",
-                                      borderRadius: 8,
-                                      border: `1px solid ${C.border}`,
-                                      background: C.bg,
-                                      color: C.neutral,
-                                    }}
-                                  >
-                                    <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>
-                                      Latest Card Run
-                                    </div>
-                                    <div>source: backend v3 /cards/run</div>
-                                    <div>
-                                      binding: {safeText(selectedCardLatestRun.runtimeBinding || "(generic)")}
-                                    </div>
-                                    <div>status: {safeText(selectedCardLatestRun.result.status)}</div>
-                                    <div>contract: {safeText(selectedCardLatestRun.result.contract?.task || "(none)")}</div>
-                                    <div>
-                                      score:{" "}
-                                      {typeof selectedCardLatestRun.result.score === "number"
-                                        ? `${selectedCardLatestRun.result.score}/${selectedCardLatestRun.result.scoreDetail?.maxScore ?? "?"}`
-                                        : "(unscored)"}
-                                    </div>
-                                    <div>passed: {selectedCardLatestRun.result.passed ? "yes" : "no"}</div>
-                                    {selectedCardLatestRun.result.improvementPromptBit && (
-                                      <div>
-                                        improvement: {safeText(selectedCardLatestRun.result.improvementPromptBit)}
-                                      </div>
-                                    )}
-                                    {selectedCardLatestRun.result.inputSummary && (
-                                      <div>input: {safeText(selectedCardLatestRun.result.inputSummary)}</div>
-                                    )}
-                                    {selectedCardLatestRun.result.outputSummary && (
-                                      <div>output: {safeText(selectedCardLatestRun.result.outputSummary)}</div>
-                                    )}
-                                    {selectedCardLatestRun.result.seed && (
-                                      <div>seed: {safeText(selectedCardLatestRun.result.seed)}</div>
-                                    )}
-                                    <div
-                                      style={{
-                                        marginTop: 6,
-                                        maxHeight: 120,
-                                        overflowY: "auto",
-                                        whiteSpace: "pre-wrap",
-                                        fontFamily: "monospace",
-                                        color: C.text,
-                                      }}
-                                    >
-                                      {safeText(
-                                        selectedCardLatestRun.result.output ||
-                                          selectedCardLatestRun.result.error ||
-                                          "(no output)",
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-                                <div>
-                                  <Suspense
-                                    fallback={
-                                      <div
-                                        style={{
-                                          padding: "12px 14px",
-                                          borderRadius: 8,
-                                          border: `1px solid ${C.border}`,
-                                          background: C.bg,
-                                          color: C.neutral,
-                                        }}
-                                      >
-                                        Loading agent configuration…
-                                      </div>
-                                    }
-                                  >
-                                    <AgentManager
-                                      key={`deck-card:${selectedCard.id}`}
-                                      projectId={selectedAgentProjectId || "deck-card"}
-                                      agentType="agent_builder"
-                                      activeTab={tab}
-                                      localConfig={selectedCardConfig}
-                                      onSaveLocalConfig={handleSaveSelectedCardConfig}
-                                      onGraphRefresh={() => {
-                                        // no-op
-                                      }}
-                                    />
-                                  </Suspense>
-                                </div>
-                              </>
-                            ) : (
-                              <div
-                                style={{
-                                  padding: "16px",
-                                  border: `1px dashed ${C.border}`,
-                                  borderRadius: "8px",
-                                  color: C.neutral,
-                                  background: "#1a1a1a",
-                                }}
-                              >
-                                Select an agent card or edge on the canvas to edit it in the existing right panel.
-                              </div>
-                            )}
-                            <BuilderDebugReadout
-                              validationResult={deckValidation}
-                              executionPlan={deckExecutionPlan}
-                              selectedCardId={selectedCardId}
-                              selectedEdgeId={selectedEdgeId}
-                              run={latestDeckRun}
-                            />
-                            <DeckRunReadout
-                              run={latestDeckRun}
-                              selectedCardId={selectedCardId}
-                            />
-                            {activeConfigProjectId && (
-                              <div
-                                style={{
-                                  padding: "12px 14px",
-                                  borderRadius: 8,
-                                  border: `1px solid ${C.border}`,
-                                  background: C.bg,
-                                }}
-                              >
-                                <div
-                                  className="flex items-center justify-between gap-3"
-                                  style={{ marginBottom: showLegacyAgentConfig ? 10 : 0 }}
-                                >
-                                  <div
-                                    className="text-xs"
-                                    style={{ color: C.text, fontWeight: 700 }}
-                                  >
-                                    Legacy Config
-                                  </div>
-                                  <button
-                                    onClick={() => setShowLegacyAgentConfig((current) => !current)}
-                                    className="text-xs"
-                                    style={{
-                                      padding: "6px 10px",
-                                      borderRadius: 8,
-                                      border: `1px solid ${C.border}`,
-                                      background: "transparent",
-                                      color: C.text,
-                                    }}
-                                  >
-                                    {showLegacyAgentConfig ? "Hide Legacy Config" : "Open Legacy Config"}
-                                  </button>
-                                </div>
-                                {!showLegacyAgentConfig ? (
-                                  <div className="text-xs" style={{ color: C.neutral }}>
-                                    Deck authoring now happens on the canvas. This fallback stays available temporarily
-                                    for legacy system-agent config.
-                                  </div>
-                                ) : (
-                                  <>
-                                    {/* TODO: remove this legacy AgentManager fallback once all agent workspace authoring is deck-native. */}
-                                    <div className="space-y-4">
-                                    <div
-                                      className="text-xs"
-                                      style={{
-                                        padding: "10px 12px",
-                                        borderRadius: 8,
-                                        border: `1px solid ${C.border}`,
-                                        background: "#1a1a1a",
-                                        color: C.neutral,
-                                      }}
-                                    >
-                                      <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>
-                                        Config Binding
-                                      </div>
-                                      <div>current projectId: {activeConfigProjectId}</div>
-                                      <div>current agentType: {selectedAgentType}</div>
-                                      {SYSTEM_AGENT_TYPES.has(selectedAgentType) && (
-                                        <div style={{ opacity: 0.8 }}>
-                                          selected deck: {safeText(selectedAgentProject?.name || selectedAgentProject?.id || "system")}
-                                        </div>
-                                      )}
-                                    </div>
-                                    <div>
-                                      <Suspense
-                                        fallback={
-                                          <div
-                                            style={{
-                                              padding: "12px 14px",
-                                              borderRadius: 8,
-                                              border: `1px solid ${C.border}`,
-                                              background: "#1a1a1a",
-                                              color: C.neutral,
-                                            }}
-                                          >
-                                            Loading legacy configuration…
-                                          </div>
-                                        }
-                                      >
-                                        <AgentManager
-                                          key={agentManagerRenderKey}
-                                          projectId={activeConfigProjectId}
-                                          agentType={selectedAgentType}
-                                          activeTab={tab}
-                                          onGraphRefresh={() => {
-                                            // no-op
-                                          }}
-                                        />
-                                      </Suspense>
-                                    </div>
-                                    </div>
-                                  </>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div
-                            style={{
-                              padding: '16px',
-                              border: `1px dashed ${C.border}`,
-                              borderRadius: '8px',
-                              color: C.neutral,
-                              background: '#1a1a1a',
-                            }}
-                          >
-                            Select an Assist project for system agents or an Agent workspace for Agent Builder config.
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {tab === "Links" && (
-                      <div className="space-y-3">
-                        {/* Sources/Links */}
-                        {links.map((l) => (
-                          <div
-                            key={l.id}
-                            style={{
-                              border: `1px solid ${C.border}`,
-                              borderRadius: 8,
-                              padding: "8px",
-                            }}
-                          >
-                            <div
-                              style={{
-                                color: C.text,
-                                fontWeight: 600,
-                              }}
-                            >
-                              {safeText(l.title)}
-                            </div>
-                            <div
-                              className="text-xs"
-                              style={{ opacity: 0.8, margin: "4px 0 8px" }}
-                            >
-                              {safeText(l.url)}
-                            </div>
-                            <div className="flex gap-6 text-sm">
-                              {!l.accepted && (
-                                <button
-                                  onClick={() => accept(l.id)}
-                                  style={{ color: C.primary }}
-                                >
-                                  Accept
-                                </button>
-                              )}
-                              <button
-                                onClick={() => reject(l.id)}
-                                style={{ color: C.warn }}
-                              >
-                                Reject
-                              </button>
-                              <a
-                                href={safeText(l.url)}
-                                target="_blank"
-                                rel="noreferrer"
-                                style={{ color: C.neutral }}
-                              >
-                                open
-                              </a>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {tab === "Dashboard" && (
-                      <div className="space-y-3">
-                        {/* ThinkGraph ingest results - auto-populated from Assist chat */}
-                      <div className="space-y-2">
-                        <div
-                          className="text-xs font-semibold"
-                          style={{ color: C.text }}
-                        >
-                          Last ThinkGraph Ingest
-                        </div>
-                        <div className="text-xs" style={{ color: C.neutral, marginBottom: 8 }}>
-                          Auto-populated when Assist chat triggers ingest.
-                        </div>
-                        {lastIngestTrace ? (
-                            <div
-                              className="text-xs space-y-2 p-3 rounded"
-                              style={{
-                                background: C.bg,
-                                border: `1px solid ${C.border}`,
-                                maxHeight: 400,
-                                overflow: 'auto',
-                              }}
-                            >
-                              {lastIngestTrace.error ? (
-                                <div style={{ color: '#f87171' }}>
-                                  <div style={{ fontWeight: 600, marginBottom: 4 }}>❌ Ingest Failed</div>
-                                  <div style={{ marginBottom: 4 }}>Step: {safeText(lastIngestTrace.error.step)}</div>
-                                  <div style={{ marginBottom: 4 }}>Code: {safeText(lastIngestTrace.error.code)}</div>
-                                  <div style={{ marginBottom: 8 }}>{safeText(lastIngestTrace.error.message)}</div>
-                                  
-                                  {lastIngestTrace.step_states.chunking && !lastIngestTrace.step_states.chunking.ok && (
-                                    <div style={{ marginTop: 12, padding: 8, background: '#1a1a1a', borderRadius: 4, fontSize: '11px' }}>
-                                      <div style={{ fontWeight: 600, marginBottom: 4, color: '#f87171' }}>CHUNKING EVIDENCE</div>
-                                      {lastIngestTrace.step_states.chunking.model_key && (
-                                        <div style={{ marginBottom: 4 }}>Model: {safeText(lastIngestTrace.step_states.chunking.model_key)}</div>
-                                      )}
-                                      {lastIngestTrace.step_states.chunking.prompt_user_sha1 && (
-                                        <div style={{ marginBottom: 4 }}>Prompt SHA1: {safeText(lastIngestTrace.step_states.chunking.prompt_user_sha1).slice(0, 12)}...</div>
-                                      )}
-                                      {lastIngestTrace.step_states.chunking.raw_output_sha1 && (
-                                        <div style={{ marginBottom: 4 }}>Output SHA1: {safeText(lastIngestTrace.step_states.chunking.raw_output_sha1).slice(0, 12)}...</div>
-                                      )}
-                                      {lastIngestTrace.step_states.chunking.parse_error && (
-                                        <div style={{ marginBottom: 4, color: '#fca5a5' }}>Parse Error: {safeText(lastIngestTrace.step_states.chunking.parse_error)}</div>
-                                      )}
-                                      {lastIngestTrace.step_states.chunking.raw_output_preview && (
-                                        <div style={{ marginTop: 8 }}>
-                                          <div style={{ fontWeight: 600, marginBottom: 4 }}>Raw Output Preview:</div>
-                                          <pre style={{ 
-                                            whiteSpace: 'pre-wrap', 
-                                            wordBreak: 'break-all',
-                                            fontSize: '10px',
-                                            maxHeight: 200,
-                                            overflow: 'auto',
-                                            background: '#0a0a0a',
-                                            padding: 8,
-                                            borderRadius: 4,
-                                            margin: 0
-                                          }}>{safeText(lastIngestTrace.step_states.chunking.raw_output_preview)}</pre>
-                                        </div>
-                                      )}
-                                      {lastIngestTrace.step_states.chunking.prompt_user_preview && (
-                                        <div style={{ marginTop: 8 }}>
-                                          <div style={{ fontWeight: 600, marginBottom: 4 }}>Prompt Preview:</div>
-                                          <pre style={{ 
-                                            whiteSpace: 'pre-wrap', 
-                                            wordBreak: 'break-all',
-                                            fontSize: '10px',
-                                            maxHeight: 200,
-                                            overflow: 'auto',
-                                            background: '#0a0a0a',
-                                            padding: 8,
-                                            borderRadius: 4,
-                                            margin: 0
-                                          }}>{safeText(lastIngestTrace.step_states.chunking.prompt_user_preview)}</pre>
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              ) : (
-                                <>
-                                  <div>
-                                    <div style={{ color: C.primary, fontWeight: 600 }}>✅ LAST INGEST</div>
-                                    <div style={{ color: C.neutral }}>Time: {new Date(lastIngestTrace.created_at).toLocaleString()}</div>
-                                    <div style={{ color: C.neutral }}>Trace ID: {safeText(lastIngestTrace.trace_id)}</div>
-                                    <div style={{ color: C.neutral }}>Model: {safeText(lastIngestTrace.model_key)}</div>
-                                    <div style={{ color: C.neutral }}>Source: {safeText(lastIngestTrace.src)}</div>
-                                  </div>
-                                  <div style={{ marginTop: 8 }}>
-                                    <div style={{ color: C.primary, fontWeight: 600 }}>STEP CHECKSUMS</div>
-                                    <div style={{ color: C.neutral }}>Start: {lastIngestTrace.step_states.start?.ok ? '✅' : '❌'}</div>
-                                    {lastIngestTrace.step_states.chunking && (
-                                      <>
-                                        <div style={{ color: C.neutral }}>Chunking: {lastIngestTrace.step_states.chunking.ok ? '✅' : '❌'} {lastIngestTrace.step_states.chunking.chunk_count ? `(${lastIngestTrace.step_states.chunking.chunk_count} chunks)` : ''}</div>
-                                        {lastIngestTrace.step_states.chunking.ok && (
-                                          <div style={{ marginLeft: 16, marginTop: 4, fontSize: '11px', color: C.neutral }}>
-                                            {lastIngestTrace.step_states.chunking.model_key && (
-                                              <div>Model: {safeText(lastIngestTrace.step_states.chunking.model_key)}</div>
-                                            )}
-                                            {lastIngestTrace.step_states.chunking.prompt_user_sha1 && (
-                                              <div>Prompt SHA1: {safeText(lastIngestTrace.step_states.chunking.prompt_user_sha1).slice(0, 12)}...</div>
-                                            )}
-                                            {lastIngestTrace.step_states.chunking.raw_output_sha1 && (
-                                              <div>Output SHA1: {safeText(lastIngestTrace.step_states.chunking.raw_output_sha1).slice(0, 12)}...</div>
-                                            )}
-                                          </div>
-                                        )}
-                                      </>
-                                    )}
-                                    {lastIngestTrace.step_states.embed && (
-                                      <div style={{ color: C.neutral }}>Embed: {lastIngestTrace.step_states.embed.ok ? '✅' : '❌'} {lastIngestTrace.step_states.embed.vectors_count ? `(${lastIngestTrace.step_states.embed.vectors_count} vectors)` : ''}</div>
-                                    )}
-                                    {lastIngestTrace.step_states.write && (
-                                      <div style={{ color: C.neutral }}>Write: {lastIngestTrace.step_states.write.ok ? '✅' : '❌'} {lastIngestTrace.step_states.write.entity_count ? `(${lastIngestTrace.step_states.write.entity_count} entities, ${lastIngestTrace.step_states.write.relation_count} relations)` : ''}</div>
-                                    )}
-                                    {lastIngestTrace.step_states.done && (
-                                      <div style={{ color: lastIngestTrace.step_states.done.ok ? '#10b981' : '#f87171', fontWeight: 600 }}>
-                                        Done: {lastIngestTrace.step_states.done.ok ? '✅' : '❌'} ({lastIngestTrace.step_states.done.t_ms}ms)
-                                        {lastIngestTrace.step_states.done.entity_count !== undefined && (
-                                          <div style={{ fontWeight: 400 }}>Entities: {lastIngestTrace.step_states.done.entity_count}, Relations: {lastIngestTrace.step_states.done.relation_count}, Chunks: {lastIngestTrace.step_states.done.chunk_count}</div>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                </>
-                              )}
-                            </div>
-                        ) : (
-                          <div className="text-xs" style={{ color: C.neutral, fontStyle: 'italic' }}>
-                            No ingest activity yet. Send a chat message to trigger auto-ingest.
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    )}
-                  </>
-                )}
+                {mode === "agents" && <>{renderAgentBuilderPanel()}</>}
 
                 {mode === "assist" && tab === "Plan" && (
                   <div className="space-y-3">
@@ -6247,7 +5678,7 @@ export default function AgentBuilder() {
                           background: "#1a1a1a",
                         }}
                       >
-                        Select an Assist project to view its plan.
+                    Select an Assist project to view its plan.
                       </div>
                     ) : !stateLoaded ? (
                       <div
@@ -6263,263 +5694,130 @@ export default function AgentBuilder() {
                       </div>
                     ) : (
                       <>
-                      <div
-                        style={{
-                          border: `1px solid ${C.border}`,
-                          borderRadius: 8,
-                          padding: "14px 16px",
-                          background: C.bg,
-                        }}
-                      >
-                        <div
-                          className="text-xs"
-                          style={{ color: C.text, fontWeight: 700, marginBottom: 12 }}
-                        >
-                          Plan
-                        </div>
-                        <div className="space-y-3">
-                          {[
-                            {
-                              key: "goal",
-                              title: "Goal",
-                              items: structuredAssistPlan.goal ? [structuredAssistPlan.goal] : [],
-                              emptyText: "No goal saved yet.",
-                            },
-                            {
-                              key: "what-matters-now",
-                              title: "What matters now",
-                              items: structuredAssistPlan.whatMattersNow,
-                              emptyText: "No current priorities saved yet.",
-                            },
-                            {
-                              key: "next-move",
-                              title: "Next move",
-                              items: structuredAssistPlan.nextMove,
-                              emptyText: "No next move saved yet.",
-                            },
-                            {
-                              key: "assumptions",
-                              title: "Assumptions",
-                              items: structuredAssistPlan.assumptions,
-                              emptyText: "No assumptions saved yet.",
-                            },
-                            {
-                              key: "research",
-                              title: "Research",
-                              items: structuredAssistPlan.research,
-                              emptyText: "No research section saved yet.",
-                            },
-                            {
-                              key: "open-questions",
-                              title: "Open questions",
-                              items: structuredAssistPlan.openQuestions,
-                              emptyText: "No open questions saved yet.",
-                            },
-                            {
-                              key: "human-tasks",
-                              title: "Human tasks",
-                              items: structuredAssistPlan.humanTasks,
-                              emptyText: "No human tasks saved yet.",
-                            },
-                            {
-                              key: "agent-tasks",
-                              title: "Agent tasks",
-                              items: structuredAssistPlan.agentTasks,
-                              emptyText: "No agent tasks saved yet.",
-                            },
-                            {
-                              key: "path-options",
-                              title: "Path options",
-                              items: structuredAssistPlan.pathOptions,
-                              emptyText: "No path options saved yet.",
-                            },
-                          ].map((section, index) => (
-                            <div
-                              key={section.key}
-                              style={{
-                                paddingTop: index === 0 ? 0 : 10,
-                                borderTop: index === 0 ? "none" : `1px solid ${C.border}`,
-                              }}
-                            >
-                              <div
-                                className="text-[11px]"
-                                style={{
-                                  color: C.text,
-                                  fontWeight: 700,
-                                  marginBottom: 6,
-                                  letterSpacing: "0.03em",
-                                }}
-                              >
-                                {section.title}
-                              </div>
-                              {section.items.length > 0 ? (
-                                <div className="space-y-1.5">
-                                  {section.items.map((item, itemIndex) => (
-                                    <div
-                                      key={`${section.key}-${itemIndex}`}
-                                      style={{
-                                        color: C.neutral,
-                                        lineHeight: 1.45,
-                                        fontSize: 13,
-                                        paddingLeft: 10,
-                                        position: "relative",
-                                      }}
-                                    >
-                                      <span
-                                        style={{
-                                          position: "absolute",
-                                          left: 0,
-                                          color: C.primary,
-                                        }}
-                                      >
-                                        •
-                                      </span>
-                                      {safeText(item)}
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div
-                                  style={{
-                                    color: C.neutral,
-                                    opacity: 0.75,
-                                    fontSize: 12,
-                                    lineHeight: 1.4,
-                                  }}
-                                >
-                                  {section.emptyText}
-                                </div>
-                              )}
+                        {structuredAssistPlan.goal && (
+                          <Section title="Goal">
+                            <div style={{ color: C.text, whiteSpace: "pre-wrap" }}>
+                              {safeText(structuredAssistPlan.goal)}
                             </div>
-                          ))}
-                        </div>
-                      </div>
+                          </Section>
+                        )}
+
+                        {structuredAssistPlan.whatMattersNow.length > 0 && (
+                          <Section title="What Matters Now">
+                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                              {structuredAssistPlan.whatMattersNow.map((item, index) => (
+                                <li key={`wmn-${index}`}>{item}</li>
+                              ))}
+                            </ul>
+                          </Section>
+                        )}
+
+                        {structuredAssistPlan.nextMove && (
+                          <Section title="Next Move">
+                            <div style={{ color: C.text, whiteSpace: "pre-wrap" }}>
+                              {safeText(structuredAssistPlan.nextMove)}
+                            </div>
+                          </Section>
+                        )}
+
+                        {structuredAssistPlan.assumptions.length > 0 && (
+                          <Section title="Assumptions">
+                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                              {structuredAssistPlan.assumptions.map((item, index) => (
+                                <li key={`assumption-${index}`}>{item}</li>
+                              ))}
+                            </ul>
+                          </Section>
+                        )}
+
+                        {structuredAssistPlan.research.length > 0 && (
+                          <Section title="Research">
+                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                              {structuredAssistPlan.research.map((item, index) => (
+                                <li key={`research-${index}`}>{item}</li>
+                              ))}
+                            </ul>
+                          </Section>
+                        )}
+
+                        {structuredAssistPlan.openQuestions.length > 0 && (
+                          <Section title="Open Questions">
+                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                              {structuredAssistPlan.openQuestions.map((item, index) => (
+                                <li key={`question-${index}`}>{item}</li>
+                              ))}
+                            </ul>
+                          </Section>
+                        )}
+
+                        {structuredAssistPlan.humanTasks.length > 0 && (
+                          <Section title="Human Tasks">
+                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                              {structuredAssistPlan.humanTasks.map((item, index) => (
+                                <li key={`human-${index}`}>{item}</li>
+                              ))}
+                            </ul>
+                          </Section>
+                        )}
+
+                        {structuredAssistPlan.agentTasks.length > 0 && (
+                          <Section title="Agent Tasks">
+                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                              {structuredAssistPlan.agentTasks.map((item, index) => (
+                                <li key={`agent-${index}`}>{item}</li>
+                              ))}
+                            </ul>
+                          </Section>
+                        )}
+
+                        {structuredAssistPlan.pathOptions.length > 0 && (
+                          <Section title="Path Options">
+                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                              {structuredAssistPlan.pathOptions.map((item, index) => (
+                                <li key={`path-${index}`}>{item}</li>
+                              ))}
+                            </ul>
+                          </Section>
+                        )}
 
                         {structuredAssistPlan.hasExplicitPlanDocument && (
-                          <div
-                            style={{
-                              border: `1px solid ${C.border}`,
-                              borderRadius: 8,
-                              padding: "12px 14px",
-                              background: C.bg,
-                            }}
-                          >
-                            <div
-                              className="text-xs"
-                              style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
+                          <Section title="Plan Notes">
+                            <Suspense
+                              fallback={
+                                <div style={{ color: C.text, whiteSpace: "pre-wrap", minHeight: 120 }}>
+                                  {safeText(structuredAssistPlan.explicitPlanText).trim() || "No plan notes yet."}
+                                </div>
+                              }
                             >
-                              Plan Notes
-                            </div>
-                            <div style={{ color: C.text }}>
-                              <Suspense
-                                fallback={
-                                  <div
-                                    style={{
-                                      color: C.text,
-                                      whiteSpace: "pre-wrap",
-                                      lineHeight: 1.55,
-                                      fontSize: 13,
-                                      minHeight: 72,
-                                    }}
-                                  >
-                                    {structuredAssistPlan.explicitPlanText || "Loading plan notes..."}
-                                  </div>
-                                }
-                              >
-                                <PlanWikiLexicalView
-                                  source={planSource}
-                                  fallbackText=""
-                                  textColor={C.text}
-                                  mutedColor={C.neutral}
-                                  emptyText="No saved plan notes."
-                                />
-                              </Suspense>
-                            </div>
-                          </div>
+                              <PlanWikiLexicalView
+                                source={planSource}
+                                fallbackText={safeText(structuredAssistPlan.explicitPlanText)}
+                                textColor={C.text}
+                                mutedColor={C.neutral}
+                                emptyText="No plan notes yet."
+                              />
+                            </Suspense>
+                          </Section>
                         )}
 
                         {structuredAssistPlan.whatChanged.length > 0 && (
-                          <div
-                            style={{
-                              border: `1px solid ${C.border}`,
-                              borderRadius: 8,
-                              padding: "10px 12px",
-                              background: C.bg,
-                            }}
-                          >
-                            <div
-                              className="text-xs"
-                              style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
-                            >
-                              What Changed
-                            </div>
-                            <div className="space-y-2">
+                          <Section title="What Changed">
+                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
                               {structuredAssistPlan.whatChanged.map((item, index) => (
-                                <div
-                                  key={`what-changed-${index}`}
-                                  style={{
-                                    color: C.neutral,
-                                    lineHeight: 1.45,
-                                    paddingLeft: 10,
-                                    position: "relative",
-                                  }}
-                                >
-                                  <span
-                                    style={{
-                                      position: "absolute",
-                                      left: 0,
-                                      color: C.primary,
-                                    }}
-                                  >
-                                    •
-                                  </span>
-                                  {safeText(item)}
-                                </div>
+                                <li key={`changed-${index}`}>{item}</li>
                               ))}
-                            </div>
-                          </div>
+                            </ul>
+                          </Section>
                         )}
 
                         {structuredAssistPlan.sources.length > 0 && (
-                          <div
-                            style={{
-                              border: `1px solid ${C.border}`,
-                              borderRadius: 8,
-                              padding: "10px 12px",
-                              background: C.bg,
-                            }}
-                          >
-                            <div
-                              className="text-xs"
-                              style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
-                            >
-                              Sources
-                            </div>
-                            <div className="space-y-2">
+                          <Section title="Sources">
+                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
                               {structuredAssistPlan.sources.map((item, index) => (
-                                <div
-                                  key={`anchor-source-${index}`}
-                                  style={{
-                                    color: C.neutral,
-                                    lineHeight: 1.45,
-                                    paddingLeft: 10,
-                                    position: "relative",
-                                  }}
-                                >
-                                  <span
-                                    style={{
-                                      position: "absolute",
-                                      left: 0,
-                                      color: C.primary,
-                                    }}
-                                  >
-                                    •
-                                  </span>
-                                  {safeText(item)}
-                                </div>
+                                <li key={`source-${index}`}>{item}</li>
                               ))}
-                            </div>
-                          </div>
+                            </ul>
+                          </Section>
                         )}
                       </>
                     )}
@@ -6698,7 +5996,7 @@ export default function AgentBuilder() {
 
       {/* drawers */}
       {openDrawer === "project" && (
-        <Drawer title={mode === "agents" ? "Deck Workspaces" : "Project"} onClose={() => setOpenDrawer(null)}>
+        <Drawer title={mode === "agents" ? "Agents" : "Project"} onClose={() => setOpenDrawer(null)}>
           <div className="space-y-3">
             {/* Mode Selector */}
             <div className="flex gap-2 mb-3">
@@ -6728,213 +6026,174 @@ export default function AgentBuilder() {
                   border: `1px solid ${mode === 'agents' ? C.primary : C.border}`,
                 }}
               >
-                Agent
+                Agents
               </button>
             </div>
             
-            <div
-              className="text-xs uppercase mb-2 flex items-center justify-between"
-              style={{ color: C.neutral }}
-            >
-              <span>{mode === 'assist' ? 'Assist Projects' : 'Deck Workspaces'}</span>
-              <button
-                onClick={createProjectPrompt}
-                className="text-[11px] px-2 py-1 rounded"
-                style={{ border: `1px solid ${C.border}`, color: C.text }}
-              >
-                {mode === 'assist' ? 'New Project' : 'New Workspace'}
-              </button>
-            </div>
-            <div className="space-y-2" style={{ maxHeight: '400px', overflowY: 'auto' }}>
-              {!Array.isArray(projects) && (
-                <div className="text-xs" style={{ color: C.neutral }}>
-                  No projects available.
+            {mode === "assist" ? (
+              <>
+                <div
+                  className="text-xs uppercase mb-2 flex items-center justify-between"
+                  style={{ color: C.neutral }}
+                >
+                  <span>Assist Projects</span>
+                  <button
+                    onClick={createProjectPrompt}
+                    className="text-[11px] px-2 py-1 rounded"
+                    style={{ border: `1px solid ${C.border}`, color: C.text }}
+                  >
+                    New Project
+                  </button>
                 </div>
-              )}
-              {projectsError && (
-                <div className="text-xs" style={{ color: C.neutral }}>
-                  {safeText(projectsError)}
-                </div>
-              )}
-              {Array.from(
-                new Map(
-                  (Array.isArray(projects) ? projects : []).map((p) => {
-                    const codeKey = String(p.code || '').toLowerCase();
-                    const key = codeKey ? `code:${codeKey}` : `id:${p.id}`;
-                    return [key, p];
-                  }),
-                ).values(),
-              ).map((project) => {
-                return (
-                  <React.Fragment key={project.id}>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => {
-                          if (mode === "agents") {
-                            setSelectedAgentProjectId(project.id);
-                            setSelectedAgentType(agentTypeFromProjectCode(String(project.code || "")));
-                          } else {
-                            setActiveProjectWithUrl(project.id);
-                          }
-                          setOpenDrawer(null);
-                        }}
-                        className="flex-1 text-left p-3 rounded"
-                        style={{
-                          background:
-                            (mode === "agents" ? selectedAgentProjectId === project.id : activeProject === project.id)
-                              ? "rgba(79,162,173,0.18)"
-                              : "transparent",
-                          border: `1px solid ${
-                            (mode === "agents" ? selectedAgentProjectId === project.id : activeProject === project.id)
-                              ? C.primary
-                              : C.border
-                          }`,
-                          color: C.text,
-                        }}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="font-medium">
-                              {safeText(project.name || project.id)}
-                            </div>
-                            {project.code && (
-                              <div className="opacity-60 text-xs">
-                                {safeText(project.code)}
-                              </div>
-                            )}
-                            {mode === "agents" && (
-                              <div className="opacity-60 text-xs" style={{ marginTop: 4 }}>
-                                Opens in the visual deck builder
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </button>
-                      <button
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          const PROTECTED_AGENT_CODES = new Set(["main-chat", "kg-ingest", "thinkgraph", "knowgraph", "neo4j", "research-agent"]);
-                          const isProtectedAgent = mode === "agents" && PROTECTED_AGENT_CODES.has(project.code);
-                          if (isProtectedAgent) {
-                            alert("Main Chat, ThinkGraph, KnowGraph, Neo4j, and Research Agent are protected system decks.");
-                            return;
-                          }
-                          if (!confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
-                          try {
-                            const res = await fetch(`${V2_PROJECTS_API}/${project.id}`, { method: 'DELETE' });
-                            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                            await refreshProjects(undefined, undefined, 'after-delete');
-                            if (mode === "assist" && activeProject === project.id) {
-                              const remaining = projects.filter(p => p.id !== project.id);
-                              if (remaining.length > 0) {
-                                setActiveProjectWithUrl(remaining[0].id);
-                              } else {
-                                setActiveProject('');
-                              }
-                            }
-                          } catch (err: any) {
-                            alert(`Failed to delete project: ${err.message}`);
-                          }
-                        }}
-                        className="p-2 rounded"
-                        style={{
-                          background: 'transparent',
-                          border: `1px solid ${C.border}`,
-                          color: C.warn,
-                        }}
-                        title="Delete project"
-                      >
-                        ×
-                      </button>
+                <div className="space-y-2" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                  {!Array.isArray(projects) && (
+                    <div className="text-xs" style={{ color: C.neutral }}>
+                      No projects available.
                     </div>
-                  </React.Fragment>
-                );
-              })}
+                  )}
+                  {projectsError && (
+                    <div className="text-xs" style={{ color: C.neutral }}>
+                      {safeText(projectsError)}
+                    </div>
+                  )}
+                  {Array.from(
+                    new Map(
+                      (Array.isArray(projects) ? projects : []).map((p) => {
+                        const codeKey = String(p.code || '').toLowerCase();
+                        const key = codeKey ? `code:${codeKey}` : `id:${p.id}`;
+                        return [key, p];
+                      }),
+                    ).values(),
+                  ).map((project) => {
+                    return (
+                      <React.Fragment key={project.id}>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              setActiveProjectWithUrl(project.id);
+                              setOpenDrawer(null);
+                            }}
+                            className="flex-1 text-left p-3 rounded"
+                            style={{
+                              background:
+                                activeProject === project.id
+                                  ? "rgba(79,162,173,0.18)"
+                                  : "transparent",
+                              border: `1px solid ${activeProject === project.id ? C.primary : C.border}`,
+                              color: C.text,
+                            }}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="font-medium">
+                                  {safeText(project.name || project.id)}
+                                </div>
+                                {project.code && (
+                                  <div className="opacity-60 text-xs">
+                                    {safeText(project.code)}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </button>
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              if (!confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
+                              try {
+                                const res = await fetch(`${V2_PROJECTS_API}/${project.id}`, { method: 'DELETE' });
+                                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                                await refreshProjects(undefined, undefined, 'after-delete');
+                                if (activeProject === project.id) {
+                                  const remaining = projects.filter(p => p.id !== project.id);
+                                  if (remaining.length > 0) {
+                                    setActiveProjectWithUrl(remaining[0].id);
+                                  } else {
+                                    setActiveProject('');
+                                  }
+                                }
+                              } catch (err: any) {
+                                alert(`Failed to delete project: ${err.message}`);
+                              }
+                            }}
+                            className="p-2 rounded"
+                            style={{
+                              background: 'transparent',
+                              border: `1px solid ${C.border}`,
+                              color: C.warn,
+                            }}
+                            title="Delete project"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      </React.Fragment>
+                    );
+                  })}
 
-              {Array.isArray(projects) && projects.length === 0 && !projectsError && (
-                <div className="text-xs" style={{ color: C.neutral }}>
-                  No projects available.
+                  {Array.isArray(projects) && projects.length === 0 && !projectsError && (
+                    <div className="text-xs" style={{ color: C.neutral }}>
+                      No projects available.
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-            {mode === "agents" && (
-              <div
-                style={{
-                  marginTop: 16,
-                  paddingTop: 12,
-                  borderTop: `1px solid ${C.border}`,
-                }}
-              >
+              </>
+            ) : (
+              <>
                 <div
                   className="text-xs uppercase mb-2"
                   style={{ color: C.neutral }}
                 >
-                  Board-backed deck
+                  Agents on canvas
                 </div>
-                {!selectedAgentProjectId ? (
+                {drawerBoardCards.length === 0 ? (
                   <div className="text-xs" style={{ color: C.neutral }}>
-                    Select a deck workspace to navigate the board from this drawer.
+                    No cards are currently on the canvas.
                   </div>
                 ) : (
-                  <div className="space-y-2">
-                    <button
-                      onClick={handleOpenDeckFromDrawer}
-                      className="w-full text-left p-3 rounded"
-                      style={{
-                        background: "rgba(79,162,173,0.08)",
-                        border: `1px solid ${C.border}`,
-                        color: C.text,
-                      }}
-                    >
-                      <div className="font-medium">{safeText(deck.name)}</div>
-                      <div className="opacity-60 text-xs" style={{ marginTop: 4 }}>
-                        Jump to deck on board · {deck.nodes.length} card{deck.nodes.length === 1 ? "" : "s"}
-                      </div>
-                    </button>
-                    <div className="space-y-2" style={{ maxHeight: 260, overflowY: "auto" }}>
-                      {drawerBoardCards.map((card) => (
-                        <button
-                          key={card.id}
-                          onClick={() => handleOpenBoardCardFromDrawer(card.id)}
-                          className="w-full text-left p-3 rounded"
-                          style={{
-                            background:
-                              selectedCardId === card.id
-                                ? "rgba(79,162,173,0.18)"
-                                : "transparent",
-                            border: `1px solid ${
-                              selectedCardId === card.id ? C.primary : C.border
-                            }`,
-                            color: C.text,
-                          }}
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <div>
-                              <div className="font-medium">{safeText(card.title || card.id)}</div>
-                              {card.subtitle && (
-                                <div className="opacity-60 text-xs" style={{ marginTop: 4 }}>
-                                  {safeText(card.subtitle)}
-                                </div>
-                              )}
-                            </div>
-                            <div
-                              className="text-[11px]"
-                              style={{ color: selectedCardId === card.id ? C.primary : C.neutral }}
-                            >
-                              {safeText(card.runtimeBinding || "card")}
-                            </div>
+                  <div className="space-y-2" style={{ maxHeight: 420, overflowY: "auto" }}>
+                    {drawerBoardCards.map((card) => (
+                      <button
+                        key={card.id}
+                        onClick={() => handleOpenBoardCardFromDrawer(card.id)}
+                        className="w-full text-left p-3 rounded"
+                        style={{
+                          background:
+                            selectedCardId === card.id
+                              ? "rgba(79,162,173,0.18)"
+                              : "transparent",
+                          border: `1px solid ${
+                            selectedCardId === card.id ? C.primary : C.border
+                          }`,
+                          color: C.text,
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="font-medium">{safeText(card.title || card.id)}</div>
+                            {card.subtitle && (
+                              <div className="opacity-60 text-xs" style={{ marginTop: 4 }}>
+                                {safeText(card.subtitle)}
+                              </div>
+                            )}
                           </div>
-                        </button>
-                      ))}
-                    </div>
+                          <div
+                            className="text-[11px]"
+                            style={{ color: selectedCardId === card.id ? C.primary : C.neutral }}
+                          >
+                            {safeText(card.runtimeBinding || "card")}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 )}
-              </div>
+              </>
             )}
             <div className="text-xs mt-4" style={{ color: C.neutral }}>
               {mode === 'assist'
                 ? 'Assist projects are shipped product workspaces.'
-                : `Agent workspaces open directly in the visual deck builder. Legacy config remains temporarily available in the right panel.`}
+                : `Drawer items jump to the corresponding canvas card and open its editor in the right panel.`}
             </div>
           </div>
         </Drawer>
@@ -6958,20 +6217,3 @@ export default function AgentBuilder() {
   );
 }
 
-function StatCard({ title, value }: { title: string; value: string }) {
-  return (
-    <div
-      style={{
-        background: C.bg,
-        border: `1px solid ${C.border}`,
-        borderRadius: 10,
-        padding: "12px",
-      }}
-    >
-      <div className="text-xs" style={{ color: C.neutral, marginBottom: 6 }}>
-        {title}
-      </div>
-      <div style={{ fontSize: 22, fontWeight: 700, color: C.text }}>{value}</div>
-    </div>
-  );
-}

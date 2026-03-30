@@ -27,7 +27,8 @@ router.put('/:projectId/decks/:deckId', async (req, res) => {
       req.params.deckId,
       document as DeckDocument,
     );
-    return res.json({ ok: true, deck });
+    const { blackboard } = await getDeckDocument(req.params.projectId, req.params.deckId);
+    return res.json({ ok: true, deck, blackboard });
   } catch (err: any) {
     const status = err?.message === 'project_not_found' ? 404 : 500;
     return res.status(status).json({ ok: false, error: err?.message || 'deck_save_failed' });
@@ -52,12 +53,16 @@ router.post('/:projectId/decks/run', async (req, res) => {
 
   try {
     let deck: DeckDocument | null = null;
+    let blackboard = null;
 
     if (req.body?.document && typeof req.body.document === 'object') {
       deck = await saveDeckDocument(req.params.projectId, deckId, req.body.document as DeckDocument);
+      const loaded = await getDeckDocument(req.params.projectId, deckId);
+      blackboard = loaded.blackboard;
     } else {
       const loaded = await getDeckDocument(req.params.projectId, deckId);
       deck = loaded.deck;
+      blackboard = loaded.blackboard;
     }
 
     if (!deck) {
@@ -67,10 +72,11 @@ router.post('/:projectId/decks/run', async (req, res) => {
     const run = await executeDeck(deck, templates, {
       input: String(req.body?.input || ''),
       promptTemplates: promptTemplates.length > 0 ? promptTemplates : deck.promptTemplates,
+      blackboard,
     });
 
     await saveDeckRun(req.params.projectId, deckId, run);
-    return res.json({ ok: true, deck, run });
+    return res.json({ ok: true, deck, run, blackboard: run.blackboard });
   } catch (err: any) {
     const status = err?.message === 'project_not_found' ? 404 : 500;
     return res.status(status).json({ ok: false, error: err?.message || 'deck_run_failed' });

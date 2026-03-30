@@ -1,4 +1,4 @@
-import type { AssistPlanState, PlanAgentType, PlanReportNode } from "../../types/plan";
+import type { AssistPlanState, PlanAgentType } from "../../types/plan";
 
 export type BuilderCanvasNodeType =
   | "plan"
@@ -6,7 +6,7 @@ export type BuilderCanvasNodeType =
   | "thinkgraph"
   | "research"
   | "knowgraph"
-  | "review";
+  | "neo4j";
 
 export type BuilderCanvasNode = {
   id: string;
@@ -25,7 +25,7 @@ export type BuilderCanvasEdge = {
   id: string;
   from: string;
   to: string;
-  type: "feeds" | "updates" | "reviews";
+  type: "feeds" | "updates";
 };
 
 export type BuilderCanvasState = {
@@ -78,7 +78,7 @@ function normalizeNodeType(value: unknown): BuilderCanvasNodeType | null {
     case "thinkgraph":
     case "research":
     case "knowgraph":
-    case "review":
+    case "neo4j":
       return normalized;
     default:
       return null;
@@ -106,10 +106,6 @@ function edgeId(from: string, to: string): string {
   return `edge:${from}:${to}`;
 }
 
-function reviewSourceId(projectId: string, report: PlanReportNode | undefined): string {
-  return safeText(report?.id).trim() || `review:${projectId}`;
-}
-
 function createSeedNode(input: {
   id: string;
   type: BuilderCanvasNodeType;
@@ -127,13 +123,12 @@ function createSeedNode(input: {
   };
 }
 
-export function createSeedBuilderCanvasState({ projectId, decks, plan }: SeedContext): BuilderCanvasState {
+export function createSeedBuilderCanvasState({ projectId, decks, plan: _plan }: SeedContext): BuilderCanvasState {
   const mainChatDeck = findDeck(decks, "main-chat", "llm-chat", "main_chat", "llm_chat");
   const thinkGraphDeck = findDeck(decks, "kg-ingest", "kg_ingest", "thinkgraph");
   const researchDeck = findDeck(decks, "research-agent", "research_agent");
   const knowGraphDeck = findDeck(decks, "knowgraph");
-  const latestReport = Array.isArray(plan.report_nodes) ? plan.report_nodes[0] : undefined;
-  const reviewId = reviewSourceId(projectId, latestReport);
+  const neo4jDeck = findDeck(decks, "neo4j");
 
   const nodes: BuilderCanvasNode[] = [
     createSeedNode({
@@ -187,12 +182,12 @@ export function createSeedBuilderCanvasState({ projectId, decks, plan }: SeedCon
       y: 180,
     }),
     createSeedNode({
-      id: reviewId,
-      type: "review",
-      label: "Review",
-      sourceKind: latestReport ? "report" : "plan",
-      sourceId: reviewId,
-      agentType: null,
+      id: `agent:${neo4jDeck?.id || "neo4j"}`,
+      type: "neo4j",
+      label: "Neo4j",
+      sourceKind: "agent",
+      sourceId: neo4jDeck?.id || "neo4j",
+      agentType: "neo4j",
       x: 1200,
       y: 180,
     }),
@@ -203,7 +198,7 @@ export function createSeedBuilderCanvasState({ projectId, decks, plan }: SeedCon
     { id: edgeId(nodes[0].id, nodes[2].id), from: nodes[0].id, to: nodes[2].id, type: "feeds" },
     { id: edgeId(nodes[0].id, nodes[3].id), from: nodes[0].id, to: nodes[3].id, type: "feeds" },
     { id: edgeId(nodes[3].id, nodes[4].id), from: nodes[3].id, to: nodes[4].id, type: "updates" },
-    { id: edgeId(nodes[4].id, nodes[5].id), from: nodes[4].id, to: nodes[5].id, type: "reviews" },
+    { id: edgeId(nodes[4].id, nodes[5].id), from: nodes[4].id, to: nodes[5].id, type: "updates" },
     { id: edgeId(nodes[5].id, nodes[0].id), from: nodes[5].id, to: nodes[0].id, type: "updates" },
   ];
 
@@ -243,13 +238,13 @@ export function normalizeBuilderCanvasState(
         h: Number.isFinite(Number(entry?.h)) ? Number(entry.h) : DEFAULT_H,
       } satisfies BuilderCanvasNode;
     })
-    .filter((entry): entry is BuilderCanvasNode => Boolean(entry));
+    .filter((entry: BuilderCanvasNode | null): entry is BuilderCanvasNode => Boolean(entry));
 
   if (!nodes.length) {
     return createSeedBuilderCanvasState(context);
   }
 
-  const validNodeIds = new Set(nodes.map((node) => node.id));
+  const validNodeIds = new Set(nodes.map((node: BuilderCanvasNode) => node.id));
   const seenEdgeIds = new Set<string>();
   const edges = rawEdges
     .map((entry: any) => {
@@ -263,10 +258,10 @@ export function normalizeBuilderCanvasState(
         id,
         from,
         to,
-        type: entry?.type === "updates" || entry?.type === "reviews" ? entry.type : "feeds",
+        type: entry?.type === "updates" ? entry.type : "feeds",
       } satisfies BuilderCanvasEdge;
     })
-    .filter((entry): entry is BuilderCanvasEdge => Boolean(entry));
+    .filter((entry: BuilderCanvasEdge | null): entry is BuilderCanvasEdge => Boolean(entry));
 
   return { nodes, edges };
 }

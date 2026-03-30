@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import { ChatInterface, Message } from "../components/chat-interface";
 import { KnowledgePanel, Triple, HistoryItem } from "../components/knowledge-panel";
 import { TimeSeriesPoint, BandPoint, EventPoint } from "../components/timeseries-chart";
-import { solRun, callBossAgent } from "../lib/api";
+import { solRun } from "../lib/api";
 import { TradingModal } from "../components/trading-modal";
 import TradingUI from "./tradingui";
 import { PlaybookPanel } from "./components/playbook-panel";
@@ -124,40 +124,15 @@ export default function Agentic() {
     // Combine all user messages into a single goal
     const goal = userMessages.map(msg => msg.text).join("\n");
     
-    // Set thinking state
     setBossAgentThinking(true);
-    
+
     try {
-      // Call BossAgent API
-      const response = await callBossAgent({
-        projectId: currentProjectId,
-        goal,
-        domain: currentDomain
-      });
-      
-      if (response.ok) {
-        // Update plan content
-        if (response.result.departments?.planning) {
-          setPlanContent(response.result.departments.planning);
-        }
-        
-        // Update workflow content
-        if (response.result.departments?.workflow) {
-          setWorkflowContent(response.result.departments.workflow);
-        }
-        
-        // Update report content
-        if (response.result.departments?.report) {
-          setReportContent(response.result.departments.report);
-        }
-      } else {
-        console.error('Error from BossAgent:', response.result.final);
-      }
-      
-      // Update last processed message index
+      const legacyMessage =
+        "Legacy BossAgent orchestration has been removed. Use the Builder canvas runtime instead.";
+      setPlanContent(legacyMessage);
+      setWorkflowContent(legacyMessage);
+      setReportContent(legacyMessage);
       setLastProcessedMessageIndex(messages.length);
-    } catch (error) {
-      console.error('Error processing chat with BossAgent:', error);
     } finally {
       setBossAgentThinking(false);
     }
