@@ -111,3 +111,13 @@ neo4j-plugins/
 audit-*/
 /data/prompt-sources/leaked-system-prompts/
 
+# Python virtual environments / caches
+.venv/
+**/.venv/
+__pycache__/
+*.py[cod]
+
+# Local checkpoints and test artifacts
+checkpoints/
+test-results/
+
