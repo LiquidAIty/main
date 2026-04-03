@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import {
   Background,
@@ -24,9 +24,20 @@ import {
 
 import '@xyflow/react/dist/style.css';
 
-import type { AgentCardInstance, DeckDocument, DeckEdge } from '../../types/agentgraph';
+import type {
+  AgentCardInstance,
+  AgentCardRuntimeType,
+  DeckDocument,
+  DeckEdge,
+  DeckEdgeMetadata,
+  DeckEdgeType,
+} from '../../types/agentgraph';
 import type { DeckExecutionPlan } from './deckExecution';
-import { buildDeckEdgeIdentityKey } from './deckValidation';
+import {
+  buildDeckEdgeIdentityKey,
+  buildDefaultDeckEdgeMetadata,
+  normalizeDeckEdgeMetadata,
+} from './deckValidation';
 import AgentCardNode from './nodes/AgentCardNode';
 
 const nodeTypes = {
@@ -36,12 +47,92 @@ const nodeTypes = {
 const DEV_MODE = import.meta.env.DEV;
 const PERSISTED_NODE_CHANGE_TYPES = new Set<NodeChange['type']>(['add', 'remove', 'replace', 'position']);
 const PERSISTED_EDGE_CHANGE_TYPES = new Set<EdgeChange['type']>(['add', 'remove', 'replace']);
+const FALLBACK_NODE_WIDTH = 320;
+const FALLBACK_NODE_HEIGHT = 180;
+
+type ViewportRect = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
+export type AssistStructureMode = 'single' | 'seq' | 'branch' | 'merge' | 'branch_merge';
+
+export type AssistStructureSummary = {
+  mode: AssistStructureMode;
+  incomingGraphFlowCount: number;
+  outgoingGraphFlowCount: number;
+};
+
+type CanvasRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 
 export type BuilderCanvasFocusRequest = {
   kind: 'deck' | 'card';
   cardId?: string | null;
   nonce: number;
 };
+
+function buildViewportTranslateExtent(nodes: Node[]): [[number, number], [number, number]] {
+  if (nodes.length === 0) {
+    return [[-4000, -4000], [4000, 4000]];
+  }
+
+  const padding = 420;
+  const minX = Math.min(...nodes.map((node) => node.position.x)) - padding;
+  const minY = Math.min(...nodes.map((node) => node.position.y)) - padding;
+  const maxX = Math.max(...nodes.map((node) => node.position.x)) + 420 + padding;
+  const maxY = Math.max(...nodes.map((node) => node.position.y)) + 260 + padding;
+
+  return [[minX, minY], [maxX, maxY]];
+}
+
+function getNodeCanvasRect(node: Node): CanvasRect {
+  const nodeWithLayout = node as Node & {
+    width?: number;
+    height?: number;
+    measured?: { width?: number; height?: number };
+    positionAbsolute?: { x: number; y: number };
+  };
+  const position = nodeWithLayout.positionAbsolute || node.position;
+  const width =
+    typeof nodeWithLayout.measured?.width === 'number'
+      ? nodeWithLayout.measured.width
+      : typeof nodeWithLayout.width === 'number'
+        ? nodeWithLayout.width
+        : FALLBACK_NODE_WIDTH;
+  const height =
+    typeof nodeWithLayout.measured?.height === 'number'
+      ? nodeWithLayout.measured.height
+      : typeof nodeWithLayout.height === 'number'
+        ? nodeWithLayout.height
+        : FALLBACK_NODE_HEIGHT;
+
+  return {
+    x: position.x,
+    y: position.y,
+    width,
+    height,
+  };
+}
+
+export function isCanvasRectVisible(rect: CanvasRect, visibleRect: ViewportRect, padding: number): boolean {
+  return (
+    rect.x + rect.width >= visibleRect.left + padding &&
+    rect.x <= visibleRect.right - padding &&
+    rect.y + rect.height >= visibleRect.top + padding &&
+    rect.y <= visibleRect.bottom - padding
+  );
+}
+
+export function isAnyCanvasNodeVisible(nodes: Node[], visibleRect: ViewportRect, padding: number): boolean {
+  return nodes.some((node) => isCanvasRectVisible(getNodeCanvasRect(node), visibleRect, padding));
+}
 
 function toFlowNodes(
   document: DeckDocument,
@@ -52,6 +143,12 @@ function toFlowNodes(
     (executionPlan?.simpleOrderCardIds || []).map((cardId, index) => [cardId, index + 1] as const),
   );
   const startCardIds = new Set(executionPlan?.startCardIds || []);
+  const callableHeadIds = new Set(
+    document.edges
+      .filter((edge) => normalizeEdgeType(edge.edgeType) === 'magentic_option')
+      .map((edge) => edge.target),
+  );
+  const assistStructureSummaries = buildAssistStructureSummaries(document);
   return document.nodes.map((node) => ({
     id: node.id,
     type: 'agentCard',
@@ -60,12 +157,9 @@ function toFlowNodes(
       ...node,
       executionOrder: executionOrderById.get(node.id) || null,
       isStartCard: startCardIds.has(node.id),
-      readsFromBlackboard: document.edges.some(
-        (edge) => edge.source === 'node_blackboard' && edge.target === node.id,
-      ),
-      writesToBlackboard: document.edges.some(
-        (edge) => edge.source === node.id && edge.target === 'node_blackboard',
-      ),
+      isCallableHead: callableHeadIds.has(node.id),
+      assistStructureMode: assistStructureSummaries.get(node.id)?.mode || null,
+      swarmBadge: getAssistSwarmBadge(node),
     },
     selected: node.id === selectedCardId,
   }));
@@ -74,10 +168,170 @@ function toFlowNodes(
 export type DeckEdgeVisualState = {
   isLoopEdge: boolean;
   isReturnEdge: boolean;
-  isBlackboardEdge: boolean;
   offset: number;
   borderRadius: number;
 };
+
+type FlowEdgeData = {
+  edgeType?: DeckEdgeType | null;
+  metadata?: DeckEdgeMetadata | null;
+};
+
+function normalizeEdgeType(value: unknown): DeckEdgeType {
+  return String(value || '').trim().toLowerCase() === 'magentic_option'
+    ? 'magentic_option'
+    : 'graph_flow';
+}
+
+function normalizeRuntimeType(value: unknown): AgentCardRuntimeType {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'magentic_one') return 'magentic_one';
+  if (normalized === 'graph_flow') return 'graph_flow';
+  return 'assistant_agent';
+}
+
+function isTopLevelCanvasCard(node: AgentCardInstance | undefined | null): node is AgentCardInstance {
+  return Boolean(node && node.kind !== 'blackboard' && !String(node.parentGraphId || '').trim());
+}
+
+function isAssistCanvasCard(node: AgentCardInstance | undefined | null): node is AgentCardInstance {
+  return Boolean(
+    node &&
+      node.kind !== 'blackboard' &&
+      normalizeRuntimeType(node.runtimeType) === 'assistant_agent',
+  );
+}
+
+function isVisibleAssistFlowPair(
+  sourceNode: AgentCardInstance | undefined | null,
+  targetNode: AgentCardInstance | undefined | null,
+): boolean {
+  if (!isAssistCanvasCard(sourceNode) || !isAssistCanvasCard(targetNode)) return false;
+
+  const sourceGraphId = String(sourceNode.parentGraphId || '').trim();
+  const targetGraphId = String(targetNode.parentGraphId || '').trim();
+
+  if (!sourceGraphId && !targetGraphId) {
+    return true;
+  }
+
+  return Boolean(sourceGraphId && sourceGraphId === targetGraphId);
+}
+
+export function buildAssistStructureSummaries(
+  document: DeckDocument,
+): Map<string, AssistStructureSummary> {
+  const summaries = new Map<string, AssistStructureSummary>();
+  const nodeMap = new Map(document.nodes.map((node) => [node.id, node] as const));
+
+  document.nodes.forEach((node) => {
+    if (node.kind === 'blackboard' || normalizeRuntimeType(node.runtimeType) !== 'assistant_agent') {
+      return;
+    }
+    summaries.set(node.id, {
+      mode: 'single',
+      incomingGraphFlowCount: 0,
+      outgoingGraphFlowCount: 0,
+    });
+  });
+
+  document.edges.forEach((edge) => {
+    if (normalizeEdgeType(edge.edgeType) !== 'graph_flow') return;
+    const sourceNode = nodeMap.get(edge.source);
+    const targetNode = nodeMap.get(edge.target);
+    if (!sourceNode || !targetNode || !isVisibleAssistFlowPair(sourceNode, targetNode)) {
+      return;
+    }
+
+    const sourceSummary = summaries.get(sourceNode.id);
+    const targetSummary = summaries.get(targetNode.id);
+    if (!sourceSummary || !targetSummary) return;
+
+    sourceSummary.outgoingGraphFlowCount += 1;
+    targetSummary.incomingGraphFlowCount += 1;
+  });
+
+  summaries.forEach((summary) => {
+    if (summary.outgoingGraphFlowCount > 1 && summary.incomingGraphFlowCount > 1) {
+      summary.mode = 'branch_merge';
+      return;
+    }
+    if (summary.outgoingGraphFlowCount > 1) {
+      summary.mode = 'branch';
+      return;
+    }
+    if (summary.incomingGraphFlowCount > 1) {
+      summary.mode = 'merge';
+      return;
+    }
+    if (summary.outgoingGraphFlowCount > 0 || summary.incomingGraphFlowCount > 0) {
+      summary.mode = 'seq';
+    }
+  });
+
+  return summaries;
+}
+
+export function getAssistSwarmBadge(node: AgentCardInstance): string | null {
+  if (normalizeRuntimeType(node.runtimeType) !== 'assistant_agent') return null;
+  if (node.runtimeOptions?.executionMode !== 'swarm') return null;
+  const workerCount = Math.max(2, Math.min(Number(node.runtimeOptions?.swarmMaxWorkers) || 3, 6));
+  return `Swarm x${workerCount}`;
+}
+
+function resolveCanvasConnectionEdgeType(
+  document: DeckDocument,
+  connection: Pick<Connection, 'source' | 'target'>,
+): DeckEdgeType | null {
+  if (!connection.source || !connection.target || connection.source === connection.target) {
+    return null;
+  }
+
+  const nodeMap = new Map(document.nodes.map((node) => [node.id, node] as const));
+  const sourceNode = nodeMap.get(connection.source);
+  const targetNode = nodeMap.get(connection.target);
+  if (!sourceNode || !targetNode) return null;
+
+  const sourceRuntimeType = normalizeRuntimeType(sourceNode.runtimeType);
+  const targetRuntimeType = normalizeRuntimeType(targetNode.runtimeType);
+
+  if (
+    sourceRuntimeType === 'magentic_one' &&
+    isTopLevelCanvasCard(sourceNode) &&
+    isTopLevelCanvasCard(targetNode) &&
+    (targetRuntimeType === 'assistant_agent' || targetRuntimeType === 'graph_flow')
+  ) {
+    return 'magentic_option';
+  }
+
+  if (isVisibleAssistFlowPair(sourceNode, targetNode)) {
+    return 'graph_flow';
+  }
+
+  return null;
+}
+
+function resolveCanvasConnectionMetadata(
+  document: DeckDocument,
+  connection: Pick<Connection, 'source' | 'target'>,
+  edgeType: DeckEdgeType,
+): DeckEdgeMetadata | null {
+  if (!connection.source || !connection.target) {
+    return buildDefaultDeckEdgeMetadata(edgeType);
+  }
+
+  const nodeMap = new Map(document.nodes.map((node) => [node.id, node] as const));
+  const sourceNode = nodeMap.get(connection.source);
+  const targetNode = nodeMap.get(connection.target);
+  const legacyCompatibility = Boolean(
+    normalizeRuntimeType(sourceNode?.runtimeType) === 'graph_flow' ||
+    normalizeRuntimeType(targetNode?.runtimeType) === 'graph_flow' ||
+    String(sourceNode?.parentGraphId || '').trim() ||
+    String(targetNode?.parentGraphId || '').trim(),
+  );
+
+  return buildDefaultDeckEdgeMetadata(edgeType, { legacyCompatibility });
+}
 
 function buildEdgeAdjacency(document: DeckDocument): Map<string, Array<{ edgeId: string; target: string }>> {
   const adjacency = new Map<string, Array<{ edgeId: string; target: string }>>();
@@ -119,7 +373,6 @@ export function buildDeckEdgeVisualStates(document: DeckDocument): Map<string, D
     document.edges.map((edge) => {
       const sourceNode = nodeMap.get(edge.source);
       const targetNode = nodeMap.get(edge.target);
-      const isBlackboardEdge = sourceNode?.kind === 'blackboard' || targetNode?.kind === 'blackboard';
       const isLoopEdge = canReachNode(adjacency, edge.target, edge.source, edge.id);
       const isReturnEdge =
         sourceNode && targetNode
@@ -132,8 +385,7 @@ export function buildDeckEdgeVisualStates(document: DeckDocument): Map<string, D
         {
           isLoopEdge,
           isReturnEdge,
-          isBlackboardEdge,
-          offset: isLoopEdge ? 56 : isReturnEdge ? 42 : isBlackboardEdge ? 32 : 24,
+          offset: isLoopEdge ? 56 : isReturnEdge ? 42 : 24,
           borderRadius: isLoopEdge ? 20 : isReturnEdge ? 18 : 14,
         },
       ] as const;
@@ -148,26 +400,30 @@ function toFlowEdges(document: DeckDocument, selectedEdgeId: string | null): Edg
     const visualState = visualStates.get(edge.id) || {
       isLoopEdge: false,
       isReturnEdge: false,
-      isBlackboardEdge: false,
       offset: 24,
       borderRadius: 14,
     };
+    const edgeType = normalizeEdgeType(edge.edgeType);
     const stroke = isSelected
       ? 'rgba(79, 162, 173, 0.98)'
+      : edgeType === 'magentic_option'
+        ? 'rgba(96, 194, 255, 0.96)'
       : visualState.isLoopEdge
         ? 'rgba(217, 132, 88, 0.94)'
-        : visualState.isBlackboardEdge
-          ? 'rgba(111, 176, 186, 0.94)'
-          : 'rgba(118, 126, 138, 0.92)';
+        : 'rgba(234, 146, 77, 0.94)';
     return {
       id: edge.id,
       source: edge.source,
       target: edge.target,
+      data: {
+        edgeType,
+        metadata: edge.metadata || null,
+      } satisfies FlowEdgeData,
       type: 'smoothstep',
       className: [
         visualState.isLoopEdge ? 'edge-loop' : null,
         visualState.isReturnEdge ? 'edge-return' : null,
-        visualState.isBlackboardEdge ? 'edge-blackboard' : null,
+        edgeType === 'magentic_option' ? 'edge-magentic-option' : 'edge-graph-flow',
       ]
         .filter(Boolean)
         .join(' '),
@@ -229,21 +485,35 @@ export function mergeFlowEdgesIntoDeck(nextEdges: Edge[], prevEdges: DeckEdge[])
     .filter((edge) => nextEdgeById.has(edge.id))
     .map((edge) => {
       const nextEdge = nextEdgeById.get(edge.id);
-      return nextEdge
-        ? {
-            ...edge,
-            source: nextEdge.source,
-            target: nextEdge.target,
-          }
-        : edge;
+      if (!nextEdge) return edge;
+      const metadata =
+        normalizeDeckEdgeMetadata((nextEdge.data as FlowEdgeData | undefined)?.metadata) ??
+        edge.metadata ??
+        null;
+      const { metadata: _ignoredMetadata, ...edgeWithoutMetadata } = edge;
+      return {
+        ...edgeWithoutMetadata,
+        source: nextEdge.source,
+        target: nextEdge.target,
+        edgeType:
+          ((nextEdge.data as FlowEdgeData | undefined)?.edgeType as DeckEdgeType | null | undefined) ??
+          edge.edgeType ??
+          'graph_flow',
+        ...(metadata ? { metadata } : {}),
+      };
     });
 
   nextEdges.forEach((edge) => {
     if (merged.some((entry) => entry.id === edge.id)) return;
+    const metadata = normalizeDeckEdgeMetadata((edge.data as FlowEdgeData | undefined)?.metadata);
     merged.push({
       id: edge.id,
       source: edge.source,
       target: edge.target,
+      edgeType:
+        ((edge.data as FlowEdgeData | undefined)?.edgeType as DeckEdgeType | null | undefined) ??
+        'graph_flow',
+      ...(metadata ? { metadata } : {}),
     });
   });
 
@@ -284,10 +554,80 @@ export default function BuilderCanvas({
   const [nodes, setNodes] = useNodesState(flowNodes);
   const [edges, setEdges] = useEdgesState(flowEdges);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const viewportRecoveryFrameRef = useRef<number | null>(null);
+  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const selectedEdge = useMemo(
     () => document.edges.find((edge) => edge.id === selectedEdgeId) || null,
     [document.edges, selectedEdgeId],
   );
+  const translateExtent = useMemo(() => buildViewportTranslateExtent(nodes), [nodes]);
+
+  const recoverViewportIfGraphLost = (reason: string) => {
+    if (draggingNodeId) return;
+    if (!reactFlowInstance || !reactFlowInstance.viewportInitialized || nodes.length === 0) return;
+    const viewportHost = canvasRef.current;
+    if (!viewportHost) return;
+
+    const viewport = reactFlowInstance.getViewport();
+    const zoom = viewport.zoom || 1;
+    const visibleRect = {
+      left: -viewport.x / zoom,
+      top: -viewport.y / zoom,
+      right: (viewportHost.clientWidth - viewport.x) / zoom,
+      bottom: (viewportHost.clientHeight - viewport.y) / zoom,
+    };
+    const selectedNode = selectedCardId ? nodes.find((node) => node.id === selectedCardId) || null : null;
+
+    const graphBounds = reactFlowInstance.getNodesBounds(nodes);
+    if (!Number.isFinite(graphBounds.x) || !Number.isFinite(graphBounds.y)) return;
+    const graphVisible = isAnyCanvasNodeVisible(nodes, visibleRect, 28 / zoom);
+
+    const selectedNodeBounds = selectedNode ? getNodeCanvasRect(selectedNode) : null;
+    const selectedNodeVisible = selectedNodeBounds
+      ? isCanvasRectVisible(selectedNodeBounds, visibleRect, 20 / zoom)
+      : true;
+    const shouldPreferSelectedNode =
+      reason === 'selection-change' || reason === 'node-drag-stop';
+
+    if (!graphVisible || (shouldPreferSelectedNode && !selectedNodeVisible)) {
+      if (DEV_MODE) {
+        console.debug('[builder] recovering lost viewport', {
+          reason,
+          viewport,
+          visibleRect,
+          graphBounds,
+          selectedNodeBounds,
+          graphVisible,
+          selectedNodeVisible,
+          selectedCardId,
+          draggingNodeId,
+          shouldPreferSelectedNode,
+        });
+      }
+      if (selectedNode && shouldPreferSelectedNode && !selectedNodeVisible) {
+        reactFlowInstance.fitView({
+          nodes: [selectedNode],
+          duration: 220,
+          padding: 1.0,
+          minZoom: 0.28,
+          maxZoom: 1.15,
+        });
+      } else {
+        reactFlowInstance.fitView({ duration: 220, padding: 0.22, minZoom: 0.22, maxZoom: 1.35 });
+      }
+    }
+  };
+
+  const scheduleViewportRecovery = (reason: string) => {
+    if (viewportRecoveryFrameRef.current != null) {
+      window.cancelAnimationFrame(viewportRecoveryFrameRef.current);
+    }
+    viewportRecoveryFrameRef.current = window.requestAnimationFrame(() => {
+      viewportRecoveryFrameRef.current = null;
+      recoverViewportIfGraphLost(reason);
+    });
+  };
 
   useEffect(() => {
     setNodes(flowNodes);
@@ -312,6 +652,40 @@ export default function BuilderCanvas({
       maxZoom: 1.15,
     });
   }, [focusRequest, nodes, reactFlowInstance]);
+
+  useEffect(() => {
+    scheduleViewportRecovery('document-change');
+  }, [document.version, nodes, reactFlowInstance, draggingNodeId]);
+
+  useEffect(() => {
+    scheduleViewportRecovery('selection-change');
+  }, [selectedCardId, reactFlowInstance, draggingNodeId]);
+
+  useEffect(() => {
+    const viewportHost = canvasRef.current;
+    if (!viewportHost || !reactFlowInstance) return;
+
+    const scheduleRecovery = () => {
+      scheduleViewportRecovery('canvas-resize');
+    };
+
+    const observer = new ResizeObserver(() => scheduleRecovery());
+    observer.observe(viewportHost);
+    window.addEventListener('resize', scheduleRecovery);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', scheduleRecovery);
+    };
+  }, [reactFlowInstance, nodes, draggingNodeId]);
+
+  useEffect(() => {
+    return () => {
+      if (viewportRecoveryFrameRef.current != null) {
+        window.cancelAnimationFrame(viewportRecoveryFrameRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -357,10 +731,12 @@ export default function BuilderCanvas({
   ): boolean => {
     if (!connection.source || !connection.target) return false;
     if (connection.source === connection.target) return false;
+    if (!resolveCanvasConnectionEdgeType(document, connection)) return false;
 
     const nextEdgeKey = buildDeckEdgeIdentityKey({
       source: connection.source,
       target: connection.target,
+      edgeType: resolveCanvasConnectionEdgeType(document, connection) || 'graph_flow',
     });
 
     return !currentEdges.some((edge) => {
@@ -370,6 +746,9 @@ export default function BuilderCanvas({
         buildDeckEdgeIdentityKey({
           source: edge.source,
           target: edge.target,
+          edgeType:
+            ((edge.data as { edgeType?: DeckEdgeType | null } | undefined)?.edgeType as DeckEdgeType | null | undefined) ??
+            'graph_flow',
         }) === nextEdgeKey
       );
     });
@@ -427,6 +806,13 @@ export default function BuilderCanvas({
         {
           ...connection,
           id: `edge_${Math.random().toString(36).slice(2, 10)}`,
+          data: (() => {
+            const edgeType = resolveCanvasConnectionEdgeType(document, connection) || 'graph_flow';
+            return {
+              edgeType,
+              metadata: resolveCanvasConnectionMetadata(document, connection, edgeType),
+            } satisfies FlowEdgeData;
+          })(),
         },
         current,
       );
@@ -446,7 +832,27 @@ export default function BuilderCanvas({
   const onReconnect: OnReconnect<Edge> = (oldEdge, newConnection) => {
     setEdges((current) => {
       if (!isPlainConnectionAllowed(newConnection, current, oldEdge.id)) return current;
-      const next = reconnectEdge(oldEdge, newConnection, current, { shouldReplaceId: false });
+      const nextEdgeType = resolveCanvasConnectionEdgeType(document, newConnection) || 'graph_flow';
+      const reconnected = reconnectEdge(
+        oldEdge,
+        newConnection,
+        current,
+        { shouldReplaceId: false },
+      );
+      const next = reconnected.map((edge) =>
+        edge.id === oldEdge.id
+          ? {
+              ...edge,
+              data: {
+                ...((edge.data as FlowEdgeData | undefined) || {}),
+                edgeType: nextEdgeType,
+                metadata:
+                  normalizeDeckEdgeMetadata((edge.data as FlowEdgeData | undefined)?.metadata) ??
+                  resolveCanvasConnectionMetadata(document, newConnection, nextEdgeType),
+              },
+            }
+          : edge,
+      );
       onPersistGraphMutation?.('canvas:reconnect', {
         edgeId: oldEdge.id,
         source: newConnection.source,
@@ -464,7 +870,11 @@ export default function BuilderCanvas({
   };
 
   return (
-    <div className="builder-flow h-full w-full" style={{ position: 'relative' }}>
+    <div
+      ref={canvasRef}
+      className="builder-flow h-full w-full"
+      style={{ position: 'relative' }}
+    >
       <style>{`
         .builder-flow .react-flow__edge {
           cursor: pointer;
@@ -487,8 +897,11 @@ export default function BuilderCanvas({
         .builder-flow .react-flow__edge.edge-return .react-flow__edge-path {
           opacity: 0.96;
         }
-        .builder-flow .react-flow__edge.edge-blackboard .react-flow__edge-path {
+        .builder-flow .react-flow__edge.edge-magentic-option .react-flow__edge-path {
           opacity: 0.98;
+        }
+        .builder-flow .react-flow__edge.edge-graph-flow .react-flow__edge-path {
+          opacity: 0.96;
         }
         .builder-flow .react-flow__handle {
           transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
@@ -582,10 +995,22 @@ export default function BuilderCanvas({
         edges={edges}
         nodeTypes={nodeTypes}
         connectionMode={ConnectionMode.Strict}
+        minZoom={0.22}
+        maxZoom={1.6}
+        translateExtent={translateExtent}
+        preventScrolling
         connectOnClick={false}
         deleteKeyCode={null}
         isValidConnection={(connection) => isPlainConnectionAllowed(connection, edges)}
         onInit={setReactFlowInstance}
+        onNodeDragStart={(_, node) => {
+          setDraggingNodeId(node.id);
+        }}
+        onNodeDragStop={(_, node) => {
+          setDraggingNodeId((current) => (current === node.id ? null : current));
+          scheduleViewportRecovery('node-drag-stop');
+        }}
+        onMoveEnd={() => scheduleViewportRecovery('move-end')}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
@@ -616,7 +1041,7 @@ export default function BuilderCanvas({
         }}
         snapToGrid
         snapGrid={[24, 24]}
-        fitViewOptions={{ padding: 0.22 }}
+        fitViewOptions={{ padding: 0.22, minZoom: 0.22, maxZoom: 1.35 }}
         fitView
       >
         <Background variant={BackgroundVariant.Lines} gap={24} size={1} color="rgba(73, 82, 91, 0.42)" />

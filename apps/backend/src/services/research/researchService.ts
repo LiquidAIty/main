@@ -3,6 +3,7 @@ import { runLLM } from '../../llm/client';
 import type { ResolvedAgentConfig } from '../resolveAgents';
 import { tavilySearch } from '../../agents/mcp/tavilyClient';
 import { getConfiguredPositiveInt, isDevTestModeEnabled } from '../devTest';
+import { planResearchTasksWithAutoGen } from './autogenResearchClient';
 import type {
   CandidateEdge,
   KnowGraphGap,
@@ -633,6 +634,15 @@ async function generateTripletGuidedSearchTasks(
   draftTasks: ResearchSearchTask[],
 ): Promise<ResearchSearchTask[]> {
   const hydratedDraftTasks = hydrateResearchTasks(packet, draftTasks);
+  if (packet.searchTasks.length > 0) {
+    console.log(
+      '[ResearchAgent][Adapter] projectId=%s turnId=%s source=orchestrator structured_tasks=%d',
+      packet.projectId,
+      packet.turnId,
+      hydratedDraftTasks.length,
+    );
+    return hydratedDraftTasks;
+  }
   console.log(
     '[ResearchTriplets] projectId=%s turnId=%s triplet_count=%d sample=%s',
     packet.projectId,
@@ -648,6 +658,33 @@ async function generateTripletGuidedSearchTasks(
       packet.turnId,
     );
     return hydratedDraftTasks;
+  }
+
+  try {
+    const autogenPlan = await planResearchTasksWithAutoGen(packet, resolvedAgent, hydratedDraftTasks);
+    const autogenTasks = hydrateResearchTasks(
+      packet,
+      coerceSearchTasks(autogenPlan?.search_tasks),
+    ).slice(0, TEMP_STABILIZATION_MAX_AGENT_GENERATED_SEARCH_TASKS);
+    if (autogenTasks.length) {
+      console.log(
+        '[ResearchAgent][AutoGen/Magentic] projectId=%s turnId=%s planner=%s planned=%d stop_reason=%s queries=%s',
+        packet.projectId,
+        packet.turnId,
+        autogenPlan?.planner || 'unknown',
+        autogenTasks.length,
+        autogenPlan?.stop_reason || 'n/a',
+        JSON.stringify(autogenTasks.map((task) => task.query)),
+      );
+      return autogenTasks;
+    }
+  } catch (error: any) {
+    console.warn(
+      '[ResearchAgent][AutoGen/Magentic] projectId=%s turnId=%s fallback=llm reason=%s',
+      packet.projectId,
+      packet.turnId,
+      error?.message || String(error),
+    );
   }
 
   const promptPayload = {

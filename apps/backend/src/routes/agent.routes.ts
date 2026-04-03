@@ -6,23 +6,19 @@ import {
   listAgentCards,
   saveAgentConfig as persistAgentConfig,
   getAgentConfig as fetchAgentConfig,
-  getProjectState,
-  saveProjectState,
 } from '../services/agentBuilderStore';
 import { runLLM } from '../llm/client';
 import { createOpenRouterEmbedding } from '../llm/openrouterEmbeddings';
 import { captureProbability } from '../lib/receiptCapture';
-import { resolveAgentConfig } from '../services/resolveAgents';
 import type { ResolvedAgentConfig } from '../services/resolveAgents';
 import { getConfiguredPositiveInt, isDevTestModeEnabled } from '../services/devTest';
+import { runAssistIngress } from '../services/orchestration/assistIngress';
 import { ragSearchDirect } from '../tools/rag.search';
-import { proxyKnowgraphPdfIngest, type UploadedFile } from './knowgraph.routes';
+import type { UploadedFile } from './knowgraph.routes';
 import type { KgEntity, KgRelationship } from './v2/chunking';
-import { runKgChatTurnNow, runResearchPacketForProject } from './v2/kg.routes';
 import type { CandidateEdge, KnowGraphGap, ResearchSearchTask, ThinkGraphTriplet } from '../services/research/types';
 
 export const agentRoutes = Router();
-const lastResponseIdByProject = new Map<string, string>();
 const lastAssistantTextByProject = new Map<string, string>();
 const BOSS_UPLOAD_MAX_FILE_SIZE_BYTES = isDevTestModeEnabled()
   ? 512 * 1024 * 1024
@@ -204,14 +200,17 @@ function normalizeHeuristicPhrase(value: string): string {
     .trim();
 }
 
-function isPdfUpload(file: UploadedFile | null | undefined): boolean {
+// LEGACY boss-era helpers below are no longer part of the active orchestration path.
+// The live `/api/agents/boss` ingress now delegates to `runAssistIngress`.
+
+export function isPdfUpload(file: UploadedFile | null | undefined): boolean {
   if (!file) return false;
   const fileName = String(file.originalname || '').toLowerCase();
   const fileType = String(file.mimetype || '').toLowerCase();
   return fileName.endsWith('.pdf') || fileType.includes('pdf');
 }
 
-function buildAssistUploadDocumentId(
+export function buildAssistUploadDocumentId(
   projectId: string,
   turnId: string,
   file: UploadedFile,
@@ -256,7 +255,7 @@ function tryParseJsonObject(text: string): any {
   return null;
 }
 
-function extractExistingPlanWiki(plan: unknown): Partial<StoredPlanWiki> {
+export function extractExistingPlanWiki(plan: unknown): Partial<StoredPlanWiki> {
   if (typeof plan === 'string') {
     return {
       anchor: plan.trim(),
@@ -304,7 +303,7 @@ function extractExistingPlanWiki(plan: unknown): Partial<StoredPlanWiki> {
   };
 }
 
-function buildThinkGraphPlanWikiSummary(
+export function buildThinkGraphPlanWikiSummary(
   entities: KgEntity[],
   relationships: KgRelationship[],
   triplets: ThinkGraphTriplet[],
@@ -326,7 +325,7 @@ function buildThinkGraphPlanWikiSummary(
   };
 }
 
-function buildKnowGraphPlanWikiSummary(
+export function buildKnowGraphPlanWikiSummary(
   graphFacts: RetrievedGraphFact[],
   evidence: RetrievedEvidence[],
   gaps: KnowGraphGap[],
@@ -445,7 +444,7 @@ function buildPlanWikiFallback(
   };
 }
 
-async function rewriteAssistPlanWiki(input: {
+export async function rewriteAssistPlanWiki(input: {
   projectId: string;
   turnId: string;
   domain?: unknown;
@@ -610,7 +609,7 @@ function extractFallbackEntityNames(userText: string): string[] {
     .slice(0, 3);
 }
 
-function buildCandidateEdges(userText: string, entities: KgEntity[], relationships: KgRelationship[]): CandidateEdge[] {
+export function buildCandidateEdges(userText: string, entities: KgEntity[], relationships: KgRelationship[]): CandidateEdge[] {
   const entityById = new Map(entities.map((entity) => [entity.id, String(entity.name || '').trim()]));
   const loweredUserText = userText.toLowerCase();
   const seen = new Set<string>();
@@ -686,7 +685,7 @@ function buildCandidateEdges(userText: string, entities: KgEntity[], relationshi
     .map(({ recency: _recency, order: _order, ...edge }) => edge);
 }
 
-function buildThinkGraphTriplets(candidateEdges: CandidateEdge[]): ThinkGraphTriplet[] {
+export function buildThinkGraphTriplets(candidateEdges: CandidateEdge[]): ThinkGraphTriplet[] {
   const seen = new Set<string>();
   const triplets: ThinkGraphTriplet[] = [];
   for (const edge of candidateEdges) {
@@ -784,7 +783,7 @@ function buildResearchOpenQuestions(candidateEdges: CandidateEdge[]): string[] {
     });
 }
 
-function buildDebugResearchPacket(
+export function buildDebugResearchPacket(
   projectId: string,
   turnId: string,
   userText: string,
@@ -812,7 +811,7 @@ function buildDebugResearchPacket(
   };
 }
 
-async function openNeo4jSession(): Promise<{ driver: any; session: any } | null> {
+export async function openNeo4jSession(): Promise<{ driver: any; session: any } | null> {
   const uri = process.env.NEO4J_URI;
   const user = process.env.NEO4J_USER;
   const password = process.env.NEO4J_PASSWORD;
@@ -1247,7 +1246,7 @@ async function retrieveWeightedSourceBackedEvidence(
     .filter((row): row is RetrievedEvidence => Boolean(row));
 }
 
-async function retrieveKnowGraphEvidenceForTurn(
+export async function retrieveKnowGraphEvidenceForTurn(
   session: any,
   projectId: string,
   userMessage: string,
@@ -1426,7 +1425,7 @@ async function retrieveKnowGraphEvidenceForTurn(
   };
 }
 
-function buildReplyContext(
+export function buildReplyContext(
   userMessage: string,
   previousResponseId: string | null,
   evidence: RetrievedEvidence[],
@@ -1459,12 +1458,19 @@ function buildReplyContext(
 
 agentRoutes.post('/boss', bossUpload.single('file') as any, async (req, res) => {
   const body = req.body || {};
-  const { goal, query, q, domain } = body;
-  const userText = typeof goal === 'string' ? goal : typeof query === 'string' ? query : typeof q === 'string' ? q : '';
-  const attachedFile = (req as any).file as UploadedFile | undefined;
+  const { goal, query, q, message, prompt, domain } = body;
+  const userText =
+    [goal, query, q, message, prompt]
+      .map((value) => (typeof value === 'string' ? value.trim() : ''))
+      .find(Boolean) || '';
+  const attachedFile = ((req as any).file as UploadedFile | undefined) || null;
 
-  if (!userText || typeof userText !== 'string') {
-    return res.status(400).json({ ok: false, error: "missing_goal", message: "Missing 'goal' (or 'query'/'q') in body" });
+  if (!userText) {
+    return res.status(400).json({
+      ok: false,
+      error: 'missing_goal',
+      message: "Missing 'goal' (or 'query'/'q'/'message'/'prompt') in body",
+    });
   }
 
   const project =
@@ -1473,441 +1479,68 @@ agentRoutes.post('/boss', bossUpload.single('file') as any, async (req, res) => 
     return res.status(400).json({ ok: false, error: 'missing_projectId', message: 'projectId required' });
   }
 
+  const turnId =
+    typeof body.turnId === 'string' && body.turnId.trim()
+      ? body.turnId.trim()
+      : `assist:${Date.now()}`;
+
   try {
-    const resolved = await resolveAgentConfig(project, 'llm_chat', '/api/agents/boss');
-    if (!resolved) {
-      return res.status(409).json({
-        ok: false,
-        error: 'assist_main_agent_missing',
-        message: 'No agent configuration found for main chat.',
-      });
-    }
-
-    let llmRes;
-    const turnId =
-      typeof body.turnId === 'string' && body.turnId.trim()
-        ? body.turnId.trim()
-        : `assist:${Date.now()}`;
-    let researchEntityNames: string[] = [];
-    let evidence: RetrievedEvidence[] = [];
-    let evidenceMode: RetrievedEvidenceBundle['mode'] = 'disabled';
-    let weightedEvidenceResults = 0;
-    let graphEvidenceResults = 0;
-    let graphFacts: RetrievedGraphFact[] = [];
-    let knowGraphGaps: KnowGraphGap[] = [];
-    let researchDocumentCount = 0;
-    let ingestedDocuments: TurnIngestedDocument[] = [];
-    let projectState: { plan: unknown; links: unknown[]; knowledge: { nodes: unknown[]; edges: unknown[] } } = {
-      plan: [],
-      links: [],
-      knowledge: { nodes: [], edges: [] },
-    };
-    let previousPlanWiki: Partial<StoredPlanWiki> = extractExistingPlanWiki(null);
-    let thinkGraphSummary: Record<string, unknown> = buildThinkGraphPlanWikiSummary([], [], []);
-    let knowGraphSummary: Record<string, unknown> = buildKnowGraphPlanWikiSummary([], [], [], 0, []);
-    const previousResponseId = lastResponseIdByProject.get(project) || resolved.previousResponseId || null;
-    const priorAssistantText = lastAssistantTextByProject.get(project) || '';
-    try {
-      projectState = await getProjectState(project);
-      previousPlanWiki = extractExistingPlanWiki(projectState.plan);
-      console.log(
-        '[PlanWiki] projectId=%s loaded_existing status=%s anchor_chars=%d',
-        project,
-        previousPlanWiki.status || 'draft',
-        (previousPlanWiki.anchor || '').length,
-      );
-    } catch (err: any) {
-      console.warn('[PlanWiki] projectId=%s load_failed: %s', project, err?.message || String(err));
-    }
-    console.log(
-      '[TurnPair] projectId=%s turnId=%s prior_assistant_chars=%d user_chars=%d',
-      project,
-      turnId,
-      priorAssistantText.length,
-      userText.length,
-    );
-    if (attachedFile) {
-      if (!isPdfUpload(attachedFile)) {
-        return res.status(400).json({
-          ok: false,
-          error: 'invalid_file_type',
-          message: 'Only PDF attachments are supported by the Assist KnowGraph bridge.',
-        });
-      }
-
-      const requestedDocumentId =
-        typeof body.document_id === 'string' && body.document_id.trim()
-          ? body.document_id.trim()
-          : null;
-      const assistDocumentId = buildAssistUploadDocumentId(project, turnId, attachedFile, requestedDocumentId);
-      try {
-        const upstream = await proxyKnowgraphPdfIngest({
-          projectId: project,
-          documentId: assistDocumentId,
-          file: attachedFile,
-          route: '/api/agents/boss',
-        });
-        if (upstream.status >= 200 && upstream.status < 300 && upstream.data?.ok !== false) {
-          const finalDocumentId = String(upstream.data?.document_id || assistDocumentId).trim() || assistDocumentId;
-          ingestedDocuments = [
-            {
-              documentId: finalDocumentId,
-              fileName: String(attachedFile.originalname || `${finalDocumentId}.pdf`),
-            },
-          ];
-          console.log(
-            '[ASSIST_CHAT][FILE_INGEST] projectId=%s turnId=%s documentId=%s fileName=%s status=ok',
-            project,
-            turnId,
-            finalDocumentId,
-            attachedFile.originalname || `${finalDocumentId}.pdf`,
-          );
-        } else {
-          console.warn(
-            '[ASSIST_CHAT][FILE_INGEST] projectId=%s turnId=%s documentId=%s status=%d message=%s',
-            project,
-            turnId,
-            assistDocumentId,
-            upstream.status,
-            upstream.data?.error?.message || upstream.data?.message || 'ingest_failed',
-          );
-        }
-      } catch (err: any) {
-        console.warn(
-          '[ASSIST_CHAT][FILE_INGEST] projectId=%s turnId=%s documentId=%s failed: %s',
-          project,
-          turnId,
-          assistDocumentId,
-          err?.message || String(err),
-        );
-      }
-    }
-    try {
-      const thinkGraph = await runKgChatTurnNow({
-        projectId: project,
-        turnId,
-        src: 'chat.auto',
-        mode: 'assist',
-        userText,
-        assistantText: priorAssistantText,
-      });
-      console.log(
-        '[ThinkGraph] projectId=%s entities=%d relationships=%d',
-        project,
-        thinkGraph.entities.length,
-        thinkGraph.relationships.length,
-      );
-
-      const candidateEdges = buildCandidateEdges(userText, thinkGraph.entities, thinkGraph.relationships);
-      const thinkGraphTriplets = buildThinkGraphTriplets(candidateEdges);
-      thinkGraphSummary = buildThinkGraphPlanWikiSummary(
-        thinkGraph.entities,
-        thinkGraph.relationships,
-        thinkGraphTriplets,
-      );
-      researchEntityNames = Array.from(
-        new Set([
-          ...pickRecentEntityNames(userText, thinkGraph.entities, TEMP_STABILIZATION_MAX_PRIORITY_ENTITIES),
-          ...candidateEdges.flatMap((edge) => [edge.entityA, edge.entityB]),
-        ]),
-      ).slice(0, TEMP_STABILIZATION_MAX_PRIORITY_ENTITIES);
-      console.log(
-        '[ThinkGraph] projectId=%s candidate_edges=%d priority_entities=%d',
-        project,
-        candidateEdges.length,
-        researchEntityNames.length,
-      );
-      console.log(
-        '[ThinkGraphAttention] projectId=%s turnId=%s edge_sample=%s entity_sample=%s',
-        project,
-        turnId,
-        JSON.stringify(candidateEdges.slice(0, 3)),
-        JSON.stringify(researchEntityNames.slice(0, 6)),
-      );
-      console.log(
-        '[ThinkGraphTriplets] projectId=%s turnId=%s triplets=%d sample=%s',
-        project,
-        turnId,
-        thinkGraphTriplets.length,
-        JSON.stringify(thinkGraphTriplets.slice(0, 4)),
-      );
-      if (thinkGraph.relationships.length === 0 && candidateEdges.some((edge) => edge.source === 'fallback')) {
-        console.log('[ThinkGraph] fallback synthesized %d candidate edges', candidateEdges.length);
-      }
-
-      const neo4jCtx = await openNeo4jSession();
-      try {
-        if (neo4jCtx) {
-          knowGraphGaps = candidateEdges.length > 0
-            ? await checkKnowGraphGaps(neo4jCtx.session, project, candidateEdges)
-            : [];
-          console.log(
-            '[GapCheck] projectId=%s turnId=%s candidate_edges=%d gaps=%d',
-            project,
-            turnId,
-            candidateEdges.length,
-            knowGraphGaps.length,
-          );
-          if (knowGraphGaps.length > 0) {
-            console.log(
-              '[GapCheck] projectId=%s turnId=%s gap_sample=%s',
-              project,
-              turnId,
-              JSON.stringify(knowGraphGaps.slice(0, 3)),
-            );
-          }
-        } else {
-          console.log('[GapCheck] projectId=%s turnId=%s skipped=no_neo4j_session', project, turnId);
-        }
-
-        const researchPacket = buildDebugResearchPacket(
-          project,
-          turnId,
-          userText,
-          candidateEdges,
-          thinkGraphTriplets,
-          researchEntityNames,
-          knowGraphGaps,
-        );
-        console.log(
-          '[ResearchPacket] projectId=%s edges=%d triplets=%d entities=%d gaps=%d tasks=%d',
-          project,
-          researchPacket.attentionEdges.length,
-          researchPacket.triplets.length,
-          researchPacket.priorityEntities.length,
-          researchPacket.gaps.length,
-          researchPacket.searchTasks.length,
-        );
-
-        try {
-          const researchResult = await runResearchPacketForProject(project, researchPacket, turnId);
-          researchDocumentCount = researchResult.ingested_document_count;
-          console.log(
-            '[Research] projectId=%s turnId=%s ingested_documents=%d document_ids=%s',
-            project,
-            researchResult.turn_id,
-            researchResult.ingested_document_count,
-            JSON.stringify((researchResult.document_ids || []).slice(0, 6)),
-          );
-        } catch (err: any) {
-          console.warn('[Research] projectId=%s turnId=%s failed: %s', project, turnId, err?.message || String(err));
-        }
-
-        if (neo4jCtx) {
-          console.log(
-            '[KnowGraphQuery] projectId=%s traversal=post_research candidate_edges=%d research_docs=%d',
-            project,
-            candidateEdges.length,
-            researchDocumentCount,
-          );
-          const evidenceBundle = await retrieveKnowGraphEvidenceForTurn(
-            neo4jCtx.session,
-            project,
-            userText,
-            candidateEdges,
-            researchEntityNames,
-            turnId,
-          );
-          evidence = evidenceBundle.evidence;
-          graphFacts = evidenceBundle.graphFacts;
-          evidenceMode = evidenceBundle.mode;
-          weightedEvidenceResults = evidenceBundle.weightedResults;
-          graphEvidenceResults = evidenceBundle.graphResults;
-          console.log(
-            '[KnowGraphRetrieval] projectId=%s turnId=%s graph_facts=%d evidence=%d mode=%s',
-            project,
-            turnId,
-            graphFacts.length,
-            evidence.length,
-            evidenceMode,
-          );
-          if (graphFacts.length > 0) {
-            console.log(
-              '[KnowGraphRetrieval] projectId=%s turnId=%s graph_fact_sample=%s',
-              project,
-              turnId,
-              JSON.stringify(graphFacts.slice(0, 4)),
-            );
-          }
-        } else {
-          evidence = [];
-          graphFacts = [];
-          evidenceMode = 'disabled';
-        }
-      } finally {
-        if (neo4jCtx) {
-          await neo4jCtx.session.close();
-          await neo4jCtx.driver.close();
-        }
-      }
-      console.log(
-        '[EvidenceRetrieval] mode=%s strategy=graph_first_post_research projectId=%s results=%d weighted_results=%d graph_results=%d source_docs=%d',
-        evidenceMode,
-        project,
-        evidence.length,
-        weightedEvidenceResults,
-        graphEvidenceResults,
-        new Set(evidence.map((item) => item.documentId).filter(Boolean)).size,
-      );
-      knowGraphSummary = buildKnowGraphPlanWikiSummary(
-        graphFacts,
-        evidence,
-        knowGraphGaps,
-        researchDocumentCount,
-        ingestedDocuments,
-      );
-    } catch (err: any) {
-      console.warn('[ASSIST_CHAT] pre-reply loop failed', {
-        projectId: project,
-        agent_id: resolved.agentId,
-        error: err?.message || String(err),
-      });
-    }
-
-    const replyContext = buildReplyContext(
+    const result = await runAssistIngress({
+      projectId: project,
       userText,
-      previousResponseId,
-      evidence,
-      graphFacts,
-      ingestedDocuments,
-    );
-    try {
-      console.log(
-        '[RUNTIME_MODEL] route=/api/agents/boss projectId=%s agentType=%s agent_id=%s provider=%s model_key=%s provider_model_id=%s',
-        project,
-        'llm_chat',
-        resolved.agentId,
-        resolved.provider,
-        resolved.modelKey,
-        resolved.providerModelId,
-      );
-      llmRes = await runLLM(
-        [
-          'Answer the user using the provided graph context and evidence when relevant.',
-          'Treat graph_context as grounded entity/relationship context and evidence as supporting source excerpts.',
-          'If the evidence is insufficient or only partially relevant, say so plainly.',
-          '',
-          'Reply context bundle:',
-          JSON.stringify(replyContext, null, 2),
-        ].join('\n'),
-        {
-          modelKey: resolved.modelKey,
-          provider: resolved.provider,
-          providerModelId: resolved.providerModelId,
-          temperature: resolved.temperature ?? undefined,
-          maxTokens: resolved.maxTokens ?? undefined,
-          previousResponseId,
-          useResponsesApi: resolved.provider === 'openai',
-          system: [
-            resolved.systemPrompt,
-            'Use graph-grounded entity and relationship context when it is available.',
-            'Use retrieved evidence snippets when relevant.',
-            'Do not claim unsupported facts.',
-            'When you rely on evidence, mention the source title or URL naturally.',
-          ]
-            .filter(Boolean)
-            .join('\n\n'),
-        },
-      );
-      if (typeof llmRes?.responseId === 'string' && llmRes.responseId.trim()) {
-        lastResponseIdByProject.set(project, llmRes.responseId.trim());
-      }
-      console.log('[Reply] generated response', {
-        projectId: project,
-        evidence: evidence.length,
-        graphFacts: graphFacts.length,
-        used_previous_response_id: Boolean(previousResponseId),
-      });
-    } catch (err: any) {
-      console.error('[ASSIST_CHAT] llm failed', { projectId: project, agent_id: resolved.agentId, error: err?.message });
-      return res.status(502).json({ ok: false, error: 'assist_boss_failed', message: err?.message || 'agent failed' });
-    }
+      domain,
+      turnId,
+      priorAssistantText: lastAssistantTextByProject.get(project) || '',
+      attachedFile,
+    });
 
-    const finalText = (llmRes.text || '').trim();
-    if (!finalText) {
-      return res.status(502).json({ ok: false, error: 'empty_assistant_reply', message: 'assistant returned empty text' });
-    }
-    lastAssistantTextByProject.set(project, finalText);
-    knowGraphSummary = buildKnowGraphPlanWikiSummary(
-      graphFacts,
-      evidence,
-      knowGraphGaps,
-      researchDocumentCount,
-      ingestedDocuments,
-    );
-    try {
-      const rewrittenPlanWiki = await rewriteAssistPlanWiki({
-        projectId: project,
-        turnId,
-        domain,
-        userText,
-        priorAssistantText,
-        finalAssistantText: finalText,
-        previousPlanWiki,
-        thinkGraphSummary,
-        knowGraphSummary,
-        resolved,
-      });
-      const existingPlanObject =
-        projectState.plan && typeof projectState.plan === 'object' && !Array.isArray(projectState.plan)
-          ? (projectState.plan as Record<string, unknown>)
-          : {};
-      const nextPlanState: StoredPlanWiki & Record<string, unknown> = {
-        ...existingPlanObject,
-        anchor: rewrittenPlanWiki.planWikiMarkdown,
-        whatChanged: rewrittenPlanWiki.whatChanged,
-        openQuestions: rewrittenPlanWiki.openQuestions,
-        sources: rewrittenPlanWiki.sources,
-        deltaSummary: rewrittenPlanWiki.deltaSummary,
-        status: rewrittenPlanWiki.status,
-        updatedAt: new Date().toISOString(),
-        turnId,
-        lastUserMessage: userText,
-      };
-      projectState = await saveProjectState(project, {
-        ...projectState,
-        plan: nextPlanState,
-      });
-      console.log(
-        '[PlanWiki] projectId=%s turnId=%s status=%s anchor_chars=%d what_changed=%d open_questions=%d sources=%d',
-        project,
-        turnId,
-        rewrittenPlanWiki.status,
-        rewrittenPlanWiki.planWikiMarkdown.length,
-        rewrittenPlanWiki.whatChanged.length,
-        rewrittenPlanWiki.openQuestions.length,
-        rewrittenPlanWiki.sources.length,
-      );
-    } catch (err: any) {
-      console.warn('[PlanWiki] projectId=%s turnId=%s save_failed: %s', project, turnId, err?.message || String(err));
-    }
+    lastAssistantTextByProject.set(project, result.finalText);
 
-    // Capture probability (fire-and-forget)
     void captureProbability({
       projectId: project,
-      outputText: finalText
-    }).catch(err => console.error('[ASSIST_CHAT] probability capture failed:', err));
+      outputText: result.finalText,
+    }).catch((err) => console.error('[ASSIST_CHAT] probability capture failed:', err));
 
     return res.json({
       ok: true,
-      projectId: project,
-      domain: domain ?? 'general',
-      result: { final: finalText },
-      model: llmRes.model,
-      provider: llmRes.provider,
+      projectId: result.projectId,
+      domain: result.domain,
+      result: { final: result.finalText },
+      provider: result.session.modelProvider,
+      model: result.session.providerModelId,
+      session: result.session,
+      orchestration: {
+        stopReason: result.sidecar.stopReason ?? null,
+        reportBackCount: result.sidecar.reportBacks.length,
+        elapsedMs: result.sidecar.metrics.elapsedMs,
+        turnsUsed: result.sidecar.metrics.turnsUsed,
+        blackboardWriteCount: result.sidecar.metrics.blackboardWriteCount,
+        searchTaskCount: result.sidecar.metrics.searchTaskCount,
+        refinementApplied: result.sidecar.metrics.refinementApplied,
+        researchStarted: result.researchStarted,
+        researchError: result.researchError,
+        ingestedDocuments: result.ingestedDocuments,
+      },
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
+    const lower = message.toLowerCase();
     if (
-      message.includes('llm_chat_prompt_missing') ||
-      message.includes('llm_chat_model_missing') ||
-      message.includes('assist_main_prompt_missing')
+      lower.includes('assist_main_agent_missing') ||
+      lower.includes('llm_chat_prompt_missing') ||
+      lower.includes('llm_chat_model_missing') ||
+      lower.includes('assist_main_prompt_missing')
     ) {
-      return res.status(409).json({
-        ok: false,
-        error: message,
-        message,
-      });
+      return res.status(409).json({ ok: false, error: 'assist_main_agent_missing', message });
+    }
+    if (lower.includes('invalid_file_type')) {
+      return res.status(400).json({ ok: false, error: 'invalid_file_type', message });
+    }
+    if (lower.includes('magentic_model_not_approved')) {
+      return res.status(409).json({ ok: false, error: 'magentic_model_not_approved', message });
+    }
+    if (lower.includes('autogen_orchestrator_http_') || lower.includes('autogen_orchestrator_unreachable')) {
+      return res.status(502).json({ ok: false, error: 'autogen_orchestrator_failed', message });
     }
     console.error('[ASSIST_CHAT] unexpected failure', error);
     return res.status(502).json({

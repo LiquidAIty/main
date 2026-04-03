@@ -1,3 +1,6 @@
+// LEGACY LANGGRAPH-ERA FACTORY
+// This file remains for older Sol/department-agent paths.
+// It is not the current orchestration foundation target.
 import { ChatOpenAI } from '@langchain/openai';
 import { StateGraph, MessagesAnnotation } from '@langchain/langgraph';
 import { ToolNode } from '@langchain/langgraph/prebuilt';

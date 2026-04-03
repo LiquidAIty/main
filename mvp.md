@@ -91,14 +91,14 @@ The user should not need to hand-write full prompts every time.
 
 #### Edge
 
-A real transfer rule, not decoration.
+A real visible connection, not decoration.
 
-It answers:
+In the current builder/runtime model it means:
 
-- what goes across
-- when it goes across
-- where it writes
-- whether it gates or waits
+- this node runs after that node
+- blackboard participation is only real when the blackboard link is visible
+
+Future edge semantics, if they are ever added, must stay explicit and visible. They are not part of the current truthful runtime model.
 
 ### Agent prompt rule
 
@@ -153,7 +153,7 @@ Use all three:
 
 - columns = stages
 - rows or lanes = parallel families
-- edges = actual execution
+- edges = actual execution truth
 
 ### Minimal mental model
 
@@ -172,294 +172,417 @@ Use all three:
 
 ### Suggested first canvas object types
 
-- Chat
-- Plan
+Current live node kinds:
+
 - Agent
 - Blackboard
+
+Current semantic roles expressed through agent presets and runtime bindings:
+
+- Main Chat
 - ThinkGraph
+- Research Worker
+- Summary Step
 - KnowGraph
-- Merge
+- Graph Write
 
 ### First useful layout
 
-- Column 1: Chat
-- Column 2: Plan
+- Column 1: Main Chat
+- Column 2: ThinkGraph / Plan shaping
 - Column 3: Worker agents
-- Column 4: Merge and review
-- Column 5: Blackboard, ThinkGraph, and KnowGraph
+- Column 4: Summary and review
+- Column 5: Blackboard, KnowGraph, and graph write
 - Column 6: Final answer and next step
 
 ## Repo Audit
 
-### What the repo already has
+### How the existing docs fit now
 
-- A live front-door chat runtime at `/api/agents/boss`.
-- A project-scoped main chat agent config resolver.
-- A ThinkGraph-style ingestion path that can ingest a `Q/A` pair via `runKgChatTurnNow`.
-- A research path that turns graph gaps and attention edges into web research and KnowGraph ingest.
-- Neo4j-backed KnowGraph querying and ingest helpers.
-- A `v3` deck runtime with cards, edges, runs, and a blackboard object.
-- A builder UI with a left-to-right seed deck that already visually resembles stage columns.
-- A separate admin canvas that sketches plan, main chat, ThinkGraph, research, KnowGraph, and Neo4j as nodes.
+The repo already contains three useful but different vision layers:
 
-### What is close to the target
+- [`old/MVP-FINAL.md`](C:/Projects/LiquidAIty/main/old/MVP-FINAL.md) captured an Assist-first launch contract where Agent Builder stayed internal.
+- [`old/CURRENT.md`](C:/Projects/LiquidAIty/main/old/CURRENT.md) captured the dual-graph direction: ThinkGraph for subjective reasoning and KnowGraph for evidence.
+- [`legacy/docs/PROJECT_FULL_SCOPE_V0.md`](C:/Projects/LiquidAIty/main/legacy/docs/PROJECT_FULL_SCOPE_V0.md) captured the broader project/deck/contract/graph vision.
 
-- Fast reply is partially present: `/api/agents/boss` is already the active Assist front door.
-- Pair ingestion is partially present: the KG v2 path accepts `user_text` plus `assistant_text`.
-- Plan update is partially present: the boss route rewrites a PlanWiki after the turn.
-- Blackboard is partially present: `v3` has a real blackboard shape and persisted state.
-- Graph flow is partially present: ThinkGraph extraction, research, and Neo4j/KnowGraph integrations already exist.
-- Visual orchestration is partially present: the builder canvas already treats edges as explicit objects.
+Those docs are not contradictory. They describe different levels of scope:
 
-### Biggest mismatches
+- old Assist-first MVP = the narrow launch cut
+- dual-graph note = the memory and graph split
+- full-scope doc = the long-term operating environment
 
-#### 1. Reply-first law is violated in the active Assist runtime
+What this document does now is reconcile those with the current repo truth.
 
-The current boss route performs ThinkGraph extraction, gap detection, research dispatch, and evidence retrieval before the final assistant reply. That is the opposite of the intended law.
+### What the repo already has now
 
-The current runtime is closer to:
+- A real front-door Assist route at `/api/agents/boss`.
+- A real ThinkGraph-style ingestion and research path through KG v2.
+- A real KnowGraph / Neo4j path for evidence-backed graph work.
+- A real AutoGen Python sidecar route at `/autogen/research/plan`.
+- A real React Flow builder where nodes are real objects and edges are plain visible `source -> target` links.
+- A real v3 deck runtime where visible links determine execution order.
+- A real v3 blackboard that only reads and writes through visible links in the deck runtime.
+- A real right-panel agent editing flow through the existing `AgentManager`.
 
-`user -> deep pre-reply loop -> assistant reply -> plan rewrite`
+### What is true now in the active builder/runtime path
 
-The intended runtime is:
+The active builder truth is:
 
-`user -> assistant reply -> pair ingest -> plan update -> optional agents -> deeper work`
+- nodes are real runtime objects
+- edges are plain visible `source -> target` links
+- runtime follows visible links only
+- blackboard reads happen only through visible links
+- blackboard writes happen only through visible links
+- loops are warned honestly instead of being faked into an order
+- selected nodes are edited in the right panel
 
-#### 2. The ingestion unit is wrong in the boss route
+This is a meaningful step forward. The builder is no longer just a fake diagram surface.
 
-The repo can ingest a pair, but `/api/agents/boss` currently sends the current user text plus the previous assistant text into ThinkGraph. The MVP requires ingesting the current user text plus the current assistant reply as the minimum unit.
+### What is still split or unfinished
 
-#### 3. There are two different state systems
+#### 1. The repo still has two active state worlds
 
-The active Assist runtime writes plan state into `builder_state.plan`, while `v3` maintains a separate deck and blackboard state under `v3_state`. That split will create drift unless one becomes canonical.
+- Assist/project continuity still lives in `builder_state`
+- deck runtime and blackboard still live in `v3_state`
 
-#### 4. The visual layer is not yet the live runtime surface
+That is the main structural split in the repo today.
 
-The builder canvas and the admin canvas are editor-style surfaces. The active chat runtime does not emit live runtime objects, live edge traversals, live agent calls, or live state writes into those canvases.
+#### 2. `/api/agents/boss` and the v3 deck runtime are not unified yet
 
-#### 5. Deck edges are not yet execution truth
+The current Assist route is real, and the current deck runtime is real, but they are not yet one coherent orchestration spine.
 
-The `v3` model stores `routeType`, `condition`, `passforwardMode`, and priorities, but execution does not yet honor conditional routing or success/error branching. Today the deck runtime effectively performs a simple topological walk.
+#### 3. The planning surface is useful but still rescue-heavy
 
-That means the repo already stores edge metadata, but edges do not yet fully behave like the program.
+The plan/wiki surface works, but it still relies on fallback shaping and normalization logic because the stored plan shape is not yet cleanly stabilized.
 
-#### 6. Parallel work is drawn better than it is executed
+#### 4. Runtime bindings are still thinner than their names imply
 
-The `v3` runtime can represent fan-out and multiple nodes, but execution is still sequential. Parallel families are not actually run in parallel yet.
+Cards can be labeled as `main_chat`, `kg_ingest`, `research_agent`, `knowgraph`, and `neo4j`, but the v3 card runner still resolves to a generic LLM call for most card execution.
 
-#### 7. Runtime bindings are mostly labels, not real behaviors
+#### 5. LangGraph is not the active backbone
 
-Cards can declare bindings like `main_chat`, `kg_ingest`, `research_agent`, `knowgraph`, and `neo4j`, but card execution currently resolves to a generic LLM call. The binding does not yet switch into the real service path for chat, graph ingest, research, or graph persistence.
+LangGraph paths still exist in the repo, but they are not the real critical path for the current builder, Assist runtime, ThinkGraph path, or KnowGraph path.
 
-#### 8. The node model is too narrow for the intended canvas grammar
+## What This System Is Becoming
 
-`v3` only has `agent` and `blackboard` node kinds. The MVP needs at least explicit `chat`, `plan`, `thinkgraph`, `knowgraph`, and `merge` semantics if the visual layer is supposed to expose real execution objects rather than decorative cards.
+This project is not best understood as a single chat app or a single workflow editor.
 
-#### 9. Prompt-seed expansion is not the current default
+It is becoming:
 
-The repo has strong prompt templates and agent configs, but the main deck path still stores full prompts on cards. The MVP wants plan-derived prompt seeds plus agent-type expansion, with full manual prompts as an override rather than the normal path.
+**a project-based AI operating environment with visible orchestration, durable project state, graph-backed reasoning, and a controllable execution engine**
 
-#### 10. The ThinkGraph and KnowGraph split is not yet cleanly unified
+In practice, that means:
 
-The current repo uses a ThinkGraph-style extraction path backed by the KG v2 pipeline and separate KnowGraph or Neo4j flows elsewhere. The architectural intent is present, but the boundary is not yet normalized into one runtime contract.
+- the builder is the visible route map
+- the plan/wiki is the directional continuity surface
+- the blackboard is the shared work surface
+- ThinkGraph is the provisional reasoning layer
+- KnowGraph is the grounded evidence layer
+- AutoGen should become the execution and orchestration engine moving through those layers
 
-#### 11. Blackboard policy exists in types but is not enforced in runtime
+The system should not collapse into AutoGen.
+AutoGen should run inside this system.
 
-`inputSources`, `blackboardReadFields`, `blackboardWriteFields`, and `nextMoveAuthority` exist in the model and UI, but the backend runtime does not yet enforce them. That means the repo has configuration surface without full execution semantics behind it.
+## What Stays Ours
 
-#### 12. Test coverage is far short of the MVP risk surface
+These parts remain first-class and should not be replaced:
 
-There are a few tests, but there is no end-to-end proof of:
+- React Flow builder and visible routing truth
+- project continuity and project state
+- plan/wiki
+- blackboard
+- ThinkGraph
+- KnowGraph
+- the right-panel node editing surface
 
-- reply first
-- post-reply pair ingest
-- plan update from pair
-- agent fan-out and merge
-- explicit graph writes
-- runtime visibility in the visual layer
+## What AutoGen Should Own
 
-## What It Would Take
+AutoGen is the best fit for:
 
-### 1. Pick one canonical runtime spine
+- the permanent orchestration runtime
+- the orchestrator entrypoint
+- agent execution
+- AutoGen-backed worker agents
+- team orchestration
+- handoffs
+- Magentic-One orchestration
+- manager-worker behavior
+- explicit model/provider resolution
+- fail-fast model gating
+- bounded temporary run context
+- save/load orchestration state
+- tool and MCP usage
+- structured report-backs into our truth systems
+- tracing and observability for orchestration runs
 
-Recommendation, based on the current repo: keep `/api/agents/boss` as the front door and make `v3` the canonical runtime state and orchestration model behind it. Do not build a third orchestration path.
+AutoGen should be the car, not the penthouse.
 
-That means:
+## Where The Old LangGraph Vision Fits Now
 
-- boss route = front door and fast reply
-- `v3` state = blackboard, runs, runtime events, visual objects
-- KG v2 plus research services = async graph workers behind runtime bindings
+LangGraph should not drive the current plan.
 
-### 2. Reorder the boss route into a true fast path plus background path
+It can stay in the repo for now, but it is not the current backbone and should not define the next architecture decisions.
 
-Required change:
+The more current direction is:
 
-1. generate the assistant reply first
-2. persist the turn
-3. enqueue the fresh `user_text + assistant_text` pair
-4. update the plan and blackboard from that pair
-5. fan out deeper research only if the plan says it is needed
+- keep the current builder truth
+- keep the current graph split
+- keep the current project continuity surfaces
+- keep AutoGen in the Python sidecar as the orchestration engine
+- make Magentic the real orchestrator instead of treating it as an optional experiment
 
-This is the single most important architectural change for the MVP.
+## What Is Working Enough To Build On
 
-### 3. Make the pair the canonical turn object
+### 1. Builder truth
 
-Add a first-class turn record that stores at least:
+The builder is now strong enough to preserve:
 
-- `turn_id`
-- `project_id`
-- `user_text`
-- `assistant_text`
-- `reply_started_at`
-- `reply_finished_at`
-- `ingest_status`
-- `plan_status`
-- `runtime_events`
+- visible routing
+- visible blackboard participation
+- right-panel agent editing
+- starter and quick-add setup
 
-Then make every downstream stage consume that turn object rather than ad hoc text strings.
+### 2. Dual-graph direction
 
-### 4. Unify PlanWiki and Blackboard into one mission state model
+The ThinkGraph / KnowGraph split is still the right conceptual model.
 
-The current PlanWiki is useful, but it is still mostly markdown. The MVP needs structured state.
+That older vision remains valid:
 
-The canonical mission state should include:
+- ThinkGraph = subjective, provisional, exploratory
+- KnowGraph = objective, evidence-backed, grounded
 
-- objective
-- current plan
-- subagent assignments
-- returned results
-- integration notes
-- next actions
-- open questions
+### 3. Plan/wiki as continuity
 
-The markdown PlanWiki can still exist, but it should be a readable projection of structured state, not the only state.
+The plan/wiki should stay as the readable brain of the project.
+It should not be replaced by raw framework chat history.
 
-### 5. Make runtime bindings real
+### 4. AutoGen foundation direction
 
-Each binding should map to a concrete runtime adapter:
+AutoGen is now installed and connected through the Python sidecar.
 
-- `main_chat` -> reply node
-- `kg_ingest` -> ThinkGraph extraction on a pair object
-- `research_agent` -> search and source retrieval worker
-- `knowgraph` -> grounded fact normalization and objective write
-- `neo4j` -> graph persistence step
+The current real foothold is:
 
-Without this, the visual layer will stay a generic LLM card runner rather than a real orchestration system.
+- `/autogen/research/plan` in the Python sidecar
+- the backend research service calling that route
 
-### 6. Make edges executable, not just descriptive
+But that foothold is not the target architecture.
 
-The `v3` runtime needs real support for:
+The target architecture is:
 
-- success and error routing
-- conditional routing
-- fan-out
-- fan-in
-- gates
-- waits
-- explicit write edges
+- Python sidecar becomes the real orchestration runtime
+- Magentic-One becomes the real orchestrator
+- `/api/agents/boss` becomes, at most, a thin API ingress into that runtime
+- worker agents become AutoGen-backed
+- orchestration writes back through typed contracts, not ad hoc chat glue
 
-This is also where explicit merge nodes should become first-class.
+This repo should not spend time on throwaway planner-only bridge code whose main purpose is to preserve broken orchestration patterns.
 
-### 7. Add true parallel execution groups
+## What Is Not Working As One Coherent System Yet
 
-The runtime should be able to run sibling nodes concurrently when their dependencies are satisfied and their edge rules allow it. The current sequential walk is fine for a scaffold, but it does not satisfy the visual programming intent.
+### 1. Main Chat is not yet the real orchestration engine
 
-### 8. Normalize the graph boundary
+The Assist route is real, but it is still custom route/service glue rather than a true long-horizon orchestration engine.
 
-For MVP, decide this explicitly:
+### 2. The blackboard is real in v3, but not yet the shared Assist blackboard
 
-- ThinkGraph = provisional output only
-- KnowGraph = grounded source-backed output only
+The v3 blackboard works inside deck execution, but `/api/agents/boss` does not yet use it as a common shared state surface.
 
-Then decide whether the MVP keeps:
+### 3. The planning surface still needs cleaner structure
 
-- ThinkGraph in the current KG v2 path and KnowGraph in Neo4j
+The plan surface is readable, but it still accepts too many input shapes and needs rescue logic to stay coherent.
 
-or simplifies into:
+### 4. The real orchestration foundation is not installed yet
 
-- one Neo4j-backed graph with separate labels and write policies
+- `/api/agents/boss` still contains orchestration intelligence instead of being a trivial ingress or disappearing entirely
+- worker agents are not yet AutoGen-backed as the default execution model
+- `ContextPack`, `AgentReportBack`, `BlackboardEntry`, and `SidecarSession` are not yet the frozen basis of integration
+- blackboard, plan/wiki, and graph writes are not yet driven by one structured orchestration contract
 
-Either can work, but the repo should stop leaving this implicit.
+### 5. Magentic model compatibility is a real engineering concern
 
-### 9. Drive the canvas from runtime events
+Magentic is the intended orchestrator, but not every model is a safe fit for its ledger/orchestration behavior.
 
-The canvas should subscribe to real run data, not inferred summaries.
+The repo should treat Magentic-safe model choice as explicit runtime policy, not as something hidden in local `.env`.
 
-At minimum, emit events for:
+### 6. The repo should not optimize for keeping both orchestration patterns alive
 
-- reply started
-- reply completed
-- pair queued for ingest
-- plan updated
-- agent started
-- agent finished
-- write to blackboard
-- write to ThinkGraph
-- write to KnowGraph
-- merge completed
+Old routes may remain callable temporarily as adapters.
 
-The user should be able to see which runtime object ran, what edge fired, and what state changed.
+They should not remain the design center.
 
-### 10. Tighten the prompt contract
+This pass should not preserve broken glue just to claim compatibility.
 
-The MVP should default to:
+## Old Methods Still In Use
 
-- plan creates a compact step brief
-- agent type expands it
-- manual full prompt remains an override
+The current old research spine still matters and stays in place:
 
-That will keep prompt writing from becoming the product.
+- ThinkGraph extraction still runs through KG v2.
+- Tavily/web retrieval still runs through the current research service.
+- KnowGraph and Neo4j ingest still run through the current pipeline.
+- plan/wiki rewrite still runs through the Assist route.
+- blackboard, ThinkGraph, KnowGraph, and plan/wiki remain ours.
 
-### 11. Add end-to-end verification
+AutoGen is not replacing those surfaces.
+AutoGen is replacing orchestration work first.
 
-Before calling this an MVP, add tests for:
+That does not mean preserving old orchestration glue as the primary system shape.
 
-- reply-first latency path
-- current user + current assistant pair ingestion
-- plan update after pair ingest
-- agent creation from plan
-- graph writes into provisional and objective targets
-- live runtime event visibility in the visual layer
+Old routes should survive only as temporary adapters where continuity requires them.
 
-## Suggested Build Sequence
+The design center is the new orchestration foundation, not the legacy glue.
 
-### Phase 1
+## AutoGen Feature Map
 
-Make `/api/agents/boss` reply first, then enqueue the fresh pair into the existing KG v2 ingest route.
+| AutoGen feature | Current code surface | Current role now | Planned role |
+| --- | --- | --- | --- |
+| `AssistantAgent` | existing agent prompt/config surfaces and the Python sidecar runtime | worker/prompt unit | default worker agent unit under the orchestrator |
+| `MagenticOneGroupChat` | Python sidecar orchestration path | intended primary orchestrator | research first, main chat/front-door runtime next |
+| `SelectorGroupChat` | temporary legacy AutoGen research planner path | transitional only | not part of the target architecture |
+| `ContextPack` | shaped context from plan/wiki, ThinkGraph, KnowGraph, and blackboard | not frozen yet | required contract into the orchestrator |
+| `AgentReportBack` | structured agent output returned from the sidecar | not frozen yet | required contract back into backend truth systems |
+| `BlackboardEntry` | blackboard write contract | not frozen yet | required structured blackboard update path |
+| `SidecarSession` / `ProjectSession` | orchestration run/session boundary | not frozen yet | required persistence and trace boundary |
+| AutoGen memory / model context | shaped external context, not truth | external context sources | bounded execution context only |
+| save/load state | project continuity + sidecar session wrapper | not unified yet | orchestration persistence bridge later |
+| GraphFlow | not active in the current runtime | none | later option under the builder, not a replacement for builder truth |
 
-### Phase 2
+## Foundation Contracts
 
-Create a canonical turn record and unify it with `v3` run state and blackboard state.
+The permanent integration basis should be these typed contracts:
 
-### Phase 3
+- `ContextPack`
+- `AgentReportBack`
+- `BlackboardEntry`
+- `SidecarSession` / `ProjectSession`
 
-Bind `v3` runtime bindings to the actual boss, ThinkGraph, research, KnowGraph, and Neo4j service paths.
+These are not optional cleanup work for later.
 
-### Phase 4
+They are the basis of the real orchestration architecture and should be frozen before deeper wiring spreads ad hoc shapes through the codebase.
 
-Implement real edge semantics, merge nodes, and parallel execution.
+## Current AutoGen/Magentic Path
 
-### Phase 5
+The current live AutoGen path is:
 
-Push live runtime events into the visual layer so the canvas shows real execution rather than just a saved deck.
+1. KG/Research packet is prepared in the backend.
+2. Backend calls the Python sidecar route.
+3. AutoGen/Magentic plans research work.
+4. Backend continues with the existing Tavily, KnowGraph, and plan/wiki work.
 
-### Phase 6
+That is proof that the sidecar is real.
 
-Add end-to-end tests and basic latency budgets for the reply path.
+It is not the intended end state.
+
+The intended end state is:
+
+1. backend builds a real `ContextPack`
+2. the front-door runtime calls the sidecar orchestrator, or AutoGen owns the call path directly
+3. AutoGen/Magentic runs the orchestration
+4. sidecar returns `AgentReportBack` plus `BlackboardEntry` updates
+5. backend persists those structured writes into plan/wiki, blackboard, ThinkGraph, and KnowGraph
+
+Old planner-style routes are acceptable only as temporary adapters while the permanent path is installed.
+
+## Current Default Model Direction
+
+The intended repo default for orchestration is:
+
+- OpenRouter OpenAI GPT-5.1 chat
+
+It should be treated as the code-level default for:
+
+- Main Chat
+- Research orchestration
+- other orchestration-first surfaces
+
+Moonshot/Kimi can still exist in the registry, but it is not the intended default orchestrator model.
+
+## Next Plan
+
+### Phase 1 — Freeze the real contracts now
+
+- define and use `ContextPack`
+- define and use `AgentReportBack`
+- define and use `BlackboardEntry`
+- define and use `SidecarSession` / `ProjectSession`
+
+Do not postpone these behind throwaway planner glue.
+
+### Phase 2 — Make the Python sidecar the real orchestration runtime
+
+- define the real orchestrator entrypoint
+- wire AutoGen + Magentic-One as the real orchestration layer
+- make model/provider resolution explicit
+- fail fast on blocked or unsafe models
+- do not silently remap models
+- do not silently fall back inside the orchestrator
+
+### Phase 3 — Reduce `/api/agents/boss` to an optional ingress shim
+
+- `/api/agents/boss` may still receive API traffic
+- it may remain as a thin shim, be called by AutoGen, call AutoGen, or disappear later
+- it should stop being the place where orchestration intelligence lives
+- orchestration authority belongs in the sidecar runtime, not in the route name
+
+### Phase 4 — Make worker agents AutoGen-backed
+
+- worker agents should execute through the orchestrator runtime
+- orchestration should stop depending on legacy route-local glue as the primary pattern
+- old paths may remain temporarily only as adapters
+
+### Phase 5 — Connect structured writes into the truth systems
+
+- write blackboard updates through `BlackboardEntry`
+- write plan/wiki updates through structured report-backs
+- keep ThinkGraph and KnowGraph as real system memory surfaces
+- do not collapse those surfaces into chat memory
+
+### Phase 6 — Keep only minimal adapters for continuity
+
+- if an old route is still needed, keep it as an adapter only
+- do not let adapter-only code define the architecture
+- do not invest in fake compatibility work whose only value is preserving bad glue
 
 ## Practical MVP Recommendation
 
-For this repo, the shortest path is not to replace everything. It is to unify what already exists.
+The shortest truthful path now is:
 
-Recommended MVP cut:
-
-- keep `/api/agents/boss` as the chat front door
-- keep KG v2 and research services as graph workers
-- make `v3` the canonical visual runtime and blackboard state
-- reorder the loop so reply happens first
-- use the current pair-ingest path after reply
-- make the canvas reflect real run events before adding more editor complexity
+- keep the current builder truth
+- keep the current dual-graph split
+- keep the plan/wiki and blackboard surfaces
+- install AutoGen/Magentic as the real orchestration foundation
+- freeze the real contracts now
+- reduce `/api/agents/boss` to an optional shim if it still exists
+- keep old routes only as temporary adapters where continuity requires them
+- stop designing around preserving broken orchestration glue
 
 ## One-line Summary
 
-Reply fast -> ingest the fresh user and assistant pair -> update the mission state -> run only the needed agents -> write provisional and grounded graph outputs -> show the real runtime on the canvas
+Keep the visible builder, plan/wiki, blackboard, ThinkGraph, and KnowGraph as the penthouse -> install AutoGen with Magentic-One as the real orchestration foundation now -> treat `/api/agents/boss` as an optional shim at most, not a real architecture object -> keep old routes only as temporary adapters, not as the design center
+
+## Future Possibilities
+
+These are reasonable future additions once the current runtime path is stable:
+
+- visible participant-membership links if nested runtime truth needs to be shown on canvas
+- wrapped nested runtimes for supported internal team patterns
+- executable `swarm` support only after handoff behavior is wired truthfully
+- executable `graph_flow` support only after workflow semantics are mapped honestly to the deck runtime
+- richer test-panel traces for team events, participant turns, and structured report-backs
+
+### Deferred Runtime Controls
+
+These runtime settings were cut from the active editor because the current app does not wire them truthfully yet:
+
+- real `TerminationCondition` builders for team runtimes
+- selector `candidate_func` / `selector_func` style hooks
+- executable `emitTeamEvents` streaming into the builder test panel
+- executable `swarm` handoff controls
+- executable `graph_flow` workflow controls
+- executable adapter target controls
+- full AutoGen `AssistantAgent` memory / tool / streaming parity for the single-card runtime path
+
+### Participant Membership Later
+
+Participant selection currently stays inside the agent card config because the current deck edges still mean top-level execution order only.
+
+Future work can move participant membership into the visual canvas only after that relationship has its own explicit visible semantics and does not overload normal deck edges.

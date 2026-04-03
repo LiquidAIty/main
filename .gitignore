@@ -121,3 +121,6 @@ __pycache__/
 checkpoints/
 test-results/
 
+# Root temp / local scratch artifacts
+tmp-*.json.new
+

@@ -31,6 +31,7 @@ router.post('/:projectId/cards/run', async (req, res) => {
     const run = await executeDeck(singleCardDocument, typedTemplates, {
       input: String(input || ''),
       blackboard: projectBlob.blackboard,
+      projectId: req.params.projectId,
     });
     const step = run.steps[0];
     if (!step) {
@@ -44,6 +45,7 @@ router.post('/:projectId/cards/run', async (req, res) => {
       startedAt: step.startedAt,
       endedAt: step.endedAt,
       runtimeBinding: step.runtimeBinding,
+      runtimeType: step.runtimeType,
       seed: step.seed,
       contract: step.contract,
       handshake: step.handshake,

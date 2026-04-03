@@ -4,8 +4,9 @@ import type { AgentCardInstance } from '../../../types/agentgraph';
 type AgentCardNodeData = AgentCardInstance & {
   executionOrder?: number | null;
   isStartCard?: boolean;
-  readsFromBlackboard?: boolean;
-  writesToBlackboard?: boolean;
+  isCallableHead?: boolean;
+  assistStructureMode?: 'single' | 'seq' | 'branch' | 'merge' | 'branch_merge' | null;
+  swarmBadge?: string | null;
 };
 
 export default function AgentCardNode({
@@ -15,19 +16,33 @@ export default function AgentCardNode({
   data: AgentCardNodeData;
   selected?: boolean;
 }) {
-  const isBlackboard = data?.kind === 'blackboard';
   const executionOrder = typeof data?.executionOrder === 'number' ? data.executionOrder : null;
-  const runtimeLabel = isBlackboard
-    ? 'BLACKBOARD'
-    : data?.runtimeBinding
-      ? String(data.runtimeBinding).split('_').join(' ').toUpperCase()
-      : /summary/i.test(String(data?.title || ''))
-        ? 'SUMMARY'
-        : 'INTERNAL STEP';
+  const runtimeType = String(data?.runtimeType || 'assistant_agent').trim();
+  const isMagentic = runtimeType === 'magentic_one';
+  const isGraph = runtimeType === 'graph_flow';
+  const isGraphStep = runtimeType === 'assistant_agent' && Boolean(String(data?.parentGraphId || '').trim());
+  const isCallableHead = Boolean(data?.isCallableHead) && !isMagentic && !isGraphStep;
+  const canReceiveConnection = !isMagentic;
+  const canStartConnection = isMagentic || runtimeType === 'assistant_agent';
+  const runtimeLabel = isMagentic ? 'MAGENTIC' : 'ASSIST';
+  const structureLabel =
+    data?.assistStructureMode === 'branch_merge'
+      ? 'Branch+Merge'
+      : data?.assistStructureMode === 'branch'
+      ? 'Branch'
+      : data?.assistStructureMode === 'merge'
+        ? 'Merge'
+      : data?.assistStructureMode === 'seq'
+        ? 'Seq'
+        : runtimeType === 'assistant_agent'
+          ? 'Single'
+          : null;
   const badges = [
     data?.isStartCard ? 'Start' : null,
-    data?.readsFromBlackboard ? 'Reads board' : null,
-    data?.writesToBlackboard ? 'Writes board' : null,
+    isCallableHead ? 'Callable' : null,
+    isGraph ? 'Compat' : null,
+    structureLabel,
+    data?.swarmBadge || null,
   ].filter(Boolean);
   return (
     <div
@@ -37,18 +52,29 @@ export default function AgentCardNode({
       style={
         {
           position: 'relative',
+          borderWidth: isGraph ? 1.5 : 1,
           borderColor: selected
             ? 'rgba(79, 162, 173, 0.98)'
-            : isBlackboard
-              ? 'rgba(79, 162, 173, 0.72)'
+            : isMagentic
+              ? 'rgba(96, 194, 255, 0.82)'
+              : isGraph
+                ? 'rgba(154, 162, 172, 0.66)'
+              : isCallableHead
+                ? 'rgba(79, 162, 173, 0.72)'
               : 'rgba(64, 71, 78, 0.96)',
-          background: isBlackboard
-            ? 'linear-gradient(180deg, rgba(17,31,35,0.98), rgba(13,20,24,0.98))'
+          background: isMagentic
+            ? 'linear-gradient(180deg, rgba(14,28,35,0.98), rgba(10,18,22,0.98))'
+            : isGraph
+              ? 'linear-gradient(180deg, rgba(31,34,38,0.98), rgba(18,21,24,0.98))'
             : 'linear-gradient(180deg, rgba(28,31,34,0.98), rgba(18,21,24,0.98))',
           boxShadow: selected
             ? '0 0 0 1px rgba(79, 162, 173, 0.22), 0 18px 36px rgba(79, 162, 173, 0.18)'
-            : isBlackboard
-              ? 'inset 0 0 0 1px rgba(79, 162, 173, 0.22), 0 14px 30px rgba(9, 18, 20, 0.22)'
+            : isMagentic
+              ? 'inset 0 0 0 1px rgba(96, 194, 255, 0.14), 0 14px 30px rgba(9, 18, 20, 0.22)'
+              : isGraph
+                ? 'inset 0 0 0 1px rgba(154, 162, 172, 0.12), 0 12px 28px rgba(0, 0, 0, 0.2)'
+              : isCallableHead
+                ? 'inset 0 0 0 1px rgba(79, 162, 173, 0.14), 0 14px 30px rgba(9, 18, 20, 0.18)'
               : '0 14px 30px rgba(0,0,0,0.22)',
         }
       }
@@ -57,26 +83,30 @@ export default function AgentCardNode({
         type="target"
         position={Position.Left}
         aria-label={`${data.title} input`}
+        isConnectable={canReceiveConnection}
         style={{
           width: 14,
           height: 14,
           left: -8,
           borderRadius: '999px',
           border: '2px solid rgba(148, 163, 184, 0.95)',
-          background: '#161a1d',
+          background: canReceiveConnection ? '#161a1d' : '#111315',
+          opacity: canReceiveConnection ? 1 : 0.4,
         }}
       />
       <Handle
         type="source"
         position={Position.Right}
         aria-label={`${data.title} output`}
+        isConnectable={canStartConnection}
         style={{
           width: 14,
           height: 14,
           right: -8,
           borderRadius: '999px',
           border: '2px solid rgba(79, 162, 173, 0.96)',
-          background: '#122329',
+          background: canStartConnection ? '#122329' : '#111315',
+          opacity: canStartConnection ? 1 : 0.4,
         }}
       />
 
@@ -109,6 +139,21 @@ export default function AgentCardNode({
         OUT
       </div>
 
+      {isGraph ? (
+        <div
+          style={{
+            position: 'absolute',
+            left: 14,
+            right: 14,
+            top: 10,
+            height: 4,
+            borderRadius: 999,
+            background: 'linear-gradient(90deg, rgba(154,162,172,0.92), rgba(210,214,221,0.4))',
+            pointerEvents: 'none',
+          }}
+        />
+      ) : null}
+
       <div
         style={{
           display: 'flex',
@@ -126,11 +171,21 @@ export default function AgentCardNode({
               padding: '3px 8px',
               marginBottom: 8,
               borderRadius: 999,
-              background: isBlackboard ? 'rgba(79, 162, 173, 0.14)' : 'rgba(255,255,255,0.05)',
-              border: isBlackboard
-                ? '1px solid rgba(79, 162, 173, 0.3)'
-                : '1px solid rgba(255,255,255,0.08)',
-              color: isBlackboard ? '#d8ecee' : 'rgba(224, 222, 213, 0.88)',
+              background: isMagentic
+                ? 'rgba(96, 194, 255, 0.14)'
+                : isGraph
+                  ? 'rgba(154, 162, 172, 0.14)'
+                  : 'rgba(255,255,255,0.05)',
+              border: isMagentic
+                ? '1px solid rgba(96, 194, 255, 0.3)'
+                : isGraph
+                  ? '1px solid rgba(154, 162, 172, 0.26)'
+                  : '1px solid rgba(255,255,255,0.08)',
+              color: isMagentic
+                ? '#d8f2ff'
+                : isGraph
+                  ? '#e8edf4'
+                  : 'rgba(224, 222, 213, 0.88)',
               fontSize: 10,
               letterSpacing: '0.14em',
             }}
@@ -141,7 +196,7 @@ export default function AgentCardNode({
             {data.title}
           </div>
         </div>
-        {!isBlackboard && executionOrder ? (
+        {executionOrder ? (
           <div
             style={{
               padding: '3px 8px',
@@ -180,9 +235,36 @@ export default function AgentCardNode({
               style={{
                 padding: '4px 8px',
                 borderRadius: 999,
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.08)',
-                color: 'rgba(224, 222, 213, 0.92)',
+                background:
+                  badge === 'Callable'
+                    ? 'rgba(79, 162, 173, 0.14)'
+                    : badge === 'Compat Workflow'
+                      ? 'rgba(234, 146, 77, 0.14)'
+                    : badge === 'In Workflow'
+                      ? 'rgba(234, 146, 77, 0.12)'
+                      : String(badge).startsWith('Swarm x')
+                        ? 'rgba(96, 194, 255, 0.14)'
+                      : 'rgba(255,255,255,0.04)',
+                border:
+                  badge === 'Callable'
+                    ? '1px solid rgba(79, 162, 173, 0.34)'
+                    : badge === 'Compat Workflow'
+                      ? '1px solid rgba(234, 146, 77, 0.3)'
+                    : badge === 'In Workflow'
+                      ? '1px solid rgba(234, 146, 77, 0.22)'
+                      : String(badge).startsWith('Swarm x')
+                        ? '1px solid rgba(96, 194, 255, 0.3)'
+                      : '1px solid rgba(255,255,255,0.08)',
+                color:
+                  badge === 'Callable'
+                    ? '#d8f2ff'
+                    : badge === 'Compat Workflow'
+                      ? '#ffe6d6'
+                    : badge === 'In Workflow'
+                      ? '#ffe6d6'
+                      : String(badge).startsWith('Swarm x')
+                        ? '#d8f2ff'
+                      : 'rgba(224, 222, 213, 0.92)',
                 fontSize: 11,
                 lineHeight: 1,
               }}

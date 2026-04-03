@@ -1,9 +1,12 @@
+// LEGACY ROUTE
+// /api/sol/run is retained only for older Sol/LangGraph-era clients and pages.
+// It is not the current orchestration direction and should not be used as an implementation target.
 import { Router, Request, Response } from "express";
 import { runSol } from "../volt/sol.agent";
 
 const router = Router();
 
-// POST /api/sol/run → call Sol agent directly (no Volt dependency)
+// POST /api/sol/run → legacy Sol agent call path
 router.post("/run", async (req: Request, res: Response) => {
   const raw = req.body?.goal;
   const goal = typeof raw === "string" ? raw.trim() : "";

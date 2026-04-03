@@ -154,12 +154,12 @@ function defaultAgentName(agentType: AgentType): string {
 
 function pickDefaultOpenRouterModelKey(agentType: AgentType): string {
   const candidatesByAgent: Record<AgentType, string[]> = {
-    llm_chat: ['or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5-mini', 'or-openai-gpt-5', 'or-openai-gpt-5-nano'],
+    llm_chat: ['or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5.1-chat', 'or-openai-gpt-5-mini', 'or-openai-gpt-5', 'or-openai-gpt-5-nano'],
     kg_ingest: ['or-openai-gpt-5-mini', 'or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5-nano', 'or-openai-gpt-5'],
     knowgraph: ['or-openai-gpt-5-mini', 'or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5-nano', 'or-openai-gpt-5'],
     neo4j: ['or-openai-gpt-5-mini', 'or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5-nano', 'or-openai-gpt-5'],
-    research_agent: ['or-openai-gpt-5-mini', 'or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5-nano', 'or-openai-gpt-5'],
-    agent_builder: ['or-openai-gpt-5-mini', 'or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5-nano', 'or-openai-gpt-5'],
+    research_agent: ['or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5.1-chat', 'or-openai-gpt-5-mini', 'or-openai-gpt-5', 'or-openai-gpt-5-nano'],
+    agent_builder: ['or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5.1-chat', 'or-openai-gpt-5-mini', 'or-openai-gpt-5', 'or-openai-gpt-5-nano'],
   };
   const envCandidates = [
     process.env.OPENROUTER_DEFAULT_MODEL,

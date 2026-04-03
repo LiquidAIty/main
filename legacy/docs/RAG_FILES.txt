@@ -231,3 +231,5 @@ MCP Spec: https://modelcontextprotocol.io/
 LangGraph: https://langchain-ai.github.io/langgraph/
 
 STATUS: ✅ Ready for testing and integration
+ARCHIVED INVENTORY
+Historical RAG file list retained for reference only.

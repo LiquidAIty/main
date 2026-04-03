@@ -3,6 +3,12 @@ import { ToolResult, MemoryRecord } from '../../types/agent';
 const memoryStore = new Map<string, { value: any, expires?: number }>();
 
 export const memoryTool = {
+  id: 'memory',
+  name: 'Memory',
+  kind: 'internal',
+  endpoint: 'internal:/api/tools/memory',
+  enabled: true,
+  match: { keywords: ['memory', 'store', 'recall', 'cache'], weight: 1 },
   async run(params: { operation: 'get'|'set', record: MemoryRecord }): Promise<ToolResult> {
     try {
       const { operation, record } = params;

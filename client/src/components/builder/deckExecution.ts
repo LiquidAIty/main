@@ -48,7 +48,7 @@ export type DeckExecutionPlan = {
 };
 
 function isRunnableNode(node: AgentCardInstance): boolean {
-  return node.kind !== 'blackboard';
+  return node.kind !== 'blackboard' && !String(node.parentGraphId || '').trim();
 }
 
 function getValidEdges(document: DeckDocument): DeckEdge[] {
@@ -65,50 +65,22 @@ function getNodeMap(document: DeckDocument): Map<string, AgentCardInstance> {
 }
 
 function getRunnableNodes(document: DeckDocument): AgentCardInstance[] {
-  return document.nodes.filter(isRunnableNode);
+  const callableTargets = new Set(
+    getValidEdges(document)
+      .filter((edge) => edge.edgeType === 'magentic_option')
+      .map((edge) => edge.target),
+  );
+  return document.nodes.filter((node) => isRunnableNode(node) && !callableTargets.has(node.id));
 }
 
 function getRunnableEdges(document: DeckDocument): DeckEdge[] {
   const nodeMap = getNodeMap(document);
-  const directRunnableEdges = getValidEdges(document).filter((edge) => {
+  return getValidEdges(document).filter((edge) => {
+    if (edge.edgeType !== 'graph_flow') return false;
     const source = nodeMap.get(edge.source);
     const target = nodeMap.get(edge.target);
     return Boolean(source && target && isRunnableNode(source) && isRunnableNode(target));
   });
-
-  const derivedEdges: DeckEdge[] = [];
-  const seenEdgeKeys = new Set(
-    directRunnableEdges.map((edge) => `${edge.source}::${edge.target}`),
-  );
-
-  document.nodes
-    .filter((node) => node.kind === 'blackboard')
-    .forEach((blackboardNode) => {
-      const inboundWriters = getValidEdges(document)
-        .filter((edge) => edge.target === blackboardNode.id)
-        .map((edge) => nodeMap.get(edge.source))
-        .filter((node): node is AgentCardInstance => Boolean(node && isRunnableNode(node)));
-      const outboundReaders = getValidEdges(document)
-        .filter((edge) => edge.source === blackboardNode.id)
-        .map((edge) => nodeMap.get(edge.target))
-        .filter((node): node is AgentCardInstance => Boolean(node && isRunnableNode(node)));
-
-      inboundWriters.forEach((writer) => {
-        outboundReaders.forEach((reader) => {
-          if (writer.id === reader.id) return;
-          const edgeKey = `${writer.id}::${reader.id}`;
-          if (seenEdgeKeys.has(edgeKey)) return;
-          seenEdgeKeys.add(edgeKey);
-          derivedEdges.push({
-            id: `derived_blackboard_${blackboardNode.id}_${writer.id}_${reader.id}`,
-            source: writer.id,
-            target: reader.id,
-          });
-        });
-      });
-    });
-
-  return [...directRunnableEdges, ...derivedEdges];
 }
 
 function sortRoutes(routes: NextCardRoute[], edgeOrder: Map<string, number>): NextCardRoute[] {

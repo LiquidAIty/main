@@ -33,6 +33,7 @@ import {
   resolveEffectiveAgent,
 } from "../components/builder/deckRuntime";
 import {
+  buildDefaultDeckEdgeMetadata,
   sanitizeDeckEdges,
   validateDeckDocument,
 } from "../components/builder/deckValidation";
@@ -50,9 +51,12 @@ import {
 } from "../components/builder/requestGuards";
 import type {
   AgentCardInstance,
+  AgentCardRuntimeOptions,
+  AgentCardRuntimeType,
   AgentTemplate,
   CardRunResult,
   DeckEdge,
+  DeckEdgeType,
   DeckDocument,
   DeckRun,
   PromptTemplate,
@@ -113,7 +117,9 @@ const C = {
   warn: "#D98458",
 };
 
-const ASSIST_TABS = ["Plan", "Links", "Knowledge"] as const;
+const HOME_CHAT_TABS = ["Canvas", "Knowledge", "Plan"] as const;
+const HOME_PLAN_TABS = ["Chat", "Canvas", "Knowledge"] as const;
+const KNOWLEDGE_VIEW_TABS = ["Chat", "Canvas", "Plan"] as const;
 const BUILDER_PROJECT_TABS = ["Plan"] as const;
 const BUILDER_NODE_TABS = ["Prompt", "Knowledge", "Tools", "Runtime"] as const;
 const BUILDER_BLACKBOARD_TABS = ["Blackboard"] as const;
@@ -164,24 +170,190 @@ function safeText(value: unknown): string {
   return String(value);
 }
 
-function buildSingleCardRunDocument(
+function cleanOptionalText(value: unknown): string | null {
+  const text = safeText(value).trim();
+  return text || null;
+}
+
+function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
+  const normalized = safeText(value).trim().toLowerCase();
+  if (normalized === "assistant_agent") return "assistant_agent";
+  if (normalized === "round_robin") return "round_robin";
+  if (normalized === "selector") return "selector";
+  if (normalized === "swarm") return "swarm";
+  if (normalized === "magentic_one") return "magentic_one";
+  if (normalized === "graph_flow") return "graph_flow";
+  if (normalized === "adapter") return "adapter";
+  return null;
+}
+
+function normalizeRuntimeOptions(value: unknown): AgentCardRuntimeOptions | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return cloneDeckDocument(value as AgentCardRuntimeOptions);
+}
+
+function normalizeDeckEdgeType(value: unknown): DeckEdgeType {
+  return safeText(value).trim().toLowerCase() === "magentic_option"
+    ? "magentic_option"
+    : "graph_flow";
+}
+
+function isTopLevelCanvasCard(
+  node: AgentCardInstance | null | undefined,
+): node is AgentCardInstance {
+  return Boolean(node && node.kind !== "blackboard" && !cleanOptionalText(node.parentGraphId));
+}
+
+function isAssistCanvasCard(
+  node: AgentCardInstance | null | undefined,
+): node is AgentCardInstance {
+  return Boolean(
+    node &&
+      node.kind !== "blackboard" &&
+      normalizeRuntimeType(node.runtimeType) === "assistant_agent",
+  );
+}
+
+function isVisibleAssistFlowPair(
+  sourceNode: AgentCardInstance | null | undefined,
+  targetNode: AgentCardInstance | null | undefined,
+): boolean {
+  if (!isAssistCanvasCard(sourceNode) || !isAssistCanvasCard(targetNode)) return false;
+
+  const sourceGraphId = cleanOptionalText(sourceNode.parentGraphId);
+  const targetGraphId = cleanOptionalText(targetNode.parentGraphId);
+
+  if (!sourceGraphId && !targetGraphId) {
+    return true;
+  }
+
+  return Boolean(sourceGraphId && sourceGraphId === targetGraphId);
+}
+
+function collectVisibleAssistFlowIds(
+  document: DeckDocument,
+  startNodeId: string,
+): Set<string> {
+  const nodeMap = new Map(document.nodes.map((node) => [node.id, node] as const));
+  const visited = new Set<string>();
+  const queue = [startNodeId];
+
+  while (queue.length > 0) {
+    const nodeId = queue.shift();
+    if (!nodeId || visited.has(nodeId)) continue;
+    visited.add(nodeId);
+
+    document.edges.forEach((edge) => {
+      if (normalizeDeckEdgeType(edge.edgeType) !== "graph_flow") return;
+      const sourceNode = nodeMap.get(edge.source);
+      const targetNode = nodeMap.get(edge.target);
+      if (!isVisibleAssistFlowPair(sourceNode, targetNode)) return;
+
+      if (edge.source === nodeId && !visited.has(edge.target)) {
+        queue.push(edge.target);
+      }
+      if (edge.target === nodeId && !visited.has(edge.source)) {
+        queue.push(edge.source);
+      }
+    });
+  }
+
+  return visited;
+}
+
+function collectGraphScopedNodeIds(
+  document: DeckDocument,
+  graphOwnerId: string,
+): Set<string> {
+  const scopedNodeIds = new Set<string>([graphOwnerId]);
+  document.nodes.forEach((node) => {
+    if (cleanOptionalText(node.parentGraphId) === graphOwnerId) {
+      scopedNodeIds.add(node.id);
+    }
+  });
+  return scopedNodeIds;
+}
+
+function buildSingleCardRunNodeScope(
+  document: DeckDocument,
+  selectedNode: AgentCardInstance,
+): Set<string> {
+  const nodeMap = new Map(document.nodes.map((node) => [node.id, node] as const));
+  const relatedNodeIds = new Set<string>();
+  const selectedRuntimeType = normalizeRuntimeType(selectedNode.runtimeType);
+  const selectedParentGraphId = cleanOptionalText(selectedNode.parentGraphId);
+
+  if (selectedParentGraphId) {
+    return collectGraphScopedNodeIds(document, selectedParentGraphId);
+  }
+
+  if (selectedRuntimeType === "magentic_one" && isTopLevelCanvasCard(selectedNode)) {
+    relatedNodeIds.add(selectedNode.id);
+
+    document.edges.forEach((edge) => {
+      if (
+        edge.source !== selectedNode.id ||
+        normalizeDeckEdgeType(edge.edgeType) !== "magentic_option"
+      ) {
+        return;
+      }
+
+      const targetNode = nodeMap.get(edge.target);
+      if (!targetNode) return;
+
+      const targetRuntimeType = normalizeRuntimeType(targetNode.runtimeType);
+      if (targetRuntimeType === "graph_flow" && isTopLevelCanvasCard(targetNode)) {
+        collectGraphScopedNodeIds(document, targetNode.id).forEach((nodeId) => {
+          relatedNodeIds.add(nodeId);
+        });
+        return;
+      }
+
+      collectVisibleAssistFlowIds(document, targetNode.id).forEach((nodeId) => {
+        relatedNodeIds.add(nodeId);
+      });
+    });
+
+    return relatedNodeIds;
+  }
+
+  if (selectedRuntimeType === "graph_flow" && isTopLevelCanvasCard(selectedNode)) {
+    return collectGraphScopedNodeIds(document, selectedNode.id);
+  }
+
+  if (isAssistCanvasCard(selectedNode) && isTopLevelCanvasCard(selectedNode)) {
+    return collectVisibleAssistFlowIds(document, selectedNode.id);
+  }
+
+  relatedNodeIds.add(selectedNode.id);
+  return relatedNodeIds;
+}
+
+export function buildSingleCardRunDocument(
   document: DeckDocument,
   cardId: string,
 ): DeckDocument | null {
   const selectedNode = document.nodes.find((node) => node.id === cardId);
   if (!selectedNode) return null;
-  const relatedNodeIds = new Set<string>([cardId]);
-  const blackboardNode = document.nodes.find((node) => node.kind === "blackboard");
-  if (
-    blackboardNode &&
-    document.edges.some(
-      (edge) =>
-        (edge.source === cardId && edge.target === blackboardNode.id) ||
-        (edge.source === blackboardNode.id && edge.target === cardId),
-    )
-  ) {
-    relatedNodeIds.add(blackboardNode.id);
-  }
+  const relatedNodeIds = buildSingleCardRunNodeScope(document, selectedNode);
+
+  document.edges.forEach((edge) => {
+    const sourceNode = document.nodes.find((node) => node.id === edge.source) || null;
+    const targetNode = document.nodes.find((node) => node.id === edge.target) || null;
+    if (
+      sourceNode?.kind === "blackboard" &&
+      relatedNodeIds.has(edge.target)
+    ) {
+      relatedNodeIds.add(sourceNode.id);
+    }
+    if (
+      targetNode?.kind === "blackboard" &&
+      relatedNodeIds.has(edge.source)
+    ) {
+      relatedNodeIds.add(targetNode.id);
+    }
+  });
+
   return {
     ...document,
     nodes: document.nodes.filter((node) => relatedNodeIds.has(node.id)),
@@ -483,7 +655,7 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
   },
 ];
 
-const INITIAL_DECK: DeckDocument = {
+export const INITIAL_DECK: DeckDocument = {
   id: "deck_builder",
   name: "Agent Card Deck",
   promptTemplates: cloneDeckDocument(INITIAL_PROMPT_TEMPLATES),
@@ -495,6 +667,8 @@ const INITIAL_DECK: DeckDocument = {
       templateId: "template_main_chat",
       prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_main_chat")?.content || "",
       runtimeBinding: "main_chat",
+      runtimeType: "assistant_agent",
+      parentGraphId: null,
       title: "Main Chat",
       subtitle: "User-facing control response",
       position: { x: -220, y: 170 },
@@ -507,7 +681,9 @@ const INITIAL_DECK: DeckDocument = {
       templateId: "template_kg_ingest",
       prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_kg_ingest")?.content || "",
       runtimeBinding: "kg_ingest",
-      title: "KG Ingest / ThinkGraph",
+      runtimeType: "assistant_agent",
+      parentGraphId: null,
+      title: "ThinkGraph",
       subtitle: "Extract entities, relations, and gaps",
       position: { x: 80, y: 40 },
       status: "ready",
@@ -519,6 +695,8 @@ const INITIAL_DECK: DeckDocument = {
       templateId: "template_research",
       prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_research")?.content || "",
       runtimeBinding: "research_agent",
+      runtimeType: "assistant_agent",
+      parentGraphId: null,
       title: "Research Agent",
       subtitle: "Investigate gaps and sources",
       position: { x: 380, y: 40 },
@@ -531,6 +709,8 @@ const INITIAL_DECK: DeckDocument = {
       templateId: "template_knowgraph",
       prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_knowgraph")?.content || "",
       runtimeBinding: "knowgraph",
+      runtimeType: "assistant_agent",
+      parentGraphId: null,
       title: "KnowGraph",
       subtitle: "Ground and normalize evidence",
       position: { x: 680, y: 40 },
@@ -543,21 +723,11 @@ const INITIAL_DECK: DeckDocument = {
       templateId: "template_neo4j",
       prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_neo4j")?.content || "",
       runtimeBinding: "neo4j",
+      runtimeType: "assistant_agent",
+      parentGraphId: null,
       title: "Neo4j",
       subtitle: "Graph persistence and relationship pass",
       position: { x: 980, y: 40 },
-      status: "ready",
-      cloneConfig: { enabled: false, seeds: [] },
-    },
-    {
-      id: "node_blackboard",
-      kind: "blackboard",
-      templateId: "template_blackboard",
-      prompt: "",
-      runtimeBinding: null,
-      title: "Blackboard",
-      subtitle: "Explicit shared store",
-      position: { x: 380, y: 320 },
       status: "ready",
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -567,64 +737,30 @@ const INITIAL_DECK: DeckDocument = {
       id: "edge_main_chat_kg_ingest",
       source: "card_main_chat",
       target: "card_kg_ingest",
+      edgeType: "graph_flow",
     },
     {
       id: "edge_kg_ingest_research",
       source: "card_kg_ingest",
       target: "card_research",
+      edgeType: "graph_flow",
     },
     {
       id: "edge_research_knowgraph",
       source: "card_research",
       target: "card_knowgraph",
+      edgeType: "graph_flow",
     },
     {
       id: "edge_knowgraph_neo4j",
       source: "card_knowgraph",
       target: "card_neo4j",
-    },
-    {
-      id: "edge_main_chat_blackboard",
-      source: "card_main_chat",
-      target: "node_blackboard",
-    },
-    {
-      id: "edge_kg_ingest_blackboard",
-      source: "card_kg_ingest",
-      target: "node_blackboard",
-    },
-    {
-      id: "edge_research_blackboard",
-      source: "card_research",
-      target: "node_blackboard",
-    },
-    {
-      id: "edge_knowgraph_blackboard",
-      source: "card_knowgraph",
-      target: "node_blackboard",
-    },
-    {
-      id: "edge_neo4j_blackboard",
-      source: "card_neo4j",
-      target: "node_blackboard",
-    },
-    {
-      id: "edge_blackboard_main_chat",
-      source: "node_blackboard",
-      target: "card_main_chat",
+      edgeType: "graph_flow",
     },
   ],
 };
 
 const BUILDER_DECK_ID = INITIAL_DECK.id;
-const CURRENT_SYSTEM_CARD_IDS = [
-  "card_main_chat",
-  "card_kg_ingest",
-  "card_research",
-  "card_knowgraph",
-  "card_neo4j",
-  "node_blackboard",
-] as const;
 const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
   card_main_chat: "main_chat",
   card_kg_ingest: "kg_ingest",
@@ -646,9 +782,52 @@ function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
   return null;
 }
 
+export function filterAuthoringCompatibleEdges(
+  nodes: AgentCardInstance[],
+  edges: DeckEdge[],
+): DeckEdge[] {
+  const nodeMap = new Map(nodes.map((node) => [node.id, node] as const));
+
+  return edges
+    .filter((edge) => {
+      const sourceNode = nodeMap.get(edge.source);
+      const targetNode = nodeMap.get(edge.target);
+      if (!sourceNode || !targetNode) return false;
+
+      if (sourceNode.kind === "blackboard" || targetNode.kind === "blackboard") {
+        return true;
+      }
+
+      const edgeType = normalizeDeckEdgeType(edge.edgeType);
+      if (edgeType === "magentic_option") {
+        return (
+          normalizeRuntimeType(sourceNode.runtimeType) === "magentic_one" &&
+          isTopLevelCanvasCard(sourceNode) &&
+          isTopLevelCanvasCard(targetNode) &&
+          ["assistant_agent", "graph_flow"].includes(
+            normalizeRuntimeType(targetNode.runtimeType) || "",
+          )
+        );
+      }
+
+      if (
+        normalizeRuntimeType(sourceNode.runtimeType) === "graph_flow" &&
+        cleanOptionalText(targetNode.parentGraphId) === sourceNode.id
+      ) {
+        return true;
+      }
+
+      return isVisibleAssistFlowPair(sourceNode, targetNode);
+    })
+    .map((edge) => cloneDeckDocument(edge));
+}
+
 function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
   if (!Array.isArray(value)) {
     return cloneDeckDocument(INITIAL_DECK.nodes);
+  }
+  if (value.length === 0) {
+    return [];
   }
   const nextNodes = value.filter(
     (node): node is AgentCardInstance =>
@@ -668,6 +847,9 @@ function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
         runtimeBinding: normalizeRuntimeBinding(
           node.runtimeBinding ?? SYSTEM_CARD_RUNTIME_BINDINGS[safeText(node.id).trim()] ?? null,
         ),
+        runtimeType: normalizeRuntimeType(node.runtimeType) ?? "assistant_agent",
+        runtimeOptions: normalizeRuntimeOptions(node.runtimeOptions),
+        parentGraphId: cleanOptionalText(node.parentGraphId),
         title: safeText(node.title || node.id).trim() || safeText(node.id).trim(),
         subtitle: typeof node.subtitle === "string" ? node.subtitle : undefined,
         position:
@@ -697,6 +879,9 @@ function normalizeDeckPromptTemplates(value: unknown): PromptTemplate[] {
   if (!Array.isArray(value)) {
     return cloneDeckDocument(INITIAL_PROMPT_TEMPLATES);
   }
+  if (value.length === 0) {
+    return [];
+  }
   const nextPromptTemplates = value.filter(
     (template): template is PromptTemplate =>
       Boolean(
@@ -712,8 +897,10 @@ function normalizeDeckPromptTemplates(value: unknown): PromptTemplate[] {
 }
 
 function normalizeDeckEdges(value: unknown): DeckEdge[] {
-  const nextEdges = sanitizeDeckEdges(value);
-  return nextEdges.length > 0 ? cloneDeckDocument(nextEdges) : cloneDeckDocument(INITIAL_DECK.edges);
+  if (!Array.isArray(value)) {
+    return cloneDeckDocument(INITIAL_DECK.edges);
+  }
+  return cloneDeckDocument(sanitizeDeckEdges(value));
 }
 
 function slugifyDeckIdPart(value: string): string {
@@ -728,6 +915,10 @@ function buildDeckNodeFromPreset(
   preset: DeckNodePreset,
   promptTemplates: PromptTemplate[],
   position: { x: number; y: number },
+  options: {
+    title?: string;
+    parentGraphId?: string | null;
+  } = {},
 ): AgentCardInstance {
   const promptTemplateContent =
     preset.promptTemplateId
@@ -746,11 +937,86 @@ function buildDeckNodeFromPreset(
     templateId: preset.templateId,
     prompt: promptTemplateContent,
     runtimeBinding: preset.runtimeBinding,
-    title: preset.title,
+    runtimeType: preset.runtimeType,
+    runtimeOptions: null,
+    parentGraphId: cleanOptionalText(options.parentGraphId),
+    title: options.title || preset.title,
     subtitle: preset.subtitle,
     position,
     status: "ready",
     cloneConfig: { enabled: false, seeds: [] },
+  };
+}
+
+function getNextGraphScopedAssistTitle(deck: DeckDocument, graphOwnerId: string): string {
+  const assistCount = deck.nodes.filter(
+    (node) =>
+      cleanOptionalText(node.parentGraphId) === graphOwnerId &&
+      normalizeRuntimeType(node.runtimeType) === "assistant_agent",
+  ).length;
+  return `Assist ${assistCount + 1}`;
+}
+
+function resolveQuickAddParentGraphId(
+  preset: DeckNodePreset,
+  anchorNode: AgentCardInstance | null,
+): string | null {
+  if (preset.runtimeType !== "assistant_agent" || !anchorNode) {
+    return null;
+  }
+
+  const anchorParentGraphId = cleanOptionalText(anchorNode.parentGraphId);
+  if (anchorParentGraphId) {
+    return anchorParentGraphId;
+  }
+
+  if (
+    normalizeRuntimeType(anchorNode.runtimeType) === "graph_flow" &&
+    isTopLevelCanvasCard(anchorNode)
+  ) {
+    return anchorNode.id;
+  }
+
+  return null;
+}
+
+function resolveQuickAddEdge(
+  anchorNode: AgentCardInstance | null,
+  nextNode: AgentCardInstance,
+): DeckEdge | null {
+  if (!anchorNode) return null;
+  if (anchorNode.kind === "blackboard" || nextNode.kind === "blackboard") return null;
+
+  const anchorRuntimeType = normalizeRuntimeType(anchorNode.runtimeType);
+  const nextRuntimeType = normalizeRuntimeType(nextNode.runtimeType);
+  let edgeType: DeckEdgeType | null = null;
+
+  if (
+    anchorRuntimeType === "magentic_one" &&
+    isTopLevelCanvasCard(anchorNode) &&
+    isTopLevelCanvasCard(nextNode) &&
+    (nextRuntimeType === "assistant_agent" || nextRuntimeType === "graph_flow")
+  ) {
+    edgeType = "magentic_option";
+  } else if (isVisibleAssistFlowPair(anchorNode, nextNode)) {
+    edgeType = "graph_flow";
+  }
+
+  if (!edgeType) return null;
+
+  const legacyCompatibility = Boolean(
+    anchorRuntimeType === "graph_flow" ||
+    nextRuntimeType === "graph_flow" ||
+    cleanOptionalText(anchorNode.parentGraphId) ||
+    cleanOptionalText(nextNode.parentGraphId),
+  );
+
+  return {
+    id: `edge_${slugifyDeckIdPart(anchorNode.id)}_${slugifyDeckIdPart(nextNode.id)}_${uid()}`,
+    source: anchorNode.id,
+    target: nextNode.id,
+    edgeType,
+    metadata: buildDefaultDeckEdgeMetadata(edgeType, { legacyCompatibility }),
   };
 }
 
@@ -799,22 +1065,21 @@ export function buildQuickAddDeckMutation(
   anchorNodeId: string | null,
 ): { nextDeck: DeckDocument; nextNode: AgentCardInstance; nextEdge: DeckEdge | null } {
   const anchorNode = deck.nodes.find((node) => node.id === anchorNodeId) || null;
+  const nextParentGraphId = resolveQuickAddParentGraphId(preset, anchorNode);
+  const nextTitle =
+    nextParentGraphId && preset.runtimeType === "assistant_agent"
+      ? getNextGraphScopedAssistTitle(deck, nextParentGraphId)
+      : preset.title;
   const nextNode = buildDeckNodeFromPreset(
     preset,
     deck.promptTemplates,
     getSuggestedDeckNodePosition(deck, preset, anchorNode),
+    {
+      title: nextTitle,
+      parentGraphId: nextParentGraphId,
+    },
   );
-  const shouldConnectFromAnchor =
-    Boolean(anchorNode) &&
-    !(anchorNode?.kind === "blackboard" && nextNode.kind === "blackboard");
-  const nextEdge =
-    anchorNode && shouldConnectFromAnchor
-      ? {
-          id: `edge_${slugifyDeckIdPart(anchorNode.id)}_${slugifyDeckIdPart(nextNode.id)}_${uid()}`,
-          source: anchorNode.id,
-          target: nextNode.id,
-        }
-      : null;
+  const nextEdge = resolveQuickAddEdge(anchorNode, nextNode);
 
   return {
     nextDeck: {
@@ -917,15 +1182,11 @@ function formatBuilderStatusMessage(message: unknown, fallback: string): string 
 
 function seedCurrentSystemCardsIntoLegacyDeck(deck: DeckDocument): DeckDocument {
   const defaultNodeIds = new Set(INITIAL_DECK.nodes.map((node) => node.id));
-  const hasLegacyCore = ["card_research"].every((nodeId) =>
-    deck.nodes.some((node) => node.id === nodeId),
-  );
-  const hasOnlyDefaultShape = deck.nodes.every((node) => defaultNodeIds.has(node.id));
-  const missingCurrentSystemCards = CURRENT_SYSTEM_CARD_IDS.filter(
-    (nodeId) => !deck.nodes.some((node) => node.id === nodeId),
-  );
+  const isExactSystemDeckShape =
+    deck.nodes.length === defaultNodeIds.size &&
+    deck.nodes.every((node) => defaultNodeIds.has(node.id));
 
-  if (!hasLegacyCore || !hasOnlyDefaultShape || missingCurrentSystemCards.length === 0) {
+  if (!isExactSystemDeckShape) {
     return deck;
   }
 
@@ -967,6 +1228,15 @@ function seedCurrentSystemCardsIntoLegacyDeck(deck: DeckDocument): DeckDocument 
       runtimeBinding: normalizeRuntimeBinding(
         existingNode.runtimeBinding ?? seedNode.runtimeBinding ?? null,
       ),
+      runtimeType: normalizeRuntimeType(
+        existingNode.runtimeType ?? seedNode.runtimeType ?? "assistant_agent",
+      ),
+      runtimeOptions: normalizeRuntimeOptions(
+        existingNode.runtimeOptions ?? seedNode.runtimeOptions ?? null,
+      ),
+      parentGraphId: cleanOptionalText(
+        existingNode.parentGraphId ?? seedNode.parentGraphId ?? null,
+      ),
       position: existingNode.position || seedNode.position,
       overrides: existingNode.overrides,
       status: existingNode.status ?? seedNode.status,
@@ -988,14 +1258,21 @@ function seedCurrentSystemCardsIntoLegacyDeck(deck: DeckDocument): DeckDocument 
     version: Math.max(deck.version, INITIAL_DECK.version),
     promptTemplates: upgradedPromptTemplates,
     nodes: upgradedNodes,
-    edges: cloneDeckDocument(INITIAL_DECK.edges),
+    edges: filterAuthoringCompatibleEdges(upgradedNodes, deck.edges),
   };
 }
 
-function hydrateDeckDocument(value: Partial<DeckDocument> | null | undefined): DeckDocument {
+export function hydrateDeckDocument(value: Partial<DeckDocument> | null | undefined): DeckDocument {
   if (!value || typeof value !== "object") {
     return cloneDeckDocument(INITIAL_DECK);
   }
+  const hasExplicitNodes = Array.isArray(value.nodes);
+  const nextEdges =
+    Array.isArray(value.edges)
+      ? normalizeDeckEdges(value.edges)
+      : hasExplicitNodes
+        ? []
+        : normalizeDeckEdges(value.edges);
   const hydratedDeck = seedCurrentSystemCardsIntoLegacyDeck({
     ...cloneDeckDocument(INITIAL_DECK),
     ...value,
@@ -1003,7 +1280,7 @@ function hydrateDeckDocument(value: Partial<DeckDocument> | null | undefined): D
     name: String(value.name || INITIAL_DECK.name).trim() || INITIAL_DECK.name,
     version: Number.isFinite(Number(value.version)) ? Number(value.version) : INITIAL_DECK.version,
     nodes: normalizeDeckNodes(value.nodes),
-    edges: normalizeDeckEdges(value.edges),
+    edges: nextEdges,
     promptTemplates: normalizeDeckPromptTemplates(value.promptTemplates),
   });
   const bannedNodeIds = new Set(["card_synthesis", "card_review"]);
@@ -1017,6 +1294,42 @@ function hydrateDeckDocument(value: Partial<DeckDocument> | null | undefined): D
     promptTemplates: hydratedDeck.promptTemplates.filter((template) =>
       !bannedPromptTemplateIds.has(template.id),
     ),
+  };
+}
+
+export function resolveProjectDeckPayload(
+  deckPayload: Partial<DeckDocument> | null | undefined,
+): { deck: DeckDocument; usedFallback: boolean } {
+  if (!deckPayload || typeof deckPayload !== "object") {
+    return {
+      deck: hydrateDeckDocument(INITIAL_DECK),
+      usedFallback: true,
+    };
+  }
+
+  return {
+    deck: hydrateDeckDocument(deckPayload),
+    usedFallback: false,
+  };
+}
+
+export function resolveProjectDeckLoadResult(
+  currentDeck: DeckDocument,
+  deckPayload: Partial<DeckDocument> | null | undefined,
+  preserveCurrentOnFailure = false,
+): { deck: DeckDocument; usedFallback: boolean; preservedCurrent: boolean } {
+  if (preserveCurrentOnFailure) {
+    return {
+      deck: cloneDeckDocument(currentDeck),
+      usedFallback: false,
+      preservedCurrent: true,
+    };
+  }
+
+  const resolved = resolveProjectDeckPayload(deckPayload);
+  return {
+    ...resolved,
+    preservedCurrent: false,
   };
 }
 
@@ -1062,7 +1375,7 @@ function compactAgentOverrides(
 }
 
 // helper: load all project-local state (defaults only; real data is fetched from backend)
-function loadProjectState(_projectId: string, _mode: "assist" | "agents" = "assist") {
+function loadProjectState(_projectId: string) {
   return {
     messages: [] as { role: "assistant" | "user"; text: string }[],
     plan: [{ id: uid(), text: "Define objective", status: "draft" }] as PlanItem[],
@@ -3283,10 +3596,10 @@ function BlackboardStatePanel({
 // -------- Main page --------
 export default function AgentBuilder(): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
+  const [largeSurface, setLargeSurface] = useState<"chat" | "plan" | "canvas" | "knowledge">("chat");
   const [activeProject, setActiveProject] = useState("");
   const [panelOpen, setPanelOpen] = useState(true);
   const [panelWidth, setPanelWidth] = useState(480);
-  const [mode, setMode] = useState<"assist" | "agents">("assist");
   const [selectedAgentProjectId, setSelectedAgentProjectId] = useState("");
   const [deck, setDeckState] = useState<DeckDocument>(() => hydrateDeckDocument(INITIAL_DECK));
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
@@ -3321,11 +3634,11 @@ export default function AgentBuilder(): React.ReactElement {
     [activeProject],
   );
 
-  const [tab, setTab] = useState<string>("Plan");
-  const [openDrawer, setOpenDrawer] = useState<
-    null | "project" | "apps" | "settings" | "admin"
-  >(null);
+  const [tab, setTab] = useState<string>("Canvas");
+  const [openDrawer, setOpenDrawer] = useState<null | "navigation">(null);
   const sending = false;
+  const workspaceView =
+    largeSurface === "canvas" ? "canvas" : largeSurface === "knowledge" ? "knowledge" : "home";
 
   // agent builder state
   const [projects, setProjects] = useState<any[]>([]);
@@ -3393,7 +3706,6 @@ export default function AgentBuilder(): React.ReactElement {
   );
 
   useEffect(() => {
-    if (mode !== "agents") return;
     if (!selectedAgentProjectId) {
       recordDeckWriteReason("builder-reset");
       setDeck(hydrateDeckDocument(INITIAL_DECK));
@@ -3428,13 +3740,15 @@ export default function AgentBuilder(): React.ReactElement {
           throw new Error(safeText(payload.data?.error || "deck_load_failed"));
         }
 
-        const nextDeck =
+        const loadResult = resolveProjectDeckLoadResult(
+          deck,
           payload.data?.deck && typeof payload.data.deck === "object"
-            ? hydrateDeckDocument({ ...(payload.data.deck as DeckDocument), id: BUILDER_DECK_ID })
-            : hydrateDeckDocument(INITIAL_DECK);
+            ? { ...(payload.data.deck as DeckDocument), id: BUILDER_DECK_ID }
+            : null,
+        );
 
-        recordDeckWriteReason(payload.data?.deck ? "deck-load" : "deck-load-default");
-        setDeck(nextDeck);
+        recordDeckWriteReason(loadResult.usedFallback ? "deck-load-default" : "deck-load");
+        setDeck(loadResult.deck);
         setLatestDeckRun(
           payload.data?.latestRun && typeof payload.data.latestRun === "object"
             ? (payload.data.latestRun as DeckRun)
@@ -3446,15 +3760,14 @@ export default function AgentBuilder(): React.ReactElement {
           ),
         );
         setLatestCardRun(null);
-        setDeckStatusMessage(payload.data?.deck ? "Canvas loaded." : "Using default canvas.");
+        setDeckStatusMessage(loadResult.usedFallback ? "Using default canvas." : "Canvas loaded.");
       } catch (err: any) {
         if (controller.signal.aborted) return;
-        recordDeckWriteReason("deck-load-fallback");
-        setDeck(hydrateDeckDocument(INITIAL_DECK));
+        recordDeckWriteReason("deck-load-preserve-current");
         setLatestDeckRun(null);
         setLatestCardRun(null);
         setV3Blackboard(createEmptyBlackboard());
-        setDeckStatusMessage(formatBuilderStatusMessage(err?.message, "Using default canvas."));
+        setDeckStatusMessage(formatBuilderStatusMessage(err?.message, "Keeping current canvas."));
       } finally {
         if (!controller.signal.aborted) {
           setDeckLoadBusy(false);
@@ -3465,9 +3778,9 @@ export default function AgentBuilder(): React.ReactElement {
     return () => {
       controller.abort();
     };
-  }, [mode, recordDeckWriteReason, selectedAgentProjectId]);
+  }, [recordDeckWriteReason, selectedAgentProjectId]);
 
-  const showDeckBuilder = mode === "agents";
+  const showDeckBuilder = workspaceView === "canvas";
   const selectedCard = useMemo(
     () => deck.nodes.find((node) => node.id === selectedCardId) || null,
     [deck.nodes, selectedCardId],
@@ -3490,11 +3803,19 @@ export default function AgentBuilder(): React.ReactElement {
     if (selectedCard) return [...BUILDER_NODE_TABS];
     return [...BUILDER_PROJECT_TABS];
   }, [selectedCard, selectedEdge]);
-  const activeTabs = mode === "assist" ? [...ASSIST_TABS] : builderTabs;
+  const activeTabs = useMemo(() => {
+    if (largeSurface === "canvas") return builderTabs;
+    if (largeSurface === "knowledge") return [...KNOWLEDGE_VIEW_TABS];
+    if (largeSurface === "plan") return [...HOME_PLAN_TABS];
+    return [...HOME_CHAT_TABS];
+  }, [builderTabs, largeSurface]);
   const selectedCardConfig = useMemo<AgentManagerLocalConfig | null>(() => {
     if (!effectiveAgent || !selectedCard) return null;
     return {
       runtime_binding: selectedCard.runtimeBinding ?? null,
+      runtime_type: selectedCard.runtimeType ?? "assistant_agent",
+      runtime_options: selectedCard.runtimeOptions ?? null,
+      parent_graph_id: selectedCard.parentGraphId ?? null,
       provider:
         effectiveAgent.provider === "openai" || effectiveAgent.provider === "openrouter"
           ? effectiveAgent.provider
@@ -3569,7 +3890,7 @@ export default function AgentBuilder(): React.ReactElement {
   }, [deck.edges, selectedEdgeId]);
 
   useEffect(() => {
-    if (mode !== "agents") return;
+    if (workspaceView !== "canvas") return;
     if (selectedCardId || selectedEdgeId) return;
     if (deck.nodes.length === 0) return;
     const preferredNode =
@@ -3579,7 +3900,7 @@ export default function AgentBuilder(): React.ReactElement {
     if (!preferredNode) return;
     setSelectedCardId(preferredNode.id);
     setTab(preferredNode.kind === "blackboard" ? "Blackboard" : "Prompt");
-  }, [deck.nodes, mode, selectedCardId, selectedEdgeId]);
+  }, [deck.nodes, selectedCardId, selectedEdgeId, workspaceView]);
 
   useEffect(() => {
     if (activeTabs.some((entry) => entry === tab)) return;
@@ -3587,14 +3908,14 @@ export default function AgentBuilder(): React.ReactElement {
   }, [activeTabs, tab]);
 
   useEffect(() => {
-    if (mode !== "agents") return;
+    if (workspaceView !== "canvas") return;
     recordUiOnlyAction("tab-switch");
-  }, [mode, recordUiOnlyAction, tab]);
+  }, [recordUiOnlyAction, tab, workspaceView]);
 
   useEffect(() => {
-    if (mode !== "agents") return;
+    if (workspaceView !== "canvas") return;
     recordUiOnlyAction("drawer-toggle");
-  }, [mode, openDrawer, recordUiOnlyAction]);
+  }, [openDrawer, recordUiOnlyAction, workspaceView]);
 
   const handleSelectCard = useCallback((cardId: string | null) => {
     recordUiOnlyAction("node-selection");
@@ -4013,6 +4334,12 @@ export default function AgentBuilder(): React.ReactElement {
       recordDeckWriteReason("card-editor");
       setDeck((currentDeck) => {
         const nextRuntimeBinding = normalizeRuntimeBinding(nextConfig.runtime_binding);
+        const nextRuntimeType =
+          normalizeRuntimeType(nextConfig.runtime_type) ??
+          normalizeRuntimeType(selectedCard.runtimeType) ??
+          "assistant_agent";
+        const nextRuntimeOptions = normalizeRuntimeOptions(nextConfig.runtime_options);
+        const nextParentGraphId = cleanOptionalText(nextConfig.parent_graph_id);
         const nextProvider =
           nextConfig.provider === "openai" || nextConfig.provider === "openrouter"
             ? nextConfig.provider
@@ -4062,19 +4389,25 @@ export default function AgentBuilder(): React.ReactElement {
               : undefined,
         });
 
+        const nextNodes = currentDeck.nodes.map((node) =>
+          node.id === selectedCard.id
+            ? {
+                ...node,
+                prompt: String(nextConfig.prompt_template || ""),
+                runtimeBinding: nextRuntimeBinding,
+                runtimeType: nextRuntimeType,
+                runtimeOptions: nextRuntimeOptions,
+                parentGraphId: nextParentGraphId,
+                overrides: nextOverrides,
+              }
+            : node,
+        );
+
         return {
           ...currentDeck,
           version: currentDeck.version + 1,
-          nodes: currentDeck.nodes.map((node) =>
-            node.id === selectedCard.id
-              ? {
-                  ...node,
-                  prompt: String(nextConfig.prompt_template || ""),
-                  runtimeBinding: nextRuntimeBinding,
-                  overrides: nextOverrides,
-                }
-              : node,
-          ),
+          nodes: nextNodes,
+          edges: filterAuthoringCompatibleEdges(nextNodes, currentDeck.edges),
         };
       });
     },
@@ -4268,7 +4601,7 @@ export default function AgentBuilder(): React.ReactElement {
   };
 
   // TODO: persist to backend project_state.workflow_board
-  const refreshProjects = useCallback(async (preferredId?: string, filterType?: 'assist' | 'agent', reason?: string) => {
+  const refreshProjects = useCallback(async (reason?: string, preferredAssistId?: string, preferredAgentId?: string) => {
     const seq = ++refreshSeq.current;
     const requestType = "projects-refresh";
     const requestSeq = nextRequestSequence(requestType);
@@ -4278,9 +4611,11 @@ export default function AgentBuilder(): React.ReactElement {
 
     try {
       setProjectsError(null);
-      const projectType = filterType || (mode === 'assist' ? 'assist' : 'agent');
-      
-      console.debug('[refreshProjects]', { reason: reason || 'unknown', mode, project_type_filter: projectType, seq });
+      console.debug("[refreshProjects]", {
+        reason: reason || "unknown",
+        workspaceView,
+        seq,
+      });
       
       const endpoint = V2_PROJECTS_API;
       const payload = await guardedRequest({
@@ -4307,85 +4642,61 @@ export default function AgentBuilder(): React.ReactElement {
       }
 
       const rawCards = Array.isArray(data?.projects) ? data.projects : [];
-      let cards = dedupeProjectCards(rawCards).filter((card: any) => inferProjectCardType(card) === projectType);
-      
-      // Pin canonical agent decks to top in agent mode
-      if (projectType === 'agent') {
-        const PINNED_CODES = ['main-chat', 'kg-ingest', 'thinkgraph', 'knowgraph', 'neo4j', 'research-agent', 'agent-builder'];
-        const pinned = cards.filter((c: any) => PINNED_CODES.includes(normalizeProjectCardKey(c?.code)));
-        const others = cards.filter((c: any) => !PINNED_CODES.includes(normalizeProjectCardKey(c?.code)));
-        if (!pinned.some((c: any) => normalizeProjectCardKey(c?.code) === 'neo4j')) {
-          pinned.push({
-            id: 'system:neo4j',
-            name: 'Neo4j',
-            code: 'neo4j',
-            status: 'active',
-            project_type: 'agent',
-            syntheticSystemDeck: true,
-          });
+      const cards = dedupeProjectCards(rawCards);
+      const assistCards = cards.filter((card: any) => inferProjectCardType(card) === "assist");
+      const agentCards = cards.filter((card: any) => inferProjectCardType(card) === "agent");
+      const AGENT_PRIORITY = [
+        "main-chat",
+        "kg-ingest",
+        "thinkgraph",
+        "knowgraph",
+        "neo4j",
+        "research-agent",
+        "agent-builder",
+      ];
+      const orderedAgentCards = [...agentCards].sort((left: any, right: any) => {
+        const leftRank = AGENT_PRIORITY.indexOf(normalizeProjectCardKey(left?.code));
+        const rightRank = AGENT_PRIORITY.indexOf(normalizeProjectCardKey(right?.code));
+        const normalizedLeftRank = leftRank === -1 ? Number.MAX_SAFE_INTEGER : leftRank;
+        const normalizedRightRank = rightRank === -1 ? Number.MAX_SAFE_INTEGER : rightRank;
+        if (normalizedLeftRank !== normalizedRightRank) {
+          return normalizedLeftRank - normalizedRightRank;
         }
-        if (!pinned.some((c: any) => normalizeProjectCardKey(c?.code) === 'research-agent')) {
-          pinned.push({
-            id: 'system:research-agent',
-            name: 'Research Agent',
-            code: 'research-agent',
-            status: 'active',
-            project_type: 'agent',
-            syntheticSystemDeck: true,
-          });
-        }
-        pinned.sort(
-          (a: any, b: any) =>
-            PINNED_CODES.indexOf(normalizeProjectCardKey(a?.code)) -
-            PINNED_CODES.indexOf(normalizeProjectCardKey(b?.code)),
-        );
-        cards = dedupeProjectCards([...pinned, ...others]);
-      }
+        return safeText(left?.name || left?.id).localeCompare(safeText(right?.name || right?.id));
+      });
 
       setProjects(cards);
 
-      if (projectType === "agent") {
-        const currentAgentProjectId = preferredId || selectedAgentProjectId || "";
-        const hasCurrentAgentProject =
-          currentAgentProjectId && cards.some((c: any) => c.id === currentAgentProjectId);
-        const main = cards.find((c: any) => normalizeProjectCardKey(c?.code) === "main-chat") || null;
-        const kg =
-          cards.find((c: any) => {
-            const code = normalizeProjectCardKey(c?.code);
-            return code === "kg-ingest" || code === "thinkgraph";
-          }) || null;
-        const knowgraph = cards.find((c: any) => normalizeProjectCardKey(c?.code) === "knowgraph") || null;
-        const neo4j = cards.find((c: any) => normalizeProjectCardKey(c?.code) === "neo4j") || null;
-        const researchAgent =
-          cards.find((c: any) => normalizeProjectCardKey(c?.code) === "research-agent") || null;
-        const agentBuilder =
-          cards.find((c: any) => normalizeProjectCardKey(c?.code) === "agent-builder") || null;
-        const fallbackPinned =
-          agentBuilder?.id || main?.id || kg?.id || knowgraph?.id || neo4j?.id || researchAgent?.id || "";
-        const nextAgentProjectId =
-          (hasCurrentAgentProject ? currentAgentProjectId : "") || fallbackPinned || cards[0]?.id || "";
-        setSelectedAgentProjectId(nextAgentProjectId);
-        return;
-      }
-
       const search = new URLSearchParams(window.location.search);
       const urlId = search.get("projectId") || "";
-      const urlIdValid = urlId && cards.some((c: any) => c.id === urlId);
-      const current = preferredId || activeProject || "";
-      const hasCurrent = current && cards.some((c: any) => c.id === current);
-      const nextId = urlIdValid ? urlId : (hasCurrent ? current : "") || cards[0]?.id || "";
-      if (nextId) {
-        setActiveProjectWithUrl(nextId);
+      const urlIdValid = urlId && assistCards.some((card: any) => card.id === urlId);
+      const currentAssistId = preferredAssistId || activeProject || "";
+      const hasCurrentAssist = currentAssistId && assistCards.some((card: any) => card.id === currentAssistId);
+      const nextAssistId =
+        (urlIdValid ? urlId : "") || (hasCurrentAssist ? currentAssistId : "") || assistCards[0]?.id || "";
+      if (nextAssistId) {
+        setActiveProjectWithUrl(nextAssistId);
       } else {
         setActiveProject("");
       }
+
+      const currentAgentId = preferredAgentId || selectedAgentProjectId || "";
+      const hasCurrentAgent = currentAgentId && orderedAgentCards.some((card: any) => card.id === currentAgentId);
+      const nextAgentId =
+        (hasCurrentAgent ? currentAgentId : "") || orderedAgentCards[0]?.id || "";
+      setSelectedAgentProjectId(nextAgentId);
     } catch (err: any) {
       if (isAbortLikeError(err)) return;
       console.error("Error loading projects:", err);
       if (seq !== refreshSeq.current || !isLatestRequestSequence(requestType, requestSeq)) return;
       setProjectsError(err?.message || 'Error loading projects');
     }
-  }, [setActiveProjectWithUrl, mode, activeProject, selectedAgentProjectId]);
+  }, [activeProject, selectedAgentProjectId, setActiveProjectWithUrl, workspaceView]);
+
+  const assistProjects = useMemo(
+    () => projects.filter((project: any) => inferProjectCardType(project) === "assist"),
+    [projects],
+  );
 
   useEffect(() => {
     activeProjectLatestRef.current = activeProject;
@@ -4401,28 +4712,21 @@ export default function AgentBuilder(): React.ReactElement {
   // chat state
   const [messages, setMessages] = useState<
     { role: "assistant" | "user"; text: string }[]
-  >(() => loadProjectState(activeProject, mode).messages);
-
-  // Enforce panel visibility by mode
-  useEffect(() => {
-    if (!panelOpen) {
-      setPanelOpen(true);
-    }
-  }, [mode, panelOpen]);
+  >(() => loadProjectState(activeProject).messages);
 
 
   // plan
   const [planSource, setPlanSource] = useState<unknown>(
-    () => loadProjectState(activeProject, mode).plan,
+    () => loadProjectState(activeProject).plan,
   );
   const [plan, setPlan] = useState<PlanItem[]>(
-    () => loadProjectState(activeProject, mode).plan,
+    () => loadProjectState(activeProject).plan,
   );
   const [stateLoaded, setStateLoaded] = useState(false);
 
   // links
   const [links, setLinks] = useState<LinkRef[]>(
-    () => loadProjectState(activeProject, mode).links,
+    () => loadProjectState(activeProject).links,
   );
   const assistAnchorSurface = useMemo(
     () => normalizeAnchorSurface(planSource, { messages, planItems: plan, links }),
@@ -4448,7 +4752,7 @@ export default function AgentBuilder(): React.ReactElement {
     relationships: [],
   });
   const [, setLastIngestTrace] = useState<any>(null);
-  const scopeKey = `${mode}:${activeProject || ""}`;
+  const scopeKey = activeProject || "";
   const graphCacheScope = `${scopeKey}:${graphTypeFilter}:${graphRecencyFilter}:${graphMinConfidence}`;
   const graphCacheKey = `${KG_CACHE_PREFIX}:${graphCacheScope}`;
 
@@ -5027,7 +5331,7 @@ export default function AgentBuilder(): React.ReactElement {
       if (urlId) {
         setActiveProjectWithUrl(urlId);
       }
-      void refreshProjects(undefined, mode === "assist" ? "assist" : "agent", "mount");
+      void refreshProjects("mount");
     }, 0);
     return () => {
       cancelled = true;
@@ -5036,8 +5340,6 @@ export default function AgentBuilder(): React.ReactElement {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   
-  // Mode is user-chosen via Assist/Agent toggle - do not auto-switch based on project
-
   useEffect(() => {
     return () => {
       refreshAbortRef.current?.abort();
@@ -5199,7 +5501,10 @@ export default function AgentBuilder(): React.ReactElement {
 
   // Auto-load project subgraph when Knowledge tab opens or project changes
   useEffect(() => {
-    if (tab !== 'Knowledge' || !activeProject || !panelOpen) {
+    const isKnowledgeSurfaceOpen =
+      largeSurface === "knowledge" ||
+      ((largeSurface === "chat" || largeSurface === "plan") && tab === "Knowledge");
+    if (!isKnowledgeSurfaceOpen || !activeProject || !panelOpen) {
       kgAutoLoadKeyRef.current = "";
       return;
     }
@@ -5207,7 +5512,7 @@ export default function AgentBuilder(): React.ReactElement {
     if (kgAutoLoadKeyRef.current === autoLoadKey) return; // StrictMode/effect-cascade guard.
     kgAutoLoadKeyRef.current = autoLoadKey;
     loadProjectSubgraph();
-  }, [tab, activeProject, panelOpen, graphCacheScope, loadProjectSubgraph]);
+  }, [activeProject, graphCacheScope, largeSurface, loadProjectSubgraph, panelOpen, tab]);
 
   useEffect(() => {
     const refresh = () => {
@@ -5478,7 +5783,7 @@ export default function AgentBuilder(): React.ReactElement {
       code = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
     }
     
-    const projectType = mode === 'assist' ? 'assist' : 'agent';
+    const projectType = "assist";
     
     try {
       const res = await fetch(V2_PROJECTS_API, {
@@ -5497,29 +5802,365 @@ export default function AgentBuilder(): React.ReactElement {
       const data = await res.json().catch(() => null);
       const newId = (data && data.id) || "";
       
-      // Refresh projects with the correct type filter
-      await refreshProjects(newId, projectType, 'after-create');
-      
-      // Set mode based on project type
-      if (projectType === 'assist') {
-        setMode('assist');
-      } else {
-        setMode('agents');
-      }
+      await refreshProjects("after-create", newId);
       
       // Select the new project
       if (newId) {
-        if (projectType === "assist") {
-          setActiveProjectWithUrl(newId);
-        } else {
-          setSelectedAgentProjectId(newId);
-        }
+        setActiveProjectWithUrl(newId);
       }
     } catch (err: any) {
       console.error("Create project failed", err);
       setProjectsError(`Failed to create project: ${err?.message || 'Unknown error'}`);
     }
   };
+
+  const renderChatSurface = (
+    projectId: string,
+    compact = false,
+    surfaceRole: "large" | "companion" = compact ? "companion" : "large",
+  ) => (
+    <div
+      data-testid={`${surfaceRole}-surface-chat`}
+      style={{ height: "100%", minHeight: compact ? 320 : undefined }}
+    >
+      <Chat
+        messages={messages}
+        onSend={handleSend}
+        projectId={projectId}
+        disabled={sending}
+      />
+    </div>
+  );
+
+  const renderCanvasSurface = (
+    compact = false,
+    surfaceRole: "large" | "companion" = compact ? "companion" : "large",
+  ) => (
+    <div
+      data-testid={`${surfaceRole}-surface-canvas`}
+      style={{ height: "100%", minHeight: compact ? 320 : undefined }}
+    >
+      <BuilderCanvas
+        document={deck}
+        setDocument={setDeck}
+        onPersistGraphMutation={recordDeckWriteReason}
+        executionPlan={deckExecutionPlan}
+        selectedCardId={selectedCardId}
+        selectedEdgeId={selectedEdgeId}
+        onSelectCard={handleSelectCard}
+        onSelectEdge={handleSelectEdge}
+        onDeleteSelectedEdge={handleDeleteSelectedEdge}
+        focusRequest={builderCanvasFocusRequest}
+      />
+    </div>
+  );
+
+  const renderKnowledgeGraphSurface = (
+    minHeight = 280,
+    surfaceRole: "large" | "companion" = minHeight > 320 ? "large" : "companion",
+  ) => (
+    <div
+      data-testid={`${surfaceRole}-surface-knowledge`}
+      className="space-y-3 h-full flex flex-col"
+    >
+      <div
+        className="text-xs p-3 rounded"
+        style={{
+          background: C.bg,
+          border: `1px solid ${C.border}`,
+          color: C.neutral,
+        }}
+      >
+        <span>{knowledgePanelSummaryText(graphVizFiltered)}</span>
+      </div>
+
+      {graphError && (
+        <div
+          className="text-xs"
+          style={{
+            color: C.warn,
+            border: `1px solid rgba(217,132,88,0.35)`,
+            background: "rgba(217,132,88,0.08)",
+            borderRadius: 8,
+            padding: "6px 8px",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+          title={safeText(graphError)}
+        >
+          {safeText(graphError)}
+        </div>
+      )}
+      <div style={{ display: "flex", justifyContent: "center", flex: 1, minHeight }}>
+        <Suspense
+          fallback={
+            <div
+              style={{
+                width: "100%",
+                minHeight,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                background: C.bg,
+                color: C.neutral,
+              }}
+            >
+              Loading knowledge graph…
+            </div>
+          }
+        >
+          <KnowledgeGraphNVL
+            key={`kg-nvl-${graphResetToken}`}
+            entities={graphVizForNVL.entities}
+            relationships={graphVizForNVL.relationships}
+            loading={graphLoading}
+            expandingEntityId={expandingNodeId}
+            onThinkGraphExpand={expandGraphFromNode}
+            onKnowGraphExpand={expandKnowGraphFromEntity}
+            onRelationshipInspect={setSelectedEdgeEvidence}
+          />
+        </Suspense>
+      </div>
+    </div>
+  );
+
+  const renderPlanSurface = (surfaceRole: "large" | "companion" = "large") => (
+    <div
+      data-testid={`${surfaceRole}-surface-plan`}
+      className="space-y-3 h-full overflow-auto pr-1"
+    >
+      {!activeProject ? (
+        <div
+          style={{
+            padding: "16px",
+            border: `1px dashed ${C.border}`,
+            borderRadius: "8px",
+            color: C.neutral,
+            background: "#1a1a1a",
+          }}
+        >
+          Select a project to view its plan.
+        </div>
+      ) : !stateLoaded ? (
+        <div
+          style={{
+            padding: "16px",
+            border: `1px solid ${C.border}`,
+            borderRadius: "8px",
+            color: C.neutral,
+            background: C.bg,
+          }}
+        >
+          Loading plan...
+        </div>
+      ) : (
+        <>
+          {structuredAssistPlan.goal && (
+            <Section title="Goal">
+              <div style={{ color: C.text, whiteSpace: "pre-wrap" }}>
+                {safeText(structuredAssistPlan.goal)}
+              </div>
+            </Section>
+          )}
+
+          {structuredAssistPlan.whatMattersNow.length > 0 && (
+            <Section title="What Matters Now">
+              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                {structuredAssistPlan.whatMattersNow.map((item, index) => (
+                  <li key={`wmn-${index}`}>{item}</li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {structuredAssistPlan.nextMove && (
+            <Section title="Next Move">
+              <div style={{ color: C.text, whiteSpace: "pre-wrap" }}>
+                {safeText(structuredAssistPlan.nextMove)}
+              </div>
+            </Section>
+          )}
+
+          {structuredAssistPlan.assumptions.length > 0 && (
+            <Section title="Assumptions">
+              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                {structuredAssistPlan.assumptions.map((item, index) => (
+                  <li key={`assumption-${index}`}>{item}</li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {structuredAssistPlan.research.length > 0 && (
+            <Section title="Research">
+              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                {structuredAssistPlan.research.map((item, index) => (
+                  <li key={`research-${index}`}>{item}</li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {structuredAssistPlan.openQuestions.length > 0 && (
+            <Section title="Open Questions">
+              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                {structuredAssistPlan.openQuestions.map((item, index) => (
+                  <li key={`question-${index}`}>{item}</li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {structuredAssistPlan.humanTasks.length > 0 && (
+            <Section title="Human Tasks">
+              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                {structuredAssistPlan.humanTasks.map((item, index) => (
+                  <li key={`human-${index}`}>{item}</li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {structuredAssistPlan.agentTasks.length > 0 && (
+            <Section title="Agent Tasks">
+              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                {structuredAssistPlan.agentTasks.map((item, index) => (
+                  <li key={`agent-${index}`}>{item}</li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {structuredAssistPlan.pathOptions.length > 0 && (
+            <Section title="Path Options">
+              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                {structuredAssistPlan.pathOptions.map((item, index) => (
+                  <li key={`path-${index}`}>{item}</li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {structuredAssistPlan.hasExplicitPlanDocument && (
+            <Section title="Plan Notes">
+              <Suspense
+                fallback={
+                  <div style={{ color: C.text, whiteSpace: "pre-wrap", minHeight: 120 }}>
+                    {safeText(structuredAssistPlan.explicitPlanText).trim() || "No plan notes yet."}
+                  </div>
+                }
+              >
+                <PlanWikiLexicalView
+                  source={planSource}
+                  fallbackText={safeText(structuredAssistPlan.explicitPlanText)}
+                  textColor={C.text}
+                  mutedColor={C.neutral}
+                  emptyText="No plan notes yet."
+                />
+              </Suspense>
+            </Section>
+          )}
+
+          {structuredAssistPlan.whatChanged.length > 0 && (
+            <Section title="What Changed">
+              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                {structuredAssistPlan.whatChanged.map((item, index) => (
+                  <li key={`changed-${index}`}>{item}</li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {structuredAssistPlan.sources.length > 0 && (
+            <Section title="Sources">
+              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                {structuredAssistPlan.sources.map((item, index) => (
+                  <li key={`source-${index}`}>{item}</li>
+                ))}
+              </ul>
+            </Section>
+          )}
+        </>
+      )}
+    </div>
+  );
+
+  const showHomeChat = useCallback(() => {
+    setLargeSurface("chat");
+    setTab("Canvas");
+  }, []);
+
+  const showCanvasWorkspace = useCallback(() => {
+    setLargeSurface("canvas");
+  }, []);
+
+  const showKnowledgeWorkspace = useCallback(() => {
+    setLargeSurface("knowledge");
+    setTab("Chat");
+  }, []);
+
+  const showPlanWorkspace = useCallback(() => {
+    setLargeSurface("plan");
+    setTab("Chat");
+  }, []);
+
+  const promoteSurface = useCallback(
+    (target: "chat" | "plan" | "canvas" | "knowledge") => {
+      const previousLargeSurface = largeSurface;
+      if (target === "canvas") {
+        setLargeSurface("canvas");
+        return;
+      }
+      if (target === "knowledge") {
+        setLargeSurface("knowledge");
+        setTab(previousLargeSurface === "plan" ? "Plan" : "Chat");
+        return;
+      }
+      if (target === "plan") {
+        setLargeSurface("plan");
+        setTab(previousLargeSurface === "knowledge" ? "Knowledge" : "Chat");
+        return;
+      }
+      setLargeSurface("chat");
+      if (previousLargeSurface === "knowledge") {
+        setTab("Knowledge");
+      } else if (previousLargeSurface === "plan") {
+        setTab("Plan");
+      } else {
+        setTab("Canvas");
+      }
+    },
+    [largeSurface],
+  );
+
+  const handleCompanionTabClick = useCallback(
+    (nextTab: string) => {
+      if (workspaceView === "canvas") {
+        setTab(nextTab);
+        return;
+      }
+
+      if (nextTab === "Chat") {
+        promoteSurface("chat");
+        return;
+      }
+      if (nextTab === "Plan") {
+        promoteSurface("plan");
+        return;
+      }
+      if (nextTab === "Canvas") {
+        promoteSurface("canvas");
+        return;
+      }
+      if (nextTab === "Knowledge") {
+        promoteSurface("knowledge");
+      }
+    },
+    [promoteSurface, workspaceView],
+  );
 
   return (
     <div
@@ -5545,7 +6186,21 @@ export default function AgentBuilder(): React.ReactElement {
             }}
           />
         </div>
-        <div className="flex items-center gap-3" />
+        <div data-testid="header-actions" className="flex items-center gap-3">
+          <button
+            title="Three-lines"
+            aria-label="Three-lines"
+            data-testid="header-three-lines-button"
+            onClick={() => setOpenDrawer("navigation")}
+            className="p-2 rounded"
+            style={{
+              color: C.text,
+              background: "transparent",
+            }}
+          >
+            <Icon d="M4 7h16M4 12h16M4 17h16" />
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-1 overflow-hidden min-h-0">
@@ -5559,35 +6214,43 @@ export default function AgentBuilder(): React.ReactElement {
           }}
         >
           <button
-            title={mode === "agents" ? "Agents" : "Project"}
-            onClick={() => setOpenDrawer("project")}
+            title="Home"
+            aria-label="Home"
+            data-testid="rail-home-button"
+            onClick={showHomeChat}
             className="p-2 rounded"
-            style={{ color: C.text }}
+            style={{ color: workspaceView === "home" ? C.primary : C.text }}
           >
             <Icon d="M4 7l8-4 8 4v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
           </button>
           <button
-            title={panelOpen ? "Hide Context" : "Show Context"}
-            onClick={() => setPanelOpen((v) => !v)}
+            title="Plus"
+            aria-label="Plus"
+            data-testid="rail-plus-button"
+            onClick={showCanvasWorkspace}
             className="p-2 rounded"
-            style={{ color: panelOpen ? C.primary : C.text }}
+            style={{ color: workspaceView === "canvas" ? C.primary : C.text }}
           >
             <Icon d="M3 12h18M12 3v18" />
           </button>
           <button
-            title="Settings"
-            onClick={() => setOpenDrawer("settings")}
+            title="Burst"
+            aria-label="Burst"
+            data-testid="rail-burst-button"
+            onClick={showKnowledgeWorkspace}
             className="p-2 rounded"
-            style={{ color: C.text }}
+            style={{ color: workspaceView === "knowledge" ? C.primary : C.text }}
           >
             <Icon d="M12 1v3M12 20v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M1 12h3M20 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" />
           </button>
           <div className="flex-1" />
           <button
-            title="Admin"
-            onClick={() => setOpenDrawer("admin")}
+            title="Orange"
+            aria-label="Orange"
+            data-testid="rail-orange-button"
+            onClick={showPlanWorkspace}
             className="p-2 rounded"
-            style={{ color: "#ffb86b" }}
+            style={{ color: largeSurface === "plan" ? "#ffb86b" : C.text }}
           >
             <Icon d="M3 12l2-2 4 4L21 4" />
           </button>
@@ -5595,37 +6258,27 @@ export default function AgentBuilder(): React.ReactElement {
 
         {/* CENTER content */}
         <div
+          data-testid="workspace-large-region"
+          data-surface={largeSurface}
           className="h-full transition-[width] duration-300 ease-out min-w-0"
           style={{
             width: panelOpen ? `calc(100% - ${panelWidth}px)` : "100%",
           }}
         >
-          {showDeckBuilder ? (
-            <BuilderCanvas
-              document={deck}
-              setDocument={setDeck}
-              onPersistGraphMutation={recordDeckWriteReason}
-              executionPlan={deckExecutionPlan}
-              selectedCardId={selectedCardId}
-              selectedEdgeId={selectedEdgeId}
-              onSelectCard={handleSelectCard}
-              onSelectEdge={handleSelectEdge}
-              onDeleteSelectedEdge={handleDeleteSelectedEdge}
-              focusRequest={builderCanvasFocusRequest}
-            />
-          ) : (
-            <Chat
-              messages={messages}
-              onSend={handleSend}
-              projectId={activeProject}
-              disabled={sending}
-            />
-          )}
+          {largeSurface === "canvas"
+            ? renderCanvasSurface(false, "large")
+            : largeSurface === "knowledge"
+              ? renderKnowledgeGraphSurface(420, "large")
+              : largeSurface === "plan"
+                ? renderPlanSurface("large")
+                : renderChatSurface(activeProject, false, "large")}
         </div>
 
         {/* RIGHT panel */}
         {panelOpen && (
           <aside
+            data-testid="workspace-companion-region"
+            data-workspace={workspaceView}
             className="h-full relative"
             style={{
               width: panelWidth,
@@ -5640,7 +6293,9 @@ export default function AgentBuilder(): React.ReactElement {
                 {activeTabs.map((t) => (
                   <button
                     key={t}
-                    onClick={() => setTab(t)}
+                    data-testid={`companion-tab-${t.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+                    aria-pressed={tab === t}
+                    onClick={() => handleCompanionTabClick(t)}
                     className="font-semibold transition-colors"
                     style={{
                       padding: "8px 10px",
@@ -5661,305 +6316,26 @@ export default function AgentBuilder(): React.ReactElement {
               </div>
 
               <div
-                className="flex-1 overflow-auto px-1 pr-3 pb-6 text-sm"
+                className="flex-1 overflow-hidden px-1 pr-3 pb-6 text-sm min-h-0"
                 style={{ color: C.neutral }}
               >
-                {mode === "agents" && <>{renderAgentBuilderPanel()}</>}
-
-                {mode === "assist" && tab === "Plan" && (
-                  <div className="space-y-3">
-                    {!activeProject ? (
-                      <div
-                        style={{
-                          padding: "16px",
-                          border: `1px dashed ${C.border}`,
-                          borderRadius: "8px",
-                          color: C.neutral,
-                          background: "#1a1a1a",
-                        }}
-                      >
-                    Select an Assist project to view its plan.
-                      </div>
-                    ) : !stateLoaded ? (
-                      <div
-                        style={{
-                          padding: "16px",
-                          border: `1px solid ${C.border}`,
-                          borderRadius: "8px",
-                          color: C.neutral,
-                          background: C.bg,
-                        }}
-                      >
-                        Loading plan...
-                      </div>
-                    ) : (
-                      <>
-                        {structuredAssistPlan.goal && (
-                          <Section title="Goal">
-                            <div style={{ color: C.text, whiteSpace: "pre-wrap" }}>
-                              {safeText(structuredAssistPlan.goal)}
-                            </div>
-                          </Section>
-                        )}
-
-                        {structuredAssistPlan.whatMattersNow.length > 0 && (
-                          <Section title="What Matters Now">
-                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                              {structuredAssistPlan.whatMattersNow.map((item, index) => (
-                                <li key={`wmn-${index}`}>{item}</li>
-                              ))}
-                            </ul>
-                          </Section>
-                        )}
-
-                        {structuredAssistPlan.nextMove && (
-                          <Section title="Next Move">
-                            <div style={{ color: C.text, whiteSpace: "pre-wrap" }}>
-                              {safeText(structuredAssistPlan.nextMove)}
-                            </div>
-                          </Section>
-                        )}
-
-                        {structuredAssistPlan.assumptions.length > 0 && (
-                          <Section title="Assumptions">
-                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                              {structuredAssistPlan.assumptions.map((item, index) => (
-                                <li key={`assumption-${index}`}>{item}</li>
-                              ))}
-                            </ul>
-                          </Section>
-                        )}
-
-                        {structuredAssistPlan.research.length > 0 && (
-                          <Section title="Research">
-                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                              {structuredAssistPlan.research.map((item, index) => (
-                                <li key={`research-${index}`}>{item}</li>
-                              ))}
-                            </ul>
-                          </Section>
-                        )}
-
-                        {structuredAssistPlan.openQuestions.length > 0 && (
-                          <Section title="Open Questions">
-                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                              {structuredAssistPlan.openQuestions.map((item, index) => (
-                                <li key={`question-${index}`}>{item}</li>
-                              ))}
-                            </ul>
-                          </Section>
-                        )}
-
-                        {structuredAssistPlan.humanTasks.length > 0 && (
-                          <Section title="Human Tasks">
-                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                              {structuredAssistPlan.humanTasks.map((item, index) => (
-                                <li key={`human-${index}`}>{item}</li>
-                              ))}
-                            </ul>
-                          </Section>
-                        )}
-
-                        {structuredAssistPlan.agentTasks.length > 0 && (
-                          <Section title="Agent Tasks">
-                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                              {structuredAssistPlan.agentTasks.map((item, index) => (
-                                <li key={`agent-${index}`}>{item}</li>
-                              ))}
-                            </ul>
-                          </Section>
-                        )}
-
-                        {structuredAssistPlan.pathOptions.length > 0 && (
-                          <Section title="Path Options">
-                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                              {structuredAssistPlan.pathOptions.map((item, index) => (
-                                <li key={`path-${index}`}>{item}</li>
-                              ))}
-                            </ul>
-                          </Section>
-                        )}
-
-                        {structuredAssistPlan.hasExplicitPlanDocument && (
-                          <Section title="Plan Notes">
-                            <Suspense
-                              fallback={
-                                <div style={{ color: C.text, whiteSpace: "pre-wrap", minHeight: 120 }}>
-                                  {safeText(structuredAssistPlan.explicitPlanText).trim() || "No plan notes yet."}
-                                </div>
-                              }
-                            >
-                              <PlanWikiLexicalView
-                                source={planSource}
-                                fallbackText={safeText(structuredAssistPlan.explicitPlanText)}
-                                textColor={C.text}
-                                mutedColor={C.neutral}
-                                emptyText="No plan notes yet."
-                              />
-                            </Suspense>
-                          </Section>
-                        )}
-
-                        {structuredAssistPlan.whatChanged.length > 0 && (
-                          <Section title="What Changed">
-                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                              {structuredAssistPlan.whatChanged.map((item, index) => (
-                                <li key={`changed-${index}`}>{item}</li>
-                              ))}
-                            </ul>
-                          </Section>
-                        )}
-
-                        {structuredAssistPlan.sources.length > 0 && (
-                          <Section title="Sources">
-                            <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                              {structuredAssistPlan.sources.map((item, index) => (
-                                <li key={`source-${index}`}>{item}</li>
-                              ))}
-                            </ul>
-                          </Section>
-                        )}
-                      </>
-                    )}
+                {workspaceView === "canvas" && (
+                  <div data-testid="companion-surface-editor" style={{ height: "100%", overflow: "auto" }}>
+                    {renderAgentBuilderPanel()}
                   </div>
                 )}
 
-                {mode === "assist" && tab === "Links" && (
-                  <div className="space-y-3">
-                    {links.length > 0 ? (
-                      links.map((l) => (
-                        <div
-                          key={l.id}
-                          style={{
-                            border: `1px solid ${C.border}`,
-                            borderRadius: 8,
-                            padding: "8px",
-                          }}
-                        >
-                          <div
-                            style={{
-                              color: C.text,
-                              fontWeight: 600,
-                            }}
-                          >
-                            {safeText(l.title)}
-                          </div>
-                          <div
-                            className="text-xs"
-                            style={{ opacity: 0.8, margin: "4px 0 8px" }}
-                          >
-                            {safeText(l.url)}
-                          </div>
-                          <div className="flex gap-6 text-sm">
-                            {!l.accepted && (
-                              <button
-                                onClick={() => accept(l.id)}
-                                style={{ color: C.primary }}
-                              >
-                                Accept
-                              </button>
-                            )}
-                            <button
-                              onClick={() => reject(l.id)}
-                              style={{ color: C.warn }}
-                            >
-                              Reject
-                            </button>
-                            <a
-                              href={safeText(l.url)}
-                              target="_blank"
-                              rel="noreferrer"
-                              style={{ color: C.neutral }}
-                            >
-                              open
-                            </a>
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div
-                        style={{
-                          padding: "16px",
-                          border: `1px solid ${C.border}`,
-                          borderRadius: 8,
-                          color: C.neutral,
-                          background: C.bg,
-                        }}
-                      >
-                        No links in this Assist project yet.
-                      </div>
-                    )}
-                  </div>
-                )}
+                {largeSurface === "chat" && tab === "Canvas" && renderCanvasSurface(true, "companion")}
+                {largeSurface === "chat" && tab === "Knowledge" && renderKnowledgeGraphSurface(320, "companion")}
+                {largeSurface === "chat" && tab === "Plan" && renderPlanSurface("companion")}
 
-                {/* Knowledge tab - available in both modes */}
-                {tab === "Knowledge" && (
-                  <div className="space-y-3 h-full flex flex-col">
-                    <div
-                      className="text-xs p-3 rounded"
-                      style={{
-                        background: C.bg,
-                        border: `1px solid ${C.border}`,
-                        color: C.neutral,
-                      }}
-                    >
-                      <span>
-                        {knowledgePanelSummaryText(graphVizFiltered)}
-                      </span>
-                    </div>
+                {largeSurface === "plan" && tab === "Chat" && renderChatSurface(activeProject, true, "companion")}
+                {largeSurface === "plan" && tab === "Canvas" && renderCanvasSurface(true, "companion")}
+                {largeSurface === "plan" && tab === "Knowledge" && renderKnowledgeGraphSurface(320, "companion")}
 
-                    {graphError && (
-                      <div
-                        className="text-xs"
-                        style={{
-                          color: C.warn,
-                          border: `1px solid rgba(217,132,88,0.35)`,
-                          background: "rgba(217,132,88,0.08)",
-                          borderRadius: 8,
-                          padding: "6px 8px",
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                        title={safeText(graphError)}
-                      >
-                        {safeText(graphError)}
-                      </div>
-                    )}
-                    <div style={{ display: "flex", justifyContent: "center", flex: 1, minHeight: 280 }}>
-                      <Suspense
-                        fallback={
-                          <div
-                            style={{
-                              width: "100%",
-                              minHeight: 280,
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              border: `1px solid ${C.border}`,
-                              borderRadius: 8,
-                              background: C.bg,
-                              color: C.neutral,
-                            }}
-                          >
-                            Loading knowledge graph…
-                          </div>
-                        }
-                      >
-                        <KnowledgeGraphNVL
-                          key={`kg-nvl-${graphResetToken}`}
-                          entities={graphVizForNVL.entities}
-                          relationships={graphVizForNVL.relationships}
-                          loading={graphLoading}
-                          expandingEntityId={expandingNodeId}
-                          onThinkGraphExpand={expandGraphFromNode}
-                          onKnowGraphExpand={expandKnowGraphFromEntity}
-                          onRelationshipInspect={setSelectedEdgeEvidence}
-                        />
-                      </Suspense>
-                    </div>
-                  </div>
-                )}
+                {largeSurface === "knowledge" && tab === "Chat" && renderChatSurface(activeProject, true, "companion")}
+                {largeSurface === "knowledge" && tab === "Canvas" && renderCanvasSurface(true, "companion")}
+                {largeSurface === "knowledge" && tab === "Plan" && renderPlanSurface("companion")}
               </div>
 
               {/* resize handle */}
@@ -5995,225 +6371,95 @@ export default function AgentBuilder(): React.ReactElement {
       </div>
 
       {/* drawers */}
-      {openDrawer === "project" && (
-        <Drawer title={mode === "agents" ? "Agents" : "Project"} onClose={() => setOpenDrawer(null)}>
-          <div className="space-y-3">
-            {/* Mode Selector */}
-            <div className="flex gap-2 mb-3">
+      {openDrawer === "navigation" && (
+        <Drawer title="Projects" onClose={() => setOpenDrawer(null)}>
+          <div data-testid="navigation-drawer" className="space-y-3">
+            <div
+              data-testid="drawer-projects-section"
+              className="text-xs uppercase mb-2 flex items-center justify-between"
+              style={{ color: C.neutral }}
+            >
+              <span>Chat Projects</span>
               <button
-                onClick={() => {
-                  setMode('assist');
-                  refreshProjects(undefined, 'assist', 'mode-change');
-                }}
-                className="flex-1 px-3 py-2 rounded text-sm font-medium transition-colors"
-                style={{
-                  background: mode === 'assist' ? C.primary : 'transparent',
-                  color: mode === 'assist' ? '#0B0C0E' : C.text,
-                  border: `1px solid ${mode === 'assist' ? C.primary : C.border}`,
-                }}
+                onClick={createProjectPrompt}
+                className="text-[11px] px-2 py-1 rounded"
+                style={{ border: `1px solid ${C.border}`, color: C.text }}
               >
-                Assist
-              </button>
-              <button
-                onClick={() => {
-                  setMode('agents');
-                  refreshProjects(undefined, 'agent', 'mode-change');
-                }}
-                className="flex-1 px-3 py-2 rounded text-sm font-medium transition-colors"
-                style={{
-                  background: mode === 'agents' ? C.primary : 'transparent',
-                  color: mode === 'agents' ? '#0B0C0E' : C.text,
-                  border: `1px solid ${mode === 'agents' ? C.primary : C.border}`,
-                }}
-              >
-                Agents
+                New Project
               </button>
             </div>
-            
-            {mode === "assist" ? (
-              <>
-                <div
-                  className="text-xs uppercase mb-2 flex items-center justify-between"
-                  style={{ color: C.neutral }}
-                >
-                  <span>Assist Projects</span>
+            <div className="space-y-2" style={{ maxHeight: 400, overflowY: "auto" }}>
+              {projectsError && (
+                <div className="text-xs" style={{ color: C.neutral }}>
+                  {safeText(projectsError)}
+                </div>
+              )}
+              {assistProjects.map((project) => (
+                <div key={project.id} className="flex items-center gap-2">
                   <button
-                    onClick={createProjectPrompt}
-                    className="text-[11px] px-2 py-1 rounded"
-                    style={{ border: `1px solid ${C.border}`, color: C.text }}
+                    onClick={() => {
+                      setActiveProjectWithUrl(project.id);
+                      setOpenDrawer(null);
+                    }}
+                    className="flex-1 text-left p-3 rounded"
+                    style={{
+                      background:
+                        activeProject === project.id
+                          ? "rgba(79,162,173,0.18)"
+                          : "transparent",
+                      border: `1px solid ${activeProject === project.id ? C.primary : C.border}`,
+                      color: C.text,
+                    }}
                   >
-                    New Project
+                    <div className="font-medium">{safeText(project.name || project.id)}</div>
+                    {project.code && (
+                      <div className="opacity-60 text-xs" style={{ marginTop: 2 }}>
+                        {safeText(project.code)}
+                      </div>
+                    )}
+                  </button>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      if (!confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
+                      try {
+                        const res = await fetch(`${V2_PROJECTS_API}/${project.id}`, { method: "DELETE" });
+                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                        await refreshProjects("after-delete");
+                        if (activeProject === project.id) {
+                          const remaining = assistProjects.filter((entry) => entry.id !== project.id);
+                          if (remaining.length > 0) {
+                            setActiveProjectWithUrl(remaining[0].id);
+                          } else {
+                            setActiveProject("");
+                          }
+                        }
+                      } catch (err: any) {
+                        alert(`Failed to delete project: ${err.message}`);
+                      }
+                    }}
+                    className="p-2 rounded"
+                    style={{
+                      background: "transparent",
+                      border: `1px solid ${C.border}`,
+                      color: C.warn,
+                    }}
+                    title="Delete project"
+                  >
+                    ×
                   </button>
                 </div>
-                <div className="space-y-2" style={{ maxHeight: '400px', overflowY: 'auto' }}>
-                  {!Array.isArray(projects) && (
-                    <div className="text-xs" style={{ color: C.neutral }}>
-                      No projects available.
-                    </div>
-                  )}
-                  {projectsError && (
-                    <div className="text-xs" style={{ color: C.neutral }}>
-                      {safeText(projectsError)}
-                    </div>
-                  )}
-                  {Array.from(
-                    new Map(
-                      (Array.isArray(projects) ? projects : []).map((p) => {
-                        const codeKey = String(p.code || '').toLowerCase();
-                        const key = codeKey ? `code:${codeKey}` : `id:${p.id}`;
-                        return [key, p];
-                      }),
-                    ).values(),
-                  ).map((project) => {
-                    return (
-                      <React.Fragment key={project.id}>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => {
-                              setActiveProjectWithUrl(project.id);
-                              setOpenDrawer(null);
-                            }}
-                            className="flex-1 text-left p-3 rounded"
-                            style={{
-                              background:
-                                activeProject === project.id
-                                  ? "rgba(79,162,173,0.18)"
-                                  : "transparent",
-                              border: `1px solid ${activeProject === project.id ? C.primary : C.border}`,
-                              color: C.text,
-                            }}
-                          >
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <div className="font-medium">
-                                  {safeText(project.name || project.id)}
-                                </div>
-                                {project.code && (
-                                  <div className="opacity-60 text-xs">
-                                    {safeText(project.code)}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          </button>
-                          <button
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              if (!confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
-                              try {
-                                const res = await fetch(`${V2_PROJECTS_API}/${project.id}`, { method: 'DELETE' });
-                                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                                await refreshProjects(undefined, undefined, 'after-delete');
-                                if (activeProject === project.id) {
-                                  const remaining = projects.filter(p => p.id !== project.id);
-                                  if (remaining.length > 0) {
-                                    setActiveProjectWithUrl(remaining[0].id);
-                                  } else {
-                                    setActiveProject('');
-                                  }
-                                }
-                              } catch (err: any) {
-                                alert(`Failed to delete project: ${err.message}`);
-                              }
-                            }}
-                            className="p-2 rounded"
-                            style={{
-                              background: 'transparent',
-                              border: `1px solid ${C.border}`,
-                              color: C.warn,
-                            }}
-                            title="Delete project"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      </React.Fragment>
-                    );
-                  })}
+              ))}
 
-                  {Array.isArray(projects) && projects.length === 0 && !projectsError && (
-                    <div className="text-xs" style={{ color: C.neutral }}>
-                      No projects available.
-                    </div>
-                  )}
+              {assistProjects.length === 0 && !projectsError && (
+                <div className="text-xs" style={{ color: C.neutral }}>
+                  No projects available.
                 </div>
-              </>
-            ) : (
-              <>
-                <div
-                  className="text-xs uppercase mb-2"
-                  style={{ color: C.neutral }}
-                >
-                  Agents on canvas
-                </div>
-                {drawerBoardCards.length === 0 ? (
-                  <div className="text-xs" style={{ color: C.neutral }}>
-                    No cards are currently on the canvas.
-                  </div>
-                ) : (
-                  <div className="space-y-2" style={{ maxHeight: 420, overflowY: "auto" }}>
-                    {drawerBoardCards.map((card) => (
-                      <button
-                        key={card.id}
-                        onClick={() => handleOpenBoardCardFromDrawer(card.id)}
-                        className="w-full text-left p-3 rounded"
-                        style={{
-                          background:
-                            selectedCardId === card.id
-                              ? "rgba(79,162,173,0.18)"
-                              : "transparent",
-                          border: `1px solid ${
-                            selectedCardId === card.id ? C.primary : C.border
-                          }`,
-                          color: C.text,
-                        }}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <div className="font-medium">{safeText(card.title || card.id)}</div>
-                            {card.subtitle && (
-                              <div className="opacity-60 text-xs" style={{ marginTop: 4 }}>
-                                {safeText(card.subtitle)}
-                              </div>
-                            )}
-                          </div>
-                          <div
-                            className="text-[11px]"
-                            style={{ color: selectedCardId === card.id ? C.primary : C.neutral }}
-                          >
-                            {safeText(card.runtimeBinding || "card")}
-                          </div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-            <div className="text-xs mt-4" style={{ color: C.neutral }}>
-              {mode === 'assist'
-                ? 'Assist projects are shipped product workspaces.'
-                : `Drawer items jump to the corresponding canvas card and open its editor in the right panel.`}
+              )}
             </div>
-          </div>
-        </Drawer>
-      )}
-      {openDrawer === "settings" && (
-        <Drawer title="Settings" onClose={() => setOpenDrawer(null)}>
-          <div className="text-sm" style={{ color: C.text }}>
-            No settings available yet.
-          </div>
-        </Drawer>
-      )}
-
-      {openDrawer === "admin" && (
-        <Drawer title="Admin" onClose={() => setOpenDrawer(null)}>
-          <div className="text-sm" style={{ color: C.text }}>
-            Admin controls placeholder.
           </div>
         </Drawer>
       )}
     </div>
   );
 }
-

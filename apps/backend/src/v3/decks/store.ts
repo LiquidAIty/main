@@ -6,8 +6,15 @@ import {
 } from '../blackboard';
 import type {
   AgentCardInstance,
+  AgentCardRuntimeOptions,
+  AgentCardRuntimeType,
   DeckDocument,
   DeckEdge,
+  DeckEdgeExecutionMode,
+  DeckEdgeMergeIntent,
+  DeckEdgeMetadata,
+  DeckEdgeRole,
+  DeckEdgeType,
   DeckRun,
   PromptTemplate,
   V3ProjectBlob,
@@ -41,6 +48,130 @@ function normalizeJson<TDefault>(value: unknown, fallback: TDefault): TDefault {
   return fallback;
 }
 
+function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'assistant_agent') return 'assistant_agent';
+  if (normalized === 'round_robin') return 'round_robin';
+  if (normalized === 'selector') return 'selector';
+  if (normalized === 'swarm') return 'swarm';
+  if (normalized === 'magentic_one') return 'magentic_one';
+  if (normalized === 'graph_flow') return 'graph_flow';
+  if (normalized === 'adapter') return 'adapter';
+  return null;
+}
+
+function normalizeEdgeType(value: unknown): DeckEdgeType {
+  return String(value || '').trim().toLowerCase() === 'magentic_option'
+    ? 'magentic_option'
+    : 'graph_flow';
+}
+
+const EDGE_ROLE_VALUES = new Set<DeckEdgeRole>([
+  'graph_execution',
+  'callable_route',
+  'reconcile_input',
+  'compatibility_legacy',
+]);
+
+const EDGE_EXECUTION_MODE_VALUES = new Set<DeckEdgeExecutionMode>([
+  'required',
+  'optional',
+  'conditional',
+]);
+
+const EDGE_MERGE_INTENT_VALUES = new Set<DeckEdgeMergeIntent>([
+  'all_inputs',
+  'any_input',
+  'first_success',
+  'summarize_all',
+  'select_best',
+  'manual_review',
+]);
+
+function cleanOptionalText(value: unknown): string | null {
+  const text = String(value || '').trim();
+  return text || null;
+}
+
+function cleanOptionalNumber(value: unknown): number | null {
+  if (value == null) return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
+  const normalized = Number(value);
+  return Number.isFinite(normalized) ? normalized : null;
+}
+
+function cleanOptionalBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+function normalizeDeckEdgeMetadata(value: unknown): DeckEdgeMetadata | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const normalized: DeckEdgeMetadata = {
+    role: EDGE_ROLE_VALUES.has(raw.role as DeckEdgeRole) ? (raw.role as DeckEdgeRole) : null,
+    executionMode: EDGE_EXECUTION_MODE_VALUES.has(raw.executionMode as DeckEdgeExecutionMode)
+      ? (raw.executionMode as DeckEdgeExecutionMode)
+      : null,
+    conditionType: cleanOptionalText(raw.conditionType),
+    conditionExpression: cleanOptionalText(raw.conditionExpression),
+    conditionLabel: cleanOptionalText(raw.conditionLabel),
+    priority: cleanOptionalNumber(raw.priority),
+    order: cleanOptionalNumber(raw.order),
+    weight: cleanOptionalNumber(raw.weight),
+    mergeIntent: EDGE_MERGE_INTENT_VALUES.has(raw.mergeIntent as DeckEdgeMergeIntent)
+      ? (raw.mergeIntent as DeckEdgeMergeIntent)
+      : null,
+    legacyCompatibility: cleanOptionalBoolean(raw.legacyCompatibility),
+  };
+  return Object.values(normalized).some((entry) => entry !== null) ? normalized : null;
+}
+
+function normalizeRuntimeOptions(value: unknown): AgentCardRuntimeOptions | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const provider =
+    raw.provider === 'openai' || raw.provider === 'openrouter' ? raw.provider : null;
+  const allowRepeatedSpeaker =
+    typeof raw.allowRepeatedSpeaker === 'boolean'
+      ? raw.allowRepeatedSpeaker
+      : raw.repeatedSpeakerBehavior === 'allow'
+        ? true
+        : raw.repeatedSpeakerBehavior === 'prevent' || raw.repeatedSpeakerBehavior === 'avoid'
+          ? false
+          : null;
+  const normalized: AgentCardRuntimeOptions = {
+    provider,
+    modelKey: typeof raw.modelKey === 'string' ? raw.modelKey.trim() || null : null,
+    temperature: Number.isFinite(Number(raw.temperature)) ? Number(raw.temperature) : null,
+    maxTokens: Number.isFinite(Number(raw.maxTokens)) ? Number(raw.maxTokens) : null,
+    streaming: raw.streaming === true ? true : null,
+    emitTeamEvents: raw.emitTeamEvents === true ? true : null,
+    executionMode:
+      raw.executionMode === 'swarm'
+        ? 'swarm'
+        : raw.executionMode === 'single'
+          ? 'single'
+          : null,
+    swarmMaxWorkers: Number.isFinite(Number(raw.swarmMaxWorkers))
+      ? Number(raw.swarmMaxWorkers)
+      : null,
+    swarmWorkerPromptTemplate:
+      typeof raw.swarmWorkerPromptTemplate === 'string'
+        ? raw.swarmWorkerPromptTemplate.trim() || null
+        : null,
+    useSocietyOfMindConsolidation:
+      raw.useSocietyOfMindConsolidation === true ? true : null,
+    maxTurns: Number.isFinite(Number(raw.maxTurns)) ? Number(raw.maxTurns) : null,
+    maxStalls: Number.isFinite(Number(raw.maxStalls)) ? Number(raw.maxStalls) : null,
+    finalAnswerPrompt:
+      typeof raw.finalAnswerPrompt === 'string' ? raw.finalAnswerPrompt.trim() || null : null,
+    selectorPrompt:
+      typeof raw.selectorPrompt === 'string' ? raw.selectorPrompt.trim() || null : null,
+    allowRepeatedSpeaker,
+  };
+  return normalized;
+}
+
 function normalizeDeckNode(value: unknown): AgentCardInstance | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Record<string, unknown>;
@@ -69,6 +200,9 @@ function normalizeDeckNode(value: unknown): AgentCardInstance | null {
     templateId: String(raw.templateId || '').trim(),
     prompt,
     runtimeBinding: resolveRuntimeBinding(raw.runtimeBinding, raw.id),
+    runtimeType: normalizeRuntimeType(raw.runtimeType) || (kind === 'agent' ? 'assistant_agent' : null),
+    runtimeOptions: normalizeRuntimeOptions(raw.runtimeOptions),
+    parentGraphId: typeof raw.parentGraphId === 'string' ? raw.parentGraphId.trim() || null : null,
     title: title || String(raw.id || '').trim(),
     subtitle,
     position,
@@ -81,10 +215,13 @@ function normalizeDeckNode(value: unknown): AgentCardInstance | null {
 function normalizeDeckEdge(value: unknown): DeckEdge | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Record<string, unknown>;
+  const metadata = normalizeDeckEdgeMetadata(raw.metadata);
   return {
     id: String(raw.id || '').trim(),
     source: String(raw.source || '').trim(),
     target: String(raw.target || '').trim(),
+    edgeType: normalizeEdgeType(raw.edgeType),
+    ...(metadata ? { metadata } : {}),
   };
 }
 

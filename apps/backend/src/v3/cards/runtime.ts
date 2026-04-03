@@ -1,9 +1,18 @@
+import { REPO_DEFAULT_MODEL_KEY, resolveModel, type Provider } from '../../llm/models.config';
 import { runLLM } from '../../llm/client';
-import { normalizeV3Blackboard, resolveRuntimeBinding } from '../blackboard';
+import { getTool, type Tool } from '../../agents/registry';
+import { mergeV3Blackboard, normalizeV3Blackboard, resolveRuntimeBinding } from '../blackboard';
+import {
+  buildGraphExecutionInputText,
+  createGraphExecutionScheduler,
+} from '../runtime/graphExecution';
 import type {
   AgentCardInstance,
+  AgentCardRuntimeType,
   AgentTemplate,
   CardRunResult,
+  DeckEdge,
+  DeckEdgeType,
   PromptTemplate,
   RuntimeBinding,
   V3Blackboard,
@@ -15,6 +24,47 @@ export type CardRuntimeContext = {
   promptTemplates?: PromptTemplate[];
   seed?: string;
   blackboard?: V3Blackboard | null;
+  projectId?: string;
+  deckId?: string;
+  deckName?: string;
+  allCards?: AgentCardInstance[];
+  allEdges?: DeckEdge[];
+  allTemplates?: AgentTemplate[];
+  allowVisibleAssistWorkflowExpansion?: boolean;
+};
+
+type ResolvedModelConfig = {
+  provider: Provider;
+  modelKey: string;
+  providerModelId: string;
+  temperature: number | null;
+  maxTokens: number | null;
+};
+
+type GraphExecutionStep = {
+  card: AgentCardInstance;
+  effectiveAgent: AgentTemplate;
+};
+
+type ResolvedAssistTool = {
+  configuredName: string;
+  toolId: string;
+  tool: Tool;
+};
+
+const PROMPT_DRIVEN_ASSIST_TOOL_IDS = new Set([
+  'openai',
+  'openai-agent',
+  'python',
+  'n8n',
+  'scraper',
+  'ui',
+  'mcp',
+]);
+
+const ASSIST_TOOL_ALIAS_MAP: Record<string, string> = {
+  openai_agent: 'openai-agent',
+  openaiagent: 'openai-agent',
 };
 
 function summarizeText(value: string | null | undefined, maxLength = 220): string {
@@ -23,9 +73,56 @@ function summarizeText(value: string | null | undefined, maxLength = 220): strin
   return text.length <= maxLength ? text : `${text.slice(0, maxLength - 3)}...`;
 }
 
+function normalizeEdgeType(value: unknown): DeckEdgeType {
+  return String(value || '').trim().toLowerCase() === 'magentic_option'
+    ? 'magentic_option'
+    : 'graph_flow';
+}
+
+function extractJsonObject(text: string): Record<string, unknown> | null {
+  const source = String(text || '').trim();
+  if (!source) return null;
+  const firstBrace = source.indexOf('{');
+  const lastBrace = source.lastIndexOf('}');
+  if (firstBrace < 0 || lastBrace <= firstBrace) return null;
+  try {
+    const parsed = JSON.parse(source.slice(firstBrace, lastBrace + 1));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function interpolateWorkerTemplate(template: string, workerIndex: number, workerCount: number): string {
+  return template
+    .replace(/\{workerIndex\}/g, String(workerIndex))
+    .replace(/\{workerCount\}/g, String(workerCount));
+}
+
 function formatCardRuntimeError(err: unknown): string {
   const debugMessage = String((err as any)?.message || err || 'card_run_failed').trim();
   const lower = debugMessage.toLowerCase();
+
+  if (
+    lower.includes('runtime_not_supported') ||
+    lower.includes('participant_runtime_not_supported') ||
+    lower.includes('participants_required') ||
+    lower.includes('participant_card_missing') ||
+    lower.includes('participant_card_invalid') ||
+    lower.includes('assistant_tool_') ||
+    lower.includes('assistant_swarm_') ||
+    lower.includes('assistant_empty_response') ||
+    lower.includes('magentic_callable_heads_required') ||
+    lower.includes('magentic_invalid_head_selection') ||
+    lower.includes('graph_flow_') ||
+    lower.includes('provider_model_mismatch') ||
+    lower.includes('model_not_configured') ||
+    lower.includes('magentic_model_not_approved')
+  ) {
+    return debugMessage;
+  }
 
   if (
     lower.includes('insufficient_quota') ||
@@ -52,8 +149,15 @@ function formatCardRuntimeError(err: unknown): string {
     return 'The configured model timed out before the card completed.';
   }
 
-  if (lower.includes('model') && (lower.includes('not found') || lower.includes('does not exist'))) {
+  if (
+    lower.includes('model') &&
+    (lower.includes('not found') || lower.includes('does not exist') || lower.includes('not configured'))
+  ) {
     return 'The configured model for this card is unavailable.';
+  }
+
+  if (lower.includes('autogen_orchestrator_http_') || lower.includes('autogen_orchestrator_unreachable')) {
+    return 'The team runtime sidecar could not complete this card right now.';
   }
 
   return 'The backend model call failed for this card.';
@@ -71,6 +175,95 @@ function buildJsonSchema(cardId: string, schema: Record<string, unknown>) {
     schema,
     strict: true,
   };
+}
+
+function normalizeProvider(value: unknown): Provider | null {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'openai' || normalized === 'openrouter') {
+    return normalized;
+  }
+  return null;
+}
+
+function coerceNumber(value: unknown, fallback: number | null = null): number | null {
+  if (value == null || value === '') return fallback;
+  const next = Number(value);
+  return Number.isFinite(next) ? next : fallback;
+}
+
+function resolveCardRuntimeType(card: AgentCardInstance): AgentCardRuntimeType {
+  return card.kind === 'agent'
+    ? ((card.runtimeType || 'assistant_agent') as AgentCardRuntimeType)
+    : 'assistant_agent';
+}
+
+function resolveCardSystemPrompt(card: AgentCardInstance, effectiveAgent: AgentTemplate): string {
+  return String(card.prompt || effectiveAgent.promptTemplate || '').trim();
+}
+
+function resolveModelConfig(
+  modelKeyRaw: unknown,
+  providerHintRaw: unknown,
+  temperatureRaw: unknown,
+  maxTokensRaw: unknown,
+  scope: string,
+): ResolvedModelConfig {
+  const providerHint = normalizeProvider(providerHintRaw);
+  const modelKey = String(modelKeyRaw || '').trim() || REPO_DEFAULT_MODEL_KEY;
+
+  if (modelKey.includes('/')) {
+    const provider = providerHint || 'openrouter';
+    if (provider !== 'openrouter') {
+      throw new Error(`${scope}_provider_model_mismatch: provider=${provider} model_key=${modelKey}`);
+    }
+    return {
+      provider,
+      modelKey,
+      providerModelId: modelKey,
+      temperature: coerceNumber(temperatureRaw, null),
+      maxTokens: coerceNumber(maxTokensRaw, null),
+    };
+  }
+
+  try {
+    const resolved = resolveModel(modelKey);
+    if (providerHint && providerHint !== resolved.provider) {
+      throw new Error(`${scope}_provider_model_mismatch: provider=${providerHint} model_key=${modelKey}`);
+    }
+    return {
+      provider: resolved.provider,
+      modelKey,
+      providerModelId: resolved.id,
+      temperature: coerceNumber(temperatureRaw, null),
+      maxTokens: coerceNumber(maxTokensRaw, null),
+    };
+  } catch (error: any) {
+    if (!providerHint) {
+      throw new Error(`${scope}_model_not_configured: ${modelKey}`);
+    }
+    return {
+      provider: providerHint,
+      modelKey,
+      providerModelId: modelKey,
+      temperature: coerceNumber(temperatureRaw, null),
+      maxTokens: coerceNumber(maxTokensRaw, null),
+    };
+  }
+}
+
+function resolveCardModelConfig(
+  card: AgentCardInstance,
+  effectiveAgent: AgentTemplate,
+  scope: string,
+): ResolvedModelConfig {
+  const runtimeOptions = card.runtimeOptions || {};
+  return resolveModelConfig(
+    runtimeOptions.modelKey ?? effectiveAgent.model,
+    runtimeOptions.provider ?? effectiveAgent.provider,
+    runtimeOptions.temperature ?? effectiveAgent.temperature,
+    runtimeOptions.maxTokens ?? effectiveAgent.maxTokens,
+    scope,
+  );
 }
 
 export function resolveEffectiveAgent(
@@ -97,6 +290,918 @@ export function resolveEffectiveAgent(
   };
 }
 
+function getConfiguredTools(effectiveAgent: AgentTemplate): string[] {
+  return Array.isArray(effectiveAgent.tools)
+    ? effectiveAgent.tools.map((tool) => String(tool || '').trim()).filter(Boolean)
+    : [];
+}
+
+function normalizeAssistToolName(value: unknown): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/_/g, '-');
+}
+
+function resolveConfiguredAssistTools(
+  card: AgentCardInstance,
+  effectiveAgent: AgentTemplate,
+): ResolvedAssistTool[] {
+  const seen = new Set<string>();
+
+  return getConfiguredTools(effectiveAgent).map((configuredName) => {
+    const normalizedConfiguredName = normalizeAssistToolName(configuredName);
+    const lookupName = ASSIST_TOOL_ALIAS_MAP[normalizedConfiguredName] || normalizedConfiguredName;
+    const tool = getTool(lookupName) || getTool(configuredName);
+    if (!tool) {
+      throw new Error(
+        `assistant_tool_not_supported: cardId=${card.id} tool=${configuredName}`,
+      );
+    }
+    if (!PROMPT_DRIVEN_ASSIST_TOOL_IDS.has(tool.id)) {
+      throw new Error(
+        `assistant_tool_structured_params_required: cardId=${card.id} tool=${configuredName} resolvedTool=${tool.id}`,
+      );
+    }
+    if (seen.has(tool.id)) {
+      return null;
+    }
+    seen.add(tool.id);
+    return {
+      configuredName,
+      toolId: tool.id,
+      tool,
+    };
+  }).filter((tool): tool is ResolvedAssistTool => Boolean(tool));
+}
+
+function resolveAssistExecutionMode(card: AgentCardInstance): 'single' | 'swarm' {
+  return card.runtimeOptions?.executionMode === 'swarm' ? 'swarm' : 'single';
+}
+
+function resolveCallableHeadCards(
+  card: AgentCardInstance,
+  context: CardRuntimeContext,
+): AgentCardInstance[] {
+  const nodeMap = new Map((context.allCards || []).map((node) => [node.id, node]));
+  const seen = new Set<string>();
+  return (context.allEdges || [])
+    .filter(
+      (edge) =>
+        edge.source === card.id &&
+        normalizeEdgeType(edge.edgeType) === 'magentic_option' &&
+        edge.target !== card.id,
+    )
+    .map((edge) => nodeMap.get(edge.target))
+    .filter((node): node is AgentCardInstance => Boolean(node && node.kind === 'agent'))
+    .filter((node) => !String(node.parentGraphId || '').trim())
+    .filter((node) => {
+      const runtimeType = resolveCardRuntimeType(node);
+      return runtimeType === 'assistant_agent' || runtimeType === 'graph_flow';
+    })
+    .filter((node) => {
+      if (seen.has(node.id)) return false;
+      seen.add(node.id);
+      return true;
+    });
+}
+
+function isTopLevelAssistCard(node: AgentCardInstance | undefined | null): node is AgentCardInstance {
+  return Boolean(
+    node &&
+      node.kind === 'agent' &&
+      resolveCardRuntimeType(node) === 'assistant_agent' &&
+      !String(node.parentGraphId || '').trim(),
+  );
+}
+
+function resolveGraphExecutionSteps(
+  card: AgentCardInstance,
+  context: CardRuntimeContext,
+): GraphExecutionStep[] {
+  const templates = context.allTemplates || [];
+  const cards = (context.allCards || []).filter(
+    (candidate) =>
+      candidate.kind === 'agent' && String(candidate.parentGraphId || '').trim() === card.id,
+  );
+
+  return cards.map((stepCard) => {
+    if (resolveCardRuntimeType(stepCard) !== 'assistant_agent') {
+      throw new Error(
+        `graph_flow_step_runtime_not_supported: graphCardId=${card.id} stepCardId=${stepCard.id} runtimeType=${resolveCardRuntimeType(stepCard)}`,
+      );
+    }
+    const effectiveStep = resolveEffectiveAgent(stepCard, templates);
+    if (!effectiveStep) {
+      throw new Error(
+        `graph_flow_step_template_missing: graphCardId=${card.id} stepCardId=${stepCard.id} templateId=${stepCard.templateId}`,
+      );
+    }
+    return {
+      card: stepCard,
+      effectiveAgent: effectiveStep,
+    };
+  });
+}
+
+function resolveVisibleAssistWorkflowSteps(
+  headCard: AgentCardInstance,
+  context: CardRuntimeContext,
+): GraphExecutionStep[] {
+  if (!isTopLevelAssistCard(headCard)) return [];
+
+  const nodeMap = new Map((context.allCards || []).map((node) => [node.id, node] as const));
+  const templates = context.allTemplates || [];
+  const queue = [headCard.id];
+  const visited = new Set<string>();
+  const orderedIds: string[] = [];
+
+  while (queue.length > 0) {
+    const cardId = queue.shift();
+    if (!cardId || visited.has(cardId)) continue;
+    visited.add(cardId);
+    const currentCard = nodeMap.get(cardId);
+    if (!isTopLevelAssistCard(currentCard)) continue;
+    orderedIds.push(currentCard.id);
+
+    (context.allEdges || []).forEach((edge) => {
+      if (normalizeEdgeType(edge.edgeType) !== 'graph_flow' || edge.source !== currentCard.id) return;
+      const nextCard = nodeMap.get(edge.target);
+      if (!isTopLevelAssistCard(nextCard)) return;
+      queue.push(nextCard.id);
+    });
+  }
+
+  return orderedIds.map((stepCardId) => {
+    const stepCard = nodeMap.get(stepCardId);
+    if (!stepCard || !isTopLevelAssistCard(stepCard)) {
+      throw new Error(
+        `assist_workflow_step_missing: headCardId=${headCard.id} stepCardId=${stepCardId}`,
+      );
+    }
+    const effectiveStep = resolveEffectiveAgent(stepCard, templates);
+    if (!effectiveStep) {
+      throw new Error(
+        `assist_workflow_step_template_missing: headCardId=${headCard.id} stepCardId=${stepCard.id} templateId=${stepCard.templateId}`,
+      );
+    }
+    return {
+      card: stepCard,
+      effectiveAgent: effectiveStep,
+    };
+  });
+}
+
+function resolveGraphFlowEdges(
+  card: AgentCardInstance,
+  context: CardRuntimeContext,
+  stepIds: Set<string>,
+): DeckEdge[] {
+  return (context.allEdges || []).filter(
+    (edge) =>
+      normalizeEdgeType(edge.edgeType) === 'graph_flow' &&
+      stepIds.has(edge.source) &&
+      stepIds.has(edge.target) &&
+      edge.source !== card.id &&
+      edge.target !== card.id,
+  );
+}
+
+function resolveVisibleAssistFlowEdges(
+  context: CardRuntimeContext,
+  stepIds: Set<string>,
+): DeckEdge[] {
+  return (context.allEdges || []).filter(
+    (edge) =>
+      normalizeEdgeType(edge.edgeType) === 'graph_flow' &&
+      stepIds.has(edge.source) &&
+      stepIds.has(edge.target),
+  );
+}
+
+async function consolidateCompositeOutput(
+  scope: string,
+  modelConfig: ResolvedModelConfig,
+  systemPrompt: string,
+  originalInput: string,
+  outputs: string[],
+): Promise<string> {
+  const consolidationSystem = [
+    systemPrompt,
+    'Internally consolidate multiple partial results into one clean user-facing answer.',
+    'Do not expose worker chatter, intermediate transcripts, or internal process notes.',
+    'Return one clean final answer only.',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const consolidationInput = [
+    'Original task:',
+    originalInput,
+    '',
+    'Internal results:',
+    outputs
+      .map((output, index) => `Result ${index + 1}:\n${String(output || '').trim()}`)
+      .join('\n\n'),
+  ]
+    .join('\n')
+    .trim();
+
+  const llmResult = await runLLM(consolidationInput, {
+    modelKey: modelConfig.modelKey,
+    provider: modelConfig.provider,
+    providerModelId: modelConfig.providerModelId,
+    temperature: modelConfig.temperature ?? undefined,
+    maxTokens: modelConfig.maxTokens ?? undefined,
+    system: consolidationSystem || undefined,
+    useResponsesApi: modelConfig.provider === 'openai',
+  });
+
+  const finalText = String(llmResult.text || '').trim();
+  if (!finalText) {
+    throw new Error(`${scope}_empty_consolidated_response`);
+  }
+  return finalText;
+}
+
+async function runCompositeWorkflow(
+  scopeCard: AgentCardInstance,
+  effectiveAgent: AgentTemplate,
+  runtimeInput: string,
+  context: CardRuntimeContext,
+  runtimeBinding: RuntimeBinding | null,
+  startedAt: string,
+  options: {
+    scope: 'graph_flow' | 'assist_workflow';
+    runtimeType: CardRunResult['runtimeType'];
+    steps: GraphExecutionStep[];
+    edges: DeckEdge[];
+    emptyOutputError: string;
+    stepFailurePrefix: string;
+    consolidationScopeId: string;
+  },
+): Promise<CardRunResult> {
+  const currentBlackboard = normalizeV3Blackboard(context.blackboard);
+  const scheduler = createGraphExecutionScheduler({
+    nodes: options.steps.map((step) => step.card),
+    edges: options.edges,
+  });
+  const stepMap = new Map(options.steps.map((step) => [step.card.id, step] as const));
+  const outputsByCardId = new Map<string, string>();
+  let compositeBlackboard = currentBlackboard;
+  let compositeBlackboardWrite = normalizeV3Blackboard(null);
+  let executedStepCount = 0;
+
+  while (true) {
+    const event = scheduler.next();
+    if (!event) break;
+    if (event.type === 'skipped') continue;
+
+    const step = stepMap.get(event.card.id);
+    if (!step) {
+      throw new Error(`${options.scope}_step_missing: cardId=${scopeCard.id} stepCardId=${event.card.id}`);
+    }
+
+    const stepInput = buildGraphExecutionInputText({
+      card: step.card,
+      routeInfo: event.routeInfo,
+      isStart: event.isStart,
+      baseInput: runtimeInput,
+    });
+    const stepResult = await runCardWithContract(step.card, step.effectiveAgent, stepInput, {
+      ...context,
+      userInput: stepInput,
+      previousOutput: '',
+      blackboard: compositeBlackboard,
+      allowVisibleAssistWorkflowExpansion: false,
+    });
+    if (stepResult.status !== 'success' || !stepResult.output) {
+      throw new Error(
+        stepResult.error ||
+          `${options.stepFailurePrefix}: cardId=${scopeCard.id} stepCardId=${step.card.id}`,
+      );
+    }
+
+    executedStepCount += 1;
+    outputsByCardId.set(step.card.id, stepResult.output);
+    if (stepResult.blackboardWrite) {
+      compositeBlackboard = mergeV3Blackboard(compositeBlackboard, stepResult.blackboardWrite);
+      compositeBlackboardWrite = mergeV3Blackboard(compositeBlackboardWrite, stepResult.blackboardWrite);
+    }
+    scheduler.markSuccess(step.card.id, stepResult.output, compositeBlackboard);
+  }
+
+  const unresolvedStepIds = scheduler.getUnresolvedNodeIds();
+  if (unresolvedStepIds.length > 0) {
+    throw new Error(
+      `${options.scope}_cycle_or_unresolved_dependency: cardId=${scopeCard.id} unresolved=${unresolvedStepIds.join(',')}`,
+    );
+  }
+
+  const terminalOutputs = scheduler.getTerminalExecutedNodeIds()
+    .map((stepId) => String(outputsByCardId.get(stepId) || '').trim())
+    .filter(Boolean);
+  if (terminalOutputs.length === 0) {
+    throw new Error(options.emptyOutputError);
+  }
+
+  const prompt = resolveCardSystemPrompt(scopeCard, effectiveAgent);
+  const modelConfig = resolveCardModelConfig(scopeCard, effectiveAgent, `card_${scopeCard.id}`);
+  const useConsolidation =
+    scopeCard.runtimeOptions?.useSocietyOfMindConsolidation === true ||
+    executedStepCount > 1 ||
+    terminalOutputs.length > 1;
+  const finalText = useConsolidation
+    ? await consolidateCompositeOutput(
+        options.consolidationScopeId,
+        modelConfig,
+        prompt,
+        runtimeInput,
+        terminalOutputs,
+      )
+    : terminalOutputs[0];
+
+  return {
+    output: finalText,
+    status: 'success',
+    startedAt,
+    endedAt: new Date().toISOString(),
+    runtimeBinding,
+    runtimeType: options.runtimeType,
+    seed: context.seed,
+    inputSummary: summarizeText(runtimeInput),
+    outputSummary: summarizeText(finalText),
+    blackboardWrite:
+      Object.keys(compositeBlackboardWrite.store || {}).length ||
+      compositeBlackboardWrite.current_goal ||
+      compositeBlackboardWrite.next_move ||
+      compositeBlackboardWrite.what_matters_now.length ||
+      compositeBlackboardWrite.open_questions.length ||
+      compositeBlackboardWrite.findings.length ||
+      compositeBlackboardWrite.suggestions.length ||
+      compositeBlackboardWrite.next_options.length
+        ? compositeBlackboardWrite
+        : null,
+    blackboard: compositeBlackboard,
+  };
+}
+
+async function runAssistantModelText(
+  card: AgentCardInstance,
+  effectiveAgent: AgentTemplate,
+  modelConfig: ResolvedModelConfig,
+  systemPrompt: string,
+  runtimeInput: string,
+  allowStructuredOutput: boolean,
+): Promise<string> {
+  const llmResult = await runLLM(runtimeInput, {
+    modelKey: modelConfig.modelKey,
+    provider: modelConfig.provider,
+    providerModelId: modelConfig.providerModelId,
+    temperature: modelConfig.temperature ?? undefined,
+    maxTokens: modelConfig.maxTokens ?? undefined,
+    system: systemPrompt || undefined,
+    jsonMode: allowStructuredOutput && Boolean(effectiveAgent.ioSchema),
+    jsonSchema:
+      allowStructuredOutput && effectiveAgent.ioSchema && typeof effectiveAgent.ioSchema === 'object'
+        ? buildJsonSchema(card.id, effectiveAgent.ioSchema)
+        : undefined,
+    useResponsesApi: modelConfig.provider === 'openai',
+  });
+
+  const finalText = String(llmResult.text || '').trim();
+  if (!finalText) {
+    throw new Error(`assistant_empty_response: cardId=${card.id}`);
+  }
+  return finalText;
+}
+
+function buildPromptDrivenToolParams(
+  card: AgentCardInstance,
+  tool: ResolvedAssistTool,
+  runtimeInput: string,
+  currentBlackboard: V3Blackboard,
+  context: Pick<CardRuntimeContext, 'projectId' | 'deckId'>,
+): Record<string, unknown> {
+  return {
+    prompt: runtimeInput,
+    q: runtimeInput,
+    query: runtimeInput,
+    task: runtimeInput,
+    input: runtimeInput,
+    tool: tool.toolId,
+    cardId: card.id,
+    projectId: context.projectId || null,
+    deckId: context.deckId || null,
+    blackboard: currentBlackboard,
+  };
+}
+
+function extractToolFailure(result: unknown): string | null {
+  const payload = result as any;
+  if (!payload) return 'tool returned no result';
+  if (payload.ok === false) {
+    return String(payload.error || payload.message || 'tool returned ok=false').trim();
+  }
+
+  const status = String(payload.status || '').trim().toLowerCase();
+  if (status && status !== 'ok' && status !== 'completed') {
+    const eventMessage = Array.isArray(payload.events)
+      ? payload.events
+          .map((event: any) => String(event?.data?.message || '').trim())
+          .filter(Boolean)
+          .join('; ')
+      : '';
+    return eventMessage || String(payload.error || payload.message || `status=${status}`).trim();
+  }
+  return null;
+}
+
+function serializeToolResult(result: unknown): string {
+  const payload = result as any;
+  const directCandidates = [
+    payload?.output,
+    payload?.text,
+    payload?.content,
+    payload?.result,
+  ];
+  for (const candidate of directCandidates) {
+    const text = String(candidate || '').trim();
+    if (text) return text;
+  }
+
+  if (Array.isArray(payload?.artifacts) && payload.artifacts.length > 0) {
+    const artifactText = payload.artifacts
+      .map((artifact: any, index: number) => {
+        const content = artifact?.content ?? artifact?.data ?? artifact;
+        if (content == null) return '';
+        if (typeof content === 'string') return content.trim();
+        try {
+          return `Artifact ${index + 1}: ${JSON.stringify(content)}`;
+        } catch {
+          return `Artifact ${index + 1}: ${String(content)}`;
+        }
+      })
+      .filter(Boolean)
+      .join('\n\n');
+    if (artifactText) return artifactText;
+  }
+
+  if (Array.isArray(payload?.events) && payload.events.length > 0) {
+    const eventText = payload.events
+      .map((event: any) => String(event?.data?.message || '').trim())
+      .filter(Boolean)
+      .join('\n');
+    if (eventText) return eventText;
+  }
+
+  try {
+    return JSON.stringify(payload);
+  } catch {
+    return String(payload || '').trim();
+  }
+}
+
+async function runToolEnabledAssistantText(
+  card: AgentCardInstance,
+  effectiveAgent: AgentTemplate,
+  runtimeInput: string,
+  currentBlackboard: V3Blackboard,
+  context: Pick<CardRuntimeContext, 'projectId' | 'deckId'>,
+  systemPrompt: string,
+  modelConfig: ResolvedModelConfig,
+  allowStructuredOutput: boolean,
+): Promise<string> {
+  const resolvedTools = resolveConfiguredAssistTools(card, effectiveAgent);
+  if (resolvedTools.length === 0) {
+    throw new Error(`assistant_tool_not_supported: cardId=${card.id} tool=missing`);
+  }
+
+  const toolOutputs: string[] = [];
+  for (const resolvedTool of resolvedTools) {
+    let toolResult: unknown;
+    try {
+      toolResult = await resolvedTool.tool.run(
+        buildPromptDrivenToolParams(card, resolvedTool, runtimeInput, currentBlackboard, context),
+      );
+    } catch (error: any) {
+      throw new Error(
+        `assistant_tool_call_failed: cardId=${card.id} tool=${resolvedTool.configuredName} message=${String(
+          error?.message || error || 'tool_call_failed',
+        ).trim()}`,
+      );
+    }
+
+    const failure = extractToolFailure(toolResult);
+    if (failure) {
+      throw new Error(
+        `assistant_tool_call_failed: cardId=${card.id} tool=${resolvedTool.configuredName} message=${failure}`,
+      );
+    }
+
+    const toolText = serializeToolResult(toolResult).trim();
+    if (!toolText) {
+      throw new Error(
+        `assistant_tool_empty_result: cardId=${card.id} tool=${resolvedTool.configuredName}`,
+      );
+    }
+    toolOutputs.push(`Tool ${resolvedTool.toolId}:\n${toolText}`);
+  }
+
+  const synthesisSystem = [
+    systemPrompt,
+    'You are producing the final user-facing answer for this assist card.',
+    'Use the tool results below as working context.',
+    'Do not mention internal tool routing, raw tool payloads, or internal process notes.',
+    'Return one clean answer only.',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  const synthesisInput = [
+    'Original task:',
+    runtimeInput,
+    '',
+    'Tool results:',
+    toolOutputs.join('\n\n'),
+  ]
+    .join('\n')
+    .trim();
+
+  return runAssistantModelText(
+    card,
+    effectiveAgent,
+    modelConfig,
+    synthesisSystem,
+    synthesisInput,
+    allowStructuredOutput,
+  );
+}
+
+async function runAssistantSingleCard(
+  card: AgentCardInstance,
+  effectiveAgent: AgentTemplate,
+  runtimeInput: string,
+  currentBlackboard: V3Blackboard,
+  runtimeBinding: RuntimeBinding | null,
+  context: Pick<CardRuntimeContext, 'projectId' | 'deckId'>,
+  startedAt: string,
+): Promise<CardRunResult> {
+  const tools = getConfiguredTools(effectiveAgent);
+  const prompt = resolveCardSystemPrompt(card, effectiveAgent);
+  const modelConfig = resolveCardModelConfig(card, effectiveAgent, `card_${card.id}`);
+  const finalText =
+    tools.length > 0
+      ? await runToolEnabledAssistantText(
+          card,
+          effectiveAgent,
+          runtimeInput,
+          currentBlackboard,
+          context,
+          prompt,
+          modelConfig,
+          true,
+        )
+      : await runAssistantModelText(
+          card,
+          effectiveAgent,
+          modelConfig,
+          prompt,
+          runtimeInput,
+          true,
+        );
+
+  return {
+    output: finalText,
+    status: 'success',
+    startedAt,
+    endedAt: new Date().toISOString(),
+    runtimeBinding,
+    runtimeType: 'assistant_agent',
+    seed: undefined,
+    inputSummary: summarizeText(runtimeInput),
+    outputSummary: summarizeText(finalText),
+    blackboardWrite: null,
+    blackboard: currentBlackboard,
+  };
+}
+
+async function runAssistantSwarmCard(
+  card: AgentCardInstance,
+  effectiveAgent: AgentTemplate,
+  runtimeInput: string,
+  currentBlackboard: V3Blackboard,
+  runtimeBinding: RuntimeBinding | null,
+  context: Pick<CardRuntimeContext, 'projectId' | 'deckId'>,
+  startedAt: string,
+): Promise<CardRunResult> {
+  const tools = getConfiguredTools(effectiveAgent);
+  const prompt = resolveCardSystemPrompt(card, effectiveAgent);
+  const runtimeOptions = card.runtimeOptions || {};
+  const modelConfig = resolveCardModelConfig(card, effectiveAgent, `card_${card.id}`);
+  const workerCount = Math.max(2, Math.min(Number(runtimeOptions.swarmMaxWorkers) || 3, 6));
+  const workerTemplate =
+    String(runtimeOptions.swarmWorkerPromptTemplate || '').trim() ||
+    'You are temporary swarm worker {workerIndex} of {workerCount}. Produce one concise partial answer from a distinct useful angle. Avoid repetition.';
+  const workerOutputs: string[] = [];
+
+  for (let index = 0; index < workerCount; index += 1) {
+    const workerSystem = [
+      prompt,
+      interpolateWorkerTemplate(workerTemplate, index + 1, workerCount),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    const workerText = tools.length > 0
+      ? await runToolEnabledAssistantText(
+          card,
+          effectiveAgent,
+          runtimeInput,
+          currentBlackboard,
+          context,
+          workerSystem,
+          modelConfig,
+          false,
+        )
+      : await runAssistantModelText(
+          card,
+          effectiveAgent,
+          modelConfig,
+          workerSystem,
+          runtimeInput,
+          false,
+        );
+    if (workerText) workerOutputs.push(workerText);
+  }
+
+  if (workerOutputs.length === 0) {
+    throw new Error(`assistant_swarm_empty_worker_output: cardId=${card.id}`);
+  }
+
+  const finalText = await consolidateCompositeOutput(
+    `assistant_swarm_${card.id}`,
+    modelConfig,
+    prompt,
+    runtimeInput,
+    workerOutputs,
+  );
+
+  return {
+    output: finalText,
+    status: 'success',
+    startedAt,
+    endedAt: new Date().toISOString(),
+    runtimeBinding,
+    runtimeType: 'assistant_agent',
+    seed: undefined,
+    inputSummary: summarizeText(runtimeInput),
+    outputSummary: summarizeText(finalText),
+    blackboardWrite: null,
+    blackboard: currentBlackboard,
+  };
+}
+
+async function runAssistantLeafCard(
+  card: AgentCardInstance,
+  effectiveAgent: AgentTemplate,
+  runtimeInput: string,
+  currentBlackboard: V3Blackboard,
+  context: Pick<CardRuntimeContext, 'projectId' | 'deckId'>,
+  runtimeBinding: RuntimeBinding | null,
+  startedAt: string,
+): Promise<CardRunResult> {
+  return resolveAssistExecutionMode(card) === 'swarm'
+    ? runAssistantSwarmCard(
+        card,
+        effectiveAgent,
+        runtimeInput,
+        currentBlackboard,
+        runtimeBinding,
+        context,
+        startedAt,
+      )
+    : runAssistantSingleCard(
+        card,
+        effectiveAgent,
+        runtimeInput,
+        currentBlackboard,
+        runtimeBinding,
+        context,
+        startedAt,
+      );
+}
+
+async function runAssistantWorkflowCard(
+  card: AgentCardInstance,
+  effectiveAgent: AgentTemplate,
+  runtimeInput: string,
+  context: CardRuntimeContext,
+  runtimeBinding: RuntimeBinding | null,
+  startedAt: string,
+): Promise<CardRunResult> {
+  const currentBlackboard = normalizeV3Blackboard(context.blackboard);
+  const workflowSteps = resolveVisibleAssistWorkflowSteps(card, context);
+  if (workflowSteps.length <= 1) {
+    return runAssistantLeafCard(
+      card,
+      effectiveAgent,
+      runtimeInput,
+      currentBlackboard,
+      context,
+      runtimeBinding,
+      startedAt,
+    );
+  }
+
+  const stepIdSet = new Set(workflowSteps.map((step) => step.card.id));
+  const workflowEdges = resolveVisibleAssistFlowEdges(context, stepIdSet);
+  return runCompositeWorkflow(card, effectiveAgent, runtimeInput, context, runtimeBinding, startedAt, {
+    scope: 'assist_workflow',
+    runtimeType: 'assistant_agent',
+    steps: workflowSteps,
+    edges: workflowEdges,
+    emptyOutputError: `assist_workflow_empty_output: headCardId=${card.id}`,
+    stepFailurePrefix: 'assist_workflow_step_failed',
+    consolidationScopeId: `assist_workflow_${card.id}`,
+  });
+}
+
+async function runAssistantAgentCard(
+  card: AgentCardInstance,
+  effectiveAgent: AgentTemplate,
+  runtimeInput: string,
+  currentBlackboard: V3Blackboard,
+  context: CardRuntimeContext,
+  runtimeBinding: RuntimeBinding | null,
+  startedAt: string,
+): Promise<CardRunResult> {
+  if (context.allowVisibleAssistWorkflowExpansion && isTopLevelAssistCard(card)) {
+    return runAssistantWorkflowCard(
+      card,
+      effectiveAgent,
+      runtimeInput,
+      {
+        ...context,
+        blackboard: currentBlackboard,
+      },
+      runtimeBinding,
+      startedAt,
+    );
+  }
+
+  return runAssistantLeafCard(
+    card,
+    effectiveAgent,
+    runtimeInput,
+    currentBlackboard,
+    context,
+    runtimeBinding,
+    startedAt,
+  );
+}
+
+async function runGraphFlowCard(
+  card: AgentCardInstance,
+  effectiveAgent: AgentTemplate,
+  runtimeInput: string,
+  context: CardRuntimeContext,
+  runtimeBinding: RuntimeBinding | null,
+  startedAt: string,
+): Promise<CardRunResult> {
+  const graphSteps = resolveGraphExecutionSteps(card, context);
+  if (graphSteps.length === 0) {
+    throw new Error(`graph_flow_steps_required: graphCardId=${card.id}`);
+  }
+  const stepIdSet = new Set(graphSteps.map((step) => step.card.id));
+  const graphEdges = resolveGraphFlowEdges(card, context, stepIdSet);
+  return runCompositeWorkflow(card, effectiveAgent, runtimeInput, context, runtimeBinding, startedAt, {
+    scope: 'graph_flow',
+    runtimeType: 'graph_flow',
+    steps: graphSteps,
+    edges: graphEdges,
+    emptyOutputError: `graph_flow_empty_output: graphCardId=${card.id}`,
+    stepFailurePrefix: 'graph_flow_step_failed',
+    consolidationScopeId: `graph_flow_${card.id}`,
+  });
+}
+
+async function runMagenticCard(
+  card: AgentCardInstance,
+  effectiveAgent: AgentTemplate,
+  runtimeInput: string,
+  context: CardRuntimeContext,
+  runtimeBinding: RuntimeBinding | null,
+  startedAt: string,
+): Promise<CardRunResult> {
+  const currentBlackboard = normalizeV3Blackboard(context.blackboard);
+  const callableHeads = resolveCallableHeadCards(card, context);
+  if (callableHeads.length === 0) {
+    throw new Error(`magentic_callable_heads_required: cardId=${card.id}`);
+  }
+
+  const modelConfig = resolveCardModelConfig(card, effectiveAgent, `card_${card.id}`);
+  const prompt = resolveCardSystemPrompt(card, effectiveAgent);
+  const chooserSchema = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      selectedCardId: { type: ['string', 'null'] },
+      directResponseText: { type: ['string', 'null'] },
+    },
+  };
+  const chooserSystem = [
+    prompt,
+    'You are the top-level orchestrator for this deck run.',
+    'Choose exactly one callable head card to run next, or answer directly if no head should be called.',
+    'Return JSON only with keys selectedCardId and directResponseText.',
+    'Set exactly one of those keys to a non-empty value.',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  const chooserInput = JSON.stringify(
+    {
+      userText: runtimeInput,
+      callableHeads: callableHeads.map((head) => ({
+        cardId: head.id,
+        title: head.title,
+        runtimeType: resolveCardRuntimeType(head),
+      })),
+    },
+    null,
+    2,
+  );
+  const chooserResult = await runLLM(chooserInput, {
+    modelKey: modelConfig.modelKey,
+    provider: modelConfig.provider,
+    providerModelId: modelConfig.providerModelId,
+    temperature: modelConfig.temperature ?? undefined,
+    maxTokens: modelConfig.maxTokens ?? undefined,
+    system: chooserSystem || undefined,
+    jsonMode: true,
+    jsonSchema: buildJsonSchema(card.id, chooserSchema),
+    useResponsesApi: modelConfig.provider === 'openai',
+  });
+
+  const parsed = extractJsonObject(chooserResult.text || '');
+  const directResponseText = String(parsed?.directResponseText || '').trim();
+  const selectedCardId = String(parsed?.selectedCardId || '').trim();
+
+  if (directResponseText) {
+    return {
+      output: directResponseText,
+      status: 'success',
+      startedAt,
+      endedAt: new Date().toISOString(),
+      runtimeBinding,
+      runtimeType: 'magentic_one',
+      seed: context.seed,
+      inputSummary: summarizeText(runtimeInput),
+      outputSummary: summarizeText(directResponseText),
+      blackboardWrite: null,
+      blackboard: currentBlackboard,
+    };
+  }
+
+  const selectedHead = callableHeads.find((head) => head.id === selectedCardId);
+  if (!selectedHead) {
+    throw new Error(`magentic_invalid_head_selection: cardId=${card.id} selectedCardId=${selectedCardId || 'missing'}`);
+  }
+  const templates = context.allTemplates || [];
+  const selectedEffectiveAgent = resolveEffectiveAgent(selectedHead, templates);
+  if (!selectedEffectiveAgent) {
+    throw new Error(
+      `magentic_head_template_missing: cardId=${card.id} selectedCardId=${selectedHead.id} templateId=${selectedHead.templateId}`,
+    );
+  }
+  const selectedResult = await runCardWithContract(selectedHead, selectedEffectiveAgent, runtimeInput, {
+    ...context,
+    userInput: runtimeInput,
+    previousOutput: '',
+    blackboard: currentBlackboard,
+    allowVisibleAssistWorkflowExpansion: resolveCardRuntimeType(selectedHead) === 'assistant_agent',
+  });
+  if (selectedResult.status !== 'success') {
+    throw new Error(
+      selectedResult.error ||
+        `magentic_selected_head_failed: cardId=${card.id} selectedCardId=${selectedHead.id}`,
+    );
+  }
+
+  return {
+    output: selectedResult.output,
+    status: 'success',
+    startedAt,
+    endedAt: new Date().toISOString(),
+    runtimeBinding,
+    runtimeType: 'magentic_one',
+    seed: context.seed,
+    inputSummary: summarizeText(runtimeInput),
+    outputSummary: summarizeText(selectedResult.output),
+    blackboardWrite: selectedResult.blackboardWrite,
+    blackboard: selectedResult.blackboard ?? currentBlackboard,
+  };
+}
+
 export async function runCardWithContract(
   card: AgentCardInstance,
   effectiveAgent: AgentTemplate,
@@ -107,35 +1212,46 @@ export async function runCardWithContract(
   const runtimeBinding: RuntimeBinding | null = resolveRuntimeBinding(card.runtimeBinding, card.id);
   const currentBlackboard = normalizeV3Blackboard(context.blackboard);
   const runtimeInput = buildRuntimeInput(input, context);
-  const prompt = String(card.prompt || '').trim();
+  const runtimeType = resolveCardRuntimeType(card);
 
   try {
-    const llmResult = await runLLM(runtimeInput, {
-      modelKey: effectiveAgent.model || undefined,
-      provider: effectiveAgent.provider || undefined,
-      temperature: effectiveAgent.temperature ?? undefined,
-      maxTokens: effectiveAgent.maxTokens ?? undefined,
-      system: prompt || undefined,
-      jsonMode: Boolean(effectiveAgent.ioSchema),
-      jsonSchema:
-        effectiveAgent.ioSchema && typeof effectiveAgent.ioSchema === 'object'
-          ? buildJsonSchema(card.id, effectiveAgent.ioSchema)
-          : undefined,
-      useResponsesApi: effectiveAgent.provider === 'openai',
-    });
-
-    return {
-      output: llmResult.text,
-      status: 'success',
-      startedAt,
-      endedAt: new Date().toISOString(),
-      runtimeBinding,
-      seed: context.seed,
-      inputSummary: summarizeText(runtimeInput),
-      outputSummary: summarizeText(llmResult.text),
-      blackboardWrite: null,
-      blackboard: currentBlackboard,
-    };
+    switch (runtimeType) {
+      case 'assistant_agent':
+        return await runAssistantAgentCard(
+          card,
+          effectiveAgent,
+          runtimeInput,
+          currentBlackboard,
+          context,
+          runtimeBinding,
+          startedAt,
+        );
+      case 'magentic_one':
+        return await runMagenticCard(
+          card,
+          effectiveAgent,
+          runtimeInput,
+          context,
+          runtimeBinding,
+          startedAt,
+        );
+      case 'graph_flow':
+        return await runGraphFlowCard(
+          card,
+          effectiveAgent,
+          runtimeInput,
+          context,
+          runtimeBinding,
+          startedAt,
+        );
+      case 'selector':
+      case 'round_robin':
+      case 'swarm':
+      case 'adapter':
+        throw new Error(`team_runtime_not_supported: runtimeType=${runtimeType} cardId=${card.id}`);
+      default:
+        throw new Error(`team_runtime_not_supported: runtimeType=${runtimeType} cardId=${card.id}`);
+    }
   } catch (err: any) {
     return {
       output: null,
@@ -144,6 +1260,7 @@ export async function runCardWithContract(
       startedAt,
       endedAt: new Date().toISOString(),
       runtimeBinding,
+      runtimeType,
       seed: context.seed,
       inputSummary: summarizeText(runtimeInput),
       outputSummary: summarizeText(String(err?.message || err || 'card_run_failed')),

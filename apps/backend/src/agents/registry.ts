@@ -25,7 +25,7 @@ function isTool(x: any): x is Tool {
   return !!x && typeof x.id === 'string' && typeof x.run === 'function';
 }
 
-const TOOL_LIST: Tool[] = [
+const TOOL_LIST = [
   mcpTool,
   openaiTool,
   openaiAgentTool,
@@ -35,7 +35,7 @@ const TOOL_LIST: Tool[] = [
   scraperTool,
   memoryTool,
   uiTool,
-].filter(isTool);
+].filter(isTool) as Tool[];
 
 export function listTools(): Tool[] {
   return TOOL_LIST.filter(t => t.enabled ?? true);

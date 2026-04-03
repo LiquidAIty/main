@@ -1,3 +1,8 @@
+# ARCHIVED
+
+This file is retained for historical reference only.
+It is not the active architecture plan.
+
 # LIQUIDAIty — PROJECT FULL SCOPE (v0)
 
 ## Status

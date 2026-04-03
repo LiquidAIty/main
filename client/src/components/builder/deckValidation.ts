@@ -1,4 +1,13 @@
-import type { AgentCardInstance, DeckDocument, DeckEdge } from '../../types/agentgraph';
+import type {
+  AgentCardInstance,
+  DeckDocument,
+  DeckEdge,
+  DeckEdgeExecutionMode,
+  DeckEdgeMergeIntent,
+  DeckEdgeMetadata,
+  DeckEdgeRole,
+  DeckEdgeType,
+} from '../../types/agentgraph';
 
 export type DeckValidationIssueLevel = 'error' | 'warning';
 
@@ -34,8 +43,85 @@ export type DeckValidationResult = {
   };
 };
 
+const EDGE_ROLE_VALUES = new Set<DeckEdgeRole>([
+  'graph_execution',
+  'callable_route',
+  'reconcile_input',
+  'compatibility_legacy',
+]);
+
+const EDGE_EXECUTION_MODE_VALUES = new Set<DeckEdgeExecutionMode>([
+  'required',
+  'optional',
+  'conditional',
+]);
+
+const EDGE_MERGE_INTENT_VALUES = new Set<DeckEdgeMergeIntent>([
+  'all_inputs',
+  'any_input',
+  'first_success',
+  'summarize_all',
+  'select_best',
+  'manual_review',
+]);
+
+function cleanOptionalText(value: unknown): string | null {
+  const text = String(value || '').trim();
+  return text || null;
+}
+
+function cleanOptionalNumber(value: unknown): number | null {
+  if (value == null) return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
+  const normalized = Number(value);
+  return Number.isFinite(normalized) ? normalized : null;
+}
+
+function cleanOptionalBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+export function normalizeDeckEdgeMetadata(value: unknown): DeckEdgeMetadata | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const normalized: DeckEdgeMetadata = {
+    role: EDGE_ROLE_VALUES.has(raw.role as DeckEdgeRole) ? (raw.role as DeckEdgeRole) : null,
+    executionMode: EDGE_EXECUTION_MODE_VALUES.has(raw.executionMode as DeckEdgeExecutionMode)
+      ? (raw.executionMode as DeckEdgeExecutionMode)
+      : null,
+    conditionType: cleanOptionalText(raw.conditionType),
+    conditionExpression: cleanOptionalText(raw.conditionExpression),
+    conditionLabel: cleanOptionalText(raw.conditionLabel),
+    priority: cleanOptionalNumber(raw.priority),
+    order: cleanOptionalNumber(raw.order),
+    weight: cleanOptionalNumber(raw.weight),
+    mergeIntent: EDGE_MERGE_INTENT_VALUES.has(raw.mergeIntent as DeckEdgeMergeIntent)
+      ? (raw.mergeIntent as DeckEdgeMergeIntent)
+      : null,
+    legacyCompatibility: cleanOptionalBoolean(raw.legacyCompatibility),
+  };
+  const hasAnyValue = Object.values(normalized).some((entry) => entry !== null);
+  return hasAnyValue ? normalized : null;
+}
+
+export function buildDefaultDeckEdgeMetadata(
+  edgeType: DeckEdgeType,
+  options: { legacyCompatibility?: boolean } = {},
+): DeckEdgeMetadata | null {
+  return normalizeDeckEdgeMetadata({
+    role: edgeType === 'magentic_option' ? 'callable_route' : 'graph_execution',
+    executionMode: edgeType === 'graph_flow' ? 'required' : null,
+    legacyCompatibility: options.legacyCompatibility === true ? true : null,
+  });
+}
+
 export function sanitizeDeckEdges(value: unknown): DeckEdge[] {
   if (!Array.isArray(value)) return [];
+
+  const normalizeEdgeType = (edgeType: unknown): DeckEdge['edgeType'] =>
+    String(edgeType || '').trim().toLowerCase() === 'magentic_option'
+      ? 'magentic_option'
+      : 'graph_flow';
 
   return value
     .filter(
@@ -48,22 +134,36 @@ export function sanitizeDeckEdges(value: unknown): DeckEdge[] {
             typeof (edge as DeckEdge).target === 'string',
         ),
     )
-    .map((edge) => ({
-      id: String(edge.id || '').trim(),
-      source: String(edge.source || '').trim(),
-      target: String(edge.target || '').trim(),
-    }))
+    .map((edge) => {
+      const metadata = normalizeDeckEdgeMetadata((edge as DeckEdge).metadata);
+      return {
+        id: String(edge.id || '').trim(),
+        source: String(edge.source || '').trim(),
+        target: String(edge.target || '').trim(),
+        edgeType: normalizeEdgeType((edge as DeckEdge).edgeType),
+        ...(metadata ? { metadata } : {}),
+      };
+    })
     .filter((edge) => edge.id && edge.source && edge.target);
 }
 
 function isRunnableNode(node: AgentCardInstance | undefined | null): boolean {
-  return Boolean(node && node.kind !== 'blackboard');
+  return Boolean(node && node.kind !== 'blackboard' && !String(node.parentGraphId || '').trim());
 }
 
-export function buildDeckEdgeIdentityKey(edge: Pick<DeckEdge, 'source' | 'target'>): string {
+function normalizeEdgeType(value: unknown): DeckEdgeType {
+  return String(value || '').trim().toLowerCase() === 'magentic_option'
+    ? 'magentic_option'
+    : 'graph_flow';
+}
+
+export function buildDeckEdgeIdentityKey(
+  edge: Pick<DeckEdge, 'source' | 'target' | 'edgeType'>,
+): string {
   return [
     String(edge.source || '').trim(),
     String(edge.target || '').trim(),
+    normalizeEdgeType(edge.edgeType),
   ].join('::');
 }
 
@@ -122,6 +222,7 @@ export function validateDeckDocument(
     const edgeKey = buildDeckEdgeIdentityKey({
       source: sourceId,
       target: targetId,
+      edgeType: edge.edgeType,
     });
 
     if (edgeIdentityMap.has(edgeKey)) {
@@ -145,9 +246,14 @@ export function validateDeckDocument(
   document.nodes
     .filter((node) => isRunnableNode(node))
     .forEach((node) => incomingCounts.set(node.id, 0));
+  const callableTargets = new Set<string>();
   validEdges.forEach((edge) => {
+    if (edge.edgeType === 'magentic_option') {
+      callableTargets.add(edge.target);
+    }
     const sourceNode = nodeMap.get(edge.source);
     const targetNode = nodeMap.get(edge.target);
+    if (edge.edgeType !== 'graph_flow') return;
     if (!isRunnableNode(sourceNode) || !isRunnableNode(targetNode)) return;
     incomingCounts.set(edge.target, (incomingCounts.get(edge.target) || 0) + 1);
   });
@@ -155,7 +261,7 @@ export function validateDeckDocument(
   const startCardIds = document.nodes
     .filter((node) => isRunnableNode(node))
     .map((node) => String(node.id || '').trim())
-    .filter((nodeId) => nodeId && (incomingCounts.get(nodeId) || 0) === 0);
+    .filter((nodeId) => nodeId && !callableTargets.has(nodeId) && (incomingCounts.get(nodeId) || 0) === 0);
 
   const orphanCardIds = document.nodes
     .map((node) => String(node.id || '').trim())

@@ -25,8 +25,9 @@ import knowgraphRoutes from './knowgraph.routes';
 import { mountV3 } from '../v3';
 
 /**
- * /api/sol/run is the primary Sol chat endpoint. It can run with or without auth
- * depending on SOL_AUTH_DISABLED or NODE_ENV=development, so dev stays frictionless.
+ * LEGACY ROUTE NOTICE
+ * /api/sol/run remains mounted for older Sol/LangGraph-era clients.
+ * It is not the active architecture source of truth for current orchestration work.
  */
 const SOL_AUTH_DISABLED =
   process.env.SOL_AUTH_DISABLED === '1' ||
@@ -41,7 +42,7 @@ router.use('/auth', auth);
 router.use('/health', health);
 router.use('/diagnostic', diagnosticRoutes);
 
-// /sol route: auth in prod, automatic bypass in dev (toggle via SOL_AUTH_DISABLED)
+// Legacy /sol route: keep mounted for continuity only.
 if (SOL_AUTH_DISABLED) {
   router.use('/sol', sol);
 } else {
@@ -61,7 +62,7 @@ router.use('/webhook', authMiddleware, webhook);
 router.use('/agents', agentRoutes);
 router.use('/graph', graph);
 // /projects continues to host project CRUD plus quarantined legacy/manual KG routes.
-// The authoritative Assist runtime is /api/agents/boss + /api/v2/projects/:projectId/kg/*.
+// The current active Assist surfaces are /api/agents/boss + /api/v2/projects/:projectId/kg/*.
 router.use('/projects', projects);
 // /projects/:projectId/agents remains for config CRUD; the old agent runner path is legacy-only.
 router.use('/projects', projectAgents);

@@ -1,3 +1,7 @@
+# ARCHIVED
+# This config note is historical only.
+# The current runtime should not treat this file as active policy truth.
+#
 # Sol policy configuration
 system_prompt: |
   You are Sol, a concise, helpful trading assistant. Answer briefly and clearly.

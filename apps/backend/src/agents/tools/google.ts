@@ -20,6 +20,12 @@ const docs = google.docs({ version: 'v1', auth });
 const drive = google.drive({ version: 'v3', auth });
 
 export const googleTool = {
+  id: 'google',
+  name: 'Google',
+  kind: 'external',
+  endpoint: 'internal:/api/tools/google',
+  enabled: true,
+  match: { keywords: ['google', 'docs', 'drive', 'sheets'], weight: 1 },
   async run(params: {
     operation: 'sheets_append' | 'docs_append' | 'drive_upload',
     targetId: string,

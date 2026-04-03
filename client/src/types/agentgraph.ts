@@ -10,6 +10,66 @@ export type RuntimeBinding =
   | 'knowgraph'
   | 'neo4j';
 
+export type AgentCardRuntimeType =
+  | 'assistant_agent'
+  | 'round_robin'
+  | 'selector'
+  | 'swarm'
+  | 'magentic_one'
+  | 'graph_flow'
+  | 'adapter';
+
+export type DeckEdgeType = 'magentic_option' | 'graph_flow';
+
+export type DeckEdgeRole =
+  | 'graph_execution'
+  | 'callable_route'
+  | 'reconcile_input'
+  | 'compatibility_legacy';
+
+export type DeckEdgeExecutionMode = 'required' | 'optional' | 'conditional';
+
+export type DeckEdgeMergeIntent =
+  | 'all_inputs'
+  | 'any_input'
+  | 'first_success'
+  | 'summarize_all'
+  | 'select_best'
+  | 'manual_review';
+
+export type DeckEdgeMetadata = {
+  role?: DeckEdgeRole | null;
+  executionMode?: DeckEdgeExecutionMode | null;
+  conditionType?: string | null;
+  conditionExpression?: string | null;
+  conditionLabel?: string | null;
+  priority?: number | null;
+  order?: number | null;
+  weight?: number | null;
+  mergeIntent?: DeckEdgeMergeIntent | null;
+  legacyCompatibility?: boolean | null;
+};
+
+export type AssistExecutionMode = 'single' | 'swarm';
+
+export type AgentCardRuntimeOptions = {
+  provider?: 'openai' | 'openrouter' | null;
+  modelKey?: string | null;
+  temperature?: number | null;
+  maxTokens?: number | null;
+  streaming?: boolean | null;
+  emitTeamEvents?: boolean | null;
+  executionMode?: AssistExecutionMode | null;
+  swarmMaxWorkers?: number | null;
+  swarmWorkerPromptTemplate?: string | null;
+  useSocietyOfMindConsolidation?: boolean | null;
+  maxTurns?: number | null;
+  maxStalls?: number | null;
+  finalAnswerPrompt?: string | null;
+  selectorPrompt?: string | null;
+  allowRepeatedSpeaker?: boolean | null;
+};
+
 export type DeckNodeKind = 'agent' | 'blackboard';
 
 export type AgentTemplate = {
@@ -53,6 +113,9 @@ export type AgentCardInstance = {
   templateId: string;
   prompt?: string | null;
   runtimeBinding?: RuntimeBinding | null;
+  runtimeType?: AgentCardRuntimeType | null;
+  runtimeOptions?: AgentCardRuntimeOptions | null;
+  parentGraphId?: string | null;
 
   title: string;
   subtitle?: string;
@@ -69,6 +132,8 @@ export type DeckEdge = {
   id: string;
   source: string;
   target: string;
+  edgeType?: DeckEdgeType | null;
+  metadata?: DeckEdgeMetadata | null;
 };
 
 export type DeckDocument = {
@@ -173,6 +238,18 @@ export type DeckRunStep = {
   outputSummary?: string;
   blackboardWrite?: V3Blackboard | null;
   blackboard?: V3Blackboard | null;
+  routeInfo?: {
+    mergeIntent?: DeckEdgeMergeIntent | 'legacy_default' | null;
+    inputMode?: 'legacy_text' | 'single_upstream' | 'structured_merge' | null;
+    notes?: string[];
+    inputSources?: Array<{
+      edgeId: string;
+      sourceCardId: string;
+      sourceTitle: string;
+      executionMode?: DeckEdgeExecutionMode | 'legacy_default' | null;
+      output?: string | null;
+    }>;
+  } | null;
 };
 
 export type DeckRun = {

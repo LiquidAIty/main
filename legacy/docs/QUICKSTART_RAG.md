@@ -1,3 +1,8 @@
+# ARCHIVED
+
+This quickstart documents an older narrow RAG setup path.
+Use `docs/RAG_SEARCH.md` for the active specialized RAG reference.
+
 # RAG Search Quick Start
 
 ## What's New

@@ -73,6 +73,7 @@ router.post('/:projectId/decks/run', async (req, res) => {
       input: String(req.body?.input || ''),
       promptTemplates: promptTemplates.length > 0 ? promptTemplates : deck.promptTemplates,
       blackboard,
+      projectId: req.params.projectId,
     });
 
     await saveDeckRun(req.params.projectId, deckId, run);

@@ -1,13 +1,19 @@
 import { randomUUID } from 'crypto';
 import { resolveEffectiveAgent, runCardWithContract } from '../cards/runtime';
-import { createEmptyV3Blackboard, normalizeV3Blackboard } from '../blackboard';
+import { createEmptyV3Blackboard, mergeV3Blackboard, normalizeV3Blackboard } from '../blackboard';
 import { buildExecutionPlan } from '../decks/executionPlan';
 import { validateDeckDocument } from '../decks/validation';
+import {
+  buildGraphExecutionInputText,
+  createGraphExecutionScheduler,
+  type GraphExecutionRouteInfo,
+} from './graphExecution';
 import type {
   AgentCardInstance,
   AgentTemplate,
   DeckDocument,
   DeckEdge,
+  DeckEdgeType,
   DeckRun,
   DeckRunStep,
   PromptTemplate,
@@ -18,6 +24,7 @@ export type ExecuteDeckOptions = {
   input?: string;
   promptTemplates?: PromptTemplate[];
   blackboard?: V3Blackboard | null;
+  projectId?: string;
 };
 
 function isBlackboardNode(node: AgentCardInstance | undefined | null): boolean {
@@ -25,14 +32,13 @@ function isBlackboardNode(node: AgentCardInstance | undefined | null): boolean {
 }
 
 function isRunnableNode(node: AgentCardInstance | undefined | null): node is AgentCardInstance {
-  return Boolean(node && node.kind !== 'blackboard');
+  return Boolean(node && node.kind !== 'blackboard' && !String(node.parentGraphId || '').trim());
 }
 
-function createBlackboardWrite(storeWrite: Record<string, string>): V3Blackboard {
-  const next = createEmptyV3Blackboard();
-  next.store = storeWrite;
-  next.updated_at = new Date().toISOString();
-  return next;
+function normalizeEdgeType(value: unknown): DeckEdgeType {
+  return String(value || '').trim().toLowerCase() === 'magentic_option'
+    ? 'magentic_option'
+    : 'graph_flow';
 }
 
 function getNodeMap(document: DeckDocument): Map<string, AgentCardInstance> {
@@ -45,50 +51,22 @@ function getExistingEdges(document: DeckDocument): DeckEdge[] {
 }
 
 function getRunnableNodes(document: DeckDocument): AgentCardInstance[] {
-  return document.nodes.filter((node) => isRunnableNode(node));
+  const callableTargets = new Set(
+    getExistingEdges(document)
+      .filter((edge) => normalizeEdgeType(edge.edgeType) === 'magentic_option')
+      .map((edge) => edge.target),
+  );
+  return document.nodes.filter((node) => isRunnableNode(node) && !callableTargets.has(node.id));
 }
 
 function getAgentEdges(document: DeckDocument): DeckEdge[] {
   const nodeMap = getNodeMap(document);
-  const directAgentEdges = getExistingEdges(document).filter((edge) => {
+  return getExistingEdges(document).filter((edge) => {
+    if (normalizeEdgeType(edge.edgeType) !== 'graph_flow') return false;
     const source = nodeMap.get(edge.source);
     const target = nodeMap.get(edge.target);
     return isRunnableNode(source) && isRunnableNode(target);
   });
-
-  const derivedEdges: DeckEdge[] = [];
-  const seenEdgeKeys = new Set(
-    directAgentEdges.map((edge) => `${edge.source}::${edge.target}`),
-  );
-
-  document.nodes
-    .filter((node) => node.kind === 'blackboard')
-    .forEach((blackboardNode) => {
-      const inboundWriters = getExistingEdges(document)
-        .filter((edge) => edge.target === blackboardNode.id)
-        .map((edge) => nodeMap.get(edge.source))
-        .filter((node): node is AgentCardInstance => Boolean(node && isRunnableNode(node)));
-      const outboundReaders = getExistingEdges(document)
-        .filter((edge) => edge.source === blackboardNode.id)
-        .map((edge) => nodeMap.get(edge.target))
-        .filter((node): node is AgentCardInstance => Boolean(node && isRunnableNode(node)));
-
-      inboundWriters.forEach((writer) => {
-        outboundReaders.forEach((reader) => {
-          if (writer.id === reader.id) return;
-          const edgeKey = `${writer.id}::${reader.id}`;
-          if (seenEdgeKeys.has(edgeKey)) return;
-          seenEdgeKeys.add(edgeKey);
-          derivedEdges.push({
-            id: `derived_blackboard_${blackboardNode.id}_${writer.id}_${reader.id}`,
-            source: writer.id,
-            target: reader.id,
-          });
-        });
-      });
-    });
-
-  return [...directAgentEdges, ...derivedEdges];
 }
 
 function buildRunSnapshot(
@@ -126,12 +104,6 @@ function buildRunSnapshot(
   };
 }
 
-function buildAgentInput(upstreamOutput: string | undefined): string {
-  const fullOutput = String(upstreamOutput || '').trim();
-  if (!fullOutput) return '';
-  return fullOutput;
-}
-
 function buildBlackboardInput(blackboard: V3Blackboard): string {
   const storeEntries = Object.entries(blackboard.store || {}).filter(([, value]) =>
     Boolean(String(value || '').trim()),
@@ -143,47 +115,49 @@ function buildBlackboardInput(blackboard: V3Blackboard): string {
 
 function buildNodeInput(
   document: DeckDocument,
-  card: AgentCardInstance,
+  event: {
+    card: AgentCardInstance;
+    isStart: boolean;
+    routeInfo: GraphExecutionRouteInfo;
+  },
   baseInput: string,
-  cardOutputMap: Map<string, string>,
   blackboard: V3Blackboard,
-  startCardIds: Set<string>,
 ): string {
   const nodeMap = getNodeMap(document);
-  const edgeOrder = new Map(document.edges.map((edge, index) => [edge.id, index]));
   const inboundEdges = getExistingEdges(document)
-    .filter((edge) => edge.target === card.id)
-    .sort((left, right) => (edgeOrder.get(left.id) || 0) - (edgeOrder.get(right.id) || 0));
-  const sections: string[] = [];
+    .filter((edge) => edge.target === event.card.id && normalizeEdgeType(edge.edgeType) === 'graph_flow');
+  const hasBlackboardInput = inboundEdges.some((edge) => isBlackboardNode(nodeMap.get(edge.source)));
 
-  if (startCardIds.has(card.id) && baseInput.trim()) {
-    sections.push(baseInput.trim());
-  }
-
-  inboundEdges.forEach((edge) => {
-    const sourceNode = nodeMap.get(edge.source);
-    if (isBlackboardNode(sourceNode)) {
-      const blackboardText = buildBlackboardInput(blackboard);
-      if (blackboardText) sections.push(blackboardText);
-      return;
-    }
-
-    const upstreamOutput = cardOutputMap.get(edge.source);
-    const upstreamText = buildAgentInput(upstreamOutput);
-    if (upstreamText) sections.push(upstreamText);
+  return buildGraphExecutionInputText({
+    card: event.card,
+    routeInfo: event.routeInfo,
+    isStart: event.isStart,
+    baseInput,
+    blackboardInput: hasBlackboardInput ? buildBlackboardInput(blackboard) : '',
   });
-
-  return sections.join('\n\n').trim() || baseInput.trim();
 }
 
 function writeCardOutputToBlackboard(
   document: DeckDocument,
   card: AgentCardInstance,
   output: string,
+  explicitWrite: V3Blackboard | null | undefined,
   blackboard: V3Blackboard,
 ): { blackboard: V3Blackboard; blackboardWrite: V3Blackboard | null } {
   const trimmedOutput = String(output || '').trim();
-  if (!trimmedOutput) {
+  const explicitBlackboard = normalizeV3Blackboard(explicitWrite);
+  const hasExplicitWrite = Boolean(
+    explicitBlackboard.current_goal ||
+      explicitBlackboard.next_move ||
+      explicitBlackboard.what_matters_now.length ||
+      explicitBlackboard.open_questions.length ||
+      explicitBlackboard.findings.length ||
+      explicitBlackboard.suggestions.length ||
+      explicitBlackboard.next_options.length ||
+      Object.keys(explicitBlackboard.store || {}).length,
+  );
+
+  if (!trimmedOutput && !hasExplicitWrite) {
     return { blackboard, blackboardWrite: null };
   }
 
@@ -197,20 +171,34 @@ function writeCardOutputToBlackboard(
     return { blackboard, blackboardWrite: null };
   }
 
-  const nextBlackboard = normalizeV3Blackboard(blackboard);
-  const storeWrite: Record<string, string> = {
-    [card.id]: trimmedOutput,
-  };
+  let nextBlackboard = normalizeV3Blackboard(blackboard);
+  if (hasExplicitWrite) {
+    nextBlackboard = mergeV3Blackboard(nextBlackboard, explicitBlackboard);
+  }
+  let blackboardWrite = hasExplicitWrite ? normalizeV3Blackboard(explicitBlackboard) : createEmptyV3Blackboard();
 
-  nextBlackboard.store = {
-    ...(nextBlackboard.store || {}),
-    ...storeWrite,
-  };
-  nextBlackboard.updated_at = new Date().toISOString();
+  if (trimmedOutput) {
+    const storeWrite: Record<string, string> = {
+      [card.id]: trimmedOutput,
+    };
+    nextBlackboard.store = {
+      ...(nextBlackboard.store || {}),
+      ...storeWrite,
+    };
+    nextBlackboard.updated_at = new Date().toISOString();
+    blackboardWrite = normalizeV3Blackboard({
+      ...blackboardWrite,
+      store: {
+        ...(blackboardWrite.store || {}),
+        ...storeWrite,
+      },
+      updated_at: nextBlackboard.updated_at,
+    });
+  }
 
   return {
     blackboard: nextBlackboard,
-    blackboardWrite: createBlackboardWrite(storeWrite),
+    blackboardWrite,
   };
 }
 
@@ -225,7 +213,6 @@ export async function executeDeck(
   const validation = validateDeckDocument(document, { enforceStartCard: true });
   const executionPlan = buildExecutionPlan(document);
   const steps: DeckRunStep[] = [];
-  const cardOutputMap = new Map<string, string>();
   let currentBlackboard = normalizeV3Blackboard(options.blackboard || createEmptyV3Blackboard());
 
   if (!validation.ok) {
@@ -249,26 +236,14 @@ export async function executeDeck(
   const nodeMap = getNodeMap(document);
   const runnableNodes = getRunnableNodes(document);
   const agentEdges = getAgentEdges(document);
-  const documentOrder = new Map(document.nodes.map((node, index) => [node.id, index]));
-  const startCardIds = new Set(executionPlan.startCardIds);
-  const inboundCounts = new Map<string, number>();
-  const outgoingTargets = new Map<string, string[]>();
-
-  runnableNodes.forEach((node) => {
-    inboundCounts.set(node.id, 0);
-    outgoingTargets.set(node.id, []);
+  const queueStartIds = executionPlan.startCardIds.filter((cardId) => nodeMap.has(cardId));
+  const scheduler = createGraphExecutionScheduler({
+    nodes: runnableNodes,
+    edges: agentEdges,
+    startCardIds: queueStartIds,
   });
 
-  agentEdges.forEach((edge) => {
-    inboundCounts.set(edge.target, (inboundCounts.get(edge.target) || 0) + 1);
-    outgoingTargets.set(edge.source, [...(outgoingTargets.get(edge.source) || []), edge.target]);
-  });
-
-  const queue = executionPlan.startCardIds
-    .filter((cardId) => nodeMap.has(cardId))
-    .sort((left, right) => (documentOrder.get(left) || 0) - (documentOrder.get(right) || 0));
-
-  if (runnableNodes.length > 0 && queue.length === 0) {
+  if (runnableNodes.length > 0 && queueStartIds.length === 0) {
     return buildRunSnapshot(
       runId,
       document,
@@ -286,12 +261,46 @@ export async function executeDeck(
     );
   }
 
-  const executedCardIds = new Set<string>();
+  const successfulCardIds = new Set<string>();
 
-  while (queue.length > 0) {
-    const cardId = queue.shift();
-    const card = cardId ? nodeMap.get(cardId) : null;
-    if (!isRunnableNode(card) || executedCardIds.has(card.id)) continue;
+  while (true) {
+    const event = scheduler.next();
+    if (!event) break;
+
+    if (event.type === 'skipped') {
+      const skippedEffectiveAgent =
+        resolveEffectiveAgent(event.card, templates) || {
+          id: event.card.templateId,
+          name: event.card.title,
+          tools: [],
+        };
+
+      steps.push({
+        id: `step_${steps.length + 1}`,
+        executionId: `${event.card.id}::skipped`,
+        cardId: event.card.id,
+        templateId: event.card.templateId,
+        title: event.card.title,
+        input: buildNodeInput(document, event, input, currentBlackboard),
+        runtimeBinding: event.card.runtimeBinding ?? null,
+        runtimeType: event.card.runtimeType ?? 'assistant_agent',
+        effectiveAgent: skippedEffectiveAgent,
+        output: null,
+        status: 'skipped',
+        error: event.reason,
+        startedAt: new Date().toISOString(),
+        endedAt: new Date().toISOString(),
+        inputSummary: event.reason,
+        outputSummary: event.reason,
+        blackboardWrite: null,
+        blackboard: currentBlackboard,
+        routeInfo: event.routeInfo,
+      });
+      continue;
+    }
+
+    const card = nodeMap.get(event.card.id);
+    if (!isRunnableNode(card) || successfulCardIds.has(card.id)) continue;
 
     const effectiveAgent = resolveEffectiveAgent(card, templates);
     if (!effectiveAgent) {
@@ -312,14 +321,7 @@ export async function executeDeck(
       );
     }
 
-    const nodeInput = buildNodeInput(
-      document,
-      card,
-      input,
-      cardOutputMap,
-      currentBlackboard,
-      startCardIds,
-    );
+    const nodeInput = buildNodeInput(document, event, input, currentBlackboard);
     const cloneSeeds =
       card.cloneConfig?.enabled && Array.isArray(card.cloneConfig.seeds)
         ? card.cloneConfig.seeds.filter(Boolean)
@@ -335,11 +337,23 @@ export async function executeDeck(
         promptTemplates: options.promptTemplates,
         seed,
         blackboard: currentBlackboard,
+        projectId: options.projectId,
+        deckId: document.id,
+        deckName: document.name,
+        allCards: document.nodes,
+        allEdges: document.edges,
+        allTemplates: templates,
       });
 
       const blackboardUpdate =
-        result.status === 'success' && result.output
-          ? writeCardOutputToBlackboard(document, card, result.output, currentBlackboard)
+        result.status === 'success' && (result.output || result.blackboardWrite)
+          ? writeCardOutputToBlackboard(
+              document,
+              card,
+              result.output || '',
+              result.blackboardWrite,
+              currentBlackboard,
+            )
           : { blackboard: currentBlackboard, blackboardWrite: null };
       currentBlackboard = normalizeV3Blackboard(blackboardUpdate.blackboard);
 
@@ -352,6 +366,7 @@ export async function executeDeck(
         title: card.title,
         input: nodeInput,
         runtimeBinding: result.runtimeBinding,
+        runtimeType: result.runtimeType,
         effectiveAgent,
         output: result.output,
         status: result.status,
@@ -369,6 +384,7 @@ export async function executeDeck(
         outputSummary: result.outputSummary,
         blackboardWrite: blackboardUpdate.blackboardWrite,
         blackboard: currentBlackboard,
+        routeInfo: event.routeInfo,
       };
 
       steps.push(step);
@@ -396,20 +412,12 @@ export async function executeDeck(
       }
     }
 
-    cardOutputMap.set(card.id, variantOutputs.join('\n\n').trim());
-    executedCardIds.add(card.id);
-
-    (outgoingTargets.get(card.id) || []).forEach((targetId) => {
-      const remaining = (inboundCounts.get(targetId) || 0) - 1;
-      inboundCounts.set(targetId, remaining);
-      if (remaining === 0) {
-        queue.push(targetId);
-        queue.sort((left, right) => (documentOrder.get(left) || 0) - (documentOrder.get(right) || 0));
-      }
-    });
+    scheduler.markSuccess(card.id, variantOutputs.join('\n\n').trim(), currentBlackboard);
+    successfulCardIds.add(card.id);
   }
 
-  if (executedCardIds.size !== runnableNodes.length) {
+  const unresolvedNodeIds = scheduler.getUnresolvedNodeIds();
+  if (unresolvedNodeIds.length > 0) {
     return buildRunSnapshot(
       runId,
       document,
@@ -422,7 +430,7 @@ export async function executeDeck(
       'error',
       {
         endedAt: new Date().toISOString(),
-        error: 'Graph execution stalled before all runnable nodes completed.',
+        error: `Graph execution stalled before all runnable nodes completed: ${unresolvedNodeIds.join(', ')}`,
       },
     );
   }

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentCardInstance, AgentTemplate, DeckDocument, V3Blackboard } from '../types';
+import type { AgentCardInstance, AgentTemplate, DeckDocument, DeckEdge, V3Blackboard } from '../types';
 
 const runtimeHarness = vi.hoisted(() => ({
   calls: [] as Array<{ cardId: string; input: string }>,
@@ -30,7 +30,7 @@ const templates: AgentTemplate[] = [
   },
 ];
 
-function createAgent(id: string, title: string): AgentCardInstance {
+function createAgent(id: string, title: string, runtimeType: AgentCardInstance['runtimeType'] = 'assistant_agent'): AgentCardInstance {
   return {
     id,
     kind: 'agent',
@@ -38,6 +38,7 @@ function createAgent(id: string, title: string): AgentCardInstance {
     title,
     prompt: '',
     position: { x: 0, y: 0 },
+    runtimeType,
   };
 }
 
@@ -50,6 +51,16 @@ function createBlackboard(id = 'node_blackboard'): AgentCardInstance {
     prompt: '',
     position: { x: 0, y: 0 },
   };
+}
+
+function edge(
+  id: string,
+  source: string,
+  target: string,
+  edgeType: DeckEdge['edgeType'] = 'graph_flow',
+  metadata: DeckEdge['metadata'] = undefined,
+): DeckEdge {
+  return metadata ? { id, source, target, edgeType, metadata } : { id, source, target, edgeType };
 }
 
 function createDeckDocument(
@@ -83,6 +94,7 @@ describe('executeDeck', () => {
         startedAt: '2026-03-27T00:00:00.000Z',
         endedAt: '2026-03-27T00:00:01.000Z',
         runtimeBinding: card.runtimeBinding ?? null,
+        runtimeType: card.runtimeType ?? 'assistant_agent',
         inputSummary: input,
         outputSummary: `output:${card.id}`,
         blackboardWrite: null,
@@ -91,12 +103,12 @@ describe('executeDeck', () => {
     });
   });
 
-  it('uses drawn links to determine execution order', async () => {
+  it('uses explicit orange graph_flow edges to determine top-level execution order', async () => {
     const deck = createDeckDocument(
       [createAgent('c', 'C'), createAgent('a', 'A'), createAgent('b', 'B')],
       [
-        { id: 'edge_a_b', source: 'a', target: 'b' },
-        { id: 'edge_b_c', source: 'b', target: 'c' },
+        edge('edge_a_b', 'a', 'b', 'graph_flow'),
+        edge('edge_b_c', 'b', 'c', 'graph_flow'),
       ],
     );
 
@@ -106,177 +118,341 @@ describe('executeDeck', () => {
     expect(run.steps.map((step) => step.cardId)).toEqual(['a', 'b', 'c']);
   });
 
-  it('changes execution order when a drawn link is deleted', async () => {
-    const deck = createDeckDocument(
-      [createAgent('c', 'C'), createAgent('a', 'A'), createAgent('b', 'B')],
-      [{ id: 'edge_a_b', source: 'a', target: 'b' }],
-    );
-
-    const run = await executeDeck(deck, templates, { input: '' });
-
-    expect(run.status).toBe('success');
-    expect(run.steps.map((step) => step.cardId)).toEqual(['c', 'a', 'b']);
-  });
-
-  it('updates execution order when a visible link is rewired', async () => {
-    const originalDeck = createDeckDocument(
-      [createAgent('c', 'C'), createAgent('a', 'A'), createAgent('b', 'B')],
-      [
-        { id: 'edge_c_a', source: 'c', target: 'a' },
-        { id: 'edge_a_b', source: 'a', target: 'b' },
-      ],
-    );
-    const rewiredDeck = createDeckDocument(
-      [createAgent('c', 'C'), createAgent('a', 'A'), createAgent('b', 'B')],
-      [
-        { id: 'edge_c_a', source: 'c', target: 'a' },
-        { id: 'edge_a_b', source: 'b', target: 'a' },
-      ],
-    );
-
-    const originalRun = await executeDeck(originalDeck, templates, { input: '' });
-    const rewiredRun = await executeDeck(rewiredDeck, templates, { input: '' });
-
-    expect(originalRun.status).toBe('success');
-    expect(originalRun.steps.map((step) => step.cardId)).toEqual(['c', 'a', 'b']);
-    expect(rewiredRun.status).toBe('success');
-    expect(rewiredRun.steps.map((step) => step.cardId)).toEqual(['c', 'b', 'a']);
-  });
-
-  it('reads and writes blackboard only through visible links', async () => {
+  it('does not derive runnable edges from blackboard links', async () => {
     const board = createBlackboard();
-
-    const fullyLinkedRun = await executeDeck(
+    const run = await executeDeck(
       createDeckDocument(
         [createAgent('reader', 'Reader'), createAgent('writer', 'Writer'), board],
         [
-          { id: 'edge_writer_board', source: 'writer', target: board.id },
-          { id: 'edge_board_reader', source: board.id, target: 'reader' },
+          edge('edge_writer_board', 'writer', board.id, 'graph_flow'),
+          edge('edge_board_reader', board.id, 'reader', 'graph_flow'),
         ],
       ),
       templates,
       { input: '' },
     );
 
-    expect(fullyLinkedRun.steps.map((step) => step.cardId)).toEqual(['writer', 'reader']);
-    expect(runtimeHarness.calls.find((call) => call.cardId === 'reader')?.input).toBe(
-      'writer:\noutput:writer',
-    );
-    expect(fullyLinkedRun.blackboard?.store).toEqual({ writer: 'output:writer' });
-    runtimeHarness.calls.length = 0;
-
-    const noVisibleWriteRun = await executeDeck(
-      createDeckDocument(
-        [createAgent('reader', 'Reader'), createAgent('writer', 'Writer'), board],
-        [{ id: 'edge_board_reader', source: board.id, target: 'reader' }],
-      ),
-      templates,
-      { input: '' },
-    );
-
+    expect(run.status).toBe('success');
+    expect(run.steps.map((step) => step.cardId)).toEqual(['reader', 'writer']);
     expect(runtimeHarness.calls.find((call) => call.cardId === 'reader')?.input).toBe('');
-    expect(noVisibleWriteRun.blackboard?.store || {}).toEqual({});
-    runtimeHarness.calls.length = 0;
-
-    const noVisibleReadRun = await executeDeck(
-      createDeckDocument(
-        [createAgent('reader', 'Reader'), createAgent('writer', 'Writer'), board],
-        [{ id: 'edge_writer_board', source: 'writer', target: board.id }],
-      ),
-      templates,
-      { input: '' },
-    );
-
-    expect(runtimeHarness.calls.find((call) => call.cardId === 'reader')?.input).toBe('');
-    expect(noVisibleReadRun.blackboard?.store).toEqual({ writer: 'output:writer' });
+    expect(run.blackboard?.store).toEqual({ writer: 'output:writer' });
   });
 
-  it('runs the assist starter spine through visible links only and only writes blackboard when the sink link exists', async () => {
-    const board = createBlackboard();
-    const starterNodes = [
-      createAgent('main_chat', 'Main Chat'),
-      createAgent('thinkgraph', 'ThinkGraph / Extract'),
-      createAgent('research', 'Research Worker'),
-      createAgent('summary', 'Summary Step'),
-      board,
-    ];
-
-    const starterRun = await executeDeck(
-      createDeckDocument(starterNodes, [
-        { id: 'edge_main_chat_thinkgraph', source: 'main_chat', target: 'thinkgraph' },
-        { id: 'edge_thinkgraph_research', source: 'thinkgraph', target: 'research' },
-        { id: 'edge_research_summary', source: 'research', target: 'summary' },
-        { id: 'edge_summary_board', source: 'summary', target: board.id },
-      ]),
-      templates,
-      { input: 'user input' },
-    );
-
-    expect(starterRun.status).toBe('success');
-    expect(starterRun.steps.map((step) => step.cardId)).toEqual([
-      'main_chat',
-      'thinkgraph',
-      'research',
-      'summary',
-    ]);
-    expect(starterRun.blackboard?.store).toEqual({ summary: 'output:summary' });
-    runtimeHarness.calls.length = 0;
-
-    const noBoardSinkRun = await executeDeck(
-      createDeckDocument(starterNodes, [
-        { id: 'edge_main_chat_thinkgraph', source: 'main_chat', target: 'thinkgraph' },
-        { id: 'edge_thinkgraph_research', source: 'thinkgraph', target: 'research' },
-        { id: 'edge_research_summary', source: 'research', target: 'summary' },
-      ]),
-      templates,
-      { input: 'user input' },
-    );
-
-    expect(noBoardSinkRun.status).toBe('success');
-    expect(noBoardSinkRun.steps.map((step) => step.cardId)).toEqual([
-      'main_chat',
-      'thinkgraph',
-      'research',
-      'summary',
-    ]);
-    expect(noBoardSinkRun.blackboard?.store || {}).toEqual({});
-  });
-
-  it('ignores legacy node policy payloads and keeps execution driven by visible links only', async () => {
-    const legacyPolicyNode = {
-      ...createAgent('a', 'A'),
-      runtimePolicy: {
-        inputSources: {
-          user_input: false,
-          previous_output: false,
-          blackboard: true,
-        },
-        blackboardReadFields: ['findings'],
-        blackboardWriteFields: ['next_move'],
-        nextMoveAuthority: false,
-      },
-    } as AgentCardInstance;
-
+  it('does not auto-run blue magentic_option targets as top-level deck steps', async () => {
     const deck = createDeckDocument(
       [
-        legacyPolicyNode,
-        createAgent('b', 'B'),
-        createAgent('c', 'C'),
+        createAgent('magentic', 'Magentic', 'magentic_one'),
+        createAgent('assist_head', 'Assist Head', 'assistant_agent'),
       ],
+      [edge('edge_magentic_head', 'magentic', 'assist_head', 'magentic_option')],
+    );
+
+    const run = await executeDeck(deck, templates, { input: 'route this' });
+
+    expect(run.status).toBe('success');
+    expect(run.steps.map((step) => step.cardId)).toEqual(['magentic']);
+  });
+
+  it('keeps graph-owned assist steps out of top-level deck scheduling', async () => {
+    const graph = createAgent('graph_head', 'Graph Head', 'graph_flow');
+    const stepA = createAgent('step_a', 'Step A', 'assistant_agent');
+    stepA.parentGraphId = graph.id;
+    const stepB = createAgent('step_b', 'Step B', 'assistant_agent');
+    stepB.parentGraphId = graph.id;
+
+    const run = await executeDeck(
+      createDeckDocument(
+        [graph, stepA, stepB],
+        [edge('edge_step_a_step_b', 'step_a', 'step_b', 'graph_flow')],
+      ),
+      templates,
+      { input: 'graph input' },
+    );
+
+    expect(run.status).toBe('success');
+    expect(run.steps.map((step) => step.cardId)).toEqual(['graph_head']);
+  });
+
+  it('runs conditional edges only when a supported blackboard expression passes', async () => {
+    const deck = createDeckDocument(
+      [createAgent('entry', 'Entry'), createAgent('fresh_path', 'Fresh Path'), createAgent('stale_path', 'Stale Path')],
       [
-        { id: 'edge_a_b', source: 'a', target: 'b' },
-        { id: 'edge_b_c', source: 'b', target: 'c' },
+        edge('edge_entry_fresh', 'entry', 'fresh_path', 'graph_flow'),
+        edge(
+          'edge_entry_stale',
+          'entry',
+          'stale_path',
+          'graph_flow',
+          {
+            executionMode: 'conditional',
+            conditionExpression: 'blackboard.store.stale === true',
+          },
+        ),
       ],
     );
 
-    const run = await executeDeck(deck, templates, { input: 'user input' });
+    const run = await executeDeck(deck, templates, {
+      input: 'check freshness',
+      blackboard: { store: { stale: 'true' } } as V3Blackboard,
+    });
+
+    expect(run.status).toBe('success');
+    expect(run.steps.filter((step) => step.status === 'success').map((step) => step.cardId)).toEqual([
+      'entry',
+      'fresh_path',
+      'stale_path',
+    ]);
+    expect(run.steps.find((step) => step.cardId === 'stale_path')?.routeInfo?.notes || []).toContain(
+      'Edge "edge_entry_stale": Conditional edge ran because blackboard.store.stale === true passed.',
+    );
+  });
+
+  it('skips unsupported or false conditional routes without flattening the rest of the graph', async () => {
+    const deck = createDeckDocument(
+      [createAgent('entry', 'Entry'), createAgent('required_path', 'Required'), createAgent('conditional_path', 'Conditional')],
+      [
+        edge('edge_entry_required', 'entry', 'required_path', 'graph_flow'),
+        edge(
+          'edge_entry_conditional',
+          'entry',
+          'conditional_path',
+          'graph_flow',
+          {
+            executionMode: 'conditional',
+            conditionType: 'never',
+          },
+        ),
+      ],
+    );
+
+    const run = await executeDeck(deck, templates, { input: 'branch test' });
+    const stepByCardId = new Map(run.steps.map((step) => [step.cardId, step]));
+
+    expect(run.status).toBe('success');
+    expect(stepByCardId.get('entry')?.status).toBe('success');
+    expect(stepByCardId.get('required_path')?.status).toBe('success');
+    expect(stepByCardId.get('conditional_path')?.status).toBe('skipped');
+    expect(stepByCardId.get('conditional_path')?.routeInfo?.notes || []).toContain(
+      'Edge "edge_entry_conditional": Conditional edge skipped because conditionType=never.',
+    );
+  });
+
+  it('waits only for required upstream inputs when optional routes are present', async () => {
+    const deck = createDeckDocument(
+      [
+        createAgent('entry', 'Entry'),
+        createAgent('required_branch', 'Required Branch'),
+        createAgent('optional_branch', 'Optional Branch'),
+        createAgent('join', 'Join'),
+      ],
+      [
+        edge('edge_entry_required', 'entry', 'required_branch', 'graph_flow'),
+        edge(
+          'edge_entry_optional',
+          'entry',
+          'optional_branch',
+          'graph_flow',
+          { executionMode: 'optional' },
+        ),
+        edge(
+          'edge_required_join',
+          'required_branch',
+          'join',
+          'graph_flow',
+          {
+            executionMode: 'required',
+            mergeIntent: 'all_inputs',
+          },
+        ),
+        edge(
+          'edge_optional_join',
+          'optional_branch',
+          'join',
+          'graph_flow',
+          {
+            executionMode: 'optional',
+            mergeIntent: 'all_inputs',
+          },
+        ),
+      ],
+    );
+
+    const run = await executeDeck(deck, templates, { input: 'merge optional' });
+    const joinStep = run.steps.find((step) => step.cardId === 'join');
+
+    expect(run.status).toBe('success');
+    expect(joinStep?.status).toBe('success');
+    expect(joinStep?.routeInfo?.mergeIntent).toBe('all_inputs');
+    expect(joinStep?.routeInfo?.notes || []).toContain('Merge policy all_inputs is active for this node.');
+  });
+
+  it('keeps legacy graph_flow edges on their existing unconditional all-inputs behavior', async () => {
+    const deck = createDeckDocument(
+      [createAgent('a', 'A'), createAgent('b', 'B'), createAgent('c', 'C')],
+      [
+        edge('edge_a_b', 'a', 'b', 'graph_flow'),
+        edge('edge_b_c', 'b', 'c', 'graph_flow'),
+      ],
+    );
+
+    const run = await executeDeck(deck, templates, { input: 'legacy path' });
+    const stepB = run.steps.find((step) => step.cardId === 'b');
 
     expect(run.status).toBe('success');
     expect(run.steps.map((step) => step.cardId)).toEqual(['a', 'b', 'c']);
-    expect(runtimeHarness.calls.map((call) => call.input)).toEqual([
-      'user input',
-      'output:a',
-      'output:b',
+    expect(stepB?.routeInfo?.mergeIntent).toBe('legacy_default');
+    expect(stepB?.routeInfo?.notes || []).toContain(
+      'Merge policy used legacy graph_flow defaults because no edge metadata was present.',
+    );
+  });
+
+  it('waits for all required upstream inputs before firing an all_inputs merge', async () => {
+    const deck = createDeckDocument(
+      [
+        createAgent('entry', 'Entry'),
+        createAgent('left', 'Left'),
+        createAgent('right', 'Right'),
+        createAgent('join', 'Join'),
+      ],
+      [
+        edge('edge_entry_left', 'entry', 'left', 'graph_flow'),
+        edge('edge_entry_right', 'entry', 'right', 'graph_flow'),
+        edge('edge_left_join', 'left', 'join', 'graph_flow', { mergeIntent: 'all_inputs' }),
+        edge('edge_right_join', 'right', 'join', 'graph_flow', { mergeIntent: 'all_inputs' }),
+      ],
+    );
+
+    const run = await executeDeck(deck, templates, { input: 'wait for both' });
+
+    expect(run.status).toBe('success');
+    expect(run.steps.map((step) => step.cardId)).toEqual(['entry', 'left', 'right', 'join']);
+    expect(runtimeHarness.calls.find((call) => call.cardId === 'join')?.input).toBe(
+      ['output:left', 'output:right'].join('\n\n'),
+    );
+  });
+
+  it('fires any_input on the first available upstream result', async () => {
+    const deck = createDeckDocument(
+      [
+        createAgent('entry', 'Entry'),
+        createAgent('left', 'Left'),
+        createAgent('right', 'Right'),
+        createAgent('join', 'Join'),
+      ],
+      [
+        edge('edge_entry_left', 'entry', 'left', 'graph_flow'),
+        edge('edge_entry_right', 'entry', 'right', 'graph_flow'),
+        edge('edge_left_join', 'left', 'join', 'graph_flow', { mergeIntent: 'any_input' }),
+        edge('edge_right_join', 'right', 'join', 'graph_flow', { mergeIntent: 'any_input' }),
+      ],
+    );
+
+    const run = await executeDeck(deck, templates, { input: 'take any' });
+    const joinStep = run.steps.find((step) => step.cardId === 'join');
+
+    expect(run.status).toBe('success');
+    expect(joinStep?.routeInfo?.mergeIntent).toBe('any_input');
+    expect(joinStep?.routeInfo?.inputSources).toEqual([
+      expect.objectContaining({
+        sourceCardId: 'left',
+        output: 'output:left',
+      }),
     ]);
+    expect(runtimeHarness.calls.find((call) => call.cardId === 'join')?.input).toBe('output:left');
+  });
+
+  it('fires first_success on the first successful upstream result', async () => {
+    const deck = createDeckDocument(
+      [
+        createAgent('entry', 'Entry'),
+        createAgent('left', 'Left'),
+        createAgent('right', 'Right'),
+        createAgent('join', 'Join'),
+      ],
+      [
+        edge('edge_entry_left', 'entry', 'left', 'graph_flow'),
+        edge('edge_entry_right', 'entry', 'right', 'graph_flow'),
+        edge('edge_left_join', 'left', 'join', 'graph_flow', { mergeIntent: 'first_success' }),
+        edge('edge_right_join', 'right', 'join', 'graph_flow', { mergeIntent: 'first_success' }),
+      ],
+    );
+
+    const run = await executeDeck(deck, templates, { input: 'take first success' });
+    const joinStep = run.steps.find((step) => step.cardId === 'join');
+
+    expect(run.status).toBe('success');
+    expect(joinStep?.routeInfo?.mergeIntent).toBe('first_success');
+    expect(joinStep?.routeInfo?.inputSources).toEqual([
+      expect.objectContaining({
+        sourceCardId: 'left',
+        output: 'output:left',
+      }),
+    ]);
+    expect(runtimeHarness.calls.find((call) => call.cardId === 'join')?.input).toBe('output:left');
+  });
+
+  it('passes structured upstream inputs into summarize_all merges', async () => {
+    const deck = createDeckDocument(
+      [
+        createAgent('entry', 'Entry'),
+        createAgent('left', 'Left'),
+        createAgent('right', 'Right'),
+        createAgent('synth', 'Synth'),
+      ],
+      [
+        edge('edge_entry_left', 'entry', 'left', 'graph_flow'),
+        edge('edge_entry_right', 'entry', 'right', 'graph_flow'),
+        edge('edge_left_synth', 'left', 'synth', 'graph_flow', { mergeIntent: 'summarize_all' }),
+        edge('edge_right_synth', 'right', 'synth', 'graph_flow', { mergeIntent: 'summarize_all' }),
+      ],
+    );
+
+    const run = await executeDeck(deck, templates, { input: 'summarize branches' });
+    const synthCall = runtimeHarness.calls.find((call) => call.cardId === 'synth');
+    const synthStep = run.steps.find((step) => step.cardId === 'synth');
+
+    expect(run.status).toBe('success');
+    expect(synthStep?.routeInfo?.mergeIntent).toBe('summarize_all');
+    expect(synthStep?.routeInfo?.inputMode).toBe('structured_merge');
+    expect(synthCall?.input || '').toContain('"type": "deck_merge_input"');
+    expect(synthCall?.input || '').toContain('"mergeIntent": "summarize_all"');
+    expect(synthCall?.input || '').toContain('"sourceCardId": "left"');
+    expect(synthCall?.input || '').toContain('"sourceCardId": "right"');
+  });
+
+  it('keeps runtime behavior explainable from visible graph edges and active metadata only', async () => {
+    const deck = createDeckDocument(
+      [
+        createAgent('entry', 'Entry'),
+        createAgent('left', 'Left'),
+        createAgent('right', 'Right'),
+        createAgent('merge', 'Merge'),
+      ],
+      [
+        edge('edge_entry_left', 'entry', 'left', 'graph_flow'),
+        edge(
+          'edge_entry_right',
+          'entry',
+          'right',
+          'graph_flow',
+          { executionMode: 'conditional', conditionType: 'never' },
+        ),
+        edge('edge_left_merge', 'left', 'merge', 'graph_flow', { mergeIntent: 'all_inputs' }),
+        edge('edge_right_merge', 'right', 'merge', 'graph_flow', { mergeIntent: 'all_inputs' }),
+      ],
+    );
+
+    const run = await executeDeck(deck, templates, { input: 'visible only' });
+    const mergeStep = run.steps.find((step) => step.cardId === 'merge');
+    const rightStep = run.steps.find((step) => step.cardId === 'right');
+
+    expect(run.status).toBe('success');
+    expect(rightStep?.status).toBe('skipped');
+    expect(mergeStep?.routeInfo?.inputSources).toEqual([
+      expect.objectContaining({
+        sourceCardId: 'left',
+      }),
+    ]);
+    expect((mergeStep?.routeInfo?.notes || []).join('\n')).not.toContain('hidden');
   });
 });

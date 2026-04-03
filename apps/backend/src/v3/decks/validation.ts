@@ -1,4 +1,4 @@
-import type { AgentCardInstance, DeckDocument, DeckEdge } from '../types';
+import type { AgentCardInstance, DeckDocument, DeckEdge, DeckEdgeType } from '../types';
 
 export type DeckValidationIssueLevel = 'error' | 'warning';
 
@@ -35,13 +35,22 @@ export type DeckValidationResult = {
 };
 
 function isRunnableNode(node: AgentCardInstance | undefined | null): boolean {
-  return Boolean(node && node.kind !== 'blackboard');
+  return Boolean(node && node.kind !== 'blackboard' && !String(node.parentGraphId || '').trim());
 }
 
-export function buildDeckEdgeIdentityKey(edge: Pick<DeckEdge, 'source' | 'target'>): string {
+function normalizeEdgeType(value: unknown): DeckEdgeType {
+  return String(value || '').trim().toLowerCase() === 'magentic_option'
+    ? 'magentic_option'
+    : 'graph_flow';
+}
+
+export function buildDeckEdgeIdentityKey(
+  edge: Pick<DeckEdge, 'source' | 'target' | 'edgeType'>,
+): string {
   return [
     String(edge.source || '').trim(),
     String(edge.target || '').trim(),
+    normalizeEdgeType(edge.edgeType),
   ].join('::');
 }
 
@@ -82,6 +91,7 @@ export function validateDeckDocument(
   });
 
   const edgeIdentityMap = new Map<string, string>();
+  const incomingMagenticTargets = new Set<string>();
 
   document.edges.forEach((edge) => {
     const sourceId = String(edge.source || '').trim();
@@ -100,6 +110,7 @@ export function validateDeckDocument(
     const edgeKey = buildDeckEdgeIdentityKey({
       source: sourceId,
       target: targetId,
+      edgeType: edge.edgeType,
     });
 
     if (edgeIdentityMap.has(edgeKey)) {
@@ -117,6 +128,9 @@ export function validateDeckDocument(
     validEdges.push(edge);
     connectedCardIds.add(sourceId);
     connectedCardIds.add(targetId);
+    if (normalizeEdgeType(edge.edgeType) === 'magentic_option') {
+      incomingMagenticTargets.add(targetId);
+    }
   });
 
   const incomingCounts = new Map<string, number>();
@@ -127,13 +141,19 @@ export function validateDeckDocument(
     const sourceNode = nodeMap.get(edge.source);
     const targetNode = nodeMap.get(edge.target);
     if (!isRunnableNode(sourceNode) || !isRunnableNode(targetNode)) return;
+    if (normalizeEdgeType(edge.edgeType) !== 'graph_flow') return;
     incomingCounts.set(edge.target, (incomingCounts.get(edge.target) || 0) + 1);
   });
 
   const startCardIds = document.nodes
     .filter((node) => isRunnableNode(node))
     .map((node) => String(node.id || '').trim())
-    .filter((nodeId) => nodeId && (incomingCounts.get(nodeId) || 0) === 0);
+    .filter(
+      (nodeId) =>
+        nodeId &&
+        (incomingCounts.get(nodeId) || 0) === 0 &&
+        !incomingMagenticTargets.has(nodeId),
+    );
 
   const orphanCardIds = document.nodes
     .map((node) => String(node.id || '').trim())
