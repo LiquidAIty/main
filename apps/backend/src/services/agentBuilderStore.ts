@@ -1,10 +1,21 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { pool } from '../db/pool';
 import type { AgentCard, AgentConfig } from '../types/agentBuilder';
-type ProjectState = {
+export type ProjectState = {
+  messages: Array<{ role: 'assistant' | 'user'; text: string }>;
   plan: any;
   links: any[];
   knowledge: { nodes: any[]; edges: any[] };
+};
+
+export type ProjectStateMeta = {
+  revision: string;
+  savedAt: string | null;
+};
+
+export type ProjectStateSnapshot = {
+  state: ProjectState;
+  meta: ProjectStateMeta;
 };
 
 // Projects table lives in ag_catalog schema in your DB
@@ -17,6 +28,9 @@ const PROJECTS_SCHEMA = PROJECTS_TABLE.includes('.')
 const PROJECTS_NAME = PROJECTS_TABLE.includes('.')
   ? PROJECTS_TABLE.split('.')[1]
   : PROJECTS_TABLE;
+const BUILDER_STATE_KEY = 'builder_state';
+const BUILDER_STATE_META_KEY = 'builder_state_meta';
+const PROJECT_SCHEMA_CAS_RETRIES = 3;
 
 let projectColumnsPromise: Promise<Map<string, boolean>> | null = null;
 
@@ -146,9 +160,22 @@ function projectLookup(projectId: string): { clause: string; params: any[] } {
 }
 
 function normalizeState(value: unknown): ProjectState {
-  const empty: ProjectState = { plan: [], links: [], knowledge: { nodes: [], edges: [] } };
+  const empty: ProjectState = {
+    messages: [],
+    plan: [],
+    links: [],
+    knowledge: { nodes: [], edges: [] },
+  };
   if (!value || typeof value !== 'object') return empty;
   const obj = value as any;
+  const messages = Array.isArray(obj.messages)
+    ? obj.messages
+        .map((entry: any): { role: 'assistant' | 'user'; text: string } => ({
+          role: entry?.role === 'assistant' ? 'assistant' : 'user',
+          text: String(entry?.text ?? '').trim(),
+        }))
+        .filter((entry: { role: 'assistant' | 'user'; text: string }) => entry.text.length > 0)
+    : [];
   const knowledge = obj.knowledge && typeof obj.knowledge === 'object'
     ? {
         nodes: Array.isArray(obj.knowledge.nodes) ? obj.knowledge.nodes : [],
@@ -156,6 +183,7 @@ function normalizeState(value: unknown): ProjectState {
       }
     : { nodes: [], edges: [] };
   return {
+    messages,
     plan:
       Array.isArray(obj.plan) || typeof obj.plan === 'string' || (obj.plan && typeof obj.plan === 'object')
         ? obj.plan
@@ -163,6 +191,64 @@ function normalizeState(value: unknown): ProjectState {
     links: Array.isArray(obj.links) ? obj.links : [],
     knowledge,
   };
+}
+
+function hashRevision(value: unknown): string {
+  return createHash('sha1').update(JSON.stringify(value ?? null), 'utf8').digest('hex');
+}
+
+function normalizeProjectStateMeta(value: unknown, state: ProjectState): ProjectStateMeta {
+  const raw = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  const revision = String(raw.revision || '').trim() || `legacy:${hashRevision(state)}`;
+  const savedAt = typeof raw.savedAt === 'string' && raw.savedAt.trim() ? raw.savedAt.trim() : null;
+  return { revision, savedAt };
+}
+
+async function loadProjectSchema(projectId: string): Promise<{
+  clause: string;
+  params: any[];
+  ioSchema: Record<string, unknown>;
+}> {
+  const { clause, params } = projectLookup(projectId);
+  const { rows } = await pool.query(
+    `SELECT agent_io_schema FROM ${PROJECTS_TABLE} WHERE ${clause} LIMIT 1`,
+    params,
+  );
+  if (!rows.length) {
+    throw new Error('project not found');
+  }
+  return {
+    clause,
+    params,
+    ioSchema: normalizeJson(rows[0].agent_io_schema, {} as Record<string, unknown>),
+  };
+}
+
+async function writeProjectSchemaCas(
+  projectId: string,
+  updater: (ioSchema: Record<string, unknown>) => Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  for (let attempt = 0; attempt < PROJECT_SCHEMA_CAS_RETRIES; attempt += 1) {
+    const { clause, params, ioSchema } = await loadProjectSchema(projectId);
+    const nextSchema = updater(ioSchema);
+    const result = await pool.query(
+      `UPDATE ${PROJECTS_TABLE}
+       SET agent_io_schema = $${params.length + 1}::jsonb, updated_at = NOW()
+       WHERE ${clause}
+         AND COALESCE(agent_io_schema, '{}'::jsonb) = $${params.length + 2}::jsonb
+       RETURNING agent_io_schema`,
+      [...params, JSON.stringify(nextSchema), JSON.stringify(ioSchema)],
+    );
+    if (result.rows.length > 0) {
+      return normalizeJson(result.rows[0].agent_io_schema, {} as Record<string, unknown>);
+    }
+  }
+  throw new Error('project_state_conflict');
+}
+
+function isProjectStateConflictError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err || '');
+  return message === 'builder_state_conflict' || message === 'project_state_conflict';
 }
 
 export async function createProject(name: string, code?: string | null, projectType: 'assist' | 'agent' = 'agent'): Promise<AgentCard> {
@@ -416,34 +502,58 @@ export async function saveAgentConfig(config: AgentConfig): Promise<AgentConfig>
   };
 }
 
-export async function getProjectState(projectId: string): Promise<ProjectState> {
-  const { clause, params } = projectLookup(projectId);
-  const { rows } = await pool.query(
-    `SELECT agent_io_schema FROM ${PROJECTS_TABLE} WHERE ${clause} LIMIT 1`,
-    params
-  );
-  if (!rows.length) {
-    throw new Error('project not found');
-  }
-  const ioSchema = normalizeJson(rows[0].agent_io_schema, {} as Record<string, unknown>);
-  return normalizeState((ioSchema as any).builder_state);
+export async function getProjectStateSnapshot(projectId: string): Promise<ProjectStateSnapshot> {
+  const { ioSchema } = await loadProjectSchema(projectId);
+  const state = normalizeState((ioSchema as any)[BUILDER_STATE_KEY]);
+  const meta = normalizeProjectStateMeta((ioSchema as any)[BUILDER_STATE_META_KEY], state);
+  return { state, meta };
 }
 
-export async function saveProjectState(projectId: string, state: ProjectState): Promise<ProjectState> {
-  const { clause, params } = projectLookup(projectId);
-  const { rows } = await pool.query(
-    `SELECT agent_io_schema FROM ${PROJECTS_TABLE} WHERE ${clause} LIMIT 1`,
-    params
-  );
-  if (!rows.length) {
-    throw new Error('project not found');
+export async function getProjectState(projectId: string): Promise<ProjectState> {
+  const snapshot = await getProjectStateSnapshot(projectId);
+  return snapshot.state;
+}
+
+export async function saveProjectState(
+  projectId: string,
+  state: ProjectState,
+  options?: {
+    expectedRevision?: string | null;
+    onConflict?: 'throw' | 'return_current';
+  },
+): Promise<ProjectStateSnapshot & { applied: boolean }> {
+  const nextState = normalizeState(state);
+  const expectedRevision = String(options?.expectedRevision || '').trim() || null;
+  try {
+    const nextSchema = await writeProjectSchemaCas(projectId, (ioSchema) => {
+      const currentState = normalizeState((ioSchema as any)[BUILDER_STATE_KEY]);
+      const currentMeta = normalizeProjectStateMeta((ioSchema as any)[BUILDER_STATE_META_KEY], currentState);
+      if (expectedRevision && currentMeta.revision !== expectedRevision) {
+        throw new Error('builder_state_conflict');
+      }
+      const nextMeta: ProjectStateMeta = {
+        revision: randomUUID(),
+        savedAt: new Date().toISOString(),
+      };
+      return {
+        ...ioSchema,
+        [BUILDER_STATE_KEY]: nextState,
+        [BUILDER_STATE_META_KEY]: nextMeta,
+      };
+    });
+    const savedState = normalizeState((nextSchema as any)[BUILDER_STATE_KEY]);
+    const savedMeta = normalizeProjectStateMeta((nextSchema as any)[BUILDER_STATE_META_KEY], savedState);
+    return {
+      state: savedState,
+      meta: savedMeta,
+      applied: true,
+    };
+  } catch (err) {
+    if (options?.onConflict === 'return_current' && isProjectStateConflictError(err)) {
+      const snapshot = await getProjectStateSnapshot(projectId);
+      return { ...snapshot, applied: false };
+    }
+    throw err;
   }
-  const ioSchema = normalizeJson(rows[0].agent_io_schema, {} as Record<string, unknown>);
-  const nextSchema = { ...ioSchema, builder_state: state };
-  await pool.query(
-    `UPDATE ${PROJECTS_TABLE} SET agent_io_schema = $2, updated_at = NOW() WHERE ${clause}`,
-    [...params, JSON.stringify(nextSchema)]
-  );
-  return state;
 }
 

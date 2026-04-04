@@ -276,9 +276,20 @@ export type V3Blackboard = {
   updated_at?: string | null;
 };
 
+export type V3RevisionMeta = {
+  revision: string;
+  savedAt: string | null;
+};
+
+export type V3ProjectBlobMeta = {
+  decks: Record<string, V3RevisionMeta>;
+  blackboard: V3RevisionMeta;
+};
+
 export type V3ProjectBlob = {
   decks: Record<string, DeckDocument>;
   deckRuns: Record<string, DeckRun[]>;
   blackboard: V3Blackboard;
   hiddenTelemetry: Record<string, unknown>;
+  meta: V3ProjectBlobMeta;
 };

@@ -3,6 +3,7 @@ export type GuardedRequestOptions<T> = {
   method?: string;
   ttlMs?: number;
   dedupe?: boolean;
+  bypassCache?: boolean;
   signal?: AbortSignal;
   fetcher: (signal: AbortSignal) => Promise<T>;
 };
@@ -104,7 +105,7 @@ export async function guardedRequest<T>(options: GuardedRequestOptions<T>): Prom
   const method = (options.method || "GET").toUpperCase();
   const ttlMs = options.ttlMs || 0;
   const canCache = method === "GET" && ttlMs > 0;
-  if (canCache) {
+  if (canCache && !options.bypassCache) {
     const cached = requestGuardCache.get(options.key);
     if (cached && cached.expiresAt > Date.now()) {
       return cached.value as T;

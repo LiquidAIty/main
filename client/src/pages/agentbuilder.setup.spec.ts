@@ -183,8 +183,9 @@ describe('agentbuilder authoring flow', () => {
     expect(executionPlan.simpleOrderCardIds).toEqual(['card_magentic']);
   });
 
-  it('ships the default example using the real pre-canvas agent cards', () => {
+  it('ships the default example using the real magentic-led agent graph', () => {
     expect(INITIAL_DECK.nodes.map((node) => node.title)).toEqual([
+      'Magentic-One',
       'Main Chat',
       'ThinkGraph',
       'Research Agent',
@@ -194,6 +195,7 @@ describe('agentbuilder authoring flow', () => {
 
     expect(INITIAL_DECK.nodes.filter((node) => node.runtimeType === 'graph_flow')).toEqual([]);
     expect(INITIAL_DECK.nodes.map((node) => node.runtimeBinding)).toEqual([
+      null,
       'main_chat',
       'kg_ingest',
       'research_agent',
@@ -201,6 +203,7 @@ describe('agentbuilder authoring flow', () => {
       'neo4j',
     ]);
     expect(INITIAL_DECK.nodes.map((node) => node.templateId)).toEqual([
+      'template_magentic',
       'template_main_chat',
       'template_kg_ingest',
       'template_research',
@@ -213,6 +216,7 @@ describe('agentbuilder authoring flow', () => {
       target: edge.target,
       edgeType: edge.edgeType,
     }))).toEqual([
+      { source: 'card_magentic', target: 'card_main_chat', edgeType: 'magentic_option' },
       { source: 'card_main_chat', target: 'card_kg_ingest', edgeType: 'graph_flow' },
       { source: 'card_kg_ingest', target: 'card_research', edgeType: 'graph_flow' },
       { source: 'card_research', target: 'card_knowgraph', edgeType: 'graph_flow' },
@@ -347,6 +351,7 @@ describe('agentbuilder authoring flow', () => {
       ...JSON.parse(JSON.stringify(INITIAL_DECK)),
       version: 2,
       edges: [
+        { id: 'edge_magentic_main_chat', source: 'card_magentic', target: 'card_main_chat', edgeType: 'magentic_option' },
         { id: 'edge_main_chat_kg_ingest', source: 'card_main_chat', target: 'card_kg_ingest', edgeType: 'graph_flow' },
         { id: 'edge_kg_ingest_research', source: 'card_kg_ingest', target: 'card_research', edgeType: 'graph_flow' },
         { id: 'edge_kg_ingest_knowgraph', source: 'card_kg_ingest', target: 'card_knowgraph', edgeType: 'graph_flow' },
@@ -360,6 +365,7 @@ describe('agentbuilder authoring flow', () => {
 
     expect(loaded.usedFallback).toBe(false);
     expect(rehydrated.nodes.map((node) => node.title)).toEqual([
+      'Magentic-One',
       'Main Chat',
       'ThinkGraph',
       'Research Agent',
@@ -371,6 +377,7 @@ describe('agentbuilder authoring flow', () => {
       target: edge.target,
       edgeType: edge.edgeType,
     }))).toEqual([
+      { source: 'card_magentic', target: 'card_main_chat', edgeType: 'magentic_option' },
       { source: 'card_main_chat', target: 'card_kg_ingest', edgeType: 'graph_flow' },
       { source: 'card_kg_ingest', target: 'card_research', edgeType: 'graph_flow' },
       { source: 'card_kg_ingest', target: 'card_knowgraph', edgeType: 'graph_flow' },
@@ -383,13 +390,56 @@ describe('agentbuilder authoring flow', () => {
     const loaded = resolveProjectDeckPayload(null);
 
     expect(loaded.usedFallback).toBe(true);
+    expect(loaded.displayFallbackOnly).toBe(false);
     expect(loaded.deck.nodes.map((node) => node.title)).toEqual([
+      'Magentic-One',
       'Main Chat',
       'ThinkGraph',
       'Research Agent',
       'KnowGraph',
       'Neo4j',
     ]);
+  });
+
+  it('uses the canonical chain only as a display fallback for truncated saved system decks', () => {
+    const mainChatNode = INITIAL_DECK.nodes.find((node) => node.id === 'card_main_chat');
+    if (!mainChatNode) {
+      throw new Error('missing_main_chat');
+    }
+
+    const truncatedSystemDeck: DeckDocument = {
+      id: 'deck_builder',
+      name: 'Broken Saved Deck',
+      promptTemplates: [],
+      version: 4,
+      nodes: [
+        {
+          ...JSON.parse(JSON.stringify(mainChatNode)),
+          id: 'card_main_chat',
+          title: 'Main Chat',
+        },
+      ],
+      edges: [],
+    };
+
+    const loaded = resolveProjectDeckPayload(truncatedSystemDeck);
+
+    expect(loaded.usedFallback).toBe(true);
+    expect(loaded.displayFallbackOnly).toBe(true);
+    expect(loaded.deck.nodes.map((node) => node.id)).toEqual(INITIAL_DECK.nodes.map((node) => node.id));
+    expect(
+      loaded.deck.edges.map((edge) => ({
+        source: edge.source,
+        target: edge.target,
+        edgeType: edge.edgeType ?? null,
+      })),
+    ).toEqual(
+      INITIAL_DECK.edges.map((edge) => ({
+        source: edge.source,
+        target: edge.target,
+        edgeType: edge.edgeType ?? null,
+      })),
+    );
   });
 
   it('preserves the current deck on project load failure instead of silently replacing it with fallback', () => {
@@ -468,12 +518,12 @@ describe('agentbuilder authoring flow', () => {
       version: 3,
       promptTemplates: [],
       nodes: [
-        createCard('card_main_chat', 'assistant_agent', {
+        createCard('card_custom_main', 'assistant_agent', {
           templateId: 'template_main_chat',
           runtimeBinding: 'main_chat',
           title: 'Main Chat',
         }),
-        createCard('card_research', 'assistant_agent', {
+        createCard('card_custom_research', 'assistant_agent', {
           templateId: 'template_research',
           runtimeBinding: 'research_agent',
           title: 'Research Agent',

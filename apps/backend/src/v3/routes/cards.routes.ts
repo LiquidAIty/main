@@ -62,9 +62,18 @@ router.post('/:projectId/cards/run', async (req, res) => {
     const blackboard = await saveProjectBlackboard(
       req.params.projectId,
       run.blackboard || projectBlob.blackboard,
+      {
+        expectedRevision: projectBlob.meta.blackboard.revision,
+        onConflict: 'return_current',
+      },
     );
 
-    return res.json({ ok: true, result: { ...result, blackboard }, blackboard });
+    return res.json({
+      ok: true,
+      result: { ...result, blackboard: blackboard.blackboard },
+      blackboard: blackboard.blackboard,
+      meta: { blackboardRevision: blackboard.meta.revision, blackboardSavedAt: blackboard.meta.savedAt },
+    });
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || 'card_run_failed' });
   }

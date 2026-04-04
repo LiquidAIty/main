@@ -20,15 +20,53 @@ import type { CandidateEdge, KnowGraphGap, ResearchSearchTask, ThinkGraphTriplet
 
 export const agentRoutes = Router();
 const lastAssistantTextByProject = new Map<string, string>();
-const BOSS_UPLOAD_MAX_FILE_SIZE_BYTES = isDevTestModeEnabled()
-  ? 512 * 1024 * 1024
-  : 100 * 1024 * 1024;
+const BOSS_UPLOAD_MAX_FILE_SIZE_BYTES = Math.max(
+  1_000_000,
+  Number(
+    process.env.BOSS_UPLOAD_MAX_FILE_SIZE_BYTES ||
+      (isDevTestModeEnabled() ? 512 * 1024 * 1024 : 25 * 1024 * 1024),
+  ),
+);
+function looksLikePdfUpload(file: { mimetype?: string; originalname?: string } | null | undefined): boolean {
+  if (!file) return false;
+  const fileName = String(file.originalname || '').toLowerCase();
+  const fileType = String(file.mimetype || '').toLowerCase();
+  return fileName.endsWith('.pdf') || fileType === 'application/pdf' || fileType.includes('/pdf');
+}
 const bossUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: BOSS_UPLOAD_MAX_FILE_SIZE_BYTES,
+    files: 1,
+    parts: 12,
+    fields: 10,
+  },
+  fileFilter: (_req, file, cb) => {
+    if (!looksLikePdfUpload(file)) {
+      cb(new multer.MulterError('LIMIT_UNEXPECTED_FILE', 'file'));
+      return;
+    }
+    cb(null, true);
   },
 });
+const bossUploadSingle = (req: any, res: any, next: any) => {
+  bossUpload.single('file')(req, res, (err: any) => {
+    if (!err) {
+      next();
+      return;
+    }
+    if (err instanceof multer.MulterError) {
+      const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+      const message =
+        err.code === 'LIMIT_FILE_SIZE'
+          ? 'Attached file exceeds the current upload size limit.'
+          : 'Only a single PDF attachment is accepted on this route.';
+      res.status(status).json({ ok: false, error: 'invalid_upload', message });
+      return;
+    }
+    next(err);
+  });
+};
 // DEV TEST LIMIT RAISED: keep more candidate edges during real document loop testing.
 const TEMP_STABILIZATION_MAX_CANDIDATE_EDGES = getConfiguredPositiveInt(
   'LOOP_MAX_CANDIDATE_EDGES',
@@ -1456,7 +1494,7 @@ export function buildReplyContext(
   };
 }
 
-agentRoutes.post('/boss', bossUpload.single('file') as any, async (req, res) => {
+agentRoutes.post('/boss', bossUploadSingle as any, async (req, res) => {
   const body = req.body || {};
   const { goal, query, q, message, prompt, domain } = body;
   const userText =

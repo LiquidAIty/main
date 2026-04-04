@@ -6,15 +6,53 @@ import { isDevTestModeEnabled } from '../services/devTest';
 
 const router = Router();
 // DEV TEST LIMIT RAISED: allow large real-document uploads during development and loop testing.
-const KNOWGRAPH_UPLOAD_MAX_FILE_SIZE_BYTES = isDevTestModeEnabled()
-  ? 512 * 1024 * 1024
-  : 100 * 1024 * 1024;
+const KNOWGRAPH_UPLOAD_MAX_FILE_SIZE_BYTES = Math.max(
+  1_000_000,
+  Number(
+    process.env.KNOWGRAPH_UPLOAD_MAX_FILE_SIZE_BYTES ||
+      (isDevTestModeEnabled() ? 512 * 1024 * 1024 : 25 * 1024 * 1024),
+  ),
+);
+function looksLikePdfUpload(file: { mimetype?: string; originalname?: string } | null | undefined): boolean {
+  if (!file) return false;
+  const fileName = String(file.originalname || '').toLowerCase();
+  const fileType = String(file.mimetype || '').toLowerCase();
+  return fileName.endsWith('.pdf') || fileType === 'application/pdf' || fileType.includes('/pdf');
+}
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: KNOWGRAPH_UPLOAD_MAX_FILE_SIZE_BYTES,
+    files: 1,
+    parts: 12,
+    fields: 10,
+  },
+  fileFilter: (_req, file, cb) => {
+    if (!looksLikePdfUpload(file)) {
+      cb(new multer.MulterError('LIMIT_UNEXPECTED_FILE', 'file'));
+      return;
+    }
+    cb(null, true);
   },
 });
+const knowgraphUploadSingle = (req: any, res: any, next: any) => {
+  upload.single('file')(req, res, (err: any) => {
+    if (!err) {
+      next();
+      return;
+    }
+    if (err instanceof multer.MulterError) {
+      const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+      const message =
+        err.code === 'LIMIT_FILE_SIZE'
+          ? 'Attached PDF exceeds the current upload size limit.'
+          : 'Only a single PDF file is accepted for KnowGraph ingest.';
+      res.status(status).json({ ok: false, error: { message } });
+      return;
+    }
+    next(err);
+  });
+};
 
 export type UploadedFile = {
   buffer: Buffer;
@@ -617,7 +655,7 @@ export async function proxyKnowgraphPdfIngest(input: {
   throw lastError;
 }
 
-router.post('/ingest', upload.single('file') as any, async (req, res) => {
+router.post('/ingest', knowgraphUploadSingle as any, async (req, res) => {
   try {
     const projectId = typeof req.body?.project_id === 'string' ? req.body.project_id.trim() : '';
     const documentId = typeof req.body?.document_id === 'string' ? req.body.document_id.trim() : '';

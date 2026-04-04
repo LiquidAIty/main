@@ -1,11 +1,22 @@
 import { Router } from 'express';
 import type { Request as ExpressRequest, Response as ExpressResponse } from 'express';
+import { isLocalDevLoopbackRequest } from '../security/requestAccess';
 
 const router = Router();
 
 // Execute code artifact
 router.post('/execute', async (req: ExpressRequest, res: ExpressResponse) => {
   try {
+    const executionEnabled =
+      process.env.ENABLE_ARTIFACT_EXECUTION === '1' && isLocalDevLoopbackRequest(req);
+    if (!executionEnabled) {
+      return res.status(403).json({
+        ok: false,
+        error: 'artifact_execute_disabled',
+        message: 'Artifact execution is disabled outside explicit local development.',
+      });
+    }
+
     const { code, language = 'javascript' } = req.body;
 
     if (!code) {

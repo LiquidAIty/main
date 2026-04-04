@@ -1,6 +1,11 @@
 import { Router } from 'express';
 import { pool } from '../../db/pool';
-import { createProject, getProjectState, listAgentCards, saveProjectState } from '../../services/agentBuilderStore';
+import {
+  createProject,
+  getProjectStateSnapshot,
+  listAgentCards,
+  saveProjectState,
+} from '../../services/agentBuilderStore';
 import { getLastTrace } from '../../services/ingestTrace';
 import { ensureSystemAgentConfigs } from '../../services/v2/agentConfigStore';
 
@@ -72,8 +77,8 @@ router.delete('/:projectId', async (req, res) => {
 router.get('/:projectId/state', async (req, res) => {
   logV2ProjectRoute(req);
   try {
-    const state = await getProjectState(req.params.projectId);
-    return res.json(state);
+    const snapshot = await getProjectStateSnapshot(req.params.projectId);
+    return res.json({ ...snapshot.state, meta: snapshot.meta });
   } catch (err: any) {
     const status = (err?.message || '').includes('not found') ? 404 : 500;
     return res.status(status).json({ ok: false, error: err?.message || 'failed to load state' });
@@ -84,10 +89,26 @@ router.put('/:projectId/state', async (req, res) => {
   logV2ProjectRoute(req);
   const projectId = req.params.projectId;
   try {
-    const state = await saveProjectState(projectId, req.body || {});
-    return res.json(state);
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const expectedRevision =
+      typeof (body as any).expectedRevision === 'string'
+        ? String((body as any).expectedRevision)
+        : typeof (body as any).meta?.revision === 'string'
+          ? String((body as any).meta.revision)
+          : null;
+    const stateInput =
+      (body as any).state && typeof (body as any).state === 'object'
+        ? (body as any).state
+        : body;
+    const result = await saveProjectState(projectId, stateInput, { expectedRevision });
+    return res.json({ ...result.state, meta: result.meta, applied: result.applied });
   } catch (err: any) {
-    const status = (err?.message || '').includes('not found') ? 404 : 500;
+    const status =
+      err?.message === 'builder_state_conflict'
+        ? 409
+        : (err?.message || '').includes('not found')
+          ? 404
+          : 500;
     return res.status(status).json({ ok: false, error: err?.message || 'failed to save state' });
   }
 });

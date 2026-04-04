@@ -5,19 +5,34 @@ import cookieParser = require("cookie-parser");
 import routes from "./routes";
 import { logModelConfiguration } from "./startup/modelConfig";
 import { getDevTestJsonBodyLimit } from "./services/devTest";
+import { getAllowedCorsOrigins } from "./security/requestAccess";
 
 dotenv.config({ path: "apps/backend/.env" });
 
 const app = express();
 app.set('etag', false);
 
+const allowedCorsOrigins = new Set(getAllowedCorsOrigins());
+
 // CORS middleware
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  const origin = String(req.headers.origin || '').trim();
+  if (!origin) {
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+    return next();
+  }
+  if (!allowedCorsOrigins.has(origin)) {
+    return res.status(403).json({ ok: false, error: 'cors_origin_not_allowed' });
+  }
+  res.header('Vary', 'Origin');
+  res.header('Access-Control-Allow-Origin', origin);
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, X-Bootstrap-Token');
   if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
+    return res.sendStatus(204);
   }
   return next();
 });

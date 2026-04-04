@@ -1,6 +1,9 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { AgentManagerLocalConfig } from "../components/AgentManager";
+import type {
+  AgentManagerLocalConfig,
+  AgentManagerMemoryGraphData,
+} from "../components/AgentManager";
 import BuilderCanvas, {
   type BuilderCanvasFocusRequest,
 } from "../components/builder/BuilderCanvas";
@@ -64,10 +67,18 @@ import type {
   V3Blackboard,
 } from "../types/agentgraph";
 import type {
+  KnowledgeGraphScope,
   KnowledgeGraphRelationship,
   KnowledgeGraphNode,
 } from "../components/knowledge/KnowledgeGraphNVL";
 import UploadAttachment from "../components/knowledge/UploadAttachment";
+import {
+  createWorkspaceTestingInteractionId,
+  recordWorkspaceTestingEvent,
+  type WorkspaceTestingEventInput,
+  type WorkspaceTestingObjectType,
+  type WorkspaceTestingSurface,
+} from "../lib/workspaceTestingTelemetry";
 
 const AgentManager = lazy(async () => {
   const mod = await import("../components/AgentManager");
@@ -124,6 +135,19 @@ const BUILDER_PROJECT_TABS = ["Plan"] as const;
 const BUILDER_NODE_TABS = ["Prompt", "Knowledge", "Tools", "Runtime"] as const;
 const BUILDER_BLACKBOARD_TABS = ["Blackboard"] as const;
 const BUILDER_EDGE_TABS = ["Edge"] as const;
+
+function normalizeWorkspaceSurface(value: string): WorkspaceTestingSurface | null {
+  const normalized = safeText(value).trim().toLowerCase();
+  if (
+    normalized === "chat" ||
+    normalized === "plan" ||
+    normalized === "canvas" ||
+    normalized === "knowledge"
+  ) {
+    return normalized;
+  }
+  return null;
+}
 
 // ---- utils ----
 function clamp(x: number, a: number, b: number) {
@@ -196,6 +220,334 @@ function normalizeDeckEdgeType(value: unknown): DeckEdgeType {
   return safeText(value).trim().toLowerCase() === "magentic_option"
     ? "magentic_option"
     : "graph_flow";
+}
+
+function extractPromptTemplateField(
+  template: string,
+  field: "ROLE" | "GOAL" | "CONSTRAINTS" | "IO_SCHEMA" | "MEMORY_POLICY",
+): string | null {
+  const normalizedTemplate = safeText(template).replace(/\r\n/g, "\n");
+  if (!normalizedTemplate.includes(`[${field}]`)) return null;
+
+  const tagRegex = /\[(ROLE|GOAL|CONSTRAINTS|IO_SCHEMA|MEMORY_POLICY)\]/gi;
+  const tags: Array<{ key: string; start: number; end: number }> = [];
+  let match: RegExpExecArray | null;
+  while ((match = tagRegex.exec(normalizedTemplate)) !== null) {
+    tags.push({
+      key: String(match[1] || "").toUpperCase(),
+      start: match.index,
+      end: tagRegex.lastIndex,
+    });
+  }
+
+  for (let index = 0; index < tags.length; index += 1) {
+    const current = tags[index];
+    if (current.key !== field) continue;
+    const next = tags[index + 1];
+    const value = normalizedTemplate
+      .slice(current.end, next ? next.start : normalizedTemplate.length)
+      .trim();
+    return value || null;
+  }
+
+  return null;
+}
+
+function summarizeMemoryGraphLabel(value: string, fallback: string): string {
+  const text = safeText(value).trim();
+  if (!text) return fallback;
+  const normalized = text.replace(/^https?:\/\//i, "").replace(/^[a-z]+:\/\//i, "");
+  if (normalized.length <= 30) return normalized;
+  const lastSegment = normalized.split(/[\\/]/).filter(Boolean).pop() || normalized;
+  if (lastSegment.length <= 30) return lastSegment;
+  return `${lastSegment.slice(0, 27)}…`;
+}
+
+function normalizeKnowledgeScope(
+  value: unknown,
+  fallback: KnowledgeGraphScope,
+): KnowledgeGraphScope {
+  const normalized = safeText(value).trim().toLowerCase();
+  if (normalized === "agent") return "agent";
+  if (normalized === "project") return "project";
+  if (normalized === "system") return "system";
+  if (normalized === "grounded_research" || normalized === "grounded-research") {
+    return "grounded_research";
+  }
+  return fallback;
+}
+
+function formatKnowledgeScope(scope: KnowledgeGraphScope): string {
+  if (scope === "grounded_research") return "grounded research";
+  return scope;
+}
+
+function buildSelectedCardMemoryGraphData(
+  document: DeckDocument,
+  selectedCard: AgentCardInstance | null,
+  selectedCardConfig: AgentManagerLocalConfig | null,
+  blackboard: V3Blackboard,
+): AgentManagerMemoryGraphData | null {
+  if (!selectedCard || !selectedCardConfig || selectedCard.kind === "blackboard") return null;
+
+  const nodeMap = new Map(document.nodes.map((node) => [node.id, node] as const));
+  const entityMap = new Map<string, KnowledgeGraphNode>();
+  const relationshipMap = new Map<string, KnowledgeGraphRelationship>();
+  const agentNodeId = `memory:${selectedCard.id}`;
+
+  const pushEntity = (entity: KnowledgeGraphNode) => {
+    if (!entityMap.has(entity.id)) {
+      entityMap.set(entity.id, entity);
+    }
+  };
+  const pushRelationship = (relationship: KnowledgeGraphRelationship) => {
+    if (!relationshipMap.has(relationship.id)) {
+      relationshipMap.set(relationship.id, relationship);
+    }
+  };
+  const blackboardEntries: Array<{ label: string; value: string; type: string }> = [];
+  const pushBlackboardEntry = (label: string, value: unknown, type: string) => {
+    const text = cleanOptionalText(value);
+    if (!text) return;
+    blackboardEntries.push({ label, value: text, type });
+  };
+  let blackboardNodeId: string | null = null;
+  let hasBlackboardRead = false;
+  let hasBlackboardWrite = false;
+
+  pushEntity({
+    id: agentNodeId,
+    rawId: selectedCard.id,
+    label: safeText(selectedCard.title || selectedCard.id),
+    type: "Agent",
+    source: "mixed",
+    scope: "agent",
+  });
+  pushEntity({
+    id: `runtime_input:${selectedCard.id}`,
+    rawId: "Current user or upstream turn input.",
+    label: "Current Input",
+    type: "Runtime Input",
+    source: "think",
+    scope: "agent",
+  });
+  pushRelationship({
+    id: `rel:runtime_input:${selectedCard.id}`,
+    from: `runtime_input:${selectedCard.id}`,
+    to: agentNodeId,
+    type: "feeds_input",
+    source: "think",
+    scope: "agent",
+    evidence_snippet: "Current turn input is routed into this card at runtime.",
+  });
+
+  const memoryPolicy = extractPromptTemplateField(
+    String(selectedCardConfig.prompt_template || selectedCard.prompt || ""),
+    "MEMORY_POLICY",
+  );
+  if (memoryPolicy) {
+    pushEntity({
+      id: `memory_policy:${selectedCard.id}`,
+      rawId: memoryPolicy,
+      label: "Memory Policy",
+      type: "Memory Policy",
+      source: "think",
+      scope: "agent",
+    });
+    pushRelationship({
+      id: `rel:memory_policy:${selectedCard.id}`,
+      from: `memory_policy:${selectedCard.id}`,
+      to: agentNodeId,
+      type: "shapes_memory",
+      source: "think",
+      scope: "agent",
+      evidence_snippet: "This prompt section shapes how the card carries or constrains memory.",
+    });
+  }
+
+  (Array.isArray(selectedCardConfig.knowledge_sources)
+    ? selectedCardConfig.knowledge_sources
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+    : []
+  ).forEach((source, index) => {
+    const sourceNodeId = `knowledge_source:${selectedCard.id}:${index}`;
+    pushEntity({
+      id: sourceNodeId,
+      rawId: source,
+      label: summarizeMemoryGraphLabel(source, "Knowledge Source"),
+      type: "Knowledge Source",
+      source: "know",
+      scope: "agent",
+      originSource: "know",
+    });
+    pushRelationship({
+      id: `rel:knowledge_source:${selectedCard.id}:${index}`,
+      from: sourceNodeId,
+      to: agentNodeId,
+      type: "grounds_context",
+      source: "know",
+      scope: "agent",
+      evidence_snippet: "Configured knowledge source available to this card.",
+    });
+  });
+
+  document.edges.forEach((edge) => {
+    const edgeType = normalizeDeckEdgeType(edge.edgeType);
+    const sourceNode = nodeMap.get(edge.source) || null;
+    const targetNode = nodeMap.get(edge.target) || null;
+
+    if (
+      edge.target === selectedCard.id &&
+      sourceNode?.kind !== "blackboard" &&
+      sourceNode &&
+      (edgeType === "graph_flow" || edgeType === "magentic_option")
+    ) {
+      const sourceEntityId = `upstream:${sourceNode.id}`;
+      pushEntity({
+        id: sourceEntityId,
+        rawId: sourceNode.id,
+        label: safeText(sourceNode.title || sourceNode.id),
+        type: sourceNode.runtimeType === "magentic_one" ? "Orchestrator" : "Upstream Agent",
+        source: edgeType === "magentic_option" ? "mixed" : "think",
+        scope: "project",
+      });
+      pushRelationship({
+        id: `rel:upstream:${edge.id}`,
+        from: sourceEntityId,
+        to: agentNodeId,
+        type: edgeType === "magentic_option" ? "routes_input" : "feeds_input",
+        source: edgeType === "magentic_option" ? "mixed" : "think",
+        scope: "project",
+        evidence_snippet:
+          edgeType === "magentic_option"
+            ? "Visible orchestrator route into this card."
+            : "Visible upstream graph input into this card.",
+      });
+    }
+
+    if (
+      sourceNode?.kind === "blackboard" &&
+      edge.target === selectedCard.id
+    ) {
+      blackboardNodeId = `blackboard:${sourceNode.id}`;
+      hasBlackboardRead = true;
+      pushEntity({
+        id: blackboardNodeId,
+        rawId: sourceNode.id,
+        label: safeText(sourceNode.title || "Blackboard"),
+        type: "Blackboard",
+        source: "mixed",
+        scope: "project",
+      });
+      pushRelationship({
+        id: `rel:blackboard_read:${edge.id}`,
+        from: blackboardNodeId,
+        to: agentNodeId,
+        type: "reads_blackboard",
+        source: "mixed",
+        scope: "project",
+        evidence_snippet: "This card reads shared working state from the blackboard.",
+      });
+    }
+
+    if (
+      targetNode?.kind === "blackboard" &&
+      edge.source === selectedCard.id
+    ) {
+      blackboardNodeId = `blackboard:${targetNode.id}`;
+      hasBlackboardWrite = true;
+      pushEntity({
+        id: blackboardNodeId,
+        rawId: targetNode.id,
+        label: safeText(targetNode.title || "Blackboard"),
+        type: "Blackboard",
+        source: "mixed",
+        scope: "project",
+      });
+      pushRelationship({
+        id: `rel:blackboard_write:${edge.id}`,
+        from: agentNodeId,
+        to: blackboardNodeId,
+        type: "writes_blackboard",
+        source: "mixed",
+        scope: "project",
+        evidence_snippet: "This card writes shared working state into the blackboard.",
+      });
+    }
+
+    if (
+      edge.source === selectedCard.id &&
+      targetNode?.kind !== "blackboard" &&
+      targetNode &&
+      (edgeType === "graph_flow" || edgeType === "magentic_option")
+    ) {
+      const targetEntityId = `downstream:${targetNode.id}`;
+      pushEntity({
+        id: targetEntityId,
+        rawId: targetNode.id,
+        label: safeText(targetNode.title || targetNode.id),
+        type: targetNode.runtimeType === "magentic_one" ? "Orchestrator" : "Downstream Agent",
+        source: edgeType === "magentic_option" ? "mixed" : "think",
+        scope: "project",
+      });
+      pushRelationship({
+        id: `rel:downstream:${edge.id}`,
+        from: agentNodeId,
+        to: targetEntityId,
+        type: edgeType === "magentic_option" ? "routes_output" : "feeds_output",
+        source: edgeType === "magentic_option" ? "mixed" : "think",
+        scope: "project",
+        evidence_snippet:
+          edgeType === "magentic_option"
+            ? "This card exposes a callable route into the downstream graph."
+            : "Visible downstream graph consumer of this card output.",
+      });
+    }
+  });
+
+  if (blackboardNodeId && (hasBlackboardRead || hasBlackboardWrite)) {
+    pushBlackboardEntry("Current Goal", blackboard.current_goal, "Blackboard Goal");
+    pushBlackboardEntry("Next Move", blackboard.next_move, "Blackboard Next Move");
+    blackboard.open_questions.slice(0, 2).forEach((entry) => {
+      pushBlackboardEntry("Open Question", entry, "Blackboard Question");
+    });
+    blackboard.findings.slice(0, 2).forEach((entry) => {
+      pushBlackboardEntry("Finding", entry, "Blackboard Finding");
+    });
+    Object.entries(blackboard.store || {})
+      .slice(0, 3)
+      .forEach(([key, value]) => {
+        pushBlackboardEntry(key.replace(/[_-]+/g, " "), value, "Blackboard Store");
+      });
+
+    blackboardEntries.forEach((entry, index) => {
+      const entryId = `blackboard_context:${selectedCard.id}:${index}`;
+      pushEntity({
+        id: entryId,
+        rawId: entry.value,
+        label: summarizeMemoryGraphLabel(entry.value, entry.label),
+        type: entry.type,
+        source: "mixed",
+        scope: "project",
+      });
+      pushRelationship({
+        id: `rel:blackboard_context:${selectedCard.id}:${index}`,
+        from: blackboardNodeId!,
+        to: entryId,
+        type: "holds_context",
+        source: "mixed",
+        scope: "project",
+        evidence_snippet: entry.value,
+      });
+    });
+  }
+
+  return {
+    entities: Array.from(entityMap.values()),
+    relationships: Array.from(relationshipMap.values()),
+  };
 }
 
 function isTopLevelCanvasCard(
@@ -376,6 +728,11 @@ function normalizeMessages(input: unknown): { role: "assistant" | "user"; text: 
 const uid = () => Math.random().toString(36).slice(2, 8);
 const V2_PROJECTS_API = "/api/v2/projects";
 const V3_PROJECTS_API = "/api/v3/projects";
+const EMPTY_PROJECT_STATE = {
+  messages: [] as { role: "assistant" | "user"; text: string }[],
+  plan: [] as PlanItem[],
+  links: [] as LinkRef[],
+};
 
 const KG_CACHE_PREFIX = "agentbuilder:kg-cache:v1";
 const KG_CACHE_TTL_MS = 60_000;
@@ -386,6 +743,7 @@ type KNode = {
   label: string;
   type?: string;
   graphSource?: "think" | "know";
+  scope?: KnowledgeGraphScope;
   last_seen_ts?: string;
   degree?: number;
   createdAtMs?: number;
@@ -398,6 +756,7 @@ type KEdge = {
   id?: string;
   rawId?: string;
   graphSource?: "think" | "know";
+  scope?: KnowledgeGraphScope;
   source?: string;
   target?: string;
   type?: string;
@@ -551,6 +910,16 @@ ${parts.memoryPolicy}`;
 
 const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   {
+    id: "prompt_magentic",
+    content: buildSeedPromptTemplate({
+      role: "You are Magentic-One, the top-level orchestrator for the visible agent graph.",
+      goal: "Choose the best callable head to run next or answer directly when no downstream call is needed.",
+      constraints: "Route deliberately. Do not invent hidden workers. Stay grounded in the visible deck structure.",
+      ioSchema: "Input: user request plus callable head summaries. Output: a direct response or one selected downstream head.",
+      memoryPolicy: "Use the current input, callable head summaries, and explicit deck context only.",
+    }),
+  },
+  {
     id: "prompt_main_chat",
     content: buildSeedPromptTemplate({
       role: "You are LiquidAIty main chat. You help the user move the project forward with direct, practical answers.",
@@ -603,6 +972,16 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
 ];
 
 const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
+  {
+    id: "template_magentic",
+    name: "Magentic-One",
+    promptTemplate: "prompt_magentic",
+    model: "gpt-5-mini",
+    provider: "openai",
+    temperature: 0.2,
+    maxTokens: 1200,
+    tools: [],
+  },
   {
     id: "template_main_chat",
     name: "Main Chat",
@@ -659,8 +1038,22 @@ export const INITIAL_DECK: DeckDocument = {
   id: "deck_builder",
   name: "Agent Card Deck",
   promptTemplates: cloneDeckDocument(INITIAL_PROMPT_TEMPLATES),
-  version: 1,
+  version: 2,
   nodes: [
+    {
+      id: "card_magentic",
+      kind: "agent",
+      templateId: "template_magentic",
+      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_magentic")?.content || "",
+      runtimeBinding: null,
+      runtimeType: "magentic_one",
+      parentGraphId: null,
+      title: "Magentic-One",
+      subtitle: "Top-level orchestrator",
+      position: { x: -220, y: -120 },
+      status: "ready",
+      cloneConfig: { enabled: false, seeds: [] },
+    },
     {
       id: "card_main_chat",
       kind: "agent",
@@ -733,6 +1126,12 @@ export const INITIAL_DECK: DeckDocument = {
     },
   ],
   edges: [
+    {
+      id: "edge_magentic_main_chat",
+      source: "card_magentic",
+      target: "card_main_chat",
+      edgeType: "magentic_option",
+    },
     {
       id: "edge_main_chat_kg_ingest",
       source: "card_main_chat",
@@ -1182,11 +1581,15 @@ function formatBuilderStatusMessage(message: unknown, fallback: string): string 
 
 function seedCurrentSystemCardsIntoLegacyDeck(deck: DeckDocument): DeckDocument {
   const defaultNodeIds = new Set(INITIAL_DECK.nodes.map((node) => node.id));
-  const isExactSystemDeckShape =
-    deck.nodes.length === defaultNodeIds.size &&
+  const hasOnlySystemNodes =
+    deck.nodes.length > 0 &&
     deck.nodes.every((node) => defaultNodeIds.has(node.id));
+  const isExactSystemDeckShape =
+    hasOnlySystemNodes && deck.nodes.length === defaultNodeIds.size;
+  const isPartialSystemDeckShape =
+    hasOnlySystemNodes && deck.nodes.length < defaultNodeIds.size;
 
-  if (!isExactSystemDeckShape) {
+  if (!isExactSystemDeckShape && !isPartialSystemDeckShape) {
     return deck;
   }
 
@@ -1253,12 +1656,27 @@ function seedCurrentSystemCardsIntoLegacyDeck(deck: DeckDocument): DeckDocument 
       .map((template) => cloneDeckDocument(template)),
   ];
 
+  const nextEdges = isPartialSystemDeckShape
+    ? (() => {
+        const mergedEdges = new Map<string, DeckEdge>();
+        deck.edges.forEach((edge) => {
+          mergedEdges.set(edge.id, cloneDeckDocument(edge));
+        });
+        INITIAL_DECK.edges.forEach((edge) => {
+          if (!mergedEdges.has(edge.id)) {
+            mergedEdges.set(edge.id, cloneDeckDocument(edge));
+          }
+        });
+        return filterAuthoringCompatibleEdges(upgradedNodes, Array.from(mergedEdges.values()));
+      })()
+    : filterAuthoringCompatibleEdges(upgradedNodes, deck.edges);
+
   return {
     ...deck,
     version: Math.max(deck.version, INITIAL_DECK.version),
     promptTemplates: upgradedPromptTemplates,
     nodes: upgradedNodes,
-    edges: filterAuthoringCompatibleEdges(upgradedNodes, deck.edges),
+    edges: nextEdges,
   };
 }
 
@@ -1297,19 +1715,46 @@ export function hydrateDeckDocument(value: Partial<DeckDocument> | null | undefi
   };
 }
 
+function isTruncatedSystemDeckPayload(deckPayload: Partial<DeckDocument>): boolean {
+  if (!Array.isArray(deckPayload.nodes)) {
+    return false;
+  }
+
+  const canonicalNodeIds = new Set(INITIAL_DECK.nodes.map((node) => node.id));
+  const nodeIds = deckPayload.nodes
+    .map((node) => safeText((node as { id?: unknown } | null)?.id).trim())
+    .filter(Boolean);
+
+  if (nodeIds.length === 0) {
+    return false;
+  }
+
+  return nodeIds.length < canonicalNodeIds.size && nodeIds.every((nodeId) => canonicalNodeIds.has(nodeId));
+}
+
 export function resolveProjectDeckPayload(
   deckPayload: Partial<DeckDocument> | null | undefined,
-): { deck: DeckDocument; usedFallback: boolean } {
+): { deck: DeckDocument; usedFallback: boolean; displayFallbackOnly: boolean } {
   if (!deckPayload || typeof deckPayload !== "object") {
     return {
       deck: hydrateDeckDocument(INITIAL_DECK),
       usedFallback: true,
+      displayFallbackOnly: false,
+    };
+  }
+
+  if (isTruncatedSystemDeckPayload(deckPayload)) {
+    return {
+      deck: hydrateDeckDocument(deckPayload),
+      usedFallback: true,
+      displayFallbackOnly: true,
     };
   }
 
   return {
     deck: hydrateDeckDocument(deckPayload),
     usedFallback: false,
+    displayFallbackOnly: false,
   };
 }
 
@@ -1317,12 +1762,18 @@ export function resolveProjectDeckLoadResult(
   currentDeck: DeckDocument,
   deckPayload: Partial<DeckDocument> | null | undefined,
   preserveCurrentOnFailure = false,
-): { deck: DeckDocument; usedFallback: boolean; preservedCurrent: boolean } {
+): {
+  deck: DeckDocument;
+  usedFallback: boolean;
+  preservedCurrent: boolean;
+  displayFallbackOnly: boolean;
+} {
   if (preserveCurrentOnFailure) {
     return {
       deck: cloneDeckDocument(currentDeck),
       usedFallback: false,
       preservedCurrent: true,
+      displayFallbackOnly: false,
     };
   }
 
@@ -1377,9 +1828,9 @@ function compactAgentOverrides(
 // helper: load all project-local state (defaults only; real data is fetched from backend)
 function loadProjectState(_projectId: string) {
   return {
-    messages: [] as { role: "assistant" | "user"; text: string }[],
-    plan: [{ id: uid(), text: "Define objective", status: "draft" }] as PlanItem[],
-    links: [] as LinkRef[],
+    messages: [...EMPTY_PROJECT_STATE.messages],
+    plan: [...EMPTY_PROJECT_STATE.plan],
+    links: [...EMPTY_PROJECT_STATE.links],
   };
 }
 
@@ -1421,12 +1872,19 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
     return new Date(ms).toISOString();
   };
 
-  const upsertNode = (idRaw: unknown, labelRaw: unknown, typeRaw: unknown, tsRaw: unknown) => {
+  const upsertNode = (
+    idRaw: unknown,
+    labelRaw: unknown,
+    typeRaw: unknown,
+    tsRaw: unknown,
+    scopeRaw?: unknown,
+  ) => {
     const id = String(idRaw ?? "").trim();
     if (!id) return;
 
     const label = String(labelRaw ?? "").trim() || id.slice(0, 12);
     const type = normalizeType(typeRaw);
+    const scope = normalizeKnowledgeScope(scopeRaw, "project");
     const nextMs = parseTimestampMs(tsRaw);
     const nextTs = typeof nextMs === "number" ? new Date(nextMs).toISOString() : undefined;
 
@@ -1436,6 +1894,7 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
         id,
         label,
         type,
+        scope,
         createdAtMs: nextMs,
         last_seen_ts: nextTs,
       });
@@ -1448,6 +1907,7 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
     if ((!existing.type || existing.type === "unknown") && type !== "unknown") {
       existing.type = type;
     }
+    existing.scope = normalizeKnowledgeScope(existing.scope, scope);
     if (typeof nextMs === "number" && (!existing.createdAtMs || nextMs > existing.createdAtMs)) {
       existing.createdAtMs = nextMs;
       existing.last_seen_ts = nextTs;
@@ -1470,6 +1930,10 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
     const edgeTs = toIsoTs(row.r_ts ?? row.r_created_at ?? row.created_at);
     const edgeWeight = toNum(row.r_weight ?? row.weight ?? row.confidence);
     const edgeConfidence = toNum(row.r_confidence ?? row.confidence ?? row.r_weight ?? row.weight);
+    const scope = normalizeKnowledgeScope(
+      row.r_scope ?? row.scope ?? row.relationship_scope,
+      "project",
+    );
     const explicitEdgeId = String(row.r_id ?? row.edge_id ?? "").trim();
     const edgeId =
       explicitEdgeId ||
@@ -1484,6 +1948,7 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
         a: source,
         b: target,
         type: relType,
+        scope,
         weight: edgeWeight,
         confidence: edgeConfidence,
         last_seen_ts: edgeTs,
@@ -1500,6 +1965,7 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
     if (typeof edgeConfidence === "number") {
       existing.confidence = Math.max(existing.confidence ?? 0, edgeConfidence);
     }
+    existing.scope = normalizeKnowledgeScope(existing.scope, scope);
     if (!existing.evidence_doc_id && evidenceDocId) {
       existing.evidence_doc_id = evidenceDocId;
     }
@@ -1531,12 +1997,14 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
         row.a_name,
         row.a_type ?? row.a_etype ?? row.a_category,
         row.a_ts ?? row.a_created_at,
+        row.a_scope,
       );
       upsertNode(
         row.b_id,
         row.b_name,
         row.b_type ?? row.b_etype ?? row.b_category,
         row.b_ts ?? row.b_created_at,
+        row.b_scope,
       );
       upsertEdge(row.a_id, row.b_id, row.r_type ?? row.rel_type, row);
       return;
@@ -1547,8 +2015,20 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
       const bId = extractNodeId(row.b);
       const aProps = row.a?.properties || row.a;
       const bProps = row.b?.properties || row.b;
-      upsertNode(aId, aProps?.name ?? aProps?.label, aProps?.etype ?? aProps?.type, aProps?.created_at);
-      upsertNode(bId, bProps?.name ?? bProps?.label, bProps?.etype ?? bProps?.type, bProps?.created_at);
+      upsertNode(
+        aId,
+        aProps?.name ?? aProps?.label,
+        aProps?.etype ?? aProps?.type,
+        aProps?.created_at,
+        aProps?.scope ?? row.a?.scope,
+      );
+      upsertNode(
+        bId,
+        bProps?.name ?? bProps?.label,
+        bProps?.etype ?? bProps?.type,
+        bProps?.created_at,
+        bProps?.scope ?? row.b?.scope,
+      );
       upsertEdge(aId, bId, row.r?.rtype ?? row.r?.type ?? row.rtype, {
         ...row,
         r_ts: row.r?.created_at,
@@ -1556,6 +2036,7 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
         r_confidence: row.r?.confidence,
         r_doc_id: row.r?.source?.doc_id,
         r_snippet: row.r?.source?.snippet,
+        r_scope: row.r?.scope ?? row.r?.properties?.scope,
       });
     }
   });
@@ -1569,10 +2050,10 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
     degreeByNode.set(source, (degreeByNode.get(source) || 0) + 1);
     degreeByNode.set(target, (degreeByNode.get(target) || 0) + 1);
     if (!nodeMap.has(source)) {
-      upsertNode(source, source, "unknown", e.last_seen_ts);
+      upsertNode(source, source, "unknown", e.last_seen_ts, "project");
     }
     if (!nodeMap.has(target)) {
-      upsertNode(target, target, "unknown", e.last_seen_ts);
+      upsertNode(target, target, "unknown", e.last_seen_ts, "project");
     }
   });
 
@@ -1580,6 +2061,7 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
     ...n,
     rawId: n.id,
     graphSource: "think" as const,
+    scope: normalizeKnowledgeScope(n.scope, "project"),
     degree: degreeByNode.get(n.id) || 0,
     type: normalizeType(n.type),
   }));
@@ -1590,6 +2072,7 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
       ...e,
       rawId: e.id,
       graphSource: "think" as const,
+      scope: normalizeKnowledgeScope(e.scope, "project"),
     })),
   };
 }
@@ -1621,6 +2104,7 @@ function normalizeKnowGraphResponseToGraph(payload: any): { nodes: KNode[]; edge
       id,
       rawId,
       graphSource: "know",
+      scope: normalizeKnowledgeScope(props.scope ?? raw?.scope, "grounded_research"),
       label: safeText(raw?.label || props.name || props.title || rawId),
       type: safeText(raw?.type || (Array.isArray(raw?.labels) ? raw.labels[0] : "") || "NeoEntity").toLowerCase(),
       last_seen_ts: typeof ts === "string" ? ts : undefined,
@@ -1654,6 +2138,7 @@ function normalizeKnowGraphResponseToGraph(payload: any): { nodes: KNode[]; edge
       id,
       rawId,
       graphSource: "know",
+      scope: normalizeKnowledgeScope(props.scope ?? raw?.scope, "grounded_research"),
       a: source,
       b: target,
       source,
@@ -1764,6 +2249,10 @@ function buildGraphVizForNVL(graph: { nodes: KNode[]; edges: KEdge[] }) {
       label: n.label || n.id,
       type: String(n.type || "unknown").toLowerCase(),
       source,
+      scope: normalizeKnowledgeScope(
+        n.scope,
+        n.graphSource === "know" ? "grounded_research" : "project",
+      ),
       originSource: source,
       last_seen_ts: n.last_seen_ts,
       degree: n.degree || 0,
@@ -1782,6 +2271,10 @@ function buildGraphVizForNVL(graph: { nodes: KNode[]; edges: KEdge[] }) {
       to: target,
       type: e.type || "related_to",
       source: e.graphSource === "know" ? "know" : "think",
+      scope: normalizeKnowledgeScope(
+        e.scope,
+        e.graphSource === "know" ? "grounded_research" : "project",
+      ),
       weight: e.weight,
       confidence: e.confidence,
       last_seen_ts: e.last_seen_ts,
@@ -1791,10 +2284,6 @@ function buildGraphVizForNVL(graph: { nodes: KNode[]; edges: KEdge[] }) {
   });
 
   return { entities, relationships };
-}
-
-function knowledgePanelSummaryText(graph: { nodes: KNode[]; edges: KEdge[] }): string {
-  return `Entities: ${graph.nodes.length} | Relationships: ${graph.edges.length}`;
 }
 
 // -------- Knowledge: interactive force-layout canvas --------
@@ -3602,8 +4091,12 @@ export default function AgentBuilder(): React.ReactElement {
   const [panelWidth, setPanelWidth] = useState(480);
   const [selectedAgentProjectId, setSelectedAgentProjectId] = useState("");
   const [deck, setDeckState] = useState<DeckDocument>(() => hydrateDeckDocument(INITIAL_DECK));
+  const [deckRevision, setDeckRevision] = useState<string | null>(null);
+  const [blackboardRevision, setBlackboardRevision] = useState<string | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [selectedKnowledgeEntityId, setSelectedKnowledgeEntityId] = useState<string | null>(null);
+  const [selectedKnowledgeRelationshipId, setSelectedKnowledgeRelationshipId] = useState<string | null>(null);
   const [builderCanvasFocusRequest, setBuilderCanvasFocusRequest] =
     useState<BuilderCanvasFocusRequest | null>(null);
   // TODO: replace manual deck input with plan-driven execution input.
@@ -3616,6 +4109,7 @@ export default function AgentBuilder(): React.ReactElement {
   const [deckLoadBusy, setDeckLoadBusy] = useState(false);
   const [deckSaveBusy, setDeckSaveBusy] = useState(false);
   const [deckStatusMessage, setDeckStatusMessage] = useState<string | null>(null);
+  const [deckUsingDisplayFallback, setDeckUsingDisplayFallback] = useState(false);
   const setActiveProjectWithUrl = useCallback(
     (projectId: string) => {
       const currentSearch = window.location.search.replace(/^\?/, "");
@@ -3635,16 +4129,154 @@ export default function AgentBuilder(): React.ReactElement {
   );
 
   const [tab, setTab] = useState<string>("Canvas");
+  const [hoveredCompanionSurface, setHoveredCompanionSurface] =
+    useState<null | "chat" | "plan" | "canvas" | "knowledge">(null);
   const [openDrawer, setOpenDrawer] = useState<null | "navigation">(null);
-  const sending = false;
+  const [sending, setSending] = useState(false);
   const workspaceView =
     largeSurface === "canvas" ? "canvas" : largeSurface === "knowledge" ? "knowledge" : "home";
+  const lastLargeSurfaceTelemetryRef = useRef<WorkspaceTestingSurface | null>(null);
+  const lastCompanionSurfaceTelemetryRef = useRef<string | null>(null);
+  const chatLoopTelemetryRef = useRef<{
+    interactionId: string;
+    sendStartedAt: number;
+    responseReceivedAt: number | null;
+    refreshRecorded: boolean;
+  } | null>(null);
+  const pendingPanelOpenTelemetryRef = useRef<{
+    objectType: WorkspaceTestingObjectType;
+    objectId: string;
+    graphType: "agent" | "knowledge";
+    interactionId: string;
+    startedAt: number;
+  } | null>(null);
+
+  const emitWorkspaceTestingEvent = useCallback(
+    (payload: WorkspaceTestingEventInput) => {
+      const metadata = {
+        activeProjectId: activeProject || null,
+        agentProjectId: selectedAgentProjectId || null,
+        ...(payload.metadata || {}),
+      };
+      recordWorkspaceTestingEvent({
+        ...payload,
+        projectId:
+          payload.projectId ??
+          cleanOptionalText(activeProject) ??
+          cleanOptionalText(selectedAgentProjectId) ??
+          null,
+        metadata,
+      });
+    },
+    [activeProject, selectedAgentProjectId],
+  );
+
+  const recordPostResponseRefreshIfPending = useCallback(
+    (refreshKind: "workspace_state" | "agent_graph" | "knowledge_graph", completedAt: number) => {
+      const activeLoop = chatLoopTelemetryRef.current;
+      if (!activeLoop?.responseReceivedAt || activeLoop.refreshRecorded) return;
+      activeLoop.refreshRecorded = true;
+      emitWorkspaceTestingEvent({
+        event: "post_response_refresh_completed",
+        interactionId: activeLoop.interactionId,
+        durationMs: Math.max(0, completedAt - activeLoop.responseReceivedAt),
+        metadata: { refreshKind },
+      });
+    },
+    [emitWorkspaceTestingEvent],
+  );
+
+  const queueWorkspacePanelTelemetry = useCallback(
+    (
+      graphType: "agent" | "knowledge",
+      objectType: WorkspaceTestingObjectType,
+      objectId: string,
+      interactionId: string,
+    ) => {
+      const startedAt = Date.now();
+      if (panelOpen) {
+        emitWorkspaceTestingEvent({
+          event: "workspace_panel_opened_from_graph_selection",
+          objectType,
+          objectId,
+          interactionId,
+          durationMs: 0,
+          metadata: { graphType, panelAlreadyOpen: true },
+        });
+        pendingPanelOpenTelemetryRef.current = null;
+        return;
+      }
+      pendingPanelOpenTelemetryRef.current = {
+        objectType,
+        objectId,
+        graphType,
+        interactionId,
+        startedAt,
+      };
+    },
+    [emitWorkspaceTestingEvent, panelOpen],
+  );
+
+  useEffect(() => {
+    const previousSurface = lastLargeSurfaceTelemetryRef.current;
+    emitWorkspaceTestingEvent({
+      event: "surface_opened",
+      surface: largeSurface,
+      surfaceRole: "large",
+      metadata: { workspaceView },
+    });
+    if (largeSurface === "chat" && previousSurface && previousSurface !== "chat") {
+      emitWorkspaceTestingEvent({
+        event: "return_to_chat",
+        surface: "chat",
+        surfaceRole: "large",
+        metadata: { fromSurface: previousSurface },
+      });
+    }
+    lastLargeSurfaceTelemetryRef.current = largeSurface;
+  }, [emitWorkspaceTestingEvent, largeSurface, workspaceView]);
+
+  useEffect(() => {
+    if (workspaceView === "canvas") {
+      lastCompanionSurfaceTelemetryRef.current = null;
+      return;
+    }
+    const companionSurface = normalizeWorkspaceSurface(tab);
+    if (!companionSurface) {
+      lastCompanionSurfaceTelemetryRef.current = null;
+      return;
+    }
+    const nextKey = `${workspaceView}:${companionSurface}`;
+    if (lastCompanionSurfaceTelemetryRef.current === nextKey) return;
+    emitWorkspaceTestingEvent({
+      event: "surface_opened",
+      surface: companionSurface,
+      surfaceRole: "companion",
+      metadata: { workspaceView },
+    });
+    lastCompanionSurfaceTelemetryRef.current = nextKey;
+  }, [emitWorkspaceTestingEvent, tab, workspaceView]);
+
+  useEffect(() => {
+    const pending = pendingPanelOpenTelemetryRef.current;
+    if (!panelOpen || !pending) return;
+    emitWorkspaceTestingEvent({
+      event: "workspace_panel_opened_from_graph_selection",
+      objectType: pending.objectType,
+      objectId: pending.objectId,
+      interactionId: pending.interactionId,
+      durationMs: Math.max(0, Date.now() - pending.startedAt),
+      metadata: { graphType: pending.graphType, panelAlreadyOpen: false },
+    });
+    pendingPanelOpenTelemetryRef.current = null;
+  }, [emitWorkspaceTestingEvent, panelOpen]);
 
   // agent builder state
   const [projects, setProjects] = useState<any[]>([]);
   const refreshSeq = useRef(0);
   const refreshAbortRef = useRef<AbortController | null>(null);
   const mountRefreshRanRef = useRef(false);
+  const canvasSelectionInitializedRef = useRef(false);
   const activeProjectLatestRef = useRef("");
   const stateLoadKeyRef = useRef("");
   const stateLoadAbortRef = useRef<AbortController | null>(null);
@@ -3706,9 +4338,13 @@ export default function AgentBuilder(): React.ReactElement {
   );
 
   useEffect(() => {
+    canvasSelectionInitializedRef.current = false;
     if (!selectedAgentProjectId) {
       recordDeckWriteReason("builder-reset");
       setDeck(hydrateDeckDocument(INITIAL_DECK));
+      setDeckRevision(null);
+      setBlackboardRevision(null);
+      setDeckUsingDisplayFallback(false);
       setLatestDeckRun(null);
       setLatestCardRun(null);
       setV3Blackboard(createEmptyBlackboard());
@@ -3717,7 +4353,11 @@ export default function AgentBuilder(): React.ReactElement {
     }
 
     const controller = new AbortController();
+    const deckRefreshStartedAt = Date.now();
+    let usedDisplayFallback = false;
     setDeckLoadBusy(true);
+    setDeckRevision(null);
+    setBlackboardRevision(null);
       setDeckStatusMessage("Loading canvas...");
 
     void (async () => {
@@ -3749,6 +4389,13 @@ export default function AgentBuilder(): React.ReactElement {
 
         recordDeckWriteReason(loadResult.usedFallback ? "deck-load-default" : "deck-load");
         setDeck(loadResult.deck);
+        setDeckRevision(
+          typeof payload.data?.meta?.deckRevision === "string"
+            ? payload.data.meta.deckRevision
+            : null,
+        );
+        setDeckUsingDisplayFallback(loadResult.displayFallbackOnly);
+        usedDisplayFallback = loadResult.displayFallbackOnly;
         setLatestDeckRun(
           payload.data?.latestRun && typeof payload.data.latestRun === "object"
             ? (payload.data.latestRun as DeckRun)
@@ -3759,17 +4406,41 @@ export default function AgentBuilder(): React.ReactElement {
             payload.data?.blackboard ?? payload.data?.latestRun?.blackboard ?? createEmptyBlackboard(),
           ),
         );
+        setBlackboardRevision(
+          typeof payload.data?.meta?.blackboardRevision === "string"
+            ? payload.data.meta.blackboardRevision
+            : null,
+        );
         setLatestCardRun(null);
-        setDeckStatusMessage(loadResult.usedFallback ? "Using default canvas." : "Canvas loaded.");
+        setDeckStatusMessage(
+          loadResult.displayFallbackOnly
+            ? "Showing the canonical chain as a temporary fallback for a truncated saved canvas."
+            : loadResult.usedFallback
+              ? "Using default canvas."
+              : "Canvas loaded.",
+        );
       } catch (err: any) {
         if (controller.signal.aborted) return;
         recordDeckWriteReason("deck-load-preserve-current");
         setLatestDeckRun(null);
         setLatestCardRun(null);
         setV3Blackboard(createEmptyBlackboard());
+        setDeckRevision(null);
+        setBlackboardRevision(null);
         setDeckStatusMessage(formatBuilderStatusMessage(err?.message, "Keeping current canvas."));
       } finally {
         if (!controller.signal.aborted) {
+          const completedAt = Date.now();
+          emitWorkspaceTestingEvent({
+            event: "graph_refresh_completed",
+            durationMs: Math.max(0, completedAt - deckRefreshStartedAt),
+            metadata: {
+              graphType: "agent",
+              source: "deck_load",
+              usedDisplayFallback,
+            },
+          });
+          recordPostResponseRefreshIfPending("agent_graph", completedAt);
           setDeckLoadBusy(false);
         }
       }
@@ -3778,7 +4449,12 @@ export default function AgentBuilder(): React.ReactElement {
     return () => {
       controller.abort();
     };
-  }, [recordDeckWriteReason, selectedAgentProjectId]);
+  }, [
+    emitWorkspaceTestingEvent,
+    recordDeckWriteReason,
+    recordPostResponseRefreshIfPending,
+    selectedAgentProjectId,
+  ]);
 
   const showDeckBuilder = workspaceView === "canvas";
   const selectedCard = useMemo(
@@ -3835,6 +4511,10 @@ export default function AgentBuilder(): React.ReactElement {
         : null,
     };
   }, [effectiveAgent, selectedCard]);
+  const selectedCardMemoryGraph = useMemo<AgentManagerMemoryGraphData | null>(
+    () => buildSelectedCardMemoryGraphData(deck, selectedCard, selectedCardConfig, v3Blackboard),
+    [deck, selectedCard, selectedCardConfig, v3Blackboard],
+  );
   const deckValidation = useMemo(
     () => validateDeckDocument(deck, { enforceStartCard: true }),
     [deck],
@@ -3891,13 +4571,18 @@ export default function AgentBuilder(): React.ReactElement {
 
   useEffect(() => {
     if (workspaceView !== "canvas") return;
-    if (selectedCardId || selectedEdgeId) return;
+    if (selectedCardId || selectedEdgeId) {
+      canvasSelectionInitializedRef.current = true;
+      return;
+    }
+    if (canvasSelectionInitializedRef.current) return;
     if (deck.nodes.length === 0) return;
     const preferredNode =
       deck.nodes.find((node) => node.kind !== "blackboard") ||
       deck.nodes[0] ||
       null;
     if (!preferredNode) return;
+    canvasSelectionInitializedRef.current = true;
     setSelectedCardId(preferredNode.id);
     setTab(preferredNode.kind === "blackboard" ? "Blackboard" : "Prompt");
   }, [deck.nodes, selectedCardId, selectedEdgeId, workspaceView]);
@@ -3919,6 +4604,19 @@ export default function AgentBuilder(): React.ReactElement {
 
   const handleSelectCard = useCallback((cardId: string | null) => {
     recordUiOnlyAction("node-selection");
+    if (!cardId) {
+      pendingPanelOpenTelemetryRef.current = null;
+    } else {
+      const interactionId = createWorkspaceTestingInteractionId("agent-node");
+      emitWorkspaceTestingEvent({
+        event: "agent_graph_node_selected",
+        objectType: "agent_node",
+        objectId: cardId,
+        interactionId,
+        metadata: { workspaceView: "canvas" },
+      });
+      queueWorkspacePanelTelemetry("agent", "agent_node", cardId, interactionId);
+    }
     setPanelOpen(true);
     setSelectedCardId(cardId);
     if (cardId) {
@@ -3930,17 +4628,72 @@ export default function AgentBuilder(): React.ReactElement {
         setTab("Prompt");
       }
     }
-  }, [deck.nodes, recordUiOnlyAction, tab]);
+  }, [deck.nodes, emitWorkspaceTestingEvent, queueWorkspacePanelTelemetry, recordUiOnlyAction, tab]);
 
   const handleSelectEdge = useCallback((edgeId: string | null) => {
     recordUiOnlyAction("edge-selection");
+    if (!edgeId) {
+      pendingPanelOpenTelemetryRef.current = null;
+    } else {
+      const interactionId = createWorkspaceTestingInteractionId("agent-edge");
+      emitWorkspaceTestingEvent({
+        event: "agent_graph_edge_selected",
+        objectType: "agent_edge",
+        objectId: edgeId,
+        interactionId,
+        metadata: { workspaceView: "canvas" },
+      });
+      queueWorkspacePanelTelemetry("agent", "agent_edge", edgeId, interactionId);
+    }
     setPanelOpen(true);
     setSelectedEdgeId(edgeId);
     if (edgeId) {
       setSelectedCardId(null);
       setTab("Edge");
     }
-  }, [recordUiOnlyAction]);
+  }, [emitWorkspaceTestingEvent, queueWorkspacePanelTelemetry, recordUiOnlyAction]);
+
+  const handleSelectKnowledgeEntity = useCallback((entity: KnowledgeGraphNode | null) => {
+    recordUiOnlyAction("knowledge-node-selection");
+    if (!entity?.id) {
+      pendingPanelOpenTelemetryRef.current = null;
+    } else {
+      const interactionId = createWorkspaceTestingInteractionId("knowledge-node");
+      emitWorkspaceTestingEvent({
+        event: "knowledge_graph_node_selected",
+        objectType: "knowledge_node",
+        objectId: entity.id,
+        interactionId,
+        metadata: { scope: entity.scope, source: entity.source },
+      });
+      queueWorkspacePanelTelemetry("knowledge", "knowledge_node", entity.id, interactionId);
+    }
+    setPanelOpen(true);
+    setSelectedEdgeEvidence(null);
+    setSelectedKnowledgeRelationshipId(null);
+    setSelectedKnowledgeEntityId(entity?.id ?? null);
+  }, [emitWorkspaceTestingEvent, queueWorkspacePanelTelemetry, recordUiOnlyAction]);
+
+  const handleSelectKnowledgeRelationship = useCallback((relationship: KnowledgeGraphRelationship | null) => {
+    recordUiOnlyAction("knowledge-edge-selection");
+    if (!relationship?.id) {
+      pendingPanelOpenTelemetryRef.current = null;
+    } else {
+      const interactionId = createWorkspaceTestingInteractionId("knowledge-edge");
+      emitWorkspaceTestingEvent({
+        event: "knowledge_graph_edge_selected",
+        objectType: "knowledge_edge",
+        objectId: relationship.id,
+        interactionId,
+        metadata: { scope: relationship.scope, source: relationship.source },
+      });
+      queueWorkspacePanelTelemetry("knowledge", "knowledge_edge", relationship.id, interactionId);
+    }
+    setPanelOpen(true);
+    setSelectedEdgeEvidence(relationship);
+    setSelectedKnowledgeEntityId(null);
+    setSelectedKnowledgeRelationshipId(relationship?.id ?? null);
+  }, [emitWorkspaceTestingEvent, queueWorkspacePanelTelemetry, recordUiOnlyAction]);
 
   const queueBuilderCanvasFocus = useCallback(
     (kind: BuilderCanvasFocusRequest["kind"], cardId?: string | null) => {
@@ -4036,6 +4789,12 @@ export default function AgentBuilder(): React.ReactElement {
       setDeckStatusMessage("Open a canvas before saving.");
       return;
     }
+    if (deckUsingDisplayFallback) {
+      setDeckStatusMessage(
+        "This canvas is a temporary display fallback and will not overwrite the saved deck.",
+      );
+      return;
+    }
 
     const requestedDeckVersion = deck.version;
 
@@ -4058,6 +4817,7 @@ export default function AgentBuilder(): React.ReactElement {
             ...deck,
             id: BUILDER_DECK_ID,
           },
+          expectedRevision: deckRevision,
         }),
       });
       const data = await safeJson(response);
@@ -4081,14 +4841,35 @@ export default function AgentBuilder(): React.ReactElement {
           return hydrateDeckDocument({ ...(data.deck as DeckDocument), id: BUILDER_DECK_ID });
         });
       }
+      setDeckRevision(
+        typeof data?.meta?.deckRevision === "string" ? data.meta.deckRevision : deckRevision,
+      );
       setV3Blackboard(normalizeV3Blackboard(data?.blackboard ?? v3Blackboard));
+      setBlackboardRevision(
+        typeof data?.meta?.blackboardRevision === "string"
+          ? data.meta.blackboardRevision
+          : blackboardRevision,
+      );
       setDeckStatusMessage("Board saved.");
     } catch (err: any) {
-      setDeckStatusMessage(formatBuilderStatusMessage(err?.message, "Could not save the current board."));
+      const fallbackMessage =
+        safeText(err?.message) === "deck_conflict"
+          ? "A newer saved canvas exists. Reload the workspace before saving again."
+          : "Could not save the current board.";
+      setDeckStatusMessage(formatBuilderStatusMessage(err?.message, fallbackMessage));
     } finally {
       setDeckSaveBusy(false);
     }
-  }, [BUILDER_DEV, deck, recordDeckWriteReason, selectedAgentProjectId, v3Blackboard]);
+  }, [
+    BUILDER_DEV,
+    blackboardRevision,
+    deck,
+    deckRevision,
+    deckUsingDisplayFallback,
+    recordDeckWriteReason,
+    selectedAgentProjectId,
+    v3Blackboard,
+  ]);
 
   const handleRunSelectedCard = useCallback(async () => {
     if (!selectedAgentProjectId) {
@@ -4130,6 +4911,7 @@ export default function AgentBuilder(): React.ReactElement {
           },
           templates: INITIAL_AGENT_TEMPLATES,
           input: deckRunInput,
+          baseBlackboardRevision: blackboardRevision,
         }),
       });
       const data = await safeJson(response);
@@ -4177,6 +4959,11 @@ export default function AgentBuilder(): React.ReactElement {
       });
       setLatestDeckRun(run);
       setV3Blackboard(nextBlackboard);
+      setBlackboardRevision(
+        typeof data?.meta?.blackboardRevision === "string"
+          ? data.meta.blackboardRevision
+          : blackboardRevision,
+      );
 
       if (result.status === "error") {
         setDeckStatusMessage(formatBuilderStatusMessage(result.error, "Card run failed."));
@@ -4207,6 +4994,7 @@ export default function AgentBuilder(): React.ReactElement {
     deck,
     deckRunInput,
     effectiveAgent,
+    blackboardRevision,
     selectedAgentProjectId,
     selectedCard,
     v3Blackboard,
@@ -4260,6 +5048,7 @@ export default function AgentBuilder(): React.ReactElement {
           },
           templates: INITIAL_AGENT_TEMPLATES,
           input: deckRunInput,
+          baseBlackboardRevision: blackboardRevision,
         }),
       });
       const data = await safeJson(response);
@@ -4271,6 +5060,11 @@ export default function AgentBuilder(): React.ReactElement {
       const run = data.run as DeckRun;
       setLatestDeckRun(run);
       setV3Blackboard(normalizeV3Blackboard(data?.blackboard ?? data?.run?.blackboard ?? v3Blackboard));
+      setBlackboardRevision(
+        typeof data?.meta?.blackboardRevision === "string"
+          ? data.meta.blackboardRevision
+          : blackboardRevision,
+      );
       if (data?.deck && typeof data.deck === "object") {
         recordDeckWriteReason("deck-run-merge");
         setDeck((currentDeck) => {
@@ -4316,6 +5110,7 @@ export default function AgentBuilder(): React.ReactElement {
     }
   }, [
     BUILDER_DEV,
+    blackboardRevision,
     deck,
     deckExecutionPlan,
     deckRunInput,
@@ -4480,12 +5275,14 @@ export default function AgentBuilder(): React.ReactElement {
                 projectId={selectedAgentProjectId || "deck-card"}
                 agentType="agent_builder"
                 activeTab={tab}
+                selectedCardId={selectedCard.id}
                 promptTestInput={deckRunInput}
                 onChangePromptTestInput={setDeckRunInput}
                 onRunPromptTest={handleRunSelectedCard}
                 promptTestBusy={cardRunBusy}
                 promptTestDisabled={cardRunBusy || deckLoadBusy || !selectedAgentProjectId}
                 localConfig={selectedCardConfig}
+                memoryGraphData={selectedCardMemoryGraph}
                 onSaveLocalConfig={handleSaveSelectedCardConfig}
                 onGraphRefresh={() => {
                   // no-op
@@ -4680,10 +5477,21 @@ export default function AgentBuilder(): React.ReactElement {
         setActiveProject("");
       }
 
-      const currentAgentId = preferredAgentId || selectedAgentProjectId || "";
+      const explicitAgentId = preferredAgentId || "";
+      const hasExplicitAgent =
+        explicitAgentId && orderedAgentCards.some((card: any) => card.id === explicitAgentId);
+      const currentAgentId = selectedAgentProjectId || "";
       const hasCurrentAgent = currentAgentId && orderedAgentCards.some((card: any) => card.id === currentAgentId);
+      const agentBuilderCard =
+        orderedAgentCards.find(
+          (card: any) => normalizeProjectCardKey(card?.code) === "agent-builder",
+        ) || null;
       const nextAgentId =
-        (hasCurrentAgent ? currentAgentId : "") || orderedAgentCards[0]?.id || "";
+        (hasExplicitAgent ? explicitAgentId : "") ||
+        agentBuilderCard?.id ||
+        (hasCurrentAgent ? currentAgentId : "") ||
+        orderedAgentCards[0]?.id ||
+        "";
       setSelectedAgentProjectId(nextAgentId);
     } catch (err: any) {
       if (isAbortLikeError(err)) return;
@@ -4747,6 +5555,11 @@ export default function AgentBuilder(): React.ReactElement {
   const [graphRecencyFilter] = useState<"all" | "24h" | "7d" | "30d">("all");
   const [graphMinConfidence] = useState<number>(0);
   const [, setSelectedEdgeEvidence] = useState<KnowledgeGraphRelationship | null>(null);
+  const clearKnowledgeWorkspaceSelection = useCallback(() => {
+    setSelectedKnowledgeEntityId(null);
+    setSelectedKnowledgeRelationshipId(null);
+    setSelectedEdgeEvidence(null);
+  }, []);
   const [knowGraphData, setKnowGraphData] = useState<{ nodes: any[]; relationships: any[] }>({
     nodes: [],
     relationships: [],
@@ -4772,8 +5585,8 @@ export default function AgentBuilder(): React.ReactElement {
     setGraphLoading(false);
     setExpandingNodeId(null);
     setGraphResetToken((v) => v + 1);
-    setSelectedEdgeEvidence(null);
-  }, []);
+    clearKnowledgeWorkspaceSelection();
+  }, [clearKnowledgeWorkspaceSelection]);
 
   useEffect(() => {
     resetKnowledgePanelState();
@@ -4944,6 +5757,7 @@ export default function AgentBuilder(): React.ReactElement {
       merge?: boolean;
       nodeId?: string;
       limit?: number;
+      bypassCache?: boolean;
       signal?: AbortSignal;
       requestType?: string;
       requestSeq?: number;
@@ -4995,6 +5809,7 @@ export default function AgentBuilder(): React.ReactElement {
         key: `kg:get:${endpoint}`,
         method: "GET",
         ttlMs: preset === "SEED" ? KG_CACHE_TTL_MS : 12_000,
+        bypassCache: opts?.bypassCache,
         signal: opts?.signal,
         fetcher: async (signal) => {
           const res = await fetch(endpoint, {
@@ -5067,7 +5882,7 @@ export default function AgentBuilder(): React.ReactElement {
   }, [activeProject, graphTypeFilter, graphMinConfidence, buildRecencySinceTs, runGraphQuery]);
 
   const loadKnowGraphData = useCallback(async (
-    opts?: { signal?: AbortSignal; requestType?: string; requestSeq?: number },
+    opts?: { signal?: AbortSignal; requestType?: string; requestSeq?: number; bypassCache?: boolean },
   ): Promise<boolean> => {
     const projectId = activeProject;
     if (!projectId) {
@@ -5083,6 +5898,7 @@ export default function AgentBuilder(): React.ReactElement {
         key: `knowgraph:data:${projectId}`,
         method: "GET",
         ttlMs: KG_CACHE_TTL_MS,
+        bypassCache: opts?.bypassCache,
         signal: opts?.signal,
         fetcher: async (signal) => {
           const res = await fetch(endpoint, {
@@ -5246,14 +6062,14 @@ export default function AgentBuilder(): React.ReactElement {
     [activeProject],
   );
 
-  const loadActiveProjectState = useCallback(async () => {
+  const loadActiveProjectState = useCallback(async (opts?: { force?: boolean; preserveMessagesOnFallback?: boolean }) => {
     if (!activeProject) {
       stateLoadKeyRef.current = "";
       stateLoadProjectRef.current = "";
       return;
     }
     const projectId = activeProject;
-    if (stateLoadKeyRef.current === projectId) return; // Guard duplicate load cascades for the same project selection.
+    if (!opts?.force && stateLoadKeyRef.current === projectId) return; // Guard duplicate load cascades for the same project selection.
     stateLoadKeyRef.current = projectId;
     const requestType = "project-state-load";
     const requestSeq = nextRequestSequence(requestType);
@@ -5262,57 +6078,73 @@ export default function AgentBuilder(): React.ReactElement {
     stateLoadAbortRef.current = controller;
     stateLoadProjectRef.current = projectId;
     setStateLoaded(false);
+    const stateRefreshStartedAt = Date.now();
 
-    void (async () => {
-      try {
-        const endpoint = `${V2_PROJECTS_API}/${projectId}/state`;
-        const payload = await guardedRequest({
-          key: `project-state:${projectId}`,
-          method: "GET",
-          ttlMs: 3_000,
-          signal: controller.signal,
-          fetcher: async (signal) => {
-            const response = await fetch(endpoint, { signal });
-            const data = await safeJson(response);
-            return { response, data };
-          },
-        });
-        if (
-          controller.signal.aborted ||
-          !isLatestRequestSequence(requestType, requestSeq) ||
-          activeProjectLatestRef.current !== projectId
-        ) {
-          return;
-        }
-        setMessages(normalizeMessages(payload.data?.messages));
-        setPlanSource(payload.data?.plan);
-        setPlan(normalizePlanItems(payload.data?.plan));
-        setLinks(normalizeLinks(payload.data?.links));
-        setStateLoaded(true);
-      } catch (err) {
-        if (
-          isAbortLikeError(err) ||
-          !isLatestRequestSequence(requestType, requestSeq) ||
-          activeProjectLatestRef.current !== projectId
-        ) {
-          return;
-        }
-        const next = loadProjectState(projectId);
-        setMessages(normalizeMessages(next.messages));
-        setPlanSource(next.plan);
-        setPlan(normalizePlanItems(next.plan));
-        setLinks(normalizeLinks(next.links));
-        setStateLoaded(true);
-      } finally {
-        if (stateLoadAbortRef.current === controller) {
-          stateLoadAbortRef.current = null;
-        }
-        if (stateLoadProjectRef.current === projectId) {
-          stateLoadProjectRef.current = "";
-        }
+    try {
+      const endpoint = `${V2_PROJECTS_API}/${projectId}/state`;
+      const payload = await guardedRequest({
+        key: `project-state:${projectId}`,
+        method: "GET",
+        ttlMs: 3_000,
+        bypassCache: opts?.force,
+        signal: controller.signal,
+        fetcher: async (signal) => {
+          const response = await fetch(endpoint, { signal });
+          const data = await safeJson(response);
+          return { response, data };
+        },
+      });
+      if (
+        controller.signal.aborted ||
+        !isLatestRequestSequence(requestType, requestSeq) ||
+        activeProjectLatestRef.current !== projectId
+      ) {
+        return;
       }
-    })();
-  }, [activeProject]);
+      setMessages(normalizeMessages(payload.data?.messages));
+      setPlanSource(payload.data?.plan);
+      setPlan(normalizePlanItems(payload.data?.plan));
+      setLinks(normalizeLinks(payload.data?.links));
+      setStateLoaded(true);
+      const completedAt = Date.now();
+      emitWorkspaceTestingEvent({
+        event: "workspace_state_refresh_completed",
+        durationMs: Math.max(0, completedAt - stateRefreshStartedAt),
+        metadata: { source: opts?.force ? "remote_forced" : "remote" },
+      });
+      recordPostResponseRefreshIfPending("workspace_state", completedAt);
+    } catch (err) {
+      if (
+        isAbortLikeError(err) ||
+        !isLatestRequestSequence(requestType, requestSeq) ||
+        activeProjectLatestRef.current !== projectId
+      ) {
+        return;
+      }
+      const next = loadProjectState(projectId);
+      if (!opts?.preserveMessagesOnFallback) {
+        setMessages(normalizeMessages(next.messages));
+      }
+      setPlanSource(next.plan);
+      setPlan(normalizePlanItems(next.plan));
+      setLinks(normalizeLinks(next.links));
+      setStateLoaded(true);
+      const completedAt = Date.now();
+      emitWorkspaceTestingEvent({
+        event: "workspace_state_refresh_completed",
+        durationMs: Math.max(0, completedAt - stateRefreshStartedAt),
+        metadata: { source: "local_fallback" },
+      });
+      recordPostResponseRefreshIfPending("workspace_state", completedAt);
+    } finally {
+      if (stateLoadAbortRef.current === controller) {
+        stateLoadAbortRef.current = null;
+      }
+      if (stateLoadProjectRef.current === projectId) {
+        stateLoadProjectRef.current = "";
+      }
+    }
+  }, [activeProject, emitWorkspaceTestingEvent, recordPostResponseRefreshIfPending]);
 
   // When switching projects, reload all per-project state from storage.
   useEffect(() => {
@@ -5364,7 +6196,7 @@ export default function AgentBuilder(): React.ReactElement {
     const requestType = "kg-subgraph-load";
     const requestSeq = nextRequestSequence(requestType);
     setGraphResetToken((v) => v + 1);
-    setSelectedEdgeEvidence(null);
+    clearKnowledgeWorkspaceSelection();
     const cached = readCachedGraphPayload(cacheKey);
     if (cached) {
       // Show cached graph immediately while refresh decision is made.
@@ -5384,6 +6216,7 @@ export default function AgentBuilder(): React.ReactElement {
     }
     kgLoadAbortRef.current?.abort();
     const controller = new AbortController();
+    const graphRefreshStartedAt = Date.now();
     kgLoadAbortRef.current = controller;
     kgLoadProjectRef.current = projectId;
     setGraphError(null);
@@ -5395,6 +6228,7 @@ export default function AgentBuilder(): React.ReactElement {
       });
       await runGraphPresetQuery("SEED", {
         limit: 220,
+        bypassCache: opts?.force,
         signal: controller.signal,
         requestType,
         requestSeq,
@@ -5412,11 +6246,28 @@ export default function AgentBuilder(): React.ReactElement {
         return;
       }
       await loadKnowGraphData({
+        bypassCache: opts?.force,
         signal: controller.signal,
         requestType,
         requestSeq,
       });
     })().finally(() => {
+      if (
+        !controller.signal.aborted &&
+        isLatestRequestSequence(requestType, requestSeq) &&
+        activeProjectLatestRef.current === projectId
+      ) {
+        const completedAt = Date.now();
+        emitWorkspaceTestingEvent({
+          event: "graph_refresh_completed",
+          durationMs: Math.max(0, completedAt - graphRefreshStartedAt),
+          metadata: {
+            graphType: "knowledge",
+            source: opts?.force ? "forced_refresh" : "refresh",
+          },
+        });
+        recordPostResponseRefreshIfPending("knowledge_graph", completedAt);
+      }
       if (kgLoadAbortRef.current === controller) {
         kgLoadAbortRef.current = null;
       }
@@ -5424,7 +6275,17 @@ export default function AgentBuilder(): React.ReactElement {
         kgLoadProjectRef.current = "";
       }
     });
-  }, [activeProject, graphCacheKey, loadKnowGraphData, loadKnowGraphHealth, resetKnowledgePanelState, runGraphPresetQuery]);
+  }, [
+    activeProject,
+    clearKnowledgeWorkspaceSelection,
+    emitWorkspaceTestingEvent,
+    graphCacheKey,
+    loadKnowGraphData,
+    loadKnowGraphHealth,
+    recordPostResponseRefreshIfPending,
+    resetKnowledgePanelState,
+    runGraphPresetQuery,
+  ]);
 
   useEffect(() => {
     if (!activeProject) {
@@ -5523,8 +6384,8 @@ export default function AgentBuilder(): React.ReactElement {
   }, [loadGraphData]);
 
   useEffect(() => {
-    setSelectedEdgeEvidence(null);
-  }, [activeProject, tab]);
+    clearKnowledgeWorkspaceSelection();
+  }, [activeProject, clearKnowledgeWorkspaceSelection, tab]);
 
   useEffect(() => {
     if (
@@ -5668,15 +6529,123 @@ export default function AgentBuilder(): React.ReactElement {
     const trimmed = t.trim();
     if (!trimmed) return;
     if (sending) return;
+    if (!activeProject) return;
+    const interactionId = createWorkspaceTestingInteractionId("chat");
+    const sendStartedAt = Date.now();
+    const turnId = `assist:${Date.now()}:${uid()}`;
+    chatLoopTelemetryRef.current = {
+      interactionId,
+      sendStartedAt,
+      responseReceivedAt: null,
+      refreshRecorded: false,
+    };
+    emitWorkspaceTestingEvent({
+      event: "chat_send_started",
+      interactionId,
+      surface: largeSurface === "chat" ? "chat" : normalizeWorkspaceSurface(tab),
+      surfaceRole: largeSurface === "chat" ? "large" : "companion",
+      metadata: {
+        messageLength: trimmed.length,
+        responseMode: "assist_runtime",
+        turnId,
+      },
+    });
 
     setMessages((m) => [...m, { role: "user", text: trimmed }]);
-    setMessages((m) => [
-      ...m,
-      {
-        role: "assistant",
-        text: "Assist chat runtime has been removed from Builder. Use the canvas run controls.",
-      },
-    ]);
+    setSending(true);
+
+    void (async () => {
+      try {
+        const endpoint = "/api/agents/boss";
+        const response = await fetch(endpoint, {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            projectId: activeProject,
+            message: trimmed,
+            turnId,
+          }),
+        });
+        const data = await safeJson(response);
+        if (!response.ok || !data?.ok) {
+          throw new Error(
+            safeText(data?.message || data?.error || "assist_runtime_failed"),
+          );
+        }
+        const assistantText = cleanOptionalText(data?.result?.final) || "No response returned.";
+        setMessages((m) => [...m, { role: "assistant", text: assistantText }]);
+        const responseReceivedAt = Date.now();
+        chatLoopTelemetryRef.current = {
+          interactionId,
+          sendStartedAt,
+          responseReceivedAt,
+          refreshRecorded: false,
+        };
+        emitWorkspaceTestingEvent({
+          event: "chat_response_received",
+          interactionId,
+          durationMs: Math.max(0, responseReceivedAt - sendStartedAt),
+          surface: largeSurface === "chat" ? "chat" : normalizeWorkspaceSurface(tab),
+          surfaceRole: largeSurface === "chat" ? "large" : "companion",
+          metadata: {
+            responseMode: "assist_runtime",
+            turnId,
+            provider: cleanOptionalText(data?.provider),
+            model: cleanOptionalText(data?.model),
+            stopReason: cleanOptionalText(data?.orchestration?.stopReason),
+            turnsUsed:
+              typeof data?.orchestration?.turnsUsed === "number"
+                ? data.orchestration.turnsUsed
+                : null,
+          },
+        });
+
+        stateLoadKeyRef.current = "";
+        void loadActiveProjectState({ force: true, preserveMessagesOnFallback: true });
+        loadProjectSubgraph({ force: true });
+        window.setTimeout(() => {
+          if (activeProjectLatestRef.current !== activeProject) return;
+          loadProjectSubgraph({ force: true });
+        }, 1500);
+      } catch (err: any) {
+        const message = formatBuilderStatusMessage(
+          err?.message,
+          "Chat request failed.",
+        );
+        setMessages((m) => [
+          ...m,
+          {
+            role: "assistant",
+            text: `Request failed: ${message}`,
+          },
+        ]);
+        const responseReceivedAt = Date.now();
+        chatLoopTelemetryRef.current = {
+          interactionId,
+          sendStartedAt,
+          responseReceivedAt,
+          refreshRecorded: true,
+        };
+        emitWorkspaceTestingEvent({
+          event: "chat_response_received",
+          interactionId,
+          durationMs: Math.max(0, responseReceivedAt - sendStartedAt),
+          surface: largeSurface === "chat" ? "chat" : normalizeWorkspaceSurface(tab),
+          surfaceRole: largeSurface === "chat" ? "large" : "companion",
+          metadata: {
+            responseMode: "assist_runtime",
+            turnId,
+            ok: false,
+            error: message,
+          },
+        });
+      } finally {
+        setSending(false);
+      }
+    })();
   };
 
   const accept = (id: string) =>
@@ -5773,6 +6742,38 @@ export default function AgentBuilder(): React.ReactElement {
     () => buildGraphVizForNVL(graphVizFiltered),
     [graphVizFiltered],
   );
+  const knowledgeEntityById = useMemo(
+    () => new Map(graphVizForNVL.entities.map((entity) => [entity.id, entity] as const)),
+    [graphVizForNVL.entities],
+  );
+  const knowledgeRelationshipById = useMemo(
+    () => new Map(graphVizForNVL.relationships.map((relationship) => [relationship.id, relationship] as const)),
+    [graphVizForNVL.relationships],
+  );
+  const selectedKnowledgeEntity = useMemo(
+    () => (selectedKnowledgeEntityId ? knowledgeEntityById.get(selectedKnowledgeEntityId) || null : null),
+    [knowledgeEntityById, selectedKnowledgeEntityId],
+  );
+  const selectedKnowledgeRelationship = useMemo(
+    () =>
+      selectedKnowledgeRelationshipId
+        ? knowledgeRelationshipById.get(selectedKnowledgeRelationshipId) || null
+        : null,
+    [knowledgeRelationshipById, selectedKnowledgeRelationshipId],
+  );
+  const hasKnowledgeWorkspaceSelection = Boolean(selectedKnowledgeEntity || selectedKnowledgeRelationship);
+
+  useEffect(() => {
+    if (!selectedKnowledgeEntityId) return;
+    if (knowledgeEntityById.has(selectedKnowledgeEntityId)) return;
+    setSelectedKnowledgeEntityId(null);
+  }, [knowledgeEntityById, selectedKnowledgeEntityId]);
+
+  useEffect(() => {
+    if (!selectedKnowledgeRelationshipId) return;
+    if (knowledgeRelationshipById.has(selectedKnowledgeRelationshipId)) return;
+    setSelectedKnowledgeRelationshipId(null);
+  }, [knowledgeRelationshipById, selectedKnowledgeRelationshipId]);
 
   const createProjectPrompt = async () => {
     const name = window.prompt("New project name?");
@@ -5814,295 +6815,553 @@ export default function AgentBuilder(): React.ReactElement {
     }
   };
 
+  const getSurfaceShellStyle = useCallback(
+    (
+      surfaceKey: "chat" | "plan" | "canvas" | "knowledge",
+      compact: boolean,
+      surfaceRole: "large" | "companion",
+      extra?: React.CSSProperties,
+    ): React.CSSProperties => {
+      const base: React.CSSProperties = {
+        height: "100%",
+        minHeight: compact ? 320 : undefined,
+        ...extra,
+      };
+      if (surfaceRole !== "companion") {
+        return base;
+      }
+
+      const hovered = hoveredCompanionSurface === surfaceKey;
+      return {
+        ...base,
+        cursor: "pointer",
+        boxShadow: hovered ? "inset 0 0 0 1px rgba(255,255,255,0.05)" : "none",
+        transition: "box-shadow 120ms ease",
+      };
+    },
+    [hoveredCompanionSurface],
+  );
+
+  const shouldIgnoreCompanionPromotion = useCallback((target: EventTarget | null): boolean => {
+    if (!(target instanceof Element)) return false;
+    return Boolean(
+      target.closest(
+        [
+          "button",
+          "input",
+          "textarea",
+          "select",
+          "option",
+          "label",
+          "a[href]",
+          "summary",
+          '[role="button"]',
+          '[role="link"]',
+          '[contenteditable="true"]',
+          "[data-no-surface-promote='true']",
+        ].join(", "),
+      ),
+    );
+  }, []);
+
+  const getCompanionSurfaceHandlers = useCallback(
+    (
+      surfaceKey: "chat" | "plan" | "canvas" | "knowledge",
+      surfaceRole: "large" | "companion",
+      onPromote?: () => void,
+    ) =>
+      surfaceRole === "companion" && onPromote
+        ? {
+            onClick: (event: React.MouseEvent<HTMLDivElement>) => {
+              if (shouldIgnoreCompanionPromotion(event.target)) return;
+              onPromote();
+            },
+            onMouseEnter: () => setHoveredCompanionSurface(surfaceKey),
+            onMouseLeave: () =>
+              setHoveredCompanionSurface((current) => (current === surfaceKey ? null : current)),
+          }
+        : {},
+    [shouldIgnoreCompanionPromotion],
+  );
+
   const renderChatSurface = (
     projectId: string,
     compact = false,
     surfaceRole: "large" | "companion" = compact ? "companion" : "large",
+    onPromote?: () => void,
   ) => (
     <div
       data-testid={`${surfaceRole}-surface-chat`}
-      style={{ height: "100%", minHeight: compact ? 320 : undefined }}
+      {...getCompanionSurfaceHandlers("chat", surfaceRole, onPromote)}
+      style={getSurfaceShellStyle("chat", compact, surfaceRole)}
     >
-      <Chat
-        messages={messages}
-        onSend={handleSend}
-        projectId={projectId}
-        disabled={sending}
-      />
+      <div
+        style={{
+          height: "100%",
+        }}
+      >
+        <Chat
+          messages={messages}
+          onSend={handleSend}
+          projectId={projectId}
+          disabled={sending}
+        />
+      </div>
     </div>
   );
 
   const renderCanvasSurface = (
     compact = false,
     surfaceRole: "large" | "companion" = compact ? "companion" : "large",
-  ) => (
-    <div
-      data-testid={`${surfaceRole}-surface-canvas`}
-      style={{ height: "100%", minHeight: compact ? 320 : undefined }}
-    >
-      <BuilderCanvas
-        document={deck}
-        setDocument={setDeck}
-        onPersistGraphMutation={recordDeckWriteReason}
-        executionPlan={deckExecutionPlan}
-        selectedCardId={selectedCardId}
-        selectedEdgeId={selectedEdgeId}
-        onSelectCard={handleSelectCard}
-        onSelectEdge={handleSelectEdge}
-        onDeleteSelectedEdge={handleDeleteSelectedEdge}
-        focusRequest={builderCanvasFocusRequest}
-      />
-    </div>
-  );
+    onPromote?: () => void,
+  ) => {
+    const isCompanionPreview = surfaceRole === "companion";
+    return (
+      <div
+        data-testid={`${surfaceRole}-surface-canvas`}
+        {...getCompanionSurfaceHandlers("canvas", surfaceRole, onPromote)}
+        style={getSurfaceShellStyle("canvas", compact, surfaceRole)}
+      >
+        <div
+          style={{
+            height: "100%",
+          }}
+        >
+          <BuilderCanvas
+            document={deck}
+            setDocument={setDeck}
+            onPersistGraphMutation={recordDeckWriteReason}
+            executionPlan={isCompanionPreview ? null : deckExecutionPlan}
+            selectedCardId={isCompanionPreview ? null : selectedCardId}
+            selectedEdgeId={isCompanionPreview ? null : selectedEdgeId}
+            onSelectCard={handleSelectCard}
+            onSelectEdge={handleSelectEdge}
+            onDeleteSelectedEdge={handleDeleteSelectedEdge}
+            focusRequest={isCompanionPreview ? null : builderCanvasFocusRequest}
+          />
+        </div>
+      </div>
+    );
+  };
+
+  const renderKnowledgeWorkspacePanel = () => {
+    if (!selectedKnowledgeEntity && !selectedKnowledgeRelationship) return null;
+
+    if (selectedKnowledgeEntity) {
+      return (
+        <div
+          data-testid="companion-surface-knowledge-panel"
+          style={{ height: "100%", overflow: "auto" }}
+        >
+          <div
+            data-testid="knowledge-panel-entity"
+            style={{
+              display: "grid",
+              gap: 12,
+              paddingRight: 4,
+            }}
+          >
+            <div
+              style={{
+                border: `1px solid ${C.border}`,
+                borderRadius: 10,
+                background: C.bg,
+                padding: "14px 16px",
+              }}
+            >
+              <div style={{ color: C.text, fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>
+                {safeText(selectedKnowledgeEntity.label)}
+              </div>
+              <div
+                className="text-xs"
+                style={{ color: C.neutral, marginTop: 6 }}
+              >
+                {safeText(selectedKnowledgeEntity.type)} • {safeText(selectedKnowledgeEntity.source)} •{" "}
+                {formatKnowledgeScope(selectedKnowledgeEntity.scope)}
+              </div>
+            </div>
+
+            <div
+              style={{
+                border: `1px solid ${C.border}`,
+                borderRadius: 10,
+                background: C.bg,
+                padding: "12px 14px",
+                color: C.neutral,
+                lineHeight: 1.6,
+              }}
+            >
+              Degree {selectedKnowledgeEntity.degree || 0}
+              {selectedKnowledgeEntity.last_seen_ts
+                ? ` • ${safeText(selectedKnowledgeEntity.last_seen_ts)}`
+                : ""}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (!selectedKnowledgeRelationship) return null;
+    const fromLabel =
+      knowledgeEntityById.get(selectedKnowledgeRelationship.from)?.label || selectedKnowledgeRelationship.from;
+    const toLabel =
+      knowledgeEntityById.get(selectedKnowledgeRelationship.to)?.label || selectedKnowledgeRelationship.to;
+
+    return (
+      <div
+        data-testid="companion-surface-knowledge-panel"
+        style={{ height: "100%", overflow: "auto" }}
+      >
+        <div
+          data-testid="knowledge-panel-relationship"
+          style={{
+            display: "grid",
+            gap: 12,
+            paddingRight: 4,
+          }}
+        >
+          <div
+            style={{
+              border: `1px solid ${C.border}`,
+              borderRadius: 10,
+              background: C.bg,
+              padding: "14px 16px",
+            }}
+          >
+            <div style={{ color: C.text, fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>
+              {safeText(selectedKnowledgeRelationship.type)}
+            </div>
+            <div
+              className="text-xs"
+              style={{ color: C.neutral, marginTop: 6 }}
+            >
+              {safeText(fromLabel)} → {safeText(toLabel)}
+            </div>
+            <div
+              className="text-xs"
+              style={{ color: C.neutral, marginTop: 6 }}
+            >
+              {safeText(selectedKnowledgeRelationship.source)} •{" "}
+              {formatKnowledgeScope(selectedKnowledgeRelationship.scope)}
+            </div>
+          </div>
+
+          {(selectedKnowledgeRelationship.evidence_doc_id || selectedKnowledgeRelationship.last_seen_ts) && (
+            <div
+              style={{
+                border: `1px solid ${C.border}`,
+                borderRadius: 10,
+                background: C.bg,
+                padding: "12px 14px",
+                color: C.neutral,
+                lineHeight: 1.6,
+              }}
+            >
+              {selectedKnowledgeRelationship.evidence_doc_id
+                ? `Doc ${safeText(selectedKnowledgeRelationship.evidence_doc_id)}`
+                : ""}
+              {selectedKnowledgeRelationship.evidence_doc_id &&
+              selectedKnowledgeRelationship.last_seen_ts
+                ? " • "
+                : ""}
+              {selectedKnowledgeRelationship.last_seen_ts
+                ? safeText(selectedKnowledgeRelationship.last_seen_ts)
+                : ""}
+            </div>
+          )}
+
+          {selectedKnowledgeRelationship.evidence_snippet && (
+            <div
+              style={{
+                border: `1px solid ${C.border}`,
+                borderRadius: 10,
+                background: C.bg,
+                padding: "12px 14px",
+                color: C.text,
+                lineHeight: 1.6,
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {safeText(selectedKnowledgeRelationship.evidence_snippet)}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   const renderKnowledgeGraphSurface = (
     minHeight = 280,
     surfaceRole: "large" | "companion" = minHeight > 320 ? "large" : "companion",
+    onPromote?: () => void,
   ) => (
     <div
       data-testid={`${surfaceRole}-surface-knowledge`}
-      className="space-y-3 h-full flex flex-col"
+      {...getCompanionSurfaceHandlers("knowledge", surfaceRole, onPromote)}
+      style={getSurfaceShellStyle("knowledge", minHeight <= 320, surfaceRole)}
     >
-      <div
-        className="text-xs p-3 rounded"
-        style={{
-          background: C.bg,
-          border: `1px solid ${C.border}`,
-          color: C.neutral,
-        }}
-      >
-        <span>{knowledgePanelSummaryText(graphVizFiltered)}</span>
-      </div>
-
-      {graphError && (
-        <div
-          className="text-xs"
-          style={{
-            color: C.warn,
-            border: `1px solid rgba(217,132,88,0.35)`,
-            background: "rgba(217,132,88,0.08)",
-            borderRadius: 8,
-            padding: "6px 8px",
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-          title={safeText(graphError)}
-        >
-          {safeText(graphError)}
+      <div className="h-full flex flex-col" style={{ position: "relative" }}>
+        {graphError && (
+          <div
+            className="text-xs"
+            style={{
+              position: "absolute",
+              right: 12,
+              bottom: 12,
+              zIndex: 3,
+              color: C.warn,
+              border: `1px solid rgba(217,132,88,0.35)`,
+              background: "rgba(217,132,88,0.08)",
+              borderRadius: 8,
+              padding: "6px 8px",
+              maxWidth: surfaceRole === "companion" ? 220 : 320,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+            data-no-surface-promote="true"
+            title={safeText(graphError)}
+          >
+            {safeText(graphError)}
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "center", flex: 1, minHeight }}>
+          <Suspense
+            fallback={
+              <div
+                style={{
+                  width: "100%",
+                  minHeight,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 8,
+                  background: C.bg,
+                  color: C.neutral,
+                }}
+              >
+                Loading knowledge graph…
+              </div>
+            }
+          >
+            <KnowledgeGraphNVL
+              key={`kg-nvl-${graphResetToken}`}
+              entities={graphVizForNVL.entities}
+              relationships={graphVizForNVL.relationships}
+              loading={graphLoading}
+              expandingEntityId={expandingNodeId}
+              onThinkGraphExpand={expandGraphFromNode}
+              onKnowGraphExpand={expandKnowGraphFromEntity}
+              onRelationshipInspect={setSelectedEdgeEvidence}
+              selectionEnabled={surfaceRole === "large"}
+              selectedEntityId={surfaceRole === "large" ? selectedKnowledgeEntityId : null}
+              selectedRelationshipId={surfaceRole === "large" ? selectedKnowledgeRelationshipId : null}
+              onSelectEntity={surfaceRole === "large" ? handleSelectKnowledgeEntity : undefined}
+              onSelectRelationship={
+                surfaceRole === "large" ? handleSelectKnowledgeRelationship : undefined
+              }
+            />
+          </Suspense>
         </div>
-      )}
-      <div style={{ display: "flex", justifyContent: "center", flex: 1, minHeight }}>
-        <Suspense
-          fallback={
-            <div
-              style={{
-                width: "100%",
-                minHeight,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                border: `1px solid ${C.border}`,
-                borderRadius: 8,
-                background: C.bg,
-                color: C.neutral,
-              }}
-            >
-              Loading knowledge graph…
-            </div>
-          }
-        >
-          <KnowledgeGraphNVL
-            key={`kg-nvl-${graphResetToken}`}
-            entities={graphVizForNVL.entities}
-            relationships={graphVizForNVL.relationships}
-            loading={graphLoading}
-            expandingEntityId={expandingNodeId}
-            onThinkGraphExpand={expandGraphFromNode}
-            onKnowGraphExpand={expandKnowGraphFromEntity}
-            onRelationshipInspect={setSelectedEdgeEvidence}
-          />
-        </Suspense>
       </div>
     </div>
   );
 
-  const renderPlanSurface = (surfaceRole: "large" | "companion" = "large") => (
+  const renderPlanSurface = (
+    surfaceRole: "large" | "companion" = "large",
+    onPromote?: () => void,
+  ) => (
     <div
       data-testid={`${surfaceRole}-surface-plan`}
-      className="space-y-3 h-full overflow-auto pr-1"
+      {...getCompanionSurfaceHandlers("plan", surfaceRole, onPromote)}
+      style={getSurfaceShellStyle("plan", surfaceRole === "companion", surfaceRole, {
+        overflow: surfaceRole === "companion" ? "hidden" : "auto",
+      })}
     >
-      {!activeProject ? (
-        <div
-          style={{
-            padding: "16px",
-            border: `1px dashed ${C.border}`,
-            borderRadius: "8px",
-            color: C.neutral,
-            background: "#1a1a1a",
-          }}
-        >
-          Select a project to view its plan.
-        </div>
-      ) : !stateLoaded ? (
-        <div
-          style={{
-            padding: "16px",
-            border: `1px solid ${C.border}`,
-            borderRadius: "8px",
-            color: C.neutral,
-            background: C.bg,
-          }}
-        >
-          Loading plan...
-        </div>
-      ) : (
-        <>
-          {structuredAssistPlan.goal && (
-            <Section title="Goal">
-              <div style={{ color: C.text, whiteSpace: "pre-wrap" }}>
-                {safeText(structuredAssistPlan.goal)}
-              </div>
-            </Section>
-          )}
+      <div
+        className="space-y-3 h-full"
+        style={{
+          overflow: surfaceRole === "companion" ? "hidden" : "auto",
+          paddingRight: surfaceRole === "companion" ? 0 : 4,
+        }}
+      >
+        {!activeProject ? (
+          <div
+            style={{
+              padding: "16px",
+              border: `1px dashed ${C.border}`,
+              borderRadius: "8px",
+              color: C.neutral,
+              background: "#1a1a1a",
+            }}
+          >
+            Select a project to view its plan.
+          </div>
+        ) : !stateLoaded ? (
+          <div
+            style={{
+              padding: "16px",
+              border: `1px solid ${C.border}`,
+              borderRadius: "8px",
+              color: C.neutral,
+              background: C.bg,
+            }}
+          >
+            Loading plan...
+          </div>
+        ) : (
+          <>
+            {structuredAssistPlan.goal && (
+              <Section title="Goal">
+                <div style={{ color: C.text, whiteSpace: "pre-wrap" }}>
+                  {safeText(structuredAssistPlan.goal)}
+                </div>
+              </Section>
+            )}
 
-          {structuredAssistPlan.whatMattersNow.length > 0 && (
-            <Section title="What Matters Now">
-              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                {structuredAssistPlan.whatMattersNow.map((item, index) => (
-                  <li key={`wmn-${index}`}>{item}</li>
-                ))}
-              </ul>
-            </Section>
-          )}
+            {structuredAssistPlan.whatMattersNow.length > 0 && (
+              <Section title="What Matters Now">
+                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                  {structuredAssistPlan.whatMattersNow.map((item, index) => (
+                    <li key={`wmn-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              </Section>
+            )}
 
-          {structuredAssistPlan.nextMove && (
-            <Section title="Next Move">
-              <div style={{ color: C.text, whiteSpace: "pre-wrap" }}>
-                {safeText(structuredAssistPlan.nextMove)}
-              </div>
-            </Section>
-          )}
+            {structuredAssistPlan.nextMove && (
+              <Section title="Next Move">
+                <div style={{ color: C.text, whiteSpace: "pre-wrap" }}>
+                  {safeText(structuredAssistPlan.nextMove)}
+                </div>
+              </Section>
+            )}
 
-          {structuredAssistPlan.assumptions.length > 0 && (
-            <Section title="Assumptions">
-              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                {structuredAssistPlan.assumptions.map((item, index) => (
-                  <li key={`assumption-${index}`}>{item}</li>
-                ))}
-              </ul>
-            </Section>
-          )}
+            {structuredAssistPlan.assumptions.length > 0 && (
+              <Section title="Assumptions">
+                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                  {structuredAssistPlan.assumptions.map((item, index) => (
+                    <li key={`assumption-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              </Section>
+            )}
 
-          {structuredAssistPlan.research.length > 0 && (
-            <Section title="Research">
-              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                {structuredAssistPlan.research.map((item, index) => (
-                  <li key={`research-${index}`}>{item}</li>
-                ))}
-              </ul>
-            </Section>
-          )}
+            {structuredAssistPlan.research.length > 0 && (
+              <Section title="Research">
+                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                  {structuredAssistPlan.research.map((item, index) => (
+                    <li key={`research-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              </Section>
+            )}
 
-          {structuredAssistPlan.openQuestions.length > 0 && (
-            <Section title="Open Questions">
-              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                {structuredAssistPlan.openQuestions.map((item, index) => (
-                  <li key={`question-${index}`}>{item}</li>
-                ))}
-              </ul>
-            </Section>
-          )}
+            {structuredAssistPlan.openQuestions.length > 0 && (
+              <Section title="Open Questions">
+                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                  {structuredAssistPlan.openQuestions.map((item, index) => (
+                    <li key={`question-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              </Section>
+            )}
 
-          {structuredAssistPlan.humanTasks.length > 0 && (
-            <Section title="Human Tasks">
-              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                {structuredAssistPlan.humanTasks.map((item, index) => (
-                  <li key={`human-${index}`}>{item}</li>
-                ))}
-              </ul>
-            </Section>
-          )}
+            {structuredAssistPlan.humanTasks.length > 0 && (
+              <Section title="Human Tasks">
+                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                  {structuredAssistPlan.humanTasks.map((item, index) => (
+                    <li key={`human-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              </Section>
+            )}
 
-          {structuredAssistPlan.agentTasks.length > 0 && (
-            <Section title="Agent Tasks">
-              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                {structuredAssistPlan.agentTasks.map((item, index) => (
-                  <li key={`agent-${index}`}>{item}</li>
-                ))}
-              </ul>
-            </Section>
-          )}
+            {structuredAssistPlan.agentTasks.length > 0 && (
+              <Section title="Agent Tasks">
+                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                  {structuredAssistPlan.agentTasks.map((item, index) => (
+                    <li key={`agent-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              </Section>
+            )}
 
-          {structuredAssistPlan.pathOptions.length > 0 && (
-            <Section title="Path Options">
-              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                {structuredAssistPlan.pathOptions.map((item, index) => (
-                  <li key={`path-${index}`}>{item}</li>
-                ))}
-              </ul>
-            </Section>
-          )}
+            {structuredAssistPlan.pathOptions.length > 0 && (
+              <Section title="Path Options">
+                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                  {structuredAssistPlan.pathOptions.map((item, index) => (
+                    <li key={`path-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              </Section>
+            )}
 
-          {structuredAssistPlan.hasExplicitPlanDocument && (
-            <Section title="Plan Notes">
-              <Suspense
-                fallback={
-                  <div style={{ color: C.text, whiteSpace: "pre-wrap", minHeight: 120 }}>
-                    {safeText(structuredAssistPlan.explicitPlanText).trim() || "No plan notes yet."}
-                  </div>
-                }
-              >
-                <PlanWikiLexicalView
-                  source={planSource}
-                  fallbackText={safeText(structuredAssistPlan.explicitPlanText)}
-                  textColor={C.text}
-                  mutedColor={C.neutral}
-                  emptyText="No plan notes yet."
-                />
-              </Suspense>
-            </Section>
-          )}
+            {structuredAssistPlan.hasExplicitPlanDocument && (
+              <Section title="Plan Notes">
+                <Suspense
+                  fallback={
+                    <div style={{ color: C.text, whiteSpace: "pre-wrap", minHeight: 120 }}>
+                      {safeText(structuredAssistPlan.explicitPlanText).trim() || "No plan notes yet."}
+                    </div>
+                  }
+                >
+                  <PlanWikiLexicalView
+                    source={planSource}
+                    fallbackText={safeText(structuredAssistPlan.explicitPlanText)}
+                    textColor={C.text}
+                    mutedColor={C.neutral}
+                    emptyText="No plan notes yet."
+                  />
+                </Suspense>
+              </Section>
+            )}
 
-          {structuredAssistPlan.whatChanged.length > 0 && (
-            <Section title="What Changed">
-              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                {structuredAssistPlan.whatChanged.map((item, index) => (
-                  <li key={`changed-${index}`}>{item}</li>
-                ))}
-              </ul>
-            </Section>
-          )}
+            {structuredAssistPlan.whatChanged.length > 0 && (
+              <Section title="What Changed">
+                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                  {structuredAssistPlan.whatChanged.map((item, index) => (
+                    <li key={`changed-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              </Section>
+            )}
 
-          {structuredAssistPlan.sources.length > 0 && (
-            <Section title="Sources">
-              <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                {structuredAssistPlan.sources.map((item, index) => (
-                  <li key={`source-${index}`}>{item}</li>
-                ))}
-              </ul>
-            </Section>
-          )}
-        </>
-      )}
+            {structuredAssistPlan.sources.length > 0 && (
+              <Section title="Sources">
+                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
+                  {structuredAssistPlan.sources.map((item, index) => (
+                    <li key={`source-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              </Section>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 
   const showHomeChat = useCallback(() => {
+    setHoveredCompanionSurface(null);
     setLargeSurface("chat");
     setTab("Canvas");
   }, []);
 
   const showCanvasWorkspace = useCallback(() => {
+    setHoveredCompanionSurface(null);
     setLargeSurface("canvas");
   }, []);
 
   const showKnowledgeWorkspace = useCallback(() => {
+    setHoveredCompanionSurface(null);
     setLargeSurface("knowledge");
     setTab("Chat");
   }, []);
 
   const showPlanWorkspace = useCallback(() => {
+    setHoveredCompanionSurface(null);
     setLargeSurface("plan");
     setTab("Chat");
   }, []);
@@ -6110,6 +7369,7 @@ export default function AgentBuilder(): React.ReactElement {
   const promoteSurface = useCallback(
     (target: "chat" | "plan" | "canvas" | "knowledge") => {
       const previousLargeSurface = largeSurface;
+      setHoveredCompanionSurface(null);
       if (target === "canvas") {
         setLargeSurface("canvas");
         return;
@@ -6138,28 +7398,13 @@ export default function AgentBuilder(): React.ReactElement {
 
   const handleCompanionTabClick = useCallback(
     (nextTab: string) => {
-      if (workspaceView === "canvas") {
-        setTab(nextTab);
-        return;
+      setHoveredCompanionSurface(null);
+      if (workspaceView === "knowledge") {
+        clearKnowledgeWorkspaceSelection();
       }
-
-      if (nextTab === "Chat") {
-        promoteSurface("chat");
-        return;
-      }
-      if (nextTab === "Plan") {
-        promoteSurface("plan");
-        return;
-      }
-      if (nextTab === "Canvas") {
-        promoteSurface("canvas");
-        return;
-      }
-      if (nextTab === "Knowledge") {
-        promoteSurface("knowledge");
-      }
+      setTab(nextTab);
     },
-    [promoteSurface, workspaceView],
+    [clearKnowledgeWorkspaceSelection, workspaceView],
   );
 
   return (
@@ -6260,7 +7505,7 @@ export default function AgentBuilder(): React.ReactElement {
         <div
           data-testid="workspace-large-region"
           data-surface={largeSurface}
-          className="h-full transition-[width] duration-300 ease-out min-w-0"
+          className="h-full transition-[width] duration-150 ease-out min-w-0"
           style={{
             width: panelOpen ? `calc(100% - ${panelWidth}px)` : "100%",
           }}
@@ -6279,7 +7524,7 @@ export default function AgentBuilder(): React.ReactElement {
           <aside
             data-testid="workspace-companion-region"
             data-workspace={workspaceView}
-            className="h-full relative"
+            className="h-full relative transition-[width] duration-150 ease-out"
             style={{
               width: panelWidth,
               borderLeft: `1px solid ${C.border}`,
@@ -6295,18 +7540,21 @@ export default function AgentBuilder(): React.ReactElement {
                     key={t}
                     data-testid={`companion-tab-${t.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
                     aria-pressed={tab === t}
-                    onClick={() => handleCompanionTabClick(t)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleCompanionTabClick(t);
+                    }}
                     className="font-semibold transition-colors"
                     style={{
                       padding: "8px 10px",
                       color: tab === t ? "#FFFFFF" : C.neutral,
                       background:
                         tab === t
-                          ? "rgba(79,162,173,0.18)"
+                          ? "rgba(79,162,173,0.10)"
                           : "transparent",
                       border:
                         "1px solid " +
-                        (tab === t ? C.primary : "transparent"),
+                        (tab === t ? "rgba(79,162,173,0.32)" : "transparent"),
                       borderRadius: 10,
                     }}
                   >
@@ -6324,18 +7572,46 @@ export default function AgentBuilder(): React.ReactElement {
                     {renderAgentBuilderPanel()}
                   </div>
                 )}
+                {workspaceView === "knowledge" && hasKnowledgeWorkspaceSelection && renderKnowledgeWorkspacePanel()}
 
-                {largeSurface === "chat" && tab === "Canvas" && renderCanvasSurface(true, "companion")}
-                {largeSurface === "chat" && tab === "Knowledge" && renderKnowledgeGraphSurface(320, "companion")}
-                {largeSurface === "chat" && tab === "Plan" && renderPlanSurface("companion")}
+                {workspaceView !== "knowledge" &&
+                  largeSurface === "chat" &&
+                  tab === "Canvas" &&
+                  renderCanvasSurface(true, "companion", () => promoteSurface("canvas"))}
+                {workspaceView !== "knowledge" &&
+                  largeSurface === "chat" &&
+                  tab === "Knowledge" &&
+                  renderKnowledgeGraphSurface(320, "companion", () => promoteSurface("knowledge"))}
+                {workspaceView !== "knowledge" &&
+                  largeSurface === "chat" &&
+                  tab === "Plan" &&
+                  renderPlanSurface("companion", () => promoteSurface("plan"))}
 
-                {largeSurface === "plan" && tab === "Chat" && renderChatSurface(activeProject, true, "companion")}
-                {largeSurface === "plan" && tab === "Canvas" && renderCanvasSurface(true, "companion")}
-                {largeSurface === "plan" && tab === "Knowledge" && renderKnowledgeGraphSurface(320, "companion")}
+                {workspaceView !== "knowledge" &&
+                  largeSurface === "plan" &&
+                  tab === "Chat" &&
+                  renderChatSurface(activeProject, true, "companion", () => promoteSurface("chat"))}
+                {workspaceView !== "knowledge" &&
+                  largeSurface === "plan" &&
+                  tab === "Canvas" &&
+                  renderCanvasSurface(true, "companion", () => promoteSurface("canvas"))}
+                {workspaceView !== "knowledge" &&
+                  largeSurface === "plan" &&
+                  tab === "Knowledge" &&
+                  renderKnowledgeGraphSurface(320, "companion", () => promoteSurface("knowledge"))}
 
-                {largeSurface === "knowledge" && tab === "Chat" && renderChatSurface(activeProject, true, "companion")}
-                {largeSurface === "knowledge" && tab === "Canvas" && renderCanvasSurface(true, "companion")}
-                {largeSurface === "knowledge" && tab === "Plan" && renderPlanSurface("companion")}
+                {workspaceView === "knowledge" &&
+                  !hasKnowledgeWorkspaceSelection &&
+                  tab === "Chat" &&
+                  renderChatSurface(activeProject, true, "companion", () => promoteSurface("chat"))}
+                {workspaceView === "knowledge" &&
+                  !hasKnowledgeWorkspaceSelection &&
+                  tab === "Canvas" &&
+                  renderCanvasSurface(true, "companion", () => promoteSurface("canvas"))}
+                {workspaceView === "knowledge" &&
+                  !hasKnowledgeWorkspaceSelection &&
+                  tab === "Plan" &&
+                  renderPlanSurface("companion", () => promoteSurface("plan"))}
               </div>
 
               {/* resize handle */}

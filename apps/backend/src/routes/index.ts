@@ -22,7 +22,7 @@ import receipts from './receipts.routes';
 import config from './config.routes';
 import v2Routes from './v2';
 import knowgraphRoutes from './knowgraph.routes';
-import { mountV3 } from '../v3';
+import { v3Routes } from '../v3';
 
 /**
  * LEGACY ROUTE NOTICE
@@ -58,21 +58,20 @@ router.use('/dispatch', authMiddleware, dispatch);
 router.use('/tools', authMiddleware, tools);
 router.use('/artifacts', authMiddleware, artifacts);
 router.use('/webhook', authMiddleware, webhook);
-// TODO: Restore auth middleware for /agents after testing
-router.use('/agents', agentRoutes);
-router.use('/graph', graph);
+router.use('/agents', authMiddleware, agentRoutes);
+router.use('/graph', authMiddleware, graph);
 // /projects continues to host project CRUD plus quarantined legacy/manual KG routes.
 // The current active Assist surfaces are /api/agents/boss + /api/v2/projects/:projectId/kg/*.
-router.use('/projects', projects);
+router.use('/projects', authMiddleware, projects);
 // /projects/:projectId/agents remains for config CRUD; the old agent runner path is legacy-only.
-router.use('/projects', projectAgents);
+router.use('/projects', authMiddleware, projectAgents);
 router.use('/models', authMiddleware, models);
 router.use('/rag', authMiddleware, ragSearch);
 router.use('/kg', authMiddleware, kg);
 router.use('/receipts', authMiddleware, receipts);
-router.use('/config', config);
+router.use('/config', authMiddleware, config);
 router.use('/knowgraph', authMiddleware, knowgraphRoutes);
-router.use('/v2', v2Routes);
-mountV3(router);
+router.use('/v2', authMiddleware, v2Routes);
+router.use('/v3', authMiddleware, v3Routes);
 
 export default router;

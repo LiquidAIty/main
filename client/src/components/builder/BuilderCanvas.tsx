@@ -5,7 +5,6 @@ import {
   BackgroundVariant,
   ConnectionMode,
   MarkerType,
-  Controls,
   ReactFlow,
   addEdge,
   applyEdgeChanges,
@@ -38,6 +37,13 @@ import {
   buildDefaultDeckEdgeMetadata,
   normalizeDeckEdgeMetadata,
 } from './deckValidation';
+import { GRAPH_THEME, graphControlButtonStyle, graphControlStackStyle, graphPillButtonStyle } from '../graph/graphVisualTokens';
+import {
+  GRAPH_WORKSPACE,
+  buildFocusedNodeSet,
+  buildUndirectedNeighborMap,
+  isEdgeConnectedToNode,
+} from '../graph/graphWorkspaceContract';
 import AgentCardNode from './nodes/AgentCardNode';
 
 const nodeTypes = {
@@ -137,6 +143,7 @@ export function isAnyCanvasNodeVisible(nodes: Node[], visibleRect: ViewportRect,
 function toFlowNodes(
   document: DeckDocument,
   selectedCardId: string | null,
+  hoveredCardId: string | null,
   executionPlan: Pick<DeckExecutionPlan, 'simpleOrderCardIds' | 'startCardIds'> | null,
 ): Node[] {
   const executionOrderById = new Map(
@@ -149,10 +156,23 @@ function toFlowNodes(
       .map((edge) => edge.target),
   );
   const assistStructureSummaries = buildAssistStructureSummaries(document);
+  const neighborsByNode = buildUndirectedNeighborMap(
+    document.nodes.map((node) => node.id),
+    document.edges.map((edge) => ({ source: edge.source, target: edge.target })),
+  );
+  const hoveredRelatedNodeIds = buildFocusedNodeSet(hoveredCardId, neighborsByNode);
   return document.nodes.map((node) => ({
     id: node.id,
     type: 'agentCard',
     position: node.position,
+    style: hoveredCardId
+      ? {
+          opacity:
+            node.id === hoveredCardId || hoveredRelatedNodeIds.has(node.id) || node.id === selectedCardId
+              ? 1
+              : 0.44,
+        }
+      : undefined,
     data: {
       ...node,
       executionOrder: executionOrderById.get(node.id) || null,
@@ -160,6 +180,8 @@ function toFlowNodes(
       isCallableHead: callableHeadIds.has(node.id),
       assistStructureMode: assistStructureSummaries.get(node.id)?.mode || null,
       swarmBadge: getAssistSwarmBadge(node),
+      isHovered: node.id === hoveredCardId,
+      isHoverRelated: hoveredCardId ? hoveredRelatedNodeIds.has(node.id) : false,
     },
     selected: node.id === selectedCardId,
   }));
@@ -393,10 +415,11 @@ export function buildDeckEdgeVisualStates(document: DeckDocument): Map<string, D
   );
 }
 
-function toFlowEdges(document: DeckDocument, selectedEdgeId: string | null): Edge[] {
+function toFlowEdges(document: DeckDocument, selectedEdgeId: string | null, hoveredCardId: string | null): Edge[] {
   const visualStates = buildDeckEdgeVisualStates(document);
   return document.edges.map((edge) => {
     const isSelected = edge.id === selectedEdgeId;
+    const isHoverConnected = isEdgeConnectedToNode(edge.source, edge.target, hoveredCardId);
     const visualState = visualStates.get(edge.id) || {
       isLoopEdge: false,
       isReturnEdge: false,
@@ -405,12 +428,14 @@ function toFlowEdges(document: DeckDocument, selectedEdgeId: string | null): Edg
     };
     const edgeType = normalizeEdgeType(edge.edgeType);
     const stroke = isSelected
-      ? 'rgba(79, 162, 173, 0.98)'
+      ? GRAPH_THEME.accent.primary
+      : hoveredCardId && isHoverConnected
+        ? GRAPH_THEME.accent.hover
       : edgeType === 'magentic_option'
-        ? 'rgba(96, 194, 255, 0.96)'
+        ? GRAPH_THEME.accent.magentic
       : visualState.isLoopEdge
-        ? 'rgba(217, 132, 88, 0.94)'
-        : 'rgba(234, 146, 77, 0.94)';
+        ? GRAPH_THEME.accent.workflow
+        : GRAPH_THEME.accent.workflow;
     return {
       id: edge.id,
       source: edge.source,
@@ -444,7 +469,8 @@ function toFlowEdges(document: DeckDocument, selectedEdgeId: string | null): Edg
       },
       style: {
         stroke,
-        strokeWidth: isSelected ? 3.2 : 2.2,
+        strokeWidth: isSelected ? 3.2 : hoveredCardId && isHoverConnected ? 2.8 : 2.2,
+        opacity: hoveredCardId ? (isHoverConnected ? 0.98 : 0.24) : 1,
         strokeDasharray: visualState.isLoopEdge ? '10 7' : visualState.isReturnEdge ? '6 5' : undefined,
       },
     };
@@ -543,13 +569,15 @@ export default function BuilderCanvas({
   focusRequest: BuilderCanvasFocusRequest | null;
   executionPlan: Pick<DeckExecutionPlan, 'simpleOrderCardIds' | 'startCardIds'> | null;
 }) {
+  const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
+  const [layoutLocked, setLayoutLocked] = useState(false);
   const flowNodes = useMemo(
-    () => toFlowNodes(document, selectedCardId, executionPlan),
-    [document, executionPlan, selectedCardId],
+    () => toFlowNodes(document, selectedCardId, hoveredCardId, executionPlan),
+    [document, executionPlan, hoveredCardId, selectedCardId],
   );
   const flowEdges = useMemo(
-    () => toFlowEdges(document, selectedEdgeId),
-    [document, selectedEdgeId],
+    () => toFlowEdges(document, selectedEdgeId, hoveredCardId),
+    [document, hoveredCardId, selectedEdgeId],
   );
   const [nodes, setNodes] = useNodesState(flowNodes);
   const [edges, setEdges] = useEdgesState(flowEdges);
@@ -608,13 +636,18 @@ export default function BuilderCanvas({
       if (selectedNode && shouldPreferSelectedNode && !selectedNodeVisible) {
         reactFlowInstance.fitView({
           nodes: [selectedNode],
-          duration: 220,
+          duration: GRAPH_THEME.nav.fitDurationMs,
           padding: 1.0,
-          minZoom: 0.28,
-          maxZoom: 1.15,
+          minZoom: GRAPH_THEME.nav.minZoom,
+          maxZoom: GRAPH_THEME.nav.focusMaxZoom,
         });
       } else {
-        reactFlowInstance.fitView({ duration: 220, padding: 0.22, minZoom: 0.22, maxZoom: 1.35 });
+        reactFlowInstance.fitView({
+          duration: GRAPH_THEME.nav.fitDurationMs,
+          padding: GRAPH_THEME.nav.fitPadding,
+          minZoom: GRAPH_THEME.nav.minZoom,
+          maxZoom: GRAPH_THEME.nav.fitMaxZoom,
+        });
       }
     }
   };
@@ -640,16 +673,21 @@ export default function BuilderCanvas({
   useEffect(() => {
     if (!reactFlowInstance || !focusRequest) return;
     if (focusRequest.kind === 'deck') {
-      reactFlowInstance.fitView({ duration: 260, padding: 0.22 });
+      reactFlowInstance.fitView({
+        duration: GRAPH_THEME.nav.focusDurationMs,
+        padding: GRAPH_THEME.nav.fitPadding,
+        minZoom: GRAPH_THEME.nav.minZoom,
+        maxZoom: GRAPH_THEME.nav.fitMaxZoom,
+      });
       return;
     }
     const targetNode = nodes.find((node) => node.id === focusRequest.cardId);
     if (!targetNode) return;
     reactFlowInstance.fitView({
       nodes: [targetNode],
-      duration: 260,
+      duration: GRAPH_THEME.nav.focusDurationMs,
       padding: 1.1,
-      maxZoom: 1.15,
+      maxZoom: GRAPH_THEME.nav.focusMaxZoom,
     });
   }, [focusRequest, nodes, reactFlowInstance]);
 
@@ -873,7 +911,7 @@ export default function BuilderCanvas({
     <div
       ref={canvasRef}
       className="builder-flow h-full w-full"
-      style={{ position: 'relative' }}
+      style={{ position: 'relative', background: GRAPH_THEME.background.agentSurface }}
     >
       <style>{`
         .builder-flow .react-flow__edge {
@@ -883,16 +921,16 @@ export default function BuilderCanvas({
           transition: stroke 120ms ease, stroke-width 120ms ease, opacity 120ms ease;
         }
         .builder-flow .react-flow__edge:hover .react-flow__edge-path {
-          stroke: rgba(212, 219, 228, 0.96);
+          stroke: ${GRAPH_THEME.accent.hover};
           stroke-width: 2.8;
         }
         .builder-flow .react-flow__edge.selected .react-flow__edge-path,
         .builder-flow .react-flow__edge:focus .react-flow__edge-path {
-          stroke: rgba(79, 162, 173, 0.98);
+          stroke: ${GRAPH_THEME.accent.primary};
           stroke-width: 3.2;
         }
         .builder-flow .react-flow__edge.edge-loop .react-flow__edge-path {
-          filter: drop-shadow(0 0 6px rgba(217, 132, 88, 0.18));
+          filter: drop-shadow(0 0 6px ${GRAPH_THEME.accent.workflowGlow});
         }
         .builder-flow .react-flow__edge.edge-return .react-flow__edge-path {
           opacity: 0.96;
@@ -909,98 +947,131 @@ export default function BuilderCanvas({
         .builder-flow .react-flow__handle:hover,
         .builder-flow .react-flow__handle.connectionindicator {
           transform: scale(1.14);
-          box-shadow: 0 0 0 4px rgba(79, 162, 173, 0.12);
+          box-shadow: 0 0 0 4px ${GRAPH_THEME.accent.primarySoft};
         }
         .builder-flow .react-flow__connection-path {
-          stroke: rgba(79, 162, 173, 0.92);
+          stroke: ${GRAPH_THEME.accent.primary};
           stroke-width: 2.8;
         }
         .builder-flow .react-flow__edge-interaction {
           cursor: pointer;
         }
         .builder-flow .react-flow__controls {
-          background: #171717;
-          border: 1px solid #2f3437;
-          border-radius: 8px;
-          box-shadow: none;
+          background: ${GRAPH_THEME.controls.background};
+          border: 1px solid ${GRAPH_THEME.controls.border};
+          border-radius: 10px;
+          box-shadow: ${GRAPH_THEME.controls.shadow};
           overflow: hidden;
         }
         .builder-flow .react-flow__controls-button {
-          background: #171717;
-          border-bottom: 1px solid #2f3437;
-          color: #e6e6e6;
+          background: ${GRAPH_THEME.controls.background};
+          border-bottom: 1px solid ${GRAPH_THEME.controls.border};
+          color: ${GRAPH_THEME.controls.text};
         }
         .builder-flow .react-flow__controls-button:hover {
-          background: #222629;
+          background: ${GRAPH_THEME.controls.hoverBackground};
         }
         .builder-flow .react-flow__controls-button svg {
-          fill: #e6e6e6;
+          fill: ${GRAPH_THEME.controls.text};
         }
         .builder-flow .react-flow__attribution {
           display: none;
         }
       `}</style>
-      <div
-        style={{
-          position: 'absolute',
-          left: 16,
-          top: 16,
-          zIndex: 20,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => reactFlowInstance?.fitView({ duration: 220, padding: 0.22 })}
+      {selectedEdge && onDeleteSelectedEdge ? (
+        <div
           style={{
-            padding: '7px 10px',
-            borderRadius: 999,
-            border: '1px solid rgba(79, 162, 173, 0.38)',
-            background: 'rgba(17, 17, 17, 0.94)',
-            color: '#ffffff',
-            cursor: 'pointer',
-            fontSize: 12,
-            fontWeight: 600,
-            boxShadow: '0 16px 36px rgba(0,0,0,0.18)',
-            backdropFilter: 'blur(8px)',
+            position: 'absolute',
+            left: 16,
+            top: 16,
+            zIndex: 20,
           }}
         >
-          Fit Flow
-        </button>
-        {selectedEdge && onDeleteSelectedEdge ? (
           <button
             type="button"
             onClick={() => onDeleteSelectedEdge()}
-            style={{
-              padding: '7px 10px',
-              borderRadius: 999,
-              border: '1px solid rgba(217,132,88,0.36)',
-              background: 'rgba(17, 17, 17, 0.94)',
-              color: '#ffffff',
-              cursor: 'pointer',
-              fontSize: 12,
-              fontWeight: 600,
-              boxShadow: '0 16px 36px rgba(0,0,0,0.18)',
-              backdropFilter: 'blur(8px)',
-            }}
+            style={graphPillButtonStyle({
+              border: `1px solid ${GRAPH_THEME.accent.workflow}`,
+              color: GRAPH_THEME.surface.text,
+            })}
           >
             Delete Link
           </button>
-        ) : null}
+        </div>
+      ) : null}
+      <div style={graphControlStackStyle}>
+        <button
+          type="button"
+          aria-label="Zoom in"
+          onClick={() => reactFlowInstance?.zoomIn({ duration: GRAPH_THEME.nav.zoomDurationMs })}
+          style={graphControlButtonStyle({ borderBottom: `1px solid ${GRAPH_THEME.controls.border}` })}
+        >
+          +
+        </button>
+        <button
+          type="button"
+          aria-label="Zoom out"
+          onClick={() => reactFlowInstance?.zoomOut({ duration: GRAPH_THEME.nav.zoomDurationMs })}
+          style={graphControlButtonStyle({ borderBottom: `1px solid ${GRAPH_THEME.controls.border}` })}
+        >
+          −
+        </button>
+        <button
+          type="button"
+          aria-label="Fit view"
+          onClick={() =>
+            reactFlowInstance?.fitView({
+              duration: GRAPH_THEME.nav.fitDurationMs,
+              padding: GRAPH_THEME.nav.fitPadding,
+              minZoom: GRAPH_THEME.nav.minZoom,
+              maxZoom: GRAPH_THEME.nav.fitMaxZoom,
+            })
+          }
+          style={graphControlButtonStyle({ borderBottom: `1px solid ${GRAPH_THEME.controls.border}` })}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+            <path
+              d="M2.25 5.25V2.25h3M8.75 2.25h3v3M11.75 8.75v3h-3M5.25 11.75h-3v-3"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.25"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+        <button
+          type="button"
+          aria-label={layoutLocked ? 'Unlock graph layout' : 'Lock graph layout'}
+          onClick={() => setLayoutLocked((current) => !current)}
+          style={graphControlButtonStyle({
+            color: layoutLocked ? GRAPH_THEME.accent.primary : GRAPH_THEME.controls.text,
+          })}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+            <path
+              d="M4.5 6V4.75a2.5 2.5 0 1 1 5 0V6"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.25"
+              strokeLinecap="round"
+            />
+            <rect x="3" y="6" width="8" height="6" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.25" />
+          </svg>
+        </button>
       </div>
       <ReactFlow
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
         connectionMode={ConnectionMode.Strict}
-        minZoom={0.22}
-        maxZoom={1.6}
+        minZoom={GRAPH_THEME.nav.minZoom}
+        maxZoom={GRAPH_THEME.nav.maxZoom}
         translateExtent={translateExtent}
         preventScrolling
         connectOnClick={false}
         deleteKeyCode={null}
+        nodesDraggable={!layoutLocked}
         isValidConnection={(connection) => isPlainConnectionAllowed(connection, edges)}
         onInit={setReactFlowInstance}
         onNodeDragStart={(_, node) => {
@@ -1019,12 +1090,18 @@ export default function BuilderCanvas({
           onSelectEdge(null);
           onSelectCard(node.id);
         }}
+        onNodeMouseEnter={(_, node) => setHoveredCardId(node.id)}
+        onNodeMouseLeave={(_, node) =>
+          setHoveredCardId((current) => (current === node.id ? null : current))
+        }
         onEdgeClick={(_, edge) => {
           onSelectCard(null);
           onSelectEdge(edge.id);
         }}
         onPaneClick={() => {
+          onSelectCard(null);
           onSelectEdge(null);
+          setHoveredCardId(null);
         }}
         defaultEdgeOptions={{
           type: 'smoothstep',
@@ -1036,16 +1113,24 @@ export default function BuilderCanvas({
             type: MarkerType.ArrowClosed,
             width: 18,
             height: 18,
-            color: 'rgba(118, 126, 138, 0.92)',
+            color: GRAPH_THEME.edge.neutral,
           },
         }}
         snapToGrid
-        snapGrid={[24, 24]}
-        fitViewOptions={{ padding: 0.22, minZoom: 0.22, maxZoom: 1.35 }}
+        snapGrid={[GRAPH_WORKSPACE.worldGridGap, GRAPH_WORKSPACE.worldGridGap]}
+        fitViewOptions={{
+          padding: GRAPH_THEME.nav.fitPadding,
+          minZoom: GRAPH_THEME.nav.minZoom,
+          maxZoom: GRAPH_THEME.nav.fitMaxZoom,
+        }}
         fitView
       >
-        <Background variant={BackgroundVariant.Lines} gap={24} size={1} color="rgba(73, 82, 91, 0.42)" />
-        <Controls />
+        <Background
+          variant={BackgroundVariant.Lines}
+          gap={GRAPH_WORKSPACE.worldGridGap}
+          size={GRAPH_WORKSPACE.worldGridLineWidth}
+          color={GRAPH_THEME.background.grid}
+        />
       </ReactFlow>
     </div>
   );

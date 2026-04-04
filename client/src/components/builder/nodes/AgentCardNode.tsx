@@ -1,5 +1,6 @@
 import { Handle, Position } from '@xyflow/react';
 import type { AgentCardInstance } from '../../../types/agentgraph';
+import { GRAPH_THEME } from '../../graph/graphVisualTokens';
 
 type AgentCardNodeData = AgentCardInstance & {
   executionOrder?: number | null;
@@ -7,6 +8,8 @@ type AgentCardNodeData = AgentCardInstance & {
   isCallableHead?: boolean;
   assistStructureMode?: 'single' | 'seq' | 'branch' | 'merge' | 'branch_merge' | null;
   swarmBadge?: string | null;
+  isHovered?: boolean;
+  isHoverRelated?: boolean;
 };
 
 export default function AgentCardNode({
@@ -44,6 +47,12 @@ export default function AgentCardNode({
     structureLabel,
     data?.swarmBadge || null,
   ].filter(Boolean);
+  const hoverRing =
+    !selected && data?.isHovered
+      ? `0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 14px 28px ${GRAPH_THEME.accent.primaryGlow}`
+      : !selected && data?.isHoverRelated
+        ? `0 0 0 1px rgba(79, 162, 173, 0.12), ${GRAPH_THEME.surface.shadow}`
+        : null;
   return (
     <div
       className={`rounded-xl border p-4 min-w-[258px] bg-zinc-900 text-white ${
@@ -54,28 +63,30 @@ export default function AgentCardNode({
           position: 'relative',
           borderWidth: isGraph ? 1.5 : 1,
           borderColor: selected
-            ? 'rgba(79, 162, 173, 0.98)'
+            ? GRAPH_THEME.accent.primary
             : isMagentic
               ? 'rgba(96, 194, 255, 0.82)'
               : isGraph
-                ? 'rgba(154, 162, 172, 0.66)'
+                ? GRAPH_THEME.accent.graph
               : isCallableHead
-                ? 'rgba(79, 162, 173, 0.72)'
-              : 'rgba(64, 71, 78, 0.96)',
+                ? GRAPH_THEME.accent.primaryBorder
+              : GRAPH_THEME.surface.border,
           background: isMagentic
             ? 'linear-gradient(180deg, rgba(14,28,35,0.98), rgba(10,18,22,0.98))'
             : isGraph
               ? 'linear-gradient(180deg, rgba(31,34,38,0.98), rgba(18,21,24,0.98))'
             : 'linear-gradient(180deg, rgba(28,31,34,0.98), rgba(18,21,24,0.98))',
           boxShadow: selected
-            ? '0 0 0 1px rgba(79, 162, 173, 0.22), 0 18px 36px rgba(79, 162, 173, 0.18)'
+            ? `0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 18px 36px ${GRAPH_THEME.accent.primaryGlow}`
+            : hoverRing
+              ? hoverRing
             : isMagentic
               ? 'inset 0 0 0 1px rgba(96, 194, 255, 0.14), 0 14px 30px rgba(9, 18, 20, 0.22)'
               : isGraph
                 ? 'inset 0 0 0 1px rgba(154, 162, 172, 0.12), 0 12px 28px rgba(0, 0, 0, 0.2)'
               : isCallableHead
                 ? 'inset 0 0 0 1px rgba(79, 162, 173, 0.14), 0 14px 30px rgba(9, 18, 20, 0.18)'
-              : '0 14px 30px rgba(0,0,0,0.22)',
+              : GRAPH_THEME.surface.shadow,
         }
       }
     >
@@ -90,7 +101,7 @@ export default function AgentCardNode({
           left: -8,
           borderRadius: '999px',
           border: '2px solid rgba(148, 163, 184, 0.95)',
-          background: canReceiveConnection ? '#161a1d' : '#111315',
+          background: canReceiveConnection ? GRAPH_THEME.surface.base : '#111315',
           opacity: canReceiveConnection ? 1 : 0.4,
         }}
       />
@@ -104,8 +115,8 @@ export default function AgentCardNode({
           height: 14,
           right: -8,
           borderRadius: '999px',
-          border: '2px solid rgba(79, 162, 173, 0.96)',
-          background: canStartConnection ? '#122329' : '#111315',
+          border: `2px solid ${GRAPH_THEME.accent.primary}`,
+          background: canStartConnection ? 'rgba(18,35,41,0.98)' : '#111315',
           opacity: canStartConnection ? 1 : 0.4,
         }}
       />
@@ -118,7 +129,7 @@ export default function AgentCardNode({
           transform: 'translateY(-50%)',
           fontSize: 10,
           letterSpacing: '0.16em',
-          color: 'rgba(148, 163, 184, 0.82)',
+          color: GRAPH_THEME.surface.mutedText,
           pointerEvents: 'none',
         }}
       >
@@ -132,7 +143,7 @@ export default function AgentCardNode({
           transform: 'translateY(-50%)',
           fontSize: 10,
           letterSpacing: '0.16em',
-          color: 'rgba(79, 162, 173, 0.86)',
+          color: GRAPH_THEME.accent.primary,
           pointerEvents: 'none',
         }}
       >
@@ -185,7 +196,7 @@ export default function AgentCardNode({
                 ? '#d8f2ff'
                 : isGraph
                   ? '#e8edf4'
-                  : 'rgba(224, 222, 213, 0.88)',
+                  : GRAPH_THEME.surface.mutedText,
               fontSize: 10,
               letterSpacing: '0.14em',
             }}
@@ -201,9 +212,9 @@ export default function AgentCardNode({
             style={{
               padding: '3px 8px',
               borderRadius: 999,
-              background: 'rgba(79, 162, 173, 0.14)',
-              border: '1px solid rgba(79, 162, 173, 0.34)',
-              color: '#dce7ea',
+              background: GRAPH_THEME.accent.primarySoft,
+              border: `1px solid ${GRAPH_THEME.accent.primaryBorder}`,
+              color: GRAPH_THEME.surface.text,
               fontSize: 11,
               lineHeight: 1,
               whiteSpace: 'nowrap',
@@ -215,7 +226,10 @@ export default function AgentCardNode({
       </div>
 
       {data.subtitle && (
-        <div className="text-xs opacity-70 mt-1" style={{ lineHeight: 1.45, paddingRight: 18 }}>
+        <div
+          className="text-xs opacity-70 mt-1"
+          style={{ lineHeight: 1.45, paddingRight: 18, color: GRAPH_THEME.surface.mutedText }}
+        >
           {data.subtitle}
         </div>
       )}
@@ -264,7 +278,7 @@ export default function AgentCardNode({
                       ? '#ffe6d6'
                       : String(badge).startsWith('Swarm x')
                         ? '#d8f2ff'
-                      : 'rgba(224, 222, 213, 0.92)',
+                      : GRAPH_THEME.surface.mutedText,
                 fontSize: 11,
                 lineHeight: 1,
               }}

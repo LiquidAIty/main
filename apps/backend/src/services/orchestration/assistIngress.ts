@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 
-import { getProjectState, saveProjectState } from '../agentBuilderStore';
+import { getProjectStateSnapshot, saveProjectState } from '../agentBuilderStore';
 import { resolveAgentConfig } from '../resolveAgents';
 import { runSidecarOrchestrator } from './autogenOrchestratorClient';
 import type { BlackboardEntry, ContextPack, OrchestratorRunResponse, ProjectSession } from './contracts';
@@ -50,6 +50,18 @@ function normalizeStringList(value: unknown, limit = 8): string[] {
   return Array.from(
     new Set(value.map((entry) => String(entry ?? '').trim()).filter(Boolean)),
   ).slice(0, limit);
+}
+
+function normalizeProjectMessages(
+  value: unknown,
+): Array<{ role: 'assistant' | 'user'; text: string }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry: any): { role: 'assistant' | 'user'; text: string } => ({
+      role: entry?.role === 'assistant' ? 'assistant' : 'user',
+      text: String(entry?.text ?? '').trim(),
+    }))
+    .filter((entry) => entry.text.length > 0);
 }
 
 function extractExistingPlanWiki(plan: unknown): StoredPlanWiki {
@@ -227,15 +239,19 @@ export async function runAssistIngress(input: AssistIngressInput): Promise<Assis
     typeof input.turnId === 'string' && input.turnId.trim()
       ? input.turnId.trim()
       : `assist:${Date.now()}`;
-  const projectState = await getProjectState(input.projectId);
+  const projectStateSnapshot = await getProjectStateSnapshot(input.projectId);
+  const projectState = projectStateSnapshot.state;
   const previousPlanWiki = extractExistingPlanWiki(projectState.plan);
 
   let blackboard = createEmptyV3Blackboard();
+  let blackboardRevision: string | null = null;
   try {
     const v3Blob = await getV3ProjectBlob(input.projectId);
     blackboard = normalizeV3Blackboard(v3Blob.blackboard);
+    blackboardRevision = v3Blob.meta.blackboard.revision;
   } catch {
     blackboard = createEmptyV3Blackboard();
+    blackboardRevision = null;
   }
 
   const ingestedDocuments = await ingestAttachedPdf(input.projectId, turnId, input.attachedFile);
@@ -273,12 +289,21 @@ export async function runAssistIngress(input: AssistIngressInput): Promise<Assis
     blackboardEntriesToWrite(sidecar.blackboardEntries),
     { userInput: input.userText },
   );
-  await saveProjectBlackboard(input.projectId, mergedBlackboard);
+  const blackboardSave = await saveProjectBlackboard(input.projectId, mergedBlackboard, {
+    expectedRevision: blackboardRevision,
+    onConflict: 'return_current',
+  });
 
   const existingPlanObject =
     projectState.plan && typeof projectState.plan === 'object' && !Array.isArray(projectState.plan)
       ? (projectState.plan as Record<string, unknown>)
       : {};
+  const existingMessages = normalizeProjectMessages((projectState as any).messages);
+  const nextMessages = [
+    ...existingMessages,
+    { role: 'user' as const, text: input.userText },
+    { role: 'assistant' as const, text: finalText },
+  ];
   const nextPlanState = {
     ...existingPlanObject,
     anchor: sidecar.plan.anchor,
@@ -291,10 +316,28 @@ export async function runAssistIngress(input: AssistIngressInput): Promise<Assis
     turnId,
     lastUserMessage: input.userText,
   };
-  await saveProjectState(input.projectId, {
+  const stateSave = await saveProjectState(input.projectId, {
     ...projectState,
+    messages: nextMessages,
     plan: nextPlanState,
+  }, {
+    expectedRevision: projectStateSnapshot.meta.revision,
+    onConflict: 'return_current',
   });
+  if (!blackboardSave.applied) {
+    console.warn(
+      '[ASSIST_INGRESS][blackboard] preserved newer truth projectId=%s turnId=%s',
+      input.projectId,
+      turnId,
+    );
+  }
+  if (!stateSave.applied) {
+    console.warn(
+      '[ASSIST_INGRESS][builder_state] preserved newer truth projectId=%s turnId=%s',
+      input.projectId,
+      turnId,
+    );
+  }
 
   void runKgChatTurnNow({
     projectId: input.projectId,
