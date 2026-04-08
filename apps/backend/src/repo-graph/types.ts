@@ -28,9 +28,12 @@ export type RepoGraphEdgeKind =
 
 export type RepoGraphScanInput = {
   repoPath: string;
+  allowlistRoots?: string[];
+  excludeRoots?: string[];
   includeExtensions?: string[];
   excludeDirs?: string[];
   maxFiles?: number;
+  dryRun?: boolean;
 };
 
 export type RepoGraphDirectoryRecord = {
@@ -45,11 +48,36 @@ export type RepoGraphFileRecord = {
   language: RepoGraphLanguage;
   sizeBytes: number;
   lastModifiedAt: string;
+  isRouteFile: boolean;
+};
+
+export type RepoGraphScanRootStatus = {
+  root: string;
+  normalizedRoot: string;
+  kind: 'file' | 'directory' | 'missing' | 'excluded' | 'outside_repo' | 'unsupported';
+  selectedDirectoryCount: number;
+  selectedFileCount: number;
+  reason?: string;
+};
+
+export type RepoGraphScanSummary = {
+  dryRun: boolean;
+  truncated: boolean;
+  directoryCount: number;
+  fileCount: number;
+  routeFileCount: number;
 };
 
 export type RepoGraphScanResult = {
   repoPath: string;
   scannedAt: string;
+  allowlistRoots: string[];
+  excludeRoots: string[];
+  maxFiles: number;
+  dryRun: boolean;
+  truncated: boolean;
+  rootStatuses: RepoGraphScanRootStatus[];
+  summary: RepoGraphScanSummary;
   directories: RepoGraphDirectoryRecord[];
   files: RepoGraphFileRecord[];
 };

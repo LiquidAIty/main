@@ -250,6 +250,10 @@ async function parseFile(
 }
 
 export async function parseRepoGraph(scanResult: RepoGraphScanResult): Promise<RepoGraphParseResult> {
+  if (scanResult.dryRun) {
+    throw new Error('Cannot parse a dry-run repo graph scan result. Re-run the scan with dryRun set to false.');
+  }
+
   const knownFiles = new Set(scanResult.files.map((file) => file.path));
   const files = await Promise.all(
     scanResult.files.map((file) => parseFile(scanResult.repoPath, file, knownFiles)),
