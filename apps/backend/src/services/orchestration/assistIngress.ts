@@ -10,6 +10,7 @@ import type { V3Blackboard } from '../../v3/types';
 import { proxyKnowgraphPdfIngest, type UploadedFile } from '../../routes/knowgraph.routes';
 import { runKgChatTurnNow, runResearchPacketForProject } from '../../routes/v2/kg.routes';
 
+// This ingress is not the planner of record. The intended product spine is PlanWiki -> Agent Graph -> Runtime -> Tool Layer -> Blackboard/Graphs.
 type StoredPlanWiki = {
   anchor: string;
   whatChanged: string[];

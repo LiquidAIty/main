@@ -20,6 +20,7 @@ import type {
   V3Blackboard,
 } from '../types';
 
+// Visible graph edges are the execution truth. Higher-level planning must compile into this runtime, not bypass it.
 export type ExecuteDeckOptions = {
   input?: string;
   promptTemplates?: PromptTemplate[];

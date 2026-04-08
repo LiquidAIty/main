@@ -9,13 +9,11 @@ import BuilderCanvas, {
 } from "../components/builder/BuilderCanvas";
 import {
   buildStructuredAssistPlanSurface,
-  type AnchorSurface,
   type LinkRef,
   normalizeAnchorSurface,
   normalizeLinks,
   normalizePlanItems,
   type PlanItem,
-  type StructuredAssistPlanSurface,
 } from "../components/builder/assistPlanSurface";
 import {
   createEmptyBlackboard,
@@ -135,6 +133,9 @@ const BUILDER_PROJECT_TABS = ["Plan"] as const;
 const BUILDER_NODE_TABS = ["Prompt", "Knowledge", "Tools", "Runtime"] as const;
 const BUILDER_BLACKBOARD_TABS = ["Blackboard"] as const;
 const BUILDER_EDGE_TABS = ["Edge"] as const;
+type WorkspaceTestingEventDraft = Omit<WorkspaceTestingEventInput, "projectId"> & {
+  projectId?: string | null;
+};
 
 function normalizeWorkspaceSurface(value: string): WorkspaceTestingSurface | null {
   const normalized = safeText(value).trim().toLowerCase();
@@ -632,6 +633,7 @@ function buildSingleCardRunNodeScope(
 ): Set<string> {
   const nodeMap = new Map(document.nodes.map((node) => [node.id, node] as const));
   const relatedNodeIds = new Set<string>();
+  const selectedNodeId = selectedNode.id;
   const selectedRuntimeType = normalizeRuntimeType(selectedNode.runtimeType);
   const selectedParentGraphId = cleanOptionalText(selectedNode.parentGraphId);
 
@@ -640,11 +642,11 @@ function buildSingleCardRunNodeScope(
   }
 
   if (selectedRuntimeType === "magentic_one" && isTopLevelCanvasCard(selectedNode)) {
-    relatedNodeIds.add(selectedNode.id);
+    relatedNodeIds.add(selectedNodeId);
 
     document.edges.forEach((edge) => {
       if (
-        edge.source !== selectedNode.id ||
+        edge.source !== selectedNodeId ||
         normalizeDeckEdgeType(edge.edgeType) !== "magentic_option"
       ) {
         return;
@@ -670,14 +672,14 @@ function buildSingleCardRunNodeScope(
   }
 
   if (selectedRuntimeType === "graph_flow" && isTopLevelCanvasCard(selectedNode)) {
-    return collectGraphScopedNodeIds(document, selectedNode.id);
+    return collectGraphScopedNodeIds(document, selectedNodeId);
   }
 
   if (isAssistCanvasCard(selectedNode) && isTopLevelCanvasCard(selectedNode)) {
-    return collectVisibleAssistFlowIds(document, selectedNode.id);
+    return collectVisibleAssistFlowIds(document, selectedNodeId);
   }
 
-  relatedNodeIds.add(selectedNode.id);
+  relatedNodeIds.add(selectedNodeId);
   return relatedNodeIds;
 }
 
@@ -1329,10 +1331,8 @@ function buildDeckNodeFromPreset(
 
   return {
     id:
-      preset.kind === "blackboard"
-        ? `node_${slug}_${uid()}`
-        : `card_${slug}_${uid()}`,
-    kind: preset.kind,
+      `card_${slug}_${uid()}`,
+    kind: "agent",
     templateId: preset.templateId,
     prompt: promptTemplateContent,
     runtimeBinding: preset.runtimeBinding,
@@ -1426,27 +1426,10 @@ function getSuggestedDeckNodePosition(
 ): { x: number; y: number } {
   if (anchorNode) {
     const outgoingCount = deck.edges.filter((edge) => edge.source === anchorNode.id).length;
-    if (preset.kind === "blackboard") {
-      return {
-        x: anchorNode.position.x + 40,
-        y: anchorNode.position.y + 220 + outgoingCount * 28,
-      };
-    }
-
     return {
       x: anchorNode.position.x + 320,
       y: anchorNode.position.y + outgoingCount * 180,
     };
-  }
-
-  if (preset.kind === "blackboard") {
-    const agentNodes = deck.nodes.filter((node) => node.kind !== "blackboard");
-    const averageX =
-      agentNodes.length > 0
-        ? Math.round(agentNodes.reduce((sum, node) => sum + node.position.x, 0) / agentNodes.length)
-        : 120;
-    const maxY = deck.nodes.reduce((max, node) => Math.max(max, node.position.y), 0);
-    return { x: averageX + 120, y: maxY + 260 };
   }
 
   const rightMostX = deck.nodes.reduce((max, node) => Math.max(max, node.position.x), -220);
@@ -3853,11 +3836,8 @@ function DeckQuickAddPanel({
                 style={{
                   padding: "8px 10px",
                   borderRadius: 999,
-                  border: `1px solid ${preset.kind === "blackboard" ? C.primary : C.border}`,
-                  background:
-                    preset.kind === "blackboard"
-                      ? "rgba(79,162,173,0.12)"
-                      : "rgba(255,255,255,0.04)",
+                  border: `1px solid ${C.border}`,
+                  background: "rgba(255,255,255,0.04)",
                   color: C.text,
                   cursor: "pointer",
                   fontSize: 12,
@@ -3886,8 +3866,7 @@ function DeckQuickAddPanel({
               padding: "10px 12px",
               borderRadius: 8,
               border: `1px solid ${C.border}`,
-              background:
-                preset.kind === "blackboard" ? "rgba(79,162,173,0.12)" : "#202020",
+              background: "#202020",
               color: C.text,
               cursor: "pointer",
             }}
@@ -4152,7 +4131,7 @@ export default function AgentBuilder(): React.ReactElement {
   } | null>(null);
 
   const emitWorkspaceTestingEvent = useCallback(
-    (payload: WorkspaceTestingEventInput) => {
+    (payload: WorkspaceTestingEventDraft) => {
       const metadata = {
         activeProjectId: activeProject || null,
         agentProjectId: selectedAgentProjectId || null,
@@ -4520,15 +4499,6 @@ export default function AgentBuilder(): React.ReactElement {
     [deck],
   );
   const deckExecutionPlan = useMemo(() => buildExecutionPlan(deck), [deck]);
-  const drawerBoardCards = useMemo(() => {
-    const orderedIds = deckExecutionPlan.simpleOrderCardIds;
-    const orderedCards = orderedIds
-      .map((cardId) => deck.nodes.find((node) => node.id === cardId) || null)
-      .filter((node): node is AgentCardInstance => Boolean(node));
-    const orderedCardIds = new Set(orderedCards.map((node) => node.id));
-    const remainingCards = deck.nodes.filter((node) => !orderedCardIds.has(node.id));
-    return [...orderedCards, ...remainingCards];
-  }, [deck.nodes, deckExecutionPlan.simpleOrderCardIds]);
 
   const deckPersistFingerprint = useMemo(
     () => (BUILDER_DEV ? JSON.stringify(deck) : ""),
@@ -4706,19 +4676,6 @@ export default function AgentBuilder(): React.ReactElement {
     [],
   );
 
-  const handleOpenBoardCardFromDrawer = useCallback(
-    (cardId: string) => {
-      const selectedNode = deck.nodes.find((node) => node.id === cardId) || null;
-      setPanelOpen(true);
-      setTab(selectedNode?.kind === "blackboard" ? "Blackboard" : "Prompt");
-      setSelectedEdgeId(null);
-      setSelectedCardId(cardId);
-      queueBuilderCanvasFocus("card", cardId);
-      setOpenDrawer(null);
-    },
-    [deck.nodes, queueBuilderCanvasFocus],
-  );
-
   const handleDeleteSelectedEdge = useCallback(() => {
     if (!selectedEdgeId) return;
     recordDeckWriteReason("edge-delete");
@@ -4747,7 +4704,7 @@ export default function AgentBuilder(): React.ReactElement {
       setPanelOpen(true);
       setSelectedEdgeId(null);
       setSelectedCardId(mutation.nextNode.id);
-      setTab(preset.kind === "blackboard" ? "Blackboard" : "Prompt");
+      setTab("Prompt");
       queueBuilderCanvasFocus("card", mutation.nextNode.id);
       setDeckStatusMessage(
         mutation.nextEdge && anchorNode
@@ -6647,14 +6604,6 @@ export default function AgentBuilder(): React.ReactElement {
       }
     })();
   };
-
-  const accept = (id: string) =>
-    setLinks((ls) =>
-      ls.map((x) => (x.id === id ? { ...x, accepted: true } : x)),
-    );
-
-  const reject = (id: string) =>
-    setLinks((ls) => ls.filter((x) => x.id !== id));
 
   const thinkGraphViz = useMemo(
     () => prefixThinkGraphIds(ageRowsToGraph(graphResult)),
