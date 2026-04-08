@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-export default function login() {
+export default function Login() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -19,8 +19,7 @@ export default function login() {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      // If successful, navigate to the main app
-      navigate('/agent-manager');
+      navigate('/agentbuilder');
     } catch (err: any) {
       setError(err.message || 'Failed to start demo');
     } finally {

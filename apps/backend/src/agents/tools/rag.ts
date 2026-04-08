@@ -1,20 +1,31 @@
 import { z } from 'zod';
-import { makeZodTool } from '../lang/tools/zodTools';
+import { DynamicStructuredTool } from '@langchain/core/tools';
+
+const RagSearchSchema = z.object({
+  query: z.string().describe('Natural language query or topic to search for'),
+  k: z.number().int().min(1).max(50).default(5).describe('Number of results (1-50)'),
+  w_rec: z.number().min(0).max(1).default(0.1).describe('Weight for recency (0-1)'),
+  w_sig: z.number().min(0).max(1).default(0.1).describe('Weight for signal/confidence (0-1)'),
+  memory_scope: z.enum(['system', 'user', 'project', 'all']).default('all').describe('Memory scope filter'),
+  project_id: z.string().optional().describe('Project ID for project-scoped queries'),
+  user_id: z.string().optional().describe('User ID for user-scoped queries'),
+});
 
 export function createRagTool() {
-  return makeZodTool({
+  return new DynamicStructuredTool({
     name: 'rag_search',
     description: 'Search the knowledge base using weighted RAG (semantic + recency + signal). Returns top-k chunks.',
-    schema: z.object({
-      query: z.string().describe('Natural language query or topic to search for'),
-      k: z.number().int().min(1).max(50).default(5).describe('Number of results (1-50)'),
-      w_rec: z.number().min(0).max(1).default(0.1).describe('Weight for recency (0-1)'),
-      w_sig: z.number().min(0).max(1).default(0.1).describe('Weight for signal/confidence (0-1)'),
-      memory_scope: z.enum(['system', 'user', 'project', 'all']).default('all').describe('Memory scope filter'),
-      project_id: z.string().optional().describe('Project ID for project-scoped queries'),
-      user_id: z.string().optional().describe('User ID for user-scoped queries')
-    }),
-    func: async ({ query, k, w_rec, w_sig, memory_scope, project_id, user_id }) => {
+    schema: RagSearchSchema,
+    func: async (input) => {
+      const {
+        query,
+        k,
+        w_rec,
+        w_sig,
+        memory_scope,
+        project_id,
+        user_id,
+      } = RagSearchSchema.parse(input);
       try {
         // TODO: Replace mock embedding with real embedding model (e.g., OpenAI text-embedding-3-small)
         const mockEmbedding = Array(1536).fill(0).map(() => Math.random() * 0.01);

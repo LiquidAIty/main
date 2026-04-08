@@ -46,9 +46,9 @@ app.use((req, res, next) => {
   return next();
 });
 
-// Debug logging for non-GET requests to /api/projects
+// Debug logging for non-GET requests to active project/deck routes.
 app.use((req, _res, next) => {
-  if (req.path.includes('/api/projects') && req.method !== 'GET') {
+  if ((req.path.includes('/api/v2/projects') || req.path.includes('/api/v3/projects')) && req.method !== 'GET') {
     console.log('[REQ]', req.method, req.path);
   }
   next();
@@ -83,9 +83,9 @@ function logStartupBanner() {
     // fallback already set
   }
 
-  console.log("──────────────── SOL BACKEND START ────────────────");
+  console.log("────────────── LIQUIDAITY BACKEND START ─────────────");
   console.log(`NODE_ENV:         ${nodeEnv}`);
-  console.log(`SOL model:        ${model}`);
+  console.log(`Runtime model:    ${model}`);
   console.log(`OPENAI_BASE_URL:  ${baseUrl}`);
   console.log(`OPENAI_API_KEY:   ${redactedKey}`);
   console.log(`DB_HOST:          ${dbHost}`);

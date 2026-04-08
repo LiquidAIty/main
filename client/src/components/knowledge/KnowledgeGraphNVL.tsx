@@ -67,6 +67,7 @@ type Props = {
 };
 
 type SimNode = KnowledgeGraphNode & d3.SimulationNodeDatum;
+type RankedKnowledgeGraphNode = KnowledgeGraphNode & { degree: number };
 type SimLink = d3.SimulationLinkDatum<SimNode> & {
   id: string;
   type: string;
@@ -347,7 +348,7 @@ export default function KnowledgeGraphNVL({
       degreeByNode.set(relationship.to, (degreeByNode.get(relationship.to) || 0) + 1);
     });
 
-    const normalizedNodes = filteredNodes.map((node) => ({
+    const normalizedNodes: RankedKnowledgeGraphNode[] = filteredNodes.map((node) => ({
       ...node,
       degree: degreeByNode.get(node.id) || node.degree || 0,
     }));
@@ -392,10 +393,14 @@ export default function KnowledgeGraphNVL({
     const components = buildConnectedComponents(normalizedNodes, neighborsByNode);
     const componentMeta = components
       .map((componentIds) => {
-        const componentNodes = componentIds
-          .map((nodeId) => nodeById.get(nodeId))
-          .filter((node): node is KnowledgeGraphNode => Boolean(node))
-          .sort((a, b) => (scoreByNode.get(b.id) || 0) - (scoreByNode.get(a.id) || 0));
+        const componentNodes: RankedKnowledgeGraphNode[] = [];
+        componentIds.forEach((nodeId) => {
+          const node = nodeById.get(nodeId);
+          if (node) {
+            componentNodes.push(node);
+          }
+        });
+        componentNodes.sort((a, b) => (scoreByNode.get(b.id) || 0) - (scoreByNode.get(a.id) || 0));
         const anchorIds: string[] = [];
         componentNodes.slice(0, 2).forEach((node) => {
           if (!anchorIds.includes(node.id)) {
@@ -406,7 +411,7 @@ export default function KnowledgeGraphNVL({
         if (articulationAnchor && !anchorIds.includes(articulationAnchor.id)) {
           anchorIds.push(articulationAnchor.id);
         }
-        const freshestNode = componentNodes.reduce<KnowledgeGraphNode | null>((best, node) => {
+        const freshestNode = componentNodes.reduce<RankedKnowledgeGraphNode | null>((best, node) => {
           if (!best) return node;
           return parseTimestampMs(node.last_seen_ts) > parseTimestampMs(best.last_seen_ts) ? node : best;
         }, null);
@@ -960,9 +965,9 @@ export default function KnowledgeGraphNVL({
           nodeLabelIds.add(nodeId);
         }
       });
-      if (focusRelationship) {
-        nodeLabelIds.add(focusRelationship.from);
-        nodeLabelIds.add(focusRelationship.to);
+      if (focusedRelationship) {
+        nodeLabelIds.add(focusedRelationship.from);
+        nodeLabelIds.add(focusedRelationship.to);
       }
       if (focusEntityId) {
         nodeLabelIds.add(focusEntityId);
