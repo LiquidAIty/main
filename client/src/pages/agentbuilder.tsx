@@ -7,32 +7,36 @@ import type {
 import BuilderCanvas, {
   type BuilderCanvasFocusRequest,
 } from "../components/builder/BuilderCanvas";
+import BuilderChat from "../components/builder/BuilderChat";
+import BuilderDrawer from "../components/builder/BuilderDrawer";
+import PlanWikiSurface from "../components/assist/PlanWikiSurface";
 import {
   buildStructuredAssistPlanSurface,
   type LinkRef,
   normalizeAnchorSurface,
-  normalizeLinks,
-  normalizePlanItems,
   type PlanItem,
 } from "../components/builder/assistPlanSurface";
-import {
-  createEmptyBlackboard,
-  normalizeV3Blackboard,
-} from "../components/builder/blackboardState";
+import DeckEdgeInspector from "../components/builder/DeckEdgeInspector";
 import {
   buildExecutionPlan,
 } from "../components/builder/deckExecution";
+import DeckExecutionPathSummary from "../components/builder/DeckExecutionPathSummary";
 import {
-  DECK_NODE_PRESETS,
   findDeckNodePreset,
   getAssistStarterRecipe,
-  getCommonAssistNextPresetKeys,
   type AssistStarterRecipe,
   type DeckNodePreset,
 } from "../components/builder/deckPresets";
+import DeckQuickAddPanel from "../components/builder/DeckQuickAddPanel";
 import {
   resolveEffectiveAgent,
 } from "../components/builder/deckRuntime";
+import {
+  buildDeckRuntimeVisualState,
+  buildReloadStateFromDeckRuns,
+  resolveDeckRunFinalText,
+  streamDeckRunRequest,
+} from "../components/builder/deckRunState";
 import {
   buildDefaultDeckEdgeMetadata,
   sanitizeDeckEdges,
@@ -50,26 +54,29 @@ import {
   safeJson,
   writeCachedGraphPayload,
 } from "../components/builder/requestGuards";
+import {
+  type LatestCardRunRecord,
+  useBuilderDeckRuntimeActions,
+} from "../components/builder/useBuilderDeckRuntimeActions";
+import { useBuilderProjects } from "../components/builder/useBuilderProjects";
 import type {
   AgentCardInstance,
   AgentCardRuntimeOptions,
   AgentCardRuntimeType,
   AgentTemplate,
-  CardRunResult,
   DeckEdge,
   DeckEdgeType,
   DeckDocument,
   DeckRun,
+  DeckRuntimeEvent,
   PromptTemplate,
   RuntimeBinding,
-  V3Blackboard,
 } from "../types/agentgraph";
 import type {
   KnowledgeGraphScope,
   KnowledgeGraphRelationship,
   KnowledgeGraphNode,
 } from "../components/knowledge/KnowledgeGraphNVL";
-import UploadAttachment from "../components/knowledge/UploadAttachment";
 import {
   createWorkspaceTestingInteractionId,
   recordWorkspaceTestingEvent,
@@ -131,7 +138,6 @@ const HOME_PLAN_TABS = ["Chat", "Canvas", "Knowledge"] as const;
 const KNOWLEDGE_VIEW_TABS = ["Chat", "Canvas", "Plan"] as const;
 const BUILDER_PROJECT_TABS = ["Plan"] as const;
 const BUILDER_NODE_TABS = ["Prompt", "Knowledge", "Tools", "Runtime"] as const;
-const BUILDER_BLACKBOARD_TABS = ["Blackboard"] as const;
 const BUILDER_EDGE_TABS = ["Edge"] as const;
 type WorkspaceTestingEventDraft = Omit<WorkspaceTestingEventInput, "projectId"> & {
   projectId?: string | null;
@@ -203,12 +209,8 @@ function cleanOptionalText(value: unknown): string | null {
 function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   const normalized = safeText(value).trim().toLowerCase();
   if (normalized === "assistant_agent") return "assistant_agent";
-  if (normalized === "round_robin") return "round_robin";
-  if (normalized === "selector") return "selector";
-  if (normalized === "swarm") return "swarm";
   if (normalized === "magentic_one") return "magentic_one";
   if (normalized === "graph_flow") return "graph_flow";
-  if (normalized === "adapter") return "adapter";
   return null;
 }
 
@@ -220,7 +222,7 @@ function normalizeRuntimeOptions(value: unknown): AgentCardRuntimeOptions | null
 function normalizeDeckEdgeType(value: unknown): DeckEdgeType {
   return safeText(value).trim().toLowerCase() === "magentic_option"
     ? "magentic_option"
-    : "graph_flow";
+    : "flow";
 }
 
 function extractPromptTemplateField(
@@ -287,9 +289,8 @@ function buildSelectedCardMemoryGraphData(
   document: DeckDocument,
   selectedCard: AgentCardInstance | null,
   selectedCardConfig: AgentManagerLocalConfig | null,
-  blackboard: V3Blackboard,
 ): AgentManagerMemoryGraphData | null {
-  if (!selectedCard || !selectedCardConfig || selectedCard.kind === "blackboard") return null;
+  if (!selectedCard || !selectedCardConfig) return null;
 
   const nodeMap = new Map(document.nodes.map((node) => [node.id, node] as const));
   const entityMap = new Map<string, KnowledgeGraphNode>();
@@ -306,16 +307,6 @@ function buildSelectedCardMemoryGraphData(
       relationshipMap.set(relationship.id, relationship);
     }
   };
-  const blackboardEntries: Array<{ label: string; value: string; type: string }> = [];
-  const pushBlackboardEntry = (label: string, value: unknown, type: string) => {
-    const text = cleanOptionalText(value);
-    if (!text) return;
-    blackboardEntries.push({ label, value: text, type });
-  };
-  let blackboardNodeId: string | null = null;
-  let hasBlackboardRead = false;
-  let hasBlackboardWrite = false;
-
   pushEntity({
     id: agentNodeId,
     rawId: selectedCard.id,
@@ -401,9 +392,8 @@ function buildSelectedCardMemoryGraphData(
 
     if (
       edge.target === selectedCard.id &&
-      sourceNode?.kind !== "blackboard" &&
       sourceNode &&
-      (edgeType === "graph_flow" || edgeType === "magentic_option")
+      (edgeType === "flow" || edgeType === "magentic_option")
     ) {
       const sourceEntityId = `upstream:${sourceNode.id}`;
       pushEntity({
@@ -429,60 +419,9 @@ function buildSelectedCardMemoryGraphData(
     }
 
     if (
-      sourceNode?.kind === "blackboard" &&
-      edge.target === selectedCard.id
-    ) {
-      blackboardNodeId = `blackboard:${sourceNode.id}`;
-      hasBlackboardRead = true;
-      pushEntity({
-        id: blackboardNodeId,
-        rawId: sourceNode.id,
-        label: safeText(sourceNode.title || "Blackboard"),
-        type: "Blackboard",
-        source: "mixed",
-        scope: "project",
-      });
-      pushRelationship({
-        id: `rel:blackboard_read:${edge.id}`,
-        from: blackboardNodeId,
-        to: agentNodeId,
-        type: "reads_blackboard",
-        source: "mixed",
-        scope: "project",
-        evidence_snippet: "This card reads shared working state from the blackboard.",
-      });
-    }
-
-    if (
-      targetNode?.kind === "blackboard" &&
-      edge.source === selectedCard.id
-    ) {
-      blackboardNodeId = `blackboard:${targetNode.id}`;
-      hasBlackboardWrite = true;
-      pushEntity({
-        id: blackboardNodeId,
-        rawId: targetNode.id,
-        label: safeText(targetNode.title || "Blackboard"),
-        type: "Blackboard",
-        source: "mixed",
-        scope: "project",
-      });
-      pushRelationship({
-        id: `rel:blackboard_write:${edge.id}`,
-        from: agentNodeId,
-        to: blackboardNodeId,
-        type: "writes_blackboard",
-        source: "mixed",
-        scope: "project",
-        evidence_snippet: "This card writes shared working state into the blackboard.",
-      });
-    }
-
-    if (
       edge.source === selectedCard.id &&
-      targetNode?.kind !== "blackboard" &&
       targetNode &&
-      (edgeType === "graph_flow" || edgeType === "magentic_option")
+      (edgeType === "flow" || edgeType === "magentic_option")
     ) {
       const targetEntityId = `downstream:${targetNode.id}`;
       pushEntity({
@@ -508,43 +447,6 @@ function buildSelectedCardMemoryGraphData(
     }
   });
 
-  if (blackboardNodeId && (hasBlackboardRead || hasBlackboardWrite)) {
-    pushBlackboardEntry("Current Goal", blackboard.current_goal, "Blackboard Goal");
-    pushBlackboardEntry("Next Move", blackboard.next_move, "Blackboard Next Move");
-    blackboard.open_questions.slice(0, 2).forEach((entry) => {
-      pushBlackboardEntry("Open Question", entry, "Blackboard Question");
-    });
-    blackboard.findings.slice(0, 2).forEach((entry) => {
-      pushBlackboardEntry("Finding", entry, "Blackboard Finding");
-    });
-    Object.entries(blackboard.store || {})
-      .slice(0, 3)
-      .forEach(([key, value]) => {
-        pushBlackboardEntry(key.replace(/[_-]+/g, " "), value, "Blackboard Store");
-      });
-
-    blackboardEntries.forEach((entry, index) => {
-      const entryId = `blackboard_context:${selectedCard.id}:${index}`;
-      pushEntity({
-        id: entryId,
-        rawId: entry.value,
-        label: summarizeMemoryGraphLabel(entry.value, entry.label),
-        type: entry.type,
-        source: "mixed",
-        scope: "project",
-      });
-      pushRelationship({
-        id: `rel:blackboard_context:${selectedCard.id}:${index}`,
-        from: blackboardNodeId!,
-        to: entryId,
-        type: "holds_context",
-        source: "mixed",
-        scope: "project",
-        evidence_snippet: entry.value,
-      });
-    });
-  }
-
   return {
     entities: Array.from(entityMap.values()),
     relationships: Array.from(relationshipMap.values()),
@@ -554,7 +456,7 @@ function buildSelectedCardMemoryGraphData(
 function isTopLevelCanvasCard(
   node: AgentCardInstance | null | undefined,
 ): node is AgentCardInstance {
-  return Boolean(node && node.kind !== "blackboard" && !cleanOptionalText(node.parentGraphId));
+  return Boolean(node && !cleanOptionalText(node.parentGraphId));
 }
 
 function isAssistCanvasCard(
@@ -562,7 +464,6 @@ function isAssistCanvasCard(
 ): node is AgentCardInstance {
   return Boolean(
     node &&
-      node.kind !== "blackboard" &&
       normalizeRuntimeType(node.runtimeType) === "assistant_agent",
   );
 }
@@ -597,7 +498,7 @@ function collectVisibleAssistFlowIds(
     visited.add(nodeId);
 
     document.edges.forEach((edge) => {
-      if (normalizeDeckEdgeType(edge.edgeType) !== "graph_flow") return;
+      if (normalizeDeckEdgeType(edge.edgeType) !== "flow") return;
       const sourceNode = nodeMap.get(edge.source);
       const targetNode = nodeMap.get(edge.target);
       if (!isVisibleAssistFlowPair(sourceNode, targetNode)) return;
@@ -691,23 +592,6 @@ export function buildSingleCardRunDocument(
   if (!selectedNode) return null;
   const relatedNodeIds = buildSingleCardRunNodeScope(document, selectedNode);
 
-  document.edges.forEach((edge) => {
-    const sourceNode = document.nodes.find((node) => node.id === edge.source) || null;
-    const targetNode = document.nodes.find((node) => node.id === edge.target) || null;
-    if (
-      sourceNode?.kind === "blackboard" &&
-      relatedNodeIds.has(edge.target)
-    ) {
-      relatedNodeIds.add(sourceNode.id);
-    }
-    if (
-      targetNode?.kind === "blackboard" &&
-      relatedNodeIds.has(edge.source)
-    ) {
-      relatedNodeIds.add(targetNode.id);
-    }
-  });
-
   return {
     ...document,
     nodes: document.nodes.filter((node) => relatedNodeIds.has(node.id)),
@@ -715,16 +599,6 @@ export function buildSingleCardRunDocument(
       (edge) => relatedNodeIds.has(edge.source) && relatedNodeIds.has(edge.target),
     ),
   };
-}
-
-function normalizeMessages(input: unknown): { role: "assistant" | "user"; text: string }[] {
-  if (!Array.isArray(input)) return [];
-  return input
-    .map((m: any): { role: "assistant" | "user"; text: string } => ({
-      role: m?.role === "assistant" ? "assistant" : "user",
-      text: safeText(m?.text),
-    }))
-    .filter((m) => m.text.length > 0);
 }
 
 const uid = () => Math.random().toString(36).slice(2, 8);
@@ -770,9 +644,6 @@ type KEdge = {
   evidence_snippet?: string;
 };
 
-const STRONG_RELATIONS = new Set(["part_of", "member_of", "instance_of"]);
-const MEDIUM_RELATIONS = new Set(["works_at", "created_by", "uses"]);
-const WEAK_RELATIONS = new Set(["mentions", "related_to"]);
 const KG_SEED_QUERY = [
   "MATCH (a:Entity { project_id: $projectId })-[r:REL { project_id: $projectId }]->(b:Entity { project_id: $projectId })",
   "WHERE ($typeFilter IS NULL OR toLower(coalesce(a.etype, 'unknown')) = $typeFilter OR toLower(coalesce(b.etype, 'unknown')) = $typeFilter)",
@@ -819,73 +690,6 @@ function parseTimestampMs(value: unknown): number | undefined {
   return Number.isFinite(t) ? t : undefined;
 }
 
-function normalizeProjectCardKey(value: unknown): string {
-  return String(value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-function inferProjectCardType(card: any): "assist" | "agent" {
-  const explicit = String(card?.project_type ?? "").trim().toLowerCase();
-  if (explicit === "assist" || explicit === "agent") {
-    return explicit;
-  }
-
-  const codeKey = normalizeProjectCardKey(card?.code);
-  const nameKey = normalizeProjectCardKey(card?.name);
-  const legacyAgentKeys = new Set([
-    "main-chat",
-    "kg-ingest",
-    "thinkgraph",
-    "knowgraph",
-    "neo4j",
-    "research-agent",
-    "agent-builder",
-  ]);
-
-  if (legacyAgentKeys.has(codeKey) || legacyAgentKeys.has(nameKey) || Boolean(card?.hasAgentConfig)) {
-    return "agent";
-  }
-
-  return "assist";
-}
-
-function dedupeProjectCards(cards: any[]): any[] {
-  const byKey = new Map<string, any>();
-
-  cards.forEach((card: any) => {
-    const codeKey = normalizeProjectCardKey(card?.code);
-    const nameKey = normalizeProjectCardKey(card?.name);
-    const idKey = String(card?.id ?? "").trim();
-    const key = codeKey ? `code:${codeKey}` : nameKey ? `name:${nameKey}` : `id:${idKey}`;
-    if (!key) return;
-
-    const next = {
-      ...card,
-      project_type: inferProjectCardType(card),
-    };
-    const existing = byKey.get(key);
-    if (!existing) {
-      byKey.set(key, next);
-      return;
-    }
-
-    const existingSynthetic = Boolean(existing?.syntheticSystemDeck);
-    const nextSynthetic = Boolean(next?.syntheticSystemDeck);
-    if (existingSynthetic && !nextSynthetic) {
-      byKey.set(key, next);
-      return;
-    }
-    if (!existing?.project_type && next?.project_type) {
-      byKey.set(key, next);
-    }
-  });
-
-  return Array.from(byKey.values());
-}
-
 function buildSeedPromptTemplate(parts: {
   role: string;
   goal: string;
@@ -914,11 +718,38 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   {
     id: "prompt_magentic",
     content: buildSeedPromptTemplate({
-      role: "You are Magentic-One, the top-level orchestrator for the visible agent graph.",
-      goal: "Choose the best callable head to run next or answer directly when no downstream call is needed.",
-      constraints: "Route deliberately. Do not invent hidden workers. Stay grounded in the visible deck structure.",
-      ioSchema: "Input: user request plus callable head summaries. Output: a direct response or one selected downstream head.",
-      memoryPolicy: "Use the current input, callable head summaries, and explicit deck context only.",
+      role: [
+        "You are Magentic-One, the lead orchestrator for the visible agent graph.",
+        "You are part of the visible team, not a hidden side system.",
+      ].join("\n"),
+      goal: [
+        "Understand the user goal, make a short working plan for the current task, and decide whether to answer directly or delegate.",
+        "Track whether progress is being made, and revise the next step if progress stalls.",
+      ].join("\n"),
+      constraints: [
+        "The visible canvas is your full action space.",
+        "You may only delegate through visible outgoing magentic_option connections from this card.",
+        "Only visibly connected outgoing magentic_option paths are callable.",
+        "If the task can be answered directly without delegation, do so.",
+        "If delegation is needed, choose exactly one connected node for the next assignment and explain why that node is the best next move.",
+        "Do not invent agents, tools, routes, subprocesses, hidden plans, or capabilities that are not present on the canvas.",
+        "Do not create workflow steps that are not represented by the visible graph structure.",
+        "If no connected node can validly help, stop and return control to the human.",
+      ].join("\n"),
+      ioSchema: [
+        "Input: user request plus visible callable node summaries and any completed results from this run.",
+        "Output: either a direct answer or one selected connected node for the next assignment.",
+        "Use the plan stream to report short plain-text updates in this shape:",
+        "Goal: ...",
+        "Next: calling [Node Title] because ...",
+        "Progress: ...",
+        "Result: ...",
+        "Waiting: more work, human input, or done.",
+      ].join("\n"),
+      memoryPolicy: [
+        "Use only the current request, the visible callable node list, completed results from this run, and explicit deck context.",
+        "Keep the working plan short, update it after each result, and re-plan if progress stalls.",
+      ].join("\n"),
     }),
   },
   {
@@ -1138,25 +969,25 @@ export const INITIAL_DECK: DeckDocument = {
       id: "edge_main_chat_kg_ingest",
       source: "card_main_chat",
       target: "card_kg_ingest",
-      edgeType: "graph_flow",
+      edgeType: "flow",
     },
     {
       id: "edge_kg_ingest_research",
       source: "card_kg_ingest",
       target: "card_research",
-      edgeType: "graph_flow",
+      edgeType: "flow",
     },
     {
       id: "edge_research_knowgraph",
       source: "card_research",
       target: "card_knowgraph",
-      edgeType: "graph_flow",
+      edgeType: "flow",
     },
     {
       id: "edge_knowgraph_neo4j",
       source: "card_knowgraph",
       target: "card_neo4j",
-      edgeType: "graph_flow",
+      edgeType: "flow",
     },
   ],
 };
@@ -1195,10 +1026,6 @@ export function filterAuthoringCompatibleEdges(
       const targetNode = nodeMap.get(edge.target);
       if (!sourceNode || !targetNode) return false;
 
-      if (sourceNode.kind === "blackboard" || targetNode.kind === "blackboard") {
-        return true;
-      }
-
       const edgeType = normalizeDeckEdgeType(edge.edgeType);
       if (edgeType === "magentic_option") {
         return (
@@ -1235,6 +1062,7 @@ function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
       Boolean(
         node &&
           typeof node === "object" &&
+          safeText((node as Partial<AgentCardInstance>).kind).trim().toLowerCase() !== "blackboard" &&
           typeof (node as AgentCardInstance).id === "string" &&
           typeof (node as AgentCardInstance).templateId === "string",
       ),
@@ -1242,7 +1070,7 @@ function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
   return nextNodes.length > 0
     ? nextNodes.map((node) => ({
         id: safeText(node.id).trim(),
-        kind: safeText(node.kind).trim() === "blackboard" ? "blackboard" : "agent",
+        kind: "agent",
         templateId: safeText(node.templateId).trim(),
         prompt: typeof node.prompt === "string" ? node.prompt : "",
         runtimeBinding: normalizeRuntimeBinding(
@@ -1273,7 +1101,7 @@ function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
             ? node.cloneConfig
             : undefined,
       }))
-    : cloneDeckDocument(INITIAL_DECK.nodes);
+    : [];
 }
 
 function normalizeDeckPromptTemplates(value: unknown): PromptTemplate[] {
@@ -1384,7 +1212,6 @@ function resolveQuickAddEdge(
   nextNode: AgentCardInstance,
 ): DeckEdge | null {
   if (!anchorNode) return null;
-  if (anchorNode.kind === "blackboard" || nextNode.kind === "blackboard") return null;
 
   const anchorRuntimeType = normalizeRuntimeType(anchorNode.runtimeType);
   const nextRuntimeType = normalizeRuntimeType(nextNode.runtimeType);
@@ -1398,7 +1225,7 @@ function resolveQuickAddEdge(
   ) {
     edgeType = "magentic_option";
   } else if (isVisibleAssistFlowPair(anchorNode, nextNode)) {
-    edgeType = "graph_flow";
+    edgeType = "flow";
   }
 
   if (!edgeType) return null;
@@ -1581,7 +1408,7 @@ function seedCurrentSystemCardsIntoLegacyDeck(deck: DeckDocument): DeckDocument 
     deck.promptTemplates.map((template) => [template.id, template] as const),
   );
   const initialPromptTemplateIds = new Set(INITIAL_PROMPT_TEMPLATES.map((template) => template.id));
-  const upgradedNodes = INITIAL_DECK.nodes.map((seedNode) => {
+  const upgradedNodes: AgentCardInstance[] = INITIAL_DECK.nodes.map((seedNode): AgentCardInstance => {
     const existingNode = existingNodesById.get(seedNode.id);
     if (!existingNode) {
       return cloneDeckDocument(seedNode);
@@ -1596,15 +1423,10 @@ function seedCurrentSystemCardsIntoLegacyDeck(deck: DeckDocument): DeckDocument 
       String(existingNode.subtitle || "").trim() === "Gather upstream inputs"
         ? seedNode.subtitle
         : existingNode.subtitle || seedNode.subtitle;
-    const nextKind: AgentCardInstance["kind"] =
-      safeText((existingNode as any).kind || seedNode.kind).trim() === "blackboard"
-        ? "blackboard"
-        : "agent";
-
     return {
       ...cloneDeckDocument(seedNode),
       ...cloneDeckDocument(existingNode),
-      kind: nextKind,
+      kind: "agent",
       prompt:
         typeof (existingNode as any).prompt === "string"
           ? (existingNode as any).prompt
@@ -1766,16 +1588,6 @@ export function resolveProjectDeckLoadResult(
     preservedCurrent: false,
   };
 }
-
-type LatestCardRunRecord = {
-  cardId: string;
-  title: string;
-  templateId: string;
-  runtimeBinding?: RuntimeBinding | null;
-  input: string;
-  effectiveAgent: AgentTemplate;
-  result: CardRunResult;
-};
 
 function resolveAgentTemplate(
   card: AgentCardInstance | null,
@@ -2269,1220 +2081,6 @@ function buildGraphVizForNVL(graph: { nodes: KNode[]; edges: KEdge[] }) {
   return { entities, relationships };
 }
 
-// -------- Knowledge: interactive force-layout canvas --------
-type CameraState = { x: number; y: number; scale: number };
-type SimNodeState = { x: number; y: number; vx: number; vy: number; mass: number };
-type XY = { x: number; y: number };
-
-function pointToSegmentDistance(px: number, py: number, ax: number, ay: number, bx: number, by: number) {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const lenSq = dx * dx + dy * dy;
-  if (lenSq === 0) return Math.hypot(px - ax, py - ay);
-  const t = clamp(((px - ax) * dx + (py - ay) * dy) / lenSq, 0, 1);
-  const cx = ax + t * dx;
-  const cy = ay + t * dy;
-  return Math.hypot(px - cx, py - cy);
-}
-
-function hashString(text: string): number {
-  let h = 0;
-  for (let i = 0; i < text.length; i += 1) {
-    h = (h * 31 + text.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h);
-}
-
-function relationForceConfig(relationType?: string) {
-  const rel = normalizeRelationType(relationType);
-  if (STRONG_RELATIONS.has(rel)) return { spring: 0.013, length: 92, alpha: 0.75 };
-  if (MEDIUM_RELATIONS.has(rel)) return { spring: 0.008, length: 132, alpha: 0.55 };
-  if (WEAK_RELATIONS.has(rel)) return { spring: 0.0045, length: 178, alpha: 0.34 };
-  return { spring: 0.0058, length: 156, alpha: 0.45 };
-}
-
-function relationColor(relationType?: string): string {
-  const rel = normalizeRelationType(relationType);
-  if (STRONG_RELATIONS.has(rel)) return "110, 233, 172";
-  if (MEDIUM_RELATIONS.has(rel)) return "126, 189, 255";
-  if (WEAK_RELATIONS.has(rel)) return "138, 148, 168";
-  return "122, 172, 214";
-}
-
-function edgeControlPoint(ax: number, ay: number, bx: number, by: number, seed: string, cameraScale: number): XY {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const d = Math.max(1, Math.hypot(dx, dy));
-  const nx = -dy / d;
-  const ny = dx / d;
-  const hash = hashString(seed);
-  const sign = hash % 2 === 0 ? 1 : -1;
-  const bendBase = (14 + (hash % 11)) / Math.max(cameraScale, 0.22);
-  const bend = Math.min(bendBase, d * 0.35) * sign;
-  return { x: (ax + bx) / 2 + nx * bend, y: (ay + by) / 2 + ny * bend };
-}
-
-function quadPoint(ax: number, ay: number, cx: number, cy: number, bx: number, by: number, t: number): XY {
-  const mt = 1 - t;
-  return {
-    x: mt * mt * ax + 2 * mt * t * cx + t * t * bx,
-    y: mt * mt * ay + 2 * mt * t * cy + t * t * by,
-  };
-}
-
-function pointToQuadraticDistance(
-  px: number,
-  py: number,
-  ax: number,
-  ay: number,
-  cx: number,
-  cy: number,
-  bx: number,
-  by: number,
-): number {
-  const steps = 14;
-  let prev = { x: ax, y: ay };
-  let best = Number.POSITIVE_INFINITY;
-  for (let i = 1; i <= steps; i += 1) {
-    const t = i / steps;
-    const next = quadPoint(ax, ay, cx, cy, bx, by, t);
-    best = Math.min(best, pointToSegmentDistance(px, py, prev.x, prev.y, next.x, next.y));
-    prev = next;
-  }
-  return best;
-}
-
-function convexHull(points: XY[]): XY[] {
-  if (points.length <= 2) return points;
-  const sorted = [...points].sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
-  const cross = (o: XY, a: XY, b: XY) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-  const lower: XY[] = [];
-  sorted.forEach((p) => {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
-    lower.push(p);
-  });
-  const upper: XY[] = [];
-  for (let i = sorted.length - 1; i >= 0; i -= 1) {
-    const p = sorted[i];
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
-    upper.push(p);
-  }
-  lower.pop();
-  upper.pop();
-  return lower.concat(upper);
-}
-
-function detectCommunities(nodeIds: string[], edges: KEdge[]): Map<string, number> {
-  const out = new Map<string, number>();
-  if (!nodeIds.length) return out;
-
-  const sortedIds = [...nodeIds].sort();
-  const neighbors = new Map<string, Set<string>>();
-  sortedIds.forEach((id) => neighbors.set(id, new Set()));
-  edges.forEach((e) => {
-    if (!neighbors.has(e.a) || !neighbors.has(e.b)) return;
-    neighbors.get(e.a)!.add(e.b);
-    neighbors.get(e.b)!.add(e.a);
-  });
-
-  sortedIds.forEach((id, idx) => out.set(id, idx));
-  for (let iter = 0; iter < 8; iter += 1) {
-    let changed = false;
-    sortedIds.forEach((id) => {
-      const local = neighbors.get(id);
-      if (!local || local.size === 0) return;
-      const counts = new Map<number, number>();
-      local.forEach((nb) => {
-        const label = out.get(nb);
-        if (label == null) return;
-        counts.set(label, (counts.get(label) || 0) + 1);
-      });
-      if (!counts.size) return;
-      const currentLabel = out.get(id)!;
-      let bestLabel = currentLabel;
-      let bestCount = -1;
-      Array.from(counts.entries())
-        .sort((a, b) => a[0] - b[0])
-        .forEach(([label, count]) => {
-          if (count > bestCount || (count === bestCount && label < bestLabel)) {
-            bestCount = count;
-            bestLabel = label;
-          }
-        });
-      if (bestLabel !== currentLabel) {
-        out.set(id, bestLabel);
-        changed = true;
-      }
-    });
-    if (!changed) break;
-  }
-
-  const relabel = new Map<number, number>();
-  let next = 0;
-  sortedIds.forEach((id) => {
-    const label = out.get(id)!;
-    if (!relabel.has(label)) relabel.set(label, next++);
-    out.set(id, relabel.get(label)!);
-  });
-  return out;
-}
-
-function approximateBetweennessCentrality(
-  nodeIds: string[],
-  adjacency: Map<string, Set<string>>,
-  maxSources = 18,
-): Map<string, number> {
-  const scores = new Map<string, number>();
-  nodeIds.forEach((id) => scores.set(id, 0));
-  if (nodeIds.length <= 2) return scores;
-
-  const sorted = [...nodeIds].sort();
-  const sourceCount = Math.max(1, Math.min(maxSources, sorted.length));
-  const step = sorted.length / sourceCount;
-  const sources = Array.from(new Set(Array.from({ length: sourceCount }, (_, i) => sorted[Math.floor(i * step)])));
-
-  sources.forEach((source) => {
-    const stack: string[] = [];
-    const pred = new Map<string, string[]>();
-    const sigma = new Map<string, number>();
-    const dist = new Map<string, number>();
-    nodeIds.forEach((v) => {
-      pred.set(v, []);
-      sigma.set(v, 0);
-      dist.set(v, -1);
-    });
-    sigma.set(source, 1);
-    dist.set(source, 0);
-
-    const queue: string[] = [source];
-    while (queue.length) {
-      const v = queue.shift()!;
-      stack.push(v);
-      const neighbors = adjacency.get(v);
-      if (!neighbors) continue;
-      neighbors.forEach((w) => {
-        if (!dist.has(w)) return;
-        if ((dist.get(w) ?? -1) < 0) {
-          queue.push(w);
-          dist.set(w, (dist.get(v) ?? 0) + 1);
-        }
-        if ((dist.get(w) ?? -1) === (dist.get(v) ?? 0) + 1) {
-          sigma.set(w, (sigma.get(w) ?? 0) + (sigma.get(v) ?? 0));
-          pred.get(w)!.push(v);
-        }
-      });
-    }
-
-    const delta = new Map<string, number>();
-    nodeIds.forEach((v) => delta.set(v, 0));
-    while (stack.length) {
-      const w = stack.pop()!;
-      const sigmaW = sigma.get(w) ?? 0;
-      pred.get(w)!.forEach((v) => {
-        if (sigmaW <= 0) return;
-        const contrib = ((sigma.get(v) ?? 0) / sigmaW) * (1 + (delta.get(w) ?? 0));
-        delta.set(v, (delta.get(v) ?? 0) + contrib);
-      });
-      if (w !== source) {
-        scores.set(w, (scores.get(w) ?? 0) + (delta.get(w) ?? 0));
-      }
-    }
-  });
-
-  const denom = Math.max(1, sources.length);
-  nodeIds.forEach((v) => scores.set(v, (scores.get(v) ?? 0) / denom));
-  return scores;
-}
-
-function MiniForce({
-  nodes,
-  edges,
-  onNodeClick,
-  onNodeDoubleClick,
-  expandingNodeId,
-  resetViewToken,
-}: {
-  nodes: { id: string; label: string; degree?: number; createdAtMs?: number }[];
-  edges: { a: string; b: string; type?: string }[];
-  onNodeClick?: (nodeId: string) => void;
-  onNodeDoubleClick?: (nodeId: string) => void;
-  expandingNodeId?: string | null;
-  resetViewToken?: number;
-}) {
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const posRef = useRef<Record<string, SimNodeState>>({});
-  const cameraRef = useRef<CameraState>({ x: 0, y: 0, scale: 1 });
-  const viewportRef = useRef({ width: 1, height: 1, dpr: 1 });
-  const pendingAutoFitRef = useRef(true);
-  const lastResetTokenRef = useRef<number | undefined>(undefined);
-  const hoverNodeRef = useRef<string | null>(null);
-  const hoverEdgeRef = useRef<KEdge | null>(null);
-  const lastClickRef = useRef<{ nodeId: string; ts: number }>({ nodeId: "", ts: 0 });
-  const simAlphaRef = useRef(1);
-  const simStartedAtRef = useRef(Date.now());
-  const simActiveRef = useRef(true);
-  const firstSeenRef = useRef<Map<string, number>>(new Map());
-  const [hoverEdgeType, setHoverEdgeType] = useState<string | null>(null);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [revealDepth, setRevealDepth] = useState(1);
-  const [cursor, setCursor] = useState<"grab" | "grabbing" | "default">("grab");
-  const interactionRef = useRef<{
-    mode: "none" | "pan" | "node";
-    nodeId: string | null;
-    pointerId: number;
-    startClientX: number;
-    startClientY: number;
-    startCamX: number;
-    startCamY: number;
-    moved: boolean;
-  }>({
-    mode: "none",
-    nodeId: null,
-    pointerId: -1,
-    startClientX: 0,
-    startClientY: 0,
-    startCamX: 0,
-    startCamY: 0,
-    moved: false,
-  });
-
-  const baseRadius = 4.5;
-  const bgColor = "#0b0d10";
-  const nodeGlow = "#d8f6ff";
-  const labelZoomThreshold = 1.35;
-  const clusterPalette = ["#34d399", "#60a5fa", "#f59e0b", "#fb7185", "#a78bfa", "#22d3ee"];
-
-  const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
-
-  const adjacency = useMemo(() => {
-    const map = new Map<string, Set<string>>(nodes.map((n) => [n.id, new Set<string>()]));
-    edges.forEach((e) => {
-      if (!map.has(e.a)) map.set(e.a, new Set<string>());
-      if (!map.has(e.b)) map.set(e.b, new Set<string>());
-      map.get(e.a)!.add(e.b);
-      map.get(e.b)!.add(e.a);
-    });
-    return map;
-  }, [edges, nodes]);
-
-  const degreeByNode = useMemo(() => {
-    const map = new Map<string, number>();
-    nodes.forEach((n) => map.set(n.id, n.degree || 0));
-    edges.forEach((e) => {
-      map.set(e.a, (map.get(e.a) || 0) + 1);
-      map.set(e.b, (map.get(e.b) || 0) + 1);
-    });
-    return map;
-  }, [edges, nodes]);
-  const degreeCentralityByNode = useMemo(() => {
-    const map = new Map<string, number>();
-    const denom = Math.max(1, nodes.length - 1);
-    nodes.forEach((n) => {
-      const degree = degreeByNode.get(n.id) || 0;
-      map.set(n.id, clamp(degree / denom, 0, 1));
-    });
-    return map;
-  }, [nodes, degreeByNode]);
-
-  const focusNodeId = useMemo(() => {
-    if (!nodes.length) return null;
-    if (expandingNodeId && nodeById.has(expandingNodeId)) return expandingNodeId;
-    let bestId = nodes[0].id;
-    let bestScore = -1;
-    nodes.forEach((n) => {
-      const score = degreeCentralityByNode.get(n.id) || 0;
-      if (score > bestScore) {
-        bestScore = score;
-        bestId = n.id;
-      }
-    });
-    return bestId;
-  }, [nodes, degreeCentralityByNode, expandingNodeId, nodeById]);
-
-  const depthByNode = useMemo(() => {
-    const depth = new Map<string, number>();
-    nodes.forEach((n) => depth.set(n.id, 3));
-    if (!focusNodeId) return depth;
-
-    const q: string[] = [focusNodeId];
-    depth.set(focusNodeId, 0);
-    while (q.length) {
-      const id = q.shift()!;
-      const d = depth.get(id) || 0;
-      if (d >= 3) continue;
-      const neigh = adjacency.get(id);
-      if (!neigh) continue;
-      neigh.forEach((nb) => {
-        const prev = depth.get(nb);
-        if (prev == null || prev > d + 1) {
-          depth.set(nb, d + 1);
-          q.push(nb);
-        }
-      });
-    }
-    return depth;
-  }, [nodes, adjacency, focusNodeId]);
-
-  const visibleNodeIds = useMemo(() => {
-    const out = new Set<string>();
-    nodes.forEach((n) => {
-      const d = depthByNode.get(n.id) ?? 3;
-      if (d <= revealDepth) out.add(n.id);
-    });
-    if (focusNodeId) out.add(focusNodeId);
-    if (selectedNodeId) {
-      out.add(selectedNodeId);
-      (adjacency.get(selectedNodeId) || new Set<string>()).forEach((id) => out.add(id));
-    }
-    return out;
-  }, [nodes, depthByNode, revealDepth, focusNodeId, selectedNodeId, adjacency]);
-
-  const visibleNodes = useMemo(() => nodes.filter((n) => visibleNodeIds.has(n.id)), [nodes, visibleNodeIds]);
-  const visibleEdges = useMemo(
-    () => edges.filter((e) => visibleNodeIds.has(e.a) && visibleNodeIds.has(e.b)),
-    [edges, visibleNodeIds],
-  );
-
-  const visibleAdjacency = useMemo(() => {
-    const map = new Map<string, Set<string>>(visibleNodes.map((n) => [n.id, new Set<string>()]));
-    visibleEdges.forEach((e) => {
-      if (!map.has(e.a)) map.set(e.a, new Set<string>());
-      if (!map.has(e.b)) map.set(e.b, new Set<string>());
-      map.get(e.a)!.add(e.b);
-      map.get(e.b)!.add(e.a);
-    });
-    return map;
-  }, [visibleEdges, visibleNodes]);
-
-  const communityByNode = useMemo(() => detectCommunities(nodes.map((n) => n.id), edges), [nodes, edges]);
-  const betweennessByNode = useMemo(
-    () => approximateBetweennessCentrality(nodes.map((n) => n.id), adjacency, 16),
-    [nodes, adjacency],
-  );
-  const bridgeThreshold = useMemo(() => {
-    const vals = Array.from(betweennessByNode.values()).filter((v) => Number.isFinite(v) && v > 0);
-    if (!vals.length) return Number.POSITIVE_INFINITY;
-    vals.sort((a, b) => a - b);
-    return vals[Math.floor(vals.length * 0.8)] ?? vals[vals.length - 1];
-  }, [betweennessByNode]);
-  const recentCutoffMs = useMemo(() => {
-    const timestamps = nodes
-      .map((n) => n.createdAtMs)
-      .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
-    if (timestamps.length) {
-      const newest = Math.max(...timestamps);
-      return newest - 30 * 60 * 1000;
-    }
-    return Date.now() - 20 * 1000;
-  }, [nodes]);
-
-  const selectedInfo = useMemo(() => {
-    if (!selectedNodeId) return null;
-    const node = nodeById.get(selectedNodeId);
-    if (!node) return null;
-    const relationCounts = new Map<string, number>();
-    edges.forEach((e) => {
-      if (e.a !== selectedNodeId && e.b !== selectedNodeId) return;
-      const rel = normalizeRelationType(e.type) || "related_to";
-      relationCounts.set(rel, (relationCounts.get(rel) || 0) + 1);
-    });
-    const topRelations = Array.from(relationCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 6);
-    return {
-      node,
-      degree: degreeByNode.get(selectedNodeId) || 0,
-      degreeCentrality: degreeCentralityByNode.get(selectedNodeId) || 0,
-      neighbors: adjacency.get(selectedNodeId)?.size || 0,
-      betweenness: betweennessByNode.get(selectedNodeId) || 0,
-      cluster: communityByNode.get(selectedNodeId) ?? 0,
-      topRelations,
-    };
-  }, [selectedNodeId, nodeById, edges, degreeByNode, degreeCentralityByNode, adjacency, betweennessByNode, communityByNode]);
-
-  const kickSimulation = useCallback((alpha = 1) => {
-    simAlphaRef.current = Math.max(simAlphaRef.current, alpha);
-    simStartedAtRef.current = Date.now();
-    simActiveRef.current = true;
-  }, []);
-
-  const toScreen = useCallback((wx: number, wy: number) => {
-    const cam = cameraRef.current;
-    return {
-      x: wx * cam.scale + cam.x,
-      y: wy * cam.scale + cam.y,
-    };
-  }, []);
-
-  const toWorld = useCallback((sx: number, sy: number) => {
-    const cam = cameraRef.current;
-    return {
-      x: (sx - cam.x) / cam.scale,
-      y: (sy - cam.y) / cam.scale,
-    };
-  }, []);
-
-  const ensureNodePositions = useCallback(() => {
-    const P = posRef.current;
-    const firstSeen = firstSeenRef.current;
-    const ids = new Set(nodes.map((n) => n.id));
-
-    Object.keys(P).forEach((id) => {
-      if (!ids.has(id)) {
-        delete P[id];
-      }
-    });
-    Array.from(firstSeen.keys()).forEach((id) => {
-      if (!ids.has(id)) {
-        firstSeen.delete(id);
-      }
-    });
-
-    const existing = Object.values(P);
-    const center =
-      existing.length > 0
-        ? {
-            x: existing.reduce((s, p) => s + p.x, 0) / existing.length,
-            y: existing.reduce((s, p) => s + p.y, 0) / existing.length,
-          }
-        : { x: 0, y: 0 };
-
-    nodes.forEach((n, idx) => {
-      if (!firstSeen.has(n.id)) {
-        firstSeen.set(n.id, Date.now());
-      }
-      const centrality = degreeCentralityByNode.get(n.id) || 0;
-      const mass = 1 + centrality * 7.5;
-      if (P[n.id]) {
-        P[n.id].mass = mass;
-        return;
-      }
-      const neigh = Array.from(adjacency.get(n.id) || []);
-      const anchored = neigh.map((id) => P[id]).filter((p): p is SimNodeState => Boolean(p));
-      let x = center.x;
-      let y = center.y;
-      if (anchored.length) {
-        x = anchored.reduce((sum, p) => sum + p.x, 0) / anchored.length + (Math.random() - 0.5) * 32;
-        y = anchored.reduce((sum, p) => sum + p.y, 0) / anchored.length + (Math.random() - 0.5) * 32;
-      } else {
-        const angle = (idx / Math.max(nodes.length, 1)) * Math.PI * 2;
-        const radius = 150 + Math.random() * 72;
-        x = center.x + Math.cos(angle) * radius;
-        y = center.y + Math.sin(angle) * radius;
-      }
-      P[n.id] = {
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        mass,
-      };
-    });
-  }, [nodes, degreeCentralityByNode, adjacency]);
-
-  const fitGraphToViewport = useCallback(() => {
-    const targetNodes = visibleNodes.length ? visibleNodes : nodes;
-    if (!targetNodes.length) return;
-    ensureNodePositions();
-
-    const { width, height } = viewportRef.current;
-    if (width <= 1 || height <= 1) return;
-
-    let minX = Number.POSITIVE_INFINITY;
-    let minY = Number.POSITIVE_INFINITY;
-    let maxX = Number.NEGATIVE_INFINITY;
-    let maxY = Number.NEGATIVE_INFINITY;
-    const P = posRef.current;
-
-    targetNodes.forEach((n) => {
-      const p = P[n.id];
-      if (!p) return;
-      minX = Math.min(minX, p.x);
-      minY = Math.min(minY, p.y);
-      maxX = Math.max(maxX, p.x);
-      maxY = Math.max(maxY, p.y);
-    });
-
-    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
-      return;
-    }
-
-    const padding = 48;
-    const spanX = Math.max(maxX - minX, 1);
-    const spanY = Math.max(maxY - minY, 1);
-    const nextScale = clamp(
-      Math.min((width - padding * 2) / spanX, (height - padding * 2) / spanY),
-      0.15,
-      2.8,
-    );
-    const cx = (minX + maxX) / 2;
-    const cy = (minY + maxY) / 2;
-
-    cameraRef.current = {
-      x: width / 2 - cx * nextScale,
-      y: height / 2 - cy * nextScale,
-      scale: nextScale,
-    };
-  }, [ensureNodePositions, visibleNodes, nodes]);
-
-  useEffect(() => {
-    if (!nodes.length) return;
-    if (lastResetTokenRef.current === resetViewToken) return;
-    lastResetTokenRef.current = resetViewToken;
-    setRevealDepth(1);
-    setSelectedNodeId(null);
-    hoverNodeRef.current = null;
-    hoverEdgeRef.current = null;
-    setHoverEdgeType(null);
-    pendingAutoFitRef.current = true;
-    kickSimulation(1);
-    const t = window.setTimeout(() => setRevealDepth((d) => Math.max(d, 2)), 150);
-    return () => window.clearTimeout(t);
-  }, [resetViewToken, nodes.length, kickSimulation]);
-
-  useEffect(() => {
-    ensureNodePositions();
-    kickSimulation(0.85);
-  }, [ensureNodePositions, visibleNodes.length, visibleEdges.length, kickSimulation]);
-
-  useEffect(() => {
-    const wrapper = wrapperRef.current;
-    const canvas = canvasRef.current;
-    if (!wrapper || !canvas) return;
-
-    const syncCanvasSize = () => {
-      const rect = wrapper.getBoundingClientRect();
-      const width = Math.max(1, Math.floor(rect.width));
-      const height = Math.max(1, Math.floor(rect.height));
-      const dpr = Math.max(1, window.devicePixelRatio || 1);
-      viewportRef.current = { width, height, dpr };
-      canvas.width = Math.floor(width * dpr);
-      canvas.height = Math.floor(height * dpr);
-      canvas.style.width = `${width}px`;
-      canvas.style.height = `${height}px`;
-
-      if (pendingAutoFitRef.current && (visibleNodes.length > 0 || nodes.length > 0)) {
-        fitGraphToViewport();
-        pendingAutoFitRef.current = false;
-      }
-    };
-
-    syncCanvasSize();
-    const ro = new ResizeObserver(syncCanvasSize);
-    ro.observe(wrapper);
-    window.addEventListener("resize", syncCanvasSize);
-
-    return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", syncCanvasSize);
-    };
-  }, [fitGraphToViewport, nodes.length, visibleNodes.length]);
-
-  const centerOnNode = useCallback((nodeId: string) => {
-    const p = posRef.current[nodeId];
-    if (!p) return;
-    const { width, height } = viewportRef.current;
-    const cam = cameraRef.current;
-    cameraRef.current = {
-      ...cam,
-      x: width / 2 - p.x * cam.scale,
-      y: height / 2 - p.y * cam.scale,
-    };
-  }, []);
-
-  const edgeControlWorld = useCallback((a: SimNodeState, b: SimNodeState, edge: KEdge) => {
-    return edgeControlPoint(a.x, a.y, b.x, b.y, `${edge.a}|${edge.b}|${edge.type || ""}`, cameraRef.current.scale);
-  }, []);
-
-  const findNodeAt = useCallback(
-    (wx: number, wy: number): string | null => {
-      const P = posRef.current;
-      for (let i = visibleNodes.length - 1; i >= 0; i -= 1) {
-        const node = visibleNodes[i];
-        const p = P[node.id];
-        if (!p) continue;
-        const centrality = degreeCentralityByNode.get(node.id) || 0;
-        const radius = baseRadius + 2 + centrality * 13;
-        const hitRadius = (radius + 4) / cameraRef.current.scale;
-        const d = Math.hypot(wx - p.x, wy - p.y);
-        if (d <= hitRadius) {
-          return node.id;
-        }
-      }
-      return null;
-    },
-    [visibleNodes, degreeCentralityByNode],
-  );
-
-  const findEdgeAt = useCallback(
-    (wx: number, wy: number): KEdge | null => {
-      const P = posRef.current;
-      const threshold = 10 / cameraRef.current.scale;
-      let bestEdge: KEdge | null = null;
-      let bestDist = Number.POSITIVE_INFINITY;
-      for (const e of visibleEdges) {
-        const a = P[e.a];
-        const b = P[e.b];
-        if (!a || !b) continue;
-        const c = edgeControlWorld(a, b, e);
-        const dist = pointToQuadraticDistance(wx, wy, a.x, a.y, c.x, c.y, b.x, b.y);
-        if (dist > threshold) continue;
-        if (dist < bestDist) {
-          bestDist = dist;
-          bestEdge = e;
-        }
-      }
-      return bestEdge;
-    },
-    [visibleEdges, edgeControlWorld],
-  );
-
-  useEffect(() => {
-    ensureNodePositions();
-    let raf = 0;
-    const tick = () => {
-      const canvas = canvasRef.current;
-      if (!canvas) {
-        raf = requestAnimationFrame(tick);
-        return;
-      }
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        raf = requestAnimationFrame(tick);
-        return;
-      }
-
-      const P = posRef.current;
-      if (simActiveRef.current && visibleNodes.length > 0) {
-        const alpha = Math.max(0.01, simAlphaRef.current);
-        const repulsionBase = 270;
-        for (let i = 0; i < visibleNodes.length; i += 1) {
-          const aNode = visibleNodes[i];
-          const a = P[aNode.id];
-          if (!a) continue;
-          for (let j = i + 1; j < visibleNodes.length; j += 1) {
-            const bNode = visibleNodes[j];
-            const b = P[bNode.id];
-            if (!b) continue;
-            const dx = b.x - a.x;
-            const dy = b.y - a.y;
-            const d2 = dx * dx + dy * dy + 0.01;
-            const d = Math.sqrt(d2);
-            const force = (repulsionBase * alpha * a.mass * b.mass) / d2;
-            const fx = (dx / d) * force;
-            const fy = (dy / d) * force;
-            a.vx -= fx / a.mass;
-            a.vy -= fy / a.mass;
-            b.vx += fx / b.mass;
-            b.vy += fy / b.mass;
-          }
-        }
-
-        visibleEdges.forEach((e) => {
-          const a = P[e.a];
-          const b = P[e.b];
-          if (!a || !b) return;
-          const cfg = relationForceConfig(e.type);
-          const dx = b.x - a.x;
-          const dy = b.y - a.y;
-          const d = Math.max(0.01, Math.hypot(dx, dy));
-          const hubStretch = ((degreeByNode.get(e.a) || 0) + (degreeByNode.get(e.b) || 0)) * 1.8;
-          const targetLen = cfg.length + hubStretch;
-          const force = (d - targetLen) * cfg.spring * alpha;
-          const fx = (dx / d) * force;
-          const fy = (dy / d) * force;
-          a.vx += fx / a.mass;
-          a.vy += fy / a.mass;
-          b.vx -= fx / b.mass;
-          b.vy -= fy / b.mass;
-        });
-
-        let kinetic = 0;
-        const damping = 0.85 + (1 - alpha) * 0.1;
-        visibleNodes.forEach((n) => {
-          const p = P[n.id];
-          if (!p) return;
-          p.vx *= damping;
-          p.vy *= damping;
-          p.x += p.vx;
-          p.y += p.vy;
-          kinetic += Math.abs(p.vx) + Math.abs(p.vy);
-        });
-
-        simAlphaRef.current = Math.max(0, simAlphaRef.current * 0.986 - 0.0008);
-        if (kinetic < 0.05 || simAlphaRef.current < 0.015 || Date.now() - simStartedAtRef.current > 6500) {
-          simActiveRef.current = false;
-          visibleNodes.forEach((n) => {
-            const p = P[n.id];
-            if (!p) return;
-            p.vx = Math.abs(p.vx) < 0.0005 ? 0 : p.vx * 0.3;
-            p.vy = Math.abs(p.vy) < 0.0005 ? 0 : p.vy * 0.3;
-          });
-        }
-      }
-
-      const { width, height, dpr } = viewportRef.current;
-      const hoveredNodeId = hoverNodeRef.current;
-      const hoveredNeighbors = hoveredNodeId
-        ? visibleAdjacency.get(hoveredNodeId) || new Set<string>()
-        : new Set<string>();
-      const hoveredEdge = hoverEdgeRef.current;
-      const selectedNeighbors = selectedNodeId
-        ? visibleAdjacency.get(selectedNodeId) || new Set<string>()
-        : new Set<string>();
-
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, width, height);
-      ctx.fillStyle = bgColor;
-      ctx.fillRect(0, 0, width, height);
-
-      const clusters = new Map<number, XY[]>();
-      visibleNodes.forEach((n) => {
-        const p = P[n.id];
-        if (!p) return;
-        const cid = communityByNode.get(n.id);
-        if (cid == null) return;
-        if (!clusters.has(cid)) clusters.set(cid, []);
-        clusters.get(cid)!.push(toScreen(p.x, p.y));
-      });
-
-      clusters.forEach((pts, cid) => {
-        const color = clusterPalette[cid % clusterPalette.length];
-        if (pts.length >= 3) {
-          const hull = convexHull(pts);
-          if (hull.length >= 3) {
-            ctx.beginPath();
-            ctx.moveTo(hull[0].x, hull[0].y);
-            for (let i = 1; i < hull.length; i += 1) {
-              ctx.lineTo(hull[i].x, hull[i].y);
-            }
-            ctx.closePath();
-            ctx.fillStyle = `${color}1E`;
-            ctx.strokeStyle = `${color}4F`;
-            ctx.lineWidth = 1;
-            ctx.fill();
-            ctx.stroke();
-          }
-        } else if (pts.length === 2) {
-          ctx.beginPath();
-          ctx.moveTo(pts[0].x, pts[0].y);
-          ctx.lineTo(pts[1].x, pts[1].y);
-          ctx.strokeStyle = `${color}33`;
-          ctx.lineWidth = 18;
-          ctx.stroke();
-        } else if (pts.length === 1) {
-          ctx.beginPath();
-          ctx.arc(pts[0].x, pts[0].y, 16, 0, Math.PI * 2);
-          ctx.fillStyle = `${color}22`;
-          ctx.fill();
-        }
-      });
-
-      visibleEdges.forEach((e) => {
-        const a = P[e.a];
-        const b = P[e.b];
-        if (!a || !b) return;
-        const c = edgeControlWorld(a, b, e);
-        const sa = toScreen(a.x, a.y);
-        const sc = toScreen(c.x, c.y);
-        const sb = toScreen(b.x, b.y);
-        const cfg = relationForceConfig(e.type);
-        const isSelectedEdge = selectedNodeId ? e.a === selectedNodeId || e.b === selectedNodeId : true;
-        const edgeIsHoveredNode = hoveredNodeId ? e.a === hoveredNodeId || e.b === hoveredNodeId : false;
-        const isHoveredEdge =
-          hoveredEdge && hoveredEdge.a === e.a && hoveredEdge.b === e.b && hoveredEdge.type === e.type;
-        let alpha = selectedNodeId ? (isSelectedEdge ? 0.92 : 0.08) : cfg.alpha;
-        if (edgeIsHoveredNode) alpha = Math.max(alpha, 0.88);
-        if (isHoveredEdge) alpha = 0.97;
-
-        ctx.beginPath();
-        ctx.moveTo(sa.x, sa.y);
-        ctx.quadraticCurveTo(sc.x, sc.y, sb.x, sb.y);
-        ctx.strokeStyle = `rgba(${relationColor(e.type)}, ${alpha})`;
-        ctx.lineWidth = isHoveredEdge ? 2.1 : STRONG_RELATIONS.has(normalizeRelationType(e.type)) ? 1.6 : 1.1;
-        ctx.stroke();
-      });
-
-      if (hoveredEdge?.type) {
-        const a = P[hoveredEdge.a];
-        const b = P[hoveredEdge.b];
-        if (a && b) {
-          const c = edgeControlWorld(a, b, hoveredEdge);
-          const mid = quadPoint(a.x, a.y, c.x, c.y, b.x, b.y, 0.5);
-          const sm = toScreen(mid.x, mid.y);
-          const txt = hoveredEdge.type;
-          ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI";
-          const w = ctx.measureText(txt).width + 10;
-          const h = 18;
-          ctx.fillStyle = "rgba(5, 9, 14, 0.9)";
-          ctx.fillRect(sm.x - w / 2, sm.y - h / 2, w, h);
-          ctx.strokeStyle = "rgba(138, 226, 255, 0.8)";
-          ctx.strokeRect(sm.x - w / 2, sm.y - h / 2, w, h);
-          ctx.fillStyle = "#d9f6ff";
-          ctx.textBaseline = "middle";
-          ctx.fillText(txt, sm.x - w / 2 + 5, sm.y);
-        }
-      }
-
-      visibleNodes.forEach((n) => {
-        const p = P[n.id];
-        if (!p) return;
-        const s = toScreen(p.x, p.y);
-        const centrality = degreeCentralityByNode.get(n.id) || 0;
-        const radius = baseRadius + 2 + centrality * 14;
-        const isHover = hoveredNodeId === n.id;
-        const isSelected = selectedNodeId === n.id;
-        const isSelectedNeighbor = selectedNodeId ? selectedNeighbors.has(n.id) : false;
-        const isHoverNeighbor = hoveredNeighbors.has(n.id);
-        const inContext = !selectedNodeId || isSelected || isSelectedNeighbor;
-        const clusterId = communityByNode.get(n.id) ?? 0;
-        const fill = clusterPalette[clusterId % clusterPalette.length];
-        const bridgeScore = betweennessByNode.get(n.id) || 0;
-        const isBridge = bridgeScore >= bridgeThreshold && bridgeScore > 0;
-        const createdMs = n.createdAtMs ?? firstSeenRef.current.get(n.id);
-        const isRecent = typeof createdMs === "number" && createdMs >= recentCutoffMs;
-        const pulse = isRecent ? 1 + 0.14 * Math.sin(Date.now() / 220 + (hashString(n.id) % 37)) : 1;
-        const drawRadius = (isSelected ? radius + 2 : radius) * pulse;
-        const alpha = inContext ? 1 : 0.25;
-
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = fill;
-        ctx.shadowBlur = isBridge ? 22 : isSelected ? 18 : isHover ? 16 : isHoverNeighbor ? 12 : 8;
-        ctx.shadowColor = isBridge ? "rgba(255, 236, 153, 0.95)" : isHover ? nodeGlow : fill;
-        ctx.beginPath();
-        ctx.arc(s.x, s.y, drawRadius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        ctx.lineWidth = isBridge ? 2.4 : isSelected ? 2 : 1;
-        ctx.strokeStyle = isBridge
-          ? "rgba(255, 236, 153, 0.95)"
-          : isSelected
-            ? "rgba(230, 247, 255, 0.95)"
-            : "rgba(10, 15, 22, 0.55)";
-        ctx.stroke();
-      });
-      ctx.globalAlpha = 1;
-
-      const showLabelsByZoom = cameraRef.current.scale > labelZoomThreshold;
-      ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI";
-      ctx.textBaseline = "middle";
-      visibleNodes.forEach((n) => {
-        const p = P[n.id];
-        if (!p) return;
-        const isHover = hoveredNodeId === n.id;
-        const isNeighbor = hoveredNeighbors.has(n.id);
-        const isSelected = selectedNodeId === n.id;
-        const isSelectedNeighbor = selectedNodeId ? selectedNeighbors.has(n.id) : false;
-        if (!showLabelsByZoom && !isHover && !isNeighbor && !isSelected && !isSelectedNeighbor) return;
-        const s = toScreen(p.x, p.y);
-        const label = n.label || n.id.slice(0, 10);
-        const m = ctx.measureText(label);
-        const w = m.width + 10;
-        const h = 18;
-        const x = s.x + 9;
-        const y = s.y - h / 2;
-        ctx.fillStyle = "rgba(5, 9, 14, 0.86)";
-        ctx.fillRect(x, y, w, h);
-        ctx.strokeStyle = isSelected
-          ? "rgba(225, 246, 255, 0.88)"
-          : isHover
-            ? "rgba(138, 226, 255, 0.8)"
-            : "rgba(145, 160, 180, 0.35)";
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x, y, w, h);
-        ctx.fillStyle = isSelected || isHover ? "#d7f8ff" : "#cfd6e2";
-        ctx.fillText(label, x + 5, y + h / 2);
-      });
-
-      raf = requestAnimationFrame(tick);
-    };
-
-    tick();
-    return () => cancelAnimationFrame(raf);
-  }, [
-    communityByNode,
-    degreeByNode,
-    degreeCentralityByNode,
-    edgeControlWorld,
-    ensureNodePositions,
-    visibleAdjacency,
-    visibleEdges,
-    visibleNodes,
-    selectedNodeId,
-    toScreen,
-  ]);
-
-  const getLocalPoint = useCallback((clientX: number, clientY: number) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return { x: 0, y: 0 };
-    const r = canvas.getBoundingClientRect();
-    return { x: clientX - r.left, y: clientY - r.top };
-  }, []);
-
-  const handlePointerDown = useCallback(
-    (ev: React.PointerEvent<HTMLCanvasElement>) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      canvas.setPointerCapture(ev.pointerId);
-
-      const { x, y } = getLocalPoint(ev.clientX, ev.clientY);
-      const world = toWorld(x, y);
-      const nodeId = findNodeAt(world.x, world.y);
-      interactionRef.current = {
-        mode: nodeId ? "node" : "pan",
-        nodeId,
-        pointerId: ev.pointerId,
-        startClientX: ev.clientX,
-        startClientY: ev.clientY,
-        startCamX: cameraRef.current.x,
-        startCamY: cameraRef.current.y,
-        moved: false,
-      };
-      setRevealDepth((d) => Math.max(d, 3));
-      kickSimulation(0.45);
-      setCursor("grabbing");
-      ev.preventDefault();
-    },
-    [findNodeAt, getLocalPoint, toWorld, kickSimulation],
-  );
-
-  const handlePointerMove = useCallback(
-    (ev: React.PointerEvent<HTMLCanvasElement>) => {
-      const interaction = interactionRef.current;
-      const { x, y } = getLocalPoint(ev.clientX, ev.clientY);
-      const world = toWorld(x, y);
-
-      if (interaction.mode === "pan") {
-        const dx = ev.clientX - interaction.startClientX;
-        const dy = ev.clientY - interaction.startClientY;
-        if (Math.abs(dx) + Math.abs(dy) > 3) interaction.moved = true;
-        cameraRef.current.x = interaction.startCamX + dx;
-        cameraRef.current.y = interaction.startCamY + dy;
-        setCursor("grabbing");
-        ev.preventDefault();
-        return;
-      }
-
-      if (interaction.mode === "node" && interaction.nodeId) {
-        const p = posRef.current[interaction.nodeId];
-        if (p) {
-          p.x = world.x;
-          p.y = world.y;
-          p.vx = 0;
-          p.vy = 0;
-        }
-        if (
-          Math.abs(ev.clientX - interaction.startClientX) + Math.abs(ev.clientY - interaction.startClientY) >
-          3
-        ) {
-          interaction.moved = true;
-        }
-        setCursor("grabbing");
-        kickSimulation(0.62);
-        ev.preventDefault();
-        return;
-      }
-
-      const hitNode = findNodeAt(world.x, world.y);
-      hoverNodeRef.current = hitNode;
-      if (hitNode) {
-        hoverEdgeRef.current = null;
-        setHoverEdgeType(null);
-        setCursor("default");
-        return;
-      }
-
-      const hitEdge = findEdgeAt(world.x, world.y);
-      hoverEdgeRef.current = hitEdge;
-      setHoverEdgeType(hitEdge?.type || null);
-      setCursor(hitEdge ? "default" : "grab");
-    },
-    [findEdgeAt, findNodeAt, getLocalPoint, toWorld, kickSimulation],
-  );
-
-  const handlePointerUp = useCallback(
-    (ev: React.PointerEvent<HTMLCanvasElement>) => {
-      const canvas = canvasRef.current;
-      const interaction = interactionRef.current;
-      if (interaction.mode === "node" && interaction.nodeId && !interaction.moved) {
-        const nodeId = interaction.nodeId;
-        setRevealDepth((d) => Math.max(d, 3));
-        setSelectedNodeId(nodeId);
-        centerOnNode(nodeId);
-        const now = performance.now();
-        const isDouble = lastClickRef.current.nodeId === nodeId && now - lastClickRef.current.ts < 280;
-        if (isDouble && typeof onNodeDoubleClick === "function") {
-          onNodeDoubleClick(nodeId);
-        } else if (!isDouble && typeof onNodeClick === "function") {
-          onNodeClick(nodeId);
-        }
-        lastClickRef.current = { nodeId, ts: now };
-      }
-      interactionRef.current = {
-        mode: "none",
-        nodeId: null,
-        pointerId: -1,
-        startClientX: 0,
-        startClientY: 0,
-        startCamX: cameraRef.current.x,
-        startCamY: cameraRef.current.y,
-        moved: false,
-      };
-      if (canvas && canvas.hasPointerCapture(ev.pointerId)) {
-        canvas.releasePointerCapture(ev.pointerId);
-      }
-      kickSimulation(0.34);
-      setCursor("grab");
-    },
-    [centerOnNode, onNodeClick, onNodeDoubleClick, kickSimulation],
-  );
-
-  const handlePointerLeave = useCallback(() => {
-    if (interactionRef.current.mode !== "none") return;
-    hoverNodeRef.current = null;
-    hoverEdgeRef.current = null;
-    setHoverEdgeType(null);
-    setCursor(selectedNodeId ? "default" : "grab");
-  }, [selectedNodeId]);
-
-  const handleWheel = useCallback(
-    (ev: React.WheelEvent<HTMLCanvasElement>) => {
-      const { x, y } = getLocalPoint(ev.clientX, ev.clientY);
-      const before = toWorld(x, y);
-      const cam = cameraRef.current;
-      const factor = Math.exp(-ev.deltaY * 0.0015);
-      const nextScale = clamp(cam.scale * factor, 0.12, 4.5);
-      cameraRef.current.scale = nextScale;
-      cameraRef.current.x = x - before.x * nextScale;
-      cameraRef.current.y = y - before.y * nextScale;
-      setRevealDepth((d) => Math.max(d, 3));
-      kickSimulation(0.25);
-      ev.preventDefault();
-    },
-    [getLocalPoint, toWorld, kickSimulation],
-  );
-
-  return (
-    <div
-      ref={wrapperRef}
-      style={{
-        position: "relative",
-        width: "100%",
-        height: "100%",
-        minHeight: 260,
-        background: bgColor,
-        border: `1px solid ${C.border}`,
-        borderRadius: 8,
-        overflow: "hidden",
-      }}
-    >
-      <canvas
-        ref={canvasRef}
-        style={{
-          width: "100%",
-          height: "100%",
-          display: "block",
-          cursor,
-        }}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerLeave={handlePointerLeave}
-        onWheel={handleWheel}
-      />
-      {hoverEdgeType && (
-        <div
-          className="text-xs"
-          style={{
-            position: "absolute",
-            top: 8,
-            right: 8,
-            padding: "6px 8px",
-            borderRadius: 6,
-            background: "rgba(10, 14, 20, 0.9)",
-            border: `1px solid ${C.border}`,
-            color: "#d9f6ff",
-            pointerEvents: "none",
-          }}
-        >
-          Relation: {hoverEdgeType}
-        </div>
-      )}
-      {selectedInfo && (
-        <div
-          className="text-xs"
-          style={{
-            position: "absolute",
-            top: 8,
-            left: 8,
-            minWidth: 190,
-            maxWidth: 260,
-            padding: "8px 10px",
-            borderRadius: 8,
-            background: "rgba(10, 14, 20, 0.92)",
-            border: `1px solid ${C.border}`,
-            color: C.neutral,
-            pointerEvents: "none",
-          }}
-        >
-          <div style={{ color: C.text, fontWeight: 600, marginBottom: 4 }}>{selectedInfo.node.label}</div>
-          <div style={{ marginBottom: 2 }}>degree: {selectedInfo.degree}</div>
-          <div style={{ marginBottom: 2 }}>degree centrality: {selectedInfo.degreeCentrality.toFixed(3)}</div>
-          <div style={{ marginBottom: 6 }}>neighbors: {selectedInfo.neighbors}</div>
-          <div style={{ marginBottom: 2 }}>cluster: {selectedInfo.cluster}</div>
-          <div style={{ marginBottom: 6 }}>bridge score: {selectedInfo.betweenness.toFixed(2)}</div>
-          {selectedInfo.topRelations.length > 0 &&
-            selectedInfo.topRelations.map(([rel, count]) => (
-              <div key={rel}>
-                {rel}: {count}
-              </div>
-            ))}
-        </div>
-      )}
-      <div
-        className="text-xs"
-        style={{
-          position: "absolute",
-          right: 8,
-          bottom: 8,
-          padding: "6px 8px",
-          borderRadius: 6,
-          background: "rgba(10, 14, 20, 0.8)",
-          border: `1px solid ${C.border}`,
-          color: C.neutral,
-          pointerEvents: "none",
-        }}
-      >
-        <div>Core Topic: large central nodes</div>
-        <div>Bridge Concept: outlined nodes</div>
-        <div>Topic Cluster: color groups</div>
-        <div>New Info: pulsing nodes</div>
-      </div>
-      {expandingNodeId && (
-        <div
-          className="text-xs"
-          style={{
-            position: "absolute",
-            bottom: 8,
-            left: 8,
-            padding: "6px 8px",
-            borderRadius: 6,
-            background: "rgba(10, 14, 20, 0.9)",
-            border: `1px solid ${C.border}`,
-            color: C.neutral,
-            pointerEvents: "none",
-          }}
-        >
-          Expanding node {expandingNodeId}...
-        </div>
-      )}
-    </div>
-  );
-}
-
-const LEGACY_MINI_FORCE_COMPONENT = MiniForce;
-void LEGACY_MINI_FORCE_COMPONENT;
 
 // ---- small components ----
 function Icon({ d, size = 22 }: { d: string; size?: number }) {
@@ -3502,576 +2100,28 @@ function Icon({ d, size = 22 }: { d: string; size?: number }) {
   );
 }
 
-function Drawer({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    // clicking the dark background closes the drawer
-    <div
-      className="fixed inset-0"
-      style={{ background: "#0008" }}
-      onClick={onClose}
-    >
-      <div
-        className="absolute top-0 left-0 h-full"
-        style={{
-          width: 300,
-          background: C.panel,
-          borderRight: `1px solid ${C.border}`,
-        }}
-        // stop clicks inside the panel from bubbling to the background
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div
-          className="flex items-center justify-between px-4"
-          style={{ height: 52, borderBottom: `1px solid ${C.border}` }}
-        >
-          <div style={{ color: C.text, fontWeight: 600 }}>{title}</div>
-          <button
-            onClick={onClose}
-            className="px-2 py-1 rounded"
-            style={{ border: `1px solid ${C.border}`, color: C.neutral }}
-          >
-            ✕
-          </button>
-        </div>
-        <div className="p-4 text-sm" style={{ color: C.text }}>
-          {children}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Chat({
-  messages,
-  onSend,
-  projectId,
-  disabled = false,
-}: {
-  messages: { role: "assistant" | "user"; text: string }[];
-  onSend: (t: string) => void;
-  projectId: string;
-  disabled?: boolean;
-}) {
-  const [v, setV] = useState("");
-  const listRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    listRef.current?.scrollTo({ top: 999999, behavior: "smooth" });
-  }, [messages.length]);
-
-  const send = () => {
-    if (disabled) return;
-    const trimmed = v.trim();
-    if (!trimmed) return;
-    onSend(trimmed);
-    setV("");
-  };
-
-  return (
-    <div className="h-full flex flex-col" style={{ gap: 12 }}>
-      <div
-        ref={listRef}
-        className="flex-1 overflow-auto"
-        style={{
-          padding: "14px 18px",
-          display: "grid",
-          gap: 10,
-          alignContent: "start",
-        }}
-      >
-        {messages.map((m, i) => {
-          const right = m.role !== "assistant";
-          const bg = m.role === "user" ? C.panel : C.bg;
-          return (
-            <div
-              key={i}
-              style={{ justifySelf: right ? "end" : "start", maxWidth: "86%" }}
-            >
-              <div
-                style={{ fontSize: 11, color: C.neutral, marginBottom: 4 }}
-              >
-                {m.role === "assistant" ? "Assistant" : "You"}
-              </div>
-              <div
-                style={{
-                  background: bg,
-                  border: `1px solid ${C.border}`,
-                  borderRadius: 12,
-                  padding: "10px 12px",
-                  color: C.text,
-                  whiteSpace: "pre-wrap",
-                }}
-              >
-                {safeText(m.text)}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <div className="px-4 pb-4 flex items-center gap-2">
-        <UploadAttachment
-          projectId={projectId}
-          disabled={disabled || !projectId}
-        />
-        <input
-          value={v}
-          onChange={(e) => setV(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") send();
-          }}
-          placeholder="Type a message…"
-          className="flex-1"
-          style={{
-            background: C.panel,
-            border: `1px solid ${C.border}`,
-            borderRadius: 10,
-            padding: "12px 14px",
-            color: C.text,
-          }}
-          disabled={disabled}
-        />
-        <button
-          onClick={send}
-          aria-label="Send"
-          className="rounded-full flex items-center justify-center"
-          style={{
-            width: 42,
-            height: 42,
-            background: C.primary,
-            boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
-          }}
-          disabled={disabled}
-        >
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="#FFFFFF"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M12 19V5" />
-            <path d="M5 12l7-7 7 7" />
-          </svg>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function DeckEdgeInspector({
-  edge,
-  onDelete,
-  sourceLabel,
-  targetLabel,
-}: {
-  edge: DeckEdge;
-  onDelete: () => void;
-  sourceLabel: string;
-  targetLabel: string;
-}) {
-  const isBlackboardWrite = safeText(edge.target).trim() === "node_blackboard";
-  const isBlackboardRead = safeText(edge.source).trim() === "node_blackboard";
-  const connectionMeaning = isBlackboardWrite
-    ? "send output to blackboard"
-    : isBlackboardRead
-      ? "run using blackboard context"
-      : "run next";
-  return (
-    <div
-      style={{
-        padding: "12px 14px",
-        borderRadius: 8,
-        border: `1px solid ${C.border}`,
-        background: C.bg,
-      }}
-    >
-      <div
-        className="text-xs"
-        style={{ color: C.text, fontWeight: 700, marginBottom: 12 }}
-      >
-        Edge
-      </div>
-      <div className="space-y-3">
-        <div
-          className="text-xs"
-          style={{
-            padding: "10px 12px",
-            borderRadius: 8,
-            border: `1px solid ${C.border}`,
-            background: C.panel,
-            color: C.neutral,
-            lineHeight: 1.5,
-          }}
-        >
-          <div>source: {sourceLabel}</div>
-          <div>target: {targetLabel}</div>
-          <div>meaning: {connectionMeaning}</div>
-        </div>
-        <div
-          className="text-xs"
-          style={{
-            padding: "10px 12px",
-            borderRadius: 8,
-            border: `1px solid ${C.border}`,
-            background: C.panel,
-            color: C.neutral,
-            lineHeight: 1.5,
-          }}
-        >
-          This line is the real saved connection between these two nodes.
-          <div style={{ marginTop: 6 }}>
-            Drag either end of the selected line on the canvas to rewire it.
-          </div>
-        </div>
-        <button
-          onClick={onDelete}
-          style={{
-            width: "100%",
-            padding: "10px 12px",
-            borderRadius: 8,
-            border: `1px solid ${C.warn}`,
-            background: "rgba(217,132,88,0.12)",
-            color: C.text,
-            cursor: "pointer",
-            fontWeight: 600,
-          }}
-        >
-          Delete Connection
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function DeckQuickAddPanel({
-  anchorCard,
-  onAddPreset,
-  onCreateAssistStarter,
-}: {
-  anchorCard: AgentCardInstance | null;
-  onAddPreset: (presetKey: string) => void;
-  onCreateAssistStarter: () => void;
-}) {
-  const commonPresets = getCommonAssistNextPresetKeys(anchorCard)
-    .map((presetKey) => findDeckNodePreset(presetKey))
-    .filter((preset): preset is DeckNodePreset => Boolean(preset));
-  const assistStarterRecipe = getAssistStarterRecipe(anchorCard);
-  const helperText = anchorCard
-    ? anchorCard.kind === "blackboard"
-      ? "New agent cards appear beside Blackboard and connect from it. New blackboards stay disconnected."
-      : "New cards appear beside the selected node and connect from it so the new link is immediately visible."
-    : "Start with the common Assist roles below, then wire the rest with visible links only.";
-
-  return (
-    <div
-      style={{
-        padding: "12px 14px",
-        borderRadius: 8,
-        border: `1px solid ${C.border}`,
-        background: C.bg,
-      }}
-    >
-      <div
-        className="text-xs"
-        style={{ color: C.text, fontWeight: 700, marginBottom: 10 }}
-      >
-        Quick Add
-      </div>
-      {assistStarterRecipe && (
-        <div
-          style={{
-            marginBottom: 10,
-            padding: "10px 12px",
-            borderRadius: 10,
-            border: `1px solid ${C.primary}`,
-            background: "rgba(79,162,173,0.08)",
-          }}
-        >
-          <div className="text-xs" style={{ color: C.text, fontWeight: 700, marginBottom: 6 }}>
-            Assist Starter
-          </div>
-          <div className="text-xs" style={{ color: C.neutral, lineHeight: 1.5, marginBottom: 8 }}>
-            {assistStarterRecipe.presetKeys
-              .map((presetKey) => findDeckNodePreset(presetKey)?.label || presetKey)
-              .join(" -> ")}
-          </div>
-          <button
-            onClick={onCreateAssistStarter}
-            style={{
-              width: "100%",
-              padding: "9px 12px",
-              borderRadius: 8,
-              border: `1px solid ${C.primary}`,
-              background: "rgba(79,162,173,0.16)",
-              color: C.text,
-              cursor: "pointer",
-              fontWeight: 700,
-            }}
-          >
-            {assistStarterRecipe.label}
-          </button>
-        </div>
-      )}
-      {commonPresets.length > 0 && (
-        <div style={{ marginBottom: 10 }}>
-          <div className="text-xs" style={{ color: C.neutral, marginBottom: 8 }}>
-            {anchorCard ? "Common Next" : "Assist MVP Roles"}
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {commonPresets.map((preset) => (
-              <button
-                key={`common:${preset.key}`}
-                onClick={() => onAddPreset(preset.key)}
-                style={{
-                  padding: "8px 10px",
-                  borderRadius: 999,
-                  border: `1px solid ${C.border}`,
-                  background: "rgba(255,255,255,0.04)",
-                  color: C.text,
-                  cursor: "pointer",
-                  fontSize: 12,
-                  fontWeight: 700,
-                }}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-          gap: 8,
-        }}
-      >
-        {DECK_NODE_PRESETS.map((preset) => (
-          <button
-            key={preset.key}
-            onClick={() => onAddPreset(preset.key)}
-            style={{
-              textAlign: "left",
-              padding: "10px 12px",
-              borderRadius: 8,
-              border: `1px solid ${C.border}`,
-              background: "#202020",
-              color: C.text,
-              cursor: "pointer",
-            }}
-          >
-            <div style={{ fontSize: 12, fontWeight: 700 }}>{preset.label}</div>
-            <div
-              className="text-xs"
-              style={{ color: C.neutral, marginTop: 4, lineHeight: 1.45, opacity: 0.9 }}
-            >
-              {preset.subtitle}
-            </div>
-          </button>
-        ))}
-      </div>
-      <div className="text-xs" style={{ color: C.neutral, marginTop: 10, lineHeight: 1.5 }}>
-        {helperText}
-      </div>
-    </div>
-  );
-}
-
-function DeckExecutionPathSummary({
-  deck,
-  executionPlan,
-}: {
-  deck: DeckDocument;
-  executionPlan: ReturnType<typeof buildExecutionPlan>;
-}) {
-  const nodeLabel = new Map(deck.nodes.map((node) => [node.id, safeText(node.title || node.id)] as const));
-  const orderedLabels = executionPlan.simpleOrderCardIds
-    .map((cardId) => nodeLabel.get(cardId) || cardId)
-    .filter(Boolean);
-  const hasLoopIssue = executionPlan.issues.some((issue) => issue.toLowerCase().includes("cycle"));
-
-  return (
-    <div
-      style={{
-        padding: "12px 14px",
-        borderRadius: 8,
-        border: `1px solid ${C.border}`,
-        background: C.bg,
-        marginBottom: 12,
-      }}
-    >
-      <div
-        className="text-xs"
-        style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
-      >
-        Visible Execution Path
-      </div>
-      <div className="text-xs" style={{ color: C.neutral, lineHeight: 1.55 }}>
-        {orderedLabels.length > 0 ? orderedLabels.join(" -> ") : "No runnable path yet."}
-      </div>
-      <div className="text-xs" style={{ color: C.neutral, marginTop: 8, opacity: 0.85 }}>
-        This order comes directly from the drawn links on the canvas.
-      </div>
-      {hasLoopIssue && (
-        <div
-          className="text-xs"
-          style={{
-            color: C.warn,
-            marginTop: 8,
-            lineHeight: 1.55,
-            padding: "8px 10px",
-            borderRadius: 8,
-            border: `1px solid rgba(217,132,88,0.34)`,
-            background: "rgba(217,132,88,0.08)",
-          }}
-        >
-          Loop detected in the drawn graph. The runtime does not invent a fake simple order through cycles.
-        </div>
-      )}
-    </div>
-  );
-}
-
-function BlackboardStatePanel({
-  title,
-  blackboard,
-}: {
-  title: string;
-  blackboard: V3Blackboard;
-}) {
-  const sections: Array<{ label: string; value: string }> = [
-    { label: "Current Goal", value: safeText(blackboard.current_goal) },
-    { label: "What Matters Now", value: blackboard.what_matters_now.join("\n") },
-    { label: "Open Questions", value: blackboard.open_questions.join("\n") },
-    { label: "Findings", value: blackboard.findings.join("\n") },
-    { label: "Suggestions", value: blackboard.suggestions.join("\n") },
-    { label: "Next Options", value: blackboard.next_options.join("\n") },
-    { label: "Next Move", value: safeText(blackboard.next_move) },
-  ];
-  const storeEntries = Object.entries(blackboard.store || {});
-
-  return (
-    <div
-      style={{
-        border: `1px solid ${C.border}`,
-        borderRadius: 8,
-        padding: "12px 14px",
-        background: C.bg,
-      }}
-    >
-      <div
-        className="text-xs"
-        style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
-      >
-        {title}
-      </div>
-      <div className="space-y-3">
-        {sections.map((section) => (
-          <div key={section.label}>
-            <div className="text-xs" style={{ color: C.neutral, marginBottom: 6 }}>
-              {section.label}
-            </div>
-            <div
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                borderRadius: 8,
-                border: `1px solid ${C.border}`,
-                background: "#181818",
-                color: C.text,
-                whiteSpace: "pre-wrap",
-                fontFamily: "monospace",
-                fontSize: 12,
-                lineHeight: 1.55,
-                minHeight: 44,
-              }}
-            >
-              {section.value || "(empty)"}
-            </div>
-          </div>
-        ))}
-        <div>
-          <div className="text-xs" style={{ color: C.neutral, marginBottom: 6 }}>
-            Store
-          </div>
-          {storeEntries.length === 0 ? (
-            <div
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                borderRadius: 8,
-                border: `1px solid ${C.border}`,
-                background: "#181818",
-                color: C.neutral,
-                fontFamily: "monospace",
-                fontSize: 12,
-                lineHeight: 1.55,
-                minHeight: 44,
-              }}
-            >
-              (empty)
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {storeEntries.map(([key, value]) => (
-                <div
-                  key={key}
-                  style={{
-                    borderRadius: 8,
-                    border: `1px solid ${C.border}`,
-                    background: "#181818",
-                    padding: "10px 12px",
-                  }}
-                >
-                  <div
-                    className="text-xs"
-                    style={{ color: C.neutral, marginBottom: 6, fontFamily: "monospace" }}
-                  >
-                    {key}
-                  </div>
-                  <div
-                    style={{
-                      color: C.text,
-                      whiteSpace: "pre-wrap",
-                      fontFamily: "monospace",
-                      fontSize: 12,
-                      lineHeight: 1.55,
-                    }}
-                  >
-                    {safeText(value) || "(empty)"}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // -------- Main page --------
 export default function AgentBuilder(): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
-  const [largeSurface, setLargeSurface] = useState<"chat" | "plan" | "canvas" | "knowledge">("chat");
-  const [activeProject, setActiveProject] = useState("");
+  const [largeSurface, setLargeSurface] = useState<"chat" | "plan" | "canvas" | "knowledge">("canvas");
+  const workspaceView =
+    largeSurface === "canvas" ? "canvas" : largeSurface === "knowledge" ? "knowledge" : "home";
+  const {
+    activeProject,
+    assistProjects,
+    projectsError,
+    setProjectsError,
+    setActiveProjectWithUrl,
+    refreshProjects,
+  } = useBuilderProjects({
+    projectsApi: V2_PROJECTS_API,
+    workspaceView,
+  });
   const [panelOpen, setPanelOpen] = useState(true);
   const [panelWidth, setPanelWidth] = useState(480);
-  const [selectedAgentProjectId, setSelectedAgentProjectId] = useState("");
+  const canvasProjectId = cleanOptionalText(activeProject) ?? "";
   const [deck, setDeckState] = useState<DeckDocument>(() => hydrateDeckDocument(INITIAL_DECK));
   const [deckRevision, setDeckRevision] = useState<string | null>(null);
-  const [blackboardRevision, setBlackboardRevision] = useState<string | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [selectedKnowledgeEntityId, setSelectedKnowledgeEntityId] = useState<string | null>(null);
@@ -4082,38 +2132,19 @@ export default function AgentBuilder(): React.ReactElement {
   const [deckRunInput, setDeckRunInput] = useState("");
   const [latestDeckRun, setLatestDeckRun] = useState<DeckRun | null>(null);
   const [, setLatestCardRun] = useState<LatestCardRunRecord | null>(null);
-  const [v3Blackboard, setV3Blackboard] = useState<V3Blackboard>(() => createEmptyBlackboard());
+  const [liveDeckEvents, setLiveDeckEvents] = useState<DeckRuntimeEvent[]>([]);
   const [deckRunBusy, setDeckRunBusy] = useState(false);
   const [cardRunBusy, setCardRunBusy] = useState(false);
   const [deckLoadBusy, setDeckLoadBusy] = useState(false);
   const [deckSaveBusy, setDeckSaveBusy] = useState(false);
   const [deckStatusMessage, setDeckStatusMessage] = useState<string | null>(null);
   const [deckUsingDisplayFallback, setDeckUsingDisplayFallback] = useState(false);
-  const setActiveProjectWithUrl = useCallback(
-    (projectId: string) => {
-      const currentSearch = window.location.search.replace(/^\?/, "");
-      const current = new URLSearchParams(currentSearch).get("projectId") || "";
-      if (projectId === activeProject && projectId === current) {
-        return;
-      }
-      const nextSearch = new URLSearchParams(window.location.search);
-      nextSearch.set("projectId", projectId);
-      const nextQs = nextSearch.toString();
-      setActiveProject(projectId);
-      if (nextQs !== currentSearch) {
-        window.history.replaceState({}, "", `${window.location.pathname}?${nextQs}`);
-      }
-    },
-    [activeProject],
-  );
 
   const [tab, setTab] = useState<string>("Canvas");
   const [hoveredCompanionSurface, setHoveredCompanionSurface] =
     useState<null | "chat" | "plan" | "canvas" | "knowledge">(null);
   const [openDrawer, setOpenDrawer] = useState<null | "navigation">(null);
   const [sending, setSending] = useState(false);
-  const workspaceView =
-    largeSurface === "canvas" ? "canvas" : largeSurface === "knowledge" ? "knowledge" : "home";
   const lastLargeSurfaceTelemetryRef = useRef<WorkspaceTestingSurface | null>(null);
   const lastCompanionSurfaceTelemetryRef = useRef<string | null>(null);
   const chatLoopTelemetryRef = useRef<{
@@ -4134,7 +2165,6 @@ export default function AgentBuilder(): React.ReactElement {
     (payload: WorkspaceTestingEventDraft) => {
       const metadata = {
         activeProjectId: activeProject || null,
-        agentProjectId: selectedAgentProjectId || null,
         ...(payload.metadata || {}),
       };
       recordWorkspaceTestingEvent({
@@ -4142,12 +2172,11 @@ export default function AgentBuilder(): React.ReactElement {
         projectId:
           payload.projectId ??
           cleanOptionalText(activeProject) ??
-          cleanOptionalText(selectedAgentProjectId) ??
           null,
         metadata,
       });
     },
-    [activeProject, selectedAgentProjectId],
+    [activeProject],
   );
 
   const recordPostResponseRefreshIfPending = useCallback(
@@ -4251,15 +2280,10 @@ export default function AgentBuilder(): React.ReactElement {
   }, [emitWorkspaceTestingEvent, panelOpen]);
 
   // agent builder state
-  const [projects, setProjects] = useState<any[]>([]);
-  const refreshSeq = useRef(0);
-  const refreshAbortRef = useRef<AbortController | null>(null);
-  const mountRefreshRanRef = useRef(false);
+  const deckSaveAbortRef = useRef<AbortController | null>(null);
+  const deckExecutionAbortRef = useRef<AbortController | null>(null);
   const canvasSelectionInitializedRef = useRef(false);
   const activeProjectLatestRef = useRef("");
-  const stateLoadKeyRef = useRef("");
-  const stateLoadAbortRef = useRef<AbortController | null>(null);
-  const stateLoadProjectRef = useRef("");
   const healthCheckScheduledRef = useRef(false);
   const kgAutoLoadKeyRef = useRef("");
   const kgLoadAbortRef = useRef<AbortController | null>(null);
@@ -4275,7 +2299,6 @@ export default function AgentBuilder(): React.ReactElement {
   const lastBuilderDeckWriteReasonRef = useRef<string | null>(null);
   const lastBuilderUiOnlyActionRef = useRef<string | null>(null);
   const lastBuilderDeckFingerprintRef = useRef<string | null>(null);
-  const [projectsError, setProjectsError] = useState<string | null>(null);
 
   const recordDeckWriteReason = useCallback(
     (reason: string) => {
@@ -4318,15 +2341,19 @@ export default function AgentBuilder(): React.ReactElement {
 
   useEffect(() => {
     canvasSelectionInitializedRef.current = false;
-    if (!selectedAgentProjectId) {
+    if (!canvasProjectId) {
       recordDeckWriteReason("builder-reset");
       setDeck(hydrateDeckDocument(INITIAL_DECK));
       setDeckRevision(null);
-      setBlackboardRevision(null);
       setDeckUsingDisplayFallback(false);
       setLatestDeckRun(null);
       setLatestCardRun(null);
-      setV3Blackboard(createEmptyBlackboard());
+      setLiveDeckEvents([]);
+      setMessages([...EMPTY_PROJECT_STATE.messages]);
+      setPlanSource([...EMPTY_PROJECT_STATE.plan]);
+      setPlan([...EMPTY_PROJECT_STATE.plan]);
+      setLinks([...EMPTY_PROJECT_STATE.links]);
+      setStateLoaded(false);
       setDeckStatusMessage(null);
       return;
     }
@@ -4335,15 +2362,15 @@ export default function AgentBuilder(): React.ReactElement {
     const deckRefreshStartedAt = Date.now();
     let usedDisplayFallback = false;
     setDeckLoadBusy(true);
+    setStateLoaded(false);
     setDeckRevision(null);
-    setBlackboardRevision(null);
       setDeckStatusMessage("Loading canvas...");
 
     void (async () => {
       try {
-        const endpoint = `${V3_PROJECTS_API}/${selectedAgentProjectId}/decks/${BUILDER_DECK_ID}`;
+        const endpoint = `${V3_PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}`;
         const payload = await guardedRequest({
-          key: `v3-deck:${selectedAgentProjectId}:${BUILDER_DECK_ID}`,
+          key: `v3-deck:${canvasProjectId}:${BUILDER_DECK_ID}`,
           method: "GET",
           ttlMs: 1_000,
           signal: controller.signal,
@@ -4375,22 +2402,22 @@ export default function AgentBuilder(): React.ReactElement {
         );
         setDeckUsingDisplayFallback(loadResult.displayFallbackOnly);
         usedDisplayFallback = loadResult.displayFallbackOnly;
-        setLatestDeckRun(
+        const persistedLatestRun =
           payload.data?.latestRun && typeof payload.data.latestRun === "object"
             ? (payload.data.latestRun as DeckRun)
-            : null,
-        );
-        setV3Blackboard(
-          normalizeV3Blackboard(
-            payload.data?.blackboard ?? payload.data?.latestRun?.blackboard ?? createEmptyBlackboard(),
-          ),
-        );
-        setBlackboardRevision(
-          typeof payload.data?.meta?.blackboardRevision === "string"
-            ? payload.data.meta.blackboardRevision
-            : null,
-        );
+            : null;
+        const persistedRuns = Array.isArray(payload.data?.runs)
+          ? (payload.data.runs as DeckRun[])
+          : [];
+        const continuity = buildReloadStateFromDeckRuns(persistedRuns, persistedLatestRun);
+        setLatestDeckRun(persistedLatestRun);
         setLatestCardRun(null);
+        setLiveDeckEvents([]);
+        setMessages(continuity.messages);
+        setPlanSource(continuity.planSource);
+        setPlan(continuity.plan);
+        setLinks(continuity.links);
+        setStateLoaded(true);
         setDeckStatusMessage(
           loadResult.displayFallbackOnly
             ? "Showing the canonical chain as a temporary fallback for a truncated saved canvas."
@@ -4400,13 +2427,20 @@ export default function AgentBuilder(): React.ReactElement {
         );
       } catch (err: any) {
         if (controller.signal.aborted) return;
-        recordDeckWriteReason("deck-load-preserve-current");
+        recordDeckWriteReason("deck-load-default-error");
+        setDeck(hydrateDeckDocument(INITIAL_DECK));
+        setDeckUsingDisplayFallback(false);
+        const next = loadProjectState(canvasProjectId);
         setLatestDeckRun(null);
         setLatestCardRun(null);
-        setV3Blackboard(createEmptyBlackboard());
+        setLiveDeckEvents([]);
         setDeckRevision(null);
-        setBlackboardRevision(null);
-        setDeckStatusMessage(formatBuilderStatusMessage(err?.message, "Keeping current canvas."));
+        setMessages([...next.messages]);
+        setPlanSource([...next.plan]);
+        setPlan([...next.plan]);
+        setLinks([...next.links]);
+        setStateLoaded(true);
+        setDeckStatusMessage(formatBuilderStatusMessage(err?.message, "Using default canvas."));
       } finally {
         if (!controller.signal.aborted) {
           const completedAt = Date.now();
@@ -4432,10 +2466,29 @@ export default function AgentBuilder(): React.ReactElement {
     emitWorkspaceTestingEvent,
     recordDeckWriteReason,
     recordPostResponseRefreshIfPending,
-    selectedAgentProjectId,
+    canvasProjectId,
   ]);
 
+  useEffect(() => {
+    deckSaveAbortRef.current?.abort();
+    deckSaveAbortRef.current = null;
+    deckExecutionAbortRef.current?.abort();
+    deckExecutionAbortRef.current = null;
+    setSending(false);
+    setDeckSaveBusy(false);
+    setDeckRunBusy(false);
+    setCardRunBusy(false);
+  }, [canvasProjectId]);
+
   const showDeckBuilder = workspaceView === "canvas";
+  const runtimeEvents = useMemo(
+    () => (liveDeckEvents.length > 0 ? liveDeckEvents : latestDeckRun?.events || []),
+    [latestDeckRun?.events, liveDeckEvents],
+  );
+  const runtimeVisualState = useMemo(
+    () => buildDeckRuntimeVisualState(runtimeEvents),
+    [runtimeEvents],
+  );
   const selectedCard = useMemo(
     () => deck.nodes.find((node) => node.id === selectedCardId) || null,
     [deck.nodes, selectedCardId],
@@ -4454,7 +2507,6 @@ export default function AgentBuilder(): React.ReactElement {
   );
   const builderTabs = useMemo(() => {
     if (selectedEdge) return [...BUILDER_EDGE_TABS];
-    if (selectedCard?.kind === "blackboard") return [...BUILDER_BLACKBOARD_TABS];
     if (selectedCard) return [...BUILDER_NODE_TABS];
     return [...BUILDER_PROJECT_TABS];
   }, [selectedCard, selectedEdge]);
@@ -4491,8 +2543,8 @@ export default function AgentBuilder(): React.ReactElement {
     };
   }, [effectiveAgent, selectedCard]);
   const selectedCardMemoryGraph = useMemo<AgentManagerMemoryGraphData | null>(
-    () => buildSelectedCardMemoryGraphData(deck, selectedCard, selectedCardConfig, v3Blackboard),
-    [deck, selectedCard, selectedCardConfig, v3Blackboard],
+    () => buildSelectedCardMemoryGraphData(deck, selectedCard, selectedCardConfig),
+    [deck, selectedCard, selectedCardConfig],
   );
   const deckValidation = useMemo(
     () => validateDeckDocument(deck, { enforceStartCard: true }),
@@ -4547,14 +2599,11 @@ export default function AgentBuilder(): React.ReactElement {
     }
     if (canvasSelectionInitializedRef.current) return;
     if (deck.nodes.length === 0) return;
-    const preferredNode =
-      deck.nodes.find((node) => node.kind !== "blackboard") ||
-      deck.nodes[0] ||
-      null;
+    const preferredNode = deck.nodes[0] || null;
     if (!preferredNode) return;
     canvasSelectionInitializedRef.current = true;
     setSelectedCardId(preferredNode.id);
-    setTab(preferredNode.kind === "blackboard" ? "Blackboard" : "Prompt");
+    setTab("Prompt");
   }, [deck.nodes, selectedCardId, selectedEdgeId, workspaceView]);
 
   useEffect(() => {
@@ -4591,10 +2640,7 @@ export default function AgentBuilder(): React.ReactElement {
     setSelectedCardId(cardId);
     if (cardId) {
       setSelectedEdgeId(null);
-      const selectedNode = deck.nodes.find((node) => node.id === cardId) || null;
-      if (selectedNode?.kind === "blackboard") {
-        setTab("Blackboard");
-      } else if (!BUILDER_NODE_TABS.some((entry) => entry === tab)) {
+      if (!BUILDER_NODE_TABS.some((entry) => entry === tab)) {
         setTab("Prompt");
       }
     }
@@ -4730,8 +2776,7 @@ export default function AgentBuilder(): React.ReactElement {
     setSelectedEdgeId(null);
     setSelectedCardId(mutation.focusNodeId);
     if (mutation.focusNodeId) {
-      const focusNode = mutation.nextDeck.nodes.find((node) => node.id === mutation.focusNodeId) || null;
-      setTab(focusNode?.kind === "blackboard" ? "Blackboard" : "Prompt");
+      setTab("Prompt");
       queueBuilderCanvasFocus("card", mutation.focusNodeId);
     }
     setDeckStatusMessage(
@@ -4741,341 +2786,38 @@ export default function AgentBuilder(): React.ReactElement {
     );
   }, [deck, queueBuilderCanvasFocus, recordDeckWriteReason, selectedCardId]);
 
-  const handleSaveDeck = useCallback(async () => {
-    if (!selectedAgentProjectId) {
-      setDeckStatusMessage("Open a canvas before saving.");
-      return;
-    }
-    if (deckUsingDisplayFallback) {
-      setDeckStatusMessage(
-        "This canvas is a temporary display fallback and will not overwrite the saved deck.",
-      );
-      return;
-    }
-
-    const requestedDeckVersion = deck.version;
-
-    // Persist contract:
-    // - canvas/deck state is the only persisted graph source of truth
-    // - right-panel edits write only explicit node/edge fields into that deck state
-    // - selection, tab, drawer, and blackboard inspect UI are non-persisted view state only
-    setDeckSaveBusy(true);
-    setDeckStatusMessage("Saving deck...");
-
-    try {
-      const endpoint = `${V3_PROJECTS_API}/${selectedAgentProjectId}/decks/${BUILDER_DECK_ID}`;
-      const response = await fetch(endpoint, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          document: {
-            ...deck,
-            id: BUILDER_DECK_ID,
-          },
-          expectedRevision: deckRevision,
-        }),
-      });
-      const data = await safeJson(response);
-
-      if (!response.ok) {
-        throw new Error(safeText(data?.error || "deck_save_failed"));
-      }
-
-      if (data?.deck && typeof data.deck === "object") {
-        recordDeckWriteReason("deck-save-merge");
-        setDeck((currentDeck) => {
-          if (currentDeck.version !== requestedDeckVersion) {
-            if (BUILDER_DEV) {
-              console.warn("[builder] skipped stale deck save merge", {
-                requestVersion: requestedDeckVersion,
-                currentVersion: currentDeck.version,
-              });
-            }
-            return currentDeck;
-          }
-          return hydrateDeckDocument({ ...(data.deck as DeckDocument), id: BUILDER_DECK_ID });
-        });
-      }
-      setDeckRevision(
-        typeof data?.meta?.deckRevision === "string" ? data.meta.deckRevision : deckRevision,
-      );
-      setV3Blackboard(normalizeV3Blackboard(data?.blackboard ?? v3Blackboard));
-      setBlackboardRevision(
-        typeof data?.meta?.blackboardRevision === "string"
-          ? data.meta.blackboardRevision
-          : blackboardRevision,
-      );
-      setDeckStatusMessage("Board saved.");
-    } catch (err: any) {
-      const fallbackMessage =
-        safeText(err?.message) === "deck_conflict"
-          ? "A newer saved canvas exists. Reload the workspace before saving again."
-          : "Could not save the current board.";
-      setDeckStatusMessage(formatBuilderStatusMessage(err?.message, fallbackMessage));
-    } finally {
-      setDeckSaveBusy(false);
-    }
-  }, [
-    BUILDER_DEV,
-    blackboardRevision,
+  const { handleSaveDeck, handleRunSelectedCard, handleRunDeck } = useBuilderDeckRuntimeActions({
+    builderDev: BUILDER_DEV,
+    buildSingleCardRunDocument,
+    canvasProjectId,
     deck,
-    deckRevision,
-    deckUsingDisplayFallback,
-    recordDeckWriteReason,
-    selectedAgentProjectId,
-    v3Blackboard,
-  ]);
-
-  const handleRunSelectedCard = useCallback(async () => {
-    if (!selectedAgentProjectId) {
-      setDeckStatusMessage("Canvas data is unavailable for this selection.");
-      return;
-    }
-    if (!selectedCard || !effectiveAgent) {
-      setDeckStatusMessage("Select a card before running it.");
-      return;
-    }
-    if (selectedCard.kind === "blackboard") {
-      setDeckStatusMessage("Blackboard is a storage node and cannot run directly.");
-      return;
-    }
-
-    const singleCardDeck = buildSingleCardRunDocument(deck, selectedCard.id);
-    if (!singleCardDeck) {
-      setDeckStatusMessage("Selected card could not be isolated for execution.");
-      return;
-    }
-
-    setCardRunBusy(true);
-    setLatestCardRun(null);
-    setDeckStatusMessage("Running selected card...");
-
-    try {
-      const selectedCardRunAgent = resolveEffectiveAgent(selectedCard, INITIAL_AGENT_TEMPLATES);
-      const endpoint = `${V3_PROJECTS_API}/${selectedAgentProjectId}/decks/run`;
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          deckId: BUILDER_DECK_ID,
-          document: {
-            ...singleCardDeck,
-            id: BUILDER_DECK_ID,
-          },
-          templates: INITIAL_AGENT_TEMPLATES,
-          input: deckRunInput,
-          baseBlackboardRevision: blackboardRevision,
-        }),
-      });
-      const data = await safeJson(response);
-
-      if (!response.ok || !data?.run || typeof data.run !== "object") {
-        throw new Error(safeText(data?.message || data?.error || "Card run failed."));
-      }
-
-      const run = data.run as DeckRun;
-      const step = run.steps.find((entry) => entry.cardId === selectedCard.id);
-      if (!step) {
-        throw new Error("Selected card did not produce a run step.");
-      }
-      const result: CardRunResult = {
-        output: step.output,
-        status: step.status,
-        error: step.error,
-        startedAt: step.startedAt,
-        endedAt: step.endedAt,
-        runtimeBinding: step.runtimeBinding,
-        seed: step.seed,
-        contract: step.contract,
-        handshake: step.handshake,
-        score: step.score,
-        passed: step.passed,
-        scoreDetail: step.scoreDetail,
-        improvementPromptBit: step.improvementPromptBit,
-        inputSummary: step.inputSummary,
-        outputSummary: step.outputSummary,
-        blackboardWrite: step.blackboardWrite,
-        blackboard: step.blackboard,
-      };
-      const nextBlackboard = normalizeV3Blackboard(
-        data?.blackboard ?? result.blackboard ?? v3Blackboard,
-      );
-
-      setLatestCardRun({
-        cardId: selectedCard.id,
-        title: selectedCard.title,
-        templateId: selectedCard.templateId,
-        runtimeBinding: selectedCard.runtimeBinding ?? null,
-        input: deckRunInput,
-        effectiveAgent: selectedCardRunAgent || effectiveAgent,
-        result,
-      });
-      setLatestDeckRun(run);
-      setV3Blackboard(nextBlackboard);
-      setBlackboardRevision(
-        typeof data?.meta?.blackboardRevision === "string"
-          ? data.meta.blackboardRevision
-          : blackboardRevision,
-      );
-
-      if (result.status === "error") {
-        setDeckStatusMessage(formatBuilderStatusMessage(result.error, "Card run failed."));
-      } else {
-        setDeckStatusMessage("Selected card run complete.");
-      }
-    } catch (err: any) {
-      setLatestCardRun({
-        cardId: selectedCard.id,
-        title: selectedCard.title,
-        templateId: selectedCard.templateId,
-        runtimeBinding: selectedCard.runtimeBinding ?? null,
-        input: deckRunInput,
-        effectiveAgent,
-        result: {
-          output: null,
-          status: "error",
-          error: err?.message || "Card run failed.",
-          startedAt: new Date().toISOString(),
-          endedAt: new Date().toISOString(),
-        },
-      });
-      setDeckStatusMessage(formatBuilderStatusMessage(err?.message, "Card run failed."));
-    } finally {
-      setCardRunBusy(false);
-    }
-  }, [
-    deck,
-    deckRunInput,
-    effectiveAgent,
-    blackboardRevision,
-    selectedAgentProjectId,
-    selectedCard,
-    v3Blackboard,
-  ]);
-
-  const handleRunDeck = useCallback(async () => {
-    if (!selectedAgentProjectId) {
-      const now = new Date().toISOString();
-      setLatestDeckRun({
-        id: `deck_run_${uid()}`,
-        deckId: BUILDER_DECK_ID,
-        startedAt: now,
-        endedAt: now,
-        status: "error",
-        input: deckRunInput,
-        error: "Select an Agent workspace before running the deck.",
-        steps: [],
-        validationSummary: {
-          ok: deckValidation.ok,
-          errors: deckValidation.errors.map((issue) => issue.message),
-          warnings: deckValidation.warnings.map((issue) => issue.message),
-        },
-        executionPlanSummary: {
-          startCardIds: deckExecutionPlan.startCardIds,
-          simpleOrderCardIds: deckExecutionPlan.simpleOrderCardIds,
-          expandedStepIds: deckExecutionPlan.expandedSteps.map((step) => step.executionId),
-        },
-      });
-      return;
-    }
-
-    const requestedDeckVersion = deck.version;
-
-    setDeckRunBusy(true);
-    setLatestCardRun(null);
-    setLatestDeckRun(null);
-    setDeckStatusMessage("Running deck...");
-
-    try {
-      const endpoint = `${V3_PROJECTS_API}/${selectedAgentProjectId}/decks/run`;
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          deckId: BUILDER_DECK_ID,
-          document: {
-            ...deck,
-            id: BUILDER_DECK_ID,
-          },
-          templates: INITIAL_AGENT_TEMPLATES,
-          input: deckRunInput,
-          baseBlackboardRevision: blackboardRevision,
-        }),
-      });
-      const data = await safeJson(response);
-
-      if (!response.ok || !data?.run) {
-        throw new Error(safeText(data?.error || "Deck run failed."));
-      }
-
-      const run = data.run as DeckRun;
-      setLatestDeckRun(run);
-      setV3Blackboard(normalizeV3Blackboard(data?.blackboard ?? data?.run?.blackboard ?? v3Blackboard));
-      setBlackboardRevision(
-        typeof data?.meta?.blackboardRevision === "string"
-          ? data.meta.blackboardRevision
-          : blackboardRevision,
-      );
-      if (data?.deck && typeof data.deck === "object") {
-        recordDeckWriteReason("deck-run-merge");
-        setDeck((currentDeck) => {
-          if (currentDeck.version !== requestedDeckVersion) {
-            if (BUILDER_DEV) {
-              console.warn("[builder] skipped stale deck run merge", {
-                requestVersion: requestedDeckVersion,
-                currentVersion: currentDeck.version,
-              });
-            }
-            return currentDeck;
-          }
-          return hydrateDeckDocument({ ...(data.deck as DeckDocument), id: BUILDER_DECK_ID });
-        });
-      }
-      setDeckStatusMessage("Board run complete.");
-    } catch (err: any) {
-      const friendlyError = formatBuilderStatusMessage(err?.message, "Board run failed.");
-      const now = new Date().toISOString();
-      setLatestDeckRun({
-        id: `deck_run_${uid()}`,
-        deckId: BUILDER_DECK_ID,
-        startedAt: now,
-        endedAt: now,
-        status: "error",
-        input: deckRunInput,
-        error: friendlyError,
-        steps: [],
-        validationSummary: {
-          ok: deckValidation.ok,
-          errors: deckValidation.errors.map((issue) => issue.message),
-          warnings: deckValidation.warnings.map((issue) => issue.message),
-        },
-        executionPlanSummary: {
-          startCardIds: deckExecutionPlan.startCardIds,
-          simpleOrderCardIds: deckExecutionPlan.simpleOrderCardIds,
-          expandedStepIds: deckExecutionPlan.expandedSteps.map((step) => step.executionId),
-        },
-      });
-      setDeckStatusMessage(friendlyError);
-    } finally {
-      setDeckRunBusy(false);
-    }
-  }, [
-    BUILDER_DEV,
-    blackboardRevision,
-    deck,
+    deckExecutionAbortRef,
     deckExecutionPlan,
+    deckId: BUILDER_DECK_ID,
+    deckRevision,
     deckRunInput,
+    deckSaveAbortRef,
+    deckUsingDisplayFallback,
     deckValidation,
+    effectiveAgent,
+    formatBuilderStatusMessage,
+    hydrateDeckDocument,
+    selectedCard,
+    setCardRunBusy,
+    setDeck,
+    setDeckRevision,
+    setDeckRunBusy,
+    setDeckSaveBusy,
+    setDeckStatusMessage,
+    setLatestCardRun,
+    setLatestDeckRun,
+    setLiveDeckEvents,
+    templates: INITIAL_AGENT_TEMPLATES,
+    uid,
+    v3ProjectsApi: V3_PROJECTS_API,
+    activeProjectLatestRef,
     recordDeckWriteReason,
-    selectedAgentProjectId,
-    v3Blackboard,
-  ]);
+  });
 
   const handleSaveSelectedCardConfig = useCallback(
     (nextConfig: AgentManagerLocalConfig) => {
@@ -5193,19 +2935,10 @@ export default function AgentBuilder(): React.ReactElement {
             onDelete={handleDeleteSelectedEdge}
             sourceLabel={safeText(sourceNode?.title || selectedEdge.source)}
             targetLabel={safeText(targetNode?.title || selectedEdge.target)}
+            colors={C}
           />
         </div>
       );
-    }
-
-    if (selectedCard && selectedCard.kind === "blackboard") {
-      if (tab === "Blackboard") {
-        return (
-          <div className="space-y-3">
-            <BlackboardStatePanel title="Blackboard Node" blackboard={v3Blackboard} />
-          </div>
-        );
-      }
     }
 
     if (selectedCard && selectedCardConfig) {
@@ -5229,7 +2962,7 @@ export default function AgentBuilder(): React.ReactElement {
             >
               <AgentManager
                 key={`deck-card:${selectedCard.id}:${tab}`}
-                projectId={selectedAgentProjectId || "deck-card"}
+                projectId={canvasProjectId || "deck-card"}
                 agentType="agent_builder"
                 activeTab={tab}
                 selectedCardId={selectedCard.id}
@@ -5237,7 +2970,7 @@ export default function AgentBuilder(): React.ReactElement {
                 onChangePromptTestInput={setDeckRunInput}
                 onRunPromptTest={handleRunSelectedCard}
                 promptTestBusy={cardRunBusy}
-                promptTestDisabled={cardRunBusy || deckLoadBusy || !selectedAgentProjectId}
+                promptTestDisabled={cardRunBusy || deckLoadBusy || !canvasProjectId}
                 localConfig={selectedCardConfig}
                 memoryGraphData={selectedCardMemoryGraph}
                 onSaveLocalConfig={handleSaveSelectedCardConfig}
@@ -5258,8 +2991,9 @@ export default function AgentBuilder(): React.ReactElement {
             anchorCard={null}
             onAddPreset={handleQuickAddDeckNode}
             onCreateAssistStarter={handleCreateAssistStarter}
+            colors={C}
           />
-          <DeckExecutionPathSummary deck={deck} executionPlan={deckExecutionPlan} />
+          <DeckExecutionPathSummary deck={deck} executionPlan={deckExecutionPlan} colors={C} />
           <div
             style={{
               padding: "12px 14px",
@@ -5293,7 +3027,7 @@ export default function AgentBuilder(): React.ReactElement {
             <div className="flex items-center gap-2" style={{ marginTop: 10 }}>
               <button
                 onClick={handleSaveDeck}
-                disabled={deckSaveBusy || deckLoadBusy || !selectedAgentProjectId}
+                disabled={deckSaveBusy || deckLoadBusy || !canvasProjectId}
                 style={{
                   padding: "8px 12px",
                   borderRadius: 8,
@@ -5301,14 +3035,14 @@ export default function AgentBuilder(): React.ReactElement {
                   background: deckSaveBusy ? C.panel : "#222222",
                   color: C.text,
                   cursor:
-                    deckSaveBusy || deckLoadBusy || !selectedAgentProjectId ? "not-allowed" : "pointer",
+                    deckSaveBusy || deckLoadBusy || !canvasProjectId ? "not-allowed" : "pointer",
                 }}
               >
                 {deckSaveBusy ? "Saving..." : "Save Deck"}
               </button>
               <button
                 onClick={handleRunDeck}
-                disabled={deckRunBusy || deckLoadBusy || deck.nodes.length === 0 || !selectedAgentProjectId}
+                disabled={deckRunBusy || deckLoadBusy || deck.nodes.length === 0 || !canvasProjectId}
                 style={{
                   padding: "8px 12px",
                   borderRadius: 8,
@@ -5316,7 +3050,7 @@ export default function AgentBuilder(): React.ReactElement {
                   background: deckRunBusy ? C.panel : "rgba(79,162,173,0.18)",
                   color: C.text,
                   cursor:
-                    deckRunBusy || deckLoadBusy || deck.nodes.length === 0 || !selectedAgentProjectId
+                    deckRunBusy || deckLoadBusy || deck.nodes.length === 0 || !canvasProjectId
                       ? "not-allowed"
                       : "pointer",
                 }}
@@ -5353,115 +3087,6 @@ export default function AgentBuilder(): React.ReactElement {
       </div>
     );
   };
-
-  // TODO: persist to backend project_state.workflow_board
-  const refreshProjects = useCallback(async (reason?: string, preferredAssistId?: string, preferredAgentId?: string) => {
-    const seq = ++refreshSeq.current;
-    const requestType = "projects-refresh";
-    const requestSeq = nextRequestSequence(requestType);
-    refreshAbortRef.current?.abort();
-    const controller = new AbortController();
-    refreshAbortRef.current = controller;
-
-    try {
-      setProjectsError(null);
-      console.debug("[refreshProjects]", {
-        reason: reason || "unknown",
-        workspaceView,
-        seq,
-      });
-      
-      const endpoint = V2_PROJECTS_API;
-      const payload = await guardedRequest({
-        key: "projects:list:all",
-        method: "GET",
-        ttlMs: 3_000,
-        signal: controller.signal,
-        fetcher: async (signal) => {
-          const response = await fetch(endpoint, { signal });
-          const data = await safeJson(response);
-          return { response, data };
-        },
-      });
-      const { response, data } = payload;
-      
-      if (controller.signal.aborted || seq !== refreshSeq.current || !isLatestRequestSequence(requestType, requestSeq)) return;
-      if (!data) {
-        console.warn('[refreshProjects] empty response', { status: response.status, url: response.url });
-        if (response.status !== 304 && response.status !== 204) {
-          setProjectsError(`Error loading projects (HTTP ${response.status})`);
-          setProjects([]);
-        }
-        return;
-      }
-
-      const rawCards = Array.isArray(data?.projects) ? data.projects : [];
-      const cards = dedupeProjectCards(rawCards);
-      const assistCards = cards.filter((card: any) => inferProjectCardType(card) === "assist");
-      const agentCards = cards.filter((card: any) => inferProjectCardType(card) === "agent");
-      const AGENT_PRIORITY = [
-        "main-chat",
-        "kg-ingest",
-        "thinkgraph",
-        "knowgraph",
-        "neo4j",
-        "research-agent",
-        "agent-builder",
-      ];
-      const orderedAgentCards = [...agentCards].sort((left: any, right: any) => {
-        const leftRank = AGENT_PRIORITY.indexOf(normalizeProjectCardKey(left?.code));
-        const rightRank = AGENT_PRIORITY.indexOf(normalizeProjectCardKey(right?.code));
-        const normalizedLeftRank = leftRank === -1 ? Number.MAX_SAFE_INTEGER : leftRank;
-        const normalizedRightRank = rightRank === -1 ? Number.MAX_SAFE_INTEGER : rightRank;
-        if (normalizedLeftRank !== normalizedRightRank) {
-          return normalizedLeftRank - normalizedRightRank;
-        }
-        return safeText(left?.name || left?.id).localeCompare(safeText(right?.name || right?.id));
-      });
-
-      setProjects(cards);
-
-      const search = new URLSearchParams(window.location.search);
-      const urlId = search.get("projectId") || "";
-      const urlIdValid = urlId && assistCards.some((card: any) => card.id === urlId);
-      const currentAssistId = preferredAssistId || activeProject || "";
-      const hasCurrentAssist = currentAssistId && assistCards.some((card: any) => card.id === currentAssistId);
-      const nextAssistId =
-        (urlIdValid ? urlId : "") || (hasCurrentAssist ? currentAssistId : "") || assistCards[0]?.id || "";
-      if (nextAssistId) {
-        setActiveProjectWithUrl(nextAssistId);
-      } else {
-        setActiveProject("");
-      }
-
-      const explicitAgentId = preferredAgentId || "";
-      const hasExplicitAgent =
-        explicitAgentId && orderedAgentCards.some((card: any) => card.id === explicitAgentId);
-      const currentAgentId = selectedAgentProjectId || "";
-      const hasCurrentAgent = currentAgentId && orderedAgentCards.some((card: any) => card.id === currentAgentId);
-      const agentBuilderCard =
-        orderedAgentCards.find(
-          (card: any) => normalizeProjectCardKey(card?.code) === "agent-builder",
-        ) || null;
-      const nextAgentId =
-        (hasExplicitAgent ? explicitAgentId : "") ||
-        agentBuilderCard?.id ||
-        (hasCurrentAgent ? currentAgentId : "") ||
-        orderedAgentCards[0]?.id ||
-        "";
-      setSelectedAgentProjectId(nextAgentId);
-    } catch (err: any) {
-      if (isAbortLikeError(err)) return;
-      console.error("Error loading projects:", err);
-      if (seq !== refreshSeq.current || !isLatestRequestSequence(requestType, requestSeq)) return;
-      setProjectsError(err?.message || 'Error loading projects');
-    }
-  }, [activeProject, selectedAgentProjectId, setActiveProjectWithUrl, workspaceView]);
-
-  const assistProjects = useMemo(
-    () => projects.filter((project: any) => inferProjectCardType(project) === "assist"),
-    [projects],
-  );
 
   useEffect(() => {
     activeProjectLatestRef.current = activeProject;
@@ -6019,120 +3644,10 @@ export default function AgentBuilder(): React.ReactElement {
     [activeProject],
   );
 
-  const loadActiveProjectState = useCallback(async (opts?: { force?: boolean; preserveMessagesOnFallback?: boolean }) => {
-    if (!activeProject) {
-      stateLoadKeyRef.current = "";
-      stateLoadProjectRef.current = "";
-      return;
-    }
-    const projectId = activeProject;
-    if (!opts?.force && stateLoadKeyRef.current === projectId) return; // Guard duplicate load cascades for the same project selection.
-    stateLoadKeyRef.current = projectId;
-    const requestType = "project-state-load";
-    const requestSeq = nextRequestSequence(requestType);
-    stateLoadAbortRef.current?.abort();
-    const controller = new AbortController();
-    stateLoadAbortRef.current = controller;
-    stateLoadProjectRef.current = projectId;
-    setStateLoaded(false);
-    const stateRefreshStartedAt = Date.now();
-
-    try {
-      const endpoint = `${V2_PROJECTS_API}/${projectId}/state`;
-      const payload = await guardedRequest({
-        key: `project-state:${projectId}`,
-        method: "GET",
-        ttlMs: 3_000,
-        bypassCache: opts?.force,
-        signal: controller.signal,
-        fetcher: async (signal) => {
-          const response = await fetch(endpoint, { signal });
-          const data = await safeJson(response);
-          return { response, data };
-        },
-      });
-      if (
-        controller.signal.aborted ||
-        !isLatestRequestSequence(requestType, requestSeq) ||
-        activeProjectLatestRef.current !== projectId
-      ) {
-        return;
-      }
-      setMessages(normalizeMessages(payload.data?.messages));
-      setPlanSource(payload.data?.plan);
-      setPlan(normalizePlanItems(payload.data?.plan));
-      setLinks(normalizeLinks(payload.data?.links));
-      setStateLoaded(true);
-      const completedAt = Date.now();
-      emitWorkspaceTestingEvent({
-        event: "workspace_state_refresh_completed",
-        durationMs: Math.max(0, completedAt - stateRefreshStartedAt),
-        metadata: { source: opts?.force ? "remote_forced" : "remote" },
-      });
-      recordPostResponseRefreshIfPending("workspace_state", completedAt);
-    } catch (err) {
-      if (
-        isAbortLikeError(err) ||
-        !isLatestRequestSequence(requestType, requestSeq) ||
-        activeProjectLatestRef.current !== projectId
-      ) {
-        return;
-      }
-      const next = loadProjectState(projectId);
-      if (!opts?.preserveMessagesOnFallback) {
-        setMessages(normalizeMessages(next.messages));
-      }
-      setPlanSource(next.plan);
-      setPlan(normalizePlanItems(next.plan));
-      setLinks(normalizeLinks(next.links));
-      setStateLoaded(true);
-      const completedAt = Date.now();
-      emitWorkspaceTestingEvent({
-        event: "workspace_state_refresh_completed",
-        durationMs: Math.max(0, completedAt - stateRefreshStartedAt),
-        metadata: { source: "local_fallback" },
-      });
-      recordPostResponseRefreshIfPending("workspace_state", completedAt);
-    } finally {
-      if (stateLoadAbortRef.current === controller) {
-        stateLoadAbortRef.current = null;
-      }
-      if (stateLoadProjectRef.current === projectId) {
-        stateLoadProjectRef.current = "";
-      }
-    }
-  }, [activeProject, emitWorkspaceTestingEvent, recordPostResponseRefreshIfPending]);
-
-  // When switching projects, reload all per-project state from storage.
-  useEffect(() => {
-    void loadActiveProjectState();
-  }, [loadActiveProjectState]);
-
-  // Load projects on mount ONLY
-  useEffect(() => {
-    if (mountRefreshRanRef.current) return;
-    let cancelled = false;
-    const timerId = window.setTimeout(() => {
-      if (cancelled || mountRefreshRanRef.current) return;
-      mountRefreshRanRef.current = true;
-      const search = new URLSearchParams(window.location.search);
-      const urlId = search.get("projectId") || "";
-      if (urlId) {
-        setActiveProjectWithUrl(urlId);
-      }
-      void refreshProjects("mount");
-    }, 0);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timerId);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  
   useEffect(() => {
     return () => {
-      refreshAbortRef.current?.abort();
-      stateLoadAbortRef.current?.abort();
+      deckSaveAbortRef.current?.abort();
+      deckExecutionAbortRef.current?.abort();
       kgLoadAbortRef.current?.abort();
       kgExpandAbortRef.current?.abort();
       dashboardPollAbortRef.current?.abort();
@@ -6346,13 +3861,6 @@ export default function AgentBuilder(): React.ReactElement {
 
   useEffect(() => {
     if (
-      stateLoadAbortRef.current &&
-      stateLoadProjectRef.current &&
-      stateLoadProjectRef.current !== activeProject
-    ) {
-      stateLoadAbortRef.current.abort();
-    }
-    if (
       kgLoadAbortRef.current &&
       kgLoadProjectRef.current &&
       kgLoadProjectRef.current !== activeProject
@@ -6485,8 +3993,8 @@ export default function AgentBuilder(): React.ReactElement {
   const handleSend = (t: string) => {
     const trimmed = t.trim();
     if (!trimmed) return;
-    if (sending) return;
-    if (!activeProject) return;
+    if (sending || deckRunBusy || cardRunBusy || deckLoadBusy) return;
+    if (!canvasProjectId) return;
     const interactionId = createWorkspaceTestingInteractionId("chat");
     const sendStartedAt = Date.now();
     const turnId = `assist:${Date.now()}:${uid()}`;
@@ -6503,38 +4011,58 @@ export default function AgentBuilder(): React.ReactElement {
       surfaceRole: largeSurface === "chat" ? "large" : "companion",
       metadata: {
         messageLength: trimmed.length,
-        responseMode: "assist_runtime",
+        responseMode: "deck_runtime",
         turnId,
       },
     });
 
     setMessages((m) => [...m, { role: "user", text: trimmed }]);
     setSending(true);
+    setDeckRunBusy(true);
+    setLatestCardRun(null);
+    setLatestDeckRun(null);
+    setLiveDeckEvents([]);
+    setDeckStatusMessage("Running deck from chat...");
+    const requestProjectId = canvasProjectId;
+    deckExecutionAbortRef.current?.abort();
+    const controller = new AbortController();
+    deckExecutionAbortRef.current = controller;
 
     void (async () => {
       try {
-        const endpoint = "/api/agents/boss";
-        const response = await fetch(endpoint, {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
+        const endpoint = `${V3_PROJECTS_API}/${requestProjectId}/decks/run`;
+        const data = await streamDeckRunRequest({
+          endpoint,
+          body: {
+            deckId: BUILDER_DECK_ID,
+            document: {
+              ...deck,
+              id: BUILDER_DECK_ID,
+            },
+            templates: INITIAL_AGENT_TEMPLATES,
+            input: trimmed,
           },
-          body: JSON.stringify({
-            projectId: activeProject,
-            message: trimmed,
-            turnId,
-          }),
+          signal: controller.signal,
+          onEvent: (event) => {
+            if (controller.signal.aborted || activeProjectLatestRef.current !== requestProjectId) return;
+            setLiveDeckEvents((current) => [...current, event]);
+          },
         });
-        const data = await safeJson(response);
-        if (!response.ok || !data?.ok) {
-          throw new Error(
-            safeText(data?.message || data?.error || "assist_runtime_failed"),
-          );
+        if (controller.signal.aborted || activeProjectLatestRef.current !== requestProjectId) {
+          return;
         }
-        const assistantText = cleanOptionalText(data?.result?.final) || "No response returned.";
+        if (!data?.run || typeof data.run !== "object") {
+          const failure = data as { message?: unknown; error?: unknown };
+          throw new Error(safeText(failure.message || failure.error || "deck_run_failed"));
+        }
+        const run = data.run as DeckRun;
+        const assistantText = resolveDeckRunFinalText(run) || "No response returned.";
+        setLatestDeckRun(run);
+        setLiveDeckEvents([]);
         setMessages((m) => [...m, { role: "assistant", text: assistantText }]);
+        setDeckStatusMessage("Deck run completed.");
         const responseReceivedAt = Date.now();
+        const finalStep = [...(run.steps || [])].reverse().find((step) => step.status === "success") || null;
         chatLoopTelemetryRef.current = {
           interactionId,
           sendStartedAt,
@@ -6548,30 +4076,31 @@ export default function AgentBuilder(): React.ReactElement {
           surface: largeSurface === "chat" ? "chat" : normalizeWorkspaceSurface(tab),
           surfaceRole: largeSurface === "chat" ? "large" : "companion",
           metadata: {
-            responseMode: "assist_runtime",
+            responseMode: "deck_runtime",
             turnId,
-            provider: cleanOptionalText(data?.provider),
-            model: cleanOptionalText(data?.model),
-            stopReason: cleanOptionalText(data?.orchestration?.stopReason),
-            turnsUsed:
-              typeof data?.orchestration?.turnsUsed === "number"
-                ? data.orchestration.turnsUsed
-                : null,
+            provider: cleanOptionalText(finalStep?.effectiveAgent?.provider),
+            model: cleanOptionalText(finalStep?.effectiveAgent?.model),
+            stopReason: cleanOptionalText(run.status),
+            turnsUsed: Array.isArray(run.steps) ? run.steps.length : null,
           },
         });
 
-        stateLoadKeyRef.current = "";
-        void loadActiveProjectState({ force: true, preserveMessagesOnFallback: true });
         loadProjectSubgraph({ force: true });
         window.setTimeout(() => {
-          if (activeProjectLatestRef.current !== activeProject) return;
+          if (activeProjectLatestRef.current !== requestProjectId) return;
           loadProjectSubgraph({ force: true });
         }, 1500);
       } catch (err: any) {
+        if (isAbortLikeError(err) || activeProjectLatestRef.current !== requestProjectId) {
+          return;
+        }
         const message = formatBuilderStatusMessage(
           err?.message,
-          "Chat request failed.",
+          "Deck chat run failed.",
         );
+        setLiveDeckEvents([]);
+        setLatestDeckRun(null);
+        setDeckStatusMessage(message);
         setMessages((m) => [
           ...m,
           {
@@ -6593,14 +4122,18 @@ export default function AgentBuilder(): React.ReactElement {
           surface: largeSurface === "chat" ? "chat" : normalizeWorkspaceSurface(tab),
           surfaceRole: largeSurface === "chat" ? "large" : "companion",
           metadata: {
-            responseMode: "assist_runtime",
+            responseMode: "deck_runtime",
             turnId,
             ok: false,
             error: message,
           },
         });
       } finally {
+        if (deckExecutionAbortRef.current === controller) {
+          deckExecutionAbortRef.current = null;
+        }
         setSending(false);
+        setDeckRunBusy(false);
       }
     })();
   };
@@ -6804,6 +4337,7 @@ export default function AgentBuilder(): React.ReactElement {
           "label",
           "a[href]",
           "summary",
+          ".react-flow__controls",
           '[role="button"]',
           '[role="link"]',
           '[contenteditable="true"]',
@@ -6849,11 +4383,12 @@ export default function AgentBuilder(): React.ReactElement {
           height: "100%",
         }}
       >
-        <Chat
+        <BuilderChat
           messages={messages}
           onSend={handleSend}
           projectId={projectId}
-          disabled={sending}
+          disabled={sending || deckRunBusy || cardRunBusy || deckLoadBusy || !canvasProjectId}
+          colors={C}
         />
       </div>
     </div>
@@ -6881,6 +4416,11 @@ export default function AgentBuilder(): React.ReactElement {
             setDocument={setDeck}
             onPersistGraphMutation={recordDeckWriteReason}
             executionPlan={isCompanionPreview ? null : deckExecutionPlan}
+            activeCardIds={isCompanionPreview ? [] : runtimeVisualState.activeCardIds}
+            activeEdgeIds={isCompanionPreview ? [] : runtimeVisualState.activeEdgeIds}
+            swarmProgressByCardId={
+              isCompanionPreview ? {} : runtimeVisualState.swarmProgressByCardId
+            }
             selectedCardId={isCompanionPreview ? null : selectedCardId}
             selectedEdgeId={isCompanionPreview ? null : selectedEdgeId}
             onSelectCard={handleSelectCard}
@@ -7161,129 +4701,81 @@ export default function AgentBuilder(): React.ReactElement {
           </div>
         ) : (
           <>
-            {structuredAssistPlan.goal && (
-              <Section title="Goal">
-                <div style={{ color: C.text, whiteSpace: "pre-wrap" }}>
-                  {safeText(structuredAssistPlan.goal)}
-                </div>
+            <PlanWikiSurface
+              structuredPlan={structuredAssistPlan}
+              colors={C}
+              document={
+                structuredAssistPlan.hasExplicitPlanDocument ? (
+                  <Suspense
+                    fallback={
+                      <div style={{ color: C.text, whiteSpace: "pre-wrap", minHeight: 120 }}>
+                        {safeText(structuredAssistPlan.explicitPlanText).trim() || "No plan notes yet."}
+                      </div>
+                    }
+                  >
+                    <PlanWikiLexicalView
+                      source={planSource}
+                      fallbackText={safeText(structuredAssistPlan.explicitPlanText)}
+                      textColor={C.text}
+                      mutedColor={C.neutral}
+                      emptyText="No plan text yet."
+                    />
+                  </Suspense>
+                ) : null
+              }
+            />
+
+            {(deckRunBusy || cardRunBusy || runtimeEvents.length > 0) && (
+              <Section title="Live Reasoning">
+                {runtimeVisualState.reasoningLines.length > 0 ? (
+                  <div style={{ display: "grid", gap: 8, color: C.text }}>
+                    {runtimeVisualState.reasoningLines.map((line, index) => (
+                      <div key={`reasoning-${index}`} style={{ whiteSpace: "pre-wrap" }}>
+                        {line}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: C.neutral }}>
+                    {deckRunBusy || cardRunBusy ? "Waiting: runtime reasoning is still in progress." : "No runtime reasoning captured."}
+                  </div>
+                )}
               </Section>
             )}
 
-            {structuredAssistPlan.whatMattersNow.length > 0 && (
-              <Section title="What Matters Now">
-                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                  {structuredAssistPlan.whatMattersNow.map((item, index) => (
-                    <li key={`wmn-${index}`}>{item}</li>
-                  ))}
-                </ul>
+            {(deckRunBusy || cardRunBusy || runtimeEvents.length > 0) && (
+              <Section title="Live Team Stream">
+                {runtimeVisualState.teamLines.length > 0 ? (
+                  <div style={{ display: "grid", gap: 8, color: C.text }}>
+                    {runtimeVisualState.teamLines.map((line, index) => (
+                      <div key={`team-${index}`} style={{ whiteSpace: "pre-wrap" }}>
+                        {line}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: C.neutral }}>
+                    {deckRunBusy || cardRunBusy ? "Waiting: runtime updates are still in progress." : "No runtime team messages captured."}
+                  </div>
+                )}
               </Section>
             )}
 
-            {structuredAssistPlan.nextMove && (
-              <Section title="Next Move">
-                <div style={{ color: C.text, whiteSpace: "pre-wrap" }}>
-                  {safeText(structuredAssistPlan.nextMove)}
-                </div>
-              </Section>
-            )}
-
-            {structuredAssistPlan.assumptions.length > 0 && (
-              <Section title="Assumptions">
-                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                  {structuredAssistPlan.assumptions.map((item, index) => (
-                    <li key={`assumption-${index}`}>{item}</li>
-                  ))}
-                </ul>
-              </Section>
-            )}
-
-            {structuredAssistPlan.research.length > 0 && (
-              <Section title="Research">
-                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                  {structuredAssistPlan.research.map((item, index) => (
-                    <li key={`research-${index}`}>{item}</li>
-                  ))}
-                </ul>
-              </Section>
-            )}
-
-            {structuredAssistPlan.openQuestions.length > 0 && (
-              <Section title="Open Questions">
-                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                  {structuredAssistPlan.openQuestions.map((item, index) => (
-                    <li key={`question-${index}`}>{item}</li>
-                  ))}
-                </ul>
-              </Section>
-            )}
-
-            {structuredAssistPlan.humanTasks.length > 0 && (
-              <Section title="Human Tasks">
-                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                  {structuredAssistPlan.humanTasks.map((item, index) => (
-                    <li key={`human-${index}`}>{item}</li>
-                  ))}
-                </ul>
-              </Section>
-            )}
-
-            {structuredAssistPlan.agentTasks.length > 0 && (
-              <Section title="Agent Tasks">
-                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                  {structuredAssistPlan.agentTasks.map((item, index) => (
-                    <li key={`agent-${index}`}>{item}</li>
-                  ))}
-                </ul>
-              </Section>
-            )}
-
-            {structuredAssistPlan.pathOptions.length > 0 && (
-              <Section title="Path Options">
-                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                  {structuredAssistPlan.pathOptions.map((item, index) => (
-                    <li key={`path-${index}`}>{item}</li>
-                  ))}
-                </ul>
-              </Section>
-            )}
-
-            {structuredAssistPlan.hasExplicitPlanDocument && (
-              <Section title="Plan Notes">
-                <Suspense
-                  fallback={
-                    <div style={{ color: C.text, whiteSpace: "pre-wrap", minHeight: 120 }}>
-                      {safeText(structuredAssistPlan.explicitPlanText).trim() || "No plan notes yet."}
-                    </div>
-                  }
-                >
-                  <PlanWikiLexicalView
-                    source={planSource}
-                    fallbackText={safeText(structuredAssistPlan.explicitPlanText)}
-                    textColor={C.text}
-                    mutedColor={C.neutral}
-                    emptyText="No plan notes yet."
-                  />
-                </Suspense>
-              </Section>
-            )}
-
-            {structuredAssistPlan.whatChanged.length > 0 && (
-              <Section title="What Changed">
-                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                  {structuredAssistPlan.whatChanged.map((item, index) => (
-                    <li key={`changed-${index}`}>{item}</li>
-                  ))}
-                </ul>
-              </Section>
-            )}
-
-            {structuredAssistPlan.sources.length > 0 && (
-              <Section title="Sources">
-                <ul style={{ paddingLeft: 18, margin: 0, color: C.text }}>
-                  {structuredAssistPlan.sources.map((item, index) => (
-                    <li key={`source-${index}`}>{item}</li>
-                  ))}
-                </ul>
+            {(deckRunBusy || cardRunBusy || runtimeEvents.length > 0) && (
+              <Section title="Live Reports">
+                {runtimeVisualState.reportLines.length > 0 ? (
+                  <div style={{ display: "grid", gap: 8, color: C.text }}>
+                    {runtimeVisualState.reportLines.map((line, index) => (
+                      <div key={`report-${index}`} style={{ whiteSpace: "pre-wrap" }}>
+                        {line}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: C.neutral }}>
+                    {deckRunBusy || cardRunBusy ? "Waiting: final runtime results are still in progress." : "No runtime reports captured."}
+                  </div>
+                )}
               </Section>
             )}
           </>
@@ -7381,19 +4873,6 @@ export default function AgentBuilder(): React.ReactElement {
           />
         </div>
         <div data-testid="header-actions" className="flex items-center gap-3">
-          <button
-            title="Three-lines"
-            aria-label="Three-lines"
-            data-testid="header-three-lines-button"
-            onClick={() => setOpenDrawer("navigation")}
-            className="p-2 rounded"
-            style={{
-              color: C.text,
-              background: "transparent",
-            }}
-          >
-            <Icon d="M4 7h16M4 12h16M4 17h16" />
-          </button>
         </div>
       </div>
 
@@ -7447,6 +4926,19 @@ export default function AgentBuilder(): React.ReactElement {
             style={{ color: largeSurface === "plan" ? "#ffb86b" : C.text }}
           >
             <Icon d="M3 12l2-2 4 4L21 4" />
+          </button>
+          <button
+            title="Three-lines"
+            aria-label="Three-lines"
+            data-testid="header-three-lines-button"
+            onClick={() => setOpenDrawer("navigation")}
+            className="p-2 rounded"
+            style={{
+              color: C.text,
+              background: "transparent",
+            }}
+          >
+            <Icon d="M4 7h16M4 12h16M4 17h16" />
           </button>
         </aside>
 
@@ -7597,7 +5089,7 @@ export default function AgentBuilder(): React.ReactElement {
 
       {/* drawers */}
       {openDrawer === "navigation" && (
-        <Drawer title="Projects" onClose={() => setOpenDrawer(null)}>
+        <BuilderDrawer title="Projects" onClose={() => setOpenDrawer(null)} colors={C}>
           <div data-testid="navigation-drawer" className="space-y-3">
             <div
               data-testid="drawer-projects-section"
@@ -7656,7 +5148,7 @@ export default function AgentBuilder(): React.ReactElement {
                           if (remaining.length > 0) {
                             setActiveProjectWithUrl(remaining[0].id);
                           } else {
-                            setActiveProject("");
+                            setActiveProjectWithUrl("");
                           }
                         }
                       } catch (err: any) {
@@ -7683,7 +5175,7 @@ export default function AgentBuilder(): React.ReactElement {
               )}
             </div>
           </div>
-        </Drawer>
+        </BuilderDrawer>
       )}
     </div>
   );

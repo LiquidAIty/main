@@ -145,6 +145,8 @@ function toFlowNodes(
   selectedCardId: string | null,
   hoveredCardId: string | null,
   executionPlan: Pick<DeckExecutionPlan, 'simpleOrderCardIds' | 'startCardIds'> | null,
+  activeCardIds: Set<string>,
+  swarmProgressByCardId: Record<string, { completed: number; total: number }>,
 ): Node[] {
   const executionOrderById = new Map(
     (executionPlan?.simpleOrderCardIds || []).map((cardId, index) => [cardId, index + 1] as const),
@@ -179,7 +181,8 @@ function toFlowNodes(
       isStartCard: startCardIds.has(node.id),
       isCallableHead: callableHeadIds.has(node.id),
       assistStructureMode: assistStructureSummaries.get(node.id)?.mode || null,
-      swarmBadge: getAssistSwarmBadge(node),
+      swarmBadge: getAssistSwarmBadge(node, swarmProgressByCardId[node.id] || null),
+      isRuntimeActive: activeCardIds.has(node.id),
       isHovered: node.id === hoveredCardId,
       isHoverRelated: hoveredCardId ? hoveredRelatedNodeIds.has(node.id) : false,
     },
@@ -202,7 +205,7 @@ type FlowEdgeData = {
 function normalizeEdgeType(value: unknown): DeckEdgeType {
   return String(value || '').trim().toLowerCase() === 'magentic_option'
     ? 'magentic_option'
-    : 'graph_flow';
+    : 'flow';
 }
 
 function normalizeRuntimeType(value: unknown): AgentCardRuntimeType {
@@ -213,13 +216,12 @@ function normalizeRuntimeType(value: unknown): AgentCardRuntimeType {
 }
 
 function isTopLevelCanvasCard(node: AgentCardInstance | undefined | null): node is AgentCardInstance {
-  return Boolean(node && node.kind !== 'blackboard' && !String(node.parentGraphId || '').trim());
+  return Boolean(node && !String(node.parentGraphId || '').trim());
 }
 
 function isAssistCanvasCard(node: AgentCardInstance | undefined | null): node is AgentCardInstance {
   return Boolean(
     node &&
-      node.kind !== 'blackboard' &&
       normalizeRuntimeType(node.runtimeType) === 'assistant_agent',
   );
 }
@@ -247,7 +249,7 @@ export function buildAssistStructureSummaries(
   const nodeMap = new Map(document.nodes.map((node) => [node.id, node] as const));
 
   document.nodes.forEach((node) => {
-    if (node.kind === 'blackboard' || normalizeRuntimeType(node.runtimeType) !== 'assistant_agent') {
+    if (normalizeRuntimeType(node.runtimeType) !== 'assistant_agent') {
       return;
     }
     summaries.set(node.id, {
@@ -258,7 +260,7 @@ export function buildAssistStructureSummaries(
   });
 
   document.edges.forEach((edge) => {
-    if (normalizeEdgeType(edge.edgeType) !== 'graph_flow') return;
+    if (normalizeEdgeType(edge.edgeType) !== 'flow') return;
     const sourceNode = nodeMap.get(edge.source);
     const targetNode = nodeMap.get(edge.target);
     if (!sourceNode || !targetNode || !isVisibleAssistFlowPair(sourceNode, targetNode)) {
@@ -294,11 +296,14 @@ export function buildAssistStructureSummaries(
   return summaries;
 }
 
-export function getAssistSwarmBadge(node: AgentCardInstance): string | null {
+export function getAssistSwarmBadge(
+  node: AgentCardInstance,
+  runtimeProgress: { completed: number; total: number } | null,
+): string | null {
   if (normalizeRuntimeType(node.runtimeType) !== 'assistant_agent') return null;
   if (node.runtimeOptions?.executionMode !== 'swarm') return null;
-  const workerCount = Math.max(2, Math.min(Number(node.runtimeOptions?.swarmMaxWorkers) || 3, 6));
-  return `Swarm x${workerCount}`;
+  if (!runtimeProgress) return null;
+  return `${runtimeProgress.completed}/${runtimeProgress.total}`;
 }
 
 function resolveCanvasConnectionEdgeType(
@@ -327,7 +332,7 @@ function resolveCanvasConnectionEdgeType(
   }
 
   if (isVisibleAssistFlowPair(sourceNode, targetNode)) {
-    return 'graph_flow';
+    return 'flow';
   }
 
   return null;
@@ -415,11 +420,17 @@ export function buildDeckEdgeVisualStates(document: DeckDocument): Map<string, D
   );
 }
 
-function toFlowEdges(document: DeckDocument, selectedEdgeId: string | null, hoveredCardId: string | null): Edge[] {
+function toFlowEdges(
+  document: DeckDocument,
+  selectedEdgeId: string | null,
+  hoveredCardId: string | null,
+  activeEdgeIds: Set<string>,
+): Edge[] {
   const visualStates = buildDeckEdgeVisualStates(document);
   return document.edges.map((edge) => {
     const isSelected = edge.id === selectedEdgeId;
     const isHoverConnected = isEdgeConnectedToNode(edge.source, edge.target, hoveredCardId);
+    const isActive = activeEdgeIds.has(edge.id);
     const visualState = visualStates.get(edge.id) || {
       isLoopEdge: false,
       isReturnEdge: false,
@@ -427,7 +438,9 @@ function toFlowEdges(document: DeckDocument, selectedEdgeId: string | null, hove
       borderRadius: 14,
     };
     const edgeType = normalizeEdgeType(edge.edgeType);
-    const stroke = isSelected
+    const stroke = isActive
+      ? GRAPH_THEME.accent.primary
+      : isSelected
       ? GRAPH_THEME.accent.primary
       : hoveredCardId && isHoverConnected
         ? GRAPH_THEME.accent.hover
@@ -448,7 +461,7 @@ function toFlowEdges(document: DeckDocument, selectedEdgeId: string | null, hove
       className: [
         visualState.isLoopEdge ? 'edge-loop' : null,
         visualState.isReturnEdge ? 'edge-return' : null,
-        edgeType === 'magentic_option' ? 'edge-magentic-option' : 'edge-graph-flow',
+        edgeType === 'magentic_option' ? 'edge-magentic-option' : 'edge-flow',
       ]
         .filter(Boolean)
         .join(' '),
@@ -469,9 +482,10 @@ function toFlowEdges(document: DeckDocument, selectedEdgeId: string | null, hove
       },
       style: {
         stroke,
-        strokeWidth: isSelected ? 3.2 : hoveredCardId && isHoverConnected ? 2.8 : 2.2,
-        opacity: hoveredCardId ? (isHoverConnected ? 0.98 : 0.24) : 1,
+        strokeWidth: isActive ? 3.4 : isSelected ? 3.2 : hoveredCardId && isHoverConnected ? 2.8 : 2.2,
+        opacity: isActive ? 1 : hoveredCardId ? (isHoverConnected ? 0.98 : 0.24) : 1,
         strokeDasharray: visualState.isLoopEdge ? '10 7' : visualState.isReturnEdge ? '6 5' : undefined,
+        filter: isActive ? `drop-shadow(0 0 8px ${GRAPH_THEME.accent.primaryGlow})` : undefined,
       },
     };
   });
@@ -521,10 +535,10 @@ export function mergeFlowEdgesIntoDeck(nextEdges: Edge[], prevEdges: DeckEdge[])
         ...edgeWithoutMetadata,
         source: nextEdge.source,
         target: nextEdge.target,
-        edgeType:
-          ((nextEdge.data as FlowEdgeData | undefined)?.edgeType as DeckEdgeType | null | undefined) ??
+          edgeType:
+            ((nextEdge.data as FlowEdgeData | undefined)?.edgeType as DeckEdgeType | null | undefined) ??
           edge.edgeType ??
-          'graph_flow',
+          'flow',
         ...(metadata ? { metadata } : {}),
       };
     });
@@ -538,7 +552,7 @@ export function mergeFlowEdgesIntoDeck(nextEdges: Edge[], prevEdges: DeckEdge[])
       target: edge.target,
       edgeType:
         ((edge.data as FlowEdgeData | undefined)?.edgeType as DeckEdgeType | null | undefined) ??
-        'graph_flow',
+        'flow',
       ...(metadata ? { metadata } : {}),
     });
   });
@@ -557,6 +571,9 @@ export default function BuilderCanvas({
   onDeleteSelectedEdge,
   focusRequest,
   executionPlan,
+  activeCardIds = [],
+  activeEdgeIds = [],
+  swarmProgressByCardId = {},
 }: {
   document: DeckDocument;
   setDocument: Dispatch<SetStateAction<DeckDocument>>;
@@ -568,16 +585,29 @@ export default function BuilderCanvas({
   onDeleteSelectedEdge?: () => void;
   focusRequest: BuilderCanvasFocusRequest | null;
   executionPlan: Pick<DeckExecutionPlan, 'simpleOrderCardIds' | 'startCardIds'> | null;
+  activeCardIds?: string[];
+  activeEdgeIds?: string[];
+  swarmProgressByCardId?: Record<string, { completed: number; total: number }>;
 }) {
+  const activeCardIdSet = useMemo(() => new Set(activeCardIds), [activeCardIds]);
+  const activeEdgeIdSet = useMemo(() => new Set(activeEdgeIds), [activeEdgeIds]);
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
   const [layoutLocked, setLayoutLocked] = useState(false);
   const flowNodes = useMemo(
-    () => toFlowNodes(document, selectedCardId, hoveredCardId, executionPlan),
-    [document, executionPlan, hoveredCardId, selectedCardId],
+    () =>
+      toFlowNodes(
+        document,
+        selectedCardId,
+        hoveredCardId,
+        executionPlan,
+        activeCardIdSet,
+        swarmProgressByCardId,
+      ),
+    [activeCardIdSet, document, executionPlan, hoveredCardId, selectedCardId, swarmProgressByCardId],
   );
   const flowEdges = useMemo(
-    () => toFlowEdges(document, selectedEdgeId, hoveredCardId),
-    [document, hoveredCardId, selectedEdgeId],
+    () => toFlowEdges(document, selectedEdgeId, hoveredCardId, activeEdgeIdSet),
+    [activeEdgeIdSet, document, hoveredCardId, selectedEdgeId],
   );
   const [nodes, setNodes] = useNodesState(flowNodes);
   const [edges, setEdges] = useEdgesState(flowEdges);
@@ -774,7 +804,7 @@ export default function BuilderCanvas({
     const nextEdgeKey = buildDeckEdgeIdentityKey({
       source: connection.source,
       target: connection.target,
-      edgeType: resolveCanvasConnectionEdgeType(document, connection) || 'graph_flow',
+      edgeType: resolveCanvasConnectionEdgeType(document, connection) || 'flow',
     });
 
     return !currentEdges.some((edge) => {
@@ -786,7 +816,7 @@ export default function BuilderCanvas({
           target: edge.target,
           edgeType:
             ((edge.data as { edgeType?: DeckEdgeType | null } | undefined)?.edgeType as DeckEdgeType | null | undefined) ??
-            'graph_flow',
+            'flow',
         }) === nextEdgeKey
       );
     });
@@ -845,7 +875,7 @@ export default function BuilderCanvas({
           ...connection,
           id: `edge_${Math.random().toString(36).slice(2, 10)}`,
           data: (() => {
-            const edgeType = resolveCanvasConnectionEdgeType(document, connection) || 'graph_flow';
+            const edgeType = resolveCanvasConnectionEdgeType(document, connection) || 'flow';
             return {
               edgeType,
               metadata: resolveCanvasConnectionMetadata(document, connection, edgeType),
@@ -870,7 +900,7 @@ export default function BuilderCanvas({
   const onReconnect: OnReconnect<Edge> = (oldEdge, newConnection) => {
     setEdges((current) => {
       if (!isPlainConnectionAllowed(newConnection, current, oldEdge.id)) return current;
-      const nextEdgeType = resolveCanvasConnectionEdgeType(document, newConnection) || 'graph_flow';
+      const nextEdgeType = resolveCanvasConnectionEdgeType(document, newConnection) || 'flow';
       const reconnected = reconnectEdge(
         oldEdge,
         newConnection,

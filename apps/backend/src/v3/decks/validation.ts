@@ -35,13 +35,13 @@ export type DeckValidationResult = {
 };
 
 function isRunnableNode(node: AgentCardInstance | undefined | null): boolean {
-  return Boolean(node && node.kind !== 'blackboard' && !String(node.parentGraphId || '').trim());
+  return Boolean(node && !String(node.parentGraphId || '').trim());
 }
 
 function normalizeEdgeType(value: unknown): DeckEdgeType {
   return String(value || '').trim().toLowerCase() === 'magentic_option'
     ? 'magentic_option'
-    : 'graph_flow';
+    : 'flow';
 }
 
 export function buildDeckEdgeIdentityKey(
@@ -141,7 +141,7 @@ export function validateDeckDocument(
     const sourceNode = nodeMap.get(edge.source);
     const targetNode = nodeMap.get(edge.target);
     if (!isRunnableNode(sourceNode) || !isRunnableNode(targetNode)) return;
-    if (normalizeEdgeType(edge.edgeType) !== 'graph_flow') return;
+    if (normalizeEdgeType(edge.edgeType) !== 'flow') return;
     incomingCounts.set(edge.target, (incomingCounts.get(edge.target) || 0) + 1);
   });
 

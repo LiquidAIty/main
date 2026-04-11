@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentCardInstance, AgentTemplate, DeckDocument, DeckEdge, V3Blackboard } from '../types';
+import type { AgentCardInstance, AgentTemplate, DeckDocument, DeckEdge } from '../types';
 
 const runtimeHarness = vi.hoisted(() => ({
   calls: [] as Array<{ cardId: string; input: string }>,
@@ -23,11 +23,6 @@ const templates: AgentTemplate[] = [
     name: 'Worker',
     tools: [],
   },
-  {
-    id: 'blackboard',
-    name: 'Blackboard',
-    tools: [],
-  },
 ];
 
 function createAgent(id: string, title: string, runtimeType: AgentCardInstance['runtimeType'] = 'assistant_agent'): AgentCardInstance {
@@ -42,22 +37,11 @@ function createAgent(id: string, title: string, runtimeType: AgentCardInstance['
   };
 }
 
-function createBlackboard(id = 'node_blackboard'): AgentCardInstance {
-  return {
-    id,
-    kind: 'blackboard',
-    templateId: 'blackboard',
-    title: 'Blackboard',
-    prompt: '',
-    position: { x: 0, y: 0 },
-  };
-}
-
 function edge(
   id: string,
   source: string,
   target: string,
-  edgeType: DeckEdge['edgeType'] = 'graph_flow',
+  edgeType: DeckEdge['edgeType'] = 'flow',
   metadata: DeckEdge['metadata'] = undefined,
 ): DeckEdge {
   return metadata ? { id, source, target, edgeType, metadata } : { id, source, target, edgeType };
@@ -85,7 +69,7 @@ describe('executeDeck', () => {
       card: AgentCardInstance,
       _agent: AgentTemplate,
       input: string,
-      context: { blackboard?: V3Blackboard | null },
+      _context: Record<string, unknown>,
     ) => {
       runtimeHarness.calls.push({ cardId: card.id, input });
       return {
@@ -97,18 +81,16 @@ describe('executeDeck', () => {
         runtimeType: card.runtimeType ?? 'assistant_agent',
         inputSummary: input,
         outputSummary: `output:${card.id}`,
-        blackboardWrite: null,
-        blackboard: context.blackboard ?? null,
       };
     });
   });
 
-  it('uses explicit orange graph_flow edges to determine top-level execution order', async () => {
+  it('uses explicit flow edges to determine top-level execution order', async () => {
     const deck = createDeckDocument(
       [createAgent('c', 'C'), createAgent('a', 'A'), createAgent('b', 'B')],
       [
-        edge('edge_a_b', 'a', 'b', 'graph_flow'),
-        edge('edge_b_c', 'b', 'c', 'graph_flow'),
+        edge('edge_a_b', 'a', 'b', 'flow'),
+        edge('edge_b_c', 'b', 'c', 'flow'),
       ],
     );
 
@@ -118,14 +100,21 @@ describe('executeDeck', () => {
     expect(run.steps.map((step) => step.cardId)).toEqual(['a', 'b', 'c']);
   });
 
-  it('does not derive runnable edges from blackboard links', async () => {
-    const board = createBlackboard();
+  it('ignores legacy blackboard nodes in visible flow routing', async () => {
+    const board = {
+      id: 'node_blackboard',
+      kind: 'blackboard',
+      templateId: 'blackboard',
+      title: 'Blackboard',
+      prompt: '',
+      position: { x: 0, y: 0 },
+    } as unknown as AgentCardInstance;
     const run = await executeDeck(
       createDeckDocument(
         [createAgent('reader', 'Reader'), createAgent('writer', 'Writer'), board],
         [
-          edge('edge_writer_board', 'writer', board.id, 'graph_flow'),
-          edge('edge_board_reader', board.id, 'reader', 'graph_flow'),
+          edge('edge_writer_board', 'writer', board.id, 'flow'),
+          edge('edge_board_reader', board.id, 'reader', 'flow'),
         ],
       ),
       templates,
@@ -133,9 +122,8 @@ describe('executeDeck', () => {
     );
 
     expect(run.status).toBe('success');
-    expect(run.steps.map((step) => step.cardId)).toEqual(['reader', 'writer']);
+    expect(run.steps.map((step) => step.cardId).sort()).toEqual(['reader', 'writer']);
     expect(runtimeHarness.calls.find((call) => call.cardId === 'reader')?.input).toBe('');
-    expect(run.blackboard?.store).toEqual({ writer: 'output:writer' });
   });
 
   it('does not auto-run blue magentic_option targets as top-level deck steps', async () => {
@@ -163,7 +151,7 @@ describe('executeDeck', () => {
     const run = await executeDeck(
       createDeckDocument(
         [graph, stepA, stepB],
-        [edge('edge_step_a_step_b', 'step_a', 'step_b', 'graph_flow')],
+        [edge('edge_step_a_step_b', 'step_a', 'step_b', 'flow')],
       ),
       templates,
       { input: 'graph input' },
@@ -173,16 +161,16 @@ describe('executeDeck', () => {
     expect(run.steps.map((step) => step.cardId)).toEqual(['graph_head']);
   });
 
-  it('runs conditional edges only when a supported blackboard expression passes', async () => {
+  it('preserves legacy condition expressions as inert metadata instead of executing them', async () => {
     const deck = createDeckDocument(
       [createAgent('entry', 'Entry'), createAgent('fresh_path', 'Fresh Path'), createAgent('stale_path', 'Stale Path')],
       [
-        edge('edge_entry_fresh', 'entry', 'fresh_path', 'graph_flow'),
+        edge('edge_entry_fresh', 'entry', 'fresh_path', 'flow'),
         edge(
           'edge_entry_stale',
           'entry',
           'stale_path',
-          'graph_flow',
+          'flow',
           {
             executionMode: 'conditional',
             conditionExpression: 'blackboard.store.stale === true',
@@ -191,19 +179,16 @@ describe('executeDeck', () => {
       ],
     );
 
-    const run = await executeDeck(deck, templates, {
-      input: 'check freshness',
-      blackboard: { store: { stale: 'true' } } as V3Blackboard,
-    });
+    const run = await executeDeck(deck, templates, { input: 'check freshness' });
 
     expect(run.status).toBe('success');
     expect(run.steps.filter((step) => step.status === 'success').map((step) => step.cardId)).toEqual([
       'entry',
       'fresh_path',
-      'stale_path',
     ]);
+    expect(run.steps.find((step) => step.cardId === 'stale_path')?.status).toBe('skipped');
     expect(run.steps.find((step) => step.cardId === 'stale_path')?.routeInfo?.notes || []).toContain(
-      'Edge "edge_entry_stale": Conditional edge ran because blackboard.store.stale === true passed.',
+      'Edge "edge_entry_stale": Conditional edge skipped because expression "blackboard.store.stale === true" is preserved-only legacy metadata in this runtime.',
     );
   });
 
@@ -211,12 +196,12 @@ describe('executeDeck', () => {
     const deck = createDeckDocument(
       [createAgent('entry', 'Entry'), createAgent('required_path', 'Required'), createAgent('conditional_path', 'Conditional')],
       [
-        edge('edge_entry_required', 'entry', 'required_path', 'graph_flow'),
+        edge('edge_entry_required', 'entry', 'required_path', 'flow'),
         edge(
           'edge_entry_conditional',
           'entry',
           'conditional_path',
-          'graph_flow',
+          'flow',
           {
             executionMode: 'conditional',
             conditionType: 'never',
@@ -246,19 +231,19 @@ describe('executeDeck', () => {
         createAgent('join', 'Join'),
       ],
       [
-        edge('edge_entry_required', 'entry', 'required_branch', 'graph_flow'),
+        edge('edge_entry_required', 'entry', 'required_branch', 'flow'),
         edge(
           'edge_entry_optional',
           'entry',
           'optional_branch',
-          'graph_flow',
+          'flow',
           { executionMode: 'optional' },
         ),
         edge(
           'edge_required_join',
           'required_branch',
           'join',
-          'graph_flow',
+          'flow',
           {
             executionMode: 'required',
             mergeIntent: 'all_inputs',
@@ -268,7 +253,7 @@ describe('executeDeck', () => {
           'edge_optional_join',
           'optional_branch',
           'join',
-          'graph_flow',
+          'flow',
           {
             executionMode: 'optional',
             mergeIntent: 'all_inputs',
@@ -286,12 +271,12 @@ describe('executeDeck', () => {
     expect(joinStep?.routeInfo?.notes || []).toContain('Merge policy all_inputs is active for this node.');
   });
 
-  it('keeps legacy graph_flow edges on their existing unconditional all-inputs behavior', async () => {
+  it('keeps legacy flow edges on their existing unconditional all-inputs behavior', async () => {
     const deck = createDeckDocument(
       [createAgent('a', 'A'), createAgent('b', 'B'), createAgent('c', 'C')],
       [
-        edge('edge_a_b', 'a', 'b', 'graph_flow'),
-        edge('edge_b_c', 'b', 'c', 'graph_flow'),
+        edge('edge_a_b', 'a', 'b', 'flow'),
+        edge('edge_b_c', 'b', 'c', 'flow'),
       ],
     );
 
@@ -302,7 +287,7 @@ describe('executeDeck', () => {
     expect(run.steps.map((step) => step.cardId)).toEqual(['a', 'b', 'c']);
     expect(stepB?.routeInfo?.mergeIntent).toBe('legacy_default');
     expect(stepB?.routeInfo?.notes || []).toContain(
-      'Merge policy used legacy graph_flow defaults because no edge metadata was present.',
+      'Merge policy used legacy flow defaults because no edge metadata was present.',
     );
   });
 
@@ -315,10 +300,10 @@ describe('executeDeck', () => {
         createAgent('join', 'Join'),
       ],
       [
-        edge('edge_entry_left', 'entry', 'left', 'graph_flow'),
-        edge('edge_entry_right', 'entry', 'right', 'graph_flow'),
-        edge('edge_left_join', 'left', 'join', 'graph_flow', { mergeIntent: 'all_inputs' }),
-        edge('edge_right_join', 'right', 'join', 'graph_flow', { mergeIntent: 'all_inputs' }),
+        edge('edge_entry_left', 'entry', 'left', 'flow'),
+        edge('edge_entry_right', 'entry', 'right', 'flow'),
+        edge('edge_left_join', 'left', 'join', 'flow', { mergeIntent: 'all_inputs' }),
+        edge('edge_right_join', 'right', 'join', 'flow', { mergeIntent: 'all_inputs' }),
       ],
     );
 
@@ -340,10 +325,10 @@ describe('executeDeck', () => {
         createAgent('join', 'Join'),
       ],
       [
-        edge('edge_entry_left', 'entry', 'left', 'graph_flow'),
-        edge('edge_entry_right', 'entry', 'right', 'graph_flow'),
-        edge('edge_left_join', 'left', 'join', 'graph_flow', { mergeIntent: 'any_input' }),
-        edge('edge_right_join', 'right', 'join', 'graph_flow', { mergeIntent: 'any_input' }),
+        edge('edge_entry_left', 'entry', 'left', 'flow'),
+        edge('edge_entry_right', 'entry', 'right', 'flow'),
+        edge('edge_left_join', 'left', 'join', 'flow', { mergeIntent: 'any_input' }),
+        edge('edge_right_join', 'right', 'join', 'flow', { mergeIntent: 'any_input' }),
       ],
     );
 
@@ -370,10 +355,10 @@ describe('executeDeck', () => {
         createAgent('join', 'Join'),
       ],
       [
-        edge('edge_entry_left', 'entry', 'left', 'graph_flow'),
-        edge('edge_entry_right', 'entry', 'right', 'graph_flow'),
-        edge('edge_left_join', 'left', 'join', 'graph_flow', { mergeIntent: 'first_success' }),
-        edge('edge_right_join', 'right', 'join', 'graph_flow', { mergeIntent: 'first_success' }),
+        edge('edge_entry_left', 'entry', 'left', 'flow'),
+        edge('edge_entry_right', 'entry', 'right', 'flow'),
+        edge('edge_left_join', 'left', 'join', 'flow', { mergeIntent: 'first_success' }),
+        edge('edge_right_join', 'right', 'join', 'flow', { mergeIntent: 'first_success' }),
       ],
     );
 
@@ -400,10 +385,10 @@ describe('executeDeck', () => {
         createAgent('synth', 'Synth'),
       ],
       [
-        edge('edge_entry_left', 'entry', 'left', 'graph_flow'),
-        edge('edge_entry_right', 'entry', 'right', 'graph_flow'),
-        edge('edge_left_synth', 'left', 'synth', 'graph_flow', { mergeIntent: 'summarize_all' }),
-        edge('edge_right_synth', 'right', 'synth', 'graph_flow', { mergeIntent: 'summarize_all' }),
+        edge('edge_entry_left', 'entry', 'left', 'flow'),
+        edge('edge_entry_right', 'entry', 'right', 'flow'),
+        edge('edge_left_synth', 'left', 'synth', 'flow', { mergeIntent: 'summarize_all' }),
+        edge('edge_right_synth', 'right', 'synth', 'flow', { mergeIntent: 'summarize_all' }),
       ],
     );
 
@@ -429,16 +414,16 @@ describe('executeDeck', () => {
         createAgent('merge', 'Merge'),
       ],
       [
-        edge('edge_entry_left', 'entry', 'left', 'graph_flow'),
+        edge('edge_entry_left', 'entry', 'left', 'flow'),
         edge(
           'edge_entry_right',
           'entry',
           'right',
-          'graph_flow',
+          'flow',
           { executionMode: 'conditional', conditionType: 'never' },
         ),
-        edge('edge_left_merge', 'left', 'merge', 'graph_flow', { mergeIntent: 'all_inputs' }),
-        edge('edge_right_merge', 'right', 'merge', 'graph_flow', { mergeIntent: 'all_inputs' }),
+        edge('edge_left_merge', 'left', 'merge', 'flow', { mergeIntent: 'all_inputs' }),
+        edge('edge_right_merge', 'right', 'merge', 'flow', { mergeIntent: 'all_inputs' }),
       ],
     );
 

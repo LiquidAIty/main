@@ -1,6 +1,5 @@
 import { randomUUID } from 'crypto';
 import { resolveEffectiveAgent, runCardWithContract } from '../cards/runtime';
-import { createEmptyV3Blackboard, mergeV3Blackboard, normalizeV3Blackboard } from '../blackboard';
 import { buildExecutionPlan } from '../decks/executionPlan';
 import { validateDeckDocument } from '../decks/validation';
 import {
@@ -15,31 +14,27 @@ import type {
   DeckEdge,
   DeckEdgeType,
   DeckRun,
+  DeckRuntimeEvent,
   DeckRunStep,
   PromptTemplate,
-  V3Blackboard,
 } from '../types';
 
 // Visible graph edges are the execution truth. Higher-level planning must compile into this runtime, not bypass it.
 export type ExecuteDeckOptions = {
   input?: string;
   promptTemplates?: PromptTemplate[];
-  blackboard?: V3Blackboard | null;
   projectId?: string;
+  onRuntimeEvent?: (event: DeckRuntimeEvent) => void;
 };
 
-function isBlackboardNode(node: AgentCardInstance | undefined | null): boolean {
-  return Boolean(node && node.kind === 'blackboard');
-}
-
 function isRunnableNode(node: AgentCardInstance | undefined | null): node is AgentCardInstance {
-  return Boolean(node && node.kind !== 'blackboard' && !String(node.parentGraphId || '').trim());
+  return Boolean(node && node.kind === 'agent' && !String(node.parentGraphId || '').trim());
 }
 
 function normalizeEdgeType(value: unknown): DeckEdgeType {
   return String(value || '').trim().toLowerCase() === 'magentic_option'
     ? 'magentic_option'
-    : 'graph_flow';
+    : 'flow';
 }
 
 function getNodeMap(document: DeckDocument): Map<string, AgentCardInstance> {
@@ -63,7 +58,7 @@ function getRunnableNodes(document: DeckDocument): AgentCardInstance[] {
 function getAgentEdges(document: DeckDocument): DeckEdge[] {
   const nodeMap = getNodeMap(document);
   return getExistingEdges(document).filter((edge) => {
-    if (normalizeEdgeType(edge.edgeType) !== 'graph_flow') return false;
+    if (normalizeEdgeType(edge.edgeType) !== 'flow') return false;
     const source = nodeMap.get(edge.source);
     const target = nodeMap.get(edge.target);
     return isRunnableNode(source) && isRunnableNode(target);
@@ -76,9 +71,9 @@ function buildRunSnapshot(
   input: string,
   startedAt: string,
   steps: DeckRunStep[],
+  events: DeckRuntimeEvent[],
   validation: ReturnType<typeof validateDeckDocument>,
   executionPlan: ReturnType<typeof buildExecutionPlan>,
-  blackboard: V3Blackboard,
   status: DeckRun['status'],
   extra?: Pick<DeckRun, 'endedAt' | 'error'>,
 ): DeckRun {
@@ -91,7 +86,7 @@ function buildRunSnapshot(
     input,
     error: extra?.error,
     steps,
-    blackboard,
+    events,
     validationSummary: {
       ok: validation.ok,
       errors: validation.errors.map((issue) => issue.message),
@@ -105,15 +100,6 @@ function buildRunSnapshot(
   };
 }
 
-function buildBlackboardInput(blackboard: V3Blackboard): string {
-  const storeEntries = Object.entries(blackboard.store || {}).filter(([, value]) =>
-    Boolean(String(value || '').trim()),
-  );
-
-  if (storeEntries.length === 0) return '';
-  return storeEntries.map(([key, value]) => `${key}:\n${value}`).join('\n\n').trim();
-}
-
 function buildNodeInput(
   document: DeckDocument,
   event: {
@@ -122,85 +108,13 @@ function buildNodeInput(
     routeInfo: GraphExecutionRouteInfo;
   },
   baseInput: string,
-  blackboard: V3Blackboard,
 ): string {
-  const nodeMap = getNodeMap(document);
-  const inboundEdges = getExistingEdges(document)
-    .filter((edge) => edge.target === event.card.id && normalizeEdgeType(edge.edgeType) === 'graph_flow');
-  const hasBlackboardInput = inboundEdges.some((edge) => isBlackboardNode(nodeMap.get(edge.source)));
-
   return buildGraphExecutionInputText({
     card: event.card,
     routeInfo: event.routeInfo,
     isStart: event.isStart,
     baseInput,
-    blackboardInput: hasBlackboardInput ? buildBlackboardInput(blackboard) : '',
   });
-}
-
-function writeCardOutputToBlackboard(
-  document: DeckDocument,
-  card: AgentCardInstance,
-  output: string,
-  explicitWrite: V3Blackboard | null | undefined,
-  blackboard: V3Blackboard,
-): { blackboard: V3Blackboard; blackboardWrite: V3Blackboard | null } {
-  const trimmedOutput = String(output || '').trim();
-  const explicitBlackboard = normalizeV3Blackboard(explicitWrite);
-  const hasExplicitWrite = Boolean(
-    explicitBlackboard.current_goal ||
-      explicitBlackboard.next_move ||
-      explicitBlackboard.what_matters_now.length ||
-      explicitBlackboard.open_questions.length ||
-      explicitBlackboard.findings.length ||
-      explicitBlackboard.suggestions.length ||
-      explicitBlackboard.next_options.length ||
-      Object.keys(explicitBlackboard.store || {}).length,
-  );
-
-  if (!trimmedOutput && !hasExplicitWrite) {
-    return { blackboard, blackboardWrite: null };
-  }
-
-  const nodeMap = getNodeMap(document);
-  const outgoingToBlackboard = getExistingEdges(document).filter((edge) => {
-    if (edge.source !== card.id) return false;
-    return isBlackboardNode(nodeMap.get(edge.target));
-  });
-
-  if (outgoingToBlackboard.length === 0) {
-    return { blackboard, blackboardWrite: null };
-  }
-
-  let nextBlackboard = normalizeV3Blackboard(blackboard);
-  if (hasExplicitWrite) {
-    nextBlackboard = mergeV3Blackboard(nextBlackboard, explicitBlackboard);
-  }
-  let blackboardWrite = hasExplicitWrite ? normalizeV3Blackboard(explicitBlackboard) : createEmptyV3Blackboard();
-
-  if (trimmedOutput) {
-    const storeWrite: Record<string, string> = {
-      [card.id]: trimmedOutput,
-    };
-    nextBlackboard.store = {
-      ...(nextBlackboard.store || {}),
-      ...storeWrite,
-    };
-    nextBlackboard.updated_at = new Date().toISOString();
-    blackboardWrite = normalizeV3Blackboard({
-      ...blackboardWrite,
-      store: {
-        ...(blackboardWrite.store || {}),
-        ...storeWrite,
-      },
-      updated_at: nextBlackboard.updated_at,
-    });
-  }
-
-  return {
-    blackboard: nextBlackboard,
-    blackboardWrite,
-  };
 }
 
 export async function executeDeck(
@@ -214,18 +128,38 @@ export async function executeDeck(
   const validation = validateDeckDocument(document, { enforceStartCard: true });
   const executionPlan = buildExecutionPlan(document);
   const steps: DeckRunStep[] = [];
-  let currentBlackboard = normalizeV3Blackboard(options.blackboard || createEmptyV3Blackboard());
+  const events: DeckRuntimeEvent[] = [];
+  const emitRuntimeEvent = (event: Omit<DeckRuntimeEvent, 'id' | 'at'>) => {
+    const nextEvent: DeckRuntimeEvent = {
+      id: `evt_${randomUUID().slice(0, 8)}`,
+      at: new Date().toISOString(),
+      ...event,
+    };
+    events.push(nextEvent);
+    options.onRuntimeEvent?.(nextEvent);
+  };
+
+  emitRuntimeEvent({
+    kind: 'run_started',
+    text: `Deck ${document.name} started.`,
+    status: 'running',
+  });
 
   if (!validation.ok) {
+    emitRuntimeEvent({
+      kind: 'run_completed',
+      text: 'Deck run failed validation.',
+      status: 'error',
+    });
     return buildRunSnapshot(
       runId,
       document,
       input,
       startedAt,
       steps,
+      events,
       validation,
       executionPlan,
-      currentBlackboard,
       'error',
       {
         endedAt: new Date().toISOString(),
@@ -245,15 +179,20 @@ export async function executeDeck(
   });
 
   if (runnableNodes.length > 0 && queueStartIds.length === 0) {
+    emitRuntimeEvent({
+      kind: 'run_completed',
+      text: 'Deck run failed because no runnable start node was found.',
+      status: 'error',
+    });
     return buildRunSnapshot(
       runId,
       document,
       input,
       startedAt,
       steps,
+      events,
       validation,
       executionPlan,
-      currentBlackboard,
       'error',
       {
         endedAt: new Date().toISOString(),
@@ -276,13 +215,24 @@ export async function executeDeck(
           tools: [],
         };
 
+      emitRuntimeEvent({
+        kind: 'step_skipped',
+        cardId: event.card.id,
+        cardTitle: event.card.title,
+        runtimeType: event.card.runtimeType ?? 'assistant_agent',
+        edgeIds: (event.routeInfo.inputSources || []).map((source) => source.edgeId),
+        notes: [...(event.routeInfo.notes || [])],
+        text: event.reason,
+        status: 'skipped',
+      });
+
       steps.push({
         id: `step_${steps.length + 1}`,
         executionId: `${event.card.id}::skipped`,
         cardId: event.card.id,
         templateId: event.card.templateId,
         title: event.card.title,
-        input: buildNodeInput(document, event, input, currentBlackboard),
+        input: buildNodeInput(document, event, input),
         runtimeBinding: event.card.runtimeBinding ?? null,
         runtimeType: event.card.runtimeType ?? 'assistant_agent',
         effectiveAgent: skippedEffectiveAgent,
@@ -293,8 +243,6 @@ export async function executeDeck(
         endedAt: new Date().toISOString(),
         inputSummary: event.reason,
         outputSummary: event.reason,
-        blackboardWrite: null,
-        blackboard: currentBlackboard,
         routeInfo: event.routeInfo,
       });
       continue;
@@ -305,15 +253,20 @@ export async function executeDeck(
 
     const effectiveAgent = resolveEffectiveAgent(card, templates);
     if (!effectiveAgent) {
+      emitRuntimeEvent({
+        kind: 'run_completed',
+        text: `Deck run failed because template ${card.templateId} could not be resolved.`,
+        status: 'error',
+      });
       return buildRunSnapshot(
         runId,
         document,
         input,
         startedAt,
         steps,
+        events,
         validation,
         executionPlan,
-        currentBlackboard,
         'error',
         {
           endedAt: new Date().toISOString(),
@@ -322,7 +275,18 @@ export async function executeDeck(
       );
     }
 
-    const nodeInput = buildNodeInput(document, event, input, currentBlackboard);
+    const nodeInput = buildNodeInput(document, event, input);
+    const activeEdgeIds = (event.routeInfo.inputSources || []).map((source) => source.edgeId);
+    emitRuntimeEvent({
+      kind: 'step_started',
+      cardId: card.id,
+      cardTitle: card.title,
+      runtimeType: card.runtimeType ?? 'assistant_agent',
+      edgeIds: activeEdgeIds,
+      notes: [...(event.routeInfo.notes || [])],
+      text: `${card.title} started.`,
+      status: 'running',
+    });
     const cloneSeeds =
       card.cloneConfig?.enabled && Array.isArray(card.cloneConfig.seeds)
         ? card.cloneConfig.seeds.filter(Boolean)
@@ -337,26 +301,14 @@ export async function executeDeck(
         previousOutput: '',
         promptTemplates: options.promptTemplates,
         seed,
-        blackboard: currentBlackboard,
         projectId: options.projectId,
         deckId: document.id,
         deckName: document.name,
         allCards: document.nodes,
         allEdges: document.edges,
         allTemplates: templates,
+        onRuntimeEvent: emitRuntimeEvent,
       });
-
-      const blackboardUpdate =
-        result.status === 'success' && (result.output || result.blackboardWrite)
-          ? writeCardOutputToBlackboard(
-              document,
-              card,
-              result.output || '',
-              result.blackboardWrite,
-              currentBlackboard,
-            )
-          : { blackboard: currentBlackboard, blackboardWrite: null };
-      currentBlackboard = normalizeV3Blackboard(blackboardUpdate.blackboard);
 
       const step: DeckRunStep = {
         id: `step_${steps.length + 1}`,
@@ -383,23 +335,40 @@ export async function executeDeck(
         improvementPromptBit: result.improvementPromptBit,
         inputSummary: result.inputSummary,
         outputSummary: result.outputSummary,
-        blackboardWrite: blackboardUpdate.blackboardWrite,
-        blackboard: currentBlackboard,
         routeInfo: event.routeInfo,
       };
 
       steps.push(step);
 
+      emitRuntimeEvent({
+        kind: 'step_completed',
+        cardId: card.id,
+        cardTitle: card.title,
+        runtimeType: result.runtimeType ?? card.runtimeType ?? 'assistant_agent',
+        edgeIds: activeEdgeIds,
+        text:
+          step.status === 'error'
+            ? step.error || `${card.title} failed.`
+            : `${card.title} completed.`,
+        outputSummary: step.outputSummary || null,
+        status: step.status,
+      });
+
       if (step.status === 'error') {
+        emitRuntimeEvent({
+          kind: 'run_completed',
+          text: step.error || `Deck run failed because ${card.title} failed.`,
+          status: 'error',
+        });
         return buildRunSnapshot(
           runId,
           document,
           input,
           startedAt,
           steps,
+          events,
           validation,
           executionPlan,
-          currentBlackboard,
           'error',
           {
             endedAt: new Date().toISOString(),
@@ -413,21 +382,26 @@ export async function executeDeck(
       }
     }
 
-    scheduler.markSuccess(card.id, variantOutputs.join('\n\n').trim(), currentBlackboard);
+    scheduler.markSuccess(card.id, variantOutputs.join('\n\n').trim());
     successfulCardIds.add(card.id);
   }
 
   const unresolvedNodeIds = scheduler.getUnresolvedNodeIds();
   if (unresolvedNodeIds.length > 0) {
+    emitRuntimeEvent({
+      kind: 'run_completed',
+      text: `Deck run stalled before all runnable nodes completed: ${unresolvedNodeIds.join(', ')}`,
+      status: 'error',
+    });
     return buildRunSnapshot(
       runId,
       document,
       input,
       startedAt,
       steps,
+      events,
       validation,
       executionPlan,
-      currentBlackboard,
       'error',
       {
         endedAt: new Date().toISOString(),
@@ -436,15 +410,20 @@ export async function executeDeck(
     );
   }
 
+  emitRuntimeEvent({
+    kind: 'run_completed',
+    text: `Deck ${document.name} completed.`,
+    status: 'success',
+  });
   return buildRunSnapshot(
     runId,
     document,
     input,
     startedAt,
     steps,
+    events,
     validation,
     executionPlan,
-    currentBlackboard,
     'success',
     {
       endedAt: new Date().toISOString(),

@@ -1,7 +1,7 @@
 import { REPO_DEFAULT_MODEL_KEY, resolveModel, type Provider } from '../../llm/models.config';
 import { runLLM } from '../../llm/client';
 import { getTool, type Tool } from '../../agents/registry';
-import { mergeV3Blackboard, normalizeV3Blackboard, resolveRuntimeBinding } from '../blackboard';
+import { resolveRuntimeBinding } from '../runtimeBinding';
 import {
   buildGraphExecutionInputText,
   createGraphExecutionScheduler,
@@ -13,9 +13,9 @@ import type {
   CardRunResult,
   DeckEdge,
   DeckEdgeType,
+  DeckRuntimeEvent,
   PromptTemplate,
   RuntimeBinding,
-  V3Blackboard,
 } from '../types';
 
 export type CardRuntimeContext = {
@@ -23,7 +23,6 @@ export type CardRuntimeContext = {
   previousOutput?: string;
   promptTemplates?: PromptTemplate[];
   seed?: string;
-  blackboard?: V3Blackboard | null;
   projectId?: string;
   deckId?: string;
   deckName?: string;
@@ -31,6 +30,7 @@ export type CardRuntimeContext = {
   allEdges?: DeckEdge[];
   allTemplates?: AgentTemplate[];
   allowVisibleAssistWorkflowExpansion?: boolean;
+  onRuntimeEvent?: (event: DeckRuntimeEvent) => void;
 };
 
 type ResolvedModelConfig = {
@@ -73,10 +73,44 @@ function summarizeText(value: string | null | undefined, maxLength = 220): strin
   return text.length <= maxLength ? text : `${text.slice(0, maxLength - 3)}...`;
 }
 
+function emitRuntimeEvent(
+  context: Pick<CardRuntimeContext, 'onRuntimeEvent'>,
+  event: Omit<DeckRuntimeEvent, 'id' | 'at'>,
+): void {
+  context.onRuntimeEvent?.({
+    id: `evt_${Math.random().toString(36).slice(2, 10)}`,
+    at: new Date().toISOString(),
+    ...event,
+  });
+}
+
+function emitRuntimeMessage(
+  context: Pick<CardRuntimeContext, 'onRuntimeEvent'>,
+  event: {
+    cardId: string;
+    cardTitle?: string | null;
+    runtimeType?: AgentCardRuntimeType | null;
+    role: 'assistant' | 'tool' | 'user';
+    content: string | null | undefined;
+  },
+): void {
+  const content = String(event.content || '').trim();
+  if (!content) return;
+  emitRuntimeEvent(context, {
+    kind: 'message',
+    type: 'message',
+    cardId: event.cardId,
+    cardTitle: event.cardTitle || null,
+    runtimeType: event.runtimeType || null,
+    role: event.role,
+    content,
+  });
+}
+
 function normalizeEdgeType(value: unknown): DeckEdgeType {
   return String(value || '').trim().toLowerCase() === 'magentic_option'
     ? 'magentic_option'
-    : 'graph_flow';
+    : 'flow';
 }
 
 function extractJsonObject(text: string): Record<string, unknown> | null {
@@ -426,7 +460,7 @@ function resolveVisibleAssistWorkflowSteps(
     orderedIds.push(currentCard.id);
 
     (context.allEdges || []).forEach((edge) => {
-      if (normalizeEdgeType(edge.edgeType) !== 'graph_flow' || edge.source !== currentCard.id) return;
+      if (normalizeEdgeType(edge.edgeType) !== 'flow' || edge.source !== currentCard.id) return;
       const nextCard = nodeMap.get(edge.target);
       if (!isTopLevelAssistCard(nextCard)) return;
       queue.push(nextCard.id);
@@ -460,7 +494,7 @@ function resolveGraphFlowEdges(
 ): DeckEdge[] {
   return (context.allEdges || []).filter(
     (edge) =>
-      normalizeEdgeType(edge.edgeType) === 'graph_flow' &&
+      normalizeEdgeType(edge.edgeType) === 'flow' &&
       stepIds.has(edge.source) &&
       stepIds.has(edge.target) &&
       edge.source !== card.id &&
@@ -474,7 +508,7 @@ function resolveVisibleAssistFlowEdges(
 ): DeckEdge[] {
   return (context.allEdges || []).filter(
     (edge) =>
-      normalizeEdgeType(edge.edgeType) === 'graph_flow' &&
+      normalizeEdgeType(edge.edgeType) === 'flow' &&
       stepIds.has(edge.source) &&
       stepIds.has(edge.target),
   );
@@ -542,15 +576,12 @@ async function runCompositeWorkflow(
     consolidationScopeId: string;
   },
 ): Promise<CardRunResult> {
-  const currentBlackboard = normalizeV3Blackboard(context.blackboard);
   const scheduler = createGraphExecutionScheduler({
     nodes: options.steps.map((step) => step.card),
     edges: options.edges,
   });
   const stepMap = new Map(options.steps.map((step) => [step.card.id, step] as const));
   const outputsByCardId = new Map<string, string>();
-  let compositeBlackboard = currentBlackboard;
-  let compositeBlackboardWrite = normalizeV3Blackboard(null);
   let executedStepCount = 0;
 
   while (true) {
@@ -569,14 +600,35 @@ async function runCompositeWorkflow(
       isStart: event.isStart,
       baseInput: runtimeInput,
     });
+    emitRuntimeEvent(context, {
+      kind: 'step_started',
+      cardId: step.card.id,
+      cardTitle: step.card.title,
+      runtimeType: step.card.runtimeType ?? 'assistant_agent',
+      edgeIds: (event.routeInfo.inputSources || []).map((source) => source.edgeId),
+      notes: [...(event.routeInfo.notes || [])],
+      text: `${step.card.title} started.`,
+      status: 'running',
+    });
     const stepResult = await runCardWithContract(step.card, step.effectiveAgent, stepInput, {
       ...context,
       userInput: stepInput,
       previousOutput: '',
-      blackboard: compositeBlackboard,
       allowVisibleAssistWorkflowExpansion: false,
     });
     if (stepResult.status !== 'success' || !stepResult.output) {
+      emitRuntimeEvent(context, {
+        kind: 'step_completed',
+        cardId: step.card.id,
+        cardTitle: step.card.title,
+        runtimeType: step.card.runtimeType ?? 'assistant_agent',
+        edgeIds: (event.routeInfo.inputSources || []).map((source) => source.edgeId),
+        text:
+          stepResult.error ||
+          `${step.card.title} failed.`,
+        outputSummary: stepResult.outputSummary || null,
+        status: stepResult.status,
+      });
       throw new Error(
         stepResult.error ||
           `${options.stepFailurePrefix}: cardId=${scopeCard.id} stepCardId=${step.card.id}`,
@@ -585,11 +637,17 @@ async function runCompositeWorkflow(
 
     executedStepCount += 1;
     outputsByCardId.set(step.card.id, stepResult.output);
-    if (stepResult.blackboardWrite) {
-      compositeBlackboard = mergeV3Blackboard(compositeBlackboard, stepResult.blackboardWrite);
-      compositeBlackboardWrite = mergeV3Blackboard(compositeBlackboardWrite, stepResult.blackboardWrite);
-    }
-    scheduler.markSuccess(step.card.id, stepResult.output, compositeBlackboard);
+    emitRuntimeEvent(context, {
+      kind: 'step_completed',
+      cardId: step.card.id,
+      cardTitle: step.card.title,
+      runtimeType: stepResult.runtimeType ?? step.card.runtimeType ?? 'assistant_agent',
+      edgeIds: (event.routeInfo.inputSources || []).map((source) => source.edgeId),
+      text: `${step.card.title} completed.`,
+      outputSummary: stepResult.outputSummary || null,
+      status: stepResult.status,
+    });
+    scheduler.markSuccess(step.card.id, stepResult.output);
   }
 
   const unresolvedStepIds = scheduler.getUnresolvedNodeIds();
@@ -622,6 +680,14 @@ async function runCompositeWorkflow(
       )
     : terminalOutputs[0];
 
+  emitRuntimeMessage(context, {
+    cardId: scopeCard.id,
+    cardTitle: scopeCard.title,
+    runtimeType: options.runtimeType,
+    role: 'assistant',
+    content: finalText,
+  });
+
   return {
     output: finalText,
     status: 'success',
@@ -632,18 +698,6 @@ async function runCompositeWorkflow(
     seed: context.seed,
     inputSummary: summarizeText(runtimeInput),
     outputSummary: summarizeText(finalText),
-    blackboardWrite:
-      Object.keys(compositeBlackboardWrite.store || {}).length ||
-      compositeBlackboardWrite.current_goal ||
-      compositeBlackboardWrite.next_move ||
-      compositeBlackboardWrite.what_matters_now.length ||
-      compositeBlackboardWrite.open_questions.length ||
-      compositeBlackboardWrite.findings.length ||
-      compositeBlackboardWrite.suggestions.length ||
-      compositeBlackboardWrite.next_options.length
-        ? compositeBlackboardWrite
-        : null,
-    blackboard: compositeBlackboard,
   };
 }
 
@@ -681,7 +735,6 @@ function buildPromptDrivenToolParams(
   card: AgentCardInstance,
   tool: ResolvedAssistTool,
   runtimeInput: string,
-  currentBlackboard: V3Blackboard,
   context: Pick<CardRuntimeContext, 'projectId' | 'deckId'>,
 ): Record<string, unknown> {
   return {
@@ -694,7 +747,6 @@ function buildPromptDrivenToolParams(
     cardId: card.id,
     projectId: context.projectId || null,
     deckId: context.deckId || null,
-    blackboard: currentBlackboard,
   };
 }
 
@@ -767,11 +819,11 @@ async function runToolEnabledAssistantText(
   card: AgentCardInstance,
   effectiveAgent: AgentTemplate,
   runtimeInput: string,
-  currentBlackboard: V3Blackboard,
-  context: Pick<CardRuntimeContext, 'projectId' | 'deckId'>,
+  context: Pick<CardRuntimeContext, 'projectId' | 'deckId' | 'onRuntimeEvent'>,
   systemPrompt: string,
   modelConfig: ResolvedModelConfig,
   allowStructuredOutput: boolean,
+  emitToolMessages = true,
 ): Promise<string> {
   const resolvedTools = resolveConfiguredAssistTools(card, effectiveAgent);
   if (resolvedTools.length === 0) {
@@ -783,7 +835,7 @@ async function runToolEnabledAssistantText(
     let toolResult: unknown;
     try {
       toolResult = await resolvedTool.tool.run(
-        buildPromptDrivenToolParams(card, resolvedTool, runtimeInput, currentBlackboard, context),
+        buildPromptDrivenToolParams(card, resolvedTool, runtimeInput, context),
       );
     } catch (error: any) {
       throw new Error(
@@ -805,6 +857,15 @@ async function runToolEnabledAssistantText(
       throw new Error(
         `assistant_tool_empty_result: cardId=${card.id} tool=${resolvedTool.configuredName}`,
       );
+    }
+    if (emitToolMessages) {
+      emitRuntimeMessage(context, {
+        cardId: card.id,
+        cardTitle: card.title,
+        runtimeType: 'assistant_agent',
+        role: 'tool',
+        content: toolText,
+      });
     }
     toolOutputs.push(`Tool ${resolvedTool.toolId}:\n${toolText}`);
   }
@@ -842,9 +903,8 @@ async function runAssistantSingleCard(
   card: AgentCardInstance,
   effectiveAgent: AgentTemplate,
   runtimeInput: string,
-  currentBlackboard: V3Blackboard,
   runtimeBinding: RuntimeBinding | null,
-  context: Pick<CardRuntimeContext, 'projectId' | 'deckId'>,
+  context: Pick<CardRuntimeContext, 'projectId' | 'deckId' | 'onRuntimeEvent'>,
   startedAt: string,
 ): Promise<CardRunResult> {
   const tools = getConfiguredTools(effectiveAgent);
@@ -856,7 +916,6 @@ async function runAssistantSingleCard(
           card,
           effectiveAgent,
           runtimeInput,
-          currentBlackboard,
           context,
           prompt,
           modelConfig,
@@ -871,6 +930,14 @@ async function runAssistantSingleCard(
           true,
         );
 
+  emitRuntimeMessage(context, {
+    cardId: card.id,
+    cardTitle: card.title,
+    runtimeType: 'assistant_agent',
+    role: 'assistant',
+    content: finalText,
+  });
+
   return {
     output: finalText,
     status: 'success',
@@ -881,8 +948,6 @@ async function runAssistantSingleCard(
     seed: undefined,
     inputSummary: summarizeText(runtimeInput),
     outputSummary: summarizeText(finalText),
-    blackboardWrite: null,
-    blackboard: currentBlackboard,
   };
 }
 
@@ -890,9 +955,8 @@ async function runAssistantSwarmCard(
   card: AgentCardInstance,
   effectiveAgent: AgentTemplate,
   runtimeInput: string,
-  currentBlackboard: V3Blackboard,
   runtimeBinding: RuntimeBinding | null,
-  context: Pick<CardRuntimeContext, 'projectId' | 'deckId'>,
+  context: Pick<CardRuntimeContext, 'projectId' | 'deckId' | 'onRuntimeEvent'>,
   startedAt: string,
 ): Promise<CardRunResult> {
   const tools = getConfiguredTools(effectiveAgent);
@@ -917,10 +981,10 @@ async function runAssistantSwarmCard(
           card,
           effectiveAgent,
           runtimeInput,
-          currentBlackboard,
           context,
           workerSystem,
           modelConfig,
+          false,
           false,
         )
       : await runAssistantModelText(
@@ -932,6 +996,16 @@ async function runAssistantSwarmCard(
           false,
         );
     if (workerText) workerOutputs.push(workerText);
+    emitRuntimeEvent(context, {
+      kind: 'swarm_progress',
+      cardId: card.id,
+      cardTitle: card.title,
+      runtimeType: 'assistant_agent',
+      text: `${card.title} swarm worker ${index + 1} of ${workerCount} completed.`,
+      completedWorkers: index + 1,
+      totalWorkers: workerCount,
+      status: 'running',
+    });
   }
 
   if (workerOutputs.length === 0) {
@@ -946,6 +1020,14 @@ async function runAssistantSwarmCard(
     workerOutputs,
   );
 
+  emitRuntimeMessage(context, {
+    cardId: card.id,
+    cardTitle: card.title,
+    runtimeType: 'assistant_agent',
+    role: 'assistant',
+    content: finalText,
+  });
+
   return {
     output: finalText,
     status: 'success',
@@ -956,8 +1038,6 @@ async function runAssistantSwarmCard(
     seed: undefined,
     inputSummary: summarizeText(runtimeInput),
     outputSummary: summarizeText(finalText),
-    blackboardWrite: null,
-    blackboard: currentBlackboard,
   };
 }
 
@@ -965,8 +1045,7 @@ async function runAssistantLeafCard(
   card: AgentCardInstance,
   effectiveAgent: AgentTemplate,
   runtimeInput: string,
-  currentBlackboard: V3Blackboard,
-  context: Pick<CardRuntimeContext, 'projectId' | 'deckId'>,
+  context: Pick<CardRuntimeContext, 'projectId' | 'deckId' | 'onRuntimeEvent'>,
   runtimeBinding: RuntimeBinding | null,
   startedAt: string,
 ): Promise<CardRunResult> {
@@ -975,7 +1054,6 @@ async function runAssistantLeafCard(
         card,
         effectiveAgent,
         runtimeInput,
-        currentBlackboard,
         runtimeBinding,
         context,
         startedAt,
@@ -984,7 +1062,6 @@ async function runAssistantLeafCard(
         card,
         effectiveAgent,
         runtimeInput,
-        currentBlackboard,
         runtimeBinding,
         context,
         startedAt,
@@ -999,14 +1076,12 @@ async function runAssistantWorkflowCard(
   runtimeBinding: RuntimeBinding | null,
   startedAt: string,
 ): Promise<CardRunResult> {
-  const currentBlackboard = normalizeV3Blackboard(context.blackboard);
   const workflowSteps = resolveVisibleAssistWorkflowSteps(card, context);
   if (workflowSteps.length <= 1) {
     return runAssistantLeafCard(
       card,
       effectiveAgent,
       runtimeInput,
-      currentBlackboard,
       context,
       runtimeBinding,
       startedAt,
@@ -1030,7 +1105,6 @@ async function runAssistantAgentCard(
   card: AgentCardInstance,
   effectiveAgent: AgentTemplate,
   runtimeInput: string,
-  currentBlackboard: V3Blackboard,
   context: CardRuntimeContext,
   runtimeBinding: RuntimeBinding | null,
   startedAt: string,
@@ -1040,10 +1114,7 @@ async function runAssistantAgentCard(
       card,
       effectiveAgent,
       runtimeInput,
-      {
-        ...context,
-        blackboard: currentBlackboard,
-      },
+      context,
       runtimeBinding,
       startedAt,
     );
@@ -1053,7 +1124,6 @@ async function runAssistantAgentCard(
     card,
     effectiveAgent,
     runtimeInput,
-    currentBlackboard,
     context,
     runtimeBinding,
     startedAt,
@@ -1093,7 +1163,6 @@ async function runMagenticCard(
   runtimeBinding: RuntimeBinding | null,
   startedAt: string,
 ): Promise<CardRunResult> {
-  const currentBlackboard = normalizeV3Blackboard(context.blackboard);
   const callableHeads = resolveCallableHeadCards(card, context);
   if (callableHeads.length === 0) {
     throw new Error(`magentic_callable_heads_required: cardId=${card.id}`);
@@ -1107,14 +1176,16 @@ async function runMagenticCard(
     properties: {
       selectedCardId: { type: ['string', 'null'] },
       directResponseText: { type: ['string', 'null'] },
+      progressText: { type: ['string', 'null'] },
     },
   };
   const chooserSystem = [
     prompt,
     'You are the top-level orchestrator for this deck run.',
     'Choose exactly one callable head card to run next, or answer directly if no head should be called.',
-    'Return JSON only with keys selectedCardId and directResponseText.',
-    'Set exactly one of those keys to a non-empty value.',
+    'Optionally include progressText with one short plain-language status update for the plan stream.',
+    'Return JSON only with keys selectedCardId, directResponseText, and progressText.',
+    'Set exactly one of selectedCardId or directResponseText to a non-empty value.',
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -1145,8 +1216,32 @@ async function runMagenticCard(
   const parsed = extractJsonObject(chooserResult.text || '');
   const directResponseText = String(parsed?.directResponseText || '').trim();
   const selectedCardId = String(parsed?.selectedCardId || '').trim();
+  const progressText = String(parsed?.progressText || '').trim();
 
   if (directResponseText) {
+    emitRuntimeEvent(context, {
+      kind: 'magentic_assignment',
+      cardId: card.id,
+      cardTitle: card.title,
+      runtimeType: 'magentic_one',
+      text: `${card.title} answered directly without delegating to another visible card.`,
+      progressText: progressText || null,
+      status: 'success',
+    });
+    emitRuntimeMessage(context, {
+      cardId: card.id,
+      cardTitle: card.title,
+      runtimeType: 'magentic_one',
+      role: 'assistant',
+      content: progressText,
+    });
+    emitRuntimeMessage(context, {
+      cardId: card.id,
+      cardTitle: card.title,
+      runtimeType: 'magentic_one',
+      role: 'assistant',
+      content: directResponseText,
+    });
     return {
       output: directResponseText,
       status: 'success',
@@ -1157,8 +1252,6 @@ async function runMagenticCard(
       seed: context.seed,
       inputSummary: summarizeText(runtimeInput),
       outputSummary: summarizeText(directResponseText),
-      blackboardWrite: null,
-      blackboard: currentBlackboard,
     };
   }
 
@@ -1173,11 +1266,34 @@ async function runMagenticCard(
       `magentic_head_template_missing: cardId=${card.id} selectedCardId=${selectedHead.id} templateId=${selectedHead.templateId}`,
     );
   }
+  const selectedHeadEdgeId =
+    (context.allEdges || []).find(
+      (edge) =>
+        edge.source === card.id &&
+        edge.target === selectedHead.id &&
+        normalizeEdgeType(edge.edgeType) === 'magentic_option',
+    )?.id || null;
+  emitRuntimeEvent(context, {
+    kind: 'magentic_assignment',
+    cardId: card.id,
+    cardTitle: card.title,
+    runtimeType: 'magentic_one',
+    edgeIds: selectedHeadEdgeId ? [selectedHeadEdgeId] : [],
+    text: `${card.title} assigned work to ${selectedHead.title}.`,
+    progressText: progressText || null,
+    status: 'running',
+  });
+  emitRuntimeMessage(context, {
+    cardId: card.id,
+    cardTitle: card.title,
+    runtimeType: 'magentic_one',
+    role: 'assistant',
+    content: progressText,
+  });
   const selectedResult = await runCardWithContract(selectedHead, selectedEffectiveAgent, runtimeInput, {
     ...context,
     userInput: runtimeInput,
     previousOutput: '',
-    blackboard: currentBlackboard,
     allowVisibleAssistWorkflowExpansion: resolveCardRuntimeType(selectedHead) === 'assistant_agent',
   });
   if (selectedResult.status !== 'success') {
@@ -1197,8 +1313,6 @@ async function runMagenticCard(
     seed: context.seed,
     inputSummary: summarizeText(runtimeInput),
     outputSummary: summarizeText(selectedResult.output),
-    blackboardWrite: selectedResult.blackboardWrite,
-    blackboard: selectedResult.blackboard ?? currentBlackboard,
   };
 }
 
@@ -1210,7 +1324,6 @@ export async function runCardWithContract(
 ): Promise<CardRunResult> {
   const startedAt = new Date().toISOString();
   const runtimeBinding: RuntimeBinding | null = resolveRuntimeBinding(card.runtimeBinding, card.id);
-  const currentBlackboard = normalizeV3Blackboard(context.blackboard);
   const runtimeInput = buildRuntimeInput(input, context);
   const runtimeType = resolveCardRuntimeType(card);
 
@@ -1221,7 +1334,6 @@ export async function runCardWithContract(
           card,
           effectiveAgent,
           runtimeInput,
-          currentBlackboard,
           context,
           runtimeBinding,
           startedAt,
@@ -1244,11 +1356,6 @@ export async function runCardWithContract(
           runtimeBinding,
           startedAt,
         );
-      case 'selector':
-      case 'round_robin':
-      case 'swarm':
-      case 'adapter':
-        throw new Error(`team_runtime_not_supported: runtimeType=${runtimeType} cardId=${card.id}`);
       default:
         throw new Error(`team_runtime_not_supported: runtimeType=${runtimeType} cardId=${card.id}`);
     }
@@ -1264,8 +1371,6 @@ export async function runCardWithContract(
       seed: context.seed,
       inputSummary: summarizeText(runtimeInput),
       outputSummary: summarizeText(String(err?.message || err || 'card_run_failed')),
-      blackboardWrite: null,
-      blackboard: currentBlackboard,
     };
   }
 }

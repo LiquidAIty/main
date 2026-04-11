@@ -98,6 +98,11 @@ export function getDeckQuickAddActions(anchorCard: AgentCardInstance | null): De
         label: "Add Assist",
         description: "Create a top-level Assist worker or entry point.",
       },
+      {
+        presetKey: "graph",
+        label: "Add Workflow",
+        description: "Create a compatibility workflow card.",
+      },
     ];
   }
 
@@ -117,7 +122,7 @@ export function getDeckQuickAddActions(anchorCard: AgentCardInstance | null): De
       {
         presetKey: "assist",
         label: "Add First Assist",
-        description: "Create the first Assist inside this compatibility workflow.",
+        description: "Create the first Assist inside this workflow card.",
       },
     ];
   }
@@ -127,7 +132,7 @@ export function getDeckQuickAddActions(anchorCard: AgentCardInstance | null): De
       {
         presetKey: "assist",
         label: "Add Next Assist",
-        description: "Create the next Assist in this compatibility workflow and connect it with an orange execution edge.",
+        description: "Create the next Assist in this workflow and connect it with a flow edge.",
       },
     ];
   }
@@ -137,7 +142,7 @@ export function getDeckQuickAddActions(anchorCard: AgentCardInstance | null): De
       {
         presetKey: "assist",
         label: "Add Next Assist",
-        description: "Create another top-level Assist and connect it with an orange execution edge.",
+        description: "Create another top-level Assist and connect it with a flow edge.",
       },
     ];
   }
@@ -165,7 +170,7 @@ export function getAssistStarterRecipe(
 
 export function getDeckQuickAddHelperText(anchorCard: AgentCardInstance | null): string {
   if (!anchorCard) {
-    return "Create top-level Magentic and Assist cards here. The graph lives in the visible connections: orange edges carry execution flow and can branch or recombine naturally.";
+    return "Create top-level Magentic, Assist, and workflow cards here. The graph lives in the visible connections: flow edges carry execution and can branch or recombine naturally.";
   }
 
   const runtimeType = safeText(anchorCard.runtimeType).trim();
@@ -178,11 +183,11 @@ export function getDeckQuickAddHelperText(anchorCard: AgentCardInstance | null):
   }
 
   if (isGraphOwnedCard(anchorCard)) {
-    return "This Assist already belongs to a legacy compatibility workflow. Adding another Assist here preserves that older path without teaching it as the new default model.";
+    return "This Assist already belongs to a workflow card. Adding another Assist here preserves that local workflow without creating hidden orchestration.";
   }
 
   if (runtimeType === "assistant_agent") {
-    return "Use this Assist card to extend the visible graph. One downstream orange edge makes a sequence, multiple downstream orange edges make a branch, and multiple inbound orange edges create recombination.";
+    return "Use this Assist card to extend the visible graph. One downstream flow edge makes a sequence, multiple downstream flow edges make a branch, and multiple inbound flow edges create recombination.";
   }
 
   return "This is a top-level worker card. Add more top-level heads here, or clear selection to add a Magentic card.";

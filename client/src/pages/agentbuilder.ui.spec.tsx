@@ -18,10 +18,20 @@ vi.mock("../components/builder/BuilderCanvas", () => ({
     return (
       <div data-testid="builder-canvas">
         Builder Canvas
+        <div
+          className="react-flow__node"
+          data-testid="builder-preview-node"
+          onClick={() => props.onSelectCard?.("card_main_chat")}
+        >
+          Preview Agent Node
+        </div>
+        <button type="button" data-testid="builder-preview-control">
+          Preview Control
+        </button>
         <button
           type="button"
           data-testid="builder-select-node"
-          onClick={() => props.onSelectCard?.("main_chat")}
+          onClick={() => props.onSelectCard?.("card_main_chat")}
         >
           Select Agent Node
         </button>
@@ -125,16 +135,7 @@ const AGENT_PROJECT = {
   project_type: "agent",
 };
 
-let assistProjectState: {
-  messages: Array<{ role: "assistant" | "user"; text: string }>;
-  plan: Array<{ id: string; text: string; status: string }>;
-  links: any[];
-} = {
-  messages: [{ role: "assistant", text: "Loaded chat state" }],
-  plan: [{ id: "goal", text: "Define objective", status: "draft" }],
-  links: [],
-};
-let bossRequests: Array<Record<string, unknown>> = [];
+let deckRunRequests: Array<Record<string, unknown>> = [];
 
 const mountedRoots: Array<() => void> = [];
 
@@ -143,6 +144,74 @@ function jsonResponse(data: unknown, status = 200): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function buildDeckLoadResponse(latestAssistantText = "Loaded chat state") {
+  const latestRun = {
+    id: "deck_run_saved",
+    deckId: "deck_builder",
+    startedAt: "2026-04-10T00:00:00.000Z",
+    endedAt: "2026-04-10T00:00:01.000Z",
+    status: "success",
+    input: "Restore the prior deck response",
+    steps: [
+      {
+        id: "step_saved",
+        executionId: "card_magentic::single",
+        cardId: "card_magentic",
+        templateId: "template_magentic",
+        title: "Magentic-One",
+        input: "Restore the prior deck response",
+        runtimeBinding: null,
+        runtimeType: "magentic_one",
+        effectiveAgent: {
+          id: "template_magentic",
+          name: "Magentic-One",
+          model: "gpt-5-mini",
+          provider: "openai",
+          temperature: 0.2,
+          maxTokens: 1200,
+          tools: [],
+        },
+        output: latestAssistantText,
+        status: "success",
+        startedAt: "2026-04-10T00:00:00.000Z",
+        endedAt: "2026-04-10T00:00:01.000Z",
+        inputSummary: "Restore the prior deck response",
+        outputSummary: latestAssistantText,
+      },
+    ],
+    validationSummary: {
+      ok: true,
+      errors: [],
+      warnings: [],
+    },
+    events: [
+      {
+        id: "evt_saved",
+        at: "2026-04-10T00:00:00.000Z",
+        kind: "run_completed",
+        text: "Deck Agent Card Deck completed.",
+        status: "success",
+      },
+    ],
+    executionPlanSummary: {
+      startCardIds: ["card_magentic"],
+      simpleOrderCardIds: ["card_magentic"],
+      expandedStepIds: ["card_magentic::single"],
+    },
+  };
+
+  return {
+    ok: true,
+    deck: null,
+    latestRun,
+    runs: [latestRun],
+    meta: {
+      deckRevision: "rev_saved",
+      deckSavedAt: "2026-04-10T00:00:01.000Z",
+    },
+  };
 }
 
 function mount(element: React.ReactElement) {
@@ -241,12 +310,7 @@ beforeEach(() => {
   window.history.replaceState({}, "", "/");
   setWorkspaceTestingEnabled(true);
   clearWorkspaceTestingEvents();
-  assistProjectState = {
-    messages: [{ role: "assistant", text: "Loaded chat state" }],
-    plan: [{ id: "goal", text: "Define objective", status: "draft" }],
-    links: [],
-  };
-  bossRequests = [];
+  deckRunRequests = [];
   Object.defineProperty(HTMLElement.prototype, "scrollTo", {
     configurable: true,
     value: vi.fn(),
@@ -268,35 +332,84 @@ beforeEach(() => {
         });
       }
 
-      if (url === `/api/v2/projects/${ASSIST_PROJECT.id}/state`) {
-        return jsonResponse(assistProjectState);
+      if (url === `/api/v3/projects/${ASSIST_PROJECT.id}/decks/deck_builder`) {
+        return jsonResponse(buildDeckLoadResponse("Loaded chat state"));
       }
 
       if (url === `/api/v3/projects/${AGENT_PROJECT.id}/decks/deck_builder`) {
-        return jsonResponse({});
+        return jsonResponse(buildDeckLoadResponse("Loaded chat state"));
       }
 
-      if (url === "/api/agents/boss") {
+      if (url === `/api/v3/projects/${ASSIST_PROJECT.id}/decks/run?stream=1`) {
         const body = init?.body ? JSON.parse(String(init.body)) : {};
-        bossRequests.push(body);
-        assistProjectState = {
-          messages: [
-            { role: "assistant", text: "Loaded chat state" },
-            { role: "user", text: String(body.message || "") },
-            { role: "assistant", text: "Live assist reply" },
-          ],
-          plan: [{ id: "goal", text: "Updated objective", status: "draft" }],
-          links: [],
-        };
+        deckRunRequests.push(body);
         return jsonResponse({
           ok: true,
-          projectId: ASSIST_PROJECT.id,
-          result: { final: "Live assist reply" },
-          provider: "openai",
-          model: "gpt-5.4",
-          orchestration: {
-            stopReason: "final",
-            turnsUsed: 2,
+          run: {
+            id: "deck_run_test",
+            deckId: "deck_builder",
+            startedAt: "2026-04-10T00:00:00.000Z",
+            endedAt: "2026-04-10T00:00:01.000Z",
+            status: "success",
+            input: String(body.input || ""),
+            steps: [
+              {
+                id: "step_1",
+                executionId: "card_magentic::single",
+                cardId: "card_magentic",
+                templateId: "template_magentic",
+                title: "Magentic-One",
+                input: String(body.input || ""),
+                runtimeBinding: null,
+                runtimeType: "magentic_one",
+                effectiveAgent: {
+                  id: "template_magentic",
+                  name: "Magentic-One",
+                  model: "gpt-5-mini",
+                  provider: "openai",
+                  temperature: 0.2,
+                  maxTokens: 1200,
+                  tools: [],
+                },
+                output: "Live deck reply",
+                status: "success",
+                startedAt: "2026-04-10T00:00:00.000Z",
+                endedAt: "2026-04-10T00:00:01.000Z",
+                inputSummary: String(body.input || ""),
+                outputSummary: "Live deck reply",
+              },
+            ],
+            validationSummary: {
+              ok: true,
+              errors: [],
+              warnings: [],
+            },
+            events: [
+              {
+                id: "evt_1",
+                at: "2026-04-10T00:00:00.000Z",
+                kind: "magentic_assignment",
+                cardId: "card_magentic",
+                cardTitle: "Magentic-One",
+                runtimeType: "magentic_one",
+                edgeIds: ["edge_magentic_main_chat"],
+                text: "Magentic-One assigned work to Main Chat.",
+                progressText: "Goal: map the next move. Next: calling Main Chat because it is the visible reply node.",
+                status: "running",
+              },
+              {
+                id: "evt_2",
+                at: "2026-04-10T00:00:01.000Z",
+                kind: "run_completed",
+                text: "Deck Agent Card Deck completed.",
+                status: "success",
+              },
+            ],
+            executionPlanSummary: {
+              startCardIds: ["card_magentic"],
+              simpleOrderCardIds: ["card_magentic"],
+              expandedStepIds: ["card_magentic::single"],
+            },
           },
         });
       }
@@ -489,6 +602,65 @@ describe("AgentBuilder locked 3-state flow", () => {
     });
 
     expect(queryByTestId(container, "companion-surface-editor")).toBeTruthy();
+  });
+
+  it("promotes the small canvas preview instead of dropping back to Chat when a preview node is clicked", async () => {
+    const container = mount(<AgentBuilder />);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-canvas")).toBeTruthy();
+    });
+
+    click(getButtonByTitle(container, "Orange"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-plan")).toBeTruthy();
+      expect(queryByTestId(container, "large-surface-canvas")).toBeNull();
+    });
+
+    click(getByTestId(container, "companion-tab-canvas"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "companion-surface-canvas")).toBeTruthy();
+    });
+
+    click(getByTestId(container, "builder-preview-node"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-canvas")).toBeTruthy();
+    });
+
+    expect(queryByTestId(container, "large-surface-plan")).toBeNull();
+    expect(queryByTestId(container, "companion-surface-editor")).toBeTruthy();
+    expect(getByTestId(container, "companion-tab-prompt").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("keeps the small canvas preview in place when a preview control button is clicked", async () => {
+    const container = mount(<AgentBuilder />);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-canvas")).toBeTruthy();
+    });
+
+    click(getButtonByTitle(container, "Orange"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-plan")).toBeTruthy();
+    });
+
+    click(getByTestId(container, "companion-tab-canvas"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "companion-surface-canvas")).toBeTruthy();
+    });
+
+    click(getByTestId(container, "builder-preview-control"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-plan")).toBeTruthy();
+      expect(queryByTestId(container, "large-surface-canvas")).toBeNull();
+      expect(queryByTestId(container, "companion-surface-canvas")).toBeTruthy();
+    });
   });
 
   it("uses Burst to open Knowledge View and only returns to Home after clicking the small Chat preview", async () => {
@@ -764,7 +936,7 @@ describe("AgentBuilder locked 3-state flow", () => {
     ).toBe(true);
   });
 
-  it("sends Builder chat through the live assist path and records real loop telemetry", async () => {
+  it("sends Builder chat through the deck runtime path and records real loop telemetry", async () => {
     const container = mount(<AgentBuilder />);
 
     await waitFor(() => {
@@ -790,26 +962,26 @@ describe("AgentBuilder locked 3-state flow", () => {
     click(getSendButton(container));
 
     await waitFor(() => {
-      expect(container.textContent).toContain("Live assist reply");
+      expect(container.textContent).toContain("Live deck reply");
     });
 
-    expect(bossRequests).toHaveLength(1);
-    expect(bossRequests[0]?.projectId).toBe(ASSIST_PROJECT.id);
-    expect(bossRequests[0]?.message).toBe("Map the next move");
+    expect(deckRunRequests).toHaveLength(1);
+    expect(deckRunRequests[0]?.deckId).toBe("deck_builder");
+    expect(deckRunRequests[0]?.input).toBe("Map the next move");
 
     const events = readWorkspaceTestingEvents();
     expect(
       events.some(
         (event) =>
           event.event === "chat_send_started" &&
-          event.metadata?.responseMode === "assist_runtime",
+          event.metadata?.responseMode === "deck_runtime",
       ),
     ).toBe(true);
     expect(
       events.some(
         (event) =>
           event.event === "chat_response_received" &&
-          event.metadata?.responseMode === "assist_runtime" &&
+          event.metadata?.responseMode === "deck_runtime" &&
           event.metadata?.provider === "openai",
       ),
     ).toBe(true);

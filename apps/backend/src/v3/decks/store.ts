@@ -1,10 +1,6 @@
 import { createHash, randomUUID } from 'crypto';
 import { pool } from '../../db/pool';
-import {
-  createEmptyV3Blackboard,
-  normalizeV3Blackboard,
-  resolveRuntimeBinding,
-} from '../blackboard';
+import { resolveRuntimeBinding } from '../runtimeBinding';
 import type {
   AgentCardInstance,
   AgentCardRuntimeOptions,
@@ -54,19 +50,15 @@ function normalizeJson<TDefault>(value: unknown, fallback: TDefault): TDefault {
 function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'assistant_agent') return 'assistant_agent';
-  if (normalized === 'round_robin') return 'round_robin';
-  if (normalized === 'selector') return 'selector';
-  if (normalized === 'swarm') return 'swarm';
   if (normalized === 'magentic_one') return 'magentic_one';
   if (normalized === 'graph_flow') return 'graph_flow';
-  if (normalized === 'adapter') return 'adapter';
   return null;
 }
 
 function normalizeEdgeType(value: unknown): DeckEdgeType {
   return String(value || '').trim().toLowerCase() === 'magentic_option'
     ? 'magentic_option'
-    : 'graph_flow';
+    : 'flow';
 }
 
 const EDGE_ROLE_VALUES = new Set<DeckEdgeRole>([
@@ -178,7 +170,9 @@ function normalizeRuntimeOptions(value: unknown): AgentCardRuntimeOptions | null
 function normalizeDeckNode(value: unknown): AgentCardInstance | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Record<string, unknown>;
-  const kind = String(raw.kind || '').trim() === 'blackboard' ? 'blackboard' : 'agent';
+  if (String(raw.kind || '').trim().toLowerCase() === 'blackboard') {
+    return null;
+  }
   const prompt = typeof raw.prompt === 'string' ? raw.prompt : '';
   const title = String(raw.title || '').trim();
   const subtitle = typeof raw.subtitle === 'string' ? raw.subtitle : undefined;
@@ -199,11 +193,11 @@ function normalizeDeckNode(value: unknown): AgentCardInstance | null {
       : { x: 0, y: 0 };
   return {
     id: String(raw.id || '').trim(),
-    kind,
+    kind: 'agent',
     templateId: String(raw.templateId || '').trim(),
     prompt,
     runtimeBinding: resolveRuntimeBinding(raw.runtimeBinding, raw.id),
-    runtimeType: normalizeRuntimeType(raw.runtimeType) || (kind === 'agent' ? 'assistant_agent' : null),
+    runtimeType: normalizeRuntimeType(raw.runtimeType) || 'assistant_agent',
     runtimeOptions: normalizeRuntimeOptions(raw.runtimeOptions),
     parentGraphId: typeof raw.parentGraphId === 'string' ? raw.parentGraphId.trim() || null : null,
     title: title || String(raw.id || '').trim(),
@@ -276,7 +270,6 @@ function normalizeRevisionMeta(value: unknown, fallbackValue: unknown): V3Revisi
 function cloneBlobMeta(meta: V3ProjectBlob['meta']): V3ProjectBlob['meta'] {
   return {
     decks: { ...meta.decks },
-    blackboard: { ...meta.blackboard },
   };
 }
 
@@ -300,7 +293,6 @@ function normalizeProjectBlob(value: unknown): V3ProjectBlob {
     deckRuns[deckId] = normalizeDeckRuns(runsValue);
   });
 
-  const blackboard = normalizeV3Blackboard(raw.blackboard);
   const rawMeta = raw.meta && typeof raw.meta === 'object' ? (raw.meta as Record<string, unknown>) : {};
   const rawDeckMeta =
     rawMeta.decks && typeof rawMeta.decks === 'object'
@@ -310,7 +302,6 @@ function normalizeProjectBlob(value: unknown): V3ProjectBlob {
   return {
     decks,
     deckRuns,
-    blackboard,
     hiddenTelemetry:
       raw.hiddenTelemetry && typeof raw.hiddenTelemetry === 'object'
         ? (raw.hiddenTelemetry as Record<string, unknown>)
@@ -322,7 +313,6 @@ function normalizeProjectBlob(value: unknown): V3ProjectBlob {
           normalizeRevisionMeta(rawDeckMeta[deckId], deck),
         ]),
       ),
-      blackboard: normalizeRevisionMeta(rawMeta.blackboard, blackboard),
     },
   };
 }
@@ -380,15 +370,11 @@ async function writeV3ProjectBlobCas(
 function buildDeckResponseMeta(blob: V3ProjectBlob, deckId: string): {
   deckRevision: string | null;
   deckSavedAt: string | null;
-  blackboardRevision: string;
-  blackboardSavedAt: string | null;
 } {
   const deckMeta = blob.meta.decks[deckId] || null;
   return {
     deckRevision: deckMeta?.revision || null,
     deckSavedAt: deckMeta?.savedAt || null,
-    blackboardRevision: blob.meta.blackboard.revision,
-    blackboardSavedAt: blob.meta.blackboard.savedAt,
   };
 }
 
@@ -396,12 +382,9 @@ export async function getDeckDocument(projectId: string, deckId: string): Promis
   deck: DeckDocument | null;
   latestRun: DeckRun | null;
   runs: DeckRun[];
-  blackboard: V3ProjectBlob['blackboard'];
   meta: {
     deckRevision: string | null;
     deckSavedAt: string | null;
-    blackboardRevision: string;
-    blackboardSavedAt: string | null;
   };
 }> {
   const blob = await getV3ProjectBlob(projectId);
@@ -410,7 +393,6 @@ export async function getDeckDocument(projectId: string, deckId: string): Promis
     deck: blob.decks[deckId] || null,
     latestRun: runs[0] || null,
     runs,
-    blackboard: blob.blackboard || createEmptyV3Blackboard(),
     meta: buildDeckResponseMeta(blob, deckId),
   };
 }
@@ -427,8 +409,6 @@ export async function saveDeckDocument(
   meta: {
     deckRevision: string | null;
     deckSavedAt: string | null;
-    blackboardRevision: string;
-    blackboardSavedAt: string | null;
   };
 }> {
   const nextDeck = normalizeDeckDocument({ ...document, id: deckId }, deckId);
@@ -472,105 +452,23 @@ export async function saveDeckRun(
   projectId: string,
   deckId: string,
   run: DeckRun,
-  options?: {
-    baseBlackboardRevision?: string | null;
-  },
 ): Promise<{
-  blackboard: V3ProjectBlob['blackboard'];
-  blackboardApplied: boolean;
   meta: {
     deckRevision: string | null;
     deckSavedAt: string | null;
-    blackboardRevision: string;
-    blackboardSavedAt: string | null;
   };
 }> {
-  const baseBlackboardRevision = String(options?.baseBlackboardRevision || '').trim() || null;
-  let blackboardApplied = false;
   const nextBlob = await writeV3ProjectBlobCas(projectId, (blob) => {
     const currentRuns = blob.deckRuns[deckId] || [];
-    const nextDeckRuns = {
-      ...blob.deckRuns,
-      [deckId]: [run, ...currentRuns].slice(0, 12),
-    };
-    const canApplyBlackboard =
-      !baseBlackboardRevision || blob.meta.blackboard.revision === baseBlackboardRevision;
-    if (!canApplyBlackboard) {
-      blackboardApplied = false;
-      return {
-        ...blob,
-        deckRuns: nextDeckRuns,
-      };
-    }
-    blackboardApplied = true;
     return {
       ...blob,
-      deckRuns: nextDeckRuns,
-      blackboard: normalizeV3Blackboard(run.blackboard),
-      meta: {
-        ...cloneBlobMeta(blob.meta),
-        blackboard: {
-          revision: randomUUID(),
-          savedAt: new Date().toISOString(),
-        },
+      deckRuns: {
+        ...blob.deckRuns,
+        [deckId]: [run, ...currentRuns].slice(0, 12),
       },
     };
   });
   return {
-    blackboard: nextBlob.blackboard,
-    blackboardApplied,
     meta: buildDeckResponseMeta(nextBlob, deckId),
   };
-}
-
-export async function saveProjectBlackboard(
-  projectId: string,
-  blackboard: V3ProjectBlob['blackboard'],
-  options?: {
-    expectedRevision?: string | null;
-    onConflict?: 'throw' | 'return_current';
-  },
-): Promise<{
-  blackboard: V3ProjectBlob['blackboard'];
-  applied: boolean;
-  meta: V3RevisionMeta;
-}> {
-  const expectedRevision = String(options?.expectedRevision || '').trim() || null;
-  try {
-    const nextBlob = await writeV3ProjectBlobCas(projectId, (blob) => {
-      if (expectedRevision && blob.meta.blackboard.revision !== expectedRevision) {
-        throw new Error('blackboard_conflict');
-      }
-      return {
-        ...blob,
-        blackboard: normalizeV3Blackboard(blackboard),
-        meta: {
-          ...cloneBlobMeta(blob.meta),
-          blackboard: {
-            revision: randomUUID(),
-            savedAt: new Date().toISOString(),
-          },
-        },
-      };
-    });
-    return {
-      blackboard: nextBlob.blackboard,
-      applied: true,
-      meta: nextBlob.meta.blackboard,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err || '');
-    if (
-      options?.onConflict === 'return_current' &&
-      (message === 'blackboard_conflict' || message === 'v3_state_conflict')
-    ) {
-      const currentBlob = await getV3ProjectBlob(projectId);
-      return {
-        blackboard: currentBlob.blackboard,
-        applied: false,
-        meta: currentBlob.meta.blackboard,
-      };
-    }
-    throw err;
-  }
 }

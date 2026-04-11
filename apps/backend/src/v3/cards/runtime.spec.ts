@@ -52,7 +52,7 @@ function edge(
   id: string,
   source: string,
   target: string,
-  edgeType: DeckEdge['edgeType'] = 'graph_flow',
+  edgeType: DeckEdge['edgeType'] = 'flow',
   metadata: DeckEdge['metadata'] = undefined,
 ): DeckEdge {
   return metadata ? { id, source, target, edgeType, metadata } : { id, source, target, edgeType };
@@ -78,7 +78,6 @@ describe('runCardWithContract runtime dispatch', () => {
 
     const result = await runCardWithContract(card, effective, 'hello world', {
       userInput: 'hello world',
-      blackboard: null,
     });
 
     expect(result.status).toBe('success');
@@ -111,7 +110,6 @@ describe('runCardWithContract runtime dispatch', () => {
 
     const result = await runCardWithContract(card, effective, 'use the tool', {
       userInput: 'use the tool',
-      blackboard: null,
       projectId: 'project_test',
       deckId: 'deck_test',
     });
@@ -129,6 +127,56 @@ describe('runCardWithContract runtime dispatch', () => {
     expect(llmHarness.runLLM).toHaveBeenCalledTimes(1);
   });
 
+  it('emits raw tool and assistant message events when real text exists', async () => {
+    const card = createCard('assistant_tool_card', 'assistant_agent');
+    card.overrides = { tools: ['openai'] };
+    const effective = resolveEffectiveAgent(card, templates);
+    if (!effective) throw new Error('missing_effective_agent');
+    const events: Array<Record<string, unknown>> = [];
+    const toolRun = vi.fn().mockResolvedValue({
+      ok: true,
+      output: 'tool result payload',
+    });
+    registryHarness.getTool.mockReturnValue({
+      id: 'openai',
+      name: 'OpenAI',
+      run: toolRun,
+    });
+    llmHarness.runLLM.mockResolvedValue({
+      text: 'final answer using tool output',
+      model: 'openai/gpt-5.1-chat',
+      provider: 'openrouter',
+      responseId: null,
+    });
+
+    const result = await runCardWithContract(card, effective, 'use the tool', {
+      userInput: 'use the tool',
+      projectId: 'project_test',
+      deckId: 'deck_test',
+      onRuntimeEvent: (event) => events.push(event as unknown as Record<string, unknown>),
+    });
+
+    expect(result.status).toBe('success');
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'message',
+          type: 'message',
+          cardId: 'assistant_tool_card',
+          role: 'tool',
+          content: 'tool result payload',
+        }),
+        expect.objectContaining({
+          kind: 'message',
+          type: 'message',
+          cardId: 'assistant_tool_card',
+          role: 'assistant',
+          content: 'final answer using tool output',
+        }),
+      ]),
+    );
+  });
+
   it('fails clear when an assist tool is unsupported', async () => {
     const card = createCard('assistant_bad_tool', 'assistant_agent');
     card.overrides = { tools: ['graph_lookup'] };
@@ -138,7 +186,6 @@ describe('runCardWithContract runtime dispatch', () => {
 
     const result = await runCardWithContract(card, effective, 'bad tool input', {
       userInput: 'bad tool input',
-      blackboard: null,
     });
 
     expect(result.status).toBe('error');
@@ -147,14 +194,14 @@ describe('runCardWithContract runtime dispatch', () => {
   });
 
   it('fails legacy participant-driven runtimes instead of executing hidden members', async () => {
-    const card = createCard('selector_team', 'selector');
+    const card = createCard('selector_team', 'assistant_agent');
+    (card as any).runtimeType = 'selector';
     (card as any).participants = [{ cardId: 'worker_a' }];
     const effective = resolveEffectiveAgent(card, templates);
     if (!effective) throw new Error('missing_effective_agent');
 
     const result = await runCardWithContract(card, effective, 'legacy input', {
       userInput: 'legacy input',
-      blackboard: null,
       allCards: [card, createCard('worker_a')],
       allTemplates: templates,
     });
@@ -182,7 +229,6 @@ describe('runCardWithContract runtime dispatch', () => {
 
     const result = await runCardWithContract(card, effective, 'swarm input', {
       userInput: 'swarm input',
-      blackboard: null,
     });
 
     expect(result.status).toBe('success');
@@ -218,7 +264,6 @@ describe('runCardWithContract runtime dispatch', () => {
 
     const result = await runCardWithContract(card, effective, 'swarm tool input', {
       userInput: 'swarm tool input',
-      blackboard: null,
     });
 
     expect(result.status).toBe('success');
@@ -246,9 +291,8 @@ describe('runCardWithContract runtime dispatch', () => {
 
     const result = await runCardWithContract(graph, effectiveGraph, 'graph input', {
       userInput: 'graph input',
-      blackboard: null,
       allCards: [graph, stepA, stepB],
-      allEdges: [edge('edge_a_b', 'step_a', 'step_b', 'graph_flow')],
+      allEdges: [edge('edge_a_b', 'step_a', 'step_b', 'flow')],
       allTemplates: templates,
     });
 
@@ -280,11 +324,10 @@ describe('runCardWithContract runtime dispatch', () => {
 
     const result = await runCardWithContract(graph, effectiveGraph, 'graph summarize input', {
       userInput: 'graph summarize input',
-      blackboard: null,
       allCards: [graph, stepLeft, stepRight, stepMerge],
       allEdges: [
-        edge('edge_left_merge', 'step_left', 'step_merge', 'graph_flow', { mergeIntent: 'summarize_all' }),
-        edge('edge_right_merge', 'step_right', 'step_merge', 'graph_flow', { mergeIntent: 'summarize_all' }),
+        edge('edge_left_merge', 'step_left', 'step_merge', 'flow', { mergeIntent: 'summarize_all' }),
+        edge('edge_right_merge', 'step_right', 'step_merge', 'flow', { mergeIntent: 'summarize_all' }),
       ],
       allTemplates: templates,
     });
@@ -311,7 +354,6 @@ describe('runCardWithContract runtime dispatch', () => {
 
     const result = await runCardWithContract(magentic, effectiveMagentic, 'route this', {
       userInput: 'route this',
-      blackboard: null,
       allCards: [magentic, head],
       allEdges: [edge('edge_magentic_head', 'magentic', 'assist_head', 'magentic_option')],
       allTemplates: templates,
@@ -321,6 +363,81 @@ describe('runCardWithContract runtime dispatch', () => {
     expect(result.runtimeType).toBe('magentic_one');
     expect(result.output).toBe('head output');
     expect(llmHarness.runLLM).toHaveBeenCalledTimes(2);
+  });
+
+  it('passes through one optional magentic progress line for the plan stream', async () => {
+    const magentic = createCard('magentic', 'magentic_one');
+    const head = createCard('assist_head', 'assistant_agent');
+    const effectiveMagentic = resolveEffectiveAgent(magentic, templates);
+    if (!effectiveMagentic) throw new Error('missing_effective_agent');
+    const events: Array<{ kind?: string; progressText?: string | null; text?: string | null }> = [];
+
+    llmHarness.runLLM
+      .mockResolvedValueOnce({
+        text: '{"selectedCardId":"assist_head","directResponseText":null,"progressText":"Goal: route this. Next: calling Assist Head because it is the visible callable path."}',
+      })
+      .mockResolvedValueOnce({ text: 'head output' });
+
+    const result = await runCardWithContract(magentic, effectiveMagentic, 'route this', {
+      userInput: 'route this',
+      allCards: [magentic, head],
+      allEdges: [edge('edge_magentic_head', 'magentic', 'assist_head', 'magentic_option')],
+      allTemplates: templates,
+      onRuntimeEvent: (event) => events.push(event),
+    });
+
+    expect(result.status).toBe('success');
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'magentic_assignment',
+          text: 'magentic assigned work to assist_head.',
+          progressText:
+            'Goal: route this. Next: calling Assist Head because it is the visible callable path.',
+        }),
+      ]),
+    );
+  });
+
+  it('emits direct magentic response text as a raw message event', async () => {
+    const magentic = createCard('magentic', 'magentic_one');
+    const head = createCard('assist_head', 'assistant_agent');
+    const effectiveMagentic = resolveEffectiveAgent(magentic, templates);
+    if (!effectiveMagentic) throw new Error('missing_effective_agent');
+    const events: Array<Record<string, unknown>> = [];
+
+    llmHarness.runLLM.mockResolvedValueOnce({
+      text: '{"selectedCardId":null,"directResponseText":"Direct magentic answer","progressText":"Goal: answer directly."}',
+    });
+
+    const result = await runCardWithContract(magentic, effectiveMagentic, 'route this', {
+      userInput: 'route this',
+      allCards: [magentic, head],
+      allEdges: [edge('edge_magentic_head', 'magentic', 'assist_head', 'magentic_option')],
+      allTemplates: templates,
+      onRuntimeEvent: (event) => events.push(event as unknown as Record<string, unknown>),
+    });
+
+    expect(result.status).toBe('success');
+    expect(result.output).toBe('Direct magentic answer');
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'message',
+          type: 'message',
+          cardId: 'magentic',
+          role: 'assistant',
+          content: 'Goal: answer directly.',
+        }),
+        expect.objectContaining({
+          kind: 'message',
+          type: 'message',
+          cardId: 'magentic',
+          role: 'assistant',
+          content: 'Direct magentic answer',
+        }),
+      ]),
+    );
   });
 
   it('lets magentic call a visible top-level Assist workflow and returns one consolidated output', async () => {
@@ -338,11 +455,10 @@ describe('runCardWithContract runtime dispatch', () => {
 
     const result = await runCardWithContract(magentic, effectiveMagentic, 'route this workflow', {
       userInput: 'route this workflow',
-      blackboard: null,
       allCards: [magentic, head, next],
       allEdges: [
         edge('edge_magentic_head', 'magentic', 'assist_head', 'magentic_option'),
-        edge('edge_head_next', 'assist_head', 'assist_next', 'graph_flow'),
+        edge('edge_head_next', 'assist_head', 'assist_next', 'flow'),
       ],
       allTemplates: templates,
     });

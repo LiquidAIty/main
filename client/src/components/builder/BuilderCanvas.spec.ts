@@ -64,7 +64,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         id: 'edge_step_1_2',
         source: 'card_step_1',
         target: 'card_step_2',
-        data: { edgeType: 'graph_flow' },
+        data: { edgeType: 'flow' },
       },
     ];
 
@@ -82,7 +82,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         id: 'edge_step_1_2',
         source: 'card_step_1',
         target: 'card_step_2',
-        edgeType: 'graph_flow',
+        edgeType: 'flow',
       },
     ]);
     expect(loadedEdges).toEqual(savedEdges);
@@ -107,7 +107,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         source: 'card_assist',
         target: 'card_next',
         data: {
-          edgeType: 'graph_flow',
+          edgeType: 'flow',
           metadata: {
             role: 'graph_execution',
             executionMode: 'conditional',
@@ -144,7 +144,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         id: 'edge_assist_next',
         source: 'card_assist',
         target: 'card_next',
-        edgeType: 'graph_flow',
+        edgeType: 'flow',
         metadata: {
           role: 'graph_execution',
           executionMode: 'conditional',
@@ -228,7 +228,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
           id: 'edge_step_1_2',
           source: 'card_step_1',
           target: 'card_step_2',
-          edgeType: 'graph_flow',
+          edgeType: 'flow',
         },
       ],
     };
@@ -291,9 +291,9 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         },
       ],
       edges: [
-        { id: 'edge_single_middle', source: 'card_step_single', target: 'card_step_middle', edgeType: 'graph_flow' },
-        { id: 'edge_middle_left', source: 'card_step_middle', target: 'card_step_branch_left', edgeType: 'graph_flow' },
-        { id: 'edge_middle_right', source: 'card_step_middle', target: 'card_step_branch_right', edgeType: 'graph_flow' },
+        { id: 'edge_single_middle', source: 'card_step_single', target: 'card_step_middle', edgeType: 'flow' },
+        { id: 'edge_middle_left', source: 'card_step_middle', target: 'card_step_branch_left', edgeType: 'flow' },
+        { id: 'edge_middle_right', source: 'card_step_middle', target: 'card_step_branch_right', edgeType: 'flow' },
       ],
     };
 
@@ -353,10 +353,10 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         },
       ],
       edges: [
-        { id: 'edge_left_merge', source: 'card_assist_left', target: 'card_assist_merge', edgeType: 'graph_flow' },
-        { id: 'edge_right_merge', source: 'card_assist_right', target: 'card_assist_merge', edgeType: 'graph_flow' },
-        { id: 'edge_merge_left', source: 'card_assist_merge', target: 'card_assist_after_merge_left', edgeType: 'graph_flow' },
-        { id: 'edge_merge_right', source: 'card_assist_merge', target: 'card_assist_after_merge_right', edgeType: 'graph_flow' },
+        { id: 'edge_left_merge', source: 'card_assist_left', target: 'card_assist_merge', edgeType: 'flow' },
+        { id: 'edge_right_merge', source: 'card_assist_right', target: 'card_assist_merge', edgeType: 'flow' },
+        { id: 'edge_merge_left', source: 'card_assist_merge', target: 'card_assist_after_merge_left', edgeType: 'flow' },
+        { id: 'edge_merge_right', source: 'card_assist_merge', target: 'card_assist_after_merge_right', edgeType: 'flow' },
       ],
     };
 
@@ -409,9 +409,9 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         },
       ],
       edges: [
-        { id: 'edge_entry_mid', source: 'card_assist_entry', target: 'card_assist_mid', edgeType: 'graph_flow' },
-        { id: 'edge_mid_left', source: 'card_assist_mid', target: 'card_assist_left', edgeType: 'graph_flow' },
-        { id: 'edge_mid_right', source: 'card_assist_mid', target: 'card_assist_right', edgeType: 'graph_flow' },
+        { id: 'edge_entry_mid', source: 'card_assist_entry', target: 'card_assist_mid', edgeType: 'flow' },
+        { id: 'edge_mid_left', source: 'card_assist_mid', target: 'card_assist_left', edgeType: 'flow' },
+        { id: 'edge_mid_right', source: 'card_assist_mid', target: 'card_assist_right', edgeType: 'flow' },
       ],
     };
 
@@ -471,11 +471,11 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         },
       ],
       edges: [
-        { id: 'edge_main_chat_kg_ingest', source: 'card_main_chat', target: 'card_kg_ingest', edgeType: 'graph_flow' },
-        { id: 'edge_kg_ingest_research', source: 'card_kg_ingest', target: 'card_research', edgeType: 'graph_flow' },
-        { id: 'edge_kg_ingest_knowgraph', source: 'card_kg_ingest', target: 'card_knowgraph', edgeType: 'graph_flow' },
-        { id: 'edge_research_neo4j', source: 'card_research', target: 'card_neo4j', edgeType: 'graph_flow' },
-        { id: 'edge_knowgraph_neo4j', source: 'card_knowgraph', target: 'card_neo4j', edgeType: 'graph_flow' },
+        { id: 'edge_main_chat_kg_ingest', source: 'card_main_chat', target: 'card_kg_ingest', edgeType: 'flow' },
+        { id: 'edge_kg_ingest_research', source: 'card_kg_ingest', target: 'card_research', edgeType: 'flow' },
+        { id: 'edge_kg_ingest_knowgraph', source: 'card_kg_ingest', target: 'card_knowgraph', edgeType: 'flow' },
+        { id: 'edge_research_neo4j', source: 'card_research', target: 'card_neo4j', edgeType: 'flow' },
+        { id: 'edge_knowgraph_neo4j', source: 'card_knowgraph', target: 'card_neo4j', edgeType: 'flow' },
       ],
     };
 
@@ -487,7 +487,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     expect(summaries.get('card_neo4j')).toMatchObject({ mode: 'merge' });
   });
 
-  it('derives visible swarm count from assist runtime options', () => {
+  it('shows swarm progress only when real runtime progress exists', () => {
     expect(
       getAssistSwarmBadge({
         id: 'card_swarm_assist',
@@ -500,8 +500,26 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         },
         title: 'Assist',
         position: { x: 0, y: 0 },
-      }),
-    ).toBe('Swarm x5');
+      }, null),
+    ).toBeNull();
+
+    expect(
+      getAssistSwarmBadge(
+        {
+          id: 'card_swarm_assist',
+          kind: 'agent',
+          templateId: 'template_assist',
+          runtimeType: 'assistant_agent',
+          runtimeOptions: {
+            executionMode: 'swarm',
+            swarmMaxWorkers: 5,
+          },
+          title: 'Assist',
+          position: { x: 0, y: 0 },
+        },
+        { completed: 2, total: 5 },
+      ),
+    ).toBe('2/5');
 
     expect(
       getAssistSwarmBadge({
@@ -514,7 +532,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         },
         title: 'Assist',
         position: { x: 0, y: 0 },
-      }),
+      }, null),
     ).toBeNull();
   });
 
@@ -541,8 +559,8 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         },
       ],
       edges: [
-        { id: 'edge_a_b', source: 'a', target: 'b', edgeType: 'graph_flow' },
-        { id: 'edge_b_a', source: 'b', target: 'a', edgeType: 'graph_flow' },
+        { id: 'edge_a_b', source: 'a', target: 'b', edgeType: 'flow' },
+        { id: 'edge_b_a', source: 'b', target: 'a', edgeType: 'flow' },
       ],
     };
 
@@ -587,3 +605,4 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     ).toBe(true);
   });
 });
+

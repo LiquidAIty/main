@@ -116,6 +116,42 @@ function closeServer(server: Server): Promise<void> {
   });
 }
 
+function formatListenError(error: unknown, port: number): string {
+  const err = error as NodeJS.ErrnoException | undefined;
+  if (err?.code === 'EADDRINUSE') {
+    return `Port ${port} is already in use. Another backend process is already listening on this port. Stop the existing process or restart with a different PORT.`;
+  }
+  if (err?.code === 'EACCES') {
+    return `Port ${port} requires elevated privileges or is blocked by system policy.`;
+  }
+  return err?.message || `Failed to listen on port ${port}.`;
+}
+
+function listenOnPort(port: number): Promise<Server> {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(port);
+
+    const cleanup = () => {
+      server.off('error', onError);
+      server.off('listening', onListening);
+    };
+
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+
+    const onListening = () => {
+      cleanup();
+      console.log("[BOOT] listening on :" + port);
+      resolve(server);
+    };
+
+    server.once('error', onError);
+    server.once('listening', onListening);
+  });
+}
+
 function installShutdownHooks() {
   if (globalThis.__liquidaityBackendShutdownHooksInstalled__) {
     return;
@@ -156,7 +192,19 @@ async function startServer() {
   logStartupBanner();
   void logModelConfiguration();
 
-  const server = app.listen(PORT, () => console.log("[BOOT] listening on :" + PORT));
+  let server: Server;
+  try {
+    server = await listenOnPort(PORT);
+  } catch (error) {
+    console.error("[BOOT] " + formatListenError(error, PORT));
+    const err = error as NodeJS.ErrnoException | undefined;
+    if (err?.code !== 'EADDRINUSE') {
+      console.error(error);
+    }
+    process.exitCode = 1;
+    return;
+  }
+
   server.on('close', () => {
     if (globalThis.__liquidaityBackendServer__ === server) {
       globalThis.__liquidaityBackendServer__ = undefined;

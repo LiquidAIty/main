@@ -8,6 +8,8 @@ import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { $createHeadingNode, HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { $createParagraphNode, $createTextNode, $getRoot } from "lexical";
 
+import "./planWikiLexicalView.css";
+
 type PlanWikiLexicalViewProps = {
   source: unknown;
   fallbackText: string;
@@ -201,7 +203,20 @@ export default function PlanWikiLexicalView({
     () => ({
       namespace: "AssistPlanWiki",
       editable: false,
-      theme: {},
+      theme: {
+        paragraph: "planWikiLexicalParagraph",
+        quote: "planWikiLexicalQuote",
+        link: "planWikiLexicalLink",
+        heading: {
+          h1: "planWikiLexicalHeading1",
+          h2: "planWikiLexicalHeading2",
+          h3: "planWikiLexicalHeading3",
+        },
+        list: {
+          ul: "planWikiLexicalList",
+          listitem: "planWikiLexicalListItem",
+        },
+      },
       onError(error: Error) {
         console.error("[PlanWikiLexical]", error);
       },
@@ -215,19 +230,27 @@ export default function PlanWikiLexicalView({
     <LexicalComposer key={document.signature} initialConfig={initialConfig}>
       <RichTextPlugin
         contentEditable={
-          <ContentEditable
-            aria-label="Assist PlanWiki document"
+          <div
+            className="planWikiLexicalShell"
+            data-plan-document="notes"
             style={{
               color: textColor,
-              lineHeight: 1.55,
-              fontSize: 13,
-              outline: "none",
               minHeight: 72,
             }}
-          />
+          >
+            <ContentEditable
+              aria-label="Assist PlanWiki document"
+              className="planWikiLexicalEditor"
+              style={{
+                color: textColor,
+                outline: "none",
+                minHeight: 72,
+              }}
+            />
+          </div>
         }
         placeholder={
-          <div style={{ color: mutedColor, fontSize: 13, lineHeight: 1.5 }}>
+          <div className="planWikiLexicalPlaceholder" style={{ color: mutedColor }}>
             {emptyText}
           </div>
         }

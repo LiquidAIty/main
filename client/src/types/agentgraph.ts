@@ -12,14 +12,10 @@ export type RuntimeBinding =
 
 export type AgentCardRuntimeType =
   | 'assistant_agent'
-  | 'round_robin'
-  | 'selector'
-  | 'swarm'
   | 'magentic_one'
-  | 'graph_flow'
-  | 'adapter';
+  | 'graph_flow';
 
-export type DeckEdgeType = 'magentic_option' | 'graph_flow';
+export type DeckEdgeType = 'magentic_option' | 'flow';
 
 export type DeckEdgeRole =
   | 'graph_execution'
@@ -70,7 +66,7 @@ export type AgentCardRuntimeOptions = {
   allowRepeatedSpeaker?: boolean | null;
 };
 
-export type DeckNodeKind = 'agent' | 'blackboard';
+export type DeckNodeKind = 'agent';
 
 export type AgentTemplate = {
   id: string;
@@ -96,15 +92,6 @@ export type CloneConfig = {
   enabled: boolean;
   seeds?: string[];
 };
-
-export type V3BlackboardField =
-  | 'current_goal'
-  | 'what_matters_now'
-  | 'open_questions'
-  | 'findings'
-  | 'suggestions'
-  | 'next_options'
-  | 'next_move';
 
 export type AgentCardInstance = {
   id: string;
@@ -209,8 +196,38 @@ export type CardRunResult = {
   improvementPromptBit?: string;
   inputSummary?: string;
   outputSummary?: string;
-  blackboardWrite?: V3Blackboard | null;
-  blackboard?: V3Blackboard | null;
+};
+
+export type DeckRuntimeEventKind =
+  | 'run_started'
+  | 'step_started'
+  | 'step_completed'
+  | 'step_skipped'
+  | 'magentic_assignment'
+  | 'swarm_progress'
+  | 'message'
+  | 'run_completed';
+
+export type DeckRuntimeMessageRole = 'assistant' | 'tool' | 'user';
+
+export type DeckRuntimeEvent = {
+  id: string;
+  at: string;
+  kind: DeckRuntimeEventKind;
+  type?: 'message' | null;
+  cardId?: string | null;
+  cardTitle?: string | null;
+  runtimeType?: AgentCardRuntimeType | null;
+  edgeIds?: string[];
+  text?: string | null;
+  role?: DeckRuntimeMessageRole | null;
+  content?: string | null;
+  progressText?: string | null;
+  notes?: string[];
+  status?: DeckRunStatus | null;
+  outputSummary?: string | null;
+  completedWorkers?: number | null;
+  totalWorkers?: number | null;
 };
 
 export type DeckRunStep = {
@@ -236,8 +253,6 @@ export type DeckRunStep = {
   improvementPromptBit?: string;
   inputSummary?: string;
   outputSummary?: string;
-  blackboardWrite?: V3Blackboard | null;
-  blackboard?: V3Blackboard | null;
   routeInfo?: {
     mergeIntent?: DeckEdgeMergeIntent | 'legacy_default' | null;
     inputMode?: 'legacy_text' | 'single_upstream' | 'structured_merge' | null;
@@ -266,22 +281,10 @@ export type DeckRun = {
     errors: string[];
     warnings: string[];
   };
-  blackboard?: V3Blackboard | null;
+  events?: DeckRuntimeEvent[];
   executionPlanSummary: {
     startCardIds: string[];
     simpleOrderCardIds: string[];
     expandedStepIds: string[];
   };
-};
-
-export type V3Blackboard = {
-  store?: Record<string, string>;
-  current_goal: string | null;
-  what_matters_now: string[];
-  open_questions: string[];
-  findings: string[];
-  suggestions: string[];
-  next_options: string[];
-  next_move: string | null;
-  updated_at?: string | null;
 };

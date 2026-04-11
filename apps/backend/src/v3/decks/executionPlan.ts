@@ -48,13 +48,13 @@ export type DeckExecutionPlan = {
 };
 
 function isRunnableNode(node: AgentCardInstance): boolean {
-  return node.kind !== 'blackboard' && !String(node.parentGraphId || '').trim();
+  return !String(node.parentGraphId || '').trim();
 }
 
 function normalizeEdgeType(value: unknown): DeckEdgeType {
   return String(value || '').trim().toLowerCase() === 'magentic_option'
     ? 'magentic_option'
-    : 'graph_flow';
+    : 'flow';
 }
 
 function getValidEdges(document: DeckDocument): DeckEdge[] {
@@ -82,7 +82,7 @@ function getRunnableNodes(document: DeckDocument): AgentCardInstance[] {
 function getRunnableEdges(document: DeckDocument): DeckEdge[] {
   const nodeMap = getNodeMap(document);
   return getValidEdges(document).filter((edge) => {
-    if (normalizeEdgeType(edge.edgeType) !== 'graph_flow') return false;
+    if (normalizeEdgeType(edge.edgeType) !== 'flow') return false;
     const source = nodeMap.get(edge.source);
     const target = nodeMap.get(edge.target);
     return Boolean(source && target && isRunnableNode(source) && isRunnableNode(target));

@@ -8,6 +8,7 @@ type AgentCardNodeData = AgentCardInstance & {
   isCallableHead?: boolean;
   assistStructureMode?: 'single' | 'seq' | 'branch' | 'merge' | 'branch_merge' | null;
   swarmBadge?: string | null;
+  isRuntimeActive?: boolean;
   isHovered?: boolean;
   isHoverRelated?: boolean;
 };
@@ -47,6 +48,7 @@ export default function AgentCardNode({
     structureLabel,
     data?.swarmBadge || null,
   ].filter(Boolean);
+  const isRuntimeActive = Boolean(data?.isRuntimeActive);
   const hoverRing =
     !selected && data?.isHovered
       ? `0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 14px 28px ${GRAPH_THEME.accent.primaryGlow}`
@@ -64,6 +66,8 @@ export default function AgentCardNode({
           borderWidth: isGraph ? 1.5 : 1,
           borderColor: selected
             ? GRAPH_THEME.accent.primary
+            : isRuntimeActive
+              ? GRAPH_THEME.accent.primary
             : isMagentic
               ? 'rgba(96, 194, 255, 0.82)'
               : isGraph
@@ -78,6 +82,8 @@ export default function AgentCardNode({
             : 'linear-gradient(180deg, rgba(28,31,34,0.98), rgba(18,21,24,0.98))',
           boxShadow: selected
             ? `0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 18px 36px ${GRAPH_THEME.accent.primaryGlow}`
+            : isRuntimeActive
+              ? `0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 18px 36px ${GRAPH_THEME.accent.primaryGlow}`
             : hoverRing
               ? hoverRing
             : isMagentic
@@ -182,21 +188,27 @@ export default function AgentCardNode({
               padding: '3px 8px',
               marginBottom: 8,
               borderRadius: 999,
-              background: isMagentic
-                ? 'rgba(96, 194, 255, 0.14)'
-                : isGraph
-                  ? 'rgba(154, 162, 172, 0.14)'
-                  : 'rgba(255,255,255,0.05)',
-              border: isMagentic
-                ? '1px solid rgba(96, 194, 255, 0.3)'
-                : isGraph
-                  ? '1px solid rgba(154, 162, 172, 0.26)'
-                  : '1px solid rgba(255,255,255,0.08)',
-              color: isMagentic
-                ? '#d8f2ff'
-                : isGraph
-                  ? '#e8edf4'
-                  : GRAPH_THEME.surface.mutedText,
+                background: isMagentic
+                  ? 'rgba(96, 194, 255, 0.14)'
+                  : isGraph
+                    ? 'rgba(154, 162, 172, 0.14)'
+                    : isRuntimeActive
+                      ? 'rgba(79, 162, 173, 0.18)'
+                    : 'rgba(255,255,255,0.05)',
+                border: isMagentic
+                  ? '1px solid rgba(96, 194, 255, 0.3)'
+                  : isGraph
+                    ? '1px solid rgba(154, 162, 172, 0.26)'
+                    : isRuntimeActive
+                      ? '1px solid rgba(79, 162, 173, 0.34)'
+                    : '1px solid rgba(255,255,255,0.08)',
+                color: isMagentic
+                  ? '#d8f2ff'
+                  : isGraph
+                    ? '#e8edf4'
+                    : isRuntimeActive
+                      ? '#d8f2ff'
+                    : GRAPH_THEME.surface.mutedText,
               fontSize: 10,
               letterSpacing: '0.14em',
             }}

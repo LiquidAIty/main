@@ -52,15 +52,10 @@ interface AgentManagerProps {
 const ACTIVE_RUNTIME_TYPES: AgentCardRuntimeType[] = [
   'assistant_agent',
   'magentic_one',
+  'graph_flow',
 ];
 
-const LEGACY_RUNTIME_TYPES: AgentCardRuntimeType[] = [
-  'graph_flow',
-  'round_robin',
-  'selector',
-  'swarm',
-  'adapter',
-];
+const LEGACY_RUNTIME_TYPES: AgentCardRuntimeType[] = [];
 
 export type AgentManagerGraphOwnerOption = {
   cardId: string;

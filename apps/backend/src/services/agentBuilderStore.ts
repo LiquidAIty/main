@@ -1,11 +1,16 @@
 import { createHash, randomUUID } from 'crypto';
 import { pool } from '../db/pool';
 import type { AgentCard, AgentConfig } from '../types/agentBuilder';
+
 export type ProjectState = {
   messages: Array<{ role: 'assistant' | 'user'; text: string }>;
   plan: any;
   links: any[];
   knowledge: { nodes: any[]; edges: any[] };
+};
+
+export type ProjectCard = AgentCard & {
+  isInternal: boolean;
 };
 
 export type ProjectStateMeta = {
@@ -53,6 +58,10 @@ async function getProjectColumns(): Promise<Map<string, boolean>> {
       .catch(() => new Map<string, boolean>());
   }
   return projectColumnsPromise;
+}
+
+function resetProjectColumnsCache(): void {
+  projectColumnsPromise = null;
 }
 
 function pickOwnerId(): string | null {
@@ -290,40 +299,55 @@ export async function createProject(name: string, code?: string | null, projectT
 }
 
 export async function listAgentCards(userId?: string | null, projectType?: 'assist' | 'agent' | null): Promise<AgentCard[]> {
-  const columns = await getProjectColumns();
-  const hasProjectType = columns.has('project_type');
-  
-  const params: any[] = [];
-  const whereClauses: string[] = [];
-  
-  let sql = `
-    SELECT id, name, code, status,
-           agent_model, agent_prompt_template, agent_tools,
-           agent_io_schema, agent_temperature, agent_max_tokens, agent_permissions,
-           ${hasProjectType ? 'project_type' : "'agent' as project_type"}
-    FROM ${PROJECTS_TABLE}
-  `;
+  const runQuery = async (columns: Map<string, boolean>): Promise<AgentCard[]> => {
+    const hasOwnerColumn = columns.has('owner_user_id');
+    const hasProjectType = columns.has('project_type');
 
-  if (userId) {
-    whereClauses.push(`owner_user_id = $${params.length + 1}`);
-    params.push(userId);
-  }
-  
-  if (whereClauses.length > 0) {
-    sql += ' WHERE ' + whereClauses.join(' AND ');
-  }
+    const selectColumn = (column: string, fallbackSql: string) =>
+      columns.has(column) ? column : `${fallbackSql} as ${column}`;
 
-  sql += ' ORDER BY updated_at DESC';
+    const params: any[] = [];
+    const whereClauses: string[] = [];
 
-  if (process.env.LOG_LEVEL === 'debug') {
-    console.log('[listAgentCards] Querying DB:', {
-      table: PROJECTS_TABLE,
-      hasUserId: !!userId,
-      dbUrl: process.env.DATABASE_URL ? 'set' : 'NOT SET',
-    });
-  }
+    let sql = `
+      SELECT id,
+             name,
+             ${selectColumn('code', 'NULL')},
+             ${selectColumn('status', 'NULL')},
+             ${selectColumn('agent_model', 'NULL')},
+             ${selectColumn('agent_prompt_template', 'NULL')},
+             ${selectColumn('agent_tools', "'[]'::jsonb")},
+             ${selectColumn('agent_io_schema', "'{}'::jsonb")},
+             ${selectColumn('agent_temperature', 'NULL')},
+             ${selectColumn('agent_max_tokens', 'NULL')},
+             ${selectColumn('agent_permissions', "'{}'::jsonb")},
+             ${hasProjectType ? 'project_type' : "'agent' as project_type"}
+      FROM ${PROJECTS_TABLE}
+    `;
 
-  try {
+    if (userId && hasOwnerColumn) {
+      whereClauses.push(`owner_user_id = $${params.length + 1}`);
+      params.push(userId);
+    }
+
+    if (whereClauses.length > 0) {
+      sql += ' WHERE ' + whereClauses.join(' AND ');
+    }
+
+    sql += columns.has('updated_at')
+      ? ' ORDER BY updated_at DESC'
+      : columns.has('created_at')
+        ? ' ORDER BY created_at DESC'
+        : ' ORDER BY name ASC';
+
+    if (process.env.LOG_LEVEL === 'debug') {
+      console.log('[listAgentCards] Querying DB:', {
+        table: PROJECTS_TABLE,
+        hasUserId: !!userId,
+        dbUrl: process.env.DATABASE_URL ? 'set' : 'NOT SET',
+      });
+    }
+
     const { rows } = await pool.query(sql, params);
     if (process.env.LOG_LEVEL === 'debug') {
       console.log('[listAgentCards] Query success, rows:', rows.length);
@@ -343,7 +367,44 @@ export async function listAgentCards(userId?: string | null, projectType?: 'assi
         };
       })
       .filter((row) => !projectType || row.project_type === projectType);
+  };
+
+  const isUndefinedColumnError = (err: any): boolean =>
+    err?.code === '42703' || /column .* does not exist/i.test(String(err?.message || ''));
+
+  try {
+    return await runQuery(await getProjectColumns());
   } catch (err: any) {
+    if (isUndefinedColumnError(err)) {
+      console.warn('[listAgentCards] Query hit schema drift, retrying with refreshed columns', {
+        message: err?.message,
+        code: err?.code,
+        detail: err?.detail,
+        table: PROJECTS_TABLE,
+      });
+      resetProjectColumnsCache();
+      try {
+        return await runQuery(await getProjectColumns());
+      } catch (retryErr: any) {
+        if (isUndefinedColumnError(retryErr)) {
+          console.warn('[listAgentCards] Schema drift persisted, returning empty project list', {
+            message: retryErr?.message,
+            code: retryErr?.code,
+            detail: retryErr?.detail,
+            table: PROJECTS_TABLE,
+          });
+          return [];
+        }
+        console.error('[listAgentCards] Query failed after schema refresh:', {
+          message: retryErr?.message,
+          code: retryErr?.code,
+          detail: retryErr?.detail,
+          table: PROJECTS_TABLE,
+        });
+        throw retryErr;
+      }
+    }
+
     console.error('[listAgentCards] Query failed:', {
       message: err?.message,
       code: err?.code,
@@ -384,6 +445,41 @@ export async function getAgentConfig(projectId: string): Promise<AgentConfig | n
     agent_temperature: row.agent_temperature ?? null,
     agent_max_tokens: row.agent_max_tokens ?? null,
     agent_permissions: normalizeJson(row.agent_permissions, {} as Record<string, unknown>),
+  };
+}
+
+function isInternalProjectValue(...values: unknown[]): boolean {
+  return values.some((value) => normalizeProjectKey(value) === 'admin');
+}
+
+export async function getProjectCard(projectId: string): Promise<ProjectCard | null> {
+  const trimmed = String(projectId || '').trim();
+  if (!trimmed) return null;
+
+  const { clause, params } = projectLookup(trimmed);
+  const { rows } = await pool.query(`SELECT * FROM ${PROJECTS_TABLE} WHERE ${clause} LIMIT 1`, params);
+  if (!rows.length) return null;
+
+  const row = rows[0];
+  return {
+    id: row.id,
+    name: row.name,
+    code: row.code ?? null,
+    status: row.status ?? null,
+    hasAgentConfig: hasConfig(row),
+    project_type: inferProjectType(row),
+    isInternal: isInternalProjectValue(trimmed, row.id, row.code, row.name),
+  };
+}
+
+export async function ensureInternalAdminProject(): Promise<ProjectCard> {
+  const existing = await getProjectCard('admin');
+  if (existing) return existing;
+
+  const created = await createProject('Admin', 'admin', 'assist');
+  return {
+    ...created,
+    isInternal: true,
   };
 }
 
@@ -556,4 +652,3 @@ export async function saveProjectState(
     throw err;
   }
 }
-

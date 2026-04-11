@@ -1,6 +1,6 @@
 import { pool } from '../../db/pool';
 
-// Current persisted PlanWiki storage is intentionally human-facing. Machine task packets compile from apps/backend/src/planwiki/*.
+// Current persisted PlanWiki storage is intentionally human-facing.
 export type Message = {
   id: string;
   projectId: string;

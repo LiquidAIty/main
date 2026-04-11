@@ -4,7 +4,6 @@ import type {
   DeckEdgeExecutionMode,
   DeckEdgeMergeIntent,
   DeckEdgeType,
-  V3Blackboard,
 } from '../types';
 
 export type RuntimeActiveMergeIntent =
@@ -74,7 +73,7 @@ const SUPPORTED_RUNTIME_MERGE_INTENTS = new Set<DeckEdgeMergeIntent>([
 function normalizeEdgeType(value: unknown): DeckEdgeType {
   return String(value || '').trim().toLowerCase() === 'magentic_option'
     ? 'magentic_option'
-    : 'graph_flow';
+    : 'flow';
 }
 
 function normalizeExecutionMode(edge: DeckEdge): DeckEdgeExecutionMode | 'legacy_default' {
@@ -101,92 +100,7 @@ function normalizeConditionType(edge: DeckEdge): string | null {
   return normalized || null;
 }
 
-function parseLiteral(value: string): unknown {
-  const trimmed = value.trim();
-  if (!trimmed) return '';
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1);
-  }
-  if (trimmed === 'true') return true;
-  if (trimmed === 'false') return false;
-  if (trimmed === 'null') return null;
-  const numeric = Number(trimmed);
-  if (Number.isFinite(numeric)) return numeric;
-  return trimmed;
-}
-
-function coerceComparisonValue(value: unknown): unknown {
-  if (typeof value !== 'string') return value;
-  const trimmed = value.trim();
-  if (!trimmed) return '';
-  if (trimmed === 'true') return true;
-  if (trimmed === 'false') return false;
-  if (trimmed === 'null') return null;
-  const numeric = Number(trimmed);
-  if (Number.isFinite(numeric)) return numeric;
-  return trimmed;
-}
-
-function readBlackboardPath(path: string, blackboard: V3Blackboard): unknown {
-  const normalized = path.trim();
-  if (normalized === 'blackboard.current_goal') return blackboard.current_goal;
-  if (normalized === 'blackboard.next_move') return blackboard.next_move;
-  if (normalized.startsWith('blackboard.store.')) {
-    const key = normalized.slice('blackboard.store.'.length).trim();
-    return key ? blackboard.store?.[key] ?? null : null;
-  }
-  return undefined;
-}
-
-function evaluateSimpleConditionExpression(
-  expression: string,
-  blackboard: V3Blackboard,
-): ConditionResolution {
-  const trimmed = expression.trim();
-  const normalized = trimmed.toLowerCase();
-
-  if (normalized === 'true' || normalized === 'always') {
-    return {
-      active: true,
-      note: `Conditional edge ran because expression "${trimmed}" resolved to always.`,
-    };
-  }
-
-  if (normalized === 'false' || normalized === 'never') {
-    return {
-      active: false,
-      note: `Conditional edge skipped because expression "${trimmed}" resolved to never.`,
-    };
-  }
-
-  const comparisonMatch = trimmed.match(
-    /^(blackboard(?:\.store\.[A-Za-z0-9_-]+|\.current_goal|\.next_move))\s*(===|!==|==|!=)\s*(.+)$/i,
-  );
-  if (!comparisonMatch) {
-    return {
-      active: false,
-      note: `Conditional edge skipped because expression "${trimmed}" is preserved-only in this runtime.`,
-    };
-  }
-
-  const [, path, operator, rawRight] = comparisonMatch;
-  const leftValue = coerceComparisonValue(readBlackboardPath(path, blackboard));
-  const rightValue = parseLiteral(rawRight);
-  const equals = leftValue === rightValue;
-  const active = operator === '===' || operator === '==' ? equals : !equals;
-
-  return {
-    active,
-    note: active
-      ? `Conditional edge ran because ${path} ${operator} ${rawRight.trim()} passed.`
-      : `Conditional edge skipped because ${path} ${operator} ${rawRight.trim()} did not pass.`,
-  };
-}
-
-function evaluateConditionalEdge(edge: DeckEdge, blackboard: V3Blackboard): ConditionResolution {
+function evaluateConditionalEdge(edge: DeckEdge): ConditionResolution {
   const conditionType = normalizeConditionType(edge);
   const conditionExpression = String(edge.metadata?.conditionExpression || '').trim();
   const conditionLabel = String(edge.metadata?.conditionLabel || '').trim();
@@ -206,7 +120,10 @@ function evaluateConditionalEdge(edge: DeckEdge, blackboard: V3Blackboard): Cond
   }
 
   if (conditionExpression) {
-    return evaluateSimpleConditionExpression(conditionExpression, blackboard);
+    return {
+      active: false,
+      note: `Conditional edge skipped because expression "${conditionExpression}" is preserved-only legacy metadata in this runtime.`,
+    };
   }
 
   if (conditionType === 'label_only' || conditionType === 'label' || conditionLabel) {
@@ -234,7 +151,7 @@ function resolveMergeIntent(edges: DeckEdge[]): MergeResolution {
   if (rawMergeIntents.length === 0) {
     return {
       mergeIntent: 'legacy_default',
-      notes: ['Merge policy used legacy graph_flow defaults because no edge metadata was present.'],
+      notes: ['Merge policy used legacy flow defaults because no edge metadata was present.'],
     };
   }
 
@@ -297,17 +214,12 @@ export function buildGraphExecutionInputText(options: {
   routeInfo: GraphExecutionRouteInfo;
   isStart: boolean;
   baseInput?: string;
-  blackboardInput?: string;
 }): string {
   const sections: string[] = [];
   const baseInput = String(options.baseInput || '').trim();
-  const blackboardInput = String(options.blackboardInput || '').trim();
 
   if (options.isStart && baseInput) {
     sections.push(baseInput);
-  }
-  if (blackboardInput) {
-    sections.push(blackboardInput);
   }
 
   if (options.routeInfo.inputSources.length > 0) {
@@ -349,7 +261,7 @@ export function createGraphExecutionScheduler(options: {
   const edgeOrder = new Map(options.edges.map((edge, index) => [edge.id, index] as const));
   const graphEdges = options.edges.filter(
     (edge) =>
-      normalizeEdgeType(edge.edgeType) === 'graph_flow' &&
+      normalizeEdgeType(edge.edgeType) === 'flow' &&
       nodeMap.has(edge.source) &&
       nodeMap.has(edge.target),
   );
@@ -558,7 +470,6 @@ export function createGraphExecutionScheduler(options: {
 
   function buildSatisfiedEdgeState(
     edge: DeckEdge,
-    blackboard: V3Blackboard,
   ): EdgeRuntimeState {
     const executionMode = normalizeExecutionMode(edge);
     if (executionMode === 'legacy_default') {
@@ -567,7 +478,7 @@ export function createGraphExecutionScheduler(options: {
         executionMode,
         blocking: true,
         resolvedOrder: resolutionCounter,
-        note: `Edge "${edge.id}" used legacy graph_flow defaults and participated as required execution.`,
+        note: `Edge "${edge.id}" used legacy flow defaults and participated as required execution.`,
       };
     }
 
@@ -591,7 +502,7 @@ export function createGraphExecutionScheduler(options: {
       };
     }
 
-    const condition = evaluateConditionalEdge(edge, blackboard);
+    const condition = evaluateConditionalEdge(edge);
     return {
       status: condition.active ? 'satisfied' : 'inactive',
       executionMode,
@@ -621,13 +532,13 @@ export function createGraphExecutionScheduler(options: {
       };
     },
 
-    markSuccess(cardId: string, output: string | null, blackboard: V3Blackboard): void {
+    markSuccess(cardId: string, output: string | null): void {
       nodeStates.set(cardId, 'success');
       outputsByCardId.set(cardId, String(output || '').trim());
 
       (outgoingBySource.get(cardId) || []).forEach((edge) => {
         resolutionCounter += 1;
-        edgeStates.set(edge.id, buildSatisfiedEdgeState(edge, blackboard));
+        edgeStates.set(edge.id, buildSatisfiedEdgeState(edge));
       });
     },
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AgentCardInstance, DeckDocument } from '../types/agentgraph';
+import type { AgentCardInstance, DeckDocument, DeckRun, DeckRuntimeEvent } from '../types/agentgraph';
 import {
   buildQuickAddDeckMutation,
   buildSingleCardRunDocument,
@@ -10,6 +10,10 @@ import {
   resolveProjectDeckLoadResult,
   resolveProjectDeckPayload,
 } from './agentbuilder';
+import {
+  buildDeckRuntimeVisualState,
+  buildReloadStateFromDeckRuns,
+} from '../components/builder/deckRunState';
 import { findDeckNodePreset, getDeckQuickAddActions } from '../components/builder/deckPresets';
 import { buildExecutionPlan } from '../components/builder/deckExecution';
 
@@ -48,6 +52,7 @@ describe('agentbuilder authoring flow', () => {
     expect(getDeckQuickAddActions(null).map((action) => action.label)).toEqual([
       'Add Magentic',
       'Add Assist',
+      'Add Workflow',
     ]);
 
     expect(
@@ -132,7 +137,7 @@ describe('agentbuilder authoring flow', () => {
 
     expect(secondStepMutation.nextNode.parentGraphId).toBe(graph.id);
     expect(secondStepMutation.nextNode.title).toBe('Assist 2');
-    expect(secondStepMutation.nextEdge?.edgeType).toBe('graph_flow');
+    expect(secondStepMutation.nextEdge?.edgeType).toBe('flow');
     expect(secondStepMutation.nextEdge?.source).toBe(firstStepMutation.nextNode.id);
     expect(secondStepMutation.nextEdge?.target).toBe(secondStepMutation.nextNode.id);
     expect(secondStepMutation.nextEdge?.metadata).toMatchObject({
@@ -154,7 +159,7 @@ describe('agentbuilder authoring flow', () => {
 
     expect(nextAssistMutation.nextNode.runtimeType).toBe('assistant_agent');
     expect(nextAssistMutation.nextNode.parentGraphId).toBeNull();
-    expect(nextAssistMutation.nextEdge?.edgeType).toBe('graph_flow');
+    expect(nextAssistMutation.nextEdge?.edgeType).toBe('flow');
     expect(nextAssistMutation.nextEdge?.source).toBe(assist.id);
     expect(nextAssistMutation.nextEdge?.target).toBe(nextAssistMutation.nextNode.id);
     expect(nextAssistMutation.nextEdge?.metadata).toMatchObject({
@@ -217,10 +222,10 @@ describe('agentbuilder authoring flow', () => {
       edgeType: edge.edgeType,
     }))).toEqual([
       { source: 'card_magentic', target: 'card_main_chat', edgeType: 'magentic_option' },
-      { source: 'card_main_chat', target: 'card_kg_ingest', edgeType: 'graph_flow' },
-      { source: 'card_kg_ingest', target: 'card_research', edgeType: 'graph_flow' },
-      { source: 'card_research', target: 'card_knowgraph', edgeType: 'graph_flow' },
-      { source: 'card_knowgraph', target: 'card_neo4j', edgeType: 'graph_flow' },
+      { source: 'card_main_chat', target: 'card_kg_ingest', edgeType: 'flow' },
+      { source: 'card_kg_ingest', target: 'card_research', edgeType: 'flow' },
+      { source: 'card_research', target: 'card_knowgraph', edgeType: 'flow' },
+      { source: 'card_knowgraph', target: 'card_neo4j', edgeType: 'flow' },
     ]);
   });
 
@@ -243,7 +248,7 @@ describe('agentbuilder authoring flow', () => {
         }),
       ],
       edges: [
-        { id: 'edge_saved_a_b', source: 'card_saved_a', target: 'card_saved_b', edgeType: 'graph_flow' },
+        { id: 'edge_saved_a_b', source: 'card_saved_a', target: 'card_saved_b', edgeType: 'flow' },
       ],
     };
 
@@ -252,7 +257,7 @@ describe('agentbuilder authoring flow', () => {
     expect(loaded.usedFallback).toBe(false);
     expect(loaded.deck.nodes.map((node) => node.title)).toEqual(['Saved A', 'Saved B']);
     expect(loaded.deck.edges).toEqual([
-      { id: 'edge_saved_a_b', source: 'card_saved_a', target: 'card_saved_b', edgeType: 'graph_flow' },
+      { id: 'edge_saved_a_b', source: 'card_saved_a', target: 'card_saved_b', edgeType: 'flow' },
     ]);
   });
 
@@ -272,7 +277,7 @@ describe('agentbuilder authoring flow', () => {
           id: 'edge_a_b',
           source: 'card_a',
           target: 'card_b',
-          edgeType: 'graph_flow',
+          edgeType: 'flow',
           metadata: {
             role: 'graph_execution',
             executionMode: 'conditional',
@@ -286,7 +291,7 @@ describe('agentbuilder authoring flow', () => {
           id: 'edge_a_c',
           source: 'card_a',
           target: 'card_c',
-          edgeType: 'graph_flow',
+          edgeType: 'flow',
           metadata: {
             role: 'graph_execution',
             executionMode: 'optional',
@@ -311,7 +316,7 @@ describe('agentbuilder authoring flow', () => {
         id: 'edge_a_b',
         source: 'card_a',
         target: 'card_b',
-        edgeType: 'graph_flow',
+        edgeType: 'flow',
         metadata: {
           role: 'graph_execution',
           executionMode: 'conditional',
@@ -329,7 +334,7 @@ describe('agentbuilder authoring flow', () => {
         id: 'edge_a_c',
         source: 'card_a',
         target: 'card_c',
-        edgeType: 'graph_flow',
+        edgeType: 'flow',
         metadata: {
           role: 'graph_execution',
           executionMode: 'optional',
@@ -352,11 +357,11 @@ describe('agentbuilder authoring flow', () => {
       version: 2,
       edges: [
         { id: 'edge_magentic_main_chat', source: 'card_magentic', target: 'card_main_chat', edgeType: 'magentic_option' },
-        { id: 'edge_main_chat_kg_ingest', source: 'card_main_chat', target: 'card_kg_ingest', edgeType: 'graph_flow' },
-        { id: 'edge_kg_ingest_research', source: 'card_kg_ingest', target: 'card_research', edgeType: 'graph_flow' },
-        { id: 'edge_kg_ingest_knowgraph', source: 'card_kg_ingest', target: 'card_knowgraph', edgeType: 'graph_flow' },
-        { id: 'edge_research_neo4j', source: 'card_research', target: 'card_neo4j', edgeType: 'graph_flow' },
-        { id: 'edge_knowgraph_neo4j', source: 'card_knowgraph', target: 'card_neo4j', edgeType: 'graph_flow' },
+        { id: 'edge_main_chat_kg_ingest', source: 'card_main_chat', target: 'card_kg_ingest', edgeType: 'flow' },
+        { id: 'edge_kg_ingest_research', source: 'card_kg_ingest', target: 'card_research', edgeType: 'flow' },
+        { id: 'edge_kg_ingest_knowgraph', source: 'card_kg_ingest', target: 'card_knowgraph', edgeType: 'flow' },
+        { id: 'edge_research_neo4j', source: 'card_research', target: 'card_neo4j', edgeType: 'flow' },
+        { id: 'edge_knowgraph_neo4j', source: 'card_knowgraph', target: 'card_neo4j', edgeType: 'flow' },
       ],
     };
 
@@ -378,11 +383,11 @@ describe('agentbuilder authoring flow', () => {
       edgeType: edge.edgeType,
     }))).toEqual([
       { source: 'card_magentic', target: 'card_main_chat', edgeType: 'magentic_option' },
-      { source: 'card_main_chat', target: 'card_kg_ingest', edgeType: 'graph_flow' },
-      { source: 'card_kg_ingest', target: 'card_research', edgeType: 'graph_flow' },
-      { source: 'card_kg_ingest', target: 'card_knowgraph', edgeType: 'graph_flow' },
-      { source: 'card_research', target: 'card_neo4j', edgeType: 'graph_flow' },
-      { source: 'card_knowgraph', target: 'card_neo4j', edgeType: 'graph_flow' },
+      { source: 'card_main_chat', target: 'card_kg_ingest', edgeType: 'flow' },
+      { source: 'card_kg_ingest', target: 'card_research', edgeType: 'flow' },
+      { source: 'card_kg_ingest', target: 'card_knowgraph', edgeType: 'flow' },
+      { source: 'card_research', target: 'card_neo4j', edgeType: 'flow' },
+      { source: 'card_knowgraph', target: 'card_neo4j', edgeType: 'flow' },
     ]);
   });
 
@@ -496,7 +501,7 @@ describe('agentbuilder authoring flow', () => {
         createCard('card_b', 'assistant_agent', { title: 'B' }),
       ],
       edges: [
-        { id: 'edge_a_b', source: 'card_a', target: 'card_b', edgeType: 'graph_flow' },
+        { id: 'edge_a_b', source: 'card_a', target: 'card_b', edgeType: 'flow' },
       ],
     });
 
@@ -505,7 +510,7 @@ describe('agentbuilder authoring flow', () => {
         id: 'edge_a_b',
         source: 'card_a',
         target: 'card_b',
-        edgeType: 'graph_flow',
+        edgeType: 'flow',
       },
     ]);
     expect(hydrated.edges[0]?.metadata).toBeUndefined();
@@ -550,7 +555,7 @@ describe('agentbuilder authoring flow', () => {
     const nextNodes = [magentic, graph, { ...stepA, parentGraphId: null }, stepB];
     const nextEdges = filterAuthoringCompatibleEdges(nextNodes, [
       { id: 'edge_magentic_graph', source: magentic.id, target: graph.id, edgeType: 'magentic_option' },
-      { id: 'edge_step_chain', source: stepA.id, target: stepB.id, edgeType: 'graph_flow' },
+      { id: 'edge_step_chain', source: stepA.id, target: stepB.id, edgeType: 'flow' },
     ]);
 
     expect(nextEdges).toEqual([
@@ -563,11 +568,11 @@ describe('agentbuilder authoring flow', () => {
     const assistB = createCard('assist_b', 'assistant_agent');
 
     const nextEdges = filterAuthoringCompatibleEdges([assistA, assistB], [
-      { id: 'edge_assist_a_b', source: assistA.id, target: assistB.id, edgeType: 'graph_flow' },
+      { id: 'edge_assist_a_b', source: assistA.id, target: assistB.id, edgeType: 'flow' },
     ]);
 
     expect(nextEdges).toEqual([
-      { id: 'edge_assist_a_b', source: assistA.id, target: assistB.id, edgeType: 'graph_flow' },
+      { id: 'edge_assist_a_b', source: assistA.id, target: assistB.id, edgeType: 'flow' },
     ]);
   });
 
@@ -591,11 +596,11 @@ describe('agentbuilder authoring flow', () => {
     });
 
     const nextEdges = filterAuthoringCompatibleEdges([graph, stepA, stepB, stepC, stepD], [
-      { id: 'edge_graph_a', source: graph.id, target: stepA.id, edgeType: 'graph_flow' },
-      { id: 'edge_a_b', source: stepA.id, target: stepB.id, edgeType: 'graph_flow' },
-      { id: 'edge_a_c', source: stepA.id, target: stepC.id, edgeType: 'graph_flow' },
-      { id: 'edge_b_d', source: stepB.id, target: stepD.id, edgeType: 'graph_flow' },
-      { id: 'edge_c_d', source: stepC.id, target: stepD.id, edgeType: 'graph_flow' },
+      { id: 'edge_graph_a', source: graph.id, target: stepA.id, edgeType: 'flow' },
+      { id: 'edge_a_b', source: stepA.id, target: stepB.id, edgeType: 'flow' },
+      { id: 'edge_a_c', source: stepA.id, target: stepC.id, edgeType: 'flow' },
+      { id: 'edge_b_d', source: stepB.id, target: stepD.id, edgeType: 'flow' },
+      { id: 'edge_c_d', source: stepC.id, target: stepD.id, edgeType: 'flow' },
     ]);
 
     expect(nextEdges.map((edge) => edge.id)).toEqual([
@@ -616,7 +621,7 @@ describe('agentbuilder authoring flow', () => {
         id: 'edge_assist_a_b',
         source: assistA.id,
         target: assistB.id,
-        edgeType: 'graph_flow',
+        edgeType: 'flow',
         metadata: {
           role: 'graph_execution',
           executionMode: 'conditional',
@@ -631,7 +636,7 @@ describe('agentbuilder authoring flow', () => {
         id: 'edge_assist_a_b',
         source: assistA.id,
         target: assistB.id,
-        edgeType: 'graph_flow',
+        edgeType: 'flow',
         metadata: {
           role: 'graph_execution',
           executionMode: 'conditional',
@@ -657,7 +662,7 @@ describe('agentbuilder authoring flow', () => {
           id: 'edge_saved_a_b',
           source: 'card_saved_a',
           target: 'card_saved_b',
-          edgeType: 'graph_flow',
+          edgeType: 'flow',
           metadata: {
             role: 'graph_execution',
             executionMode: 'optional',
@@ -719,7 +724,7 @@ describe('agentbuilder authoring flow', () => {
       ...createDeck([magentic, assistA, assistB, graph, graphStep]),
       edges: [
         { id: 'edge_magentic_assist', source: magentic.id, target: assistA.id, edgeType: 'magentic_option' },
-        { id: 'edge_assist_chain', source: assistA.id, target: assistB.id, edgeType: 'graph_flow' },
+        { id: 'edge_assist_chain', source: assistA.id, target: assistB.id, edgeType: 'flow' },
         { id: 'edge_magentic_graph', source: magentic.id, target: graph.id, edgeType: 'magentic_option' },
       ],
     };
@@ -743,4 +748,167 @@ describe('agentbuilder authoring flow', () => {
       'edge_magentic_graph',
     ]);
   });
+
+  it('hydrates reload-time chat and plan continuity from saved deck runs', () => {
+    const latestRun: DeckRun = {
+      id: 'deck_run_latest',
+      deckId: 'deck_builder',
+      startedAt: '2026-04-10T00:00:00.000Z',
+      endedAt: '2026-04-10T00:00:05.000Z',
+      status: 'success',
+      input: 'Map the next move',
+      steps: [
+        {
+          id: 'step_1',
+          executionId: 'card_magentic::single',
+          cardId: 'card_magentic',
+          templateId: 'template_magentic',
+          title: 'Magentic-One',
+          input: 'Map the next move',
+          effectiveAgent: { id: 'template_magentic', name: 'Magentic-One', tools: [] },
+          output: 'Here is the next move.',
+          status: 'success',
+          startedAt: '2026-04-10T00:00:00.000Z',
+          endedAt: '2026-04-10T00:00:05.000Z',
+          outputSummary: 'Here is the next move.',
+        },
+      ],
+      validationSummary: {
+        ok: true,
+        errors: [],
+        warnings: [],
+      },
+      events: [
+        {
+          id: 'evt_latest',
+          at: '2026-04-10T00:00:01.000Z',
+          kind: 'magentic_assignment',
+          cardId: 'card_magentic',
+          cardTitle: 'Magentic-One',
+          runtimeType: 'magentic_one',
+          text: 'Magentic-One assigned work to Main Chat.',
+          progressText: 'Goal: map the next move. Next: calling Main Chat because it is the visible reply node.',
+          status: 'running',
+        },
+      ],
+      executionPlanSummary: {
+        startCardIds: ['card_magentic'],
+        simpleOrderCardIds: ['card_magentic'],
+        expandedStepIds: ['card_magentic::single'],
+      },
+    };
+
+    const continuity = buildReloadStateFromDeckRuns([latestRun], latestRun);
+
+    expect(continuity.messages).toEqual([
+      { role: 'user', text: 'Map the next move' },
+      { role: 'assistant', text: 'Here is the next move.' },
+    ]);
+    expect(continuity.planSource).toEqual(
+      expect.objectContaining({
+        goal: 'Map the next move',
+        nextMove: ['Waiting for the next user input.'],
+        whatMattersNow: ['Magentic-One assigned work to Main Chat.'],
+      }),
+    );
+    expect(continuity.plan).toEqual([
+      expect.objectContaining({
+        text: 'Magentic-One: Here is the next move.',
+        status: 'done',
+      }),
+    ]);
+    expect(continuity.links).toEqual([]);
+  });
+
+  it('derives live runtime visuals from streamed deck events only', () => {
+    const events: DeckRuntimeEvent[] = [
+      {
+        id: 'evt_1',
+        at: '2026-04-10T00:00:00.000Z',
+        kind: 'step_started',
+        cardId: 'assist_a',
+        cardTitle: 'Assist A',
+        runtimeType: 'assistant_agent',
+        edgeIds: ['edge_a_b'],
+        notes: ['Merged upstream outputs for Assist A.'],
+        text: 'Assist A started.',
+        status: 'running',
+      },
+      {
+        id: 'evt_2',
+        at: '2026-04-10T00:00:01.000Z',
+        kind: 'magentic_assignment',
+        cardId: 'magentic',
+        cardTitle: 'Magentic-One',
+        runtimeType: 'magentic_one',
+        edgeIds: ['edge_magentic_assist'],
+        text: 'Magentic-One assigned work to Assist A.',
+        status: 'running',
+      },
+      {
+        id: 'evt_3',
+        at: '2026-04-10T00:00:01.500Z',
+        kind: 'message',
+        type: 'message',
+        cardId: 'assist_a',
+        cardTitle: 'Assist A',
+        runtimeType: 'assistant_agent',
+        role: 'assistant',
+        content: 'Actual assistant message from Assist A.',
+      },
+      {
+        id: 'evt_4',
+        at: '2026-04-10T00:00:02.000Z',
+        kind: 'swarm_progress',
+        cardId: 'assist_a',
+        cardTitle: 'Assist A',
+        runtimeType: 'assistant_agent',
+        text: 'Assist A swarm worker 2 of 5 completed.',
+        completedWorkers: 2,
+        totalWorkers: 5,
+        status: 'running',
+      },
+      {
+        id: 'evt_5',
+        at: '2026-04-10T00:00:03.000Z',
+        kind: 'step_completed',
+        cardId: 'assist_a',
+        cardTitle: 'Assist A',
+        runtimeType: 'assistant_agent',
+        edgeIds: ['edge_a_b'],
+        text: 'Assist A completed.',
+        outputSummary: 'Prepared the next research summary.',
+        status: 'success',
+      },
+      {
+        id: 'evt_6',
+        at: '2026-04-10T00:00:04.000Z',
+        kind: 'run_completed',
+        text: 'Deck Admin completed.',
+        status: 'success',
+      },
+    ];
+
+    expect(buildDeckRuntimeVisualState(events)).toEqual({
+      activeCardIds: [],
+      activeEdgeIds: [],
+      swarmProgressByCardId: {},
+      reasoningLines: [
+        'Merged upstream outputs for Assist A.',
+        'Assignment: Magentic-One assigned work to Assist A.',
+      ],
+      teamLines: [
+        'Progress: Assist A started.',
+        'Assignment: Magentic-One assigned work to Assist A.',
+        'Actual assistant message from Assist A.',
+        'Progress: Assist A swarm worker 2 of 5 completed.',
+        'Progress: Assist A completed.',
+      ],
+      reportLines: [
+        'Result: Assist A: Prepared the next research summary.',
+        'Result: Deck Admin completed.',
+      ],
+    });
+  });
 });
+
