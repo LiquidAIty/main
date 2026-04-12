@@ -11,29 +11,30 @@ const C = {
   warn: "#D98458",
 };
 
-export default function Login() {
+export default function Signup() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
     
     try {
-      const response = await fetch('/api/auth/login', {
+      const response = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, name: name || undefined }),
       });
 
       if (!response.ok) {
         const data = await response.json();
-        throw new Error(data.error || 'Login failed');
+        throw new Error(data.error || 'Signup failed');
       }
 
       navigate('/');
@@ -57,7 +58,7 @@ export default function Login() {
               boxShadow: "0 0 0 2px #000 inset",
             }}
           />
-          <h1 className="text-2xl font-bold" style={{ color: C.text }}>LiquidAIty</h1>
+          <h1 className="text-2xl font-bold" style={{ color: C.text }}>Create Account</h1>
         </div>
         
         {error && (
@@ -66,7 +67,7 @@ export default function Login() {
           </div>
         )}
 
-        <form onSubmit={handleLogin} className="space-y-4">
+        <form onSubmit={handleSignup} className="space-y-4">
           <div>
             <label htmlFor="email" className="block text-sm font-medium mb-2" style={{ color: C.neutral }}>
               Email
@@ -84,6 +85,21 @@ export default function Login() {
           </div>
 
           <div>
+            <label htmlFor="name" className="block text-sm font-medium mb-2" style={{ color: C.neutral }}>
+              Name (optional)
+            </label>
+            <input
+              id="name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full px-4 py-3 rounded focus:outline-none"
+              style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.text }}
+              placeholder="Your name"
+            />
+          </div>
+
+          <div>
             <label htmlFor="password" className="block text-sm font-medium mb-2" style={{ color: C.neutral }}>
               Password
             </label>
@@ -96,8 +112,9 @@ export default function Login() {
               minLength={8}
               className="w-full px-4 py-3 rounded focus:outline-none"
               style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.text }}
-              placeholder="••••••••"
+              placeholder="At least 8 characters"
             />
+            <p className="mt-1 text-xs" style={{ color: C.neutral }}>Must be at least 8 characters</p>
           </div>
 
           <button
@@ -111,15 +128,15 @@ export default function Login() {
               cursor: loading ? 'not-allowed' : 'pointer',
             }}
           >
-            {loading ? 'Logging in...' : 'Sign In'}
+            {loading ? 'Creating account...' : 'Sign Up'}
           </button>
         </form>
 
         <div className="mt-6 text-center">
           <p className="text-sm" style={{ color: C.neutral }}>
-            Don't have an account?{' '}
-            <Link to="/signup" style={{ color: C.primary }} className="hover:underline">
-              Sign up
+            Already have an account?{' '}
+            <Link to="/login" style={{ color: C.primary }} className="hover:underline">
+              Sign in
             </Link>
           </p>
         </div>

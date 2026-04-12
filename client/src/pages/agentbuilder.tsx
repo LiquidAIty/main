@@ -2103,7 +2103,7 @@ function Icon({ d, size = 22 }: { d: string; size?: number }) {
 // -------- Main page --------
 export default function AgentBuilder(): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
-  const [largeSurface, setLargeSurface] = useState<"chat" | "plan" | "canvas" | "knowledge">("canvas");
+  const [largeSurface, setLargeSurface] = useState<"chat" | "plan" | "canvas" | "knowledge">("chat");
   const workspaceView =
     largeSurface === "canvas" ? "canvas" : largeSurface === "knowledge" ? "knowledge" : "home";
   const {
@@ -2144,6 +2144,10 @@ export default function AgentBuilder(): React.ReactElement {
   const [hoveredCompanionSurface, setHoveredCompanionSurface] =
     useState<null | "chat" | "plan" | "canvas" | "knowledge">(null);
   const [openDrawer, setOpenDrawer] = useState<null | "navigation">(null);
+  const [showCreateProjectForm, setShowCreateProjectForm] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectCode, setNewProjectCode] = useState("");
+  const [showAdvancedProjectFields, setShowAdvancedProjectFields] = useState(false);
   const [sending, setSending] = useState(false);
   const lastLargeSurfaceTelemetryRef = useRef<WorkspaceTestingSurface | null>(null);
   const lastCompanionSurfaceTelemetryRef = useRef<string | null>(null);
@@ -4257,13 +4261,15 @@ export default function AgentBuilder(): React.ReactElement {
     setSelectedKnowledgeRelationshipId(null);
   }, [knowledgeRelationshipById, selectedKnowledgeRelationshipId]);
 
-  const createProjectPrompt = async () => {
-    const name = window.prompt("New project name?");
-    if (!name || !name.trim()) return;
-    let code = window.prompt("Project code (optional)") || "";
-    code = code.trim();
+  const handleCreateProject = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    
+    const name = newProjectName.trim();
+    if (!name) return;
+    
+    let code = newProjectCode.trim();
     if (!code) {
-      code = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+      code = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
     }
     
     const projectType = "assist";
@@ -4273,7 +4279,7 @@ export default function AgentBuilder(): React.ReactElement {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          name: name.trim(), 
+          name, 
           code,
           project_type: projectType
         }),
@@ -4285,9 +4291,12 @@ export default function AgentBuilder(): React.ReactElement {
       const data = await res.json().catch(() => null);
       const newId = (data && data.id) || "";
       
+      setShowCreateProjectForm(false);
+      setNewProjectName("");
+      setNewProjectCode("");
+      
       await refreshProjects("after-create", newId);
       
-      // Select the new project
       if (newId) {
         setActiveProjectWithUrl(newId);
       }
@@ -4897,8 +4906,8 @@ export default function AgentBuilder(): React.ReactElement {
             <Icon d="M4 7l8-4 8 4v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
           </button>
           <button
-            title="Plus"
-            aria-label="Plus"
+            title="Agents"
+            aria-label="Agents"
             data-testid="rail-plus-button"
             onClick={showCanvasWorkspace}
             className="p-2 rounded"
@@ -4907,8 +4916,8 @@ export default function AgentBuilder(): React.ReactElement {
             <Icon d="M3 12h18M12 3v18" />
           </button>
           <button
-            title="Burst"
-            aria-label="Burst"
+            title="Knowledge"
+            aria-label="Knowledge"
             data-testid="rail-burst-button"
             onClick={showKnowledgeWorkspace}
             className="p-2 rounded"
@@ -4918,19 +4927,19 @@ export default function AgentBuilder(): React.ReactElement {
           </button>
           <div className="flex-1" />
           <button
-            title="Orange"
-            aria-label="Orange"
+            title="Plan"
+            aria-label="Plan"
             data-testid="rail-orange-button"
             onClick={showPlanWorkspace}
-            className="p-2 rounded"
+            className="p-2 rounded mb-1"
             style={{ color: largeSurface === "plan" ? "#ffb86b" : C.text }}
           >
             <Icon d="M3 12l2-2 4 4L21 4" />
           </button>
           <button
-            title="Three-lines"
-            aria-label="Three-lines"
-            data-testid="header-three-lines-button"
+            title="Menu"
+            aria-label="Menu"
+            data-testid="rail-three-lines-button"
             onClick={() => setOpenDrawer("navigation")}
             className="p-2 rounded"
             style={{
@@ -5098,13 +5107,70 @@ export default function AgentBuilder(): React.ReactElement {
             >
               <span>Chat Projects</span>
               <button
-                onClick={createProjectPrompt}
+                onClick={() => setShowCreateProjectForm(!showCreateProjectForm)}
                 className="text-[11px] px-2 py-1 rounded"
                 style={{ border: `1px solid ${C.border}`, color: C.text }}
+                data-testid="new-project-button"
               >
                 New Project
               </button>
             </div>
+
+            {showCreateProjectForm && (
+              <form
+                onSubmit={handleCreateProject}
+                className="mb-2 p-2 rounded"
+                style={{ border: `1px solid ${C.border}`, background: C.bg }}
+                data-testid="create-project-form"
+              >
+                <div className="flex gap-1 mb-1">
+                  <input
+                    type="text"
+                    value={newProjectName}
+                    onChange={(e) => setNewProjectName(e.target.value)}
+                    placeholder="Project name"
+                    autoFocus
+                    className="flex-1 px-2 py-1 text-xs rounded focus:outline-none"
+                    style={{ background: C.panel, border: `1px solid ${C.border}`, color: C.text }}
+                    data-testid="project-name-input"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!newProjectName.trim()}
+                    className="text-xs py-1 px-3 rounded font-medium"
+                    style={{
+                      background: newProjectName.trim() ? `rgba(79,162,173,0.18)` : C.panel,
+                      border: `1px solid ${newProjectName.trim() ? C.primary : C.border}`,
+                      color: C.text,
+                      cursor: newProjectName.trim() ? 'pointer' : 'not-allowed',
+                    }}
+                    data-testid="create-project-submit"
+                  >
+                    Create
+                  </button>
+                </div>
+                {showAdvancedProjectFields && (
+                  <input
+                    type="text"
+                    value={newProjectCode}
+                    onChange={(e) => setNewProjectCode(e.target.value)}
+                    placeholder="code (optional)"
+                    className="w-full px-2 py-1 text-xs rounded focus:outline-none mb-1"
+                    style={{ background: C.panel, border: `1px solid ${C.border}`, color: C.text }}
+                    data-testid="project-code-input"
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedProjectFields(!showAdvancedProjectFields)}
+                  className="text-[10px] px-1"
+                  style={{ color: C.neutral }}
+                >
+                  {showAdvancedProjectFields ? '− less' : '+ code'}
+                </button>
+              </form>
+            )}
+
             <div className="space-y-2" style={{ maxHeight: 400, overflowY: "auto" }}>
               {projectsError && (
                 <div className="text-xs" style={{ color: C.neutral }}>
@@ -5173,6 +5239,30 @@ export default function AgentBuilder(): React.ReactElement {
                   No projects available.
                 </div>
               )}
+            </div>
+
+            <div className="mt-6 pt-4" style={{ borderTop: `1px solid ${C.border}` }}>
+              <div className="text-xs uppercase mb-2" style={{ color: C.neutral }}>
+                Account
+              </div>
+              <button
+                onClick={async () => {
+                  try {
+                    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+                    window.location.href = '/login';
+                  } catch (err) {
+                    console.error('Logout failed:', err);
+                  }
+                }}
+                className="w-full text-left p-3 rounded"
+                style={{
+                  background: "transparent",
+                  border: `1px solid ${C.border}`,
+                  color: C.text,
+                }}
+              >
+                <div className="font-medium">Sign Out</div>
+              </button>
             </div>
           </div>
         </BuilderDrawer>

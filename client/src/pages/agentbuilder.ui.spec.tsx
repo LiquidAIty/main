@@ -468,7 +468,7 @@ describe("AgentBuilder locked 3-state flow", () => {
     expect(getButtonByTitle(container, "Plus")).toBeTruthy();
     expect(getButtonByTitle(container, "Burst")).toBeTruthy();
     expect(getButtonByTitle(container, "Orange")).toBeTruthy();
-    expect(getButtonByTitle(container, "Three-lines")).toBeTruthy();
+    expect(container.querySelector('[data-testid="rail-three-lines-button"]')).toBeTruthy();
     expect(getByTestId(container, "workspace-large-region").getAttribute("data-surface")).toBe("chat");
     expect(queryByTestId(container, "companion-surface-canvas")).toBeTruthy();
     expect(queryByTestId(container, "large-surface-canvas")).toBeNull();
@@ -835,7 +835,7 @@ describe("AgentBuilder locked 3-state flow", () => {
     expect(getByTestId(container, "header-actions").textContent?.trim()).toBe("");
     expect(container.querySelector('button[title="Projects"]')).toBeNull();
 
-    click(getButtonByTitle(container, "Three-lines"));
+    click(getByTestId(container, "rail-three-lines-button"));
 
     await waitFor(() => {
       expect(queryByTestId(container, "navigation-drawer")).toBeTruthy();
@@ -848,6 +848,53 @@ describe("AgentBuilder locked 3-state flow", () => {
     expect(getByTestId(container, "drawer-projects-section")).toBeTruthy();
     expect(container.textContent).toContain("Chat Projects");
     expect(container.textContent).toContain("Alpha Project");
+  });
+
+  it("creates a new project using inline form without browser prompts", async () => {
+    const container = mount(<AgentBuilder />);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
+    });
+
+    click(getByTestId(container, "rail-three-lines-button"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "navigation-drawer")).toBeTruthy();
+    });
+
+    const newProjectButton = getByTestId(container, "new-project-button");
+    expect(newProjectButton.textContent).toBe("New Project");
+
+    click(newProjectButton);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "create-project-form")).toBeTruthy();
+    });
+
+    expect(newProjectButton.textContent).toBe("New Project");
+
+    const nameInput = getByTestId(container, "project-name-input") as HTMLInputElement;
+    const submitButton = getByTestId(container, "create-project-submit");
+
+    expect(submitButton.hasAttribute("disabled")).toBe(true);
+
+    fireEvent.change(nameInput, { target: { value: "Test Project" } });
+
+    await waitFor(() => {
+      expect(nameInput.value).toBe("Test Project");
+      expect(submitButton.hasAttribute("disabled")).toBe(false);
+    });
+
+    click(submitButton);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "create-project-form")).toBeNull();
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("Test Project");
+    });
   });
 
   it("captures internal workspace testing events for surfaces, graph selection, and return to chat", async () => {

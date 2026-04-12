@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentCardInstance, DeckDocument, DeckEdge } from '../../types/agentgraph';
 import { buildExecutionPlan } from './deckExecution';
 import {
+  buildCanvasDocumentRecoveryKey,
   buildAssistStructureSummaries,
   buildDeckEdgeVisualStates,
   getAssistSwarmBadge,
@@ -13,6 +14,8 @@ import {
   mergeFlowNodesIntoDeck,
   shouldPersistEdgeChanges,
   shouldPersistNodeChanges,
+  syncFlowEdgesForRender,
+  syncFlowNodesForRender,
 } from './BuilderCanvas';
 import { sanitizeDeckEdges } from './deckValidation';
 
@@ -603,6 +606,186 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         0,
       ),
     ).toBe(true);
+  });
+
+  it('ignores non-layout document changes when deciding whether hover should recover the viewport', () => {
+    const document: DeckDocument = {
+      id: 'deck_recovery_key',
+      name: 'Recovery Key',
+      promptTemplates: [
+        {
+          id: 'prompt_main',
+          label: 'Main Prompt',
+          prompt: 'original prompt',
+        } as any,
+      ],
+      version: 4,
+      nodes: [
+        {
+          id: 'card_main',
+          kind: 'agent',
+          templateId: 'template_main',
+          runtimeType: 'assistant_agent',
+          title: 'Main',
+          subtitle: 'Original subtitle',
+          prompt: 'Original prompt',
+          position: { x: 120, y: 80 },
+        },
+      ],
+      edges: [],
+    };
+
+    const restyledDocument: DeckDocument = {
+      ...document,
+      name: 'Recovery Key Updated',
+      promptTemplates: [
+        {
+          id: 'prompt_main',
+          label: 'Main Prompt',
+          prompt: 'updated prompt',
+        } as any,
+      ],
+      nodes: [
+        {
+          ...document.nodes[0],
+          title: 'Main Updated',
+          subtitle: 'Updated subtitle',
+          prompt: 'Updated prompt',
+        },
+      ],
+    };
+
+    expect(buildCanvasDocumentRecoveryKey(restyledDocument)).toBe(buildCanvasDocumentRecoveryKey(document));
+  });
+
+  it('changes the viewport recovery key when the actual graph layout changes', () => {
+    const document: DeckDocument = {
+      id: 'deck_recovery_layout',
+      name: 'Recovery Layout',
+      promptTemplates: [],
+      version: 7,
+      nodes: [
+        {
+          id: 'card_a',
+          kind: 'agent',
+          templateId: 'template_a',
+          runtimeType: 'assistant_agent',
+          title: 'A',
+          position: { x: 80, y: 80 },
+        },
+        {
+          id: 'card_b',
+          kind: 'agent',
+          templateId: 'template_b',
+          runtimeType: 'assistant_agent',
+          title: 'B',
+          position: { x: 420, y: 80 },
+        },
+      ],
+      edges: [
+        {
+          id: 'edge_a_b',
+          source: 'card_a',
+          target: 'card_b',
+          edgeType: 'flow',
+        },
+      ],
+    };
+
+    const movedNodeDocument: DeckDocument = {
+      ...document,
+      nodes: [
+        {
+          ...document.nodes[0],
+          position: { x: 240, y: 80 },
+        },
+        document.nodes[1],
+      ],
+    };
+    const rewiredEdgeDocument: DeckDocument = {
+      ...document,
+      edges: [
+        {
+          ...document.edges[0],
+          target: 'card_a',
+        },
+      ],
+    };
+
+    expect(buildCanvasDocumentRecoveryKey(movedNodeDocument)).not.toBe(buildCanvasDocumentRecoveryKey(document));
+    expect(buildCanvasDocumentRecoveryKey(rewiredEdgeDocument)).not.toBe(buildCanvasDocumentRecoveryKey(document));
+  });
+
+  it('preserves measured node layout state during hover-only render sync', () => {
+    const currentNodes: Node[] = [
+      {
+        id: 'card_main',
+        type: 'agentCard',
+        position: { x: 120, y: 80 },
+        width: 320,
+        height: 180,
+        measured: { width: 326, height: 184 },
+        positionAbsolute: { x: 120, y: 80 },
+        data: { title: 'Main' },
+      } as Node,
+    ];
+    const nextNodes: Node[] = [
+      {
+        id: 'card_main',
+        type: 'agentCard',
+        position: { x: 120, y: 80 },
+        selected: true,
+        style: { opacity: 0.44 },
+        data: { title: 'Main', isHovered: true },
+      } as Node,
+    ];
+
+    const synced = syncFlowNodesForRender(currentNodes, nextNodes);
+
+    expect(synced[0]).toMatchObject({
+      width: 320,
+      height: 180,
+      measured: { width: 326, height: 184 },
+      positionAbsolute: { x: 120, y: 80 },
+      selected: true,
+      style: { opacity: 0.44 },
+      data: { title: 'Main', isHovered: true },
+    });
+  });
+
+  it('preserves computed edge state during hover-only render sync', () => {
+    const currentEdges: Edge[] = [
+      {
+        id: 'edge_main_next',
+        source: 'card_main',
+        target: 'card_next',
+        data: { edgeType: 'flow' },
+        markerEnd: { type: 'arrowclosed', color: '#999' } as any,
+        style: { stroke: '#999', opacity: 1 },
+        selected: false,
+      } as Edge,
+    ];
+    const nextEdges: Edge[] = [
+      {
+        id: 'edge_main_next',
+        source: 'card_main',
+        target: 'card_next',
+        data: { edgeType: 'flow' },
+        markerEnd: { type: 'arrowclosed', color: '#fff' } as any,
+        style: { stroke: '#fff', opacity: 0.24 },
+        selected: true,
+        className: 'edge-flow',
+      } as Edge,
+    ];
+
+    const synced = syncFlowEdgesForRender(currentEdges, nextEdges);
+
+    expect(synced[0]).toMatchObject({
+      markerEnd: { color: '#fff' },
+      style: { stroke: '#fff', opacity: 0.24 },
+      selected: true,
+      className: 'edge-flow',
+    });
   });
 });
 

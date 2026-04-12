@@ -1,109 +1,67 @@
-import { v4 as uuidv4 } from 'uuid';
-import fs from 'fs';
-import path from 'path';
-import { promisify } from 'util';
+import { PrismaClient } from '@prisma/client';
 import type { Request, Response } from 'express';
+import type { User } from './userService';
 
-const writeFile = promisify(fs.writeFile);
-const readFile = promisify(fs.readFile);
-const mkdir = promisify(fs.mkdir);
-
-const DATA_DIR = path.join(__dirname, '..', '..', '.data');
-const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
-const USERS_FILE = path.join(DATA_DIR, 'users.json');
-
-export interface User {
-  id: string;
-  created: string;
-}
+const prisma = new PrismaClient();
 
 export interface Session {
   id: string;
   userId: string;
-  created: string;
+  createdAt: Date;
 }
 
-async function ensureDataDir() {
-  try {
-    await mkdir(DATA_DIR, { recursive: true });
-  } catch {
-    // directory already exists
-  }
-}
+export async function createSession(userId: string): Promise<Session> {
+  const session = await prisma.session.create({
+    data: {
+      userId,
+    },
+  });
 
-async function readJsonFile<T>(filePath: string, defaultValue: T): Promise<T> {
-  await ensureDataDir();
-  try {
-    const data = await readFile(filePath, 'utf-8');
-    return JSON.parse(data) as T;
-  } catch {
-    await writeJsonFile(filePath, defaultValue);
-    return defaultValue;
-  }
-}
-
-async function writeJsonFile<T>(filePath: string, data: T): Promise<void> {
-  await ensureDataDir();
-  const tempFile = `${filePath}.tmp`;
-  await writeFile(tempFile, JSON.stringify(data, null, 2), 'utf-8');
-  await fs.promises.rename(tempFile, filePath);
-}
-
-export async function getUsers(): Promise<User[]> {
-  return readJsonFile(USERS_FILE, []);
-}
-
-async function saveUsers(users: User[]): Promise<void> {
-  await writeJsonFile(USERS_FILE, users);
-}
-
-async function addUser(user: User): Promise<void> {
-  const users = await getUsers();
-  users.push(user);
-  await saveUsers(users);
-}
-
-export async function getSessions(): Promise<Session[]> {
-  return readJsonFile(SESSIONS_FILE, []);
-}
-
-async function saveSessions(sessions: Session[]): Promise<void> {
-  await writeJsonFile(SESSIONS_FILE, sessions);
-}
-
-async function addSession(session: Session): Promise<void> {
-  const sessions = await getSessions();
-  sessions.push(session);
-  await saveSessions(sessions);
-}
-
-export async function removeSession(sessionId: string): Promise<void> {
-  const sessions = await getSessions();
-  const updatedSessions = sessions.filter((session) => session.id !== sessionId);
-  await saveSessions(updatedSessions);
+  return {
+    id: session.id,
+    userId: session.userId,
+    createdAt: session.createdAt,
+  };
 }
 
 export async function getUserBySessionId(sessionId: string): Promise<User | null> {
-  const sessions = await getSessions();
-  const session = sessions.find((entry) => entry.id === sessionId);
-  if (!session) return null;
-  const users = await getUsers();
-  return users.find((user) => user.id === session.userId) || null;
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    include: {
+      user: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          createdAt: true,
+        },
+      },
+    },
+  });
+
+  if (!session) {
+    return null;
+  }
+
+  return session.user;
 }
 
-export async function createAnonymousSession(): Promise<{ user: User; session: Session }> {
-  const user: User = {
-    id: uuidv4(),
-    created: new Date().toISOString(),
-  };
-  await addUser(user);
+export async function removeSession(sessionId: string): Promise<void> {
+  await prisma.session.delete({
+    where: { id: sessionId },
+  }).catch(() => {
+    // Session might not exist, ignore error
+  });
+}
 
-  const session: Session = {
-    id: uuidv4(),
-    userId: user.id,
-    created: new Date().toISOString(),
-  };
-  await addSession(session);
+// For backward compatibility with dev/bootstrap flow
+export async function createAnonymousSession(): Promise<{ user: User; session: Session }> {
+  // Create a temporary anonymous user
+  const { createUser } = await import('./userService.js');
+  const anonymousEmail = `anon-${Date.now()}-${Math.random().toString(36).substring(7)}@localhost`;
+  const user = await createUser(anonymousEmail, Math.random().toString(36), 'Anonymous User');
+  
+  const session = await createSession(user.id);
 
   return { user, session };
 }
@@ -121,6 +79,7 @@ export function setSessionCookie(res: Response, sessionId: string, req?: Request
     secure: shouldUseSecureCookie(req),
     sameSite: 'lax',
     path: '/',
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
   });
 }
 
@@ -132,3 +91,6 @@ export function clearSessionCookie(res: Response, req?: Request) {
     path: '/',
   });
 }
+
+// Export for backward compatibility
+export { User };

@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import TradingUI from "./pages/tradingui";
 import DetailedMode from "./pages/detailedmode";
 import Login from "./pages/login";
+import Signup from "./pages/signup";
 import UserPanel from "./pages/userpanel";
 import AgentBuilder from "./pages/agentbuilder";
 
@@ -14,6 +15,7 @@ export default function App() {
         <Route path="/agentpage" element={<Navigate to="/agentbuilder" replace />} />
         <Route path="/tradingui" element={<TradingUI />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
         <Route path="/user-panel" element={<UserPanel />} />
         <Route path="/detailed" element={<DetailedMode />} />
         <Route path="/lab/agent" element={<Navigate to="/agentbuilder" replace />} />

@@ -6,10 +6,14 @@
 
 ## 1. Repository Purpose Summary
 
-**LiquidAIty** is an agentic AI platform with two primary modes:
+**LiquidAIty** is an agentic AI platform with a unified workspace:
 
-1. **Assist Mode** - Production chat interface with knowledge graph integration
-2. **Agent Builder Mode** - Internal tool for configuring agent behavior, deck execution, and knowledge graph management
+- **Chat** - Front door for user interaction and conversation
+- **Canvas** - Connected agent-building and orchestration surface
+- **Plan Wiki** - Operational planning and reasoning surface
+- **Knowledge Graph** - Semantic memory and exploration
+
+All surfaces work together in a single integrated environment.
 
 ### Tech Stack
 - **Frontend:** React 19 + TypeScript + Vite
@@ -300,7 +304,7 @@ LiquidAIty/
 ## 7. Knowledge Graph / Research Chain
 
 ### KG Ingestion Flow
-1. **Chat Turn:** User sends message in Assist mode
+1. **Chat Turn:** User sends message in chat interface
 2. **Ingest Trigger:** `POST /api/v2/projects/:id/kg/ingest_chat_turn`
 3. **Route:** `apps/backend/src/routes/v2/kg.routes.ts` (1,800+ lines)
 4. **Chunking:** `apps/backend/src/routes/v2/chunking.ts`
@@ -393,7 +397,7 @@ All routes in:
 - ✅ Add new components in `components/`
 - ❌ Don't refactor `agentbuilder.tsx` without explicit approval
 - ❌ Don't rename v2/v3 without coordinated client/backend migration
-- ❌ Don't add UI controls to Assist mode (it's production)
+- ❌ Don't add unnecessary admin controls to production chat interface
 
 ### Testing Before Deploy
 ```bash
@@ -497,13 +501,13 @@ npm run audit:deps
 - `/api/kg` vs `/api/v2/projects/:id/kg` vs `/api/knowgraph`
 - Different purposes but overlapping names
 
-### 5. Assist vs Builder Integration
-- Assist and Builder are conceptually distinct surfaces/roles in the same system
-- Growing integration between modes, not fully separate or fully merged
-- Assist = production chat (no admin UI, no debug controls)
-- Builder = internal tool (full controls, orchestration visuals)
-- **Risk:** Agents often try to add admin UI to Assist mode
-- **Guideline:** Keep modes conceptually distinct while allowing integration
+### 5. Workspace Surface Roles
+- Chat, Canvas, Plan Wiki, and Knowledge Graph are integrated surfaces in a unified workspace
+- Chat is the front door for user interaction
+- Canvas provides agent-building and orchestration capabilities
+- Plan Wiki and Knowledge Graph are shared across all surfaces
+- **Risk:** Agents often try to add unnecessary admin controls to the chat interface
+- **Guideline:** Keep chat simple and focused, use canvas for orchestration complexity
 
 ---
 
@@ -543,11 +547,12 @@ npm run audit:deps
 - **Possible future use:** Team-message stream surface
 - **Decision needed:** Keep for future use or delete as dead code?
 
-### 2. **Assist vs Builder Boundary**
-- **Current state:** Conceptually distinct surfaces with growing integration
-- **Uncertainty:** Optimal long-term boundary between modes
-- **Observation:** Some features span both modes (e.g., Plan Wiki, canvas)
-- **Recommendation:** Allow integration while maintaining conceptual distinction
+### 2. **Chat vs Canvas Surface Roles**
+- **Current state:** Unified workspace with distinct surface purposes
+- **Chat role:** Front door, conversation, simple interaction
+- **Canvas role:** Agent orchestration, deck building, visual workflow
+- **Shared surfaces:** Plan Wiki and Knowledge Graph available everywhere
+- **Recommendation:** Keep chat simple, use canvas for complexity
 
 ### 3. **v2/v3 Naming Confusion**
 - **Issue:** Names suggest versioning, but they're separate subsystems

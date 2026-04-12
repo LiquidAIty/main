@@ -20,11 +20,14 @@
 - Legacy cleanup complete ✅
 
 **What's blocking:**
-- Users can access each other's projects 🔴
-- Sessions don't survive restarts 🔴
-- No rate limiting on expensive operations 🔴
-- Deploy path will break auth in production 🔴
-- Sensitive diagnostic routes exposed 🔴
+- Users can access each other's projects 🔴 (Patch 2)
+- No rate limiting on expensive operations �
+- Deploy path needs HTTPS hardening �
+- Sensitive diagnostic routes exposed �
+
+**Recently fixed:**
+- ✅ Sessions now survive restarts (Patch 1 complete)
+- ✅ Real user/account system with email/password (Patch 1 complete)
 
 ---
 
@@ -48,30 +51,32 @@
 
 ## Must-Fix Before First Users
 
-### 1. **Auth & User Isolation** 🔴 BLOCKER
+### 1. **Auth & User Isolation** ✅ COMPLETE (Patch 1)
 
-**Current State:**
-- `client/src/pages/login.tsx:13` and `client/src/components/UploadAttachment.tsx:84` call `/api/auth/start`
-- `apps/backend/src/routes/auth.routes.ts:17` only allows bootstrap when `apps/backend/src/security/requestAccess.ts:80` accepts local loopback or `AUTH_BOOTSTRAP_TOKEN`
-- Client does not send bootstrap token
-- Sessions are local JSON files in `apps/backend/src/auth/sessionStore.ts:12`
-- Identity is not durable across container replacement
+**Status:** **SHIPPED** - April 11, 2026
 
-**Why it matters:** Users will be logged out on every deploy.
+**What was fixed:**
+- ✅ Users stored in Postgres database (`User` table with email/password)
+- ✅ Sessions stored in Postgres database (`Session` table)
+- ✅ Sessions survive container restarts
+- ✅ Email/password signup and login (`/api/auth/signup`, `/api/auth/login`)
+- ✅ Bcrypt password hashing (10 salt rounds)
+- ✅ 30-day session expiry
+- ✅ UI improvements: hamburger moved to left rail, account menu with sign out
 
-**Required Fix:**
-- Make user identity stable in production (persist sessions to DB or Redis)
-- Implement proper login flow that doesn't require bootstrap token for real users
-- Add session validation middleware to all protected routes
-- Ensure sessions survive container restarts
+**Files Modified:**
+- `prisma/schema.prisma` - Added password field and Session model
+- `db/migrations/002_user_sessions.sql` - Database migration
+- `apps/backend/src/auth/sessionStore.ts` - Database-backed sessions
+- `apps/backend/src/auth/userService.ts` - User management with bcrypt
+- `apps/backend/src/routes/auth.routes.ts` - Signup/login endpoints
+- `client/src/pages/login.tsx` - Email/password form
+- `client/src/pages/signup.tsx` - New signup page
+- `client/src/pages/agentbuilder.tsx` - UI improvements
 
-**Files to Modify:**
-- `apps/backend/src/auth/sessionStore.ts` - Move from JSON files to durable storage
-- `apps/backend/src/routes/auth.routes.ts` - Add production-safe login flow
-- `apps/backend/src/middleware/auth.ts` - Strengthen session validation
-- `client/src/pages/login.tsx` - Implement proper auth flow
-
-**Planning estimate:** 2-3 days
+**Testing Required:**
+- Manual test: signup → login → create project → logout → login → see same project
+- Manual test: sessions survive backend restart
 
 ---
 
@@ -522,17 +527,18 @@ curl http://localhost:4000/api/diagnostic/schema-check
 - **Decision needed:** Keep for future use or delete as dead code?
 - **Current recommendation:** Mark as dormant, revisit after launch
 
-### 2. **Assist vs Builder Integration**
-- **Current state:** Conceptually distinct surfaces/roles in the same system
-- **Integration level:** Growing integration, not fully separate or fully merged
-- **Uncertainty:** Optimal long-term boundary between modes
-- **Current recommendation:** Keep current integration level, evolve post-launch
+### 2. **Chat vs Canvas Surface Roles**
+- **Current state:** Unified workspace with distinct surface purposes
+- **Chat role:** Front door for user interaction and conversation
+- **Canvas role:** Agent orchestration, deck building, visual workflow
+- **Shared surfaces:** Plan Wiki and Knowledge Graph available everywhere
+- **Current recommendation:** Keep chat simple and focused, use canvas for orchestration complexity
 
-### 3. **Session Storage Strategy**
-- **Options:** Postgres, Redis, or keep JSON with durable volume
-- **Trade-offs:** Complexity vs reliability vs operational overhead
-- **Decision needed:** Which durable storage for production sessions?
-- **Current recommendation:** Postgres for simplicity (already required)
+### 3. **Session Storage Strategy** ✅ RESOLVED
+- **Decision:** Postgres (implemented in Patch 1)
+- **Rationale:** Simplicity - already required, no additional infrastructure
+- **Implementation:** `Session` table with foreign key to `User` table
+- **Status:** Complete
 
 ### 4. **HTTPS Termination Strategy**
 - **Options:** nginx SSL, reverse proxy (Cloudflare/ALB), or both
@@ -544,6 +550,63 @@ curl http://localhost:4000/api/diagnostic/schema-check
 - **Uncertainty:** Appropriate limits for auth, deck run, KG operations
 - **Needs:** Real usage data to set reasonable limits
 - **Current recommendation:** Start conservative, adjust based on monitoring
+
+---
+
+## Setup Commands (Windows/PowerShell)
+
+### Apply Database Migration (Patch 1)
+
+```powershell
+# Connect to Postgres and run migration
+psql "postgresql://postgres:postgres@localhost:5433/liquidaity" -f db/migrations/002_user_sessions.sql
+```
+
+### Install Dependencies
+
+```powershell
+# Install bcrypt and types
+npm install
+
+# Generate Prisma client
+npx prisma generate
+```
+
+### Build and Test
+
+```powershell
+# Build backend
+nx build backend
+
+# Run tests
+nx test backend
+```
+
+### Run Application
+
+```powershell
+# Terminal 1: Backend
+npm run serve
+
+# Terminal 2: Frontend
+cd client
+npm run dev
+```
+
+### Manual Testing Checklist
+
+- [ ] Navigate to `http://localhost:5173/signup`
+- [ ] Create account with email/password (8+ chars)
+- [ ] Should redirect to `/agentbuilder` with session
+- [ ] Create a test project
+- [ ] Click three-lines button (left rail, bottom)
+- [ ] Click "Sign Out" in Account section
+- [ ] Should redirect to `/login`
+- [ ] Login with same credentials
+- [ ] Should see the same project
+- [ ] Restart backend server (`Ctrl+C`, then `npm run serve`)
+- [ ] Refresh browser
+- [ ] Should still be logged in (session persisted)
 
 ---
 

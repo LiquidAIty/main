@@ -84,6 +84,60 @@ export type BuilderCanvasFocusRequest = {
   nonce: number;
 };
 
+export function buildCanvasDocumentRecoveryKey(document: DeckDocument): string {
+  return JSON.stringify({
+    version: document.version,
+    nodes: document.nodes.map((node) => ({
+      id: node.id,
+      x: node.position.x,
+      y: node.position.y,
+      parentGraphId: String(node.parentGraphId || ''),
+      runtimeType: normalizeRuntimeType(node.runtimeType),
+    })),
+    edges: document.edges.map((edge) => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      edgeType: normalizeEdgeType(edge.edgeType),
+    })),
+  });
+}
+
+export function syncFlowNodesForRender(currentNodes: Node[], nextNodes: Node[]): Node[] {
+  const currentNodeById = new Map(currentNodes.map((node) => [node.id, node] as const));
+
+  return nextNodes.map((nextNode) => {
+    const currentNode = currentNodeById.get(nextNode.id);
+    if (!currentNode) return nextNode;
+    return {
+      ...currentNode,
+      ...nextNode,
+      position: nextNode.position,
+      data: nextNode.data,
+      style: nextNode.style,
+      selected: nextNode.selected,
+    };
+  });
+}
+
+export function syncFlowEdgesForRender(currentEdges: Edge[], nextEdges: Edge[]): Edge[] {
+  const currentEdgeById = new Map(currentEdges.map((edge) => [edge.id, edge] as const));
+
+  return nextEdges.map((nextEdge) => {
+    const currentEdge = currentEdgeById.get(nextEdge.id);
+    if (!currentEdge) return nextEdge;
+    return {
+      ...currentEdge,
+      ...nextEdge,
+      data: nextEdge.data,
+      style: nextEdge.style,
+      markerEnd: nextEdge.markerEnd,
+      selected: nextEdge.selected,
+      className: nextEdge.className,
+    };
+  });
+}
+
 function buildViewportTranslateExtent(nodes: Node[]): [[number, number], [number, number]] {
   if (nodes.length === 0) {
     return [[-4000, -4000], [4000, 4000]];
@@ -615,6 +669,7 @@ export default function BuilderCanvas({
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const viewportRecoveryFrameRef = useRef<number | null>(null);
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
+  const documentRecoveryKey = useMemo(() => buildCanvasDocumentRecoveryKey(document), [document]);
   const selectedEdge = useMemo(
     () => document.edges.find((edge) => edge.id === selectedEdgeId) || null,
     [document.edges, selectedEdgeId],
@@ -693,11 +748,11 @@ export default function BuilderCanvas({
   };
 
   useEffect(() => {
-    setNodes(flowNodes);
+    setNodes((current) => syncFlowNodesForRender(current, flowNodes));
   }, [flowNodes, setNodes]);
 
   useEffect(() => {
-    setEdges(flowEdges);
+    setEdges((current) => syncFlowEdgesForRender(current, flowEdges));
   }, [flowEdges, setEdges]);
 
   useEffect(() => {
@@ -722,8 +777,10 @@ export default function BuilderCanvas({
   }, [focusRequest, nodes, reactFlowInstance]);
 
   useEffect(() => {
+    // Hover and selection restyle the controlled flow nodes, but they do not change
+    // the actual deck layout. Recovery should only follow real document changes.
     scheduleViewportRecovery('document-change');
-  }, [document.version, nodes, reactFlowInstance, draggingNodeId]);
+  }, [documentRecoveryKey, reactFlowInstance, draggingNodeId]);
 
   useEffect(() => {
     scheduleViewportRecovery('selection-change');
@@ -745,7 +802,7 @@ export default function BuilderCanvas({
       observer.disconnect();
       window.removeEventListener('resize', scheduleRecovery);
     };
-  }, [reactFlowInstance, nodes, draggingNodeId]);
+  }, [reactFlowInstance, documentRecoveryKey, draggingNodeId]);
 
   useEffect(() => {
     return () => {
