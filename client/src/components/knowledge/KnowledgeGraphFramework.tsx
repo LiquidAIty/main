@@ -286,13 +286,13 @@ export default function KnowledgeGraphFramework({
           top: 12,
           right: 12,
           zIndex: 5,
-          border: "1px solid rgba(79,162,173,0.35)",
-          background: "rgba(8,8,8,0.72)",
-          color: "rgba(79,162,173,0.98)",
+          border: "1px solid rgba(255,255,255,0.12)",
+          background: "rgba(13,16,20,0.9)",
+          color: "rgba(224,222,213,0.9)",
           borderRadius: 8,
           fontSize: 11,
           fontWeight: 600,
-          padding: "6px 10px",
+          padding: "6px 9px",
           cursor: "pointer",
         }}
       >

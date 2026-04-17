@@ -4,7 +4,6 @@ import {
   Background,
   BackgroundVariant,
   ConnectionMode,
-  MarkerType,
   ReactFlow,
   addEdge,
   applyEdgeChanges,
@@ -44,10 +43,14 @@ import {
   buildUndirectedNeighborMap,
   isEdgeConnectedToNode,
 } from '../graph/graphWorkspaceContract';
+import TurboFlowEdge from './edges/TurboFlowEdge';
 import AgentCardNode from './nodes/AgentCardNode';
 
 const nodeTypes = {
   agentCard: AgentCardNode,
+};
+const edgeTypes = {
+  turboFlow: TurboFlowEdge,
 };
 
 const DEV_MODE = import.meta.env.DEV;
@@ -197,9 +200,11 @@ export function isAnyCanvasNodeVisible(nodes: Node[], visibleRect: ViewportRect,
 function toFlowNodes(
   document: DeckDocument,
   selectedCardId: string | null,
+  selectedEdgeId: string | null,
   hoveredCardId: string | null,
   executionPlan: Pick<DeckExecutionPlan, 'simpleOrderCardIds' | 'startCardIds'> | null,
   activeCardIds: Set<string>,
+  activeEdgeIds: Set<string>,
   swarmProgressByCardId: Record<string, { completed: number; total: number }>,
 ): Node[] {
   const executionOrderById = new Map(
@@ -217,6 +222,11 @@ function toFlowNodes(
     document.edges.map((edge) => ({ source: edge.source, target: edge.target })),
   );
   const hoveredRelatedNodeIds = buildFocusedNodeSet(hoveredCardId, neighborsByNode);
+  const emphasizedFlowNodeIds = new Set(
+    document.edges
+      .filter((edge) => edge.id === selectedEdgeId || activeEdgeIds.has(edge.id))
+      .flatMap((edge) => [edge.source, edge.target]),
+  );
   return document.nodes.map((node) => ({
     id: node.id,
     type: 'agentCard',
@@ -239,6 +249,7 @@ function toFlowNodes(
       isRuntimeActive: activeCardIds.has(node.id),
       isHovered: node.id === hoveredCardId,
       isHoverRelated: hoveredCardId ? hoveredRelatedNodeIds.has(node.id) : false,
+      isFlowLinked: emphasizedFlowNodeIds.has(node.id),
     },
     selected: node.id === selectedCardId,
   }));
@@ -254,6 +265,11 @@ export type DeckEdgeVisualState = {
 type FlowEdgeData = {
   edgeType?: DeckEdgeType | null;
   metadata?: DeckEdgeMetadata | null;
+  isActive?: boolean;
+  isSelected?: boolean;
+  isHoverConnected?: boolean;
+  isLoopEdge?: boolean;
+  isReturnEdge?: boolean;
 };
 
 function normalizeEdgeType(value: unknown): DeckEdgeType {
@@ -492,17 +508,6 @@ function toFlowEdges(
       borderRadius: 14,
     };
     const edgeType = normalizeEdgeType(edge.edgeType);
-    const stroke = isActive
-      ? GRAPH_THEME.accent.primary
-      : isSelected
-      ? GRAPH_THEME.accent.primary
-      : hoveredCardId && isHoverConnected
-        ? GRAPH_THEME.accent.hover
-      : edgeType === 'magentic_option'
-        ? GRAPH_THEME.accent.magentic
-      : visualState.isLoopEdge
-        ? GRAPH_THEME.accent.workflow
-        : GRAPH_THEME.accent.workflow;
     return {
       id: edge.id,
       source: edge.source,
@@ -510,9 +515,16 @@ function toFlowEdges(
       data: {
         edgeType,
         metadata: edge.metadata || null,
+        isActive,
+        isSelected,
+        isHoverConnected,
+        isLoopEdge: visualState.isLoopEdge,
+        isReturnEdge: visualState.isReturnEdge,
       } satisfies FlowEdgeData,
-      type: 'smoothstep',
+      type: 'turboFlow',
       className: [
+        isActive ? 'edge-active' : null,
+        isSelected ? 'edge-selected' : null,
         visualState.isLoopEdge ? 'edge-loop' : null,
         visualState.isReturnEdge ? 'edge-return' : null,
         edgeType === 'magentic_option' ? 'edge-magentic-option' : 'edge-flow',
@@ -528,18 +540,10 @@ function toFlowEdges(
         offset: visualState.offset,
         borderRadius: visualState.borderRadius,
       },
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-        width: 18,
-        height: 18,
-        color: stroke,
-      },
+      markerEnd: isActive || visualState.isLoopEdge || visualState.isReturnEdge ? 'agent-edge-circle-hot' : 'agent-edge-circle',
       style: {
-        stroke,
-        strokeWidth: isActive ? 3.4 : isSelected ? 3.2 : hoveredCardId && isHoverConnected ? 2.8 : 2.2,
-        opacity: isActive ? 1 : hoveredCardId ? (isHoverConnected ? 0.98 : 0.24) : 1,
-        strokeDasharray: visualState.isLoopEdge ? '10 7' : visualState.isReturnEdge ? '6 5' : undefined,
-        filter: isActive ? `drop-shadow(0 0 8px ${GRAPH_THEME.accent.primaryGlow})` : undefined,
+        strokeWidth: isActive ? 2.85 : isSelected ? 2.5 : hoveredCardId && isHoverConnected ? 2.35 : 2.05,
+        opacity: isActive ? 1 : hoveredCardId ? (isHoverConnected ? 0.96 : 0.3) : 1,
       },
     };
   });
@@ -654,12 +658,14 @@ export default function BuilderCanvas({
       toFlowNodes(
         document,
         selectedCardId,
+        selectedEdgeId,
         hoveredCardId,
         executionPlan,
         activeCardIdSet,
+        activeEdgeIdSet,
         swarmProgressByCardId,
       ),
-    [activeCardIdSet, document, executionPlan, hoveredCardId, selectedCardId, swarmProgressByCardId],
+    [activeCardIdSet, activeEdgeIdSet, document, executionPlan, hoveredCardId, selectedCardId, selectedEdgeId, swarmProgressByCardId],
   );
   const flowEdges = useMemo(
     () => toFlowEdges(document, selectedEdgeId, hoveredCardId, activeEdgeIdSet),
@@ -1009,44 +1015,48 @@ export default function BuilderCanvas({
       }}
     >
       <style>{`
+        @keyframes agent-turbo-flow-dash {
+          to {
+            stroke-dashoffset: -80;
+          }
+        }
         .builder-flow .react-flow__edge {
           cursor: pointer;
+          transition: opacity 180ms cubic-bezier(0.22, 1, 0.36, 1);
         }
-        .builder-flow .react-flow__edge-path {
-          transition: stroke 120ms ease, stroke-width 120ms ease, opacity 120ms ease;
+        .builder-flow .react-flow__edge:hover {
+          opacity: 1;
         }
-        .builder-flow .react-flow__edge:hover .react-flow__edge-path {
-          stroke: ${GRAPH_THEME.accent.hover};
-          stroke-width: 2.8;
+        .builder-flow .react-flow__edge.selected,
+        .builder-flow .react-flow__edge.edge-selected {
+          filter: drop-shadow(0 0 5px rgba(79, 162, 173, 0.12));
         }
-        .builder-flow .react-flow__edge.selected .react-flow__edge-path,
-        .builder-flow .react-flow__edge:focus .react-flow__edge-path {
-          stroke: ${GRAPH_THEME.accent.primary};
-          stroke-width: 3.2;
+        .builder-flow .react-flow__edge.edge-active {
+          filter: drop-shadow(0 0 7px rgba(79, 162, 173, 0.16)) drop-shadow(0 0 4px rgba(223, 146, 84, 0.1));
         }
-        .builder-flow .react-flow__edge.edge-loop .react-flow__edge-path {
-          filter: drop-shadow(0 0 6px ${GRAPH_THEME.accent.workflowGlow});
+        .builder-flow .react-flow__edge.edge-loop,
+        .builder-flow .react-flow__edge.edge-return {
+          filter: drop-shadow(0 0 5px rgba(223, 146, 84, 0.12));
         }
-        .builder-flow .react-flow__edge.edge-return .react-flow__edge-path {
-          opacity: 0.96;
+        .builder-flow .react-flow__node {
+          transition: filter 180ms cubic-bezier(0.22, 1, 0.36, 1);
         }
-        .builder-flow .react-flow__edge.edge-magentic-option .react-flow__edge-path {
-          opacity: 0.98;
-        }
-        .builder-flow .react-flow__edge.edge-graph-flow .react-flow__edge-path {
-          opacity: 0.96;
+        .builder-flow .react-flow__node.selected {
+          filter: drop-shadow(0 0 8px rgba(79, 162, 173, 0.12));
         }
         .builder-flow .react-flow__handle {
-          transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+          transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
         }
         .builder-flow .react-flow__handle:hover,
         .builder-flow .react-flow__handle.connectionindicator {
-          transform: scale(1.14);
-          box-shadow: 0 0 0 4px ${GRAPH_THEME.accent.primarySoft};
+          transform: scale(1.06);
+          box-shadow:
+            0 0 0 2px rgba(79, 162, 173, 0.14),
+            0 0 0 5px rgba(140, 116, 204, 0.08);
         }
         .builder-flow .react-flow__connection-path {
           stroke: ${GRAPH_THEME.accent.primary};
-          stroke-width: 2.8;
+          stroke-width: 2.35;
         }
         .builder-flow .react-flow__edge-interaction {
           cursor: pointer;
@@ -1073,6 +1083,49 @@ export default function BuilderCanvas({
           display: none;
         }
       `}</style>
+      <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden>
+        <defs>
+          <linearGradient id="agent-edge-gradient-intelligence" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stopColor={GRAPH_THEME.turboFlow.intelligenceGradientStart} />
+            <stop offset="61.8%" stopColor={GRAPH_THEME.turboFlow.intelligenceGradientMid} />
+            <stop offset="100%" stopColor={GRAPH_THEME.turboFlow.intelligenceGradientEnd} />
+          </linearGradient>
+          <linearGradient id="agent-edge-gradient-execution" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stopColor={GRAPH_THEME.turboFlow.executionGradientStart} />
+            <stop offset="61.8%" stopColor={GRAPH_THEME.turboFlow.executionGradientMid} />
+            <stop offset="100%" stopColor={GRAPH_THEME.turboFlow.executionGradientEnd} />
+          </linearGradient>
+          <linearGradient id="agent-edge-gradient-memory" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stopColor={GRAPH_THEME.turboFlow.memoryGradientStart} />
+            <stop offset="61.8%" stopColor={GRAPH_THEME.turboFlow.memoryGradientMid} />
+            <stop offset="100%" stopColor={GRAPH_THEME.turboFlow.memoryGradientEnd} />
+          </linearGradient>
+          <marker
+            id="agent-edge-circle"
+            viewBox="-5 -5 10 10"
+            refX="0"
+            refY="0"
+            markerUnits="strokeWidth"
+            markerWidth="10"
+            markerHeight="10"
+            orient="auto"
+          >
+            <circle stroke={GRAPH_THEME.turboFlow.markerStroke} strokeOpacity="0.9" r="2" cx="0" cy="0" fill="none" />
+          </marker>
+          <marker
+            id="agent-edge-circle-hot"
+            viewBox="-5 -5 10 10"
+            refX="0"
+            refY="0"
+            markerUnits="strokeWidth"
+            markerWidth="10"
+            markerHeight="10"
+            orient="auto"
+          >
+            <circle stroke={GRAPH_THEME.turboFlow.markerHotStroke} strokeOpacity="0.92" r="2" cx="0" cy="0" fill="none" />
+          </marker>
+        </defs>
+      </svg>
       {selectedEdge && onDeleteSelectedEdge ? (
         <div
           style={{
@@ -1159,6 +1212,7 @@ export default function BuilderCanvas({
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         connectionMode={ConnectionMode.Strict}
         minZoom={GRAPH_THEME.nav.minZoom}
         maxZoom={GRAPH_THEME.nav.maxZoom}
@@ -1206,17 +1260,12 @@ export default function BuilderCanvas({
           setHoveredCardId(null);
         }}
         defaultEdgeOptions={{
-          type: 'smoothstep',
+          type: 'turboFlow',
           selectable: !miniMode,
           focusable: !miniMode,
           reconnectable: !miniMode,
           interactionWidth: miniMode ? 12 : 32,
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            width: 18,
-            height: 18,
-            color: GRAPH_THEME.edge.neutral,
-          },
+          markerEnd: 'agent-edge-circle',
         }}
         snapToGrid
         snapGrid={[GRAPH_WORKSPACE.worldGridGap, GRAPH_WORKSPACE.worldGridGap]}

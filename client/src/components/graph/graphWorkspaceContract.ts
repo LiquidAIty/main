@@ -9,7 +9,7 @@ export const GRAPH_WORKSPACE = {
   zoomStep: 1.18,
   zoomDurationMs: 140,
   wheelDelta: 0.0016,
-  worldGridGap: 24,
+  worldGridGap: 28,
   worldGridMajorGapMultiplier: 4,
   worldGridLineWidth: 1,
   worldOverscan: 12000,

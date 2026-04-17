@@ -171,6 +171,65 @@ function EdgeLines({
   );
 }
 
+function AmbientDust({
+  nodes,
+  highlightedIds,
+}: {
+  nodes: CodeGraphNode[];
+  highlightedIds: Set<number> | null;
+}) {
+  const pointsRef = useRef<THREE.Points>(null);
+  const cloud = useMemo(() => {
+    const sample = nodes.slice(0, Math.min(nodes.length, 220));
+    const positions = new Float32Array(sample.length * 3);
+    const colors = new Float32Array(sample.length * 3);
+    const color = new THREE.Color();
+    sample.forEach((node, index) => {
+      positions[index * 3] = node.x + (Math.random() - 0.5) * 36;
+      positions[index * 3 + 1] = node.y + (Math.random() - 0.5) * 36;
+      positions[index * 3 + 2] = node.z + (Math.random() - 0.5) * 36;
+      color.set(node.color);
+      if (highlightedIds?.size && !highlightedIds.has(node.id)) {
+        color.multiplyScalar(0.22);
+      } else {
+        color.lerp(new THREE.Color("#f3b17a"), 0.18);
+      }
+      colors[index * 3] = color.r;
+      colors[index * 3 + 1] = color.g;
+      colors[index * 3 + 2] = color.b;
+    });
+    return { positions, colors };
+  }, [nodes, highlightedIds]);
+
+  useFrame(({ clock }) => {
+    const points = pointsRef.current;
+    if (!points) return;
+    points.rotation.y = clock.getElapsedTime() * 0.012;
+    points.rotation.x = Math.sin(clock.getElapsedTime() * 0.08) * 0.02;
+    const material = points.material as THREE.PointsMaterial;
+    material.opacity = highlightedIds?.size ? 0.28 : 0.18;
+  });
+
+  return (
+    <points ref={pointsRef}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[cloud.positions, 3]} />
+        <bufferAttribute attach="attributes-color" args={[cloud.colors, 3]} />
+      </bufferGeometry>
+      <pointsMaterial
+        size={4.2}
+        sizeAttenuation
+        transparent
+        opacity={0.18}
+        vertexColors
+        depthWrite={false}
+        blending={THREE.AdditiveBlending}
+        toneMapped={false}
+      />
+    </points>
+  );
+}
+
 function NodeLabels({ nodes, highlightedIds, maxLabels = 80 }: { nodes: CodeGraphNode[]; highlightedIds: Set<number> | null; maxLabels?: number; }) {
   const labeled = useMemo(() => {
     const hasHighlight = highlightedIds && highlightedIds.size > 0;
@@ -256,6 +315,7 @@ export function CodeGraphScene({ data, showLabels, highlightedIds, onNodeClick }
       <pointLight position={[500, 500, 500]} intensity={0.6} />
       <pointLight position={[-300, -200, -300]} intensity={0.4} color="#6040ff" />
 
+      <AmbientDust nodes={data.nodes} highlightedIds={highlightedIds} />
       <EdgeLines nodes={data.nodes} edges={data.edges} highlightedIds={highlightedIds} />
       <NodeCloud
         nodes={data.nodes}
@@ -283,11 +343,11 @@ export function CodeGraphScene({ data, showLabels, highlightedIds, onNodeClick }
 
       <EffectComposer>
         <Bloom
-          luminanceThreshold={0.3}
+          luminanceThreshold={0.34}
           luminanceSmoothing={0.7}
-          intensity={1.2}
+          intensity={0.95}
           mipmapBlur
-          radius={0.6}
+          radius={0.5}
         />
       </EffectComposer>
 
@@ -300,7 +360,7 @@ export function CodeGraphScene({ data, showLabels, highlightedIds, onNodeClick }
         minDistance={10}
         maxDistance={50000}
         autoRotate
-        autoRotateSpeed={0.4}
+        autoRotateSpeed={0.22}
       />
     </Canvas>
   );

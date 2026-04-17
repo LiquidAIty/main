@@ -4,6 +4,7 @@ type UploadAttachmentProps = {
   knowledgeProjectId: string;
   disabled?: boolean;
   onUploaded?: () => void;
+  appearance?: "default" | "chat-inline";
 };
 
 function buildDocumentId(file: File): string {
@@ -95,6 +96,7 @@ export default function UploadAttachment({
   knowledgeProjectId,
   disabled = false,
   onUploaded,
+  appearance = "default",
 }: UploadAttachmentProps) {
   const [uploading, setUploading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -176,38 +178,67 @@ export default function UploadAttachment({
         type="button"
         onClick={openPicker}
         disabled={disabled || uploading}
-        aria-label={uploading ? "Importing knowledge PDF" : "Import knowledge PDF"}
-        title={uploading ? "Importing knowledge PDF" : "Import knowledge PDF"}
+        aria-label={uploading ? "Attaching knowledge PDF" : "Attach knowledge PDF"}
+        title={uploading ? "Attaching knowledge PDF" : "Attach knowledge PDF"}
         data-no-surface-promote="true"
         style={{
-          width: 42,
-          height: 42,
+          width: appearance === "chat-inline" ? 36 : 42,
+          height: appearance === "chat-inline" ? 36 : 42,
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          border: "1px solid #3A3A3A",
-          borderRadius: 12,
-          background: uploading ? "rgba(79,162,173,0.18)" : "#202020",
-          color: "#FFFFFF",
-          boxShadow: uploading ? "0 0 0 1px rgba(79,162,173,0.22) inset" : "none",
+          border:
+            appearance === "chat-inline" ? "1px solid rgba(255,255,255,0.05)" : "1px solid #3A3A3A",
+          borderRadius: appearance === "chat-inline" ? 10 : 12,
+          background:
+            appearance === "chat-inline"
+              ? uploading
+                ? "rgba(79,162,173,0.16)"
+                : "rgba(255,255,255,0.02)"
+              : uploading
+                ? "rgba(79,162,173,0.18)"
+                : "#202020",
+          color: appearance === "chat-inline" ? "rgba(224,222,213,0.9)" : "#FFFFFF",
+          boxShadow:
+            appearance === "chat-inline"
+              ? "none"
+              : uploading
+                ? "0 0 0 1px rgba(79,162,173,0.22) inset"
+                : "none",
           opacity: disabled || uploading ? 0.65 : 1,
+          transition: "background 120ms ease, border-color 120ms ease",
         }}
       >
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.9"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-          <path d="M7 10l5 5 5-5" />
-          <path d="M12 15V3" />
-        </svg>
+        {appearance === "chat-inline" ? (
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 5v14" />
+            <path d="M5 12h14" />
+          </svg>
+        ) : (
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.9"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21.44 11.05l-8.49 8.49a5.5 5.5 0 0 1-7.78-7.78l9.2-9.19a3.5 3.5 0 1 1 4.95 4.95l-9.19 9.2a1.5 1.5 0 0 1-2.12-2.13l8.49-8.48" />
+          </svg>
+        )}
       </button>
       <input
         ref={inputRef}

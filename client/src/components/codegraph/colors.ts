@@ -1,15 +1,15 @@
 const LABEL_COLORS: Record<string, string> = {
-  Project: "#e11d48",
-  Package: "#f97316",
-  Module: "#f97316",
-  Folder: "#22c55e",
-  File: "#3b82f6",
-  Class: "#a855f7",
-  Interface: "#a855f7",
-  Function: "#06b6d4",
-  Method: "#06b6d4",
-  Route: "#eab308",
-  Variable: "#64748b",
+  Project: "#d78c5a",
+  Package: "#d78c5a",
+  Module: "#c57b4f",
+  Folder: "#5f8d8d",
+  File: "#4fa2ad",
+  Class: "#8c74cd",
+  Interface: "#8c74cd",
+  Function: "#63c7d1",
+  Method: "#63c7d1",
+  Route: "#d6b15d",
+  Variable: "#70818d",
 };
 
 const DEFAULT_COLOR = "#94a3b8";
@@ -20,15 +20,15 @@ export function colorForCodeGraphLabel(label: string): string {
 
 export function colorForCodeGraphEdgeType(type: string): string {
   const normalized = String(type || "").trim().toUpperCase();
-  if (normalized === "CALLS") return "#1DA27E";
-  if (normalized === "IMPORTS") return "#3b82f6";
-  if (normalized === "DEFINES") return "#a855f7";
-  if (normalized === "DEFINES_METHOD") return "#a855f7";
-  if (normalized === "CONTAINS_FILE") return "#22c55e";
-  if (normalized === "CONTAINS_FOLDER") return "#22c55e";
-  if (normalized === "HANDLES") return "#eab308";
-  if (normalized === "IMPLEMENTS") return "#f97316";
-  if (normalized === "HTTP_CALLS") return "#e11d48";
-  if (normalized === "ASYNC_CALLS") return "#ec4899";
-  return "#1C8585";
+  if (normalized === "CALLS") return "#4fa2ad";
+  if (normalized === "IMPORTS") return "#5fb9c6";
+  if (normalized === "DEFINES") return "#8c74cd";
+  if (normalized === "DEFINES_METHOD") return "#8c74cd";
+  if (normalized === "CONTAINS_FILE") return "#6f8a92";
+  if (normalized === "CONTAINS_FOLDER") return "#6f8a92";
+  if (normalized === "HANDLES") return "#d6b15d";
+  if (normalized === "IMPLEMENTS") return "#d78c5a";
+  if (normalized === "HTTP_CALLS") return "#d96f6f";
+  if (normalized === "ASYNC_CALLS") return "#9f85d8";
+  return "#4a9298";
 }

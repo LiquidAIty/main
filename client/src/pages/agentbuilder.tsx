@@ -360,10 +360,7 @@ function extractCodeGraphViewContractFromEvent(
   event: DeckRuntimeEvent,
   projectId?: string | null,
 ): GraphViewContract | null {
-  const typedContract = normalizeCodeGraphViewContractCandidate(
-    event.graphViewContract ?? event.codegraphViewContract,
-    projectId,
-  );
+  const typedContract = normalizeCodeGraphViewContractCandidate(event.codegraphViewContract, projectId);
   if (typedContract) return typedContract;
   const candidates: unknown[] = [
     event.content,
@@ -382,17 +379,11 @@ function extractCodeGraphViewContractFromRun(
   run: DeckRun | null | undefined,
   projectId?: string | null,
 ): GraphViewContract | null {
-  const typedRunContract = normalizeCodeGraphViewContractCandidate(
-    run?.graphViewContract ?? run?.codegraphViewContract,
-    projectId,
-  );
+  const typedRunContract = normalizeCodeGraphViewContractCandidate(run?.codegraphViewContract, projectId);
   if (typedRunContract) return typedRunContract;
   const steps = Array.isArray(run?.steps) ? [...run.steps].reverse() : [];
   for (const step of steps) {
-    const typedStepContract = normalizeCodeGraphViewContractCandidate(
-      step.graphViewContract ?? step.codegraphViewContract,
-      projectId,
-    );
+    const typedStepContract = normalizeCodeGraphViewContractCandidate(step.codegraphViewContract, projectId);
     if (typedStepContract) return typedStepContract;
     const contractFromOutput = extractCodeGraphViewContractFromUnknown(step.output, projectId);
     if (contractFromOutput) return contractFromOutput;
@@ -2371,6 +2362,150 @@ function Icon({ d, size = 22 }: { d: string; size?: number }) {
   );
 }
 
+/** Mean synodic month in days (NASA/USNO convention). */
+const SYNODIC_MONTH_DAYS = 29.530588861;
+/** Reference Julian Date of a known new moon (2000-01-06 18:14 UTC ≈ JD 2451550.09765). */
+const REF_NEW_MOON_JD = 2451550.09765;
+
+function julianDateUtc(d: Date): number {
+  return d.getTime() / 86400000 + 2440587.5;
+}
+
+/**
+ * Synodic phase in [0,1): 0 new, 0.25 first quarter, 0.5 full, 0.75 last quarter, 1≡0 new.
+ * Waxing for p in (0, 0.5), waning for p in (0.5, 1).
+ */
+function synodicPhaseFromDate(d: Date): number {
+  const jd = julianDateUtc(d);
+  let age = (jd - REF_NEW_MOON_JD) % SYNODIC_MONTH_DAYS;
+  if (age < 0) age += SYNODIC_MONTH_DAYS;
+  return age / SYNODIC_MONTH_DAYS;
+}
+
+/** Illuminated fraction of the lunar disk (0=new … 1=full … 0=new). */
+function moonIllumination(phase01: number): number {
+  const p = ((phase01 % 1) + 1) % 1;
+  return 0.5 * (1 - Math.cos(2 * Math.PI * p));
+}
+
+/**
+ * For two unit circles (R=1) whose centers are distance d=2t apart (t in [0,1]),
+ * fraction of the left disk covered by the right disk (overlap / π).
+ * Monotonic decreasing in t: t=0 → 1, t=1 → 0.
+ */
+function overlapFractionTwoUnitCircles(t: number): number {
+  const tt = Math.min(1, Math.max(0, t));
+  return (2 / Math.PI) * (Math.acos(tt) - tt * Math.sqrt(Math.max(0, 1 - tt * tt)));
+}
+
+/** Invert overlap fraction to separation parameter t=d/(2R) for the two-circle terminator model. */
+function separationTFromOverlapFraction(targetOverlap: number): number {
+  const g = Math.min(1, Math.max(0, targetOverlap));
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 32; i++) {
+    const mid = (lo + hi) / 2;
+    const v = overlapFractionTwoUnitCircles(mid);
+    if (v > g) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+type BuilderRailMoonOrbProps = {
+  /** Synodic phase in [0,1); values outside are wrapped. */
+  phase01: number;
+};
+
+/**
+ * Code-driven lunar terminator: same-radius eclipser circle (true circular arc terminator),
+ * waxing lit on the right, waning lit on the left. Overlap geometry inverts
+ * illumination k = 0.5*(1-cos(2πp)) via overlap = 1 - k on the lit mask.
+ */
+function BuilderRailMoonOrb({ phase01 }: BuilderRailMoonOrbProps): React.ReactElement {
+  const uid = React.useId().replace(/:/g, "");
+  const diskClipId = `moon-disk-${uid}`;
+  const litMaskId = `moon-lit-${uid}`;
+  const litGradId = `moon-lit-grad-${uid}`;
+  const baseGradId = `moon-base-grad-${uid}`;
+  const glowFilterId = `moon-glow-${uid}`;
+
+  const p = ((phase01 % 1) + 1) % 1;
+  const illumination = moonIllumination(p);
+  const targetOverlap = 1 - illumination;
+  const t = separationTFromOverlapFraction(targetOverlap);
+
+  const R = 14;
+  const cx = 14;
+  const cy = 14;
+  const waxing = p <= 0.5;
+  const sep = 2 * R * t;
+  const shadowCx = waxing ? cx - sep : cx + sep;
+
+  const limbGlowOpacity = 0.06 + 0.14 * illumination;
+  const purpleRimOpacity = 0.12 + 0.08 * illumination;
+
+  return (
+    <svg
+      width={28}
+      height={28}
+      viewBox="0 0 28 28"
+      role="img"
+      aria-label={`Moon phase ${Math.round(illumination * 100)}% illuminated`}
+    >
+      <defs>
+        <radialGradient id={baseGradId} cx="38%" cy="35%" r="72%">
+          <stop offset="0%" stopColor="rgba(12,42,52,0.98)" />
+          <stop offset="55%" stopColor="rgba(30,89,102,0.96)" />
+          <stop offset="100%" stopColor="rgba(6,22,30,0.98)" />
+        </radialGradient>
+        <radialGradient id={litGradId} cx="32%" cy="30%" r="78%">
+          <stop offset="0%" stopColor="rgba(255,252,244,0.98)" />
+          <stop offset="42%" stopColor="rgba(255,228,196,0.92)" />
+          <stop offset="100%" stopColor="rgba(223,146,84,0.55)" />
+        </radialGradient>
+        <filter id={glowFilterId} x="-35%" y="-35%" width="170%" height="170%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="0.9" result="b" />
+          <feMerge>
+            <feMergeNode in="b" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+        <clipPath id={diskClipId}>
+          <circle cx={cx} cy={cy} r={R} />
+        </clipPath>
+        <mask id={litMaskId} maskUnits="userSpaceOnUse">
+          <rect x="0" y="0" width="28" height="28" fill="white" />
+          <circle cx={shadowCx} cy={cy} r={R} fill="black" />
+        </mask>
+      </defs>
+
+      <g filter={`url(#${glowFilterId})`}>
+        <circle cx={cx} cy={cy} r={R} fill={`url(#${baseGradId})`} />
+        <g clipPath={`url(#${diskClipId})`}>
+          <circle cx={cx} cy={cy} r={R} fill={`url(#${litGradId})`} mask={`url(#${litMaskId})`} />
+        </g>
+        <circle
+          cx={cx}
+          cy={cy}
+          r={R - 0.5}
+          fill="none"
+          stroke={`rgba(125,105,180,${purpleRimOpacity.toFixed(3)})`}
+          strokeWidth={0.9}
+        />
+        <circle
+          cx={cx}
+          cy={cy}
+          r={R - 1.25}
+          fill="none"
+          stroke={`rgba(79,162,173,${limbGlowOpacity.toFixed(3)})`}
+          strokeWidth={1.1}
+        />
+      </g>
+    </svg>
+  );
+}
+
 // -------- Main page --------
 export default function AgentBuilder(): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
@@ -2395,7 +2530,8 @@ export default function AgentBuilder(): React.ReactElement {
     workspaceView,
   });
   const [panelOpen, setPanelOpen] = useState(true);
-  const [panelWidth, setPanelWidth] = useState(480);
+  const [panelWidth, setPanelWidth] = useState(540);
+  const [moonPhase01, setMoonPhase01] = useState(() => synodicPhaseFromDate(new Date()));
   const canvasProjectId = cleanOptionalText(activeProject) ?? "";
   const [deck, setDeckState] = useState<DeckDocument>(() => hydrateDeckDocument(INITIAL_DECK));
   const [deckRevision, setDeckRevision] = useState<string | null>(null);
@@ -2423,8 +2559,6 @@ export default function AgentBuilder(): React.ReactElement {
   const [openDrawer, setOpenDrawer] = useState<null | "navigation">(null);
   const [showCreateProjectForm, setShowCreateProjectForm] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
-  const [newProjectCode, setNewProjectCode] = useState("");
-  const [showAdvancedProjectFields, setShowAdvancedProjectFields] = useState(false);
   const [sending, setSending] = useState(false);
   const [knowledgeGraphKind, setKnowledgeGraphKind] = useState<KnowledgeGraphKind>("knowgraph");
   const [graphViewContract, setGraphViewContract] = useState<GraphViewContract | null>(null);
@@ -2561,6 +2695,13 @@ export default function AgentBuilder(): React.ReactElement {
     });
     pendingPanelOpenTelemetryRef.current = null;
   }, [emitWorkspaceTestingEvent, panelOpen]);
+
+  useEffect(() => {
+    const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
+    tick();
+    const id = window.setInterval(tick, 120000);
+    return () => window.clearInterval(id);
+  }, []);
 
   // agent builder state
   const deckSaveAbortRef = useRef<AbortController | null>(null);
@@ -4682,10 +4823,7 @@ export default function AgentBuilder(): React.ReactElement {
     const name = newProjectName.trim();
     if (!name) return;
     
-    let code = newProjectCode.trim();
-    if (!code) {
-      code = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-    }
+    const code = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
     
     const projectType = "assist";
     
@@ -4708,7 +4846,6 @@ export default function AgentBuilder(): React.ReactElement {
       
       setShowCreateProjectForm(false);
       setNewProjectName("");
-      setNewProjectCode("");
       
       await refreshProjects("after-create", newId);
       
@@ -5319,32 +5456,15 @@ export default function AgentBuilder(): React.ReactElement {
 
   return (
     <div
-      className="h-screen w-full flex flex-col overflow-hidden"
+      className="h-screen w-full flex overflow-hidden"
       style={{ background: C.bg, color: C.text }}
     >
-      {/* Top bar */}
-      <div
-        className="flex items-center justify-between px-5"
-        style={{ height: 56, borderBottom: `1px solid ${C.border}` }}
-      >
-        <div className="flex items-center gap-3">
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: "50%",
-              background:
-                "radial-gradient(circle at 35% 30%, #7ED1DB 0%, " +
-                C.primary +
-                " 55%, #2E6C75 100%)",
-              boxShadow: "0 0 0 2px #000 inset",
-            }}
-          />
-        </div>
-        <div data-testid="header-actions" className="flex items-center gap-3">
-        </div>
-      </div>
-
+      <style>{`
+        @keyframes builder-orb-float {
+          0%, 100% { transform: translateY(0px) scale(1); }
+          50% { transform: translateY(-0.5px) scale(1.015); }
+        }
+      `}</style>
       <div className="flex flex-1 overflow-hidden min-h-0">
         {/* LEFT rail */}
         <aside
@@ -5355,6 +5475,22 @@ export default function AgentBuilder(): React.ReactElement {
             borderRight: `1px solid ${C.border}`,
           }}
         >
+          <div className="p-2" aria-hidden>
+            <div
+              style={{
+                position: "relative",
+                width: 28,
+                height: 28,
+                borderRadius: "50%",
+                overflow: "visible",
+                animation: "builder-orb-float 21s ease-in-out infinite",
+                boxShadow:
+                  "inset 0 1px 1px rgba(255,255,255,0.12), 0 0 14px rgba(79,162,173,0.14), 0 0 26px rgba(125,105,180,0.08)",
+              }}
+            >
+              <BuilderRailMoonOrb phase01={moonPhase01} />
+            </div>
+          </div>
           <button
             title="Home"
             aria-label="Home"
@@ -5436,11 +5572,63 @@ export default function AgentBuilder(): React.ReactElement {
         <div
           data-testid="workspace-large-region"
           data-surface={largeSurface}
-          className="h-full transition-[width] duration-150 ease-out min-w-0"
-          style={{
-            width: panelOpen ? `calc(100% - ${panelWidth}px)` : "100%",
-          }}
+          className="h-full flex-1 min-w-0 relative"
         >
+          {!panelOpen && (
+            <button
+              type="button"
+              aria-label="Expand right dock"
+              data-testid="dock-expand-button"
+              onClick={() => setPanelOpen(true)}
+              className="absolute z-10 flex items-center justify-center outline-none transition-[filter,background] duration-200 ease-out hover:brightness-[1.04] group"
+              style={{
+                top: "50%",
+                right: 0,
+                transform: "translateY(-50%)",
+                width: 11,
+                height: 72,
+                padding: 0,
+                border: "none",
+                borderTopLeftRadius: 7,
+                borderBottomLeftRadius: 7,
+                borderTopRightRadius: 0,
+                borderBottomRightRadius: 0,
+                cursor: "col-resize",
+                background:
+                  "linear-gradient(90deg, rgba(20,22,26,0.02) 0%, rgba(48,52,58,0.55) 40%, rgba(38,42,48,0.88) 100%)",
+                boxShadow:
+                  "inset 1px 0 0 rgba(79,162,173,0.22), inset 0 1px 0 rgba(255,255,255,0.06), -6px 0 18px rgba(0,0,0,0.12)",
+              }}
+            >
+              <span className="pointer-events-none flex flex-col items-center gap-[5px] opacity-[0.42] group-hover:opacity-[0.62] transition-opacity duration-200">
+                <span
+                  className="rounded-full"
+                  style={{
+                    width: 2,
+                    height: 14,
+                    background: "linear-gradient(180deg, rgba(255,255,255,0.5), rgba(255,255,255,0.12))",
+                    boxShadow: "0 0 6px rgba(79,162,173,0.25)",
+                  }}
+                />
+                <span
+                  className="rounded-full"
+                  style={{
+                    width: 2,
+                    height: 14,
+                    background: "linear-gradient(180deg, rgba(255,255,255,0.35), rgba(255,255,255,0.1))",
+                  }}
+                />
+                <span
+                  className="rounded-full"
+                  style={{
+                    width: 2,
+                    height: 14,
+                    background: "linear-gradient(180deg, rgba(255,255,255,0.22), rgba(255,255,255,0.08))",
+                  }}
+                />
+              </span>
+            </button>
+          )}
           {largeSurface === "canvas"
             ? renderCanvasSurface(false, "large")
             : largeSurface === "knowledge"
@@ -5451,49 +5639,115 @@ export default function AgentBuilder(): React.ReactElement {
         </div>
 
         {/* RIGHT panel */}
-        {panelOpen && (
-          <aside
-            data-testid="workspace-companion-region"
-            data-workspace={workspaceView}
-            className="h-full relative transition-[width] duration-150 ease-out"
-            style={{
-              width: panelWidth,
-              borderLeft: `1px solid ${C.border}`,
-              background: C.panel,
-              flexShrink: 0,
-              overflow: "hidden",
-            }}
-          >
-            <div className="px-4 pt-4 h-full flex flex-col overflow-hidden min-h-0">
-              <div className="flex gap-6 mb-3">
-                {activeTabs.map((t) => (
+        <aside
+          data-testid="workspace-companion-region"
+          data-workspace={workspaceView}
+          data-open={panelOpen ? "true" : "false"}
+          className="h-full relative transition-[width] duration-200 ease-out"
+          style={{
+            width: panelOpen ? panelWidth : 0,
+            borderLeft: panelOpen ? `1px solid ${C.border}` : "none",
+            background: C.panel,
+            flexShrink: 0,
+            overflow: "hidden",
+          }}
+        >
+          <div className="px-4 pt-3 h-full flex flex-col overflow-hidden min-h-0 relative">
+            <div
+              className="pointer-events-none absolute left-0 top-0 bottom-0 w-px z-[1]"
+              style={{
+                background: "linear-gradient(180deg, rgba(79,162,173,0.22), rgba(79,162,173,0.06) 38%, rgba(255,255,255,0.04) 100%)",
+                opacity: 0.9,
+              }}
+              aria-hidden
+            />
+            <div className="mb-3 flex items-stretch gap-2 min-h-[40px] relative z-[2]">
+              <button
+                type="button"
+                aria-label="Collapse right dock"
+                data-testid="dock-collapse-button"
+                onClick={() => setPanelOpen(false)}
+                className="flex-none flex items-center justify-center self-stretch outline-none transition-[background,box-shadow,width] duration-200 ease-out hover:bg-[rgba(255,255,255,0.04)] group shrink-0"
+                style={{
+                  width: 12,
+                  minHeight: 40,
+                  marginLeft: -12,
+                  paddingLeft: 2,
+                  border: "none",
+                  borderRight: "1px solid rgba(255,255,255,0.05)",
+                  borderTopRightRadius: 6,
+                  borderBottomRightRadius: 6,
+                  cursor: "col-resize",
+                  background: "linear-gradient(90deg, rgba(0,0,0,0.06), rgba(255,255,255,0.02))",
+                  boxShadow: "inset -1px 0 0 rgba(79,162,173,0.12)",
+                }}
+              >
+                <span className="pointer-events-none flex flex-col items-center gap-[4px] opacity-[0.38] group-hover:opacity-[0.58] transition-opacity duration-200">
+                  <span
+                    className="rounded-full"
+                    style={{
+                      width: 2,
+                      height: 11,
+                      background: "linear-gradient(180deg, rgba(255,255,255,0.45), rgba(255,255,255,0.1))",
+                    }}
+                  />
+                  <span
+                    className="rounded-full"
+                    style={{
+                      width: 2,
+                      height: 11,
+                      background: "linear-gradient(180deg, rgba(255,255,255,0.3), rgba(255,255,255,0.08))",
+                    }}
+                  />
+                  <span
+                    className="rounded-full"
+                    style={{
+                      width: 2,
+                      height: 11,
+                      background: "linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06))",
+                    }}
+                  />
+                </span>
+              </button>
+              <div className="flex min-w-0 flex-1 gap-2.5 overflow-x-auto pb-0.5 items-center pl-0.5">
+                {activeTabs.map((t) => {
+                  const selected = tab === t;
+                  return (
                   <button
                     key={t}
                     data-testid={`companion-tab-${t.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
-                    aria-pressed={tab === t}
+                    aria-pressed={selected}
                     onClick={(event) => {
                       event.stopPropagation();
                       handleCompanionTabClick(t);
                     }}
-                    className="font-semibold transition-colors"
+                    className="whitespace-nowrap transition-[color,background,box-shadow,border-color,transform] duration-200 ease-out"
                     style={{
-                      padding: "8px 10px",
-                      color: tab === t ? "#FFFFFF" : C.neutral,
-                      background:
-                        tab === t
-                          ? "rgba(79,162,173,0.10)"
-                          : "transparent",
-                      border:
-                        "1px solid " +
-                        (tab === t ? "rgba(79,162,173,0.32)" : "transparent"),
-                      borderRadius: 10,
+                      padding: selected ? "8px 14px" : "7px 12px",
+                      fontSize: selected ? 12.75 : 12.25,
+                      lineHeight: 1.15,
+                      fontWeight: selected ? 600 : 500,
+                      letterSpacing: selected ? "-0.01em" : "0",
+                      color: selected ? "rgba(255,255,255,0.96)" : "rgba(224,222,213,0.52)",
+                      background: selected
+                        ? "linear-gradient(180deg, rgba(79,162,173,0.16) 0%, rgba(79,162,173,0.07) 100%)"
+                        : "rgba(255,255,255,0.018)",
+                      border: selected
+                        ? "1px solid rgba(79,162,173,0.34)"
+                        : "1px solid rgba(255,255,255,0.035)",
+                      borderRadius: selected ? 13 : 11,
+                      boxShadow: selected
+                        ? "inset 0 1px 0 rgba(255,255,255,0.1), 0 0 0 1px rgba(0,0,0,0.12), 0 6px 20px rgba(79,162,173,0.08), 0 1px 2px rgba(0,0,0,0.2)"
+                        : "inset 0 1px 0 rgba(255,255,255,0.03)",
+                      transform: selected ? "translateY(-0.5px)" : "none",
                     }}
                   >
                     {t}
                   </button>
-                ))}
+                  );
+                })}
               </div>
-
+            </div>
               <div
                 className="flex-1 overflow-hidden px-1 pr-3 pb-6 text-sm min-h-0"
                 style={{ color: C.neutral }}
@@ -5560,6 +5814,7 @@ export default function AgentBuilder(): React.ReactElement {
               {/* resize handle */}
               <div
                 onMouseDown={(e) => {
+                  if (!panelOpen) return;
                   const sx = e.clientX;
                   const sw = panelWidth;
                   const minW = 360;
@@ -5577,16 +5832,18 @@ export default function AgentBuilder(): React.ReactElement {
                 }}
                 style={{
                   position: "absolute",
-                  left: -6,
+                  left: 0,
                   top: 0,
-                  width: 8,
+                  width: 6,
                   height: "100%",
                   cursor: "col-resize",
+                  zIndex: 2,
+                  background:
+                    "linear-gradient(90deg, rgba(255,255,255,0.00), rgba(255,255,255,0.04))",
                 }}
               />
-            </div>
-          </aside>
-        )}
+          </div>
+        </aside>
       </div>
 
       {/* drawers */}
@@ -5616,7 +5873,7 @@ export default function AgentBuilder(): React.ReactElement {
                 style={{ border: `1px solid ${C.border}`, background: C.bg }}
                 data-testid="create-project-form"
               >
-                <div className="flex gap-1 mb-1">
+                <div className="flex gap-2 mb-2">
                   <input
                     type="text"
                     value={newProjectName}
@@ -5642,25 +5899,6 @@ export default function AgentBuilder(): React.ReactElement {
                     Create
                   </button>
                 </div>
-                {showAdvancedProjectFields && (
-                  <input
-                    type="text"
-                    value={newProjectCode}
-                    onChange={(e) => setNewProjectCode(e.target.value)}
-                    placeholder="code (optional)"
-                    className="w-full px-2 py-1 text-xs rounded focus:outline-none mb-1"
-                    style={{ background: C.panel, border: `1px solid ${C.border}`, color: C.text }}
-                    data-testid="project-code-input"
-                  />
-                )}
-                <button
-                  type="button"
-                  onClick={() => setShowAdvancedProjectFields(!showAdvancedProjectFields)}
-                  className="text-[10px] px-1"
-                  style={{ color: C.neutral }}
-                >
-                  {showAdvancedProjectFields ? '− less' : '+ code'}
-                </button>
               </form>
             )}
 

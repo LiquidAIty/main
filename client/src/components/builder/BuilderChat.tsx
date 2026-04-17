@@ -58,33 +58,43 @@ export default function BuilderChat({
         ref={listRef}
         className="flex-1 overflow-auto"
         style={{
-          padding: "14px 18px",
+          padding: "16px 20px 18px",
           display: "grid",
-          gap: 10,
+          gap: 14,
           alignContent: "start",
         }}
       >
         {messages.map((m, i) => {
-          const right = m.role !== "assistant";
-          const bg = m.role === "user" ? colors.panel : colors.bg;
+          const isUser = m.role !== "assistant";
           return (
             <div
               key={i}
-              style={{ justifySelf: right ? "end" : "start", maxWidth: "86%" }}
+              style={{
+                justifySelf: isUser ? "end" : "start",
+                maxWidth: isUser ? "min(82%, 560px)" : "min(92%, 640px)",
+                width: "fit-content",
+              }}
             >
               <div
-                style={{ fontSize: 11, color: colors.neutral, marginBottom: 4 }}
-              >
-                {m.role === "assistant" ? "Assistant" : "You"}
-              </div>
-              <div
                 style={{
-                  background: bg,
-                  border: `1px solid ${colors.border}`,
-                  borderRadius: 12,
-                  padding: "10px 12px",
+                  padding: isUser ? "11px 15px 12px 15px" : "11px 16px 12px 16px",
                   color: colors.text,
                   whiteSpace: "pre-wrap",
+                  lineHeight: 1.55,
+                  fontSize: 13.5,
+                  letterSpacing: "-0.01em",
+                  borderRadius: isUser
+                    ? "16px 16px 5px 16px"
+                    : "16px 16px 16px 6px",
+                  background: isUser
+                    ? "linear-gradient(165deg, rgba(52,56,62,0.98) 0%, rgba(36,40,46,0.99) 55%, rgba(30,34,40,1) 100%)"
+                    : "linear-gradient(180deg, rgba(28,30,34,0.55) 0%, rgba(22,24,28,0.72) 100%)",
+                  border: isUser
+                    ? "1px solid rgba(79,162,173,0.22)"
+                    : `1px solid rgba(255,255,255,0.06)`,
+                  boxShadow: isUser
+                    ? "inset 0 1px 0 rgba(255,255,255,0.07), 0 1px 0 rgba(0,0,0,0.35), 0 10px 28px rgba(0,0,0,0.22), 0 0 0 1px rgba(79,162,173,0.06)"
+                    : "inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -1px 0 rgba(0,0,0,0.18), 0 4px 18px rgba(0,0,0,0.14)",
                 }}
               >
                 {safeText(m.text)}
@@ -93,54 +103,69 @@ export default function BuilderChat({
           );
         })}
       </div>
-      <div className="px-4 pb-4 flex items-center gap-2">
-        <UploadAttachment
-          knowledgeProjectId={knowledgeProjectId}
-          disabled={disabled || !knowledgeProjectId}
-        />
-        <input
-          value={v}
-          onChange={(e) => setV(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") send();
-          }}
-          placeholder="Type a message…"
-          className="flex-1"
+      <div className="px-4 pb-4">
+        <div
+          className="flex items-center gap-2"
           style={{
+            borderRadius: 15,
             background: colors.panel,
             border: `1px solid ${colors.border}`,
-            borderRadius: 10,
-            padding: "12px 14px",
-            color: colors.text,
+            boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)",
+            padding: "5px 6px 5px 7px",
           }}
-          disabled={disabled}
-        />
-        <button
-          onClick={send}
-          aria-label="Send"
-          className="rounded-full flex items-center justify-center"
-          style={{
-            width: 42,
-            height: 42,
-            background: colors.primary,
-            boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
-          }}
-          disabled={disabled}
         >
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="#FFFFFF"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+          <UploadAttachment
+            knowledgeProjectId={knowledgeProjectId}
+            disabled={disabled || !knowledgeProjectId}
+            appearance="chat-inline"
+          />
+          <input
+            value={v}
+            onChange={(e) => setV(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") send();
+            }}
+            placeholder="Type a message…"
+            className="flex-1"
+            style={{
+              background: "transparent",
+              border: "none",
+              outline: "none",
+              padding: "10px 7px",
+              color: colors.text,
+              fontSize: 14,
+              lineHeight: 1.25,
+            }}
+            disabled={disabled}
+          />
+          <button
+            onClick={send}
+            aria-label="Send"
+            className="rounded-full flex items-center justify-center"
+            style={{
+              width: 40,
+              height: 40,
+              background: colors.primary,
+              border: "1px solid rgba(79,162,173,0.36)",
+              boxShadow: "0 8px 18px rgba(79,162,173,0.10), inset 0 1px 0 rgba(255,255,255,0.14)",
+            }}
+            disabled={disabled}
           >
-            <path d="M12 19V5" />
-            <path d="M5 12l7-7 7 7" />
-          </svg>
-        </button>
+            <svg
+              width="19"
+              height="19"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#FFFFFF"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 19V5" />
+              <path d="M5 12l7-7 7 7" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   );

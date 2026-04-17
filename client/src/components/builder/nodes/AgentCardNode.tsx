@@ -11,6 +11,7 @@ type AgentCardNodeData = AgentCardInstance & {
   isRuntimeActive?: boolean;
   isHovered?: boolean;
   isHoverRelated?: boolean;
+  isFlowLinked?: boolean;
 };
 
 export default function AgentCardNode({
@@ -48,25 +49,29 @@ export default function AgentCardNode({
     structureLabel,
   ].filter(Boolean);
   const isRuntimeActive = Boolean(data?.isRuntimeActive);
+  const isFlowLinked = Boolean(data?.isFlowLinked);
   const hoverRing =
     !selected && data?.isHovered
-      ? `0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 14px 28px ${GRAPH_THEME.accent.primaryGlow}`
+      ? `inset 0 1px 0 rgba(255,255,255,0.04), 0 0 0 1px rgba(79, 162, 173, 0.22), 0 10px 24px rgba(79, 162, 173, 0.09)`
       : !selected && data?.isHoverRelated
-        ? `0 0 0 1px rgba(79, 162, 173, 0.12), ${GRAPH_THEME.surface.shadow}`
+        ? `inset 0 1px 0 rgba(255,255,255,0.02), 0 0 0 1px rgba(79, 162, 173, 0.1), ${GRAPH_THEME.surface.shadow}`
         : null;
+  const ambientShell =
+    "radial-gradient(circle at 14% 20%, rgba(140,116,204,0.055), transparent 38%), radial-gradient(circle at 86% 14%, rgba(79,162,173,0.085), transparent 40%), linear-gradient(180deg, rgba(30,33,36,0.98), rgba(18,21,24,0.985))";
   return (
     <div
-      className={`rounded-xl border p-4 min-w-[258px] bg-zinc-900 text-white ${
-        selected ? 'ring-2 ring-cyan-400' : ''
-      }`}
+      className="rounded-xl border min-w-[248px] bg-zinc-900 text-white"
       style={
         {
           position: 'relative',
+          padding: "14px 18px 15px",
           borderWidth: isGraph ? 1.5 : 1,
           borderColor: selected
             ? GRAPH_THEME.accent.primary
             : isRuntimeActive
               ? GRAPH_THEME.accent.primary
+            : isFlowLinked
+              ? "rgba(79, 162, 173, 0.24)"
             : isMagentic
               ? 'rgba(96, 194, 255, 0.82)'
               : isGraph
@@ -75,23 +80,25 @@ export default function AgentCardNode({
                 ? GRAPH_THEME.accent.primaryBorder
               : GRAPH_THEME.surface.border,
           background: isMagentic
-            ? 'linear-gradient(180deg, rgba(14,28,35,0.98), rgba(10,18,22,0.98))'
+            ? 'radial-gradient(circle at 18% 20%, rgba(140,116,204,0.08), transparent 38%), radial-gradient(circle at 80% 16%, rgba(96,194,255,0.12), transparent 36%), radial-gradient(circle at 50% 92%, rgba(223,146,84,0.05), transparent 42%), linear-gradient(180deg, rgba(14,28,35,0.98), rgba(10,18,22,0.98))'
             : isGraph
-              ? 'linear-gradient(180deg, rgba(31,34,38,0.98), rgba(18,21,24,0.98))'
-            : 'linear-gradient(180deg, rgba(28,31,34,0.98), rgba(18,21,24,0.98))',
+              ? 'radial-gradient(circle at 82% 18%, rgba(79,162,173,0.07), transparent 36%), linear-gradient(180deg, rgba(31,34,38,0.98), rgba(18,21,24,0.98))'
+            : ambientShell,
           boxShadow: selected
-            ? `0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 18px 36px ${GRAPH_THEME.accent.primaryGlow}`
+            ? `inset 0 1px 0 rgba(255,255,255,0.05), 0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 14px 32px rgba(79, 162, 173, 0.1)`
             : isRuntimeActive
-              ? `0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 18px 36px ${GRAPH_THEME.accent.primaryGlow}`
+              ? `inset 0 1px 0 rgba(255,255,255,0.04), 0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 14px 28px rgba(79, 162, 173, 0.1), 0 0 12px rgba(223, 146, 84, 0.09)`
+            : isFlowLinked
+              ? `inset 0 1px 0 rgba(255,255,255,0.03), 0 0 0 1px rgba(79, 162, 173, 0.16), 0 10px 22px rgba(79, 162, 173, 0.07)`
             : hoverRing
               ? hoverRing
             : isMagentic
-              ? 'inset 0 0 0 1px rgba(96, 194, 255, 0.14), 0 14px 30px rgba(9, 18, 20, 0.22)'
+              ? 'inset 0 1px 0 rgba(255,255,255,0.04), inset 0 0 0 1px rgba(96, 194, 255, 0.12), 0 12px 26px rgba(9, 18, 20, 0.2)'
               : isGraph
-                ? 'inset 0 0 0 1px rgba(154, 162, 172, 0.12), 0 12px 28px rgba(0, 0, 0, 0.2)'
+                ? 'inset 0 1px 0 rgba(255,255,255,0.03), inset 0 0 0 1px rgba(154, 162, 172, 0.1), 0 10px 24px rgba(0, 0, 0, 0.18)'
               : isCallableHead
-                ? 'inset 0 0 0 1px rgba(79, 162, 173, 0.14), 0 14px 30px rgba(9, 18, 20, 0.18)'
-              : GRAPH_THEME.surface.shadow,
+                ? `inset 0 1px 0 rgba(255,255,255,0.03), inset 0 0 0 1px rgba(79, 162, 173, 0.12), 0 12px 26px rgba(9, 18, 20, 0.16), 0 0 10px rgba(223, 146, 84, 0.06)`
+              : `inset 0 1px 0 rgba(255,255,255,0.03), ${GRAPH_THEME.surface.shadow}`,
         }
       }
     >
@@ -101,12 +108,21 @@ export default function AgentCardNode({
         aria-label={`${data.title} input`}
         isConnectable={canReceiveConnection}
         style={{
-          width: 14,
-          height: 14,
-          left: -8,
+          width: 12,
+          height: 12,
+          left: -7,
           borderRadius: '999px',
-          border: '2px solid rgba(148, 163, 184, 0.95)',
-          background: canReceiveConnection ? GRAPH_THEME.surface.base : '#111315',
+          border: isFlowLinked
+            ? '1.5px solid rgba(140, 116, 204, 0.42)'
+            : '1.5px solid rgba(79, 162, 173, 0.38)',
+          background: canReceiveConnection
+            ? "radial-gradient(circle at 32% 28%, rgba(79,162,173,0.35), rgba(12,16,20,0.96))"
+            : '#111315',
+          boxShadow: canReceiveConnection
+            ? isFlowLinked
+              ? "inset 0 0 0 1px rgba(140,116,204,0.12), 0 0 0 1px rgba(79,162,173,0.1)"
+              : "inset 0 0 0 1px rgba(79,162,173,0.12)"
+            : undefined,
           opacity: canReceiveConnection ? 1 : 0.4,
         }}
       />
@@ -116,44 +132,28 @@ export default function AgentCardNode({
         aria-label={`${data.title} output`}
         isConnectable={canStartConnection}
         style={{
-          width: 14,
-          height: 14,
-          right: -8,
+          width: 12,
+          height: 12,
+          right: -7,
           borderRadius: '999px',
-          border: `2px solid ${GRAPH_THEME.accent.primary}`,
-          background: canStartConnection ? 'rgba(18,35,41,0.98)' : '#111315',
+          border: isRuntimeActive
+            ? `1.5px solid ${GRAPH_THEME.accent.solar}`
+            : isFlowLinked
+              ? '1.5px solid rgba(79, 162, 173, 0.48)'
+              : `1.5px solid ${GRAPH_THEME.accent.primary}`,
+          background: canStartConnection
+            ? isRuntimeActive
+              ? "radial-gradient(circle at 30% 26%, rgba(223,146,84,0.45), rgba(22,18,16,0.96))"
+              : "radial-gradient(circle at 32% 28%, rgba(79,162,173,0.32), rgba(12,18,22,0.96))"
+            : '#111315',
+          boxShadow: canStartConnection
+            ? isRuntimeActive
+              ? "inset 0 0 0 1px rgba(255,200,160,0.12), 0 0 0 1px rgba(223,146,84,0.12)"
+              : "inset 0 0 0 1px rgba(79,162,173,0.1)"
+            : undefined,
           opacity: canStartConnection ? 1 : 0.4,
         }}
       />
-
-      <div
-        style={{
-          position: 'absolute',
-          left: 18,
-          top: '50%',
-          transform: 'translateY(-50%)',
-          fontSize: 10,
-          letterSpacing: '0.16em',
-          color: GRAPH_THEME.surface.mutedText,
-          pointerEvents: 'none',
-        }}
-      >
-        IN
-      </div>
-      <div
-        style={{
-          position: 'absolute',
-          right: 18,
-          top: '50%',
-          transform: 'translateY(-50%)',
-          fontSize: 10,
-          letterSpacing: '0.16em',
-          color: GRAPH_THEME.accent.primary,
-          pointerEvents: 'none',
-        }}
-      >
-        OUT
-      </div>
 
       {isGraph ? (
         <div
@@ -175,18 +175,18 @@ export default function AgentCardNode({
           display: 'flex',
           alignItems: 'flex-start',
           justifyContent: 'space-between',
-          gap: 12,
+          gap: 10,
         }}
       >
-        <div style={{ minWidth: 0 }}>
+        <div style={{ minWidth: 0, paddingLeft: 2, paddingRight: 2 }}>
           {runtimeLabel && (
             <div
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 6,
-                padding: '3px 8px',
-                marginBottom: 8,
+                padding: '2px 7px',
+                marginBottom: 7,
                 borderRadius: 999,
                   background: isMagentic
                     ? 'rgba(96, 194, 255, 0.14)'
@@ -216,19 +216,27 @@ export default function AgentCardNode({
               {runtimeLabel}
             </div>
           )}
-          <div className="text-sm font-semibold" style={{ lineHeight: 1.3 }}>
+          <div
+            style={{
+              fontSize: 13.5,
+              fontWeight: 600,
+              lineHeight: 1.28,
+              letterSpacing: "-0.015em",
+            }}
+          >
             {data.title}
           </div>
         </div>
         {executionOrder ? (
           <div
             style={{
-              padding: '3px 8px',
+              padding: '2px 7px',
               borderRadius: 999,
-              background: GRAPH_THEME.accent.primarySoft,
-              border: `1px solid ${GRAPH_THEME.accent.primaryBorder}`,
+              background: 'rgba(223, 146, 84, 0.11)',
+              border: '1px solid rgba(223, 146, 84, 0.22)',
               color: GRAPH_THEME.surface.text,
-              fontSize: 11,
+              fontSize: 10.5,
+              fontWeight: 600,
               lineHeight: 1,
               whiteSpace: 'nowrap',
             }}
@@ -240,8 +248,15 @@ export default function AgentCardNode({
 
       {data.subtitle && (
         <div
-          className="text-xs opacity-70 mt-1"
-          style={{ lineHeight: 1.45, paddingRight: 18, color: GRAPH_THEME.surface.mutedText }}
+          style={{
+            marginTop: 6,
+            fontSize: 12,
+            lineHeight: 1.5,
+            paddingLeft: 2,
+            paddingRight: 4,
+            color: GRAPH_THEME.surface.mutedText,
+            opacity: 0.72,
+          }}
         >
           {data.subtitle}
         </div>
@@ -252,19 +267,21 @@ export default function AgentCardNode({
           style={{
             display: 'flex',
             flexWrap: 'wrap',
-            gap: 6,
-            marginTop: 12,
+            gap: 5,
+            marginTop: 11,
           }}
         >
           {badges.map((badge) => (
             <div
               key={badge}
               style={{
-                padding: '4px 8px',
+                padding: '3px 7px',
                 borderRadius: 999,
                 background:
                   badge === 'Callable'
                     ? 'rgba(79, 162, 173, 0.14)'
+                    : badge === 'Branch+Merge'
+                      ? GRAPH_THEME.accent.memorySoft
                     : badge === 'Compat Workflow'
                       ? 'rgba(234, 146, 77, 0.14)'
                     : badge === 'In Workflow'
@@ -275,6 +292,8 @@ export default function AgentCardNode({
                 border:
                   badge === 'Callable'
                     ? '1px solid rgba(79, 162, 173, 0.34)'
+                    : badge === 'Branch+Merge'
+                      ? `1px solid ${GRAPH_THEME.accent.memory}`
                     : badge === 'Compat Workflow'
                       ? '1px solid rgba(234, 146, 77, 0.3)'
                     : badge === 'In Workflow'
@@ -285,6 +304,8 @@ export default function AgentCardNode({
                 color:
                   badge === 'Callable'
                     ? '#d8f2ff'
+                    : badge === 'Branch+Merge'
+                      ? '#e6ddff'
                     : badge === 'Compat Workflow'
                       ? '#ffe6d6'
                     : badge === 'In Workflow'
@@ -292,8 +313,8 @@ export default function AgentCardNode({
                       : String(badge).startsWith('Swarm x')
                         ? '#d8f2ff'
                       : GRAPH_THEME.surface.mutedText,
-                fontSize: 11,
-                lineHeight: 1,
+                fontSize: 10.5,
+                lineHeight: 1.05,
               }}
             >
               {badge}
