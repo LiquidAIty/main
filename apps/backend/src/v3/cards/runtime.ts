@@ -1,3 +1,8 @@
+// @graph entity: CardRuntime
+// @graph role: card-execution-orchestrator
+// @graph relates_to: DeckRuntime, Magentic-One Runtime, PlanWiki, ThinkGraph, KnowGraph
+// @graph depends_on: OpenAI, RuntimeBindings
+// @graph feeds_to: DeckRuntime
 import { REPO_DEFAULT_MODEL_KEY, resolveModel, type Provider } from '../../llm/models.config';
 import { runLLM } from '../../llm/client';
 import { getTool, type Tool } from '../../agents/registry';
@@ -11,9 +16,11 @@ import type {
   AgentCardRuntimeType,
   AgentTemplate,
   CardRunResult,
+  CodeGraphViewContract,
   DeckEdge,
   DeckEdgeType,
   DeckRuntimeEvent,
+  GraphViewContract,
   PromptTemplate,
   RuntimeBinding,
 } from '../types';
@@ -51,6 +58,23 @@ type ResolvedAssistTool = {
   toolId: string;
   tool: Tool;
 };
+
+const CODEGRAPH_DEFAULT_NODE_LABEL_ALLOWLIST = [
+  'File',
+  'Module',
+  'Function',
+  'Class',
+  'Interface',
+  'Route',
+];
+
+const CODEGRAPH_DEFAULT_EDGE_TYPE_ALLOWLIST = [
+  'IMPORTS',
+  'CALLS',
+  'DEFINES',
+  'HANDLES',
+  'CONTAINS_FILE',
+];
 
 const PROMPT_DRIVEN_ASSIST_TOOL_IDS = new Set([
   'openai',
@@ -127,6 +151,179 @@ function extractJsonObject(text: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+function normalizeCodeGraphViewContractCandidate(value: unknown): GraphViewContract | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const toStringArray = (input: unknown): string[] | undefined => {
+    if (!Array.isArray(input)) return undefined;
+    const normalized = input
+      .map((entry) => String(entry || '').trim())
+      .filter(Boolean);
+    return normalized.length > 0 ? normalized : undefined;
+  };
+
+  const nodeLabelAllowlist = toStringArray(
+    record.nodeLabelAllowlist ?? record.node_labels ?? record.nodeLabels,
+  );
+  const edgeTypeAllowlist = toStringArray(
+    record.edgeTypeAllowlist ?? record.edge_types ?? record.edgeTypes,
+  );
+  const focusPaths = toStringArray(record.focusPaths ?? record.focus_paths);
+  const focusSymbols = toStringArray(record.focusSymbols ?? record.focus_symbols);
+  const focusNodeIds = toStringArray(record.focusNodeIds ?? record.focus_node_ids);
+  const showLabelsRaw = record.showLabels ?? record.show_labels;
+  const maxNodesRaw = record.maxNodes ?? record.max_nodes;
+  const projectIdRaw = record.projectId ?? record.project_id;
+  const graphKindRaw = String(record.graphKind ?? record.graph_kind ?? 'codegraph')
+    .trim()
+    .toLowerCase();
+  const cameraModeRaw = record.cameraMode ?? record.camera_mode;
+  const animationModeRaw = record.animationMode ?? record.animation_mode;
+  const narrativeIntentRaw = record.narrativeIntent ?? record.narrative_intent;
+  const showLabels = typeof showLabelsRaw === 'boolean' ? showLabelsRaw : undefined;
+  const maxNodes = Number.isFinite(Number(maxNodesRaw)) ? Number(maxNodesRaw) : undefined;
+  const projectId = String(projectIdRaw || '').trim() || undefined;
+  const graphKind =
+    graphKindRaw === 'thinkgraph' || graphKindRaw === 'knowgraph' || graphKindRaw === 'codegraph'
+      ? graphKindRaw
+      : 'codegraph';
+  const cameraMode =
+    cameraModeRaw === 'overview' ||
+    cameraModeRaw === 'focus' ||
+    cameraModeRaw === 'trace' ||
+    cameraModeRaw === 'cluster'
+      ? cameraModeRaw
+      : undefined;
+  const animationMode =
+    animationModeRaw === 'calm' || animationModeRaw === 'guided' || animationModeRaw === 'active'
+      ? animationModeRaw
+      : undefined;
+  const narrativeIntent = String(narrativeIntentRaw || '').trim() || undefined;
+
+  if (
+    !nodeLabelAllowlist &&
+    !edgeTypeAllowlist &&
+    !focusPaths &&
+    !focusSymbols &&
+    !focusNodeIds &&
+    showLabels == null &&
+    maxNodes == null &&
+    !projectId &&
+    !cameraMode &&
+    !animationMode &&
+    !narrativeIntent
+  ) {
+    return null;
+  }
+
+  return {
+    graphKind: graphKind as GraphViewContract['graphKind'],
+    projectId,
+    focusNodeIds,
+    nodeLabelAllowlist,
+    edgeTypeAllowlist,
+    focusPaths,
+    focusSymbols,
+    showLabels,
+    maxNodes,
+    cameraMode: cameraMode as GraphViewContract['cameraMode'],
+    animationMode: animationMode as GraphViewContract['animationMode'],
+    narrativeIntent: narrativeIntent ?? null,
+  };
+}
+
+function extractCodeGraphFocusPaths(text: string): string[] {
+  const matches = text.match(
+    /[A-Za-z0-9_./-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|sql|py|yml|yaml)/g,
+  );
+  if (!matches) return [];
+  return Array.from(new Set(matches.map((entry) => entry.trim()).filter(Boolean))).slice(0, 8);
+}
+
+function extractCodeGraphFocusSymbols(text: string): string[] {
+  const values: string[] = [];
+  for (const match of text.matchAll(/`([A-Za-z_][A-Za-z0-9_]*)`/g)) {
+    values.push(String(match[1] || '').trim());
+  }
+  for (const match of text.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)) {
+    values.push(String(match[1] || '').trim());
+  }
+  return Array.from(new Set(values.filter(Boolean))).slice(0, 8);
+}
+
+function isGraphRelevantHeadCard(card: AgentCardInstance): boolean {
+  if (resolveCardRuntimeType(card) === 'graph_flow') return true;
+  const runtimeBinding = String(card.runtimeBinding || '').trim().toLowerCase();
+  if (runtimeBinding === 'knowgraph' || runtimeBinding === 'neo4j' || runtimeBinding === 'kg_ingest') {
+    return true;
+  }
+  const headText = `${card.title || ''} ${card.prompt || ''}`.toLowerCase();
+  return /codegraph|graph|knowgraph|neo4j|cypher|dependency|dependencies|symbol|schema|imports?/.test(
+    headText,
+  );
+}
+
+function isGraphRelevantMagenticTask(runtimeInput: string, callableHeads: AgentCardInstance[]): boolean {
+  if (
+    /codegraph|graph|knowgraph|neo4j|cypher|dependency|dependencies|focusPaths|focusSymbols|nodeLabelAllowlist|edgeTypeAllowlist/.test(
+      runtimeInput.toLowerCase(),
+    )
+  ) {
+    return true;
+  }
+  return callableHeads.some((head) => isGraphRelevantHeadCard(head));
+}
+
+function buildGraphRelevantCodeGraphContract(
+  runtimeInput: string,
+  projectId?: string,
+  base?: GraphViewContract | null,
+): GraphViewContract {
+  const focusPathsFromInput = extractCodeGraphFocusPaths(runtimeInput);
+  const focusSymbolsFromInput = extractCodeGraphFocusSymbols(runtimeInput);
+  return {
+    graphKind: base?.graphKind || 'codegraph',
+    projectId:
+      base?.projectId !== undefined
+        ? base.projectId
+        : projectId
+          ? projectId
+          : null,
+    focusPaths:
+      Array.isArray(base?.focusPaths) && base.focusPaths.length > 0
+        ? base.focusPaths
+        : focusPathsFromInput,
+    focusSymbols:
+      Array.isArray(base?.focusSymbols) && base.focusSymbols.length > 0
+        ? base.focusSymbols
+        : focusSymbolsFromInput,
+    nodeLabelAllowlist:
+      Array.isArray(base?.nodeLabelAllowlist) && base.nodeLabelAllowlist.length > 0
+        ? base.nodeLabelAllowlist
+        : [...CODEGRAPH_DEFAULT_NODE_LABEL_ALLOWLIST],
+    edgeTypeAllowlist:
+      Array.isArray(base?.edgeTypeAllowlist) && base.edgeTypeAllowlist.length > 0
+        ? base.edgeTypeAllowlist
+        : [...CODEGRAPH_DEFAULT_EDGE_TYPE_ALLOWLIST],
+    showLabels: typeof base?.showLabels === 'boolean' ? base.showLabels : true,
+    maxNodes:
+      Number.isFinite(Number(base?.maxNodes)) && Number(base?.maxNodes) > 0
+        ? Number(base?.maxNodes)
+        : 12000,
+    focusNodeIds:
+      Array.isArray(base?.focusNodeIds) && base.focusNodeIds.length > 0 ? base.focusNodeIds : undefined,
+    cameraMode: base?.cameraMode,
+    animationMode: base?.animationMode,
+    narrativeIntent: base?.narrativeIntent ?? null,
+  };
+}
+
+function toGraphViewContract(
+  value: GraphViewContract | CodeGraphViewContract | null | undefined,
+): GraphViewContract | null {
+  return normalizeCodeGraphViewContractCandidate(value);
 }
 
 function interpolateWorkerTemplate(template: string, workerIndex: number, workerCount: number): string {
@@ -1167,6 +1364,7 @@ async function runMagenticCard(
   if (callableHeads.length === 0) {
     throw new Error(`magentic_callable_heads_required: cardId=${card.id}`);
   }
+  const graphRelevantTask = isGraphRelevantMagenticTask(runtimeInput, callableHeads);
 
   const modelConfig = resolveCardModelConfig(card, effectiveAgent, `card_${card.id}`);
   const prompt = resolveCardSystemPrompt(card, effectiveAgent);
@@ -1177,6 +1375,9 @@ async function runMagenticCard(
       selectedCardId: { type: ['string', 'null'] },
       directResponseText: { type: ['string', 'null'] },
       progressText: { type: ['string', 'null'] },
+      graphViewContract: { type: ['object', 'null'], additionalProperties: true },
+      // Temporary legacy key accepted during migration.
+      codegraphViewContract: { type: ['object', 'null'], additionalProperties: true },
     },
   };
   const chooserSystem = [
@@ -1184,7 +1385,13 @@ async function runMagenticCard(
     'You are the top-level orchestrator for this deck run.',
     'Choose exactly one callable head card to run next, or answer directly if no head should be called.',
     'Optionally include progressText with one short plain-language status update for the plan stream.',
-    'Return JSON only with keys selectedCardId, directResponseText, and progressText.',
+    graphRelevantTask
+      ? 'This routing decision is graph-relevant. Include graphViewContract as structured JSON.'
+      : 'Include graphViewContract only when graph focus will materially improve the next step.',
+    graphRelevantTask
+      ? 'When included, graphViewContract should include graphKind, projectId, focusNodeIds, focusPaths, focusSymbols, nodeLabelAllowlist, edgeTypeAllowlist, showLabels, maxNodes, cameraMode, animationMode, and narrativeIntent.'
+      : null,
+    'Return JSON only with keys selectedCardId, directResponseText, progressText, and graphViewContract.',
     'Set exactly one of selectedCardId or directResponseText to a non-empty value.',
   ]
     .filter(Boolean)
@@ -1196,7 +1403,12 @@ async function runMagenticCard(
         cardId: head.id,
         title: head.title,
         runtimeType: resolveCardRuntimeType(head),
+        runtimeBinding: head.runtimeBinding || null,
       })),
+      graphRelevantTask,
+      graphContractTemplate: graphRelevantTask
+        ? buildGraphRelevantCodeGraphContract(runtimeInput, context.projectId)
+        : null,
     },
     null,
     2,
@@ -1217,6 +1429,16 @@ async function runMagenticCard(
   const directResponseText = String(parsed?.directResponseText || '').trim();
   const selectedCardId = String(parsed?.selectedCardId || '').trim();
   const progressText = String(parsed?.progressText || '').trim();
+  const parsedCodegraphViewContract = normalizeCodeGraphViewContractCandidate(
+    parsed?.graphViewContract ?? parsed?.codegraphViewContract,
+  );
+  const graphViewContract = graphRelevantTask
+    ? buildGraphRelevantCodeGraphContract(
+        runtimeInput,
+        context.projectId,
+        parsedCodegraphViewContract,
+      )
+    : parsedCodegraphViewContract;
 
   if (directResponseText) {
     emitRuntimeEvent(context, {
@@ -1227,6 +1449,8 @@ async function runMagenticCard(
       text: `${card.title} answered directly without delegating to another visible card.`,
       progressText: progressText || null,
       status: 'success',
+      graphViewContract,
+      codegraphViewContract: graphViewContract,
     });
     emitRuntimeMessage(context, {
       cardId: card.id,
@@ -1252,6 +1476,8 @@ async function runMagenticCard(
       seed: context.seed,
       inputSummary: summarizeText(runtimeInput),
       outputSummary: summarizeText(directResponseText),
+      graphViewContract,
+      codegraphViewContract: graphViewContract,
     };
   }
 
@@ -1282,6 +1508,8 @@ async function runMagenticCard(
     text: `${card.title} assigned work to ${selectedHead.title}.`,
     progressText: progressText || null,
     status: 'running',
+    graphViewContract,
+    codegraphViewContract: graphViewContract,
   });
   emitRuntimeMessage(context, {
     cardId: card.id,
@@ -1302,6 +1530,7 @@ async function runMagenticCard(
         `magentic_selected_head_failed: cardId=${card.id} selectedCardId=${selectedHead.id}`,
     );
   }
+  const selectedLegacyGraphViewContract = toGraphViewContract(selectedResult.codegraphViewContract);
 
   return {
     output: selectedResult.output,
@@ -1313,6 +1542,14 @@ async function runMagenticCard(
     seed: context.seed,
     inputSummary: summarizeText(runtimeInput),
     outputSummary: summarizeText(selectedResult.output),
+    graphViewContract:
+      selectedResult.graphViewContract ??
+      selectedLegacyGraphViewContract ??
+      graphViewContract,
+    codegraphViewContract:
+      selectedResult.graphViewContract ??
+      selectedLegacyGraphViewContract ??
+      graphViewContract,
   };
 }
 

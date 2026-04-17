@@ -1,3 +1,8 @@
+// @graph entity: DeckRunState
+// @graph role: deck-run-stream-client
+// @graph relates_to: AgentBuilderWorkspace, BuilderDeckRuntimeActions, DeckRuntime
+// @graph depends_on: DeckRunRoute
+// @graph feeds_to: DeckRunRoute
 import type { LinkRef, PlanItem } from "./assistPlanSurface";
 import { safeJson } from "./requestGuards";
 import type { DeckDocument, DeckRun, DeckRuntimeEvent } from "../../types/agentgraph";

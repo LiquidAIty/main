@@ -1,3 +1,8 @@
+// @graph entity: BuilderDeckRuntimeActions
+// @graph role: deck-run-actions
+// @graph relates_to: AgentBuilderWorkspace, DeckRuntime, CardRuntime
+// @graph depends_on: DeckRunState, React
+// @graph feeds_to: DeckRunRoute
 import { useCallback } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 

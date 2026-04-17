@@ -1,4 +1,23 @@
+// @graph entity: ThinkGraph
+// @graph role: provisional-graph-state
+// @graph relates_to: PlanWiki, Magentic-One Runtime
+// @graph depends_on: Apache AGE, Postgres
+// @graph feeds_to: PlanWiki
 import { pool } from '../db/pool';
+
+// ============================================================================
+// THINKGRAPH SERVICE (AGE / Postgres)
+// ============================================================================
+// This service manages ThinkGraph: the provisional conversation/planning graph.
+// ThinkGraph stores:
+// - Provisional entities and relationships extracted from conversation
+// - Hypotheses, questions, gaps, and next actions
+// - Planning structure and reasoning state
+// - Candidate structure before grounding
+//
+// ThinkGraph is NOT the source-backed truth graph.
+// For grounded, evidence-linked knowledge, see KnowGraph (Neo4j).
+// ============================================================================
 
 async function ensureAgeExtension() {
   await pool.query('CREATE EXTENSION IF NOT EXISTS age');

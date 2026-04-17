@@ -60,6 +60,9 @@ RELATIONSHIP_TYPES: list[dict[str, object]] = [
     {"label": "USES", "description": "Dependency or usage relationship."},
     {"label": "PART_OF", "description": "Part-whole relationship."},
     {"label": "EVIDENCE_FOR", "description": "Evidence supports a claim/concept."},
+    {"label": "IMPORTS", "description": "Code file imports another."},
+    {"label": "DEFINES", "description": "File defines function/class."},
+    {"label": "CALLS", "description": "Function calls another function."},
 ]
 
 PATTERNS: list[tuple[str, str, str]] = [
@@ -85,5 +88,12 @@ KNOWGRAPH_SCHEMA: dict[str, object] = {
     "patterns": PATTERNS,
     "additional_node_types": False,
     "additional_relationship_types": False,
-    "additional_patterns": False,
+    "aChunk", "MENdIONS", "Function"),
+    ("Chunk", "MENTIONS", "Class"),
+    ("Tditional_patterns": False,
 }
+t"),
+    ("CodeFile", "IMPORTS", "CodeFile"),
+    ("CodeFile", "DEFINES", "Funcion"),
+    ("CodeFile", "DEFINES", "Class"),
+    ("Function", "CALLS", "Function

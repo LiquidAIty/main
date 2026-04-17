@@ -1,3 +1,8 @@
+// @graph entity: PlanRoute
+// @graph role: planning-entrypoint
+// @graph relates_to: PlanWiki, ThinkGraph
+// @graph depends_on: Express, PlanWiki
+// @graph feeds_to: PlanWiki
 import { Router } from 'express';
 import { saveMessage, getMessages, savePlanWiki, getPlanWiki } from '../messages/store';
 

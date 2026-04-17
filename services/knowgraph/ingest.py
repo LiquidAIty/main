@@ -1,3 +1,8 @@
+# @graph entity: KnowGraph Ingest
+# @graph role: grounded-ingest
+# @graph relates_to: KnowGraph, PlanWiki
+# @graph depends_on: Neo4j, OpenAI
+# @graph feeds_to: KnowGraph
 """KnowGraph ingestion pipeline using Neo4j GraphRAG KG Builder."""
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ load_dotenv()
 DEFAULT_CHUNK_SIZE = 1400
 DEFAULT_CHUNK_OVERLAP = 200
 DEFAULT_CHUNK_APPROXIMATE = True
+GRAPH_METADATA_HEADER_LINE_LIMIT = 40
 
 
 def _sha256_hex(value: str) -> str:
@@ -56,6 +62,26 @@ class RuntimeModelConfig:
     embedding_model: str
     embedding_dimensions: int
     embedding_client_kwargs: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class GraphMetadata:
+    entity: str | None = None
+    role: str | None = None
+    relates_to: tuple[str, ...] = ()
+    depends_on: tuple[str, ...] = ()
+    feeds_to: tuple[str, ...] = ()
+
+    def is_empty(self) -> bool:
+        return not any(
+            (
+                self.entity,
+                self.role,
+                self.relates_to,
+                self.depends_on,
+                self.feeds_to,
+            )
+        )
 
 
 def _optional_env(name: str) -> str | None:
@@ -218,6 +244,92 @@ def _serialize_metadata_json(value: Any) -> str | None:
         return json.dumps(normalized, sort_keys=True)
     except Exception:
         return str(normalized)
+
+
+def _dedupe_strings(values: list[str]) -> tuple[str, ...]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for raw_value in values:
+        value = raw_value.strip()
+        if not value:
+            continue
+        folded = value.casefold()
+        if folded in seen:
+            continue
+        seen.add(folded)
+        deduped.append(value)
+    return tuple(deduped)
+
+
+def _strip_graph_comment_prefix(line: str) -> str:
+    stripped = line.strip()
+    for prefix in ("#", "//"):
+        if stripped.startswith(prefix):
+            return stripped[len(prefix) :].strip()
+    return stripped
+
+
+def _parse_graph_metadata(text: str) -> tuple[GraphMetadata | None, str]:
+    lines = text.splitlines()
+    entity: str | None = None
+    role: str | None = None
+    relates_to: list[str] = []
+    depends_on: list[str] = []
+    feeds_to: list[str] = []
+    metadata_line_indexes: set[int] = set()
+
+    for index, line in enumerate(lines[:GRAPH_METADATA_HEADER_LINE_LIMIT]):
+        candidate = _strip_graph_comment_prefix(line)
+        if not candidate.lower().startswith("@graph "):
+            continue
+        field_name, separator, raw_value = candidate[7:].partition(":")
+        if not separator:
+            continue
+        field_key = field_name.strip().lower().replace("-", "_")
+        value = raw_value.strip()
+        if not value:
+            continue
+        metadata_line_indexes.add(index)
+        if field_key == "entity":
+            entity = value
+        elif field_key == "role":
+            role = value
+        elif field_key == "relates_to":
+            relates_to.extend(part.strip() for part in value.split(","))
+        elif field_key == "depends_on":
+            depends_on.extend(part.strip() for part in value.split(","))
+        elif field_key == "feeds_to":
+            feeds_to.extend(part.strip() for part in value.split(","))
+
+    metadata = GraphMetadata(
+        entity=entity,
+        role=role,
+        relates_to=_dedupe_strings(relates_to),
+        depends_on=_dedupe_strings(depends_on),
+        feeds_to=_dedupe_strings(feeds_to),
+    )
+    if not metadata_line_indexes or metadata.is_empty():
+        return None, text
+
+    stripped_lines = [
+        line for index, line in enumerate(lines) if index not in metadata_line_indexes
+    ]
+    stripped_text = "\n".join(stripped_lines).strip()
+    return metadata, stripped_text or text
+
+
+def _resolve_source_path(
+    *,
+    document_id: str,
+    source_url: str | None,
+    metadata: Any = None,
+) -> str:
+    normalized_metadata = _normalize_optional_json_value(metadata)
+    if isinstance(normalized_metadata, dict):
+        file_path = str(normalized_metadata.get("file_path") or "").strip()
+        if file_path:
+            return file_path
+    return source_url or f"web://{document_id}"
 
 
 def _format_prompt_guidance_block(title: str, value: Any) -> str | None:
@@ -429,6 +541,7 @@ def _merge_ingested_graph(
     fetched_at: str | None = None,
     snippet: str | None = None,
     metadata_json: str | None = None,
+    graph_metadata: GraphMetadata | None = None,
 ) -> None:
     merge_cypher = """
     MERGE (doc:Document {project_id: $project_id, document_id: $document_id})
@@ -533,6 +646,87 @@ def _merge_ingested_graph(
         source_type=source_type,
         source_url=source_url,
         fetched_at=fetched_at,
+        database_=database,
+    )
+
+    if not graph_metadata or not graph_metadata.entity:
+        return
+
+    semantic_metadata_cypher = """
+    MATCH (doc:Document {project_id: $project_id, document_id: $document_id})
+    SET doc.graph_entity = $graph_entity,
+        doc.graph_role = $graph_role,
+        doc.graph_relates_to = $graph_relates_to,
+        doc.graph_depends_on = $graph_depends_on,
+        doc.graph_feeds_to = $graph_feeds_to
+    MERGE (entity:Entity {project_id: $project_id, name: $graph_entity})
+    ON CREATE SET entity.created_at = datetime()
+    SET entity.role = coalesce($graph_role, entity.role),
+        entity.source_path = $source_path,
+        entity.updated_at = datetime()
+    MERGE (doc)-[doc_rel:RELATES_TO]->(entity)
+    SET doc_rel.project_id = $project_id,
+        doc_rel.document_id = $document_id,
+        doc_rel.source_name = $source_name,
+        doc_rel.source_type = $source_type,
+        doc_rel.source_url = coalesce($source_url, doc_rel.source_url),
+        doc_rel.fetched_at = coalesce($fetched_at, doc_rel.fetched_at),
+        doc_rel.graph_anchor = 'entity',
+        doc_rel.updated_at = datetime()
+    FOREACH (dependency_name IN $graph_depends_on |
+        MERGE (dependency:Entity {project_id: $project_id, name: dependency_name})
+        ON CREATE SET dependency.created_at = datetime()
+        SET dependency.updated_at = datetime()
+        MERGE (entity)-[depends_rel:DEPENDS_ON]->(dependency)
+        SET depends_rel.project_id = $project_id,
+            depends_rel.document_id = $document_id,
+            depends_rel.source_name = $source_name,
+            depends_rel.source_type = $source_type,
+            depends_rel.source_url = coalesce($source_url, depends_rel.source_url),
+            depends_rel.fetched_at = coalesce($fetched_at, depends_rel.fetched_at),
+            depends_rel.updated_at = datetime()
+    )
+    FOREACH (related_entity_name IN $graph_relates_to |
+        MERGE (related:Entity {project_id: $project_id, name: related_entity_name})
+        ON CREATE SET related.created_at = datetime()
+        SET related.updated_at = datetime()
+        MERGE (entity)-[related_rel:RELATES_TO]->(related)
+        SET related_rel.project_id = $project_id,
+            related_rel.document_id = $document_id,
+            related_rel.source_name = $source_name,
+            related_rel.source_type = $source_type,
+            related_rel.source_url = coalesce($source_url, related_rel.source_url),
+            related_rel.fetched_at = coalesce($fetched_at, related_rel.fetched_at),
+            related_rel.updated_at = datetime()
+    )
+    FOREACH (fed_entity_name IN $graph_feeds_to |
+        MERGE (fed:Entity {project_id: $project_id, name: fed_entity_name})
+        ON CREATE SET fed.created_at = datetime()
+        SET fed.updated_at = datetime()
+        MERGE (entity)-[feeds_rel:FEEDS_TO]->(fed)
+        SET feeds_rel.project_id = $project_id,
+            feeds_rel.document_id = $document_id,
+            feeds_rel.source_name = $source_name,
+            feeds_rel.source_type = $source_type,
+            feeds_rel.source_url = coalesce($source_url, feeds_rel.source_url),
+            feeds_rel.fetched_at = coalesce($fetched_at, feeds_rel.fetched_at),
+            feeds_rel.updated_at = datetime()
+    )
+    """
+    driver.execute_query(
+        semantic_metadata_cypher,
+        project_id=project_id,
+        document_id=document_id,
+        source_path=source_path,
+        source_name=source_name,
+        source_type=source_type,
+        source_url=source_url,
+        fetched_at=fetched_at,
+        graph_entity=graph_metadata.entity,
+        graph_role=graph_metadata.role,
+        graph_relates_to=list(graph_metadata.relates_to),
+        graph_depends_on=list(graph_metadata.depends_on),
+        graph_feeds_to=list(graph_metadata.feeds_to),
         database_=database,
     )
 
@@ -718,10 +912,16 @@ async def ingest_text_document(
     relationship_taxonomy: Any = None,
     extraction_policy: Any = None,
     research_focus: Any = None,
+    source_type: str = "web_research",
 ) -> dict[str, Any]:
     normalized_text = text.strip()
     if not normalized_text:
         raise ValueError("text is required")
+    graph_metadata: GraphMetadata | None = None
+    if source_type == "code_file":
+        graph_metadata, stripped_text = _parse_graph_metadata(normalized_text)
+        if stripped_text:
+            normalized_text = stripped_text
 
     effective_prompt_template = _build_prompt_template(
         prompt_template=prompt_template,
@@ -742,7 +942,11 @@ async def ingest_text_document(
         prompt_template=effective_prompt_template,
     )
     source_name = (title or source_url or f"{document_id}.txt").strip() or f"{document_id}.txt"
-    source_path = source_url or f"web://{document_id}"
+    source_path = _resolve_source_path(
+        document_id=document_id,
+        source_url=source_url,
+        metadata=metadata,
+    )
     metadata_json = _serialize_metadata_json(metadata)
 
     try:
@@ -757,7 +961,7 @@ async def ingest_text_document(
                 "fetched_at": fetched_at,
                 "snippet": snippet,
                 "metadata_json": metadata_json,
-                "source_type": "web_research",
+                "source_type": source_type,
             },
         )
 
@@ -773,6 +977,7 @@ async def ingest_text_document(
             fetched_at=fetched_at,
             snippet=snippet,
             metadata_json=metadata_json,
+            graph_metadata=graph_metadata,
         )
         ensure_vector_index(
             driver,
@@ -790,6 +995,17 @@ async def ingest_text_document(
             "agent_id": agent_id,
             "source_url": source_url,
             "source_name": source_name,
+            "graph_metadata": (
+                {
+                    "entity": graph_metadata.entity,
+                    "role": graph_metadata.role,
+                    "relates_to": list(graph_metadata.relates_to),
+                    "depends_on": list(graph_metadata.depends_on),
+                    "feeds_to": list(graph_metadata.feeds_to),
+                }
+                if graph_metadata
+                else None
+            ),
         }
     finally:
         driver.close()

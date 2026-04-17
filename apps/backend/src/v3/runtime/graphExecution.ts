@@ -1,3 +1,8 @@
+// @graph entity: GraphExecutionScheduler
+// @graph role: graph-run-scheduler
+// @graph relates_to: DeckRuntime, BuilderCanvas
+// @graph depends_on: DeckExecutionPlan
+// @graph feeds_to: CardRuntime
 import type {
   AgentCardInstance,
   DeckEdge,

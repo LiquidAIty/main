@@ -1,3 +1,8 @@
+# @graph entity: KnowGraph API
+# @graph role: ingest-entrypoint
+# @graph relates_to: KnowGraph Ingest, Magentic-One Runtime
+# @graph depends_on: FastAPI
+# @graph feeds_to: KnowGraph Ingest
 """FastAPI entrypoint for KnowGraph ingestion."""
 
 from __future__ import annotations
@@ -11,7 +16,7 @@ from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from ingest import ingest_pdf, ingest_web_documents
+from ingest import ingest_pdf, ingest_web_documents, ingest_text_document
 
 load_dotenv()
 
@@ -139,6 +144,55 @@ async def ingest_web_results(
             relationship_taxonomy=payload.relationship_taxonomy,
             extraction_policy=payload.extraction_policy,
             research_focus=payload.research_focus,
+        )
+        return JSONResponse(status_code=200, content={"ok": True, **result})
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "ok": False,
+                "error": {
+                    "message": str(exc),
+                },
+            },
+        )
+
+
+@app.post("/ingest_code")
+async def ingest_code(
+    request: Request,
+    project_id: str = Form(...),
+    document_id: str = Form(...),
+    code_text: str = Form(...),
+    file_path: str | None = Form(None),
+    language: str | None = Form(None),
+    organizing_principle: str | None = Form(None),
+    entity_taxonomy_json: str | None = Form(None),
+    relationship_taxonomy_json: str | None = Form(None),
+    extraction_policy_json: str | None = Form(None),
+) -> JSONResponse:
+    try:
+        agent_id = (request.headers.get("x-agent-id") or "").strip() or None
+        agent_provider = (request.headers.get("x-agent-provider") or "").strip() or None
+        agent_model_key = (request.headers.get("x-agent-model-key") or "").strip() or None
+        agent_model_id = (request.headers.get("x-agent-model-id") or "").strip() or None
+
+        result = await ingest_text_document(
+            project_id=project_id,
+            document_id=document_id,
+            text=code_text,
+            title=file_path or f"{document_id}.{language or 'code'}",
+            source_url=f"file://{file_path}" if file_path else None,
+            metadata={"language": language, "file_path": file_path},
+            source_type="code_file",
+            provider=agent_provider,
+            model_key=agent_model_key,
+            model_id=agent_model_id,
+            agent_id=agent_id,
+            organizing_principle=organizing_principle,
+            entity_taxonomy=entity_taxonomy_json,
+            relationship_taxonomy=relationship_taxonomy_json,
+            extraction_policy=extraction_policy_json,
         )
         return JSONResponse(status_code=200, content={"ok": True, **result})
     except Exception as exc:

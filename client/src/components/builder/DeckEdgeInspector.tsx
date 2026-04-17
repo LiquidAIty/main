@@ -23,7 +23,7 @@ export default function DeckEdgeInspector({
   colors: DeckEdgeInspectorColors;
 }) {
   const connectionMeaning =
-    edge.edgeType === "magentic_option" ? "make this node callable from Magentic" : "run next";
+    edge.edgeType === "magentic_option" ? "callable route" : "flow";
   return (
     <div
       style={{
@@ -37,7 +37,7 @@ export default function DeckEdgeInspector({
         className="text-xs"
         style={{ color: colors.text, fontWeight: 700, marginBottom: 12 }}
       >
-        Edge
+        Connection
       </div>
       <div className="space-y-3">
         <div
@@ -51,25 +51,8 @@ export default function DeckEdgeInspector({
             lineHeight: 1.5,
           }}
         >
-          <div>source: {sourceLabel}</div>
-          <div>target: {targetLabel}</div>
-          <div>meaning: {connectionMeaning}</div>
-        </div>
-        <div
-          className="text-xs"
-          style={{
-            padding: "10px 12px",
-            borderRadius: 8,
-            border: `1px solid ${colors.border}`,
-            background: colors.panel,
-            color: colors.neutral,
-            lineHeight: 1.5,
-          }}
-        >
-          This line is the real saved connection between these two nodes.
-          <div style={{ marginTop: 6 }}>
-            Drag either end of the selected line on the canvas to rewire it.
-          </div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>{sourceLabel} → {targetLabel}</div>
+          <div style={{ opacity: 0.8 }}>type: {connectionMeaning}</div>
         </div>
         <button
           onClick={onDelete}

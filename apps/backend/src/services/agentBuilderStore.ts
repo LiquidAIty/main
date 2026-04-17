@@ -260,12 +260,18 @@ function isProjectStateConflictError(err: unknown): boolean {
   return message === 'builder_state_conflict' || message === 'project_state_conflict';
 }
 
-export async function createProject(name: string, code?: string | null, projectType: 'assist' | 'agent' = 'agent'): Promise<AgentCard> {
+export async function createProject(
+  name: string,
+  code?: string | null,
+  projectType: 'assist' | 'agent' = 'agent',
+  ownerUserId?: string | null,
+): Promise<AgentCard> {
   const columns = await getProjectColumns();
   const hasOwnerColumn = columns.has('owner_user_id');
   const hasProjectType = columns.has('project_type');
   const ownerNullable = columns.get('owner_user_id') ?? true;
-  const ownerId = pickOwnerId() ?? (ownerNullable ? null : NIL_UUID);
+  const explicitOwnerId = typeof ownerUserId === 'string' ? ownerUserId.trim() : '';
+  const ownerId = explicitOwnerId || pickOwnerId() || (ownerNullable ? null : NIL_UUID);
   const projectId = randomUUID();
   const projectCode = code?.trim() || null;
   

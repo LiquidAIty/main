@@ -6,7 +6,7 @@
 -- 1) Projects (per user)
 CREATE TABLE IF NOT EXISTS projects (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  owner_user_id uuid NOT NULL,
+  owner_user_id text NOT NULL,  -- TEXT to match Prisma User.id (cuid)
   name         text NOT NULL,
   code         text,              -- short slug, e.g. 'liquidaity'
   description  text,

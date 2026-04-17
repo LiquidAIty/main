@@ -1145,6 +1145,8 @@ export default function KnowledgeGraphNVL({
     fitGraphToView,
   ]);
 
+  const hasData = entities.length > 0 || relationships.length > 0;
+
   return (
     <div
       ref={containerRef}
@@ -1160,6 +1162,37 @@ export default function KnowledgeGraphNVL({
         backgroundSize: GRAPH_THEME.background.knowledgePatternSize,
       }}
     >
+      {!hasData && !loading && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 12,
+            color: GRAPH_THEME.controls.text,
+            opacity: 0.6,
+          }}
+        >
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <circle cx="12" cy="12" r="3" />
+            <circle cx="6" cy="6" r="2" />
+            <circle cx="18" cy="6" r="2" />
+            <circle cx="6" cy="18" r="2" />
+            <circle cx="18" cy="18" r="2" />
+            <line x1="12" y1="9" x2="12" y2="6" />
+            <line x1="9" y1="12" x2="6" y2="12" />
+            <line x1="15" y1="12" x2="18" y2="12" />
+            <line x1="12" y1="15" x2="12" y2="18" />
+          </svg>
+          <div style={{ fontSize: 14, fontWeight: 500 }}>No knowledge graph data</div>
+          <div style={{ fontSize: 12, textAlign: "center", maxWidth: 280, lineHeight: 1.5 }}>
+            Import code or documents to build the knowledge graph for this project
+          </div>
+        </div>
+      )}
       <div style={graphControlStackStyle}>
         <button
           type="button"

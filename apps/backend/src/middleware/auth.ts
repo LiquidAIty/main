@@ -11,13 +11,12 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   if (sessionId) {
     try {
       const user = await getUserBySessionId(sessionId);
-      if (!user) {
-        res.status(401).json({ error: 'Invalid session' });
+      if (user) {
+        (req as any).userId = user.id;
+        next();
         return;
       }
-      (req as any).userId = user.id;
-      next();
-      return;
+      // Session is invalid/expired - fall through to create new session for local dev
     } catch (error: any) {
       res.status(500).json({ error: error.message || 'Internal server error' });
       return;

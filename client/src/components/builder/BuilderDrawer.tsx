@@ -22,7 +22,12 @@ export default function BuilderDrawer({
     // clicking the dark background closes the drawer
     <div
       className="fixed inset-0"
-      style={{ background: "#0008" }}
+      style={{
+        // Operator-first: drawers should fully occlude the workspace behind them.
+        // Semi-transparent overlays read as "bleed through" in the current UI.
+        background: "rgb(4, 8, 12)",
+        zIndex: 1200,
+      }}
       onClick={onClose}
     >
       <div

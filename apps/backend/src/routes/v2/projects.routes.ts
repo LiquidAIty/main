@@ -1,5 +1,11 @@
 import { Router } from 'express';
+import {
+  createAnonymousSession,
+  getUserBySessionId,
+  setSessionCookie,
+} from '../../auth/sessionStore';
 import { pool } from '../../db/pool';
+import { canIssueBootstrapSession } from '../../security/requestAccess';
 import {
   createProject,
   getProjectStateSnapshot,
@@ -13,6 +19,24 @@ const router = Router();
 
 function logV2ProjectRoute(req: any) {
   console.log('[V2][projects] %s %s', req.method, req.originalUrl);
+}
+
+async function resolveProjectOwnerUserId(req: any, res: any): Promise<string | null> {
+  const sessionId = typeof req.cookies?.sid === 'string' ? req.cookies.sid.trim() : '';
+  if (sessionId) {
+    const user = await getUserBySessionId(sessionId);
+    if (user?.id) {
+      return user.id;
+    }
+  }
+
+  if (!canIssueBootstrapSession(req)) {
+    return null;
+  }
+
+  const { user, session } = await createAnonymousSession();
+  setSessionCookie(res, session.id, req);
+  return user.id;
 }
 
 router.get('/', async (req, res) => {
@@ -35,7 +59,16 @@ router.post('/', async (req, res) => {
   }
   const projectType = project_type === 'assist' || project_type === 'agent' ? project_type : 'agent';
   try {
-    const project = await createProject(name, typeof code === 'string' ? code : null, projectType);
+    const ownerUserId = await resolveProjectOwnerUserId(req, res);
+    if (!ownerUserId) {
+      return res.status(401).json({ ok: false, error: 'project owner session required' });
+    }
+    const project = await createProject(
+      name,
+      typeof code === 'string' ? code : null,
+      projectType,
+      ownerUserId,
+    );
     try {
       await ensureSystemAgentConfigs(project.id);
     } catch (ensureErr: any) {

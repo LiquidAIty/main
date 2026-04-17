@@ -195,7 +195,7 @@ describe('agentbuilder authoring flow', () => {
       'ThinkGraph',
       'Research Agent',
       'KnowGraph',
-      'Neo4j',
+      'KnowGraph Persist',
     ]);
 
     expect(INITIAL_DECK.nodes.filter((node) => node.runtimeType === 'graph_flow')).toEqual([]);
@@ -375,7 +375,7 @@ describe('agentbuilder authoring flow', () => {
       'ThinkGraph',
       'Research Agent',
       'KnowGraph',
-      'Neo4j',
+      'KnowGraph Persist',
     ]);
     expect(rehydrated.edges.map((edge) => ({
       source: edge.source,
@@ -402,7 +402,7 @@ describe('agentbuilder authoring flow', () => {
       'ThinkGraph',
       'Research Agent',
       'KnowGraph',
-      'Neo4j',
+      'KnowGraph Persist',
     ]);
   });
 

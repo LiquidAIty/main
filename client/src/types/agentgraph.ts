@@ -8,7 +8,10 @@ export type RuntimeBinding =
   | 'kg_ingest'
   | 'research_agent'
   | 'knowgraph'
-  | 'neo4j';
+  | 'neo4j'
+  | 'thinkgraph_agent'
+  | 'codegraph_agent'
+  | 'knowgraph_agent';
 
 export type AgentCardRuntimeType =
   | 'assistant_agent'
@@ -180,6 +183,62 @@ export type CardRunScoreDetail = {
   maxScore: number;
 };
 
+export type CodeGraphViewContract = {
+  projectId?: string | null;
+  focusPaths?: string[];
+  focusSymbols?: string[];
+  nodeLabelAllowlist?: string[];
+  edgeTypeAllowlist?: string[];
+  showLabels?: boolean;
+  maxNodes?: number;
+};
+
+export type KnowledgeGraphKind = 'thinkgraph' | 'knowgraph' | 'codegraph';
+
+export type GraphNode = {
+  id: string;
+  label: string;
+  type: string;
+  x?: number;
+  y?: number;
+  z?: number;
+  color?: string;
+  size?: number;
+  summary?: string;
+  sourceIds?: string[];
+  confidence?: number;
+};
+
+export type GraphEdge = {
+  id: string;
+  source: string;
+  target: string;
+  type: string;
+  weight?: number;
+  color?: string;
+};
+
+export type GraphViewData = {
+  kind: KnowledgeGraphKind;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+};
+
+export type GraphViewContract = {
+  graphKind: KnowledgeGraphKind;
+  projectId?: string | null;
+  focusNodeIds?: string[];
+  focusPaths?: string[];
+  focusSymbols?: string[];
+  nodeLabelAllowlist?: string[];
+  edgeTypeAllowlist?: string[];
+  showLabels?: boolean;
+  maxNodes?: number;
+  cameraMode?: 'overview' | 'focus' | 'trace' | 'cluster';
+  animationMode?: 'calm' | 'guided' | 'active';
+  narrativeIntent?: string | null;
+};
+
 export type CardRunResult = {
   output: string | null;
   status: DeckRunStatus;
@@ -196,6 +255,7 @@ export type CardRunResult = {
   improvementPromptBit?: string;
   inputSummary?: string;
   outputSummary?: string;
+  codegraphViewContract?: CodeGraphViewContract | null;
 };
 
 export type DeckRuntimeEventKind =
@@ -228,6 +288,7 @@ export type DeckRuntimeEvent = {
   outputSummary?: string | null;
   completedWorkers?: number | null;
   totalWorkers?: number | null;
+  codegraphViewContract?: CodeGraphViewContract | null;
 };
 
 export type DeckRunStep = {
@@ -253,6 +314,7 @@ export type DeckRunStep = {
   improvementPromptBit?: string;
   inputSummary?: string;
   outputSummary?: string;
+  codegraphViewContract?: CodeGraphViewContract | null;
   routeInfo?: {
     mergeIntent?: DeckEdgeMergeIntent | 'legacy_default' | null;
     inputMode?: 'legacy_text' | 'single_upstream' | 'structured_merge' | null;
@@ -276,6 +338,7 @@ export type DeckRun = {
   input: string;
   error?: string;
   steps: DeckRunStep[];
+  codegraphViewContract?: CodeGraphViewContract | null;
   validationSummary: {
     ok: boolean;
     errors: string[];

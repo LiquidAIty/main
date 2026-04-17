@@ -439,6 +439,52 @@ Neo4j is a good home for:
 
 Again, the more important thing is the role separation, not the logo.
 
+#### The Promotion Boundary Between ThinkGraph And KnowGraph
+
+This is a critical architectural rule.
+
+**Nothing becomes KnowGraph truth just because the model said it.**
+
+The promotion boundary works as follows:
+
+1. **ThinkGraph Extraction (AGE)**
+   - Conversation turns are processed into provisional semantic structure
+   - Entities, relationships, hypotheses, questions, gaps, and next actions are extracted
+   - This structure is marked as provisional and stored in ThinkGraph
+   - Uncertainty is preserved
+   - No source backing is required at this stage
+
+2. **Research Stage**
+   - Gaps and questions from ThinkGraph trigger research
+   - Research agent investigates using web search, PDF ingest, or other sources
+   - Findings are returned with source references
+
+3. **KnowGraph Normalization (Neo4j)**
+   - Research findings are normalized into grounded entities and relationships
+   - Only structure backed by sources is promoted to KnowGraph
+   - Provenance and evidence links are preserved
+   - Speculation is removed or marked as provisional
+   - If evidence is weak, the structure stays in ThinkGraph or is excluded
+
+4. **KnowGraph Persistence (Neo4j)**
+   - Final grounded structure is written to Neo4j
+   - All writes include source references and evidence links
+   - This becomes the durable research memory
+
+**Why This Matters**
+
+- ThinkGraph can be messy, incomplete, and speculative. That is its job.
+- KnowGraph must remain clean, grounded, and traceable. That is its job.
+- The promotion boundary prevents truth leakage from provisional thought into durable knowledge.
+- This separation allows the system to reason freely in ThinkGraph while keeping KnowGraph trustworthy.
+
+**Implementation Notes**
+
+- Default builder cards enforce this boundary through prompt semantics
+- Backend routes mark ThinkGraph (AGE) vs KnowGraph (Neo4j) ownership clearly
+- Tests verify that the default setup reflects the intended split
+- The canvas flow shows: ThinkGraph → Research → KnowGraph Normalization → KnowGraph Persist
+
 ---
 
 ### G. Skills Graph And Documentation RAG Graph

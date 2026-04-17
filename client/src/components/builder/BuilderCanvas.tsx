@@ -628,6 +628,7 @@ export default function BuilderCanvas({
   activeCardIds = [],
   activeEdgeIds = [],
   swarmProgressByCardId = {},
+  miniMode = false,
 }: {
   document: DeckDocument;
   setDocument: Dispatch<SetStateAction<DeckDocument>>;
@@ -642,6 +643,7 @@ export default function BuilderCanvas({
   activeCardIds?: string[];
   activeEdgeIds?: string[];
   swarmProgressByCardId?: Record<string, { completed: number; total: number }>;
+  miniMode?: boolean;
 }) {
   const activeCardIdSet = useMemo(() => new Set(activeCardIds), [activeCardIds]);
   const activeEdgeIdSet = useMemo(() => new Set(activeEdgeIds), [activeEdgeIds]);
@@ -700,8 +702,9 @@ export default function BuilderCanvas({
     const selectedNodeVisible = selectedNodeBounds
       ? isCanvasRectVisible(selectedNodeBounds, visibleRect, 20 / zoom)
       : true;
-    const shouldPreferSelectedNode =
-      reason === 'selection-change' || reason === 'node-drag-stop';
+    // Selection-based fitView is a common source of "camera jump" regressions.
+    // Only recover if the graph is actually offscreen, or after a node drag.
+    const shouldPreferSelectedNode = reason === 'node-drag-stop';
 
     if (!graphVisible || (shouldPreferSelectedNode && !selectedNodeVisible)) {
       if (DEV_MODE) {
@@ -811,43 +814,6 @@ export default function BuilderCanvas({
       }
     };
   }, []);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!selectedEdgeId) return;
-      if (event.key !== 'Delete' && event.key !== 'Backspace') return;
-
-      const target = event.target as HTMLElement | null;
-      const tagName = String(target?.tagName || '').toLowerCase();
-      const isTypingSurface =
-        tagName === 'input' ||
-        tagName === 'textarea' ||
-        tagName === 'select' ||
-        target?.isContentEditable;
-      if (isTypingSurface) return;
-
-      event.preventDefault();
-      setEdges((current) => {
-        const next = current.filter((edge) => edge.id !== selectedEdgeId);
-        if (next.length === current.length) return current;
-        onPersistGraphMutation?.('canvas:edge-delete', {
-          edgeId: selectedEdgeId,
-          source: current.find((edge) => edge.id === selectedEdgeId)?.source || null,
-          target: current.find((edge) => edge.id === selectedEdgeId)?.target || null,
-        });
-        setDocument((prev) => ({
-          ...prev,
-          version: prev.version + 1,
-          edges: mergeFlowEdgesIntoDeck(next, prev.edges),
-        }));
-        onSelectEdge(null);
-        return next;
-      });
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onPersistGraphMutation, onSelectEdge, selectedEdgeId, setDocument, setEdges]);
 
   const isPlainConnectionAllowed = (
     connection: Pick<Connection, 'source' | 'target'>,
@@ -999,6 +965,48 @@ export default function BuilderCanvas({
       ref={canvasRef}
       className="builder-flow h-full w-full"
       style={{ position: 'relative', background: GRAPH_THEME.background.agentSurface }}
+      tabIndex={miniMode ? -1 : 0}
+      onKeyDown={(event) => {
+        if (miniMode) return;
+        if (event.key === 'Backspace' || event.key === 'Delete') {
+          if (selectedCardId) {
+            event.preventDefault();
+            onPersistGraphMutation?.('canvas:delete-node', { cardId: selectedCardId });
+            setDocument((prev) => ({
+              ...prev,
+              version: prev.version + 1,
+              nodes: prev.nodes.filter((node) => node.id !== selectedCardId),
+              edges: prev.edges.filter(
+                (edge) => edge.source !== selectedCardId && edge.target !== selectedCardId,
+              ),
+            }));
+            onSelectCard(null);
+            onSelectEdge(null);
+            setHoveredCardId(null);
+            return;
+          }
+          if (selectedEdgeId) {
+            event.preventDefault();
+            if (onDeleteSelectedEdge) {
+              onDeleteSelectedEdge();
+            } else {
+              onPersistGraphMutation?.('canvas:delete-edge', { edgeId: selectedEdgeId });
+              setDocument((prev) => ({
+                ...prev,
+                version: prev.version + 1,
+                edges: prev.edges.filter((edge) => edge.id !== selectedEdgeId),
+              }));
+              onSelectEdge(null);
+            }
+            return;
+          }
+        }
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        onSelectCard(null);
+        onSelectEdge(null);
+        setHoveredCardId(null);
+      }}
     >
       <style>{`
         .builder-flow .react-flow__edge {
@@ -1174,6 +1182,8 @@ export default function BuilderCanvas({
         onConnect={onConnect}
         onReconnect={onReconnect}
         onNodeClick={(_, node) => {
+          if (miniMode) return;
+          canvasRef.current?.focus();
           onSelectEdge(null);
           onSelectCard(node.id);
         }}
@@ -1182,20 +1192,25 @@ export default function BuilderCanvas({
           setHoveredCardId((current) => (current === node.id ? null : current))
         }
         onEdgeClick={(_, edge) => {
+          if (miniMode) return;
+          canvasRef.current?.focus();
           onSelectCard(null);
           onSelectEdge(edge.id);
         }}
         onPaneClick={() => {
-          onSelectCard(null);
-          onSelectEdge(null);
+          canvasRef.current?.focus();
+          if (!miniMode) {
+            onSelectCard(null);
+            onSelectEdge(null);
+          }
           setHoveredCardId(null);
         }}
         defaultEdgeOptions={{
           type: 'smoothstep',
-          selectable: true,
-          focusable: true,
-          reconnectable: true,
-          interactionWidth: 32,
+          selectable: !miniMode,
+          focusable: !miniMode,
+          reconnectable: !miniMode,
+          interactionWidth: miniMode ? 12 : 32,
           markerEnd: {
             type: MarkerType.ArrowClosed,
             width: 18,

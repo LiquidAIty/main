@@ -121,6 +121,58 @@ function renderManager(options?: {
 }
 
 describe('AgentManager runtime editor', () => {
+  it('keeps Name input focused across controlled updates', () => {
+    function ControlledAgentManagerHarness() {
+      const [cardName, setCardName] = React.useState('Alpha Agent');
+      const [cardSubtext, setCardSubtext] = React.useState('Subtext');
+      return React.createElement(AgentManager, {
+        projectId: 'project_test',
+        agentType: 'agent_builder',
+        activeTab: 'Prompt',
+        selectedCardId: 'card_alpha',
+        localConfig: createLocalConfig('assistant_agent'),
+        cardName,
+        cardSubtext,
+        onChangeCardName: setCardName,
+        onChangeCardSubtext: setCardSubtext,
+        onSaveLocalConfig: vi.fn(),
+        promptTestInput: '',
+        onChangePromptTestInput: vi.fn(),
+        onRunPromptTest: vi.fn(),
+      });
+    }
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    act(() => {
+      root.render(React.createElement(ControlledAgentManagerHarness));
+    });
+
+    mountedRoots.push(() =>
+      act(() => {
+        root.unmount();
+        container.remove();
+      }),
+    );
+
+    const nameInput = container.querySelector('input[placeholder="Enter agent name"]') as HTMLInputElement | null;
+    if (!nameInput) throw new Error('missing_name_input');
+
+    act(() => {
+      nameInput.focus();
+      nameInput.value = 'Alpha Agen';
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(document.activeElement).toBe(nameInput);
+
+    act(() => {
+      nameInput.value = 'Alpha Age';
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(document.activeElement).toBe(nameInput);
+  });
+
   it('builds save payloads for assistant swarm without participants', () => {
     const payload = buildActiveAgentManagerLocalConfig({
       runtimeBinding: '',

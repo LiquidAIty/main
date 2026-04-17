@@ -1,4 +1,4 @@
-export type WorkspaceTestingSurface = "chat" | "plan" | "canvas" | "knowledge";
+export type WorkspaceTestingSurface = "chat" | "plan" | "canvas" | "knowledge" | "codegraph";
 export type WorkspaceTestingSurfaceRole = "large" | "companion";
 export type WorkspaceTestingObjectType =
   | "agent_node"

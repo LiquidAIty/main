@@ -1,6 +1,23 @@
 import neo4j from 'neo4j-driver';
 import type { Driver, Session } from 'neo4j-driver';
 
+// ============================================================================
+// KNOWGRAPH CONNECTOR (Neo4j)
+// ============================================================================
+// This connector manages KnowGraph: the source-backed research graph.
+// KnowGraph stores:
+// - Grounded entities and relationships backed by sources
+// - Evidence, provenance, and citations
+// - Source ingest from web/PDF/upload
+// - Durable research memory
+//
+// KnowGraph is NOT the provisional conversation graph.
+// For provisional planning/reasoning structure, see ThinkGraph (AGE/Postgres).
+//
+// HARD RULE: Nothing becomes KnowGraph truth just because the model said it.
+// All KnowGraph writes must be source-grounded.
+// ============================================================================
+
 // Singleton driver - reuse connection across app
 let driver: Driver | null = null;
 

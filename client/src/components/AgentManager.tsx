@@ -24,6 +24,10 @@ interface AgentManagerProps {
   agentType: AgentType;
   activeTab: string;
   selectedCardId?: string | null;
+  cardName?: string;
+  cardSubtext?: string;
+  onChangeCardName?: (value: string) => void;
+  onChangeCardSubtext?: (value: string) => void;
   graphOwnerOptions?: AgentManagerGraphOwnerOption[];
   promptPreviewPlanText?: string;
   onGraphRefresh?: () => void;
@@ -549,6 +553,10 @@ export function buildActiveAgentManagerLocalConfig(input: {
 
 export function AgentManager({
   activeTab,
+  cardName,
+  cardSubtext,
+  onChangeCardName,
+  onChangeCardSubtext,
   graphOwnerOptions = [],
   localConfig,
   memoryGraphData,
@@ -619,6 +627,8 @@ export function AgentManager({
   const [runtimeOptionsText, setRuntimeOptionsText] = useState(
     localConfig?.runtime_options ? JSON.stringify(localConfig.runtime_options, null, 2) : '',
   );
+  const [cardNameDraft, setCardNameDraft] = useState(String(cardName || ''));
+  const [cardSubtextDraft, setCardSubtextDraft] = useState(String(cardSubtext || ''));
   const [selectedMemoryEntityId, setSelectedMemoryEntityId] = useState<string | null>(null);
   const [selectedMemoryRelationshipId, setSelectedMemoryRelationshipId] = useState<string | null>(null);
 
@@ -662,6 +672,11 @@ export function AgentManager({
       localConfig?.runtime_options ? JSON.stringify(localConfig.runtime_options, null, 2) : '',
     );
   }, [localConfig, runtimeOptions, runtimeType]);
+
+  useEffect(() => {
+    setCardNameDraft(String(cardName || ''));
+    setCardSubtextDraft(String(cardSubtext || ''));
+  }, [selectedCardId]);
 
   const compactMemoryGraph = useMemo(
     () =>
@@ -790,17 +805,23 @@ export function AgentManager({
         value !== null &&
         value !== undefined,
     );
-  const Field = ({
-    label,
-    children,
-  }: {
-    label: string;
-    children: React.ReactNode;
-  }) => (
-    <label style={{ display: 'grid', gap: 6 }}>
-      <span style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>{label}</span>
-      {children}
-    </label>
+  const Field = useMemo(
+    () =>
+      function AgentManagerField({
+        label,
+        children,
+      }: {
+        label: string;
+        children: React.ReactNode;
+      }) {
+        return (
+          <label style={{ display: 'grid', gap: 6 }}>
+            <span style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>{label}</span>
+            {children}
+          </label>
+        );
+      },
+    [],
   );
 
   const inputStyle: CSSProperties = {
@@ -813,10 +834,43 @@ export function AgentManager({
   };
 
   const numberValue = (value: number | '') => (value === '' ? '' : String(value));
+  const showCardHeaderFields = Boolean(onChangeCardName || onChangeCardSubtext);
+  const renderCardHeaderFields = () => {
+    if (!showCardHeaderFields) return null;
+    return (
+      <>
+        <Field label="Name">
+          <input
+            value={cardNameDraft}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              setCardNameDraft(nextValue);
+              onChangeCardName?.(nextValue);
+            }}
+            placeholder="Enter agent name"
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Subtext">
+          <input
+            value={cardSubtextDraft}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              setCardSubtextDraft(nextValue);
+              onChangeCardSubtext?.(nextValue);
+            }}
+            placeholder="Enter subtitle text"
+            style={inputStyle}
+          />
+        </Field>
+      </>
+    );
+  };
 
   if (activeTab === 'Prompt') {
     return (
       <div style={{ display: 'grid', gap: 12 }}>
+        {renderCardHeaderFields()}
         <Field label="Role">
           <textarea value={role} onChange={(event) => updatePromptFields('role', event.target.value)} rows={4} style={{ ...inputStyle, resize: 'vertical' }} />
         </Field>
@@ -860,6 +914,7 @@ export function AgentManager({
   if (activeTab === 'Knowledge') {
     return (
       <div style={{ display: 'grid', gap: 12 }}>
+        {renderCardHeaderFields()}
         <div data-testid="agent-memory-graph" style={{ height: 260, minHeight: 260 }}>
           <KnowledgeGraphNVL
             entities={compactMemoryGraph.entities}
@@ -987,6 +1042,7 @@ export function AgentManager({
   if (activeTab === 'Tools') {
     return (
       <div style={{ display: 'grid', gap: 12 }}>
+        {renderCardHeaderFields()}
         <Field label="Tools">
           <textarea
             value={toolsText}
@@ -1010,6 +1066,7 @@ export function AgentManager({
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
+      {renderCardHeaderFields()}
       <Field label="Runtime Type">
         <select
           aria-label="Runtime Type"

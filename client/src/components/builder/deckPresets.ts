@@ -16,18 +16,8 @@ export type DeckNodePreset = {
   subtitle: string;
 };
 
+// Only Assist can be added - Magentic is unique and seeded, not addable
 export const DECK_NODE_PRESETS: DeckNodePreset[] = [
-  {
-    key: "magentic",
-    label: "Magentic",
-    kind: "agent",
-    templateId: "template_magentic",
-    promptTemplateId: "prompt_magentic",
-    runtimeBinding: null,
-    runtimeType: "magentic_one",
-    title: "Magentic",
-    subtitle: "Top-level orchestrator",
-  },
   {
     key: "assist",
     label: "Assist",
@@ -38,17 +28,6 @@ export const DECK_NODE_PRESETS: DeckNodePreset[] = [
     runtimeType: "assistant_agent",
     title: "Assist",
     subtitle: "Single worker or swarm worker",
-  },
-  {
-    key: "graph",
-    label: "Workflow Compat",
-    kind: "agent",
-    templateId: "template_graph",
-    promptTemplateId: "prompt_graph",
-    runtimeBinding: null,
-    runtimeType: "graph_flow",
-    title: "Workflow Compat",
-    subtitle: "Legacy compatibility workflow",
   },
 ];
 
@@ -85,75 +64,9 @@ function isGraphOwnedCard(anchorCard: AgentCardInstance | null): boolean {
   return Boolean(anchorCard && String(anchorCard.parentGraphId || "").trim());
 }
 
-export function getDeckQuickAddActions(anchorCard: AgentCardInstance | null): DeckQuickAddAction[] {
-  if (!anchorCard) {
-    return [
-      {
-        presetKey: "magentic",
-        label: "Add Magentic",
-        description: "Create the top-level orchestrator card.",
-      },
-      {
-        presetKey: "assist",
-        label: "Add Assist",
-        description: "Create a top-level Assist worker or entry point.",
-      },
-      {
-        presetKey: "graph",
-        label: "Add Workflow",
-        description: "Create a compatibility workflow card.",
-      },
-    ];
-  }
-
-  const runtimeType = safeText(anchorCard.runtimeType).trim();
-  if (runtimeType === "magentic_one") {
-    return [
-      {
-        presetKey: "assist",
-        label: "Add Callable Assist",
-        description: "Create a top-level Assist head and connect it with a blue callable edge.",
-      },
-    ];
-  }
-
-  if (runtimeType === "graph_flow") {
-    return [
-      {
-        presetKey: "assist",
-        label: "Add First Assist",
-        description: "Create the first Assist inside this workflow card.",
-      },
-    ];
-  }
-
-  if (isGraphOwnedCard(anchorCard)) {
-    return [
-      {
-        presetKey: "assist",
-        label: "Add Next Assist",
-        description: "Create the next Assist in this workflow and connect it with a flow edge.",
-      },
-    ];
-  }
-
-  if (runtimeType === "assistant_agent") {
-    return [
-      {
-        presetKey: "assist",
-        label: "Add Next Assist",
-        description: "Create another top-level Assist and connect it with a flow edge.",
-      },
-    ];
-  }
-
-  return [
-    {
-      presetKey: "assist",
-      label: "Add Top-level Assist",
-      description: "Create another top-level Assist card.",
-    },
-  ];
+// Only Assist can be added - left rail plus button handles this directly
+export function getDeckQuickAddActions(_anchorCard: AgentCardInstance | null): DeckQuickAddAction[] {
+  return [];
 }
 
 export function getCommonAssistNextPresetKeys(
@@ -168,27 +81,7 @@ export function getAssistStarterRecipe(
   return null;
 }
 
-export function getDeckQuickAddHelperText(anchorCard: AgentCardInstance | null): string {
-  if (!anchorCard) {
-    return "Create top-level Magentic, Assist, and workflow cards here. The graph lives in the visible connections: flow edges carry execution and can branch or recombine naturally.";
-  }
-
-  const runtimeType = safeText(anchorCard.runtimeType).trim();
-  if (runtimeType === "magentic_one") {
-    return "Use this card to add callable top-level Assist entry points only. Blue edges are callable orchestration routes from Magentic into the visible graph.";
-  }
-
-  if (runtimeType === "graph_flow") {
-    return "This is a legacy compatibility workflow card. Keep it only when preserving older decks; new execution structure should live in visible Assist-to-Assist connections.";
-  }
-
-  if (isGraphOwnedCard(anchorCard)) {
-    return "This Assist already belongs to a workflow card. Adding another Assist here preserves that local workflow without creating hidden orchestration.";
-  }
-
-  if (runtimeType === "assistant_agent") {
-    return "Use this Assist card to extend the visible graph. One downstream flow edge makes a sequence, multiple downstream flow edges make a branch, and multiple inbound flow edges create recombination.";
-  }
-
-  return "This is a top-level worker card. Add more top-level heads here, or clear selection to add a Magentic card.";
+// Helper text removed - left rail plus is the only add mechanism
+export function getDeckQuickAddHelperText(_anchorCard: AgentCardInstance | null): string {
+  return "";
 }

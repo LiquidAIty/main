@@ -1,3 +1,8 @@
+// @graph entity: BuilderDeckExecutionPlan
+// @graph role: client-deck-planner
+// @graph relates_to: AgentBuilderWorkspace, BuilderCanvas, DeckRuntime
+// @graph depends_on: DeckValidation
+// @graph feeds_to: AgentBuilderWorkspace
 import type { AgentCardInstance, DeckDocument, DeckEdge } from '../../types/agentgraph';
 import { validateDeckDocument } from './deckValidation';
 

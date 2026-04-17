@@ -1,6 +1,12 @@
+// @graph entity: KnowGraphRoute
+// @graph role: knowgraph-gateway
+// @graph relates_to: AgentBuilderWorkspace, KnowGraph API, KnowGraph
+// @graph depends_on: Express, Neo4j, KnowGraph API
+// @graph feeds_to: KnowGraph API, KnowGraph
 import axios from 'axios';
 import { Router } from 'express';
 import multer from 'multer';
+import { pool } from '../db/pool';
 import { resolveKnowgraphAgent } from '../services/resolveAgents';
 import { isDevTestModeEnabled } from '../services/devTest';
 
@@ -116,6 +122,40 @@ function neoNodeLabel(id: string, props: Record<string, unknown>): string {
   return id;
 }
 
+async function resolveKnowGraphProjectScopeIds(projectId: string): Promise<string[]> {
+  const seed = String(projectId || '').trim();
+  if (!seed) return [];
+
+  const scopeIds = new Set<string>([seed]);
+  try {
+    const result = await pool.query(
+      `
+        SELECT
+          id::text AS id,
+          coalesce(name, '') AS name,
+          coalesce(code, '') AS code
+        FROM ag_catalog.projects
+        WHERE id::text = $1
+           OR lower(coalesce(name, '')) = lower($1)
+           OR lower(coalesce(code, '')) = lower($1)
+        LIMIT 1
+      `,
+      [seed],
+    );
+    const row = result?.rows?.[0] as { id?: string; name?: string; code?: string } | undefined;
+    if (row) {
+      for (const rawValue of [row.id, row.name, row.code]) {
+        const value = String(rawValue || '').trim();
+        if (value) scopeIds.add(value);
+      }
+    }
+  } catch (error: any) {
+    console.warn('[KNOWGRAPH][SCOPE] project alias resolution failed:', error?.message || error);
+  }
+
+  return Array.from(scopeIds);
+}
+
 async function queryKnowGraphProject(projectId: string): Promise<{
   nodes: KnowGraphNodeDto[];
   relationships: KnowGraphRelationshipDto[];
@@ -133,6 +173,7 @@ async function queryKnowGraphProject(projectId: string): Promise<{
   const driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
   const database = String(process.env.NEO4J_DATABASE || '').trim();
   const session = driver.session(database ? { database } : undefined);
+  const projectScopeIds = await resolveKnowGraphProjectScopeIds(projectId);
 
   try {
     const nodeMap = new Map<string, KnowGraphNodeDto>();
@@ -158,9 +199,9 @@ async function queryKnowGraphProject(projectId: string): Promise<{
     const relResult = await session.run(
       `
         MATCH (a)-[r]->(b)
-        WHERE coalesce(r.project_id, '') = $projectId
-          AND coalesce(a.project_id, '') = $projectId
-          AND coalesce(b.project_id, '') = $projectId
+        WHERE toString(a.project_id) IN $projectScopeIds
+          AND toString(b.project_id) IN $projectScopeIds
+          AND toString(r.project_id) IN $projectScopeIds
         RETURN DISTINCT
           elementId(r) AS rel_id,
           type(r) AS rel_type,
@@ -172,7 +213,7 @@ async function queryKnowGraphProject(projectId: string): Promise<{
           labels(b) AS to_labels,
           properties(b) AS to_props
       `,
-      { projectId },
+      { projectScopeIds },
     );
 
     const relationships: KnowGraphRelationshipDto[] = [];
@@ -199,10 +240,10 @@ async function queryKnowGraphProject(projectId: string): Promise<{
     const nodeResult = await session.run(
       `
         MATCH (n)
-        WHERE coalesce(n.project_id, '') = $projectId
+        WHERE toString(n.project_id) IN $projectScopeIds
         RETURN DISTINCT elementId(n) AS node_id, labels(n) AS node_labels, properties(n) AS node_props
       `,
-      { projectId },
+      { projectScopeIds },
     );
 
     nodeResult.records.forEach((record: any) => {
@@ -250,6 +291,7 @@ async function queryKnowGraphExpand(
   const driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
   const database = String(process.env.NEO4J_DATABASE || '').trim();
   const session = driver.session(database ? { database } : undefined);
+  const projectScopeIds = await resolveKnowGraphProjectScopeIds(projectId);
 
   try {
     const nodeMap = new Map<string, KnowGraphNodeDto>();
@@ -273,11 +315,11 @@ async function queryKnowGraphExpand(
       `
         MATCH (n)
         WHERE elementId(n) = $nodeId
-          AND coalesce(n.project_id, '') = $projectId
+          AND toString(n.project_id) IN $projectScopeIds
         RETURN elementId(n) AS node_id, labels(n) AS node_labels, properties(n) AS node_props
         LIMIT 1
       `,
-      { nodeId: rawNodeId, projectId },
+      { nodeId: rawNodeId, projectScopeIds },
     );
 
     if (centerResult.records.length === 0) {
@@ -292,12 +334,12 @@ async function queryKnowGraphExpand(
       `
         MATCH (center)
         WHERE elementId(center) = $nodeId
-          AND coalesce(center.project_id, '') = $projectId
+          AND toString(center.project_id) IN $projectScopeIds
         MATCH (a)-[r]-(b)
         WHERE (a = center OR b = center)
-          AND coalesce(a.project_id, '') = $projectId
-          AND coalesce(b.project_id, '') = $projectId
-          AND coalesce(r.project_id, '') = $projectId
+          AND toString(a.project_id) IN $projectScopeIds
+          AND toString(b.project_id) IN $projectScopeIds
+          AND toString(r.project_id) IN $projectScopeIds
         RETURN DISTINCT
           elementId(r) AS rel_id,
           type(r) AS rel_type,
@@ -310,7 +352,7 @@ async function queryKnowGraphExpand(
           properties(b) AS to_props
         LIMIT toInteger($limit)
       `,
-      { nodeId: rawNodeId, projectId, limit },
+      { nodeId: rawNodeId, projectScopeIds, limit },
     );
 
     const relationships: KnowGraphRelationshipDto[] = [];
@@ -673,6 +715,75 @@ router.post('/ingest', knowgraphUploadSingle as any, async (req, res) => {
       (typeof error?.toString === 'function' ? error.toString() : undefined) ||
       error?.message ||
       'KnowGraph proxy request failed';
+    return res.status(502).json({ ok: false, error: { message } });
+  }
+});
+
+router.post('/ingest_code', async (req, res) => {
+  try {
+    const projectId = typeof req.body?.project_id === 'string' ? req.body.project_id.trim() : '';
+    const documentId = typeof req.body?.document_id === 'string' ? req.body.document_id.trim() : '';
+    const codeText = typeof req.body?.code_text === 'string' ? req.body.code_text : '';
+    const filePath = typeof req.body?.file_path === 'string' ? req.body.file_path.trim() : undefined;
+    const language = typeof req.body?.language === 'string' ? req.body.language.trim() : undefined;
+
+    if (!projectId || !documentId || !codeText) {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'project_id, document_id, and code_text are required' },
+      });
+    }
+
+    const resolved = await resolveKnowgraphAgent(projectId, '/api/knowgraph/ingest_code');
+    if (!resolved) {
+      return res.status(409).json({
+        ok: false,
+        error: { message: 'knowgraph_agent_not_configured' },
+      });
+    }
+
+    const baseUrls = buildKnowgraphBaseUrls();
+    let lastError: any;
+
+    for (const baseUrl of baseUrls) {
+      try {
+        const form = new FormData();
+        form.append('project_id', projectId);
+        form.append('document_id', documentId);
+        form.append('code_text', codeText);
+        if (filePath) form.append('file_path', filePath);
+        if (language) form.append('language', language);
+        if (resolved.organizingPrinciple) form.append('organizing_principle', resolved.organizingPrinciple);
+        if (resolved.entityTaxonomy) form.append('entity_taxonomy_json', JSON.stringify(resolved.entityTaxonomy));
+        if (resolved.relationshipTaxonomy) form.append('relationship_taxonomy_json', JSON.stringify(resolved.relationshipTaxonomy));
+        if (resolved.extractionPolicy) form.append('extraction_policy_json', JSON.stringify(resolved.extractionPolicy));
+
+        const response = await fetch(`${baseUrl}/ingest_code`, {
+          method: 'POST',
+          headers: {
+            'x-agent-id': resolved.agentId,
+            'x-agent-provider': resolved.provider,
+            'x-agent-model-key': resolved.modelKey,
+            'x-agent-model-id': resolved.providerModelId,
+          },
+          body: form,
+        });
+
+        const data = await readResponseDataSafe(response);
+        return res.status(response.status).json(data);
+      } catch (error: any) {
+        lastError = error;
+        const code = String(error?.cause?.code || error?.code || '');
+        const canRetryNetworkLookup = code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN';
+        if (!canRetryNetworkLookup) {
+          break;
+        }
+      }
+    }
+
+    throw lastError;
+  } catch (error: any) {
+    const message = error?.message || 'KnowGraph code ingest proxy request failed';
     return res.status(502).json({ ok: false, error: { message } });
   }
 });

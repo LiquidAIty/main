@@ -1,613 +1,663 @@
-# LiquidAIty Launch Readiness
-
-**Generated:** April 11, 2026  
-**Status:** Pre-launch hardening phase  
-**Target:** First real users on production infrastructure
-
----
-
-## Executive Summary
-
-### Are We Close to Launch?
-
-**Planning estimate: 2-3 weeks of hardening work before safe first launch.**
-
-**What's working:**
-- Visible Magentic-One orchestration ✅
-- Deck runtime execution ✅
-- Plan Wiki operational surface ✅
-- Canvas interaction fixed ✅
-- Legacy cleanup complete ✅
-
-**What's blocking:**
-- Users can access each other's projects 🔴 (Patch 2)
-- No rate limiting on expensive operations �
-- Deploy path needs HTTPS hardening �
-- Sensitive diagnostic routes exposed �
-
-**Recently fixed:**
-- ✅ Sessions now survive restarts (Patch 1 complete)
-- ✅ Real user/account system with email/password (Patch 1 complete)
-
----
-
-## Current State Assessment
-
-### ✅ What's Working
-- **Deck runtime** - v3 execution path is operational with revision conflict handling
-- **Visible orchestration** - React Flow canvas with Magentic-One routing
-- **Plan Wiki** - Real operational surface with backend persistence
-- **Canvas click bug** - Fixed with regression coverage
-- **Legacy cleanup** - `/api/agents/boss` chain deleted, dead code trimmed
-
-### ⚠️ What's Blocking Launch
-- **Auth/user isolation** - Not production-ready
-- **Project ownership** - Effectively absent
-- **Sensitive routes** - Exposed without auth
-- **Cost/abuse guardrails** - Missing on expensive paths
-- **Deploy path** - Not fail-fast or HTTPS-safe
+LiquidAIty MVP Readiness
+Generated: April 11, 2026
+Updated: April 13, 2026
+Status: Internal dogfooding / operator-first phase
+Target: Jeremiah as first real user, then cleanup, then external launch
 
----
+Executive Summary
+What phase are we actually in?
+We are not in true public launch readiness yet.
+We are in operator-first readiness.
+The immediate goal is not “ship to many users.”
+The immediate goal is to make LiquidAIty genuinely usable by you inside your real workflow:
 
-## Must-Fix Before First Users
 
-### 1. **Auth & User Isolation** ✅ COMPLETE (Patch 1)
-
-**Status:** **SHIPPED** - April 11, 2026
-
-**What was fixed:**
-- ✅ Users stored in Postgres database (`User` table with email/password)
-- ✅ Sessions stored in Postgres database (`Session` table)
-- ✅ Sessions survive container restarts
-- ✅ Email/password signup and login (`/api/auth/signup`, `/api/auth/login`)
-- ✅ Bcrypt password hashing (10 salt rounds)
-- ✅ 30-day session expiry
-- ✅ UI improvements: hamburger moved to left rail, account menu with sign out
-
-**Files Modified:**
-- `prisma/schema.prisma` - Added password field and Session model
-- `db/migrations/002_user_sessions.sql` - Database migration
-- `apps/backend/src/auth/sessionStore.ts` - Database-backed sessions
-- `apps/backend/src/auth/userService.ts` - User management with bcrypt
-- `apps/backend/src/routes/auth.routes.ts` - Signup/login endpoints
-- `client/src/pages/login.tsx` - Email/password form
-- `client/src/pages/signup.tsx` - New signup page
-- `client/src/pages/agentbuilder.tsx` - UI improvements
-
-**Testing Required:**
-- Manual test: signup → login → create project → logout → login → see same project
-- Manual test: sessions survive backend restart
-
----
-
-### 2. **Project Ownership & Isolation** 🔴 BLOCKER
-
-**Current State:**
-- `apps/backend/src/routes/v2/projects.routes.ts:23` lists projects with `listAgentCards(null, ...)`
-- `apps/backend/src/routes/v2/projects.routes.ts:38` creates projects without `req.userId`
-- `apps/backend/src/services/agentBuilderStore.ts:268` assigns ownership from env fallback, not active user
-- `apps/backend/src/v3/routes/decks.routes.ts:12` and `apps/backend/src/v3/decks/store.ts:381` trust raw `projectId`
-- `apps/backend/src/routes/knowgraph.routes.ts:412` accepts `projectId` from query/body with no ownership check
-- **One user can access another user's projects if they know the ID**
-
-**Why it matters:** This is a data breach waiting to happen.
-
-**Required Fix:**
-- Stop creating/listing projects without `req.userId`
-- Stop assigning owner from env fallback
-- Add ownership check middleware: `ensureProjectOwnership(req, res, next)`
-- Apply to ALL project-scoped routes:
-  - v2 projects routes
-  - v2 config routes
-  - v2 KG routes
-  - v3 decks routes
-  - v3 cards routes
-  - KnowGraph routes
-
-**Files to Modify:**
-- `apps/backend/src/middleware/projectOwnership.ts` - **CREATE NEW** - Ownership check middleware
-- `apps/backend/src/routes/v2/projects.routes.ts` - Add ownership enforcement
-- `apps/backend/src/routes/v2/config.routes.ts` - Add ownership enforcement
-- `apps/backend/src/routes/v2/kg.routes.ts` - Add ownership enforcement
-- `apps/backend/src/v3/routes/decks.routes.ts` - Add ownership enforcement
-- `apps/backend/src/v3/routes/cards.routes.ts` - Add ownership enforcement
-- `apps/backend/src/routes/knowgraph.routes.ts` - Add ownership enforcement
-- `apps/backend/src/services/agentBuilderStore.ts` - Use `req.userId` for ownership
-
-**Planning estimate:** 2-3 days
-
----
+building and evolving the project itself
 
-### 3. **Close Sensitive Internal Routes** 🔴 BLOCKER
 
-**Current State:**
-- `apps/backend/src/routes/index.ts:30` mounts `/api/diagnostic` without auth
-- `apps/backend/src/routes/diagnostic.routes.ts:6` returns DB/schema details
-- Exposes internal topology to unauthenticated users
+loading and exploring the current code graph
 
-**Why it matters:** Leaks internal topology to attackers.
 
-**Required Fix:**
-- Remove `/api/diagnostic` mount OR
-- Add auth middleware to diagnostic routes
+building project-scoped knowledge around the code, dependencies, docs, and research used to create it
 
-**Files to Modify:**
-- `apps/backend/src/routes/index.ts` - Remove or protect diagnostic mount
 
-**Planning estimate:** 5 minutes
+using MainChat / Magentic-One as the central orchestrator
 
----
 
-### 4. **Cost/Abuse Guardrails** 🔴 BLOCKER
+using the UI to generate and route coding tasks/prompts to a User Proxy Agent through MCP (Model Context Protocol) to Goose or a similar coding agent
 
-**Current State:**
-- `express-rate-limit` is installed in `apps/backend/package.json:38` but not wired
-- Deck run, KnowGraph ingest/research/query, and auth bootstrap are unthrottled
-- No concurrency limits on expensive LLM calls
 
-**Why it matters:** Open to abuse and cost explosion.
+validating the 4-surface workspace in real use before cleanup and external launch
 
-**Required Fix:**
-- Add rate limiting to:
-  - `/api/auth/start` - Prevent brute force
-  - `/api/v3/projects/:id/decks/run` - Limit concurrent deck executions
-  - `/api/v2/projects/:id/kg/ingest_chat_turn` - Limit KG ingestion
-  - `/api/v2/projects/:id/kg/research` - Limit research calls
-  - `/api/v2/projects/:id/kg/query` - Limit graph queries
-- Add per-user concurrency limits for LLM-heavy operations
 
-**Files to Modify:**
-- `apps/backend/src/middleware/rateLimiting.ts` - **CREATE NEW** - Rate limit configs
-- `apps/backend/src/routes/auth.routes.ts` - Apply rate limiting
-- `apps/backend/src/v3/routes/decks.routes.ts` - Apply rate limiting
-- `apps/backend/src/routes/v2/kg.routes.ts` - Apply rate limiting
+Actual product truth
+LiquidAIty MVP has 4 distinct but connected surfaces:
 
-**Planning estimate:** 1-2 days
 
----
+Chat
 
-### 5. **Production Deploy Path** 🔴 BLOCKER
 
-**Current State:**
-- `apps/backend/Dockerfile:9` and `apps/backend/Dockerfile:12` mask failures with `|| true`
-- `docker-compose.yml:25` depends on local `apps/backend/.env`
-- `docker-compose.yml:54` depends on host-built `client/dist`
-- `nginx.conf:2` is plain HTTP on `:80`
-- `apps/backend/src/auth/sessionStore.ts:121` sets secure cookies in production
-- **HTTPS/cookie mismatch will break auth**
+Canvas
 
-**Why it matters:** Auth will silently fail in production.
 
-**Required Fix:**
-- Remove `|| true` from Dockerfile - fail fast on build errors
-- Create production `.env.example` with required vars documented
-- Build client inside Docker, not on host
-- Add HTTPS termination (nginx SSL or reverse proxy config)
-- Add startup health checks for Postgres + required provider config
-- Create single deterministic launch path
+Plan
 
-**Files to Modify:**
-- `apps/backend/Dockerfile` - Remove `|| true`, add health checks
-- `client/Dockerfile` - **CREATE NEW** - Build client in container
-- `docker-compose.yml` - Remove host dependencies, add HTTPS
-- `nginx.conf` - Add SSL termination or document reverse proxy requirement
-- `.env.example` - **CREATE NEW** - Document required production vars
 
-**Planning estimate:** 1-2 days
+Knowledge
 
----
 
-### 6. **Minimal Launch Observability** 🟡 HIGH PRIORITY
+MainChat = Magentic-One.
+MainChat / Magentic-One is the central orchestrator.
+User input, plan, and graph context belong on the MainChat side.
+Agents on the canvas are the agents available to that orchestrator. This aligns with the repo’s unified workspace model and visible orchestration/canvas runtime.
+What this phase must prove
+Before worrying about broad launch, the system must prove these things in visible UI:
 
-**Current State:**
-- No structured request logging
-- No run-level tracking with `requestId`, `userId`, `projectId`
-- No provider/model/status logging for LLM calls
 
-**Required Fix:**
-- Add minimal request logging middleware
-- Log: `requestId`, `userId`, `projectId`, `route`, `method`, `status`, `duration`
-- Log LLM calls: `provider`, `model`, `tokens`, `cost`, `status`, `error`
-- Add startup/readiness checks
+Current project code graph visibly loads
 
-**Files to Modify:**
-- `apps/backend/src/middleware/requestLogging.ts` - **CREATE NEW** - Request logger
-- `apps/backend/src/llm/client.ts` - Add LLM call logging
-- `apps/backend/src/main.ts` - Wire logging middleware, add health checks
 
-**Planning estimate:** 1 day
+Project-scoped knowledge graph visibly builds around that code and its sources
 
----
 
-### 7. **Deck Save/Load/Run Reliability** 🟢 ALREADY GOOD
+MainChat can use that context to reason and plan
 
-**Current State:**
-- v3 deck path has revision conflict handling in `client/src/hooks/useBuilderDeckRuntimeActions.ts:148`
-- Backend has conflict detection in `apps/backend/src/v3/decks/store.ts:418`
-- Backend typecheck passes
 
-**Required Fix:**
-- Add one narrow smoke test: login → create project → save deck → load deck → run deck
-- Ensure test doesn't depend on broken `vendor/sim` workspace
+Canvas agents are visibly available to MainChat
 
-**Files to Modify:**
-- `apps/backend/src/__tests__/smoke.spec.ts` - **CREATE NEW** - Smoke test
 
-**Planning estimate:** 1-2 days
+UI can prepare prompts/tasks for a User Proxy coding agent via MCP
 
----
 
-## Should-Fix Soon After Launch
+Plan visibly populates after real runs
 
-### 1. **Provider Failure Handling** 🟡
-- Add graceful degradation when OpenAI/OpenRouter fails
-- Show user-friendly error messages instead of raw API errors
-- Add retry logic with exponential backoff
 
-### 2. **Improved Observability** 🟡
-- Add structured logging (JSON format)
-- Add metrics collection (request counts, latencies, errors)
-- Add error tracking (Sentry or similar)
+Knowledge is human-explorable and agent-readable
 
-### 3. **Better Test Coverage** 🟡
-- Fix repo-wide Vitest workspace to not pull in `vendor/sim`
-- Add integration tests for critical paths
-- Add E2E tests for main user flows
 
-### 4. **Performance Monitoring** 🟡
-- Add slow query logging
-- Add LLM call duration tracking
-- Add deck execution performance metrics
+All of this works for the active project / ADMIN scope in real use
 
-### 5. **User Feedback Mechanisms** 🟡
-- Add error reporting UI
-- Add feedback collection
-- Add usage analytics (privacy-respecting)
-
----
-
-## Safe to Defer
-
-### 1. **More Dead-Code Archaeology** ⚪
-- Current cleanup is sufficient for launch
-- Further cleanup can happen post-launch
-
-### 2. **Refactoring `agentbuilder.tsx`** ⚪
-- 5,183-line file is large but functional
-- Splitting it is a nice-to-have, not a blocker
-
-### 3. **Deck Runtime Redesign** ⚪
-- Current v3 deck spine is good enough
-- Perimeter hardening is the real work
-
-### 4. **Fancy Provider Fallback Strategy** ⚪
-- Current error handling is serviceable
-- Advanced fallback can come later
-
-### 5. **Full Observability Stack** ⚪
-- Minimal logging is enough for first users
-- Full APM/tracing can come later
-
-### 6. **Graph Explore Mode Maturity** ⚪
-- Current Graph View is functional
-- Deep exploration features can evolve post-launch
-
-### 7. **Pretext Integration** ⚪
-- Package is installed (`@chenglou/pretext` in `client/package.json:18`)
-- Plan Wiki rendering is acceptable now
-- Better typography can come later
-- Best future use: graph-linked narrative cards, explorer explanation blocks
-
----
-
-## First Patch to Implement Now
-
-### **Task: Implement Stable Per-User Project Access Enforcement**
-
-This is first because everything else is secondary if users can see or mutate each other's projects.
-
-#### Step 1: Create Ownership Middleware
-```typescript
-// apps/backend/src/middleware/projectOwnership.ts
-import type { Request, Response, NextFunction } from 'express';
-import { getProjectOwner } from '../services/agentBuilderStore';
-
-export async function ensureProjectOwnership(
-  req: Request,
-  res: Response,
-  next: NextFunction
-) {
-  const projectId = req.params.projectId || req.body.projectId || req.query.projectId;
-  const userId = req.userId; // Set by auth middleware
-
-  if (!userId) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  if (!projectId) {
-    return res.status(400).json({ error: 'Project ID required' });
-  }
-
-  try {
-    const owner = await getProjectOwner(projectId);
-    
-    if (!owner) {
-      return res.status(404).json({ error: 'Project not found' });
-    }
-
-    if (owner !== userId) {
-      return res.status(403).json({ error: 'Access denied' });
-    }
-
-    next();
-  } catch (error) {
-    console.error('Ownership check failed:', error);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-}
-```
-
-#### Step 2: Update agentBuilderStore
-```typescript
-// apps/backend/src/services/agentBuilderStore.ts
-
-// Add function to get project owner
-export async function getProjectOwner(projectId: string): Promise<string | null> {
-  const project = await getAgentCard(projectId);
-  return project?.owner || null;
-}
-
-// Update createAgentCard to require userId
-export async function createAgentCard(
-  userId: string, // Make required, remove env fallback
-  type: string,
-  ...
-) {
-  // Use userId directly, no fallback
-  const owner = userId;
-  // ...
-}
-
-// Update listAgentCards to filter by userId
-export async function listAgentCards(
-  userId: string, // Make required, not nullable
-  type?: string
-) {
-  // Filter by userId, not null
-  // ...
-}
-```
-
-#### Step 3: Apply Middleware to Routes
-```typescript
-// apps/backend/src/routes/v2/projects.routes.ts
-import { ensureProjectOwnership } from '../../middleware/projectOwnership';
-
-// Apply to all project-scoped routes
-router.get('/:projectId/state', ensureProjectOwnership, async (req, res) => { ... });
-router.put('/:projectId/state', ensureProjectOwnership, async (req, res) => { ... });
-router.delete('/:projectId', ensureProjectOwnership, async (req, res) => { ... });
-
-// Update list to use req.userId
-router.get('/', async (req, res) => {
-  const projects = await listAgentCards(req.userId, ...);
-  // ...
-});
-
-// Update create to use req.userId
-router.post('/', async (req, res) => {
-  const project = await createAgentCard(req.userId, ...);
-  // ...
-});
-```
-
-#### Step 4: Apply to All Project-Scoped Routes
-- `apps/backend/src/routes/v2/config.routes.ts`
-- `apps/backend/src/routes/v2/kg.routes.ts`
-- `apps/backend/src/routes/v2/agentBuilder.routes.ts`
-- `apps/backend/src/v3/routes/decks.routes.ts`
-- `apps/backend/src/v3/routes/cards.routes.ts`
-- `apps/backend/src/routes/knowgraph.routes.ts`
-
-#### Step 5: Close Diagnostic Route
-```typescript
-// apps/backend/src/routes/index.ts
-// Remove or protect:
-// router.use('/diagnostic', diagnosticRoutes);
-
-// If keeping, add auth:
-router.use('/diagnostic', authMiddleware, diagnosticRoutes);
-```
-
-#### Step 6: Make Identity Durable
-If keeping cookie sessions for first launch:
-```typescript
-// apps/backend/src/auth/sessionStore.ts
-// Move from JSON files to Postgres or Redis
-// Ensure sessions survive container restarts
-```
-
-#### Verification Commands
-```bash
-# Typecheck
-npx tsc -p apps/backend/tsconfig.app.json --noEmit
-
-# Test ownership enforcement
-# (Create test that verifies user A cannot access user B's project)
-
-# Test that diagnostic is protected
-curl http://localhost:4000/api/diagnostic/schema-check
-# Should return 401 or 404, not schema details
-```
-
----
-
-## Planning Estimate Timeline
-
-**Note:** These are planning estimates only, not commitments.
-
-### Week 1: Security Hardening
-1. **Day 1-2:** Implement project ownership enforcement
-2. **Day 3:** Close sensitive routes, add auth to diagnostic
-3. **Day 4-5:** Make user identity durable (move sessions to DB/Redis)
-
-### Week 2: Guardrails & Deploy
-4. **Day 1-2:** Add rate limiting to expensive endpoints
-5. **Day 3-4:** Fix Docker build path (remove `|| true`, add HTTPS)
-6. **Day 5:** Add minimal request/LLM logging
-
-### Week 3: Testing & Launch Prep
-7. **Day 1-2:** Add smoke test (login → project → deck → run)
-8. **Day 3:** Create production `.env.example` with docs
-9. **Day 4:** Add startup health checks
-10. **Day 5:** Final security review & launch
-
----
-
-## Launch Checklist
-
-### Pre-Launch Verification
-- [ ] User A cannot access User B's projects
-- [ ] User A cannot modify User B's decks
-- [ ] Unauthenticated users cannot access protected routes
-- [ ] `/api/diagnostic` is protected or removed
-- [ ] Rate limiting works on auth, deck run, KG operations
-- [ ] Sessions survive container restart
-- [ ] HTTPS works with secure cookies
-- [ ] Docker build fails fast on errors
-- [ ] Health check endpoint returns 200 when ready
-- [ ] Smoke test passes: login → project → deck → run
-
-### Launch Day
-- [ ] Deploy to production environment
-- [ ] Verify HTTPS certificate
-- [ ] Verify auth flow works
-- [ ] Create test user account
-- [ ] Run full smoke test in production
-- [ ] Monitor logs for errors
-- [ ] Set up alerting for critical errors
-
-### Post-Launch Week 1
-- [ ] Monitor user signups
-- [ ] Monitor error rates
-- [ ] Monitor LLM costs
-- [ ] Collect user feedback
-- [ ] Fix critical bugs immediately
-- [ ] Plan Week 2 improvements from "Should-Fix" section
-
----
-
-## Risk Assessment
-
-### 🔴 Critical Risks (Must Fix Before Launch)
-1. **Project isolation** - Users can access each other's data
-2. **Auth durability** - Sessions lost on restart
-3. **HTTPS/cookie mismatch** - Auth will break in production
-4. **No rate limiting** - Open to abuse and cost explosion
-5. **Diagnostic route exposed** - Leaks DB schema
-
-### 🟡 High Risks (Fix Soon After Launch)
-1. **Limited observability** - Hard to debug production issues
-2. **No error tracking** - User errors go unnoticed
-3. **Provider failures** - Poor UX when APIs fail
-
-### 🟢 Low Risks (Can Defer)
-1. **Large coordinator files** - Functional but hard to maintain
-2. **Test coverage** - Core paths work, but fragile
-3. **Graph UX maturity** - Functional but not polished
-
----
-
-## Open Questions / Uncertain Items
-
-### 1. **messages.routes.ts Disposition**
-- **File:** `apps/backend/src/v3/routes/messages.routes.ts`
-- **Status:** Currently unmounted, not part of live path
-- **Possible future use:** Team-message stream surface
-- **Decision needed:** Keep for future use or delete as dead code?
-- **Current recommendation:** Mark as dormant, revisit after launch
-
-### 2. **Chat vs Canvas Surface Roles**
-- **Current state:** Unified workspace with distinct surface purposes
-- **Chat role:** Front door for user interaction and conversation
-- **Canvas role:** Agent orchestration, deck building, visual workflow
-- **Shared surfaces:** Plan Wiki and Knowledge Graph available everywhere
-- **Current recommendation:** Keep chat simple and focused, use canvas for orchestration complexity
-
-### 3. **Session Storage Strategy** ✅ RESOLVED
-- **Decision:** Postgres (implemented in Patch 1)
-- **Rationale:** Simplicity - already required, no additional infrastructure
-- **Implementation:** `Session` table with foreign key to `User` table
-- **Status:** Complete
-
-### 4. **HTTPS Termination Strategy**
-- **Options:** nginx SSL, reverse proxy (Cloudflare/ALB), or both
-- **Uncertainty:** Production deployment environment not yet chosen
-- **Decision needed:** Where does HTTPS termination happen?
-- **Current recommendation:** Document reverse proxy requirement, defer nginx SSL
-
-### 5. **Rate Limiting Thresholds**
-- **Uncertainty:** Appropriate limits for auth, deck run, KG operations
-- **Needs:** Real usage data to set reasonable limits
-- **Current recommendation:** Start conservative, adjust based on monitoring
-
----
-
-## Setup Commands (Windows/PowerShell)
-
-### Apply Database Migration (Patch 1)
-
-```powershell
-# Connect to Postgres and run migration
-psql "postgresql://postgres:postgres@localhost:5433/liquidaity" -f db/migrations/002_user_sessions.sql
-```
-
-### Install Dependencies
-
-```powershell
-# Install bcrypt and types
-npm install
-
-# Generate Prisma client
-npx prisma generate
-```
-
-### Build and Test
-
-```powershell
-# Build backend
-nx build backend
-
-# Run tests
-nx test backend
-```
-
-### Run Application
-
-```powershell
-# Terminal 1: Backend
-npm run serve
-
-# Terminal 2: Frontend
-cd client
-npm run dev
-```
-
-### Manual Testing Checklist
-
-- [ ] Navigate to `http://localhost:5173/signup`
-- [ ] Create account with email/password (8+ chars)
-- [ ] Should redirect to `/agentbuilder` with session
-- [ ] Create a test project
-- [ ] Click three-lines button (left rail, bottom)
-- [ ] Click "Sign Out" in Account section
-- [ ] Should redirect to `/login`
-- [ ] Login with same credentials
-- [ ] Should see the same project
-- [ ] Restart backend server (`Ctrl+C`, then `npm run serve`)
-- [ ] Refresh browser
-- [ ] Should still be logged in (session persisted)
-
----
-
-**End of Launch Readiness Document**
+
+No success should be claimed unless the UI visibly proves it.
+
+Current State Assessment
+What is already true
+
+
+Backend Neo4j code graph import works
+
+
+Overlay import works
+
+
+Project-scoped Knowledge had a real bug: knowledgeProjectId must use active project id
+
+
+messages.routes.ts is dormant/unmounted and should not be used
+
+
+agentbuilder.tsx is the giant coordinator
+
+
+BuilderCanvas.tsx is the real canvas surface
+
+
+These match the repo structure and mounted/unmounted route inventory. 
+What is already working
+
+
+Visible Magentic-One orchestration
+
+
+Deck runtime execution
+
+
+Plan Wiki operational surface
+
+
+Canvas interaction improved/fixed
+
+
+Legacy cleanup progress
+
+
+These are real strengths, but they do not yet prove the operator-first workflow is complete.
+What is still missing for real operator use
+
+
+mini chat-side canvas behavior is not yet correctly constrained
+
+
+full canvas responsibilities are still too easy to leak into mini/chat
+
+
+knowledge is not yet clearly acting as a living research substrate in visible UI
+
+
+plan population after real runs is not yet the trusted visible behavior
+
+
+active project / ADMIN graph visibility is still an acceptance-critical test
+
+
+UI-to-MCP coding-agent handoff is not yet the clearly proven workflow
+
+
+
+Primary Goal of This Phase
+Build LiquidAIty by using LiquidAIty on itself
+The immediate objective is to make the system useful for its own development.
+That means:
+
+
+the project’s code graph is loaded and visible
+
+
+the project’s knowledge graph grows around the codebase, dependencies, external references, implementation notes, research, and prior decisions
+
+
+MainChat / Magentic-One can read that project context and produce plans
+
+
+the Canvas exposes the available agents that MainChat can use
+
+
+the UI can prepare a good task/prompt for a User Proxy Agent
+
+
+that User Proxy Agent can be routed through MCP to Goose or a similar coding agent
+
+
+outputs from those agents can feed back into Plan and Knowledge
+
+
+the system becomes a real internal build environment before it becomes a public product
+
+
+
+Phase Structure
+Phase 1 — Internal Operator Readiness
+Goal
+Make the product truly usable by you as the first real user.
+Must be visibly true
+1. Chat / MainChat
+
+
+MainChat is the central orchestrator
+
+
+user input is handled here
+
+
+plan context is visible here
+
+
+graph context is available here
+
+
+MainChat can decide when to use available agents
+
+
+2. Mini chat-side canvas
+
+
+still uses the same canvas language
+
+
+shows MainChat / Magentic-One and relevant nearby agents
+
+
+shows nearby available agents, not only currently connected ones
+
+
+allows only quick connect/disconnect to MainChat
+
+
+does not become a list manager
+
+
+does not become a form surface
+
+
+does not leak full canvas editing behavior
+
+
+3. Full agents canvas
+
+
+remains the only true editing surface
+
+
+add-agent works here
+
+
+full edge editing works here
+
+
+prompt/tool/runtime editing works here
+
+
+this is where full graph authoring lives
+
+
+4. Knowledge
+
+
+summary first
+
+
+evidence reveal second
+
+
+source links visible
+
+
+full source open available
+
+
+graph context visible
+
+
+Plan ↔ Knowledge linking visible
+
+
+readable by humans
+
+
+usable by agents
+
+
+5. Plan
+
+
+may be blank before first real run
+
+
+must visibly populate after a real run
+
+
+must not be treated as logs
+
+
+must reflect reasoning and execution intent
+
+
+6. Project-scoped graph
+
+
+imported code graph visibly loads for active project / ADMIN
+
+
+knowledge graph is clearly scoped to that project
+
+
+code graph + knowledge graph can be used together during work
+
+
+7. MCP coding-agent bridge
+
+
+UI can create a task/prompt for a User Proxy Agent
+
+
+that task can be sent through MCP to Goose or a similar coding agent
+
+
+the coding-agent result can come back into the project workflow
+
+
+the result can update plan and/or knowledge surfaces
+
+
+
+Phase 2 — System Cleanup After Real Use
+Goal
+Clean up only after the operator workflow is real.
+This means:
+
+
+remove UI drift
+
+
+tighten surface responsibilities
+
+
+reduce accidental control leakage
+
+
+improve clarity in agentbuilder.tsx without unsafe big-bang refactors
+
+
+harden project scoping
+
+
+make the MCP handoff cleaner and more repeatable
+
+
+improve Knowledge browse/explore quality
+
+
+improve Plan ↔ Knowledge ↔ Canvas coherence
+
+
+This phase exists to stabilize what worked in real use, not to theorize.
+
+Phase 3 — External Launch Readiness
+Goal
+Prepare for users beyond yourself only after operator-first proof exists.
+This is where the previous launch-hardening items become primary:
+
+
+project ownership isolation
+
+
+route protection
+
+
+rate limiting
+
+
+HTTPS-safe deploy path
+
+
+observability
+
+
+smoke coverage
+
+
+production docs
+
+
+onboarding polish
+
+
+Those remain valid launch requirements, but they are not the product-defining work of the current phase. The previous launch-readiness document is still useful here, just in the wrong order.
+
+What Now Counts as “Blocking”
+A. Blocking internal operator use
+These are the top blockers now:
+
+
+Current project graph not visibly loading for active project / ADMIN
+
+
+Mini chat-side canvas not behaving as MainChat neighborhood view
+
+
+Knowledge not yet behaving as a living research substrate
+
+
+Plan not clearly populating after real runs
+
+
+UI-to-MCP User Proxy Agent handoff not proven
+
+
+Code graph and knowledge graph not yet clearly working together in the same project flow
+
+
+B. Blocking external launch later
+These remain real, but come after internal operator proof:
+
+
+project ownership / isolation
+
+
+rate limiting
+
+
+sensitive route protection
+
+
+HTTPS-safe deployment
+
+
+structured observability
+
+
+smoke tests for critical flows
+
+
+
+Acceptance Criteria for This Phase
+The phase is successful only when screenshots or visible UI prove all of the following:
+Workspace / surfaces
+
+
+Chat, Canvas, Plan, and Knowledge all exist as distinct but connected surfaces
+
+
+MainChat is visibly the orchestrator
+
+
+user input, plan, and graph context sit on the MainChat side
+
+
+Mini canvas
+
+
+mini canvas shows MainChat plus nearby available agents
+
+
+mini canvas allows only quick connect/disconnect to MainChat
+
+
+mini canvas does not expose full editor behavior
+
+
+Full canvas
+
+
+full canvas is the only place with add-agent and full graph editing
+
+
+prompt/tool/runtime editing is only in full canvas mode
+
+
+Knowledge
+
+
+knowledge shows summary first
+
+
+evidence is expandable
+
+
+source links are visible
+
+
+full sources can be opened
+
+
+graph context is visible
+
+
+Plan ↔ Knowledge linking is visible
+
+
+Plan
+
+
+blank before first run is acceptable
+
+
+after a real run, plan visibly populates
+
+
+Graphs
+
+
+imported code graph visibly loads for active project / ADMIN
+
+
+knowledge graph visibly reflects project-scoped research and context
+
+
+code graph and knowledge graph can both inform the workflow
+
+
+MCP coding-agent workflow
+
+
+user can trigger a UI action that prepares a coding task/prompt
+
+
+that task is routed to a User Proxy Agent through MCP
+
+
+Goose or similar coding agent can receive it
+
+
+returned result can feed back into the workspace
+
+
+No claim of completion should be made until screenshots match.
+
+Exact Priority Order Now
+Priority 1
+Visible active-project code graph and project-scoped knowledge graph in the UI
+Priority 2
+Mini canvas corrected into MainChat-neighborhood behavior
+Priority 3
+Knowledge surface upgraded into summary → evidence → source → graph-context workflow
+Priority 4
+Plan visibly populates from real runs
+Priority 5
+UI task/prompt handoff to MCP User Proxy Agent → Goose-like coding agent
+Priority 6
+Cleanup and hardening for repeated internal use
+Priority 7
+External launch hardening
+
+Files Most Relevant to This Phase
+Frontend
+
+
+client/src/pages/agentbuilder.tsx
+
+
+client/src/components/builder/BuilderCanvas.tsx
+
+
+client/src/components/builder/BuilderChat.tsx
+
+
+client/src/components/PlanWikiSurface.tsx
+
+
+client/src/components/PlanWikiLexicalView.tsx
+
+
+client/src/components/assistPlanSurface.ts
+
+
+client/src/components/builder/DeckEdgeInspector.tsx
+
+
+client/src/components/builder/DeckQuickAddPanel.tsx
+
+
+client/src/hooks/useBuilderDeckRuntimeActions.ts
+
+
+Backend
+
+
+apps/backend/src/routes/v2/projects.routes.ts
+
+
+apps/backend/src/routes/v2/kg.routes.ts
+
+
+apps/backend/src/routes/knowgraph.routes.ts
+
+
+apps/backend/src/routes/v2/agentBuilder.routes.ts
+
+
+apps/backend/src/services/agentBuilderStore.ts
+
+
+apps/backend/src/services/research/researchService.ts
+
+
+apps/backend/src/services/graphService.ts
+
+
+Explicitly do not use
+
+
+apps/backend/src/v3/routes/messages.routes.ts
+Because it is dormant/unmounted. 
+
+
+
+Revised Launch Sequence
+Stage 1 — Use it on itself
+
+
+load project code graph
+
+
+build project knowledge around it
+
+
+use MainChat with plan + graph context
+
+
+use canvas agents from MainChat
+
+
+send coding work to User Proxy Agent through MCP
+
+
+bring outputs back into plan/knowledge
+
+
+Stage 2 — Tighten the product
+
+
+remove surface drift
+
+
+clean up mini/full canvas boundaries
+
+
+improve knowledge exploration
+
+
+improve MCP task handoff
+
+
+make internal workflow repeatable
+
+
+Stage 3 — Harden for outside users
+
+
+ownership isolation
+
+
+auth hardening
+
+
+rate limiting
+
+
+HTTPS deploy path
+
+
+observability
+
+
+smoke tests
+
+
+onboarding polish
+
+
+
+One-line product definition for this phase
+LiquidAIty is a 4-surface workspace where MainChat / Magentic-One uses project-scoped plan, code-graph, and knowledge-graph context to orchestrate canvas agents and route coding work through MCP to external coding agents, first for internal self-use, then for cleanup, then for launch.
+

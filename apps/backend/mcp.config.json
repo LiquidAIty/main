@@ -6,6 +6,11 @@
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "./"],
       "restart": { "enabled": true, "maxAttempts": 3, "delayMs": 1000 }
     },
+    "codebase-memory": {
+      "transport": "stdio",
+      "command": "C:\\cbm\\codebase-memory-mcp.exe",
+      "restart": { "enabled": true, "maxAttempts": 3, "delayMs": 1000 }
+    },
     "github": {
       "transport": "sse",
       "url": "${GITHUB_MCP_URL}",

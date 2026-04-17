@@ -1,3 +1,8 @@
+// @graph entity: DeckRuntime
+// @graph role: visible-graph-executor
+// @graph relates_to: BuilderCanvas, CardRuntime, Magentic-One Runtime
+// @graph depends_on: CardRuntime
+// @graph feeds_to: CardRuntime
 import { randomUUID } from 'crypto';
 import { resolveEffectiveAgent, runCardWithContract } from '../cards/runtime';
 import { buildExecutionPlan } from '../decks/executionPlan';
@@ -10,12 +15,14 @@ import {
 import type {
   AgentCardInstance,
   AgentTemplate,
+  CodeGraphViewContract,
   DeckDocument,
   DeckEdge,
   DeckEdgeType,
   DeckRun,
   DeckRuntimeEvent,
   DeckRunStep,
+  GraphViewContract,
   PromptTemplate,
 } from '../types';
 
@@ -77,6 +84,16 @@ function buildRunSnapshot(
   status: DeckRun['status'],
   extra?: Pick<DeckRun, 'endedAt' | 'error'>,
 ): DeckRun {
+  const graphViewContract =
+    [...steps]
+      .reverse()
+      .map((step) => toGraphViewContract(step.graphViewContract || step.codegraphViewContract))
+      .find((value) => value != null) ||
+    [...events]
+      .reverse()
+      .map((event) => toGraphViewContract(event.graphViewContract || event.codegraphViewContract))
+      .find((value) => value != null) ||
+    null;
   return {
     id: runId,
     deckId: document.id,
@@ -87,6 +104,8 @@ function buildRunSnapshot(
     error: extra?.error,
     steps,
     events,
+    graphViewContract,
+    codegraphViewContract: graphViewContract,
     validationSummary: {
       ok: validation.ok,
       errors: validation.errors.map((issue) => issue.message),
@@ -97,6 +116,48 @@ function buildRunSnapshot(
       simpleOrderCardIds: executionPlan.simpleOrderCardIds,
       expandedStepIds: executionPlan.expandedSteps.map((step) => step.executionId),
     },
+  };
+}
+
+function toGraphViewContract(
+  value: GraphViewContract | CodeGraphViewContract | null | undefined,
+): GraphViewContract | null {
+  if (!value) return null;
+  const record = value as Record<string, unknown>;
+  const graphKindRaw = String(record.graphKind || 'codegraph').trim().toLowerCase();
+  const graphKind =
+    graphKindRaw === 'thinkgraph' || graphKindRaw === 'knowgraph' || graphKindRaw === 'codegraph'
+      ? graphKindRaw
+      : 'codegraph';
+  const toStringArray = (input: unknown): string[] | undefined => {
+    if (!Array.isArray(input)) return undefined;
+    const normalized = input.map((entry) => String(entry || '').trim()).filter(Boolean);
+    return normalized.length > 0 ? normalized : undefined;
+  };
+  return {
+    graphKind: graphKind as GraphViewContract['graphKind'],
+    projectId: String(record.projectId || '').trim() || undefined,
+    focusNodeIds: toStringArray(record.focusNodeIds),
+    focusPaths: toStringArray(record.focusPaths),
+    focusSymbols: toStringArray(record.focusSymbols),
+    nodeLabelAllowlist: toStringArray(record.nodeLabelAllowlist),
+    edgeTypeAllowlist: toStringArray(record.edgeTypeAllowlist),
+    showLabels: typeof record.showLabels === 'boolean' ? record.showLabels : undefined,
+    maxNodes: Number.isFinite(Number(record.maxNodes)) ? Number(record.maxNodes) : undefined,
+    cameraMode:
+      record.cameraMode === 'overview' ||
+      record.cameraMode === 'focus' ||
+      record.cameraMode === 'trace' ||
+      record.cameraMode === 'cluster'
+        ? (record.cameraMode as GraphViewContract['cameraMode'])
+        : undefined,
+    animationMode:
+      record.animationMode === 'calm' ||
+      record.animationMode === 'guided' ||
+      record.animationMode === 'active'
+        ? (record.animationMode as GraphViewContract['animationMode'])
+        : undefined,
+    narrativeIntent: String(record.narrativeIntent || '').trim() || null,
   };
 }
 
@@ -129,12 +190,25 @@ export async function executeDeck(
   const executionPlan = buildExecutionPlan(document);
   const steps: DeckRunStep[] = [];
   const events: DeckRuntimeEvent[] = [];
+  let latestGraphViewContract: GraphViewContract | null = null;
   const emitRuntimeEvent = (event: Omit<DeckRuntimeEvent, 'id' | 'at'>) => {
+    const resolvedGraphViewContract =
+      toGraphViewContract(event.graphViewContract || event.codegraphViewContract) ||
+      (event.kind === 'run_completed' ? latestGraphViewContract : null);
     const nextEvent: DeckRuntimeEvent = {
       id: `evt_${randomUUID().slice(0, 8)}`,
       at: new Date().toISOString(),
       ...event,
+      ...(resolvedGraphViewContract
+        ? {
+            graphViewContract: resolvedGraphViewContract,
+            codegraphViewContract: resolvedGraphViewContract,
+          }
+        : {}),
     };
+    if (nextEvent.graphViewContract) {
+      latestGraphViewContract = nextEvent.graphViewContract;
+    }
     events.push(nextEvent);
     options.onRuntimeEvent?.(nextEvent);
   };
@@ -335,8 +409,13 @@ export async function executeDeck(
         improvementPromptBit: result.improvementPromptBit,
         inputSummary: result.inputSummary,
         outputSummary: result.outputSummary,
+        graphViewContract: toGraphViewContract(result.graphViewContract ?? result.codegraphViewContract),
+        codegraphViewContract: toGraphViewContract(result.graphViewContract ?? result.codegraphViewContract),
         routeInfo: event.routeInfo,
       };
+      if (step.graphViewContract) {
+        latestGraphViewContract = step.graphViewContract;
+      }
 
       steps.push(step);
 
@@ -352,6 +431,8 @@ export async function executeDeck(
             : `${card.title} completed.`,
         outputSummary: step.outputSummary || null,
         status: step.status,
+        graphViewContract: step.graphViewContract ?? null,
+        codegraphViewContract: step.graphViewContract ?? null,
       });
 
       if (step.status === 'error') {

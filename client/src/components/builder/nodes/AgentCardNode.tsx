@@ -28,25 +28,24 @@ export default function AgentCardNode({
   const isCallableHead = Boolean(data?.isCallableHead) && !isMagentic && !isGraphStep;
   const canReceiveConnection = !isMagentic;
   const canStartConnection = isMagentic || runtimeType === 'assistant_agent';
-  const runtimeLabel = isMagentic ? 'MAGENTIC' : 'ASSIST';
+  // Only show label for Magentic, not for Assist agents
+  const runtimeLabel = isMagentic ? 'MAINCHAT' : null;
   const structureLabel =
     data?.assistStructureMode === 'branch_merge'
       ? 'Branch+Merge'
       : data?.assistStructureMode === 'branch'
-      ? 'Branch'
-      : data?.assistStructureMode === 'merge'
-        ? 'Merge'
-      : data?.assistStructureMode === 'seq'
-        ? 'Seq'
-        : runtimeType === 'assistant_agent'
-          ? 'Single'
+        ? 'Branch'
+        : data?.assistStructureMode === 'merge'
+          ? 'Merge'
           : null;
+
+  // Operator-first: keep Assist cards quiet by default.
+  // Preserve only meaningful state badges that indicate actionable differences.
   const badges = [
     data?.isStartCard ? 'Start' : null,
     isCallableHead ? 'Callable' : null,
-    isGraph ? 'Compat' : null,
-    structureLabel,
     data?.swarmBadge || null,
+    structureLabel,
   ].filter(Boolean);
   const isRuntimeActive = Boolean(data?.isRuntimeActive);
   const hoverRing =
@@ -180,41 +179,43 @@ export default function AgentCardNode({
         }}
       >
         <div style={{ minWidth: 0 }}>
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '3px 8px',
-              marginBottom: 8,
-              borderRadius: 999,
-                background: isMagentic
-                  ? 'rgba(96, 194, 255, 0.14)'
-                  : isGraph
-                    ? 'rgba(154, 162, 172, 0.14)'
-                    : isRuntimeActive
-                      ? 'rgba(79, 162, 173, 0.18)'
-                    : 'rgba(255,255,255,0.05)',
-                border: isMagentic
-                  ? '1px solid rgba(96, 194, 255, 0.3)'
-                  : isGraph
-                    ? '1px solid rgba(154, 162, 172, 0.26)'
-                    : isRuntimeActive
-                      ? '1px solid rgba(79, 162, 173, 0.34)'
-                    : '1px solid rgba(255,255,255,0.08)',
-                color: isMagentic
-                  ? '#d8f2ff'
-                  : isGraph
-                    ? '#e8edf4'
-                    : isRuntimeActive
-                      ? '#d8f2ff'
-                    : GRAPH_THEME.surface.mutedText,
-              fontSize: 10,
-              letterSpacing: '0.14em',
-            }}
-          >
-            {runtimeLabel}
-          </div>
+          {runtimeLabel && (
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '3px 8px',
+                marginBottom: 8,
+                borderRadius: 999,
+                  background: isMagentic
+                    ? 'rgba(96, 194, 255, 0.14)'
+                    : isGraph
+                      ? 'rgba(154, 162, 172, 0.14)'
+                      : isRuntimeActive
+                        ? 'rgba(79, 162, 173, 0.18)'
+                      : 'rgba(255,255,255,0.05)',
+                  border: isMagentic
+                    ? '1px solid rgba(96, 194, 255, 0.3)'
+                    : isGraph
+                      ? '1px solid rgba(154, 162, 172, 0.26)'
+                      : isRuntimeActive
+                        ? '1px solid rgba(79, 162, 173, 0.34)'
+                      : '1px solid rgba(255,255,255,0.08)',
+                  color: isMagentic
+                    ? '#d8f2ff'
+                    : isGraph
+                      ? '#e8edf4'
+                      : isRuntimeActive
+                        ? '#d8f2ff'
+                      : GRAPH_THEME.surface.mutedText,
+                fontSize: 10,
+                letterSpacing: '0.14em',
+              }}
+            >
+              {runtimeLabel}
+            </div>
+          )}
           <div className="text-sm font-semibold" style={{ lineHeight: 1.3 }}>
             {data.title}
           </div>

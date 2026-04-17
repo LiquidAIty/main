@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 
 type UploadAttachmentProps = {
-  projectId: string;
+  knowledgeProjectId: string;
   disabled?: boolean;
   onUploaded?: () => void;
 };
@@ -91,12 +91,8 @@ async function ensureAnonymousSession(): Promise<void> {
   }
 }
 
-function knowledgeImportButtonLabel(uploading: boolean): string {
-  return uploading ? "Importing…" : "Import Knowledge";
-}
-
 export default function UploadAttachment({
-  projectId,
+  knowledgeProjectId,
   disabled = false,
   onUploaded,
 }: UploadAttachmentProps) {
@@ -133,7 +129,7 @@ export default function UploadAttachment({
       return;
     }
 
-    if (!projectId) {
+    if (!knowledgeProjectId) {
       setToastType("error");
       setToast("Select a project before importing knowledge.");
       clearInput();
@@ -142,11 +138,11 @@ export default function UploadAttachment({
 
     setUploading(true);
     try {
-      let { response, payload } = await postKnowgraphIngest(file, projectId);
+      let { response, payload } = await postKnowgraphIngest(file, knowledgeProjectId);
 
       if (response.status === 401) {
         await ensureAnonymousSession();
-        ({ response, payload } = await postKnowgraphIngest(file, projectId));
+        ({ response, payload } = await postKnowgraphIngest(file, knowledgeProjectId));
       }
 
       if (!response.ok) {
@@ -180,19 +176,38 @@ export default function UploadAttachment({
         type="button"
         onClick={openPicker}
         disabled={disabled || uploading}
+        aria-label={uploading ? "Importing knowledge PDF" : "Import knowledge PDF"}
+        title={uploading ? "Importing knowledge PDF" : "Import knowledge PDF"}
+        data-no-surface-promote="true"
         style={{
+          width: 42,
+          height: 42,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
           border: "1px solid #3A3A3A",
-          borderRadius: 10,
-          background: "#2B2B2B",
+          borderRadius: 12,
+          background: uploading ? "rgba(79,162,173,0.18)" : "#202020",
           color: "#FFFFFF",
-          padding: "10px 12px",
-          fontSize: 13,
-          lineHeight: 1.2,
-          whiteSpace: "nowrap",
+          boxShadow: uploading ? "0 0 0 1px rgba(79,162,173,0.22) inset" : "none",
           opacity: disabled || uploading ? 0.65 : 1,
         }}
       >
-        {knowledgeImportButtonLabel(uploading)}
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.9"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <path d="M7 10l5 5 5-5" />
+          <path d="M12 15V3" />
+        </svg>
       </button>
       <input
         ref={inputRef}

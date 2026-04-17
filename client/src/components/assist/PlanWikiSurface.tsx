@@ -1,3 +1,8 @@
+// @graph entity: PlanWikiSurface
+// @graph role: planwiki-ui-surface
+// @graph relates_to: PlanWiki, AgentBuilderWorkspace
+// @graph depends_on: React
+// @graph feeds_to: AgentBuilderWorkspace
 import type { ReactNode } from "react";
 
 import type { StructuredAssistPlanSurface } from "../builder/assistPlanSurface";

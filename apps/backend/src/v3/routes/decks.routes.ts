@@ -1,3 +1,8 @@
+// @graph entity: DeckRunRoute
+// @graph role: deck-run-entrypoint
+// @graph relates_to: AgentBuilderWorkspace, DeckRuntime
+// @graph depends_on: Express, DeckRuntime
+// @graph feeds_to: DeckRuntime
 import { Router, type Response } from 'express';
 import { getDeckDocument, saveDeckDocument, saveDeckRun } from '../decks/store';
 import { executeDeck } from '../runtime/deckRuntime';

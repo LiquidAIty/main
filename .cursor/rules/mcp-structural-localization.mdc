@@ -1,0 +1,32 @@
+---
+description: MCP-first structural localization workflow for this repo
+alwaysApply: true
+---
+
+# MCP-First Structural Localization
+
+For behavior/debug/change requests in this repository:
+
+1. Use `codebase-memory-mcp` first for structural localization.
+2. Identify the subsystem involved.
+3. Rank the top 5 files most likely controlling the behavior.
+4. Show inbound and outbound dependencies around the primary symbol/file.
+5. Only then read the minimum files needed to confirm exact code facts.
+6. Propose the smallest patch; avoid architectural redesign unless explicitly requested.
+
+## Required Response Sections
+
+- **A. graph-derived structural facts**
+  - MCP-derived facts only (search/trace/query/architecture).
+  - Include subsystem, top-5 file ranking, and dependency relationships.
+- **B. file-derived exact code facts**
+  - Verified from direct file reads only.
+  - Keep reads minimal and targeted.
+- **C. patch plan**
+  - Smallest viable edit set with exact files and rationale.
+
+## Guardrails
+
+- Do not guess when graph or code evidence is missing.
+- Do not start with broad file reading when MCP can localize first.
+- Keep changes scoped to the structurally central controlling files.

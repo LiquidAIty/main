@@ -27,13 +27,13 @@ function safeText(value: unknown): string {
 export default function BuilderChat({
   messages,
   onSend,
-  projectId,
+  knowledgeProjectId,
   disabled = false,
   colors,
 }: {
   messages: { role: "assistant" | "user"; text: string }[];
   onSend: (t: string) => void;
-  projectId: string;
+  knowledgeProjectId: string;
   disabled?: boolean;
   colors: BuilderChatColors;
 }) {
@@ -95,8 +95,8 @@ export default function BuilderChat({
       </div>
       <div className="px-4 pb-4 flex items-center gap-2">
         <UploadAttachment
-          projectId={projectId}
-          disabled={disabled || !projectId}
+          knowledgeProjectId={knowledgeProjectId}
+          disabled={disabled || !knowledgeProjectId}
         />
         <input
           value={v}

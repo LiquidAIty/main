@@ -1,3 +1,8 @@
+// @graph entity: DeckStore
+// @graph role: deck-persistence
+// @graph relates_to: AgentBuilderWorkspace, DeckRuntime
+// @graph depends_on: Postgres
+// @graph feeds_to: DeckRunRoute
 import { createHash, randomUUID } from 'crypto';
 import { pool } from '../../db/pool';
 import { resolveRuntimeBinding } from '../runtimeBinding';

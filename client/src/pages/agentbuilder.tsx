@@ -27,7 +27,6 @@ import {
   type AssistStarterRecipe,
   type DeckNodePreset,
 } from "../components/builder/deckPresets";
-import DeckQuickAddPanel from "../components/builder/DeckQuickAddPanel";
 import {
   resolveEffectiveAgent,
 } from "../components/builder/deckRuntime";
@@ -69,6 +68,9 @@ import type {
   DeckDocument,
   DeckRun,
   DeckRuntimeEvent,
+  GraphViewContract,
+  GraphViewData,
+  KnowledgeGraphKind,
   PromptTemplate,
   RuntimeBinding,
 } from "../types/agentgraph";
@@ -89,7 +91,12 @@ const AgentManager = lazy(async () => {
   const mod = await import("../components/AgentManager");
   return { default: mod.AgentManager };
 });
-const KnowledgeGraphNVL = lazy(() => import("../components/knowledge/KnowledgeGraphNVL"));
+const KnowledgeSummaryPanel = lazy(() => import("../components/knowledge/KnowledgeSummaryPanel"));
+const KnowledgeEvidencePanel = lazy(() => import("../components/knowledge/KnowledgeEvidencePanel"));
+const KnowledgeGraphFramework = lazy(() => import("../components/knowledge/KnowledgeGraphFramework"));
+const CODEBASE_MEMORY_PROJECT_NAME = "C-Projects-LiquidAIty-main";
+void KnowledgeSummaryPanel;
+void KnowledgeEvidencePanel;
 const PlanWikiLexicalView = lazy(async () => {
   try {
     return await import("../components/assist/PlanWikiLexicalView");
@@ -136,6 +143,7 @@ const C = {
 const HOME_CHAT_TABS = ["Canvas", "Knowledge", "Plan"] as const;
 const HOME_PLAN_TABS = ["Chat", "Canvas", "Knowledge"] as const;
 const KNOWLEDGE_VIEW_TABS = ["Chat", "Canvas", "Plan"] as const;
+const CODEGRAPH_VIEW_TABS = ["Chat", "Canvas", "Knowledge", "Plan"] as const;
 const BUILDER_PROJECT_TABS = ["Plan"] as const;
 const BUILDER_NODE_TABS = ["Prompt", "Knowledge", "Tools", "Runtime"] as const;
 const BUILDER_EDGE_TABS = ["Edge"] as const;
@@ -149,7 +157,8 @@ function normalizeWorkspaceSurface(value: string): WorkspaceTestingSurface | nul
     normalized === "chat" ||
     normalized === "plan" ||
     normalized === "canvas" ||
-    normalized === "knowledge"
+    normalized === "knowledge" ||
+    normalized === "codegraph"
   ) {
     return normalized;
   }
@@ -204,6 +213,195 @@ function safeText(value: unknown): string {
 function cleanOptionalText(value: unknown): string | null {
   const text = safeText(value).trim();
   return text || null;
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  const trimmed = safeText(text).trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // ignore parse errors
+  }
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (!fencedMatch?.[1]) return null;
+  try {
+    const parsed = JSON.parse(fencedMatch[1].trim());
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return null;
+}
+
+function normalizeCodeGraphViewContractCandidate(
+  candidate: unknown,
+  projectId?: string | null,
+): GraphViewContract | null {
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+  const record = candidate as Record<string, unknown>;
+  const nodeLabelAllowlistRaw =
+    record.nodeLabelAllowlist ?? record.node_labels ?? record.nodeLabels ?? null;
+  const edgeTypeAllowlistRaw =
+    record.edgeTypeAllowlist ?? record.edge_types ?? record.edgeTypes ?? null;
+  const showLabelsRaw = record.showLabels ?? record.show_labels;
+  const focusPathsRaw = record.focusPaths ?? record.focus_paths;
+  const focusSymbolsRaw = record.focusSymbols ?? record.focus_symbols;
+  const maxNodesRaw = record.maxNodes ?? record.max_nodes;
+  const graphKindRaw = record.graphKind ?? record.graph_kind ?? "codegraph";
+  const focusNodeIdsRaw = record.focusNodeIds ?? record.focus_node_ids;
+  const cameraModeRaw = record.cameraMode ?? record.camera_mode;
+  const animationModeRaw = record.animationMode ?? record.animation_mode;
+  const narrativeIntentRaw = record.narrativeIntent ?? record.narrative_intent;
+
+  const toStringArray = (value: unknown): string[] | undefined => {
+    if (!Array.isArray(value)) return undefined;
+    const normalized = value
+      .map((entry) => safeText(entry).trim())
+      .filter(Boolean);
+    return normalized.length > 0 ? normalized : undefined;
+  };
+
+  const nodeLabelAllowlist = toStringArray(nodeLabelAllowlistRaw);
+  const edgeTypeAllowlist = toStringArray(edgeTypeAllowlistRaw);
+  const focusPaths = toStringArray(focusPathsRaw);
+  const focusSymbols = toStringArray(focusSymbolsRaw);
+  const focusNodeIds = toStringArray(focusNodeIdsRaw);
+  const showLabels = typeof showLabelsRaw === "boolean" ? showLabelsRaw : undefined;
+  const maxNodes = Number.isFinite(Number(maxNodesRaw)) ? Number(maxNodesRaw) : undefined;
+  const graphKindNormalized = safeText(graphKindRaw).trim().toLowerCase();
+  const graphKind: KnowledgeGraphKind =
+    graphKindNormalized === "thinkgraph" || graphKindNormalized === "knowgraph" || graphKindNormalized === "codegraph"
+      ? (graphKindNormalized as KnowledgeGraphKind)
+      : "codegraph";
+  const cameraMode =
+    cameraModeRaw === "overview" ||
+    cameraModeRaw === "focus" ||
+    cameraModeRaw === "trace" ||
+    cameraModeRaw === "cluster"
+      ? cameraModeRaw
+      : undefined;
+  const animationMode =
+    animationModeRaw === "calm" || animationModeRaw === "guided" || animationModeRaw === "active"
+      ? animationModeRaw
+      : undefined;
+  const narrativeIntent = cleanOptionalText(narrativeIntentRaw);
+
+  if (
+    !nodeLabelAllowlist &&
+    !edgeTypeAllowlist &&
+    showLabels == null &&
+    !focusPaths &&
+    !focusSymbols &&
+    !focusNodeIds &&
+    maxNodes == null &&
+    !cameraMode &&
+    !animationMode &&
+    !narrativeIntent
+  ) {
+    return null;
+  }
+
+  return {
+    graphKind,
+    projectId: cleanOptionalText(projectId) ?? undefined,
+    focusNodeIds,
+    nodeLabelAllowlist,
+    edgeTypeAllowlist,
+    showLabels,
+    focusPaths,
+    focusSymbols,
+    maxNodes,
+    cameraMode,
+    animationMode,
+    narrativeIntent,
+  };
+}
+
+function extractCodeGraphViewContractFromUnknown(
+  payload: unknown,
+  projectId?: string | null,
+): GraphViewContract | null {
+  const direct = normalizeCodeGraphViewContractCandidate(payload, projectId);
+  if (direct) return direct;
+
+  if (typeof payload === "string") {
+    const parsed = parseJsonObject(payload);
+    if (!parsed) return null;
+    return extractCodeGraphViewContractFromUnknown(parsed, projectId);
+  }
+
+  if (!payload || typeof payload !== "object") return null;
+  const record = payload as Record<string, unknown>;
+  const nestedKeys = [
+    "codeGraphViewContract",
+    "codegraphViewContract",
+    "graphViewContract",
+    "codegraph_view_contract",
+    "codegraph",
+    "graph_view",
+    "view",
+    "contract",
+  ] as const;
+  for (const key of nestedKeys) {
+    if (record[key] == null) continue;
+    const nested = extractCodeGraphViewContractFromUnknown(record[key], projectId);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function extractCodeGraphViewContractFromEvent(
+  event: DeckRuntimeEvent,
+  projectId?: string | null,
+): GraphViewContract | null {
+  const typedContract = normalizeCodeGraphViewContractCandidate(
+    event.graphViewContract ?? event.codegraphViewContract,
+    projectId,
+  );
+  if (typedContract) return typedContract;
+  const candidates: unknown[] = [
+    event.content,
+    event.text,
+    event.progressText,
+    ...(Array.isArray(event.notes) ? event.notes : []),
+  ];
+  for (const candidate of candidates) {
+    const contract = extractCodeGraphViewContractFromUnknown(candidate, projectId);
+    if (contract) return contract;
+  }
+  return null;
+}
+
+function extractCodeGraphViewContractFromRun(
+  run: DeckRun | null | undefined,
+  projectId?: string | null,
+): GraphViewContract | null {
+  const typedRunContract = normalizeCodeGraphViewContractCandidate(
+    run?.graphViewContract ?? run?.codegraphViewContract,
+    projectId,
+  );
+  if (typedRunContract) return typedRunContract;
+  const steps = Array.isArray(run?.steps) ? [...run.steps].reverse() : [];
+  for (const step of steps) {
+    const typedStepContract = normalizeCodeGraphViewContractCandidate(
+      step.graphViewContract ?? step.codegraphViewContract,
+      projectId,
+    );
+    if (typedStepContract) return typedStepContract;
+    const contractFromOutput = extractCodeGraphViewContractFromUnknown(step.output, projectId);
+    if (contractFromOutput) return contractFromOutput;
+    const contractFromSummary = extractCodeGraphViewContractFromUnknown(step.outputSummary, projectId);
+    if (contractFromSummary) return contractFromSummary;
+    const contractFromTaskContract = extractCodeGraphViewContractFromUnknown(step.contract, projectId);
+    if (contractFromTaskContract) return contractFromTaskContract;
+  }
+  return null;
 }
 
 function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
@@ -753,53 +951,136 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     }),
   },
   {
-    id: "prompt_main_chat",
+    id: "prompt_thinkgraph_agent",
     content: buildSeedPromptTemplate({
-      role: "You are LiquidAIty main chat. You help the user move the project forward with direct, practical answers.",
-      goal: "Understand the request, answer clearly, and suggest the next useful move when it helps.",
-      constraints: "Do not invent features or hidden state. If context is missing, say so plainly. Do not expose runtime plumbing unless asked.",
-      ioSchema: "Input: user message plus current card context. Output: normal conversational text.",
-      memoryPolicy: "Use only the current input and any explicit deck context passed into this card.",
+      role: [
+        "You are the ThinkGraph Agent, a graph-specialist agent for provisional and planning memory.",
+        "You work only with ThinkGraph (PostgreSQL + AGE), which stores provisional semantic structure.",
+      ].join("\n"),
+      goal: [
+        "Extract and manage provisional entities, relationships, hypotheses, working state, and gaps.",
+        "ThinkGraph is read first by the planner to understand current ideas, goals, and open loops.",
+      ].join("\n"),
+      constraints: [
+        "ThinkGraph is provisional/subjective memory, not grounded facts.",
+        "Separate candidate claims from grounded evidence.",
+        "Keep structure concise and useful for planning.",
+        "Do not merge ThinkGraph with KnowGraph or CodeGraph.",
+      ].join("\n"),
+      ioSchema: [
+        "Input: user request or planning context.",
+        "Output: provisional entities, relationships, hypotheses, gaps, and next research targets.",
+      ].join("\n"),
+      memoryPolicy: [
+        "Use current input and existing ThinkGraph context.",
+        "ThinkGraph stores: ideas, prompts, goals, hypotheses, working summaries, open questions.",
+      ].join("\n"),
     }),
   },
   {
-    id: "prompt_kg_ingest",
+    id: "prompt_codegraph_agent",
     content: buildSeedPromptTemplate({
-      role: "You act as the KG ingest / ThinkGraph extraction stage.",
-      goal: "Turn the current input into candidate entities, relationships, facts, and explicit gaps worth researching.",
-      constraints: "Stay close to the source. Separate grounded facts from hypotheses. Keep the structure concise and useful downstream.",
-      ioSchema: "Input: user or upstream card input. Output: compact graph-style findings and gaps.",
-      memoryPolicy: "Use only the current input passed into this card.",
+      role: [
+        "You are the CodeGraph Agent, a graph-specialist agent for structural code memory.",
+        "You work only with CodeGraph, which stores files, symbols, routes, libraries, subsystem boundaries, and dependency/call structure.",
+      ].join("\n"),
+      goal: [
+        "Extract and manage code structure: what does what, what library it uses, what part of the product this belongs to, what depends on what.",
+        "CodeGraph is read second by the planner to understand what code areas, subsystems, files, symbols, and routes matter.",
+      ].join("\n"),
+      constraints: [
+        "CodeGraph is structural code memory, separate from ThinkGraph and KnowGraph.",
+        "Preserve Codebase-Memory-style usefulness for AI.",
+        "Local-first storage is acceptable.",
+        "Do not merge CodeGraph with other graph types.",
+      ].join("\n"),
+      ioSchema: [
+        "Input: code analysis request or codebase context.",
+        "Output: files, symbols, routes, libraries, subsystem boundaries, dependencies, call structure.",
+      ].join("\n"),
+      memoryPolicy: [
+        "Use current input and existing CodeGraph context.",
+        "CodeGraph stores: files, symbols, routes, libraries, subsystems, dependencies, call graphs.",
+      ].join("\n"),
     }),
   },
   {
-    id: "prompt_research",
+    id: "prompt_research_agent",
     content: buildSeedPromptTemplate({
-      role: "You are the research agent for the current deck.",
-      goal: "Investigate the current gaps, find useful evidence, and return concrete findings with uncertainty called out.",
-      constraints: "Stay concise. Prefer primary evidence. Flag uncertainty clearly.",
-      ioSchema: "Input: task brief. Output: bullet list of findings and gaps.",
-      memoryPolicy: "Use upstream deck context and the current run input only.",
+      role: [
+        "You are the Research Agent, a worker agent for conducting research and gathering information.",
+        "You analyze requests, perform research, and produce structured findings for downstream agents.",
+      ].join("\n"),
+      goal: [
+        "Analyze research requests and gather relevant information from available sources.",
+        "Produce structured research findings that can be consumed by KnowGraph Agent for grounding.",
+      ].join("\n"),
+      constraints: [
+        "Focus on research and analysis tasks.",
+        "Produce structured output suitable for downstream processing.",
+        "Do not store grounded knowledge yourself; pass findings to KnowGraph Agent.",
+      ].join("\n"),
+      ioSchema: [
+        "Input: research request or analysis task from upstream agents.",
+        "Output: structured research findings, analysis results, and recommendations.",
+      ].join("\n"),
+      memoryPolicy: [
+        "Use current input and any provided context from upstream agents.",
+        "Research output should be structured for KnowGraph Agent to ground and store.",
+      ].join("\n"),
     }),
   },
   {
-    id: "prompt_knowgraph",
+    id: "prompt_knowgraph_agent",
     content: buildSeedPromptTemplate({
-      role: "You are the grounded knowledge normalization stage.",
-      goal: "Take researched findings and rewrite them into stable, evidence-backed knowledge that is safe to carry forward.",
-      constraints: "Prefer grounded claims. Remove unsupported leaps. Preserve citations or evidence cues when present.",
-      ioSchema: "Input: research findings. Output: normalized grounded knowledge summary.",
-      memoryPolicy: "Use upstream research output only.",
+      role: [
+        "You are the KnowGraph Agent, a graph-specialist agent for grounded and evidence-backed memory.",
+        "You work only with KnowGraph (Neo4j), which stores grounded entities, relationships, docs, PDFs, web research summaries, links, and provenance.",
+      ].join("\n"),
+      goal: [
+        "Extract and manage grounded knowledge: evidence-backed entities, relationships, research summaries, and citations.",
+        "KnowGraph is read third by the planner to understand what docs, PDFs, research, grounded evidence, summaries, and links matter.",
+      ].join("\n"),
+      constraints: [
+        "KnowGraph is grounded/evidence-backed memory, not provisional thought.",
+        "Only promote structure backed by sources.",
+        "Preserve citations and provenance.",
+        "Do not merge KnowGraph with ThinkGraph or CodeGraph.",
+      ].join("\n"),
+      ioSchema: [
+        "Input: research findings or grounded knowledge request.",
+        "Output: grounded entities, relationships, evidence summaries, citations, and provenance.",
+      ].join("\n"),
+      memoryPolicy: [
+        "Use current input and existing KnowGraph context.",
+        "KnowGraph stores: grounded entities, relationships, docs, PDFs, research summaries, links, provenance.",
+      ].join("\n"),
     }),
   },
   {
-    id: "prompt_neo4j",
+    id: "prompt_assist",
     content: buildSeedPromptTemplate({
-      role: "You represent the graph persistence / relationship-shaping layer.",
-      goal: "Prepare graph-ready relationships and persistence notes from grounded knowledge.",
-      constraints: "Stay structured. Prefer explicit entities and relationship language. Do not invent graph facts.",
-      ioSchema: "Input: grounded knowledge. Output: graph-write oriented summary and relationship candidates.",
-      memoryPolicy: "Use upstream grounded knowledge only.",
+      role: [
+        "You are an Assist Agent, a general-purpose worker agent.",
+        "You perform tasks as directed by the orchestrator or flow.",
+      ].join("\n"),
+      goal: [
+        "Execute the assigned task using available tools and context.",
+        "Return clear, actionable results to continue the workflow.",
+      ].join("\n"),
+      constraints: [
+        "Stay within your assigned scope.",
+        "Use tools appropriately and efficiently.",
+        "Return results in the expected format.",
+      ].join("\n"),
+      ioSchema: [
+        "Input: task description and context from upstream nodes.",
+        "Output: task results for downstream nodes.",
+      ].join("\n"),
+      memoryPolicy: [
+        "Use provided context and upstream inputs.",
+        "Store intermediate results if needed for downstream agents.",
+      ].join("\n"),
     }),
   },
 ];
@@ -816,54 +1097,54 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     tools: [],
   },
   {
-    id: "template_main_chat",
-    name: "Main Chat",
-    promptTemplate: "prompt_main_chat",
-    model: "gpt-5-mini",
-    provider: "openai",
-    temperature: 0.5,
-    maxTokens: 1600,
-    tools: ["response_formatter"],
-  },
-  {
-    id: "template_kg_ingest",
-    name: "KG Ingest / ThinkGraph",
-    promptTemplate: "prompt_kg_ingest",
+    id: "template_thinkgraph_agent",
+    name: "ThinkGraph Agent",
+    promptTemplate: "prompt_thinkgraph_agent",
     model: "gpt-5-mini",
     provider: "openai",
     temperature: 0.2,
     maxTokens: 1400,
-    tools: ["entity_extractor"],
+    tools: ["thinkgraph_query", "thinkgraph_write", "entity_extractor"],
   },
   {
-    id: "template_research",
+    id: "template_codegraph_agent",
+    name: "CodeGraph Agent",
+    promptTemplate: "prompt_codegraph_agent",
+    model: "gpt-5-mini",
+    provider: "openai",
+    temperature: 0.2,
+    maxTokens: 1400,
+    tools: ["codegraph_query", "codegraph_write", "code_analyzer"],
+  },
+  {
+    id: "template_research_agent",
     name: "Research Agent",
-    promptTemplate: "prompt_research",
+    promptTemplate: "prompt_research_agent",
     model: "gpt-5-mini",
     provider: "openai",
     temperature: 0.2,
     maxTokens: 1400,
-    tools: ["web_search"],
+    tools: ["web_search", "knowledge_ingest"],
   },
   {
-    id: "template_knowgraph",
-    name: "KnowGraph",
-    promptTemplate: "prompt_knowgraph",
+    id: "template_knowgraph_agent",
+    name: "KnowGraph Agent",
+    promptTemplate: "prompt_knowgraph_agent",
     model: "gpt-5-mini",
     provider: "openai",
     temperature: 0.2,
     maxTokens: 1400,
-    tools: ["knowledge_ingest"],
+    tools: ["knowgraph_query", "knowgraph_write", "web_search", "knowledge_ingest"],
   },
   {
-    id: "template_neo4j",
-    name: "Neo4j",
-    promptTemplate: "prompt_neo4j",
+    id: "template_assist",
+    name: "Assist",
+    promptTemplate: "prompt_assist",
     model: "gpt-5-mini",
     provider: "openai",
-    temperature: 0.1,
+    temperature: 0.2,
     maxTokens: 1200,
-    tools: ["graph_write"],
+    tools: [],
   },
 ];
 
@@ -882,111 +1163,91 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeType: "magentic_one",
       parentGraphId: null,
       title: "Magentic-One",
-      subtitle: "Top-level orchestrator",
+      subtitle: "Admin orchestrator / planner",
       position: { x: -220, y: -120 },
       status: "ready",
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
-      id: "card_main_chat",
+      id: "card_thinkgraph_agent",
       kind: "agent",
-      templateId: "template_main_chat",
-      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_main_chat")?.content || "",
-      runtimeBinding: "main_chat",
+      templateId: "template_thinkgraph_agent",
+      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_thinkgraph_agent")?.content || "",
+      runtimeBinding: "thinkgraph_agent",
       runtimeType: "assistant_agent",
       parentGraphId: null,
-      title: "Main Chat",
-      subtitle: "User-facing control response",
-      position: { x: -220, y: 170 },
+      title: "ThinkGraph Agent",
+      subtitle: "Provisional / planning memory (AGE)",
+      position: { x: 180, y: -120 },
       status: "ready",
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
-      id: "card_kg_ingest",
+      id: "card_codegraph_agent",
       kind: "agent",
-      templateId: "template_kg_ingest",
-      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_kg_ingest")?.content || "",
-      runtimeBinding: "kg_ingest",
+      templateId: "template_codegraph_agent",
+      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_codegraph_agent")?.content || "",
+      runtimeBinding: "codegraph_agent",
       runtimeType: "assistant_agent",
       parentGraphId: null,
-      title: "ThinkGraph",
-      subtitle: "Extract entities, relations, and gaps",
-      position: { x: 80, y: 40 },
+      title: "CodeGraph Agent",
+      subtitle: "Structural code memory",
+      position: { x: 180, y: 40 },
       status: "ready",
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
-      id: "card_research",
+      id: "card_research_agent",
       kind: "agent",
-      templateId: "template_research",
-      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_research")?.content || "",
+      templateId: "template_research_agent",
+      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_research_agent")?.content || "",
       runtimeBinding: "research_agent",
       runtimeType: "assistant_agent",
       parentGraphId: null,
       title: "Research Agent",
-      subtitle: "Investigate gaps and sources",
-      position: { x: 380, y: 40 },
+      subtitle: "Research and analysis worker",
+      position: { x: 180, y: 200 },
       status: "ready",
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
-      id: "card_knowgraph",
+      id: "card_knowgraph_agent",
       kind: "agent",
-      templateId: "template_knowgraph",
-      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_knowgraph")?.content || "",
-      runtimeBinding: "knowgraph",
+      templateId: "template_knowgraph_agent",
+      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_knowgraph_agent")?.content || "",
+      runtimeBinding: "knowgraph_agent",
       runtimeType: "assistant_agent",
       parentGraphId: null,
-      title: "KnowGraph",
-      subtitle: "Ground and normalize evidence",
-      position: { x: 680, y: 40 },
-      status: "ready",
-      cloneConfig: { enabled: false, seeds: [] },
-    },
-    {
-      id: "card_neo4j",
-      kind: "agent",
-      templateId: "template_neo4j",
-      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_neo4j")?.content || "",
-      runtimeBinding: "neo4j",
-      runtimeType: "assistant_agent",
-      parentGraphId: null,
-      title: "Neo4j",
-      subtitle: "Graph persistence and relationship pass",
-      position: { x: 980, y: 40 },
+      title: "KnowGraph Agent",
+      subtitle: "Grounded / evidence-backed memory (Neo4j)",
+      position: { x: 180, y: 360 },
       status: "ready",
       cloneConfig: { enabled: false, seeds: [] },
     },
   ],
   edges: [
     {
-      id: "edge_magentic_main_chat",
+      id: "edge_magentic_thinkgraph",
       source: "card_magentic",
-      target: "card_main_chat",
+      target: "card_thinkgraph_agent",
       edgeType: "magentic_option",
     },
     {
-      id: "edge_main_chat_kg_ingest",
-      source: "card_main_chat",
-      target: "card_kg_ingest",
+      id: "edge_thinkgraph_codegraph",
+      source: "card_thinkgraph_agent",
+      target: "card_codegraph_agent",
       edgeType: "flow",
     },
     {
-      id: "edge_kg_ingest_research",
-      source: "card_kg_ingest",
-      target: "card_research",
+      id: "edge_codegraph_research",
+      source: "card_codegraph_agent",
+      target: "card_research_agent",
       edgeType: "flow",
     },
     {
       id: "edge_research_knowgraph",
-      source: "card_research",
-      target: "card_knowgraph",
-      edgeType: "flow",
-    },
-    {
-      id: "edge_knowgraph_neo4j",
-      source: "card_knowgraph",
-      target: "card_neo4j",
+      source: "card_research_agent",
+      target: "card_knowgraph_agent",
       edgeType: "flow",
     },
   ],
@@ -994,6 +1255,12 @@ export const INITIAL_DECK: DeckDocument = {
 
 const BUILDER_DECK_ID = INITIAL_DECK.id;
 const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
+  // New specialist graph roles (current seeded Admin model)
+  card_thinkgraph_agent: "thinkgraph_agent",
+  card_codegraph_agent: "codegraph_agent",
+  card_research_agent: "research_agent",
+  card_knowgraph_agent: "knowgraph_agent",
+  // Backward compatibility: legacy card IDs for existing saved decks
   card_main_chat: "main_chat",
   card_kg_ingest: "kg_ingest",
   card_research: "research_agent",
@@ -1011,6 +1278,9 @@ function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
   if (normalized === "research_agent") return "research_agent";
   if (normalized === "knowgraph") return "knowgraph";
   if (normalized === "neo4j") return "neo4j";
+  if (normalized === "thinkgraph_agent") return "thinkgraph_agent";
+  if (normalized === "codegraph_agent") return "codegraph_agent";
+  if (normalized === "knowgraph_agent") return "knowgraph_agent";
   return null;
 }
 
@@ -2034,6 +2304,7 @@ function mergeKnowledgeGraphs(...graphs: Array<{ nodes: KNode[]; edges: KEdge[] 
     edges: Array.from(edgeMap.values()),
   };
 }
+void mergeKnowledgeGraphs;
 
 function buildGraphVizForNVL(graph: { nodes: KNode[]; edges: KEdge[] }) {
   const entities: KnowledgeGraphNode[] = graph.nodes.map((n) => {
@@ -2103,9 +2374,15 @@ function Icon({ d, size = 22 }: { d: string; size?: number }) {
 // -------- Main page --------
 export default function AgentBuilder(): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
-  const [largeSurface, setLargeSurface] = useState<"chat" | "plan" | "canvas" | "knowledge">("chat");
+  const [largeSurface, setLargeSurface] = useState<"chat" | "plan" | "canvas" | "knowledge" | "codegraph">("chat");
   const workspaceView =
-    largeSurface === "canvas" ? "canvas" : largeSurface === "knowledge" ? "knowledge" : "home";
+    largeSurface === "canvas"
+      ? "canvas"
+      : largeSurface === "knowledge"
+        ? "knowledge"
+        : largeSurface === "codegraph"
+          ? "codegraph"
+          : "home";
   const {
     activeProject,
     assistProjects,
@@ -2149,6 +2426,8 @@ export default function AgentBuilder(): React.ReactElement {
   const [newProjectCode, setNewProjectCode] = useState("");
   const [showAdvancedProjectFields, setShowAdvancedProjectFields] = useState(false);
   const [sending, setSending] = useState(false);
+  const [knowledgeGraphKind, setKnowledgeGraphKind] = useState<KnowledgeGraphKind>("knowgraph");
+  const [graphViewContract, setGraphViewContract] = useState<GraphViewContract | null>(null);
   const lastLargeSurfaceTelemetryRef = useRef<WorkspaceTestingSurface | null>(null);
   const lastCompanionSurfaceTelemetryRef = useRef<string | null>(null);
   const chatLoopTelemetryRef = useRef<{
@@ -2517,6 +2796,7 @@ export default function AgentBuilder(): React.ReactElement {
   const activeTabs = useMemo(() => {
     if (largeSurface === "canvas") return builderTabs;
     if (largeSurface === "knowledge") return [...KNOWLEDGE_VIEW_TABS];
+    if (largeSurface === "codegraph") return [...CODEGRAPH_VIEW_TABS];
     if (largeSurface === "plan") return [...HOME_PLAN_TABS];
     return [...HOME_CHAT_TABS];
   }, [builderTabs, largeSurface]);
@@ -2742,7 +3022,7 @@ export default function AgentBuilder(): React.ReactElement {
       const preset = findDeckNodePreset(presetKey);
       if (!preset) return;
 
-      const mutation = buildQuickAddDeckMutation(deck, preset, selectedCardId);
+      const mutation = buildQuickAddDeckMutation(deck, preset, null);
       const anchorNode = selectedCardId
         ? deck.nodes.find((node) => node.id === selectedCardId) || null
         : null;
@@ -2755,40 +3035,15 @@ export default function AgentBuilder(): React.ReactElement {
       setSelectedEdgeId(null);
       setSelectedCardId(mutation.nextNode.id);
       setTab("Prompt");
-      queueBuilderCanvasFocus("card", mutation.nextNode.id);
+      // NO camera jump, NO zoom lock - let user position manually
       setDeckStatusMessage(
         mutation.nextEdge && anchorNode
           ? `Added ${preset.label} and connected it from ${safeText(anchorNode.title || anchorNode.id)}.`
           : `Added ${preset.label} to the canvas.`,
       );
     },
-    [deck, queueBuilderCanvasFocus, recordDeckWriteReason, selectedCardId],
+    [deck, recordDeckWriteReason, selectedCardId],
   );
-
-  const handleCreateAssistStarter = useCallback(() => {
-    const mutation = buildAssistStarterDeckMutation(deck, selectedCardId);
-    if (!mutation) {
-      setDeckStatusMessage("Assist starter is not available for this selection.");
-      return;
-    }
-
-    setLatestCardRun(null);
-    setLatestDeckRun(null);
-    recordDeckWriteReason("deck-assist-starter");
-    setDeck(mutation.nextDeck);
-    setPanelOpen(true);
-    setSelectedEdgeId(null);
-    setSelectedCardId(mutation.focusNodeId);
-    if (mutation.focusNodeId) {
-      setTab("Prompt");
-      queueBuilderCanvasFocus("card", mutation.focusNodeId);
-    }
-    setDeckStatusMessage(
-      `${mutation.recipe.label}: ${mutation.recipe.presetKeys
-        .map((presetKey) => findDeckNodePreset(presetKey)?.label || presetKey)
-        .join(" -> ")}`,
-    );
-  }, [deck, queueBuilderCanvasFocus, recordDeckWriteReason, selectedCardId]);
 
   const { handleSaveDeck, handleRunSelectedCard, handleRunDeck } = useBuilderDeckRuntimeActions({
     builderDev: BUILDER_DEV,
@@ -2912,6 +3167,52 @@ export default function AgentBuilder(): React.ReactElement {
     [recordDeckWriteReason, selectedCard, selectedTemplate],
   );
 
+  const handleRenameSelectedCard = useCallback(
+    (nextName: string) => {
+      if (!selectedCard) return;
+
+      setLatestCardRun(null);
+      setLatestDeckRun(null);
+      recordDeckWriteReason("card-rename");
+      setDeck((currentDeck) => ({
+        ...currentDeck,
+        version: currentDeck.version + 1,
+        nodes: currentDeck.nodes.map((node) =>
+          node.id === selectedCard.id
+            ? {
+                ...node,
+                title: nextName,
+              }
+            : node,
+        ),
+      }));
+    },
+    [recordDeckWriteReason, selectedCard],
+  );
+
+  const handleUpdateSelectedCardSubtext = useCallback(
+    (nextSubtext: string) => {
+      if (!selectedCard) return;
+
+      setLatestCardRun(null);
+      setLatestDeckRun(null);
+      recordDeckWriteReason("card-subtitle-update");
+      setDeck((currentDeck) => ({
+        ...currentDeck,
+        version: currentDeck.version + 1,
+        nodes: currentDeck.nodes.map((node) =>
+          node.id === selectedCard.id
+            ? {
+                ...node,
+                subtitle: nextSubtext.length > 0 ? nextSubtext : undefined,
+              }
+            : node,
+        ),
+      }));
+    },
+    [recordDeckWriteReason, selectedCard],
+  );
+
   const renderAgentBuilderPanel = () => {
     if (!showDeckBuilder) {
       return (
@@ -2929,11 +3230,12 @@ export default function AgentBuilder(): React.ReactElement {
       );
     }
 
-    if (selectedEdge && tab === "Edge") {
-      const sourceNode = deck.nodes.find((node) => node.id === selectedEdge.source) || null;
-      const targetNode = deck.nodes.find((node) => node.id === selectedEdge.target) || null;
-      return (
-        <div className="space-y-3">
+    // Editor content based on selection
+    const renderEditorContent = () => {
+      if (selectedEdge && tab === "Edge") {
+        const sourceNode = deck.nodes.find((node) => node.id === selectedEdge.source) || null;
+        const targetNode = deck.nodes.find((node) => node.id === selectedEdge.target) || null;
+        return (
           <DeckEdgeInspector
             edge={selectedEdge}
             onDelete={handleDeleteSelectedEdge}
@@ -2941,153 +3243,158 @@ export default function AgentBuilder(): React.ReactElement {
             targetLabel={safeText(targetNode?.title || selectedEdge.target)}
             colors={C}
           />
-        </div>
-      );
-    }
-
-    if (selectedCard && selectedCardConfig) {
-      if (tab === "Prompt" || tab === "Knowledge" || tab === "Tools" || tab === "Runtime") {
-        return (
-          <div>
-            <Suspense
-              fallback={
-                <div
-                  style={{
-                    padding: "12px 14px",
-                    borderRadius: 8,
-                    border: `1px solid ${C.border}`,
-                    background: C.bg,
-                    color: C.neutral,
-                  }}
-                >
-                  Loading card configuration…
-                </div>
-              }
-            >
-              <AgentManager
-                key={`deck-card:${selectedCard.id}:${tab}`}
-                projectId={canvasProjectId || "deck-card"}
-                agentType="agent_builder"
-                activeTab={tab}
-                selectedCardId={selectedCard.id}
-                promptTestInput={deckRunInput}
-                onChangePromptTestInput={setDeckRunInput}
-                onRunPromptTest={handleRunSelectedCard}
-                promptTestBusy={cardRunBusy}
-                promptTestDisabled={cardRunBusy || deckLoadBusy || !canvasProjectId}
-                localConfig={selectedCardConfig}
-                memoryGraphData={selectedCardMemoryGraph}
-                onSaveLocalConfig={handleSaveSelectedCardConfig}
-                onGraphRefresh={() => {
-                  // no-op
-                }}
-              />
-            </Suspense>
-          </div>
         );
       }
-    }
 
-    if (!selectedCard && !selectedEdge && tab === "Plan") {
-      return (
-        <div className="space-y-3">
-          <DeckQuickAddPanel
-            anchorCard={null}
-            onAddPreset={handleQuickAddDeckNode}
-            onCreateAssistStarter={handleCreateAssistStarter}
-            colors={C}
-          />
-          <DeckExecutionPathSummary deck={deck} executionPlan={deckExecutionPlan} colors={C} />
-          <div
-            style={{
-              padding: "12px 14px",
-              borderRadius: 8,
-              border: `1px solid ${C.border}`,
-              background: C.bg,
-            }}
-          >
+      if (selectedCard && selectedCardConfig) {
+        if (tab === "Prompt" || tab === "Knowledge" || tab === "Tools" || tab === "Runtime") {
+          return (
+            <>
+              <Suspense
+                fallback={
+                  <div
+                    style={{
+                      padding: "12px 14px",
+                      borderRadius: 8,
+                      border: `1px solid ${C.border}`,
+                      background: C.bg,
+                      color: C.neutral,
+                    }}
+                  >
+                    Loading card configuration…
+                  </div>
+                }
+              >
+                <AgentManager
+                  key={`deck-card:${selectedCard.id}:${tab}`}
+                  projectId={canvasProjectId || "deck-card"}
+                  agentType="agent_builder"
+                  activeTab={tab}
+                  selectedCardId={selectedCard.id}
+                  promptTestInput={deckRunInput}
+                  onChangePromptTestInput={setDeckRunInput}
+                  onRunPromptTest={handleRunSelectedCard}
+                  promptTestBusy={cardRunBusy}
+                  promptTestDisabled={cardRunBusy || deckLoadBusy || !canvasProjectId}
+                  localConfig={selectedCardConfig}
+                  memoryGraphData={selectedCardMemoryGraph}
+                  cardName={String(selectedCard.title || "")}
+                  cardSubtext={String(selectedCard.subtitle || "")}
+                  onChangeCardName={handleRenameSelectedCard}
+                  onChangeCardSubtext={handleUpdateSelectedCardSubtext}
+                  onSaveLocalConfig={handleSaveSelectedCardConfig}
+                  onGraphRefresh={() => {
+                    // no-op
+                  }}
+                />
+              </Suspense>
+            </>
+          );
+        }
+      }
+
+      if (tab === "Plan") {
+        return (
+          <>
+            <DeckExecutionPathSummary deck={deck} executionPlan={deckExecutionPlan} colors={C} />
             <div
-              className="text-xs"
-              style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
-            >
-              Run Input
-            </div>
-            <textarea
-              value={deckRunInput}
-              onChange={(event) => setDeckRunInput(event.target.value)}
-              rows={6}
               style={{
-                width: "100%",
-                padding: "10px 12px",
+                padding: "12px 14px",
                 borderRadius: 8,
                 border: `1px solid ${C.border}`,
-                background: "#181818",
-                color: C.text,
-                resize: "vertical",
-                fontFamily: "monospace",
-                fontSize: 12,
+                background: C.bg,
               }}
-            />
-            <div className="flex items-center gap-2" style={{ marginTop: 10 }}>
-              <button
-                onClick={handleSaveDeck}
-                disabled={deckSaveBusy || deckLoadBusy || !canvasProjectId}
+            >
+              <div
+                className="text-xs"
+                style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
+              >
+                Run Input
+              </div>
+              <textarea
+                value={deckRunInput}
+                onChange={(event) => setDeckRunInput(event.target.value)}
+                rows={6}
                 style={{
-                  padding: "8px 12px",
+                  width: "100%",
+                  padding: "10px 12px",
                   borderRadius: 8,
                   border: `1px solid ${C.border}`,
-                  background: deckSaveBusy ? C.panel : "#222222",
+                  background: "#181818",
                   color: C.text,
-                  cursor:
-                    deckSaveBusy || deckLoadBusy || !canvasProjectId ? "not-allowed" : "pointer",
+                  resize: "vertical",
+                  fontFamily: "monospace",
+                  fontSize: 12,
                 }}
-              >
-                {deckSaveBusy ? "Saving..." : "Save Deck"}
-              </button>
-              <button
-                onClick={handleRunDeck}
-                disabled={deckRunBusy || deckLoadBusy || deck.nodes.length === 0 || !canvasProjectId}
-                style={{
-                  padding: "8px 12px",
-                  borderRadius: 8,
-                  border: `1px solid ${deckRunBusy ? C.border : C.primary}`,
-                  background: deckRunBusy ? C.panel : "rgba(79,162,173,0.18)",
-                  color: C.text,
-                  cursor:
-                    deckRunBusy || deckLoadBusy || deck.nodes.length === 0 || !canvasProjectId
-                      ? "not-allowed"
-                      : "pointer",
-                }}
-              >
-                {deckRunBusy ? "Running..." : "Run Deck"}
-              </button>
+              />
+              <div className="flex items-center gap-2" style={{ marginTop: 10 }}>
+                <button
+                  onClick={handleSaveDeck}
+                  disabled={deckSaveBusy || deckLoadBusy || !canvasProjectId}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    border: `1px solid ${C.border}`,
+                    background: deckSaveBusy ? C.panel : "#222222",
+                    color: C.text,
+                    cursor:
+                      deckSaveBusy || deckLoadBusy || !canvasProjectId ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {deckSaveBusy ? "Saving..." : "Save Deck"}
+                </button>
+                <button
+                  onClick={handleRunDeck}
+                  disabled={deckRunBusy || deckLoadBusy || deck.nodes.length === 0 || !canvasProjectId}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    border: `1px solid ${deckRunBusy ? C.border : C.primary}`,
+                    background: deckRunBusy ? C.panel : "rgba(79,162,173,0.18)",
+                    color: C.text,
+                    cursor:
+                      deckRunBusy || deckLoadBusy || deck.nodes.length === 0 || !canvasProjectId
+                        ? "not-allowed"
+                        : "pointer",
+                  }}
+                >
+                  {deckRunBusy ? "Running..." : "Run Deck"}
+                </button>
+              </div>
+              {deckStatusMessage && (
+                <div className="text-xs" style={{ marginTop: 8, color: C.neutral }}>
+                  {deckStatusMessage}
+                </div>
+              )}
+              {latestDeckRun?.error && (
+                <div className="text-xs" style={{ marginTop: 8, color: C.warn }}>
+                  {latestDeckRun.error}
+                </div>
+              )}
             </div>
-            {deckStatusMessage && (
-              <div className="text-xs" style={{ marginTop: 8, color: C.neutral }}>
-                {deckStatusMessage}
-              </div>
-            )}
-            {latestDeckRun?.error && (
-              <div className="text-xs" style={{ marginTop: 8, color: C.warn }}>
-                {latestDeckRun.error}
-              </div>
-            )}
-          </div>
+          </>
+        );
+      }
+
+      return (
+        <div
+          style={{
+            padding: "16px",
+            border: `1px dashed ${C.border}`,
+            borderRadius: "8px",
+            color: C.neutral,
+            background: "#1a1a1a",
+          }}
+        >
+          Select a node or edge on the canvas to edit it. Clear the selection to return to project-level tabs.
         </div>
       );
-    }
+    };
 
+    // Left rail plus is the only add mechanism - no right panel add UI
     return (
-      <div
-        style={{
-          padding: "16px",
-          border: `1px dashed ${C.border}`,
-          borderRadius: "8px",
-          color: C.neutral,
-          background: "#1a1a1a",
-        }}
-      >
-        Select a node or edge on the canvas to edit it. Clear the selection to return to project-level tabs.
+      <div className="space-y-3">
+        {renderEditorContent()}
       </div>
     );
   };
@@ -3135,6 +3442,7 @@ export default function AgentBuilder(): React.ReactElement {
   const [graphResult, setGraphResult] = useState<any[]>([]);
   const [graphError, setGraphError] = useState<string | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
+  const [knowledgeGraphStatus, setKnowledgeGraphStatus] = useState<string>("Idle");
   const [graphResetToken, setGraphResetToken] = useState(0);
   const [expandingNodeId, setExpandingNodeId] = useState<string | null>(null);
   const [graphTypeFilter] = useState<string>("all");
@@ -3150,6 +3458,7 @@ export default function AgentBuilder(): React.ReactElement {
     nodes: [],
     relationships: [],
   });
+  const graphResultRef = useRef<any[]>([]);
   const [, setLastIngestTrace] = useState<any>(null);
   const scopeKey = activeProject || "";
   const graphCacheScope = `${scopeKey}:${graphTypeFilter}:${graphRecencyFilter}:${graphMinConfidence}`;
@@ -3169,6 +3478,7 @@ export default function AgentBuilder(): React.ReactElement {
     setKnowGraphData({ nodes: [], relationships: [] });
     setGraphError(null);
     setGraphLoading(false);
+    setKnowledgeGraphStatus("Idle");
     setExpandingNodeId(null);
     setGraphResetToken((v) => v + 1);
     clearKnowledgeWorkspaceSelection();
@@ -3177,6 +3487,10 @@ export default function AgentBuilder(): React.ReactElement {
   useEffect(() => {
     resetKnowledgePanelState();
   }, [activeProject, resetKnowledgePanelState]);
+
+  useEffect(() => {
+    graphResultRef.current = graphResult;
+  }, [graphResult]);
 
   useEffect(() => {
     if (healthCheckScheduledRef.current) return;
@@ -3506,10 +3820,9 @@ export default function AgentBuilder(): React.ReactElement {
       }
       if (activeProjectLatestRef.current !== projectId) return false;
       if (!isLatestRequestSequence(requestType, requestSeq)) return false;
-      setKnowGraphData({
-        nodes: Array.isArray(payload.data?.nodes) ? payload.data.nodes : [],
-        relationships: Array.isArray(payload.data?.relationships) ? payload.data.relationships : [],
-      });
+      const rawNodes = Array.isArray(payload.data?.nodes) ? payload.data.nodes : [];
+      const rawRels = Array.isArray(payload.data?.relationships) ? payload.data.relationships : [];
+      setKnowGraphData({ nodes: rawNodes, relationships: rawRels });
       setGraphError((prev) => (prev && prev.includes("/api/knowgraph/graph") ? null : prev));
       return true;
     } catch (err: any) {
@@ -3607,6 +3920,24 @@ export default function AgentBuilder(): React.ReactElement {
 
         const nextNodes = Array.isArray(payload.data?.nodes) ? payload.data.nodes : [];
         const nextRelationships = Array.isArray(payload.data?.relationships) ? payload.data.relationships : [];
+        const currentNodeIds = new Set(
+          (Array.isArray(knowGraphData.nodes) ? knowGraphData.nodes : [])
+            .map((entry: any) => String(entry?.id ?? "").trim())
+            .filter(Boolean),
+        );
+        const currentRelationshipIds = new Set(
+          (Array.isArray(knowGraphData.relationships) ? knowGraphData.relationships : [])
+            .map((entry: any) => String(entry?.id ?? "").trim())
+            .filter(Boolean),
+        );
+        const addedNodeCount = nextNodes.reduce((count: number, entry: any) => {
+          const id = String(entry?.id ?? "").trim();
+          return id && !currentNodeIds.has(id) ? count + 1 : count;
+        }, 0);
+        const addedRelationshipCount = nextRelationships.reduce((count: number, entry: any) => {
+          const id = String(entry?.id ?? "").trim();
+          return id && !currentRelationshipIds.has(id) ? count + 1 : count;
+        }, 0);
         setKnowGraphData((prev) => {
           const nodeMap = new Map<string, any>();
           const relationshipMap = new Map<string, any>();
@@ -3623,6 +3954,17 @@ export default function AgentBuilder(): React.ReactElement {
             relationships: Array.from(relationshipMap.values()),
           };
         });
+        if (addedNodeCount === 0 && addedRelationshipCount === 0) {
+          setKnowledgeGraphStatus(
+            `No additional graph neighbors found for "${safeText(entity.label || entity.id)}".`,
+          );
+        } else {
+          setKnowledgeGraphStatus(
+            `Expanded "${safeText(entity.label || entity.id)}": +${addedNodeCount} node${
+              addedNodeCount === 1 ? "" : "s"
+            }, +${addedRelationshipCount} edge${addedRelationshipCount === 1 ? "" : "s"}.`,
+          );
+        }
         setGraphError((prev) => (prev && prev.includes("/api/knowgraph/expand") ? null : prev));
       } catch (err: any) {
         if (
@@ -3645,7 +3987,7 @@ export default function AgentBuilder(): React.ReactElement {
         }
       }
     },
-    [activeProject],
+    [activeProject, knowGraphData.nodes, knowGraphData.relationships],
   );
 
   useEffect(() => {
@@ -3671,6 +4013,7 @@ export default function AgentBuilder(): React.ReactElement {
     const cacheKey = graphCacheKey;
     const requestType = "kg-subgraph-load";
     const requestSeq = nextRequestSequence(requestType);
+    setKnowledgeGraphStatus("Refreshing knowledge graph...");
     setGraphResetToken((v) => v + 1);
     clearKnowledgeWorkspaceSelection();
     const cached = readCachedGraphPayload(cacheKey);
@@ -3688,6 +4031,7 @@ export default function AgentBuilder(): React.ReactElement {
     if (!shouldRefresh) {
       setGraphLoading(false);
       setGraphError(null);
+      setKnowledgeGraphStatus("Using cached knowledge graph.");
       return;
     }
     kgLoadAbortRef.current?.abort();
@@ -3719,14 +4063,22 @@ export default function AgentBuilder(): React.ReactElement {
       }
       if (!knowHealthOk) {
         setKnowGraphData({ nodes: [], relationships: [] });
+        setKnowledgeGraphStatus("KnowGraph health check failed.");
         return;
       }
-      await loadKnowGraphData({
+      const loaded = await loadKnowGraphData({
         bypassCache: opts?.force,
         signal: controller.signal,
         requestType,
         requestSeq,
       });
+      if (
+        !controller.signal.aborted &&
+        isLatestRequestSequence(requestType, requestSeq) &&
+        activeProjectLatestRef.current === projectId
+      ) {
+        setKnowledgeGraphStatus(loaded ? "Knowledge graph refresh succeeded." : "Knowledge graph refresh failed.");
+      }
     })().finally(() => {
       if (
         !controller.signal.aborted &&
@@ -3807,6 +4159,7 @@ export default function AgentBuilder(): React.ReactElement {
       if (!trimmed || !projectId) return;
       const requestType = "kg-expand";
       const requestSeq = nextRequestSequence(requestType);
+      const beforeCount = graphResultRef.current.length;
       kgExpandAbortRef.current?.abort();
       const controller = new AbortController();
       kgExpandAbortRef.current = controller;
@@ -3821,6 +4174,13 @@ export default function AgentBuilder(): React.ReactElement {
           requestType,
           requestSeq,
         });
+        const afterCount = graphResultRef.current.length;
+        const delta = Math.max(0, afterCount - beforeCount);
+        setKnowledgeGraphStatus(
+          delta === 0
+            ? `No additional graph neighbors found for "${safeText(trimmed)}".`
+            : `Expanded "${safeText(trimmed)}": +${delta} graph row${delta === 1 ? "" : "s"}.`,
+        );
       } finally {
         if (activeProjectLatestRef.current === projectId && isLatestRequestSequence(requestType, requestSeq)) {
           setExpandingNodeId(null);
@@ -3841,7 +4201,7 @@ export default function AgentBuilder(): React.ReactElement {
     const isKnowledgeSurfaceOpen =
       largeSurface === "knowledge" ||
       ((largeSurface === "chat" || largeSurface === "plan") && tab === "Knowledge");
-    if (!isKnowledgeSurfaceOpen || !activeProject || !panelOpen) {
+    if (!isKnowledgeSurfaceOpen || !activeProject) {
       kgAutoLoadKeyRef.current = "";
       return;
     }
@@ -3849,7 +4209,7 @@ export default function AgentBuilder(): React.ReactElement {
     if (kgAutoLoadKeyRef.current === autoLoadKey) return; // StrictMode/effect-cascade guard.
     kgAutoLoadKeyRef.current = autoLoadKey;
     loadProjectSubgraph();
-  }, [activeProject, graphCacheScope, largeSurface, loadProjectSubgraph, panelOpen, tab]);
+  }, [activeProject, graphCacheScope, largeSurface, loadProjectSubgraph, tab]);
 
   useEffect(() => {
     const refresh = () => {
@@ -4050,6 +4410,10 @@ export default function AgentBuilder(): React.ReactElement {
           onEvent: (event) => {
             if (controller.signal.aborted || activeProjectLatestRef.current !== requestProjectId) return;
             setLiveDeckEvents((current) => [...current, event]);
+            const contract = extractCodeGraphViewContractFromEvent(event, requestProjectId);
+            if (contract) {
+              applyCodeGraphViewContract(contract);
+            }
           },
         });
         if (controller.signal.aborted || activeProjectLatestRef.current !== requestProjectId) {
@@ -4060,6 +4424,10 @@ export default function AgentBuilder(): React.ReactElement {
           throw new Error(safeText(failure.message || failure.error || "deck_run_failed"));
         }
         const run = data.run as DeckRun;
+        const runDerivedCodeGraphContract = extractCodeGraphViewContractFromRun(run, requestProjectId);
+        if (runDerivedCodeGraphContract) {
+          applyCodeGraphViewContract(runDerivedCodeGraphContract);
+        }
         const assistantText = resolveDeckRunFinalText(run) || "No response returned.";
         setLatestDeckRun(run);
         setLiveDeckEvents([]);
@@ -4147,15 +4515,14 @@ export default function AgentBuilder(): React.ReactElement {
     [graphResult],
   );
 
-  const knowGraphViz = useMemo(
-    () => normalizeKnowGraphResponseToGraph(knowGraphData),
-    [knowGraphData],
-  );
+  const knowGraphViz = useMemo(() => {
+    const result = normalizeKnowGraphResponseToGraph(knowGraphData);
+    return result;
+  }, [knowGraphData]);
 
-  const graphViz = useMemo(
-    () => mergeKnowledgeGraphs(thinkGraphViz, knowGraphViz),
-    [thinkGraphViz, knowGraphViz],
-  );
+  const graphViz = useMemo(() => {
+    return knowledgeGraphKind === "thinkgraph" ? thinkGraphViz : knowGraphViz;
+  }, [knowledgeGraphKind, knowGraphViz, thinkGraphViz]);
 
   const graphVizFiltered = useMemo(() => {
     const sinceTs = buildRecencySinceTs();
@@ -4224,9 +4591,47 @@ export default function AgentBuilder(): React.ReactElement {
     return { nodes: keptNodes, edges: keptEdges };
   }, [graphViz, graphTypeFilter, graphMinConfidence, buildRecencySinceTs]);
 
-  const graphVizForNVL = useMemo(
-    () => buildGraphVizForNVL(graphVizFiltered),
-    [graphVizFiltered],
+  const graphVizForNVL = useMemo(() => {
+    const result = buildGraphVizForNVL(graphVizFiltered);
+    return result;
+  }, [graphVizFiltered]);
+  const thinkGraphViewData = useMemo<GraphViewData>(
+    () => ({
+      kind: "thinkgraph",
+      nodes: thinkGraphViz.nodes.map((node) => ({
+        id: String(node.id),
+        label: safeText(node.label || node.id),
+        type: safeText(node.type || "entity"),
+        confidence: typeof node.confidence === "number" ? node.confidence : undefined,
+      })),
+      edges: thinkGraphViz.edges.map((edge, index) => ({
+        id: safeText(edge.id) || `think:${index}:${safeText(edge.a)}:${safeText(edge.b)}`,
+        source: String(edge.source || edge.a),
+        target: String(edge.target || edge.b),
+        type: safeText(edge.type || "related_to"),
+        weight: typeof edge.weight === "number" ? edge.weight : undefined,
+      })),
+    }),
+    [thinkGraphViz.edges, thinkGraphViz.nodes],
+  );
+  const knowGraphViewData = useMemo<GraphViewData>(
+    () => ({
+      kind: "knowgraph",
+      nodes: knowGraphViz.nodes.map((node) => ({
+        id: String(node.id),
+        label: safeText(node.label || node.id),
+        type: safeText(node.type || "entity"),
+        confidence: typeof node.confidence === "number" ? node.confidence : undefined,
+      })),
+      edges: knowGraphViz.edges.map((edge, index) => ({
+        id: safeText(edge.id) || `know:${index}:${safeText(edge.a)}:${safeText(edge.b)}`,
+        source: String(edge.source || edge.a),
+        target: String(edge.target || edge.b),
+        type: safeText(edge.type || "related_to"),
+        weight: typeof edge.weight === "number" ? edge.weight : undefined,
+      })),
+    }),
+    [knowGraphViz.edges, knowGraphViz.nodes],
   );
   const knowledgeEntityById = useMemo(
     () => new Map(graphVizForNVL.entities.map((entity) => [entity.id, entity] as const)),
@@ -4260,6 +4665,16 @@ export default function AgentBuilder(): React.ReactElement {
     if (knowledgeRelationshipById.has(selectedKnowledgeRelationshipId)) return;
     setSelectedKnowledgeRelationshipId(null);
   }, [knowledgeRelationshipById, selectedKnowledgeRelationshipId]);
+  void handleSelectKnowledgeEntity;
+  void handleSelectKnowledgeRelationship;
+  void queueBuilderCanvasFocus;
+  void graphError;
+  void graphLoading;
+  void knowledgeGraphStatus;
+  void graphResetToken;
+  void expandingNodeId;
+  void expandKnowGraphFromEntity;
+  void expandGraphFromNode;
 
   const handleCreateProject = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -4395,7 +4810,7 @@ export default function AgentBuilder(): React.ReactElement {
         <BuilderChat
           messages={messages}
           onSend={handleSend}
-          projectId={projectId}
+          knowledgeProjectId={projectId}
           disabled={sending || deckRunBusy || cardRunBusy || deckLoadBusy || !canvasProjectId}
           colors={C}
         />
@@ -4436,6 +4851,7 @@ export default function AgentBuilder(): React.ReactElement {
             onSelectEdge={handleSelectEdge}
             onDeleteSelectedEdge={handleDeleteSelectedEdge}
             focusRequest={isCompanionPreview ? null : builderCanvasFocusRequest}
+            miniMode={isCompanionPreview}
           />
         </div>
       </div>
@@ -4599,30 +5015,6 @@ export default function AgentBuilder(): React.ReactElement {
       style={getSurfaceShellStyle("knowledge", minHeight <= 320, surfaceRole)}
     >
       <div className="h-full flex flex-col" style={{ position: "relative" }}>
-        {graphError && (
-          <div
-            className="text-xs"
-            style={{
-              position: "absolute",
-              right: 12,
-              bottom: 12,
-              zIndex: 3,
-              color: C.warn,
-              border: `1px solid rgba(217,132,88,0.35)`,
-              background: "rgba(217,132,88,0.08)",
-              borderRadius: 8,
-              padding: "6px 8px",
-              maxWidth: surfaceRole === "companion" ? 220 : 320,
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-            data-no-surface-promote="true"
-            title={safeText(graphError)}
-          >
-            {safeText(graphError)}
-          </div>
-        )}
         <div style={{ display: "flex", justifyContent: "center", flex: 1, minHeight }}>
           <Suspense
             fallback={
@@ -4639,26 +5031,50 @@ export default function AgentBuilder(): React.ReactElement {
                   color: C.neutral,
                 }}
               >
-                Loading knowledge graph…
+                Loading knowledge graph...
               </div>
             }
           >
-            <KnowledgeGraphNVL
-              key={`kg-nvl-${graphResetToken}`}
-              entities={graphVizForNVL.entities}
-              relationships={graphVizForNVL.relationships}
-              loading={graphLoading}
-              expandingEntityId={expandingNodeId}
-              onThinkGraphExpand={expandGraphFromNode}
-              onKnowGraphExpand={expandKnowGraphFromEntity}
-              onRelationshipInspect={setSelectedEdgeEvidence}
-              selectionEnabled={surfaceRole === "large"}
-              selectedEntityId={surfaceRole === "large" ? selectedKnowledgeEntityId : null}
-              selectedRelationshipId={surfaceRole === "large" ? selectedKnowledgeRelationshipId : null}
-              onSelectEntity={surfaceRole === "large" ? handleSelectKnowledgeEntity : undefined}
-              onSelectRelationship={
-                surfaceRole === "large" ? handleSelectKnowledgeRelationship : undefined
+            <KnowledgeGraphFramework
+              kind={knowledgeGraphKind}
+              onKindChange={(nextKind) => {
+                setKnowledgeGraphKind(nextKind);
+                setGraphViewContract((prev) => ({
+                  graphKind: nextKind,
+                  projectId:
+                    nextKind === "codegraph"
+                      ? CODEBASE_MEMORY_PROJECT_NAME
+                      : activeProject ?? null,
+                  nodeLabelAllowlist: undefined,
+                  edgeTypeAllowlist: undefined,
+                  showLabels: prev?.showLabels ?? true,
+                  maxNodes: undefined,
+                  focusNodeIds: undefined,
+                  focusPaths: undefined,
+                  focusSymbols: undefined,
+                  cameraMode: prev?.cameraMode ?? "overview",
+                  animationMode: prev?.animationMode ?? "calm",
+                  narrativeIntent: prev?.narrativeIntent ?? null,
+                }));
+              }}
+              contract={
+                graphViewContract ?? {
+                  graphKind: knowledgeGraphKind,
+                  projectId:
+                    knowledgeGraphKind === "codegraph"
+                      ? CODEBASE_MEMORY_PROJECT_NAME
+                      : activeProject ?? null,
+                  showLabels: true,
+                  cameraMode: "overview",
+                  animationMode: "calm",
+                  narrativeIntent: null,
+                }
               }
+              onContractChange={(nextContract) => setGraphViewContract(nextContract)}
+              thinkGraphData={thinkGraphViewData}
+              knowGraphData={knowGraphViewData}
+              codeGraphProjectName={CODEBASE_MEMORY_PROJECT_NAME}
+              minHeight={minHeight}
             />
           </Suspense>
         </div>
@@ -4807,6 +5223,28 @@ export default function AgentBuilder(): React.ReactElement {
   const showKnowledgeWorkspace = useCallback(() => {
     setHoveredCompanionSurface(null);
     setLargeSurface("knowledge");
+    setKnowledgeGraphKind("knowgraph");
+    setTab("Chat");
+  }, []);
+
+  const showCodeGraphWorkspace = useCallback(() => {
+    setHoveredCompanionSurface(null);
+    setLargeSurface("knowledge");
+    setKnowledgeGraphKind("codegraph");
+    setGraphViewContract((prev) => ({
+      graphKind: "codegraph",
+      projectId: CODEBASE_MEMORY_PROJECT_NAME,
+      nodeLabelAllowlist: undefined,
+      edgeTypeAllowlist: undefined,
+      showLabels: prev?.showLabels ?? true,
+      maxNodes: undefined,
+      focusNodeIds: undefined,
+      focusPaths: undefined,
+      focusSymbols: undefined,
+      cameraMode: prev?.cameraMode ?? "overview",
+      animationMode: prev?.animationMode ?? "calm",
+      narrativeIntent: prev?.narrativeIntent ?? null,
+    }));
     setTab("Chat");
   }, []);
 
@@ -4815,6 +5253,28 @@ export default function AgentBuilder(): React.ReactElement {
     setLargeSurface("plan");
     setTab("Chat");
   }, []);
+
+  const applyCodeGraphViewContract = useCallback((contract: GraphViewContract | null) => {
+    if (!contract) return;
+    const setter = (window as any).__LIQUIDAITY_SET_CODEGRAPH_VIEW_CONTRACT__;
+    if (typeof setter === "function") {
+      setter(contract);
+      return;
+    }
+    setKnowledgeGraphKind(contract.graphKind || "codegraph");
+    setGraphViewContract(contract);
+  }, []);
+
+  useEffect(() => {
+    (window as any).__LIQUIDAITY_SET_CODEGRAPH_VIEW_CONTRACT__ = (contract: GraphViewContract | null) => {
+      if (!contract) return;
+      setKnowledgeGraphKind(contract.graphKind || "codegraph");
+      setGraphViewContract(contract);
+    };
+    return () => {
+      delete (window as any).__LIQUIDAITY_SET_CODEGRAPH_VIEW_CONTRACT__;
+    };
+  }, [applyCodeGraphViewContract]);
 
   const promoteSurface = useCallback(
     (target: "chat" | "plan" | "canvas" | "knowledge") => {
@@ -4909,7 +5369,13 @@ export default function AgentBuilder(): React.ReactElement {
             title="Agents"
             aria-label="Agents"
             data-testid="rail-plus-button"
-            onClick={showCanvasWorkspace}
+            onClick={() => {
+              if (largeSurface === "canvas") {
+                handleQuickAddDeckNode("assist");
+              } else {
+                showCanvasWorkspace();
+              }
+            }}
             className="p-2 rounded"
             style={{ color: workspaceView === "canvas" ? C.primary : C.text }}
           >
@@ -4924,6 +5390,21 @@ export default function AgentBuilder(): React.ReactElement {
             style={{ color: workspaceView === "knowledge" ? C.primary : C.text }}
           >
             <Icon d="M12 1v3M12 20v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M1 12h3M20 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" />
+          </button>
+          <button
+            title="CodeGraph"
+            aria-label="CodeGraph"
+            data-testid="rail-codegraph-button"
+            onClick={showCodeGraphWorkspace}
+            className="p-2 rounded"
+            style={{
+              color:
+                workspaceView === "knowledge" && knowledgeGraphKind === "codegraph"
+                  ? C.primary
+                  : C.text,
+            }}
+          >
+            <Icon d="M4 6h6v6H4zM14 6h6v6h-6zM9 12v3h6v3M4 15h3v3H4z" />
           </button>
           <div className="flex-1" />
           <button
@@ -5017,7 +5498,7 @@ export default function AgentBuilder(): React.ReactElement {
                 className="flex-1 overflow-hidden px-1 pr-3 pb-6 text-sm min-h-0"
                 style={{ color: C.neutral }}
               >
-                {workspaceView === "canvas" && (
+                {workspaceView === "canvas" && largeSurface === "canvas" && (
                   <div data-testid="companion-surface-editor" style={{ height: "100%", overflow: "auto" }}>
                     {renderAgentBuilderPanel()}
                   </div>
@@ -5060,6 +5541,18 @@ export default function AgentBuilder(): React.ReactElement {
                   renderCanvasSurface(true, "companion", () => promoteSurface("canvas"))}
                 {workspaceView === "knowledge" &&
                   !hasKnowledgeWorkspaceSelection &&
+                  tab === "Plan" &&
+                  renderPlanSurface("companion", () => promoteSurface("plan"))}
+                {workspaceView === "codegraph" &&
+                  tab === "Chat" &&
+                  renderChatSurface(activeProject, true, "companion", () => promoteSurface("chat"))}
+                {workspaceView === "codegraph" &&
+                  tab === "Canvas" &&
+                  renderCanvasSurface(true, "companion", () => promoteSurface("canvas"))}
+                {workspaceView === "codegraph" &&
+                  tab === "Knowledge" &&
+                  renderKnowledgeGraphSurface(320, "companion", () => promoteSurface("knowledge"))}
+                {workspaceView === "codegraph" &&
                   tab === "Plan" &&
                   renderPlanSurface("companion", () => promoteSurface("plan"))}
               </div>
