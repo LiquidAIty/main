@@ -147,6 +147,9 @@ const CODEGRAPH_VIEW_TABS = ["Chat", "Canvas", "Knowledge", "Plan"] as const;
 const BUILDER_PROJECT_TABS = ["Plan"] as const;
 const BUILDER_NODE_TABS = ["Prompt", "Knowledge", "Tools", "Runtime"] as const;
 const BUILDER_EDGE_TABS = ["Edge"] as const;
+const AGENTS_CHAT_MIN_WIDTH = 360;
+const AGENTS_CANVAS_MIN_WIDTH = 520;
+const AGENTS_EDITOR_MIN_WIDTH = 360;
 type WorkspaceTestingEventDraft = Omit<WorkspaceTestingEventInput, "projectId"> & {
   projectId?: string | null;
 };
@@ -2509,15 +2512,10 @@ function BuilderRailMoonOrb({ phase01 }: BuilderRailMoonOrbProps): React.ReactEl
 // -------- Main page --------
 export default function AgentBuilder(): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
-  const [largeSurface, setLargeSurface] = useState<"chat" | "plan" | "canvas" | "knowledge" | "codegraph">("chat");
-  const workspaceView =
-    largeSurface === "canvas"
-      ? "canvas"
-      : largeSurface === "knowledge"
-        ? "knowledge"
-        : largeSurface === "codegraph"
-          ? "codegraph"
-          : "home";
+  const largeSurface = "chat" as const;
+  const [workspaceView, setWorkspaceView] = useState<
+    "chat" | "plan" | "canvas" | "knowledge" | "codegraph"
+  >("canvas");
   const {
     activeProject,
     assistProjects,
@@ -2531,6 +2529,8 @@ export default function AgentBuilder(): React.ReactElement {
   });
   const [panelOpen, setPanelOpen] = useState(true);
   const [panelWidth, setPanelWidth] = useState(540);
+  const [chatPanelWidth, setChatPanelWidth] = useState(420);
+  const workspaceShellRef = useRef<HTMLDivElement | null>(null);
   const [moonPhase01, setMoonPhase01] = useState(() => synodicPhaseFromDate(new Date()));
   const canvasProjectId = cleanOptionalText(activeProject) ?? "";
   const [deck, setDeckState] = useState<DeckDocument>(() => hydrateDeckDocument(INITIAL_DECK));
@@ -2554,8 +2554,6 @@ export default function AgentBuilder(): React.ReactElement {
   const [deckUsingDisplayFallback, setDeckUsingDisplayFallback] = useState(false);
 
   const [tab, setTab] = useState<string>("Canvas");
-  const [hoveredCompanionSurface, setHoveredCompanionSurface] =
-    useState<null | "chat" | "plan" | "canvas" | "knowledge">(null);
   const [openDrawer, setOpenDrawer] = useState<null | "navigation">(null);
   const [showCreateProjectForm, setShowCreateProjectForm] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
@@ -2666,7 +2664,7 @@ export default function AgentBuilder(): React.ReactElement {
       lastCompanionSurfaceTelemetryRef.current = null;
       return;
     }
-    const companionSurface = normalizeWorkspaceSurface(tab);
+    const companionSurface = normalizeWorkspaceSurface(workspaceView);
     if (!companionSurface) {
       lastCompanionSurfaceTelemetryRef.current = null;
       return;
@@ -2680,7 +2678,7 @@ export default function AgentBuilder(): React.ReactElement {
       metadata: { workspaceView },
     });
     lastCompanionSurfaceTelemetryRef.current = nextKey;
-  }, [emitWorkspaceTestingEvent, tab, workspaceView]);
+  }, [emitWorkspaceTestingEvent, workspaceView]);
 
   useEffect(() => {
     const pending = pendingPanelOpenTelemetryRef.current;
@@ -2935,12 +2933,9 @@ export default function AgentBuilder(): React.ReactElement {
     return [...BUILDER_PROJECT_TABS];
   }, [selectedCard, selectedEdge]);
   const activeTabs = useMemo(() => {
-    if (largeSurface === "canvas") return builderTabs;
-    if (largeSurface === "knowledge") return [...KNOWLEDGE_VIEW_TABS];
-    if (largeSurface === "codegraph") return [...CODEGRAPH_VIEW_TABS];
-    if (largeSurface === "plan") return [...HOME_PLAN_TABS];
-    return [...HOME_CHAT_TABS];
-  }, [builderTabs, largeSurface]);
+    if (workspaceView === "canvas") return builderTabs;
+    return [];
+  }, [builderTabs, workspaceView]);
   const selectedCardConfig = useMemo<AgentManagerLocalConfig | null>(() => {
     if (!effectiveAgent || !selectedCard) return null;
     return {
@@ -4340,8 +4335,7 @@ export default function AgentBuilder(): React.ReactElement {
   // Auto-load project subgraph when Knowledge tab opens or project changes
   useEffect(() => {
     const isKnowledgeSurfaceOpen =
-      largeSurface === "knowledge" ||
-      ((largeSurface === "chat" || largeSurface === "plan") && tab === "Knowledge");
+      workspaceView === "knowledge" || workspaceView === "codegraph";
     if (!isKnowledgeSurfaceOpen || !activeProject) {
       kgAutoLoadKeyRef.current = "";
       return;
@@ -4350,7 +4344,7 @@ export default function AgentBuilder(): React.ReactElement {
     if (kgAutoLoadKeyRef.current === autoLoadKey) return; // StrictMode/effect-cascade guard.
     kgAutoLoadKeyRef.current = autoLoadKey;
     loadProjectSubgraph();
-  }, [activeProject, graphCacheScope, largeSurface, loadProjectSubgraph, tab]);
+  }, [activeProject, graphCacheScope, loadProjectSubgraph, workspaceView]);
 
   useEffect(() => {
     const refresh = () => {
@@ -4860,84 +4854,69 @@ export default function AgentBuilder(): React.ReactElement {
 
   const getSurfaceShellStyle = useCallback(
     (
-      surfaceKey: "chat" | "plan" | "canvas" | "knowledge",
       compact: boolean,
-      surfaceRole: "large" | "companion",
       extra?: React.CSSProperties,
     ): React.CSSProperties => {
-      const base: React.CSSProperties = {
+      return {
         height: "100%",
         minHeight: compact ? 320 : undefined,
         ...extra,
       };
-      if (surfaceRole !== "companion") {
-        return base;
-      }
-
-      const hovered = hoveredCompanionSurface === surfaceKey;
-      return {
-        ...base,
-        cursor: "pointer",
-        boxShadow: hovered ? "inset 0 0 0 1px rgba(255,255,255,0.05)" : "none",
-        transition: "box-shadow 120ms ease",
-      };
     },
-    [hoveredCompanionSurface],
+    [],
   );
 
-  const shouldIgnoreCompanionPromotion = useCallback((target: EventTarget | null): boolean => {
-    if (!(target instanceof Element)) return false;
-    return Boolean(
-      target.closest(
-        [
-          "button",
-          "input",
-          "textarea",
-          "select",
-          "option",
-          "label",
-          "a[href]",
-          "summary",
-          ".react-flow__controls",
-          '[role="button"]',
-          '[role="link"]',
-          '[contenteditable="true"]',
-          "[data-no-surface-promote='true']",
-        ].join(", "),
-      ),
-    );
-  }, []);
-
-  const getCompanionSurfaceHandlers = useCallback(
-    (
-      surfaceKey: "chat" | "plan" | "canvas" | "knowledge",
-      surfaceRole: "large" | "companion",
-      onPromote?: () => void,
-    ) =>
-      surfaceRole === "companion" && onPromote
-        ? {
-            onClick: (event: React.MouseEvent<HTMLDivElement>) => {
-              if (shouldIgnoreCompanionPromotion(event.target)) return;
-              onPromote();
-            },
-            onMouseEnter: () => setHoveredCompanionSurface(surfaceKey),
-            onMouseLeave: () =>
-              setHoveredCompanionSurface((current) => (current === surfaceKey ? null : current)),
-          }
-        : {},
-    [shouldIgnoreCompanionPromotion],
+  const clampAgentsChatWidth = useCallback(
+    (nextWidth: number, editorWidth: number) => {
+      const shellWidth = workspaceShellRef.current?.clientWidth ?? 0;
+      if (shellWidth <= 0) return Math.max(AGENTS_CHAT_MIN_WIDTH, nextWidth);
+      const maxWidth = Math.max(
+        AGENTS_CHAT_MIN_WIDTH,
+        shellWidth - editorWidth - AGENTS_CANVAS_MIN_WIDTH
+      );
+      return clamp(nextWidth, AGENTS_CHAT_MIN_WIDTH, maxWidth);
+    },
+    []
   );
+
+  const clampAgentsEditorWidth = useCallback(
+    (nextWidth: number, leftWidth: number) => {
+      const shellWidth = workspaceShellRef.current?.clientWidth ?? 0;
+      if (shellWidth <= 0) return Math.max(AGENTS_EDITOR_MIN_WIDTH, nextWidth);
+      const maxWidth = Math.max(
+        AGENTS_EDITOR_MIN_WIDTH,
+        shellWidth - leftWidth - AGENTS_CANVAS_MIN_WIDTH
+      );
+      return clamp(nextWidth, AGENTS_EDITOR_MIN_WIDTH, maxWidth);
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (workspaceView !== "canvas") return;
+    const syncAgentsWidths = () => {
+      setPanelWidth((current) => clampAgentsEditorWidth(current, chatPanelWidth));
+      setChatPanelWidth((current) => clampAgentsChatWidth(current, panelWidth));
+    };
+    syncAgentsWidths();
+    window.addEventListener("resize", syncAgentsWidths);
+    return () => window.removeEventListener("resize", syncAgentsWidths);
+  }, [
+    chatPanelWidth,
+    clampAgentsChatWidth,
+    clampAgentsEditorWidth,
+    panelWidth,
+    workspaceView,
+  ]);
 
   const renderChatSurface = (
     projectId: string,
     compact = false,
     surfaceRole: "large" | "companion" = compact ? "companion" : "large",
-    onPromote?: () => void,
   ) => (
     <div
       data-testid={`${surfaceRole}-surface-chat`}
-      {...getCompanionSurfaceHandlers("chat", surfaceRole, onPromote)}
-      style={getSurfaceShellStyle("chat", compact, surfaceRole)}
+      style={getSurfaceShellStyle(compact)}
     >
       <div
         style={{
@@ -4958,14 +4937,11 @@ export default function AgentBuilder(): React.ReactElement {
   const renderCanvasSurface = (
     compact = false,
     surfaceRole: "large" | "companion" = compact ? "companion" : "large",
-    onPromote?: () => void,
   ) => {
-    const isCompanionPreview = surfaceRole === "companion";
     return (
       <div
         data-testid={`${surfaceRole}-surface-canvas`}
-        {...getCompanionSurfaceHandlers("canvas", surfaceRole, onPromote)}
-        style={getSurfaceShellStyle("canvas", compact, surfaceRole)}
+        style={getSurfaceShellStyle(compact)}
       >
         <div
           style={{
@@ -4976,19 +4952,17 @@ export default function AgentBuilder(): React.ReactElement {
             document={deck}
             setDocument={setDeck}
             onPersistGraphMutation={recordDeckWriteReason}
-            executionPlan={isCompanionPreview ? null : deckExecutionPlan}
-            activeCardIds={isCompanionPreview ? [] : runtimeVisualState.activeCardIds}
-            activeEdgeIds={isCompanionPreview ? [] : runtimeVisualState.activeEdgeIds}
-            swarmProgressByCardId={
-              isCompanionPreview ? {} : runtimeVisualState.swarmProgressByCardId
-            }
-            selectedCardId={isCompanionPreview ? null : selectedCardId}
-            selectedEdgeId={isCompanionPreview ? null : selectedEdgeId}
+            executionPlan={deckExecutionPlan}
+            activeCardIds={runtimeVisualState.activeCardIds}
+            activeEdgeIds={runtimeVisualState.activeEdgeIds}
+            swarmProgressByCardId={runtimeVisualState.swarmProgressByCardId}
+            selectedCardId={selectedCardId}
+            selectedEdgeId={selectedEdgeId}
             onSelectCard={handleSelectCard}
             onSelectEdge={handleSelectEdge}
             onDeleteSelectedEdge={handleDeleteSelectedEdge}
-            focusRequest={isCompanionPreview ? null : builderCanvasFocusRequest}
-            miniMode={isCompanionPreview}
+            focusRequest={builderCanvasFocusRequest}
+            miniMode={false}
           />
         </div>
       </div>
@@ -5144,12 +5118,10 @@ export default function AgentBuilder(): React.ReactElement {
   const renderKnowledgeGraphSurface = (
     minHeight = 280,
     surfaceRole: "large" | "companion" = minHeight > 320 ? "large" : "companion",
-    onPromote?: () => void,
   ) => (
     <div
       data-testid={`${surfaceRole}-surface-knowledge`}
-      {...getCompanionSurfaceHandlers("knowledge", surfaceRole, onPromote)}
-      style={getSurfaceShellStyle("knowledge", minHeight <= 320, surfaceRole)}
+      style={getSurfaceShellStyle(minHeight <= 320)}
     >
       <div className="h-full flex flex-col" style={{ position: "relative" }}>
         <div style={{ display: "flex", justifyContent: "center", flex: 1, minHeight }}>
@@ -5221,12 +5193,10 @@ export default function AgentBuilder(): React.ReactElement {
 
   const renderPlanSurface = (
     surfaceRole: "large" | "companion" = "large",
-    onPromote?: () => void,
   ) => (
     <div
       data-testid={`${surfaceRole}-surface-plan`}
-      {...getCompanionSurfaceHandlers("plan", surfaceRole, onPromote)}
-      style={getSurfaceShellStyle("plan", surfaceRole === "companion", surfaceRole, {
+      style={getSurfaceShellStyle(surfaceRole === "companion", {
         overflow: surfaceRole === "companion" ? "hidden" : "auto",
       })}
     >
@@ -5347,26 +5317,20 @@ export default function AgentBuilder(): React.ReactElement {
   );
 
   const showHomeChat = useCallback(() => {
-    setHoveredCompanionSurface(null);
-    setLargeSurface("chat");
-    setTab("Canvas");
+    setWorkspaceView("chat");
   }, []);
 
   const showCanvasWorkspace = useCallback(() => {
-    setHoveredCompanionSurface(null);
-    setLargeSurface("canvas");
+    setWorkspaceView("canvas");
   }, []);
 
   const showKnowledgeWorkspace = useCallback(() => {
-    setHoveredCompanionSurface(null);
-    setLargeSurface("knowledge");
+    setWorkspaceView("knowledge");
     setKnowledgeGraphKind("knowgraph");
-    setTab("Chat");
   }, []);
 
   const showCodeGraphWorkspace = useCallback(() => {
-    setHoveredCompanionSurface(null);
-    setLargeSurface("knowledge");
+    setWorkspaceView("codegraph");
     setKnowledgeGraphKind("codegraph");
     setGraphViewContract((prev) => ({
       graphKind: "codegraph",
@@ -5382,13 +5346,10 @@ export default function AgentBuilder(): React.ReactElement {
       animationMode: prev?.animationMode ?? "calm",
       narrativeIntent: prev?.narrativeIntent ?? null,
     }));
-    setTab("Chat");
   }, []);
 
   const showPlanWorkspace = useCallback(() => {
-    setHoveredCompanionSurface(null);
-    setLargeSurface("plan");
-    setTab("Chat");
+    setWorkspaceView("plan");
   }, []);
 
   const applyCodeGraphViewContract = useCallback((contract: GraphViewContract | null) => {
@@ -5413,45 +5374,11 @@ export default function AgentBuilder(): React.ReactElement {
     };
   }, [applyCodeGraphViewContract]);
 
-  const promoteSurface = useCallback(
-    (target: "chat" | "plan" | "canvas" | "knowledge") => {
-      const previousLargeSurface = largeSurface;
-      setHoveredCompanionSurface(null);
-      if (target === "canvas") {
-        setLargeSurface("canvas");
-        return;
-      }
-      if (target === "knowledge") {
-        setLargeSurface("knowledge");
-        setTab(previousLargeSurface === "plan" ? "Plan" : "Chat");
-        return;
-      }
-      if (target === "plan") {
-        setLargeSurface("plan");
-        setTab(previousLargeSurface === "knowledge" ? "Knowledge" : "Chat");
-        return;
-      }
-      setLargeSurface("chat");
-      if (previousLargeSurface === "knowledge") {
-        setTab("Knowledge");
-      } else if (previousLargeSurface === "plan") {
-        setTab("Plan");
-      } else {
-        setTab("Canvas");
-      }
-    },
-    [largeSurface],
-  );
-
   const handleCompanionTabClick = useCallback(
     (nextTab: string) => {
-      setHoveredCompanionSurface(null);
-      if (workspaceView === "knowledge") {
-        clearKnowledgeWorkspaceSelection();
-      }
       setTab(nextTab);
     },
-    [clearKnowledgeWorkspaceSelection, workspaceView],
+    [],
   );
 
   return (
@@ -5497,7 +5424,7 @@ export default function AgentBuilder(): React.ReactElement {
             data-testid="rail-home-button"
             onClick={showHomeChat}
             className="p-2 rounded"
-            style={{ color: workspaceView === "home" ? C.primary : C.text }}
+            style={{ color: workspaceView === "chat" ? C.primary : C.text }}
           >
             <Icon d="M4 7l8-4 8 4v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
           </button>
@@ -5506,7 +5433,7 @@ export default function AgentBuilder(): React.ReactElement {
             aria-label="Agents"
             data-testid="rail-plus-button"
             onClick={() => {
-              if (largeSurface === "canvas") {
+              if (workspaceView === "canvas") {
                 handleQuickAddDeckNode("assist");
               } else {
                 showCanvasWorkspace();
@@ -5534,10 +5461,7 @@ export default function AgentBuilder(): React.ReactElement {
             onClick={showCodeGraphWorkspace}
             className="p-2 rounded"
             style={{
-              color:
-                workspaceView === "knowledge" && knowledgeGraphKind === "codegraph"
-                  ? C.primary
-                  : C.text,
+              color: workspaceView === "codegraph" ? C.primary : C.text,
             }}
           >
             <Icon d="M4 6h6v6H4zM14 6h6v6h-6zM9 12v3h6v3M4 15h3v3H4z" />
@@ -5549,7 +5473,7 @@ export default function AgentBuilder(): React.ReactElement {
             data-testid="rail-orange-button"
             onClick={showPlanWorkspace}
             className="p-2 rounded mb-1"
-            style={{ color: largeSurface === "plan" ? "#ffb86b" : C.text }}
+            style={{ color: workspaceView === "plan" ? "#ffb86b" : C.text }}
           >
             <Icon d="M3 12l2-2 4 4L21 4" />
           </button>
@@ -5568,91 +5492,185 @@ export default function AgentBuilder(): React.ReactElement {
           </button>
         </aside>
 
-        {/* CENTER content */}
-        <div
-          data-testid="workspace-large-region"
-          data-surface={largeSurface}
-          className="h-full flex-1 min-w-0 relative"
-        >
-          {!panelOpen && (
-            <button
-              type="button"
-              aria-label="Expand right dock"
-              data-testid="dock-expand-button"
-              onClick={() => setPanelOpen(true)}
-              className="absolute z-10 flex items-center justify-center outline-none transition-[filter,background] duration-200 ease-out hover:brightness-[1.04] group"
-              style={{
-                top: "50%",
-                right: 0,
-                transform: "translateY(-50%)",
-                width: 11,
-                height: 72,
-                padding: 0,
-                border: "none",
-                borderTopLeftRadius: 7,
-                borderBottomLeftRadius: 7,
-                borderTopRightRadius: 0,
-                borderBottomRightRadius: 0,
-                cursor: "col-resize",
-                background:
-                  "linear-gradient(90deg, rgba(20,22,26,0.02) 0%, rgba(48,52,58,0.55) 40%, rgba(38,42,48,0.88) 100%)",
-                boxShadow:
-                  "inset 1px 0 0 rgba(79,162,173,0.22), inset 0 1px 0 rgba(255,255,255,0.06), -6px 0 18px rgba(0,0,0,0.12)",
-              }}
-            >
-              <span className="pointer-events-none flex flex-col items-center gap-[5px] opacity-[0.42] group-hover:opacity-[0.62] transition-opacity duration-200">
-                <span
-                  className="rounded-full"
-                  style={{
-                    width: 2,
-                    height: 14,
-                    background: "linear-gradient(180deg, rgba(255,255,255,0.5), rgba(255,255,255,0.12))",
-                    boxShadow: "0 0 6px rgba(79,162,173,0.25)",
-                  }}
-                />
-                <span
-                  className="rounded-full"
-                  style={{
-                    width: 2,
-                    height: 14,
-                    background: "linear-gradient(180deg, rgba(255,255,255,0.35), rgba(255,255,255,0.1))",
-                  }}
-                />
-                <span
-                  className="rounded-full"
-                  style={{
-                    width: 2,
-                    height: 14,
-                    background: "linear-gradient(180deg, rgba(255,255,255,0.22), rgba(255,255,255,0.08))",
-                  }}
-                />
-              </span>
-            </button>
-          )}
-          {largeSurface === "canvas"
-            ? renderCanvasSurface(false, "large")
-            : largeSurface === "knowledge"
-              ? renderKnowledgeGraphSurface(420, "large")
-              : largeSurface === "plan"
-                ? renderPlanSurface("large")
-                : renderChatSurface(activeProject, false, "large")}
-        </div>
+        <div ref={workspaceShellRef} className="flex flex-1 overflow-hidden min-h-0">
+          <div
+            data-testid="workspace-large-region"
+            data-surface={largeSurface}
+            className="h-full min-w-0 relative"
+            style={{
+              width: workspaceView === "canvas" ? chatPanelWidth : undefined,
+              minWidth: workspaceView === "canvas" ? AGENTS_CHAT_MIN_WIDTH : 0,
+              flex: workspaceView === "canvas" ? "0 0 auto" : "1 1 0%",
+            }}
+          >
+            {!panelOpen && workspaceView !== "canvas" ? (
+              <button
+                type="button"
+                aria-label="Expand right dock"
+                data-testid="dock-expand-button"
+                onClick={() => setPanelOpen(true)}
+                className="absolute z-10 flex items-center justify-center outline-none transition-[filter,background] duration-200 ease-out hover:brightness-[1.04] group"
+                style={{
+                  top: "50%",
+                  right: 0,
+                  transform: "translateY(-50%)",
+                  width: 11,
+                  height: 72,
+                  padding: 0,
+                  border: "none",
+                  borderTopLeftRadius: 7,
+                  borderBottomLeftRadius: 7,
+                  borderTopRightRadius: 0,
+                  borderBottomRightRadius: 0,
+                  cursor: "col-resize",
+                  background:
+                    "linear-gradient(90deg, rgba(20,22,26,0.02) 0%, rgba(48,52,58,0.55) 40%, rgba(38,42,48,0.88) 100%)",
+                  boxShadow:
+                    "inset 1px 0 0 rgba(79,162,173,0.22), inset 0 1px 0 rgba(255,255,255,0.06), -6px 0 18px rgba(0,0,0,0.12)",
+                }}
+              >
+                <span className="pointer-events-none flex flex-col items-center gap-[5px] opacity-[0.42] group-hover:opacity-[0.62] transition-opacity duration-200">
+                  <span
+                    className="rounded-full"
+                    style={{
+                      width: 2,
+                      height: 14,
+                      background: "linear-gradient(180deg, rgba(255,255,255,0.5), rgba(255,255,255,0.12))",
+                      boxShadow: "0 0 6px rgba(79,162,173,0.25)",
+                    }}
+                  />
+                  <span
+                    className="rounded-full"
+                    style={{
+                      width: 2,
+                      height: 14,
+                      background: "linear-gradient(180deg, rgba(255,255,255,0.35), rgba(255,255,255,0.1))",
+                    }}
+                  />
+                  <span
+                    className="rounded-full"
+                    style={{
+                      width: 2,
+                      height: 14,
+                      background: "linear-gradient(180deg, rgba(255,255,255,0.22), rgba(255,255,255,0.08))",
+                    }}
+                  />
+                </span>
+              </button>
+            ) : null}
+            {renderChatSurface(activeProject, false, "large")}
+          </div>
 
-        {/* RIGHT panel */}
-        <aside
-          data-testid="workspace-companion-region"
-          data-workspace={workspaceView}
-          data-open={panelOpen ? "true" : "false"}
-          className="h-full relative transition-[width] duration-200 ease-out"
-          style={{
-            width: panelOpen ? panelWidth : 0,
-            borderLeft: panelOpen ? `1px solid ${C.border}` : "none",
-            background: C.panel,
-            flexShrink: 0,
-            overflow: "hidden",
-          }}
-        >
-          <div className="px-4 pt-3 h-full flex flex-col overflow-hidden min-h-0 relative">
+          {workspaceView === "canvas" ? (
+            <div
+              onMouseDown={(e) => {
+                const sx = e.clientX;
+                const sw = chatPanelWidth;
+                const currentEditorWidth = panelOpen ? panelWidth : AGENTS_EDITOR_MIN_WIDTH;
+                const mv = (ev: MouseEvent) => {
+                  const d = ev.clientX - sx;
+                  setChatPanelWidth(clampAgentsChatWidth(sw + d, currentEditorWidth));
+                };
+                const up = () => {
+                  window.removeEventListener("mousemove", mv);
+                  window.removeEventListener("mouseup", up);
+                };
+                window.addEventListener("mousemove", mv);
+                window.addEventListener("mouseup", up);
+              }}
+              style={{
+                width: 6,
+                height: "100%",
+                cursor: "col-resize",
+                flexShrink: 0,
+                background:
+                  "linear-gradient(90deg, rgba(255,255,255,0.00), rgba(255,255,255,0.04))",
+              }}
+            />
+          ) : null}
+
+          {workspaceView === "canvas" ? (
+            <div
+              data-testid="workspace-canvas-region"
+              className="h-full flex-1 min-w-0 relative"
+              style={{ minWidth: AGENTS_CANVAS_MIN_WIDTH }}
+            >
+              {!panelOpen && (
+                <button
+                  type="button"
+                  aria-label="Expand right dock"
+                  data-testid="dock-expand-button"
+                  onClick={() => setPanelOpen(true)}
+                  className="absolute z-10 flex items-center justify-center outline-none transition-[filter,background] duration-200 ease-out hover:brightness-[1.04] group"
+                  style={{
+                    top: "50%",
+                    right: 0,
+                    transform: "translateY(-50%)",
+                    width: 11,
+                    height: 72,
+                    padding: 0,
+                    border: "none",
+                    borderTopLeftRadius: 7,
+                    borderBottomLeftRadius: 7,
+                    borderTopRightRadius: 0,
+                    borderBottomRightRadius: 0,
+                    cursor: "col-resize",
+                    background:
+                      "linear-gradient(90deg, rgba(20,22,26,0.02) 0%, rgba(48,52,58,0.55) 40%, rgba(38,42,48,0.88) 100%)",
+                    boxShadow:
+                      "inset 1px 0 0 rgba(79,162,173,0.22), inset 0 1px 0 rgba(255,255,255,0.06), -6px 0 18px rgba(0,0,0,0.12)",
+                  }}
+                >
+                  <span className="pointer-events-none flex flex-col items-center gap-[5px] opacity-[0.42] group-hover:opacity-[0.62] transition-opacity duration-200">
+                    <span
+                      className="rounded-full"
+                      style={{
+                        width: 2,
+                        height: 14,
+                        background: "linear-gradient(180deg, rgba(255,255,255,0.5), rgba(255,255,255,0.12))",
+                        boxShadow: "0 0 6px rgba(79,162,173,0.25)",
+                      }}
+                    />
+                    <span
+                      className="rounded-full"
+                      style={{
+                        width: 2,
+                        height: 14,
+                        background: "linear-gradient(180deg, rgba(255,255,255,0.35), rgba(255,255,255,0.1))",
+                      }}
+                    />
+                    <span
+                      className="rounded-full"
+                      style={{
+                        width: 2,
+                        height: 14,
+                        background: "linear-gradient(180deg, rgba(255,255,255,0.22), rgba(255,255,255,0.08))",
+                      }}
+                    />
+                  </span>
+                </button>
+              )}
+              {renderCanvasSurface(false, "large")}
+            </div>
+          ) : null}
+
+          {/* RIGHT panel */}
+          <aside
+            data-testid="workspace-companion-region"
+            data-workspace={workspaceView}
+            data-open={panelOpen ? "true" : "false"}
+            className="h-full relative transition-[width] duration-200 ease-out"
+            style={{
+              width: panelOpen ? panelWidth : 0,
+              minWidth:
+                panelOpen && workspaceView === "canvas" ? AGENTS_EDITOR_MIN_WIDTH : 0,
+              borderLeft: panelOpen ? `1px solid ${C.border}` : "none",
+              background: C.panel,
+              flexShrink: 0,
+              overflow: "hidden",
+            }}
+          >
+          <div className="h-full flex flex-col overflow-hidden min-h-0 relative">
             <div
               className="pointer-events-none absolute left-0 top-0 bottom-0 w-px z-[1]"
               style={{
@@ -5661,7 +5679,56 @@ export default function AgentBuilder(): React.ReactElement {
               }}
               aria-hidden
             />
-            <div className="mb-3 flex items-stretch gap-2 min-h-[40px] relative z-[2]">
+            {workspaceView !== "canvas" ? (
+              <button
+                type="button"
+                aria-label="Collapse right dock"
+                data-testid="dock-collapse-button"
+                onClick={() => setPanelOpen(false)}
+                className="absolute left-0 top-3 z-[2] flex items-center justify-center outline-none transition-[background,box-shadow,width] duration-200 ease-out hover:bg-[rgba(255,255,255,0.04)] group shrink-0"
+                style={{
+                  width: 12,
+                  minHeight: 40,
+                  paddingLeft: 2,
+                  border: "none",
+                  borderRight: "1px solid rgba(255,255,255,0.05)",
+                  borderTopRightRadius: 6,
+                  borderBottomRightRadius: 6,
+                  cursor: "col-resize",
+                  background: "linear-gradient(90deg, rgba(0,0,0,0.06), rgba(255,255,255,0.02))",
+                  boxShadow: "inset -1px 0 0 rgba(79,162,173,0.12)",
+                }}
+              >
+                <span className="pointer-events-none flex flex-col items-center gap-[4px] opacity-[0.38] group-hover:opacity-[0.58] transition-opacity duration-200">
+                  <span
+                    className="rounded-full"
+                    style={{
+                      width: 2,
+                      height: 11,
+                      background: "linear-gradient(180deg, rgba(255,255,255,0.45), rgba(255,255,255,0.1))",
+                    }}
+                  />
+                  <span
+                    className="rounded-full"
+                    style={{
+                      width: 2,
+                      height: 11,
+                      background: "linear-gradient(180deg, rgba(255,255,255,0.3), rgba(255,255,255,0.08))",
+                    }}
+                  />
+                  <span
+                    className="rounded-full"
+                    style={{
+                      width: 2,
+                      height: 11,
+                      background: "linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06))",
+                    }}
+                  />
+                </span>
+              </button>
+            ) : null}
+            {workspaceView === "canvas" && activeTabs.length > 0 ? (
+              <div className="px-4 pt-3 flex items-stretch gap-2 min-h-[40px] relative z-[2]">
               <button
                 type="button"
                 aria-label="Collapse right dock"
@@ -5709,106 +5776,62 @@ export default function AgentBuilder(): React.ReactElement {
                   />
                 </span>
               </button>
-              <div className="flex min-w-0 flex-1 gap-2.5 overflow-x-auto pb-0.5 items-center pl-0.5">
-                {activeTabs.map((t) => {
-                  const selected = tab === t;
-                  return (
-                  <button
-                    key={t}
-                    data-testid={`companion-tab-${t.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
-                    aria-pressed={selected}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      handleCompanionTabClick(t);
-                    }}
-                    className="whitespace-nowrap transition-[color,background,box-shadow,border-color,transform] duration-200 ease-out"
-                    style={{
-                      padding: selected ? "8px 14px" : "7px 12px",
-                      fontSize: selected ? 12.75 : 12.25,
-                      lineHeight: 1.15,
-                      fontWeight: selected ? 600 : 500,
-                      letterSpacing: selected ? "-0.01em" : "0",
-                      color: selected ? "rgba(255,255,255,0.96)" : "rgba(224,222,213,0.52)",
-                      background: selected
-                        ? "linear-gradient(180deg, rgba(79,162,173,0.16) 0%, rgba(79,162,173,0.07) 100%)"
-                        : "rgba(255,255,255,0.018)",
-                      border: selected
-                        ? "1px solid rgba(79,162,173,0.34)"
-                        : "1px solid rgba(255,255,255,0.035)",
-                      borderRadius: selected ? 13 : 11,
-                      boxShadow: selected
-                        ? "inset 0 1px 0 rgba(255,255,255,0.1), 0 0 0 1px rgba(0,0,0,0.12), 0 6px 20px rgba(79,162,173,0.08), 0 1px 2px rgba(0,0,0,0.2)"
-                        : "inset 0 1px 0 rgba(255,255,255,0.03)",
-                      transform: selected ? "translateY(-0.5px)" : "none",
-                    }}
-                  >
-                    {t}
-                  </button>
-                  );
-                })}
+                <div className="flex min-w-0 flex-1 gap-2.5 overflow-x-auto pb-0.5 items-center">
+                  {activeTabs.map((t) => {
+                    const selected = tab === t;
+                    return (
+                      <button
+                        key={t}
+                        data-testid={`companion-tab-${t.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+                        aria-pressed={selected}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleCompanionTabClick(t);
+                        }}
+                        className="whitespace-nowrap transition-[color,background,box-shadow,border-color,transform] duration-200 ease-out"
+                        style={{
+                          padding: selected ? "8px 14px" : "7px 12px",
+                          fontSize: selected ? 12.75 : 12.25,
+                          lineHeight: 1.15,
+                          fontWeight: selected ? 600 : 500,
+                          letterSpacing: selected ? "-0.01em" : "0",
+                          color: selected ? "rgba(255,255,255,0.96)" : "rgba(224,222,213,0.52)",
+                          background: selected
+                            ? "linear-gradient(180deg, rgba(79,162,173,0.16) 0%, rgba(79,162,173,0.07) 100%)"
+                            : "rgba(255,255,255,0.018)",
+                          border: selected
+                            ? "1px solid rgba(79,162,173,0.34)"
+                            : "1px solid rgba(255,255,255,0.035)",
+                          borderRadius: selected ? 13 : 11,
+                          boxShadow: selected
+                            ? "inset 0 1px 0 rgba(255,255,255,0.1), 0 0 0 1px rgba(0,0,0,0.12), 0 6px 20px rgba(79,162,173,0.08), 0 1px 2px rgba(0,0,0,0.2)"
+                            : "inset 0 1px 0 rgba(255,255,255,0.03)",
+                          transform: selected ? "translateY(-0.5px)" : "none",
+                        }}
+                      >
+                        {t}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            ) : null}
               <div
-                className="flex-1 overflow-hidden px-1 pr-3 pb-6 text-sm min-h-0"
+                className="flex-1 overflow-hidden text-sm min-h-0"
                 style={{ color: C.neutral }}
               >
-                {workspaceView === "canvas" && largeSurface === "canvas" && (
+                {workspaceView === "canvas" && (
                   <div data-testid="companion-surface-editor" style={{ height: "100%", overflow: "auto" }}>
                     {renderAgentBuilderPanel()}
                   </div>
                 )}
                 {workspaceView === "knowledge" && hasKnowledgeWorkspaceSelection && renderKnowledgeWorkspacePanel()}
-
-                {workspaceView !== "knowledge" &&
-                  largeSurface === "chat" &&
-                  tab === "Canvas" &&
-                  renderCanvasSurface(true, "companion", () => promoteSurface("canvas"))}
-                {workspaceView !== "knowledge" &&
-                  largeSurface === "chat" &&
-                  tab === "Knowledge" &&
-                  renderKnowledgeGraphSurface(320, "companion", () => promoteSurface("knowledge"))}
-                {workspaceView !== "knowledge" &&
-                  largeSurface === "chat" &&
-                  tab === "Plan" &&
-                  renderPlanSurface("companion", () => promoteSurface("plan"))}
-
-                {workspaceView !== "knowledge" &&
-                  largeSurface === "plan" &&
-                  tab === "Chat" &&
-                  renderChatSurface(activeProject, true, "companion", () => promoteSurface("chat"))}
-                {workspaceView !== "knowledge" &&
-                  largeSurface === "plan" &&
-                  tab === "Canvas" &&
-                  renderCanvasSurface(true, "companion", () => promoteSurface("canvas"))}
-                {workspaceView !== "knowledge" &&
-                  largeSurface === "plan" &&
-                  tab === "Knowledge" &&
-                  renderKnowledgeGraphSurface(320, "companion", () => promoteSurface("knowledge"))}
-
                 {workspaceView === "knowledge" &&
                   !hasKnowledgeWorkspaceSelection &&
-                  tab === "Chat" &&
-                  renderChatSurface(activeProject, true, "companion", () => promoteSurface("chat"))}
-                {workspaceView === "knowledge" &&
-                  !hasKnowledgeWorkspaceSelection &&
-                  tab === "Canvas" &&
-                  renderCanvasSurface(true, "companion", () => promoteSurface("canvas"))}
-                {workspaceView === "knowledge" &&
-                  !hasKnowledgeWorkspaceSelection &&
-                  tab === "Plan" &&
-                  renderPlanSurface("companion", () => promoteSurface("plan"))}
+                  renderKnowledgeGraphSurface(420, "companion")}
                 {workspaceView === "codegraph" &&
-                  tab === "Chat" &&
-                  renderChatSurface(activeProject, true, "companion", () => promoteSurface("chat"))}
-                {workspaceView === "codegraph" &&
-                  tab === "Canvas" &&
-                  renderCanvasSurface(true, "companion", () => promoteSurface("canvas"))}
-                {workspaceView === "codegraph" &&
-                  tab === "Knowledge" &&
-                  renderKnowledgeGraphSurface(320, "companion", () => promoteSurface("knowledge"))}
-                {workspaceView === "codegraph" &&
-                  tab === "Plan" &&
-                  renderPlanSurface("companion", () => promoteSurface("plan"))}
+                  renderKnowledgeGraphSurface(420, "companion")}
+                {workspaceView === "plan" && renderPlanSurface("companion")}
               </div>
 
               {/* resize handle */}
@@ -5817,11 +5840,17 @@ export default function AgentBuilder(): React.ReactElement {
                   if (!panelOpen) return;
                   const sx = e.clientX;
                   const sw = panelWidth;
-                  const minW = 360;
+                  const minW =
+                    workspaceView === "canvas" ? AGENTS_EDITOR_MIN_WIDTH : 360;
                   const maxW = 920;
                   const mv = (ev: MouseEvent) => {
                     const d = sx - ev.clientX;
-                    setPanelWidth(clamp(sw + d, minW, maxW));
+                    const next = clamp(sw + d, minW, maxW);
+                    setPanelWidth(
+                      workspaceView === "canvas"
+                        ? clampAgentsEditorWidth(next, chatPanelWidth)
+                        : next
+                    );
                   };
                   const up = () => {
                     window.removeEventListener("mousemove", mv);
@@ -5843,7 +5872,8 @@ export default function AgentBuilder(): React.ReactElement {
                 }}
               />
           </div>
-        </aside>
+          </aside>
+        </div>
       </div>
 
       {/* drawers */}
