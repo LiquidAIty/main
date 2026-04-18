@@ -158,7 +158,7 @@ const BUILDER_NODE_TABS = ["Prompt", "Knowledge", "Tools", "Runtime"] as const;
 const AGENTS_CHAT_MIN_WIDTH = 360;
 const AGENTS_CANVAS_MIN_WIDTH = 520;
 const WORKSPACE_COMPANION_MIN_WIDTH = 360;
-const AGENT_EDITOR_DEFAULT_WIDTH = 520;
+const AGENT_EDITOR_DEFAULT_WIDTH = 500;
 type WorkspaceTestingEventDraft = Omit<WorkspaceTestingEventInput, "projectId"> & {
   projectId?: string | null;
 };
@@ -2536,6 +2536,7 @@ export default function AgentBuilder(): React.ReactElement {
   });
   const [objectDrawerOpen, setObjectDrawerOpen] = useState(false);
   const [chatPanelWidth, setChatPanelWidth] = useState(420);
+  const [chatResizeHandleActive, setChatResizeHandleActive] = useState(false);
   const workspaceShellRef = useRef<HTMLDivElement | null>(null);
   const [moonPhase01, setMoonPhase01] = useState(() => synodicPhaseFromDate(new Date()));
   const canvasProjectId = cleanOptionalText(activeProject) ?? "";
@@ -5434,7 +5435,12 @@ export default function AgentBuilder(): React.ReactElement {
           {workspaceView !== "chat" ? (
             <div
               data-testid="workspace-chat-resize-handle"
+              aria-label="Resize chat panel"
+              title="Drag to resize chat"
+              onMouseEnter={() => setChatResizeHandleActive(true)}
+              onMouseLeave={() => setChatResizeHandleActive(false)}
               onMouseDown={(e) => {
+                setChatResizeHandleActive(true);
                 const sx = e.clientX;
                 const sw = chatPanelWidth;
                 const reservedWidth =
@@ -5444,6 +5450,7 @@ export default function AgentBuilder(): React.ReactElement {
                   setChatPanelWidth(clampAgentsChatWidth(sw + d, reservedWidth));
                 };
                 const up = () => {
+                  setChatResizeHandleActive(false);
                   window.removeEventListener("mousemove", mv);
                   window.removeEventListener("mouseup", up);
                 };
@@ -5455,10 +5462,14 @@ export default function AgentBuilder(): React.ReactElement {
                 height: "100%",
                 cursor: "col-resize",
                 flexShrink: 0,
-                borderLeft: "1px solid rgba(79,162,173,0.18)",
-                borderRight: "1px solid rgba(255,255,255,0.06)",
+                borderLeft: `1px solid ${chatResizeHandleActive ? "rgba(79,162,173,0.34)" : "rgba(79,162,173,0.18)"}`,
+                borderRight: `1px solid ${chatResizeHandleActive ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.06)"}`,
+                boxShadow: chatResizeHandleActive
+                  ? "inset 0 0 0 1px rgba(79,162,173,0.16), 0 0 10px rgba(79,162,173,0.12)"
+                  : "none",
                 background:
-                  "linear-gradient(90deg, rgba(79,162,173,0.03), rgba(255,255,255,0.07), rgba(79,162,173,0.03))",
+                  "linear-gradient(90deg, rgba(79,162,173,0.05), rgba(255,255,255,0.09), rgba(79,162,173,0.05))",
+                transition: "border-color 120ms ease, box-shadow 120ms ease, background 120ms ease",
               }}
             />
           ) : null}

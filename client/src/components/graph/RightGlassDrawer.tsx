@@ -36,6 +36,7 @@ export default function RightGlassDrawer({
   zIndex = 30,
 }: RightGlassDrawerProps): React.ReactElement {
   const [width, setWidth] = useState(defaultWidth);
+  const [edgeAffordanceActive, setEdgeAffordanceActive] = useState(false);
   const widthRef = useRef(defaultWidth);
   const dragStartRef = useRef<{ x: number; width: number } | null>(null);
   const clampedWidth = useMemo(() => Math.max(minWidth, Math.min(maxWidth, width)), [maxWidth, minWidth, width]);
@@ -71,6 +72,7 @@ export default function RightGlassDrawer({
   };
 
   const startResize = (clientX: number) => {
+    setEdgeAffordanceActive(true);
     dragStartRef.current = { x: clientX, width: widthRef.current };
     const onMove = (event: MouseEvent) => {
       const drag = dragStartRef.current;
@@ -80,6 +82,7 @@ export default function RightGlassDrawer({
       setWidth(next);
     };
     const onUp = () => {
+      setEdgeAffordanceActive(false);
       const next = widthRef.current;
       persistWidth(next);
       dragStartRef.current = null;
@@ -140,6 +143,10 @@ export default function RightGlassDrawer({
         })}
       >
         <div
+          aria-label="Resize drawer"
+          title="Drag to resize drawer"
+          onMouseEnter={() => setEdgeAffordanceActive(true)}
+          onMouseLeave={() => setEdgeAffordanceActive(false)}
           onMouseDown={(event) => {
             event.preventDefault();
             startResize(event.clientX);
@@ -152,7 +159,14 @@ export default function RightGlassDrawer({
             width: 8,
             cursor: "col-resize",
             zIndex: 3,
-            background: "linear-gradient(90deg, rgba(79,162,173,0.16), rgba(79,162,173,0.01))",
+            borderRight: `1px solid ${edgeAffordanceActive ? "rgba(79,162,173,0.34)" : "rgba(79,162,173,0.18)"}`,
+            boxShadow: edgeAffordanceActive
+              ? "inset 0 0 0 1px rgba(79,162,173,0.14), 0 0 8px rgba(79,162,173,0.1)"
+              : "none",
+            background: edgeAffordanceActive
+              ? "linear-gradient(90deg, rgba(79,162,173,0.22), rgba(79,162,173,0.03))"
+              : "linear-gradient(90deg, rgba(79,162,173,0.14), rgba(79,162,173,0.01))",
+            transition: "border-color 120ms ease, box-shadow 120ms ease, background 120ms ease",
           }}
         />
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
