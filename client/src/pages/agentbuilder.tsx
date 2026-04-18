@@ -158,6 +158,7 @@ const BUILDER_NODE_TABS = ["Prompt", "Knowledge", "Tools", "Runtime"] as const;
 const AGENTS_CHAT_MIN_WIDTH = 360;
 const AGENTS_CANVAS_MIN_WIDTH = 520;
 const WORKSPACE_COMPANION_MIN_WIDTH = 360;
+const AGENT_EDITOR_DEFAULT_WIDTH = 520;
 type WorkspaceTestingEventDraft = Omit<WorkspaceTestingEventInput, "projectId"> & {
   projectId?: string | null;
 };
@@ -4748,7 +4749,7 @@ export default function AgentBuilder(): React.ReactElement {
     return null;
   }, [selectedCard, workspaceView]);
   const isObjectDrawerVisible = objectDrawerOpen && objectDrawerRole !== null;
-  const objectDrawerDefaultWidth = 520;
+  const objectDrawerDefaultWidth = AGENT_EDITOR_DEFAULT_WIDTH;
   const objectDrawerStorageKey = "liquidaity.drawer.object.agent.width";
 
   const closeObjectDrawer = useCallback(() => {
@@ -5432,6 +5433,7 @@ export default function AgentBuilder(): React.ReactElement {
 
           {workspaceView !== "chat" ? (
             <div
+              data-testid="workspace-chat-resize-handle"
               onMouseDown={(e) => {
                 const sx = e.clientX;
                 const sw = chatPanelWidth;
@@ -5449,12 +5451,14 @@ export default function AgentBuilder(): React.ReactElement {
                 window.addEventListener("mouseup", up);
               }}
               style={{
-                width: 8,
+                width: 10,
                 height: "100%",
                 cursor: "col-resize",
                 flexShrink: 0,
+                borderLeft: "1px solid rgba(79,162,173,0.18)",
+                borderRight: "1px solid rgba(255,255,255,0.06)",
                 background:
-                  "linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.08), rgba(255,255,255,0.02))",
+                  "linear-gradient(90deg, rgba(79,162,173,0.03), rgba(255,255,255,0.07), rgba(79,162,173,0.03))",
               }}
             />
           ) : null}

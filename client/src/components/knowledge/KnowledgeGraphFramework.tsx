@@ -37,6 +37,9 @@ const DEFAULT_FILTERS: Record<
     maxNodes: 50000,
   },
 };
+const KNOWLEDGE_CONTROLS_DEFAULT_WIDTH = 360;
+const KNOWLEDGE_CONTROLS_MIN_WIDTH = 320;
+const KNOWLEDGE_CONTROLS_MAX_WIDTH = 520;
 
 function resolveModeDefaultAllowlist(
   available: string[],
@@ -304,10 +307,9 @@ export default function KnowledgeGraphFramework({
         isOpen={drawerOpen}
         title="Controls"
         onClose={() => setDrawerOpen(false)}
-        onOpen={() => setDrawerOpen(true)}
-        defaultWidth={360}
-        minWidth={320}
-        maxWidth={520}
+        defaultWidth={KNOWLEDGE_CONTROLS_DEFAULT_WIDTH}
+        minWidth={KNOWLEDGE_CONTROLS_MIN_WIDTH}
+        maxWidth={KNOWLEDGE_CONTROLS_MAX_WIDTH}
         storageKey="liquidaity.drawer.knowledge-controls.width"
         dataTestId="knowledge-utility-drawer"
         top={48}
