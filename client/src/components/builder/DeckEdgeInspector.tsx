@@ -1,4 +1,9 @@
 import type { DeckEdge } from "../../types/agentgraph";
+import {
+  GRAPH_THEME,
+  graphDrawerButtonStyle,
+  graphDrawerSectionStyle,
+} from "../graph/graphVisualTokens";
 
 type DeckEdgeInspectorColors = {
   bg: string;
@@ -26,16 +31,14 @@ export default function DeckEdgeInspector({
     edge.edgeType === "magentic_option" ? "callable route" : "flow";
   return (
     <div
-      style={{
+      style={graphDrawerSectionStyle({
         padding: "12px 14px",
         borderRadius: 8,
-        border: `1px solid ${colors.border}`,
-        background: colors.bg,
-      }}
+      })}
     >
       <div
         className="text-xs"
-        style={{ color: colors.text, fontWeight: 700, marginBottom: 12 }}
+        style={{ color: GRAPH_THEME.drawer.inputText, fontWeight: 700, marginBottom: 12 }}
       >
         Connection
       </div>
@@ -45,9 +48,10 @@ export default function DeckEdgeInspector({
           style={{
             padding: "10px 12px",
             borderRadius: 8,
-            border: `1px solid ${colors.border}`,
-            background: colors.panel,
-            color: colors.neutral,
+            ...graphDrawerSectionStyle({
+              borderRadius: 8,
+            }),
+            color: GRAPH_THEME.drawer.inputMuted,
             lineHeight: 1.5,
           }}
         >
@@ -56,16 +60,12 @@ export default function DeckEdgeInspector({
         </div>
         <button
           onClick={onDelete}
-          style={{
+          style={graphDrawerButtonStyle({
             width: "100%",
-            padding: "10px 12px",
-            borderRadius: 8,
             border: `1px solid ${colors.warn}`,
             background: "rgba(217,132,88,0.12)",
-            color: colors.text,
-            cursor: "pointer",
-            fontWeight: 600,
-          }}
+            color: GRAPH_THEME.drawer.inputText,
+          })}
         >
           Delete Connection
         </button>

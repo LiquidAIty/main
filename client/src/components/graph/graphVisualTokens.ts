@@ -67,6 +67,37 @@ export const GRAPH_THEME = {
     text: "#e6edf2",
     shadow: "0 16px 36px rgba(0, 0, 0, 0.18)",
   },
+  card: {
+    glassBackground:
+      "radial-gradient(circle at 14% 20%, rgba(140,116,204,0.055), transparent 38%), radial-gradient(circle at 86% 14%, rgba(79,162,173,0.085), transparent 40%), linear-gradient(180deg, rgba(20,24,28,0.78), rgba(13,17,21,0.86))",
+    glassMagenticBackground:
+      "radial-gradient(circle at 18% 20%, rgba(140,116,204,0.09), transparent 38%), radial-gradient(circle at 80% 16%, rgba(96,194,255,0.14), transparent 36%), radial-gradient(circle at 50% 92%, rgba(223,146,84,0.06), transparent 42%), linear-gradient(180deg, rgba(14,28,35,0.88), rgba(10,18,22,0.9))",
+    glassGraphBackground:
+      "radial-gradient(circle at 82% 18%, rgba(79,162,173,0.08), transparent 36%), linear-gradient(180deg, rgba(31,34,38,0.82), rgba(18,21,24,0.88))",
+    glassBorder: "rgba(79, 162, 173, 0.18)",
+    glassInset: "inset 0 1px 0 rgba(255,255,255,0.05)",
+    glassShadow: "0 14px 30px rgba(0, 0, 0, 0.24)",
+    pillBackground: "rgba(18, 20, 23, 0.84)",
+    pillBorder: "rgba(79, 162, 173, 0.24)",
+  },
+  drawer: {
+    panelBackground: "rgba(10,10,13,0.92)",
+    panelBorder: "rgba(255,255,255,0.12)",
+    panelInset: "inset 0 1px 0 rgba(255,255,255,0.05)",
+    panelShadow: "0 16px 32px rgba(0,0,0,0.24)",
+    tabRailBackground: "rgba(5,5,8,0.7)",
+    tabRailBorder: "rgba(255,255,255,0.12)",
+    sectionBackground: "rgba(255,255,255,0.02)",
+    sectionBorder: "rgba(255,255,255,0.08)",
+    inputBackground: "rgba(255,255,255,0.02)",
+    inputBorder: "rgba(255,255,255,0.06)",
+    inputBorderFocus: "rgba(79, 162, 173, 0.28)",
+    inputText: "rgba(255,255,255,0.82)",
+    inputMuted: "rgba(255,255,255,0.62)",
+    buttonBackground: "rgba(79, 162, 173, 0.12)",
+    buttonBorder: "rgba(79,162,173,0.35)",
+    buttonShadow: "0 4px 10px rgba(79, 162, 173, 0.06)",
+  },
   turboFlow: {
     /** Core flow: cyan → blue-green → deep teal (intelligence / selection identity). */
     intelligenceGradientStart: "#9ee6ec",
@@ -125,6 +156,121 @@ export function graphControlButtonStyle(overrides?: CSSProperties): CSSPropertie
     cursor: "pointer",
     fontSize: 17,
     lineHeight: 1,
+    ...overrides,
+  };
+}
+
+export function graphGlassCardStyle(overrides?: CSSProperties): CSSProperties {
+  return {
+    borderRadius: 14,
+    border: `1px solid ${GRAPH_THEME.card.glassBorder}`,
+    background: GRAPH_THEME.card.glassBackground,
+    boxShadow: `${GRAPH_THEME.card.glassInset}, ${GRAPH_THEME.card.glassShadow}`,
+    backdropFilter: "blur(14px) saturate(120%)",
+    WebkitBackdropFilter: "blur(14px) saturate(120%)",
+    ...overrides,
+  };
+}
+
+export function graphGlassPillStyle(overrides?: CSSProperties): CSSProperties {
+  return {
+    padding: "3px 7px",
+    borderRadius: 999,
+    background: GRAPH_THEME.card.pillBackground,
+    border: `1px solid ${GRAPH_THEME.card.pillBorder}`,
+    color: GRAPH_THEME.surface.mutedText,
+    fontSize: 10.5,
+    lineHeight: 1.05,
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
+    ...overrides,
+  };
+}
+
+export function graphCompanionPanelStyle(overrides?: CSSProperties): CSSProperties {
+  return {
+    borderLeft: `1px solid ${GRAPH_THEME.drawer.panelBorder}`,
+    background: GRAPH_THEME.drawer.panelBackground,
+    ...overrides,
+  };
+}
+
+export function graphCompanionTabRailStyle(overrides?: CSSProperties): CSSProperties {
+  return {
+    background: "transparent",
+    ...overrides,
+  };
+}
+
+export function graphCompanionTabGroupStyle(overrides?: CSSProperties): CSSProperties {
+  return {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    background: GRAPH_THEME.drawer.tabRailBackground,
+    border: `1px solid ${GRAPH_THEME.drawer.tabRailBorder}`,
+    borderRadius: 10,
+    padding: 6,
+    ...overrides,
+  };
+}
+
+export function graphCompanionTabButtonStyle(
+  selected: boolean,
+  overrides?: CSSProperties,
+): CSSProperties {
+  return {
+    padding: "6px 8px",
+    borderRadius: 8,
+    border: selected
+      ? "1px solid rgba(79,162,173,0.45)"
+      : "1px solid rgba(255,255,255,0.12)",
+    background: selected ? "rgba(79,162,173,0.16)" : "rgba(8,8,8,0.55)",
+    color: selected ? "rgba(79,162,173,1)" : "rgba(255,255,255,0.65)",
+    fontSize: 11,
+    fontWeight: 600,
+    lineHeight: 1.1,
+    cursor: "pointer",
+    ...overrides,
+  };
+}
+
+export function graphDrawerSectionStyle(overrides?: CSSProperties): CSSProperties {
+  return {
+    borderRadius: 8,
+    border: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`,
+    background: GRAPH_THEME.drawer.sectionBackground,
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.02)",
+    ...overrides,
+  };
+}
+
+export function graphDrawerInputStyle(overrides?: CSSProperties): CSSProperties {
+  return {
+    width: "100%",
+    padding: "5px 7px",
+    borderRadius: 6,
+    border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+    background: GRAPH_THEME.drawer.inputBackground,
+    color: GRAPH_THEME.drawer.inputText,
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.02)",
+    fontSize: 11,
+    lineHeight: 1.4,
+    ...overrides,
+  };
+}
+
+export function graphDrawerButtonStyle(overrides?: CSSProperties): CSSProperties {
+  return {
+    width: "auto",
+    padding: "5px 7px",
+    borderRadius: 6,
+    border: `1px solid ${GRAPH_THEME.drawer.buttonBorder}`,
+    background: GRAPH_THEME.drawer.buttonBackground,
+    color: "rgba(79,162,173,0.96)",
+    boxShadow: `inset 0 1px 0 rgba(255,255,255,0.04), ${GRAPH_THEME.drawer.buttonShadow}`,
+    fontWeight: 600,
+    fontSize: 11,
+    cursor: "pointer",
     ...overrides,
   };
 }

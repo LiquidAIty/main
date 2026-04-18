@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { CodeGraphScene } from "../codegraph/CodeGraphScene";
 import { colorForCodeGraphLabel } from "../codegraph/colors";
+import RightGlassDrawer from "../graph/RightGlassDrawer";
 import type { CodeGraphData } from "../codegraph/types";
 import type { GraphViewContract, GraphViewData, KnowledgeGraphKind } from "../../types/agentgraph";
 
@@ -279,7 +280,7 @@ export default function KnowledgeGraphFramework({
 
       <button
         type="button"
-        onClick={() => setDrawerOpen((v) => !v)}
+        onClick={() => setDrawerOpen(true)}
         data-no-surface-promote="true"
         style={{
           position: "absolute",
@@ -299,21 +300,24 @@ export default function KnowledgeGraphFramework({
         Controls
       </button>
 
-      {drawerOpen ? (
+      <RightGlassDrawer
+        isOpen={drawerOpen}
+        title="Controls"
+        onClose={() => setDrawerOpen(false)}
+        onOpen={() => setDrawerOpen(true)}
+        defaultWidth={360}
+        minWidth={320}
+        maxWidth={520}
+        storageKey="liquidaity.drawer.knowledge-controls.width"
+        dataTestId="knowledge-utility-drawer"
+        top={48}
+        right={12}
+        bottom={12}
+        zIndex={6}
+      >
         <div
           data-no-surface-promote="true"
           style={{
-            position: "absolute",
-            top: 48,
-            right: 12,
-            bottom: 12,
-            width: 280,
-            zIndex: 6,
-            overflow: "auto",
-            borderRadius: 10,
-            border: "1px solid rgba(255,255,255,0.12)",
-            background: "rgba(10,10,13,0.92)",
-            padding: 12,
             display: "grid",
             gap: 12,
           }}
@@ -390,7 +394,7 @@ export default function KnowledgeGraphFramework({
             })}
           </div>
         </div>
-      ) : null}
+      </RightGlassDrawer>
 
       <div style={{ width: "100%", height: "100%", minHeight }}>
         {kind === "codegraph" && codeGraphError ? (

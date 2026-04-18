@@ -3,6 +3,7 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent } from "@testing-library/dom";
 
 import AgentBuilder from "./agentbuilder";
 import {
@@ -14,10 +15,15 @@ import {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock("../components/builder/BuilderCanvas", () => ({
-  default: function BuilderCanvasMock(props: { onSelectCard?: (cardId: string | null) => void }) {
+  default: function BuilderCanvasMock(props: {
+    document?: { nodes?: Array<unknown> };
+    onSelectCard?: (cardId: string | null) => void;
+    onSelectEdge?: (edgeId: string | null) => void;
+  }) {
     return (
       <div data-testid="builder-canvas">
         Builder Canvas
+        <div data-testid="builder-node-count">{props.document?.nodes?.length ?? 0}</div>
         <div
           className="react-flow__node"
           data-testid="builder-preview-node"
@@ -34,6 +40,23 @@ vi.mock("../components/builder/BuilderCanvas", () => ({
           onClick={() => props.onSelectCard?.("card_main_chat")}
         >
           Select Agent Node
+        </button>
+        <button
+          type="button"
+          data-testid="builder-select-edge"
+          onClick={() => props.onSelectEdge?.("edge_main_chat")}
+        >
+          Select Edge
+        </button>
+        <button
+          type="button"
+          data-testid="builder-pane-click"
+          onClick={() => {
+            props.onSelectCard?.(null);
+            props.onSelectEdge?.(null);
+          }}
+        >
+          Pane Click
         </button>
       </div>
     );
@@ -298,6 +321,15 @@ function queryChatInput(container: HTMLElement): HTMLInputElement | null {
   return input instanceof HTMLInputElement ? input : null;
 }
 
+function getBuilderNodeCount(container: HTMLElement): number {
+  const countElement = getByTestId(container, "builder-node-count");
+  const parsed = Number.parseInt(countElement.textContent || "", 10);
+  if (!Number.isFinite(parsed)) {
+    throw new Error("invalid builder node count");
+  }
+  return parsed;
+}
+
 function getSendButton(container: HTMLElement): HTMLButtonElement {
   const button = container.querySelector('button[aria-label="Send"]');
   if (!(button instanceof HTMLButtonElement)) {
@@ -457,7 +489,7 @@ afterEach(() => {
 });
 
 describe("AgentBuilder locked 3-state flow", () => {
-  it("starts in Home View with large chat and small Canvas / Knowledge / Plan tabs", async () => {
+  it("starts in chat-first simple mode", async () => {
     const container = mount(<AgentBuilder />);
 
     await waitFor(() => {
@@ -468,30 +500,23 @@ describe("AgentBuilder locked 3-state flow", () => {
     expect(getButtonByTitle(container, "Plus")).toBeTruthy();
     expect(getButtonByTitle(container, "Burst")).toBeTruthy();
     expect(getButtonByTitle(container, "Orange")).toBeTruthy();
+    expect(container.querySelector('[data-testid="rail-codegraph-button"]')).toBeNull();
     expect(container.querySelector('[data-testid="rail-three-lines-button"]')).toBeTruthy();
     expect(getByTestId(container, "workspace-large-region").getAttribute("data-surface")).toBe("chat");
-    expect(queryByTestId(container, "companion-surface-canvas")).toBeTruthy();
+    expect(queryByTestId(container, "workspace-canvas-region")).toBeNull();
+    expect(queryByTestId(container, "workspace-companion-region")).toBeNull();
     expect(queryByTestId(container, "large-surface-canvas")).toBeNull();
     expect(queryByTestId(container, "large-surface-knowledge")).toBeNull();
     expect(queryByTestId(container, "large-surface-plan")).toBeNull();
-    expect(getByTestId(container, "companion-tab-canvas").getAttribute("aria-pressed")).toBe("true");
-    expect(getByTestId(container, "companion-tab-knowledge")).toBeTruthy();
-    expect(getByTestId(container, "companion-tab-plan")).toBeTruthy();
     expect(container.textContent).not.toContain("Step 1");
     expect(queryChatInput(container)).toBeTruthy();
   });
 
-  it("Home restores large Chat with the Home companion tab family", async () => {
+  it("chat mode does not render or reserve companion workspace", async () => {
     const container = mount(<AgentBuilder />);
 
     await waitFor(() => {
       expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
-    });
-
-    click(getButtonByTitle(container, "Plus"));
-
-    await waitFor(() => {
-      expect(queryByTestId(container, "large-surface-canvas")).toBeTruthy();
     });
 
     click(getButtonByTitle(container, "Home"));
@@ -501,10 +526,69 @@ describe("AgentBuilder locked 3-state flow", () => {
     });
 
     expect(getByTestId(container, "workspace-large-region").getAttribute("data-surface")).toBe("chat");
-    expect(queryByTestId(container, "companion-surface-canvas")).toBeTruthy();
-    expect(getByTestId(container, "companion-tab-canvas").getAttribute("aria-pressed")).toBe("true");
-    expect(getByTestId(container, "companion-tab-knowledge")).toBeTruthy();
-    expect(getByTestId(container, "companion-tab-plan")).toBeTruthy();
+    expect(queryByTestId(container, "workspace-canvas-region")).toBeNull();
+    expect(queryByTestId(container, "workspace-companion-region")).toBeNull();
+  });
+
+  it("does not render a top-level CodeGraph rail icon", async () => {
+    const container = mount(<AgentBuilder />);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
+    });
+
+    expect(container.querySelector('[data-testid="rail-codegraph-button"]')).toBeNull();
+    expect(getButtonByTitle(container, "Burst")).toBeTruthy();
+  });
+
+  it("Home returns to flat chat and closes any open object drawer", async () => {
+    const container = mount(<AgentBuilder />);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
+    });
+
+    click(getButtonByTitle(container, "Plus"));
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-canvas")).toBeTruthy();
+    });
+
+    click(getByTestId(container, "builder-select-node"));
+    await waitFor(() => {
+      expect(queryByTestId(container, "companion-surface-editor")).toBeTruthy();
+    });
+
+    click(getButtonByTitle(container, "Home"));
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
+    });
+
+    expect(queryByTestId(container, "workspace-canvas-region")).toBeNull();
+    expect(queryByTestId(container, "workspace-companion-region")).toBeNull();
+    expect(queryByTestId(container, "workspace-object-drawer")).toBeNull();
+    expect(queryByTestId(container, "companion-surface-editor")).toBeNull();
+  });
+
+  it("Home clears lower/companion workspace after Knowledge is open", async () => {
+    const container = mount(<AgentBuilder />);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
+    });
+
+    click(getButtonByTitle(container, "Burst"));
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-knowledge")).toBeTruthy();
+      expect(queryByTestId(container, "workspace-companion-region")).toBeTruthy();
+    });
+
+    click(getButtonByTitle(container, "Home"));
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
+    });
+
+    expect(queryByTestId(container, "workspace-canvas-region")).toBeNull();
+    expect(queryByTestId(container, "workspace-companion-region")).toBeNull();
   });
 
   it("uses Plus to enter Agent Canvas View and Home to return", async () => {
@@ -520,11 +604,7 @@ describe("AgentBuilder locked 3-state flow", () => {
       expect(queryByTestId(container, "large-surface-canvas")).toBeTruthy();
     });
 
-    expect(queryByTestId(container, "companion-surface-editor")).toBeTruthy();
-    expect(getByTestId(container, "companion-tab-prompt")).toBeTruthy();
-    expect(getByTestId(container, "companion-tab-knowledge")).toBeTruthy();
-    expect(getByTestId(container, "companion-tab-tools")).toBeTruthy();
-    expect(getByTestId(container, "companion-tab-runtime")).toBeTruthy();
+    expect(queryByTestId(container, "companion-surface-editor")).toBeNull();
     expect(queryChatInput(container)).toBeNull();
 
     click(getButtonByTitle(container, "Home"));
@@ -533,7 +613,148 @@ describe("AgentBuilder locked 3-state flow", () => {
       expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
     });
 
-    expect(queryByTestId(container, "companion-surface-canvas")).toBeTruthy();
+    expect(queryByTestId(container, "workspace-canvas-region")).toBeNull();
+    expect(queryByTestId(container, "workspace-companion-region")).toBeNull();
+  });
+
+  it("switching to Agents/Knowledge/Plan does not auto-open object drawer", async () => {
+    const container = mount(<AgentBuilder />);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
+    });
+
+    click(getButtonByTitle(container, "Plus"));
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-canvas")).toBeTruthy();
+    });
+    expect(queryByTestId(container, "companion-surface-editor")).toBeNull();
+
+    click(getButtonByTitle(container, "Burst"));
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-knowledge")).toBeTruthy();
+    });
+    expect(queryByTestId(container, "companion-surface-editor")).toBeNull();
+    expect(queryByTestId(container, "workspace-object-drawer")).toBeNull();
+
+    click(getButtonByTitle(container, "Orange"));
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-plan")).toBeTruthy();
+    });
+    expect(queryByTestId(container, "companion-surface-editor")).toBeNull();
+    expect(queryByTestId(container, "workspace-object-drawer")).toBeNull();
+
+    click(getButtonByTitle(container, "Plus"));
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-canvas")).toBeTruthy();
+    });
+    expect(queryByTestId(container, "companion-surface-editor")).toBeNull();
+  });
+
+  it("does not open the full agent editor when Plus reveals Agents from Home", async () => {
+    const container = mount(<AgentBuilder />);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
+    });
+
+    click(getButtonByTitle(container, "Plus"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-canvas")).toBeTruthy();
+    });
+
+    expect(queryByTestId(container, "companion-surface-editor")).toBeNull();
+  });
+
+  it("adds an agent only when Agents is already active", async () => {
+    const container = mount(<AgentBuilder />);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
+    });
+
+    click(getButtonByTitle(container, "Plus"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-canvas")).toBeTruthy();
+    });
+
+    const beforeAddCount = getBuilderNodeCount(container);
+
+    click(getButtonByTitle(container, "Plus"));
+
+    await waitFor(() => {
+      expect(getBuilderNodeCount(container)).toBe(beforeAddCount + 1);
+    });
+    expect(queryByTestId(container, "companion-surface-editor")).toBeNull();
+  });
+
+  it("opens the agent editor only when an existing node is clicked", async () => {
+    const container = mount(<AgentBuilder />);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
+    });
+
+    click(getButtonByTitle(container, "Plus"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-canvas")).toBeTruthy();
+      expect(queryByTestId(container, "companion-surface-editor")).toBeNull();
+    });
+
+    click(getByTestId(container, "builder-select-node"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "companion-surface-editor")).toBeTruthy();
+    });
+  });
+
+  it("does not open any drawer when an edge is clicked", async () => {
+    const container = mount(<AgentBuilder />);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
+    });
+
+    click(getButtonByTitle(container, "Plus"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-canvas")).toBeTruthy();
+    });
+
+    click(getByTestId(container, "builder-select-edge"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "companion-surface-editor")).toBeNull();
+    });
+  });
+
+  it("closes the node drawer when empty canvas is clicked", async () => {
+    const container = mount(<AgentBuilder />);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
+    });
+
+    click(getButtonByTitle(container, "Plus"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-canvas")).toBeTruthy();
+    });
+
+    click(getByTestId(container, "builder-select-node"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "companion-surface-editor")).toBeTruthy();
+    });
+
+    click(getByTestId(container, "builder-pane-click"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "companion-surface-editor")).toBeNull();
+    });
   });
 
   it("keeps workspace tab clicks in the small pane until the preview is clicked", async () => {
@@ -811,6 +1032,12 @@ describe("AgentBuilder locked 3-state flow", () => {
 
     await waitFor(() => {
       expect(queryByTestId(container, "large-surface-canvas")).toBeTruthy();
+      expect(queryByTestId(container, "companion-surface-editor")).toBeNull();
+    });
+
+    click(getByTestId(container, "builder-select-node"));
+
+    await waitFor(() => {
       expect(queryByTestId(container, "companion-surface-editor")).toBeTruthy();
     });
 

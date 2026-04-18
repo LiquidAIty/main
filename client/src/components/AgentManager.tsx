@@ -10,6 +10,12 @@ import type {
   AgentCardRuntimeType,
   RuntimeBinding,
 } from '../types/agentgraph';
+import {
+  GRAPH_THEME,
+  graphDrawerButtonStyle,
+  graphDrawerInputStyle,
+  graphDrawerSectionStyle,
+} from './graph/graphVisualTokens';
 
 type AgentType =
   | 'agent_builder'
@@ -815,8 +821,17 @@ export function AgentManager({
         children: React.ReactNode;
       }) {
         return (
-          <label style={{ display: 'grid', gap: 6 }}>
-            <span style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>{label}</span>
+          <label style={{ display: 'grid', gap: 4 }}>
+            <span
+              style={{
+                color: 'rgba(255,255,255,0.55)',
+                fontSize: 10.5,
+                fontWeight: 500,
+                letterSpacing: 0.1,
+              }}
+            >
+              {label}
+            </span>
             {children}
           </label>
         );
@@ -824,14 +839,32 @@ export function AgentManager({
     [],
   );
 
-  const inputStyle: CSSProperties = {
-    width: '100%',
-    padding: '10px 12px',
-    borderRadius: 8,
-    border: '1px solid #3A3A3A',
-    background: '#181818',
-    color: '#FFFFFF',
-  };
+  const inputStyle: CSSProperties = graphDrawerInputStyle();
+  const actionButtonStyle: CSSProperties = graphDrawerButtonStyle();
+  const formScopeClassName = 'agent-manager-glass-form';
+  const scopedFocusStyles = `
+    .${formScopeClassName} input,
+    .${formScopeClassName} textarea,
+    .${formScopeClassName} select {
+      outline: none !important;
+      transition: border-color 160ms ease, background-color 160ms ease;
+    }
+    .${formScopeClassName} input::placeholder,
+    .${formScopeClassName} textarea::placeholder {
+      color: rgba(255,255,255,0.28);
+    }
+    .${formScopeClassName} input:focus,
+    .${formScopeClassName} textarea:focus,
+    .${formScopeClassName} select:focus,
+    .${formScopeClassName} input:focus-visible,
+    .${formScopeClassName} textarea:focus-visible,
+    .${formScopeClassName} select:focus-visible {
+      outline: none !important;
+      border-color: ${GRAPH_THEME.drawer.inputBorderFocus};
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
+      background: ${GRAPH_THEME.drawer.inputBackground};
+    }
+  `;
 
   const numberValue = (value: number | '') => (value === '' ? '' : String(value));
   const showCardHeaderFields = Boolean(onChangeCardName || onChangeCardSubtext);
@@ -869,7 +902,8 @@ export function AgentManager({
 
   if (activeTab === 'Prompt') {
     return (
-      <div style={{ display: 'grid', gap: 12 }}>
+      <div className={formScopeClassName} style={{ display: 'grid', gap: 8 }}>
+        <style>{scopedFocusStyles}</style>
         {renderCardHeaderFields()}
         <Field label="Role">
           <textarea value={role} onChange={(event) => updatePromptFields('role', event.target.value)} rows={4} style={{ ...inputStyle, resize: 'vertical' }} />
@@ -895,14 +929,17 @@ export function AgentManager({
           />
         </Field>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" onClick={saveConfig} style={{ ...inputStyle, width: 'auto', cursor: 'pointer', fontWeight: 600 }}>
+          <button type="button" onClick={saveConfig} style={actionButtonStyle}>
             Save Card
           </button>
           <button
             type="button"
             onClick={() => onRunPromptTest?.()}
             disabled={promptTestDisabled}
-            style={{ ...inputStyle, width: 'auto', cursor: promptTestDisabled ? 'not-allowed' : 'pointer', fontWeight: 600 }}
+            style={graphDrawerButtonStyle({
+              opacity: promptTestDisabled ? 0.52 : 1,
+              cursor: promptTestDisabled ? 'not-allowed' : 'pointer',
+            })}
           >
             {promptTestBusy ? 'Running...' : 'Run Card'}
           </button>
@@ -913,8 +950,8 @@ export function AgentManager({
 
   if (activeTab === 'Knowledge') {
     return (
-      <div style={{ display: 'grid', gap: 12 }}>
-        {renderCardHeaderFields()}
+      <div className={formScopeClassName} style={{ display: 'grid', gap: 8 }}>
+        <style>{scopedFocusStyles}</style>
         <div data-testid="agent-memory-graph" style={{ height: 260, minHeight: 260 }}>
           <KnowledgeGraphNVL
             entities={compactMemoryGraph.entities}
@@ -941,19 +978,19 @@ export function AgentManager({
               display: 'grid',
               gap: 6,
               padding: '10px 12px',
-              borderRadius: 8,
-              border: '1px solid rgba(154, 162, 172, 0.22)',
-              background: 'rgba(255,255,255,0.04)',
+              ...graphDrawerSectionStyle({
+                borderRadius: 8,
+              }),
             }}
           >
-            <div style={{ color: '#FFFFFF', fontWeight: 600 }}>{selectedMemoryEntity.label}</div>
-            <div style={{ color: '#E0DED5', fontSize: 12, opacity: 0.8 }}>
+            <div style={{ color: GRAPH_THEME.drawer.inputText, fontWeight: 600 }}>{selectedMemoryEntity.label}</div>
+            <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12, opacity: 0.85 }}>
               {selectedMemoryEntity.type} • {selectedMemoryEntity.source} • {selectedMemoryEntity.scope.replace(/_/g, ' ')}
             </div>
             {selectedMemoryEntity.rawId &&
             selectedMemoryEntity.rawId !== selectedMemoryEntity.label &&
             selectedMemoryEntity.rawId !== selectedMemoryEntity.id ? (
-              <div style={{ color: '#E0DED5', fontSize: 12, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+              <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
                 {selectedMemoryEntity.rawId}
               </div>
             ) : null}
@@ -967,24 +1004,24 @@ export function AgentManager({
               display: 'grid',
               gap: 6,
               padding: '10px 12px',
-              borderRadius: 8,
-              border: '1px solid rgba(154, 162, 172, 0.22)',
-              background: 'rgba(255,255,255,0.04)',
+              ...graphDrawerSectionStyle({
+                borderRadius: 8,
+              }),
             }}
           >
-            <div style={{ color: '#FFFFFF', fontWeight: 600 }}>
+            <div style={{ color: GRAPH_THEME.drawer.inputText, fontWeight: 600 }}>
               {selectedMemoryRelationship.type}
             </div>
-            <div style={{ color: '#E0DED5', fontSize: 12, opacity: 0.8 }}>
+            <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12, opacity: 0.85 }}>
               {(memoryEntityById.get(selectedMemoryRelationship.from)?.label || selectedMemoryRelationship.from)}
               {' → '}
               {(memoryEntityById.get(selectedMemoryRelationship.to)?.label || selectedMemoryRelationship.to)}
             </div>
-            <div style={{ color: '#E0DED5', fontSize: 12, opacity: 0.8 }}>
+            <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12, opacity: 0.85 }}>
               {selectedMemoryRelationship.source} • {selectedMemoryRelationship.scope.replace(/_/g, ' ')}
             </div>
             {selectedMemoryRelationship.evidence_snippet ? (
-              <div style={{ color: '#E0DED5', fontSize: 12, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+              <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
                 {selectedMemoryRelationship.evidence_snippet}
               </div>
             ) : null}
@@ -994,15 +1031,15 @@ export function AgentManager({
         <details
           data-testid="agent-knowledge-advanced"
           style={{
-            borderRadius: 8,
-            border: '1px solid rgba(154, 162, 172, 0.22)',
-            background: 'rgba(255,255,255,0.02)',
             padding: '10px 12px',
+            ...graphDrawerSectionStyle({
+              borderRadius: 8,
+            }),
           }}
         >
           <summary
             style={{
-              color: '#E0DED5',
+              color: GRAPH_THEME.drawer.inputMuted,
               fontSize: 12,
               fontWeight: 600,
               cursor: 'pointer',
@@ -1029,7 +1066,7 @@ export function AgentManager({
               />
             </Field>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button type="button" onClick={saveConfig} style={{ ...inputStyle, width: 'auto', cursor: 'pointer', fontWeight: 600 }}>
+              <button type="button" onClick={saveConfig} style={actionButtonStyle}>
                 Save Card
               </button>
             </div>
@@ -1041,8 +1078,8 @@ export function AgentManager({
 
   if (activeTab === 'Tools') {
     return (
-      <div style={{ display: 'grid', gap: 12 }}>
-        {renderCardHeaderFields()}
+      <div className={formScopeClassName} style={{ display: 'grid', gap: 8 }}>
+        <style>{scopedFocusStyles}</style>
         <Field label="Tools">
           <textarea
             value={toolsText}
@@ -1052,7 +1089,7 @@ export function AgentManager({
           />
         </Field>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" onClick={saveConfig} style={{ ...inputStyle, width: 'auto', cursor: 'pointer', fontWeight: 600 }}>
+          <button type="button" onClick={saveConfig} style={actionButtonStyle}>
             Save Card
           </button>
         </div>
@@ -1065,8 +1102,8 @@ export function AgentManager({
   }
 
   return (
-    <div style={{ display: 'grid', gap: 12 }}>
-      {renderCardHeaderFields()}
+    <div className={formScopeClassName} style={{ display: 'grid', gap: 8 }}>
+      <style>{scopedFocusStyles}</style>
       <Field label="Runtime Type">
         <select
           aria-label="Runtime Type"
@@ -1208,7 +1245,7 @@ export function AgentManager({
       ) : null}
 
       {fieldLabels.includes('Consolidate Result') ? (
-        <label style={{ display: 'flex', gap: 8, alignItems: 'center', color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', color: GRAPH_THEME.drawer.inputMuted, fontSize: 12, fontWeight: 600 }}>
           <input
             aria-label="Consolidate Result"
             type="checkbox"
@@ -1223,10 +1260,10 @@ export function AgentManager({
         <div
           style={{
             padding: '10px 12px',
-            borderRadius: 8,
-            border: '1px solid rgba(154, 162, 172, 0.22)',
-            background: 'rgba(255,255,255,0.04)',
-            color: '#E0DED5',
+            ...graphDrawerSectionStyle({
+              borderRadius: 8,
+            }),
+            color: GRAPH_THEME.drawer.inputMuted,
             fontSize: 12,
             lineHeight: 1.5,
           }}
@@ -1248,7 +1285,7 @@ export function AgentManager({
       ) : null}
 
       <div style={{ display: 'flex', gap: 8 }}>
-        <button type="button" onClick={saveConfig} style={{ ...inputStyle, width: 'auto', cursor: 'pointer', fontWeight: 600 }}>
+        <button type="button" onClick={saveConfig} style={actionButtonStyle}>
           Save Card
         </button>
       </div>

@@ -1,6 +1,6 @@
 import { Handle, Position } from '@xyflow/react';
 import type { AgentCardInstance } from '../../../types/agentgraph';
-import { GRAPH_THEME } from '../../graph/graphVisualTokens';
+import { GRAPH_THEME, graphGlassCardStyle, graphGlassPillStyle } from '../../graph/graphVisualTokens';
 
 type AgentCardNodeData = AgentCardInstance & {
   executionOrder?: number | null;
@@ -56,15 +56,14 @@ export default function AgentCardNode({
       : !selected && data?.isHoverRelated
         ? `inset 0 1px 0 rgba(255,255,255,0.02), 0 0 0 1px rgba(79, 162, 173, 0.1), ${GRAPH_THEME.surface.shadow}`
         : null;
-  const ambientShell =
-    "radial-gradient(circle at 14% 20%, rgba(140,116,204,0.055), transparent 38%), radial-gradient(circle at 86% 14%, rgba(79,162,173,0.085), transparent 40%), linear-gradient(180deg, rgba(30,33,36,0.98), rgba(18,21,24,0.985))";
   return (
     <div
       className="rounded-xl border min-w-[248px] bg-zinc-900 text-white"
       style={
-        {
+        graphGlassCardStyle({
           position: 'relative',
           padding: "14px 18px 15px",
+          minWidth: 248,
           borderWidth: isGraph ? 1.5 : 1,
           borderColor: selected
             ? GRAPH_THEME.accent.primary
@@ -78,28 +77,28 @@ export default function AgentCardNode({
                 ? GRAPH_THEME.accent.graph
               : isCallableHead
                 ? GRAPH_THEME.accent.primaryBorder
-              : GRAPH_THEME.surface.border,
+                : GRAPH_THEME.card.glassBorder,
           background: isMagentic
-            ? 'radial-gradient(circle at 18% 20%, rgba(140,116,204,0.08), transparent 38%), radial-gradient(circle at 80% 16%, rgba(96,194,255,0.12), transparent 36%), radial-gradient(circle at 50% 92%, rgba(223,146,84,0.05), transparent 42%), linear-gradient(180deg, rgba(14,28,35,0.98), rgba(10,18,22,0.98))'
+            ? GRAPH_THEME.card.glassMagenticBackground
             : isGraph
-              ? 'radial-gradient(circle at 82% 18%, rgba(79,162,173,0.07), transparent 36%), linear-gradient(180deg, rgba(31,34,38,0.98), rgba(18,21,24,0.98))'
-            : ambientShell,
+              ? GRAPH_THEME.card.glassGraphBackground
+              : GRAPH_THEME.card.glassBackground,
           boxShadow: selected
-            ? `inset 0 1px 0 rgba(255,255,255,0.05), 0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 14px 32px rgba(79, 162, 173, 0.1)`
+            ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 14px 32px rgba(79, 162, 173, 0.1)`
             : isRuntimeActive
-              ? `inset 0 1px 0 rgba(255,255,255,0.04), 0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 14px 28px rgba(79, 162, 173, 0.1), 0 0 12px rgba(223, 146, 84, 0.09)`
+              ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 14px 28px rgba(79, 162, 173, 0.1), 0 0 12px rgba(223, 146, 84, 0.09)`
             : isFlowLinked
-              ? `inset 0 1px 0 rgba(255,255,255,0.03), 0 0 0 1px rgba(79, 162, 173, 0.16), 0 10px 22px rgba(79, 162, 173, 0.07)`
+              ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px rgba(79, 162, 173, 0.16), 0 10px 22px rgba(79, 162, 173, 0.07)`
             : hoverRing
               ? hoverRing
             : isMagentic
-              ? 'inset 0 1px 0 rgba(255,255,255,0.04), inset 0 0 0 1px rgba(96, 194, 255, 0.12), 0 12px 26px rgba(9, 18, 20, 0.2)'
+              ? `${GRAPH_THEME.card.glassInset}, inset 0 0 0 1px rgba(96, 194, 255, 0.12), 0 12px 26px rgba(9, 18, 20, 0.2)`
               : isGraph
-                ? 'inset 0 1px 0 rgba(255,255,255,0.03), inset 0 0 0 1px rgba(154, 162, 172, 0.1), 0 10px 24px rgba(0, 0, 0, 0.18)'
+                ? `${GRAPH_THEME.card.glassInset}, inset 0 0 0 1px rgba(154, 162, 172, 0.1), 0 10px 24px rgba(0, 0, 0, 0.18)`
               : isCallableHead
-                ? `inset 0 1px 0 rgba(255,255,255,0.03), inset 0 0 0 1px rgba(79, 162, 173, 0.12), 0 12px 26px rgba(9, 18, 20, 0.16), 0 0 10px rgba(223, 146, 84, 0.06)`
-              : `inset 0 1px 0 rgba(255,255,255,0.03), ${GRAPH_THEME.surface.shadow}`,
-        }
+                ? `${GRAPH_THEME.card.glassInset}, inset 0 0 0 1px rgba(79, 162, 173, 0.12), 0 12px 26px rgba(9, 18, 20, 0.16), 0 0 10px rgba(223, 146, 84, 0.06)`
+                : `${GRAPH_THEME.card.glassInset}, ${GRAPH_THEME.surface.shadow}`,
+        })
       }
     >
       <Handle
@@ -185,30 +184,31 @@ export default function AgentCardNode({
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 6,
-                padding: '2px 7px',
                 marginBottom: 7,
-                borderRadius: 999,
+                ...graphGlassPillStyle({
+                  padding: '2px 7px',
                   background: isMagentic
                     ? 'rgba(96, 194, 255, 0.14)'
                     : isGraph
                       ? 'rgba(154, 162, 172, 0.14)'
                       : isRuntimeActive
                         ? 'rgba(79, 162, 173, 0.18)'
-                      : 'rgba(255,255,255,0.05)',
+                        : GRAPH_THEME.card.pillBackground,
                   border: isMagentic
                     ? '1px solid rgba(96, 194, 255, 0.3)'
                     : isGraph
                       ? '1px solid rgba(154, 162, 172, 0.26)'
                       : isRuntimeActive
                         ? '1px solid rgba(79, 162, 173, 0.34)'
-                      : '1px solid rgba(255,255,255,0.08)',
+                        : `1px solid ${GRAPH_THEME.card.pillBorder}`,
                   color: isMagentic
                     ? '#d8f2ff'
                     : isGraph
                       ? '#e8edf4'
                       : isRuntimeActive
                         ? '#d8f2ff'
-                      : GRAPH_THEME.surface.mutedText,
+                        : GRAPH_THEME.surface.mutedText,
+                }),
                 fontSize: 10,
                 letterSpacing: '0.14em',
               }}
@@ -230,11 +230,12 @@ export default function AgentCardNode({
         {executionOrder ? (
           <div
             style={{
-              padding: '2px 7px',
-              borderRadius: 999,
-              background: 'rgba(223, 146, 84, 0.11)',
-              border: '1px solid rgba(223, 146, 84, 0.22)',
-              color: GRAPH_THEME.surface.text,
+              ...graphGlassPillStyle({
+                padding: '2px 7px',
+                background: 'rgba(223, 146, 84, 0.11)',
+                border: '1px solid rgba(223, 146, 84, 0.22)',
+                color: GRAPH_THEME.surface.text,
+              }),
               fontSize: 10.5,
               fontWeight: 600,
               lineHeight: 1,
@@ -275,46 +276,44 @@ export default function AgentCardNode({
             <div
               key={badge}
               style={{
-                padding: '3px 7px',
-                borderRadius: 999,
+              ...graphGlassPillStyle({
                 background:
                   badge === 'Callable'
                     ? 'rgba(79, 162, 173, 0.14)'
                     : badge === 'Branch+Merge'
                       ? GRAPH_THEME.accent.memorySoft
-                    : badge === 'Compat Workflow'
-                      ? 'rgba(234, 146, 77, 0.14)'
-                    : badge === 'In Workflow'
-                      ? 'rgba(234, 146, 77, 0.12)'
-                      : String(badge).startsWith('Swarm x')
-                        ? 'rgba(96, 194, 255, 0.14)'
-                      : 'rgba(255,255,255,0.04)',
+                      : badge === 'Compat Workflow'
+                        ? 'rgba(234, 146, 77, 0.14)'
+                        : badge === 'In Workflow'
+                          ? 'rgba(234, 146, 77, 0.12)'
+                          : String(badge).startsWith('Swarm x')
+                            ? 'rgba(96, 194, 255, 0.14)'
+                            : GRAPH_THEME.card.pillBackground,
                 border:
                   badge === 'Callable'
                     ? '1px solid rgba(79, 162, 173, 0.34)'
                     : badge === 'Branch+Merge'
                       ? `1px solid ${GRAPH_THEME.accent.memory}`
-                    : badge === 'Compat Workflow'
-                      ? '1px solid rgba(234, 146, 77, 0.3)'
-                    : badge === 'In Workflow'
-                      ? '1px solid rgba(234, 146, 77, 0.22)'
-                      : String(badge).startsWith('Swarm x')
-                        ? '1px solid rgba(96, 194, 255, 0.3)'
-                      : '1px solid rgba(255,255,255,0.08)',
+                      : badge === 'Compat Workflow'
+                        ? '1px solid rgba(234, 146, 77, 0.3)'
+                        : badge === 'In Workflow'
+                          ? '1px solid rgba(234, 146, 77, 0.22)'
+                          : String(badge).startsWith('Swarm x')
+                            ? '1px solid rgba(96, 194, 255, 0.3)'
+                            : `1px solid ${GRAPH_THEME.card.pillBorder}`,
                 color:
                   badge === 'Callable'
                     ? '#d8f2ff'
                     : badge === 'Branch+Merge'
                       ? '#e6ddff'
-                    : badge === 'Compat Workflow'
-                      ? '#ffe6d6'
-                    : badge === 'In Workflow'
-                      ? '#ffe6d6'
-                      : String(badge).startsWith('Swarm x')
-                        ? '#d8f2ff'
-                      : GRAPH_THEME.surface.mutedText,
-                fontSize: 10.5,
-                lineHeight: 1.05,
+                      : badge === 'Compat Workflow'
+                        ? '#ffe6d6'
+                        : badge === 'In Workflow'
+                          ? '#ffe6d6'
+                          : String(badge).startsWith('Swarm x')
+                            ? '#d8f2ff'
+                            : GRAPH_THEME.surface.mutedText,
+              }),
               }}
             >
               {badge}

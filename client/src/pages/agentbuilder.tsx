@@ -16,11 +16,20 @@ import {
   normalizeAnchorSurface,
   type PlanItem,
 } from "../components/builder/assistPlanSurface";
-import DeckEdgeInspector from "../components/builder/DeckEdgeInspector";
 import {
   buildExecutionPlan,
 } from "../components/builder/deckExecution";
 import DeckExecutionPathSummary from "../components/builder/DeckExecutionPathSummary";
+import {
+  GRAPH_THEME,
+  graphDrawerButtonStyle,
+  graphDrawerInputStyle,
+  graphCompanionPanelStyle,
+  graphCompanionTabButtonStyle,
+  graphCompanionTabGroupStyle,
+  graphDrawerSectionStyle,
+} from "../components/graph/graphVisualTokens";
+import RightGlassDrawer from "../components/graph/RightGlassDrawer";
 import {
   findDeckNodePreset,
   getAssistStarterRecipe,
@@ -146,10 +155,9 @@ const KNOWLEDGE_VIEW_TABS = ["Chat", "Canvas", "Plan"] as const;
 const CODEGRAPH_VIEW_TABS = ["Chat", "Canvas", "Knowledge", "Plan"] as const;
 const BUILDER_PROJECT_TABS = ["Plan"] as const;
 const BUILDER_NODE_TABS = ["Prompt", "Knowledge", "Tools", "Runtime"] as const;
-const BUILDER_EDGE_TABS = ["Edge"] as const;
 const AGENTS_CHAT_MIN_WIDTH = 360;
 const AGENTS_CANVAS_MIN_WIDTH = 520;
-const AGENTS_EDITOR_MIN_WIDTH = 360;
+const WORKSPACE_COMPANION_MIN_WIDTH = 360;
 type WorkspaceTestingEventDraft = Omit<WorkspaceTestingEventInput, "projectId"> & {
   projectId?: string | null;
 };
@@ -182,16 +190,14 @@ function Section({
 }) {
   return (
     <div
-      style={{
-        border: `1px solid ${C.border}`,
+      style={graphDrawerSectionStyle({
         borderRadius: 8,
         padding: "12px 14px",
-        background: C.bg,
-      }}
+      })}
     >
       <div
         className="text-xs"
-        style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
+        style={{ color: GRAPH_THEME.drawer.inputText, fontWeight: 700, marginBottom: 8 }}
       >
         {title}
       </div>
@@ -2515,7 +2521,7 @@ export default function AgentBuilder(): React.ReactElement {
   const largeSurface = "chat" as const;
   const [workspaceView, setWorkspaceView] = useState<
     "chat" | "plan" | "canvas" | "knowledge" | "codegraph"
-  >("canvas");
+  >("chat");
   const {
     activeProject,
     assistProjects,
@@ -2527,8 +2533,7 @@ export default function AgentBuilder(): React.ReactElement {
     projectsApi: V2_PROJECTS_API,
     workspaceView,
   });
-  const [panelOpen, setPanelOpen] = useState(true);
-  const [panelWidth, setPanelWidth] = useState(540);
+  const [objectDrawerOpen, setObjectDrawerOpen] = useState(false);
   const [chatPanelWidth, setChatPanelWidth] = useState(420);
   const workspaceShellRef = useRef<HTMLDivElement | null>(null);
   const [moonPhase01, setMoonPhase01] = useState(() => synodicPhaseFromDate(new Date()));
@@ -2539,6 +2544,9 @@ export default function AgentBuilder(): React.ReactElement {
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [selectedKnowledgeEntityId, setSelectedKnowledgeEntityId] = useState<string | null>(null);
   const [selectedKnowledgeRelationshipId, setSelectedKnowledgeRelationshipId] = useState<string | null>(null);
+  const workspacePanelAlreadyOpen = Boolean(
+    (objectDrawerOpen && selectedCardId) || selectedKnowledgeEntityId || selectedKnowledgeRelationshipId,
+  );
   const [builderCanvasFocusRequest, setBuilderCanvasFocusRequest] =
     useState<BuilderCanvasFocusRequest | null>(null);
   // TODO: replace manual deck input with plan-driven execution input.
@@ -2617,7 +2625,7 @@ export default function AgentBuilder(): React.ReactElement {
       interactionId: string,
     ) => {
       const startedAt = Date.now();
-      if (panelOpen) {
+      if (workspacePanelAlreadyOpen) {
         emitWorkspaceTestingEvent({
           event: "workspace_panel_opened_from_graph_selection",
           objectType,
@@ -2637,7 +2645,7 @@ export default function AgentBuilder(): React.ReactElement {
         startedAt,
       };
     },
-    [emitWorkspaceTestingEvent, panelOpen],
+    [emitWorkspaceTestingEvent, workspacePanelAlreadyOpen],
   );
 
   useEffect(() => {
@@ -2682,7 +2690,7 @@ export default function AgentBuilder(): React.ReactElement {
 
   useEffect(() => {
     const pending = pendingPanelOpenTelemetryRef.current;
-    if (!panelOpen || !pending) return;
+    if (!workspacePanelAlreadyOpen || !pending) return;
     emitWorkspaceTestingEvent({
       event: "workspace_panel_opened_from_graph_selection",
       objectType: pending.objectType,
@@ -2692,7 +2700,7 @@ export default function AgentBuilder(): React.ReactElement {
       metadata: { graphType: pending.graphType, panelAlreadyOpen: false },
     });
     pendingPanelOpenTelemetryRef.current = null;
-  }, [emitWorkspaceTestingEvent, panelOpen]);
+  }, [emitWorkspaceTestingEvent, workspacePanelAlreadyOpen]);
 
   useEffect(() => {
     const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
@@ -2704,7 +2712,6 @@ export default function AgentBuilder(): React.ReactElement {
   // agent builder state
   const deckSaveAbortRef = useRef<AbortController | null>(null);
   const deckExecutionAbortRef = useRef<AbortController | null>(null);
-  const canvasSelectionInitializedRef = useRef(false);
   const activeProjectLatestRef = useRef("");
   const healthCheckScheduledRef = useRef(false);
   const kgAutoLoadKeyRef = useRef("");
@@ -2762,7 +2769,6 @@ export default function AgentBuilder(): React.ReactElement {
   );
 
   useEffect(() => {
-    canvasSelectionInitializedRef.current = false;
     if (!canvasProjectId) {
       recordDeckWriteReason("builder-reset");
       setDeck(hydrateDeckDocument(INITIAL_DECK));
@@ -2928,10 +2934,9 @@ export default function AgentBuilder(): React.ReactElement {
     [selectedCard],
   );
   const builderTabs = useMemo(() => {
-    if (selectedEdge) return [...BUILDER_EDGE_TABS];
     if (selectedCard) return [...BUILDER_NODE_TABS];
     return [...BUILDER_PROJECT_TABS];
-  }, [selectedCard, selectedEdge]);
+  }, [selectedCard]);
   const activeTabs = useMemo(() => {
     if (workspaceView === "canvas") return builderTabs;
     return [];
@@ -3012,21 +3017,6 @@ export default function AgentBuilder(): React.ReactElement {
   }, [deck.edges, selectedEdgeId]);
 
   useEffect(() => {
-    if (workspaceView !== "canvas") return;
-    if (selectedCardId || selectedEdgeId) {
-      canvasSelectionInitializedRef.current = true;
-      return;
-    }
-    if (canvasSelectionInitializedRef.current) return;
-    if (deck.nodes.length === 0) return;
-    const preferredNode = deck.nodes[0] || null;
-    if (!preferredNode) return;
-    canvasSelectionInitializedRef.current = true;
-    setSelectedCardId(preferredNode.id);
-    setTab("Prompt");
-  }, [deck.nodes, selectedCardId, selectedEdgeId, workspaceView]);
-
-  useEffect(() => {
     if (activeTabs.some((entry) => entry === tab)) return;
     setTab(activeTabs[0] || "Plan");
   }, [activeTabs, tab]);
@@ -3056,7 +3046,7 @@ export default function AgentBuilder(): React.ReactElement {
       });
       queueWorkspacePanelTelemetry("agent", "agent_node", cardId, interactionId);
     }
-    setPanelOpen(true);
+    setObjectDrawerOpen(Boolean(cardId));
     setSelectedCardId(cardId);
     if (cardId) {
       setSelectedEdgeId(null);
@@ -3064,13 +3054,11 @@ export default function AgentBuilder(): React.ReactElement {
         setTab("Prompt");
       }
     }
-  }, [deck.nodes, emitWorkspaceTestingEvent, queueWorkspacePanelTelemetry, recordUiOnlyAction, tab]);
+  }, [emitWorkspaceTestingEvent, queueWorkspacePanelTelemetry, recordUiOnlyAction, tab]);
 
   const handleSelectEdge = useCallback((edgeId: string | null) => {
     recordUiOnlyAction("edge-selection");
-    if (!edgeId) {
-      pendingPanelOpenTelemetryRef.current = null;
-    } else {
+    if (edgeId) {
       const interactionId = createWorkspaceTestingInteractionId("agent-edge");
       emitWorkspaceTestingEvent({
         event: "agent_graph_edge_selected",
@@ -3079,15 +3067,14 @@ export default function AgentBuilder(): React.ReactElement {
         interactionId,
         metadata: { workspaceView: "canvas" },
       });
-      queueWorkspacePanelTelemetry("agent", "agent_edge", edgeId, interactionId);
     }
-    setPanelOpen(true);
+    pendingPanelOpenTelemetryRef.current = null;
+    setObjectDrawerOpen(false);
     setSelectedEdgeId(edgeId);
     if (edgeId) {
       setSelectedCardId(null);
-      setTab("Edge");
     }
-  }, [emitWorkspaceTestingEvent, queueWorkspacePanelTelemetry, recordUiOnlyAction]);
+  }, [emitWorkspaceTestingEvent, recordUiOnlyAction]);
 
   const handleSelectKnowledgeEntity = useCallback((entity: KnowledgeGraphNode | null) => {
     recordUiOnlyAction("knowledge-node-selection");
@@ -3104,7 +3091,7 @@ export default function AgentBuilder(): React.ReactElement {
       });
       queueWorkspacePanelTelemetry("knowledge", "knowledge_node", entity.id, interactionId);
     }
-    setPanelOpen(true);
+    setObjectDrawerOpen(false);
     setSelectedEdgeEvidence(null);
     setSelectedKnowledgeRelationshipId(null);
     setSelectedKnowledgeEntityId(entity?.id ?? null);
@@ -3125,7 +3112,7 @@ export default function AgentBuilder(): React.ReactElement {
       });
       queueWorkspacePanelTelemetry("knowledge", "knowledge_edge", relationship.id, interactionId);
     }
-    setPanelOpen(true);
+    setObjectDrawerOpen(false);
     setSelectedEdgeEvidence(relationship);
     setSelectedKnowledgeEntityId(null);
     setSelectedKnowledgeRelationshipId(relationship?.id ?? null);
@@ -3167,10 +3154,9 @@ export default function AgentBuilder(): React.ReactElement {
       setLatestDeckRun(null);
       recordDeckWriteReason("deck-quick-add");
       setDeck(mutation.nextDeck);
-      setPanelOpen(true);
+      setObjectDrawerOpen(false);
       setSelectedEdgeId(null);
-      setSelectedCardId(mutation.nextNode.id);
-      setTab("Prompt");
+      setSelectedCardId(null);
       // NO camera jump, NO zoom lock - let user position manually
       setDeckStatusMessage(
         mutation.nextEdge && anchorNode
@@ -3353,35 +3339,19 @@ export default function AgentBuilder(): React.ReactElement {
     if (!showDeckBuilder) {
       return (
         <div
-          style={{
+          style={graphDrawerSectionStyle({
             padding: "16px",
-            border: `1px dashed ${C.border}`,
-            borderRadius: "8px",
-            color: C.neutral,
-            background: "#1a1a1a",
-          }}
+            borderStyle: "dashed",
+            color: GRAPH_THEME.drawer.inputMuted,
+          })}
         >
           Select an Assist project for system agents or an Agent workspace for Agent Builder config.
         </div>
       );
     }
 
-    // Editor content based on selection
+    // Editor content based on node selection
     const renderEditorContent = () => {
-      if (selectedEdge && tab === "Edge") {
-        const sourceNode = deck.nodes.find((node) => node.id === selectedEdge.source) || null;
-        const targetNode = deck.nodes.find((node) => node.id === selectedEdge.target) || null;
-        return (
-          <DeckEdgeInspector
-            edge={selectedEdge}
-            onDelete={handleDeleteSelectedEdge}
-            sourceLabel={safeText(sourceNode?.title || selectedEdge.source)}
-            targetLabel={safeText(targetNode?.title || selectedEdge.target)}
-            colors={C}
-          />
-        );
-      }
-
       if (selectedCard && selectedCardConfig) {
         if (tab === "Prompt" || tab === "Knowledge" || tab === "Tools" || tab === "Runtime") {
           return (
@@ -3389,13 +3359,11 @@ export default function AgentBuilder(): React.ReactElement {
               <Suspense
                 fallback={
                   <div
-                    style={{
+                    style={graphDrawerSectionStyle({
                       padding: "12px 14px",
                       borderRadius: 8,
-                      border: `1px solid ${C.border}`,
-                      background: C.bg,
-                      color: C.neutral,
-                    }}
+                      color: GRAPH_THEME.drawer.inputMuted,
+                    })}
                   >
                     Loading card configuration…
                   </div>
@@ -3434,16 +3402,14 @@ export default function AgentBuilder(): React.ReactElement {
           <>
             <DeckExecutionPathSummary deck={deck} executionPlan={deckExecutionPlan} colors={C} />
             <div
-              style={{
+              style={graphDrawerSectionStyle({
                 padding: "12px 14px",
                 borderRadius: 8,
-                border: `1px solid ${C.border}`,
-                background: C.bg,
-              }}
+              })}
             >
               <div
                 className="text-xs"
-                style={{ color: C.text, fontWeight: 700, marginBottom: 8 }}
+                style={{ color: GRAPH_THEME.drawer.inputText, fontWeight: 700, marginBottom: 8 }}
               >
                 Run Input
               </div>
@@ -3452,12 +3418,7 @@ export default function AgentBuilder(): React.ReactElement {
                 onChange={(event) => setDeckRunInput(event.target.value)}
                 rows={6}
                 style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  borderRadius: 8,
-                  border: `1px solid ${C.border}`,
-                  background: "#181818",
-                  color: C.text,
+                  ...graphDrawerInputStyle(),
                   resize: "vertical",
                   fontFamily: "monospace",
                   fontSize: 12,
@@ -3467,38 +3428,33 @@ export default function AgentBuilder(): React.ReactElement {
                 <button
                   onClick={handleSaveDeck}
                   disabled={deckSaveBusy || deckLoadBusy || !canvasProjectId}
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: 8,
-                    border: `1px solid ${C.border}`,
-                    background: deckSaveBusy ? C.panel : "#222222",
-                    color: C.text,
+                  style={graphDrawerButtonStyle({
+                    opacity: deckSaveBusy || deckLoadBusy || !canvasProjectId ? 0.58 : 1,
                     cursor:
                       deckSaveBusy || deckLoadBusy || !canvasProjectId ? "not-allowed" : "pointer",
-                  }}
+                  })}
                 >
                   {deckSaveBusy ? "Saving..." : "Save Deck"}
                 </button>
                 <button
                   onClick={handleRunDeck}
                   disabled={deckRunBusy || deckLoadBusy || deck.nodes.length === 0 || !canvasProjectId}
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: 8,
-                    border: `1px solid ${deckRunBusy ? C.border : C.primary}`,
-                    background: deckRunBusy ? C.panel : "rgba(79,162,173,0.18)",
-                    color: C.text,
+                  style={graphDrawerButtonStyle({
+                    border: `1px solid ${deckRunBusy ? GRAPH_THEME.drawer.inputBorder : C.primary}`,
+                    background: deckRunBusy ? "rgba(18,20,24,0.74)" : GRAPH_THEME.drawer.buttonBackground,
+                    opacity:
+                      deckRunBusy || deckLoadBusy || deck.nodes.length === 0 || !canvasProjectId ? 0.58 : 1,
                     cursor:
                       deckRunBusy || deckLoadBusy || deck.nodes.length === 0 || !canvasProjectId
                         ? "not-allowed"
                         : "pointer",
-                  }}
+                  })}
                 >
                   {deckRunBusy ? "Running..." : "Run Deck"}
                 </button>
               </div>
               {deckStatusMessage && (
-                <div className="text-xs" style={{ marginTop: 8, color: C.neutral }}>
+                <div className="text-xs" style={{ marginTop: 8, color: GRAPH_THEME.drawer.inputMuted }}>
                   {deckStatusMessage}
                 </div>
               )}
@@ -3514,15 +3470,13 @@ export default function AgentBuilder(): React.ReactElement {
 
       return (
         <div
-          style={{
+          style={graphDrawerSectionStyle({
             padding: "16px",
-            border: `1px dashed ${C.border}`,
-            borderRadius: "8px",
-            color: C.neutral,
-            background: "#1a1a1a",
-          }}
+            borderStyle: "dashed",
+            color: GRAPH_THEME.drawer.inputMuted,
+          })}
         >
-          Select a node or edge on the canvas to edit it. Clear the selection to return to project-level tabs.
+          Select an agent node on the canvas to edit it. Edge links are canvas-only connections.
         </div>
       );
     };
@@ -4788,6 +4742,21 @@ export default function AgentBuilder(): React.ReactElement {
     [knowledgeRelationshipById, selectedKnowledgeRelationshipId],
   );
   const hasKnowledgeWorkspaceSelection = Boolean(selectedKnowledgeEntity || selectedKnowledgeRelationship);
+  const objectDrawerRole = useMemo<"agent" | null>(() => {
+    if (workspaceView !== "canvas") return null;
+    if (selectedCard) return "agent";
+    return null;
+  }, [selectedCard, workspaceView]);
+  const isObjectDrawerVisible = objectDrawerOpen && objectDrawerRole !== null;
+  const objectDrawerDefaultWidth = 520;
+  const objectDrawerStorageKey = "liquidaity.drawer.object.agent.width";
+
+  const closeObjectDrawer = useCallback(() => {
+    setObjectDrawerOpen(false);
+    pendingPanelOpenTelemetryRef.current = null;
+    setSelectedCardId(null);
+    setSelectedEdgeId(null);
+  }, []);
 
   useEffect(() => {
     if (!selectedKnowledgeEntityId) return;
@@ -4867,45 +4836,28 @@ export default function AgentBuilder(): React.ReactElement {
   );
 
   const clampAgentsChatWidth = useCallback(
-    (nextWidth: number, editorWidth: number) => {
+    (nextWidth: number, reservedWidth: number) => {
       const shellWidth = workspaceShellRef.current?.clientWidth ?? 0;
       if (shellWidth <= 0) return Math.max(AGENTS_CHAT_MIN_WIDTH, nextWidth);
       const maxWidth = Math.max(
         AGENTS_CHAT_MIN_WIDTH,
-        shellWidth - editorWidth - AGENTS_CANVAS_MIN_WIDTH
+        shellWidth - reservedWidth
       );
       return clamp(nextWidth, AGENTS_CHAT_MIN_WIDTH, maxWidth);
     },
     []
   );
 
-  const clampAgentsEditorWidth = useCallback(
-    (nextWidth: number, leftWidth: number) => {
-      const shellWidth = workspaceShellRef.current?.clientWidth ?? 0;
-      if (shellWidth <= 0) return Math.max(AGENTS_EDITOR_MIN_WIDTH, nextWidth);
-      const maxWidth = Math.max(
-        AGENTS_EDITOR_MIN_WIDTH,
-        shellWidth - leftWidth - AGENTS_CANVAS_MIN_WIDTH
-      );
-      return clamp(nextWidth, AGENTS_EDITOR_MIN_WIDTH, maxWidth);
-    },
-    []
-  );
-
   useEffect(() => {
-    if (workspaceView !== "canvas") return;
+    const reservedWidth = workspaceView === "canvas" ? AGENTS_CANVAS_MIN_WIDTH : WORKSPACE_COMPANION_MIN_WIDTH;
     const syncAgentsWidths = () => {
-      setPanelWidth((current) => clampAgentsEditorWidth(current, chatPanelWidth));
-      setChatPanelWidth((current) => clampAgentsChatWidth(current, panelWidth));
+      setChatPanelWidth((current) => clampAgentsChatWidth(current, reservedWidth));
     };
     syncAgentsWidths();
     window.addEventListener("resize", syncAgentsWidths);
     return () => window.removeEventListener("resize", syncAgentsWidths);
   }, [
-    chatPanelWidth,
     clampAgentsChatWidth,
-    clampAgentsEditorWidth,
-    panelWidth,
     workspaceView,
   ]);
 
@@ -4987,19 +4939,17 @@ export default function AgentBuilder(): React.ReactElement {
             }}
           >
             <div
-              style={{
-                border: `1px solid ${C.border}`,
+              style={graphDrawerSectionStyle({
                 borderRadius: 10,
-                background: C.bg,
                 padding: "14px 16px",
-              }}
+              })}
             >
-              <div style={{ color: C.text, fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>
+              <div style={{ color: GRAPH_THEME.drawer.inputText, fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>
                 {safeText(selectedKnowledgeEntity.label)}
               </div>
               <div
                 className="text-xs"
-                style={{ color: C.neutral, marginTop: 6 }}
+                style={{ color: GRAPH_THEME.drawer.inputMuted, marginTop: 6 }}
               >
                 {safeText(selectedKnowledgeEntity.type)} • {safeText(selectedKnowledgeEntity.source)} •{" "}
                 {formatKnowledgeScope(selectedKnowledgeEntity.scope)}
@@ -5007,14 +4957,12 @@ export default function AgentBuilder(): React.ReactElement {
             </div>
 
             <div
-              style={{
-                border: `1px solid ${C.border}`,
+              style={graphDrawerSectionStyle({
                 borderRadius: 10,
-                background: C.bg,
                 padding: "12px 14px",
-                color: C.neutral,
+                color: GRAPH_THEME.drawer.inputMuted,
                 lineHeight: 1.6,
-              }}
+              })}
             >
               Degree {selectedKnowledgeEntity.degree || 0}
               {selectedKnowledgeEntity.last_seen_ts
@@ -5046,25 +4994,23 @@ export default function AgentBuilder(): React.ReactElement {
           }}
         >
           <div
-            style={{
-              border: `1px solid ${C.border}`,
+            style={graphDrawerSectionStyle({
               borderRadius: 10,
-              background: C.bg,
               padding: "14px 16px",
-            }}
+            })}
           >
-            <div style={{ color: C.text, fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>
+            <div style={{ color: GRAPH_THEME.drawer.inputText, fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>
               {safeText(selectedKnowledgeRelationship.type)}
             </div>
             <div
               className="text-xs"
-              style={{ color: C.neutral, marginTop: 6 }}
+              style={{ color: GRAPH_THEME.drawer.inputMuted, marginTop: 6 }}
             >
               {safeText(fromLabel)} → {safeText(toLabel)}
             </div>
             <div
               className="text-xs"
-              style={{ color: C.neutral, marginTop: 6 }}
+              style={{ color: GRAPH_THEME.drawer.inputMuted, marginTop: 6 }}
             >
               {safeText(selectedKnowledgeRelationship.source)} •{" "}
               {formatKnowledgeScope(selectedKnowledgeRelationship.scope)}
@@ -5073,14 +5019,12 @@ export default function AgentBuilder(): React.ReactElement {
 
           {(selectedKnowledgeRelationship.evidence_doc_id || selectedKnowledgeRelationship.last_seen_ts) && (
             <div
-              style={{
-                border: `1px solid ${C.border}`,
+              style={graphDrawerSectionStyle({
                 borderRadius: 10,
-                background: C.bg,
                 padding: "12px 14px",
-                color: C.neutral,
+                color: GRAPH_THEME.drawer.inputMuted,
                 lineHeight: 1.6,
-              }}
+              })}
             >
               {selectedKnowledgeRelationship.evidence_doc_id
                 ? `Doc ${safeText(selectedKnowledgeRelationship.evidence_doc_id)}`
@@ -5097,15 +5041,13 @@ export default function AgentBuilder(): React.ReactElement {
 
           {selectedKnowledgeRelationship.evidence_snippet && (
             <div
-              style={{
-                border: `1px solid ${C.border}`,
+              style={graphDrawerSectionStyle({
                 borderRadius: 10,
-                background: C.bg,
                 padding: "12px 14px",
-                color: C.text,
+                color: GRAPH_THEME.drawer.inputText,
                 lineHeight: 1.6,
                 whiteSpace: "pre-wrap",
-              }}
+              })}
             >
               {safeText(selectedKnowledgeRelationship.evidence_snippet)}
             </div>
@@ -5128,17 +5070,15 @@ export default function AgentBuilder(): React.ReactElement {
           <Suspense
             fallback={
               <div
-                style={{
+                style={graphDrawerSectionStyle({
                   width: "100%",
                   minHeight,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  border: `1px solid ${C.border}`,
                   borderRadius: 8,
-                  background: C.bg,
-                  color: C.neutral,
-                }}
+                  color: GRAPH_THEME.drawer.inputMuted,
+                })}
               >
                 Loading knowledge graph...
               </div>
@@ -5209,25 +5149,20 @@ export default function AgentBuilder(): React.ReactElement {
       >
         {!activeProject ? (
           <div
-            style={{
+            style={graphDrawerSectionStyle({
               padding: "16px",
-              border: `1px dashed ${C.border}`,
-              borderRadius: "8px",
-              color: C.neutral,
-              background: "#1a1a1a",
-            }}
+              borderStyle: "dashed",
+              color: GRAPH_THEME.drawer.inputMuted,
+            })}
           >
             Select a project to view its plan.
           </div>
         ) : !stateLoaded ? (
           <div
-            style={{
+            style={graphDrawerSectionStyle({
               padding: "16px",
-              border: `1px solid ${C.border}`,
-              borderRadius: "8px",
-              color: C.neutral,
-              background: C.bg,
-            }}
+              color: GRAPH_THEME.drawer.inputMuted,
+            })}
           >
             Loading plan...
           </div>
@@ -5317,40 +5252,29 @@ export default function AgentBuilder(): React.ReactElement {
   );
 
   const showHomeChat = useCallback(() => {
+    closeObjectDrawer();
+    setSelectedEdgeEvidence(null);
+    setSelectedKnowledgeEntityId(null);
+    setSelectedKnowledgeRelationshipId(null);
+    setOpenDrawer(null);
     setWorkspaceView("chat");
-  }, []);
+  }, [closeObjectDrawer]);
 
   const showCanvasWorkspace = useCallback(() => {
+    closeObjectDrawer();
     setWorkspaceView("canvas");
-  }, []);
+  }, [closeObjectDrawer]);
 
   const showKnowledgeWorkspace = useCallback(() => {
+    closeObjectDrawer();
     setWorkspaceView("knowledge");
     setKnowledgeGraphKind("knowgraph");
-  }, []);
-
-  const showCodeGraphWorkspace = useCallback(() => {
-    setWorkspaceView("codegraph");
-    setKnowledgeGraphKind("codegraph");
-    setGraphViewContract((prev) => ({
-      graphKind: "codegraph",
-      projectId: CODEBASE_MEMORY_PROJECT_NAME,
-      nodeLabelAllowlist: undefined,
-      edgeTypeAllowlist: undefined,
-      showLabels: prev?.showLabels ?? true,
-      maxNodes: undefined,
-      focusNodeIds: undefined,
-      focusPaths: undefined,
-      focusSymbols: undefined,
-      cameraMode: prev?.cameraMode ?? "overview",
-      animationMode: prev?.animationMode ?? "calm",
-      narrativeIntent: prev?.narrativeIntent ?? null,
-    }));
-  }, []);
+  }, [closeObjectDrawer]);
 
   const showPlanWorkspace = useCallback(() => {
+    closeObjectDrawer();
     setWorkspaceView("plan");
-  }, []);
+  }, [closeObjectDrawer]);
 
   const applyCodeGraphViewContract = useCallback((contract: GraphViewContract | null) => {
     if (!contract) return;
@@ -5454,18 +5378,6 @@ export default function AgentBuilder(): React.ReactElement {
           >
             <Icon d="M12 1v3M12 20v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M1 12h3M20 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" />
           </button>
-          <button
-            title="CodeGraph"
-            aria-label="CodeGraph"
-            data-testid="rail-codegraph-button"
-            onClick={showCodeGraphWorkspace}
-            className="p-2 rounded"
-            style={{
-              color: workspaceView === "codegraph" ? C.primary : C.text,
-            }}
-          >
-            <Icon d="M4 6h6v6H4zM14 6h6v6h-6zM9 12v3h6v3M4 15h3v3H4z" />
-          </button>
           <div className="flex-1" />
           <button
             title="Plan"
@@ -5492,84 +5404,42 @@ export default function AgentBuilder(): React.ReactElement {
           </button>
         </aside>
 
-        <div ref={workspaceShellRef} className="flex flex-1 overflow-hidden min-h-0">
+        <div
+          ref={workspaceShellRef}
+          className="flex flex-1 overflow-hidden min-h-0"
+          style={{ position: "relative" }}
+        >
           <div
             data-testid="workspace-large-region"
             data-surface={largeSurface}
             className="h-full min-w-0 relative"
             style={{
-              width: workspaceView === "canvas" ? chatPanelWidth : undefined,
-              minWidth: workspaceView === "canvas" ? AGENTS_CHAT_MIN_WIDTH : 0,
-              flex: workspaceView === "canvas" ? "0 0 auto" : "1 1 0%",
+              ...(workspaceView === "chat"
+                ? {
+                    width: "100%",
+                    minWidth: 0,
+                    flex: "1 1 auto",
+                  }
+                : {
+                    width: chatPanelWidth,
+                    minWidth: AGENTS_CHAT_MIN_WIDTH,
+                    flex: "0 0 auto",
+                  }),
             }}
           >
-            {!panelOpen && workspaceView !== "canvas" ? (
-              <button
-                type="button"
-                aria-label="Expand right dock"
-                data-testid="dock-expand-button"
-                onClick={() => setPanelOpen(true)}
-                className="absolute z-10 flex items-center justify-center outline-none transition-[filter,background] duration-200 ease-out hover:brightness-[1.04] group"
-                style={{
-                  top: "50%",
-                  right: 0,
-                  transform: "translateY(-50%)",
-                  width: 11,
-                  height: 72,
-                  padding: 0,
-                  border: "none",
-                  borderTopLeftRadius: 7,
-                  borderBottomLeftRadius: 7,
-                  borderTopRightRadius: 0,
-                  borderBottomRightRadius: 0,
-                  cursor: "col-resize",
-                  background:
-                    "linear-gradient(90deg, rgba(20,22,26,0.02) 0%, rgba(48,52,58,0.55) 40%, rgba(38,42,48,0.88) 100%)",
-                  boxShadow:
-                    "inset 1px 0 0 rgba(79,162,173,0.22), inset 0 1px 0 rgba(255,255,255,0.06), -6px 0 18px rgba(0,0,0,0.12)",
-                }}
-              >
-                <span className="pointer-events-none flex flex-col items-center gap-[5px] opacity-[0.42] group-hover:opacity-[0.62] transition-opacity duration-200">
-                  <span
-                    className="rounded-full"
-                    style={{
-                      width: 2,
-                      height: 14,
-                      background: "linear-gradient(180deg, rgba(255,255,255,0.5), rgba(255,255,255,0.12))",
-                      boxShadow: "0 0 6px rgba(79,162,173,0.25)",
-                    }}
-                  />
-                  <span
-                    className="rounded-full"
-                    style={{
-                      width: 2,
-                      height: 14,
-                      background: "linear-gradient(180deg, rgba(255,255,255,0.35), rgba(255,255,255,0.1))",
-                    }}
-                  />
-                  <span
-                    className="rounded-full"
-                    style={{
-                      width: 2,
-                      height: 14,
-                      background: "linear-gradient(180deg, rgba(255,255,255,0.22), rgba(255,255,255,0.08))",
-                    }}
-                  />
-                </span>
-              </button>
-            ) : null}
             {renderChatSurface(activeProject, false, "large")}
           </div>
 
-          {workspaceView === "canvas" ? (
+          {workspaceView !== "chat" ? (
             <div
               onMouseDown={(e) => {
                 const sx = e.clientX;
                 const sw = chatPanelWidth;
-                const currentEditorWidth = panelOpen ? panelWidth : AGENTS_EDITOR_MIN_WIDTH;
+                const reservedWidth =
+                  workspaceView === "canvas" ? AGENTS_CANVAS_MIN_WIDTH : WORKSPACE_COMPANION_MIN_WIDTH;
                 const mv = (ev: MouseEvent) => {
                   const d = ev.clientX - sx;
-                  setChatPanelWidth(clampAgentsChatWidth(sw + d, currentEditorWidth));
+                  setChatPanelWidth(clampAgentsChatWidth(sw + d, reservedWidth));
                 };
                 const up = () => {
                   window.removeEventListener("mousemove", mv);
@@ -5579,12 +5449,12 @@ export default function AgentBuilder(): React.ReactElement {
                 window.addEventListener("mouseup", up);
               }}
               style={{
-                width: 6,
+                width: 8,
                 height: "100%",
                 cursor: "col-resize",
                 flexShrink: 0,
                 background:
-                  "linear-gradient(90deg, rgba(255,255,255,0.00), rgba(255,255,255,0.04))",
+                  "linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.08), rgba(255,255,255,0.02))",
               }}
             />
           ) : null}
@@ -5595,188 +5465,58 @@ export default function AgentBuilder(): React.ReactElement {
               className="h-full flex-1 min-w-0 relative"
               style={{ minWidth: AGENTS_CANVAS_MIN_WIDTH }}
             >
-              {!panelOpen && (
-                <button
-                  type="button"
-                  aria-label="Expand right dock"
-                  data-testid="dock-expand-button"
-                  onClick={() => setPanelOpen(true)}
-                  className="absolute z-10 flex items-center justify-center outline-none transition-[filter,background] duration-200 ease-out hover:brightness-[1.04] group"
-                  style={{
-                    top: "50%",
-                    right: 0,
-                    transform: "translateY(-50%)",
-                    width: 11,
-                    height: 72,
-                    padding: 0,
-                    border: "none",
-                    borderTopLeftRadius: 7,
-                    borderBottomLeftRadius: 7,
-                    borderTopRightRadius: 0,
-                    borderBottomRightRadius: 0,
-                    cursor: "col-resize",
-                    background:
-                      "linear-gradient(90deg, rgba(20,22,26,0.02) 0%, rgba(48,52,58,0.55) 40%, rgba(38,42,48,0.88) 100%)",
-                    boxShadow:
-                      "inset 1px 0 0 rgba(79,162,173,0.22), inset 0 1px 0 rgba(255,255,255,0.06), -6px 0 18px rgba(0,0,0,0.12)",
-                  }}
-                >
-                  <span className="pointer-events-none flex flex-col items-center gap-[5px] opacity-[0.42] group-hover:opacity-[0.62] transition-opacity duration-200">
-                    <span
-                      className="rounded-full"
-                      style={{
-                        width: 2,
-                        height: 14,
-                        background: "linear-gradient(180deg, rgba(255,255,255,0.5), rgba(255,255,255,0.12))",
-                        boxShadow: "0 0 6px rgba(79,162,173,0.25)",
-                      }}
-                    />
-                    <span
-                      className="rounded-full"
-                      style={{
-                        width: 2,
-                        height: 14,
-                        background: "linear-gradient(180deg, rgba(255,255,255,0.35), rgba(255,255,255,0.1))",
-                      }}
-                    />
-                    <span
-                      className="rounded-full"
-                      style={{
-                        width: 2,
-                        height: 14,
-                        background: "linear-gradient(180deg, rgba(255,255,255,0.22), rgba(255,255,255,0.08))",
-                      }}
-                    />
-                  </span>
-                </button>
-              )}
               {renderCanvasSurface(false, "large")}
             </div>
           ) : null}
 
-          {/* RIGHT panel */}
-          <aside
-            data-testid="workspace-companion-region"
-            data-workspace={workspaceView}
-            data-open={panelOpen ? "true" : "false"}
-            className="h-full relative transition-[width] duration-200 ease-out"
-            style={{
-              width: panelOpen ? panelWidth : 0,
-              minWidth:
-                panelOpen && workspaceView === "canvas" ? AGENTS_EDITOR_MIN_WIDTH : 0,
-              borderLeft: panelOpen ? `1px solid ${C.border}` : "none",
-              background: C.panel,
-              flexShrink: 0,
-              overflow: "hidden",
-            }}
-          >
-          <div className="h-full flex flex-col overflow-hidden min-h-0 relative">
-            <div
-              className="pointer-events-none absolute left-0 top-0 bottom-0 w-px z-[1]"
-              style={{
-                background: "linear-gradient(180deg, rgba(79,162,173,0.22), rgba(79,162,173,0.06) 38%, rgba(255,255,255,0.04) 100%)",
-                opacity: 0.9,
-              }}
-              aria-hidden
-            />
-            {workspaceView !== "canvas" ? (
-              <button
-                type="button"
-                aria-label="Collapse right dock"
-                data-testid="dock-collapse-button"
-                onClick={() => setPanelOpen(false)}
-                className="absolute left-0 top-3 z-[2] flex items-center justify-center outline-none transition-[background,box-shadow,width] duration-200 ease-out hover:bg-[rgba(255,255,255,0.04)] group shrink-0"
-                style={{
-                  width: 12,
-                  minHeight: 40,
-                  paddingLeft: 2,
-                  border: "none",
-                  borderRight: "1px solid rgba(255,255,255,0.05)",
-                  borderTopRightRadius: 6,
-                  borderBottomRightRadius: 6,
-                  cursor: "col-resize",
-                  background: "linear-gradient(90deg, rgba(0,0,0,0.06), rgba(255,255,255,0.02))",
-                  boxShadow: "inset -1px 0 0 rgba(79,162,173,0.12)",
-                }}
-              >
-                <span className="pointer-events-none flex flex-col items-center gap-[4px] opacity-[0.38] group-hover:opacity-[0.58] transition-opacity duration-200">
-                  <span
-                    className="rounded-full"
-                    style={{
-                      width: 2,
-                      height: 11,
-                      background: "linear-gradient(180deg, rgba(255,255,255,0.45), rgba(255,255,255,0.1))",
-                    }}
-                  />
-                  <span
-                    className="rounded-full"
-                    style={{
-                      width: 2,
-                      height: 11,
-                      background: "linear-gradient(180deg, rgba(255,255,255,0.3), rgba(255,255,255,0.08))",
-                    }}
-                  />
-                  <span
-                    className="rounded-full"
-                    style={{
-                      width: 2,
-                      height: 11,
-                      background: "linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06))",
-                    }}
-                  />
-                </span>
-              </button>
-            ) : null}
-            {workspaceView === "canvas" && activeTabs.length > 0 ? (
-              <div className="px-4 pt-3 flex items-stretch gap-2 min-h-[40px] relative z-[2]">
-              <button
-                type="button"
-                aria-label="Collapse right dock"
-                data-testid="dock-collapse-button"
-                onClick={() => setPanelOpen(false)}
-                className="flex-none flex items-center justify-center self-stretch outline-none transition-[background,box-shadow,width] duration-200 ease-out hover:bg-[rgba(255,255,255,0.04)] group shrink-0"
-                style={{
-                  width: 12,
-                  minHeight: 40,
-                  marginLeft: -12,
-                  paddingLeft: 2,
-                  border: "none",
-                  borderRight: "1px solid rgba(255,255,255,0.05)",
-                  borderTopRightRadius: 6,
-                  borderBottomRightRadius: 6,
-                  cursor: "col-resize",
-                  background: "linear-gradient(90deg, rgba(0,0,0,0.06), rgba(255,255,255,0.02))",
-                  boxShadow: "inset -1px 0 0 rgba(79,162,173,0.12)",
-                }}
-              >
-                <span className="pointer-events-none flex flex-col items-center gap-[4px] opacity-[0.38] group-hover:opacity-[0.58] transition-opacity duration-200">
-                  <span
-                    className="rounded-full"
-                    style={{
-                      width: 2,
-                      height: 11,
-                      background: "linear-gradient(180deg, rgba(255,255,255,0.45), rgba(255,255,255,0.1))",
-                    }}
-                  />
-                  <span
-                    className="rounded-full"
-                    style={{
-                      width: 2,
-                      height: 11,
-                      background: "linear-gradient(180deg, rgba(255,255,255,0.3), rgba(255,255,255,0.08))",
-                    }}
-                  />
-                  <span
-                    className="rounded-full"
-                    style={{
-                      width: 2,
-                      height: 11,
-                      background: "linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06))",
-                    }}
-                  />
-                </span>
-              </button>
-                <div className="flex min-w-0 flex-1 gap-2.5 overflow-x-auto pb-0.5 items-center">
+          {workspaceView !== "canvas" && workspaceView !== "chat" ? (
+            <aside
+              data-testid="workspace-companion-region"
+              data-workspace={workspaceView}
+              data-open="true"
+              className="h-full relative"
+              style={graphCompanionPanelStyle({
+                minWidth: WORKSPACE_COMPANION_MIN_WIDTH,
+                flex: "1 1 0%",
+                overflow: "hidden",
+              })}
+            >
+              <div className="h-full flex flex-col overflow-hidden min-h-0 relative">
+                <div
+                  className="flex-1 overflow-hidden text-sm min-h-0"
+                  style={{
+                    color: GRAPH_THEME.drawer.inputMuted,
+                    background: "transparent",
+                  }}
+                >
+                  {workspaceView === "knowledge" && hasKnowledgeWorkspaceSelection && renderKnowledgeWorkspacePanel()}
+                  {workspaceView === "knowledge" &&
+                    !hasKnowledgeWorkspaceSelection &&
+                    renderKnowledgeGraphSurface(420, "companion")}
+                  {workspaceView === "codegraph" &&
+                    renderKnowledgeGraphSurface(420, "companion")}
+                  {workspaceView === "plan" && renderPlanSurface("companion")}
+                </div>
+              </div>
+            </aside>
+          ) : null}
+
+          {workspaceView === "canvas" ? (
+            <RightGlassDrawer
+              isOpen={isObjectDrawerVisible}
+              title="Agent Editor"
+              onClose={closeObjectDrawer}
+              defaultWidth={objectDrawerDefaultWidth}
+              minWidth={360}
+              maxWidth={760}
+              storageKey={objectDrawerStorageKey}
+              dataTestId="workspace-object-drawer"
+            >
+              {activeTabs.length > 0 ? (
+                <div
+                  className="flex min-w-0 overflow-x-auto"
+                  style={graphCompanionTabGroupStyle({ gap: 6, marginBottom: 10 })}
+                >
                   {activeTabs.map((t) => {
                     const selected = tab === t;
                     return (
@@ -5788,91 +5528,26 @@ export default function AgentBuilder(): React.ReactElement {
                           event.stopPropagation();
                           handleCompanionTabClick(t);
                         }}
-                        className="whitespace-nowrap transition-[color,background,box-shadow,border-color,transform] duration-200 ease-out"
-                        style={{
-                          padding: selected ? "8px 14px" : "7px 12px",
-                          fontSize: selected ? 12.75 : 12.25,
-                          lineHeight: 1.15,
-                          fontWeight: selected ? 600 : 500,
-                          letterSpacing: selected ? "-0.01em" : "0",
-                          color: selected ? "rgba(255,255,255,0.96)" : "rgba(224,222,213,0.52)",
-                          background: selected
-                            ? "linear-gradient(180deg, rgba(79,162,173,0.16) 0%, rgba(79,162,173,0.07) 100%)"
-                            : "rgba(255,255,255,0.018)",
-                          border: selected
-                            ? "1px solid rgba(79,162,173,0.34)"
-                            : "1px solid rgba(255,255,255,0.035)",
-                          borderRadius: selected ? 13 : 11,
-                          boxShadow: selected
-                            ? "inset 0 1px 0 rgba(255,255,255,0.1), 0 0 0 1px rgba(0,0,0,0.12), 0 6px 20px rgba(79,162,173,0.08), 0 1px 2px rgba(0,0,0,0.2)"
-                            : "inset 0 1px 0 rgba(255,255,255,0.03)",
-                          transform: selected ? "translateY(-0.5px)" : "none",
-                        }}
+                        className="whitespace-nowrap transition-colors duration-150 ease-out"
+                        style={graphCompanionTabButtonStyle(selected)}
                       >
                         {t}
                       </button>
                     );
                   })}
                 </div>
-              </div>
-            ) : null}
+              ) : null}
               <div
-                className="flex-1 overflow-hidden text-sm min-h-0"
-                style={{ color: C.neutral }}
-              >
-                {workspaceView === "canvas" && (
-                  <div data-testid="companion-surface-editor" style={{ height: "100%", overflow: "auto" }}>
-                    {renderAgentBuilderPanel()}
-                  </div>
-                )}
-                {workspaceView === "knowledge" && hasKnowledgeWorkspaceSelection && renderKnowledgeWorkspacePanel()}
-                {workspaceView === "knowledge" &&
-                  !hasKnowledgeWorkspaceSelection &&
-                  renderKnowledgeGraphSurface(420, "companion")}
-                {workspaceView === "codegraph" &&
-                  renderKnowledgeGraphSurface(420, "companion")}
-                {workspaceView === "plan" && renderPlanSurface("companion")}
-              </div>
-
-              {/* resize handle */}
-              <div
-                onMouseDown={(e) => {
-                  if (!panelOpen) return;
-                  const sx = e.clientX;
-                  const sw = panelWidth;
-                  const minW =
-                    workspaceView === "canvas" ? AGENTS_EDITOR_MIN_WIDTH : 360;
-                  const maxW = 920;
-                  const mv = (ev: MouseEvent) => {
-                    const d = sx - ev.clientX;
-                    const next = clamp(sw + d, minW, maxW);
-                    setPanelWidth(
-                      workspaceView === "canvas"
-                        ? clampAgentsEditorWidth(next, chatPanelWidth)
-                        : next
-                    );
-                  };
-                  const up = () => {
-                    window.removeEventListener("mousemove", mv);
-                    window.removeEventListener("mouseup", up);
-                  };
-                  window.addEventListener("mousemove", mv);
-                  window.addEventListener("mouseup", up);
-                }}
+                data-testid="companion-surface-editor"
                 style={{
-                  position: "absolute",
-                  left: 0,
-                  top: 0,
-                  width: 6,
-                  height: "100%",
-                  cursor: "col-resize",
-                  zIndex: 2,
-                  background:
-                    "linear-gradient(90deg, rgba(255,255,255,0.00), rgba(255,255,255,0.04))",
+                  display: "grid",
+                  gap: 8,
                 }}
-              />
-          </div>
-          </aside>
+              >
+                {renderAgentBuilderPanel()}
+              </div>
+            </RightGlassDrawer>
+          ) : null}
         </div>
       </div>
 

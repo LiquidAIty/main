@@ -1,4 +1,5 @@
 import type { DeckDocument } from "../../types/agentgraph";
+import { GRAPH_THEME, graphDrawerSectionStyle } from "../graph/graphVisualTokens";
 
 type DeckExecutionPathSummaryColors = {
   bg: string;
@@ -41,24 +42,22 @@ export default function DeckExecutionPathSummary({
 
   return (
     <div
-      style={{
+      style={graphDrawerSectionStyle({
         padding: "12px 14px",
         borderRadius: 8,
-        border: `1px solid ${colors.border}`,
-        background: colors.bg,
         marginBottom: 12,
-      }}
+      })}
     >
       <div
         className="text-xs"
-        style={{ color: colors.text, fontWeight: 700, marginBottom: 8 }}
+        style={{ color: GRAPH_THEME.drawer.inputText, fontWeight: 700, marginBottom: 8 }}
       >
         Visible Execution Path
       </div>
-      <div className="text-xs" style={{ color: colors.neutral, lineHeight: 1.55 }}>
+      <div className="text-xs" style={{ color: GRAPH_THEME.drawer.inputMuted, lineHeight: 1.55 }}>
         {orderedLabels.length > 0 ? orderedLabels.join(" -> ") : "No runnable path yet."}
       </div>
-      <div className="text-xs" style={{ color: colors.neutral, marginTop: 8, opacity: 0.85 }}>
+      <div className="text-xs" style={{ color: GRAPH_THEME.drawer.inputMuted, marginTop: 8, opacity: 0.85 }}>
         This order comes directly from the drawn links on the canvas.
       </div>
       {hasLoopIssue && (
@@ -71,7 +70,8 @@ export default function DeckExecutionPathSummary({
             padding: "8px 10px",
             borderRadius: 8,
             border: `1px solid rgba(217,132,88,0.34)`,
-            background: "rgba(217,132,88,0.08)",
+            background: "rgba(217,132,88,0.12)",
+            boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05)",
           }}
         >
           Loop detected in the drawn graph. The runtime does not invent a fake simple order through cycles.
