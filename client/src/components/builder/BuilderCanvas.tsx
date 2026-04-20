@@ -4,6 +4,8 @@ import {
   Background,
   BackgroundVariant,
   ConnectionMode,
+  Handle,
+  Position,
   ReactFlow,
   addEdge,
   applyEdgeChanges,
@@ -45,13 +47,6 @@ import {
 import TurboFlowEdge from './edges/TurboFlowEdge';
 import AgentCardNode from './nodes/AgentCardNode';
 
-const nodeTypes = {
-  agentCard: AgentCardNode,
-};
-const edgeTypes = {
-  turboFlow: TurboFlowEdge,
-};
-
 const DEV_MODE = import.meta.env.DEV;
 const PERSISTED_NODE_CHANGE_TYPES = new Set<NodeChange['type']>(['add', 'remove', 'replace', 'position']);
 const PERSISTED_EDGE_CHANGE_TYPES = new Set<EdgeChange['type']>(['add', 'remove', 'replace']);
@@ -62,8 +57,99 @@ const CANVAS_ROW_Y_START = 120;
 const CANVAS_ROW_X_GAP = 292;
 const CANVAS_ROW_Y_GAP = 162;
 const CANVAS_LAYER_BRANCH_OFFSET = 44;
-const WALL_SEAM_CAPTURE_WIDTH_PX = 128;
 const DEFAULT_CARD_VISUAL_HEIGHT = 72;
+const WALL_SOCKET_SPACING_PX = 54;
+const WALL_SOCKET_MIN_INDEX = -80;
+const WALL_SOCKET_MAX_INDEX = 80;
+const WALL_SOCKET_COUNT = WALL_SOCKET_MAX_INDEX - WALL_SOCKET_MIN_INDEX + 1;
+const WALL_RAIL_HEIGHT_PX = WALL_SOCKET_COUNT * WALL_SOCKET_SPACING_PX;
+const WALL_RAIL_Y_OFFSET = WALL_SOCKET_MIN_INDEX * WALL_SOCKET_SPACING_PX;
+
+function SeamWallRailNode() {
+  const socketIndices: number[] = [];
+  for (let index = WALL_SOCKET_MIN_INDEX; index <= WALL_SOCKET_MAX_INDEX; index += 1) {
+    socketIndices.push(index);
+  }
+
+  return (
+    <div
+      aria-label="Magentic wall seam socket rail"
+      style={{
+        position: 'relative',
+        width: 16,
+        height: WALL_RAIL_HEIGHT_PX,
+        pointerEvents: 'auto',
+        overflow: 'visible',
+      }}
+    >
+      <div
+        aria-hidden
+        style={{
+          position: 'absolute',
+          left: 7,
+          top: 0,
+          width: 2,
+          height: '100%',
+          background: 'linear-gradient(180deg, rgba(55,173,170,0.22), rgba(55,173,170,0.08), rgba(55,173,170,0.22))',
+          boxShadow: '0 0 6px rgba(55,173,170,0.12)',
+          borderRadius: 999,
+          pointerEvents: 'none',
+        }}
+      />
+      {socketIndices.map((index) => {
+        const top = (index - WALL_SOCKET_MIN_INDEX) * WALL_SOCKET_SPACING_PX;
+        return (
+          <div key={index}>
+            <Handle
+              id={`wall-target-${index}`}
+              type="target"
+              position={Position.Left}
+              isConnectable
+              style={{
+                top,
+                left: 2,
+                width: 12,
+                height: 12,
+                borderRadius: 999,
+                border: '1px solid rgba(55,173,170,0.28)',
+                background: 'rgba(55,173,170,0.16)',
+                boxShadow: '0 0 0 1px rgba(17,22,29,0.55)',
+                opacity: 0.42,
+                pointerEvents: 'auto',
+              }}
+            />
+            <Handle
+              id={`wall-source-${index}`}
+              type="source"
+              position={Position.Left}
+              isConnectable
+              style={{
+                top,
+                left: 2,
+                width: 12,
+                height: 12,
+                borderRadius: 999,
+                border: '1px solid rgba(55,173,170,0.28)',
+                background: 'rgba(55,173,170,0.16)',
+                boxShadow: '0 0 0 1px rgba(17,22,29,0.55)',
+                opacity: 0.42,
+                pointerEvents: 'auto',
+              }}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const nodeTypes = {
+  agentCard: AgentCardNode,
+  seamWallRail: SeamWallRailNode,
+};
+const edgeTypes = {
+  turboFlow: TurboFlowEdge,
+};
 
 type ViewportRect = {
   left: number;
@@ -321,6 +407,7 @@ function computeLeftToRightCanvasRows(document: DeckDocument): Map<string, { x: 
 
 function toFlowNodes(
   document: DeckDocument,
+  wallSeamX: number,
   selectedCardId: string | null,
   selectedEdgeId: string | null,
   hoveredCardId: string | null,
@@ -353,9 +440,9 @@ function toFlowNodes(
   const rowLayout = computeLeftToRightCanvasRows(document);
   return document.nodes.map((node) => ({
     id: node.id,
-    // Keep Magentic-One as real identity, but do not render it as a floating canvas wall object.
-    type: 'agentCard',
-    position: isWallOrchestratorNode(node) ? { x: -340, y: -80 } : rowLayout.get(node.id) || node.position,
+    // Keep Magentic-One as runtime/deck identity only; seam-projected edges own visible wall routing geometry.
+    type: isWallOrchestratorNode(node) ? 'seamWallRail' : 'agentCard',
+    position: isWallOrchestratorNode(node) ? { x: wallSeamX - 8, y: WALL_RAIL_Y_OFFSET } : rowLayout.get(node.id) || node.position,
     draggable: !isWallOrchestratorNode(node),
     selectable: !isWallOrchestratorNode(node),
     focusable: !isWallOrchestratorNode(node),
@@ -372,6 +459,18 @@ function toFlowNodes(
                 : 0.44,
           }
         : undefined,
+    ...(isWallOrchestratorNode(node)
+      ? {
+          style: {
+            width: 16,
+            height: WALL_RAIL_HEIGHT_PX,
+            overflow: 'visible',
+            background: 'transparent',
+            border: 'none',
+            boxShadow: 'none',
+          } as const,
+        }
+      : {}),
     data: {
       ...node,
       executionOrder: executionOrderById.get(node.id) || null,
@@ -427,6 +526,26 @@ function isWallOrchestratorNode(node: AgentCardInstance | undefined | null): boo
   if (!node) return false;
   if (normalizeRuntimeType(node.runtimeType) === 'magentic_one') return true;
   return String(node.id || '').trim().toLowerCase() === 'card_magentic';
+}
+
+function resolveWallAnchorYFromHandleId(handleId: string | null | undefined): number | undefined {
+  if (!handleId) return undefined;
+  const match = /^wall-(?:target|source)-(-?\d+)$/.exec(handleId);
+  if (!match) return undefined;
+  const index = Number(match[1]);
+  if (!Number.isFinite(index)) return undefined;
+  return Math.round(index * WALL_SOCKET_SPACING_PX);
+}
+
+function resolveWallSocketIndexFromAnchorY(anchorY: number | undefined): number | undefined {
+  if (typeof anchorY !== 'number' || !Number.isFinite(anchorY)) return undefined;
+  const rawIndex = Math.round(anchorY / WALL_SOCKET_SPACING_PX);
+  return Math.max(WALL_SOCKET_MIN_INDEX, Math.min(WALL_SOCKET_MAX_INDEX, rawIndex));
+}
+
+function resolveWallAnchorYFromSocketIndex(socketIndex: number | undefined): number | undefined {
+  if (typeof socketIndex !== 'number' || !Number.isFinite(socketIndex)) return undefined;
+  return Math.round(socketIndex * WALL_SOCKET_SPACING_PX);
 }
 
 function isTopLevelCanvasCard(node: AgentCardInstance | undefined | null): node is AgentCardInstance {
@@ -647,7 +766,8 @@ function toFlowEdges(
   wallAnchorYByEdgeId: Record<string, number>,
 ): Edge[] {
   const nodeById = new Map(document.nodes.map((node) => [node.id, node] as const));
-  return document.edges.map((edge) => {
+  const seenWallRouteKeys = new Set<string>();
+  return document.edges.flatMap((edge) => {
     const isSelected = edge.id === selectedEdgeId;
     const isHoverConnected = isEdgeConnectedToNode(edge.source, edge.target, hoveredCardId);
     const isInspectConnected = inspectCardId ? isEdgeConnectedToNode(edge.source, edge.target, inspectCardId) : false;
@@ -655,11 +775,13 @@ function toFlowEdges(
     const edgeType = normalizeEdgeType(edge.edgeType);
     const sourceNode = nodeById.get(edge.source) as AgentCardInstance | undefined;
     const targetNode = nodeById.get(edge.target) as AgentCardInstance | undefined;
-    const sourceRuntimeType = normalizeRuntimeType(sourceNode?.runtimeType);
-    const targetRuntimeType = normalizeRuntimeType(targetNode?.runtimeType);
+    // Never render dangling edges; they produce phantom wires at invalid geometry.
+    if (!sourceNode || !targetNode) return [];
     const sourceIsWallEndpoint = isWallOrchestratorNode(sourceNode);
     const targetIsWallEndpoint = isWallOrchestratorNode(targetNode);
     const isWallConnected = sourceIsWallEndpoint || targetIsWallEndpoint;
+    // Wall routes must always be explicit Magentic routes.
+    if (isWallConnected && edgeType !== 'magentic_option') return [];
     const fallbackWallAnchorNode =
       sourceIsWallEndpoint
         ? targetNode
@@ -669,13 +791,33 @@ function toFlowEdges(
     const explicitWallAnchorY = Number(wallAnchorYByEdgeId[edge.id]);
     const wallAnchorY = Number.isFinite(explicitWallAnchorY)
       ? Math.round(explicitWallAnchorY)
-      : fallbackWallAnchorNode
+      // Fallback may only use the non-wall node center; never wall node geometry.
+      : fallbackWallAnchorNode && !isWallOrchestratorNode(fallbackWallAnchorNode)
         ? Math.round(fallbackWallAnchorNode.position.y + DEFAULT_CARD_VISUAL_HEIGHT / 2)
         : undefined;
+    const wallSocketIndex = resolveWallSocketIndexFromAnchorY(wallAnchorY);
+    const normalizedWallAnchorY = resolveWallAnchorYFromSocketIndex(wallSocketIndex);
+    // Wall edges must terminate on a valid seam socket; reject invalid wall geometry.
+    if (isWallConnected && (typeof wallSocketIndex !== 'number' || typeof normalizedWallAnchorY !== 'number')) {
+      return [];
+    }
+    if (isWallConnected) {
+      const wallRouteKey = `${edge.source}->${edge.target}@${wallSocketIndex}`;
+      if (seenWallRouteKeys.has(wallRouteKey)) return [];
+      seenWallRouteKeys.add(wallRouteKey);
+    }
     return {
       id: edge.id,
       source: edge.source,
       target: edge.target,
+      sourceHandle:
+        sourceIsWallEndpoint && typeof wallSocketIndex === 'number'
+          ? `wall-source-${wallSocketIndex}`
+          : undefined,
+      targetHandle:
+        targetIsWallEndpoint && typeof wallSocketIndex === 'number'
+          ? `wall-target-${wallSocketIndex}`
+          : undefined,
       data: {
         edgeType,
         metadata: edge.metadata || null,
@@ -688,7 +830,7 @@ function toFlowEdges(
         targetIsWallEndpoint,
         wallAnchorY:
           sourceIsWallEndpoint || targetIsWallEndpoint
-            ? wallAnchorY
+            ? normalizedWallAnchorY
             : undefined,
       } satisfies FlowEdgeData,
       type: 'turboFlow',
@@ -719,7 +861,7 @@ function toFlowEdges(
             ? (isHoverConnected ? (isWallConnected ? 0.78 : 0.58) : 0.24)
             : (isWallConnected ? 0.74 : isSelected ? 0.6 : 0.44),
       },
-    };
+    } as Edge;
   });
 }
 
@@ -827,6 +969,7 @@ export default function BuilderCanvas({
 }) {
   const activeCardIdSet = useMemo(() => new Set(activeCardIds), [activeCardIds]);
   const activeEdgeIdSet = useMemo(() => new Set(activeEdgeIds), [activeEdgeIds]);
+  const [wallSeamX, setWallSeamX] = useState(-72);
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
   const [layoutLocked, setLayoutLocked] = useState(false);
   const wallAnchorYByEdgeIdRef = useRef<Record<string, number>>({});
@@ -834,6 +977,7 @@ export default function BuilderCanvas({
     () =>
       toFlowNodes(
         document,
+        wallSeamX,
         selectedCardId,
         selectedEdgeId,
         hoveredCardId,
@@ -843,7 +987,7 @@ export default function BuilderCanvas({
         activeEdgeIdSet,
         swarmProgressByCardId,
       ),
-    [activeCardIdSet, activeEdgeIdSet, document, executionPlan, hoveredCardId, inspectMode, selectedCardId, selectedEdgeId, swarmProgressByCardId],
+    [activeCardIdSet, activeEdgeIdSet, document, executionPlan, hoveredCardId, inspectMode, selectedCardId, selectedEdgeId, swarmProgressByCardId, wallSeamX],
   );
   const flowEdges = useMemo(
     () =>
@@ -861,21 +1005,12 @@ export default function BuilderCanvas({
   const [edges, setEdges] = useEdgesState(flowEdges);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
-  const pendingConnectionRef = useRef<{
-    nodeId: string | null;
-    handleType: 'source' | 'target' | null;
-  } | null>(null);
   const viewportRecoveryFrameRef = useRef<number | null>(null);
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const documentRecoveryKey = useMemo(() => buildCanvasDocumentRecoveryKey(document), [document]);
   const selectedEdge = useMemo(
     () => document.edges.find((edge) => edge.id === selectedEdgeId) || null,
     [document.edges, selectedEdgeId],
-  );
-  const magenticNodeId = useMemo(
-    () =>
-      document.nodes.find((node) => isWallOrchestratorNode(node))?.id || null,
-    [document.nodes],
   );
   const translateExtent = useMemo(() => buildViewportTranslateExtent(nodes), [nodes]);
 
@@ -1094,7 +1229,7 @@ export default function BuilderCanvas({
 
   const resolveWallAnchorYForConnection = useCallback(
     (
-      connection: Pick<Connection, 'source' | 'target'>,
+      connection: Connection,
       requestedWallAnchorY?: number | null,
     ): number | undefined => {
       const sourceNode = document.nodes.find((node) => node.id === connection.source);
@@ -1105,7 +1240,17 @@ export default function BuilderCanvas({
         typeof requestedWallAnchorY === 'number' &&
         Number.isFinite(requestedWallAnchorY)
       ) {
-        return Math.round(requestedWallAnchorY);
+        const requestedSocketIndex = resolveWallSocketIndexFromAnchorY(requestedWallAnchorY);
+        return resolveWallAnchorYFromSocketIndex(requestedSocketIndex);
+      }
+      const wallHandleAnchorY = isWallOrchestratorNode(sourceNode)
+        ? resolveWallAnchorYFromHandleId(connection.sourceHandle)
+        : isWallOrchestratorNode(targetNode)
+          ? resolveWallAnchorYFromHandleId(connection.targetHandle)
+          : undefined;
+      if (typeof wallHandleAnchorY === 'number' && Number.isFinite(wallHandleAnchorY)) {
+        const handleSocketIndex = resolveWallSocketIndexFromAnchorY(wallHandleAnchorY);
+        return resolveWallAnchorYFromSocketIndex(handleSocketIndex);
       }
       const nonWallNode =
         isWallOrchestratorNode(sourceNode)
@@ -1113,13 +1258,17 @@ export default function BuilderCanvas({
           : isWallOrchestratorNode(targetNode)
             ? sourceNode
             : null;
+      // Missing anchors rehydrate from non-wall node center only.
       if (!nonWallNode) return undefined;
-      return Math.round(nonWallNode.position.y + DEFAULT_CARD_VISUAL_HEIGHT / 2);
+      const fallbackSocketIndex = resolveWallSocketIndexFromAnchorY(
+        Math.round(nonWallNode.position.y + DEFAULT_CARD_VISUAL_HEIGHT / 2),
+      );
+      return resolveWallAnchorYFromSocketIndex(fallbackSocketIndex);
     },
     [document.nodes],
   );
 
-  const commitConnection = useCallback((connection: Pick<Connection, 'source' | 'target'>, wallAnchorY?: number | null) => {
+  const commitConnection = useCallback((connection: Connection, wallAnchorY?: number | null) => {
     if (!connection.source || !connection.target) return;
     setEdges((current) => {
       if (!isPlainConnectionAllowed(connection, current)) return current;
@@ -1158,50 +1307,7 @@ export default function BuilderCanvas({
 
   const onConnect = useCallback((connection: Connection) => {
     commitConnection(connection);
-    pendingConnectionRef.current = null;
   }, [commitConnection]);
-
-  const onConnectStart = useCallback(
-    (_event: unknown, params: { nodeId?: string | null; handleType?: 'source' | 'target' | null }) => {
-      pendingConnectionRef.current = {
-        nodeId: params?.nodeId || null,
-        handleType: params?.handleType || null,
-      };
-    },
-    [],
-  );
-
-  const onConnectEnd = useCallback((event: MouseEvent | TouchEvent) => {
-    const pending = pendingConnectionRef.current;
-    pendingConnectionRef.current = null;
-    if (!pending?.nodeId || !magenticNodeId) return;
-    if (pending.nodeId === magenticNodeId) return;
-    const host = canvasRef.current;
-    if (!host) return;
-    const rect = host.getBoundingClientRect();
-    const clientY =
-      'clientY' in event
-        ? event.clientY
-        : event.changedTouches && event.changedTouches.length > 0
-          ? event.changedTouches[0].clientY
-          : null;
-    const clientX =
-      'clientX' in event
-        ? event.clientX
-        : event.changedTouches && event.changedTouches.length > 0
-          ? event.changedTouches[0].clientX
-          : null;
-    if (clientX == null || clientY == null) return;
-    // Treat the full left seam (and slight overflow into chat side) as the wall endpoint surface.
-    if (clientX > rect.left + WALL_SEAM_CAPTURE_WIDTH_PX) return;
-    const viewport = reactFlowInstance?.getViewport() || { x: 0, y: 0, zoom: 1 };
-    const wallAnchorY = (clientY - rect.top - viewport.y) / (viewport.zoom || 1);
-    const wallConnection =
-      (pending.handleType || 'source') === 'target'
-        ? { source: magenticNodeId, target: pending.nodeId }
-        : { source: pending.nodeId, target: magenticNodeId };
-    commitConnection(wallConnection, wallAnchorY);
-  }, [commitConnection, magenticNodeId, reactFlowInstance]);
 
   const onReconnect: OnReconnect<Edge> = (oldEdge, newConnection) => {
     setEdges((current) => {
@@ -1508,6 +1614,11 @@ export default function BuilderCanvas({
         onInit={(instance) => {
           setReactFlowInstance(instance);
           instance.setViewport({ x: 72, y: 84, zoom: 1 }, { duration: 0 });
+          setWallSeamX(-72);
+        }}
+        onMove={(_, viewport) => {
+          const seamX = -viewport.x / (viewport.zoom || 1);
+          setWallSeamX((current) => (Math.abs(current - seamX) > 0.5 ? seamX : current));
         }}
         onNodeDragStart={(_, node) => {
           setDraggingNodeId(node.id);
@@ -1520,8 +1631,6 @@ export default function BuilderCanvas({
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
-        onConnectStart={onConnectStart}
-        onConnectEnd={onConnectEnd}
         onReconnect={onReconnect}
         onNodeClick={(_, node) => {
           if (miniMode) return;
