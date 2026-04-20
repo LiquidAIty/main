@@ -1,10 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from 'react';
 
-import { CodeGraphScene } from "../codegraph/CodeGraphScene";
-import { colorForCodeGraphLabel } from "../codegraph/colors";
-import RightGlassDrawer from "../graph/RightGlassDrawer";
-import type { CodeGraphData } from "../codegraph/types";
-import type { GraphViewContract, GraphViewData, KnowledgeGraphKind } from "../../types/agentgraph";
+import { CodeGraphScene } from '../codegraph/CodeGraphScene';
+import { colorForCodeGraphLabel } from '../codegraph/colors';
+import RightGlassDrawer from '../graph/RightGlassDrawer';
+import {
+  GRAPH_THEME,
+  graphCompanionTabButtonStyle,
+  graphCompanionTabGroupStyle,
+  graphControlButtonStyle,
+  graphControlStackStyle,
+  graphDrawerButtonStyle,
+  graphGlassPillStyle,
+} from '../graph/graphVisualTokens';
+import type { CodeGraphData } from '../codegraph/types';
+import type {
+  GraphViewContract,
+  GraphViewData,
+  KnowledgeGraphKind,
+} from '../../types/agentgraph';
 
 type KnowledgeGraphFrameworkProps = {
   kind: KnowledgeGraphKind;
@@ -19,21 +32,31 @@ type KnowledgeGraphFrameworkProps = {
 
 const DEFAULT_FILTERS: Record<
   KnowledgeGraphKind,
-  { nodeLabelAllowlist: string[]; edgeTypeAllowlist: string[]; maxNodes: number }
+  {
+    nodeLabelAllowlist: string[];
+    edgeTypeAllowlist: string[];
+    maxNodes: number;
+  }
 > = {
   thinkgraph: {
-    nodeLabelAllowlist: ["entity", "concept", "goal", "hypothesis"],
-    edgeTypeAllowlist: ["related_to", "supports", "contradicts", "depends_on"],
+    nodeLabelAllowlist: ['entity', 'concept', 'goal', 'hypothesis'],
+    edgeTypeAllowlist: ['related_to', 'supports', 'contradicts', 'depends_on'],
     maxNodes: 6000,
   },
   knowgraph: {
-    nodeLabelAllowlist: ["entity", "document", "topic", "person", "organization"],
-    edgeTypeAllowlist: ["related_to", "references", "cites", "evidence_for"],
+    nodeLabelAllowlist: [
+      'entity',
+      'document',
+      'topic',
+      'person',
+      'organization',
+    ],
+    edgeTypeAllowlist: ['related_to', 'references', 'cites', 'evidence_for'],
     maxNodes: 8000,
   },
   codegraph: {
-    nodeLabelAllowlist: ["file", "symbol", "module", "route", "dependency"],
-    edgeTypeAllowlist: ["IMPORTS", "CALLS", "DEPENDS_ON", "USES"],
+    nodeLabelAllowlist: ['file', 'symbol', 'module', 'route', 'dependency'],
+    edgeTypeAllowlist: ['IMPORTS', 'CALLS', 'DEPENDS_ON', 'USES'],
     maxNodes: 50000,
   },
 };
@@ -81,11 +104,11 @@ function toNumericGraphData(input: GraphViewData): NumericGraphData {
       x: node.x ?? Math.cos(theta) * radius,
       y: node.y ?? Math.sin(theta) * radius,
       z: node.z ?? ((index % 17) - 8) * 6,
-      label: String(node.type || "node"),
+      label: String(node.type || 'node'),
       name: String(node.label || node.id),
       file_path: node.sourceIds?.[0],
       size: Math.max(2, Number(node.size ?? 8)),
-      color: node.color || colorForCodeGraphLabel(String(node.type || "node")),
+      color: node.color || colorForCodeGraphLabel(String(node.type || 'node')),
     };
   });
 
@@ -97,7 +120,7 @@ function toNumericGraphData(input: GraphViewData): NumericGraphData {
       return {
         source,
         target,
-        type: String(edge.type || "related_to"),
+        type: String(edge.type || 'related_to'),
       };
     })
     .filter((edge): edge is NonNullable<typeof edge> => Boolean(edge));
@@ -112,14 +135,19 @@ function toNumericGraphData(input: GraphViewData): NumericGraphData {
   };
 }
 
-async function fetchCodeGraphLayout(project: string, maxNodes: number): Promise<CodeGraphData> {
+async function fetchCodeGraphLayout(
+  project: string,
+  maxNodes: number,
+): Promise<CodeGraphData> {
   const params = new URLSearchParams({
     project,
     max_nodes: String(maxNodes),
   });
   const response = await fetch(`/api/layout?${params.toString()}`);
   if (!response.ok) {
-    const payload = await response.json().catch(() => ({ error: response.statusText }));
+    const payload = await response
+      .json()
+      .catch(() => ({ error: response.statusText }));
     throw new Error(payload.error || `HTTP ${response.status}`);
   }
   return response.json();
@@ -144,14 +172,24 @@ export default function KnowledgeGraphFramework({
   minHeight = 360,
 }: KnowledgeGraphFrameworkProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [codeGraphData, setCodeGraphData] = useState<CodeGraphData | null>(null);
+  const [interactionLocked, setInteractionLocked] = useState(false);
+  const [cameraCommand, setCameraCommand] = useState<{
+    token: number;
+    action: 'zoom_in' | 'zoom_out' | 'fit_view';
+  } | null>(null);
+  const [codeGraphData, setCodeGraphData] = useState<CodeGraphData | null>(
+    null,
+  );
   const [loadingCodeGraph, setLoadingCodeGraph] = useState(false);
   const [codeGraphError, setCodeGraphError] = useState<string | null>(null);
 
-  const effectiveMaxNodes = Math.max(1, Number(contract.maxNodes || DEFAULT_FILTERS[kind].maxNodes));
+  const effectiveMaxNodes = Math.max(
+    1,
+    Number(contract.maxNodes || DEFAULT_FILTERS[kind].maxNodes),
+  );
 
   useEffect(() => {
-    if (kind !== "codegraph") return;
+    if (kind !== 'codegraph') return;
     let cancelled = false;
     setLoadingCodeGraph(true);
     setCodeGraphError(null);
@@ -162,7 +200,9 @@ export default function KnowledgeGraphFramework({
       })
       .catch((error: any) => {
         if (cancelled) return;
-        setCodeGraphError(String(error?.message || "Failed to load graph layout"));
+        setCodeGraphError(
+          String(error?.message || 'Failed to load graph layout'),
+        );
       })
       .finally(() => {
         if (!cancelled) setLoadingCodeGraph(false);
@@ -173,23 +213,39 @@ export default function KnowledgeGraphFramework({
   }, [codeGraphProjectName, effectiveMaxNodes, kind]);
 
   const normalized = useMemo(() => {
-    if (kind === "codegraph") {
+    if (kind === 'codegraph') {
       return {
         graph: codeGraphData ?? { nodes: [], edges: [], total_nodes: 0 },
         idMap: new Map<string, number>(),
       };
     }
-    return toNumericGraphData(kind === "thinkgraph" ? thinkGraphData : knowGraphData);
+    return toNumericGraphData(
+      kind === 'thinkgraph' ? thinkGraphData : knowGraphData,
+    );
   }, [kind, codeGraphData, thinkGraphData, knowGraphData]);
 
-  const allLabels = useMemo(() => labelSetFromGraph(normalized.graph), [normalized.graph]);
-  const allEdgeTypes = useMemo(() => edgeSetFromGraph(normalized.graph), [normalized.graph]);
+  const allLabels = useMemo(
+    () => labelSetFromGraph(normalized.graph),
+    [normalized.graph],
+  );
+  const allEdgeTypes = useMemo(
+    () => edgeSetFromGraph(normalized.graph),
+    [normalized.graph],
+  );
   const defaultLabels = useMemo(
-    () => resolveModeDefaultAllowlist(allLabels, DEFAULT_FILTERS[kind].nodeLabelAllowlist),
+    () =>
+      resolveModeDefaultAllowlist(
+        allLabels,
+        DEFAULT_FILTERS[kind].nodeLabelAllowlist,
+      ),
     [allLabels, kind],
   );
   const defaultEdgeTypes = useMemo(
-    () => resolveModeDefaultAllowlist(allEdgeTypes, DEFAULT_FILTERS[kind].edgeTypeAllowlist),
+    () =>
+      resolveModeDefaultAllowlist(
+        allEdgeTypes,
+        DEFAULT_FILTERS[kind].edgeTypeAllowlist,
+      ),
     [allEdgeTypes, kind],
   );
 
@@ -205,13 +261,21 @@ export default function KnowledgeGraphFramework({
     }
     return new Set(defaultEdgeTypes);
   }, [contract.edgeTypeAllowlist, contract.graphKind, defaultEdgeTypes, kind]);
-  const showLabels = typeof contract.showLabels === "boolean" ? contract.showLabels : true;
+  const showLabels =
+    typeof contract.showLabels === 'boolean'
+      ? contract.showLabels
+      : kind !== 'codegraph';
 
   const filteredData = useMemo<CodeGraphData>(() => {
-    const nodes = normalized.graph.nodes.filter((node) => labelAllow.has(node.label));
+    const nodes = normalized.graph.nodes.filter((node) =>
+      labelAllow.has(node.label),
+    );
     const nodeIds = new Set(nodes.map((node) => node.id));
     const edges = normalized.graph.edges.filter(
-      (edge) => edgeAllow.has(edge.type) && nodeIds.has(edge.source) && nodeIds.has(edge.target),
+      (edge) =>
+        edgeAllow.has(edge.type) &&
+        nodeIds.has(edge.source) &&
+        nodeIds.has(edge.target),
     );
     return {
       nodes,
@@ -241,42 +305,56 @@ export default function KnowledgeGraphFramework({
     });
   };
 
-  const modeButtonStyle = (value: KnowledgeGraphKind) => ({
-    border: `1px solid ${kind === value ? "rgba(79,162,173,0.45)" : "rgba(255,255,255,0.12)"}`,
-    background: kind === value ? "rgba(79,162,173,0.16)" : "rgba(8,8,8,0.55)",
-    color: kind === value ? "rgba(79,162,173,1)" : "rgba(255,255,255,0.65)",
-    borderRadius: 8,
-    fontSize: 11,
-    fontWeight: 600,
-    padding: "6px 8px",
-    cursor: "pointer",
-  });
+  const modeButtonStyle = (value: KnowledgeGraphKind) =>
+    graphCompanionTabButtonStyle(kind === value, {
+      fontSize: 11,
+      padding: '6px 8px',
+    });
 
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+    <div
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        background: GRAPH_THEME.background.knowledgeSurface,
+      }}
+    >
       <div
         style={{
-          position: "absolute",
+          position: 'absolute',
           left: 12,
           top: 12,
           zIndex: 4,
-          display: "flex",
-          alignItems: "center",
+          display: 'flex',
+          alignItems: 'center',
           gap: 8,
-          background: "rgba(5,5,8,0.7)",
-          border: "1px solid rgba(255,255,255,0.12)",
-          borderRadius: 10,
-          padding: 6,
+          ...graphCompanionTabGroupStyle({
+            gap: 6,
+            padding: 6,
+          }),
         }}
         data-no-surface-promote="true"
       >
-        <button type="button" style={modeButtonStyle("thinkgraph")} onClick={() => onKindChange("thinkgraph")}>
+        <button
+          type="button"
+          style={modeButtonStyle('thinkgraph')}
+          onClick={() => onKindChange('thinkgraph')}
+        >
           ThinkGraph
         </button>
-        <button type="button" style={modeButtonStyle("knowgraph")} onClick={() => onKindChange("knowgraph")}>
+        <button
+          type="button"
+          style={modeButtonStyle('knowgraph')}
+          onClick={() => onKindChange('knowgraph')}
+        >
           KnowGraph
         </button>
-        <button type="button" style={modeButtonStyle("codegraph")} onClick={() => onKindChange("codegraph")}>
+        <button
+          type="button"
+          style={modeButtonStyle('codegraph')}
+          onClick={() => onKindChange('codegraph')}
+        >
           CodeGraph
         </button>
       </div>
@@ -285,20 +363,14 @@ export default function KnowledgeGraphFramework({
         type="button"
         onClick={() => setDrawerOpen(true)}
         data-no-surface-promote="true"
-        style={{
-          position: "absolute",
+        style={graphDrawerButtonStyle({
+          position: 'absolute',
           top: 12,
           right: 12,
           zIndex: 5,
-          border: "1px solid rgba(255,255,255,0.12)",
-          background: "rgba(13,16,20,0.9)",
-          color: "rgba(224,222,213,0.9)",
-          borderRadius: 8,
           fontSize: 11,
-          fontWeight: 600,
-          padding: "6px 9px",
-          cursor: "pointer",
-        }}
+          padding: '6px 9px',
+        })}
       >
         Controls
       </button>
@@ -320,13 +392,29 @@ export default function KnowledgeGraphFramework({
         <div
           data-no-surface-promote="true"
           style={{
-            display: "grid",
+            display: 'grid',
             gap: 12,
           }}
         >
-          <div style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.75)" }}>Display</div>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "rgba(255,255,255,0.8)" }}>
+          <div style={{ display: 'grid', gap: 6 }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: GRAPH_THEME.surface.mutedText,
+              }}
+            >
+              Display
+            </div>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 12,
+                color: GRAPH_THEME.surface.text,
+              }}
+            >
               <input
                 type="checkbox"
                 checked={showLabels}
@@ -335,8 +423,16 @@ export default function KnowledgeGraphFramework({
               Show labels
             </label>
           </div>
-          <div style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.75)" }}>Node Labels</div>
+          <div style={{ display: 'grid', gap: 6 }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: GRAPH_THEME.surface.mutedText,
+              }}
+            >
+              Node Labels
+            </div>
             {allLabels.map((label) => {
               const enabled = labelAllow.has(label);
               return (
@@ -344,20 +440,26 @@ export default function KnowledgeGraphFramework({
                   key={label}
                   type="button"
                   style={{
-                    textAlign: "left",
-                    border: `1px solid ${enabled ? "rgba(79,162,173,0.35)" : "rgba(255,255,255,0.08)"}`,
-                    background: enabled ? "rgba(79,162,173,0.12)" : "rgba(255,255,255,0.02)",
-                    color: enabled ? "rgba(79,162,173,0.96)" : "rgba(255,255,255,0.62)",
+                    textAlign: 'left',
+                    border: `1px solid ${enabled ? GRAPH_THEME.accent.primaryBorder : GRAPH_THEME.drawer.sectionBorder}`,
+                    background: enabled
+                      ? GRAPH_THEME.accent.primarySoft
+                      : GRAPH_THEME.drawer.sectionBackground,
+                    color: enabled
+                      ? GRAPH_THEME.accent.primary
+                      : GRAPH_THEME.surface.mutedText,
                     borderRadius: 6,
-                    padding: "5px 7px",
-                    cursor: "pointer",
+                    padding: '5px 7px',
+                    cursor: 'pointer',
                     fontSize: 11,
                   }}
                   onClick={() => {
                     const next = new Set(labelAllow);
                     if (next.has(label)) next.delete(label);
                     else next.add(label);
-                    applyContractPatch({ nodeLabelAllowlist: Array.from(next) });
+                    applyContractPatch({
+                      nodeLabelAllowlist: Array.from(next),
+                    });
                   }}
                 >
                   {label}
@@ -365,8 +467,16 @@ export default function KnowledgeGraphFramework({
               );
             })}
           </div>
-          <div style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.75)" }}>Edge Types</div>
+          <div style={{ display: 'grid', gap: 6 }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: GRAPH_THEME.surface.mutedText,
+              }}
+            >
+              Edge Types
+            </div>
             {allEdgeTypes.map((edgeType) => {
               const enabled = edgeAllow.has(edgeType);
               return (
@@ -374,13 +484,17 @@ export default function KnowledgeGraphFramework({
                   key={edgeType}
                   type="button"
                   style={{
-                    textAlign: "left",
-                    border: `1px solid ${enabled ? "rgba(79,162,173,0.35)" : "rgba(255,255,255,0.08)"}`,
-                    background: enabled ? "rgba(79,162,173,0.12)" : "rgba(255,255,255,0.02)",
-                    color: enabled ? "rgba(79,162,173,0.96)" : "rgba(255,255,255,0.62)",
+                    textAlign: 'left',
+                    border: `1px solid ${enabled ? GRAPH_THEME.accent.primaryBorder : GRAPH_THEME.drawer.sectionBorder}`,
+                    background: enabled
+                      ? GRAPH_THEME.accent.primarySoft
+                      : GRAPH_THEME.drawer.sectionBackground,
+                    color: enabled
+                      ? GRAPH_THEME.accent.primary
+                      : GRAPH_THEME.surface.mutedText,
                     borderRadius: 6,
-                    padding: "5px 7px",
-                    cursor: "pointer",
+                    padding: '5px 7px',
+                    cursor: 'pointer',
                     fontSize: 11,
                   }}
                   onClick={() => {
@@ -398,18 +512,18 @@ export default function KnowledgeGraphFramework({
         </div>
       </RightGlassDrawer>
 
-      <div style={{ width: "100%", height: "100%", minHeight }}>
-        {kind === "codegraph" && codeGraphError ? (
+      <div style={{ width: '100%', height: '100%', minHeight }}>
+        {kind === 'codegraph' && codeGraphError ? (
           <div
             style={{
-              width: "100%",
-              height: "100%",
-              color: "#f87171",
+              width: '100%',
+              height: '100%',
+              color: GRAPH_THEME.accent.solar,
               fontSize: 12,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: "#06090f",
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: GRAPH_THEME.surface.base,
             }}
           >
             {codeGraphError}
@@ -419,8 +533,13 @@ export default function KnowledgeGraphFramework({
             data={filteredData}
             showLabels={showLabels}
             highlightedIds={highlightedIds}
+            interactionLocked={interactionLocked}
+            cameraAction={cameraCommand?.action || null}
+            cameraActionToken={cameraCommand?.token || 0}
             onNodeClick={(node) => {
-              const focused = new Set((contract.focusNodeIds || []).map((value) => String(value)));
+              const focused = new Set(
+                (contract.focusNodeIds || []).map((value) => String(value)),
+              );
               const nodeKey = String(node.id);
               if (focused.has(nodeKey)) {
                 applyContractPatch({ focusNodeIds: [] });
@@ -431,47 +550,130 @@ export default function KnowledgeGraphFramework({
           />
         )}
       </div>
+      <div data-no-surface-promote="true" style={graphControlStackStyle}>
+        <button
+          type="button"
+          aria-label="Zoom in"
+          onClick={() =>
+            setCameraCommand({
+              token: Date.now(),
+              action: 'zoom_in',
+            })
+          }
+          style={graphControlButtonStyle({
+            borderBottom: `1px solid ${GRAPH_THEME.controls.border}`,
+          })}
+        >
+          +
+        </button>
+        <button
+          type="button"
+          aria-label="Zoom out"
+          onClick={() =>
+            setCameraCommand({
+              token: Date.now(),
+              action: 'zoom_out',
+            })
+          }
+          style={graphControlButtonStyle({
+            borderBottom: `1px solid ${GRAPH_THEME.controls.border}`,
+          })}
+        >
+          -
+        </button>
+        <button
+          type="button"
+          aria-label="Recenter view"
+          onClick={() =>
+            setCameraCommand({
+              token: Date.now(),
+              action: 'fit_view',
+            })
+          }
+          style={graphControlButtonStyle({
+            borderBottom: `1px solid ${GRAPH_THEME.controls.border}`,
+          })}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+            <path
+              d="M2.25 5.25V2.25h3M8.75 2.25h3v3M11.75 8.75v3h-3M5.25 11.75h-3v-3"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.25"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+        <button
+          type="button"
+          aria-label={
+            interactionLocked ? 'Unlock interaction' : 'Lock interaction'
+          }
+          onClick={() => setInteractionLocked((current) => !current)}
+          style={graphControlButtonStyle({
+            color: interactionLocked
+              ? GRAPH_THEME.accent.primary
+              : GRAPH_THEME.controls.text,
+          })}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+            <path
+              d="M4.5 6V4.75a2.5 2.5 0 1 1 5 0V6"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.25"
+              strokeLinecap="round"
+            />
+            <rect
+              x="3"
+              y="6"
+              width="8"
+              height="6"
+              rx="1.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.25"
+            />
+          </svg>
+        </button>
+      </div>
 
       <div
         data-no-surface-promote="true"
-        style={{
-          position: "absolute",
+        style={graphGlassPillStyle({
+          position: 'absolute',
           left: 12,
           bottom: 12,
           zIndex: 4,
-          border: "1px solid rgba(255,255,255,0.12)",
-          background: "rgba(8,8,8,0.72)",
-          color: "rgba(255,255,255,0.82)",
-          borderRadius: 8,
           fontSize: 11,
-          padding: "6px 8px",
+          padding: '6px 8px',
           maxWidth: 420,
-        }}
+          lineHeight: 1.35,
+        })}
       >
         <div>
-          Nodes {filteredData.nodes.length.toLocaleString()} - Edges {filteredData.edges.length.toLocaleString()}
+          Nodes {filteredData.nodes.length.toLocaleString()} - Edges{' '}
+          {filteredData.edges.length.toLocaleString()}
         </div>
-        {kind === "knowgraph" && filteredData.nodes.length === 0 ? (
-          <div style={{ color: "rgba(255,255,255,0.55)", marginTop: 2 }}>
-            KnowGraph returned zero nodes from /api/knowgraph/graph for the selected project.
+        {kind === 'knowgraph' && filteredData.nodes.length === 0 ? (
+          <div style={{ color: GRAPH_THEME.surface.mutedText, marginTop: 2 }}>
+            KnowGraph returned zero nodes from /api/knowgraph/graph for the
+            selected project.
           </div>
         ) : null}
       </div>
 
-      {kind === "codegraph" && loadingCodeGraph ? (
+      {kind === 'codegraph' && loadingCodeGraph ? (
         <div
-          style={{
-            position: "absolute",
-            bottom: 12,
-            left: 12,
+          style={graphGlassPillStyle({
+            position: 'absolute',
+            right: 12,
+            bottom: 46,
             zIndex: 4,
-            border: "1px solid rgba(255,255,255,0.12)",
-            background: "rgba(8,8,8,0.72)",
-            color: "rgba(255,255,255,0.75)",
-            borderRadius: 8,
             fontSize: 11,
-            padding: "6px 8px",
-          }}
+            padding: '6px 8px',
+          })}
         >
           Loading CodeGraph...
         </div>

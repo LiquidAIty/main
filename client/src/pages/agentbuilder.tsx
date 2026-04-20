@@ -1,25 +1,35 @@
-import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import type {
   AgentManagerLocalConfig,
   AgentManagerMemoryGraphData,
-} from "../components/AgentManager";
+} from '../components/AgentManager';
 import BuilderCanvas, {
   type BuilderCanvasFocusRequest,
-} from "../components/builder/BuilderCanvas";
-import BuilderChat from "../components/builder/BuilderChat";
-import BuilderDrawer from "../components/builder/BuilderDrawer";
-import PlanWikiSurface from "../components/assist/PlanWikiSurface";
+} from '../components/builder/BuilderCanvas';
+import BuilderChat from '../components/builder/BuilderChat';
+import BuilderDrawer from '../components/builder/BuilderDrawer';
+import PlanMissionFlow from '../components/assist/PlanMissionFlow';
+import type {
+  PlanMissionNodeData,
+  PlanMissionNodeOverrideMap,
+} from '../components/assist/planMissionModel';
 import {
   buildStructuredAssistPlanSurface,
   type LinkRef,
   normalizeAnchorSurface,
   type PlanItem,
-} from "../components/builder/assistPlanSurface";
-import {
-  buildExecutionPlan,
-} from "../components/builder/deckExecution";
-import DeckExecutionPathSummary from "../components/builder/DeckExecutionPathSummary";
+} from '../components/builder/assistPlanSurface';
+import { buildExecutionPlan } from '../components/builder/deckExecution';
+import DeckExecutionPathSummary from '../components/builder/DeckExecutionPathSummary';
 import {
   GRAPH_THEME,
   graphDrawerButtonStyle,
@@ -28,28 +38,26 @@ import {
   graphCompanionTabButtonStyle,
   graphCompanionTabGroupStyle,
   graphDrawerSectionStyle,
-} from "../components/graph/graphVisualTokens";
-import RightGlassDrawer from "../components/graph/RightGlassDrawer";
+} from '../components/graph/graphVisualTokens';
+import RightGlassDrawer from '../components/graph/RightGlassDrawer';
 import {
   findDeckNodePreset,
   getAssistStarterRecipe,
   type AssistStarterRecipe,
   type DeckNodePreset,
-} from "../components/builder/deckPresets";
-import {
-  resolveEffectiveAgent,
-} from "../components/builder/deckRuntime";
+} from '../components/builder/deckPresets';
+import { resolveEffectiveAgent } from '../components/builder/deckRuntime';
 import {
   buildDeckRuntimeVisualState,
   buildReloadStateFromDeckRuns,
   resolveDeckRunFinalText,
   streamDeckRunRequest,
-} from "../components/builder/deckRunState";
+} from '../components/builder/deckRunState';
 import {
   buildDefaultDeckEdgeMetadata,
   sanitizeDeckEdges,
   validateDeckDocument,
-} from "../components/builder/deckValidation";
+} from '../components/builder/deckValidation';
 import {
   formatRequestErrorLine,
   guardedRequest,
@@ -61,12 +69,12 @@ import {
   readJsonAndText,
   safeJson,
   writeCachedGraphPayload,
-} from "../components/builder/requestGuards";
+} from '../components/builder/requestGuards';
 import {
   type LatestCardRunRecord,
   useBuilderDeckRuntimeActions,
-} from "../components/builder/useBuilderDeckRuntimeActions";
-import { useBuilderProjects } from "../components/builder/useBuilderProjects";
+} from '../components/builder/useBuilderDeckRuntimeActions';
+import { useBuilderProjects } from '../components/builder/useBuilderProjects';
 import type {
   AgentCardInstance,
   AgentCardRuntimeOptions,
@@ -80,97 +88,84 @@ import type {
   GraphViewContract,
   GraphViewData,
   KnowledgeGraphKind,
+  DeckWorkspaceContext,
   PromptTemplate,
   RuntimeBinding,
-} from "../types/agentgraph";
+} from '../types/agentgraph';
 import type {
   KnowledgeGraphScope,
   KnowledgeGraphRelationship,
   KnowledgeGraphNode,
-} from "../components/knowledge/KnowledgeGraphNVL";
+} from '../components/knowledge/KnowledgeGraphNVL';
 import {
   createWorkspaceTestingInteractionId,
   recordWorkspaceTestingEvent,
   type WorkspaceTestingEventInput,
   type WorkspaceTestingObjectType,
   type WorkspaceTestingSurface,
-} from "../lib/workspaceTestingTelemetry";
+} from '../lib/workspaceTestingTelemetry';
 
 const AgentManager = lazy(async () => {
-  const mod = await import("../components/AgentManager");
+  const mod = await import('../components/AgentManager');
   return { default: mod.AgentManager };
 });
-const KnowledgeSummaryPanel = lazy(() => import("../components/knowledge/KnowledgeSummaryPanel"));
-const KnowledgeEvidencePanel = lazy(() => import("../components/knowledge/KnowledgeEvidencePanel"));
-const KnowledgeGraphFramework = lazy(() => import("../components/knowledge/KnowledgeGraphFramework"));
-const CODEBASE_MEMORY_PROJECT_NAME = "C-Projects-LiquidAIty-main";
+const KnowledgeSummaryPanel = lazy(
+  () => import('../components/knowledge/KnowledgeSummaryPanel'),
+);
+const KnowledgeEvidencePanel = lazy(
+  () => import('../components/knowledge/KnowledgeEvidencePanel'),
+);
+const KnowledgeGraphFramework = lazy(
+  () => import('../components/knowledge/KnowledgeGraphFramework'),
+);
+const CodeGraphSurface = lazy(
+  () => import('../components/codegraph/CodeGraphSurface').then((mod) => ({ default: mod.CodeGraphSurface })),
+);
+const CODEBASE_MEMORY_PROJECT_NAME = 'C-Projects-LiquidAIty-main';
 void KnowledgeSummaryPanel;
 void KnowledgeEvidencePanel;
-const PlanWikiLexicalView = lazy(async () => {
-  try {
-    return await import("../components/assist/PlanWikiLexicalView");
-  } catch (error) {
-    console.error("[PlanWikiLexical] lazy import failed", error);
-    return {
-      default: function PlanWikiLexicalFallback(props: {
-        fallbackText: string;
-        textColor: string;
-        emptyText?: string;
-      }) {
-        return (
-          <div
-            style={{
-              color: props.textColor,
-              whiteSpace: "pre-wrap",
-              lineHeight: 1.65,
-              fontSize: 14,
-              minHeight: 120,
-            }}
-          >
-            {safeText(props.fallbackText).trim() || props.emptyText || "No plan text yet."}
-          </div>
-        );
-      },
-    };
-  }
-});
 
 // AgentPage (MVP): left icon rail + main chat + right tabs (Plan, Links, Knowledge, Dashboard)
 // No external deps. Persists per-project to localStorage. Includes mini force-graph.
 
 const C = {
-  primary: "#4FA2AD", // teal
-  bg: "#1F1F1F",
-  panel: "#2B2B2B",
-  border: "#3A3A3A",
-  text: "#FFFFFF",
-  neutral: "#E0DED5",
-  accent: "#8358A4",
-  warn: "#D98458",
+  primary: '#4FA2AD', // teal
+  bg: '#1F1F1F',
+  panel: '#2B2B2B',
+  border: '#3A3A3A',
+  text: '#FFFFFF',
+  neutral: '#E0DED5',
+  accent: '#8358A4',
+  warn: '#D98458',
 };
 
-const HOME_CHAT_TABS = ["Canvas", "Knowledge", "Plan"] as const;
-const HOME_PLAN_TABS = ["Chat", "Canvas", "Knowledge"] as const;
-const KNOWLEDGE_VIEW_TABS = ["Chat", "Canvas", "Plan"] as const;
-const CODEGRAPH_VIEW_TABS = ["Chat", "Canvas", "Knowledge", "Plan"] as const;
-const BUILDER_PROJECT_TABS = ["Plan"] as const;
-const BUILDER_NODE_TABS = ["Prompt", "Knowledge", "Tools", "Runtime"] as const;
+const HOME_CHAT_TABS = ['Canvas', 'Knowledge', 'Plan'] as const;
+const HOME_PLAN_TABS = ['Chat', 'Canvas', 'Knowledge'] as const;
+const KNOWLEDGE_VIEW_TABS = ['Chat', 'Canvas', 'Plan'] as const;
+const CODEGRAPH_VIEW_TABS = ['Chat', 'Canvas', 'Knowledge', 'Plan'] as const;
+const BUILDER_PROJECT_TABS = ['Plan'] as const;
+const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime'] as const;
 const AGENTS_CHAT_MIN_WIDTH = 360;
 const AGENTS_CANVAS_MIN_WIDTH = 520;
 const WORKSPACE_COMPANION_MIN_WIDTH = 360;
-const AGENT_EDITOR_DEFAULT_WIDTH = 500;
-type WorkspaceTestingEventDraft = Omit<WorkspaceTestingEventInput, "projectId"> & {
+const AGENT_EDITOR_DEFAULT_WIDTH = 420;
+type WorkspaceTestingEventDraft = Omit<
+  WorkspaceTestingEventInput,
+  'projectId'
+> & {
   projectId?: string | null;
 };
 
-function normalizeWorkspaceSurface(value: string): WorkspaceTestingSurface | null {
+function normalizeWorkspaceSurface(
+  value: string,
+): WorkspaceTestingSurface | null {
   const normalized = safeText(value).trim().toLowerCase();
   if (
-    normalized === "chat" ||
-    normalized === "plan" ||
-    normalized === "canvas" ||
-    normalized === "knowledge" ||
-    normalized === "codegraph"
+    normalized === 'chat' ||
+    normalized === 'plan' ||
+    normalized === 'canvas' ||
+    normalized === 'knowledge' ||
+    normalized === 'codegraph'
   ) {
     return normalized;
   }
@@ -193,12 +188,16 @@ function Section({
     <div
       style={graphDrawerSectionStyle({
         borderRadius: 8,
-        padding: "12px 14px",
+        padding: '12px 14px',
       })}
     >
       <div
         className="text-xs"
-        style={{ color: GRAPH_THEME.drawer.inputText, fontWeight: 700, marginBottom: 8 }}
+        style={{
+          color: GRAPH_THEME.drawer.inputText,
+          fontWeight: 700,
+          marginBottom: 8,
+        }}
       >
         {title}
       </div>
@@ -208,12 +207,13 @@ function Section({
 }
 
 function safeText(value: unknown): string {
-  if (value == null) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean')
+    return String(value);
   try {
     const json = JSON.stringify(value);
-    if (typeof json === "string") return json;
+    if (typeof json === 'string') return json;
   } catch {
     // fallback below
   }
@@ -230,7 +230,7 @@ function parseJsonObject(text: string): Record<string, unknown> | null {
   if (!trimmed) return null;
   try {
     const parsed = JSON.parse(trimmed);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return parsed as Record<string, unknown>;
     }
   } catch {
@@ -240,7 +240,7 @@ function parseJsonObject(text: string): Record<string, unknown> | null {
   if (!fencedMatch?.[1]) return null;
   try {
     const parsed = JSON.parse(fencedMatch[1].trim());
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return parsed as Record<string, unknown>;
     }
   } catch {
@@ -253,17 +253,21 @@ function normalizeCodeGraphViewContractCandidate(
   candidate: unknown,
   projectId?: string | null,
 ): GraphViewContract | null {
-  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate))
+    return null;
   const record = candidate as Record<string, unknown>;
   const nodeLabelAllowlistRaw =
-    record.nodeLabelAllowlist ?? record.node_labels ?? record.nodeLabels ?? null;
+    record.nodeLabelAllowlist ??
+    record.node_labels ??
+    record.nodeLabels ??
+    null;
   const edgeTypeAllowlistRaw =
     record.edgeTypeAllowlist ?? record.edge_types ?? record.edgeTypes ?? null;
   const showLabelsRaw = record.showLabels ?? record.show_labels;
   const focusPathsRaw = record.focusPaths ?? record.focus_paths;
   const focusSymbolsRaw = record.focusSymbols ?? record.focus_symbols;
   const maxNodesRaw = record.maxNodes ?? record.max_nodes;
-  const graphKindRaw = record.graphKind ?? record.graph_kind ?? "codegraph";
+  const graphKindRaw = record.graphKind ?? record.graph_kind ?? 'codegraph';
   const focusNodeIdsRaw = record.focusNodeIds ?? record.focus_node_ids;
   const cameraModeRaw = record.cameraMode ?? record.camera_mode;
   const animationModeRaw = record.animationMode ?? record.animation_mode;
@@ -282,22 +286,29 @@ function normalizeCodeGraphViewContractCandidate(
   const focusPaths = toStringArray(focusPathsRaw);
   const focusSymbols = toStringArray(focusSymbolsRaw);
   const focusNodeIds = toStringArray(focusNodeIdsRaw);
-  const showLabels = typeof showLabelsRaw === "boolean" ? showLabelsRaw : undefined;
-  const maxNodes = Number.isFinite(Number(maxNodesRaw)) ? Number(maxNodesRaw) : undefined;
+  const showLabels =
+    typeof showLabelsRaw === 'boolean' ? showLabelsRaw : undefined;
+  const maxNodes = Number.isFinite(Number(maxNodesRaw))
+    ? Number(maxNodesRaw)
+    : undefined;
   const graphKindNormalized = safeText(graphKindRaw).trim().toLowerCase();
   const graphKind: KnowledgeGraphKind =
-    graphKindNormalized === "thinkgraph" || graphKindNormalized === "knowgraph" || graphKindNormalized === "codegraph"
+    graphKindNormalized === 'thinkgraph' ||
+    graphKindNormalized === 'knowgraph' ||
+    graphKindNormalized === 'codegraph'
       ? (graphKindNormalized as KnowledgeGraphKind)
-      : "codegraph";
+      : 'codegraph';
   const cameraMode =
-    cameraModeRaw === "overview" ||
-    cameraModeRaw === "focus" ||
-    cameraModeRaw === "trace" ||
-    cameraModeRaw === "cluster"
+    cameraModeRaw === 'overview' ||
+    cameraModeRaw === 'focus' ||
+    cameraModeRaw === 'trace' ||
+    cameraModeRaw === 'cluster'
       ? cameraModeRaw
       : undefined;
   const animationMode =
-    animationModeRaw === "calm" || animationModeRaw === "guided" || animationModeRaw === "active"
+    animationModeRaw === 'calm' ||
+    animationModeRaw === 'guided' ||
+    animationModeRaw === 'active'
       ? animationModeRaw
       : undefined;
   const narrativeIntent = cleanOptionalText(narrativeIntentRaw);
@@ -340,27 +351,30 @@ function extractCodeGraphViewContractFromUnknown(
   const direct = normalizeCodeGraphViewContractCandidate(payload, projectId);
   if (direct) return direct;
 
-  if (typeof payload === "string") {
+  if (typeof payload === 'string') {
     const parsed = parseJsonObject(payload);
     if (!parsed) return null;
     return extractCodeGraphViewContractFromUnknown(parsed, projectId);
   }
 
-  if (!payload || typeof payload !== "object") return null;
+  if (!payload || typeof payload !== 'object') return null;
   const record = payload as Record<string, unknown>;
   const nestedKeys = [
-    "codeGraphViewContract",
-    "codegraphViewContract",
-    "graphViewContract",
-    "codegraph_view_contract",
-    "codegraph",
-    "graph_view",
-    "view",
-    "contract",
+    'codeGraphViewContract',
+    'codegraphViewContract',
+    'graphViewContract',
+    'codegraph_view_contract',
+    'codegraph',
+    'graph_view',
+    'view',
+    'contract',
   ] as const;
   for (const key of nestedKeys) {
     if (record[key] == null) continue;
-    const nested = extractCodeGraphViewContractFromUnknown(record[key], projectId);
+    const nested = extractCodeGraphViewContractFromUnknown(
+      record[key],
+      projectId,
+    );
     if (nested) return nested;
   }
   return null;
@@ -370,7 +384,10 @@ function extractCodeGraphViewContractFromEvent(
   event: DeckRuntimeEvent,
   projectId?: string | null,
 ): GraphViewContract | null {
-  const typedContract = normalizeCodeGraphViewContractCandidate(event.codegraphViewContract, projectId);
+  const typedContract = normalizeCodeGraphViewContractCandidate(
+    event.codegraphViewContract,
+    projectId,
+  );
   if (typedContract) return typedContract;
   const candidates: unknown[] = [
     event.content,
@@ -379,7 +396,10 @@ function extractCodeGraphViewContractFromEvent(
     ...(Array.isArray(event.notes) ? event.notes : []),
   ];
   for (const candidate of candidates) {
-    const contract = extractCodeGraphViewContractFromUnknown(candidate, projectId);
+    const contract = extractCodeGraphViewContractFromUnknown(
+      candidate,
+      projectId,
+    );
     if (contract) return contract;
   }
   return null;
@@ -389,17 +409,32 @@ function extractCodeGraphViewContractFromRun(
   run: DeckRun | null | undefined,
   projectId?: string | null,
 ): GraphViewContract | null {
-  const typedRunContract = normalizeCodeGraphViewContractCandidate(run?.codegraphViewContract, projectId);
+  const typedRunContract = normalizeCodeGraphViewContractCandidate(
+    run?.codegraphViewContract,
+    projectId,
+  );
   if (typedRunContract) return typedRunContract;
   const steps = Array.isArray(run?.steps) ? [...run.steps].reverse() : [];
   for (const step of steps) {
-    const typedStepContract = normalizeCodeGraphViewContractCandidate(step.codegraphViewContract, projectId);
+    const typedStepContract = normalizeCodeGraphViewContractCandidate(
+      step.codegraphViewContract,
+      projectId,
+    );
     if (typedStepContract) return typedStepContract;
-    const contractFromOutput = extractCodeGraphViewContractFromUnknown(step.output, projectId);
+    const contractFromOutput = extractCodeGraphViewContractFromUnknown(
+      step.output,
+      projectId,
+    );
     if (contractFromOutput) return contractFromOutput;
-    const contractFromSummary = extractCodeGraphViewContractFromUnknown(step.outputSummary, projectId);
+    const contractFromSummary = extractCodeGraphViewContractFromUnknown(
+      step.outputSummary,
+      projectId,
+    );
     if (contractFromSummary) return contractFromSummary;
-    const contractFromTaskContract = extractCodeGraphViewContractFromUnknown(step.contract, projectId);
+    const contractFromTaskContract = extractCodeGraphViewContractFromUnknown(
+      step.contract,
+      projectId,
+    );
     if (contractFromTaskContract) return contractFromTaskContract;
   }
   return null;
@@ -407,28 +442,30 @@ function extractCodeGraphViewContractFromRun(
 
 function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   const normalized = safeText(value).trim().toLowerCase();
-  if (normalized === "assistant_agent") return "assistant_agent";
-  if (normalized === "magentic_one") return "magentic_one";
-  if (normalized === "graph_flow") return "graph_flow";
+  if (normalized === 'assistant_agent') return 'assistant_agent';
+  if (normalized === 'magentic_one') return 'magentic_one';
+  if (normalized === 'graph_flow') return 'graph_flow';
   return null;
 }
 
-function normalizeRuntimeOptions(value: unknown): AgentCardRuntimeOptions | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+function normalizeRuntimeOptions(
+  value: unknown,
+): AgentCardRuntimeOptions | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return cloneDeckDocument(value as AgentCardRuntimeOptions);
 }
 
 function normalizeDeckEdgeType(value: unknown): DeckEdgeType {
-  return safeText(value).trim().toLowerCase() === "magentic_option"
-    ? "magentic_option"
-    : "flow";
+  return safeText(value).trim().toLowerCase() === 'magentic_option'
+    ? 'magentic_option'
+    : 'flow';
 }
 
 function extractPromptTemplateField(
   template: string,
-  field: "ROLE" | "GOAL" | "CONSTRAINTS" | "IO_SCHEMA" | "MEMORY_POLICY",
+  field: 'ROLE' | 'GOAL' | 'CONSTRAINTS' | 'IO_SCHEMA' | 'MEMORY_POLICY',
 ): string | null {
-  const normalizedTemplate = safeText(template).replace(/\r\n/g, "\n");
+  const normalizedTemplate = safeText(template).replace(/\r\n/g, '\n');
   if (!normalizedTemplate.includes(`[${field}]`)) return null;
 
   const tagRegex = /\[(ROLE|GOAL|CONSTRAINTS|IO_SCHEMA|MEMORY_POLICY)\]/gi;
@@ -436,7 +473,7 @@ function extractPromptTemplateField(
   let match: RegExpExecArray | null;
   while ((match = tagRegex.exec(normalizedTemplate)) !== null) {
     tags.push({
-      key: String(match[1] || "").toUpperCase(),
+      key: String(match[1] || '').toUpperCase(),
       start: match.index,
       end: tagRegex.lastIndex,
     });
@@ -458,9 +495,12 @@ function extractPromptTemplateField(
 function summarizeMemoryGraphLabel(value: string, fallback: string): string {
   const text = safeText(value).trim();
   if (!text) return fallback;
-  const normalized = text.replace(/^https?:\/\//i, "").replace(/^[a-z]+:\/\//i, "");
+  const normalized = text
+    .replace(/^https?:\/\//i, '')
+    .replace(/^[a-z]+:\/\//i, '');
   if (normalized.length <= 30) return normalized;
-  const lastSegment = normalized.split(/[\\/]/).filter(Boolean).pop() || normalized;
+  const lastSegment =
+    normalized.split(/[\\/]/).filter(Boolean).pop() || normalized;
   if (lastSegment.length <= 30) return lastSegment;
   return `${lastSegment.slice(0, 27)}…`;
 }
@@ -470,17 +510,20 @@ function normalizeKnowledgeScope(
   fallback: KnowledgeGraphScope,
 ): KnowledgeGraphScope {
   const normalized = safeText(value).trim().toLowerCase();
-  if (normalized === "agent") return "agent";
-  if (normalized === "project") return "project";
-  if (normalized === "system") return "system";
-  if (normalized === "grounded_research" || normalized === "grounded-research") {
-    return "grounded_research";
+  if (normalized === 'agent') return 'agent';
+  if (normalized === 'project') return 'project';
+  if (normalized === 'system') return 'system';
+  if (
+    normalized === 'grounded_research' ||
+    normalized === 'grounded-research'
+  ) {
+    return 'grounded_research';
   }
   return fallback;
 }
 
 function formatKnowledgeScope(scope: KnowledgeGraphScope): string {
-  if (scope === "grounded_research") return "grounded research";
+  if (scope === 'grounded_research') return 'grounded research';
   return scope;
 }
 
@@ -491,7 +534,9 @@ function buildSelectedCardMemoryGraphData(
 ): AgentManagerMemoryGraphData | null {
   if (!selectedCard || !selectedCardConfig) return null;
 
-  const nodeMap = new Map(document.nodes.map((node) => [node.id, node] as const));
+  const nodeMap = new Map(
+    document.nodes.map((node) => [node.id, node] as const),
+  );
   const entityMap = new Map<string, KnowledgeGraphNode>();
   const relationshipMap = new Map<string, KnowledgeGraphRelationship>();
   const agentNodeId = `memory:${selectedCard.id}`;
@@ -510,55 +555,56 @@ function buildSelectedCardMemoryGraphData(
     id: agentNodeId,
     rawId: selectedCard.id,
     label: safeText(selectedCard.title || selectedCard.id),
-    type: "Agent",
-    source: "mixed",
-    scope: "agent",
+    type: 'Agent',
+    source: 'mixed',
+    scope: 'agent',
   });
   pushEntity({
     id: `runtime_input:${selectedCard.id}`,
-    rawId: "Current user or upstream turn input.",
-    label: "Current Input",
-    type: "Runtime Input",
-    source: "think",
-    scope: "agent",
+    rawId: 'Current user or upstream turn input.',
+    label: 'Current Input',
+    type: 'Runtime Input',
+    source: 'think',
+    scope: 'agent',
   });
   pushRelationship({
     id: `rel:runtime_input:${selectedCard.id}`,
     from: `runtime_input:${selectedCard.id}`,
     to: agentNodeId,
-    type: "feeds_input",
-    source: "think",
-    scope: "agent",
-    evidence_snippet: "Current turn input is routed into this card at runtime.",
+    type: 'feeds_input',
+    source: 'think',
+    scope: 'agent',
+    evidence_snippet: 'Current turn input is routed into this card at runtime.',
   });
 
   const memoryPolicy = extractPromptTemplateField(
-    String(selectedCardConfig.prompt_template || selectedCard.prompt || ""),
-    "MEMORY_POLICY",
+    String(selectedCardConfig.prompt_template || selectedCard.prompt || ''),
+    'MEMORY_POLICY',
   );
   if (memoryPolicy) {
     pushEntity({
       id: `memory_policy:${selectedCard.id}`,
       rawId: memoryPolicy,
-      label: "Memory Policy",
-      type: "Memory Policy",
-      source: "think",
-      scope: "agent",
+      label: 'Memory Policy',
+      type: 'Memory Policy',
+      source: 'think',
+      scope: 'agent',
     });
     pushRelationship({
       id: `rel:memory_policy:${selectedCard.id}`,
       from: `memory_policy:${selectedCard.id}`,
       to: agentNodeId,
-      type: "shapes_memory",
-      source: "think",
-      scope: "agent",
-      evidence_snippet: "This prompt section shapes how the card carries or constrains memory.",
+      type: 'shapes_memory',
+      source: 'think',
+      scope: 'agent',
+      evidence_snippet:
+        'This prompt section shapes how the card carries or constrains memory.',
     });
   }
 
   (Array.isArray(selectedCardConfig.knowledge_sources)
     ? selectedCardConfig.knowledge_sources
-        .filter((entry): entry is string => typeof entry === "string")
+        .filter((entry): entry is string => typeof entry === 'string')
         .map((entry) => entry.trim())
         .filter(Boolean)
     : []
@@ -567,20 +613,20 @@ function buildSelectedCardMemoryGraphData(
     pushEntity({
       id: sourceNodeId,
       rawId: source,
-      label: summarizeMemoryGraphLabel(source, "Knowledge Source"),
-      type: "Knowledge Source",
-      source: "know",
-      scope: "agent",
-      originSource: "know",
+      label: summarizeMemoryGraphLabel(source, 'Knowledge Source'),
+      type: 'Knowledge Source',
+      source: 'know',
+      scope: 'agent',
+      originSource: 'know',
     });
     pushRelationship({
       id: `rel:knowledge_source:${selectedCard.id}:${index}`,
       from: sourceNodeId,
       to: agentNodeId,
-      type: "grounds_context",
-      source: "know",
-      scope: "agent",
-      evidence_snippet: "Configured knowledge source available to this card.",
+      type: 'grounds_context',
+      source: 'know',
+      scope: 'agent',
+      evidence_snippet: 'Configured knowledge source available to this card.',
     });
   });
 
@@ -592,56 +638,62 @@ function buildSelectedCardMemoryGraphData(
     if (
       edge.target === selectedCard.id &&
       sourceNode &&
-      (edgeType === "flow" || edgeType === "magentic_option")
+      (edgeType === 'flow' || edgeType === 'magentic_option')
     ) {
       const sourceEntityId = `upstream:${sourceNode.id}`;
       pushEntity({
         id: sourceEntityId,
         rawId: sourceNode.id,
         label: safeText(sourceNode.title || sourceNode.id),
-        type: sourceNode.runtimeType === "magentic_one" ? "Orchestrator" : "Upstream Agent",
-        source: edgeType === "magentic_option" ? "mixed" : "think",
-        scope: "project",
+        type:
+          sourceNode.runtimeType === 'magentic_one'
+            ? 'Orchestrator'
+            : 'Upstream Agent',
+        source: edgeType === 'magentic_option' ? 'mixed' : 'think',
+        scope: 'project',
       });
       pushRelationship({
         id: `rel:upstream:${edge.id}`,
         from: sourceEntityId,
         to: agentNodeId,
-        type: edgeType === "magentic_option" ? "routes_input" : "feeds_input",
-        source: edgeType === "magentic_option" ? "mixed" : "think",
-        scope: "project",
+        type: edgeType === 'magentic_option' ? 'routes_input' : 'feeds_input',
+        source: edgeType === 'magentic_option' ? 'mixed' : 'think',
+        scope: 'project',
         evidence_snippet:
-          edgeType === "magentic_option"
-            ? "Visible orchestrator route into this card."
-            : "Visible upstream graph input into this card.",
+          edgeType === 'magentic_option'
+            ? 'Visible orchestrator route into this card.'
+            : 'Visible upstream graph input into this card.',
       });
     }
 
     if (
       edge.source === selectedCard.id &&
       targetNode &&
-      (edgeType === "flow" || edgeType === "magentic_option")
+      (edgeType === 'flow' || edgeType === 'magentic_option')
     ) {
       const targetEntityId = `downstream:${targetNode.id}`;
       pushEntity({
         id: targetEntityId,
         rawId: targetNode.id,
         label: safeText(targetNode.title || targetNode.id),
-        type: targetNode.runtimeType === "magentic_one" ? "Orchestrator" : "Downstream Agent",
-        source: edgeType === "magentic_option" ? "mixed" : "think",
-        scope: "project",
+        type:
+          targetNode.runtimeType === 'magentic_one'
+            ? 'Orchestrator'
+            : 'Downstream Agent',
+        source: edgeType === 'magentic_option' ? 'mixed' : 'think',
+        scope: 'project',
       });
       pushRelationship({
         id: `rel:downstream:${edge.id}`,
         from: agentNodeId,
         to: targetEntityId,
-        type: edgeType === "magentic_option" ? "routes_output" : "feeds_output",
-        source: edgeType === "magentic_option" ? "mixed" : "think",
-        scope: "project",
+        type: edgeType === 'magentic_option' ? 'routes_output' : 'feeds_output',
+        source: edgeType === 'magentic_option' ? 'mixed' : 'think',
+        scope: 'project',
         evidence_snippet:
-          edgeType === "magentic_option"
-            ? "This card exposes a callable route into the downstream graph."
-            : "Visible downstream graph consumer of this card output.",
+          edgeType === 'magentic_option'
+            ? 'This card exposes a callable route into the downstream graph.'
+            : 'Visible downstream graph consumer of this card output.',
       });
     }
   });
@@ -662,8 +714,7 @@ function isAssistCanvasCard(
   node: AgentCardInstance | null | undefined,
 ): node is AgentCardInstance {
   return Boolean(
-    node &&
-      normalizeRuntimeType(node.runtimeType) === "assistant_agent",
+    node && normalizeRuntimeType(node.runtimeType) === 'assistant_agent',
   );
 }
 
@@ -671,7 +722,8 @@ function isVisibleAssistFlowPair(
   sourceNode: AgentCardInstance | null | undefined,
   targetNode: AgentCardInstance | null | undefined,
 ): boolean {
-  if (!isAssistCanvasCard(sourceNode) || !isAssistCanvasCard(targetNode)) return false;
+  if (!isAssistCanvasCard(sourceNode) || !isAssistCanvasCard(targetNode))
+    return false;
 
   const sourceGraphId = cleanOptionalText(sourceNode.parentGraphId);
   const targetGraphId = cleanOptionalText(targetNode.parentGraphId);
@@ -687,7 +739,9 @@ function collectVisibleAssistFlowIds(
   document: DeckDocument,
   startNodeId: string,
 ): Set<string> {
-  const nodeMap = new Map(document.nodes.map((node) => [node.id, node] as const));
+  const nodeMap = new Map(
+    document.nodes.map((node) => [node.id, node] as const),
+  );
   const visited = new Set<string>();
   const queue = [startNodeId];
 
@@ -697,7 +751,7 @@ function collectVisibleAssistFlowIds(
     visited.add(nodeId);
 
     document.edges.forEach((edge) => {
-      if (normalizeDeckEdgeType(edge.edgeType) !== "flow") return;
+      if (normalizeDeckEdgeType(edge.edgeType) !== 'flow') return;
       const sourceNode = nodeMap.get(edge.source);
       const targetNode = nodeMap.get(edge.target);
       if (!isVisibleAssistFlowPair(sourceNode, targetNode)) return;
@@ -731,7 +785,9 @@ function buildSingleCardRunNodeScope(
   document: DeckDocument,
   selectedNode: AgentCardInstance,
 ): Set<string> {
-  const nodeMap = new Map(document.nodes.map((node) => [node.id, node] as const));
+  const nodeMap = new Map(
+    document.nodes.map((node) => [node.id, node] as const),
+  );
   const relatedNodeIds = new Set<string>();
   const selectedNodeId = selectedNode.id;
   const selectedRuntimeType = normalizeRuntimeType(selectedNode.runtimeType);
@@ -741,13 +797,16 @@ function buildSingleCardRunNodeScope(
     return collectGraphScopedNodeIds(document, selectedParentGraphId);
   }
 
-  if (selectedRuntimeType === "magentic_one" && isTopLevelCanvasCard(selectedNode)) {
+  if (
+    selectedRuntimeType === 'magentic_one' &&
+    isTopLevelCanvasCard(selectedNode)
+  ) {
     relatedNodeIds.add(selectedNodeId);
 
     document.edges.forEach((edge) => {
       if (
         edge.source !== selectedNodeId ||
-        normalizeDeckEdgeType(edge.edgeType) !== "magentic_option"
+        normalizeDeckEdgeType(edge.edgeType) !== 'magentic_option'
       ) {
         return;
       }
@@ -756,7 +815,10 @@ function buildSingleCardRunNodeScope(
       if (!targetNode) return;
 
       const targetRuntimeType = normalizeRuntimeType(targetNode.runtimeType);
-      if (targetRuntimeType === "graph_flow" && isTopLevelCanvasCard(targetNode)) {
+      if (
+        targetRuntimeType === 'graph_flow' &&
+        isTopLevelCanvasCard(targetNode)
+      ) {
         collectGraphScopedNodeIds(document, targetNode.id).forEach((nodeId) => {
           relatedNodeIds.add(nodeId);
         });
@@ -771,7 +833,10 @@ function buildSingleCardRunNodeScope(
     return relatedNodeIds;
   }
 
-  if (selectedRuntimeType === "graph_flow" && isTopLevelCanvasCard(selectedNode)) {
+  if (
+    selectedRuntimeType === 'graph_flow' &&
+    isTopLevelCanvasCard(selectedNode)
+  ) {
     return collectGraphScopedNodeIds(document, selectedNodeId);
   }
 
@@ -795,21 +860,22 @@ export function buildSingleCardRunDocument(
     ...document,
     nodes: document.nodes.filter((node) => relatedNodeIds.has(node.id)),
     edges: document.edges.filter(
-      (edge) => relatedNodeIds.has(edge.source) && relatedNodeIds.has(edge.target),
+      (edge) =>
+        relatedNodeIds.has(edge.source) && relatedNodeIds.has(edge.target),
     ),
   };
 }
 
 const uid = () => Math.random().toString(36).slice(2, 8);
-const V2_PROJECTS_API = "/api/v2/projects";
-const V3_PROJECTS_API = "/api/v3/projects";
+const V2_PROJECTS_API = '/api/v2/projects';
+const V3_PROJECTS_API = '/api/v3/projects';
 const EMPTY_PROJECT_STATE = {
-  messages: [] as { role: "assistant" | "user"; text: string }[],
+  messages: [] as { role: 'assistant' | 'user'; text: string }[],
   plan: [] as PlanItem[],
   links: [] as LinkRef[],
 };
 
-const KG_CACHE_PREFIX = "agentbuilder:kg-cache:v1";
+const KG_CACHE_PREFIX = 'agentbuilder:kg-cache:v1';
 const KG_CACHE_TTL_MS = 60_000;
 
 type KNode = {
@@ -817,7 +883,7 @@ type KNode = {
   rawId?: string;
   label: string;
   type?: string;
-  graphSource?: "think" | "know";
+  graphSource?: 'think' | 'know';
   scope?: KnowledgeGraphScope;
   last_seen_ts?: string;
   degree?: number;
@@ -830,7 +896,7 @@ type KEdge = {
   b: string;
   id?: string;
   rawId?: string;
-  graphSource?: "think" | "know";
+  graphSource?: 'think' | 'know';
   scope?: KnowledgeGraphScope;
   source?: string;
   target?: string;
@@ -844,45 +910,45 @@ type KEdge = {
 };
 
 const KG_SEED_QUERY = [
-  "MATCH (a:Entity { project_id: $projectId })-[r:REL { project_id: $projectId }]->(b:Entity { project_id: $projectId })",
+  'MATCH (a:Entity { project_id: $projectId })-[r:REL { project_id: $projectId }]->(b:Entity { project_id: $projectId })',
   "WHERE ($typeFilter IS NULL OR toLower(coalesce(a.etype, 'unknown')) = $typeFilter OR toLower(coalesce(b.etype, 'unknown')) = $typeFilter)",
-  "AND ($sinceTs IS NULL OR coalesce(r.created_at, a.created_at, b.created_at) >= $sinceTs)",
-  "AND ($minConfidence IS NULL OR coalesce(r.confidence, 0.0) >= $minConfidence)",
-  "RETURN {",
+  'AND ($sinceTs IS NULL OR coalesce(r.created_at, a.created_at, b.created_at) >= $sinceTs)',
+  'AND ($minConfidence IS NULL OR coalesce(r.confidence, 0.0) >= $minConfidence)',
+  'RETURN {',
   "  a_id: id(a), a_name: coalesce(a.name, toString(id(a))), a_type: coalesce(a.etype, 'unknown'), a_ts: coalesce(a.created_at, r.created_at, b.created_at), a_doc_id: coalesce(a.source.doc_id, a.source.docId, r.source.doc_id, r.source.docId),",
   "  r_type: coalesce(r.rtype, 'related_to'), r_weight: coalesce(r.weight, r.confidence, 0.5), r_confidence: coalesce(r.confidence, r.weight, 0.5), r_ts: coalesce(r.created_at, a.created_at, b.created_at), r_doc_id: coalesce(r.source.doc_id, r.source.docId, a.source.doc_id, b.source.doc_id), r_snippet: coalesce(r.source.snippet, r.attrs.snippet),",
   "  b_id: id(b), b_name: coalesce(b.name, toString(id(b))), b_type: coalesce(b.etype, 'unknown'), b_ts: coalesce(b.created_at, r.created_at, a.created_at), b_doc_id: coalesce(b.source.doc_id, b.source.docId, r.source.doc_id, r.source.docId)",
-  "} AS row",
-  "ORDER BY coalesce(r.created_at, a.created_at, b.created_at) DESC",
-  "LIMIT toInteger($limit)",
-].join(" ");
+  '} AS row',
+  'ORDER BY coalesce(r.created_at, a.created_at, b.created_at) DESC',
+  'LIMIT toInteger($limit)',
+].join(' ');
 const KG_EXPAND_QUERY = [
-  "MATCH (n:Entity { project_id: $projectId })",
-  "WHERE id(n) = toInteger($nodeId)",
-  "MATCH (n)-[r:REL { project_id: $projectId }]-(m:Entity { project_id: $projectId })",
+  'MATCH (n:Entity { project_id: $projectId })',
+  'WHERE id(n) = toInteger($nodeId)',
+  'MATCH (n)-[r:REL { project_id: $projectId }]-(m:Entity { project_id: $projectId })',
   "WHERE ($typeFilter IS NULL OR toLower(coalesce(n.etype, 'unknown')) = $typeFilter OR toLower(coalesce(m.etype, 'unknown')) = $typeFilter)",
-  "AND ($sinceTs IS NULL OR coalesce(r.created_at, n.created_at, m.created_at) >= $sinceTs)",
-  "AND ($minConfidence IS NULL OR coalesce(r.confidence, 0.0) >= $minConfidence)",
-  "RETURN {",
+  'AND ($sinceTs IS NULL OR coalesce(r.created_at, n.created_at, m.created_at) >= $sinceTs)',
+  'AND ($minConfidence IS NULL OR coalesce(r.confidence, 0.0) >= $minConfidence)',
+  'RETURN {',
   "  a_id: id(n), a_name: coalesce(n.name, toString(id(n))), a_type: coalesce(n.etype, 'unknown'), a_ts: coalesce(n.created_at, r.created_at, m.created_at), a_doc_id: coalesce(n.source.doc_id, n.source.docId, r.source.doc_id, r.source.docId),",
   "  r_type: coalesce(r.rtype, 'related_to'), r_weight: coalesce(r.weight, r.confidence, 0.5), r_confidence: coalesce(r.confidence, r.weight, 0.5), r_ts: coalesce(r.created_at, n.created_at, m.created_at), r_doc_id: coalesce(r.source.doc_id, r.source.docId, n.source.doc_id, m.source.doc_id), r_snippet: coalesce(r.source.snippet, r.attrs.snippet),",
   "  b_id: id(m), b_name: coalesce(m.name, toString(id(m))), b_type: coalesce(m.etype, 'unknown'), b_ts: coalesce(m.created_at, r.created_at, n.created_at), b_doc_id: coalesce(m.source.doc_id, m.source.docId, r.source.doc_id, r.source.docId)",
-  "} AS row",
-  "ORDER BY coalesce(r.created_at, n.created_at, m.created_at) DESC",
-  "LIMIT toInteger($limit)",
-].join(" ");
+  '} AS row',
+  'ORDER BY coalesce(r.created_at, n.created_at, m.created_at) DESC',
+  'LIMIT toInteger($limit)',
+].join(' ');
 
 function normalizeRelationType(value: unknown): string {
-  return String(value ?? "")
+  return String(value ?? '')
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
 }
 
 function parseTimestampMs(value: unknown): number | undefined {
   if (value == null) return undefined;
-  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
   const s = String(value).trim();
   if (!s) return undefined;
   const t = Date.parse(s);
@@ -915,234 +981,239 @@ ${parts.memoryPolicy}`;
 
 const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   {
-    id: "prompt_magentic",
+    id: 'prompt_magentic',
     content: buildSeedPromptTemplate({
       role: [
-        "You are Magentic-One, the lead orchestrator for the visible agent graph.",
-        "You are part of the visible team, not a hidden side system.",
-      ].join("\n"),
+        'You are Magentic-One, the lead orchestrator for the visible agent graph.',
+        'You are part of the visible team, not a hidden side system.',
+      ].join('\n'),
       goal: [
-        "Understand the user goal, make a short working plan for the current task, and decide whether to answer directly or delegate.",
-        "Track whether progress is being made, and revise the next step if progress stalls.",
-      ].join("\n"),
+        'Understand the user goal, make a short working plan for the current task, and decide whether to answer directly or delegate.',
+        'Track whether progress is being made, and revise the next step if progress stalls.',
+      ].join('\n'),
       constraints: [
-        "The visible canvas is your full action space.",
-        "You may only delegate through visible outgoing magentic_option connections from this card.",
-        "Only visibly connected outgoing magentic_option paths are callable.",
-        "If the task can be answered directly without delegation, do so.",
-        "If delegation is needed, choose exactly one connected node for the next assignment and explain why that node is the best next move.",
-        "Do not invent agents, tools, routes, subprocesses, hidden plans, or capabilities that are not present on the canvas.",
-        "Do not create workflow steps that are not represented by the visible graph structure.",
-        "If no connected node can validly help, stop and return control to the human.",
-      ].join("\n"),
+        'The visible canvas is your full action space.',
+        'You may only delegate through visible outgoing magentic_option connections from this card.',
+        'Only visibly connected outgoing magentic_option paths are callable.',
+        'If the task can be answered directly without delegation, do so.',
+        'If delegation is needed, choose exactly one connected node for the next assignment and explain why that node is the best next move.',
+        'Do not invent agents, tools, routes, subprocesses, hidden plans, or capabilities that are not present on the canvas.',
+        'Do not create workflow steps that are not represented by the visible graph structure.',
+        'If no connected node can validly help, stop and return control to the human.',
+      ].join('\n'),
       ioSchema: [
-        "Input: user request plus visible callable node summaries and any completed results from this run.",
-        "Output: either a direct answer or one selected connected node for the next assignment.",
-        "Use the plan stream to report short plain-text updates in this shape:",
-        "Goal: ...",
-        "Next: calling [Node Title] because ...",
-        "Progress: ...",
-        "Result: ...",
-        "Waiting: more work, human input, or done.",
-      ].join("\n"),
+        'Input: user request plus visible callable node summaries and any completed results from this run.',
+        'Output: either a direct answer or one selected connected node for the next assignment.',
+        'Use the plan stream to report short plain-text updates in this shape:',
+        'Goal: ...',
+        'Next: calling [Node Title] because ...',
+        'Progress: ...',
+        'Result: ...',
+        'Waiting: more work, human input, or done.',
+      ].join('\n'),
       memoryPolicy: [
-        "Use only the current request, the visible callable node list, completed results from this run, and explicit deck context.",
-        "Keep the working plan short, update it after each result, and re-plan if progress stalls.",
-      ].join("\n"),
+        'Use only the current request, the visible callable node list, completed results from this run, and explicit deck context.',
+        'Keep the working plan short, update it after each result, and re-plan if progress stalls.',
+      ].join('\n'),
     }),
   },
   {
-    id: "prompt_thinkgraph_agent",
+    id: 'prompt_thinkgraph_agent',
     content: buildSeedPromptTemplate({
       role: [
-        "You are the ThinkGraph Agent, a graph-specialist agent for provisional and planning memory.",
-        "You work only with ThinkGraph (PostgreSQL + AGE), which stores provisional semantic structure.",
-      ].join("\n"),
+        'You are the ThinkGraph Agent, a graph-specialist agent for provisional and planning memory.',
+        'You work only with ThinkGraph (PostgreSQL + AGE), which stores provisional semantic structure.',
+      ].join('\n'),
       goal: [
-        "Extract and manage provisional entities, relationships, hypotheses, working state, and gaps.",
-        "ThinkGraph is read first by the planner to understand current ideas, goals, and open loops.",
-      ].join("\n"),
+        'Extract and manage provisional entities, relationships, hypotheses, working state, and gaps.',
+        'ThinkGraph is read first by the planner to understand current ideas, goals, and open loops.',
+      ].join('\n'),
       constraints: [
-        "ThinkGraph is provisional/subjective memory, not grounded facts.",
-        "Separate candidate claims from grounded evidence.",
-        "Keep structure concise and useful for planning.",
-        "Do not merge ThinkGraph with KnowGraph or CodeGraph.",
-      ].join("\n"),
+        'ThinkGraph is provisional/subjective memory, not grounded facts.',
+        'Separate candidate claims from grounded evidence.',
+        'Keep structure concise and useful for planning.',
+        'Do not merge ThinkGraph with KnowGraph or CodeGraph.',
+      ].join('\n'),
       ioSchema: [
-        "Input: user request or planning context.",
-        "Output: provisional entities, relationships, hypotheses, gaps, and next research targets.",
-      ].join("\n"),
+        'Input: user request or planning context.',
+        'Output: provisional entities, relationships, hypotheses, gaps, and next research targets.',
+      ].join('\n'),
       memoryPolicy: [
-        "Use current input and existing ThinkGraph context.",
-        "ThinkGraph stores: ideas, prompts, goals, hypotheses, working summaries, open questions.",
-      ].join("\n"),
+        'Use current input and existing ThinkGraph context.',
+        'ThinkGraph stores: ideas, prompts, goals, hypotheses, working summaries, open questions.',
+      ].join('\n'),
     }),
   },
   {
-    id: "prompt_codegraph_agent",
+    id: 'prompt_codegraph_agent',
     content: buildSeedPromptTemplate({
       role: [
-        "You are the CodeGraph Agent, a graph-specialist agent for structural code memory.",
-        "You work only with CodeGraph, which stores files, symbols, routes, libraries, subsystem boundaries, and dependency/call structure.",
-      ].join("\n"),
+        'You are the CodeGraph Agent, a graph-specialist agent for structural code memory.',
+        'You work only with CodeGraph, which stores files, symbols, routes, libraries, subsystem boundaries, and dependency/call structure.',
+      ].join('\n'),
       goal: [
-        "Extract and manage code structure: what does what, what library it uses, what part of the product this belongs to, what depends on what.",
-        "CodeGraph is read second by the planner to understand what code areas, subsystems, files, symbols, and routes matter.",
-      ].join("\n"),
+        'Extract and manage code structure: what does what, what library it uses, what part of the product this belongs to, what depends on what.',
+        'CodeGraph is read second by the planner to understand what code areas, subsystems, files, symbols, and routes matter.',
+      ].join('\n'),
       constraints: [
-        "CodeGraph is structural code memory, separate from ThinkGraph and KnowGraph.",
-        "Preserve Codebase-Memory-style usefulness for AI.",
-        "Local-first storage is acceptable.",
-        "Do not merge CodeGraph with other graph types.",
-      ].join("\n"),
+        'CodeGraph is structural code memory, separate from ThinkGraph and KnowGraph.',
+        'Preserve Codebase-Memory-style usefulness for AI.',
+        'Local-first storage is acceptable.',
+        'Do not merge CodeGraph with other graph types.',
+      ].join('\n'),
       ioSchema: [
-        "Input: code analysis request or codebase context.",
-        "Output: files, symbols, routes, libraries, subsystem boundaries, dependencies, call structure.",
-      ].join("\n"),
+        'Input: code analysis request or codebase context.',
+        'Output: files, symbols, routes, libraries, subsystem boundaries, dependencies, call structure.',
+      ].join('\n'),
       memoryPolicy: [
-        "Use current input and existing CodeGraph context.",
-        "CodeGraph stores: files, symbols, routes, libraries, subsystems, dependencies, call graphs.",
-      ].join("\n"),
+        'Use current input and existing CodeGraph context.',
+        'CodeGraph stores: files, symbols, routes, libraries, subsystems, dependencies, call graphs.',
+      ].join('\n'),
     }),
   },
   {
-    id: "prompt_research_agent",
+    id: 'prompt_research_agent',
     content: buildSeedPromptTemplate({
       role: [
-        "You are the Research Agent, a worker agent for conducting research and gathering information.",
-        "You analyze requests, perform research, and produce structured findings for downstream agents.",
-      ].join("\n"),
+        'You are the Research Agent, a worker agent for conducting research and gathering information.',
+        'You analyze requests, perform research, and produce structured findings for downstream agents.',
+      ].join('\n'),
       goal: [
-        "Analyze research requests and gather relevant information from available sources.",
-        "Produce structured research findings that can be consumed by KnowGraph Agent for grounding.",
-      ].join("\n"),
+        'Analyze research requests and gather relevant information from available sources.',
+        'Produce structured research findings that can be consumed by KnowGraph Agent for grounding.',
+      ].join('\n'),
       constraints: [
-        "Focus on research and analysis tasks.",
-        "Produce structured output suitable for downstream processing.",
-        "Do not store grounded knowledge yourself; pass findings to KnowGraph Agent.",
-      ].join("\n"),
+        'Focus on research and analysis tasks.',
+        'Produce structured output suitable for downstream processing.',
+        'Do not store grounded knowledge yourself; pass findings to KnowGraph Agent.',
+      ].join('\n'),
       ioSchema: [
-        "Input: research request or analysis task from upstream agents.",
-        "Output: structured research findings, analysis results, and recommendations.",
-      ].join("\n"),
+        'Input: research request or analysis task from upstream agents.',
+        'Output: structured research findings, analysis results, and recommendations.',
+      ].join('\n'),
       memoryPolicy: [
-        "Use current input and any provided context from upstream agents.",
-        "Research output should be structured for KnowGraph Agent to ground and store.",
-      ].join("\n"),
+        'Use current input and any provided context from upstream agents.',
+        'Research output should be structured for KnowGraph Agent to ground and store.',
+      ].join('\n'),
     }),
   },
   {
-    id: "prompt_knowgraph_agent",
+    id: 'prompt_knowgraph_agent',
     content: buildSeedPromptTemplate({
       role: [
-        "You are the KnowGraph Agent, a graph-specialist agent for grounded and evidence-backed memory.",
-        "You work only with KnowGraph (Neo4j), which stores grounded entities, relationships, docs, PDFs, web research summaries, links, and provenance.",
-      ].join("\n"),
+        'You are the KnowGraph Agent, a graph-specialist agent for grounded and evidence-backed memory.',
+        'You work only with KnowGraph (Neo4j), which stores grounded entities, relationships, docs, PDFs, web research summaries, links, and provenance.',
+      ].join('\n'),
       goal: [
-        "Extract and manage grounded knowledge: evidence-backed entities, relationships, research summaries, and citations.",
-        "KnowGraph is read third by the planner to understand what docs, PDFs, research, grounded evidence, summaries, and links matter.",
-      ].join("\n"),
+        'Extract and manage grounded knowledge: evidence-backed entities, relationships, research summaries, and citations.',
+        'KnowGraph is read third by the planner to understand what docs, PDFs, research, grounded evidence, summaries, and links matter.',
+      ].join('\n'),
       constraints: [
-        "KnowGraph is grounded/evidence-backed memory, not provisional thought.",
-        "Only promote structure backed by sources.",
-        "Preserve citations and provenance.",
-        "Do not merge KnowGraph with ThinkGraph or CodeGraph.",
-      ].join("\n"),
+        'KnowGraph is grounded/evidence-backed memory, not provisional thought.',
+        'Only promote structure backed by sources.',
+        'Preserve citations and provenance.',
+        'Do not merge KnowGraph with ThinkGraph or CodeGraph.',
+      ].join('\n'),
       ioSchema: [
-        "Input: research findings or grounded knowledge request.",
-        "Output: grounded entities, relationships, evidence summaries, citations, and provenance.",
-      ].join("\n"),
+        'Input: research findings or grounded knowledge request.',
+        'Output: grounded entities, relationships, evidence summaries, citations, and provenance.',
+      ].join('\n'),
       memoryPolicy: [
-        "Use current input and existing KnowGraph context.",
-        "KnowGraph stores: grounded entities, relationships, docs, PDFs, research summaries, links, provenance.",
-      ].join("\n"),
+        'Use current input and existing KnowGraph context.',
+        'KnowGraph stores: grounded entities, relationships, docs, PDFs, research summaries, links, provenance.',
+      ].join('\n'),
     }),
   },
   {
-    id: "prompt_assist",
+    id: 'prompt_assist',
     content: buildSeedPromptTemplate({
       role: [
-        "You are an Assist Agent, a general-purpose worker agent.",
-        "You perform tasks as directed by the orchestrator or flow.",
-      ].join("\n"),
+        'You are an Assist Agent, a general-purpose worker agent.',
+        'You perform tasks as directed by the orchestrator or flow.',
+      ].join('\n'),
       goal: [
-        "Execute the assigned task using available tools and context.",
-        "Return clear, actionable results to continue the workflow.",
-      ].join("\n"),
+        'Execute the assigned task using available tools and context.',
+        'Return clear, actionable results to continue the workflow.',
+      ].join('\n'),
       constraints: [
-        "Stay within your assigned scope.",
-        "Use tools appropriately and efficiently.",
-        "Return results in the expected format.",
-      ].join("\n"),
+        'Stay within your assigned scope.',
+        'Use tools appropriately and efficiently.',
+        'Return results in the expected format.',
+      ].join('\n'),
       ioSchema: [
-        "Input: task description and context from upstream nodes.",
-        "Output: task results for downstream nodes.",
-      ].join("\n"),
+        'Input: task description and context from upstream nodes.',
+        'Output: task results for downstream nodes.',
+      ].join('\n'),
       memoryPolicy: [
-        "Use provided context and upstream inputs.",
-        "Store intermediate results if needed for downstream agents.",
-      ].join("\n"),
+        'Use provided context and upstream inputs.',
+        'Store intermediate results if needed for downstream agents.',
+      ].join('\n'),
     }),
   },
 ];
 
 const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
   {
-    id: "template_magentic",
-    name: "Magentic-One",
-    promptTemplate: "prompt_magentic",
-    model: "gpt-5-mini",
-    provider: "openai",
+    id: 'template_magentic',
+    name: 'Magentic-One',
+    promptTemplate: 'prompt_magentic',
+    model: 'gpt-5-mini',
+    provider: 'openai',
     temperature: 0.2,
     maxTokens: 1200,
     tools: [],
   },
   {
-    id: "template_thinkgraph_agent",
-    name: "ThinkGraph Agent",
-    promptTemplate: "prompt_thinkgraph_agent",
-    model: "gpt-5-mini",
-    provider: "openai",
+    id: 'template_thinkgraph_agent',
+    name: 'ThinkGraph Agent',
+    promptTemplate: 'prompt_thinkgraph_agent',
+    model: 'gpt-5-mini',
+    provider: 'openai',
     temperature: 0.2,
     maxTokens: 1400,
-    tools: ["thinkgraph_query", "thinkgraph_write", "entity_extractor"],
+    tools: ['thinkgraph_query', 'thinkgraph_write', 'entity_extractor'],
   },
   {
-    id: "template_codegraph_agent",
-    name: "CodeGraph Agent",
-    promptTemplate: "prompt_codegraph_agent",
-    model: "gpt-5-mini",
-    provider: "openai",
+    id: 'template_codegraph_agent',
+    name: 'CodeGraph Agent',
+    promptTemplate: 'prompt_codegraph_agent',
+    model: 'gpt-5-mini',
+    provider: 'openai',
     temperature: 0.2,
     maxTokens: 1400,
-    tools: ["codegraph_query", "codegraph_write", "code_analyzer"],
+    tools: ['codegraph_query', 'codegraph_write', 'code_analyzer'],
   },
   {
-    id: "template_research_agent",
-    name: "Research Agent",
-    promptTemplate: "prompt_research_agent",
-    model: "gpt-5-mini",
-    provider: "openai",
+    id: 'template_research_agent',
+    name: 'Research Agent',
+    promptTemplate: 'prompt_research_agent',
+    model: 'gpt-5-mini',
+    provider: 'openai',
     temperature: 0.2,
     maxTokens: 1400,
-    tools: ["web_search", "knowledge_ingest"],
+    tools: ['web_search', 'knowledge_ingest'],
   },
   {
-    id: "template_knowgraph_agent",
-    name: "KnowGraph Agent",
-    promptTemplate: "prompt_knowgraph_agent",
-    model: "gpt-5-mini",
-    provider: "openai",
+    id: 'template_knowgraph_agent',
+    name: 'KnowGraph Agent',
+    promptTemplate: 'prompt_knowgraph_agent',
+    model: 'gpt-5-mini',
+    provider: 'openai',
     temperature: 0.2,
     maxTokens: 1400,
-    tools: ["knowgraph_query", "knowgraph_write", "web_search", "knowledge_ingest"],
+    tools: [
+      'knowgraph_query',
+      'knowgraph_write',
+      'web_search',
+      'knowledge_ingest',
+    ],
   },
   {
-    id: "template_assist",
-    name: "Assist",
-    promptTemplate: "prompt_assist",
-    model: "gpt-5-mini",
-    provider: "openai",
+    id: 'template_assist',
+    name: 'Assist',
+    promptTemplate: 'prompt_assist',
+    model: 'gpt-5-mini',
+    provider: 'openai',
     temperature: 0.2,
     maxTokens: 1200,
     tools: [],
@@ -1150,106 +1221,121 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
 ];
 
 export const INITIAL_DECK: DeckDocument = {
-  id: "deck_builder",
-  name: "Agent Card Deck",
+  id: 'deck_builder',
+  name: 'Agent Card Deck',
   promptTemplates: cloneDeckDocument(INITIAL_PROMPT_TEMPLATES),
   version: 2,
   nodes: [
     {
-      id: "card_magentic",
-      kind: "agent",
-      templateId: "template_magentic",
-      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_magentic")?.content || "",
+      id: 'card_magentic',
+      kind: 'agent',
+      templateId: 'template_magentic',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_magentic',
+        )?.content || '',
       runtimeBinding: null,
-      runtimeType: "magentic_one",
+      runtimeType: 'magentic_one',
       parentGraphId: null,
-      title: "Magentic-One",
-      subtitle: "Admin orchestrator / planner",
+      title: 'Magentic-One',
+      subtitle: 'Admin orchestrator / planner',
       position: { x: -220, y: -120 },
-      status: "ready",
+      status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
-      id: "card_thinkgraph_agent",
-      kind: "agent",
-      templateId: "template_thinkgraph_agent",
-      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_thinkgraph_agent")?.content || "",
-      runtimeBinding: "thinkgraph_agent",
-      runtimeType: "assistant_agent",
+      id: 'card_thinkgraph_agent',
+      kind: 'agent',
+      templateId: 'template_thinkgraph_agent',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_thinkgraph_agent',
+        )?.content || '',
+      runtimeBinding: 'thinkgraph_agent',
+      runtimeType: 'assistant_agent',
       parentGraphId: null,
-      title: "ThinkGraph Agent",
-      subtitle: "Provisional / planning memory (AGE)",
+      title: 'ThinkGraph Agent',
+      subtitle: 'Provisional / planning memory (AGE)',
       position: { x: 180, y: -120 },
-      status: "ready",
+      status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
-      id: "card_codegraph_agent",
-      kind: "agent",
-      templateId: "template_codegraph_agent",
-      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_codegraph_agent")?.content || "",
-      runtimeBinding: "codegraph_agent",
-      runtimeType: "assistant_agent",
+      id: 'card_codegraph_agent',
+      kind: 'agent',
+      templateId: 'template_codegraph_agent',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_codegraph_agent',
+        )?.content || '',
+      runtimeBinding: 'codegraph_agent',
+      runtimeType: 'assistant_agent',
       parentGraphId: null,
-      title: "CodeGraph Agent",
-      subtitle: "Structural code memory",
+      title: 'CodeGraph Agent',
+      subtitle: 'Structural code memory',
       position: { x: 180, y: 40 },
-      status: "ready",
+      status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
-      id: "card_research_agent",
-      kind: "agent",
-      templateId: "template_research_agent",
-      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_research_agent")?.content || "",
-      runtimeBinding: "research_agent",
-      runtimeType: "assistant_agent",
+      id: 'card_research_agent',
+      kind: 'agent',
+      templateId: 'template_research_agent',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_research_agent',
+        )?.content || '',
+      runtimeBinding: 'research_agent',
+      runtimeType: 'assistant_agent',
       parentGraphId: null,
-      title: "Research Agent",
-      subtitle: "Research and analysis worker",
+      title: 'Research Agent',
+      subtitle: 'Research and analysis worker',
       position: { x: 180, y: 200 },
-      status: "ready",
+      status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
-      id: "card_knowgraph_agent",
-      kind: "agent",
-      templateId: "template_knowgraph_agent",
-      prompt: INITIAL_PROMPT_TEMPLATES.find((template) => template.id === "prompt_knowgraph_agent")?.content || "",
-      runtimeBinding: "knowgraph_agent",
-      runtimeType: "assistant_agent",
+      id: 'card_knowgraph_agent',
+      kind: 'agent',
+      templateId: 'template_knowgraph_agent',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_knowgraph_agent',
+        )?.content || '',
+      runtimeBinding: 'knowgraph_agent',
+      runtimeType: 'assistant_agent',
       parentGraphId: null,
-      title: "KnowGraph Agent",
-      subtitle: "Grounded / evidence-backed memory (Neo4j)",
+      title: 'KnowGraph Agent',
+      subtitle: 'Grounded / evidence-backed memory (Neo4j)',
       position: { x: 180, y: 360 },
-      status: "ready",
+      status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
   ],
   edges: [
     {
-      id: "edge_magentic_thinkgraph",
-      source: "card_magentic",
-      target: "card_thinkgraph_agent",
-      edgeType: "magentic_option",
+      id: 'edge_magentic_thinkgraph',
+      source: 'card_magentic',
+      target: 'card_thinkgraph_agent',
+      edgeType: 'magentic_option',
     },
     {
-      id: "edge_thinkgraph_codegraph",
-      source: "card_thinkgraph_agent",
-      target: "card_codegraph_agent",
-      edgeType: "flow",
+      id: 'edge_thinkgraph_codegraph',
+      source: 'card_thinkgraph_agent',
+      target: 'card_codegraph_agent',
+      edgeType: 'flow',
     },
     {
-      id: "edge_codegraph_research",
-      source: "card_codegraph_agent",
-      target: "card_research_agent",
-      edgeType: "flow",
+      id: 'edge_codegraph_research',
+      source: 'card_codegraph_agent',
+      target: 'card_research_agent',
+      edgeType: 'flow',
     },
     {
-      id: "edge_research_knowgraph",
-      source: "card_research_agent",
-      target: "card_knowgraph_agent",
-      edgeType: "flow",
+      id: 'edge_research_knowgraph',
+      source: 'card_research_agent',
+      target: 'card_knowgraph_agent',
+      edgeType: 'flow',
     },
   ],
 };
@@ -1257,16 +1343,16 @@ export const INITIAL_DECK: DeckDocument = {
 const BUILDER_DECK_ID = INITIAL_DECK.id;
 const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
   // New specialist graph roles (current seeded Admin model)
-  card_thinkgraph_agent: "thinkgraph_agent",
-  card_codegraph_agent: "codegraph_agent",
-  card_research_agent: "research_agent",
-  card_knowgraph_agent: "knowgraph_agent",
+  card_thinkgraph_agent: 'thinkgraph_agent',
+  card_codegraph_agent: 'codegraph_agent',
+  card_research_agent: 'research_agent',
+  card_knowgraph_agent: 'knowgraph_agent',
   // Backward compatibility: legacy card IDs for existing saved decks
-  card_main_chat: "main_chat",
-  card_kg_ingest: "kg_ingest",
-  card_research: "research_agent",
-  card_knowgraph: "knowgraph",
-  card_neo4j: "neo4j",
+  card_main_chat: 'main_chat',
+  card_kg_ingest: 'kg_ingest',
+  card_research: 'research_agent',
+  card_knowgraph: 'knowgraph',
+  card_neo4j: 'neo4j',
 };
 function cloneDeckDocument<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -1274,14 +1360,14 @@ function cloneDeckDocument<T>(value: T): T {
 
 function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
   const normalized = safeText(value).trim().toLowerCase();
-  if (normalized === "main_chat") return "main_chat";
-  if (normalized === "kg_ingest") return "kg_ingest";
-  if (normalized === "research_agent") return "research_agent";
-  if (normalized === "knowgraph") return "knowgraph";
-  if (normalized === "neo4j") return "neo4j";
-  if (normalized === "thinkgraph_agent") return "thinkgraph_agent";
-  if (normalized === "codegraph_agent") return "codegraph_agent";
-  if (normalized === "knowgraph_agent") return "knowgraph_agent";
+  if (normalized === 'main_chat') return 'main_chat';
+  if (normalized === 'kg_ingest') return 'kg_ingest';
+  if (normalized === 'research_agent') return 'research_agent';
+  if (normalized === 'knowgraph') return 'knowgraph';
+  if (normalized === 'neo4j') return 'neo4j';
+  if (normalized === 'thinkgraph_agent') return 'thinkgraph_agent';
+  if (normalized === 'codegraph_agent') return 'codegraph_agent';
+  if (normalized === 'knowgraph_agent') return 'knowgraph_agent';
   return null;
 }
 
@@ -1298,19 +1384,19 @@ export function filterAuthoringCompatibleEdges(
       if (!sourceNode || !targetNode) return false;
 
       const edgeType = normalizeDeckEdgeType(edge.edgeType);
-      if (edgeType === "magentic_option") {
+      if (edgeType === 'magentic_option') {
         return (
-          normalizeRuntimeType(sourceNode.runtimeType) === "magentic_one" &&
+          normalizeRuntimeType(sourceNode.runtimeType) === 'magentic_one' &&
           isTopLevelCanvasCard(sourceNode) &&
           isTopLevelCanvasCard(targetNode) &&
-          ["assistant_agent", "graph_flow"].includes(
-            normalizeRuntimeType(targetNode.runtimeType) || "",
+          ['assistant_agent', 'graph_flow'].includes(
+            normalizeRuntimeType(targetNode.runtimeType) || '',
           )
         );
       }
 
       if (
-        normalizeRuntimeType(sourceNode.runtimeType) === "graph_flow" &&
+        normalizeRuntimeType(sourceNode.runtimeType) === 'graph_flow' &&
         cleanOptionalText(targetNode.parentGraphId) === sourceNode.id
       ) {
         return true;
@@ -1328,32 +1414,37 @@ function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
   if (value.length === 0) {
     return [];
   }
-  const nextNodes = value.filter(
-    (node): node is AgentCardInstance =>
-      Boolean(
-        node &&
-          typeof node === "object" &&
-          safeText((node as Partial<AgentCardInstance>).kind).trim().toLowerCase() !== "blackboard" &&
-          typeof (node as AgentCardInstance).id === "string" &&
-          typeof (node as AgentCardInstance).templateId === "string",
-      ),
+  const nextNodes = value.filter((node): node is AgentCardInstance =>
+    Boolean(
+      node &&
+      typeof node === 'object' &&
+      safeText((node as Partial<AgentCardInstance>).kind)
+        .trim()
+        .toLowerCase() !== 'blackboard' &&
+      typeof (node as AgentCardInstance).id === 'string' &&
+      typeof (node as AgentCardInstance).templateId === 'string',
+    ),
   );
   return nextNodes.length > 0
     ? nextNodes.map((node) => ({
         id: safeText(node.id).trim(),
-        kind: "agent",
+        kind: 'agent',
         templateId: safeText(node.templateId).trim(),
-        prompt: typeof node.prompt === "string" ? node.prompt : "",
+        prompt: typeof node.prompt === 'string' ? node.prompt : '',
         runtimeBinding: normalizeRuntimeBinding(
-          node.runtimeBinding ?? SYSTEM_CARD_RUNTIME_BINDINGS[safeText(node.id).trim()] ?? null,
+          node.runtimeBinding ??
+            SYSTEM_CARD_RUNTIME_BINDINGS[safeText(node.id).trim()] ??
+            null,
         ),
-        runtimeType: normalizeRuntimeType(node.runtimeType) ?? "assistant_agent",
+        runtimeType:
+          normalizeRuntimeType(node.runtimeType) ?? 'assistant_agent',
         runtimeOptions: normalizeRuntimeOptions(node.runtimeOptions),
         parentGraphId: cleanOptionalText(node.parentGraphId),
-        title: safeText(node.title || node.id).trim() || safeText(node.id).trim(),
-        subtitle: typeof node.subtitle === "string" ? node.subtitle : undefined,
+        title:
+          safeText(node.title || node.id).trim() || safeText(node.id).trim(),
+        subtitle: typeof node.subtitle === 'string' ? node.subtitle : undefined,
         position:
-          node.position && typeof node.position === "object"
+          node.position && typeof node.position === 'object'
             ? {
                 x: Number((node.position as { x?: unknown }).x) || 0,
                 y: Number((node.position as { y?: unknown }).y) || 0,
@@ -1361,14 +1452,14 @@ function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
             : { x: 0, y: 0 },
         overrides: node.overrides,
         status:
-          node.status === "idle" ||
-          node.status === "ready" ||
-          node.status === "running" ||
-          node.status === "error"
+          node.status === 'idle' ||
+          node.status === 'ready' ||
+          node.status === 'running' ||
+          node.status === 'error'
             ? node.status
             : undefined,
         cloneConfig:
-          node.cloneConfig && typeof node.cloneConfig === "object"
+          node.cloneConfig && typeof node.cloneConfig === 'object'
             ? node.cloneConfig
             : undefined,
       }))
@@ -1386,9 +1477,9 @@ function normalizeDeckPromptTemplates(value: unknown): PromptTemplate[] {
     (template): template is PromptTemplate =>
       Boolean(
         template &&
-          typeof template === "object" &&
-          typeof (template as PromptTemplate).id === "string" &&
-          typeof (template as PromptTemplate).content === "string",
+        typeof template === 'object' &&
+        typeof (template as PromptTemplate).id === 'string' &&
+        typeof (template as PromptTemplate).content === 'string',
       ),
   );
   return nextPromptTemplates.length > 0
@@ -1404,11 +1495,13 @@ function normalizeDeckEdges(value: unknown): DeckEdge[] {
 }
 
 function slugifyDeckIdPart(value: string): string {
-  return safeText(value)
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "") || "card";
+  return (
+    safeText(value)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '') || 'card'
+  );
 }
 
 function buildDeckNodeFromPreset(
@@ -1420,18 +1513,20 @@ function buildDeckNodeFromPreset(
     parentGraphId?: string | null;
   } = {},
 ): AgentCardInstance {
-  const promptTemplateContent =
-    preset.promptTemplateId
-      ? promptTemplates.find((template) => template.id === preset.promptTemplateId)?.content ||
-        INITIAL_PROMPT_TEMPLATES.find((template) => template.id === preset.promptTemplateId)?.content ||
-        ""
-      : "";
+  const promptTemplateContent = preset.promptTemplateId
+    ? promptTemplates.find(
+        (template) => template.id === preset.promptTemplateId,
+      )?.content ||
+      INITIAL_PROMPT_TEMPLATES.find(
+        (template) => template.id === preset.promptTemplateId,
+      )?.content ||
+      ''
+    : '';
   const slug = slugifyDeckIdPart(preset.key);
 
   return {
-    id:
-      `card_${slug}_${uid()}`,
-    kind: "agent",
+    id: `card_${slug}_${uid()}`,
+    kind: 'agent',
     templateId: preset.templateId,
     prompt: promptTemplateContent,
     runtimeBinding: preset.runtimeBinding,
@@ -1441,16 +1536,19 @@ function buildDeckNodeFromPreset(
     title: options.title || preset.title,
     subtitle: preset.subtitle,
     position,
-    status: "ready",
+    status: 'ready',
     cloneConfig: { enabled: false, seeds: [] },
   };
 }
 
-function getNextGraphScopedAssistTitle(deck: DeckDocument, graphOwnerId: string): string {
+function getNextGraphScopedAssistTitle(
+  deck: DeckDocument,
+  graphOwnerId: string,
+): string {
   const assistCount = deck.nodes.filter(
     (node) =>
       cleanOptionalText(node.parentGraphId) === graphOwnerId &&
-      normalizeRuntimeType(node.runtimeType) === "assistant_agent",
+      normalizeRuntimeType(node.runtimeType) === 'assistant_agent',
   ).length;
   return `Assist ${assistCount + 1}`;
 }
@@ -1459,7 +1557,7 @@ function resolveQuickAddParentGraphId(
   preset: DeckNodePreset,
   anchorNode: AgentCardInstance | null,
 ): string | null {
-  if (preset.runtimeType !== "assistant_agent" || !anchorNode) {
+  if (preset.runtimeType !== 'assistant_agent' || !anchorNode) {
     return null;
   }
 
@@ -1469,7 +1567,7 @@ function resolveQuickAddParentGraphId(
   }
 
   if (
-    normalizeRuntimeType(anchorNode.runtimeType) === "graph_flow" &&
+    normalizeRuntimeType(anchorNode.runtimeType) === 'graph_flow' &&
     isTopLevelCanvasCard(anchorNode)
   ) {
     return anchorNode.id;
@@ -1489,21 +1587,21 @@ function resolveQuickAddEdge(
   let edgeType: DeckEdgeType | null = null;
 
   if (
-    anchorRuntimeType === "magentic_one" &&
+    anchorRuntimeType === 'magentic_one' &&
     isTopLevelCanvasCard(anchorNode) &&
     isTopLevelCanvasCard(nextNode) &&
-    (nextRuntimeType === "assistant_agent" || nextRuntimeType === "graph_flow")
+    (nextRuntimeType === 'assistant_agent' || nextRuntimeType === 'graph_flow')
   ) {
-    edgeType = "magentic_option";
+    edgeType = 'magentic_option';
   } else if (isVisibleAssistFlowPair(anchorNode, nextNode)) {
-    edgeType = "flow";
+    edgeType = 'flow';
   }
 
   if (!edgeType) return null;
 
   const legacyCompatibility = Boolean(
-    anchorRuntimeType === "graph_flow" ||
-    nextRuntimeType === "graph_flow" ||
+    anchorRuntimeType === 'graph_flow' ||
+    nextRuntimeType === 'graph_flow' ||
     cleanOptionalText(anchorNode.parentGraphId) ||
     cleanOptionalText(nextNode.parentGraphId),
   );
@@ -1523,16 +1621,23 @@ function getSuggestedDeckNodePosition(
   anchorNode: AgentCardInstance | null,
 ): { x: number; y: number } {
   if (anchorNode) {
-    const outgoingCount = deck.edges.filter((edge) => edge.source === anchorNode.id).length;
+    const outgoingCount = deck.edges.filter(
+      (edge) => edge.source === anchorNode.id,
+    ).length;
     return {
       x: anchorNode.position.x + 320,
       y: anchorNode.position.y + outgoingCount * 180,
     };
   }
 
-  const rightMostX = deck.nodes.reduce((max, node) => Math.max(max, node.position.x), -220);
+  const rightMostX = deck.nodes.reduce(
+    (max, node) => Math.max(max, node.position.x),
+    -220,
+  );
   const nextColumnX = rightMostX + 320;
-  const occupiedInNextColumn = deck.nodes.filter((node) => Math.abs(node.position.x - nextColumnX) < 72).length;
+  const occupiedInNextColumn = deck.nodes.filter(
+    (node) => Math.abs(node.position.x - nextColumnX) < 72,
+  ).length;
   return {
     x: nextColumnX,
     y: 40 + occupiedInNextColumn * 180,
@@ -1543,11 +1648,16 @@ export function buildQuickAddDeckMutation(
   deck: DeckDocument,
   preset: DeckNodePreset,
   anchorNodeId: string | null,
-): { nextDeck: DeckDocument; nextNode: AgentCardInstance; nextEdge: DeckEdge | null } {
-  const anchorNode = deck.nodes.find((node) => node.id === anchorNodeId) || null;
+): {
+  nextDeck: DeckDocument;
+  nextNode: AgentCardInstance;
+  nextEdge: DeckEdge | null;
+} {
+  const anchorNode =
+    deck.nodes.find((node) => node.id === anchorNodeId) || null;
   const nextParentGraphId = resolveQuickAddParentGraphId(preset, anchorNode);
   const nextTitle =
-    nextParentGraphId && preset.runtimeType === "assistant_agent"
+    nextParentGraphId && preset.runtimeType === 'assistant_agent'
       ? getNextGraphScopedAssistTitle(deck, nextParentGraphId)
       : preset.title;
   const nextNode = buildDeckNodeFromPreset(
@@ -1585,7 +1695,8 @@ export function buildAssistStarterDeckMutation(
   deck: DeckDocument,
   anchorNodeId: string | null,
 ): AssistStarterDeckMutation | null {
-  const anchorNode = deck.nodes.find((node) => node.id === anchorNodeId) || null;
+  const anchorNode =
+    deck.nodes.find((node) => node.id === anchorNodeId) || null;
   const recipe = getAssistStarterRecipe(anchorNode);
   if (!recipe) return null;
 
@@ -1598,7 +1709,11 @@ export function buildAssistStarterDeckMutation(
     const preset = findDeckNodePreset(presetKey);
     if (!preset) return;
 
-    const mutation = buildQuickAddDeckMutation(workingDeck, preset, workingAnchorId);
+    const mutation = buildQuickAddDeckMutation(
+      workingDeck,
+      preset,
+      workingAnchorId,
+    );
     workingDeck = mutation.nextDeck;
     workingAnchorId = mutation.nextNode.id;
     createdNodes.push(mutation.nextNode);
@@ -1611,56 +1726,66 @@ export function buildAssistStarterDeckMutation(
     nextDeck: workingDeck,
     createdNodes,
     createdEdges,
-    focusNodeId: createdNodes[recipe.focusNodeIndex]?.id || createdNodes[0]?.id || null,
+    focusNodeId:
+      createdNodes[recipe.focusNodeIndex]?.id || createdNodes[0]?.id || null,
     recipe,
   };
 }
 
-function formatBuilderStatusMessage(message: unknown, fallback: string): string {
-  const text = String(message || "").trim();
+function formatBuilderStatusMessage(
+  message: unknown,
+  fallback: string,
+): string {
+  const text = String(message || '').trim();
   const lower = text.toLowerCase();
   if (!text) return fallback;
-  if (text === "project_not_found") return "Canvas data is unavailable for this selection.";
-  if (text === "deck_load_failed") return "Canvas data could not be loaded.";
-  if (text === "deck_save_failed") return "Could not save the current board.";
-  if (text === "card_run_failed") return "Card run failed.";
-  if (text === "deck_run_failed") return "Board run failed.";
-  if (text === "template_not_found") return "The selected card template could not be resolved.";
-  if (text === "templates_required") return "The selected card could not be run because its template set was missing.";
-  if (text === "card_required") return "No card was provided to the backend run path.";
+  if (text === 'project_not_found')
+    return 'Canvas data is unavailable for this selection.';
+  if (text === 'deck_load_failed') return 'Canvas data could not be loaded.';
+  if (text === 'deck_save_failed') return 'Could not save the current board.';
+  if (text === 'card_run_failed') return 'Card run failed.';
+  if (text === 'deck_run_failed') return 'Board run failed.';
+  if (text === 'template_not_found')
+    return 'The selected card template could not be resolved.';
+  if (text === 'templates_required')
+    return 'The selected card could not be run because its template set was missing.';
+  if (text === 'card_required')
+    return 'No card was provided to the backend run path.';
   if (
-    lower.includes("insufficient_quota") ||
-    lower.includes("quota exceeded") ||
-    (lower.includes("quota") && lower.includes("billing"))
+    lower.includes('insufficient_quota') ||
+    lower.includes('quota exceeded') ||
+    (lower.includes('quota') && lower.includes('billing'))
   ) {
-    return "The configured model could not run because provider quota or billing is unavailable right now.";
+    return 'The configured model could not run because provider quota or billing is unavailable right now.';
   }
-  if (lower.includes("rate limit") || lower.includes("too many requests")) {
-    return "The configured model is rate-limited right now. Try this card again shortly.";
-  }
-  if (
-    lower.includes("unauthorized") ||
-    lower.includes("authentication") ||
-    lower.includes("invalid api key") ||
-    lower.includes("incorrect api key")
-  ) {
-    return "The configured model request was rejected by the provider. Check the backend credentials for this card.";
+  if (lower.includes('rate limit') || lower.includes('too many requests')) {
+    return 'The configured model is rate-limited right now. Try this card again shortly.';
   }
   if (
-    lower.includes("failed to fetch") ||
-    lower.includes("networkerror") ||
-    lower.includes("econnrefused") ||
-    lower.includes("load failed")
+    lower.includes('unauthorized') ||
+    lower.includes('authentication') ||
+    lower.includes('invalid api key') ||
+    lower.includes('incorrect api key')
   ) {
-    return "The Builder backend is unavailable right now.";
+    return 'The configured model request was rejected by the provider. Check the backend credentials for this card.';
   }
-  if (lower.includes("timed out") || lower.includes("timeout")) {
-    return "The configured model timed out before the card completed.";
+  if (
+    lower.includes('failed to fetch') ||
+    lower.includes('networkerror') ||
+    lower.includes('econnrefused') ||
+    lower.includes('load failed')
+  ) {
+    return 'The Builder backend is unavailable right now.';
+  }
+  if (lower.includes('timed out') || lower.includes('timeout')) {
+    return 'The configured model timed out before the card completed.';
   }
   return text;
 }
 
-function seedCurrentSystemCardsIntoLegacyDeck(deck: DeckDocument): DeckDocument {
+function seedCurrentSystemCardsIntoLegacyDeck(
+  deck: DeckDocument,
+): DeckDocument {
   const defaultNodeIds = new Set(INITIAL_DECK.nodes.map((node) => node.id));
   const hasOnlySystemNodes =
     deck.nodes.length > 0 &&
@@ -1674,58 +1799,67 @@ function seedCurrentSystemCardsIntoLegacyDeck(deck: DeckDocument): DeckDocument 
     return deck;
   }
 
-  const existingNodesById = new Map(deck.nodes.map((node) => [node.id, node] as const));
+  const existingNodesById = new Map(
+    deck.nodes.map((node) => [node.id, node] as const),
+  );
   const existingPromptTemplatesById = new Map(
     deck.promptTemplates.map((template) => [template.id, template] as const),
   );
-  const initialPromptTemplateIds = new Set(INITIAL_PROMPT_TEMPLATES.map((template) => template.id));
-  const upgradedNodes: AgentCardInstance[] = INITIAL_DECK.nodes.map((seedNode): AgentCardInstance => {
-    const existingNode = existingNodesById.get(seedNode.id);
-    if (!existingNode) {
-      return cloneDeckDocument(seedNode);
-    }
+  const initialPromptTemplateIds = new Set(
+    INITIAL_PROMPT_TEMPLATES.map((template) => template.id),
+  );
+  const upgradedNodes: AgentCardInstance[] = INITIAL_DECK.nodes.map(
+    (seedNode): AgentCardInstance => {
+      const existingNode = existingNodesById.get(seedNode.id);
+      if (!existingNode) {
+        return cloneDeckDocument(seedNode);
+      }
 
-    const nextTitle =
-      seedNode.id === "card_research" && String(existingNode.title || "").trim() === "Research"
-        ? seedNode.title
-        : existingNode.title || seedNode.title;
-  const nextSubtitle =
-      seedNode.id === "card_research" &&
-      String(existingNode.subtitle || "").trim() === "Gather upstream inputs"
-        ? seedNode.subtitle
-        : existingNode.subtitle || seedNode.subtitle;
-    return {
-      ...cloneDeckDocument(seedNode),
-      ...cloneDeckDocument(existingNode),
-      kind: "agent",
-      prompt:
-        typeof (existingNode as any).prompt === "string"
-          ? (existingNode as any).prompt
-          : seedNode.prompt || "",
-      title: nextTitle,
-      subtitle: nextSubtitle,
-      runtimeBinding: normalizeRuntimeBinding(
-        existingNode.runtimeBinding ?? seedNode.runtimeBinding ?? null,
-      ),
-      runtimeType: normalizeRuntimeType(
-        existingNode.runtimeType ?? seedNode.runtimeType ?? "assistant_agent",
-      ),
-      runtimeOptions: normalizeRuntimeOptions(
-        existingNode.runtimeOptions ?? seedNode.runtimeOptions ?? null,
-      ),
-      parentGraphId: cleanOptionalText(
-        existingNode.parentGraphId ?? seedNode.parentGraphId ?? null,
-      ),
-      position: existingNode.position || seedNode.position,
-      overrides: existingNode.overrides,
-      status: existingNode.status ?? seedNode.status,
-      cloneConfig: existingNode.cloneConfig ?? seedNode.cloneConfig,
-    };
-  });
+      const nextTitle =
+        seedNode.id === 'card_research' &&
+        String(existingNode.title || '').trim() === 'Research'
+          ? seedNode.title
+          : existingNode.title || seedNode.title;
+      const nextSubtitle =
+        seedNode.id === 'card_research' &&
+        String(existingNode.subtitle || '').trim() === 'Gather upstream inputs'
+          ? seedNode.subtitle
+          : existingNode.subtitle || seedNode.subtitle;
+      return {
+        ...cloneDeckDocument(seedNode),
+        ...cloneDeckDocument(existingNode),
+        kind: 'agent',
+        prompt:
+          typeof (existingNode as any).prompt === 'string'
+            ? (existingNode as any).prompt
+            : seedNode.prompt || '',
+        title: nextTitle,
+        subtitle: nextSubtitle,
+        runtimeBinding: normalizeRuntimeBinding(
+          existingNode.runtimeBinding ?? seedNode.runtimeBinding ?? null,
+        ),
+        runtimeType: normalizeRuntimeType(
+          existingNode.runtimeType ?? seedNode.runtimeType ?? 'assistant_agent',
+        ),
+        runtimeOptions: normalizeRuntimeOptions(
+          existingNode.runtimeOptions ?? seedNode.runtimeOptions ?? null,
+        ),
+        parentGraphId: cleanOptionalText(
+          existingNode.parentGraphId ?? seedNode.parentGraphId ?? null,
+        ),
+        position: existingNode.position || seedNode.position,
+        overrides: existingNode.overrides,
+        status: existingNode.status ?? seedNode.status,
+        cloneConfig: existingNode.cloneConfig ?? seedNode.cloneConfig,
+      };
+    },
+  );
 
   const upgradedPromptTemplates = [
     ...INITIAL_PROMPT_TEMPLATES.map((seedTemplate) =>
-      cloneDeckDocument(existingPromptTemplatesById.get(seedTemplate.id) || seedTemplate),
+      cloneDeckDocument(
+        existingPromptTemplatesById.get(seedTemplate.id) || seedTemplate,
+      ),
     ),
     ...deck.promptTemplates
       .filter((template) => !initialPromptTemplateIds.has(template.id))
@@ -1743,7 +1877,10 @@ function seedCurrentSystemCardsIntoLegacyDeck(deck: DeckDocument): DeckDocument 
             mergedEdges.set(edge.id, cloneDeckDocument(edge));
           }
         });
-        return filterAuthoringCompatibleEdges(upgradedNodes, Array.from(mergedEdges.values()));
+        return filterAuthoringCompatibleEdges(
+          upgradedNodes,
+          Array.from(mergedEdges.values()),
+        );
       })()
     : filterAuthoringCompatibleEdges(upgradedNodes, deck.edges);
 
@@ -1756,42 +1893,69 @@ function seedCurrentSystemCardsIntoLegacyDeck(deck: DeckDocument): DeckDocument 
   };
 }
 
-export function hydrateDeckDocument(value: Partial<DeckDocument> | null | undefined): DeckDocument {
-  if (!value || typeof value !== "object") {
+export function hydrateDeckDocument(
+  value: Partial<DeckDocument> | null | undefined,
+): DeckDocument {
+  if (!value || typeof value !== 'object') {
     return cloneDeckDocument(INITIAL_DECK);
   }
   const hasExplicitNodes = Array.isArray(value.nodes);
-  const nextEdges =
-    Array.isArray(value.edges)
-      ? normalizeDeckEdges(value.edges)
-      : hasExplicitNodes
-        ? []
-        : normalizeDeckEdges(value.edges);
+  const nextEdges = Array.isArray(value.edges)
+    ? normalizeDeckEdges(value.edges)
+    : hasExplicitNodes
+      ? []
+      : normalizeDeckEdges(value.edges);
   const hydratedDeck = seedCurrentSystemCardsIntoLegacyDeck({
     ...cloneDeckDocument(INITIAL_DECK),
     ...value,
     id: String(value.id || INITIAL_DECK.id).trim() || INITIAL_DECK.id,
     name: String(value.name || INITIAL_DECK.name).trim() || INITIAL_DECK.name,
-    version: Number.isFinite(Number(value.version)) ? Number(value.version) : INITIAL_DECK.version,
+    version: Number.isFinite(Number(value.version))
+      ? Number(value.version)
+      : INITIAL_DECK.version,
     nodes: normalizeDeckNodes(value.nodes),
     edges: nextEdges,
     promptTemplates: normalizeDeckPromptTemplates(value.promptTemplates),
   });
-  const bannedNodeIds = new Set(["card_synthesis", "card_review"]);
-  const bannedPromptTemplateIds = new Set(["prompt_synthesis", "prompt_review"]);
-  return {
+  const bannedNodeIds = new Set(['card_synthesis', 'card_review']);
+  const bannedPromptTemplateIds = new Set([
+    'prompt_synthesis',
+    'prompt_review',
+  ]);
+  const baseDeck = {
     ...hydratedDeck,
     nodes: hydratedDeck.nodes.filter((node) => !bannedNodeIds.has(node.id)),
     edges: hydratedDeck.edges.filter(
-      (edge) => !bannedNodeIds.has(edge.source) && !bannedNodeIds.has(edge.target),
+      (edge) =>
+        !bannedNodeIds.has(edge.source) && !bannedNodeIds.has(edge.target),
     ),
-    promptTemplates: hydratedDeck.promptTemplates.filter((template) =>
-      !bannedPromptTemplateIds.has(template.id),
+    promptTemplates: hydratedDeck.promptTemplates.filter(
+      (template) => !bannedPromptTemplateIds.has(template.id),
     ),
+  };
+  const hasTopLevelMagentic = baseDeck.nodes.some(
+    (node) =>
+      normalizeRuntimeType(node.runtimeType) === 'magentic_one' &&
+      !String(node.parentGraphId || '').trim(),
+  );
+  if (hasTopLevelMagentic) {
+    return baseDeck;
+  }
+  const seedMagentic = INITIAL_DECK.nodes.find(
+    (node) =>
+      normalizeRuntimeType(node.runtimeType) === 'magentic_one' &&
+      !String(node.parentGraphId || '').trim(),
+  );
+  if (!seedMagentic) return baseDeck;
+  return {
+    ...baseDeck,
+    nodes: [...baseDeck.nodes, { ...seedMagentic }],
   };
 }
 
-function isTruncatedSystemDeckPayload(deckPayload: Partial<DeckDocument>): boolean {
+function isTruncatedSystemDeckPayload(
+  deckPayload: Partial<DeckDocument>,
+): boolean {
   if (!Array.isArray(deckPayload.nodes)) {
     return false;
   }
@@ -1805,13 +1969,16 @@ function isTruncatedSystemDeckPayload(deckPayload: Partial<DeckDocument>): boole
     return false;
   }
 
-  return nodeIds.length < canonicalNodeIds.size && nodeIds.every((nodeId) => canonicalNodeIds.has(nodeId));
+  return (
+    nodeIds.length < canonicalNodeIds.size &&
+    nodeIds.every((nodeId) => canonicalNodeIds.has(nodeId))
+  );
 }
 
 export function resolveProjectDeckPayload(
   deckPayload: Partial<DeckDocument> | null | undefined,
 ): { deck: DeckDocument; usedFallback: boolean; displayFallbackOnly: boolean } {
-  if (!deckPayload || typeof deckPayload !== "object") {
+  if (!deckPayload || typeof deckPayload !== 'object') {
     return {
       deck: hydrateDeckDocument(INITIAL_DECK),
       usedFallback: true,
@@ -1868,7 +2035,10 @@ function resolveAgentTemplate(
   return templates.find((template) => template.id === card.templateId) || null;
 }
 
-function sameStringArray(left: string[] | undefined, right: string[] | undefined): boolean {
+function sameStringArray(
+  left: string[] | undefined,
+  right: string[] | undefined,
+): boolean {
   const a = Array.isArray(left) ? left : [];
   const b = Array.isArray(right) ? right : [];
   if (a.length !== b.length) return false;
@@ -1907,7 +2077,7 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
 
   const asObject = (raw: any): Record<string, any> | null => {
     const parsed =
-      typeof raw === "string"
+      typeof raw === 'string'
         ? (() => {
             try {
               return JSON.parse(raw);
@@ -1916,14 +2086,17 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
             }
           })()
         : raw;
-    if (!parsed || typeof parsed !== "object") return null;
-    if (parsed.row && typeof parsed.row === "object") return parsed.row as Record<string, any>;
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (parsed.row && typeof parsed.row === 'object')
+      return parsed.row as Record<string, any>;
     return parsed as Record<string, any>;
   };
 
   const normalizeType = (value: unknown): string => {
-    const normalized = String(value ?? "").trim().toLowerCase();
-    return normalized || "unknown";
+    const normalized = String(value ?? '')
+      .trim()
+      .toLowerCase();
+    return normalized || 'unknown';
   };
 
   const toNum = (value: unknown): number | undefined => {
@@ -1934,7 +2107,7 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
 
   const toIsoTs = (value: unknown): string | undefined => {
     const ms = parseTimestampMs(value);
-    if (typeof ms !== "number") return undefined;
+    if (typeof ms !== 'number') return undefined;
     return new Date(ms).toISOString();
   };
 
@@ -1945,14 +2118,15 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
     tsRaw: unknown,
     scopeRaw?: unknown,
   ) => {
-    const id = String(idRaw ?? "").trim();
+    const id = String(idRaw ?? '').trim();
     if (!id) return;
 
-    const label = String(labelRaw ?? "").trim() || id.slice(0, 12);
+    const label = String(labelRaw ?? '').trim() || id.slice(0, 12);
     const type = normalizeType(typeRaw);
-    const scope = normalizeKnowledgeScope(scopeRaw, "project");
+    const scope = normalizeKnowledgeScope(scopeRaw, 'project');
     const nextMs = parseTimestampMs(tsRaw);
-    const nextTs = typeof nextMs === "number" ? new Date(nextMs).toISOString() : undefined;
+    const nextTs =
+      typeof nextMs === 'number' ? new Date(nextMs).toISOString() : undefined;
 
     const existing = nodeMap.get(id);
     if (!existing) {
@@ -1970,11 +2144,14 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
     if (!existing.label || existing.label === existing.id.slice(0, 12)) {
       existing.label = label;
     }
-    if ((!existing.type || existing.type === "unknown") && type !== "unknown") {
+    if ((!existing.type || existing.type === 'unknown') && type !== 'unknown') {
       existing.type = type;
     }
     existing.scope = normalizeKnowledgeScope(existing.scope, scope);
-    if (typeof nextMs === "number" && (!existing.createdAtMs || nextMs > existing.createdAtMs)) {
+    if (
+      typeof nextMs === 'number' &&
+      (!existing.createdAtMs || nextMs > existing.createdAtMs)
+    ) {
       existing.createdAtMs = nextMs;
       existing.last_seen_ts = nextTs;
     }
@@ -1986,24 +2163,28 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
     relTypeRaw: unknown,
     row: Record<string, any>,
   ) => {
-    const source = String(sourceRaw ?? "").trim();
-    const target = String(targetRaw ?? "").trim();
+    const source = String(sourceRaw ?? '').trim();
+    const target = String(targetRaw ?? '').trim();
     if (!source || !target) return;
 
-    const relType = normalizeRelationType(relTypeRaw) || "related_to";
-    const evidenceDocId = String(row.r_doc_id ?? row.doc_id ?? "").trim() || undefined;
-    const evidenceSnippet = String(row.r_snippet ?? row.snippet ?? "").trim() || undefined;
+    const relType = normalizeRelationType(relTypeRaw) || 'related_to';
+    const evidenceDocId =
+      String(row.r_doc_id ?? row.doc_id ?? '').trim() || undefined;
+    const evidenceSnippet =
+      String(row.r_snippet ?? row.snippet ?? '').trim() || undefined;
     const edgeTs = toIsoTs(row.r_ts ?? row.r_created_at ?? row.created_at);
     const edgeWeight = toNum(row.r_weight ?? row.weight ?? row.confidence);
-    const edgeConfidence = toNum(row.r_confidence ?? row.confidence ?? row.r_weight ?? row.weight);
+    const edgeConfidence = toNum(
+      row.r_confidence ?? row.confidence ?? row.r_weight ?? row.weight,
+    );
     const scope = normalizeKnowledgeScope(
       row.r_scope ?? row.scope ?? row.relationship_scope,
-      "project",
+      'project',
     );
-    const explicitEdgeId = String(row.r_id ?? row.edge_id ?? "").trim();
+    const explicitEdgeId = String(row.r_id ?? row.edge_id ?? '').trim();
     const edgeId =
       explicitEdgeId ||
-      `${source}->${target}:${relType}:${evidenceDocId || ""}:${edgeTs || ""}`;
+      `${source}->${target}:${relType}:${evidenceDocId || ''}:${edgeTs || ''}`;
 
     const existing = edgeMap.get(edgeId);
     if (!existing) {
@@ -2025,10 +2206,10 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
       return;
     }
 
-    if (typeof edgeWeight === "number") {
+    if (typeof edgeWeight === 'number') {
       existing.weight = Math.max(existing.weight ?? 0, edgeWeight);
     }
-    if (typeof edgeConfidence === "number") {
+    if (typeof edgeConfidence === 'number') {
       existing.confidence = Math.max(existing.confidence ?? 0, edgeConfidence);
     }
     existing.scope = normalizeKnowledgeScope(existing.scope, scope);
@@ -2039,18 +2220,21 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
       existing.evidence_snippet = evidenceSnippet;
     }
     const nextMs = parseTimestampMs(edgeTs);
-    if (typeof nextMs === "number" && (!existing.lastSeenMs || nextMs > existing.lastSeenMs)) {
+    if (
+      typeof nextMs === 'number' &&
+      (!existing.lastSeenMs || nextMs > existing.lastSeenMs)
+    ) {
       existing.lastSeenMs = nextMs;
       existing.last_seen_ts = edgeTs;
     }
   };
 
   const extractNodeId = (obj: any): string => {
-    if (!obj) return "";
+    if (!obj) return '';
     if (obj.id != null) return String(obj.id);
     if (obj._id != null) return String(obj._id);
     if (obj.vid != null) return String(obj.vid);
-    return "";
+    return '';
   };
 
   rows.forEach((rawRow) => {
@@ -2116,18 +2300,18 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
     degreeByNode.set(source, (degreeByNode.get(source) || 0) + 1);
     degreeByNode.set(target, (degreeByNode.get(target) || 0) + 1);
     if (!nodeMap.has(source)) {
-      upsertNode(source, source, "unknown", e.last_seen_ts, "project");
+      upsertNode(source, source, 'unknown', e.last_seen_ts, 'project');
     }
     if (!nodeMap.has(target)) {
-      upsertNode(target, target, "unknown", e.last_seen_ts, "project");
+      upsertNode(target, target, 'unknown', e.last_seen_ts, 'project');
     }
   });
 
   const nodes = Array.from(nodeMap.values()).map((n) => ({
     ...n,
     rawId: n.id,
-    graphSource: "think" as const,
-    scope: normalizeKnowledgeScope(n.scope, "project"),
+    graphSource: 'think' as const,
+    scope: normalizeKnowledgeScope(n.scope, 'project'),
     degree: degreeByNode.get(n.id) || 0,
     type: normalizeType(n.type),
   }));
@@ -2137,20 +2321,25 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
     edges: edges.map((e) => ({
       ...e,
       rawId: e.id,
-      graphSource: "think" as const,
-      scope: normalizeKnowledgeScope(e.scope, "project"),
+      graphSource: 'think' as const,
+      scope: normalizeKnowledgeScope(e.scope, 'project'),
     })),
   };
 }
 
 function safeRecord(input: unknown): Record<string, any> {
-  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
   return input as Record<string, any>;
 }
 
-function normalizeKnowGraphResponseToGraph(payload: any): { nodes: KNode[]; edges: KEdge[] } {
+function normalizeKnowGraphResponseToGraph(payload: any): {
+  nodes: KNode[];
+  edges: KEdge[];
+} {
   const rawNodes = Array.isArray(payload?.nodes) ? payload.nodes : [];
-  const rawRels = Array.isArray(payload?.relationships) ? payload.relationships : [];
+  const rawRels = Array.isArray(payload?.relationships)
+    ? payload.relationships
+    : [];
 
   const nodes: KNode[] = [];
   const edges: KEdge[] = [];
@@ -2158,31 +2347,41 @@ function normalizeKnowGraphResponseToGraph(payload: any): { nodes: KNode[]; edge
   const seenEdgeIds = new Set<string>();
 
   rawNodes.forEach((raw: any) => {
-    const rawId = String(raw?.id ?? "").trim();
+    const rawId = String(raw?.id ?? '').trim();
     if (!rawId) return;
     const id = `kg:${rawId}`;
     if (seenNodeIds.has(id)) return;
     seenNodeIds.add(id);
 
     const props = safeRecord(raw?.properties);
-    const ts = props.last_seen_ts ?? props.created_at ?? props.updated_at ?? undefined;
+    const ts =
+      props.last_seen_ts ?? props.created_at ?? props.updated_at ?? undefined;
     nodes.push({
       id,
       rawId,
-      graphSource: "know",
-      scope: normalizeKnowledgeScope(props.scope ?? raw?.scope, "grounded_research"),
+      graphSource: 'know',
+      scope: normalizeKnowledgeScope(
+        props.scope ?? raw?.scope,
+        'grounded_research',
+      ),
       label: safeText(raw?.label || props.name || props.title || rawId),
-      type: safeText(raw?.type || (Array.isArray(raw?.labels) ? raw.labels[0] : "") || "NeoEntity").toLowerCase(),
-      last_seen_ts: typeof ts === "string" ? ts : undefined,
+      type: safeText(
+        raw?.type ||
+          (Array.isArray(raw?.labels) ? raw.labels[0] : '') ||
+          'NeoEntity',
+      ).toLowerCase(),
+      last_seen_ts: typeof ts === 'string' ? ts : undefined,
       createdAtMs: parseTimestampMs(ts),
       degree: 0,
     });
   });
 
   rawRels.forEach((raw: any) => {
-    const rawId = String(raw?.id ?? "").trim() || `${raw?.from ?? ""}->${raw?.to ?? ""}:${raw?.type ?? "RELATED_TO"}`;
-    const fromRaw = String(raw?.from ?? "").trim();
-    const toRaw = String(raw?.to ?? "").trim();
+    const rawId =
+      String(raw?.id ?? '').trim() ||
+      `${raw?.from ?? ''}->${raw?.to ?? ''}:${raw?.type ?? 'RELATED_TO'}`;
+    const fromRaw = String(raw?.from ?? '').trim();
+    const toRaw = String(raw?.to ?? '').trim();
     if (!fromRaw || !toRaw) return;
 
     const id = `kg:${rawId}`;
@@ -2193,29 +2392,31 @@ function normalizeKnowGraphResponseToGraph(payload: any): { nodes: KNode[]; edge
     const source = `kg:${fromRaw}`;
     const target = `kg:${toRaw}`;
     const lastSeen =
-      props.last_seen_ts ??
-      props.created_at ??
-      props.updated_at ??
-      undefined;
+      props.last_seen_ts ?? props.created_at ?? props.updated_at ?? undefined;
     const confidenceNum = Number(props.confidence ?? props.score ?? NaN);
-    const weightNum = Number(props.weight ?? props.score ?? props.confidence ?? NaN);
+    const weightNum = Number(
+      props.weight ?? props.score ?? props.confidence ?? NaN,
+    );
 
     edges.push({
       id,
       rawId,
-      graphSource: "know",
-      scope: normalizeKnowledgeScope(props.scope ?? raw?.scope, "grounded_research"),
+      graphSource: 'know',
+      scope: normalizeKnowledgeScope(
+        props.scope ?? raw?.scope,
+        'grounded_research',
+      ),
       a: source,
       b: target,
       source,
       target,
-      type: safeText(raw?.type || "RELATED_TO").toLowerCase(),
+      type: safeText(raw?.type || 'RELATED_TO').toLowerCase(),
       weight: Number.isFinite(weightNum) ? weightNum : undefined,
       confidence: Number.isFinite(confidenceNum) ? confidenceNum : undefined,
-      last_seen_ts: typeof lastSeen === "string" ? lastSeen : undefined,
+      last_seen_ts: typeof lastSeen === 'string' ? lastSeen : undefined,
       lastSeenMs: parseTimestampMs(lastSeen),
-      evidence_doc_id: safeText(props.document_id || props.doc_id || ""),
-      evidence_snippet: safeText(props.snippet || props.evidence_snippet || ""),
+      evidence_doc_id: safeText(props.document_id || props.doc_id || ''),
+      evidence_snippet: safeText(props.snippet || props.evidence_snippet || ''),
     });
   });
 
@@ -2236,7 +2437,10 @@ function normalizeKnowGraphResponseToGraph(payload: any): { nodes: KNode[]; edge
   };
 }
 
-function prefixThinkGraphIds(graph: { nodes: KNode[]; edges: KEdge[] }): { nodes: KNode[]; edges: KEdge[] } {
+function prefixThinkGraphIds(graph: { nodes: KNode[]; edges: KEdge[] }): {
+  nodes: KNode[];
+  edges: KEdge[];
+} {
   const rawToPrefixed = new Map<string, string>();
   graph.nodes.forEach((n) => {
     rawToPrefixed.set(n.id, `tg:${n.id}`);
@@ -2246,19 +2450,21 @@ function prefixThinkGraphIds(graph: { nodes: KNode[]; edges: KEdge[] }): { nodes
     ...n,
     rawId: n.rawId || n.id,
     id: rawToPrefixed.get(n.id) || `tg:${n.id}`,
-    graphSource: "think" as const,
+    graphSource: 'think' as const,
   }));
 
   const edges = graph.edges.map((e) => {
-    const rawSource = String(e.source || e.a || "").trim();
-    const rawTarget = String(e.target || e.b || "").trim();
+    const rawSource = String(e.source || e.a || '').trim();
+    const rawTarget = String(e.target || e.b || '').trim();
     const prefSource = rawToPrefixed.get(rawSource) || `tg:${rawSource}`;
     const prefTarget = rawToPrefixed.get(rawTarget) || `tg:${rawTarget}`;
     return {
       ...e,
       rawId: e.rawId || e.id,
-      graphSource: "think" as const,
-      id: e.id ? `tg:${e.id}` : `${prefSource}->${prefTarget}:${e.type || "related_to"}`,
+      graphSource: 'think' as const,
+      id: e.id
+        ? `tg:${e.id}`
+        : `${prefSource}->${prefTarget}:${e.type || 'related_to'}`,
       a: prefSource,
       b: prefTarget,
       source: prefSource,
@@ -2269,7 +2475,9 @@ function prefixThinkGraphIds(graph: { nodes: KNode[]; edges: KEdge[] }): { nodes
   return { nodes, edges };
 }
 
-function mergeKnowledgeGraphs(...graphs: Array<{ nodes: KNode[]; edges: KEdge[] }>): { nodes: KNode[]; edges: KEdge[] } {
+function mergeKnowledgeGraphs(
+  ...graphs: Array<{ nodes: KNode[]; edges: KEdge[] }>
+): { nodes: KNode[]; edges: KEdge[] } {
   const nodeMap = new Map<string, KNode>();
   const edgeMap = new Map<string, KEdge>();
 
@@ -2281,7 +2489,7 @@ function mergeKnowledgeGraphs(...graphs: Array<{ nodes: KNode[]; edges: KEdge[] 
       }
     });
     graph.edges.forEach((edge) => {
-      const edgeId = String(edge?.id || "").trim();
+      const edgeId = String(edge?.id || '').trim();
       if (!edgeId) return;
       if (!edgeMap.has(edgeId)) {
         edgeMap.set(edgeId, edge);
@@ -2309,16 +2517,16 @@ void mergeKnowledgeGraphs;
 
 function buildGraphVizForNVL(graph: { nodes: KNode[]; edges: KEdge[] }) {
   const entities: KnowledgeGraphNode[] = graph.nodes.map((n) => {
-    const source = n.graphSource === "know" ? "know" : "think";
+    const source = n.graphSource === 'know' ? 'know' : 'think';
     return {
       id: n.id,
       rawId: n.rawId || n.id,
       label: n.label || n.id,
-      type: String(n.type || "unknown").toLowerCase(),
+      type: String(n.type || 'unknown').toLowerCase(),
       source,
       scope: normalizeKnowledgeScope(
         n.scope,
-        n.graphSource === "know" ? "grounded_research" : "project",
+        n.graphSource === 'know' ? 'grounded_research' : 'project',
       ),
       originSource: source,
       last_seen_ts: n.last_seen_ts,
@@ -2332,15 +2540,16 @@ function buildGraphVizForNVL(graph: { nodes: KNode[]; edges: KEdge[] }) {
     const target = e.target || e.b;
     if (!source || !target) return;
     relationships.push({
-      id: e.id || `${source}->${target}:${e.type || "related_to"}`,
-      rawId: e.rawId || e.id || `${source}->${target}:${e.type || "related_to"}`,
+      id: e.id || `${source}->${target}:${e.type || 'related_to'}`,
+      rawId:
+        e.rawId || e.id || `${source}->${target}:${e.type || 'related_to'}`,
       from: source,
       to: target,
-      type: e.type || "related_to",
-      source: e.graphSource === "know" ? "know" : "think",
+      type: e.type || 'related_to',
+      source: e.graphSource === 'know' ? 'know' : 'think',
       scope: normalizeKnowledgeScope(
         e.scope,
-        e.graphSource === "know" ? "grounded_research" : "project",
+        e.graphSource === 'know' ? 'grounded_research' : 'project',
       ),
       weight: e.weight,
       confidence: e.confidence,
@@ -2352,7 +2561,6 @@ function buildGraphVizForNVL(graph: { nodes: KNode[]; edges: KEdge[] }) {
 
   return { entities, relationships };
 }
-
 
 // ---- small components ----
 function Icon({ d, size = 22 }: { d: string; size?: number }) {
@@ -2405,7 +2613,9 @@ function moonIllumination(phase01: number): number {
  */
 function overlapFractionTwoUnitCircles(t: number): number {
   const tt = Math.min(1, Math.max(0, t));
-  return (2 / Math.PI) * (Math.acos(tt) - tt * Math.sqrt(Math.max(0, 1 - tt * tt)));
+  return (
+    (2 / Math.PI) * (Math.acos(tt) - tt * Math.sqrt(Math.max(0, 1 - tt * tt)))
+  );
 }
 
 /** Invert overlap fraction to separation parameter t=d/(2R) for the two-circle terminator model. */
@@ -2432,8 +2642,10 @@ type BuilderRailMoonOrbProps = {
  * waxing lit on the right, waning lit on the left. Overlap geometry inverts
  * illumination k = 0.5*(1-cos(2πp)) via overlap = 1 - k on the lit mask.
  */
-function BuilderRailMoonOrb({ phase01 }: BuilderRailMoonOrbProps): React.ReactElement {
-  const uid = React.useId().replace(/:/g, "");
+function BuilderRailMoonOrb({
+  phase01,
+}: BuilderRailMoonOrbProps): React.ReactElement {
+  const uid = React.useId().replace(/:/g, '');
   const diskClipId = `moon-disk-${uid}`;
   const litMaskId = `moon-lit-${uid}`;
   const litGradId = `moon-lit-grad-${uid}`;
@@ -2493,7 +2705,13 @@ function BuilderRailMoonOrb({ phase01 }: BuilderRailMoonOrbProps): React.ReactEl
       <g filter={`url(#${glowFilterId})`}>
         <circle cx={cx} cy={cy} r={R} fill={`url(#${baseGradId})`} />
         <g clipPath={`url(#${diskClipId})`}>
-          <circle cx={cx} cy={cy} r={R} fill={`url(#${litGradId})`} mask={`url(#${litMaskId})`} />
+          <circle
+            cx={cx}
+            cy={cy}
+            r={R}
+            fill={`url(#${litGradId})`}
+            mask={`url(#${litMaskId})`}
+          />
         </g>
         <circle
           cx={cx}
@@ -2519,10 +2737,10 @@ function BuilderRailMoonOrb({ phase01 }: BuilderRailMoonOrbProps): React.ReactEl
 // -------- Main page --------
 export default function AgentBuilder(): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
-  const largeSurface = "chat" as const;
+  const largeSurface = 'chat' as const;
   const [workspaceView, setWorkspaceView] = useState<
-    "chat" | "plan" | "canvas" | "knowledge" | "codegraph"
-  >("chat");
+    'chat' | 'plan' | 'canvas' | 'knowledge' | 'codegraph'
+  >('chat');
   const {
     activeProject,
     assistProjects,
@@ -2538,21 +2756,38 @@ export default function AgentBuilder(): React.ReactElement {
   const [chatPanelWidth, setChatPanelWidth] = useState(420);
   const [chatResizeHandleActive, setChatResizeHandleActive] = useState(false);
   const workspaceShellRef = useRef<HTMLDivElement | null>(null);
-  const [moonPhase01, setMoonPhase01] = useState(() => synodicPhaseFromDate(new Date()));
-  const canvasProjectId = cleanOptionalText(activeProject) ?? "";
-  const [deck, setDeckState] = useState<DeckDocument>(() => hydrateDeckDocument(INITIAL_DECK));
+  const [moonPhase01, setMoonPhase01] = useState(() =>
+    synodicPhaseFromDate(new Date()),
+  );
+  const canvasProjectId = cleanOptionalText(activeProject) ?? '';
+  const [deck, setDeckState] = useState<DeckDocument>(() =>
+    hydrateDeckDocument(INITIAL_DECK),
+  );
   const [deckRevision, setDeckRevision] = useState<string | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
-  const [selectedKnowledgeEntityId, setSelectedKnowledgeEntityId] = useState<string | null>(null);
-  const [selectedKnowledgeRelationshipId, setSelectedKnowledgeRelationshipId] = useState<string | null>(null);
+  const [selectedKnowledgeEntityId, setSelectedKnowledgeEntityId] = useState<
+    string | null
+  >(null);
+  const [selectedKnowledgeRelationshipId, setSelectedKnowledgeRelationshipId] =
+    useState<string | null>(null);
+  const [planMissionFocus, setPlanMissionFocus] = useState<{
+    nodeId: string;
+    nodeLabel: string;
+    nodeKind: string;
+    nodeData: PlanMissionNodeData;
+  } | null>(null);
+  const [planNodeDrafts, setPlanNodeDrafts] =
+    useState<PlanMissionNodeOverrideMap>({});
   const workspacePanelAlreadyOpen = Boolean(
-    (objectDrawerOpen && selectedCardId) || selectedKnowledgeEntityId || selectedKnowledgeRelationshipId,
+    (objectDrawerOpen && (selectedCardId || planMissionFocus?.nodeId)) ||
+    selectedKnowledgeEntityId ||
+    selectedKnowledgeRelationshipId,
   );
   const [builderCanvasFocusRequest, setBuilderCanvasFocusRequest] =
     useState<BuilderCanvasFocusRequest | null>(null);
   // TODO: replace manual deck input with plan-driven execution input.
-  const [deckRunInput, setDeckRunInput] = useState("");
+  const [deckRunInput, setDeckRunInput] = useState('');
   const [latestDeckRun, setLatestDeckRun] = useState<DeckRun | null>(null);
   const [, setLatestCardRun] = useState<LatestCardRunRecord | null>(null);
   const [liveDeckEvents, setLiveDeckEvents] = useState<DeckRuntimeEvent[]>([]);
@@ -2560,17 +2795,24 @@ export default function AgentBuilder(): React.ReactElement {
   const [cardRunBusy, setCardRunBusy] = useState(false);
   const [deckLoadBusy, setDeckLoadBusy] = useState(false);
   const [deckSaveBusy, setDeckSaveBusy] = useState(false);
-  const [deckStatusMessage, setDeckStatusMessage] = useState<string | null>(null);
-  const [deckUsingDisplayFallback, setDeckUsingDisplayFallback] = useState(false);
+  const [deckStatusMessage, setDeckStatusMessage] = useState<string | null>(
+    null,
+  );
+  const [deckUsingDisplayFallback, setDeckUsingDisplayFallback] =
+    useState(false);
 
-  const [tab, setTab] = useState<string>("Canvas");
-  const [openDrawer, setOpenDrawer] = useState<null | "navigation">(null);
+  const [tab, setTab] = useState<string>('Canvas');
+  const [openDrawer, setOpenDrawer] = useState<null | 'navigation'>(null);
   const [showCreateProjectForm, setShowCreateProjectForm] = useState(false);
-  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectName, setNewProjectName] = useState('');
   const [sending, setSending] = useState(false);
-  const [knowledgeGraphKind, setKnowledgeGraphKind] = useState<KnowledgeGraphKind>("knowgraph");
-  const [graphViewContract, setGraphViewContract] = useState<GraphViewContract | null>(null);
-  const lastLargeSurfaceTelemetryRef = useRef<WorkspaceTestingSurface | null>(null);
+  const [knowledgeGraphKind, setKnowledgeGraphKind] =
+    useState<KnowledgeGraphKind>('knowgraph');
+  const [graphViewContract, setGraphViewContract] =
+    useState<GraphViewContract | null>(null);
+  const lastLargeSurfaceTelemetryRef = useRef<WorkspaceTestingSurface | null>(
+    null,
+  );
   const lastCompanionSurfaceTelemetryRef = useRef<string | null>(null);
   const chatLoopTelemetryRef = useRef<{
     interactionId: string;
@@ -2581,7 +2823,7 @@ export default function AgentBuilder(): React.ReactElement {
   const pendingPanelOpenTelemetryRef = useRef<{
     objectType: WorkspaceTestingObjectType;
     objectId: string;
-    graphType: "agent" | "knowledge";
+    graphType: 'agent' | 'knowledge';
     interactionId: string;
     startedAt: number;
   } | null>(null);
@@ -2595,9 +2837,7 @@ export default function AgentBuilder(): React.ReactElement {
       recordWorkspaceTestingEvent({
         ...payload,
         projectId:
-          payload.projectId ??
-          cleanOptionalText(activeProject) ??
-          null,
+          payload.projectId ?? cleanOptionalText(activeProject) ?? null,
         metadata,
       });
     },
@@ -2605,12 +2845,15 @@ export default function AgentBuilder(): React.ReactElement {
   );
 
   const recordPostResponseRefreshIfPending = useCallback(
-    (refreshKind: "workspace_state" | "agent_graph" | "knowledge_graph", completedAt: number) => {
+    (
+      refreshKind: 'workspace_state' | 'agent_graph' | 'knowledge_graph',
+      completedAt: number,
+    ) => {
       const activeLoop = chatLoopTelemetryRef.current;
       if (!activeLoop?.responseReceivedAt || activeLoop.refreshRecorded) return;
       activeLoop.refreshRecorded = true;
       emitWorkspaceTestingEvent({
-        event: "post_response_refresh_completed",
+        event: 'post_response_refresh_completed',
         interactionId: activeLoop.interactionId,
         durationMs: Math.max(0, completedAt - activeLoop.responseReceivedAt),
         metadata: { refreshKind },
@@ -2621,7 +2864,7 @@ export default function AgentBuilder(): React.ReactElement {
 
   const queueWorkspacePanelTelemetry = useCallback(
     (
-      graphType: "agent" | "knowledge",
+      graphType: 'agent' | 'knowledge',
       objectType: WorkspaceTestingObjectType,
       objectId: string,
       interactionId: string,
@@ -2629,7 +2872,7 @@ export default function AgentBuilder(): React.ReactElement {
       const startedAt = Date.now();
       if (workspacePanelAlreadyOpen) {
         emitWorkspaceTestingEvent({
-          event: "workspace_panel_opened_from_graph_selection",
+          event: 'workspace_panel_opened_from_graph_selection',
           objectType,
           objectId,
           interactionId,
@@ -2653,16 +2896,20 @@ export default function AgentBuilder(): React.ReactElement {
   useEffect(() => {
     const previousSurface = lastLargeSurfaceTelemetryRef.current;
     emitWorkspaceTestingEvent({
-      event: "surface_opened",
+      event: 'surface_opened',
       surface: largeSurface,
-      surfaceRole: "large",
+      surfaceRole: 'large',
       metadata: { workspaceView },
     });
-    if (largeSurface === "chat" && previousSurface && previousSurface !== "chat") {
+    if (
+      largeSurface === 'chat' &&
+      previousSurface &&
+      previousSurface !== 'chat'
+    ) {
       emitWorkspaceTestingEvent({
-        event: "return_to_chat",
-        surface: "chat",
-        surfaceRole: "large",
+        event: 'return_to_chat',
+        surface: 'chat',
+        surfaceRole: 'large',
         metadata: { fromSurface: previousSurface },
       });
     }
@@ -2670,7 +2917,7 @@ export default function AgentBuilder(): React.ReactElement {
   }, [emitWorkspaceTestingEvent, largeSurface, workspaceView]);
 
   useEffect(() => {
-    if (workspaceView === "canvas") {
+    if (workspaceView === 'canvas') {
       lastCompanionSurfaceTelemetryRef.current = null;
       return;
     }
@@ -2682,9 +2929,9 @@ export default function AgentBuilder(): React.ReactElement {
     const nextKey = `${workspaceView}:${companionSurface}`;
     if (lastCompanionSurfaceTelemetryRef.current === nextKey) return;
     emitWorkspaceTestingEvent({
-      event: "surface_opened",
+      event: 'surface_opened',
       surface: companionSurface,
-      surfaceRole: "companion",
+      surfaceRole: 'companion',
       metadata: { workspaceView },
     });
     lastCompanionSurfaceTelemetryRef.current = nextKey;
@@ -2694,7 +2941,7 @@ export default function AgentBuilder(): React.ReactElement {
     const pending = pendingPanelOpenTelemetryRef.current;
     if (!workspacePanelAlreadyOpen || !pending) return;
     emitWorkspaceTestingEvent({
-      event: "workspace_panel_opened_from_graph_selection",
+      event: 'workspace_panel_opened_from_graph_selection',
       objectType: pending.objectType,
       objectId: pending.objectId,
       interactionId: pending.interactionId,
@@ -2714,18 +2961,18 @@ export default function AgentBuilder(): React.ReactElement {
   // agent builder state
   const deckSaveAbortRef = useRef<AbortController | null>(null);
   const deckExecutionAbortRef = useRef<AbortController | null>(null);
-  const activeProjectLatestRef = useRef("");
+  const activeProjectLatestRef = useRef('');
   const healthCheckScheduledRef = useRef(false);
-  const kgAutoLoadKeyRef = useRef("");
+  const kgAutoLoadKeyRef = useRef('');
   const kgLoadAbortRef = useRef<AbortController | null>(null);
-  const kgLoadProjectRef = useRef("");
+  const kgLoadProjectRef = useRef('');
   const kgExpandAbortRef = useRef<AbortController | null>(null);
-  const kgExpandProjectRef = useRef("");
-  const graphHydrateKeyRef = useRef("");
+  const kgExpandProjectRef = useRef('');
+  const graphHydrateKeyRef = useRef('');
   const dashboardPollRunRef = useRef(0);
   const dashboardPollTimerRef = useRef<number | null>(null);
   const dashboardPollAbortRef = useRef<AbortController | null>(null);
-  const dashboardPollProjectRef = useRef("");
+  const dashboardPollProjectRef = useRef('');
   const loggedProjectRef = useRef<string | null>(null);
   const lastBuilderDeckWriteReasonRef = useRef<string | null>(null);
   const lastBuilderUiOnlyActionRef = useRef<string | null>(null);
@@ -2748,20 +2995,25 @@ export default function AgentBuilder(): React.ReactElement {
     [BUILDER_DEV],
   );
 
-  const setDeck = useCallback<React.Dispatch<React.SetStateAction<DeckDocument>>>(
+  const setDeck = useCallback<
+    React.Dispatch<React.SetStateAction<DeckDocument>>
+  >(
     (update) => {
       setDeckState((prev) => {
         const next =
-          typeof update === "function"
+          typeof update === 'function'
             ? (update as (prevState: DeckDocument) => DeckDocument)(prev)
             : update;
         if (BUILDER_DEV) {
           const prevFingerprint = JSON.stringify(prev);
           const nextFingerprint = JSON.stringify(next);
           if (prevFingerprint === nextFingerprint) {
-            console.warn("[builder] ignored deck write without persisted graph mutation", {
-              reason: lastBuilderDeckWriteReasonRef.current || "unknown",
-            });
+            console.warn(
+              '[builder] ignored deck write without persisted graph mutation',
+              {
+                reason: lastBuilderDeckWriteReasonRef.current || 'unknown',
+              },
+            );
           }
         }
         return next;
@@ -2772,7 +3024,7 @@ export default function AgentBuilder(): React.ReactElement {
 
   useEffect(() => {
     if (!canvasProjectId) {
-      recordDeckWriteReason("builder-reset");
+      recordDeckWriteReason('builder-reset');
       setDeck(hydrateDeckDocument(INITIAL_DECK));
       setDeckRevision(null);
       setDeckUsingDisplayFallback(false);
@@ -2794,14 +3046,14 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckLoadBusy(true);
     setStateLoaded(false);
     setDeckRevision(null);
-      setDeckStatusMessage("Loading canvas...");
+    setDeckStatusMessage('Loading canvas...');
 
     void (async () => {
       try {
         const endpoint = `${V3_PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}`;
         const payload = await guardedRequest({
           key: `v3-deck:${canvasProjectId}:${BUILDER_DECK_ID}`,
-          method: "GET",
+          method: 'GET',
           ttlMs: 1_000,
           signal: controller.signal,
           fetcher: async (signal) => {
@@ -2813,33 +3065,38 @@ export default function AgentBuilder(): React.ReactElement {
 
         if (controller.signal.aborted) return;
         if (!payload.response.ok) {
-          throw new Error(safeText(payload.data?.error || "deck_load_failed"));
+          throw new Error(safeText(payload.data?.error || 'deck_load_failed'));
         }
 
         const loadResult = resolveProjectDeckLoadResult(
           deck,
-          payload.data?.deck && typeof payload.data.deck === "object"
+          payload.data?.deck && typeof payload.data.deck === 'object'
             ? { ...(payload.data.deck as DeckDocument), id: BUILDER_DECK_ID }
             : null,
         );
 
-        recordDeckWriteReason(loadResult.usedFallback ? "deck-load-default" : "deck-load");
+        recordDeckWriteReason(
+          loadResult.usedFallback ? 'deck-load-default' : 'deck-load',
+        );
         setDeck(loadResult.deck);
         setDeckRevision(
-          typeof payload.data?.meta?.deckRevision === "string"
+          typeof payload.data?.meta?.deckRevision === 'string'
             ? payload.data.meta.deckRevision
             : null,
         );
         setDeckUsingDisplayFallback(loadResult.displayFallbackOnly);
         usedDisplayFallback = loadResult.displayFallbackOnly;
         const persistedLatestRun =
-          payload.data?.latestRun && typeof payload.data.latestRun === "object"
+          payload.data?.latestRun && typeof payload.data.latestRun === 'object'
             ? (payload.data.latestRun as DeckRun)
             : null;
         const persistedRuns = Array.isArray(payload.data?.runs)
           ? (payload.data.runs as DeckRun[])
           : [];
-        const continuity = buildReloadStateFromDeckRuns(persistedRuns, persistedLatestRun);
+        const continuity = buildReloadStateFromDeckRuns(
+          persistedRuns,
+          persistedLatestRun,
+        );
         setLatestDeckRun(persistedLatestRun);
         setLatestCardRun(null);
         setLiveDeckEvents([]);
@@ -2850,14 +3107,14 @@ export default function AgentBuilder(): React.ReactElement {
         setStateLoaded(true);
         setDeckStatusMessage(
           loadResult.displayFallbackOnly
-            ? "Showing the canonical chain as a temporary fallback for a truncated saved canvas."
+            ? 'Showing the canonical chain as a temporary fallback for a truncated saved canvas.'
             : loadResult.usedFallback
-              ? "Using default canvas."
-              : "Canvas loaded.",
+              ? 'Using default canvas.'
+              : 'Canvas loaded.',
         );
       } catch (err: any) {
         if (controller.signal.aborted) return;
-        recordDeckWriteReason("deck-load-default-error");
+        recordDeckWriteReason('deck-load-default-error');
         setDeck(hydrateDeckDocument(INITIAL_DECK));
         setDeckUsingDisplayFallback(false);
         const next = loadProjectState(canvasProjectId);
@@ -2870,20 +3127,22 @@ export default function AgentBuilder(): React.ReactElement {
         setPlan([...next.plan]);
         setLinks([...next.links]);
         setStateLoaded(true);
-        setDeckStatusMessage(formatBuilderStatusMessage(err?.message, "Using default canvas."));
+        setDeckStatusMessage(
+          formatBuilderStatusMessage(err?.message, 'Using default canvas.'),
+        );
       } finally {
         if (!controller.signal.aborted) {
           const completedAt = Date.now();
           emitWorkspaceTestingEvent({
-            event: "graph_refresh_completed",
+            event: 'graph_refresh_completed',
             durationMs: Math.max(0, completedAt - deckRefreshStartedAt),
             metadata: {
-              graphType: "agent",
-              source: "deck_load",
+              graphType: 'agent',
+              source: 'deck_load',
               usedDisplayFallback,
             },
           });
-          recordPostResponseRefreshIfPending("agent_graph", completedAt);
+          recordPostResponseRefreshIfPending('agent_graph', completedAt);
           setDeckLoadBusy(false);
         }
       }
@@ -2910,9 +3169,10 @@ export default function AgentBuilder(): React.ReactElement {
     setCardRunBusy(false);
   }, [canvasProjectId]);
 
-  const showDeckBuilder = workspaceView === "canvas";
+  const showDeckBuilder = workspaceView === 'canvas';
   const runtimeEvents = useMemo(
-    () => (liveDeckEvents.length > 0 ? liveDeckEvents : latestDeckRun?.events || []),
+    () =>
+      liveDeckEvents.length > 0 ? liveDeckEvents : latestDeckRun?.events || [],
     [latestDeckRun?.events, liveDeckEvents],
   );
   const runtimeVisualState = useMemo(
@@ -2923,6 +3183,15 @@ export default function AgentBuilder(): React.ReactElement {
     () => deck.nodes.find((node) => node.id === selectedCardId) || null,
     [deck.nodes, selectedCardId],
   );
+  const magenticWallCard = useMemo(
+    () =>
+      deck.nodes.find(
+        (node) =>
+          normalizeRuntimeType(node.runtimeType) === 'magentic_one' &&
+          !String(node.parentGraphId || '').trim(),
+      ) || null,
+    [deck.nodes],
+  );
   const selectedEdge = useMemo(
     () => deck.edges.find((edge) => edge.id === selectedEdgeId) || null,
     [deck.edges, selectedEdgeId],
@@ -2932,7 +3201,10 @@ export default function AgentBuilder(): React.ReactElement {
     [selectedCard],
   );
   const effectiveAgent = useMemo(
-    () => (selectedCard ? resolveEffectiveAgent(selectedCard, INITIAL_AGENT_TEMPLATES) : null),
+    () =>
+      selectedCard
+        ? resolveEffectiveAgent(selectedCard, INITIAL_AGENT_TEMPLATES)
+        : null,
     [selectedCard],
   );
   const builderTabs = useMemo(() => {
@@ -2940,38 +3212,81 @@ export default function AgentBuilder(): React.ReactElement {
     return [...BUILDER_PROJECT_TABS];
   }, [selectedCard]);
   const activeTabs = useMemo(() => {
-    if (workspaceView === "canvas") return builderTabs;
+    if (workspaceView === 'canvas') return builderTabs;
     return [];
   }, [builderTabs, workspaceView]);
   const selectedCardConfig = useMemo<AgentManagerLocalConfig | null>(() => {
     if (!effectiveAgent || !selectedCard) return null;
     return {
       runtime_binding: selectedCard.runtimeBinding ?? null,
-      runtime_type: selectedCard.runtimeType ?? "assistant_agent",
+      runtime_type: selectedCard.runtimeType ?? 'assistant_agent',
       runtime_options: selectedCard.runtimeOptions ?? null,
       parent_graph_id: selectedCard.parentGraphId ?? null,
       provider:
-        effectiveAgent.provider === "openai" || effectiveAgent.provider === "openrouter"
+        effectiveAgent.provider === 'openai' ||
+        effectiveAgent.provider === 'openrouter'
           ? effectiveAgent.provider
-          : "",
+          : '',
       model_key: effectiveAgent.model || null,
       temperature: effectiveAgent.temperature ?? null,
       max_tokens: effectiveAgent.maxTokens ?? null,
-      prompt_template: selectedCard.prompt || "",
+      prompt_template: selectedCard.prompt || '',
       tools: effectiveAgent.tools,
       knowledge_sources: effectiveAgent.knowledgeSources || [],
       response_format: effectiveAgent.ioSchema
         ? {
-            type: "json_schema",
-            name: "card_schema",
+            type: 'json_schema',
+            name: 'card_schema',
             schema: effectiveAgent.ioSchema,
           }
         : null,
     };
   }, [effectiveAgent, selectedCard]);
   const selectedCardMemoryGraph = useMemo<AgentManagerMemoryGraphData | null>(
-    () => buildSelectedCardMemoryGraphData(deck, selectedCard, selectedCardConfig),
+    () =>
+      buildSelectedCardMemoryGraphData(deck, selectedCard, selectedCardConfig),
     [deck, selectedCard, selectedCardConfig],
+  );
+  const activeDeckWorkspaceContext = useMemo<DeckWorkspaceContext>(
+    () => ({
+      workspaceView,
+      largeSurface,
+      activeTab: tab,
+      objectEditor: {
+        open: Boolean(objectDrawerOpen && selectedCard),
+        activeTab: selectedCard ? tab : null,
+        selectedCardId: selectedCard?.id ?? null,
+        selectedCardTitle: selectedCard
+          ? safeText(selectedCard.title || '').trim() || null
+          : null,
+        selectedCardRuntimeType: selectedCard?.runtimeType ?? null,
+        editable: Boolean(
+          workspaceView === 'canvas' &&
+          objectDrawerOpen &&
+          selectedCard &&
+          !deckLoadBusy,
+        ),
+        runnable: Boolean(
+          workspaceView === 'canvas' &&
+          selectedCard &&
+          canvasProjectId &&
+          !deckLoadBusy &&
+          !deckRunBusy &&
+          !cardRunBusy,
+        ),
+      },
+    }),
+    [
+      cardRunBusy,
+      canvasProjectId,
+      deckLoadBusy,
+      deckRunBusy,
+      largeSurface,
+      objectDrawerOpen,
+      selectedCard,
+      tab,
+      workspaceView,
+    ],
   );
   const deckValidation = useMemo(
     () => validateDeckDocument(deck, { enforceStartCard: true }),
@@ -2980,7 +3295,7 @@ export default function AgentBuilder(): React.ReactElement {
   const deckExecutionPlan = useMemo(() => buildExecutionPlan(deck), [deck]);
 
   const deckPersistFingerprint = useMemo(
-    () => (BUILDER_DEV ? JSON.stringify(deck) : ""),
+    () => (BUILDER_DEV ? JSON.stringify(deck) : ''),
     [BUILDER_DEV, deck],
   );
 
@@ -2988,16 +3303,23 @@ export default function AgentBuilder(): React.ReactElement {
     if (!BUILDER_DEV) return;
     const previousFingerprint = lastBuilderDeckFingerprintRef.current;
     lastBuilderDeckFingerprintRef.current = deckPersistFingerprint;
-    if (previousFingerprint === null || previousFingerprint === deckPersistFingerprint) return;
+    if (
+      previousFingerprint === null ||
+      previousFingerprint === deckPersistFingerprint
+    )
+      return;
 
     const writeReason = lastBuilderDeckWriteReasonRef.current;
     const uiOnlyAction = lastBuilderUiOnlyActionRef.current;
     if (!writeReason) {
-      console.warn("[builder] deck payload changed without an explicit write reason", {
-        action: uiOnlyAction || "unknown",
-      });
+      console.warn(
+        '[builder] deck payload changed without an explicit write reason',
+        {
+          action: uiOnlyAction || 'unknown',
+        },
+      );
     } else if (uiOnlyAction) {
-      console.warn("[builder] deck payload changed after a UI-only action", {
+      console.warn('[builder] deck payload changed after a UI-only action', {
         action: uiOnlyAction,
         reason: writeReason,
       });
@@ -3020,120 +3342,176 @@ export default function AgentBuilder(): React.ReactElement {
 
   useEffect(() => {
     if (activeTabs.some((entry) => entry === tab)) return;
-    setTab(activeTabs[0] || "Plan");
+    setTab(activeTabs[0] || 'Plan');
   }, [activeTabs, tab]);
 
   useEffect(() => {
-    if (workspaceView !== "canvas") return;
-    recordUiOnlyAction("tab-switch");
+    if (workspaceView !== 'canvas') return;
+    recordUiOnlyAction('tab-switch');
   }, [recordUiOnlyAction, tab, workspaceView]);
 
   useEffect(() => {
-    if (workspaceView !== "canvas") return;
-    recordUiOnlyAction("drawer-toggle");
+    if (workspaceView !== 'canvas') return;
+    recordUiOnlyAction('drawer-toggle');
   }, [openDrawer, recordUiOnlyAction, workspaceView]);
 
-  const handleSelectCard = useCallback((cardId: string | null) => {
-    recordUiOnlyAction("node-selection");
-    if (!cardId) {
-      pendingPanelOpenTelemetryRef.current = null;
-    } else {
-      const interactionId = createWorkspaceTestingInteractionId("agent-node");
-      emitWorkspaceTestingEvent({
-        event: "agent_graph_node_selected",
-        objectType: "agent_node",
-        objectId: cardId,
-        interactionId,
-        metadata: { workspaceView: "canvas" },
-      });
-      queueWorkspacePanelTelemetry("agent", "agent_node", cardId, interactionId);
-    }
-    setObjectDrawerOpen(Boolean(cardId));
-    setSelectedCardId(cardId);
-    if (cardId) {
-      setSelectedEdgeId(null);
-      if (!BUILDER_NODE_TABS.some((entry) => entry === tab)) {
-        setTab("Prompt");
+  const handleSelectCard = useCallback(
+    (cardId: string | null) => {
+      recordUiOnlyAction('node-selection');
+      if (!cardId) {
+        pendingPanelOpenTelemetryRef.current = null;
+      } else {
+        const interactionId = createWorkspaceTestingInteractionId('agent-node');
+        emitWorkspaceTestingEvent({
+          event: 'agent_graph_node_selected',
+          objectType: 'agent_node',
+          objectId: cardId,
+          interactionId,
+          metadata: { workspaceView: 'canvas' },
+        });
+        queueWorkspacePanelTelemetry(
+          'agent',
+          'agent_node',
+          cardId,
+          interactionId,
+        );
       }
-    }
-  }, [emitWorkspaceTestingEvent, queueWorkspacePanelTelemetry, recordUiOnlyAction, tab]);
+      setObjectDrawerOpen(Boolean(cardId));
+      setSelectedCardId(cardId);
+      const selectedNode = cardId
+        ? deck.nodes.find((node) => node.id === cardId) || null
+        : null;
+      const isMagenticSelection = Boolean(
+        selectedNode &&
+          normalizeRuntimeType(selectedNode.runtimeType) === 'magentic_one',
+      );
+      if (cardId) {
+        setBuilderCanvasFocusRequest((current) => ({
+          kind: isMagenticSelection ? 'deck' : 'card',
+          cardId: isMagenticSelection ? null : cardId,
+          nonce: (current?.nonce || 0) + 1,
+        }));
+        setSelectedEdgeId(null);
+        setPlanMissionFocus(null);
+        if (!BUILDER_NODE_TABS.some((entry) => entry === tab)) {
+          setTab('Prompt');
+        }
+      } else {
+        setBuilderCanvasFocusRequest((current) => ({
+          kind: 'deck',
+          cardId: null,
+          nonce: (current?.nonce || 0) + 1,
+        }));
+      }
+    },
+    [
+      deck.nodes,
+      emitWorkspaceTestingEvent,
+      queueWorkspacePanelTelemetry,
+      recordUiOnlyAction,
+      tab,
+    ],
+  );
 
-  const handleSelectEdge = useCallback((edgeId: string | null) => {
-    recordUiOnlyAction("edge-selection");
-    if (edgeId) {
-      const interactionId = createWorkspaceTestingInteractionId("agent-edge");
-      emitWorkspaceTestingEvent({
-        event: "agent_graph_edge_selected",
-        objectType: "agent_edge",
-        objectId: edgeId,
-        interactionId,
-        metadata: { workspaceView: "canvas" },
-      });
-    }
-    pendingPanelOpenTelemetryRef.current = null;
-    setObjectDrawerOpen(false);
-    setSelectedEdgeId(edgeId);
-    if (edgeId) {
-      setSelectedCardId(null);
-    }
-  }, [emitWorkspaceTestingEvent, recordUiOnlyAction]);
-
-  const handleSelectKnowledgeEntity = useCallback((entity: KnowledgeGraphNode | null) => {
-    recordUiOnlyAction("knowledge-node-selection");
-    if (!entity?.id) {
+  const handleSelectEdge = useCallback(
+    (edgeId: string | null) => {
+      recordUiOnlyAction('edge-selection');
+      if (edgeId) {
+        const interactionId = createWorkspaceTestingInteractionId('agent-edge');
+        emitWorkspaceTestingEvent({
+          event: 'agent_graph_edge_selected',
+          objectType: 'agent_edge',
+          objectId: edgeId,
+          interactionId,
+          metadata: { workspaceView: 'canvas' },
+        });
+      }
       pendingPanelOpenTelemetryRef.current = null;
-    } else {
-      const interactionId = createWorkspaceTestingInteractionId("knowledge-node");
-      emitWorkspaceTestingEvent({
-        event: "knowledge_graph_node_selected",
-        objectType: "knowledge_node",
-        objectId: entity.id,
-        interactionId,
-        metadata: { scope: entity.scope, source: entity.source },
-      });
-      queueWorkspacePanelTelemetry("knowledge", "knowledge_node", entity.id, interactionId);
-    }
-    setObjectDrawerOpen(false);
-    setSelectedEdgeEvidence(null);
-    setSelectedKnowledgeRelationshipId(null);
-    setSelectedKnowledgeEntityId(entity?.id ?? null);
-  }, [emitWorkspaceTestingEvent, queueWorkspacePanelTelemetry, recordUiOnlyAction]);
-
-  const handleSelectKnowledgeRelationship = useCallback((relationship: KnowledgeGraphRelationship | null) => {
-    recordUiOnlyAction("knowledge-edge-selection");
-    if (!relationship?.id) {
-      pendingPanelOpenTelemetryRef.current = null;
-    } else {
-      const interactionId = createWorkspaceTestingInteractionId("knowledge-edge");
-      emitWorkspaceTestingEvent({
-        event: "knowledge_graph_edge_selected",
-        objectType: "knowledge_edge",
-        objectId: relationship.id,
-        interactionId,
-        metadata: { scope: relationship.scope, source: relationship.source },
-      });
-      queueWorkspacePanelTelemetry("knowledge", "knowledge_edge", relationship.id, interactionId);
-    }
-    setObjectDrawerOpen(false);
-    setSelectedEdgeEvidence(relationship);
-    setSelectedKnowledgeEntityId(null);
-    setSelectedKnowledgeRelationshipId(relationship?.id ?? null);
-  }, [emitWorkspaceTestingEvent, queueWorkspacePanelTelemetry, recordUiOnlyAction]);
-
-  const queueBuilderCanvasFocus = useCallback(
-    (kind: BuilderCanvasFocusRequest["kind"], cardId?: string | null) => {
+      setObjectDrawerOpen(false);
       setBuilderCanvasFocusRequest((current) => ({
-        kind,
-        cardId: cardId ?? null,
+        kind: 'deck',
+        cardId: null,
         nonce: (current?.nonce || 0) + 1,
       }));
+      setSelectedEdgeId(edgeId);
+      if (edgeId) {
+        setSelectedCardId(null);
+      }
     },
-    [],
+    [emitWorkspaceTestingEvent, recordUiOnlyAction],
+  );
+
+  const handleSelectKnowledgeEntity = useCallback(
+    (entity: KnowledgeGraphNode | null) => {
+      recordUiOnlyAction('knowledge-node-selection');
+      if (!entity?.id) {
+        pendingPanelOpenTelemetryRef.current = null;
+      } else {
+        const interactionId =
+          createWorkspaceTestingInteractionId('knowledge-node');
+        emitWorkspaceTestingEvent({
+          event: 'knowledge_graph_node_selected',
+          objectType: 'knowledge_node',
+          objectId: entity.id,
+          interactionId,
+          metadata: { scope: entity.scope, source: entity.source },
+        });
+        queueWorkspacePanelTelemetry(
+          'knowledge',
+          'knowledge_node',
+          entity.id,
+          interactionId,
+        );
+      }
+      setObjectDrawerOpen(false);
+      setSelectedEdgeEvidence(null);
+      setSelectedKnowledgeRelationshipId(null);
+      setSelectedKnowledgeEntityId(entity?.id ?? null);
+    },
+    [
+      emitWorkspaceTestingEvent,
+      queueWorkspacePanelTelemetry,
+      recordUiOnlyAction,
+    ],
+  );
+
+  const handleSelectKnowledgeRelationship = useCallback(
+    (relationship: KnowledgeGraphRelationship | null) => {
+      recordUiOnlyAction('knowledge-edge-selection');
+      if (!relationship?.id) {
+        pendingPanelOpenTelemetryRef.current = null;
+      } else {
+        const interactionId =
+          createWorkspaceTestingInteractionId('knowledge-edge');
+        emitWorkspaceTestingEvent({
+          event: 'knowledge_graph_edge_selected',
+          objectType: 'knowledge_edge',
+          objectId: relationship.id,
+          interactionId,
+          metadata: { scope: relationship.scope, source: relationship.source },
+        });
+        queueWorkspacePanelTelemetry(
+          'knowledge',
+          'knowledge_edge',
+          relationship.id,
+          interactionId,
+        );
+      }
+      setObjectDrawerOpen(false);
+      setSelectedEdgeEvidence(relationship);
+      setSelectedKnowledgeEntityId(null);
+      setSelectedKnowledgeRelationshipId(relationship?.id ?? null);
+    },
+    [
+      emitWorkspaceTestingEvent,
+      queueWorkspacePanelTelemetry,
+      recordUiOnlyAction,
+    ],
   );
 
   const handleDeleteSelectedEdge = useCallback(() => {
     if (!selectedEdgeId) return;
-    recordDeckWriteReason("edge-delete");
+    recordDeckWriteReason('edge-delete');
     setDeck((currentDeck) => ({
       ...currentDeck,
       version: currentDeck.version + 1,
@@ -3154,7 +3532,7 @@ export default function AgentBuilder(): React.ReactElement {
 
       setLatestCardRun(null);
       setLatestDeckRun(null);
-      recordDeckWriteReason("deck-quick-add");
+      recordDeckWriteReason('deck-quick-add');
       setDeck(mutation.nextDeck);
       setObjectDrawerOpen(false);
       setSelectedEdgeId(null);
@@ -3169,38 +3547,39 @@ export default function AgentBuilder(): React.ReactElement {
     [deck, recordDeckWriteReason, selectedCardId],
   );
 
-  const { handleSaveDeck, handleRunSelectedCard, handleRunDeck } = useBuilderDeckRuntimeActions({
-    builderDev: BUILDER_DEV,
-    buildSingleCardRunDocument,
-    canvasProjectId,
-    deck,
-    deckExecutionAbortRef,
-    deckExecutionPlan,
-    deckId: BUILDER_DECK_ID,
-    deckRevision,
-    deckRunInput,
-    deckSaveAbortRef,
-    deckUsingDisplayFallback,
-    deckValidation,
-    effectiveAgent,
-    formatBuilderStatusMessage,
-    hydrateDeckDocument,
-    selectedCard,
-    setCardRunBusy,
-    setDeck,
-    setDeckRevision,
-    setDeckRunBusy,
-    setDeckSaveBusy,
-    setDeckStatusMessage,
-    setLatestCardRun,
-    setLatestDeckRun,
-    setLiveDeckEvents,
-    templates: INITIAL_AGENT_TEMPLATES,
-    uid,
-    v3ProjectsApi: V3_PROJECTS_API,
-    activeProjectLatestRef,
-    recordDeckWriteReason,
-  });
+  const { handleSaveDeck, handleRunSelectedCard, handleRunDeck } =
+    useBuilderDeckRuntimeActions({
+      builderDev: BUILDER_DEV,
+      buildSingleCardRunDocument,
+      canvasProjectId,
+      deck,
+      deckExecutionAbortRef,
+      deckExecutionPlan,
+      deckId: BUILDER_DECK_ID,
+      deckRevision,
+      deckRunInput,
+      deckSaveAbortRef,
+      deckUsingDisplayFallback,
+      deckValidation,
+      effectiveAgent,
+      formatBuilderStatusMessage,
+      hydrateDeckDocument,
+      selectedCard,
+      setCardRunBusy,
+      setDeck,
+      setDeckRevision,
+      setDeckRunBusy,
+      setDeckSaveBusy,
+      setDeckStatusMessage,
+      setLatestCardRun,
+      setLatestDeckRun,
+      setLiveDeckEvents,
+      templates: INITIAL_AGENT_TEMPLATES,
+      uid,
+      v3ProjectsApi: V3_PROJECTS_API,
+      activeProjectLatestRef,
+      recordDeckWriteReason,
+    });
 
   const handleSaveSelectedCardConfig = useCallback(
     (nextConfig: AgentManagerLocalConfig) => {
@@ -3208,69 +3587,88 @@ export default function AgentBuilder(): React.ReactElement {
 
       setLatestCardRun(null);
       setLatestDeckRun(null);
-      recordDeckWriteReason("card-editor");
+      recordDeckWriteReason('card-editor');
       setDeck((currentDeck) => {
-        const nextRuntimeBinding = normalizeRuntimeBinding(nextConfig.runtime_binding);
+        const nextRuntimeBinding = normalizeRuntimeBinding(
+          nextConfig.runtime_binding,
+        );
         const nextRuntimeType =
           normalizeRuntimeType(nextConfig.runtime_type) ??
           normalizeRuntimeType(selectedCard.runtimeType) ??
-          "assistant_agent";
-        const nextRuntimeOptions = normalizeRuntimeOptions(nextConfig.runtime_options);
+          'assistant_agent';
+        const nextRuntimeOptions = normalizeRuntimeOptions(
+          nextConfig.runtime_options,
+        );
         const nextParentGraphId = cleanOptionalText(nextConfig.parent_graph_id);
         const nextProvider =
-          nextConfig.provider === "openai" || nextConfig.provider === "openrouter"
+          nextConfig.provider === 'openai' ||
+          nextConfig.provider === 'openrouter'
             ? nextConfig.provider
             : null;
-        const nextModel = String(nextConfig.model_key || "").trim() || null;
+        const nextModel = String(nextConfig.model_key || '').trim() || null;
         const nextTemperature =
-          typeof nextConfig.temperature === "number" ? nextConfig.temperature : null;
+          typeof nextConfig.temperature === 'number'
+            ? nextConfig.temperature
+            : null;
         const nextMaxTokens =
-          typeof nextConfig.max_tokens === "number" ? nextConfig.max_tokens : null;
+          typeof nextConfig.max_tokens === 'number'
+            ? nextConfig.max_tokens
+            : null;
         const nextTools = Array.isArray(nextConfig.tools)
           ? nextConfig.tools
-              .filter((tool): tool is string => typeof tool === "string")
+              .filter((tool): tool is string => typeof tool === 'string')
               .map((tool) => tool.trim())
               .filter(Boolean)
           : [];
         const nextKnowledgeSources = Array.isArray(nextConfig.knowledge_sources)
           ? nextConfig.knowledge_sources
-              .filter((entry): entry is string => typeof entry === "string")
+              .filter((entry): entry is string => typeof entry === 'string')
               .map((entry) => entry.trim())
               .filter(Boolean)
           : [];
         const nextIoSchema =
-          nextConfig.response_format?.type === "json_schema" &&
+          nextConfig.response_format?.type === 'json_schema' &&
           nextConfig.response_format?.schema &&
-          typeof nextConfig.response_format.schema === "object"
+          typeof nextConfig.response_format.schema === 'object'
             ? (nextConfig.response_format.schema as Record<string, unknown>)
             : null;
 
         const nextOverrides = compactAgentOverrides({
           provider:
-            nextProvider !== (selectedTemplate.provider ?? null) ? nextProvider : undefined,
-          model: nextModel !== (selectedTemplate.model ?? null) ? nextModel : undefined,
+            nextProvider !== (selectedTemplate.provider ?? null)
+              ? nextProvider
+              : undefined,
+          model:
+            nextModel !== (selectedTemplate.model ?? null)
+              ? nextModel
+              : undefined,
           temperature:
             nextTemperature !== (selectedTemplate.temperature ?? null)
               ? nextTemperature
               : undefined,
           maxTokens:
-            nextMaxTokens !== (selectedTemplate.maxTokens ?? null) ? nextMaxTokens : undefined,
-          tools: !sameStringArray(nextTools, selectedTemplate.tools) ? nextTools : undefined,
-          knowledgeSources:
-            !sameStringArray(nextKnowledgeSources, selectedTemplate.knowledgeSources)
-              ? nextKnowledgeSources
+            nextMaxTokens !== (selectedTemplate.maxTokens ?? null)
+              ? nextMaxTokens
               : undefined,
-          ioSchema:
-            !sameObjectShape(nextIoSchema, selectedTemplate.ioSchema)
-              ? nextIoSchema || undefined
-              : undefined,
+          tools: !sameStringArray(nextTools, selectedTemplate.tools)
+            ? nextTools
+            : undefined,
+          knowledgeSources: !sameStringArray(
+            nextKnowledgeSources,
+            selectedTemplate.knowledgeSources,
+          )
+            ? nextKnowledgeSources
+            : undefined,
+          ioSchema: !sameObjectShape(nextIoSchema, selectedTemplate.ioSchema)
+            ? nextIoSchema || undefined
+            : undefined,
         });
 
         const nextNodes = currentDeck.nodes.map((node) =>
           node.id === selectedCard.id
             ? {
                 ...node,
-                prompt: String(nextConfig.prompt_template || ""),
+                prompt: String(nextConfig.prompt_template || ''),
                 runtimeBinding: nextRuntimeBinding,
                 runtimeType: nextRuntimeType,
                 runtimeOptions: nextRuntimeOptions,
@@ -3297,7 +3695,7 @@ export default function AgentBuilder(): React.ReactElement {
 
       setLatestCardRun(null);
       setLatestDeckRun(null);
-      recordDeckWriteReason("card-rename");
+      recordDeckWriteReason('card-rename');
       setDeck((currentDeck) => ({
         ...currentDeck,
         version: currentDeck.version + 1,
@@ -3320,7 +3718,7 @@ export default function AgentBuilder(): React.ReactElement {
 
       setLatestCardRun(null);
       setLatestDeckRun(null);
-      recordDeckWriteReason("card-subtitle-update");
+      recordDeckWriteReason('card-subtitle-update');
       setDeck((currentDeck) => ({
         ...currentDeck,
         version: currentDeck.version + 1,
@@ -3337,17 +3735,194 @@ export default function AgentBuilder(): React.ReactElement {
     [recordDeckWriteReason, selectedCard],
   );
 
+  const selectedPlanNodeDraft = useMemo<PlanMissionNodeData | null>(() => {
+    if (!planMissionFocus?.nodeId) return null;
+    const override = planNodeDrafts[planMissionFocus.nodeId] || {};
+    const baseline = planMissionFocus.nodeData;
+    return {
+      label: String(
+        override.label ?? baseline.label ?? planMissionFocus.nodeLabel,
+      ),
+      kind: (String(
+        override.kind ?? baseline.kind ?? planMissionFocus.nodeKind,
+      ) || 'Task') as PlanMissionNodeData['kind'],
+      status: (String(override.status ?? baseline.status ?? 'seeded') ||
+        'seeded') as PlanMissionNodeData['status'],
+      description: String(override.description ?? baseline.description ?? ''),
+      assignedAgentId: String(
+        override.assignedAgentId ?? baseline.assignedAgentId ?? '',
+      ),
+      starterPrompt: String(
+        override.starterPrompt ?? baseline.starterPrompt ?? '',
+      ),
+      updateKey: String(override.updateKey ?? baseline.updateKey ?? ''),
+      outputKey: String(override.outputKey ?? baseline.outputKey ?? ''),
+      editable: Boolean(override.editable ?? true),
+    };
+  }, [planMissionFocus, planNodeDrafts]);
+
+  const updatePlanNodeDraft = useCallback(
+    (nodeId: string, patch: Partial<PlanMissionNodeData>) => {
+      setPlanNodeDrafts((current) => ({
+        ...current,
+        [nodeId]: {
+          ...(current[nodeId] || {}),
+          ...patch,
+        },
+      }));
+    },
+    [],
+  );
+
+  const renderPlanMissionEditorPanel = useCallback(() => {
+    if (!planMissionFocus || !selectedPlanNodeDraft) {
+      return (
+        <div
+          style={graphDrawerSectionStyle({
+            padding: '16px',
+            borderStyle: 'dashed',
+            color: GRAPH_THEME.drawer.inputMuted,
+          })}
+        >
+          Select a plan node to edit details.
+        </div>
+      );
+    }
+    const focusId = planMissionFocus.nodeId;
+    const setField = (
+      field: keyof PlanMissionNodeData,
+      value: PlanMissionNodeData[keyof PlanMissionNodeData],
+    ) => {
+      updatePlanNodeDraft(focusId, {
+        [field]: value,
+      } as Partial<PlanMissionNodeData>);
+    };
+    return (
+      <div style={{ display: 'grid', gap: 10 }}>
+        <div
+          style={graphDrawerSectionStyle({
+            padding: '12px 14px',
+            borderRadius: 8,
+          })}
+        >
+          <div
+            className="text-xs"
+            style={{
+              color: GRAPH_THEME.drawer.inputText,
+              fontWeight: 700,
+              marginBottom: 8,
+            }}
+          >
+            Plan Node
+          </div>
+          <input
+            value={selectedPlanNodeDraft.label || ''}
+            onChange={(event) => setField('label', event.target.value)}
+            style={graphDrawerInputStyle()}
+          />
+          <textarea
+            value={selectedPlanNodeDraft.description || ''}
+            onChange={(event) => setField('description', event.target.value)}
+            rows={4}
+            style={{
+              ...graphDrawerInputStyle({
+                marginTop: 8,
+                resize: 'vertical',
+                fontFamily: 'inherit',
+                fontSize: 12,
+              }),
+            }}
+          />
+        </div>
+        <div
+          style={graphDrawerSectionStyle({
+            padding: '12px 14px',
+            borderRadius: 8,
+          })}
+        >
+          <div
+            className="text-xs"
+            style={{
+              color: GRAPH_THEME.drawer.inputText,
+              fontWeight: 700,
+              marginBottom: 8,
+            }}
+          >
+            Runtime Fields
+          </div>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <select
+              value={selectedPlanNodeDraft.status || 'seeded'}
+              onChange={(event) =>
+                setField(
+                  'status',
+                  event.target.value as PlanMissionNodeData['status'],
+                )
+              }
+              style={graphDrawerInputStyle()}
+            >
+              {[
+                'seeded',
+                'ready',
+                'running',
+                'blocked',
+                'awaiting_review',
+                'complete',
+                'error',
+              ].map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+            <input
+              placeholder="Assigned agent id"
+              value={selectedPlanNodeDraft.assignedAgentId || ''}
+              onChange={(event) =>
+                setField('assignedAgentId', event.target.value)
+              }
+              style={graphDrawerInputStyle()}
+            />
+            <textarea
+              placeholder="Starter prompt"
+              value={selectedPlanNodeDraft.starterPrompt || ''}
+              onChange={(event) =>
+                setField('starterPrompt', event.target.value)
+              }
+              rows={5}
+              style={{
+                ...graphDrawerInputStyle({
+                  resize: 'vertical',
+                  fontFamily: 'inherit',
+                  fontSize: 12,
+                }),
+              }}
+            />
+          </div>
+          <div
+            className="text-[11px]"
+            style={{ marginTop: 10, color: GRAPH_THEME.drawer.inputMuted }}
+          >
+            Keys: {safeText(selectedPlanNodeDraft.updateKey)} /{' '}
+            {safeText(selectedPlanNodeDraft.outputKey)}
+          </div>
+        </div>
+      </div>
+    );
+  }, [planMissionFocus, selectedPlanNodeDraft, updatePlanNodeDraft]);
+
   const renderAgentBuilderPanel = () => {
     if (!showDeckBuilder) {
       return (
         <div
           style={graphDrawerSectionStyle({
-            padding: "16px",
-            borderStyle: "dashed",
+            padding: '16px',
+            borderStyle: 'dashed',
             color: GRAPH_THEME.drawer.inputMuted,
           })}
         >
-          Select an Assist project for system agents or an Agent workspace for Agent Builder config.
+          Select an Assist project for system agents or an Agent workspace for
+          Agent Builder config.
         </div>
       );
     }
@@ -3355,14 +3930,20 @@ export default function AgentBuilder(): React.ReactElement {
     // Editor content based on node selection
     const renderEditorContent = () => {
       if (selectedCard && selectedCardConfig) {
-        if (tab === "Prompt" || tab === "Knowledge" || tab === "Tools" || tab === "Runtime") {
+        if (
+          tab === 'Prompt' ||
+          tab === 'Knowledge' ||
+          tab === 'Tools' ||
+          tab === 'Runtime'
+        ) {
+          const showCardIdentityFields = tab === BUILDER_NODE_TABS[0];
           return (
             <>
               <Suspense
                 fallback={
                   <div
                     style={graphDrawerSectionStyle({
-                      padding: "12px 14px",
+                      padding: '12px 14px',
                       borderRadius: 8,
                       color: GRAPH_THEME.drawer.inputMuted,
                     })}
@@ -3373,7 +3954,7 @@ export default function AgentBuilder(): React.ReactElement {
               >
                 <AgentManager
                   key={`deck-card:${selectedCard.id}:${tab}`}
-                  projectId={canvasProjectId || "deck-card"}
+                  projectId={canvasProjectId || 'deck-card'}
                   agentType="agent_builder"
                   activeTab={tab}
                   selectedCardId={selectedCard.id}
@@ -3381,13 +3962,31 @@ export default function AgentBuilder(): React.ReactElement {
                   onChangePromptTestInput={setDeckRunInput}
                   onRunPromptTest={handleRunSelectedCard}
                   promptTestBusy={cardRunBusy}
-                  promptTestDisabled={cardRunBusy || deckLoadBusy || !canvasProjectId}
+                  promptTestDisabled={
+                    cardRunBusy || deckLoadBusy || !canvasProjectId
+                  }
                   localConfig={selectedCardConfig}
                   memoryGraphData={selectedCardMemoryGraph}
-                  cardName={String(selectedCard.title || "")}
-                  cardSubtext={String(selectedCard.subtitle || "")}
-                  onChangeCardName={handleRenameSelectedCard}
-                  onChangeCardSubtext={handleUpdateSelectedCardSubtext}
+                  cardName={
+                    showCardIdentityFields
+                      ? String(selectedCard.title || '')
+                      : undefined
+                  }
+                  cardSubtext={
+                    showCardIdentityFields
+                      ? String(selectedCard.subtitle || '')
+                      : undefined
+                  }
+                  onChangeCardName={
+                    showCardIdentityFields
+                      ? handleRenameSelectedCard
+                      : undefined
+                  }
+                  onChangeCardSubtext={
+                    showCardIdentityFields
+                      ? handleUpdateSelectedCardSubtext
+                      : undefined
+                  }
                   onSaveLocalConfig={handleSaveSelectedCardConfig}
                   onGraphRefresh={() => {
                     // no-op
@@ -3399,19 +3998,27 @@ export default function AgentBuilder(): React.ReactElement {
         }
       }
 
-      if (tab === "Plan") {
+      if (tab === 'Plan') {
         return (
           <>
-            <DeckExecutionPathSummary deck={deck} executionPlan={deckExecutionPlan} colors={C} />
+            <DeckExecutionPathSummary
+              deck={deck}
+              executionPlan={deckExecutionPlan}
+              colors={C}
+            />
             <div
               style={graphDrawerSectionStyle({
-                padding: "12px 14px",
+                padding: '12px 14px',
                 borderRadius: 8,
               })}
             >
               <div
                 className="text-xs"
-                style={{ color: GRAPH_THEME.drawer.inputText, fontWeight: 700, marginBottom: 8 }}
+                style={{
+                  color: GRAPH_THEME.drawer.inputText,
+                  fontWeight: 700,
+                  marginBottom: 8,
+                }}
               >
                 Run Input
               </div>
@@ -3421,47 +4028,76 @@ export default function AgentBuilder(): React.ReactElement {
                 rows={6}
                 style={{
                   ...graphDrawerInputStyle(),
-                  resize: "vertical",
-                  fontFamily: "monospace",
+                  resize: 'vertical',
+                  fontFamily: 'monospace',
                   fontSize: 12,
                 }}
               />
-              <div className="flex items-center gap-2" style={{ marginTop: 10 }}>
+              <div
+                className="flex items-center gap-2"
+                style={{ marginTop: 10 }}
+              >
                 <button
                   onClick={handleSaveDeck}
                   disabled={deckSaveBusy || deckLoadBusy || !canvasProjectId}
                   style={graphDrawerButtonStyle({
-                    opacity: deckSaveBusy || deckLoadBusy || !canvasProjectId ? 0.58 : 1,
+                    opacity:
+                      deckSaveBusy || deckLoadBusy || !canvasProjectId
+                        ? 0.58
+                        : 1,
                     cursor:
-                      deckSaveBusy || deckLoadBusy || !canvasProjectId ? "not-allowed" : "pointer",
+                      deckSaveBusy || deckLoadBusy || !canvasProjectId
+                        ? 'not-allowed'
+                        : 'pointer',
                   })}
                 >
-                  {deckSaveBusy ? "Saving..." : "Save Deck"}
+                  {deckSaveBusy ? 'Saving...' : 'Save Deck'}
                 </button>
                 <button
                   onClick={handleRunDeck}
-                  disabled={deckRunBusy || deckLoadBusy || deck.nodes.length === 0 || !canvasProjectId}
+                  disabled={
+                    deckRunBusy ||
+                    deckLoadBusy ||
+                    deck.nodes.length === 0 ||
+                    !canvasProjectId
+                  }
                   style={graphDrawerButtonStyle({
                     border: `1px solid ${deckRunBusy ? GRAPH_THEME.drawer.inputBorder : C.primary}`,
-                    background: deckRunBusy ? "rgba(18,20,24,0.74)" : GRAPH_THEME.drawer.buttonBackground,
+                    background: deckRunBusy
+                      ? 'rgba(18,20,24,0.74)'
+                      : GRAPH_THEME.drawer.buttonBackground,
                     opacity:
-                      deckRunBusy || deckLoadBusy || deck.nodes.length === 0 || !canvasProjectId ? 0.58 : 1,
+                      deckRunBusy ||
+                      deckLoadBusy ||
+                      deck.nodes.length === 0 ||
+                      !canvasProjectId
+                        ? 0.58
+                        : 1,
                     cursor:
-                      deckRunBusy || deckLoadBusy || deck.nodes.length === 0 || !canvasProjectId
-                        ? "not-allowed"
-                        : "pointer",
+                      deckRunBusy ||
+                      deckLoadBusy ||
+                      deck.nodes.length === 0 ||
+                      !canvasProjectId
+                        ? 'not-allowed'
+                        : 'pointer',
                   })}
                 >
-                  {deckRunBusy ? "Running..." : "Run Deck"}
+                  {deckRunBusy ? 'Running...' : 'Run Deck'}
                 </button>
               </div>
               {deckStatusMessage && (
-                <div className="text-xs" style={{ marginTop: 8, color: GRAPH_THEME.drawer.inputMuted }}>
+                <div
+                  className="text-xs"
+                  style={{ marginTop: 8, color: GRAPH_THEME.drawer.inputMuted }}
+                >
                   {deckStatusMessage}
                 </div>
               )}
               {latestDeckRun?.error && (
-                <div className="text-xs" style={{ marginTop: 8, color: C.warn }}>
+                <div
+                  className="text-xs"
+                  style={{ marginTop: 8, color: C.warn }}
+                >
                   {latestDeckRun.error}
                 </div>
               )}
@@ -3473,22 +4109,19 @@ export default function AgentBuilder(): React.ReactElement {
       return (
         <div
           style={graphDrawerSectionStyle({
-            padding: "16px",
-            borderStyle: "dashed",
+            padding: '16px',
+            borderStyle: 'dashed',
             color: GRAPH_THEME.drawer.inputMuted,
           })}
         >
-          Select an agent node on the canvas to edit it. Edge links are canvas-only connections.
+          Select an agent node on the canvas to edit it. Edge links are
+          canvas-only connections.
         </div>
       );
     };
 
     // Left rail plus is the only add mechanism - no right panel add UI
-    return (
-      <div className="space-y-3">
-        {renderEditorContent()}
-      </div>
-    );
+    return <div className="space-y-3">{renderEditorContent()}</div>;
   };
 
   useEffect(() => {
@@ -3504,9 +4137,8 @@ export default function AgentBuilder(): React.ReactElement {
 
   // chat state
   const [messages, setMessages] = useState<
-    { role: "assistant" | "user"; text: string }[]
+    { role: 'assistant' | 'user'; text: string }[]
   >(() => loadProjectState(activeProject).messages);
-
 
   // plan
   const [planSource, setPlanSource] = useState<unknown>(
@@ -3522,55 +4154,69 @@ export default function AgentBuilder(): React.ReactElement {
     () => loadProjectState(activeProject).links,
   );
   const assistAnchorSurface = useMemo(
-    () => normalizeAnchorSurface(planSource, { messages, planItems: plan, links }),
+    () =>
+      normalizeAnchorSurface(planSource, { messages, planItems: plan, links }),
     [planSource, messages, plan, links],
   );
   const structuredAssistPlan = useMemo(
-    () => buildStructuredAssistPlanSurface(planSource, { planItems: plan, anchorSurface: assistAnchorSurface }),
+    () =>
+      buildStructuredAssistPlanSurface(planSource, {
+        planItems: plan,
+        anchorSurface: assistAnchorSurface,
+      }),
     [planSource, plan, assistAnchorSurface],
   );
+  useEffect(() => {
+    setPlanMissionFocus(null);
+    setPlanNodeDrafts({});
+  }, [activeProject]);
   // knowledge graph
-  const [cypher, setCypher] = useState("");
+  const [cypher, setCypher] = useState('');
   const [graphResult, setGraphResult] = useState<any[]>([]);
   const [graphError, setGraphError] = useState<string | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
-  const [knowledgeGraphStatus, setKnowledgeGraphStatus] = useState<string>("Idle");
+  const [knowledgeGraphStatus, setKnowledgeGraphStatus] =
+    useState<string>('Idle');
   const [graphResetToken, setGraphResetToken] = useState(0);
   const [expandingNodeId, setExpandingNodeId] = useState<string | null>(null);
-  const [graphTypeFilter] = useState<string>("all");
-  const [graphRecencyFilter] = useState<"all" | "24h" | "7d" | "30d">("all");
+  const [graphTypeFilter] = useState<string>('all');
+  const [graphRecencyFilter] = useState<'all' | '24h' | '7d' | '30d'>('all');
   const [graphMinConfidence] = useState<number>(0);
-  const [, setSelectedEdgeEvidence] = useState<KnowledgeGraphRelationship | null>(null);
+  const [, setSelectedEdgeEvidence] =
+    useState<KnowledgeGraphRelationship | null>(null);
   const clearKnowledgeWorkspaceSelection = useCallback(() => {
     setSelectedKnowledgeEntityId(null);
     setSelectedKnowledgeRelationshipId(null);
     setSelectedEdgeEvidence(null);
   }, []);
-  const [knowGraphData, setKnowGraphData] = useState<{ nodes: any[]; relationships: any[] }>({
+  const [knowGraphData, setKnowGraphData] = useState<{
+    nodes: any[];
+    relationships: any[];
+  }>({
     nodes: [],
     relationships: [],
   });
   const graphResultRef = useRef<any[]>([]);
   const [, setLastIngestTrace] = useState<any>(null);
-  const scopeKey = activeProject || "";
+  const scopeKey = activeProject || '';
   const graphCacheScope = `${scopeKey}:${graphTypeFilter}:${graphRecencyFilter}:${graphMinConfidence}`;
   const graphCacheKey = `${KG_CACHE_PREFIX}:${graphCacheScope}`;
 
   const resetKnowledgePanelState = useCallback(() => {
     kgLoadAbortRef.current?.abort();
     kgLoadAbortRef.current = null;
-    kgLoadProjectRef.current = "";
+    kgLoadProjectRef.current = '';
     kgExpandAbortRef.current?.abort();
     kgExpandAbortRef.current = null;
-    kgExpandProjectRef.current = "";
-    graphHydrateKeyRef.current = "";
-    kgAutoLoadKeyRef.current = "";
-    setCypher("");
+    kgExpandProjectRef.current = '';
+    graphHydrateKeyRef.current = '';
+    kgAutoLoadKeyRef.current = '';
+    setCypher('');
     setGraphResult([]);
     setKnowGraphData({ nodes: [], relationships: [] });
     setGraphError(null);
     setGraphLoading(false);
-    setKnowledgeGraphStatus("Idle");
+    setKnowledgeGraphStatus('Idle');
     setExpandingNodeId(null);
     setGraphResetToken((v) => v + 1);
     clearKnowledgeWorkspaceSelection();
@@ -3590,40 +4236,69 @@ export default function AgentBuilder(): React.ReactElement {
     let cancelled = false;
     let timeoutId: number | null = null;
     let idleId: number | null = null;
-    const endpoint = "/api/health";
-    const requestType = "health-check";
+    const endpoint = '/api/health';
+    const requestType = 'health-check';
     const runCheck = async () => {
       const requestSeq = nextRequestSequence(requestType);
       try {
         const payload = await guardedRequest({
           key: endpoint,
-          method: "GET",
+          method: 'GET',
           ttlMs: 20_000,
           fetcher: async (signal) => {
-            const res = await fetch(endpoint, { credentials: "include", signal });
+            const res = await fetch(endpoint, {
+              credentials: 'include',
+              signal,
+            });
             const { data, text } = await readJsonAndText(res);
             return { res, data, text };
           },
         });
-        if (cancelled || !isLatestRequestSequence(requestType, requestSeq)) return;
+        if (cancelled || !isLatestRequestSequence(requestType, requestSeq))
+          return;
         if (!payload.res.ok) {
-          throw new Error(formatRequestErrorLine(endpoint, payload.res.status, (payload.data && safeText(payload.data)) || payload.text));
+          throw new Error(
+            formatRequestErrorLine(
+              endpoint,
+              payload.res.status,
+              (payload.data && safeText(payload.data)) || payload.text,
+            ),
+          );
         }
-        setGraphError((prev) => (prev && prev.includes(endpoint) ? null : prev));
+        setGraphError((prev) =>
+          prev && prev.includes(endpoint) ? null : prev,
+        );
       } catch (err: any) {
-        if (cancelled || isAbortLikeError(err) || !isLatestRequestSequence(requestType, requestSeq)) return;
-        setGraphError(formatRequestErrorLine(endpoint, 0, err?.message || "Failed to fetch"));
+        if (
+          cancelled ||
+          isAbortLikeError(err) ||
+          !isLatestRequestSequence(requestType, requestSeq)
+        )
+          return;
+        setGraphError(
+          formatRequestErrorLine(
+            endpoint,
+            0,
+            err?.message || 'Failed to fetch',
+          ),
+        );
       }
     };
     const schedule = () => {
       const maybeWindow = window as Window & {
-        requestIdleCallback?: (cb: () => void, options?: { timeout: number }) => number;
+        requestIdleCallback?: (
+          cb: () => void,
+          options?: { timeout: number },
+        ) => number;
         cancelIdleCallback?: (id: number) => void;
       };
-      if (typeof maybeWindow.requestIdleCallback === "function") {
-        idleId = maybeWindow.requestIdleCallback(() => {
-          void runCheck();
-        }, { timeout: 1500 });
+      if (typeof maybeWindow.requestIdleCallback === 'function') {
+        idleId = maybeWindow.requestIdleCallback(
+          () => {
+            void runCheck();
+          },
+          { timeout: 1500 },
+        );
         return;
       }
       timeoutId = window.setTimeout(() => {
@@ -3634,345 +4309,412 @@ export default function AgentBuilder(): React.ReactElement {
     return () => {
       cancelled = true;
       if (timeoutId != null) window.clearTimeout(timeoutId);
-      const maybeWindow = window as Window & { cancelIdleCallback?: (id: number) => void };
-      if (idleId != null && typeof maybeWindow.cancelIdleCallback === "function") {
+      const maybeWindow = window as Window & {
+        cancelIdleCallback?: (id: number) => void;
+      };
+      if (
+        idleId != null &&
+        typeof maybeWindow.cancelIdleCallback === 'function'
+      ) {
         maybeWindow.cancelIdleCallback(idleId);
       }
     };
   }, []);
 
-  const runGraphQuery = useCallback(async (
-    query?: string,
-    opts?: {
-      merge?: boolean;
-      queryParams?: Record<string, unknown>;
-      signal?: AbortSignal;
-      requestType?: string;
-      requestSeq?: number;
-      manageLoading?: boolean;
-    },
-  ): Promise<boolean> => {
-    const projectId = activeProject;
-    const q = (query ?? cypher).trim();
-    const requestType = opts?.requestType || "kg-query";
-    const requestSeq = opts?.requestSeq ?? nextRequestSequence(requestType);
-    if (!projectId) return false;
-    if (!q) {
-      setGraphError("Enter a Cypher query first.");
-      return false;
-    }
-    if (isLatestRequestSequence(requestType, requestSeq)) {
-      setGraphError(null);
-      if (opts?.manageLoading !== false) setGraphLoading(true);
-    }
-    try {
-      const endpoint = `/api/v2/projects/${projectId}/kg/query`;
-      const requestParams = { projectId, ...(opts?.queryParams || {}) };
-      const requestBody = JSON.stringify({ cypher: q, params: requestParams });
-      const payload = await guardedRequest({
-        key: `kg:post:${projectId}:${q}:${JSON.stringify(requestParams)}`,
-        method: "POST",
-        signal: opts?.signal,
-        fetcher: async (signal) => {
-          const res = await fetch(endpoint, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: requestBody,
-            signal,
-          });
-          const { data, text } = await readJsonAndText(res);
-          return { res, data, text, endpoint };
-        },
-      });
-      if (!payload.res.ok || !payload.data?.ok) {
-        const msg = formatRequestErrorLine(
-          payload.endpoint,
-          payload.res.status,
-          (payload.data && safeText(payload.data?.error || payload.data?.message)) || payload.text,
-        );
-        throw new Error(msg);
+  const runGraphQuery = useCallback(
+    async (
+      query?: string,
+      opts?: {
+        merge?: boolean;
+        queryParams?: Record<string, unknown>;
+        signal?: AbortSignal;
+        requestType?: string;
+        requestSeq?: number;
+        manageLoading?: boolean;
+      },
+    ): Promise<boolean> => {
+      const projectId = activeProject;
+      const q = (query ?? cypher).trim();
+      const requestType = opts?.requestType || 'kg-query';
+      const requestSeq = opts?.requestSeq ?? nextRequestSequence(requestType);
+      if (!projectId) return false;
+      if (!q) {
+        setGraphError('Enter a Cypher query first.');
+        return false;
       }
-      if (activeProjectLatestRef.current !== projectId) return false;
-      if (!isLatestRequestSequence(requestType, requestSeq)) return false;
-      const rows = Array.isArray(payload.data.rows) ? payload.data.rows : [];
-      if (opts?.merge) {
-        setGraphResult((prev) => {
-          const seen = new Set(
-            prev.map((row: any) => (typeof row === "string" ? row : JSON.stringify(row))),
-          );
-          const merged = [...prev];
-          rows.forEach((row: any) => {
-            const key = typeof row === "string" ? row : JSON.stringify(row);
-            if (!seen.has(key)) {
-              seen.add(key);
-              merged.push(row);
-            }
-          });
-          return merged;
+      if (isLatestRequestSequence(requestType, requestSeq)) {
+        setGraphError(null);
+        if (opts?.manageLoading !== false) setGraphLoading(true);
+      }
+      try {
+        const endpoint = `/api/v2/projects/${projectId}/kg/query`;
+        const requestParams = { projectId, ...(opts?.queryParams || {}) };
+        const requestBody = JSON.stringify({
+          cypher: q,
+          params: requestParams,
         });
-      } else {
-        setGraphResult(rows);
+        const payload = await guardedRequest({
+          key: `kg:post:${projectId}:${q}:${JSON.stringify(requestParams)}`,
+          method: 'POST',
+          signal: opts?.signal,
+          fetcher: async (signal) => {
+            const res = await fetch(endpoint, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: requestBody,
+              signal,
+            });
+            const { data, text } = await readJsonAndText(res);
+            return { res, data, text, endpoint };
+          },
+        });
+        if (!payload.res.ok || !payload.data?.ok) {
+          const msg = formatRequestErrorLine(
+            payload.endpoint,
+            payload.res.status,
+            (payload.data &&
+              safeText(payload.data?.error || payload.data?.message)) ||
+              payload.text,
+          );
+          throw new Error(msg);
+        }
+        if (activeProjectLatestRef.current !== projectId) return false;
+        if (!isLatestRequestSequence(requestType, requestSeq)) return false;
+        const rows = Array.isArray(payload.data.rows) ? payload.data.rows : [];
+        if (opts?.merge) {
+          setGraphResult((prev) => {
+            const seen = new Set(
+              prev.map((row: any) =>
+                typeof row === 'string' ? row : JSON.stringify(row),
+              ),
+            );
+            const merged = [...prev];
+            rows.forEach((row: any) => {
+              const key = typeof row === 'string' ? row : JSON.stringify(row);
+              if (!seen.has(key)) {
+                seen.add(key);
+                merged.push(row);
+              }
+            });
+            return merged;
+          });
+        } else {
+          setGraphResult(rows);
+        }
+        return true;
+      } catch (err: any) {
+        if (isAbortLikeError(err)) return false;
+        if (activeProjectLatestRef.current !== projectId) return false;
+        if (!isLatestRequestSequence(requestType, requestSeq)) return false;
+        setGraphError(err?.message || 'Graph error');
+        return false;
+      } finally {
+        if (
+          opts?.manageLoading !== false &&
+          activeProjectLatestRef.current === projectId &&
+          isLatestRequestSequence(requestType, requestSeq)
+        ) {
+          setGraphLoading(false);
+        }
       }
-      return true;
-    } catch (err: any) {
-      if (isAbortLikeError(err)) return false;
-      if (activeProjectLatestRef.current !== projectId) return false;
-      if (!isLatestRequestSequence(requestType, requestSeq)) return false;
-      setGraphError(err?.message || "Graph error");
-      return false;
-    } finally {
-      if (
-        opts?.manageLoading !== false &&
-        activeProjectLatestRef.current === projectId &&
-        isLatestRequestSequence(requestType, requestSeq)
-      ) {
-        setGraphLoading(false);
-      }
-    }
-  }, [activeProject, cypher]);
+    },
+    [activeProject, cypher],
+  );
 
   const buildRecencySinceTs = useCallback((): string | null => {
-    if (graphRecencyFilter === "all") return null;
+    if (graphRecencyFilter === 'all') return null;
     const now = Date.now();
     const deltaMs =
-      graphRecencyFilter === "24h"
+      graphRecencyFilter === '24h'
         ? 24 * 60 * 60 * 1000
-        : graphRecencyFilter === "7d"
+        : graphRecencyFilter === '7d'
           ? 7 * 24 * 60 * 60 * 1000
           : 30 * 24 * 60 * 60 * 1000;
     return new Date(now - deltaMs).toISOString();
   }, [graphRecencyFilter]);
 
-  const runGraphPresetQuery = useCallback(async (
-    preset: "SEED" | "EXPAND",
-    opts?: {
-      merge?: boolean;
-      nodeId?: string;
-      limit?: number;
-      bypassCache?: boolean;
+  const runGraphPresetQuery = useCallback(
+    async (
+      preset: 'SEED' | 'EXPAND',
+      opts?: {
+        merge?: boolean;
+        nodeId?: string;
+        limit?: number;
+        bypassCache?: boolean;
+        signal?: AbortSignal;
+        requestType?: string;
+        requestSeq?: number;
+        allowPostFallback?: boolean;
+      },
+    ): Promise<boolean> => {
+      const projectId = activeProject;
+      if (!projectId) return false;
+      const requestType = opts?.requestType || 'kg-query';
+      const requestSeq = opts?.requestSeq ?? nextRequestSequence(requestType);
+
+      const limit = opts?.limit ?? (preset === 'SEED' ? 220 : 120);
+      const sinceTs = buildRecencySinceTs();
+      const queryParams: Record<string, unknown> = {
+        projectId,
+        limit,
+        typeFilter: graphTypeFilter !== 'all' ? graphTypeFilter : null,
+        sinceTs,
+        minConfidence: graphMinConfidence > 0 ? graphMinConfidence : null,
+      };
+      if (preset === 'EXPAND') {
+        queryParams.nodeId = opts?.nodeId ?? null;
+      }
+
+      const search = new URLSearchParams();
+      search.set('query', preset);
+      search.set('limit', String(limit));
+
+      if (preset === 'EXPAND' && opts?.nodeId) {
+        search.set('nodeId', opts.nodeId);
+      }
+      if (graphTypeFilter !== 'all') {
+        search.set('type', graphTypeFilter);
+      }
+      if (sinceTs) {
+        search.set('sinceTs', sinceTs);
+      }
+      if (graphMinConfidence > 0) {
+        search.set('minConfidence', String(graphMinConfidence));
+      }
+
+      if (isLatestRequestSequence(requestType, requestSeq)) {
+        setGraphError(null);
+        setGraphLoading(true);
+      }
+      try {
+        const endpoint = `/api/v2/projects/${projectId}/kg/query?${search.toString()}`;
+        const payload = await guardedRequest({
+          key: `kg:get:${endpoint}`,
+          method: 'GET',
+          ttlMs: preset === 'SEED' ? KG_CACHE_TTL_MS : 12_000,
+          bypassCache: opts?.bypassCache,
+          signal: opts?.signal,
+          fetcher: async (signal) => {
+            const res = await fetch(endpoint, {
+              method: 'GET',
+              signal,
+            });
+            const { data, text } = await readJsonAndText(res);
+            return { res, data, text, endpoint };
+          },
+        });
+        if (!payload.res.ok || !payload.data?.ok) {
+          const msg = formatRequestErrorLine(
+            payload.endpoint,
+            payload.res.status,
+            (payload.data &&
+              safeText(payload.data?.error || payload.data?.message)) ||
+              payload.text,
+          );
+          throw new Error(msg);
+        }
+        if (activeProjectLatestRef.current !== projectId) return false;
+        if (!isLatestRequestSequence(requestType, requestSeq)) return false;
+        if (typeof payload.data?.cypher === 'string') {
+          setCypher(payload.data.cypher);
+        }
+
+        const rows = Array.isArray(payload.data.rows) ? payload.data.rows : [];
+        if (opts?.merge) {
+          setGraphResult((prev) => {
+            const seen = new Set(
+              prev.map((row: any) =>
+                typeof row === 'string' ? row : JSON.stringify(row),
+              ),
+            );
+            const merged = [...prev];
+            rows.forEach((row: any) => {
+              const key = typeof row === 'string' ? row : JSON.stringify(row);
+              if (!seen.has(key)) {
+                seen.add(key);
+                merged.push(row);
+              }
+            });
+            return merged;
+          });
+        } else {
+          setGraphResult(rows);
+        }
+        return true;
+      } catch (err: any) {
+        const msg = String(err?.message || 'Graph query failed');
+        const allowPostFallback = opts?.allowPostFallback !== false;
+        if (
+          allowPostFallback &&
+          (msg.includes('| 404 |') ||
+            msg.includes('| 405 |') ||
+            msg.includes('HTTP 404') ||
+            msg.includes('HTTP 405'))
+        ) {
+          const fallbackCypher =
+            preset === 'SEED' ? KG_SEED_QUERY : KG_EXPAND_QUERY;
+          return runGraphQuery(fallbackCypher, {
+            merge: opts?.merge,
+            queryParams,
+            signal: opts?.signal,
+            requestType,
+            requestSeq,
+            manageLoading: false,
+          });
+        }
+        if (isAbortLikeError(err)) return false;
+        if (activeProjectLatestRef.current !== projectId) return false;
+        if (!isLatestRequestSequence(requestType, requestSeq)) return false;
+        setGraphError(msg);
+        return false;
+      } finally {
+        if (
+          activeProjectLatestRef.current === projectId &&
+          isLatestRequestSequence(requestType, requestSeq)
+        ) {
+          setGraphLoading(false);
+        }
+      }
+    },
+    [
+      activeProject,
+      graphTypeFilter,
+      graphMinConfidence,
+      buildRecencySinceTs,
+      runGraphQuery,
+    ],
+  );
+
+  const loadKnowGraphData = useCallback(
+    async (opts?: {
       signal?: AbortSignal;
       requestType?: string;
       requestSeq?: number;
-      allowPostFallback?: boolean;
-    },
-  ): Promise<boolean> => {
-    const projectId = activeProject;
-    if (!projectId) return false;
-    const requestType = opts?.requestType || "kg-query";
-    const requestSeq = opts?.requestSeq ?? nextRequestSequence(requestType);
-
-    const limit = opts?.limit ?? (preset === "SEED" ? 220 : 120);
-    const sinceTs = buildRecencySinceTs();
-    const queryParams: Record<string, unknown> = {
-      projectId,
-      limit,
-      typeFilter: graphTypeFilter !== "all" ? graphTypeFilter : null,
-      sinceTs,
-      minConfidence: graphMinConfidence > 0 ? graphMinConfidence : null,
-    };
-    if (preset === "EXPAND") {
-      queryParams.nodeId = opts?.nodeId ?? null;
-    }
-
-    const search = new URLSearchParams();
-    search.set("query", preset);
-    search.set("limit", String(limit));
-
-    if (preset === "EXPAND" && opts?.nodeId) {
-      search.set("nodeId", opts.nodeId);
-    }
-    if (graphTypeFilter !== "all") {
-      search.set("type", graphTypeFilter);
-    }
-    if (sinceTs) {
-      search.set("sinceTs", sinceTs);
-    }
-    if (graphMinConfidence > 0) {
-      search.set("minConfidence", String(graphMinConfidence));
-    }
-
-    if (isLatestRequestSequence(requestType, requestSeq)) {
-      setGraphError(null);
-      setGraphLoading(true);
-    }
-    try {
-      const endpoint = `/api/v2/projects/${projectId}/kg/query?${search.toString()}`;
-      const payload = await guardedRequest({
-        key: `kg:get:${endpoint}`,
-        method: "GET",
-        ttlMs: preset === "SEED" ? KG_CACHE_TTL_MS : 12_000,
-        bypassCache: opts?.bypassCache,
-        signal: opts?.signal,
-        fetcher: async (signal) => {
-          const res = await fetch(endpoint, {
-            method: "GET",
-            signal,
-          });
-          const { data, text } = await readJsonAndText(res);
-          return { res, data, text, endpoint };
-        },
-      });
-      if (!payload.res.ok || !payload.data?.ok) {
-        const msg = formatRequestErrorLine(
-          payload.endpoint,
-          payload.res.status,
-          (payload.data && safeText(payload.data?.error || payload.data?.message)) || payload.text,
-        );
-        throw new Error(msg);
+      bypassCache?: boolean;
+    }): Promise<boolean> => {
+      const projectId = activeProject;
+      if (!projectId) {
+        setKnowGraphData({ nodes: [], relationships: [] });
+        return false;
       }
-      if (activeProjectLatestRef.current !== projectId) return false;
-      if (!isLatestRequestSequence(requestType, requestSeq)) return false;
-      if (typeof payload.data?.cypher === "string") {
-        setCypher(payload.data.cypher);
-      }
+      const requestType = opts?.requestType || 'knowgraph-data';
+      const requestSeq = opts?.requestSeq ?? nextRequestSequence(requestType);
 
-      const rows = Array.isArray(payload.data.rows) ? payload.data.rows : [];
-      if (opts?.merge) {
-        setGraphResult((prev) => {
-          const seen = new Set(prev.map((row: any) => (typeof row === "string" ? row : JSON.stringify(row))));
-          const merged = [...prev];
-          rows.forEach((row: any) => {
-            const key = typeof row === "string" ? row : JSON.stringify(row);
-            if (!seen.has(key)) {
-              seen.add(key);
-              merged.push(row);
-            }
-          });
-          return merged;
-        });
-      } else {
-        setGraphResult(rows);
-      }
-      return true;
-    } catch (err: any) {
-      const msg = String(err?.message || "Graph query failed");
-      const allowPostFallback = opts?.allowPostFallback !== false;
-      if (
-        allowPostFallback &&
-        (msg.includes("| 404 |") || msg.includes("| 405 |") || msg.includes("HTTP 404") || msg.includes("HTTP 405"))
-      ) {
-        const fallbackCypher = preset === "SEED" ? KG_SEED_QUERY : KG_EXPAND_QUERY;
-        return runGraphQuery(fallbackCypher, {
-          merge: opts?.merge,
-          queryParams,
+      try {
+        const endpoint = `/api/knowgraph/graph?projectId=${encodeURIComponent(projectId)}`;
+        const payload = await guardedRequest({
+          key: `knowgraph:data:${projectId}`,
+          method: 'GET',
+          ttlMs: KG_CACHE_TTL_MS,
+          bypassCache: opts?.bypassCache,
           signal: opts?.signal,
-          requestType,
-          requestSeq,
-          manageLoading: false,
+          fetcher: async (signal) => {
+            const res = await fetch(endpoint, {
+              credentials: 'include',
+              signal,
+            });
+            const { data, text } = await readJsonAndText(res);
+            return { res, data, text, endpoint };
+          },
         });
-      }
-      if (isAbortLikeError(err)) return false;
-      if (activeProjectLatestRef.current !== projectId) return false;
-      if (!isLatestRequestSequence(requestType, requestSeq)) return false;
-      setGraphError(msg);
-      return false;
-    } finally {
-      if (activeProjectLatestRef.current === projectId && isLatestRequestSequence(requestType, requestSeq)) {
-        setGraphLoading(false);
-      }
-    }
-  }, [activeProject, graphTypeFilter, graphMinConfidence, buildRecencySinceTs, runGraphQuery]);
-
-  const loadKnowGraphData = useCallback(async (
-    opts?: { signal?: AbortSignal; requestType?: string; requestSeq?: number; bypassCache?: boolean },
-  ): Promise<boolean> => {
-    const projectId = activeProject;
-    if (!projectId) {
-      setKnowGraphData({ nodes: [], relationships: [] });
-      return false;
-    }
-    const requestType = opts?.requestType || "knowgraph-data";
-    const requestSeq = opts?.requestSeq ?? nextRequestSequence(requestType);
-
-    try {
-      const endpoint = `/api/knowgraph/graph?projectId=${encodeURIComponent(projectId)}`;
-      const payload = await guardedRequest({
-        key: `knowgraph:data:${projectId}`,
-        method: "GET",
-        ttlMs: KG_CACHE_TTL_MS,
-        bypassCache: opts?.bypassCache,
-        signal: opts?.signal,
-        fetcher: async (signal) => {
-          const res = await fetch(endpoint, {
-            credentials: "include",
-            signal,
-          });
-          const { data, text } = await readJsonAndText(res);
-          return { res, data, text, endpoint };
-        },
-      });
-      if (!payload.res.ok) {
-        throw new Error(
-          formatRequestErrorLine(
-            payload.endpoint,
-            payload.res.status,
-            (payload.data && safeText(payload.data?.error?.message || payload.data?.error)) || payload.text,
-          ),
+        if (!payload.res.ok) {
+          throw new Error(
+            formatRequestErrorLine(
+              payload.endpoint,
+              payload.res.status,
+              (payload.data &&
+                safeText(
+                  payload.data?.error?.message || payload.data?.error,
+                )) ||
+                payload.text,
+            ),
+          );
+        }
+        if (activeProjectLatestRef.current !== projectId) return false;
+        if (!isLatestRequestSequence(requestType, requestSeq)) return false;
+        const rawNodes = Array.isArray(payload.data?.nodes)
+          ? payload.data.nodes
+          : [];
+        const rawRels = Array.isArray(payload.data?.relationships)
+          ? payload.data.relationships
+          : [];
+        setKnowGraphData({ nodes: rawNodes, relationships: rawRels });
+        setGraphError((prev) =>
+          prev && prev.includes('/api/knowgraph/graph') ? null : prev,
         );
+        return true;
+      } catch (err: any) {
+        if (isAbortLikeError(err)) return false;
+        if (activeProjectLatestRef.current !== projectId) return false;
+        if (!isLatestRequestSequence(requestType, requestSeq)) return false;
+        console.warn('[KnowGraph] graph fetch failed:', err?.message || err);
+        setKnowGraphData({ nodes: [], relationships: [] });
+        setGraphError(err?.message || 'KnowGraph graph fetch failed');
+        return false;
       }
-      if (activeProjectLatestRef.current !== projectId) return false;
-      if (!isLatestRequestSequence(requestType, requestSeq)) return false;
-      const rawNodes = Array.isArray(payload.data?.nodes) ? payload.data.nodes : [];
-      const rawRels = Array.isArray(payload.data?.relationships) ? payload.data.relationships : [];
-      setKnowGraphData({ nodes: rawNodes, relationships: rawRels });
-      setGraphError((prev) => (prev && prev.includes("/api/knowgraph/graph") ? null : prev));
-      return true;
-    } catch (err: any) {
-      if (isAbortLikeError(err)) return false;
-      if (activeProjectLatestRef.current !== projectId) return false;
-      if (!isLatestRequestSequence(requestType, requestSeq)) return false;
-      console.warn("[KnowGraph] graph fetch failed:", err?.message || err);
-      setKnowGraphData({ nodes: [], relationships: [] });
-      setGraphError(err?.message || "KnowGraph graph fetch failed");
-      return false;
-    }
-  }, [activeProject]);
+    },
+    [activeProject],
+  );
 
-  const loadKnowGraphHealth = useCallback(async (
-    opts?: { signal?: AbortSignal; requestType?: string; requestSeq?: number },
-  ): Promise<boolean> => {
-    const endpoint = "/api/knowgraph/health";
-    const requestType = opts?.requestType || "knowgraph-health";
-    const requestSeq = opts?.requestSeq ?? nextRequestSequence(requestType);
-    try {
-      const payload = await guardedRequest({
-        key: endpoint,
-        method: "GET",
-        ttlMs: 20_000,
-        signal: opts?.signal,
-        fetcher: async (signal) => {
-          const res = await fetch(endpoint, { credentials: "include", signal });
-          const { data, text } = await readJsonAndText(res);
-          return { res, data, text, endpoint };
-        },
-      });
-      if (!payload.res.ok) {
-        throw new Error(
-          formatRequestErrorLine(
-            payload.endpoint,
-            payload.res.status,
-            (payload.data && safeText(payload.data?.error?.message || payload.data?.error)) || payload.text,
-          ),
+  const loadKnowGraphHealth = useCallback(
+    async (opts?: {
+      signal?: AbortSignal;
+      requestType?: string;
+      requestSeq?: number;
+    }): Promise<boolean> => {
+      const endpoint = '/api/knowgraph/health';
+      const requestType = opts?.requestType || 'knowgraph-health';
+      const requestSeq = opts?.requestSeq ?? nextRequestSequence(requestType);
+      try {
+        const payload = await guardedRequest({
+          key: endpoint,
+          method: 'GET',
+          ttlMs: 20_000,
+          signal: opts?.signal,
+          fetcher: async (signal) => {
+            const res = await fetch(endpoint, {
+              credentials: 'include',
+              signal,
+            });
+            const { data, text } = await readJsonAndText(res);
+            return { res, data, text, endpoint };
+          },
+        });
+        if (!payload.res.ok) {
+          throw new Error(
+            formatRequestErrorLine(
+              payload.endpoint,
+              payload.res.status,
+              (payload.data &&
+                safeText(
+                  payload.data?.error?.message || payload.data?.error,
+                )) ||
+                payload.text,
+            ),
+          );
+        }
+        if (!isLatestRequestSequence(requestType, requestSeq)) return false;
+        setGraphError((prev) =>
+          prev && prev.includes(endpoint) ? null : prev,
         );
+        return true;
+      } catch (err: any) {
+        if (isAbortLikeError(err)) return false;
+        if (!isLatestRequestSequence(requestType, requestSeq)) return false;
+        setGraphError(err?.message || `${endpoint} | 0 | request failed`);
+        return false;
       }
-      if (!isLatestRequestSequence(requestType, requestSeq)) return false;
-      setGraphError((prev) => (prev && prev.includes(endpoint) ? null : prev));
-      return true;
-    } catch (err: any) {
-      if (isAbortLikeError(err)) return false;
-      if (!isLatestRequestSequence(requestType, requestSeq)) return false;
-      setGraphError(err?.message || `${endpoint} | 0 | request failed`);
-      return false;
-    }
-  }, []);
+    },
+    [],
+  );
 
   const expandKnowGraphFromEntity = useCallback(
     async (entity: KnowledgeGraphNode) => {
       const projectId = activeProject;
       if (!projectId) return;
-      const requestType = "kg-expand";
+      const requestType = 'kg-expand';
       const requestSeq = nextRequestSequence(requestType);
-      const rawId = String(entity.rawId || entity.id || "").trim();
+      const rawId = String(entity.rawId || entity.id || '').trim();
       if (!rawId) return;
 
       const endpoint = `/api/knowgraph/expand?projectId=${encodeURIComponent(projectId)}&nodeId=${encodeURIComponent(rawId)}&depth=1&limit=50`;
@@ -3984,11 +4726,14 @@ export default function AgentBuilder(): React.ReactElement {
       try {
         const payload = await guardedRequest({
           key: `knowgraph:expand:${projectId}:${rawId}`,
-          method: "GET",
+          method: 'GET',
           ttlMs: 12_000,
           signal: controller.signal,
           fetcher: async (signal) => {
-            const res = await fetch(endpoint, { credentials: "include", signal });
+            const res = await fetch(endpoint, {
+              credentials: 'include',
+              signal,
+            });
             const { data, text } = await readJsonAndText(res);
             return { res, data, text, endpoint };
           },
@@ -3998,7 +4743,11 @@ export default function AgentBuilder(): React.ReactElement {
             formatRequestErrorLine(
               payload.endpoint,
               payload.res.status,
-              (payload.data && safeText(payload.data?.error?.message || payload.data?.error)) || payload.text,
+              (payload.data &&
+                safeText(
+                  payload.data?.error?.message || payload.data?.error,
+                )) ||
+                payload.text,
             ),
           );
         }
@@ -4010,35 +4759,51 @@ export default function AgentBuilder(): React.ReactElement {
           return;
         }
 
-        const nextNodes = Array.isArray(payload.data?.nodes) ? payload.data.nodes : [];
-        const nextRelationships = Array.isArray(payload.data?.relationships) ? payload.data.relationships : [];
+        const nextNodes = Array.isArray(payload.data?.nodes)
+          ? payload.data.nodes
+          : [];
+        const nextRelationships = Array.isArray(payload.data?.relationships)
+          ? payload.data.relationships
+          : [];
         const currentNodeIds = new Set(
           (Array.isArray(knowGraphData.nodes) ? knowGraphData.nodes : [])
-            .map((entry: any) => String(entry?.id ?? "").trim())
+            .map((entry: any) => String(entry?.id ?? '').trim())
             .filter(Boolean),
         );
         const currentRelationshipIds = new Set(
-          (Array.isArray(knowGraphData.relationships) ? knowGraphData.relationships : [])
-            .map((entry: any) => String(entry?.id ?? "").trim())
+          (Array.isArray(knowGraphData.relationships)
+            ? knowGraphData.relationships
+            : []
+          )
+            .map((entry: any) => String(entry?.id ?? '').trim())
             .filter(Boolean),
         );
         const addedNodeCount = nextNodes.reduce((count: number, entry: any) => {
-          const id = String(entry?.id ?? "").trim();
+          const id = String(entry?.id ?? '').trim();
           return id && !currentNodeIds.has(id) ? count + 1 : count;
         }, 0);
-        const addedRelationshipCount = nextRelationships.reduce((count: number, entry: any) => {
-          const id = String(entry?.id ?? "").trim();
-          return id && !currentRelationshipIds.has(id) ? count + 1 : count;
-        }, 0);
+        const addedRelationshipCount = nextRelationships.reduce(
+          (count: number, entry: any) => {
+            const id = String(entry?.id ?? '').trim();
+            return id && !currentRelationshipIds.has(id) ? count + 1 : count;
+          },
+          0,
+        );
         setKnowGraphData((prev) => {
           const nodeMap = new Map<string, any>();
           const relationshipMap = new Map<string, any>();
-          [...(Array.isArray(prev.nodes) ? prev.nodes : []), ...nextNodes].forEach((n: any) => {
-            const id = String(n?.id ?? "").trim();
+          [
+            ...(Array.isArray(prev.nodes) ? prev.nodes : []),
+            ...nextNodes,
+          ].forEach((n: any) => {
+            const id = String(n?.id ?? '').trim();
             if (id && !nodeMap.has(id)) nodeMap.set(id, n);
           });
-          [...(Array.isArray(prev.relationships) ? prev.relationships : []), ...nextRelationships].forEach((r: any) => {
-            const id = String(r?.id ?? "").trim();
+          [
+            ...(Array.isArray(prev.relationships) ? prev.relationships : []),
+            ...nextRelationships,
+          ].forEach((r: any) => {
+            const id = String(r?.id ?? '').trim();
             if (id && !relationshipMap.has(id)) relationshipMap.set(id, r);
           });
           return {
@@ -4053,11 +4818,13 @@ export default function AgentBuilder(): React.ReactElement {
         } else {
           setKnowledgeGraphStatus(
             `Expanded "${safeText(entity.label || entity.id)}": +${addedNodeCount} node${
-              addedNodeCount === 1 ? "" : "s"
-            }, +${addedRelationshipCount} edge${addedRelationshipCount === 1 ? "" : "s"}.`,
+              addedNodeCount === 1 ? '' : 's'
+            }, +${addedRelationshipCount} edge${addedRelationshipCount === 1 ? '' : 's'}.`,
           );
         }
-        setGraphError((prev) => (prev && prev.includes("/api/knowgraph/expand") ? null : prev));
+        setGraphError((prev) =>
+          prev && prev.includes('/api/knowgraph/expand') ? null : prev,
+        );
       } catch (err: any) {
         if (
           isAbortLikeError(err) ||
@@ -4066,16 +4833,19 @@ export default function AgentBuilder(): React.ReactElement {
         ) {
           return;
         }
-        setGraphError(err?.message || "KnowGraph expand failed");
+        setGraphError(err?.message || 'KnowGraph expand failed');
       } finally {
-        if (activeProjectLatestRef.current === projectId && isLatestRequestSequence(requestType, requestSeq)) {
+        if (
+          activeProjectLatestRef.current === projectId &&
+          isLatestRequestSequence(requestType, requestSeq)
+        ) {
           setExpandingNodeId(null);
         }
         if (kgExpandAbortRef.current === controller) {
           kgExpandAbortRef.current = null;
         }
         if (kgExpandProjectRef.current === projectId) {
-          kgExpandProjectRef.current = "";
+          kgExpandProjectRef.current = '';
         }
       }
     },
@@ -4096,130 +4866,148 @@ export default function AgentBuilder(): React.ReactElement {
     };
   }, []);
 
-  const loadProjectSubgraph = useCallback((opts?: { force?: boolean }) => {
-    const projectId = activeProject;
-    if (!projectId) {
-      resetKnowledgePanelState();
-      return;
-    }
-    const cacheKey = graphCacheKey;
-    const requestType = "kg-subgraph-load";
-    const requestSeq = nextRequestSequence(requestType);
-    setKnowledgeGraphStatus("Refreshing knowledge graph...");
-    setGraphResetToken((v) => v + 1);
-    clearKnowledgeWorkspaceSelection();
-    const cached = readCachedGraphPayload(cacheKey);
-    if (cached) {
-      // Show cached graph immediately while refresh decision is made.
-      setCypher(cached.cypher || "");
-      setGraphResult(Array.isArray(cached.graphResult) ? cached.graphResult : []);
-      setKnowGraphData({
-        nodes: Array.isArray(cached.knowGraphData?.nodes) ? cached.knowGraphData.nodes : [],
-        relationships: Array.isArray(cached.knowGraphData?.relationships) ? cached.knowGraphData.relationships : [],
-      });
-      graphHydrateKeyRef.current = cacheKey;
-    }
-    const shouldRefresh = opts?.force || !isCachedGraphFresh(cached, KG_CACHE_TTL_MS);
-    if (!shouldRefresh) {
-      setGraphLoading(false);
-      setGraphError(null);
-      setKnowledgeGraphStatus("Using cached knowledge graph.");
-      return;
-    }
-    kgLoadAbortRef.current?.abort();
-    const controller = new AbortController();
-    const graphRefreshStartedAt = Date.now();
-    kgLoadAbortRef.current = controller;
-    kgLoadProjectRef.current = projectId;
-    setGraphError(null);
-    void (async () => {
-      const knowHealthOk = await loadKnowGraphHealth({
-        signal: controller.signal,
-        requestType,
-        requestSeq,
-      });
-      await runGraphPresetQuery("SEED", {
-        limit: 220,
-        bypassCache: opts?.force,
-        signal: controller.signal,
-        requestType,
-        requestSeq,
-        allowPostFallback: false,
-      });
-      if (
-        controller.signal.aborted ||
-        !isLatestRequestSequence(requestType, requestSeq) ||
-        activeProjectLatestRef.current !== projectId
-      ) {
+  const loadProjectSubgraph = useCallback(
+    (opts?: { force?: boolean }) => {
+      const projectId = activeProject;
+      if (!projectId) {
+        resetKnowledgePanelState();
         return;
       }
-      if (!knowHealthOk) {
-        setKnowGraphData({ nodes: [], relationships: [] });
-        setKnowledgeGraphStatus("KnowGraph health check failed.");
-        return;
-      }
-      const loaded = await loadKnowGraphData({
-        bypassCache: opts?.force,
-        signal: controller.signal,
-        requestType,
-        requestSeq,
-      });
-      if (
-        !controller.signal.aborted &&
-        isLatestRequestSequence(requestType, requestSeq) &&
-        activeProjectLatestRef.current === projectId
-      ) {
-        setKnowledgeGraphStatus(loaded ? "Knowledge graph refresh succeeded." : "Knowledge graph refresh failed.");
-      }
-    })().finally(() => {
-      if (
-        !controller.signal.aborted &&
-        isLatestRequestSequence(requestType, requestSeq) &&
-        activeProjectLatestRef.current === projectId
-      ) {
-        const completedAt = Date.now();
-        emitWorkspaceTestingEvent({
-          event: "graph_refresh_completed",
-          durationMs: Math.max(0, completedAt - graphRefreshStartedAt),
-          metadata: {
-            graphType: "knowledge",
-            source: opts?.force ? "forced_refresh" : "refresh",
-          },
+      const cacheKey = graphCacheKey;
+      const requestType = 'kg-subgraph-load';
+      const requestSeq = nextRequestSequence(requestType);
+      setKnowledgeGraphStatus('Refreshing knowledge graph...');
+      setGraphResetToken((v) => v + 1);
+      clearKnowledgeWorkspaceSelection();
+      const cached = readCachedGraphPayload(cacheKey);
+      if (cached) {
+        // Show cached graph immediately while refresh decision is made.
+        setCypher(cached.cypher || '');
+        setGraphResult(
+          Array.isArray(cached.graphResult) ? cached.graphResult : [],
+        );
+        setKnowGraphData({
+          nodes: Array.isArray(cached.knowGraphData?.nodes)
+            ? cached.knowGraphData.nodes
+            : [],
+          relationships: Array.isArray(cached.knowGraphData?.relationships)
+            ? cached.knowGraphData.relationships
+            : [],
         });
-        recordPostResponseRefreshIfPending("knowledge_graph", completedAt);
+        graphHydrateKeyRef.current = cacheKey;
       }
-      if (kgLoadAbortRef.current === controller) {
-        kgLoadAbortRef.current = null;
+      const shouldRefresh =
+        opts?.force || !isCachedGraphFresh(cached, KG_CACHE_TTL_MS);
+      if (!shouldRefresh) {
+        setGraphLoading(false);
+        setGraphError(null);
+        setKnowledgeGraphStatus('Using cached knowledge graph.');
+        return;
       }
-      if (kgLoadProjectRef.current === projectId) {
-        kgLoadProjectRef.current = "";
-      }
-    });
-  }, [
-    activeProject,
-    clearKnowledgeWorkspaceSelection,
-    emitWorkspaceTestingEvent,
-    graphCacheKey,
-    loadKnowGraphData,
-    loadKnowGraphHealth,
-    recordPostResponseRefreshIfPending,
-    resetKnowledgePanelState,
-    runGraphPresetQuery,
-  ]);
+      kgLoadAbortRef.current?.abort();
+      const controller = new AbortController();
+      const graphRefreshStartedAt = Date.now();
+      kgLoadAbortRef.current = controller;
+      kgLoadProjectRef.current = projectId;
+      setGraphError(null);
+      void (async () => {
+        const knowHealthOk = await loadKnowGraphHealth({
+          signal: controller.signal,
+          requestType,
+          requestSeq,
+        });
+        await runGraphPresetQuery('SEED', {
+          limit: 220,
+          bypassCache: opts?.force,
+          signal: controller.signal,
+          requestType,
+          requestSeq,
+          allowPostFallback: false,
+        });
+        if (
+          controller.signal.aborted ||
+          !isLatestRequestSequence(requestType, requestSeq) ||
+          activeProjectLatestRef.current !== projectId
+        ) {
+          return;
+        }
+        if (!knowHealthOk) {
+          setKnowGraphData({ nodes: [], relationships: [] });
+          setKnowledgeGraphStatus('KnowGraph health check failed.');
+          return;
+        }
+        const loaded = await loadKnowGraphData({
+          bypassCache: opts?.force,
+          signal: controller.signal,
+          requestType,
+          requestSeq,
+        });
+        if (
+          !controller.signal.aborted &&
+          isLatestRequestSequence(requestType, requestSeq) &&
+          activeProjectLatestRef.current === projectId
+        ) {
+          setKnowledgeGraphStatus(
+            loaded
+              ? 'Knowledge graph refresh succeeded.'
+              : 'Knowledge graph refresh failed.',
+          );
+        }
+      })().finally(() => {
+        if (
+          !controller.signal.aborted &&
+          isLatestRequestSequence(requestType, requestSeq) &&
+          activeProjectLatestRef.current === projectId
+        ) {
+          const completedAt = Date.now();
+          emitWorkspaceTestingEvent({
+            event: 'graph_refresh_completed',
+            durationMs: Math.max(0, completedAt - graphRefreshStartedAt),
+            metadata: {
+              graphType: 'knowledge',
+              source: opts?.force ? 'forced_refresh' : 'refresh',
+            },
+          });
+          recordPostResponseRefreshIfPending('knowledge_graph', completedAt);
+        }
+        if (kgLoadAbortRef.current === controller) {
+          kgLoadAbortRef.current = null;
+        }
+        if (kgLoadProjectRef.current === projectId) {
+          kgLoadProjectRef.current = '';
+        }
+      });
+    },
+    [
+      activeProject,
+      clearKnowledgeWorkspaceSelection,
+      emitWorkspaceTestingEvent,
+      graphCacheKey,
+      loadKnowGraphData,
+      loadKnowGraphHealth,
+      recordPostResponseRefreshIfPending,
+      resetKnowledgePanelState,
+      runGraphPresetQuery,
+    ],
+  );
 
   useEffect(() => {
     if (!activeProject) {
-      graphHydrateKeyRef.current = "";
+      graphHydrateKeyRef.current = '';
       return;
     }
     if (graphHydrateKeyRef.current === graphCacheKey) return;
     const cached = readCachedGraphPayload(graphCacheKey);
     if (!cached) return;
-    setCypher(cached.cypher || "");
+    setCypher(cached.cypher || '');
     setGraphResult(Array.isArray(cached.graphResult) ? cached.graphResult : []);
     setKnowGraphData({
-      nodes: Array.isArray(cached.knowGraphData?.nodes) ? cached.knowGraphData.nodes : [],
-      relationships: Array.isArray(cached.knowGraphData?.relationships) ? cached.knowGraphData.relationships : [],
+      nodes: Array.isArray(cached.knowGraphData?.nodes)
+        ? cached.knowGraphData.nodes
+        : [],
+      relationships: Array.isArray(cached.knowGraphData?.relationships)
+        ? cached.knowGraphData.relationships
+        : [],
     });
     graphHydrateKeyRef.current = graphCacheKey;
   }, [activeProject, graphCacheKey]);
@@ -4247,9 +5035,9 @@ export default function AgentBuilder(): React.ReactElement {
   const expandGraphFromNode = useCallback(
     async (nodeId: string) => {
       const projectId = activeProject;
-      const trimmed = String(nodeId || "").trim();
+      const trimmed = String(nodeId || '').trim();
       if (!trimmed || !projectId) return;
-      const requestType = "kg-expand";
+      const requestType = 'kg-expand';
       const requestSeq = nextRequestSequence(requestType);
       const beforeCount = graphResultRef.current.length;
       kgExpandAbortRef.current?.abort();
@@ -4258,7 +5046,7 @@ export default function AgentBuilder(): React.ReactElement {
       kgExpandProjectRef.current = projectId;
       setExpandingNodeId(trimmed);
       try {
-        await runGraphPresetQuery("EXPAND", {
+        await runGraphPresetQuery('EXPAND', {
           merge: true,
           nodeId: trimmed,
           limit: 120,
@@ -4271,17 +5059,20 @@ export default function AgentBuilder(): React.ReactElement {
         setKnowledgeGraphStatus(
           delta === 0
             ? `No additional graph neighbors found for "${safeText(trimmed)}".`
-            : `Expanded "${safeText(trimmed)}": +${delta} graph row${delta === 1 ? "" : "s"}.`,
+            : `Expanded "${safeText(trimmed)}": +${delta} graph row${delta === 1 ? '' : 's'}.`,
         );
       } finally {
-        if (activeProjectLatestRef.current === projectId && isLatestRequestSequence(requestType, requestSeq)) {
+        if (
+          activeProjectLatestRef.current === projectId &&
+          isLatestRequestSequence(requestType, requestSeq)
+        ) {
           setExpandingNodeId(null);
         }
         if (kgExpandAbortRef.current === controller) {
           kgExpandAbortRef.current = null;
         }
         if (kgExpandProjectRef.current === projectId) {
-          kgExpandProjectRef.current = "";
+          kgExpandProjectRef.current = '';
         }
       }
     },
@@ -4291,9 +5082,9 @@ export default function AgentBuilder(): React.ReactElement {
   // Auto-load project subgraph when Knowledge tab opens or project changes
   useEffect(() => {
     const isKnowledgeSurfaceOpen =
-      workspaceView === "knowledge" || workspaceView === "codegraph";
+      workspaceView === 'knowledge' || workspaceView === 'codegraph';
     if (!isKnowledgeSurfaceOpen || !activeProject) {
-      kgAutoLoadKeyRef.current = "";
+      kgAutoLoadKeyRef.current = '';
       return;
     }
     const autoLoadKey = graphCacheScope;
@@ -4306,8 +5097,8 @@ export default function AgentBuilder(): React.ReactElement {
     const refresh = () => {
       loadGraphData();
     };
-    window.addEventListener("knowledge:refresh", refresh);
-    return () => window.removeEventListener("knowledge:refresh", refresh);
+    window.addEventListener('knowledge:refresh', refresh);
+    return () => window.removeEventListener('knowledge:refresh', refresh);
   }, [loadGraphData]);
 
   useEffect(() => {
@@ -4349,7 +5140,7 @@ export default function AgentBuilder(): React.ReactElement {
   // Poll for last ingest trace when Dashboard tab is active
   useEffect(() => {
     const projectId = activeProject;
-    if (tab !== "Dashboard" || !projectId) return;
+    if (tab !== 'Dashboard' || !projectId) return;
 
     if (dashboardPollTimerRef.current != null) {
       window.clearTimeout(dashboardPollTimerRef.current);
@@ -4364,7 +5155,12 @@ export default function AgentBuilder(): React.ReactElement {
     let cancelled = false;
     let failureCount = 0;
     const schedule = (baseMs: number) => {
-      if (cancelled || controller.signal.aborted || runId !== dashboardPollRunRef.current) return;
+      if (
+        cancelled ||
+        controller.signal.aborted ||
+        runId !== dashboardPollRunRef.current
+      )
+        return;
       if (dashboardPollTimerRef.current != null) {
         window.clearTimeout(dashboardPollTimerRef.current);
       }
@@ -4382,7 +5178,7 @@ export default function AgentBuilder(): React.ReactElement {
       ) {
         return;
       }
-      if (document.visibilityState !== "visible") {
+      if (document.visibilityState !== 'visible') {
         schedule(3_000);
         return;
       }
@@ -4390,7 +5186,7 @@ export default function AgentBuilder(): React.ReactElement {
         const endpoint = `${V2_PROJECTS_API}/${projectId}/kg/last-trace`;
         const payload = await guardedRequest({
           key: `dashboard:last-trace:${projectId}`,
-          method: "GET",
+          method: 'GET',
           ttlMs: 1_200,
           signal: controller.signal,
           fetcher: async (signal) => {
@@ -4422,7 +5218,7 @@ export default function AgentBuilder(): React.ReactElement {
         ) {
           return;
         }
-        console.error("[Dashboard] Failed to fetch ingest trace:", err);
+        console.error('[Dashboard] Failed to fetch ingest trace:', err);
         failureCount = Math.min(failureCount + 1, 4);
         schedule(3_000 * Math.pow(2, failureCount));
       }
@@ -4440,7 +5236,7 @@ export default function AgentBuilder(): React.ReactElement {
         dashboardPollAbortRef.current = null;
       }
       if (dashboardPollProjectRef.current === projectId) {
-        dashboardPollProjectRef.current = "";
+        dashboardPollProjectRef.current = '';
       }
     };
   }, [tab, activeProject]);
@@ -4450,7 +5246,7 @@ export default function AgentBuilder(): React.ReactElement {
     if (!trimmed) return;
     if (sending || deckRunBusy || cardRunBusy || deckLoadBusy) return;
     if (!canvasProjectId) return;
-    const interactionId = createWorkspaceTestingInteractionId("chat");
+    const interactionId = createWorkspaceTestingInteractionId('chat');
     const sendStartedAt = Date.now();
     const turnId = `assist:${Date.now()}:${uid()}`;
     chatLoopTelemetryRef.current = {
@@ -4460,24 +5256,30 @@ export default function AgentBuilder(): React.ReactElement {
       refreshRecorded: false,
     };
     emitWorkspaceTestingEvent({
-      event: "chat_send_started",
+      event: 'chat_send_started',
       interactionId,
-      surface: largeSurface === "chat" ? "chat" : normalizeWorkspaceSurface(tab),
-      surfaceRole: largeSurface === "chat" ? "large" : "companion",
+      surface:
+        largeSurface === 'chat' ? 'chat' : normalizeWorkspaceSurface(tab),
+      surfaceRole: largeSurface === 'chat' ? 'large' : 'companion',
       metadata: {
         messageLength: trimmed.length,
-        responseMode: "deck_runtime",
+        responseMode: 'deck_runtime',
         turnId,
+        workspaceView: activeDeckWorkspaceContext.workspaceView,
+        objectEditorOpen: activeDeckWorkspaceContext.objectEditor.open,
+        objectEditorCardId:
+          activeDeckWorkspaceContext.objectEditor.selectedCardId,
+        objectEditorTab: activeDeckWorkspaceContext.objectEditor.activeTab,
       },
     });
 
-    setMessages((m) => [...m, { role: "user", text: trimmed }]);
+    setMessages((m) => [...m, { role: 'user', text: trimmed }]);
     setSending(true);
     setDeckRunBusy(true);
     setLatestCardRun(null);
     setLatestDeckRun(null);
     setLiveDeckEvents([]);
-    setDeckStatusMessage("Running deck from chat...");
+    setDeckStatusMessage('Running deck from chat...');
     const requestProjectId = canvasProjectId;
     deckExecutionAbortRef.current?.abort();
     const controller = new AbortController();
@@ -4496,36 +5298,56 @@ export default function AgentBuilder(): React.ReactElement {
             },
             templates: INITIAL_AGENT_TEMPLATES,
             input: trimmed,
+            workspaceContext: activeDeckWorkspaceContext,
           },
           signal: controller.signal,
           onEvent: (event) => {
-            if (controller.signal.aborted || activeProjectLatestRef.current !== requestProjectId) return;
+            if (
+              controller.signal.aborted ||
+              activeProjectLatestRef.current !== requestProjectId
+            )
+              return;
             setLiveDeckEvents((current) => [...current, event]);
-            const contract = extractCodeGraphViewContractFromEvent(event, requestProjectId);
+            const contract = extractCodeGraphViewContractFromEvent(
+              event,
+              requestProjectId,
+            );
             if (contract) {
               applyCodeGraphViewContract(contract);
             }
           },
         });
-        if (controller.signal.aborted || activeProjectLatestRef.current !== requestProjectId) {
+        if (
+          controller.signal.aborted ||
+          activeProjectLatestRef.current !== requestProjectId
+        ) {
           return;
         }
-        if (!data?.run || typeof data.run !== "object") {
+        if (!data?.run || typeof data.run !== 'object') {
           const failure = data as { message?: unknown; error?: unknown };
-          throw new Error(safeText(failure.message || failure.error || "deck_run_failed"));
+          throw new Error(
+            safeText(failure.message || failure.error || 'deck_run_failed'),
+          );
         }
         const run = data.run as DeckRun;
-        const runDerivedCodeGraphContract = extractCodeGraphViewContractFromRun(run, requestProjectId);
+        const runDerivedCodeGraphContract = extractCodeGraphViewContractFromRun(
+          run,
+          requestProjectId,
+        );
         if (runDerivedCodeGraphContract) {
           applyCodeGraphViewContract(runDerivedCodeGraphContract);
         }
-        const assistantText = resolveDeckRunFinalText(run) || "No response returned.";
+        const assistantText =
+          resolveDeckRunFinalText(run) || 'No response returned.';
         setLatestDeckRun(run);
         setLiveDeckEvents([]);
-        setMessages((m) => [...m, { role: "assistant", text: assistantText }]);
-        setDeckStatusMessage("Deck run completed.");
+        setMessages((m) => [...m, { role: 'assistant', text: assistantText }]);
+        setDeckStatusMessage('Deck run completed.');
         const responseReceivedAt = Date.now();
-        const finalStep = [...(run.steps || [])].reverse().find((step) => step.status === "success") || null;
+        const finalStep =
+          [...(run.steps || [])]
+            .reverse()
+            .find((step) => step.status === 'success') || null;
         chatLoopTelemetryRef.current = {
           interactionId,
           sendStartedAt,
@@ -4533,13 +5355,14 @@ export default function AgentBuilder(): React.ReactElement {
           refreshRecorded: false,
         };
         emitWorkspaceTestingEvent({
-          event: "chat_response_received",
+          event: 'chat_response_received',
           interactionId,
           durationMs: Math.max(0, responseReceivedAt - sendStartedAt),
-          surface: largeSurface === "chat" ? "chat" : normalizeWorkspaceSurface(tab),
-          surfaceRole: largeSurface === "chat" ? "large" : "companion",
+          surface:
+            largeSurface === 'chat' ? 'chat' : normalizeWorkspaceSurface(tab),
+          surfaceRole: largeSurface === 'chat' ? 'large' : 'companion',
           metadata: {
-            responseMode: "deck_runtime",
+            responseMode: 'deck_runtime',
             turnId,
             provider: cleanOptionalText(finalStep?.effectiveAgent?.provider),
             model: cleanOptionalText(finalStep?.effectiveAgent?.model),
@@ -4554,12 +5377,15 @@ export default function AgentBuilder(): React.ReactElement {
           loadProjectSubgraph({ force: true });
         }, 1500);
       } catch (err: any) {
-        if (isAbortLikeError(err) || activeProjectLatestRef.current !== requestProjectId) {
+        if (
+          isAbortLikeError(err) ||
+          activeProjectLatestRef.current !== requestProjectId
+        ) {
           return;
         }
         const message = formatBuilderStatusMessage(
           err?.message,
-          "Deck chat run failed.",
+          'Deck chat run failed.',
         );
         setLiveDeckEvents([]);
         setLatestDeckRun(null);
@@ -4567,7 +5393,7 @@ export default function AgentBuilder(): React.ReactElement {
         setMessages((m) => [
           ...m,
           {
-            role: "assistant",
+            role: 'assistant',
             text: `Request failed: ${message}`,
           },
         ]);
@@ -4579,13 +5405,14 @@ export default function AgentBuilder(): React.ReactElement {
           refreshRecorded: true,
         };
         emitWorkspaceTestingEvent({
-          event: "chat_response_received",
+          event: 'chat_response_received',
           interactionId,
           durationMs: Math.max(0, responseReceivedAt - sendStartedAt),
-          surface: largeSurface === "chat" ? "chat" : normalizeWorkspaceSurface(tab),
-          surfaceRole: largeSurface === "chat" ? "large" : "companion",
+          surface:
+            largeSurface === 'chat' ? 'chat' : normalizeWorkspaceSurface(tab),
+          surfaceRole: largeSurface === 'chat' ? 'large' : 'companion',
           metadata: {
-            responseMode: "deck_runtime",
+            responseMode: 'deck_runtime',
             turnId,
             ok: false,
             error: message,
@@ -4612,7 +5439,7 @@ export default function AgentBuilder(): React.ReactElement {
   }, [knowGraphData]);
 
   const graphViz = useMemo(() => {
-    return knowledgeGraphKind === "thinkgraph" ? thinkGraphViz : knowGraphViz;
+    return knowledgeGraphKind === 'thinkgraph' ? thinkGraphViz : knowGraphViz;
   }, [knowledgeGraphKind, knowGraphViz, thinkGraphViz]);
 
   const graphVizFiltered = useMemo(() => {
@@ -4626,18 +5453,22 @@ export default function AgentBuilder(): React.ReactElement {
       const sourceNode = source ? nodeById.get(source) : undefined;
       const targetNode = target ? nodeById.get(target) : undefined;
       const score = Number(e.confidence ?? e.weight ?? 0);
-      if (graphMinConfidence > 0 && Number.isFinite(score) && score < graphMinConfidence) {
+      if (
+        graphMinConfidence > 0 &&
+        Number.isFinite(score) &&
+        score < graphMinConfidence
+      ) {
         return false;
       }
       if (sinceMs != null) {
         const edgeTs = parseTimestampMs(e.last_seen_ts);
-        if (typeof edgeTs === "number" && edgeTs < sinceMs) {
+        if (typeof edgeTs === 'number' && edgeTs < sinceMs) {
           return false;
         }
       }
-      if (graphTypeFilter !== "all") {
-        const sourceType = String(sourceNode?.type || "unknown").toLowerCase();
-        const targetType = String(targetNode?.type || "unknown").toLowerCase();
+      if (graphTypeFilter !== 'all') {
+        const sourceType = String(sourceNode?.type || 'unknown').toLowerCase();
+        const targetType = String(targetNode?.type || 'unknown').toLowerCase();
         if (sourceType !== graphTypeFilter && targetType !== graphTypeFilter) {
           return false;
         }
@@ -4655,11 +5486,11 @@ export default function AgentBuilder(): React.ReactElement {
     });
 
     graphViz.nodes.forEach((n) => {
-      const nodeType = String(n.type || "unknown").toLowerCase();
-      if (graphTypeFilter !== "all" && nodeType !== graphTypeFilter) return;
+      const nodeType = String(n.type || 'unknown').toLowerCase();
+      if (graphTypeFilter !== 'all' && nodeType !== graphTypeFilter) return;
       if (sinceMs != null) {
         const nodeTs = parseTimestampMs(n.last_seen_ts) ?? n.createdAtMs;
-        if (typeof nodeTs === "number" && nodeTs < sinceMs) return;
+        if (typeof nodeTs === 'number' && nodeTs < sinceMs) return;
       }
       keptNodeIds.add(n.id);
     });
@@ -4688,52 +5519,69 @@ export default function AgentBuilder(): React.ReactElement {
   }, [graphVizFiltered]);
   const thinkGraphViewData = useMemo<GraphViewData>(
     () => ({
-      kind: "thinkgraph",
+      kind: 'thinkgraph',
       nodes: thinkGraphViz.nodes.map((node) => ({
         id: String(node.id),
         label: safeText(node.label || node.id),
-        type: safeText(node.type || "entity"),
-        confidence: typeof node.confidence === "number" ? node.confidence : undefined,
+        type: safeText(node.type || 'entity'),
+        confidence:
+          typeof node.confidence === 'number' ? node.confidence : undefined,
       })),
       edges: thinkGraphViz.edges.map((edge, index) => ({
-        id: safeText(edge.id) || `think:${index}:${safeText(edge.a)}:${safeText(edge.b)}`,
+        id:
+          safeText(edge.id) ||
+          `think:${index}:${safeText(edge.a)}:${safeText(edge.b)}`,
         source: String(edge.source || edge.a),
         target: String(edge.target || edge.b),
-        type: safeText(edge.type || "related_to"),
-        weight: typeof edge.weight === "number" ? edge.weight : undefined,
+        type: safeText(edge.type || 'related_to'),
+        weight: typeof edge.weight === 'number' ? edge.weight : undefined,
       })),
     }),
     [thinkGraphViz.edges, thinkGraphViz.nodes],
   );
   const knowGraphViewData = useMemo<GraphViewData>(
     () => ({
-      kind: "knowgraph",
+      kind: 'knowgraph',
       nodes: knowGraphViz.nodes.map((node) => ({
         id: String(node.id),
         label: safeText(node.label || node.id),
-        type: safeText(node.type || "entity"),
-        confidence: typeof node.confidence === "number" ? node.confidence : undefined,
+        type: safeText(node.type || 'entity'),
+        confidence:
+          typeof node.confidence === 'number' ? node.confidence : undefined,
       })),
       edges: knowGraphViz.edges.map((edge, index) => ({
-        id: safeText(edge.id) || `know:${index}:${safeText(edge.a)}:${safeText(edge.b)}`,
+        id:
+          safeText(edge.id) ||
+          `know:${index}:${safeText(edge.a)}:${safeText(edge.b)}`,
         source: String(edge.source || edge.a),
         target: String(edge.target || edge.b),
-        type: safeText(edge.type || "related_to"),
-        weight: typeof edge.weight === "number" ? edge.weight : undefined,
+        type: safeText(edge.type || 'related_to'),
+        weight: typeof edge.weight === 'number' ? edge.weight : undefined,
       })),
     }),
     [knowGraphViz.edges, knowGraphViz.nodes],
   );
   const knowledgeEntityById = useMemo(
-    () => new Map(graphVizForNVL.entities.map((entity) => [entity.id, entity] as const)),
+    () =>
+      new Map(
+        graphVizForNVL.entities.map((entity) => [entity.id, entity] as const),
+      ),
     [graphVizForNVL.entities],
   );
   const knowledgeRelationshipById = useMemo(
-    () => new Map(graphVizForNVL.relationships.map((relationship) => [relationship.id, relationship] as const)),
+    () =>
+      new Map(
+        graphVizForNVL.relationships.map(
+          (relationship) => [relationship.id, relationship] as const,
+        ),
+      ),
     [graphVizForNVL.relationships],
   );
   const selectedKnowledgeEntity = useMemo(
-    () => (selectedKnowledgeEntityId ? knowledgeEntityById.get(selectedKnowledgeEntityId) || null : null),
+    () =>
+      selectedKnowledgeEntityId
+        ? knowledgeEntityById.get(selectedKnowledgeEntityId) || null
+        : null,
     [knowledgeEntityById, selectedKnowledgeEntityId],
   );
   const selectedKnowledgeRelationship = useMemo(
@@ -4743,21 +5591,45 @@ export default function AgentBuilder(): React.ReactElement {
         : null,
     [knowledgeRelationshipById, selectedKnowledgeRelationshipId],
   );
-  const hasKnowledgeWorkspaceSelection = Boolean(selectedKnowledgeEntity || selectedKnowledgeRelationship);
-  const objectDrawerRole = useMemo<"agent" | null>(() => {
-    if (workspaceView !== "canvas") return null;
-    if (selectedCard) return "agent";
+  const hasKnowledgeWorkspaceSelection = Boolean(
+    selectedKnowledgeEntity || selectedKnowledgeRelationship,
+  );
+  const objectDrawerRole = useMemo<'agent' | 'plan' | null>(() => {
+    if (
+      selectedCard &&
+      normalizeRuntimeType(selectedCard.runtimeType) === 'magentic_one'
+    ) {
+      return 'agent';
+    }
+    if (workspaceView === 'canvas' && selectedCard) return 'agent';
+    if (workspaceView === 'plan' && planMissionFocus) return 'plan';
     return null;
-  }, [selectedCard, workspaceView]);
+  }, [planMissionFocus, selectedCard, workspaceView]);
   const isObjectDrawerVisible = objectDrawerOpen && objectDrawerRole !== null;
-  const objectDrawerDefaultWidth = AGENT_EDITOR_DEFAULT_WIDTH;
-  const objectDrawerStorageKey = "liquidaity.drawer.object.agent.width";
+  const isAgentInspectMode = Boolean(
+    workspaceView === 'canvas' &&
+      objectDrawerOpen &&
+      selectedCardId &&
+      objectDrawerRole === 'agent',
+  );
+  const objectDrawerDefaultWidth =
+    objectDrawerRole === 'plan' ? 460 : AGENT_EDITOR_DEFAULT_WIDTH;
+  const objectDrawerStorageKey =
+    objectDrawerRole === 'plan'
+      ? 'liquidaity.drawer.object.plan.width'
+      : 'liquidaity.drawer.object.agent.width';
 
   const closeObjectDrawer = useCallback(() => {
     setObjectDrawerOpen(false);
     pendingPanelOpenTelemetryRef.current = null;
     setSelectedCardId(null);
     setSelectedEdgeId(null);
+    setPlanMissionFocus(null);
+    setBuilderCanvasFocusRequest((current) => ({
+      kind: 'deck',
+      cardId: null,
+      nonce: (current?.nonce || 0) + 1,
+    }));
   }, []);
 
   useEffect(() => {
@@ -4773,7 +5645,6 @@ export default function AgentBuilder(): React.ReactElement {
   }, [knowledgeRelationshipById, selectedKnowledgeRelationshipId]);
   void handleSelectKnowledgeEntity;
   void handleSelectKnowledgeRelationship;
-  void queueBuilderCanvasFocus;
   void graphError;
   void graphLoading;
   void knowledgeGraphStatus;
@@ -4784,52 +5655,54 @@ export default function AgentBuilder(): React.ReactElement {
 
   const handleCreateProject = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    
+
     const name = newProjectName.trim();
     if (!name) return;
-    
-    const code = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-    
-    const projectType = "assist";
-    
+
+    const code = name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+
+    const projectType = 'assist';
+
     try {
       const res = await fetch(V2_PROJECTS_API, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          name, 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
           code,
-          project_type: projectType
+          project_type: projectType,
         }),
       });
       if (!res.ok) {
-        const text = await res.text().catch(() => "");
+        const text = await res.text().catch(() => '');
         throw new Error(text || `HTTP ${res.status}`);
       }
       const data = await res.json().catch(() => null);
-      const newId = (data && data.id) || "";
-      
+      const newId = (data && data.id) || '';
+
       setShowCreateProjectForm(false);
-      setNewProjectName("");
-      
-      await refreshProjects("after-create", newId);
-      
+      setNewProjectName('');
+
+      await refreshProjects('after-create', newId);
+
       if (newId) {
         setActiveProjectWithUrl(newId);
       }
     } catch (err: any) {
-      console.error("Create project failed", err);
-      setProjectsError(`Failed to create project: ${err?.message || 'Unknown error'}`);
+      console.error('Create project failed', err);
+      setProjectsError(
+        `Failed to create project: ${err?.message || 'Unknown error'}`,
+      );
     }
   };
 
   const getSurfaceShellStyle = useCallback(
-    (
-      compact: boolean,
-      extra?: React.CSSProperties,
-    ): React.CSSProperties => {
+    (compact: boolean, extra?: React.CSSProperties): React.CSSProperties => {
       return {
-        height: "100%",
+        height: '100%',
         minHeight: compact ? 320 : undefined,
         ...extra,
       };
@@ -4843,30 +5716,32 @@ export default function AgentBuilder(): React.ReactElement {
       if (shellWidth <= 0) return Math.max(AGENTS_CHAT_MIN_WIDTH, nextWidth);
       const maxWidth = Math.max(
         AGENTS_CHAT_MIN_WIDTH,
-        shellWidth - reservedWidth
+        shellWidth - reservedWidth,
       );
       return clamp(nextWidth, AGENTS_CHAT_MIN_WIDTH, maxWidth);
     },
-    []
+    [],
   );
 
   useEffect(() => {
-    const reservedWidth = workspaceView === "canvas" ? AGENTS_CANVAS_MIN_WIDTH : WORKSPACE_COMPANION_MIN_WIDTH;
+    const reservedWidth =
+      workspaceView === 'canvas'
+        ? AGENTS_CANVAS_MIN_WIDTH
+        : WORKSPACE_COMPANION_MIN_WIDTH;
     const syncAgentsWidths = () => {
-      setChatPanelWidth((current) => clampAgentsChatWidth(current, reservedWidth));
+      setChatPanelWidth((current) =>
+        clampAgentsChatWidth(current, reservedWidth),
+      );
     };
     syncAgentsWidths();
-    window.addEventListener("resize", syncAgentsWidths);
-    return () => window.removeEventListener("resize", syncAgentsWidths);
-  }, [
-    clampAgentsChatWidth,
-    workspaceView,
-  ]);
+    window.addEventListener('resize', syncAgentsWidths);
+    return () => window.removeEventListener('resize', syncAgentsWidths);
+  }, [clampAgentsChatWidth, workspaceView]);
 
   const renderChatSurface = (
     projectId: string,
     compact = false,
-    surfaceRole: "large" | "companion" = compact ? "companion" : "large",
+    surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => (
     <div
       data-testid={`${surfaceRole}-surface-chat`}
@@ -4874,14 +5749,20 @@ export default function AgentBuilder(): React.ReactElement {
     >
       <div
         style={{
-          height: "100%",
+          height: '100%',
         }}
       >
         <BuilderChat
           messages={messages}
           onSend={handleSend}
           knowledgeProjectId={projectId}
-          disabled={sending || deckRunBusy || cardRunBusy || deckLoadBusy || !canvasProjectId}
+          disabled={
+            sending ||
+            deckRunBusy ||
+            cardRunBusy ||
+            deckLoadBusy ||
+            !canvasProjectId
+          }
           colors={C}
         />
       </div>
@@ -4890,7 +5771,7 @@ export default function AgentBuilder(): React.ReactElement {
 
   const renderCanvasSurface = (
     compact = false,
-    surfaceRole: "large" | "companion" = compact ? "companion" : "large",
+    surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => {
     return (
       <div
@@ -4899,7 +5780,7 @@ export default function AgentBuilder(): React.ReactElement {
       >
         <div
           style={{
-            height: "100%",
+            height: '100%',
           }}
         >
           <BuilderCanvas
@@ -4917,6 +5798,7 @@ export default function AgentBuilder(): React.ReactElement {
             onDeleteSelectedEdge={handleDeleteSelectedEdge}
             focusRequest={builderCanvasFocusRequest}
             miniMode={false}
+            inspectMode={isAgentInspectMode}
           />
         </div>
       </div>
@@ -4930,12 +5812,12 @@ export default function AgentBuilder(): React.ReactElement {
       return (
         <div
           data-testid="companion-surface-knowledge-panel"
-          style={{ height: "100%", overflow: "auto" }}
+          style={{ height: '100%', overflow: 'auto' }}
         >
           <div
             data-testid="knowledge-panel-entity"
             style={{
-              display: "grid",
+              display: 'grid',
               gap: 12,
               paddingRight: 4,
             }}
@@ -4943,17 +5825,25 @@ export default function AgentBuilder(): React.ReactElement {
             <div
               style={graphDrawerSectionStyle({
                 borderRadius: 10,
-                padding: "14px 16px",
+                padding: '14px 16px',
               })}
             >
-              <div style={{ color: GRAPH_THEME.drawer.inputText, fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>
+              <div
+                style={{
+                  color: GRAPH_THEME.drawer.inputText,
+                  fontSize: 20,
+                  fontWeight: 700,
+                  lineHeight: 1.2,
+                }}
+              >
                 {safeText(selectedKnowledgeEntity.label)}
               </div>
               <div
                 className="text-xs"
                 style={{ color: GRAPH_THEME.drawer.inputMuted, marginTop: 6 }}
               >
-                {safeText(selectedKnowledgeEntity.type)} • {safeText(selectedKnowledgeEntity.source)} •{" "}
+                {safeText(selectedKnowledgeEntity.type)} •{' '}
+                {safeText(selectedKnowledgeEntity.source)} •{' '}
                 {formatKnowledgeScope(selectedKnowledgeEntity.scope)}
               </div>
             </div>
@@ -4961,7 +5851,7 @@ export default function AgentBuilder(): React.ReactElement {
             <div
               style={graphDrawerSectionStyle({
                 borderRadius: 10,
-                padding: "12px 14px",
+                padding: '12px 14px',
                 color: GRAPH_THEME.drawer.inputMuted,
                 lineHeight: 1.6,
               })}
@@ -4969,7 +5859,7 @@ export default function AgentBuilder(): React.ReactElement {
               Degree {selectedKnowledgeEntity.degree || 0}
               {selectedKnowledgeEntity.last_seen_ts
                 ? ` • ${safeText(selectedKnowledgeEntity.last_seen_ts)}`
-                : ""}
+                : ''}
             </div>
           </div>
         </div>
@@ -4978,19 +5868,21 @@ export default function AgentBuilder(): React.ReactElement {
 
     if (!selectedKnowledgeRelationship) return null;
     const fromLabel =
-      knowledgeEntityById.get(selectedKnowledgeRelationship.from)?.label || selectedKnowledgeRelationship.from;
+      knowledgeEntityById.get(selectedKnowledgeRelationship.from)?.label ||
+      selectedKnowledgeRelationship.from;
     const toLabel =
-      knowledgeEntityById.get(selectedKnowledgeRelationship.to)?.label || selectedKnowledgeRelationship.to;
+      knowledgeEntityById.get(selectedKnowledgeRelationship.to)?.label ||
+      selectedKnowledgeRelationship.to;
 
     return (
       <div
         data-testid="companion-surface-knowledge-panel"
-        style={{ height: "100%", overflow: "auto" }}
+        style={{ height: '100%', overflow: 'auto' }}
       >
         <div
           data-testid="knowledge-panel-relationship"
           style={{
-            display: "grid",
+            display: 'grid',
             gap: 12,
             paddingRight: 4,
           }}
@@ -4998,10 +5890,17 @@ export default function AgentBuilder(): React.ReactElement {
           <div
             style={graphDrawerSectionStyle({
               borderRadius: 10,
-              padding: "14px 16px",
+              padding: '14px 16px',
             })}
           >
-            <div style={{ color: GRAPH_THEME.drawer.inputText, fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>
+            <div
+              style={{
+                color: GRAPH_THEME.drawer.inputText,
+                fontSize: 20,
+                fontWeight: 700,
+                lineHeight: 1.2,
+              }}
+            >
               {safeText(selectedKnowledgeRelationship.type)}
             </div>
             <div
@@ -5014,30 +5913,31 @@ export default function AgentBuilder(): React.ReactElement {
               className="text-xs"
               style={{ color: GRAPH_THEME.drawer.inputMuted, marginTop: 6 }}
             >
-              {safeText(selectedKnowledgeRelationship.source)} •{" "}
+              {safeText(selectedKnowledgeRelationship.source)} •{' '}
               {formatKnowledgeScope(selectedKnowledgeRelationship.scope)}
             </div>
           </div>
 
-          {(selectedKnowledgeRelationship.evidence_doc_id || selectedKnowledgeRelationship.last_seen_ts) && (
+          {(selectedKnowledgeRelationship.evidence_doc_id ||
+            selectedKnowledgeRelationship.last_seen_ts) && (
             <div
               style={graphDrawerSectionStyle({
                 borderRadius: 10,
-                padding: "12px 14px",
+                padding: '12px 14px',
                 color: GRAPH_THEME.drawer.inputMuted,
                 lineHeight: 1.6,
               })}
             >
               {selectedKnowledgeRelationship.evidence_doc_id
                 ? `Doc ${safeText(selectedKnowledgeRelationship.evidence_doc_id)}`
-                : ""}
+                : ''}
               {selectedKnowledgeRelationship.evidence_doc_id &&
               selectedKnowledgeRelationship.last_seen_ts
-                ? " • "
-                : ""}
+                ? ' • '
+                : ''}
               {selectedKnowledgeRelationship.last_seen_ts
                 ? safeText(selectedKnowledgeRelationship.last_seen_ts)
-                : ""}
+                : ''}
             </div>
           )}
 
@@ -5045,10 +5945,10 @@ export default function AgentBuilder(): React.ReactElement {
             <div
               style={graphDrawerSectionStyle({
                 borderRadius: 10,
-                padding: "12px 14px",
+                padding: '12px 14px',
                 color: GRAPH_THEME.drawer.inputText,
                 lineHeight: 1.6,
-                whiteSpace: "pre-wrap",
+                whiteSpace: 'pre-wrap',
               })}
             >
               {safeText(selectedKnowledgeRelationship.evidence_snippet)}
@@ -5061,23 +5961,32 @@ export default function AgentBuilder(): React.ReactElement {
 
   const renderKnowledgeGraphSurface = (
     minHeight = 280,
-    surfaceRole: "large" | "companion" = minHeight > 320 ? "large" : "companion",
+    surfaceRole: 'large' | 'companion' = minHeight > 320
+      ? 'large'
+      : 'companion',
   ) => (
     <div
       data-testid={`${surfaceRole}-surface-knowledge`}
       style={getSurfaceShellStyle(minHeight <= 320)}
     >
-      <div className="h-full flex flex-col" style={{ position: "relative" }}>
-        <div style={{ display: "flex", justifyContent: "center", flex: 1, minHeight }}>
+      <div className="h-full flex flex-col" style={{ position: 'relative' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'center',
+            flex: 1,
+            minHeight,
+          }}
+        >
           <Suspense
             fallback={
               <div
                 style={graphDrawerSectionStyle({
-                  width: "100%",
+                  width: '100%',
                   minHeight,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                   borderRadius: 8,
                   color: GRAPH_THEME.drawer.inputMuted,
                 })}
@@ -5086,74 +5995,109 @@ export default function AgentBuilder(): React.ReactElement {
               </div>
             }
           >
-            <KnowledgeGraphFramework
-              kind={knowledgeGraphKind}
-              onKindChange={(nextKind) => {
-                setKnowledgeGraphKind(nextKind);
-                setGraphViewContract((prev) => ({
-                  graphKind: nextKind,
-                  projectId:
-                    nextKind === "codegraph"
-                      ? CODEBASE_MEMORY_PROJECT_NAME
-                      : activeProject ?? null,
-                  nodeLabelAllowlist: undefined,
-                  edgeTypeAllowlist: undefined,
-                  showLabels: prev?.showLabels ?? true,
-                  maxNodes: undefined,
-                  focusNodeIds: undefined,
-                  focusPaths: undefined,
-                  focusSymbols: undefined,
-                  cameraMode: prev?.cameraMode ?? "overview",
-                  animationMode: prev?.animationMode ?? "calm",
-                  narrativeIntent: prev?.narrativeIntent ?? null,
-                }));
-              }}
-              contract={
-                graphViewContract ?? {
-                  graphKind: knowledgeGraphKind,
-                  projectId:
-                    knowledgeGraphKind === "codegraph"
-                      ? CODEBASE_MEMORY_PROJECT_NAME
-                      : activeProject ?? null,
-                  showLabels: true,
-                  cameraMode: "overview",
-                  animationMode: "calm",
-                  narrativeIntent: null,
+            {knowledgeGraphKind === 'codegraph' ? (
+              <CodeGraphSurface
+                projectId={CODEBASE_MEMORY_PROJECT_NAME}
+                viewContract={{
+                  projectId: CODEBASE_MEMORY_PROJECT_NAME,
+                  nodeLabelAllowlist: graphViewContract?.nodeLabelAllowlist,
+                  edgeTypeAllowlist: graphViewContract?.edgeTypeAllowlist,
+                  showLabels: graphViewContract?.showLabels,
+                  maxNodes: graphViewContract?.maxNodes,
+                  focusPaths: graphViewContract?.focusPaths,
+                  focusSymbols: graphViewContract?.focusSymbols,
+                }}
+                onViewContractChange={(nextContract) =>
+                  setGraphViewContract((prev) => ({
+                    graphKind: 'codegraph',
+                    projectId: CODEBASE_MEMORY_PROJECT_NAME,
+                    nodeLabelAllowlist: nextContract.nodeLabelAllowlist,
+                    edgeTypeAllowlist: nextContract.edgeTypeAllowlist,
+                    showLabels:
+                      typeof nextContract.showLabels === 'boolean'
+                        ? nextContract.showLabels
+                        : (prev?.showLabels ?? true),
+                    maxNodes: nextContract.maxNodes ?? prev?.maxNodes,
+                    focusNodeIds: prev?.focusNodeIds,
+                    focusPaths: nextContract.focusPaths ?? prev?.focusPaths,
+                    focusSymbols:
+                      nextContract.focusSymbols ?? prev?.focusSymbols,
+                    cameraMode: prev?.cameraMode ?? 'overview',
+                    animationMode: prev?.animationMode ?? 'calm',
+                    narrativeIntent: prev?.narrativeIntent ?? null,
+                  }))
                 }
-              }
-              onContractChange={(nextContract) => setGraphViewContract(nextContract)}
-              thinkGraphData={thinkGraphViewData}
-              knowGraphData={knowGraphViewData}
-              codeGraphProjectName={CODEBASE_MEMORY_PROJECT_NAME}
-              minHeight={minHeight}
-            />
+              />
+            ) : (
+              <KnowledgeGraphFramework
+                kind={knowledgeGraphKind}
+                onKindChange={(nextKind) => {
+                  setKnowledgeGraphKind(nextKind);
+                  setGraphViewContract((prev) => ({
+                    graphKind: nextKind,
+                    projectId:
+                      nextKind === 'codegraph'
+                        ? CODEBASE_MEMORY_PROJECT_NAME
+                        : (activeProject ?? null),
+                    nodeLabelAllowlist: undefined,
+                    edgeTypeAllowlist: undefined,
+                    showLabels: prev?.showLabels ?? true,
+                    maxNodes: undefined,
+                    focusNodeIds: undefined,
+                    focusPaths: undefined,
+                    focusSymbols: undefined,
+                    cameraMode: prev?.cameraMode ?? 'overview',
+                    animationMode: prev?.animationMode ?? 'calm',
+                    narrativeIntent: prev?.narrativeIntent ?? null,
+                  }));
+                }}
+                contract={
+                  graphViewContract ?? {
+                    graphKind: knowledgeGraphKind,
+                    projectId:
+                      knowledgeGraphKind === 'codegraph'
+                        ? CODEBASE_MEMORY_PROJECT_NAME
+                        : (activeProject ?? null),
+                    showLabels: true,
+                    cameraMode: 'overview',
+                    animationMode: 'calm',
+                    narrativeIntent: null,
+                  }
+                }
+                onContractChange={(nextContract) =>
+                  setGraphViewContract(nextContract)
+                }
+                thinkGraphData={thinkGraphViewData}
+                knowGraphData={knowGraphViewData}
+                codeGraphProjectName={CODEBASE_MEMORY_PROJECT_NAME}
+                minHeight={minHeight}
+              />
+            )}
           </Suspense>
         </div>
       </div>
     </div>
   );
 
-  const renderPlanSurface = (
-    surfaceRole: "large" | "companion" = "large",
-  ) => (
+  const renderPlanSurface = (surfaceRole: 'large' | 'companion' = 'large') => (
     <div
       data-testid={`${surfaceRole}-surface-plan`}
-      style={getSurfaceShellStyle(surfaceRole === "companion", {
-        overflow: surfaceRole === "companion" ? "hidden" : "auto",
+      style={getSurfaceShellStyle(surfaceRole === 'companion', {
+        overflow: surfaceRole === 'companion' ? 'hidden' : 'auto',
       })}
     >
       <div
-        className="space-y-3 h-full"
+        className="h-full min-h-0"
         style={{
-          overflow: surfaceRole === "companion" ? "hidden" : "auto",
-          paddingRight: surfaceRole === "companion" ? 0 : 4,
+          overflow: surfaceRole === 'companion' ? 'hidden' : 'auto',
+          paddingRight: surfaceRole === 'companion' ? 0 : 4,
         }}
       >
         {!activeProject ? (
           <div
             style={graphDrawerSectionStyle({
-              padding: "16px",
-              borderStyle: "dashed",
+              padding: '16px',
+              borderStyle: 'dashed',
               color: GRAPH_THEME.drawer.inputMuted,
             })}
           >
@@ -5162,92 +6106,67 @@ export default function AgentBuilder(): React.ReactElement {
         ) : !stateLoaded ? (
           <div
             style={graphDrawerSectionStyle({
-              padding: "16px",
+              padding: '16px',
               color: GRAPH_THEME.drawer.inputMuted,
             })}
           >
             Loading plan...
           </div>
         ) : (
-          <>
-            <PlanWikiSurface
+          <div
+            className="h-full min-h-0"
+            style={{
+              height: '100%',
+              padding: 0,
+              borderRadius: 0,
+              border: 'none',
+              background: 'transparent',
+              boxShadow: 'none',
+            }}
+          >
+            <PlanMissionFlow
               structuredPlan={structuredAssistPlan}
-              colors={C}
-              document={
-                structuredAssistPlan.hasExplicitPlanDocument ? (
-                  <Suspense
-                    fallback={
-                      <div style={{ color: C.text, whiteSpace: "pre-wrap", minHeight: 120 }}>
-                        {safeText(structuredAssistPlan.explicitPlanText).trim() || "No plan notes yet."}
-                      </div>
-                    }
-                  >
-                    <PlanWikiLexicalView
-                      source={planSource}
-                      fallbackText={safeText(structuredAssistPlan.explicitPlanText)}
-                      textColor={C.text}
-                      mutedColor={C.neutral}
-                      emptyText="No plan text yet."
-                    />
-                  </Suspense>
-                ) : null
-              }
+              compact={surfaceRole === 'companion'}
+              fullHeight
+              nodeOverrides={planNodeDrafts}
+              selectedNodeId={planMissionFocus?.nodeId || null}
+              drawerLinked={Boolean(
+                surfaceRole === 'companion' &&
+                  workspaceView === 'plan' &&
+                  objectDrawerOpen &&
+                  planMissionFocus?.nodeId,
+              )}
+              editMode={Boolean(
+                workspaceView === 'plan' &&
+                objectDrawerOpen &&
+                planMissionFocus?.nodeId,
+              )}
+              onFocusChange={(focus) => {
+                setPlanMissionFocus(focus);
+                if (focus) {
+                  setSelectedCardId(null);
+                  setSelectedEdgeId(null);
+                  setObjectDrawerOpen(true);
+                  return;
+                }
+                if (workspaceView === 'plan') {
+                  setObjectDrawerOpen(false);
+                }
+              }}
             />
-
-            {(deckRunBusy || cardRunBusy || runtimeEvents.length > 0) && (
-              <Section title="Live Reasoning">
-                {runtimeVisualState.reasoningLines.length > 0 ? (
-                  <div style={{ display: "grid", gap: 8, color: C.text }}>
-                    {runtimeVisualState.reasoningLines.map((line, index) => (
-                      <div key={`reasoning-${index}`} style={{ whiteSpace: "pre-wrap" }}>
-                        {line}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ color: C.neutral }}>
-                    {deckRunBusy || cardRunBusy ? "Waiting: runtime reasoning is still in progress." : "No runtime reasoning captured."}
-                  </div>
-                )}
-              </Section>
-            )}
-
-            {(deckRunBusy || cardRunBusy || runtimeEvents.length > 0) && (
-              <Section title="Live Team Stream">
-                {runtimeVisualState.teamLines.length > 0 ? (
-                  <div style={{ display: "grid", gap: 8, color: C.text }}>
-                    {runtimeVisualState.teamLines.map((line, index) => (
-                      <div key={`team-${index}`} style={{ whiteSpace: "pre-wrap" }}>
-                        {line}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ color: C.neutral }}>
-                    {deckRunBusy || cardRunBusy ? "Waiting: runtime updates are still in progress." : "No runtime team messages captured."}
-                  </div>
-                )}
-              </Section>
-            )}
-
-            {(deckRunBusy || cardRunBusy || runtimeEvents.length > 0) && (
-              <Section title="Live Reports">
-                {runtimeVisualState.reportLines.length > 0 ? (
-                  <div style={{ display: "grid", gap: 8, color: C.text }}>
-                    {runtimeVisualState.reportLines.map((line, index) => (
-                      <div key={`report-${index}`} style={{ whiteSpace: "pre-wrap" }}>
-                        {line}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ color: C.neutral }}>
-                    {deckRunBusy || cardRunBusy ? "Waiting: final runtime results are still in progress." : "No runtime reports captured."}
-                  </div>
-                )}
-              </Section>
-            )}
-          </>
+            {planMissionFocus ? (
+              <div
+                className="text-xs"
+                style={{
+                  color: GRAPH_THEME.drawer.inputMuted,
+                  marginTop: 8,
+                }}
+              >
+                Focus: {safeText(planMissionFocus.nodeKind)} -{' '}
+                {safeText(planMissionFocus.nodeLabel)}
+              </div>
+            ) : null}
+          </div>
         )}
       </div>
     </div>
@@ -5259,40 +6178,58 @@ export default function AgentBuilder(): React.ReactElement {
     setSelectedKnowledgeEntityId(null);
     setSelectedKnowledgeRelationshipId(null);
     setOpenDrawer(null);
-    setWorkspaceView("chat");
+    setWorkspaceView('chat');
   }, [closeObjectDrawer]);
 
   const showCanvasWorkspace = useCallback(() => {
     closeObjectDrawer();
-    setWorkspaceView("canvas");
+    setWorkspaceView('canvas');
   }, [closeObjectDrawer]);
 
   const showKnowledgeWorkspace = useCallback(() => {
     closeObjectDrawer();
-    setWorkspaceView("knowledge");
-    setKnowledgeGraphKind("knowgraph");
+    setWorkspaceView('knowledge');
+    setKnowledgeGraphKind('knowgraph');
   }, [closeObjectDrawer]);
 
   const showPlanWorkspace = useCallback(() => {
     closeObjectDrawer();
-    setWorkspaceView("plan");
+    setWorkspaceView('plan');
   }, [closeObjectDrawer]);
 
-  const applyCodeGraphViewContract = useCallback((contract: GraphViewContract | null) => {
-    if (!contract) return;
-    const setter = (window as any).__LIQUIDAITY_SET_CODEGRAPH_VIEW_CONTRACT__;
-    if (typeof setter === "function") {
-      setter(contract);
-      return;
-    }
-    setKnowledgeGraphKind(contract.graphKind || "codegraph");
-    setGraphViewContract(contract);
-  }, []);
+  const openMagenticWallInspect = useCallback(() => {
+    if (!magenticWallCard) return;
+    setSelectedEdgeId(null);
+    setPlanMissionFocus(null);
+    setSelectedCardId(magenticWallCard.id);
+    setObjectDrawerOpen(true);
+    setBuilderCanvasFocusRequest((current) => ({
+      kind: 'deck',
+      cardId: null,
+      nonce: (current?.nonce || 0) + 1,
+    }));
+  }, [magenticWallCard]);
+
+  const applyCodeGraphViewContract = useCallback(
+    (contract: GraphViewContract | null) => {
+      if (!contract) return;
+      const setter = (window as any).__LIQUIDAITY_SET_CODEGRAPH_VIEW_CONTRACT__;
+      if (typeof setter === 'function') {
+        setter(contract);
+        return;
+      }
+      setKnowledgeGraphKind(contract.graphKind || 'codegraph');
+      setGraphViewContract(contract);
+    },
+    [],
+  );
 
   useEffect(() => {
-    (window as any).__LIQUIDAITY_SET_CODEGRAPH_VIEW_CONTRACT__ = (contract: GraphViewContract | null) => {
+    (window as any).__LIQUIDAITY_SET_CODEGRAPH_VIEW_CONTRACT__ = (
+      contract: GraphViewContract | null,
+    ) => {
       if (!contract) return;
-      setKnowledgeGraphKind(contract.graphKind || "codegraph");
+      setKnowledgeGraphKind(contract.graphKind || 'codegraph');
       setGraphViewContract(contract);
     };
     return () => {
@@ -5300,12 +6237,9 @@ export default function AgentBuilder(): React.ReactElement {
     };
   }, [applyCodeGraphViewContract]);
 
-  const handleCompanionTabClick = useCallback(
-    (nextTab: string) => {
-      setTab(nextTab);
-    },
-    [],
-  );
+  const handleCompanionTabClick = useCallback((nextTab: string) => {
+    setTab(nextTab);
+  }, []);
 
   return (
     <div
@@ -5331,14 +6265,14 @@ export default function AgentBuilder(): React.ReactElement {
           <div className="p-2" aria-hidden>
             <div
               style={{
-                position: "relative",
+                position: 'relative',
                 width: 28,
                 height: 28,
-                borderRadius: "50%",
-                overflow: "visible",
-                animation: "builder-orb-float 21s ease-in-out infinite",
+                borderRadius: '50%',
+                overflow: 'visible',
+                animation: 'builder-orb-float 21s ease-in-out infinite',
                 boxShadow:
-                  "inset 0 1px 1px rgba(255,255,255,0.12), 0 0 14px rgba(79,162,173,0.14), 0 0 26px rgba(125,105,180,0.08)",
+                  'inset 0 1px 1px rgba(255,255,255,0.12), 0 0 14px rgba(79,162,173,0.14), 0 0 26px rgba(125,105,180,0.08)',
               }}
             >
               <BuilderRailMoonOrb phase01={moonPhase01} />
@@ -5350,7 +6284,7 @@ export default function AgentBuilder(): React.ReactElement {
             data-testid="rail-home-button"
             onClick={showHomeChat}
             className="p-2 rounded"
-            style={{ color: workspaceView === "chat" ? C.primary : C.text }}
+            style={{ color: workspaceView === 'chat' ? C.primary : C.text }}
           >
             <Icon d="M4 7l8-4 8 4v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
           </button>
@@ -5359,14 +6293,14 @@ export default function AgentBuilder(): React.ReactElement {
             aria-label="Agents"
             data-testid="rail-plus-button"
             onClick={() => {
-              if (workspaceView === "canvas") {
-                handleQuickAddDeckNode("assist");
+              if (workspaceView === 'canvas') {
+                handleQuickAddDeckNode('assist');
               } else {
                 showCanvasWorkspace();
               }
             }}
             className="p-2 rounded"
-            style={{ color: workspaceView === "canvas" ? C.primary : C.text }}
+            style={{ color: workspaceView === 'canvas' ? C.primary : C.text }}
           >
             <Icon d="M3 12h18M12 3v18" />
           </button>
@@ -5376,7 +6310,9 @@ export default function AgentBuilder(): React.ReactElement {
             data-testid="rail-burst-button"
             onClick={showKnowledgeWorkspace}
             className="p-2 rounded"
-            style={{ color: workspaceView === "knowledge" ? C.primary : C.text }}
+            style={{
+              color: workspaceView === 'knowledge' ? C.primary : C.text,
+            }}
           >
             <Icon d="M12 1v3M12 20v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M1 12h3M20 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" />
           </button>
@@ -5387,7 +6323,10 @@ export default function AgentBuilder(): React.ReactElement {
             data-testid="rail-orange-button"
             onClick={showPlanWorkspace}
             className="p-2 rounded mb-1"
-            style={{ color: workspaceView === "plan" ? "#ffb86b" : C.text }}
+            style={{
+              color:
+                workspaceView === 'plan' ? GRAPH_THEME.accent.solar : C.text,
+            }}
           >
             <Icon d="M3 12l2-2 4 4L21 4" />
           </button>
@@ -5395,11 +6334,11 @@ export default function AgentBuilder(): React.ReactElement {
             title="Menu"
             aria-label="Menu"
             data-testid="rail-three-lines-button"
-            onClick={() => setOpenDrawer("navigation")}
+            onClick={() => setOpenDrawer('navigation')}
             className="p-2 rounded"
             style={{
               color: C.text,
-              background: "transparent",
+              background: 'transparent',
             }}
           >
             <Icon d="M4 7h16M4 12h16M4 17h16" />
@@ -5409,30 +6348,30 @@ export default function AgentBuilder(): React.ReactElement {
         <div
           ref={workspaceShellRef}
           className="flex flex-1 overflow-hidden min-h-0"
-          style={{ position: "relative" }}
+          style={{ position: 'relative' }}
         >
           <div
             data-testid="workspace-large-region"
             data-surface={largeSurface}
             className="h-full min-w-0 relative"
             style={{
-              ...(workspaceView === "chat"
+              ...(workspaceView === 'chat'
                 ? {
-                    width: "100%",
+                    width: '100%',
                     minWidth: 0,
-                    flex: "1 1 auto",
+                    flex: '1 1 auto',
                   }
                 : {
                     width: chatPanelWidth,
                     minWidth: AGENTS_CHAT_MIN_WIDTH,
-                    flex: "0 0 auto",
+                    flex: '0 0 auto',
                   }),
             }}
           >
-            {renderChatSurface(activeProject, false, "large")}
+            {renderChatSurface(activeProject, false, 'large')}
           </div>
 
-          {workspaceView !== "chat" ? (
+          {workspaceView !== 'chat' ? (
             <div
               data-testid="workspace-chat-resize-handle"
               aria-label="Resize chat panel"
@@ -5444,47 +6383,119 @@ export default function AgentBuilder(): React.ReactElement {
                 const sx = e.clientX;
                 const sw = chatPanelWidth;
                 const reservedWidth =
-                  workspaceView === "canvas" ? AGENTS_CANVAS_MIN_WIDTH : WORKSPACE_COMPANION_MIN_WIDTH;
+                  workspaceView === 'canvas'
+                    ? AGENTS_CANVAS_MIN_WIDTH
+                    : WORKSPACE_COMPANION_MIN_WIDTH;
                 const mv = (ev: MouseEvent) => {
                   const d = ev.clientX - sx;
-                  setChatPanelWidth(clampAgentsChatWidth(sw + d, reservedWidth));
+                  setChatPanelWidth(
+                    clampAgentsChatWidth(sw + d, reservedWidth),
+                  );
                 };
                 const up = () => {
                   setChatResizeHandleActive(false);
-                  window.removeEventListener("mousemove", mv);
-                  window.removeEventListener("mouseup", up);
+                  window.removeEventListener('mousemove', mv);
+                  window.removeEventListener('mouseup', up);
                 };
-                window.addEventListener("mousemove", mv);
-                window.addEventListener("mouseup", up);
+                window.addEventListener('mousemove', mv);
+                window.addEventListener('mouseup', up);
               }}
               style={{
                 width: 10,
-                height: "100%",
-                cursor: "col-resize",
+                height: '100%',
+                cursor: 'col-resize',
                 flexShrink: 0,
-                borderLeft: `1px solid ${chatResizeHandleActive ? "rgba(79,162,173,0.34)" : "rgba(79,162,173,0.18)"}`,
-                borderRight: `1px solid ${chatResizeHandleActive ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.06)"}`,
+                position: 'relative',
+                overflow: 'hidden',
+                borderLeft: `1px solid ${chatResizeHandleActive ? 'rgba(79,162,173,0.34)' : 'rgba(79,162,173,0.18)'}`,
+                borderRight: `1px solid ${chatResizeHandleActive ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.06)'}`,
                 boxShadow: chatResizeHandleActive
-                  ? "inset 0 0 0 1px rgba(79,162,173,0.16), 0 0 10px rgba(79,162,173,0.12)"
-                  : "none",
+                  ? 'inset 0 0 0 1px rgba(79,162,173,0.16), 0 0 10px rgba(79,162,173,0.12)'
+                  : 'none',
                 background:
-                  "linear-gradient(90deg, rgba(79,162,173,0.05), rgba(255,255,255,0.09), rgba(79,162,173,0.05))",
-                transition: "border-color 120ms ease, box-shadow 120ms ease, background 120ms ease",
+                  'linear-gradient(90deg, rgba(79,162,173,0.05), rgba(255,255,255,0.09), rgba(79,162,173,0.05))',
+                transition:
+                  'border-color 120ms ease, box-shadow 120ms ease, background 120ms ease',
               }}
-            />
+            >
+              {workspaceView === 'canvas' && magenticWallCard ? (
+                <button
+                  type="button"
+                  aria-label="Inspect Magentic-One orchestration"
+                  data-testid="magentic-wall-notch"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openMagenticWallInspect();
+                  }}
+                  style={{
+                    position: 'absolute',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    top: 62,
+                    width: 9,
+                    height: 22,
+                    borderRadius: 999,
+                    border:
+                      selectedCardId === magenticWallCard.id && objectDrawerOpen
+                        ? '1px solid rgba(55,173,170,0.52)'
+                        : '1px solid rgba(55,173,170,0.24)',
+                    background:
+                      'linear-gradient(180deg, rgba(17,22,29,0.7), rgba(11,14,18,0.84))',
+                    boxShadow:
+                      selectedCardId === magenticWallCard.id && objectDrawerOpen
+                        ? 'inset 0 1px 0 rgba(255,255,255,0.05), 0 0 8px rgba(55,173,170,0.2)'
+                        : 'inset 0 1px 0 rgba(255,255,255,0.02)',
+                    color:
+                      selectedCardId === magenticWallCard.id && objectDrawerOpen
+                        ? 'rgba(154,208,207,0.92)'
+                        : 'rgba(154,208,207,0.72)',
+                    opacity:
+                      selectedCardId === magenticWallCard.id && objectDrawerOpen
+                        ? 0.92
+                        : chatResizeHandleActive
+                          ? 0.78
+                          : 0.56,
+                    cursor: 'pointer',
+                    zIndex: 4,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    transition:
+                      'opacity 140ms ease, color 140ms ease, border-color 140ms ease, box-shadow 140ms ease',
+                  }}
+                  title="Magentic-One orchestration"
+                >
+                  <svg width="7" height="7" viewBox="0 0 16 16" aria-hidden="true">
+                    <path
+                      d="M3 11V5l5-2 5 2v6l-5 2-5-2zM8 6.3v5.4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              ) : null}
+            </div>
           ) : null}
 
-          {workspaceView === "canvas" ? (
+          {workspaceView === 'canvas' ? (
             <div
               data-testid="workspace-canvas-region"
               className="h-full flex-1 min-w-0 relative"
               style={{ minWidth: AGENTS_CANVAS_MIN_WIDTH }}
             >
-              {renderCanvasSurface(false, "large")}
+              {renderCanvasSurface(false, 'large')}
             </div>
           ) : null}
 
-          {workspaceView !== "canvas" && workspaceView !== "chat" ? (
+          {workspaceView !== 'canvas' && workspaceView !== 'chat' ? (
             <aside
               data-testid="workspace-companion-region"
               data-workspace={workspaceView}
@@ -5492,8 +6503,8 @@ export default function AgentBuilder(): React.ReactElement {
               className="h-full relative"
               style={graphCompanionPanelStyle({
                 minWidth: WORKSPACE_COMPANION_MIN_WIDTH,
-                flex: "1 1 0%",
-                overflow: "hidden",
+                flex: '1 1 0%',
+                overflow: 'hidden',
               })}
             >
               <div className="h-full flex flex-col overflow-hidden min-h-0 relative">
@@ -5501,43 +6512,78 @@ export default function AgentBuilder(): React.ReactElement {
                   className="flex-1 overflow-hidden text-sm min-h-0"
                   style={{
                     color: GRAPH_THEME.drawer.inputMuted,
-                    background: "transparent",
+                    background: 'transparent',
                   }}
                 >
-                  {workspaceView === "knowledge" && hasKnowledgeWorkspaceSelection && renderKnowledgeWorkspacePanel()}
-                  {workspaceView === "knowledge" &&
+                  {workspaceView === 'knowledge' &&
+                    hasKnowledgeWorkspaceSelection &&
+                    renderKnowledgeWorkspacePanel()}
+                  {workspaceView === 'knowledge' &&
                     !hasKnowledgeWorkspaceSelection &&
-                    renderKnowledgeGraphSurface(420, "companion")}
-                  {workspaceView === "codegraph" &&
-                    renderKnowledgeGraphSurface(420, "companion")}
-                  {workspaceView === "plan" && renderPlanSurface("companion")}
+                    renderKnowledgeGraphSurface(420, 'companion')}
+                  {workspaceView === 'codegraph' &&
+                    renderKnowledgeGraphSurface(420, 'companion')}
+                  {workspaceView === 'plan' && renderPlanSurface('companion')}
                 </div>
               </div>
             </aside>
           ) : null}
 
-          {workspaceView === "canvas" ? (
+          {workspaceView === 'canvas' || workspaceView === 'plan' ? (
             <RightGlassDrawer
               isOpen={isObjectDrawerVisible}
-              title="Agent Editor"
+              title={
+                objectDrawerRole === 'plan'
+                  ? `Plan Node: ${safeText(selectedPlanNodeDraft?.label || planMissionFocus?.nodeLabel || 'Edit')}`
+                  : `Inspect Agent${selectedCard ? `: ${safeText(selectedCard.title)}` : ''}`
+              }
               onClose={closeObjectDrawer}
               defaultWidth={objectDrawerDefaultWidth}
               minWidth={360}
               maxWidth={760}
               storageKey={objectDrawerStorageKey}
               dataTestId="workspace-object-drawer"
+              right={isAgentInspectMode ? 20 : 12}
+              top={isAgentInspectMode ? 56 : 48}
             >
-              {activeTabs.length > 0 ? (
+              {isAgentInspectMode ? (
+                <div
+                  aria-hidden
+                  style={{
+                    position: 'sticky',
+                    top: 0,
+                    margin: '-12px -12px 10px',
+                    padding: '8px 14px',
+                    borderBottom: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`,
+                    background:
+                      'linear-gradient(90deg, rgba(55,173,170,0.16), rgba(43,140,138,0.12), rgba(242,166,74,0.1), rgba(201,124,42,0.08))',
+                    boxShadow:
+                      'inset 0 1px 0 rgba(255,255,255,0.06), 0 8px 24px rgba(0,0,0,0.18)',
+                    color: GRAPH_THEME.drawer.inputText,
+                    fontSize: 11,
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    fontWeight: 700,
+                    zIndex: 1,
+                  }}
+                >
+                  Card-Centered Inspect Mode
+                </div>
+              ) : null}
+              {objectDrawerRole === 'agent' && activeTabs.length > 0 ? (
                 <div
                   className="flex min-w-0 overflow-x-auto"
-                  style={graphCompanionTabGroupStyle({ gap: 6, marginBottom: 10 })}
+                  style={graphCompanionTabGroupStyle({
+                    gap: 6,
+                    marginBottom: 10,
+                  })}
                 >
                   {activeTabs.map((t) => {
                     const selected = tab === t;
                     return (
                       <button
                         key={t}
-                        data-testid={`companion-tab-${t.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+                        data-testid={`companion-tab-${t.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
                         aria-pressed={selected}
                         onClick={(event) => {
                           event.stopPropagation();
@@ -5555,11 +6601,13 @@ export default function AgentBuilder(): React.ReactElement {
               <div
                 data-testid="companion-surface-editor"
                 style={{
-                  display: "grid",
+                  display: 'grid',
                   gap: 8,
                 }}
               >
-                {renderAgentBuilderPanel()}
+                {objectDrawerRole === 'plan'
+                  ? renderPlanMissionEditorPanel()
+                  : renderAgentBuilderPanel()}
               </div>
             </RightGlassDrawer>
           ) : null}
@@ -5567,8 +6615,12 @@ export default function AgentBuilder(): React.ReactElement {
       </div>
 
       {/* drawers */}
-      {openDrawer === "navigation" && (
-        <BuilderDrawer title="Projects" onClose={() => setOpenDrawer(null)} colors={C}>
+      {openDrawer === 'navigation' && (
+        <BuilderDrawer
+          title="Projects"
+          onClose={() => setOpenDrawer(null)}
+          colors={C}
+        >
           <div data-testid="navigation-drawer" className="space-y-3">
             <div
               data-testid="drawer-projects-section"
@@ -5601,7 +6653,11 @@ export default function AgentBuilder(): React.ReactElement {
                     placeholder="Project name"
                     autoFocus
                     className="flex-1 px-2 py-1 text-xs rounded focus:outline-none"
-                    style={{ background: C.panel, border: `1px solid ${C.border}`, color: C.text }}
+                    style={{
+                      background: C.panel,
+                      border: `1px solid ${C.border}`,
+                      color: C.text,
+                    }}
                     data-testid="project-name-input"
                   />
                   <button
@@ -5609,7 +6665,9 @@ export default function AgentBuilder(): React.ReactElement {
                     disabled={!newProjectName.trim()}
                     className="text-xs py-1 px-3 rounded font-medium"
                     style={{
-                      background: newProjectName.trim() ? `rgba(79,162,173,0.18)` : C.panel,
+                      background: newProjectName.trim()
+                        ? `rgba(79,162,173,0.18)`
+                        : C.panel,
                       border: `1px solid ${newProjectName.trim() ? C.primary : C.border}`,
                       color: C.text,
                       cursor: newProjectName.trim() ? 'pointer' : 'not-allowed',
@@ -5622,7 +6680,10 @@ export default function AgentBuilder(): React.ReactElement {
               </form>
             )}
 
-            <div className="space-y-2" style={{ maxHeight: 400, overflowY: "auto" }}>
+            <div
+              className="space-y-2"
+              style={{ maxHeight: 400, overflowY: 'auto' }}
+            >
               {projectsError && (
                 <div className="text-xs" style={{ color: C.neutral }}>
                   {safeText(projectsError)}
@@ -5639,15 +6700,20 @@ export default function AgentBuilder(): React.ReactElement {
                     style={{
                       background:
                         activeProject === project.id
-                          ? "rgba(79,162,173,0.18)"
-                          : "transparent",
+                          ? 'rgba(79,162,173,0.18)'
+                          : 'transparent',
                       border: `1px solid ${activeProject === project.id ? C.primary : C.border}`,
                       color: C.text,
                     }}
                   >
-                    <div className="font-medium">{safeText(project.name || project.id)}</div>
+                    <div className="font-medium">
+                      {safeText(project.name || project.id)}
+                    </div>
                     {project.code && (
-                      <div className="opacity-60 text-xs" style={{ marginTop: 2 }}>
+                      <div
+                        className="opacity-60 text-xs"
+                        style={{ marginTop: 2 }}
+                      >
                         {safeText(project.code)}
                       </div>
                     )}
@@ -5655,17 +6721,27 @@ export default function AgentBuilder(): React.ReactElement {
                   <button
                     onClick={async (e) => {
                       e.stopPropagation();
-                      if (!confirm(`Delete project "${project.name}"? This cannot be undone.`)) return;
+                      if (
+                        !confirm(
+                          `Delete project "${project.name}"? This cannot be undone.`,
+                        )
+                      )
+                        return;
                       try {
-                        const res = await fetch(`${V2_PROJECTS_API}/${project.id}`, { method: "DELETE" });
+                        const res = await fetch(
+                          `${V2_PROJECTS_API}/${project.id}`,
+                          { method: 'DELETE' },
+                        );
                         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                        await refreshProjects("after-delete");
+                        await refreshProjects('after-delete');
                         if (activeProject === project.id) {
-                          const remaining = assistProjects.filter((entry) => entry.id !== project.id);
+                          const remaining = assistProjects.filter(
+                            (entry) => entry.id !== project.id,
+                          );
                           if (remaining.length > 0) {
                             setActiveProjectWithUrl(remaining[0].id);
                           } else {
-                            setActiveProjectWithUrl("");
+                            setActiveProjectWithUrl('');
                           }
                         }
                       } catch (err: any) {
@@ -5674,7 +6750,7 @@ export default function AgentBuilder(): React.ReactElement {
                     }}
                     className="p-2 rounded"
                     style={{
-                      background: "transparent",
+                      background: 'transparent',
                       border: `1px solid ${C.border}`,
                       color: C.warn,
                     }}
@@ -5692,14 +6768,23 @@ export default function AgentBuilder(): React.ReactElement {
               )}
             </div>
 
-            <div className="mt-6 pt-4" style={{ borderTop: `1px solid ${C.border}` }}>
-              <div className="text-xs uppercase mb-2" style={{ color: C.neutral }}>
+            <div
+              className="mt-6 pt-4"
+              style={{ borderTop: `1px solid ${C.border}` }}
+            >
+              <div
+                className="text-xs uppercase mb-2"
+                style={{ color: C.neutral }}
+              >
                 Account
               </div>
               <button
                 onClick={async () => {
                   try {
-                    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+                    await fetch('/api/auth/logout', {
+                      method: 'POST',
+                      credentials: 'include',
+                    });
                     window.location.href = '/login';
                   } catch (err) {
                     console.error('Logout failed:', err);
@@ -5707,7 +6792,7 @@ export default function AgentBuilder(): React.ReactElement {
                 }}
                 className="w-full text-left p-3 rounded"
                 style={{
-                  background: "transparent",
+                  background: 'transparent',
                   border: `1px solid ${C.border}`,
                   color: C.text,
                 }}

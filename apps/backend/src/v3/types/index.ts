@@ -293,6 +293,23 @@ export type DeckRunStep = {
   } | null;
 };
 
+export type DeckWorkspaceObjectEditorContext = {
+  open: boolean;
+  activeTab?: string | null;
+  selectedCardId?: string | null;
+  selectedCardTitle?: string | null;
+  selectedCardRuntimeType?: AgentCardRuntimeType | null;
+  editable: boolean;
+  runnable: boolean;
+};
+
+export type DeckWorkspaceContext = {
+  workspaceView: string;
+  largeSurface: string;
+  activeTab?: string | null;
+  objectEditor: DeckWorkspaceObjectEditorContext;
+};
+
 export type DeckRun = {
   id: string;
   deckId: string;
@@ -301,6 +318,7 @@ export type DeckRun = {
   status: DeckRunStatus;
   input: string;
   error?: string;
+  workspaceContext?: DeckWorkspaceContext | null;
   steps: DeckRunStep[];
   graphViewContract?: GraphViewContract | null;
   // Temporary legacy alias while clients migrate to graphViewContract.
@@ -333,3 +351,16 @@ export type V3ProjectBlob = {
   hiddenTelemetry: Record<string, unknown>;
   meta: V3ProjectBlobMeta;
 };
+
+export type {
+  ProjectKnowledgeSeed,
+  SeedEntity,
+  SeedEntityKind,
+  SeedPattern,
+  SeedProvenance,
+  SeedRelationship,
+  SeedSourceKind,
+  SeedStatus,
+  SeedTruth,
+  SeedTruthScope,
+} from './knowledgeSeed';

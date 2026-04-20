@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Billboard, Html, OrbitControls, Text } from "@react-three/drei";
 import { Bloom, EffectComposer } from "@react-three/postprocessing";
 import * as THREE from "three";
@@ -12,7 +12,98 @@ type CodeGraphSceneProps = {
   showLabels: boolean;
   highlightedIds: Set<number> | null;
   onNodeClick: (node: CodeGraphNode) => void;
+  interactionLocked?: boolean;
+  cameraAction?: "zoom_in" | "zoom_out" | "fit_view" | null;
+  cameraActionToken?: number;
 };
+
+function CameraCommandBridge({
+  controlsRef,
+  interactionLocked,
+  cameraAction,
+  cameraActionToken,
+  nodes,
+}: {
+  controlsRef: MutableRefObject<any>;
+  interactionLocked: boolean;
+  cameraAction: "zoom_in" | "zoom_out" | "fit_view" | null;
+  cameraActionToken: number;
+  nodes: CodeGraphNode[];
+}) {
+  const { camera } = useThree();
+
+  const fitToGraph = () => {
+    const controls = controlsRef.current;
+    if (!controls || nodes.length === 0) return;
+
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let minZ = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    let maxZ = Number.NEGATIVE_INFINITY;
+
+    for (const node of nodes) {
+      minX = Math.min(minX, node.x);
+      minY = Math.min(minY, node.y);
+      minZ = Math.min(minZ, node.z);
+      maxX = Math.max(maxX, node.x);
+      maxY = Math.max(maxY, node.y);
+      maxZ = Math.max(maxZ, node.z);
+    }
+
+    const center = new THREE.Vector3(
+      (minX + maxX) / 2,
+      (minY + maxY) / 2,
+      (minZ + maxZ) / 2,
+    );
+    const span = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1);
+    const fovRadians = (camera.fov * Math.PI) / 180;
+    const distance = (span / Math.max(Math.tan(fovRadians / 2), 0.01)) * 0.72;
+
+    const direction = new THREE.Vector3()
+      .subVectors(camera.position, controls.target)
+      .normalize();
+    if (!Number.isFinite(direction.lengthSq()) || direction.lengthSq() < 0.001) {
+      direction.set(0, 0, 1);
+    }
+    camera.position.copy(center.clone().add(direction.multiplyScalar(distance)));
+    controls.target.copy(center);
+    controls.update();
+  };
+
+  useEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    controls.enableRotate = !interactionLocked;
+    controls.enablePan = !interactionLocked;
+    controls.enableZoom = !interactionLocked;
+    controls.autoRotate = !interactionLocked;
+    controls.update();
+  }, [interactionLocked, controlsRef]);
+
+  useEffect(() => {
+    if (!cameraAction || !cameraActionToken) return;
+    const controls = controlsRef.current;
+    if (!controls) return;
+
+    if (cameraAction === "zoom_in") {
+      if (typeof controls.dollyIn === "function") controls.dollyIn(1.2);
+      controls.update();
+      return;
+    }
+    if (cameraAction === "zoom_out") {
+      if (typeof controls.dollyOut === "function") controls.dollyOut(1.2);
+      controls.update();
+      return;
+    }
+    if (cameraAction === "fit_view") {
+      fitToGraph();
+    }
+  }, [cameraAction, cameraActionToken, controlsRef]);
+
+  return null;
+}
 
 function NodeCloud({
   nodes,
@@ -299,7 +390,15 @@ function NodeTooltip({ node }: { node: CodeGraphNode | null }) {
   );
 }
 
-export function CodeGraphScene({ data, showLabels, highlightedIds, onNodeClick }: CodeGraphSceneProps): React.ReactElement {
+export function CodeGraphScene({
+  data,
+  showLabels,
+  highlightedIds,
+  onNodeClick,
+  interactionLocked = false,
+  cameraAction = null,
+  cameraActionToken = 0,
+}: CodeGraphSceneProps): React.ReactElement {
   const [hoveredNode, setHoveredNode] = useState<CodeGraphNode | null>(null);
   const controlsRef = useRef<any>(null);
 
@@ -325,6 +424,13 @@ export function CodeGraphScene({ data, showLabels, highlightedIds, onNodeClick }
       />
       {showLabels ? <NodeLabels nodes={data.nodes} highlightedIds={highlightedIds} /> : null}
       <NodeTooltip node={hoveredNode} />
+      <CameraCommandBridge
+        controlsRef={controlsRef}
+        interactionLocked={interactionLocked}
+        cameraAction={cameraAction}
+        cameraActionToken={cameraActionToken}
+        nodes={data.nodes}
+      />
 
       {data.linked_projects?.map((linked) => {
         const offsetNodes = linked.nodes.map((node) => ({
@@ -359,7 +465,10 @@ export function CodeGraphScene({ data, showLabels, highlightedIds, onNodeClick }
         zoomSpeed={1.5}
         minDistance={10}
         maxDistance={50000}
-        autoRotate
+        autoRotate={!interactionLocked}
+        enableRotate={!interactionLocked}
+        enablePan={!interactionLocked}
+        enableZoom={!interactionLocked}
         autoRotateSpeed={0.22}
       />
     </Canvas>

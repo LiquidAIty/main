@@ -22,6 +22,7 @@ import type {
   DeckRun,
   DeckRuntimeEvent,
   DeckRunStep,
+  DeckWorkspaceContext,
   GraphViewContract,
   PromptTemplate,
 } from '../types';
@@ -31,8 +32,48 @@ export type ExecuteDeckOptions = {
   input?: string;
   promptTemplates?: PromptTemplate[];
   projectId?: string;
+  workspaceContext?: DeckWorkspaceContext | null;
   onRuntimeEvent?: (event: DeckRuntimeEvent) => void;
 };
+
+function cleanOptionalText(value: unknown): string | null {
+  const text = String(value || '').trim();
+  return text || null;
+}
+
+function normalizeWorkspaceRuntimeType(
+  value: unknown,
+): DeckWorkspaceContext['objectEditor']['selectedCardRuntimeType'] {
+  const runtimeType = cleanOptionalText(value);
+  if (runtimeType === 'assistant_agent') return 'assistant_agent';
+  if (runtimeType === 'magentic_one') return 'magentic_one';
+  if (runtimeType === 'graph_flow') return 'graph_flow';
+  return null;
+}
+
+function normalizeWorkspaceContext(value: unknown): DeckWorkspaceContext | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const rawEditor =
+    raw.objectEditor && typeof raw.objectEditor === 'object'
+      ? (raw.objectEditor as Record<string, unknown>)
+      : {};
+  const context: DeckWorkspaceContext = {
+    workspaceView: cleanOptionalText(raw.workspaceView) || 'chat',
+    largeSurface: cleanOptionalText(raw.largeSurface) || 'chat',
+    activeTab: cleanOptionalText(raw.activeTab),
+    objectEditor: {
+      open: rawEditor.open === true,
+      activeTab: cleanOptionalText(rawEditor.activeTab),
+      selectedCardId: cleanOptionalText(rawEditor.selectedCardId),
+      selectedCardTitle: cleanOptionalText(rawEditor.selectedCardTitle),
+      selectedCardRuntimeType: normalizeWorkspaceRuntimeType(rawEditor.selectedCardRuntimeType),
+      editable: rawEditor.editable === true,
+      runnable: rawEditor.runnable === true,
+    },
+  };
+  return context;
+}
 
 function isRunnableNode(node: AgentCardInstance | undefined | null): node is AgentCardInstance {
   return Boolean(node && node.kind === 'agent' && !String(node.parentGraphId || '').trim());
@@ -83,6 +124,7 @@ function buildRunSnapshot(
   executionPlan: ReturnType<typeof buildExecutionPlan>,
   status: DeckRun['status'],
   extra?: Pick<DeckRun, 'endedAt' | 'error'>,
+  workspaceContext?: DeckWorkspaceContext | null,
 ): DeckRun {
   const graphViewContract =
     [...steps]
@@ -102,6 +144,7 @@ function buildRunSnapshot(
     status,
     input,
     error: extra?.error,
+    workspaceContext: workspaceContext || null,
     steps,
     events,
     graphViewContract,
@@ -190,6 +233,7 @@ export async function executeDeck(
   const executionPlan = buildExecutionPlan(document);
   const steps: DeckRunStep[] = [];
   const events: DeckRuntimeEvent[] = [];
+  const workspaceContext = normalizeWorkspaceContext(options.workspaceContext);
   let latestGraphViewContract: GraphViewContract | null = null;
   const emitRuntimeEvent = (event: Omit<DeckRuntimeEvent, 'id' | 'at'>) => {
     const resolvedGraphViewContract =
@@ -239,6 +283,7 @@ export async function executeDeck(
         endedAt: new Date().toISOString(),
         error: 'Deck validation failed.',
       },
+      workspaceContext,
     );
   }
 
@@ -272,6 +317,7 @@ export async function executeDeck(
         endedAt: new Date().toISOString(),
         error: 'Graph execution could not find a runnable start node.',
       },
+      workspaceContext,
     );
   }
 
@@ -346,6 +392,7 @@ export async function executeDeck(
           endedAt: new Date().toISOString(),
           error: `Template "${card.templateId}" could not be resolved.`,
         },
+        workspaceContext,
       );
     }
 
@@ -376,6 +423,7 @@ export async function executeDeck(
         promptTemplates: options.promptTemplates,
         seed,
         projectId: options.projectId,
+        workspaceContext,
         deckId: document.id,
         deckName: document.name,
         allCards: document.nodes,
@@ -455,6 +503,7 @@ export async function executeDeck(
             endedAt: new Date().toISOString(),
             error: step.error || `Card "${card.id}" failed.`,
           },
+          workspaceContext,
         );
       }
 
@@ -488,6 +537,7 @@ export async function executeDeck(
         endedAt: new Date().toISOString(),
         error: `Graph execution stalled before all runnable nodes completed: ${unresolvedNodeIds.join(', ')}`,
       },
+      workspaceContext,
     );
   }
 
@@ -509,5 +559,6 @@ export async function executeDeck(
     {
       endedAt: new Date().toISOString(),
     },
+    workspaceContext,
   );
 }

@@ -100,6 +100,7 @@ router.post('/:projectId/decks/run', async (req, res) => {
       input: String(req.body?.input || ''),
       promptTemplates: promptTemplates.length > 0 ? promptTemplates : deck.promptTemplates,
       projectId: req.params.projectId,
+      workspaceContext: req.body?.workspaceContext,
       onRuntimeEvent: useStream
         ? (event) => {
             writeStreamChunk(res, { kind: 'event', event });

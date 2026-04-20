@@ -64,8 +64,39 @@ vi.mock("../components/builder/BuilderCanvas", () => ({
 }));
 
 vi.mock("../components/AgentManager", () => ({
-  AgentManager: function AgentManagerMock() {
-    return <div data-testid="agent-manager">Agent Manager</div>;
+  AgentManager: function AgentManagerMock(props: {
+    activeTab?: string;
+    cardName?: string;
+    cardSubtext?: string;
+    onChangeCardName?: (value: string) => void;
+    onChangeCardSubtext?: (value: string) => void;
+  }) {
+    const hasCardIdentityFields = Boolean(props.onChangeCardName || props.onChangeCardSubtext);
+    return (
+      <div
+        data-testid="agent-manager"
+        data-active-tab={String(props.activeTab || "")}
+        data-has-card-identity-fields={hasCardIdentityFields ? "true" : "false"}
+        data-card-name={String(props.cardName || "")}
+        data-card-subtext={String(props.cardSubtext || "")}
+      >
+        Agent Manager
+        <button
+          type="button"
+          data-testid="agent-manager-rename"
+          onClick={() => props.onChangeCardName?.("Renamed Agent")}
+        >
+          Rename
+        </button>
+        <button
+          type="button"
+          data-testid="agent-manager-resubtext"
+          onClick={() => props.onChangeCardSubtext?.("Renamed Subtext")}
+        >
+          Resubtext
+        </button>
+      </div>
+    );
   },
 }));
 
@@ -141,6 +172,56 @@ vi.mock("../components/knowledge/UploadAttachment", () => ({
 vi.mock("../components/assist/PlanWikiLexicalView", () => ({
   default: function PlanWikiLexicalViewMock(props: { fallbackText: string }) {
     return <div>{props.fallbackText}</div>;
+  },
+}));
+
+vi.mock("../components/assist/PlanMissionFlow", () => ({
+  default: function PlanMissionFlowMock(props: {
+    onFocusChange?: (
+      focus:
+        | {
+            nodeId: string;
+            nodeLabel: string;
+            nodeKind: string;
+            nodeData: {
+              label: string;
+              kind: string;
+              status: string;
+              description: string;
+              assignedAgentId: string;
+              starterPrompt: string;
+              updateKey: string;
+              outputKey: string;
+            };
+          }
+        | null,
+    ) => void;
+  }) {
+    return (
+      <button
+        type="button"
+        data-testid="plan-mission-flow"
+        onClick={() =>
+          props.onFocusChange?.({
+            nodeId: "plan-goal",
+            nodeLabel: "Mission Goal",
+            nodeKind: "Goal",
+            nodeData: {
+              label: "Mission Goal",
+              kind: "Goal",
+              status: "ready",
+              description: "Mock mission node for tests.",
+              assignedAgentId: "card_research_agent",
+              starterPrompt: "Mock starter prompt",
+              updateKey: "mock_update",
+              outputKey: "mock_output",
+            },
+          })
+        }
+      >
+        Plan Mission Flow
+      </button>
+    );
   },
 }));
 
@@ -757,6 +838,33 @@ describe("AgentBuilder locked 3-state flow", () => {
     });
   });
 
+  it("closes the node drawer when the drawer close button is clicked", async () => {
+    const container = mount(<AgentBuilder />);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
+    });
+
+    click(getButtonByTitle(container, "Plus"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-canvas")).toBeTruthy();
+    });
+
+    click(getByTestId(container, "builder-select-node"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "companion-surface-editor")).toBeTruthy();
+    });
+
+    const closeButton = container.querySelector('button[aria-label="Close drawer"]');
+    click(closeButton);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "companion-surface-editor")).toBeNull();
+    });
+  });
+
   it("keeps workspace tab clicks in the small pane until the preview is clicked", async () => {
     const container = mount(<AgentBuilder />);
 
@@ -1018,7 +1126,8 @@ describe("AgentBuilder locked 3-state flow", () => {
     expect(getByTestId(container, "companion-tab-chat")).toBeTruthy();
     expect(getByTestId(container, "companion-tab-canvas")).toBeTruthy();
     expect(getByTestId(container, "companion-tab-knowledge")).toBeTruthy();
-    expect(container.textContent).toContain("Define objective");
+    expect(getByTestId(container, "plan-mission-flow")).toBeTruthy();
+    expect(queryByTestId(container, "plan-thinkgraph-flow")).toBeNull();
   });
 
   it("keeps agent editor tabs in the small pane when Canvas is large", async () => {
@@ -1050,6 +1159,75 @@ describe("AgentBuilder locked 3-state flow", () => {
 
     expect(getByTestId(container, "companion-tab-knowledge").getAttribute("aria-pressed")).toBe("true");
     expect(queryByTestId(container, "large-surface-knowledge")).toBeNull();
+  });
+
+  it("shows Name/Subtext editing only in the first Agent Edit tab", async () => {
+    const container = mount(<AgentBuilder />);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
+    });
+
+    click(getButtonByTitle(container, "Plus"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-canvas")).toBeTruthy();
+    });
+
+    click(getByTestId(container, "builder-select-node"));
+
+    await waitFor(() => {
+      const manager = getByTestId(container, "agent-manager");
+      expect(manager.getAttribute("data-active-tab")).toBe("Prompt");
+      expect(manager.getAttribute("data-has-card-identity-fields")).toBe("true");
+    });
+
+    click(getByTestId(container, "companion-tab-knowledge"));
+
+    await waitFor(() => {
+      const manager = getByTestId(container, "agent-manager");
+      expect(manager.getAttribute("data-active-tab")).toBe("Knowledge");
+      expect(manager.getAttribute("data-has-card-identity-fields")).toBe("false");
+    });
+  });
+
+  it("updates selected agent Name/Subtext from Prompt and keeps them hidden outside Prompt", async () => {
+    const container = mount(<AgentBuilder />);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
+    });
+
+    click(getButtonByTitle(container, "Plus"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-canvas")).toBeTruthy();
+    });
+
+    click(getByTestId(container, "builder-select-node"));
+
+    await waitFor(() => {
+      const manager = getByTestId(container, "agent-manager");
+      expect(manager.getAttribute("data-active-tab")).toBe("Prompt");
+      expect(manager.getAttribute("data-has-card-identity-fields")).toBe("true");
+    });
+
+    click(getByTestId(container, "agent-manager-rename"));
+    click(getByTestId(container, "agent-manager-resubtext"));
+
+    await waitFor(() => {
+      const manager = getByTestId(container, "agent-manager");
+      expect(manager.getAttribute("data-card-name")).toBe("Renamed Agent");
+      expect(manager.getAttribute("data-card-subtext")).toBe("Renamed Subtext");
+    });
+
+    click(getByTestId(container, "companion-tab-tools"));
+
+    await waitFor(() => {
+      const manager = getByTestId(container, "agent-manager");
+      expect(manager.getAttribute("data-active-tab")).toBe("Tools");
+      expect(manager.getAttribute("data-has-card-identity-fields")).toBe("false");
+    });
   });
 
   it("uses Three-lines for the drawer and keeps competing project controls out of the header", async () => {
@@ -1242,6 +1420,16 @@ describe("AgentBuilder locked 3-state flow", () => {
     expect(deckRunRequests).toHaveLength(1);
     expect(deckRunRequests[0]?.deckId).toBe("deck_builder");
     expect(deckRunRequests[0]?.input).toBe("Map the next move");
+    expect(deckRunRequests[0]?.workspaceContext).toMatchObject({
+      workspaceView: "chat",
+      largeSurface: "chat",
+      objectEditor: {
+        open: false,
+        selectedCardId: null,
+        editable: false,
+        runnable: false,
+      },
+    });
 
     const events = readWorkspaceTestingEvents();
     expect(

@@ -1,6 +1,6 @@
 import { Handle, Position } from '@xyflow/react';
 import type { AgentCardInstance } from '../../../types/agentgraph';
-import { GRAPH_THEME, graphGlassCardStyle, graphGlassPillStyle } from '../../graph/graphVisualTokens';
+import { GRAPH_THEME, graphGlassCardStyle } from '../../graph/graphVisualTokens';
 
 type AgentCardNodeData = AgentCardInstance & {
   executionOrder?: number | null;
@@ -12,6 +12,7 @@ type AgentCardNodeData = AgentCardInstance & {
   isHovered?: boolean;
   isHoverRelated?: boolean;
   isFlowLinked?: boolean;
+  isInspecting?: boolean;
 };
 
 export default function AgentCardNode({
@@ -21,306 +22,153 @@ export default function AgentCardNode({
   data: AgentCardNodeData;
   selected?: boolean;
 }) {
-  const executionOrder = typeof data?.executionOrder === 'number' ? data.executionOrder : null;
   const runtimeType = String(data?.runtimeType || 'assistant_agent').trim();
   const isMagentic = runtimeType === 'magentic_one';
   const isGraph = runtimeType === 'graph_flow';
-  const isGraphStep = runtimeType === 'assistant_agent' && Boolean(String(data?.parentGraphId || '').trim());
-  const isCallableHead = Boolean(data?.isCallableHead) && !isMagentic && !isGraphStep;
+  if (isMagentic) return null;
   const canReceiveConnection = !isMagentic;
   const canStartConnection = isMagentic || runtimeType === 'assistant_agent';
-  // Only show label for Magentic, not for Assist agents
-  const runtimeLabel = isMagentic ? 'MAINCHAT' : null;
-  const structureLabel =
-    data?.assistStructureMode === 'branch_merge'
-      ? 'Branch+Merge'
-      : data?.assistStructureMode === 'branch'
-        ? 'Branch'
-        : data?.assistStructureMode === 'merge'
-          ? 'Merge'
-          : null;
+  const shellActive = Boolean(selected || data?.isInspecting || data?.isRuntimeActive);
+  const name = String(data?.title || '').trim() || 'Agent';
+  const subtext = String(data?.subtitle || '').trim() || 'Operational agent';
 
-  // Operator-first: keep Assist cards quiet by default.
-  // Preserve only meaningful state badges that indicate actionable differences.
-  const badges = [
-    data?.isStartCard ? 'Start' : null,
-    isCallableHead ? 'Callable' : null,
-    data?.swarmBadge || null,
-    structureLabel,
-  ].filter(Boolean);
-  const isRuntimeActive = Boolean(data?.isRuntimeActive);
-  const isFlowLinked = Boolean(data?.isFlowLinked);
-  const hoverRing =
-    !selected && data?.isHovered
-      ? `inset 0 1px 0 rgba(255,255,255,0.04), 0 0 0 1px rgba(79, 162, 173, 0.22), 0 10px 24px rgba(79, 162, 173, 0.09)`
-      : !selected && data?.isHoverRelated
-        ? `inset 0 1px 0 rgba(255,255,255,0.02), 0 0 0 1px rgba(79, 162, 173, 0.1), ${GRAPH_THEME.surface.shadow}`
-        : null;
   return (
     <div
-      className="rounded-xl border min-w-[248px] bg-zinc-900 text-white"
+      className="rounded-xl border bg-zinc-900 text-white"
       style={
         graphGlassCardStyle({
           position: 'relative',
-          padding: "14px 18px 15px",
-          minWidth: 248,
-          borderWidth: isGraph ? 1.5 : 1,
-          borderColor: selected
-            ? GRAPH_THEME.accent.primary
-            : isRuntimeActive
-              ? GRAPH_THEME.accent.primary
-            : isFlowLinked
-              ? "rgba(79, 162, 173, 0.24)"
-            : isMagentic
-              ? 'rgba(96, 194, 255, 0.82)'
-              : isGraph
-                ? GRAPH_THEME.accent.graph
-              : isCallableHead
-                ? GRAPH_THEME.accent.primaryBorder
-                : GRAPH_THEME.card.glassBorder,
+          padding: '8px 10px',
+          width: 214,
+          minHeight: 72,
+          borderWidth: 1,
+          borderColor: shellActive
+            ? 'rgba(55,173,170,0.6)'
+            : selected
+              ? GRAPH_THEME.accent.primaryBorder
+              : GRAPH_THEME.card.glassBorder,
           background: isMagentic
             ? GRAPH_THEME.card.glassMagenticBackground
             : isGraph
               ? GRAPH_THEME.card.glassGraphBackground
               : GRAPH_THEME.card.glassBackground,
-          boxShadow: selected
-            ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 14px 32px rgba(79, 162, 173, 0.1)`
-            : isRuntimeActive
-              ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 14px 28px rgba(79, 162, 173, 0.1), 0 0 12px rgba(223, 146, 84, 0.09)`
-            : isFlowLinked
-              ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px rgba(79, 162, 173, 0.16), 0 10px 22px rgba(79, 162, 173, 0.07)`
-            : hoverRing
-              ? hoverRing
-            : isMagentic
-              ? `${GRAPH_THEME.card.glassInset}, inset 0 0 0 1px rgba(96, 194, 255, 0.12), 0 12px 26px rgba(9, 18, 20, 0.2)`
-              : isGraph
-                ? `${GRAPH_THEME.card.glassInset}, inset 0 0 0 1px rgba(154, 162, 172, 0.1), 0 10px 24px rgba(0, 0, 0, 0.18)`
-              : isCallableHead
-                ? `${GRAPH_THEME.card.glassInset}, inset 0 0 0 1px rgba(79, 162, 173, 0.12), 0 12px 26px rgba(9, 18, 20, 0.16), 0 0 10px rgba(223, 146, 84, 0.06)`
-                : `${GRAPH_THEME.card.glassInset}, ${GRAPH_THEME.surface.shadow}`,
+          boxShadow: shellActive
+            ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px rgba(55,173,170,0.6), 0 14px 30px rgba(55,173,170,0.24), 0 0 16px rgba(242,166,74,0.16)`
+            : selected
+              ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 14px 28px ${GRAPH_THEME.accent.primaryGlow}`
+              : `${GRAPH_THEME.card.glassInset}, ${GRAPH_THEME.surface.shadow}`,
         })
       }
     >
+      <style>{`
+        @keyframes agent-shell-border-travel {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+      <div
+        aria-hidden
+        style={{
+          position: 'absolute',
+          inset: -1,
+          borderRadius: 14,
+          padding: 1,
+          background:
+            'conic-gradient(from 0deg, rgba(55,173,170,0.14), #37ADAA 20%, #2B8C8A 40%, #F2A64A 63%, #C97C2A 84%, rgba(55,173,170,0.14) 100%)',
+          opacity: shellActive ? 0.92 : 0.12,
+          animation: shellActive ? 'agent-shell-border-travel 6.8s linear infinite' : 'none',
+          transition: 'opacity 220ms ease',
+          pointerEvents: 'none',
+          WebkitMask:
+            'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
+          WebkitMaskComposite: 'xor',
+          maskComposite: 'exclude',
+          zIndex: 0,
+        }}
+      />
       <Handle
         type="target"
         position={Position.Left}
-        aria-label={`${data.title} input`}
+        aria-label={`${name} input`}
         isConnectable={canReceiveConnection}
         style={{
           width: 12,
           height: 12,
           left: -7,
           borderRadius: '999px',
-          border: isFlowLinked
-            ? '1.5px solid rgba(140, 116, 204, 0.42)'
-            : '1.5px solid rgba(79, 162, 173, 0.38)',
+          border: `1.5px solid ${GRAPH_THEME.accent.primaryBorder}`,
           background: canReceiveConnection
-            ? "radial-gradient(circle at 32% 28%, rgba(79,162,173,0.35), rgba(12,16,20,0.96))"
+            ? `radial-gradient(circle at 32% 28%, ${GRAPH_THEME.accent.primarySoft}, rgba(12,16,20,0.96))`
             : '#111315',
-          boxShadow: canReceiveConnection
-            ? isFlowLinked
-              ? "inset 0 0 0 1px rgba(140,116,204,0.12), 0 0 0 1px rgba(79,162,173,0.1)"
-              : "inset 0 0 0 1px rgba(79,162,173,0.12)"
-            : undefined,
+          boxShadow: canReceiveConnection ? `inset 0 0 0 1px ${GRAPH_THEME.accent.primarySoft}` : undefined,
           opacity: canReceiveConnection ? 1 : 0.4,
         }}
       />
       <Handle
         type="source"
         position={Position.Right}
-        aria-label={`${data.title} output`}
+        aria-label={`${name} output`}
         isConnectable={canStartConnection}
         style={{
           width: 12,
           height: 12,
           right: -7,
           borderRadius: '999px',
-          border: isRuntimeActive
+          border: shellActive
             ? `1.5px solid ${GRAPH_THEME.accent.solar}`
-            : isFlowLinked
-              ? '1.5px solid rgba(79, 162, 173, 0.48)'
-              : `1.5px solid ${GRAPH_THEME.accent.primary}`,
+            : `1.5px solid ${GRAPH_THEME.accent.primary}`,
           background: canStartConnection
-            ? isRuntimeActive
-              ? "radial-gradient(circle at 30% 26%, rgba(223,146,84,0.45), rgba(22,18,16,0.96))"
-              : "radial-gradient(circle at 32% 28%, rgba(79,162,173,0.32), rgba(12,18,22,0.96))"
+            ? shellActive
+              ? `radial-gradient(circle at 30% 26%, ${GRAPH_THEME.accent.solarSoft}, rgba(22,18,16,0.96))`
+              : `radial-gradient(circle at 32% 28%, ${GRAPH_THEME.accent.primarySoft}, rgba(12,18,22,0.96))`
             : '#111315',
           boxShadow: canStartConnection
-            ? isRuntimeActive
-              ? "inset 0 0 0 1px rgba(255,200,160,0.12), 0 0 0 1px rgba(223,146,84,0.12)"
-              : "inset 0 0 0 1px rgba(79,162,173,0.1)"
+            ? shellActive
+              ? `inset 0 0 0 1px rgba(255,200,160,0.12), 0 0 0 1px ${GRAPH_THEME.accent.solarSoft}`
+              : `inset 0 0 0 1px ${GRAPH_THEME.accent.primarySoft}`
             : undefined,
           opacity: canStartConnection ? 1 : 0.4,
         }}
       />
 
-      {isGraph ? (
-        <div
-          style={{
-            position: 'absolute',
-            left: 14,
-            right: 14,
-            top: 10,
-            height: 4,
-            borderRadius: 999,
-            background: 'linear-gradient(90deg, rgba(154,162,172,0.92), rgba(210,214,221,0.4))',
-            pointerEvents: 'none',
-          }}
-        />
-      ) : null}
-
       <div
         style={{
-          display: 'flex',
-          alignItems: 'flex-start',
-          justifyContent: 'space-between',
-          gap: 10,
+          display: 'grid',
+          alignContent: 'center',
+          gap: 4,
+          position: 'relative',
+          zIndex: 1,
+          height: '100%',
+          minHeight: 50,
         }}
       >
-        <div style={{ minWidth: 0, paddingLeft: 2, paddingRight: 2 }}>
-          {runtimeLabel && (
-            <div
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                marginBottom: 7,
-                ...graphGlassPillStyle({
-                  padding: '2px 7px',
-                  background: isMagentic
-                    ? 'rgba(96, 194, 255, 0.14)'
-                    : isGraph
-                      ? 'rgba(154, 162, 172, 0.14)'
-                      : isRuntimeActive
-                        ? 'rgba(79, 162, 173, 0.18)'
-                        : GRAPH_THEME.card.pillBackground,
-                  border: isMagentic
-                    ? '1px solid rgba(96, 194, 255, 0.3)'
-                    : isGraph
-                      ? '1px solid rgba(154, 162, 172, 0.26)'
-                      : isRuntimeActive
-                        ? '1px solid rgba(79, 162, 173, 0.34)'
-                        : `1px solid ${GRAPH_THEME.card.pillBorder}`,
-                  color: isMagentic
-                    ? '#d8f2ff'
-                    : isGraph
-                      ? '#e8edf4'
-                      : isRuntimeActive
-                        ? '#d8f2ff'
-                        : GRAPH_THEME.surface.mutedText,
-                }),
-                fontSize: 10,
-                letterSpacing: '0.14em',
-              }}
-            >
-              {runtimeLabel}
-            </div>
-          )}
-          <div
-            style={{
-              fontSize: 13.5,
-              fontWeight: 600,
-              lineHeight: 1.28,
-              letterSpacing: "-0.015em",
-            }}
-          >
-            {data.title}
-          </div>
-        </div>
-        {executionOrder ? (
-          <div
-            style={{
-              ...graphGlassPillStyle({
-                padding: '2px 7px',
-                background: 'rgba(223, 146, 84, 0.11)',
-                border: '1px solid rgba(223, 146, 84, 0.22)',
-                color: GRAPH_THEME.surface.text,
-              }),
-              fontSize: 10.5,
-              fontWeight: 600,
-              lineHeight: 1,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            Step {executionOrder}
-          </div>
-        ) : null}
-      </div>
-
-      {data.subtitle && (
         <div
           style={{
-            marginTop: 6,
-            fontSize: 12,
-            lineHeight: 1.5,
-            paddingLeft: 2,
-            paddingRight: 4,
+            fontSize: 14,
+            fontWeight: 700,
+            lineHeight: 1.12,
+            letterSpacing: '-0.01em',
+            color: GRAPH_THEME.surface.text,
+            minWidth: 0,
+          }}
+        >
+          {name}
+        </div>
+        <div
+          style={{
+            fontSize: 10.5,
+            lineHeight: 1.3,
             color: GRAPH_THEME.surface.mutedText,
-            opacity: 0.72,
+            opacity: 0.84,
+            maxWidth: 172,
+            whiteSpace: 'normal',
+            overflowWrap: 'anywhere',
+            minWidth: 0,
           }}
         >
-          {data.subtitle}
+          {subtext}
         </div>
-      )}
-
-      {badges.length > 0 ? (
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 5,
-            marginTop: 11,
-          }}
-        >
-          {badges.map((badge) => (
-            <div
-              key={badge}
-              style={{
-              ...graphGlassPillStyle({
-                background:
-                  badge === 'Callable'
-                    ? 'rgba(79, 162, 173, 0.14)'
-                    : badge === 'Branch+Merge'
-                      ? GRAPH_THEME.accent.memorySoft
-                      : badge === 'Compat Workflow'
-                        ? 'rgba(234, 146, 77, 0.14)'
-                        : badge === 'In Workflow'
-                          ? 'rgba(234, 146, 77, 0.12)'
-                          : String(badge).startsWith('Swarm x')
-                            ? 'rgba(96, 194, 255, 0.14)'
-                            : GRAPH_THEME.card.pillBackground,
-                border:
-                  badge === 'Callable'
-                    ? '1px solid rgba(79, 162, 173, 0.34)'
-                    : badge === 'Branch+Merge'
-                      ? `1px solid ${GRAPH_THEME.accent.memory}`
-                      : badge === 'Compat Workflow'
-                        ? '1px solid rgba(234, 146, 77, 0.3)'
-                        : badge === 'In Workflow'
-                          ? '1px solid rgba(234, 146, 77, 0.22)'
-                          : String(badge).startsWith('Swarm x')
-                            ? '1px solid rgba(96, 194, 255, 0.3)'
-                            : `1px solid ${GRAPH_THEME.card.pillBorder}`,
-                color:
-                  badge === 'Callable'
-                    ? '#d8f2ff'
-                    : badge === 'Branch+Merge'
-                      ? '#e6ddff'
-                      : badge === 'Compat Workflow'
-                        ? '#ffe6d6'
-                        : badge === 'In Workflow'
-                          ? '#ffe6d6'
-                          : String(badge).startsWith('Swarm x')
-                            ? '#d8f2ff'
-                            : GRAPH_THEME.surface.mutedText,
-              }),
-              }}
-            >
-              {badge}
-            </div>
-          ))}
-        </div>
-      ) : null}
+      </div>
     </div>
   );
 }

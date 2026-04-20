@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import {
   Background,
@@ -38,7 +38,6 @@ import {
 } from './deckValidation';
 import { GRAPH_THEME, graphControlButtonStyle, graphControlStackStyle, graphPillButtonStyle } from '../graph/graphVisualTokens';
 import {
-  GRAPH_WORKSPACE,
   buildFocusedNodeSet,
   buildUndirectedNeighborMap,
   isEdgeConnectedToNode,
@@ -58,6 +57,13 @@ const PERSISTED_NODE_CHANGE_TYPES = new Set<NodeChange['type']>(['add', 'remove'
 const PERSISTED_EDGE_CHANGE_TYPES = new Set<EdgeChange['type']>(['add', 'remove', 'replace']);
 const FALLBACK_NODE_WIDTH = 320;
 const FALLBACK_NODE_HEIGHT = 180;
+const CANVAS_ROW_X_START = 180;
+const CANVAS_ROW_Y_START = 120;
+const CANVAS_ROW_X_GAP = 292;
+const CANVAS_ROW_Y_GAP = 162;
+const CANVAS_LAYER_BRANCH_OFFSET = 44;
+const WALL_SEAM_CAPTURE_WIDTH_PX = 128;
+const DEFAULT_CARD_VISUAL_HEIGHT = 72;
 
 type ViewportRect = {
   left: number;
@@ -197,11 +203,128 @@ export function isAnyCanvasNodeVisible(nodes: Node[], visibleRect: ViewportRect,
   return nodes.some((node) => isCanvasRectVisible(getNodeCanvasRect(node), visibleRect, padding));
 }
 
+function computeLeftToRightCanvasRows(document: DeckDocument): Map<string, { x: number; y: number }> {
+  const cards = document.nodes.filter(
+    (node) =>
+      isTopLevelCanvasCard(node) &&
+      normalizeRuntimeType(node.runtimeType) !== 'magentic_one',
+  );
+  const cardIdSet = new Set(cards.map((node) => node.id));
+  const outgoing = new Map<string, string[]>();
+  const incomingCount = new Map<string, number>();
+  const undirected = new Map<string, string[]>();
+  const positionById = new Map(cards.map((node) => [node.id, node.position] as const));
+  cards.forEach((node) => {
+    outgoing.set(node.id, []);
+    undirected.set(node.id, []);
+    incomingCount.set(node.id, 0);
+  });
+
+  document.edges.forEach((edge) => {
+    if (!cardIdSet.has(edge.source) || !cardIdSet.has(edge.target)) return;
+    outgoing.set(edge.source, [...(outgoing.get(edge.source) || []), edge.target]);
+    incomingCount.set(edge.target, Number(incomingCount.get(edge.target) || 0) + 1);
+    undirected.set(edge.source, [...(undirected.get(edge.source) || []), edge.target]);
+    undirected.set(edge.target, [...(undirected.get(edge.target) || []), edge.source]);
+  });
+
+  const queue = cards
+    .filter((node) => Number(incomingCount.get(node.id) || 0) === 0)
+    .sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x)
+    .map((node) => node.id);
+  const layerById = new Map<string, number>(cards.map((node) => [node.id, 0] as const));
+  const seen = new Set<string>();
+
+  while (queue.length > 0) {
+    const currentId = queue.shift() as string;
+    seen.add(currentId);
+    const currentLayer = Number(layerById.get(currentId) || 0);
+    (outgoing.get(currentId) || []).forEach((nextId) => {
+      layerById.set(nextId, Math.max(Number(layerById.get(nextId) || 0), currentLayer + 1));
+      const remainingIncoming = Number(incomingCount.get(nextId) || 0) - 1;
+      incomingCount.set(nextId, remainingIncoming);
+      if (remainingIncoming === 0) queue.push(nextId);
+    });
+  }
+
+  // Cycle fallback: preserve left-to-right intent by deriving layer from original x buckets.
+  cards.forEach((node) => {
+    if (seen.has(node.id)) return;
+    const bucket = Math.max(0, Math.round((node.position.x - CANVAS_ROW_X_START) / CANVAS_ROW_X_GAP));
+    layerById.set(node.id, bucket);
+  });
+
+  const components: string[][] = [];
+  const componentVisited = new Set<string>();
+  cards.forEach((node) => {
+    if (componentVisited.has(node.id)) return;
+    const stack = [node.id];
+    const component: string[] = [];
+    componentVisited.add(node.id);
+    while (stack.length > 0) {
+      const current = stack.pop() as string;
+      component.push(current);
+      (undirected.get(current) || []).forEach((nextId) => {
+        if (componentVisited.has(nextId)) return;
+        componentVisited.add(nextId);
+        stack.push(nextId);
+      });
+    }
+    components.push(component);
+  });
+
+  components.sort((a, b) => {
+    const aAnchor = a
+      .map((id) => positionById.get(id))
+      .filter(Boolean)
+      .sort((p, q) => (p as { y: number }).y - (q as { y: number }).y || (p as { x: number }).x - (q as { x: number }).x)[0];
+    const bAnchor = b
+      .map((id) => positionById.get(id))
+      .filter(Boolean)
+      .sort((p, q) => (p as { y: number }).y - (q as { y: number }).y || (p as { x: number }).x - (q as { x: number }).x)[0];
+    if (!aAnchor || !bAnchor) return 0;
+    return aAnchor.y - bAnchor.y || aAnchor.x - bAnchor.x;
+  });
+
+  const layout = new Map<string, { x: number; y: number }>();
+  components.forEach((component, rowIndex) => {
+    const rowBaseY = CANVAS_ROW_Y_START + rowIndex * CANVAS_ROW_Y_GAP;
+    const componentMinY = Math.min(
+      ...component.map((id) => (positionById.get(id)?.y ?? 0)),
+    );
+    const nodesByLayer = new Map<number, string[]>();
+    component.forEach((nodeId) => {
+      const layer = Number(layerById.get(nodeId) || 0);
+      nodesByLayer.set(layer, [...(nodesByLayer.get(layer) || []), nodeId]);
+    });
+    Array.from(nodesByLayer.keys())
+      .sort((a, b) => a - b)
+      .forEach((layer) => {
+        const ids = (nodesByLayer.get(layer) || []).sort((left, right) => {
+          const leftPos = positionById.get(left) || { x: 0, y: 0 };
+          const rightPos = positionById.get(right) || { x: 0, y: 0 };
+          return leftPos.y - rightPos.y || leftPos.x - rightPos.x;
+        });
+        ids.forEach((nodeId, branchIndex) => {
+          const nodeOriginalY = positionById.get(nodeId)?.y ?? rowBaseY;
+          const yOffset = Math.min(132, Math.max(0, nodeOriginalY - componentMinY));
+          layout.set(nodeId, {
+            x: CANVAS_ROW_X_START + layer * CANVAS_ROW_X_GAP + branchIndex * CANVAS_LAYER_BRANCH_OFFSET,
+            y: rowBaseY + yOffset,
+          });
+        });
+      });
+  });
+
+  return layout;
+}
+
 function toFlowNodes(
   document: DeckDocument,
   selectedCardId: string | null,
   selectedEdgeId: string | null,
   hoveredCardId: string | null,
+  inspectMode: boolean,
   executionPlan: Pick<DeckExecutionPlan, 'simpleOrderCardIds' | 'startCardIds'> | null,
   activeCardIds: Set<string>,
   activeEdgeIds: Set<string>,
@@ -227,18 +350,28 @@ function toFlowNodes(
       .filter((edge) => edge.id === selectedEdgeId || activeEdgeIds.has(edge.id))
       .flatMap((edge) => [edge.source, edge.target]),
   );
+  const rowLayout = computeLeftToRightCanvasRows(document);
   return document.nodes.map((node) => ({
     id: node.id,
+    // Keep Magentic-One as real identity, but do not render it as a floating canvas wall object.
     type: 'agentCard',
-    position: node.position,
-    style: hoveredCardId
+    position: isWallOrchestratorNode(node) ? { x: -340, y: -80 } : rowLayout.get(node.id) || node.position,
+    draggable: !isWallOrchestratorNode(node),
+    selectable: !isWallOrchestratorNode(node),
+    focusable: !isWallOrchestratorNode(node),
+    style: inspectMode && selectedCardId
       ? {
-          opacity:
-            node.id === hoveredCardId || hoveredRelatedNodeIds.has(node.id) || node.id === selectedCardId
-              ? 1
-              : 0.44,
+          opacity: node.id === selectedCardId ? 1 : 0.4,
+          transform: node.id === selectedCardId ? 'scale(1.02)' : 'scale(0.985)',
         }
-      : undefined,
+      : hoveredCardId
+        ? {
+            opacity:
+              node.id === hoveredCardId || hoveredRelatedNodeIds.has(node.id) || node.id === selectedCardId
+                ? 1
+                : 0.44,
+          }
+        : undefined,
     data: {
       ...node,
       executionOrder: executionOrderById.get(node.id) || null,
@@ -250,6 +383,8 @@ function toFlowNodes(
       isHovered: node.id === hoveredCardId,
       isHoverRelated: hoveredCardId ? hoveredRelatedNodeIds.has(node.id) : false,
       isFlowLinked: emphasizedFlowNodeIds.has(node.id),
+      isInspecting: inspectMode && selectedCardId === node.id,
+      isWallOrchestrator: isWallOrchestratorNode(node),
     },
     selected: node.id === selectedCardId,
   }));
@@ -270,6 +405,9 @@ type FlowEdgeData = {
   isHoverConnected?: boolean;
   isLoopEdge?: boolean;
   isReturnEdge?: boolean;
+  sourceIsWallEndpoint?: boolean;
+  targetIsWallEndpoint?: boolean;
+  wallAnchorY?: number;
 };
 
 function normalizeEdgeType(value: unknown): DeckEdgeType {
@@ -283,6 +421,12 @@ function normalizeRuntimeType(value: unknown): AgentCardRuntimeType {
   if (normalized === 'magentic_one') return 'magentic_one';
   if (normalized === 'graph_flow') return 'graph_flow';
   return 'assistant_agent';
+}
+
+function isWallOrchestratorNode(node: AgentCardInstance | undefined | null): boolean {
+  if (!node) return false;
+  if (normalizeRuntimeType(node.runtimeType) === 'magentic_one') return true;
+  return String(node.id || '').trim().toLowerCase() === 'card_magentic';
 }
 
 function isTopLevelCanvasCard(node: AgentCardInstance | undefined | null): node is AgentCardInstance {
@@ -393,10 +537,14 @@ function resolveCanvasConnectionEdgeType(
   const targetRuntimeType = normalizeRuntimeType(targetNode.runtimeType);
 
   if (
-    sourceRuntimeType === 'magentic_one' &&
-    isTopLevelCanvasCard(sourceNode) &&
-    isTopLevelCanvasCard(targetNode) &&
-    (targetRuntimeType === 'assistant_agent' || targetRuntimeType === 'graph_flow')
+    (
+      sourceRuntimeType === 'magentic_one' &&
+      (targetRuntimeType === 'assistant_agent' || targetRuntimeType === 'graph_flow')
+    ) ||
+    (
+      targetRuntimeType === 'magentic_one' &&
+      (sourceRuntimeType === 'assistant_agent' || sourceRuntimeType === 'graph_flow')
+    )
   ) {
     return 'magentic_option';
   }
@@ -494,20 +642,36 @@ function toFlowEdges(
   document: DeckDocument,
   selectedEdgeId: string | null,
   hoveredCardId: string | null,
+  inspectCardId: string | null,
   activeEdgeIds: Set<string>,
+  wallAnchorYByEdgeId: Record<string, number>,
 ): Edge[] {
-  const visualStates = buildDeckEdgeVisualStates(document);
+  const nodeById = new Map(document.nodes.map((node) => [node.id, node] as const));
   return document.edges.map((edge) => {
     const isSelected = edge.id === selectedEdgeId;
     const isHoverConnected = isEdgeConnectedToNode(edge.source, edge.target, hoveredCardId);
+    const isInspectConnected = inspectCardId ? isEdgeConnectedToNode(edge.source, edge.target, inspectCardId) : false;
     const isActive = activeEdgeIds.has(edge.id);
-    const visualState = visualStates.get(edge.id) || {
-      isLoopEdge: false,
-      isReturnEdge: false,
-      offset: 24,
-      borderRadius: 14,
-    };
     const edgeType = normalizeEdgeType(edge.edgeType);
+    const sourceNode = nodeById.get(edge.source) as AgentCardInstance | undefined;
+    const targetNode = nodeById.get(edge.target) as AgentCardInstance | undefined;
+    const sourceRuntimeType = normalizeRuntimeType(sourceNode?.runtimeType);
+    const targetRuntimeType = normalizeRuntimeType(targetNode?.runtimeType);
+    const sourceIsWallEndpoint = isWallOrchestratorNode(sourceNode);
+    const targetIsWallEndpoint = isWallOrchestratorNode(targetNode);
+    const isWallConnected = sourceIsWallEndpoint || targetIsWallEndpoint;
+    const fallbackWallAnchorNode =
+      sourceIsWallEndpoint
+        ? targetNode
+        : targetIsWallEndpoint
+          ? sourceNode
+          : null;
+    const explicitWallAnchorY = Number(wallAnchorYByEdgeId[edge.id]);
+    const wallAnchorY = Number.isFinite(explicitWallAnchorY)
+      ? Math.round(explicitWallAnchorY)
+      : fallbackWallAnchorNode
+        ? Math.round(fallbackWallAnchorNode.position.y + DEFAULT_CARD_VISUAL_HEIGHT / 2)
+        : undefined;
     return {
       id: edge.id,
       source: edge.source,
@@ -518,15 +682,20 @@ function toFlowEdges(
         isActive,
         isSelected,
         isHoverConnected,
-        isLoopEdge: visualState.isLoopEdge,
-        isReturnEdge: visualState.isReturnEdge,
+        isLoopEdge: false,
+        isReturnEdge: false,
+        sourceIsWallEndpoint,
+        targetIsWallEndpoint,
+        wallAnchorY:
+          sourceIsWallEndpoint || targetIsWallEndpoint
+            ? wallAnchorY
+            : undefined,
       } satisfies FlowEdgeData,
       type: 'turboFlow',
       className: [
         isActive ? 'edge-active' : null,
         isSelected ? 'edge-selected' : null,
-        visualState.isLoopEdge ? 'edge-loop' : null,
-        visualState.isReturnEdge ? 'edge-return' : null,
+        inspectCardId && !isInspectConnected ? 'edge-inspect-muted' : null,
         edgeType === 'magentic_option' ? 'edge-magentic-option' : 'edge-flow',
       ]
         .filter(Boolean)
@@ -537,13 +706,18 @@ function toFlowEdges(
       reconnectable: true,
       interactionWidth: 32,
       pathOptions: {
-        offset: visualState.offset,
-        borderRadius: visualState.borderRadius,
+        offset: 24,
+        borderRadius: 14,
       },
-      markerEnd: isActive || visualState.isLoopEdge || visualState.isReturnEdge ? 'agent-edge-circle-hot' : 'agent-edge-circle',
+      markerEnd: 'agent-edge-circle',
       style: {
-        strokeWidth: isActive ? 2.85 : isSelected ? 2.5 : hoveredCardId && isHoverConnected ? 2.35 : 2.05,
-        opacity: isActive ? 1 : hoveredCardId ? (isHoverConnected ? 0.96 : 0.3) : 1,
+        stroke: isWallConnected ? 'rgba(55,173,170,0.82)' : undefined,
+        strokeWidth: isWallConnected ? 1.84 : isSelected ? 1.56 : isActive ? 1.5 : 1.36,
+        opacity: inspectCardId
+          ? (isInspectConnected ? (isWallConnected ? 0.8 : isSelected ? 0.62 : 0.44) : 0.18)
+          : hoveredCardId
+            ? (isHoverConnected ? (isWallConnected ? 0.78 : 0.58) : 0.24)
+            : (isWallConnected ? 0.74 : isSelected ? 0.6 : 0.44),
       },
     };
   });
@@ -633,6 +807,7 @@ export default function BuilderCanvas({
   activeEdgeIds = [],
   swarmProgressByCardId = {},
   miniMode = false,
+  inspectMode = false,
 }: {
   document: DeckDocument;
   setDocument: Dispatch<SetStateAction<DeckDocument>>;
@@ -648,11 +823,13 @@ export default function BuilderCanvas({
   activeEdgeIds?: string[];
   swarmProgressByCardId?: Record<string, { completed: number; total: number }>;
   miniMode?: boolean;
+  inspectMode?: boolean;
 }) {
   const activeCardIdSet = useMemo(() => new Set(activeCardIds), [activeCardIds]);
   const activeEdgeIdSet = useMemo(() => new Set(activeEdgeIds), [activeEdgeIds]);
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
   const [layoutLocked, setLayoutLocked] = useState(false);
+  const wallAnchorYByEdgeIdRef = useRef<Record<string, number>>({});
   const flowNodes = useMemo(
     () =>
       toFlowNodes(
@@ -660,27 +837,45 @@ export default function BuilderCanvas({
         selectedCardId,
         selectedEdgeId,
         hoveredCardId,
+        inspectMode,
         executionPlan,
         activeCardIdSet,
         activeEdgeIdSet,
         swarmProgressByCardId,
       ),
-    [activeCardIdSet, activeEdgeIdSet, document, executionPlan, hoveredCardId, selectedCardId, selectedEdgeId, swarmProgressByCardId],
+    [activeCardIdSet, activeEdgeIdSet, document, executionPlan, hoveredCardId, inspectMode, selectedCardId, selectedEdgeId, swarmProgressByCardId],
   );
   const flowEdges = useMemo(
-    () => toFlowEdges(document, selectedEdgeId, hoveredCardId, activeEdgeIdSet),
-    [activeEdgeIdSet, document, hoveredCardId, selectedEdgeId],
+    () =>
+      toFlowEdges(
+        document,
+        selectedEdgeId,
+        hoveredCardId,
+        inspectMode ? selectedCardId : null,
+        activeEdgeIdSet,
+        wallAnchorYByEdgeIdRef.current,
+      ),
+    [activeEdgeIdSet, document, hoveredCardId, inspectMode, selectedCardId, selectedEdgeId],
   );
   const [nodes, setNodes] = useNodesState(flowNodes);
   const [edges, setEdges] = useEdgesState(flowEdges);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const pendingConnectionRef = useRef<{
+    nodeId: string | null;
+    handleType: 'source' | 'target' | null;
+  } | null>(null);
   const viewportRecoveryFrameRef = useRef<number | null>(null);
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const documentRecoveryKey = useMemo(() => buildCanvasDocumentRecoveryKey(document), [document]);
   const selectedEdge = useMemo(
     () => document.edges.find((edge) => edge.id === selectedEdgeId) || null,
     [document.edges, selectedEdgeId],
+  );
+  const magenticNodeId = useMemo(
+    () =>
+      document.nodes.find((node) => isWallOrchestratorNode(node))?.id || null,
+    [document.nodes],
   );
   const translateExtent = useMemo(() => buildViewportTranslateExtent(nodes), [nodes]);
 
@@ -767,12 +962,10 @@ export default function BuilderCanvas({
   useEffect(() => {
     if (!reactFlowInstance || !focusRequest) return;
     if (focusRequest.kind === 'deck') {
-      reactFlowInstance.fitView({
-        duration: GRAPH_THEME.nav.focusDurationMs,
-        padding: GRAPH_THEME.nav.fitPadding,
-        minZoom: GRAPH_THEME.nav.minZoom,
-        maxZoom: GRAPH_THEME.nav.fitMaxZoom,
-      });
+      reactFlowInstance.setViewport(
+        { x: 72, y: 84, zoom: 1 },
+        { duration: GRAPH_THEME.nav.focusDurationMs },
+      );
       return;
     }
     const targetNode = nodes.find((node) => node.id === focusRequest.cardId);
@@ -876,6 +1069,10 @@ export default function BuilderCanvas({
   const onEdgesChange = (changes: EdgeChange[]) => {
     setEdges((current) => {
       const next = applyEdgeChanges(changes, current);
+      changes.forEach((change) => {
+        if (change.type !== 'remove') return;
+        delete wallAnchorYByEdgeIdRef.current[change.id];
+      });
       const hasPersistedEdgeChange = shouldPersistEdgeChanges(changes);
       if (hasPersistedEdgeChange) {
         onPersistGraphMutation?.('canvas:edges', {
@@ -895,14 +1092,47 @@ export default function BuilderCanvas({
     });
   };
 
-  const onConnect = (connection: Connection) => {
+  const resolveWallAnchorYForConnection = useCallback(
+    (
+      connection: Pick<Connection, 'source' | 'target'>,
+      requestedWallAnchorY?: number | null,
+    ): number | undefined => {
+      const sourceNode = document.nodes.find((node) => node.id === connection.source);
+      const targetNode = document.nodes.find((node) => node.id === connection.target);
+      const hasWallEndpoint = isWallOrchestratorNode(sourceNode) || isWallOrchestratorNode(targetNode);
+      if (!hasWallEndpoint) return undefined;
+      if (
+        typeof requestedWallAnchorY === 'number' &&
+        Number.isFinite(requestedWallAnchorY)
+      ) {
+        return Math.round(requestedWallAnchorY);
+      }
+      const nonWallNode =
+        isWallOrchestratorNode(sourceNode)
+          ? targetNode
+          : isWallOrchestratorNode(targetNode)
+            ? sourceNode
+            : null;
+      if (!nonWallNode) return undefined;
+      return Math.round(nonWallNode.position.y + DEFAULT_CARD_VISUAL_HEIGHT / 2);
+    },
+    [document.nodes],
+  );
+
+  const commitConnection = useCallback((connection: Pick<Connection, 'source' | 'target'>, wallAnchorY?: number | null) => {
+    if (!connection.source || !connection.target) return;
     setEdges((current) => {
       if (!isPlainConnectionAllowed(connection, current)) return current;
+      const edgeId = `edge_${Math.random().toString(36).slice(2, 10)}`;
+      const nextWallAnchorY = resolveWallAnchorYForConnection(connection, wallAnchorY);
+      if (typeof nextWallAnchorY === 'number') {
+        wallAnchorYByEdgeIdRef.current[edgeId] = nextWallAnchorY;
+      }
 
       const next = addEdge(
         {
           ...connection,
-          id: `edge_${Math.random().toString(36).slice(2, 10)}`,
+          id: edgeId,
           data: (() => {
             const edgeType = resolveCanvasConnectionEdgeType(document, connection) || 'flow';
             return {
@@ -924,7 +1154,54 @@ export default function BuilderCanvas({
       }));
       return next;
     });
-  };
+  }, [document, onPersistGraphMutation, resolveWallAnchorYForConnection, setDocument]);
+
+  const onConnect = useCallback((connection: Connection) => {
+    commitConnection(connection);
+    pendingConnectionRef.current = null;
+  }, [commitConnection]);
+
+  const onConnectStart = useCallback(
+    (_event: unknown, params: { nodeId?: string | null; handleType?: 'source' | 'target' | null }) => {
+      pendingConnectionRef.current = {
+        nodeId: params?.nodeId || null,
+        handleType: params?.handleType || null,
+      };
+    },
+    [],
+  );
+
+  const onConnectEnd = useCallback((event: MouseEvent | TouchEvent) => {
+    const pending = pendingConnectionRef.current;
+    pendingConnectionRef.current = null;
+    if (!pending?.nodeId || !magenticNodeId) return;
+    if (pending.nodeId === magenticNodeId) return;
+    const host = canvasRef.current;
+    if (!host) return;
+    const rect = host.getBoundingClientRect();
+    const clientY =
+      'clientY' in event
+        ? event.clientY
+        : event.changedTouches && event.changedTouches.length > 0
+          ? event.changedTouches[0].clientY
+          : null;
+    const clientX =
+      'clientX' in event
+        ? event.clientX
+        : event.changedTouches && event.changedTouches.length > 0
+          ? event.changedTouches[0].clientX
+          : null;
+    if (clientX == null || clientY == null) return;
+    // Treat the full left seam (and slight overflow into chat side) as the wall endpoint surface.
+    if (clientX > rect.left + WALL_SEAM_CAPTURE_WIDTH_PX) return;
+    const viewport = reactFlowInstance?.getViewport() || { x: 0, y: 0, zoom: 1 };
+    const wallAnchorY = (clientY - rect.top - viewport.y) / (viewport.zoom || 1);
+    const wallConnection =
+      (pending.handleType || 'source') === 'target'
+        ? { source: magenticNodeId, target: pending.nodeId }
+        : { source: pending.nodeId, target: magenticNodeId };
+    commitConnection(wallConnection, wallAnchorY);
+  }, [commitConnection, magenticNodeId, reactFlowInstance]);
 
   const onReconnect: OnReconnect<Edge> = (oldEdge, newConnection) => {
     setEdges((current) => {
@@ -950,6 +1227,16 @@ export default function BuilderCanvas({
             }
           : edge,
       );
+      const reconnectSourceNode = document.nodes.find((node) => node.id === newConnection.source);
+      const reconnectTargetNode = document.nodes.find((node) => node.id === newConnection.target);
+      if (!isWallOrchestratorNode(reconnectSourceNode) && !isWallOrchestratorNode(reconnectTargetNode)) {
+        delete wallAnchorYByEdgeIdRef.current[oldEdge.id];
+      } else if (!Number.isFinite(Number(wallAnchorYByEdgeIdRef.current[oldEdge.id]))) {
+        const reconnectWallAnchorY = resolveWallAnchorYForConnection(newConnection);
+        if (typeof reconnectWallAnchorY === 'number') {
+          wallAnchorYByEdgeIdRef.current[oldEdge.id] = reconnectWallAnchorY;
+        }
+      }
       onPersistGraphMutation?.('canvas:reconnect', {
         edgeId: oldEdge.id,
         source: newConnection.source,
@@ -970,12 +1257,17 @@ export default function BuilderCanvas({
     <div
       ref={canvasRef}
       className="builder-flow h-full w-full"
+      data-inspect-mode={inspectMode && selectedCardId ? 'true' : 'false'}
       style={{ position: 'relative', background: GRAPH_THEME.background.agentSurface }}
       tabIndex={miniMode ? -1 : 0}
       onKeyDown={(event) => {
         if (miniMode) return;
         if (event.key === 'Backspace' || event.key === 'Delete') {
           if (selectedCardId) {
+            const selectedNode = document.nodes.find((node) => node.id === selectedCardId);
+            if (normalizeRuntimeType(selectedNode?.runtimeType) === 'magentic_one') {
+              return;
+            }
             event.preventDefault();
             onPersistGraphMutation?.('canvas:delete-node', { cardId: selectedCardId });
             setDocument((prev) => ({
@@ -1015,11 +1307,6 @@ export default function BuilderCanvas({
       }}
     >
       <style>{`
-        @keyframes agent-turbo-flow-dash {
-          to {
-            stroke-dashoffset: -80;
-          }
-        }
         .builder-flow .react-flow__edge {
           cursor: pointer;
           transition: opacity 180ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -1029,20 +1316,31 @@ export default function BuilderCanvas({
         }
         .builder-flow .react-flow__edge.selected,
         .builder-flow .react-flow__edge.edge-selected {
-          filter: drop-shadow(0 0 5px rgba(79, 162, 173, 0.12));
+          filter: none;
         }
         .builder-flow .react-flow__edge.edge-active {
-          filter: drop-shadow(0 0 7px rgba(79, 162, 173, 0.16)) drop-shadow(0 0 4px rgba(223, 146, 84, 0.1));
+          filter: none;
         }
         .builder-flow .react-flow__edge.edge-loop,
         .builder-flow .react-flow__edge.edge-return {
-          filter: drop-shadow(0 0 5px rgba(223, 146, 84, 0.12));
+          filter: none;
+        }
+        .builder-flow .react-flow__edge.edge-inspect-muted {
+          opacity: 0.16;
         }
         .builder-flow .react-flow__node {
           transition: filter 180ms cubic-bezier(0.22, 1, 0.36, 1);
         }
         .builder-flow .react-flow__node.selected {
-          filter: drop-shadow(0 0 8px rgba(79, 162, 173, 0.12));
+          filter: drop-shadow(0 0 8px ${GRAPH_THEME.accent.primaryGlow});
+        }
+        .builder-flow[data-inspect-mode="true"] .react-flow__node:not(.selected) {
+          opacity: 0.42;
+          filter: saturate(0.75) brightness(0.84);
+        }
+        .builder-flow[data-inspect-mode="true"] .react-flow__node.selected {
+          opacity: 1;
+          filter: drop-shadow(0 0 12px ${GRAPH_THEME.accent.primaryGlow}) drop-shadow(0 0 8px ${GRAPH_THEME.accent.solarSoft});
         }
         .builder-flow .react-flow__handle {
           transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
@@ -1051,8 +1349,8 @@ export default function BuilderCanvas({
         .builder-flow .react-flow__handle.connectionindicator {
           transform: scale(1.06);
           box-shadow:
-            0 0 0 2px rgba(79, 162, 173, 0.14),
-            0 0 0 5px rgba(140, 116, 204, 0.08);
+            0 0 0 2px ${GRAPH_THEME.accent.primarySoft},
+            0 0 0 5px ${GRAPH_THEME.accent.solarSoft};
         }
         .builder-flow .react-flow__connection-path {
           stroke: ${GRAPH_THEME.accent.primary};
@@ -1085,21 +1383,6 @@ export default function BuilderCanvas({
       `}</style>
       <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden>
         <defs>
-          <linearGradient id="agent-edge-gradient-intelligence" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stopColor={GRAPH_THEME.turboFlow.intelligenceGradientStart} />
-            <stop offset="61.8%" stopColor={GRAPH_THEME.turboFlow.intelligenceGradientMid} />
-            <stop offset="100%" stopColor={GRAPH_THEME.turboFlow.intelligenceGradientEnd} />
-          </linearGradient>
-          <linearGradient id="agent-edge-gradient-execution" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stopColor={GRAPH_THEME.turboFlow.executionGradientStart} />
-            <stop offset="61.8%" stopColor={GRAPH_THEME.turboFlow.executionGradientMid} />
-            <stop offset="100%" stopColor={GRAPH_THEME.turboFlow.executionGradientEnd} />
-          </linearGradient>
-          <linearGradient id="agent-edge-gradient-memory" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stopColor={GRAPH_THEME.turboFlow.memoryGradientStart} />
-            <stop offset="61.8%" stopColor={GRAPH_THEME.turboFlow.memoryGradientMid} />
-            <stop offset="100%" stopColor={GRAPH_THEME.turboFlow.memoryGradientEnd} />
-          </linearGradient>
           <marker
             id="agent-edge-circle"
             viewBox="-5 -5 10 10"
@@ -1162,7 +1445,7 @@ export default function BuilderCanvas({
           onClick={() => reactFlowInstance?.zoomOut({ duration: GRAPH_THEME.nav.zoomDurationMs })}
           style={graphControlButtonStyle({ borderBottom: `1px solid ${GRAPH_THEME.controls.border}` })}
         >
-          −
+          -
         </button>
         <button
           type="button"
@@ -1222,7 +1505,10 @@ export default function BuilderCanvas({
         deleteKeyCode={null}
         nodesDraggable={!layoutLocked}
         isValidConnection={(connection) => isPlainConnectionAllowed(connection, edges)}
-        onInit={setReactFlowInstance}
+        onInit={(instance) => {
+          setReactFlowInstance(instance);
+          instance.setViewport({ x: 72, y: 84, zoom: 1 }, { duration: 0 });
+        }}
         onNodeDragStart={(_, node) => {
           setDraggingNodeId(node.id);
         }}
@@ -1234,6 +1520,8 @@ export default function BuilderCanvas({
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onConnectStart={onConnectStart}
+        onConnectEnd={onConnectEnd}
         onReconnect={onReconnect}
         onNodeClick={(_, node) => {
           if (miniMode) return;
@@ -1268,19 +1556,20 @@ export default function BuilderCanvas({
           markerEnd: 'agent-edge-circle',
         }}
         snapToGrid
-        snapGrid={[GRAPH_WORKSPACE.worldGridGap, GRAPH_WORKSPACE.worldGridGap]}
-        fitViewOptions={{
-          padding: GRAPH_THEME.nav.fitPadding,
-          minZoom: GRAPH_THEME.nav.minZoom,
-          maxZoom: GRAPH_THEME.nav.fitMaxZoom,
-        }}
-        fitView
+        snapGrid={[GRAPH_THEME.graphPaper.minorStep, GRAPH_THEME.graphPaper.minorStep]}
+        defaultViewport={{ x: 72, y: 84, zoom: 1 }}
       >
         <Background
           variant={BackgroundVariant.Lines}
-          gap={GRAPH_WORKSPACE.worldGridGap}
-          size={GRAPH_WORKSPACE.worldGridLineWidth}
-          color={GRAPH_THEME.background.grid}
+          gap={GRAPH_THEME.graphPaper.minorStep}
+          size={GRAPH_THEME.graphPaper.lineWidth}
+          color={GRAPH_THEME.background.gridMinor}
+        />
+        <Background
+          variant={BackgroundVariant.Lines}
+          gap={GRAPH_THEME.graphPaper.majorStep}
+          size={GRAPH_THEME.graphPaper.lineWidth}
+          color={GRAPH_THEME.background.gridMajor}
         />
       </ReactFlow>
     </div>

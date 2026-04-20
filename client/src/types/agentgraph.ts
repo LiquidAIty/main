@@ -329,6 +329,23 @@ export type DeckRunStep = {
   } | null;
 };
 
+export type DeckWorkspaceObjectEditorContext = {
+  open: boolean;
+  activeTab?: string | null;
+  selectedCardId?: string | null;
+  selectedCardTitle?: string | null;
+  selectedCardRuntimeType?: AgentCardRuntimeType | null;
+  editable: boolean;
+  runnable: boolean;
+};
+
+export type DeckWorkspaceContext = {
+  workspaceView: string;
+  largeSurface: string;
+  activeTab?: string | null;
+  objectEditor: DeckWorkspaceObjectEditorContext;
+};
+
 export type DeckRun = {
   id: string;
   deckId: string;
@@ -337,6 +354,7 @@ export type DeckRun = {
   status: DeckRunStatus;
   input: string;
   error?: string;
+  workspaceContext?: DeckWorkspaceContext | null;
   steps: DeckRunStep[];
   codegraphViewContract?: CodeGraphViewContract | null;
   validationSummary: {

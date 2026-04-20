@@ -20,6 +20,7 @@ import type {
   DeckEdge,
   DeckEdgeType,
   DeckRuntimeEvent,
+  DeckWorkspaceContext,
   GraphViewContract,
   PromptTemplate,
   RuntimeBinding,
@@ -31,6 +32,7 @@ export type CardRuntimeContext = {
   promptTemplates?: PromptTemplate[];
   seed?: string;
   projectId?: string;
+  workspaceContext?: DeckWorkspaceContext | null;
   deckId?: string;
   deckName?: string;
   allCards?: AgentCardInstance[];
@@ -95,6 +97,41 @@ function summarizeText(value: string | null | undefined, maxLength = 220): strin
   const text = String(value || '').replace(/\s+/g, ' ').trim();
   if (!text) return '';
   return text.length <= maxLength ? text : `${text.slice(0, maxLength - 3)}...`;
+}
+
+function toWorkspaceFocusSummary(
+  workspaceContext: DeckWorkspaceContext | null | undefined,
+): {
+  activeSurface: string;
+  activeTab: string | null;
+  objectEditorOpen: boolean;
+  objectEditorTab: string | null;
+  selectedCardId: string | null;
+  selectedCardTitle: string | null;
+  selectedCardRuntimeType: string | null;
+  editable: boolean;
+  runnable: boolean;
+} | null {
+  if (!workspaceContext || typeof workspaceContext !== 'object') return null;
+  const clean = (value: unknown): string | null => {
+    const text = String(value || '').trim();
+    return text || null;
+  };
+  const editor =
+    workspaceContext.objectEditor && typeof workspaceContext.objectEditor === 'object'
+      ? workspaceContext.objectEditor
+      : null;
+  return {
+    activeSurface: clean(workspaceContext.largeSurface) || clean(workspaceContext.workspaceView) || 'chat',
+    activeTab: clean(workspaceContext.activeTab),
+    objectEditorOpen: Boolean(editor?.open),
+    objectEditorTab: clean(editor?.activeTab),
+    selectedCardId: clean(editor?.selectedCardId),
+    selectedCardTitle: clean(editor?.selectedCardTitle),
+    selectedCardRuntimeType: clean(editor?.selectedCardRuntimeType),
+    editable: Boolean(editor?.editable),
+    runnable: Boolean(editor?.runnable),
+  };
 }
 
 function emitRuntimeEvent(
@@ -1365,6 +1402,7 @@ async function runMagenticCard(
     throw new Error(`magentic_callable_heads_required: cardId=${card.id}`);
   }
   const graphRelevantTask = isGraphRelevantMagenticTask(runtimeInput, callableHeads);
+  const workspaceFocus = toWorkspaceFocusSummary(context.workspaceContext);
 
   const modelConfig = resolveCardModelConfig(card, effectiveAgent, `card_${card.id}`);
   const prompt = resolveCardSystemPrompt(card, effectiveAgent);
@@ -1391,6 +1429,9 @@ async function runMagenticCard(
     graphRelevantTask
       ? 'When included, graphViewContract should include graphKind, projectId, focusNodeIds, focusPaths, focusSymbols, nodeLabelAllowlist, edgeTypeAllowlist, showLabels, maxNodes, cameraMode, animationMode, and narrativeIntent.'
       : null,
+    workspaceFocus?.objectEditorOpen
+      ? 'Workspace focus currently has an object editor open. Prefer decisions that directly help the open card context when that is compatible with the user request.'
+      : null,
     'Return JSON only with keys selectedCardId, directResponseText, progressText, and graphViewContract.',
     'Set exactly one of selectedCardId or directResponseText to a non-empty value.',
   ]
@@ -1406,6 +1447,7 @@ async function runMagenticCard(
         runtimeBinding: head.runtimeBinding || null,
       })),
       graphRelevantTask,
+      workspaceFocus,
       graphContractTemplate: graphRelevantTask
         ? buildGraphRelevantCodeGraphContract(runtimeInput, context.projectId)
         : null,

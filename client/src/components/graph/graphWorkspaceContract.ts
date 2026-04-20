@@ -1,3 +1,22 @@
+const GRAPH_PAPER_MINOR_STEP = 28;
+const GRAPH_PAPER_MAJOR_STEP = GRAPH_PAPER_MINOR_STEP * 4;
+const GRAPH_PAPER_LINE_WIDTH = 1;
+
+export const GRAPH_PAPER = {
+  minorStep: GRAPH_PAPER_MINOR_STEP,
+  majorStep: GRAPH_PAPER_MAJOR_STEP,
+  lineWidth: GRAPH_PAPER_LINE_WIDTH,
+  baseColor: "#A7B0BA",
+  minorOpacity: 0.14,
+  majorOpacity: 0.22,
+  restingBrightness: 0.98,
+  vignetteOpacity: 0.16,
+  worldScale: 1,
+  // 3D renderer adapters must still match 2D resting appearance to this shared contract.
+  worldDepth: -220,
+  worldExtent: 6400,
+} as const;
+
 export const GRAPH_WORKSPACE = {
   minZoom: 0.22,
   maxZoom: 1.6,
@@ -9,9 +28,9 @@ export const GRAPH_WORKSPACE = {
   zoomStep: 1.18,
   zoomDurationMs: 140,
   wheelDelta: 0.0016,
-  worldGridGap: 28,
-  worldGridMajorGapMultiplier: 4,
-  worldGridLineWidth: 1,
+  worldGridGap: GRAPH_PAPER.minorStep,
+  worldGridMajorGapMultiplier: GRAPH_PAPER.majorStep / GRAPH_PAPER.minorStep,
+  worldGridLineWidth: GRAPH_PAPER.lineWidth,
   worldOverscan: 12000,
 } as const;
 
@@ -40,10 +59,10 @@ export function resolveKnowledgeSubstrateRhythm(zoom: number): {
 } {
   const depth = normalizeGraphZoom(zoom);
   return {
-    minorOpacity: 0.012 + depth * 0.118,
-    majorOpacity: 0.092 + depth * 0.088,
-    minorLineWidth: GRAPH_WORKSPACE.worldGridLineWidth * (0.94 - depth * 0.12),
-    majorLineWidth: GRAPH_WORKSPACE.worldGridLineWidth * (1.1 - depth * 0.08),
+    minorOpacity: 0.01 + depth * 0.11,
+    majorOpacity: 0.085 + depth * 0.082,
+    minorLineWidth: GRAPH_WORKSPACE.worldGridLineWidth * (0.92 - depth * 0.1),
+    majorLineWidth: GRAPH_WORKSPACE.worldGridLineWidth * (1.06 - depth * 0.06),
   };
 }
 

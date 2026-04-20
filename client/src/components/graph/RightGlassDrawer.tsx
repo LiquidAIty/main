@@ -113,8 +113,8 @@ export default function RightGlassDrawer({
             borderBottomRightRadius: 7,
             cursor: "pointer",
             zIndex,
-            background: "linear-gradient(90deg, rgba(10,12,16,0.82), rgba(22,26,32,0.94))",
-            color: "rgba(255,255,255,0.55)",
+            background: `linear-gradient(90deg, ${GRAPH_THEME.drawer.panelBackground}, rgba(17,22,29,0.96))`,
+            color: GRAPH_THEME.drawer.inputMuted,
             opacity: 0.86,
           }}
         >
@@ -125,7 +125,7 @@ export default function RightGlassDrawer({
         data-testid={dataTestId}
         data-open={isOpen ? "true" : "false"}
         className="absolute transition-[width,opacity,transform] duration-180 ease-out"
-        style={graphCompanionPanelStyle({
+          style={graphCompanionPanelStyle({
           top,
           right,
           bottom,
@@ -136,12 +136,14 @@ export default function RightGlassDrawer({
           pointerEvents: isOpen ? "auto" : "none",
           opacity: isOpen ? 1 : 0,
           transform: isOpen ? "translateX(0)" : "translateX(12px)",
-          borderRadius: 12,
-          border: `1px solid ${GRAPH_THEME.drawer.panelBorder}`,
-          boxShadow: `${GRAPH_THEME.drawer.panelShadow}, ${GRAPH_THEME.drawer.panelInset}`,
-          overflow: "hidden",
-        })}
-      >
+            borderRadius: 12,
+            border: `1px solid ${GRAPH_THEME.drawer.panelBorder}`,
+            boxShadow: `${GRAPH_THEME.drawer.panelShadow}, ${GRAPH_THEME.drawer.panelInset}`,
+            overflow: "hidden",
+            backdropFilter: "blur(14px) saturate(120%)",
+            WebkitBackdropFilter: "blur(14px) saturate(120%)",
+          })}
+        >
         <div
           aria-label="Resize drawer"
           title="Drag to resize drawer"
@@ -159,13 +161,13 @@ export default function RightGlassDrawer({
             width: 8,
             cursor: "col-resize",
             zIndex: 3,
-            borderRight: `1px solid ${edgeAffordanceActive ? "rgba(79,162,173,0.34)" : "rgba(79,162,173,0.18)"}`,
+            borderRight: `1px solid ${edgeAffordanceActive ? GRAPH_THEME.accent.primaryBorder : GRAPH_THEME.drawer.sectionBorder}`,
             boxShadow: edgeAffordanceActive
-              ? "inset 0 0 0 1px rgba(79,162,173,0.14), 0 0 8px rgba(79,162,173,0.1)"
+              ? "inset 0 0 0 1px rgba(55,173,170,0.14), 0 0 8px rgba(55,173,170,0.1)"
               : "none",
             background: edgeAffordanceActive
-              ? "linear-gradient(90deg, rgba(79,162,173,0.22), rgba(79,162,173,0.03))"
-              : "linear-gradient(90deg, rgba(79,162,173,0.14), rgba(79,162,173,0.01))",
+              ? "linear-gradient(90deg, rgba(55,173,170,0.2), rgba(55,173,170,0.02))"
+              : "linear-gradient(90deg, rgba(167,176,186,0.14), rgba(167,176,186,0.01))",
             transition: "border-color 120ms ease, box-shadow 120ms ease, background 120ms ease",
           }}
         />
@@ -175,7 +177,7 @@ export default function RightGlassDrawer({
             style={{
               padding: "10px 12px 10px 16px",
               borderBottom: `1px solid ${GRAPH_THEME.drawer.tabRailBorder}`,
-              background: "rgba(7,9,12,0.78)",
+              background: GRAPH_THEME.drawer.tabRailBackground,
             }}
           >
             <div
