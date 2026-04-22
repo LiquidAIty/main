@@ -3,5 +3,5 @@
 /coverage
 /.nx/cache
 /.nx/workspace-data
-openclaude-main/**
+localcoder/**
 vendor/sim/**

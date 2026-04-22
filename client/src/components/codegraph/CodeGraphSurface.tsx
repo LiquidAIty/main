@@ -4,6 +4,7 @@ import { CodeGraphFilterPanel } from "./CodeGraphFilterPanel";
 import { CodeGraphScene } from "./CodeGraphScene";
 import type { CodeGraphData, CodeGraphNode, CodeGraphViewContract } from "./types";
 import RightGlassDrawer from "../graph/RightGlassDrawer";
+import { GRAPH_WORKSPACE, getGraphMajorGridGap } from "../graph/graphWorkspaceContract";
 import {
   GRAPH_THEME,
   graphControlButtonStyle,
@@ -35,6 +36,7 @@ export function CodeGraphSurface({
   onViewContractChange,
   onRefreshRequest,
 }: CodeGraphSurfaceProps): React.ReactElement {
+  const majorGridGap = getGraphMajorGridGap();
   const [graphData, setGraphData] = useState<CodeGraphData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -203,10 +205,10 @@ export function CodeGraphSurface({
             "radial-gradient(circle at 50% 50%, rgba(255,255,255,0.04), rgba(0,0,0,0.22) 68%)",
           ].join(", "),
           backgroundSize: [
-            `${GRAPH_THEME.graphPaper.minorStep}px ${GRAPH_THEME.graphPaper.minorStep}px`,
-            `${GRAPH_THEME.graphPaper.minorStep}px ${GRAPH_THEME.graphPaper.minorStep}px`,
-            `${GRAPH_THEME.graphPaper.majorStep}px ${GRAPH_THEME.graphPaper.majorStep}px`,
-            `${GRAPH_THEME.graphPaper.majorStep}px ${GRAPH_THEME.graphPaper.majorStep}px`,
+            `${GRAPH_WORKSPACE.worldGridGap}px ${GRAPH_WORKSPACE.worldGridGap}px`,
+            `${GRAPH_WORKSPACE.worldGridGap}px ${GRAPH_WORKSPACE.worldGridGap}px`,
+            `${majorGridGap}px ${majorGridGap}px`,
+            `${majorGridGap}px ${majorGridGap}px`,
             "100% 100%",
           ].join(", "),
         }}

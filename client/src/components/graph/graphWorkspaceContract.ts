@@ -1,6 +1,9 @@
 const GRAPH_PAPER_MINOR_STEP = 28;
 const GRAPH_PAPER_MAJOR_STEP = GRAPH_PAPER_MINOR_STEP * 4;
 const GRAPH_PAPER_LINE_WIDTH = 1;
+const GRAPH_PAPER_BASELINE_SCREEN_MINOR_STEP = GRAPH_PAPER_MINOR_STEP;
+const GRAPH_BASELINE_WORLD_ZOOM =
+  GRAPH_PAPER_BASELINE_SCREEN_MINOR_STEP / GRAPH_PAPER_MINOR_STEP;
 
 export const GRAPH_PAPER = {
   minorStep: GRAPH_PAPER_MINOR_STEP,
@@ -32,6 +35,11 @@ export const GRAPH_WORKSPACE = {
   worldGridMajorGapMultiplier: GRAPH_PAPER.majorStep / GRAPH_PAPER.minorStep,
   worldGridLineWidth: GRAPH_PAPER.lineWidth,
   worldOverscan: 12000,
+  landingBaselineZoom: GRAPH_BASELINE_WORLD_ZOOM,
+  landingBaselineMinZoom: GRAPH_BASELINE_WORLD_ZOOM - 0.02,
+  landingBaselineMaxZoom: GRAPH_BASELINE_WORLD_ZOOM + 0.02,
+  landingPrimaryBandWidth: GRAPH_PAPER.majorStep * 7,
+  landingPrimaryBandHalfHeight: GRAPH_PAPER.majorStep,
 } as const;
 
 function clamp(x: number, a: number, b: number) {

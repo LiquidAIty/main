@@ -43,6 +43,7 @@ import {
   graphPillButtonStyle,
 } from '../graph/graphVisualTokens';
 import {
+  GRAPH_WORKSPACE,
   buildFocusedNodeSet,
   buildUndirectedNeighborMap,
   isEdgeConnectedToNode,
@@ -53,11 +54,11 @@ import AgentCardNode from './nodes/AgentCardNode';
 const DEV_MODE = import.meta.env.DEV;
 const PERSISTED_NODE_CHANGE_TYPES = new Set<NodeChange['type']>(['add', 'remove', 'replace', 'position']);
 const PERSISTED_EDGE_CHANGE_TYPES = new Set<EdgeChange['type']>(['add', 'remove', 'replace']);
-const FALLBACK_NODE_WIDTH = 152;
-const FALLBACK_NODE_HEIGHT = 76;
+const FALLBACK_NODE_WIDTH = 144;
+const FALLBACK_NODE_HEIGHT = 88;
 const CANVAS_ROW_X_START = 180;
 const CANVAS_ROW_Y_START = 120;
-const CANVAS_ROW_X_GAP = 232;
+const CANVAS_ROW_X_GAP = 216;
 
 const nodeTypes = {
   agentCard: AgentCardNode,
@@ -804,9 +805,9 @@ export default function BuilderCanvas({
       reactFlowInstance.fitView({
         nodes: fitNodes,
         duration: 0,
-        padding: 0.06,
-        minZoom: 1.04,
-        maxZoom: 1.24,
+        padding: 0.1,
+        minZoom: GRAPH_WORKSPACE.landingBaselineMinZoom,
+        maxZoom: GRAPH_WORKSPACE.landingBaselineMaxZoom,
       });
     };
     const frame = window.requestAnimationFrame(() => {

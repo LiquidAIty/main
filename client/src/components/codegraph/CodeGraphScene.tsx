@@ -88,12 +88,12 @@ function CameraCommandBridge({
     if (!controls) return;
 
     if (cameraAction === "zoom_in") {
-      if (typeof controls.dollyIn === "function") controls.dollyIn(1.2);
+      if (typeof controls.dollyOut === "function") controls.dollyOut(1.2);
       controls.update();
       return;
     }
     if (cameraAction === "zoom_out") {
-      if (typeof controls.dollyOut === "function") controls.dollyOut(1.2);
+      if (typeof controls.dollyIn === "function") controls.dollyIn(1.2);
       controls.update();
       return;
     }

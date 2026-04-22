@@ -27,6 +27,7 @@ import {
   graphControlButtonStyle,
   graphControlStackStyle,
 } from '../graph/graphVisualTokens';
+import { GRAPH_WORKSPACE } from '../graph/graphWorkspaceContract';
 import TurboFlowEdge from '../builder/edges/TurboFlowEdge';
 import {
   buildPlanMissionGraph,
@@ -54,8 +55,8 @@ type PlanMissionFlowProps = {
   onFocusChange?: (focus: PlanMissionFocus) => void;
 };
 
-const PLAN_BASELINE_MIN_LOAD_ZOOM = 1.04;
-const PLAN_BASELINE_MAX_LOAD_ZOOM = 1.24;
+const PLAN_BASELINE_MIN_LOAD_ZOOM = GRAPH_WORKSPACE.landingBaselineMinZoom;
+const PLAN_BASELINE_MAX_LOAD_ZOOM = GRAPH_WORKSPACE.landingBaselineMaxZoom;
 
 function WallAnchorNode() {
   return (
@@ -103,13 +104,13 @@ function MissionNode({ data, selected }: NodeProps<PlanMissionNodeData>) {
             : 'inset 0 1px 0 rgba(255,255,255,0.03)',
           padding: '9px 10px',
           background: GRAPH_THEME.card.glassBackground,
-          width: 216,
-          minHeight: 98,
+          width: 192,
+          minHeight: 108,
         }}
       >
         <div
           style={{
-            fontSize: 14.8,
+            fontSize: 14.6,
             fontWeight: 700,
             lineHeight: 1.18,
             letterSpacing: '-0.01em',
@@ -125,7 +126,7 @@ function MissionNode({ data, selected }: NodeProps<PlanMissionNodeData>) {
             color: 'rgba(167, 176, 186, 0.84)',
             fontSize: 12.2,
             lineHeight: 1.3,
-            maxWidth: 170,
+            maxWidth: 156,
             whiteSpace: 'normal',
             overflowWrap: 'anywhere',
             display: '-webkit-box',
@@ -172,8 +173,8 @@ function resolveNodeStyle(node: PlanMissionFlowNode) {
     color: GRAPH_THEME.drawer.inputText,
     fontSize: 12.5,
     lineHeight: 1.35,
-    width: 216,
-    minHeight: 98,
+    width: 192,
+    minHeight: 108,
     padding: 0,
     boxShadow: 'none',
     backdropFilter: 'none',
@@ -309,13 +310,16 @@ export default function PlanMissionFlow({
       const fitNodes = sortedByX.filter((node) => {
         const x = node.positionAbsolute?.x ?? node.position.x;
         const y = node.positionAbsolute?.y ?? node.position.y;
-        return x <= minX + 760 && Math.abs(y - centerY) <= 116;
+        return (
+          x <= minX + GRAPH_WORKSPACE.landingPrimaryBandWidth &&
+          Math.abs(y - centerY) <= GRAPH_WORKSPACE.landingPrimaryBandHalfHeight
+        );
       });
       if (fitNodes.length === 0) return;
       reactFlowInstance.fitView({
         nodes: fitNodes,
         duration: 0,
-        padding: compact ? 0.1 : 0.11,
+        padding: compact ? 0.11 : 0.12,
         minZoom: PLAN_BASELINE_MIN_LOAD_ZOOM,
         maxZoom: PLAN_BASELINE_MAX_LOAD_ZOOM,
       });

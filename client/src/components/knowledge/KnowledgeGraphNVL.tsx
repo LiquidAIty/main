@@ -289,7 +289,9 @@ export default function KnowledgeGraphNVL({
   const viewportRef = useRef({ width: 0, height: 0 });
   const hoveredEntityIdRef = useRef<string | null>(null);
   const hoveredRelationshipIdRef = useRef<string | null>(null);
-  const zoomTierRef = useRef<KnowledgeZoomTier>(resolveKnowledgeZoomTier(1));
+  const zoomTierRef = useRef<KnowledgeZoomTier>(
+    resolveKnowledgeZoomTier(GRAPH_WORKSPACE.landingBaselineZoom),
+  );
 
   const [layoutLocked, setLayoutLocked] = useState(false);
   const [hoverCard, setHoverCard] = useState<HoverCard | null>(null);
@@ -702,7 +704,7 @@ export default function KnowledgeGraphNVL({
       minorGridLayer.attr("opacity", rhythm.minorOpacity);
       majorGridLayer.attr("opacity", rhythm.majorOpacity);
     };
-    applySubstrateRhythm(1);
+    applySubstrateRhythm(GRAPH_WORKSPACE.landingBaselineZoom);
     const zoom = d3
       .zoom<SVGSVGElement, unknown>()
       .scaleExtent([GRAPH_THEME.nav.minZoom, GRAPH_THEME.nav.maxZoom])
@@ -765,7 +767,9 @@ export default function KnowledgeGraphNVL({
     }
     let autoFitFrame: number | null = null;
     let hasAutoFitted = false;
-    zoomTierRef.current = resolveKnowledgeZoomTier(1);
+    zoomTierRef.current = resolveKnowledgeZoomTier(
+      GRAPH_WORKSPACE.landingBaselineZoom,
+    );
     const updateBounds = () => {
       if (nodes.length === 0) {
         graphBoundsRef.current = null;

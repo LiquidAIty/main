@@ -39,7 +39,8 @@ function Import-DotEnv {
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 $backendEnvPath = Join-Path $repoRoot "apps\backend\.env"
-$openClaudeBin = Join-Path $repoRoot "openclaude-main\bin\openclaude"
+$mcpConfigPath = Join-Path $repoRoot "apps\backend\mcp.config.json"
+$openClaudeBin = Join-Path $repoRoot "localcoder\bin\openclaude"
 
 Import-DotEnv -Path $backendEnvPath
 
@@ -73,4 +74,9 @@ if (-not $env:OPENAI_API_KEY -or -not $env:OPENAI_API_KEY.Trim()) {
   throw "openclaude_terminal_env_missing: OPENAI_API_KEY unresolved from backend env"
 }
 
-& $openClaudeBin
+if (Test-Path -LiteralPath $mcpConfigPath) {
+  & $openClaudeBin --mcp-config $mcpConfigPath
+}
+else {
+  & $openClaudeBin
+}

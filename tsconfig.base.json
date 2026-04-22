@@ -33,5 +33,5 @@
     "libs/**/*",
     "types/**/*"
   ],
-  "exclude": ["node_modules", "tmp", "openclaude-main", "vendor/sim"]
+  "exclude": ["node_modules", "tmp", "localcoder", "vendor/sim"]
 }

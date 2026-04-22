@@ -125,13 +125,13 @@ test-results/
 tmp-*.json.new
 
 # External vendor subsystems kept inert from parent repo tooling/runtime
-openclaude-main/node_modules/
-openclaude-main/dist/
-openclaude-main/.env
-openclaude-main/.env.*
-openclaude-main/.turbo/
-openclaude-main/.next/
-openclaude-main/.cache/
+localcoder/node_modules/
+localcoder/dist/
+localcoder/.env
+localcoder/.env.*
+localcoder/.turbo/
+localcoder/.next/
+localcoder/.cache/
 vendor/sim/node_modules/
 vendor/sim/dist/
 

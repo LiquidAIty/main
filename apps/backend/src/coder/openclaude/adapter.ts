@@ -9,7 +9,7 @@ export type OpenClaudeInstallInfo = {
 };
 
 export class OpenClaudeAdapter {
-  constructor(private readonly rootPath = resolve(process.cwd(), 'openclaude-main')) {}
+  constructor(private readonly rootPath = resolve(process.cwd(), 'localcoder')) {}
 
   getInstallInfo(): OpenClaudeInstallInfo {
     const packageJson = join(this.rootPath, 'package.json');
