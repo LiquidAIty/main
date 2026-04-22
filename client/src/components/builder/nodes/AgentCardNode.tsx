@@ -38,9 +38,9 @@ export default function AgentCardNode({
       style={
         graphGlassCardStyle({
           position: 'relative',
-          padding: '6px 7px',
-          width: 166,
-          minHeight: 60,
+          padding: '8px 9px',
+          width: 152,
+          minHeight: 76,
           borderWidth: 1,
           borderColor: shellActive
             ? 'rgba(55,173,170,0.6)'
@@ -116,7 +116,7 @@ export default function AgentCardNode({
       >
         <div
           style={{
-            fontSize: 13.4,
+            fontSize: 14.8,
             fontWeight: 700,
             lineHeight: 1.1,
             letterSpacing: '-0.01em',
@@ -128,11 +128,11 @@ export default function AgentCardNode({
         </div>
         <div
           style={{
-            fontSize: 10.4,
+            fontSize: 12.2,
             lineHeight: 1.2,
             color: GRAPH_THEME.surface.mutedText,
             opacity: 0.84,
-            maxWidth: 134,
+            maxWidth: 132,
             whiteSpace: 'normal',
             overflowWrap: 'anywhere',
             display: '-webkit-box',

@@ -5947,12 +5947,13 @@ export default function AgentBuilder(): React.ReactElement {
     );
   };
 
-  const renderKnowledgeGraphSurface = (
+  const KnowledgeGraphSurface = ({
     minHeight = 280,
-    surfaceRole: 'large' | 'companion' = minHeight > 320
-      ? 'large'
-      : 'companion',
-  ) => (
+    surfaceRole = minHeight > 320 ? 'large' : 'companion',
+  }: {
+    minHeight?: number;
+    surfaceRole?: 'large' | 'companion';
+  }) => (
     <div
       data-testid={`${surfaceRole}-surface-knowledge`}
       style={getSurfaceShellStyle(minHeight <= 320)}
@@ -6431,9 +6432,15 @@ export default function AgentBuilder(): React.ReactElement {
                     renderKnowledgeWorkspacePanel()}
                   {workspaceView === 'knowledge' &&
                     !hasKnowledgeWorkspaceSelection &&
-                    renderKnowledgeGraphSurface(420, 'companion')}
+                    <KnowledgeGraphSurface
+                      minHeight={420}
+                      surfaceRole="companion"
+                    />}
                   {workspaceView === 'codegraph' &&
-                    renderKnowledgeGraphSurface(420, 'companion')}
+                    <KnowledgeGraphSurface
+                      minHeight={420}
+                      surfaceRole="companion"
+                    />}
                   {workspaceView === 'plan' && renderPlanSurface('companion')}
                 </div>
               </div>

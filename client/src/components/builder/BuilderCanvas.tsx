@@ -36,7 +36,12 @@ import {
   buildDefaultDeckEdgeMetadata,
   normalizeDeckEdgeMetadata,
 } from './deckValidation';
-import { GRAPH_THEME, graphPillButtonStyle } from '../graph/graphVisualTokens';
+import {
+  GRAPH_THEME,
+  graphControlButtonStyle,
+  graphControlStackStyle,
+  graphPillButtonStyle,
+} from '../graph/graphVisualTokens';
 import {
   buildFocusedNodeSet,
   buildUndirectedNeighborMap,
@@ -48,11 +53,11 @@ import AgentCardNode from './nodes/AgentCardNode';
 const DEV_MODE = import.meta.env.DEV;
 const PERSISTED_NODE_CHANGE_TYPES = new Set<NodeChange['type']>(['add', 'remove', 'replace', 'position']);
 const PERSISTED_EDGE_CHANGE_TYPES = new Set<EdgeChange['type']>(['add', 'remove', 'replace']);
-const FALLBACK_NODE_WIDTH = 320;
-const FALLBACK_NODE_HEIGHT = 180;
+const FALLBACK_NODE_WIDTH = 152;
+const FALLBACK_NODE_HEIGHT = 76;
 const CANVAS_ROW_X_START = 180;
 const CANVAS_ROW_Y_START = 120;
-const CANVAS_ROW_X_GAP = 292;
+const CANVAS_ROW_X_GAP = 232;
 
 const nodeTypes = {
   agentCard: AgentCardNode,
@@ -799,9 +804,9 @@ export default function BuilderCanvas({
       reactFlowInstance.fitView({
         nodes: fitNodes,
         duration: 0,
-        padding: 0.04,
-        minZoom: 1.0,
-        maxZoom: 1.32,
+        padding: 0.06,
+        minZoom: 1.04,
+        maxZoom: 1.24,
       });
     };
     const frame = window.requestAnimationFrame(() => {
@@ -1160,6 +1165,92 @@ export default function BuilderCanvas({
           </button>
         </div>
       ) : null}
+      <div style={graphControlStackStyle}>
+        <button
+          type="button"
+          aria-label="Zoom in"
+          onClick={() =>
+            reactFlowInstance?.zoomIn({
+              duration: GRAPH_THEME.nav.zoomDurationMs,
+            })
+          }
+          style={graphControlButtonStyle({
+            borderBottom: `1px solid ${GRAPH_THEME.controls.border}`,
+          })}
+        >
+          +
+        </button>
+        <button
+          type="button"
+          aria-label="Zoom out"
+          onClick={() =>
+            reactFlowInstance?.zoomOut({
+              duration: GRAPH_THEME.nav.zoomDurationMs,
+            })
+          }
+          style={graphControlButtonStyle({
+            borderBottom: `1px solid ${GRAPH_THEME.controls.border}`,
+          })}
+        >
+          -
+        </button>
+        <button
+          type="button"
+          aria-label="Fit view"
+          onClick={() =>
+            reactFlowInstance?.fitView({
+              duration: GRAPH_THEME.nav.fitDurationMs,
+              padding: GRAPH_THEME.nav.fitPadding,
+              minZoom: GRAPH_THEME.nav.minZoom,
+              maxZoom: GRAPH_THEME.nav.fitMaxZoom,
+            })
+          }
+          style={graphControlButtonStyle({
+            borderBottom: `1px solid ${GRAPH_THEME.controls.border}`,
+          })}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+            <path
+              d="M2.25 5.25V2.25h3M8.75 2.25h3v3M11.75 8.75v3h-3M5.25 11.75h-3v-3"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.25"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+        <button
+          type="button"
+          aria-label={layoutLocked ? 'Unlock graph layout' : 'Lock graph layout'}
+          onClick={() => setLayoutLocked((current) => !current)}
+          style={graphControlButtonStyle({
+            color: layoutLocked
+              ? GRAPH_THEME.accent.primary
+              : GRAPH_THEME.controls.text,
+          })}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+            <path
+              d="M4.5 6V4.75a2.5 2.5 0 1 1 5 0V6"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.25"
+              strokeLinecap="round"
+            />
+            <rect
+              x="3"
+              y="6"
+              width="8"
+              height="6"
+              rx="1.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.25"
+            />
+          </svg>
+        </button>
+      </div>
       <ReactFlow
         nodes={nodes}
         edges={edges}

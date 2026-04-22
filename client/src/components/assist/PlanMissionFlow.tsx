@@ -54,8 +54,8 @@ type PlanMissionFlowProps = {
   onFocusChange?: (focus: PlanMissionFocus) => void;
 };
 
-const PLAN_BASELINE_MIN_LOAD_ZOOM = 1.0;
-const PLAN_BASELINE_MAX_LOAD_ZOOM = 1.28;
+const PLAN_BASELINE_MIN_LOAD_ZOOM = 1.04;
+const PLAN_BASELINE_MAX_LOAD_ZOOM = 1.24;
 
 function WallAnchorNode() {
   return (
@@ -101,15 +101,15 @@ function MissionNode({ data, selected }: NodeProps<PlanMissionNodeData>) {
           boxShadow: shellActive
             ? 'inset 0 1px 0 rgba(255,255,255,0.05), 0 0 0 1px rgba(55,173,170,0.12)'
             : 'inset 0 1px 0 rgba(255,255,255,0.03)',
-          padding: '8px 10px',
+          padding: '9px 10px',
           background: GRAPH_THEME.card.glassBackground,
-          width: 252,
-          minHeight: 92,
+          width: 216,
+          minHeight: 98,
         }}
       >
         <div
           style={{
-            fontSize: 13.8,
+            fontSize: 14.8,
             fontWeight: 700,
             lineHeight: 1.18,
             letterSpacing: '-0.01em',
@@ -123,11 +123,15 @@ function MissionNode({ data, selected }: NodeProps<PlanMissionNodeData>) {
         <div
           style={{
             color: 'rgba(167, 176, 186, 0.84)',
-            fontSize: 11.2,
+            fontSize: 12.2,
             lineHeight: 1.3,
-            maxWidth: 186,
+            maxWidth: 170,
             whiteSpace: 'normal',
             overflowWrap: 'anywhere',
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
             position: 'relative',
             zIndex: 1,
           }}
@@ -168,8 +172,8 @@ function resolveNodeStyle(node: PlanMissionFlowNode) {
     color: GRAPH_THEME.drawer.inputText,
     fontSize: 12.5,
     lineHeight: 1.35,
-    width: 252,
-    minHeight: 92,
+    width: 216,
+    minHeight: 98,
     padding: 0,
     boxShadow: 'none',
     backdropFilter: 'none',
@@ -297,16 +301,21 @@ export default function PlanMissionFlow({
       const minX = sortedByX[0]
         ? sortedByX[0].positionAbsolute?.x ?? sortedByX[0].position.x
         : 0;
+      const yValues = sortedByX
+        .map((node) => node.positionAbsolute?.y ?? node.position.y)
+        .sort((left, right) => left - right);
+      const centerY = yValues[Math.floor(yValues.length / 2)] ?? 0;
       // Prioritize the left/start mission chain for first landing readability.
       const fitNodes = sortedByX.filter((node) => {
         const x = node.positionAbsolute?.x ?? node.position.x;
-        return x <= minX + 860;
+        const y = node.positionAbsolute?.y ?? node.position.y;
+        return x <= minX + 760 && Math.abs(y - centerY) <= 116;
       });
       if (fitNodes.length === 0) return;
       reactFlowInstance.fitView({
         nodes: fitNodes,
         duration: 0,
-        padding: compact ? 0.07 : 0.08,
+        padding: compact ? 0.1 : 0.11,
         minZoom: PLAN_BASELINE_MIN_LOAD_ZOOM,
         maxZoom: PLAN_BASELINE_MAX_LOAD_ZOOM,
       });
