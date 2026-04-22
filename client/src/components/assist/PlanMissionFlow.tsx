@@ -54,6 +54,9 @@ type PlanMissionFlowProps = {
   onFocusChange?: (focus: PlanMissionFocus) => void;
 };
 
+const PLAN_BASELINE_MIN_LOAD_ZOOM = 1.0;
+const PLAN_BASELINE_MAX_LOAD_ZOOM = 1.28;
+
 function WallAnchorNode() {
   return (
     <div
@@ -76,12 +79,6 @@ function MissionNode({ data, selected }: NodeProps<PlanMissionNodeData>) {
   const subtext = String(nodeData?.kind || '').trim() || 'Task';
   return (
     <>
-      <style>{`
-        @keyframes mission-shell-border-travel {
-          from { background-position: 0% 50%; }
-          to { background-position: 200% 50%; }
-        }
-      `}</style>
       <Handle
         type="target"
         position={Position.Left}
@@ -98,41 +95,21 @@ function MissionNode({ data, selected }: NodeProps<PlanMissionNodeData>) {
           position: 'relative',
           display: 'grid',
           alignContent: 'center',
-          gap: 7,
+          gap: 5,
           borderRadius: 14,
-          border: `1px solid ${shellActive ? 'rgba(55,173,170,0.58)' : 'rgba(55,173,170,0.26)'}`,
+          border: `1px solid ${shellActive ? 'rgba(55,173,170,0.44)' : 'rgba(55,173,170,0.24)'}`,
           boxShadow: shellActive
-            ? 'inset 0 1px 0 rgba(255,255,255,0.08), 0 12px 28px rgba(55,173,170,0.2), 0 0 14px rgba(242,166,74,0.16)'
-            : 'inset 0 1px 0 rgba(255,255,255,0.04), 0 8px 18px rgba(0,0,0,0.18)',
-          padding: '12px 14px',
+            ? 'inset 0 1px 0 rgba(255,255,255,0.05), 0 0 0 1px rgba(55,173,170,0.12)'
+            : 'inset 0 1px 0 rgba(255,255,255,0.03)',
+          padding: '8px 10px',
           background: GRAPH_THEME.card.glassBackground,
-          width: 282,
-          minHeight: 116,
+          width: 252,
+          minHeight: 92,
         }}
       >
         <div
-          aria-hidden
           style={{
-            position: 'absolute',
-            inset: -1,
-            borderRadius: 14,
-            padding: 1,
-            background:
-              'linear-gradient(130deg, #37ADAA 0%, #2B8C8A 26%, #F2A64A 56%, #C97C2A 80%, #37ADAA 100%)',
-            backgroundSize: '220% 220%',
-            opacity: shellActive ? 1 : 0,
-            animation: shellActive ? 'mission-shell-border-travel 4.9s linear infinite' : 'none',
-            transition: 'opacity 220ms ease',
-            pointerEvents: 'none',
-            WebkitMask:
-              'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
-            WebkitMaskComposite: 'xor',
-            maskComposite: 'exclude',
-          }}
-        />
-        <div
-          style={{
-            fontSize: 15.5,
+            fontSize: 13.8,
             fontWeight: 700,
             lineHeight: 1.18,
             letterSpacing: '-0.01em',
@@ -146,9 +123,9 @@ function MissionNode({ data, selected }: NodeProps<PlanMissionNodeData>) {
         <div
           style={{
             color: 'rgba(167, 176, 186, 0.84)',
-            fontSize: 12,
-            lineHeight: 1.48,
-            maxWidth: 220,
+            fontSize: 11.2,
+            lineHeight: 1.3,
+            maxWidth: 186,
             whiteSpace: 'normal',
             overflowWrap: 'anywhere',
             position: 'relative',
@@ -183,44 +160,20 @@ const missionEdgeTypes = {
 };
 
 function resolveNodeStyle(node: PlanMissionFlowNode) {
-  const kind = node.data?.kind;
-  const status = String(node.data?.status || 'seeded').toLowerCase();
-  const accentByKind: Record<string, string> = {
-    Goal: GRAPH_THEME.accent.primaryBorder,
-    Task: 'rgba(167,176,186,0.3)',
-    Research: GRAPH_THEME.accent.primaryBorder,
-    Synthesize: 'rgba(110,95,174,0.36)',
-    Approval: 'rgba(242,166,74,0.42)',
-    Output: GRAPH_THEME.accent.primaryBorder,
-    AgentAssignment: 'rgba(242,166,74,0.34)',
-    Note: 'rgba(167,176,186,0.24)',
-  };
-  const statusGlowByStatus: Record<string, string> = {
-    running: `0 0 0 1px ${GRAPH_THEME.accent.solarSoft}, 0 0 18px ${GRAPH_THEME.accent.solarGlow}`,
-    awaiting_review:
-      '0 0 0 1px rgba(110,95,174,0.2), 0 0 16px rgba(110,95,174,0.14)',
-    review: '0 0 0 1px rgba(110,95,174,0.2), 0 0 16px rgba(110,95,174,0.14)',
-    blocked:
-      '0 0 0 1px rgba(167,176,186,0.22), 0 0 14px rgba(167,176,186,0.12)',
-    error: '0 0 0 1px rgba(201,124,42,0.24), 0 0 16px rgba(201,124,42,0.14)',
-    complete: `0 0 0 1px ${GRAPH_THEME.accent.primarySoft}, 0 0 14px ${GRAPH_THEME.accent.primaryGlow}`,
-    done: `0 0 0 1px ${GRAPH_THEME.accent.primarySoft}, 0 0 14px ${GRAPH_THEME.accent.primaryGlow}`,
-  };
-  const accent = accentByKind[String(kind || 'Task')] || accentByKind.Task;
+  void node;
   return {
     borderRadius: 14,
-    border: `1px solid ${accent}`,
-    background: GRAPH_THEME.card.glassBackground,
+    border: '1px solid transparent',
+    background: 'transparent',
     color: GRAPH_THEME.drawer.inputText,
     fontSize: 12.5,
     lineHeight: 1.35,
-    width: 286,
-    minHeight: 124,
-    padding: '10px 12px',
-    boxShadow:
-      statusGlowByStatus[status] || 'inset 0 1px 0 rgba(255,255,255,0.04)',
-    backdropFilter: 'blur(12px) saturate(120%)',
-    WebkitBackdropFilter: 'blur(12px) saturate(120%)',
+    width: 252,
+    minHeight: 92,
+    padding: 0,
+    boxShadow: 'none',
+    backdropFilter: 'none',
+    WebkitBackdropFilter: 'none',
   } as const;
 }
 
@@ -242,6 +195,7 @@ export default function PlanMissionFlow({
   } | null>(null);
   const [reactFlowInstance, setReactFlowInstance] =
     useState<ReactFlowInstance | null>(null);
+  const lastInitialFitKeyRef = useRef<string | null>(null);
   const [layoutLocked, setLayoutLocked] = useState(false);
   const missionGraph = useMemo(
     () => buildPlanMissionGraph(structuredPlan, nodeOverrides),
@@ -266,6 +220,13 @@ export default function PlanMissionFlow({
   const [nodes, setNodes] = useNodesState(seededNodes);
   const [edges, setEdges] = useEdgesState<Edge<PlanMissionFlowEdgeData>>(
     missionGraph.edges,
+  );
+  const initialFitKey = useMemo(
+    () =>
+      `${missionGraph.nodes.map((node) => node.id).join('|')}::${missionGraph.edges
+        .map((edge) => edge.id)
+        .join('|')}::${compact ? 'compact' : 'full'}::${fullHeight ? 'fullheight' : 'fixed'}`,
+    [compact, fullHeight, missionGraph.edges, missionGraph.nodes],
   );
 
   useEffect(() => {
@@ -319,15 +280,67 @@ export default function PlanMissionFlow({
   }, [selectedNodeId, setNodes]);
 
   useEffect(() => {
+    if (!reactFlowInstance) return;
+    if (lastInitialFitKeyRef.current === initialFitKey) return;
+    lastInitialFitKeyRef.current = initialFitKey;
+    let settleTimer: number | null = null;
+    const applyFit = () => {
+      const graphNodes = reactFlowInstance
+        .getNodes()
+        .filter((node) => node.id !== WALL_ORCH_ID);
+      if (graphNodes.length === 0) return;
+      const sortedByX = [...graphNodes].sort(
+        (left, right) =>
+          (left.positionAbsolute?.x ?? left.position.x) -
+          (right.positionAbsolute?.x ?? right.position.x),
+      );
+      const minX = sortedByX[0]
+        ? sortedByX[0].positionAbsolute?.x ?? sortedByX[0].position.x
+        : 0;
+      // Prioritize the left/start mission chain for first landing readability.
+      const fitNodes = sortedByX.filter((node) => {
+        const x = node.positionAbsolute?.x ?? node.position.x;
+        return x <= minX + 860;
+      });
+      if (fitNodes.length === 0) return;
+      reactFlowInstance.fitView({
+        nodes: fitNodes,
+        duration: 0,
+        padding: compact ? 0.07 : 0.08,
+        minZoom: PLAN_BASELINE_MIN_LOAD_ZOOM,
+        maxZoom: PLAN_BASELINE_MAX_LOAD_ZOOM,
+      });
+    };
+    const frame = window.requestAnimationFrame(() => {
+      applyFit();
+      settleTimer = window.setTimeout(() => {
+        applyFit();
+      }, 96);
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (settleTimer != null) {
+        window.clearTimeout(settleTimer);
+      }
+    };
+  }, [
+    WALL_ORCH_ID,
+    compact,
+    initialFitKey,
+    nodes,
+    reactFlowInstance,
+  ]);
+
+  useEffect(() => {
     if (!reactFlowInstance || !editMode || !selectedNodeId) return;
     const selectedNode = nodes.find((node) => node.id === selectedNodeId);
     if (!selectedNode) return;
     reactFlowInstance.fitView({
       nodes: [selectedNode],
       duration: GRAPH_THEME.nav.focusDurationMs,
-      padding: 1.05,
-      minZoom: GRAPH_THEME.nav.minZoom,
-      maxZoom: GRAPH_THEME.nav.focusMaxZoom,
+      padding: 0.34,
+      minZoom: 0.66,
+      maxZoom: 0.9,
     });
   }, [editMode, nodes, reactFlowInstance, selectedNodeId]);
 
@@ -795,7 +808,7 @@ export default function PlanMissionFlow({
         defaultViewport={{
           x: compact ? 56 : 72,
           y: compact ? 86 : 96,
-          zoom: compact ? 0.52 : 0.62,
+          zoom: compact ? 0.7 : 0.76,
         }}
         minZoom={GRAPH_THEME.nav.minZoom}
         maxZoom={GRAPH_THEME.nav.maxZoom}

@@ -23,14 +23,14 @@ export default function AgentCardNode({
   selected?: boolean;
 }) {
   const runtimeType = String(data?.runtimeType || 'assistant_agent').trim();
-  const isMagentic = runtimeType === 'magentic_one';
   const isGraph = runtimeType === 'graph_flow';
-  if (isMagentic) return null;
-  const canReceiveConnection = !isMagentic;
-  const canStartConnection = isMagentic || runtimeType === 'assistant_agent';
+  const canReceiveConnection = true;
+  const canStartConnection = true;
   const shellActive = Boolean(selected || data?.isInspecting || data?.isRuntimeActive);
   const name = String(data?.title || '').trim() || 'Agent';
-  const subtext = String(data?.subtitle || '').trim() || 'Operational agent';
+  const subtext = String(data?.subtitle || '').replace(/\s+/g, ' ').trim() || 'Operational agent';
+  const compactSubtext =
+    subtext.length > 88 ? `${subtext.slice(0, 88).trimEnd()}…` : subtext;
 
   return (
     <div
@@ -38,20 +38,18 @@ export default function AgentCardNode({
       style={
         graphGlassCardStyle({
           position: 'relative',
-          padding: '8px 10px',
-          width: 214,
-          minHeight: 72,
+          padding: '6px 7px',
+          width: 166,
+          minHeight: 60,
           borderWidth: 1,
           borderColor: shellActive
             ? 'rgba(55,173,170,0.6)'
             : selected
               ? GRAPH_THEME.accent.primaryBorder
               : GRAPH_THEME.card.glassBorder,
-          background: isMagentic
-            ? GRAPH_THEME.card.glassMagenticBackground
-            : isGraph
-              ? GRAPH_THEME.card.glassGraphBackground
-              : GRAPH_THEME.card.glassBackground,
+          background: isGraph
+            ? GRAPH_THEME.card.glassGraphBackground
+            : GRAPH_THEME.card.glassBackground,
           boxShadow: shellActive
             ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px rgba(55,173,170,0.6), 0 14px 30px rgba(55,173,170,0.24), 0 0 16px rgba(242,166,74,0.16)`
             : selected
@@ -60,32 +58,6 @@ export default function AgentCardNode({
         })
       }
     >
-      <style>{`
-        @keyframes agent-shell-border-travel {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
-      <div
-        aria-hidden
-        style={{
-          position: 'absolute',
-          inset: -1,
-          borderRadius: 14,
-          padding: 1,
-          background:
-            'conic-gradient(from 0deg, rgba(55,173,170,0.14), #37ADAA 20%, #2B8C8A 40%, #F2A64A 63%, #C97C2A 84%, rgba(55,173,170,0.14) 100%)',
-          opacity: shellActive ? 0.92 : 0.12,
-          animation: shellActive ? 'agent-shell-border-travel 6.8s linear infinite' : 'none',
-          transition: 'opacity 220ms ease',
-          pointerEvents: 'none',
-          WebkitMask:
-            'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
-          WebkitMaskComposite: 'xor',
-          maskComposite: 'exclude',
-          zIndex: 0,
-        }}
-      />
       <Handle
         type="target"
         position={Position.Left}
@@ -135,18 +107,18 @@ export default function AgentCardNode({
         style={{
           display: 'grid',
           alignContent: 'center',
-          gap: 4,
+          gap: 2,
           position: 'relative',
           zIndex: 1,
           height: '100%',
-          minHeight: 50,
+          minHeight: 36,
         }}
       >
         <div
           style={{
-            fontSize: 14,
+            fontSize: 13.4,
             fontWeight: 700,
-            lineHeight: 1.12,
+            lineHeight: 1.1,
             letterSpacing: '-0.01em',
             color: GRAPH_THEME.surface.text,
             minWidth: 0,
@@ -156,17 +128,21 @@ export default function AgentCardNode({
         </div>
         <div
           style={{
-            fontSize: 10.5,
-            lineHeight: 1.3,
+            fontSize: 10.4,
+            lineHeight: 1.2,
             color: GRAPH_THEME.surface.mutedText,
             opacity: 0.84,
-            maxWidth: 172,
+            maxWidth: 134,
             whiteSpace: 'normal',
             overflowWrap: 'anywhere',
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
             minWidth: 0,
           }}
         >
-          {subtext}
+          {compactSubtext}
         </div>
       </div>
     </div>

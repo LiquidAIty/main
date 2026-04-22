@@ -3183,15 +3183,6 @@ export default function AgentBuilder(): React.ReactElement {
     () => deck.nodes.find((node) => node.id === selectedCardId) || null,
     [deck.nodes, selectedCardId],
   );
-  const magenticWallCard = useMemo(
-    () =>
-      deck.nodes.find(
-        (node) =>
-          normalizeRuntimeType(node.runtimeType) === 'magentic_one' &&
-          !String(node.parentGraphId || '').trim(),
-      ) || null,
-    [deck.nodes],
-  );
   const selectedEdge = useMemo(
     () => deck.edges.find((edge) => edge.id === selectedEdgeId) || null,
     [deck.edges, selectedEdgeId],
@@ -5595,23 +5586,11 @@ export default function AgentBuilder(): React.ReactElement {
     selectedKnowledgeEntity || selectedKnowledgeRelationship,
   );
   const objectDrawerRole = useMemo<'agent' | 'plan' | null>(() => {
-    if (
-      selectedCard &&
-      normalizeRuntimeType(selectedCard.runtimeType) === 'magentic_one'
-    ) {
-      return 'agent';
-    }
     if (workspaceView === 'canvas' && selectedCard) return 'agent';
     if (workspaceView === 'plan' && planMissionFocus) return 'plan';
     return null;
   }, [planMissionFocus, selectedCard, workspaceView]);
   const isObjectDrawerVisible = objectDrawerOpen && objectDrawerRole !== null;
-  const isAgentInspectMode = Boolean(
-    workspaceView === 'canvas' &&
-      objectDrawerOpen &&
-      selectedCardId &&
-      objectDrawerRole === 'agent',
-  );
   const objectDrawerDefaultWidth =
     objectDrawerRole === 'plan' ? 460 : AGENT_EDITOR_DEFAULT_WIDTH;
   const objectDrawerStorageKey =
@@ -5796,9 +5775,7 @@ export default function AgentBuilder(): React.ReactElement {
             onSelectCard={handleSelectCard}
             onSelectEdge={handleSelectEdge}
             onDeleteSelectedEdge={handleDeleteSelectedEdge}
-            focusRequest={builderCanvasFocusRequest}
-            miniMode={false}
-            inspectMode={isAgentInspectMode}
+            inspectMode={false}
           />
         </div>
       </div>
@@ -6197,19 +6174,6 @@ export default function AgentBuilder(): React.ReactElement {
     setWorkspaceView('plan');
   }, [closeObjectDrawer]);
 
-  const openMagenticWallInspect = useCallback(() => {
-    if (!magenticWallCard) return;
-    setSelectedEdgeId(null);
-    setPlanMissionFocus(null);
-    setSelectedCardId(magenticWallCard.id);
-    setObjectDrawerOpen(true);
-    setBuilderCanvasFocusRequest((current) => ({
-      kind: 'deck',
-      cardId: null,
-      nonce: (current?.nonce || 0) + 1,
-    }));
-  }, [magenticWallCard]);
-
   const applyCodeGraphViewContract = useCallback(
     (contract: GraphViewContract | null) => {
       if (!contract) return;
@@ -6418,70 +6382,6 @@ export default function AgentBuilder(): React.ReactElement {
                   'border-color 120ms ease, box-shadow 120ms ease, background 120ms ease',
               }}
             >
-              {workspaceView === 'canvas' && magenticWallCard ? (
-                <button
-                  type="button"
-                  aria-label="Inspect Magentic-One orchestration"
-                  data-testid="magentic-wall-notch"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                  }}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    openMagenticWallInspect();
-                  }}
-                  style={{
-                    position: 'absolute',
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    top: 62,
-                    width: 9,
-                    height: 22,
-                    borderRadius: 999,
-                    border:
-                      selectedCardId === magenticWallCard.id && objectDrawerOpen
-                        ? '1px solid rgba(55,173,170,0.52)'
-                        : '1px solid rgba(55,173,170,0.24)',
-                    background:
-                      'linear-gradient(180deg, rgba(17,22,29,0.7), rgba(11,14,18,0.84))',
-                    boxShadow:
-                      selectedCardId === magenticWallCard.id && objectDrawerOpen
-                        ? 'inset 0 1px 0 rgba(255,255,255,0.05), 0 0 8px rgba(55,173,170,0.2)'
-                        : 'inset 0 1px 0 rgba(255,255,255,0.02)',
-                    color:
-                      selectedCardId === magenticWallCard.id && objectDrawerOpen
-                        ? 'rgba(154,208,207,0.92)'
-                        : 'rgba(154,208,207,0.72)',
-                    opacity:
-                      selectedCardId === magenticWallCard.id && objectDrawerOpen
-                        ? 0.92
-                        : chatResizeHandleActive
-                          ? 0.78
-                          : 0.56,
-                    cursor: 'pointer',
-                    zIndex: 4,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    transition:
-                      'opacity 140ms ease, color 140ms ease, border-color 140ms ease, box-shadow 140ms ease',
-                  }}
-                  title="Magentic-One orchestration"
-                >
-                  <svg width="7" height="7" viewBox="0 0 16 16" aria-hidden="true">
-                    <path
-                      d="M3 11V5l5-2 5 2v6l-5 2-5-2zM8 6.3v5.4"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.4"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </button>
-              ) : null}
             </div>
           ) : null}
 
@@ -6535,7 +6435,7 @@ export default function AgentBuilder(): React.ReactElement {
               title={
                 objectDrawerRole === 'plan'
                   ? `Plan Node: ${safeText(selectedPlanNodeDraft?.label || planMissionFocus?.nodeLabel || 'Edit')}`
-                  : `Inspect Agent${selectedCard ? `: ${safeText(selectedCard.title)}` : ''}`
+                  : safeText(selectedCard?.title || 'Agent')
               }
               onClose={closeObjectDrawer}
               defaultWidth={objectDrawerDefaultWidth}
@@ -6543,33 +6443,9 @@ export default function AgentBuilder(): React.ReactElement {
               maxWidth={760}
               storageKey={objectDrawerStorageKey}
               dataTestId="workspace-object-drawer"
-              right={isAgentInspectMode ? 20 : 12}
-              top={isAgentInspectMode ? 56 : 48}
+              right={12}
+              top={48}
             >
-              {isAgentInspectMode ? (
-                <div
-                  aria-hidden
-                  style={{
-                    position: 'sticky',
-                    top: 0,
-                    margin: '-12px -12px 10px',
-                    padding: '8px 14px',
-                    borderBottom: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`,
-                    background:
-                      'linear-gradient(90deg, rgba(55,173,170,0.16), rgba(43,140,138,0.12), rgba(242,166,74,0.1), rgba(201,124,42,0.08))',
-                    boxShadow:
-                      'inset 0 1px 0 rgba(255,255,255,0.06), 0 8px 24px rgba(0,0,0,0.18)',
-                    color: GRAPH_THEME.drawer.inputText,
-                    fontSize: 11,
-                    letterSpacing: '0.08em',
-                    textTransform: 'uppercase',
-                    fontWeight: 700,
-                    zIndex: 1,
-                  }}
-                >
-                  Card-Centered Inspect Mode
-                </div>
-              ) : null}
               {objectDrawerRole === 'agent' && activeTabs.length > 0 ? (
                 <div
                   className="flex min-w-0 overflow-x-auto"

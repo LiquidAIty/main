@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import KnowledgeGraphNVL, {
   type KnowledgeGraphNode,
@@ -56,7 +56,7 @@ interface AgentManagerProps {
   promptTestDisabled?: boolean;
   localConfig?: AgentManagerLocalConfig | null;
   memoryGraphData?: AgentManagerMemoryGraphData | null;
-  onSaveLocalConfig?: (config: AgentManagerLocalConfig) => void;
+  onSaveLocalConfig?: (config: AgentManagerLocalConfig) => void | Promise<void>;
 }
 
 const ACTIVE_RUNTIME_TYPES: AgentCardRuntimeType[] = [
@@ -91,6 +91,8 @@ export type AgentManagerMemoryGraphData = {
   entities: KnowledgeGraphNode[];
   relationships: KnowledgeGraphRelationship[];
 };
+
+type SaveCardStatus = 'idle' | 'saving' | 'saved' | 'failed';
 
 function parsePromptTemplate(template: string): {
   role: string;
@@ -637,6 +639,10 @@ export function AgentManager({
   const [cardSubtextDraft, setCardSubtextDraft] = useState(String(cardSubtext || ''));
   const [selectedMemoryEntityId, setSelectedMemoryEntityId] = useState<string | null>(null);
   const [selectedMemoryRelationshipId, setSelectedMemoryRelationshipId] = useState<string | null>(null);
+  const [saveCardStatus, setSaveCardStatus] = useState<SaveCardStatus>('idle');
+  const [saveCardPressed, setSaveCardPressed] = useState(false);
+  const [saveCardErrorMessage, setSaveCardErrorMessage] = useState<string | null>(null);
+  const saveCardStatusTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     setPromptText(String(localConfig?.prompt_template || ''));
@@ -683,6 +689,24 @@ export function AgentManager({
     setCardNameDraft(String(cardName || ''));
     setCardSubtextDraft(String(cardSubtext || ''));
   }, [selectedCardId]);
+
+  useEffect(() => {
+    setSaveCardStatus('idle');
+    setSaveCardPressed(false);
+    setSaveCardErrorMessage(null);
+    if (saveCardStatusTimerRef.current != null) {
+      window.clearTimeout(saveCardStatusTimerRef.current);
+      saveCardStatusTimerRef.current = null;
+    }
+  }, [selectedCardId]);
+
+  useEffect(() => {
+    return () => {
+      if (saveCardStatusTimerRef.current != null) {
+        window.clearTimeout(saveCardStatusTimerRef.current);
+      }
+    };
+  }, []);
 
   const compactMemoryGraph = useMemo(
     () =>
@@ -750,8 +774,7 @@ export function AgentManager({
     setPromptText(serializePromptFields(nextFields));
   };
 
-  const saveConfig = () => {
-    if (!onSaveLocalConfig) return;
+  const buildSaveLocalConfigPayload = (): AgentManagerLocalConfig => {
     const parsedRuntimeOptions = parseJsonValue(
       runtimeOptionsText,
       localConfig?.runtime_options ?? {},
@@ -782,22 +805,198 @@ export function AgentManager({
       nextRuntimeOptions.useSocietyOfMindConsolidation = useSocietyOfMindConsolidation;
     }
 
-    onSaveLocalConfig(
-      buildActiveAgentManagerLocalConfig({
-        runtimeBinding: localConfig?.runtime_binding || '',
-        runtimeType: selectedRuntimeType,
-        runtimeOptions: nextRuntimeOptions,
-        parentGraphId,
-        provider,
-        modelKey,
-        temperature,
-        maxTokens,
-        promptTemplate: promptText,
-        toolsText,
-        knowledgeText,
-        responseFormatText,
-        existingResponseFormat: localConfig?.response_format ?? null,
-      }),
+    return buildActiveAgentManagerLocalConfig({
+      runtimeBinding: localConfig?.runtime_binding || '',
+      runtimeType: selectedRuntimeType,
+      runtimeOptions: nextRuntimeOptions,
+      parentGraphId,
+      provider,
+      modelKey,
+      temperature,
+      maxTokens,
+      promptTemplate: promptText,
+      toolsText,
+      knowledgeText,
+      responseFormatText,
+      existingResponseFormat: localConfig?.response_format ?? null,
+    });
+  };
+
+  const runSaveConfig = useCallback(async () => {
+    if (!onSaveLocalConfig || saveCardStatus === 'saving') return;
+    const savePayload = buildSaveLocalConfigPayload();
+    if (saveCardStatusTimerRef.current != null) {
+      window.clearTimeout(saveCardStatusTimerRef.current);
+      saveCardStatusTimerRef.current = null;
+    }
+    setSaveCardStatus('saving');
+    setSaveCardErrorMessage(null);
+    try {
+      await Promise.resolve(onSaveLocalConfig(savePayload));
+      setSaveCardStatus('saved');
+      saveCardStatusTimerRef.current = window.setTimeout(() => {
+        setSaveCardStatus('idle');
+        saveCardStatusTimerRef.current = null;
+      }, 1100);
+    } catch (error) {
+      const nextMessage =
+        error instanceof Error && error.message
+          ? error.message
+          : 'Save failed. Try again.';
+      setSaveCardStatus('failed');
+      setSaveCardErrorMessage(nextMessage);
+    }
+  }, [onSaveLocalConfig, saveCardStatus, localConfig?.runtime_options, runtimeOptionsText, provider, modelKey, temperature, maxTokens, selectedRuntimeType, executionMode, swarmMaxWorkers, swarmWorkerPromptTemplate, useSocietyOfMindConsolidation, maxTurns, maxStalls, finalAnswerPrompt, localConfig?.runtime_binding, parentGraphId, promptText, toolsText, knowledgeText, responseFormatText, localConfig?.response_format]);
+
+  const saveButtonBusy = saveCardStatus === 'saving';
+  const saveButtonDisabled = saveButtonBusy || !onSaveLocalConfig;
+  const inputStyle: CSSProperties = graphDrawerInputStyle();
+  const actionButtonStyle: CSSProperties = graphDrawerButtonStyle();
+  const formScopeClassName = 'agent-manager-glass-form';
+  const scopedFocusStyles = `
+    @keyframes agent-manager-save-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    .${formScopeClassName} input,
+    .${formScopeClassName} textarea,
+    .${formScopeClassName} select {
+      outline: none !important;
+      transition: border-color 160ms ease, background-color 160ms ease;
+    }
+    .${formScopeClassName} input::placeholder,
+    .${formScopeClassName} textarea::placeholder {
+      color: rgba(255,255,255,0.28);
+    }
+    .${formScopeClassName} input:focus,
+    .${formScopeClassName} textarea:focus,
+    .${formScopeClassName} select:focus,
+    .${formScopeClassName} input:focus-visible,
+    .${formScopeClassName} textarea:focus-visible,
+    .${formScopeClassName} select:focus-visible {
+      outline: none !important;
+      border-color: ${GRAPH_THEME.drawer.inputBorderFocus};
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
+      background: ${GRAPH_THEME.drawer.inputBackground};
+    }
+  `;
+  const saveButtonStatus = saveButtonBusy
+    ? 'saving'
+    : saveCardStatus === 'saved'
+      ? 'saved'
+      : saveCardStatus === 'failed'
+        ? 'failed'
+        : saveCardPressed
+          ? 'pressed'
+          : 'idle';
+  const saveButtonText =
+    saveButtonStatus === 'saving'
+      ? 'Saving...'
+      : saveButtonStatus === 'saved'
+        ? 'Saved'
+        : saveButtonStatus === 'failed'
+          ? 'Save Failed'
+          : 'Save Card';
+  const saveButtonStyle: CSSProperties = {
+    ...actionButtonStyle,
+    transform: saveButtonStatus === 'pressed' ? 'translateY(1px) scale(0.985)' : 'translateY(0) scale(1)',
+    boxShadow:
+      saveButtonStatus === 'pressed'
+        ? 'inset 0 2px 8px rgba(0,0,0,0.34), inset 0 0 0 1px rgba(74,226,223,0.32)'
+        : saveButtonStatus === 'saved'
+          ? '0 0 0 1px rgba(116,255,201,0.45), 0 0 14px rgba(116,255,201,0.24)'
+          : saveButtonStatus === 'failed'
+            ? '0 0 0 1px rgba(255,108,108,0.5), 0 0 14px rgba(255,108,108,0.2)'
+            : saveButtonStatus === 'saving'
+              ? '0 0 0 1px rgba(74,226,223,0.34), 0 0 10px rgba(74,226,223,0.2)'
+              : actionButtonStyle.boxShadow,
+    borderColor:
+      saveButtonStatus === 'saved'
+        ? 'rgba(116,255,201,0.64)'
+        : saveButtonStatus === 'failed'
+          ? 'rgba(255,108,108,0.7)'
+          : saveButtonStatus === 'saving'
+            ? 'rgba(74,226,223,0.58)'
+            : actionButtonStyle.borderColor,
+    color:
+      saveButtonStatus === 'saved'
+        ? '#d9ffef'
+        : saveButtonStatus === 'failed'
+          ? '#ffd7d7'
+          : actionButtonStyle.color,
+    cursor: saveButtonDisabled ? (saveButtonBusy ? 'progress' : 'not-allowed') : 'pointer',
+    opacity: saveButtonDisabled ? 0.8 : 1,
+    transition:
+      'transform 90ms ease, box-shadow 160ms ease, border-color 140ms ease, color 140ms ease, opacity 140ms ease',
+  };
+
+  const renderSaveCardButton = () => (
+    <button
+      type="button"
+      onPointerDown={() => {
+        if (saveButtonDisabled) return;
+        setSaveCardPressed(true);
+      }}
+      onPointerUp={() => setSaveCardPressed(false)}
+      onPointerCancel={() => setSaveCardPressed(false)}
+      onPointerLeave={() => setSaveCardPressed(false)}
+      onKeyDown={(event) => {
+        if (saveButtonDisabled) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+          setSaveCardPressed(true);
+        }
+      }}
+      onKeyUp={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          setSaveCardPressed(false);
+        }
+      }}
+      onBlur={() => setSaveCardPressed(false)}
+      onClick={() => {
+        void runSaveConfig();
+      }}
+      disabled={saveButtonDisabled}
+      aria-busy={saveButtonBusy}
+      data-save-state={saveButtonStatus}
+      style={saveButtonStyle}
+    >
+      {saveButtonBusy ? (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+          <span
+            aria-hidden
+            style={{
+              width: 11,
+              height: 11,
+              borderRadius: 999,
+              border: '1.5px solid rgba(255,255,255,0.32)',
+              borderTopColor: 'rgba(255,255,255,0.95)',
+              display: 'inline-block',
+              animation: 'agent-manager-save-spin 700ms linear infinite',
+            }}
+          />
+          {saveButtonText}
+        </span>
+      ) : (
+        saveButtonText
+      )}
+    </button>
+  );
+
+  const renderSaveCardFeedback = () => {
+    if (saveCardStatus !== 'failed') return null;
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        style={{
+          color: 'rgba(255,162,162,0.95)',
+          fontSize: 11.5,
+          fontWeight: 600,
+          lineHeight: 1.35,
+        }}
+      >
+        {saveCardErrorMessage || 'Save failed. Changes were not persisted.'}
+      </div>
     );
   };
 
@@ -838,33 +1037,6 @@ export function AgentManager({
       },
     [],
   );
-
-  const inputStyle: CSSProperties = graphDrawerInputStyle();
-  const actionButtonStyle: CSSProperties = graphDrawerButtonStyle();
-  const formScopeClassName = 'agent-manager-glass-form';
-  const scopedFocusStyles = `
-    .${formScopeClassName} input,
-    .${formScopeClassName} textarea,
-    .${formScopeClassName} select {
-      outline: none !important;
-      transition: border-color 160ms ease, background-color 160ms ease;
-    }
-    .${formScopeClassName} input::placeholder,
-    .${formScopeClassName} textarea::placeholder {
-      color: rgba(255,255,255,0.28);
-    }
-    .${formScopeClassName} input:focus,
-    .${formScopeClassName} textarea:focus,
-    .${formScopeClassName} select:focus,
-    .${formScopeClassName} input:focus-visible,
-    .${formScopeClassName} textarea:focus-visible,
-    .${formScopeClassName} select:focus-visible {
-      outline: none !important;
-      border-color: ${GRAPH_THEME.drawer.inputBorderFocus};
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
-      background: ${GRAPH_THEME.drawer.inputBackground};
-    }
-  `;
 
   const numberValue = (value: number | '') => (value === '' ? '' : String(value));
   const showCardHeaderFields = Boolean(onChangeCardName || onChangeCardSubtext);
@@ -928,10 +1100,8 @@ export function AgentManager({
             style={{ ...inputStyle, resize: 'vertical' }}
           />
         </Field>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" onClick={saveConfig} style={actionButtonStyle}>
-            Save Card
-          </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {renderSaveCardButton()}
           <button
             type="button"
             onClick={() => onRunPromptTest?.()}
@@ -944,6 +1114,7 @@ export function AgentManager({
             {promptTestBusy ? 'Running...' : 'Run Card'}
           </button>
         </div>
+        {renderSaveCardFeedback()}
       </div>
     );
   }
@@ -1065,11 +1236,10 @@ export function AgentManager({
                 style={{ ...inputStyle, resize: 'vertical', fontFamily: 'monospace', fontSize: 12 }}
               />
             </Field>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button type="button" onClick={saveConfig} style={actionButtonStyle}>
-                Save Card
-              </button>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              {renderSaveCardButton()}
             </div>
+            {renderSaveCardFeedback()}
           </div>
         </details>
       </div>
@@ -1088,11 +1258,10 @@ export function AgentManager({
             style={{ ...inputStyle, resize: 'vertical', fontFamily: 'monospace', fontSize: 12 }}
           />
         </Field>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" onClick={saveConfig} style={actionButtonStyle}>
-            Save Card
-          </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {renderSaveCardButton()}
         </div>
+        {renderSaveCardFeedback()}
       </div>
     );
   }
@@ -1284,11 +1453,10 @@ export function AgentManager({
         </Field>
       ) : null}
 
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button type="button" onClick={saveConfig} style={actionButtonStyle}>
-          Save Card
-        </button>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        {renderSaveCardButton()}
       </div>
+      {renderSaveCardFeedback()}
     </div>
   );
 }
