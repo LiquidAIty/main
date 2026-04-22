@@ -1,6 +1,7 @@
 import { Handle, Position } from '@xyflow/react';
 import type { AgentCardInstance } from '../../../types/agentgraph';
 import { GRAPH_THEME, graphGlassCardStyle } from '../../graph/graphVisualTokens';
+import { GRAPH_TEXT } from '../../graph/graphWorkspaceContract';
 
 type AgentCardNodeData = AgentCardInstance & {
   executionOrder?: number | null;
@@ -116,7 +117,7 @@ export default function AgentCardNode({
       >
         <div
           style={{
-            fontSize: 14.8,
+            fontSize: GRAPH_TEXT.titlePx,
             fontWeight: 700,
             lineHeight: 1.12,
             letterSpacing: '-0.01em',
@@ -128,7 +129,7 @@ export default function AgentCardNode({
         </div>
         <div
           style={{
-            fontSize: 12.4,
+            fontSize: GRAPH_TEXT.bodyPx,
             lineHeight: 1.24,
             color: GRAPH_THEME.surface.mutedText,
             opacity: 0.84,

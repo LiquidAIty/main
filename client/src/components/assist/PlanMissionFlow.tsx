@@ -27,7 +27,7 @@ import {
   graphControlButtonStyle,
   graphControlStackStyle,
 } from '../graph/graphVisualTokens';
-import { GRAPH_WORKSPACE } from '../graph/graphWorkspaceContract';
+import { GRAPH_TEXT, GRAPH_WORKSPACE } from '../graph/graphWorkspaceContract';
 import TurboFlowEdge from '../builder/edges/TurboFlowEdge';
 import {
   buildPlanMissionGraph,
@@ -110,7 +110,7 @@ function MissionNode({ data, selected }: NodeProps<PlanMissionNodeData>) {
       >
         <div
           style={{
-            fontSize: 14.6,
+            fontSize: GRAPH_TEXT.titlePx,
             fontWeight: 700,
             lineHeight: 1.18,
             letterSpacing: '-0.01em',
@@ -124,7 +124,7 @@ function MissionNode({ data, selected }: NodeProps<PlanMissionNodeData>) {
         <div
           style={{
             color: 'rgba(167, 176, 186, 0.84)',
-            fontSize: 12.2,
+            fontSize: GRAPH_TEXT.bodyPx,
             lineHeight: 1.3,
             maxWidth: 156,
             whiteSpace: 'normal',
@@ -319,7 +319,7 @@ export default function PlanMissionFlow({
       reactFlowInstance.fitView({
         nodes: fitNodes,
         duration: 0,
-        padding: compact ? 0.11 : 0.12,
+        padding: compact ? 0.12 : 0.13,
         minZoom: PLAN_BASELINE_MIN_LOAD_ZOOM,
         maxZoom: PLAN_BASELINE_MAX_LOAD_ZOOM,
       });

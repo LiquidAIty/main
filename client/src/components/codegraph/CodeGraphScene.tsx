@@ -31,6 +31,7 @@ function CameraCommandBridge({
   nodes: CodeGraphNode[];
 }) {
   const { camera } = useThree();
+  const lastAutoFitSignatureRef = useRef<string>("");
 
   const fitToGraph = () => {
     const controls = controlsRef.current;
@@ -101,6 +102,19 @@ function CameraCommandBridge({
       fitToGraph();
     }
   }, [cameraAction, cameraActionToken, controlsRef]);
+
+  useEffect(() => {
+    if (nodes.length === 0) return;
+    const signature = `${nodes.length}:${nodes[0]?.id ?? ""}:${
+      nodes[nodes.length - 1]?.id ?? ""
+    }`;
+    if (lastAutoFitSignatureRef.current === signature) return;
+    lastAutoFitSignatureRef.current = signature;
+    const frame = window.requestAnimationFrame(() => {
+      fitToGraph();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [nodes]);
 
   return null;
 }

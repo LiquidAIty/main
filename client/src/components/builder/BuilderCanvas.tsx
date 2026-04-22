@@ -799,13 +799,28 @@ export default function BuilderCanvas({
           (left.positionAbsolute?.x ?? left.position.x) -
           (right.positionAbsolute?.x ?? right.position.x),
       );
+      const minX = sortedByX[0]
+        ? sortedByX[0].positionAbsolute?.x ?? sortedByX[0].position.x
+        : 0;
+      const yValues = sortedByX
+        .map((node) => node.positionAbsolute?.y ?? node.position.y)
+        .sort((left, right) => left - right);
+      const centerY = yValues[Math.floor(yValues.length / 2)] ?? 0;
       // First landing should prioritize the left/start strip at readable scale,
       // not force-fit the entire row.
-      const fitNodes = sortedByX.slice(0, Math.min(2, sortedByX.length));
+      const fitNodes = sortedByX.filter((node) => {
+        const x = node.positionAbsolute?.x ?? node.position.x;
+        const y = node.positionAbsolute?.y ?? node.position.y;
+        return (
+          x <= minX + GRAPH_WORKSPACE.landingPrimaryBandWidth &&
+          Math.abs(y - centerY) <= GRAPH_WORKSPACE.landingPrimaryBandHalfHeight
+        );
+      });
+      if (fitNodes.length === 0) return;
       reactFlowInstance.fitView({
         nodes: fitNodes,
         duration: 0,
-        padding: 0.1,
+        padding: 0.11,
         minZoom: GRAPH_WORKSPACE.landingBaselineMinZoom,
         maxZoom: GRAPH_WORKSPACE.landingBaselineMaxZoom,
       });

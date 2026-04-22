@@ -42,6 +42,11 @@ export const GRAPH_WORKSPACE = {
   landingPrimaryBandHalfHeight: GRAPH_PAPER.majorStep,
 } as const;
 
+export const GRAPH_TEXT = {
+  titlePx: 14.5,
+  bodyPx: 12,
+} as const;
+
 function clamp(x: number, a: number, b: number) {
   return Math.min(b, Math.max(a, x));
 }
