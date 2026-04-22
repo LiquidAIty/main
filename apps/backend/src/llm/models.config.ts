@@ -14,6 +14,8 @@ export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   "gpt-5-nano": { label: "GPT-5 Nano", provider: "openai", id: "gpt-5-nano", context: 16384 },
   "gpt-5-mini": { label: "GPT-5 Mini", provider: "openai", id: "gpt-5-mini", context: 32768 },
   "gpt-5":      { label: "GPT-5 Full", provider: "openai", id: "gpt-5",      context: 32768 },
+  "gpt-5.3": { label: "GPT-5.3", provider: "openai", id: "gpt-5.3", context: 32768 },
+  "gpt-5.3-codex": { label: "GPT-5.3 Codex", provider: "openai", id: "gpt-5.3-codex", context: 32768 },
   "gpt-5.1-chat-latest": { label: "GPT-5.1 Chat Latest", provider: "openai", id: "gpt-5.1-chat-latest", context: 32768 },
 
   // --- OpenRouter (curated defaults) ---

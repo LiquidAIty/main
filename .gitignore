@@ -124,3 +124,14 @@ test-results/
 # Root temp / local scratch artifacts
 tmp-*.json.new
 
+# External vendor subsystems kept inert from parent repo tooling/runtime
+openclaude-main/node_modules/
+openclaude-main/dist/
+openclaude-main/.env
+openclaude-main/.env.*
+openclaude-main/.turbo/
+openclaude-main/.next/
+openclaude-main/.cache/
+vendor/sim/node_modules/
+vendor/sim/dist/
+

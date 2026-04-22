@@ -16,6 +16,7 @@ import { authMiddleware } from '../middleware/auth';
 import { diagnosticRoutes } from './diagnostic.routes';
 import receipts from './receipts.routes';
 import config from './config.routes';
+import coder from './coder.routes';
 import v2Routes from './v2';
 import knowgraphRoutes from './knowgraph.routes';
 import { v3Routes } from '../v3';
@@ -45,6 +46,7 @@ router.use('/rag', authMiddleware, ragSearch);
 router.use('/kg', authMiddleware, kg);
 router.use('/receipts', authMiddleware, receipts);
 router.use('/config', authMiddleware, config);
+router.use('/coder', authMiddleware, coder);
 router.use('/knowgraph', knowgraphRoutes); // TEMP: Auth bypassed for testing
 router.use('/v2', authMiddleware, v2Routes);
 router.use('/v3', authMiddleware, v3Routes);

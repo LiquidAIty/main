@@ -10,6 +10,8 @@ export default [
       '**/dist',
       '**/vite.config.*.timestamp*',
       '**/vitest.config.*.timestamp*',
+      'openclaude-main/**',
+      'vendor/sim/**',
     ],
   },
   {
