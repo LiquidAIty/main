@@ -6,6 +6,7 @@ import type {
   OpenClaudeRunResult,
   OpenClaudeState,
   OpenClaudeStatus,
+  OpenClaudeTerminalLaunchResult,
 } from '../contracts';
 import { resolveOpenClaudeProviderTarget } from '../provider/openai53';
 import { runOpenClaudeHeadless } from './headless';
@@ -44,6 +45,55 @@ export class OpenClaudeRuntimeService {
     };
   }
 
+  getTerminalLaunch(
+    request: Partial<OpenClaudeRunRequest> = {},
+  ): OpenClaudeTerminalLaunchResult {
+    const install = this.adapter.getInstallInfo();
+    if (!install.installed) {
+      return {
+        ok: false,
+        terminalAvailable: false,
+        launchCommand: null,
+        envOwner: 'backend',
+        runtimeOwner: 'backend',
+        envPath: this.adapter.getBackendEnvPath(),
+        rootPath: install.rootPath,
+        provider: 'openai',
+        modelKey: '',
+        providerModelId: '',
+        error: 'openclaude_not_installed',
+      };
+    }
+
+    const target = resolveOpenClaudeProviderTarget({
+      task: '',
+      mode: 'terminal',
+      modelKey: request.modelKey,
+      provider: request.provider,
+      providerModelId: request.providerModelId,
+    });
+
+    const launchCommand = this.adapter.buildBackendOwnedTerminalLaunchCommand({
+      modelKey: target.modelKey,
+      provider: target.provider,
+      providerModelId: target.providerModelId,
+    });
+
+    return {
+      ok: launchCommand !== null,
+      terminalAvailable: install.terminalEntrypoint !== null,
+      launchCommand,
+      envOwner: 'backend',
+      runtimeOwner: 'backend',
+      envPath: this.adapter.getBackendEnvPath(),
+      rootPath: install.rootPath,
+      provider: target.provider,
+      modelKey: target.modelKey,
+      providerModelId: target.providerModelId,
+      ...(launchCommand === null ? { error: 'terminal_launch_wrapper_missing' } : {}),
+    };
+  }
+
   async run(request: OpenClaudeRunRequest): Promise<OpenClaudeRunResult> {
     const task = String(request.task || '').trim();
     if (!task) {
@@ -59,6 +109,8 @@ export class OpenClaudeRuntimeService {
         terminal: {
           available: false,
           used: false,
+          envOwner: 'backend',
+          runtimeOwner: 'backend',
           launchCommand: null,
         },
       };
@@ -78,6 +130,8 @@ export class OpenClaudeRuntimeService {
         terminal: {
           available: false,
           used: false,
+          envOwner: 'backend',
+          runtimeOwner: 'backend',
           launchCommand: null,
         },
       };
@@ -107,7 +161,13 @@ export class OpenClaudeRuntimeService {
         terminal: {
           available: install.terminalEntrypoint !== null,
           used: false,
-          launchCommand: this.adapter.getTerminalLaunchCommand(),
+          envOwner: 'backend',
+          runtimeOwner: 'backend',
+          launchCommand: this.adapter.buildBackendOwnedTerminalLaunchCommand({
+            modelKey: target.modelKey,
+            provider: target.provider,
+            providerModelId: target.providerModelId,
+          }),
         },
       };
     }

@@ -16,6 +16,8 @@ const ENV_KEYS = [
   'OPENAI_API_KEY',
   'OPENAI_MODEL',
   'GEMINI_MODEL',
+  'OPENCLAUDE_LOCKED_PROVIDER',
+  'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST',
 ]
 
 const originalEnv: Record<string, string | undefined> = {}
@@ -37,6 +39,8 @@ const RESET_KEYS = [
   'OPENAI_API_KEY',
   'OPENAI_MODEL',
   'GEMINI_MODEL',
+  'OPENCLAUDE_LOCKED_PROVIDER',
+  'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST',
 ] as const
 
 beforeEach(() => {
@@ -207,5 +211,20 @@ describe('applyProviderFlagFromArgs', () => {
 
   test('returns undefined when --provider is absent', () => {
     expect(applyProviderFlagFromArgs(['--model', 'gpt-4o'])).toBeUndefined()
+  })
+
+  test('ignores --provider when host-managed mode is enabled', () => {
+    process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
+
+    const result = applyProviderFlagFromArgs([
+      '--provider',
+      'openai',
+      '--model',
+      'gpt-5.3-codex',
+    ])
+
+    expect(result).toBeUndefined()
+    expect(process.env.CLAUDE_CODE_USE_OPENAI).toBeUndefined()
+    expect(process.env.OPENAI_MODEL).toBeUndefined()
   })
 })

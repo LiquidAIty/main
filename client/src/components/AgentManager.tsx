@@ -61,6 +61,7 @@ interface AgentManagerProps {
 
 const ACTIVE_RUNTIME_TYPES: AgentCardRuntimeType[] = [
   'assistant_agent',
+  'local_coder',
   'magentic_one',
   'graph_flow',
 ];
@@ -234,6 +235,11 @@ function getManagedRuntimeOptionKeys(
   executionMode: 'single' | 'swarm' = 'single',
 ): Set<string> {
   const managed = new Set(['provider', 'modelKey', 'temperature', 'maxTokens']);
+  if (runtimeType === 'local_coder') {
+    managed.add('localCoderMode');
+    managed.add('localCoderAccess');
+    return managed;
+  }
   if (runtimeType === 'assistant_agent') {
     managed.add('executionMode');
     managed.add('swarmMaxWorkers');
@@ -312,6 +318,17 @@ function compactRuntimeOptions(
       ...normalized,
       useSocietyOfMindConsolidation:
         input.useSocietyOfMindConsolidation === false ? false : true,
+    };
+  } else if (runtimeType === 'local_coder') {
+    normalized = {
+      ...normalized,
+      localCoderMode: input.localCoderMode === 'terminal' ? 'terminal' : 'headless',
+      localCoderAccess:
+        input.localCoderAccess === 'patch'
+          ? 'patch'
+          : input.localCoderAccess === 'test'
+            ? 'test'
+            : 'read',
     };
   }
 
@@ -436,6 +453,7 @@ function deriveRuntimeOptions(localConfig: AgentManagerLocalConfig | null | unde
 
 function getRuntimeTypeLabel(runtimeType: AgentCardRuntimeType): string {
   if (runtimeType === 'assistant_agent') return 'Assist';
+  if (runtimeType === 'local_coder') return 'Local Coder';
   if (runtimeType === 'magentic_one') return 'Magentic';
   if (runtimeType === 'graph_flow') return 'Legacy Workflow (compat)';
   return `Legacy: ${runtimeType}`;
@@ -465,6 +483,17 @@ export function getRuntimeTypeVisibleFieldLabels(
           'Max Tokens',
           'Execution Mode',
         ];
+  }
+  if (runtimeType === 'local_coder') {
+    return [
+      'Runtime Type',
+      'Provider',
+      'Model',
+      'Temperature',
+      'Max Tokens',
+      'Local Mode',
+      'Local Access',
+    ];
   }
   if (runtimeType === 'magentic_one') {
     return [
@@ -547,7 +576,9 @@ export function buildActiveAgentManagerLocalConfig(input: {
     runtime_type: runtimeType,
     runtime_options: runtimeOptions,
     parent_graph_id:
-      runtimeType === 'assistant_agent' ? cleanString(input.parentGraphId) : null,
+      runtimeType === 'assistant_agent' || runtimeType === 'local_coder'
+        ? cleanString(input.parentGraphId)
+        : null,
     provider: input.provider,
     model_key: input.modelKey || null,
     temperature: typeof input.temperature === 'number' ? input.temperature : null,
@@ -1003,7 +1034,7 @@ export function AgentManager({
   const runtimeOptionsForSelect = getRuntimeTypeSelectOptions(selectedRuntimeType);
   const fieldLabels = getRuntimeTypeVisibleFieldLabels(selectedRuntimeType, executionMode);
   const showAdvancedRuntimeOptions =
-    !['assistant_agent', 'magentic_one', 'graph_flow'].includes(selectedRuntimeType) ||
+    !['assistant_agent', 'local_coder', 'magentic_one', 'graph_flow'].includes(selectedRuntimeType) ||
     Object.entries(localConfig?.runtime_options || {}).some(
       ([key, value]) =>
         !getManagedRuntimeOptionKeys(selectedRuntimeType, executionMode).has(key) &&

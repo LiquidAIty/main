@@ -349,7 +349,12 @@ function normalizeRuntimeType(value: unknown): AgentCardRuntimeType {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'magentic_one') return 'magentic_one';
   if (normalized === 'graph_flow') return 'graph_flow';
+  if (normalized === 'local_coder') return 'local_coder';
   return 'assistant_agent';
+}
+
+function isAssistLikeRuntimeType(runtimeType: AgentCardRuntimeType): boolean {
+  return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
 }
 
 function isTopLevelCanvasCard(node: AgentCardInstance | undefined | null): node is AgentCardInstance {
@@ -359,7 +364,7 @@ function isTopLevelCanvasCard(node: AgentCardInstance | undefined | null): node 
 function isAssistCanvasCard(node: AgentCardInstance | undefined | null): node is AgentCardInstance {
   return Boolean(
     node &&
-      normalizeRuntimeType(node.runtimeType) === 'assistant_agent',
+      isAssistLikeRuntimeType(normalizeRuntimeType(node.runtimeType)),
   );
 }
 
@@ -386,7 +391,7 @@ export function buildAssistStructureSummaries(
   const nodeMap = new Map(document.nodes.map((node) => [node.id, node] as const));
 
   document.nodes.forEach((node) => {
-    if (normalizeRuntimeType(node.runtimeType) !== 'assistant_agent') {
+    if (!isAssistLikeRuntimeType(normalizeRuntimeType(node.runtimeType))) {
       return;
     }
     summaries.set(node.id, {
@@ -462,11 +467,11 @@ function resolveCanvasConnectionEdgeType(
   if (
     (
       sourceRuntimeType === 'magentic_one' &&
-      (targetRuntimeType === 'assistant_agent' || targetRuntimeType === 'graph_flow')
+      (isAssistLikeRuntimeType(targetRuntimeType) || targetRuntimeType === 'graph_flow')
     ) ||
     (
       targetRuntimeType === 'magentic_one' &&
-      (sourceRuntimeType === 'assistant_agent' || sourceRuntimeType === 'graph_flow')
+      (isAssistLikeRuntimeType(sourceRuntimeType) || sourceRuntimeType === 'graph_flow')
     )
   ) {
     return 'magentic_option';

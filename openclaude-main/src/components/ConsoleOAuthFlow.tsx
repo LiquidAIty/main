@@ -10,6 +10,7 @@ import { getSSLErrorHint } from '../services/api/errorUtils.js';
 import { sendNotification } from '../services/notifier.js';
 import { OAuthService } from '../services/oauth/index.js';
 import { getOauthAccountInfo, validateForceLoginOrg } from '../utils/auth.js';
+import { isHostManagedProviderMode } from '../utils/hostManagedMode.js';
 import { logError } from '../utils/log.js';
 import { getSettings_DEPRECATED } from '../utils/settings/settings.js';
 import { ProviderManager } from './ProviderManager.js';
@@ -380,6 +381,8 @@ function OAuthStatusMessage({
   setOAuthStatus,
   setLoginWithClaudeAi,
 }: OAuthStatusMessageProps) {
+  const hostManaged = isHostManagedProviderMode()
+
   switch (oauthStatus.state) {
     case 'idle': {
       const promptText =
@@ -411,23 +414,37 @@ function OAuthStatusMessage({
           label: (
             <Text>
               3rd-party platform ·{' '}
-              <Text dimColor>OpenAI, Gemini, Bedrock, Ollama, and more</Text>
+              <Text dimColor>
+                OpenAI, Gemini, Bedrock, Ollama, and more
+              </Text>
               {'\n'}
             </Text>
           ),
           value: 'platform' as const,
         },
       ]
+      const selectableLoginOptions = hostManaged
+        ? loginOptions.filter(option => option.value !== 'platform')
+        : loginOptions
 
       return (
         <Box flexDirection="column" gap={1} marginTop={1}>
           <Text bold>{promptText}</Text>
           <Text>Select login method:</Text>
+          {hostManaged ? (
+            <Text dimColor>
+              Third-party provider setup is disabled in host-managed mode.
+            </Text>
+          ) : null}
           <Box>
             <Select
-              options={loginOptions}
+              options={selectableLoginOptions}
               onChange={value => {
                 if (value === 'platform') {
+                  if (hostManaged) {
+                    setOAuthStatus({ state: 'idle' })
+                    return
+                  }
                   logEvent('tengu_oauth_platform_selected', {})
                   setOAuthStatus({ state: 'platform_setup' })
                   return
@@ -449,6 +466,16 @@ function OAuthStatusMessage({
     }
 
     case 'platform_setup':
+      if (hostManaged) {
+        return (
+          <Box flexDirection="column" gap={1}>
+            <Text color="warning">
+              Third-party provider setup is disabled in host-managed mode.
+            </Text>
+            <Text dimColor>Press Enter to return.</Text>
+          </Box>
+        )
+      }
       return (
         <ProviderManager
           mode="first-run"

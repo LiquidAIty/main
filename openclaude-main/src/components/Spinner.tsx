@@ -9,11 +9,9 @@ import { getKairosActive, getUserMsgOptIn } from '../bootstrap/state.js';
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js';
 import { isEnvTruthy } from '../utils/envUtils.js';
 import { count } from '../utils/array.js';
-import sample from 'lodash-es/sample.js';
-import { formatDuration, formatNumber, formatSecondsShort } from '../utils/format.js';
+import { formatDuration, formatSecondsShort } from '../utils/format.js';
 import type { Theme } from 'src/utils/theme.js';
 import { activityManager } from '../utils/activityManager.js';
-import { getSpinnerVerbs } from '../constants/spinnerVerbs.js';
 import { MessageResponse } from './MessageResponse.js';
 import { TaskListV2 } from './TaskListV2.js';
 import { useTasksV2 } from '../hooks/useTasksV2.js';
@@ -31,11 +29,8 @@ import { getEffortSuffix } from '../utils/effort.js';
 import { getMainLoopModel } from '../utils/model/model.js';
 import { getViewedTeammateTask } from '../state/selectors.js';
 import { TEARDROP_ASTERISK } from '../constants/figures.js';
-import figures from 'figures';
-import { getCurrentTurnTokenBudget, getTurnOutputTokens } from '../bootstrap/state.js';
 import { TeammateSpinnerTree } from './Spinner/TeammateSpinnerTree.js';
 import { useAnimationFrame } from '../ink.js';
-import { getGlobalConfig } from '../utils/config.js';
 export type { SpinnerMode } from './Spinner/index.js';
 const DEFAULT_CHARACTERS = getDefaultCharacters();
 const SPINNER_FRAMES = [...DEFAULT_CHARACTERS, ...[...DEFAULT_CHARACTERS].reverse()];
@@ -159,16 +154,8 @@ function SpinnerWithVerbInner({
   }, [mode]);
 
   // Find the current in-progress task and next pending task
-  const currentTodo = tasksV2?.find(task => task.status !== 'pending' && task.status !== 'completed');
-  const nextTask = findNextPendingTask(tasksV2);
-
-  // Use useState with initializer to pick a random verb once on mount
-  const [randomVerb] = useState(() => sample(getSpinnerVerbs()));
-
-  // Leader's own verb (always the leader's, regardless of who is foregrounded)
-  const leaderVerb = overrideMessage ?? currentTodo?.activeForm ?? currentTodo?.subject ?? randomVerb;
-  const effectiveVerb = foregroundedTeammate && !foregroundedTeammate.isIdle ? foregroundedTeammate.spinnerVerb ?? randomVerb : leaderVerb;
-  const message = effectiveVerb + '…';
+  const leaderVerb = 'Thinking';
+  const message = 'Thinking...';
 
   // Track CLI activity when spinner is active
   useEffect(() => {
@@ -198,11 +185,6 @@ function SpinnerWithVerbInner({
       }
     }
   }
-
-  // Stale read of the refs for showBtwTip below — we're off the 50ms clock
-  // so this only updates when props/app state change, which is sufficient for
-  // a coarse 30s threshold.
-  const elapsedSnapshot = pauseStartTimeRef.current !== null ? pauseStartTimeRef.current - loadingStartTimeRef.current - totalPausedMsRef.current : Date.now() - loadingStartTimeRef.current - totalPausedMsRef.current;
 
   // Leader token count for TeammateSpinnerTree — read raw (non-animated) from
   // the ref. The tree is only shown when teammates are running; teammate
@@ -249,53 +231,12 @@ function SpinnerWithVerbInner({
       </Box>;
   }
 
-  // Time-based tip overrides: coarse thresholds so a stale ref read (we're
-  // off the 50ms clock) is fine. Other triggers (mode change, setMessages)
-  // cause re-renders that refresh this in practice.
-  let contextTipsActive = false;
-  const tipsEnabled = settings.spinnerTipsEnabled !== false;
-  const showClearTip = tipsEnabled && elapsedSnapshot > 1_800_000;
-  const showBtwTip = tipsEnabled && elapsedSnapshot > 30_000 && !getGlobalConfig().btwUseCount;
-  const effectiveTip = contextTipsActive ? undefined : showClearTip && !nextTask ? 'Use /clear to start fresh when switching topics and free up context' : showBtwTip && !nextTask ? "Use /btw to ask a quick side question without interrupting Claude's current work" : spinnerTip;
-
-  // Budget text (internal-only) — shown above the tip line
-  let budgetText: string | null = null;
-  if (feature('TOKEN_BUDGET')) {
-    const budget = getCurrentTurnTokenBudget();
-    if (budget !== null && budget > 0) {
-      const tokens = getTurnOutputTokens();
-      if (tokens >= budget) {
-        budgetText = `Target: ${formatNumber(tokens)} used (${formatNumber(budget)} min ${figures.tick})`;
-      } else {
-        const pct = Math.round(tokens / budget * 100);
-        const remaining = budget - tokens;
-        const rate = elapsedSnapshot > 5000 && tokens >= 2000 ? tokens / elapsedSnapshot : 0;
-        const eta = rate > 0 ? ` \u00B7 ~${formatDuration(remaining / rate, {
-          mostSignificantOnly: true
-        })}` : '';
-        budgetText = `Target: ${formatNumber(tokens)} / ${formatNumber(budget)} (${pct}%)${eta}`;
-      }
-    }
-  }
   return <Box flexDirection="column" width="100%" alignItems="flex-start">
       <SpinnerAnimationRow mode={mode} reducedMotion={reducedMotion} hasActiveTools={hasActiveTools} responseLengthRef={responseLengthRef} message={message} messageColor={messageColor} shimmerColor={shimmerColor} overrideColor={overrideColor} loadingStartTimeRef={loadingStartTimeRef} totalPausedMsRef={totalPausedMsRef} pauseStartTimeRef={pauseStartTimeRef} spinnerSuffix={spinnerSuffix} verbose={verbose} columns={columns} hasRunningTeammates={hasRunningTeammates} teammateTokens={teammateTokens} foregroundedTeammate={foregroundedTeammate} leaderIsIdle={leaderIsIdle} thinkingStatus={thinkingStatus} effortSuffix={effortSuffix} />
       {showSpinnerTree && hasRunningTeammates ? <TeammateSpinnerTree selectedIndex={selectedIPAgentIndex} isInSelectionMode={viewSelectionMode === 'selecting-agent'} allIdle={allIdle} leaderVerb={leaderIsIdle ? undefined : leaderVerb} leaderIdleText={leaderIsIdle ? 'Idle' : undefined} leaderTokenCount={leaderTokenCount} /> : showExpandedTodos && tasksV2 && tasksV2.length > 0 ? <Box width="100%" flexDirection="column">
           <MessageResponse>
             <TaskListV2 tasks={tasksV2} />
           </MessageResponse>
-        </Box> : nextTask || effectiveTip || budgetText ?
-    // IMPORTANT: we need this width="100%" to avoid an Ink bug where the
-    // tip gets duplicated over and over while the spinner is running if
-    // the terminal is very small. TODO: fix this in Ink.
-    <Box width="100%" flexDirection="column">
-          {budgetText && <MessageResponse>
-              <Text dimColor>{budgetText}</Text>
-            </MessageResponse>}
-          {(nextTask || effectiveTip) && <MessageResponse>
-              <Text dimColor>
-                {nextTask ? `Next: ${nextTask.subject}` : `Tip: ${effectiveTip}`}
-              </Text>
-            </MessageResponse>}
         </Box> : null}
     </Box>;
 }
@@ -321,8 +262,7 @@ function BriefSpinner(t0) {
   } = t0;
   const settings = useSettings();
   const reducedMotion = settings.prefersReducedMotion ?? false;
-  const [randomVerb] = useState(_temp4);
-  const verb = overrideMessage ?? randomVerb;
+  const verb = 'Thinking';
   const connStatus = useAppState(_temp5);
   let t1;
   let t2;
@@ -347,17 +287,7 @@ function BriefSpinner(t0) {
   const runningCount = useAppState(_temp6);
   const showConnWarning = connStatus === "reconnecting" || connStatus === "disconnected";
   const connText = connStatus === "reconnecting" ? "Reconnecting" : "Disconnected";
-  const dotFrame = Math.floor(time / 300) % 3;
-  let t3;
-  if ($[3] !== dotFrame || $[4] !== reducedMotion) {
-    t3 = reducedMotion ? "\u2026  " : ".".repeat(dotFrame + 1).padEnd(3);
-    $[3] = dotFrame;
-    $[4] = reducedMotion;
-    $[5] = t3;
-  } else {
-    t3 = $[5];
-  }
-  const dots = t3;
+  const dots = "...";
   let t4;
   if ($[6] !== verb) {
     t4 = stringWidth(verb);
@@ -444,9 +374,6 @@ function _temp6(s_0) {
 }
 function _temp5(s) {
   return s.remoteConnectionStatus;
-}
-function _temp4() {
-  return sample(getSpinnerVerbs()) ?? "Working";
 }
 export function BriefIdleStatus() {
   const $ = _c(9);

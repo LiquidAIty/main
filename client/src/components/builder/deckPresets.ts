@@ -16,7 +16,7 @@ export type DeckNodePreset = {
   subtitle: string;
 };
 
-// Only Assist can be added - Magentic is unique and seeded, not addable
+// Addable node presets. Magentic remains seeded/unique.
 export const DECK_NODE_PRESETS: DeckNodePreset[] = [
   {
     key: "assist",
@@ -28,6 +28,17 @@ export const DECK_NODE_PRESETS: DeckNodePreset[] = [
     runtimeType: "assistant_agent",
     title: "Assist",
     subtitle: "Single worker or swarm worker",
+  },
+  {
+    key: "local_coder",
+    label: "Local Coder",
+    kind: "agent",
+    templateId: "template_assist",
+    promptTemplateId: "prompt_assist",
+    runtimeBinding: null,
+    runtimeType: "local_coder",
+    title: "Local Coder",
+    subtitle: "Runs via local coder subsystem",
   },
 ];
 
@@ -64,7 +75,7 @@ function isGraphOwnedCard(anchorCard: AgentCardInstance | null): boolean {
   return Boolean(anchorCard && String(anchorCard.parentGraphId || "").trim());
 }
 
-// Only Assist can be added - left rail plus button handles this directly
+// Left rail plus handles creation directly from presets.
 export function getDeckQuickAddActions(_anchorCard: AgentCardInstance | null): DeckQuickAddAction[] {
   return [];
 }

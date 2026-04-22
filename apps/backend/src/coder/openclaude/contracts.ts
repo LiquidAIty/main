@@ -43,8 +43,24 @@ export type OpenClaudeRunResult = {
   terminal: {
     available: boolean;
     used: boolean;
+    envOwner: 'backend';
+    runtimeOwner: 'backend';
     launchCommand: string | null;
   };
+};
+
+export type OpenClaudeTerminalLaunchResult = {
+  ok: boolean;
+  terminalAvailable: boolean;
+  launchCommand: string | null;
+  envOwner: 'backend';
+  runtimeOwner: 'backend';
+  envPath: string;
+  rootPath: string;
+  provider: OpenClaudeProvider;
+  modelKey: string;
+  providerModelId: string;
+  error?: string;
 };
 
 export type OpenClaudeProviderResult = {

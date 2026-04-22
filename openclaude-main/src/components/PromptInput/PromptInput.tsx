@@ -825,18 +825,6 @@ function PromptInput({
     const clearedSubstantialInput = peakLength >= 20 && currentLength <= 5;
     const wasRapidClear = prevLength >= 20 && currentLength <= 5;
     if (clearedSubstantialInput && !wasRapidClear) {
-      const config = getGlobalConfig();
-      if (!config.hasUsedStash) {
-        addNotification({
-          key: 'stash-hint',
-          jsx: <Text dimColor>
-              Tip:{' '}
-              <ConfigurableShortcutHint action="chat:stash" context="Chat" fallback="ctrl+s" description="stash" />
-            </Text>,
-          priority: 'immediate',
-          timeoutMs: FOOTER_TEMPORARY_STATUS_TIMEOUT
-        });
-      }
       peakInputLengthRef.current = currentLength;
     }
   }, [input.length, addNotification]);

@@ -1,3 +1,5 @@
+import { isHostManagedProviderMode } from './hostManagedMode.js'
+
 /**
  * --provider CLI flag support.
  *
@@ -46,6 +48,9 @@ export function parseProviderFlag(args: string[]): string | null {
 export function applyProviderFlagFromArgs(
   args: string[],
 ): { error?: string } | undefined {
+  if (isHostManagedProviderMode()) {
+    return undefined
+  }
   const provider = parseProviderFlag(args)
   if (!provider) return undefined
   return applyProviderFlag(provider, args)

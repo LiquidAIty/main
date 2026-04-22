@@ -10,6 +10,7 @@ import {
   readCodexCredentialsAsync,
 } from '../utils/codexCredentials.js'
 import { isBareMode, isEnvTruthy } from '../utils/envUtils.js'
+import { isHostManagedProviderMode } from '../utils/hostManagedMode.js'
 import { getPrimaryModel, hasMultipleModels, parseModelList } from '../utils/providerModels.js'
 import {
   applySavedProfileToCurrentSession,
@@ -351,6 +352,19 @@ function CodexOAuthSetup({
 }
 
 export function ProviderManager({ mode, onDone }: Props): React.ReactNode {
+  if (isHostManagedProviderMode()) {
+    return (
+      <Pane title="Provider setup">
+        <Box flexDirection="column" gap={1}>
+          <Text>Provider configuration is disabled in host-managed mode.</Text>
+          <Text dimColor>
+            Provider, model, and auth are supplied by the host environment.
+          </Text>
+        </Box>
+      </Pane>
+    )
+  }
+
   const setAppState = useSetAppState()
   const initialGithubCredentialSource = getGithubCredentialSourceFromEnv()
   const initialIsGithubActive = isEnvTruthy(process.env.CLAUDE_CODE_USE_GITHUB)

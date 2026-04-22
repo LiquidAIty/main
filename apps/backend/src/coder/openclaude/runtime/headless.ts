@@ -17,6 +17,8 @@ export async function runOpenClaudeHeadless(
     terminal: {
       available: false,
       used: false,
+      envOwner: 'backend',
+      runtimeOwner: 'backend',
       launchCommand: null,
     },
   };

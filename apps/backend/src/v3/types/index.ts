@@ -13,7 +13,8 @@ export type RuntimeBinding =
 export type AgentCardRuntimeType =
   | 'assistant_agent'
   | 'magentic_one'
-  | 'graph_flow';
+  | 'graph_flow'
+  | 'local_coder';
 
 export type DeckEdgeType = 'magentic_option' | 'flow';
 
@@ -64,6 +65,8 @@ export type AgentCardRuntimeOptions = {
   finalAnswerPrompt?: string | null;
   selectorPrompt?: string | null;
   allowRepeatedSpeaker?: boolean | null;
+  localCoderMode?: 'headless' | 'terminal' | null;
+  localCoderAccess?: 'read' | 'patch' | 'test' | null;
 };
 
 export type DeckNodeKind = 'agent';

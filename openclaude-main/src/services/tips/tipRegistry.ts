@@ -641,21 +641,5 @@ function getCustomTips(): Tip[] {
 }
 
 export async function getRelevantTips(context?: TipContext): Promise<Tip[]> {
-  const settings = getInitialSettings()
-  const override = settings.spinnerTipsOverride
-  const customTips = getCustomTips()
-
-  // If excludeDefault is true and there are custom tips, skip built-in tips entirely
-  if (override?.excludeDefault && customTips.length > 0) {
-    return customTips
-  }
-
-  // Otherwise, filter built-in tips as before and combine with custom
-  const tips = [...externalTips, ...internalOnlyTips]
-  const isRelevant = await Promise.all(tips.map(_ => _.isRelevant(context)))
-  const filtered = tips
-    .filter((_, index) => isRelevant[index])
-    .filter(_ => getSessionsSinceLastShown(_.id) >= _.cooldownSessions)
-
-  return [...filtered, ...customTips]
+  return []
 }

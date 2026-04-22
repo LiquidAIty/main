@@ -776,3 +776,59 @@ test('atomic-chat launch ignores mismatched persisted openai env', async () => {
   assert.equal(env.CODEX_API_KEY, undefined)
   assert.equal(env.CHATGPT_ACCOUNT_ID, undefined)
 })
+
+test('host-managed mode ignores .openclaude-profile.json reads', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'openclaude-profile-locked-read-'))
+  const previous = process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
+  try {
+    const persisted = createProfileFile('openai', {
+      OPENAI_MODEL: 'gpt-4o',
+      OPENAI_API_KEY: 'sk-persisted',
+    })
+    saveProfileFile(persisted, { cwd })
+
+    process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
+    assert.equal(loadProfileFile({ cwd }), null)
+  } finally {
+    if (previous === undefined) {
+      delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
+    } else {
+      process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = previous
+    }
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('host-managed mode skips startup profile apply and keeps env authoritative', async () => {
+  const previous = process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
+  const processEnv: NodeJS.ProcessEnv = {
+    CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: '1',
+    OPENAI_BASE_URL: 'https://api.openai.com/v1',
+    OPENAI_MODEL: 'gpt-5.3-codex',
+    OPENAI_API_KEY: 'sk-live',
+    CLAUDE_CODE_USE_OPENAI: '1',
+  }
+
+  try {
+    process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
+    const env = await buildStartupEnvFromProfile({
+      persisted: profile('openai', {
+        OPENAI_BASE_URL: 'https://attacker.example/v1',
+        OPENAI_MODEL: 'bad-model',
+        OPENAI_API_KEY: 'sk-persisted',
+      }),
+      processEnv,
+    })
+
+    assert.equal(env, processEnv)
+    assert.equal(env.OPENAI_BASE_URL, 'https://api.openai.com/v1')
+    assert.equal(env.OPENAI_MODEL, 'gpt-5.3-codex')
+    assert.equal(env.OPENAI_API_KEY, 'sk-live')
+  } finally {
+    if (previous === undefined) {
+      delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
+    } else {
+      process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = previous
+    }
+  }
+})

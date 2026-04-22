@@ -9,6 +9,8 @@ async function importFreshProvidersModule() {
 const originalEnv = { ...process.env }
 
 const RESTORED_KEYS = [
+  'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST',
+  'OPENCLAUDE_LOCKED_PROVIDER',
   'CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED',
   'CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED_ID',
   'CLAUDE_CODE_USE_OPENAI',
@@ -127,6 +129,27 @@ function buildGeminiProfile(overrides: Partial<ProviderProfile> = {}): ProviderP
 }
 
 describe('applyProviderProfileToProcessEnv', () => {
+  test('does nothing in host-managed mode', async () => {
+    const { applyProviderProfileToProcessEnv } =
+      await importFreshProviderProfileModules()
+    process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
+    process.env.OPENAI_BASE_URL = 'https://api.openai.com/v1'
+    process.env.OPENAI_MODEL = 'gpt-5.3-codex'
+    process.env.OPENAI_API_KEY = 'sk-live'
+
+    applyProviderProfileToProcessEnv(
+      buildProfile({
+        baseUrl: 'https://attacker.example/v1',
+        model: 'bad-model',
+        apiKey: 'sk-persisted',
+      }),
+    )
+
+    expect(process.env.OPENAI_BASE_URL).toBe('https://api.openai.com/v1')
+    expect(process.env.OPENAI_MODEL).toBe('gpt-5.3-codex')
+    expect(process.env.OPENAI_API_KEY).toBe('sk-live')
+  })
+
   test('openai profile clears competing gemini/github flags', async () => {
     const { applyProviderProfileToProcessEnv } =
       await importFreshProviderProfileModules()
@@ -232,7 +255,59 @@ describe('applyProviderProfileToProcessEnv', () => {
   })
 })
 
+describe('profile mutation guards in host-managed mode', () => {
+  test('addProviderProfile returns null and does not mutate config', async () => {
+    const { addProviderProfile, getProviderProfiles } =
+      await importFreshProviderProfileModules()
+    process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
+
+    const added = addProviderProfile({
+      provider: 'openai',
+      name: 'Blocked',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-5.3-codex',
+      apiKey: 'sk-blocked',
+    })
+
+    expect(added).toBeNull()
+    expect(getProviderProfiles()).toEqual([])
+  })
+})
+
 describe('applyActiveProviderProfileFromConfig', () => {
+  test('does not apply active profile in host-managed mode', async () => {
+    const { applyActiveProviderProfileFromConfig } =
+      await importFreshProviderProfileModules()
+
+    process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
+    process.env.CLAUDE_CODE_USE_OPENAI = '1'
+    process.env.OPENAI_BASE_URL = 'https://api.openai.com/v1'
+    process.env.OPENAI_MODEL = 'gpt-5.3-codex'
+    process.env.OPENAI_API_KEY = 'sk-live'
+
+    const applied = applyActiveProviderProfileFromConfig(
+      {
+        providerProfiles: [
+          buildProfile({
+            id: 'saved_openai',
+            baseUrl: 'https://attacker.example/v1',
+            model: 'bad-model',
+            apiKey: 'sk-persisted',
+          }),
+        ],
+        activeProviderProfileId: 'saved_openai',
+      } as any,
+      {
+        processEnv: process.env,
+      },
+    )
+
+    expect(applied).toBeUndefined()
+    expect(process.env.OPENAI_BASE_URL).toBe('https://api.openai.com/v1')
+    expect(process.env.OPENAI_MODEL).toBe('gpt-5.3-codex')
+    expect(process.env.OPENAI_API_KEY).toBe('sk-live')
+  })
+
   test('does not override explicit startup provider selection', async () => {
     const { applyActiveProviderProfileFromConfig } =
       await importFreshProviderProfileModules()

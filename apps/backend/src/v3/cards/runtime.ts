@@ -6,6 +6,7 @@
 import { REPO_DEFAULT_MODEL_KEY, resolveModel, type Provider } from '../../llm/models.config';
 import { runLLM } from '../../llm/client';
 import { getTool, type Tool } from '../../agents/registry';
+import { openClaudeRuntimeService } from '../../coder/openclaude/runtime/service';
 import { resolveRuntimeBinding } from '../runtimeBinding';
 import {
   buildGraphExecutionInputText,
@@ -382,6 +383,7 @@ function formatCardRuntimeError(err: unknown): string {
     lower.includes('assistant_tool_') ||
     lower.includes('assistant_swarm_') ||
     lower.includes('assistant_empty_response') ||
+    lower.includes('local_coder_') ||
     lower.includes('magentic_callable_heads_required') ||
     lower.includes('magentic_invalid_head_selection') ||
     lower.includes('graph_flow_') ||
@@ -390,6 +392,13 @@ function formatCardRuntimeError(err: unknown): string {
     lower.includes('magentic_model_not_approved')
   ) {
     return debugMessage;
+  }
+
+  if (
+    lower.includes('local coder') &&
+    lower.includes('unavailable')
+  ) {
+    return 'The local coder subsystem is unavailable. Check local coder install/status and retry.';
   }
 
   if (
@@ -608,6 +617,10 @@ function resolveAssistExecutionMode(card: AgentCardInstance): 'single' | 'swarm'
   return card.runtimeOptions?.executionMode === 'swarm' ? 'swarm' : 'single';
 }
 
+function isAssistLikeRuntimeType(runtimeType: AgentCardRuntimeType): boolean {
+  return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
+}
+
 function resolveCallableHeadCards(
   card: AgentCardInstance,
   context: CardRuntimeContext,
@@ -626,7 +639,7 @@ function resolveCallableHeadCards(
     .filter((node) => !String(node.parentGraphId || '').trim())
     .filter((node) => {
       const runtimeType = resolveCardRuntimeType(node);
-      return runtimeType === 'assistant_agent' || runtimeType === 'graph_flow';
+      return isAssistLikeRuntimeType(runtimeType) || runtimeType === 'graph_flow';
     })
     .filter((node) => {
       if (seen.has(node.id)) return false;
@@ -639,7 +652,7 @@ function isTopLevelAssistCard(node: AgentCardInstance | undefined | null): node 
   return Boolean(
     node &&
       node.kind === 'agent' &&
-      resolveCardRuntimeType(node) === 'assistant_agent' &&
+      isAssistLikeRuntimeType(resolveCardRuntimeType(node)) &&
       !String(node.parentGraphId || '').trim(),
   );
 }
@@ -655,7 +668,7 @@ function resolveGraphExecutionSteps(
   );
 
   return cards.map((stepCard) => {
-    if (resolveCardRuntimeType(stepCard) !== 'assistant_agent') {
+    if (!isAssistLikeRuntimeType(resolveCardRuntimeType(stepCard))) {
       throw new Error(
         `graph_flow_step_runtime_not_supported: graphCardId=${card.id} stepCardId=${stepCard.id} runtimeType=${resolveCardRuntimeType(stepCard)}`,
       );
@@ -1364,6 +1377,132 @@ async function runAssistantAgentCard(
   );
 }
 
+async function runLocalCoderCard(
+  card: AgentCardInstance,
+  effectiveAgent: AgentTemplate,
+  runtimeInput: string,
+  context: CardRuntimeContext,
+  runtimeBinding: RuntimeBinding | null,
+  startedAt: string,
+): Promise<CardRunResult> {
+  const runtimeOptions = card.runtimeOptions || {};
+  const mode =
+    runtimeOptions.localCoderMode === 'terminal' ? 'terminal' : 'headless';
+  const access =
+    runtimeOptions.localCoderAccess === 'patch'
+      ? 'patch'
+      : runtimeOptions.localCoderAccess === 'test'
+        ? 'test'
+        : 'read';
+  const modelKey = String(
+    runtimeOptions.modelKey || effectiveAgent.model || '',
+  ).trim();
+  const provider =
+    runtimeOptions.provider === 'openai' || runtimeOptions.provider === 'openrouter'
+      ? runtimeOptions.provider
+      : null;
+  const status = openClaudeRuntimeService.getStatus({
+    mode,
+    access,
+    modelKey: modelKey || undefined,
+    provider: provider || undefined,
+  });
+
+  emitRuntimeEvent(context, {
+    kind: 'message',
+    type: 'message',
+    cardId: card.id,
+    cardTitle: card.title,
+    runtimeType: 'local_coder',
+    role: 'tool',
+    status: 'running',
+    text: `Local coder status: installed=${status.installed} headless=${status.headlessAvailable} terminal=${status.terminalAvailable} repo=${status.repoConnected} provider=${status.provider} modelKey=${status.modelKey} state=${status.state}`,
+    notes: [
+      `installed=${status.installed}`,
+      `headlessAvailable=${status.headlessAvailable}`,
+      `terminalAvailable=${status.terminalAvailable}`,
+      `repoConnected=${status.repoConnected}`,
+      `provider=${status.provider}`,
+      `modelKey=${status.modelKey}`,
+      `state=${status.state}`,
+    ],
+  });
+
+  if (!status.installed) {
+    throw new Error(
+      `local_coder_subsystem_unavailable: installed=false cardId=${card.id}`,
+    );
+  }
+  if (mode === 'headless' && !status.headlessAvailable) {
+    throw new Error(
+      `local_coder_subsystem_unavailable: headless_available=false cardId=${card.id}`,
+    );
+  }
+  if (mode === 'terminal' && !status.terminalAvailable) {
+    throw new Error(
+      `local_coder_subsystem_unavailable: terminal_available=false cardId=${card.id}`,
+    );
+  }
+  if (!status.repoConnected) {
+    throw new Error(
+      `local_coder_subsystem_unavailable: repo_connected=false cardId=${card.id}`,
+    );
+  }
+
+  const runResult = await openClaudeRuntimeService.run({
+    task: runtimeInput,
+    mode,
+    access,
+    modelKey: modelKey || undefined,
+    provider: provider || undefined,
+    temperature:
+      Number.isFinite(Number(runtimeOptions.temperature))
+        ? Number(runtimeOptions.temperature)
+        : undefined,
+    maxTokens:
+      Number.isFinite(Number(runtimeOptions.maxTokens))
+        ? Number(runtimeOptions.maxTokens)
+        : undefined,
+    terminalSteering: mode === 'terminal',
+    systemPrompt:
+      String(card.prompt || effectiveAgent.promptTemplate || '').trim() ||
+      undefined,
+  });
+
+  if (!runResult.ok) {
+    throw new Error(
+      `local_coder_run_failed: cardId=${card.id} ${String(
+        runResult.error || 'run_failed',
+      ).trim()}`,
+    );
+  }
+
+  const finalText = String(runResult.output || '').trim();
+  if (!finalText) {
+    throw new Error(`local_coder_empty_output: cardId=${card.id}`);
+  }
+
+  emitRuntimeMessage(context, {
+    cardId: card.id,
+    cardTitle: card.title,
+    runtimeType: 'local_coder',
+    role: 'assistant',
+    content: finalText,
+  });
+
+  return {
+    output: finalText,
+    status: 'success',
+    startedAt,
+    endedAt: new Date().toISOString(),
+    runtimeBinding,
+    runtimeType: 'local_coder',
+    seed: context.seed,
+    inputSummary: summarizeText(runtimeInput),
+    outputSummary: summarizeText(finalText),
+  };
+}
+
 async function runGraphFlowCard(
   card: AgentCardInstance,
   effectiveAgent: AgentTemplate,
@@ -1564,7 +1703,7 @@ async function runMagenticCard(
     ...context,
     userInput: runtimeInput,
     previousOutput: '',
-    allowVisibleAssistWorkflowExpansion: resolveCardRuntimeType(selectedHead) === 'assistant_agent',
+    allowVisibleAssistWorkflowExpansion: isAssistLikeRuntimeType(resolveCardRuntimeType(selectedHead)),
   });
   if (selectedResult.status !== 'success') {
     throw new Error(
@@ -1628,6 +1767,15 @@ export async function runCardWithContract(
         );
       case 'graph_flow':
         return await runGraphFlowCard(
+          card,
+          effectiveAgent,
+          runtimeInput,
+          context,
+          runtimeBinding,
+          startedAt,
+        );
+      case 'local_coder':
+        return await runLocalCoderCard(
           card,
           effectiveAgent,
           runtimeInput,

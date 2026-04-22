@@ -190,7 +190,7 @@ export function TeammateSpinnerLine({
       return null;
     }
     return <Text dimColor>
-        {activityText?.endsWith('…') ? activityText : `${activityText}…`}
+        {activityText?.endsWith('...') ? activityText : `${activityText}...`}
       </Text>;
   };
 

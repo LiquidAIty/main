@@ -1,13 +1,21 @@
 import type { OpenClaudeAdapter } from '../adapter';
 import type { OpenClaudeRunRequest, OpenClaudeRunResult } from '../contracts';
-import { runOpenClaudeWithCanonicalRuntime } from '../provider/openai53';
+import {
+  resolveOpenClaudeProviderTarget,
+  runOpenClaudeWithCanonicalRuntime,
+} from '../provider/openai53';
 
 export async function runOpenClaudeTerminal(
   adapter: OpenClaudeAdapter,
   request: OpenClaudeRunRequest,
 ): Promise<OpenClaudeRunResult> {
   const response = await runOpenClaudeWithCanonicalRuntime(request);
-  const launchCommand = adapter.getTerminalLaunchCommand();
+  const target = resolveOpenClaudeProviderTarget(request);
+  const launchCommand = adapter.buildBackendOwnedTerminalLaunchCommand({
+    modelKey: target.modelKey,
+    provider: target.provider,
+    providerModelId: target.providerModelId,
+  });
   const terminalAvailable = Boolean(launchCommand);
   const terminalSteering = request.terminalSteering !== false;
 
@@ -23,6 +31,8 @@ export async function runOpenClaudeTerminal(
     terminal: {
       available: terminalAvailable,
       used: terminalAvailable && terminalSteering,
+      envOwner: 'backend',
+      runtimeOwner: 'backend',
       launchCommand,
     },
   };

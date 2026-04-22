@@ -57,6 +57,7 @@ function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   if (normalized === 'assistant_agent') return 'assistant_agent';
   if (normalized === 'magentic_one') return 'magentic_one';
   if (normalized === 'graph_flow') return 'graph_flow';
+  if (normalized === 'local_coder') return 'local_coder';
   return null;
 }
 
@@ -168,6 +169,20 @@ function normalizeRuntimeOptions(value: unknown): AgentCardRuntimeOptions | null
     selectorPrompt:
       typeof raw.selectorPrompt === 'string' ? raw.selectorPrompt.trim() || null : null,
     allowRepeatedSpeaker,
+    localCoderMode:
+      raw.localCoderMode === 'terminal'
+        ? 'terminal'
+        : raw.localCoderMode === 'headless'
+          ? 'headless'
+          : null,
+    localCoderAccess:
+      raw.localCoderAccess === 'patch'
+        ? 'patch'
+        : raw.localCoderAccess === 'test'
+          ? 'test'
+          : raw.localCoderAccess === 'read'
+            ? 'read'
+            : null,
   };
   return normalized;
 }

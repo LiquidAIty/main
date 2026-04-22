@@ -22,6 +22,7 @@ import {
   sanitizeApiKey,
   sanitizeProviderConfigValue,
 } from './providerSecrets.js'
+import { isHostManagedProviderMode } from './hostManagedMode.js'
 
 export {
   maskSecretForDisplay,
@@ -450,6 +451,9 @@ export function clearPersistedCodexOAuthProfile(
 }
 
 export function loadProfileFile(options?: ProfileFileLocation): ProfileFile | null {
+  if (isHostManagedProviderMode()) {
+    return null
+  }
   const filePath = resolveProfileFilePath(options)
   if (!existsSync(filePath)) {
     return null
@@ -479,6 +483,9 @@ export function saveProfileFile(
   options?: ProfileFileLocation,
 ): string {
   const filePath = resolveProfileFilePath(options)
+  if (isHostManagedProviderMode()) {
+    return filePath
+  }
   writeFileSync(filePath, JSON.stringify(profileFile, null, 2), {
     encoding: 'utf8',
     mode: 0o600,
@@ -839,6 +846,9 @@ export async function buildStartupEnvFromProfile(options?: {
   readGeminiAccessToken?: () => string | undefined
 }): Promise<NodeJS.ProcessEnv> {
   const processEnv = options?.processEnv ?? process.env
+  if (isHostManagedProviderMode(processEnv)) {
+    return processEnv
+  }
   const persisted = options?.persisted ?? loadProfileFile()
 
   // Saved /provider profiles should still win over provider-manager env that was
@@ -901,6 +911,9 @@ export async function applySavedProfileToCurrentSession(options: {
   processEnv?: NodeJS.ProcessEnv
 }): Promise<string | null> {
   const processEnv = options.processEnv ?? process.env
+  if (isHostManagedProviderMode(processEnv)) {
+    return 'Provider profiles are disabled in host-managed mode.'
+  }
   const baseEnv = { ...processEnv }
   const isCodexOAuthProfile =
     options.profileFile.profile === 'codex' &&

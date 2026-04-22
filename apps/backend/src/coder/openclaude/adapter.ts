@@ -30,7 +30,55 @@ export class OpenClaudeAdapter {
   }
 
   getTerminalLaunchCommand(): string | null {
-    const info = this.getInstallInfo();
-    return info.terminalEntrypoint ? info.terminalEntrypoint : null;
+    return this.buildBackendOwnedTerminalLaunchCommand();
+  }
+
+  private getRepoRootPath(): string {
+    return resolve(this.rootPath, '..');
+  }
+
+  getBackendEnvPath(): string {
+    return join(this.getRepoRootPath(), 'apps', 'backend', '.env');
+  }
+
+  getTerminalWrapperScriptPath(): string {
+    return join(
+      this.getRepoRootPath(),
+      'apps',
+      'backend',
+      'scripts',
+      'openclaude-terminal-launch.ps1',
+    );
+  }
+
+  buildBackendOwnedTerminalLaunchCommand(options?: {
+    modelKey?: string;
+    provider?: 'openai' | 'openrouter';
+    providerModelId?: string;
+  }): string | null {
+    const install = this.getInstallInfo();
+    const scriptPath = this.getTerminalWrapperScriptPath();
+    if (!install.terminalEntrypoint || !existsSync(scriptPath)) {
+      return null;
+    }
+
+    const args = [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      `"${scriptPath}"`,
+    ];
+    if (options?.modelKey) {
+      args.push('-ModelKey', `"${options.modelKey}"`);
+    }
+    if (options?.provider) {
+      args.push('-Provider', `"${options.provider}"`);
+    }
+    if (options?.providerModelId) {
+      args.push('-ProviderModelId', `"${options.providerModelId}"`);
+    }
+
+    return `powershell ${args.join(' ')}`;
   }
 }

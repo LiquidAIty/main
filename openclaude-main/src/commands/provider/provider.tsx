@@ -56,6 +56,7 @@ import {
   saveGeminiAccessToken,
 } from '../../utils/geminiCredentials.js'
 import { isBareMode } from '../../utils/envUtils.js'
+import { isHostManagedProviderMode } from '../../utils/hostManagedMode.js'
 import {
   getGoalDefaultOpenAIModel,
   normalizeRecommendationGoal,
@@ -1683,6 +1684,14 @@ export function ProviderWizard({
 }
 
 export const call: LocalJSXCommandCall = async (onDone, _context, args) => {
+  if (isHostManagedProviderMode()) {
+    onDone(
+      'Provider configuration is disabled in host-managed mode.',
+      { display: 'system' },
+    )
+    return
+  }
+
   const trimmedArgs = args?.trim().toLowerCase() ?? ''
 
   if (

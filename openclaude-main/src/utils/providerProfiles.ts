@@ -14,6 +14,7 @@ import {
   buildOpenAIProfileEnv,
   type ProviderProfile as ProviderProfileStartup,
 } from './providerProfile.js'
+import { isHostManagedProviderMode } from './hostManagedMode.js'
 
 export type ProviderPreset =
   | 'anthropic'
@@ -473,6 +474,9 @@ export function clearProviderProfileEnvFromProcessEnv(
 }
 
 export function applyProviderProfileToProcessEnv(profile: ProviderProfile): void {
+  if (isHostManagedProviderMode()) {
+    return
+  }
   clearProviderProfileEnvFromProcessEnv()
   process.env[PROFILE_ENV_APPLIED_FLAG] = '1'
   process.env[PROFILE_ENV_APPLIED_ID] = profile.id
@@ -554,6 +558,9 @@ export function applyActiveProviderProfileFromConfig(
     force?: boolean
   },
 ): ProviderProfile | undefined {
+  if (isHostManagedProviderMode(options?.processEnv ?? process.env)) {
+    return undefined
+  }
   const processEnv = options?.processEnv ?? process.env
   const activeProfile = getActiveProviderProfile(config)
   if (!activeProfile) {
@@ -588,6 +595,9 @@ export function addProviderProfile(
   input: ProviderProfileInput,
   options?: { makeActive?: boolean },
 ): ProviderProfile | null {
+  if (isHostManagedProviderMode()) {
+    return null
+  }
   const profile = toProfile(input)
   if (!profile) {
     return null
@@ -624,6 +634,9 @@ export function updateProviderProfile(
   profileId: string,
   input: ProviderProfileInput,
 ): ProviderProfile | null {
+  if (isHostManagedProviderMode()) {
+    return null
+  }
   const updatedProfile = toProfile(input, profileId)
   if (!updatedProfile) {
     return null
@@ -685,6 +698,9 @@ export function updateProviderProfile(
 export function persistActiveProviderProfileModel(
   model: string,
 ): ProviderProfile | null {
+  if (isHostManagedProviderMode()) {
+    return null
+  }
   const nextModel = trimOrUndefined(model)
   if (!nextModel) {
     return null
@@ -767,6 +783,9 @@ export function getProfileModelOptions(profile: ProviderProfile): ModelOption[] 
 export function setActiveProviderProfile(
   profileId: string,
 ): ProviderProfile | null {
+  if (isHostManagedProviderMode()) {
+    return null
+  }
   const current = getGlobalConfig()
   const profiles = getProviderProfiles(current)
   const activeProfile = profiles.find(profile => profile.id === profileId)
@@ -861,6 +880,9 @@ export function deleteProviderProfile(profileId: string): {
   removed: boolean
   activeProfileId?: string
 } {
+  if (isHostManagedProviderMode()) {
+    return { removed: false }
+  }
   let removed = false
   let deletedProfile: ProviderProfile | undefined
   let nextActiveProfile: ProviderProfile | undefined

@@ -40,7 +40,7 @@ export function getUpgradeMessage(context: 'warning' | 'tip'): string | null {
     case 'warning':
       return `/model ${upgrade.alias}`
     case 'tip':
-      return `Tip: You have access to ${upgrade.name} with ${upgrade.multiplier}x more context`
+      return null
     default:
       return null
   }

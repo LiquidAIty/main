@@ -445,7 +445,12 @@ function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   if (normalized === 'assistant_agent') return 'assistant_agent';
   if (normalized === 'magentic_one') return 'magentic_one';
   if (normalized === 'graph_flow') return 'graph_flow';
+  if (normalized === 'local_coder') return 'local_coder';
   return null;
+}
+
+function isAssistLikeRuntimeType(runtimeType: AgentCardRuntimeType | null): boolean {
+  return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
 }
 
 function normalizeRuntimeOptions(
@@ -713,9 +718,7 @@ function isTopLevelCanvasCard(
 function isAssistCanvasCard(
   node: AgentCardInstance | null | undefined,
 ): node is AgentCardInstance {
-  return Boolean(
-    node && normalizeRuntimeType(node.runtimeType) === 'assistant_agent',
-  );
+  return Boolean(node && isAssistLikeRuntimeType(normalizeRuntimeType(node.runtimeType)));
 }
 
 function isVisibleAssistFlowPair(
@@ -1389,7 +1392,7 @@ export function filterAuthoringCompatibleEdges(
           normalizeRuntimeType(sourceNode.runtimeType) === 'magentic_one' &&
           isTopLevelCanvasCard(sourceNode) &&
           isTopLevelCanvasCard(targetNode) &&
-          ['assistant_agent', 'graph_flow'].includes(
+          ['assistant_agent', 'local_coder', 'graph_flow'].includes(
             normalizeRuntimeType(targetNode.runtimeType) || '',
           )
         );
@@ -1548,7 +1551,7 @@ function getNextGraphScopedAssistTitle(
   const assistCount = deck.nodes.filter(
     (node) =>
       cleanOptionalText(node.parentGraphId) === graphOwnerId &&
-      normalizeRuntimeType(node.runtimeType) === 'assistant_agent',
+      isAssistLikeRuntimeType(normalizeRuntimeType(node.runtimeType)),
   ).length;
   return `Assist ${assistCount + 1}`;
 }
@@ -1557,7 +1560,11 @@ function resolveQuickAddParentGraphId(
   preset: DeckNodePreset,
   anchorNode: AgentCardInstance | null,
 ): string | null {
-  if (preset.runtimeType !== 'assistant_agent' || !anchorNode) {
+  if (
+    (preset.runtimeType !== 'assistant_agent' &&
+      preset.runtimeType !== 'local_coder') ||
+    !anchorNode
+  ) {
     return null;
   }
 
@@ -1590,7 +1597,9 @@ function resolveQuickAddEdge(
     anchorRuntimeType === 'magentic_one' &&
     isTopLevelCanvasCard(anchorNode) &&
     isTopLevelCanvasCard(nextNode) &&
-    (nextRuntimeType === 'assistant_agent' || nextRuntimeType === 'graph_flow')
+    (nextRuntimeType === 'assistant_agent' ||
+      nextRuntimeType === 'local_coder' ||
+      nextRuntimeType === 'graph_flow')
   ) {
     edgeType = 'magentic_option';
   } else if (isVisibleAssistFlowPair(anchorNode, nextNode)) {
@@ -1657,7 +1666,9 @@ export function buildQuickAddDeckMutation(
     deck.nodes.find((node) => node.id === anchorNodeId) || null;
   const nextParentGraphId = resolveQuickAddParentGraphId(preset, anchorNode);
   const nextTitle =
-    nextParentGraphId && preset.runtimeType === 'assistant_agent'
+    nextParentGraphId &&
+    (preset.runtimeType === 'assistant_agent' ||
+      preset.runtimeType === 'local_coder')
       ? getNextGraphScopedAssistTitle(deck, nextParentGraphId)
       : preset.title;
   const nextNode = buildDeckNodeFromPreset(

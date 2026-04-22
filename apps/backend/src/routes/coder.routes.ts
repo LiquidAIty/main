@@ -16,6 +16,18 @@ router.get('/openclaude/status', (req, res) => {
   return res.json({ ok: true, status });
 });
 
+router.get('/openclaude/terminal/launch', (req, res) => {
+  const launch = openClaudeRuntimeService.getTerminalLaunch({
+    mode: 'terminal',
+    modelKey: typeof req.query.modelKey === 'string' ? req.query.modelKey : undefined,
+    provider: typeof req.query.provider === 'string' ? (req.query.provider as OpenClaudeRunRequest['provider']) : undefined,
+    providerModelId:
+      typeof req.query.providerModelId === 'string' ? req.query.providerModelId : undefined,
+  });
+  const statusCode = launch.ok ? 200 : 400;
+  return res.status(statusCode).json({ ok: launch.ok, launch });
+});
+
 router.post('/openclaude/run', async (req, res) => {
   const body = (req.body || {}) as Partial<OpenClaudeRunRequest>;
   const request: OpenClaudeRunRequest = {

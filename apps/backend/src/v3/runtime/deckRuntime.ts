@@ -48,6 +48,7 @@ function normalizeWorkspaceRuntimeType(
   if (runtimeType === 'assistant_agent') return 'assistant_agent';
   if (runtimeType === 'magentic_one') return 'magentic_one';
   if (runtimeType === 'graph_flow') return 'graph_flow';
+  if (runtimeType === 'local_coder') return 'local_coder';
   return null;
 }
 
