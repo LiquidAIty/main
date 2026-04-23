@@ -419,11 +419,10 @@ export function CodeGraphScene({
   return (
     <Canvas
       camera={{ position: [0, 0, 800], fov: 50, near: 0.1, far: 100000 }}
-      style={{ background: "#06090f" }}
+      style={{ background: "transparent" }}
       dpr={[1, 2]}
-      gl={{ antialias: true, alpha: false }}
+      gl={{ antialias: true, alpha: true }}
     >
-      <color attach="background" args={["#06090f"]} />
       <ambientLight intensity={0.5} />
       <pointLight position={[500, 500, 500]} intensity={0.6} />
       <pointLight position={[-300, -200, -300]} intensity={0.4} color="#6040ff" />

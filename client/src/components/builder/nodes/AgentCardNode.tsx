@@ -40,8 +40,8 @@ export default function AgentCardNode({
         graphGlassCardStyle({
           position: 'relative',
           padding: '9px 10px',
-          width: 144,
-          minHeight: 88,
+          width: 136,
+          minHeight: 92,
           borderWidth: 1,
           borderColor: shellActive
             ? 'rgba(55,173,170,0.6)'
@@ -133,7 +133,7 @@ export default function AgentCardNode({
             lineHeight: 1.24,
             color: GRAPH_THEME.surface.mutedText,
             opacity: 0.84,
-            maxWidth: 124,
+            maxWidth: 116,
             whiteSpace: 'normal',
             overflowWrap: 'anywhere',
             display: '-webkit-box',

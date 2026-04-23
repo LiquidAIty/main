@@ -132,6 +132,8 @@ export function buildPlanMissionGraph(
   structuredPlan: StructuredAssistPlanSurface,
   nodeOverrides?: PlanMissionNodeOverrideMap,
 ): PlanMissionGraph {
+  const PLAN_X_TIGHTEN_ORIGIN = 40;
+  const PLAN_X_TIGHTEN_RATIO = 0.92;
   const requestText =
     String(structuredPlan.goal || '').trim() ||
     'Research documentation for our current code stack, understand the main frameworks and architecture, gather useful sources, and organize the findings so the system can use them later.';
@@ -373,5 +375,16 @@ export function buildPlanMissionGraph(
         })
       : nodes;
 
-  return { nodes: mergedNodes, edges };
+  const tightenedNodes = mergedNodes.map((node) => ({
+    ...node,
+    position: {
+      ...node.position,
+      x: Math.round(
+        PLAN_X_TIGHTEN_ORIGIN +
+          (node.position.x - PLAN_X_TIGHTEN_ORIGIN) * PLAN_X_TIGHTEN_RATIO,
+      ),
+    },
+  }));
+
+  return { nodes: tightenedNodes, edges };
 }

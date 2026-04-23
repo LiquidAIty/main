@@ -58,7 +58,7 @@ const FALLBACK_NODE_WIDTH = 144;
 const FALLBACK_NODE_HEIGHT = 88;
 const CANVAS_ROW_X_START = 180;
 const CANVAS_ROW_Y_START = 120;
-const CANVAS_ROW_X_GAP = 216;
+const CANVAS_ROW_X_GAP = 204;
 
 const nodeTypes = {
   agentCard: AgentCardNode,

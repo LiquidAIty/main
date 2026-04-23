@@ -196,20 +196,17 @@ export function CodeGraphSurface({
           inset: 0,
           pointerEvents: "none",
           zIndex: 0,
-          opacity: 0.12,
           backgroundImage: [
             `linear-gradient(to right, ${GRAPH_THEME.background.gridMinor} ${GRAPH_THEME.graphPaper.lineWidth}px, transparent ${GRAPH_THEME.graphPaper.lineWidth}px)`,
             `linear-gradient(to bottom, ${GRAPH_THEME.background.gridMinor} ${GRAPH_THEME.graphPaper.lineWidth}px, transparent ${GRAPH_THEME.graphPaper.lineWidth}px)`,
             `linear-gradient(to right, ${GRAPH_THEME.background.gridMajor} ${GRAPH_THEME.graphPaper.lineWidth}px, transparent ${GRAPH_THEME.graphPaper.lineWidth}px)`,
             `linear-gradient(to bottom, ${GRAPH_THEME.background.gridMajor} ${GRAPH_THEME.graphPaper.lineWidth}px, transparent ${GRAPH_THEME.graphPaper.lineWidth}px)`,
-            "radial-gradient(circle at 50% 50%, rgba(255,255,255,0.04), rgba(0,0,0,0.22) 68%)",
           ].join(", "),
           backgroundSize: [
             `${GRAPH_WORKSPACE.worldGridGap}px ${GRAPH_WORKSPACE.worldGridGap}px`,
             `${GRAPH_WORKSPACE.worldGridGap}px ${GRAPH_WORKSPACE.worldGridGap}px`,
             `${majorGridGap}px ${majorGridGap}px`,
             `${majorGridGap}px ${majorGridGap}px`,
-            "100% 100%",
           ].join(", "),
         }}
       />
@@ -321,7 +318,13 @@ export function CodeGraphSurface({
         />
       </RightGlassDrawer>
 
-      <div style={graphControlStackStyle}>
+      <div
+        style={{
+          ...graphControlStackStyle,
+          left: 12,
+          bottom: 12,
+        }}
+      >
         <button
           type="button"
           aria-label="Zoom in"
@@ -379,8 +382,8 @@ export function CodeGraphSurface({
       <div
         style={graphGlassPillStyle({
           position: "absolute",
-          top: 12,
-          left: 12,
+          left: 56,
+          bottom: 12,
           zIndex: 4,
           fontSize: 11,
           padding: "6px 8px",
@@ -395,8 +398,8 @@ export function CodeGraphSurface({
         <div
           style={graphGlassPillStyle({
             position: "absolute",
-            left: 12,
-            bottom: 12,
+            left: 56,
+            bottom: 44,
             zIndex: 4,
             maxWidth: 360,
             fontSize: 12,
