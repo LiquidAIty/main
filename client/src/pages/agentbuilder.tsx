@@ -22,6 +22,7 @@ import type {
   PlanMissionNodeData,
   PlanMissionNodeOverrideMap,
 } from '../components/assist/planMissionModel';
+import { buildPlanMissionGraph } from '../components/assist/planMissionModel';
 import {
   buildStructuredAssistPlanSurface,
   type LinkRef,
@@ -2645,6 +2646,67 @@ function buildGraphVizForNVL(graph: { nodes: KNode[]; edges: KEdge[] }) {
   });
 
   return { entities, relationships };
+}
+
+function buildThinkGraphSeedFromPlanMissionGraph(
+  missionGraph: ReturnType<typeof buildPlanMissionGraph>,
+): { nodes: KNode[]; edges: KEdge[] } {
+  const resolveThinkNodeType = (kindRaw: string): 'entity' | 'concept' | 'goal' | 'hypothesis' => {
+    const kind = safeText(kindRaw).trim().toLowerCase();
+    if (kind === 'goal' || kind === 'output') return 'goal';
+    if (kind === 'approval' || kind === 'note') return 'hypothesis';
+    if (kind === 'research' || kind === 'synthesize') return 'concept';
+    return 'entity';
+  };
+  const nodes: KNode[] = missionGraph.nodes.map((node, index) => {
+    const nodeData = safeRecord(node.data);
+    const status = safeText(nodeData.status || 'seeded').trim().toLowerCase();
+    const statusConfidence =
+      status === 'complete'
+        ? 0.94
+        : status === 'running'
+          ? 0.82
+          : status === 'ready'
+            ? 0.74
+            : status === 'awaiting_review'
+              ? 0.68
+              : 0.62;
+    return {
+      id: `plan:${safeText(node.id)}`,
+      rawId: safeText(node.id),
+      graphSource: 'think',
+      scope: 'project',
+      label: safeText(nodeData.label || node.id),
+      type: resolveThinkNodeType(safeText(nodeData.kind || 'task')),
+      confidence: statusConfidence,
+      createdAtMs: Date.now() - Math.max(0, (missionGraph.nodes.length - index) * 1_000),
+    };
+  });
+
+  const edges: KEdge[] = missionGraph.edges.map((edge) => {
+    const edgeData = safeRecord(edge.data);
+    const motion = safeText(edgeData.motion || 'idle').trim().toLowerCase();
+    const edgeConfidence =
+      motion === 'running' ? 0.9 : motion === 'active' ? 0.78 : 0.62;
+    const source = `plan:${safeText(edge.source)}`;
+    const target = `plan:${safeText(edge.target)}`;
+    const type = motion === 'running' ? 'supports' : 'depends_on';
+    return {
+      id: `plan:${safeText(edge.id)}`,
+      rawId: safeText(edge.id),
+      graphSource: 'think',
+      scope: 'project',
+      a: source,
+      b: target,
+      source,
+      target,
+      type,
+      confidence: edgeConfidence,
+      weight: edgeConfidence,
+    };
+  });
+
+  return { nodes, edges };
 }
 
 // ---- small components ----
@@ -5508,10 +5570,18 @@ export default function AgentBuilder(): React.ReactElement {
     })();
   };
 
-  const thinkGraphViz = useMemo(
-    () => prefixThinkGraphIds(ageRowsToGraph(graphResult)),
-    [graphResult],
+  const planMissionGraphSeed = useMemo(
+    () => buildPlanMissionGraph(structuredAssistPlan, planNodeDrafts),
+    [structuredAssistPlan, planNodeDrafts],
   );
+
+  const thinkGraphViz = useMemo(() => {
+    const ageGraph = prefixThinkGraphIds(ageRowsToGraph(graphResult));
+    if (ageGraph.nodes.length > 0 || ageGraph.edges.length > 0) {
+      return ageGraph;
+    }
+    return buildThinkGraphSeedFromPlanMissionGraph(planMissionGraphSeed);
+  }, [graphResult, planMissionGraphSeed]);
 
   const knowGraphViz = useMemo(() => {
     const result = normalizeKnowGraphResponseToGraph(knowGraphData);
