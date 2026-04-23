@@ -2445,6 +2445,83 @@ function normalizeKnowGraphResponseToGraph(payload: any): {
   };
 }
 
+function buildThinkRowsFromMergedGraphPayload(payload: any): any[] {
+  const rawEntities = Array.isArray(payload?.entities) ? payload.entities : [];
+  const rawRelationships = Array.isArray(payload?.relationships)
+    ? payload.relationships
+    : [];
+  if (rawEntities.length === 0 || rawRelationships.length === 0) return [];
+
+  const entityById = new Map<
+    string,
+    {
+      id: string;
+      label: string;
+      type: string;
+      lastSeenTs?: string;
+    }
+  >();
+
+  rawEntities.forEach((entry: any) => {
+    const id = String(entry?.id ?? '').trim();
+    if (!id) return;
+    entityById.set(id, {
+      id,
+      label: safeText(entry?.label || entry?.name || entry?.title || id),
+      type: safeText(entry?.type || entry?.labels?.[0] || 'entity').toLowerCase(),
+      lastSeenTs: cleanOptionalText(
+        entry?.last_seen_ts ??
+          entry?.lastSeenTs ??
+          entry?.updated_at ??
+          entry?.created_at,
+      ) ?? undefined,
+    });
+  });
+
+  const rows = rawRelationships
+    .map((entry: any, index: number) => {
+      const sourceId = String(entry?.from ?? entry?.source ?? '').trim();
+      const targetId = String(entry?.to ?? entry?.target ?? '').trim();
+      if (!sourceId || !targetId) return null;
+      const source = entityById.get(sourceId);
+      const target = entityById.get(targetId);
+      if (!source || !target) return null;
+
+      const relationType = safeText(entry?.type || 'related_to').toLowerCase();
+      const relationId =
+        cleanOptionalText(entry?.id) ||
+        `${sourceId}:${relationType}:${targetId}:${index}`;
+      const confidence = Number(entry?.confidence ?? entry?.weight ?? 0.5);
+      const weight = Number(entry?.weight ?? entry?.confidence ?? 0.5);
+      const relationTs =
+        cleanOptionalText(
+          entry?.last_seen_ts ??
+            entry?.lastSeenTs ??
+            entry?.updated_at ??
+            entry?.created_at,
+        ) || source.lastSeenTs || target.lastSeenTs;
+
+      return {
+        a_id: source.id,
+        a_name: source.label,
+        a_type: source.type,
+        a_ts: source.lastSeenTs,
+        r_id: relationId,
+        r_type: relationType,
+        r_weight: Number.isFinite(weight) ? weight : 0.5,
+        r_confidence: Number.isFinite(confidence) ? confidence : 0.5,
+        r_ts: relationTs,
+        b_id: target.id,
+        b_name: target.label,
+        b_type: target.type,
+        b_ts: target.lastSeenTs,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+  return rows;
+}
+
 function prefixThinkGraphIds(graph: { nodes: KNode[]; edges: KEdge[] }): {
   nodes: KNode[];
   edges: KEdge[];
@@ -4380,6 +4457,8 @@ export default function AgentBuilder(): React.ReactElement {
         if (activeProjectLatestRef.current !== projectId) return false;
         if (!isLatestRequestSequence(requestType, requestSeq)) return false;
         const rows = Array.isArray(payload.data.rows) ? payload.data.rows : [];
+        const normalizedRows =
+          rows.length > 0 ? rows : buildThinkRowsFromMergedGraphPayload(payload.data);
         if (opts?.merge) {
           setGraphResult((prev) => {
             const seen = new Set(
@@ -4388,7 +4467,7 @@ export default function AgentBuilder(): React.ReactElement {
               ),
             );
             const merged = [...prev];
-            rows.forEach((row: any) => {
+            normalizedRows.forEach((row: any) => {
               const key = typeof row === 'string' ? row : JSON.stringify(row);
               if (!seen.has(key)) {
                 seen.add(key);
@@ -4398,7 +4477,7 @@ export default function AgentBuilder(): React.ReactElement {
             return merged;
           });
         } else {
-          setGraphResult(rows);
+          setGraphResult(normalizedRows);
         }
         return true;
       } catch (err: any) {
@@ -4519,6 +4598,8 @@ export default function AgentBuilder(): React.ReactElement {
         }
 
         const rows = Array.isArray(payload.data.rows) ? payload.data.rows : [];
+        const normalizedRows =
+          rows.length > 0 ? rows : buildThinkRowsFromMergedGraphPayload(payload.data);
         if (opts?.merge) {
           setGraphResult((prev) => {
             const seen = new Set(
@@ -4527,7 +4608,7 @@ export default function AgentBuilder(): React.ReactElement {
               ),
             );
             const merged = [...prev];
-            rows.forEach((row: any) => {
+            normalizedRows.forEach((row: any) => {
               const key = typeof row === 'string' ? row : JSON.stringify(row);
               if (!seen.has(key)) {
                 seen.add(key);
@@ -4537,7 +4618,7 @@ export default function AgentBuilder(): React.ReactElement {
             return merged;
           });
         } else {
-          setGraphResult(rows);
+          setGraphResult(normalizedRows);
         }
         return true;
       } catch (err: any) {

@@ -141,12 +141,13 @@ function toNumericGraphData(input: GraphViewData): NumericGraphData {
 async function fetchCodeGraphLayout(
   project: string,
   maxNodes: number,
+  signal?: AbortSignal,
 ): Promise<CodeGraphData> {
   const params = new URLSearchParams({
     project,
     max_nodes: String(maxNodes),
   });
-  const response = await fetch(`/api/layout?${params.toString()}`);
+  const response = await fetch(`/api/layout?${params.toString()}`, { signal });
   if (!response.ok) {
     const payload = await response
       .json()
@@ -184,7 +185,11 @@ export default function KnowledgeGraphFramework({
   const [codeGraphData, setCodeGraphData] = useState<CodeGraphData | null>(
     null,
   );
+  const [lastGoodCodeGraphData, setLastGoodCodeGraphData] =
+    useState<CodeGraphData | null>(null);
   const lastLoadedCodeGraphSignatureRef = useRef<string | null>(null);
+  const codeGraphLoadAbortRef = useRef<AbortController | null>(null);
+  const codeGraphRefreshAbortRef = useRef<AbortController | null>(null);
   const [loadingCodeGraph, setLoadingCodeGraph] = useState(false);
   const [codeGraphError, setCodeGraphError] = useState<string | null>(null);
   const majorGridGap = getGraphMajorGridGap();
@@ -205,9 +210,17 @@ export default function KnowledgeGraphFramework({
       return;
     }
     let cancelled = false;
+    codeGraphLoadAbortRef.current?.abort();
+    const controller = new AbortController();
+    codeGraphLoadAbortRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 20_000);
     setLoadingCodeGraph(true);
     setCodeGraphError(null);
-    void fetchCodeGraphLayout(codeGraphProjectName, effectiveMaxNodes)
+    void fetchCodeGraphLayout(
+      codeGraphProjectName,
+      effectiveMaxNodes,
+      controller.signal,
+    )
       .then((layout) => {
         if (cancelled) return;
         setCodeGraphData(layout);
@@ -215,15 +228,33 @@ export default function KnowledgeGraphFramework({
       })
       .catch((error: any) => {
         if (cancelled) return;
+        const isAbort =
+          error?.name === 'AbortError' ||
+          String(error?.message || '')
+            .toLowerCase()
+            .includes('aborted');
         setCodeGraphError(
-          String(error?.message || 'Failed to load graph layout'),
+          isAbort
+            ? 'CodeGraph request timed out. Press Refresh to retry.'
+            : String(error?.message || 'Failed to load graph layout'),
         );
       })
       .finally(() => {
-        if (!cancelled) setLoadingCodeGraph(false);
+        window.clearTimeout(timeout);
+        if (codeGraphLoadAbortRef.current === controller) {
+          codeGraphLoadAbortRef.current = null;
+        }
+        if (!cancelled) {
+          setLoadingCodeGraph(false);
+        }
       });
     return () => {
       cancelled = true;
+      window.clearTimeout(timeout);
+      if (codeGraphLoadAbortRef.current === controller) {
+        codeGraphLoadAbortRef.current.abort();
+        codeGraphLoadAbortRef.current = null;
+      }
     };
   }, [
     codeGraphData,
@@ -311,6 +342,27 @@ export default function KnowledgeGraphFramework({
     };
   }, [edgeAllow, labelAllow, normalized.graph]);
 
+  useEffect(() => {
+    if (kind !== 'codegraph') return;
+    if (filteredData.nodes.length === 0) return;
+    setLastGoodCodeGraphData(filteredData);
+  }, [filteredData, kind]);
+
+  const displayData = useMemo<CodeGraphData>(() => {
+    if (kind !== 'codegraph') return filteredData;
+    if (filteredData.nodes.length > 0) return filteredData;
+    if ((loadingCodeGraph || codeGraphError) && lastGoodCodeGraphData) {
+      return lastGoodCodeGraphData;
+    }
+    return filteredData;
+  }, [
+    codeGraphError,
+    filteredData,
+    kind,
+    lastGoodCodeGraphData,
+    loadingCodeGraph,
+  ]);
+
   const highlightedIds = useMemo(() => {
     if (!contract.focusNodeIds?.length) return null;
     const ids = new Set<number>();
@@ -333,20 +385,36 @@ export default function KnowledgeGraphFramework({
   };
 
   const refreshCodeGraph = async () => {
+    codeGraphRefreshAbortRef.current?.abort();
+    const controller = new AbortController();
+    codeGraphRefreshAbortRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 20_000);
     setLoadingCodeGraph(true);
     setCodeGraphError(null);
     try {
       const layout = await fetchCodeGraphLayout(
         codeGraphProjectName,
         effectiveMaxNodes,
+        controller.signal,
       );
       setCodeGraphData(layout);
       lastLoadedCodeGraphSignatureRef.current = codeGraphSignature;
     } catch (error: any) {
+      const isAbort =
+        error?.name === 'AbortError' ||
+        String(error?.message || '')
+          .toLowerCase()
+          .includes('aborted');
       setCodeGraphError(
-        String(error?.message || 'Failed to load graph layout'),
+        isAbort
+          ? 'CodeGraph request timed out. Press Refresh to retry.'
+          : String(error?.message || 'Failed to load graph layout'),
       );
     } finally {
+      window.clearTimeout(timeout);
+      if (codeGraphRefreshAbortRef.current === controller) {
+        codeGraphRefreshAbortRef.current = null;
+      }
       setLoadingCodeGraph(false);
     }
   };
@@ -523,7 +591,25 @@ export default function KnowledgeGraphFramework({
             ].join(', '),
           }}
         />
-        {kind === 'codegraph' && codeGraphError && !codeGraphData ? (
+        {kind === 'codegraph' &&
+        loadingCodeGraph &&
+        !lastGoodCodeGraphData &&
+        (!codeGraphData || filteredData.nodes.length === 0) ? (
+          <div
+            style={{
+              width: '100%',
+              height: '100%',
+              color: GRAPH_THEME.surface.mutedText,
+              fontSize: 12,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: GRAPH_THEME.surface.base,
+            }}
+          >
+            Loading CodeGraph...
+          </div>
+        ) : kind === 'codegraph' && codeGraphError && !lastGoodCodeGraphData ? (
           <div
             style={{
               width: '100%',
@@ -541,7 +627,7 @@ export default function KnowledgeGraphFramework({
         ) : (
           <div style={{ position: 'relative', zIndex: 1, width: '100%', height: '100%' }}>
             <CodeGraphScene
-              data={filteredData}
+              data={displayData}
               showLabels={showLabels}
               highlightedIds={highlightedIds}
               interactionLocked={interactionLocked}
@@ -655,8 +741,8 @@ export default function KnowledgeGraphFramework({
         data-no-surface-promote="true"
         style={graphGlassPillStyle({
           position: 'absolute',
-          left: 16,
-          bottom: 176,
+          left: 56,
+          bottom: 184,
           zIndex: 4,
           fontSize: 11,
           padding: '6px 8px',
@@ -665,8 +751,8 @@ export default function KnowledgeGraphFramework({
         })}
       >
         <div>
-          Nodes {filteredData.nodes.length.toLocaleString()} - Edges{' '}
-          {filteredData.edges.length.toLocaleString()}
+          Nodes {displayData.nodes.length.toLocaleString()} - Edges{' '}
+          {displayData.edges.length.toLocaleString()}
         </div>
         {kind === 'knowgraph' && filteredData.nodes.length === 0 ? (
           <div style={{ color: GRAPH_THEME.surface.mutedText, marginTop: 2 }}>
