@@ -132,8 +132,8 @@ export function buildPlanMissionGraph(
   structuredPlan: StructuredAssistPlanSurface,
   nodeOverrides?: PlanMissionNodeOverrideMap,
 ): PlanMissionGraph {
-  const PLAN_X_TIGHTEN_ORIGIN = 40;
-  const PLAN_X_TIGHTEN_RATIO = 0.92;
+  const PLAN_X_TIGHTEN_ORIGIN = 56;
+  const PLAN_X_TIGHTEN_RATIO = 0.9;
   const requestText =
     String(structuredPlan.goal || '').trim() ||
     'Research documentation for our current code stack, understand the main frameworks and architecture, gather useful sources, and organize the findings so the system can use them later.';

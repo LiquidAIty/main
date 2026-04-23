@@ -95,17 +95,17 @@ function MissionNode({ data, selected }: NodeProps<PlanMissionNodeData>) {
         style={{
           position: 'relative',
           display: 'grid',
-          alignContent: 'center',
-          gap: 5,
+          alignContent: 'start',
+          gap: 4,
           borderRadius: 14,
           border: `1px solid ${shellActive ? 'rgba(55,173,170,0.44)' : 'rgba(55,173,170,0.24)'}`,
           boxShadow: shellActive
             ? 'inset 0 1px 0 rgba(255,255,255,0.05), 0 0 0 1px rgba(55,173,170,0.12)'
             : 'inset 0 1px 0 rgba(255,255,255,0.03)',
-          padding: '9px 10px',
+          padding: '8px 9px',
           background: GRAPH_THEME.card.glassBackground,
-          width: 180,
-          minHeight: 112,
+          width: 160,
+          minHeight: 106,
         }}
       >
         <div
@@ -126,7 +126,7 @@ function MissionNode({ data, selected }: NodeProps<PlanMissionNodeData>) {
             color: 'rgba(167, 176, 186, 0.84)',
             fontSize: GRAPH_TEXT.bodyPx,
             lineHeight: 1.3,
-            maxWidth: 146,
+            maxWidth: 132,
             whiteSpace: 'normal',
             overflowWrap: 'anywhere',
             display: '-webkit-box',
@@ -173,8 +173,8 @@ function resolveNodeStyle(node: PlanMissionFlowNode) {
     color: GRAPH_THEME.drawer.inputText,
     fontSize: 12.5,
     lineHeight: 1.35,
-    width: 180,
-    minHeight: 112,
+    width: 160,
+    minHeight: 106,
     padding: 0,
     boxShadow: 'none',
     backdropFilter: 'none',

@@ -118,9 +118,6 @@ const KnowledgeEvidencePanel = lazy(
 const KnowledgeGraphFramework = lazy(
   () => import('../components/knowledge/KnowledgeGraphFramework'),
 );
-const CodeGraphSurface = lazy(
-  () => import('../components/codegraph/CodeGraphSurface').then((mod) => ({ default: mod.CodeGraphSurface })),
-);
 const CODEBASE_MEMORY_PROJECT_NAME = 'C-Projects-LiquidAIty-main';
 void KnowledgeSummaryPanel;
 void KnowledgeEvidencePanel;
@@ -5984,84 +5981,50 @@ export default function AgentBuilder(): React.ReactElement {
               </div>
             }
           >
-            {knowledgeGraphKind === 'codegraph' ? (
-              <CodeGraphSurface
-                projectId={CODEBASE_MEMORY_PROJECT_NAME}
-                viewContract={{
-                  projectId: CODEBASE_MEMORY_PROJECT_NAME,
-                  nodeLabelAllowlist: graphViewContract?.nodeLabelAllowlist,
-                  edgeTypeAllowlist: graphViewContract?.edgeTypeAllowlist,
-                  showLabels: graphViewContract?.showLabels,
-                  maxNodes: graphViewContract?.maxNodes,
-                  focusPaths: graphViewContract?.focusPaths,
-                  focusSymbols: graphViewContract?.focusSymbols,
-                }}
-                onViewContractChange={(nextContract) =>
-                  setGraphViewContract((prev) => ({
-                    graphKind: 'codegraph',
-                    projectId: CODEBASE_MEMORY_PROJECT_NAME,
-                    nodeLabelAllowlist: nextContract.nodeLabelAllowlist,
-                    edgeTypeAllowlist: nextContract.edgeTypeAllowlist,
-                    showLabels:
-                      typeof nextContract.showLabels === 'boolean'
-                        ? nextContract.showLabels
-                        : (prev?.showLabels ?? true),
-                    maxNodes: nextContract.maxNodes ?? prev?.maxNodes,
-                    focusNodeIds: prev?.focusNodeIds,
-                    focusPaths: nextContract.focusPaths ?? prev?.focusPaths,
-                    focusSymbols:
-                      nextContract.focusSymbols ?? prev?.focusSymbols,
-                    cameraMode: prev?.cameraMode ?? 'overview',
-                    animationMode: prev?.animationMode ?? 'calm',
-                    narrativeIntent: prev?.narrativeIntent ?? null,
-                  }))
+            <KnowledgeGraphFramework
+              kind={knowledgeGraphKind}
+              onKindChange={(nextKind) => {
+                setKnowledgeGraphKind(nextKind);
+                setGraphViewContract((prev) => ({
+                  graphKind: nextKind,
+                  projectId:
+                    nextKind === 'codegraph'
+                      ? CODEBASE_MEMORY_PROJECT_NAME
+                      : (activeProject ?? null),
+                  nodeLabelAllowlist: undefined,
+                  edgeTypeAllowlist: undefined,
+                  showLabels: prev?.showLabels ?? true,
+                  maxNodes: undefined,
+                  focusNodeIds: undefined,
+                  focusPaths: undefined,
+                  focusSymbols: undefined,
+                  cameraMode: prev?.cameraMode ?? 'overview',
+                  animationMode: prev?.animationMode ?? 'calm',
+                  narrativeIntent: prev?.narrativeIntent ?? null,
+                }));
+              }}
+              contract={
+                graphViewContract ?? {
+                  graphKind: knowledgeGraphKind,
+                  projectId:
+                    knowledgeGraphKind === 'codegraph'
+                      ? CODEBASE_MEMORY_PROJECT_NAME
+                      : (activeProject ?? null),
+                  showLabels: true,
+                  cameraMode: 'overview',
+                  animationMode: 'calm',
+                  narrativeIntent: null,
                 }
-              />
-            ) : (
-              <KnowledgeGraphFramework
-                kind={knowledgeGraphKind}
-                onKindChange={(nextKind) => {
-                  setKnowledgeGraphKind(nextKind);
-                  setGraphViewContract((prev) => ({
-                    graphKind: nextKind,
-                    projectId:
-                      nextKind === 'codegraph'
-                        ? CODEBASE_MEMORY_PROJECT_NAME
-                        : (activeProject ?? null),
-                    nodeLabelAllowlist: undefined,
-                    edgeTypeAllowlist: undefined,
-                    showLabels: prev?.showLabels ?? true,
-                    maxNodes: undefined,
-                    focusNodeIds: undefined,
-                    focusPaths: undefined,
-                    focusSymbols: undefined,
-                    cameraMode: prev?.cameraMode ?? 'overview',
-                    animationMode: prev?.animationMode ?? 'calm',
-                    narrativeIntent: prev?.narrativeIntent ?? null,
-                  }));
-                }}
-                contract={
-                  graphViewContract ?? {
-                    graphKind: knowledgeGraphKind,
-                    projectId:
-                      knowledgeGraphKind === 'codegraph'
-                        ? CODEBASE_MEMORY_PROJECT_NAME
-                        : (activeProject ?? null),
-                    showLabels: true,
-                    cameraMode: 'overview',
-                    animationMode: 'calm',
-                    narrativeIntent: null,
-                  }
-                }
-                onContractChange={(nextContract) =>
-                  setGraphViewContract(nextContract)
-                }
-                thinkGraphData={thinkGraphViewData}
-                knowGraphData={knowGraphViewData}
-                codeGraphProjectName={CODEBASE_MEMORY_PROJECT_NAME}
-                minHeight={minHeight}
-              />
-            )}
+              }
+              onContractChange={(nextContract) =>
+                setGraphViewContract(nextContract)
+              }
+              thinkGraphData={thinkGraphViewData}
+              knowGraphData={knowGraphViewData}
+              codeGraphProjectName={CODEBASE_MEMORY_PROJECT_NAME}
+              onRefreshRequest={loadGraphData}
+              minHeight={minHeight}
+            />
           </Suspense>
         </div>
       </div>

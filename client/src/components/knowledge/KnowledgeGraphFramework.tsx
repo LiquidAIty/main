@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { CodeGraphScene } from '../codegraph/CodeGraphScene';
 import { colorForCodeGraphLabel } from '../codegraph/colors';
+import { CodeGraphFilterPanel } from '../codegraph/CodeGraphFilterPanel';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
+import { getGraphMajorGridGap, GRAPH_WORKSPACE } from '../graph/graphWorkspaceContract';
 import {
   GRAPH_THEME,
   graphCompanionTabButtonStyle,
@@ -28,6 +30,7 @@ type KnowledgeGraphFrameworkProps = {
   knowGraphData: GraphViewData;
   codeGraphProjectName: string;
   minHeight?: number;
+  onRefreshRequest?: () => Promise<void> | void;
 };
 
 const DEFAULT_FILTERS: Record<
@@ -55,8 +58,8 @@ const DEFAULT_FILTERS: Record<
     maxNodes: 8000,
   },
   codegraph: {
-    nodeLabelAllowlist: ['file', 'symbol', 'module', 'route', 'dependency'],
-    edgeTypeAllowlist: ['IMPORTS', 'CALLS', 'DEPENDS_ON', 'USES'],
+    nodeLabelAllowlist: [],
+    edgeTypeAllowlist: [],
     maxNodes: 50000,
   },
 };
@@ -170,6 +173,7 @@ export default function KnowledgeGraphFramework({
   knowGraphData,
   codeGraphProjectName,
   minHeight = 360,
+  onRefreshRequest,
 }: KnowledgeGraphFrameworkProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [interactionLocked, setInteractionLocked] = useState(false);
@@ -180,16 +184,26 @@ export default function KnowledgeGraphFramework({
   const [codeGraphData, setCodeGraphData] = useState<CodeGraphData | null>(
     null,
   );
+  const lastLoadedCodeGraphSignatureRef = useRef<string | null>(null);
   const [loadingCodeGraph, setLoadingCodeGraph] = useState(false);
   const [codeGraphError, setCodeGraphError] = useState<string | null>(null);
+  const majorGridGap = getGraphMajorGridGap();
 
   const effectiveMaxNodes = Math.max(
     1,
     Number(contract.maxNodes || DEFAULT_FILTERS[kind].maxNodes),
   );
+  const codeGraphSignature = `${codeGraphProjectName}:${effectiveMaxNodes}`;
 
   useEffect(() => {
     if (kind !== 'codegraph') return;
+    if (
+      codeGraphData &&
+      lastLoadedCodeGraphSignatureRef.current === codeGraphSignature
+    ) {
+      setLoadingCodeGraph(false);
+      return;
+    }
     let cancelled = false;
     setLoadingCodeGraph(true);
     setCodeGraphError(null);
@@ -197,6 +211,7 @@ export default function KnowledgeGraphFramework({
       .then((layout) => {
         if (cancelled) return;
         setCodeGraphData(layout);
+        lastLoadedCodeGraphSignatureRef.current = codeGraphSignature;
       })
       .catch((error: any) => {
         if (cancelled) return;
@@ -210,7 +225,13 @@ export default function KnowledgeGraphFramework({
     return () => {
       cancelled = true;
     };
-  }, [codeGraphProjectName, effectiveMaxNodes, kind]);
+  }, [
+    codeGraphData,
+    codeGraphProjectName,
+    codeGraphSignature,
+    effectiveMaxNodes,
+    kind,
+  ]);
 
   const normalized = useMemo(() => {
     if (kind === 'codegraph') {
@@ -250,13 +271,19 @@ export default function KnowledgeGraphFramework({
   );
 
   const labelAllow = useMemo(() => {
-    if (contract.graphKind === kind && contract.nodeLabelAllowlist?.length) {
+    if (
+      contract.graphKind === kind &&
+      Array.isArray(contract.nodeLabelAllowlist)
+    ) {
       return new Set(contract.nodeLabelAllowlist);
     }
     return new Set(defaultLabels);
   }, [contract.graphKind, contract.nodeLabelAllowlist, defaultLabels, kind]);
   const edgeAllow = useMemo(() => {
-    if (contract.graphKind === kind && contract.edgeTypeAllowlist?.length) {
+    if (
+      contract.graphKind === kind &&
+      Array.isArray(contract.edgeTypeAllowlist)
+    ) {
       return new Set(contract.edgeTypeAllowlist);
     }
     return new Set(defaultEdgeTypes);
@@ -303,6 +330,33 @@ export default function KnowledgeGraphFramework({
       ...patch,
       graphKind: kind,
     });
+  };
+
+  const refreshCodeGraph = async () => {
+    setLoadingCodeGraph(true);
+    setCodeGraphError(null);
+    try {
+      const layout = await fetchCodeGraphLayout(
+        codeGraphProjectName,
+        effectiveMaxNodes,
+      );
+      setCodeGraphData(layout);
+      lastLoadedCodeGraphSignatureRef.current = codeGraphSignature;
+    } catch (error: any) {
+      setCodeGraphError(
+        String(error?.message || 'Failed to load graph layout'),
+      );
+    } finally {
+      setLoadingCodeGraph(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (kind === 'codegraph') {
+      await refreshCodeGraph();
+      return;
+    }
+    await onRefreshRequest?.();
   };
 
   const modeButtonStyle = (value: KnowledgeGraphKind) =>
@@ -374,6 +428,21 @@ export default function KnowledgeGraphFramework({
       >
         Controls
       </button>
+      <button
+        type="button"
+        onClick={() => void handleRefresh()}
+        data-no-surface-promote="true"
+        style={graphDrawerButtonStyle({
+          position: 'absolute',
+          top: 12,
+          right: 92,
+          zIndex: 5,
+          fontSize: 11,
+          padding: '6px 9px',
+        })}
+      >
+        Refresh
+      </button>
 
       <RightGlassDrawer
         isOpen={drawerOpen}
@@ -396,124 +465,65 @@ export default function KnowledgeGraphFramework({
             gap: 12,
           }}
         >
-          <div style={{ display: 'grid', gap: 6 }}>
-            <div
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                color: GRAPH_THEME.surface.mutedText,
-              }}
-            >
-              Display
-            </div>
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                fontSize: 12,
-                color: GRAPH_THEME.surface.text,
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={showLabels}
-                onChange={() => applyContractPatch({ showLabels: !showLabels })}
-              />
-              Show labels
-            </label>
-          </div>
-          <div style={{ display: 'grid', gap: 6 }}>
-            <div
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                color: GRAPH_THEME.surface.mutedText,
-              }}
-            >
-              Node Labels
-            </div>
-            {allLabels.map((label) => {
-              const enabled = labelAllow.has(label);
-              return (
-                <button
-                  key={label}
-                  type="button"
-                  style={{
-                    textAlign: 'left',
-                    border: `1px solid ${enabled ? GRAPH_THEME.accent.primaryBorder : GRAPH_THEME.drawer.sectionBorder}`,
-                    background: enabled
-                      ? GRAPH_THEME.accent.primarySoft
-                      : GRAPH_THEME.drawer.sectionBackground,
-                    color: enabled
-                      ? GRAPH_THEME.accent.primary
-                      : GRAPH_THEME.surface.mutedText,
-                    borderRadius: 6,
-                    padding: '5px 7px',
-                    cursor: 'pointer',
-                    fontSize: 11,
-                  }}
-                  onClick={() => {
-                    const next = new Set(labelAllow);
-                    if (next.has(label)) next.delete(label);
-                    else next.add(label);
-                    applyContractPatch({
-                      nodeLabelAllowlist: Array.from(next),
-                    });
-                  }}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-          <div style={{ display: 'grid', gap: 6 }}>
-            <div
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                color: GRAPH_THEME.surface.mutedText,
-              }}
-            >
-              Edge Types
-            </div>
-            {allEdgeTypes.map((edgeType) => {
-              const enabled = edgeAllow.has(edgeType);
-              return (
-                <button
-                  key={edgeType}
-                  type="button"
-                  style={{
-                    textAlign: 'left',
-                    border: `1px solid ${enabled ? GRAPH_THEME.accent.primaryBorder : GRAPH_THEME.drawer.sectionBorder}`,
-                    background: enabled
-                      ? GRAPH_THEME.accent.primarySoft
-                      : GRAPH_THEME.drawer.sectionBackground,
-                    color: enabled
-                      ? GRAPH_THEME.accent.primary
-                      : GRAPH_THEME.surface.mutedText,
-                    borderRadius: 6,
-                    padding: '5px 7px',
-                    cursor: 'pointer',
-                    fontSize: 11,
-                  }}
-                  onClick={() => {
-                    const next = new Set(edgeAllow);
-                    if (next.has(edgeType)) next.delete(edgeType);
-                    else next.add(edgeType);
-                    applyContractPatch({ edgeTypeAllowlist: Array.from(next) });
-                  }}
-                >
-                  {edgeType}
-                </button>
-              );
-            })}
-          </div>
+          <CodeGraphFilterPanel
+            data={normalized.graph}
+            enabledLabels={labelAllow}
+            enabledEdgeTypes={edgeAllow}
+            showLabels={showLabels}
+            onToggleLabel={(label) => {
+              const next = new Set(labelAllow);
+              if (next.has(label)) next.delete(label);
+              else next.add(label);
+              applyContractPatch({ nodeLabelAllowlist: Array.from(next) });
+            }}
+            onToggleEdgeType={(edgeType) => {
+              const next = new Set(edgeAllow);
+              if (next.has(edgeType)) next.delete(edgeType);
+              else next.add(edgeType);
+              applyContractPatch({ edgeTypeAllowlist: Array.from(next) });
+            }}
+            onToggleShowLabels={() =>
+              applyContractPatch({ showLabels: !showLabels })
+            }
+            onEnableAll={() =>
+              applyContractPatch({
+                nodeLabelAllowlist: allLabels,
+                edgeTypeAllowlist: allEdgeTypes,
+              })
+            }
+            onDisableAll={() =>
+              applyContractPatch({
+                nodeLabelAllowlist: [],
+                edgeTypeAllowlist: [],
+              })
+            }
+          />
         </div>
       </RightGlassDrawer>
 
       <div style={{ width: '100%', height: '100%', minHeight }}>
-        {kind === 'codegraph' && codeGraphError ? (
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            pointerEvents: 'none',
+            zIndex: 0,
+            backgroundImage: [
+              `linear-gradient(to right, ${GRAPH_THEME.background.gridMinor} ${GRAPH_THEME.graphPaper.lineWidth}px, transparent ${GRAPH_THEME.graphPaper.lineWidth}px)`,
+              `linear-gradient(to bottom, ${GRAPH_THEME.background.gridMinor} ${GRAPH_THEME.graphPaper.lineWidth}px, transparent ${GRAPH_THEME.graphPaper.lineWidth}px)`,
+              `linear-gradient(to right, ${GRAPH_THEME.background.gridMajor} ${GRAPH_THEME.graphPaper.lineWidth}px, transparent ${GRAPH_THEME.graphPaper.lineWidth}px)`,
+              `linear-gradient(to bottom, ${GRAPH_THEME.background.gridMajor} ${GRAPH_THEME.graphPaper.lineWidth}px, transparent ${GRAPH_THEME.graphPaper.lineWidth}px)`,
+            ].join(', '),
+            backgroundSize: [
+              `${GRAPH_WORKSPACE.worldGridGap}px ${GRAPH_WORKSPACE.worldGridGap}px`,
+              `${GRAPH_WORKSPACE.worldGridGap}px ${GRAPH_WORKSPACE.worldGridGap}px`,
+              `${majorGridGap}px ${majorGridGap}px`,
+              `${majorGridGap}px ${majorGridGap}px`,
+            ].join(', '),
+          }}
+        />
+        {kind === 'codegraph' && codeGraphError && !codeGraphData ? (
           <div
             style={{
               width: '100%',
@@ -529,25 +539,27 @@ export default function KnowledgeGraphFramework({
             {codeGraphError}
           </div>
         ) : (
-          <CodeGraphScene
-            data={filteredData}
-            showLabels={showLabels}
-            highlightedIds={highlightedIds}
-            interactionLocked={interactionLocked}
-            cameraAction={cameraCommand?.action || null}
-            cameraActionToken={cameraCommand?.token || 0}
-            onNodeClick={(node) => {
-              const focused = new Set(
-                (contract.focusNodeIds || []).map((value) => String(value)),
-              );
-              const nodeKey = String(node.id);
-              if (focused.has(nodeKey)) {
-                applyContractPatch({ focusNodeIds: [] });
-                return;
-              }
-              applyContractPatch({ focusNodeIds: [nodeKey] });
-            }}
-          />
+          <div style={{ position: 'relative', zIndex: 1, width: '100%', height: '100%' }}>
+            <CodeGraphScene
+              data={filteredData}
+              showLabels={showLabels}
+              highlightedIds={highlightedIds}
+              interactionLocked={interactionLocked}
+              cameraAction={cameraCommand?.action || null}
+              cameraActionToken={cameraCommand?.token || 0}
+              onNodeClick={(node) => {
+                const focused = new Set(
+                  (contract.focusNodeIds || []).map((value) => String(value)),
+                );
+                const nodeKey = String(node.id);
+                if (focused.has(nodeKey)) {
+                  applyContractPatch({ focusNodeIds: [] });
+                  return;
+                }
+                applyContractPatch({ focusNodeIds: [nodeKey] });
+              }}
+            />
+          </div>
         )}
       </div>
       <div data-no-surface-promote="true" style={graphControlStackStyle}>
@@ -643,8 +655,8 @@ export default function KnowledgeGraphFramework({
         data-no-surface-promote="true"
         style={graphGlassPillStyle({
           position: 'absolute',
-          left: 12,
-          bottom: 12,
+          left: 16,
+          bottom: 176,
           zIndex: 4,
           fontSize: 11,
           padding: '6px 8px',
@@ -666,13 +678,13 @@ export default function KnowledgeGraphFramework({
 
       {kind === 'codegraph' && loadingCodeGraph ? (
         <div
-          style={graphGlassPillStyle({
-            position: 'absolute',
-            right: 12,
-            bottom: 46,
-            zIndex: 4,
-            fontSize: 11,
-            padding: '6px 8px',
+        style={graphGlassPillStyle({
+          position: 'absolute',
+          right: 12,
+          bottom: 12,
+          zIndex: 4,
+          fontSize: 11,
+          padding: '6px 8px',
           })}
         >
           Loading CodeGraph...
