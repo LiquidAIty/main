@@ -1,213 +1,110 @@
-export default function LiquidaityColorPalettePreview() {
-  const palette = {
-    brand: [
-      { name: 'Night 950', value: '#07131F', note: 'Deep ocean base' },
-      { name: 'Night 900', value: '#0B1D2B', note: 'Main dark shell' },
-      { name: 'Night 850', value: '#102638', note: 'Elevated dark surface' },
-      { name: 'Ocean 600', value: '#156B85', note: 'Mid-depth water' },
-      { name: 'Aqua 500', value: '#22B8C7', note: 'Primary action color' },
-      { name: 'Aqua 400', value: '#52D6DF', note: 'Hover / glow edge' },
-      { name: 'Violet 500', value: '#8F6AD8', note: 'Twilight intelligence accent' },
-      { name: 'Warm Coral 400', value: '#E7A18B', note: 'Softened sunset accent' },
-      { name: 'Sand 300', value: '#E8D7AE', note: 'Soft coastal warmth' },
-      { name: 'Shell Pink 300', value: '#E9C7C1', note: 'Pastel warmth for mellow balance' },
-      { name: 'Mist Lavender 300', value: '#C9BEDF', note: 'Soft twilight haze' },
-      { name: 'Foam 100', value: '#DFF7FB', note: 'Mist / water foam' },
-    ],
-    semantic: [
-      { name: 'App Background', value: 'linear-gradient(180deg, #07131F 0%, #0B1D2B 45%, #102638 100%)', note: 'Main app atmosphere' },
-      { name: 'Surface 1', value: 'rgba(9, 20, 31, 0.82)', note: 'Main panel glass' },
-      { name: 'Surface 2', value: 'rgba(14, 29, 45, 0.88)', note: 'Raised panels / nodes' },
-      { name: 'Glass Overlay', value: 'rgba(25, 52, 73, 0.20)', note: 'Floating blur layer' },
-      { name: 'Text Primary', value: '#F8FCFF', note: 'Main readable text' },
-      { name: 'Text Secondary', value: '#B7C9D6', note: 'Subtext / labels' },
-      { name: 'Border Default', value: 'rgba(82, 214, 223, 0.22)', note: 'Soft aqua outline' },
-      { name: 'Accent Primary', value: '#22B8C7', note: 'Buttons / active states' },
-      { name: 'Accent Secondary', value: '#8F6AD8', note: 'Higher-order accent' },
-      { name: 'Accent Warm', value: '#E7A18B', note: 'Softened warm callout' },
-      { name: 'Accent Soft Warm', value: '#E8D7AE', note: 'Pastel mellowing accent' },
-    ],
-  };
-
-  const rules = [
-    'Deep navy is the base. Aqua is the main active color.',
-    'Purple is a restrained twilight accent, not the whole UI.',
-    'Warm pastel tones are there to soften the mood away from hard techno AI.',
-    'Use coral as the warm end-cap, then let sand, shell pink, or soft lavender mellow panels and highlights.',
-    'Most surfaces should stay dark, glassy, and readable.',
-    'Do not use random raw hex values in components. Use tokens only.',
-    'Text stays neutral and high-contrast. Mood comes from borders, glow, gradients, and a little pastel warmth.',
+export default function LiquidAItyPalettePreview() {
+  const tokens = [
+    { name: 'App Black', hex: '#050607', use: 'Main background / empty canvas' },
+    { name: 'Panel Black', hex: '#0B0F12', use: 'Cards, drawers, side panels' },
+    { name: 'Soft Surface', hex: '#11181C', use: 'Raised panels and node bodies' },
+    { name: 'Primary Teal', hex: '#58D8C7', use: 'Active states, selected edges, main buttons' },
+    { name: 'Soft Aqua', hex: '#A8ECE8', use: 'Hover glow, fine highlights, icons' },
+    { name: 'Mint Signal', hex: '#9FF0C8', use: 'Positive/ready signals and success' },
+    { name: 'Pastel Peach', hex: '#F0B6A0', use: 'Warm accent, logo glow, gentle callouts' },
+    { name: 'Soft Coral', hex: '#E89A8B', use: 'Warnings only, never traffic orange' },
+    { name: 'Lavender', hex: '#C7B8EA', use: 'AI/intelligence accent, rare highlights' },
+    { name: 'Warm White', hex: '#F4F1EA', use: 'Primary text' },
+    { name: 'Mist Gray', hex: '#A9B6BA', use: 'Secondary text and labels' },
   ];
 
-  const swatchStyle = (value) => {
-    if (value.startsWith('linear-gradient')) return { background: value };
-    if (value.startsWith('rgba')) return { background: value, backdropFilter: 'blur(12px)' };
-    return { background: value };
-  };
+  const css = `:root {
+  --liq-black: #050607;
+  --liq-panel: #0B0F12;
+  --liq-surface: #11181C;
+  --liq-teal: #58D8C7;
+  --liq-aqua: #A8ECE8;
+  --liq-mint: #9FF0C8;
+  --liq-peach: #F0B6A0;
+  --liq-coral: #E89A8B;
+  --liq-lavender: #C7B8EA;
+  --liq-text: #F4F1EA;
+  --liq-muted: #A9B6BA;
+  --liq-border: rgba(88, 216, 199, 0.24);
+  --liq-glass: rgba(11, 15, 18, 0.72);
+}`;
 
   return (
-    <div
-      className="min-h-screen w-full text-white"
-      style={{
-        background: 'linear-gradient(180deg, #07131F 0%, #0B1D2B 45%, #102638 100%)',
-        fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif',
-      }}
-    >
-      <div className="mx-auto max-w-7xl p-8 md:p-12">
-        <div className="mb-8 rounded-[28px] border border-white/10 bg-white/5 p-8 shadow-2xl backdrop-blur-xl">
-          <div className="mb-4 inline-flex items-center rounded-full border border-cyan-300/25 bg-cyan-300/10 px-4 py-1 text-sm text-cyan-100">
-            LiquidAIty • Ocean / Sun / Twilight palette
-          </div>
-          <h1 className="text-4xl font-semibold tracking-tight md:text-5xl">Launchable color palette preview</h1>
-          <p className="mt-3 max-w-3xl text-base leading-7 text-slate-300 md:text-lg">
-            Dark ocean base. Tropical water energy. Small sunrise warmth. Small violet twilight. Then a little pastel warmth to keep it human and calm.
+    <main className="min-h-screen p-8 text-[#F4F1EA]" style={{ background: '#050607' }}>
+      <section className="mx-auto max-w-6xl space-y-8">
+        <header className="rounded-3xl border p-7" style={{ background: 'rgba(11,15,18,.82)', borderColor: 'rgba(88,216,199,.24)' }}>
+          <p className="text-sm uppercase tracking-[0.28em]" style={{ color: '#A8ECE8' }}>LiquidAIty palette</p>
+          <h1 className="mt-3 text-4xl font-semibold">Flat black + soft pastel signal colors</h1>
+          <p className="mt-3 max-w-3xl text-base leading-7" style={{ color: '#A9B6BA' }}>
+            Use black for the canvas. Use teal/turquoise for action. Use peach, coral, mint, and lavender only as soft accents.
           </p>
+        </header>
 
-          <div className="mt-8 grid gap-4 md:grid-cols-4">
-            <HeroChip title="Base" value="#07131F → #102638" subtitle="Night ocean shell" />
-            <HeroChip title="Primary" value="#22B8C7" subtitle="Active aqua" />
-            <HeroChip title="Secondary" value="#8F6AD8" subtitle="Twilight violet" />
-            <HeroChip title="Warm" value="#E7A18B" subtitle="Soft sunset accent" />
-          </div>
-        </div>
-
-        <div className="grid gap-8 xl:grid-cols-[1.2fr_0.8fr]">
-          <div className="space-y-8">
-            <PaletteSection title="Core brand palette" description="These are the raw brand colors. They define the emotional range.">
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {palette.brand.map((item) => (
-                  <SwatchCard key={item.name} {...item} previewStyle={swatchStyle(item.value)} />
-                ))}
-              </div>
-            </PaletteSection>
-
-            <PaletteSection title="Semantic app tokens" description="These are the colors components should actually use.">
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-2">
-                {palette.semantic.map((item) => (
-                  <SwatchCard key={item.name} {...item} previewStyle={swatchStyle(item.value)} />
-                ))}
-              </div>
-            </PaletteSection>
-
-            <PaletteSection title="Recommended palette direction" description="One main palette with a softened warm finish instead of a hard tech edge.">
-              <div className="space-y-5">
-                <StripDemo
-                  title="Recommended final mix"
-                  colors={['#0B1D2B', '#102638', '#22B8C7', '#8F6AD8', '#E7A18B']}
-                />
-                <StripDemo
-                  title="Softened warm support"
-                  colors={['#102638', '#22B8C7', '#8F6AD8', '#E8D7AE', '#E9C7C1']}
-                />
-                <StripDemo
-                  title="Main shell support"
-                  colors={['#07131F', '#0B1D2B', '#102638', '#156B85', '#22B8C7']}
-                />
-              </div>
-            </PaletteSection>
-          </div>
-
-          <div className="space-y-8">
-            <div className="rounded-[28px] border border-cyan-200/15 bg-white/5 p-6 shadow-2xl backdrop-blur-xl">
-              <h2 className="text-2xl font-semibold">Good theory for your brand</h2>
-              <p className="mt-3 text-sm leading-7 text-slate-300">
-                LiquidAIty should look like money, intelligence, and fluid motion without turning into generic fintech blue.
-                The strongest version is deep night water, bright aqua activity, restrained violet intelligence, and a small coral-orange sunset edge.
-                Then pastel warmth is layered in carefully to mellow the system so it feels intelligent and premium instead of cold or aggressively techno.
-                That means the palette should converge on one main strip: navy → deep blue → aqua → violet → softened coral, with soft sand, shell pink, and mist-lavender as supporting notes.
-              </p>
-              <div className="mt-5 space-y-3">
-                {rules.map((rule, i) => (
-                  <div key={i} className="rounded-2xl border border-white/8 bg-black/20 px-4 py-3 text-sm text-slate-200">
-                    {rule}
-                  </div>
-                ))}
+        <section className="grid gap-4 md:grid-cols-3">
+          <DemoCard title="Main app shell" border="#58D8C7">
+            <div className="rounded-2xl p-4" style={{ background: '#11181C' }}>
+              <div className="mb-3 h-2 w-24 rounded-full" style={{ background: '#58D8C7' }} />
+              <div className="space-y-2">
+                <div className="h-3 rounded bg-white/15" />
+                <div className="h-3 w-2/3 rounded bg-white/10" />
               </div>
             </div>
-
-            <div className="rounded-[28px] border border-violet-300/15 bg-white/5 p-6 shadow-2xl backdrop-blur-xl">
-              <h2 className="text-2xl font-semibold">Copy-paste CSS tokens for the narrowed palette</h2>
-              <pre className="mt-4 overflow-x-auto rounded-2xl border border-white/10 bg-black/30 p-4 text-xs leading-6 text-cyan-100">
-{`:root {
-  --liq-night-950: #07131F;
-  --liq-night-900: #0B1D2B;
-  --liq-night-850: #102638;
-  --liq-ocean-600: #156B85;
-  --liq-aqua-500: #22B8C7;
-  --liq-aqua-400: #52D6DF;
-  --liq-violet-500: #8F6AD8;
-  --liq-warm-400: #E7A18B;
-  --liq-sand-300: #E8D7AE;
-  --liq-shell-300: #E9C7C1;
-  --liq-mist-lavender-300: #C9BEDF;
-  --liq-foam-100: #DFF7FB;
-
-  --bg-app: linear-gradient(180deg, #07131F 0%, #0B1D2B 45%, #102638 100%);
-  --bg-surface-1: rgba(9, 20, 31, 0.82);
-  --bg-surface-2: rgba(14, 29, 45, 0.88);
-  --bg-glass: rgba(25, 52, 73, 0.20);
-
-  --text-primary: #F8FCFF;
-  --text-secondary: #B7C9D6;
-  --border-default: rgba(82, 214, 223, 0.22);
-  --accent-primary: #22B8C7;
-  --accent-secondary: #8F6AD8;
-  --accent-warm: #E7A18B;
-  --accent-soft-warm: #E8D7AE;
-}`}
-              </pre>
+          </DemoCard>
+          <DemoCard title="Agent / graph active" border="#A8ECE8">
+            <div className="flex items-center gap-3">
+              <div className="h-12 w-12 rounded-2xl" style={{ background: '#58D8C7', boxShadow: '0 0 24px rgba(88,216,199,.35)' }} />
+              <div className="h-px flex-1" style={{ background: '#A8ECE8' }} />
+              <div className="h-12 w-12 rounded-2xl" style={{ background: '#11181C', border: '1px solid rgba(168,236,232,.4)' }} />
             </div>
+          </DemoCard>
+          <DemoCard title="Warm callout" border="#F0B6A0">
+            <div className="rounded-2xl border p-4" style={{ borderColor: 'rgba(240,182,160,.35)', background: 'rgba(240,182,160,.08)' }}>
+              <p style={{ color: '#F0B6A0' }}>Soft peach for friendly emphasis. No traffic cone orange.</p>
+            </div>
+          </DemoCard>
+        </section>
+
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {tokens.map((t) => <Swatch key={t.name} {...t} />)}
+        </section>
+
+        <section className="grid gap-6 lg:grid-cols-2">
+          <div className="rounded-3xl border p-6" style={{ background: 'rgba(11,15,18,.72)', borderColor: 'rgba(88,216,199,.24)' }}>
+            <h2 className="text-2xl font-semibold">What goes where</h2>
+            <ul className="mt-4 space-y-3 text-sm leading-6" style={{ color: '#A9B6BA' }}>
+              <li><b style={{ color: '#58D8C7' }}>Teal:</b> selected, active, primary action, current route.</li>
+              <li><b style={{ color: '#A8ECE8' }}>Aqua:</b> hover, glow, fine icon details.</li>
+              <li><b style={{ color: '#9FF0C8' }}>Mint:</b> success, ready, safe/positive signal.</li>
+              <li><b style={{ color: '#F0B6A0' }}>Peach:</b> logo warmth, friendly callouts.</li>
+              <li><b style={{ color: '#E89A8B' }}>Coral:</b> warnings only, muted and rare.</li>
+              <li><b style={{ color: '#C7B8EA' }}>Lavender:</b> AI/intelligence accent, used sparingly.</li>
+            </ul>
           </div>
-        </div>
-      </div>
-    </div>
+          <pre className="overflow-auto rounded-3xl border p-6 text-xs leading-6" style={{ background: 'rgba(11,15,18,.72)', borderColor: 'rgba(88,216,199,.24)', color: '#A8ECE8' }}>{css}</pre>
+        </section>
+      </section>
+    </main>
   );
 }
 
-function PaletteSection({ title, description, children }) {
+function DemoCard({ title, border, children }) {
   return (
-    <section className="rounded-[28px] border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-xl">
-      <div className="mb-5">
-        <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
-        <p className="mt-2 text-sm leading-6 text-slate-300">{description}</p>
-      </div>
+    <div className="rounded-3xl border p-5" style={{ background: 'rgba(11,15,18,.72)', borderColor: `${border}55` }}>
+      <h2 className="mb-4 text-lg font-medium">{title}</h2>
       {children}
-    </section>
+    </div>
   );
 }
 
-function SwatchCard({ name, value, note, previewStyle }) {
+function Swatch({ name, hex, use }) {
   return (
-    <div className="overflow-hidden rounded-[24px] border border-white/10 bg-black/20">
-      <div className="h-28 w-full" style={previewStyle} />
-      <div className="space-y-2 p-4">
-        <div className="text-lg font-medium text-white">{name}</div>
-        <div className="font-mono text-xs break-all text-cyan-100/90">{value}</div>
-        <div className="text-sm text-slate-300">{note}</div>
+    <article className="overflow-hidden rounded-3xl border" style={{ background: 'rgba(11,15,18,.72)', borderColor: 'rgba(88,216,199,.18)' }}>
+      <div className="h-24" style={{ background: hex }} />
+      <div className="p-4">
+        <div className="font-semibold">{name}</div>
+        <div className="mt-1 font-mono text-xs" style={{ color: '#A8ECE8' }}>{hex}</div>
+        <p className="mt-2 text-sm" style={{ color: '#A9B6BA' }}>{use}</p>
       </div>
-    </div>
-  );
-}
-
-function HeroChip({ title, value, subtitle }) {
-  return (
-    <div className="rounded-[22px] border border-white/10 bg-black/20 p-4">
-      <div className="text-xs uppercase tracking-[0.18em] text-slate-400">{title}</div>
-      <div className="mt-2 font-mono text-sm text-cyan-100">{value}</div>
-      <div className="mt-2 text-sm text-slate-300">{subtitle}</div>
-    </div>
-  );
-}
-
-function StripDemo({ title, colors }) {
-  return (
-    <div>
-      <div className="mb-2 text-sm text-slate-300">{title}</div>
-      <div className="flex h-16 overflow-hidden rounded-2xl border border-white/10">
-        {colors.map((color) => (
-          <div key={color} className="flex-1" style={{ background: color }} />
-        ))}
-      </div>
-    </div>
+    </article>
   );
 }

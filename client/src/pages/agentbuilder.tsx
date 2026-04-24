@@ -18,6 +18,7 @@ import BuilderCanvas, {
 import BuilderChat from '../components/builder/BuilderChat';
 import BuilderDrawer from '../components/builder/BuilderDrawer';
 import PlanMissionFlow from '../components/assist/PlanMissionFlow';
+import WorldSignalSurface from '../components/worldsignal/WorldSignalSurface';
 import type {
   PlanMissionNodeData,
   PlanMissionNodeOverrideMap,
@@ -163,9 +164,10 @@ function normalizeWorkspaceSurface(
     normalized === 'plan' ||
     normalized === 'canvas' ||
     normalized === 'knowledge' ||
-    normalized === 'codegraph'
+    normalized === 'codegraph' ||
+    normalized === 'worldsignal'
   ) {
-    return normalized;
+    return normalized as WorkspaceTestingSurface;
   }
   return null;
 }
@@ -2886,7 +2888,7 @@ export default function AgentBuilder(): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
   const largeSurface = 'chat' as const;
   const [workspaceView, setWorkspaceView] = useState<
-    'chat' | 'plan' | 'canvas' | 'knowledge' | 'codegraph'
+    'chat' | 'plan' | 'canvas' | 'knowledge' | 'codegraph' | 'worldsignal'
   >('chat');
   const {
     activeProject,
@@ -6300,6 +6302,11 @@ export default function AgentBuilder(): React.ReactElement {
     setWorkspaceView('plan');
   }, [closeObjectDrawer]);
 
+  const showWorldsignalWorkspace = useCallback(() => {
+    closeObjectDrawer();
+    setWorkspaceView('worldsignal');
+  }, [closeObjectDrawer]);
+
   const applyCodeGraphViewContract = useCallback(
     (contract: GraphViewContract | null) => {
       if (!contract) return;
@@ -6352,7 +6359,15 @@ export default function AgentBuilder(): React.ReactElement {
             borderRight: `1px solid ${C.border}`,
           }}
         >
-          <div className="p-2" aria-hidden>
+          <button
+            type="button"
+            title="World"
+            aria-label="World"
+            data-testid="rail-moon-orb-button"
+            onClick={showWorldsignalWorkspace}
+            className="p-2 rounded"
+            style={{ color: workspaceView === 'worldsignal' ? C.primary : C.text }}
+          >
             <div
               style={{
                 position: 'relative',
@@ -6367,7 +6382,7 @@ export default function AgentBuilder(): React.ReactElement {
             >
               <BuilderRailMoonOrb phase01={moonPhase01} />
             </div>
-          </div>
+          </button>
           <button
             title="Home"
             aria-label="Home"
@@ -6555,6 +6570,8 @@ export default function AgentBuilder(): React.ReactElement {
                       minHeight={420}
                       surfaceRole="companion"
                     />}
+                  {workspaceView === 'worldsignal' &&
+                    <WorldSignalSurface />}
                   {workspaceView === 'plan' && renderPlanSurface('companion')}
                 </div>
               </div>

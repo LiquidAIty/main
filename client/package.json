@@ -37,6 +37,7 @@
     "decode-uri-component": "^0.4.1",
     "dom-helpers": "^5.2.1",
     "dompurify": "^3.2.3",
+    "globe.gl": "^2.45.3",
     "lexical": "^0.26.0",
     "monaco-editor": "^0.47.0",
     "postprocessing": "^6.39.0",
