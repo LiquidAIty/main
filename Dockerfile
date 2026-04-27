@@ -17,8 +17,8 @@ RUN npm --prefix client ci
 COPY client/ client/
 RUN npm --prefix client run build
 
-# -------- Runtime --------
-FROM node:20-alpine
+# -------- Backend Runtime --------
+FROM node:20-alpine AS runtime-backend
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=4000
@@ -39,3 +39,10 @@ COPY --from=build /app/client/dist/ /app/apps/backend/public/
 
 EXPOSE 4000
 CMD ["node","apps/backend/dist/src/main.js"]
+
+# -------- Web (Nginx) Runtime --------
+FROM nginx:1.25-alpine AS web
+COPY --from=build /app/client/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]

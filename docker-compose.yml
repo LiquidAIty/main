@@ -18,8 +18,32 @@ services:
       - neo4j_logs:/logs
     restart: unless-stopped
 
+  db:
+    image: postgres:16-alpine
+    container_name: liquidaity-db
+    environment:
+      - POSTGRES_USER=${DB_USER:-postgres}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
+      - POSTGRES_DB=${DB_NAME:-liquidaity}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: liquidaity-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
   backend:
-    build: .
+    build:
+      context: .
+      target: runtime-backend
     image: liquidaity-backend
     env_file:
       - ./apps/backend/.env
@@ -28,6 +52,8 @@ services:
       - KNOWGRAPH_URL=http://knowgraph:8001
     depends_on:
       - neo4j
+      - db
+      - redis
     expose:
       - "4000"
     restart: unless-stopped
@@ -45,16 +71,18 @@ services:
     restart: unless-stopped
 
   web:
-    image: nginx:1.25-alpine
+    build:
+      context: .
+      target: web
+    image: liquidaity-web
     depends_on:
       - backend
     ports:
       - "80:80"
-    volumes:
-      - ./client/dist:/usr/share/nginx/html:ro
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     restart: unless-stopped
 
 volumes:
   neo4j_data:
   neo4j_logs:
+  postgres_data:
+  redis_data:
