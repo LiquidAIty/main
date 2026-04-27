@@ -12,6 +12,8 @@ import {
   graphGlassPillStyle,
   graphPillButtonStyle,
 } from '../graph/graphVisualTokens';
+import TelescopeOverlay from '../skyview/TelescopeOverlay';
+import type { WorldViewportMode } from '../skyview/types';
 
 type WorldsignalHealth = {
   enabled: true;
@@ -65,7 +67,7 @@ type WorldViewContextContract = {
   selectedWidgetIds: WidgetId[];
   selectedSignalId: string | null;
   selectedSignalSummary: string | null;
-  rendererMode: 'globe' | 'flat';
+  rendererMode: WorldViewportMode;
   dataStatus: WorldViewDataStatus;
   lastUpdatedAt: string | null;
 };
@@ -164,7 +166,7 @@ export default function WorldSignalSurface(): React.ReactElement {
   const [loading, setLoading] = useState(true);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
 
-  const [isFlatMode, setIsFlatMode] = useState(false);
+  const [viewportMode, setViewportMode] = useState<WorldViewportMode>('globe');
   const [flightsVisible, setFlightsVisible] = useState(true);
   const [controlsLocked, setControlsLocked] = useState(false);
   const [region, setRegion] = useState<CrucixRegion>('world');
@@ -191,7 +193,7 @@ export default function WorldSignalSurface(): React.ReactElement {
           return;
         }
         rendererRef.current = renderer;
-        renderer.setFlatMode(isFlatMode);
+        renderer.setFlatMode(viewportMode === 'flat');
         renderer.setFlightsVisible(flightsVisible);
         renderer.setRegion(region);
       } catch (error) {
@@ -289,8 +291,8 @@ export default function WorldSignalSurface(): React.ReactElement {
   }, [payload]);
 
   useEffect(() => {
-    rendererRef.current?.setFlatMode(isFlatMode);
-  }, [isFlatMode]);
+    rendererRef.current?.setFlatMode(viewportMode === 'flat');
+  }, [viewportMode]);
 
   useEffect(() => {
     rendererRef.current?.setFlightsVisible(flightsVisible);
@@ -477,18 +479,18 @@ export default function WorldSignalSurface(): React.ReactElement {
       selectedWidgetIds: activeWidgetIds,
       selectedSignalId,
       selectedSignalSummary,
-      rendererMode: isFlatMode ? 'flat' : 'globe',
+      rendererMode: viewportMode,
       dataStatus,
       lastUpdatedAt,
     }),
     [
       activeWidgetIds,
       dataStatus,
-      isFlatMode,
       lastUpdatedAt,
       region,
       selectedSignalId,
       selectedSignalSummary,
+      viewportMode,
       visibleLayerIds,
     ],
   );
@@ -512,6 +514,14 @@ export default function WorldSignalSurface(): React.ReactElement {
 
   const closeWidget = (widgetId: WidgetId) => {
     setActiveWidgetIds((prev) => prev.filter((id) => id !== widgetId));
+  };
+
+  const setWorldViewportMode = (nextMode: WorldViewportMode) => {
+    setViewportMode(nextMode);
+    setLayersOpen(false);
+    setWidgetsOpen(false);
+    if (nextMode !== 'telescope') return;
+    setActiveWidgetIds([]);
   };
 
   const handleZoomIn = () => {
@@ -738,14 +748,17 @@ export default function WorldSignalSurface(): React.ReactElement {
         .crx-region-btn:hover { color: #F5F7FA; border-color: rgba(55,173,170,0.34); }
         .crx-region-btn.active { color: #F5F7FA; background: rgba(55,173,170,0.12); border-color: rgba(55,173,170,0.42); box-shadow: inset 0 1px 0 rgba(245,247,250,0.06), 0 0 0 1px rgba(55,173,170,0.18); }
         .crx-map { position: relative; flex: 1 1 auto; min-height: 0; border: 1px solid rgba(55,173,170,0.16); border-radius: 8px; background: radial-gradient(ellipse at center,rgba(4,12,20,1),rgba(2,4,8,1)); overflow: hidden; }
-        .crx-map-view { position: absolute; inset: 0; }
+        .crx-map-view { position: absolute; inset: 0; transition: opacity 160ms ease; }
+        .crx-map-view.telescope-muted { opacity: 0.12; pointer-events: none; filter: saturate(0.45) brightness(0.55); }
         .crx-map-controls { position: absolute; left: 12px; bottom: 12px; z-index: 9; display: flex; flex-direction: column; gap: 0; }
         .crx-ctrl { width: 34px; height: 34px; font-size: 16px; }
         .crx-glass-control-stack { border: 1px solid rgba(167,176,186,0.24); background: rgba(17,22,29,0.94); backdrop-filter: blur(14px) saturate(120%); -webkit-backdrop-filter: blur(14px) saturate(120%); }
-        .crx-toggle { position: absolute; top: 12px; left: 12px; z-index: 6; }
         .crx-map-hint { position: absolute; top: 13px; right: 12px; z-index: 6; font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: rgba(167,176,186,0.78); letter-spacing: 0.03em; }
-        .crx-top-controls { position: absolute; top: 12px; right: 12px; z-index: 8; display: flex; gap: 8px; transform: translateY(26px); }
+        .crx-top-controls { position: absolute; top: 12px; right: 12px; z-index: 20; display: flex; gap: 8px; transform: translateY(26px); }
         .crx-compact-btn { border-radius: 999px; font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.05em; font-weight: 600; cursor: pointer; }
+        .crx-mode-switch { display: flex; gap: 4px; padding: 4px; border-radius: 999px; border: 1px solid rgba(167,176,186,0.24); background: rgba(17,22,29,0.94); box-shadow: 0 10px 24px rgba(0,0,0,0.16); }
+        .crx-mode-btn { border: 1px solid transparent; background: transparent; color: #A7B0BA; border-radius: 999px; padding: 7px 10px; font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.05em; font-weight: 600; cursor: pointer; }
+        .crx-mode-btn.active { color: #F5F7FA; background: rgba(55,173,170,0.14); border-color: rgba(55,173,170,0.42); }
         .crx-compact-panel { position: absolute; top: 82px; right: 12px; width: 320px; max-height: 360px; overflow-y: auto; z-index: 9; padding: 10px; border-radius: 8px; }
         .crx-overlay { position: absolute; left: 14px; right: 14px; bottom: 14px; z-index: 7; border: 1px solid rgba(68,204,255,0.2); background: rgba(6,14,22,0.88); backdrop-filter: blur(12px); padding: 14px; }
         .crx-overlay-title { font-size: 16px; font-weight: 600; }
@@ -767,7 +780,7 @@ export default function WorldSignalSurface(): React.ReactElement {
         .crx-layer-sub { font-size: 10px; color: #6a8a82; }
         .crx-layer-value { font-family: 'IBM Plex Mono', monospace; color: #64f0c8; font-size: 20px; font-weight: 600; line-height: 1; }
         .crx-pill { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #9eb0bf; border: 1px solid rgba(100,240,200,0.12); padding: 4px 8px; }
-        .crx-widget-stack { position: absolute; left: 12px; bottom: 72px; z-index: 8; display: grid; gap: 8px; max-width: min(460px, calc(100vw - 120px)); }
+        .crx-widget-stack { position: absolute; left: 58px; bottom: 72px; z-index: 10; display: grid; gap: 8px; max-width: min(460px, calc(100vw - 120px)); }
         .crx-widget-panel { border: 1px solid rgba(55,173,170,0.2); background: rgba(10,20,32,0.86); backdrop-filter: blur(14px); padding: 10px; border-radius: 8px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 14px 30px rgba(0,0,0,0.24); }
         .crx-widget-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
         .crx-widget-title { font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.1em; color: #6a8a82; text-transform: uppercase; }
@@ -783,25 +796,27 @@ export default function WorldSignalSurface(): React.ReactElement {
       `}</style>
 
       <div className="crx-main" data-testid="worldsignal-crucix-layout">
-        <div
-          data-testid="worldsignal-region-tabs"
-          className="crx-region-bar crx-glass-pill-group"
-          style={graphGlassPillStyle({
-            padding: 6,
-            color: GRAPH_THEME.surface.mutedText,
-          })}
-        >
-          {REGION_TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              className={`crx-region-btn ${tab.id === region ? 'active' : ''}`}
-              onClick={() => setRegion(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+        {viewportMode !== 'telescope' ? (
+          <div
+            data-testid="worldsignal-region-tabs"
+            className="crx-region-bar crx-glass-pill-group"
+            style={graphGlassPillStyle({
+              padding: 6,
+              color: GRAPH_THEME.surface.mutedText,
+            })}
+          >
+            {REGION_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`crx-region-btn ${tab.id === region ? 'active' : ''}`}
+                onClick={() => setRegion(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         <section
           ref={(node) => {
@@ -810,13 +825,16 @@ export default function WorldSignalSurface(): React.ReactElement {
           data-testid="worldsignal-globe-viewport"
           className="crx-map"
         >
-          <RendererMount mountRef={mountRef} />
+          <div className={viewportMode === 'telescope' ? 'crx-map-view telescope-muted' : 'crx-map-view'}>
+            <RendererMount mountRef={mountRef} />
+          </div>
 
-          <div
-            className="crx-map-controls crx-glass-control-stack"
-            data-testid="worldsignal-map-controls"
-            style={graphControlStackStyle}
-          >
+          {viewportMode !== 'telescope' ? (
+            <div
+              className="crx-map-controls crx-glass-control-stack"
+              data-testid="worldsignal-map-controls"
+              style={graphControlStackStyle}
+            >
             <button
               type="button"
               className="crx-ctrl"
@@ -890,66 +908,75 @@ export default function WorldSignalSurface(): React.ReactElement {
             >
               ✈
             </button>
-          </div>
-
-          <button
-            type="button"
-            className="crx-toggle"
-            data-testid="worldsignal-map-toggle"
-            style={graphPillButtonStyle({
-              borderRadius: 999,
-              padding: '7px 10px',
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: 10,
-              letterSpacing: '0.05em',
-              fontWeight: 600,
-              color: GRAPH_THEME.surface.mutedText,
-            })}
-            onClick={() => setIsFlatMode((prev) => !prev)}
-          >
-            {isFlatMode ? 'GLOBE MODE' : 'FLAT MODE'}
-          </button>
+            </div>
+          ) : null}
 
           <div className="crx-map-hint">
-            {isFlatMode ? 'SCROLL TO ZOOM · DRAG TO PAN' : 'DRAG TO ROTATE · SCROLL TO ZOOM'}
+            {viewportMode === 'telescope'
+              ? 'TELESCOPE · DRAG TO PAN · SCROLL TO ZOOM'
+              : viewportMode === 'flat'
+                ? 'SCROLL TO ZOOM · DRAG TO PAN'
+                : 'DRAG TO ROTATE · SCROLL TO ZOOM'}
           </div>
 
           <div className="crx-top-controls">
-            <button
-              type="button"
-              className="crx-compact-btn"
-              data-testid="worldsignal-layers-control-button"
-              style={graphPillButtonStyle({
-                padding: '7px 10px',
-                color: layersOpen ? GRAPH_THEME.surface.text : GRAPH_THEME.surface.mutedText,
-                border: `1px solid ${layersOpen ? GRAPH_THEME.accent.primaryBorder : GRAPH_THEME.controls.border}`,
-              })}
-              onClick={() => {
-                setLayersOpen((prev) => !prev);
-                setWidgetsOpen(false);
-              }}
-            >
-              Layers
-            </button>
-            <button
-              type="button"
-              className="crx-compact-btn"
-              data-testid="worldsignal-widgets-control-button"
-              style={graphPillButtonStyle({
-                padding: '7px 10px',
-                color: widgetsOpen ? GRAPH_THEME.surface.text : GRAPH_THEME.surface.mutedText,
-                border: `1px solid ${widgetsOpen ? GRAPH_THEME.accent.primaryBorder : GRAPH_THEME.controls.border}`,
-              })}
-              onClick={() => {
-                setWidgetsOpen((prev) => !prev);
-                setLayersOpen(false);
-              }}
-            >
-              Widgets
-            </button>
+            <div className="crx-mode-switch" data-testid="worldsignal-mode-switch">
+              {(['globe', 'flat', 'telescope'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className={`crx-mode-btn ${viewportMode === mode ? 'active' : ''}`}
+                  data-testid={`worldsignal-mode-${mode}`}
+                  aria-pressed={viewportMode === mode}
+                  onClick={() => setWorldViewportMode(mode)}
+                >
+                  {mode === 'globe' ? 'Globe' : mode === 'flat' ? 'Flat' : 'Telescope'}
+                </button>
+              ))}
+            </div>
+            {viewportMode !== 'telescope' ? (
+              <>
+                <button
+                  type="button"
+                  className="crx-compact-btn"
+                  data-testid="worldsignal-layers-control-button"
+                  style={graphPillButtonStyle({
+                    padding: '7px 10px',
+                    color: layersOpen ? GRAPH_THEME.surface.text : GRAPH_THEME.surface.mutedText,
+                    border: `1px solid ${layersOpen ? GRAPH_THEME.accent.primaryBorder : GRAPH_THEME.controls.border}`,
+                  })}
+                  onClick={() => {
+                    setLayersOpen((prev) => !prev);
+                    setWidgetsOpen(false);
+                  }}
+                >
+                  Layers
+                </button>
+                <button
+                  type="button"
+                  className="crx-compact-btn"
+                  data-testid="worldsignal-widgets-control-button"
+                  style={graphPillButtonStyle({
+                    padding: '7px 10px',
+                    color: widgetsOpen ? GRAPH_THEME.surface.text : GRAPH_THEME.surface.mutedText,
+                    border: `1px solid ${widgetsOpen ? GRAPH_THEME.accent.primaryBorder : GRAPH_THEME.controls.border}`,
+                  })}
+                  onClick={() => {
+                    setWidgetsOpen((prev) => !prev);
+                    setLayersOpen(false);
+                  }}
+                >
+                  Widgets
+                </button>
+              </>
+            ) : null}
           </div>
 
-          {layersOpen ? (
+          {viewportMode === 'telescope' ? (
+            <TelescopeOverlay />
+          ) : null}
+
+          {viewportMode !== 'telescope' && layersOpen ? (
             <div
               className="crx-compact-panel"
               data-testid="worldsignal-layers-control-panel"
@@ -976,7 +1003,7 @@ export default function WorldSignalSurface(): React.ReactElement {
             </div>
           ) : null}
 
-          {widgetsOpen ? (
+          {viewportMode !== 'telescope' && widgetsOpen ? (
             <div
               className="crx-compact-panel"
               data-testid="worldsignal-widgets-control-panel"
@@ -1000,28 +1027,28 @@ export default function WorldSignalSurface(): React.ReactElement {
             </div>
           ) : null}
 
-          {loading ? (
+          {viewportMode !== 'telescope' && loading ? (
             <div className="crx-overlay" data-testid="worldsignal-loading">
               <div className="crx-overlay-title">Preparing World View</div>
               <div className="crx-overlay-text">Initializing source status and live signals.</div>
             </div>
           ) : null}
 
-          {!loading && !isOnline ? (
+          {viewportMode !== 'telescope' && !loading && !isOnline ? (
             <div className="crx-overlay" data-testid="worldsignal-offline">
               <div className="crx-overlay-title">World view is offline</div>
               <div className="crx-overlay-text">Start the worldsignal sidecar to view signals.</div>
             </div>
           ) : null}
 
-          {runtimeError ? (
+          {viewportMode !== 'telescope' && runtimeError ? (
             <div className="crx-overlay" data-testid="worldsignal-runtime-error">
               <div className="crx-overlay-title">Renderer runtime issue</div>
               <div className="crx-overlay-text">{runtimeError}</div>
             </div>
           ) : null}
 
-          <div className="crx-widget-stack">
+          {viewportMode !== 'telescope' ? <div className="crx-widget-stack">
             {activeWidgetIds.map((widgetId) => {
               const widget = WIDGET_CONFIG.find((entry) => entry.id === widgetId);
               if (!widget) return null;
@@ -1046,9 +1073,9 @@ export default function WorldSignalSurface(): React.ReactElement {
                 </section>
               );
             })}
-          </div>
+          </div> : null}
 
-          <div className="crx-context" data-testid="worldsignal-active-context">
+          {viewportMode !== 'telescope' ? <div className="crx-context" data-testid="worldsignal-active-context">
             <span>open: {activeContextOpenWidgets.length ? activeContextOpenWidgets.join(', ') : 'none'}</span>
             <span>
               layers: {visibleLayerIds.length}/{WORLD_SIGNAL_LAYER_CONFIG.length}
@@ -1056,7 +1083,7 @@ export default function WorldSignalSurface(): React.ReactElement {
             <span>selected: {selectedSignalId || 'none'}</span>
             <span>mode: {worldViewContext.rendererMode}</span>
             <span>region: {worldViewContext.selectedRegion}</span>
-          </div>
+          </div> : null}
 
           <div
             data-testid="worldsignal-context-contract"

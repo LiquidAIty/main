@@ -135,3 +135,48 @@ localcoder/.cache/
 vendor/sim/node_modules/
 vendor/sim/dist/
 
+vendor/vips/
+
+# Avoid tracking nested Git repositories
+**/.git/
+
+# Node/JavaScript/TS
+**/node_modules/
+**/dist/
+**/build/
+**/.next/
+**/.vite/
+**/.nx/cache/
+**/.turbo/
+
+# Python
+**/.venv/
+**/__pycache__/
+
+# Logs and secrets
+*.log
+.env
+**/.env.*
+!**/.env.example
+
+# Temporary and test files
+coverage/
+tmp/
+.codex-temp/
+
+# Large Datasets / Telescope Imagery
+telescope/mast-downloads/
+client/public/telescope-tiles/
+client/public/telescope-datasets/
+*.fits
+*.tif
+*.tiff
+*.dzi
+
+# Binary SDKs / Dev Packages
+**/*.lib
+**/*.dll
+**/*.so
+**/*.dylib
+**/*.a
+**/*.pdb

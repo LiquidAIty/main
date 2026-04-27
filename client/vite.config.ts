@@ -11,8 +11,10 @@ export default defineConfig(() => {
     envDir: path.resolve(__dirname, '..'),
     plugins: [react()],
     optimizeDeps: {
-      include: ['react', 'react-dom'],
-      exclude: [
+      include: [
+        'react',
+        'react-dom',
+        'scheduler',
         '@react-three/fiber',
         '@react-three/drei',
         '@react-three/postprocessing',

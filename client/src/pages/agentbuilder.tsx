@@ -94,6 +94,16 @@ import type {
   PromptTemplate,
   RuntimeBinding,
 } from '../types/agentgraph';
+import {
+  ENERGY_DEFAULT_PARAMETERS,
+  type EnergyObjectId,
+  type EnergyParameterKey,
+  type EnergySurfaceParameters,
+  type WorkspaceAction,
+  type WorkspaceActionCall,
+  type WorkspaceActionResult,
+  type WorkspaceObject,
+} from '../types/workspaceActions';
 import type {
   KnowledgeGraphScope,
   KnowledgeGraphRelationship,
@@ -120,6 +130,9 @@ const KnowledgeEvidencePanel = lazy(
 const KnowledgeGraphFramework = lazy(
   () => import('../components/knowledge/KnowledgeGraphFramework'),
 );
+const EnergyFacadeSurface = lazy(
+  () => import('../components/energy/EnergyFacadeSurface'),
+);
 const CODEBASE_MEMORY_PROJECT_NAME = 'C-Projects-LiquidAIty-main';
 void KnowledgeSummaryPanel;
 void KnowledgeEvidencePanel;
@@ -137,6 +150,240 @@ const C = {
   accent: '#8358A4',
   warn: '#D98458',
 };
+
+const ENERGY_WORKSPACE_ACTIONS: WorkspaceAction[] = [
+  {
+    id: 'select_object',
+    label: 'Select object',
+    surface: 'energy',
+  },
+  {
+    id: 'update_object_parameter',
+    label: 'Update object parameter',
+    surface: 'energy',
+  },
+  {
+    id: 'reset_energy_surface',
+    label: 'Reset energy surface',
+    surface: 'energy',
+  },
+];
+
+const ENERGY_OBJECT_PARAMETERS: Record<EnergyObjectId, EnergyParameterKey[]> = {
+  'energy:surface': [
+    'width',
+    'height',
+    'depth',
+    'glazing',
+    'overhang',
+    'leftFin',
+    'rightFin',
+    'day',
+    'hour',
+    'orientation',
+  ],
+  'energy:facade': ['width', 'height', 'depth'],
+  'energy:window': ['glazing'],
+  'energy:overhang': ['overhang'],
+  'energy:leftFin': ['leftFin'],
+  'energy:rightFin': ['rightFin'],
+  'energy:sun': ['day', 'hour'],
+  'energy:results': [],
+};
+
+function isEnergyObjectId(value: string): value is EnergyObjectId {
+  return Object.prototype.hasOwnProperty.call(ENERGY_OBJECT_PARAMETERS, value);
+}
+
+function isEnergyParameterKey(value: string): value is EnergyParameterKey {
+  return Object.prototype.hasOwnProperty.call(ENERGY_DEFAULT_PARAMETERS, value);
+}
+
+function buildEnergyWorkspaceObjects(
+  inputs: EnergySurfaceParameters,
+): WorkspaceObject[] {
+  return [
+    {
+      id: 'energy:surface',
+      surface: 'energy',
+      type: 'energy_surface',
+      label: 'Energy Surface',
+      parameters: { ...inputs },
+    },
+    {
+      id: 'energy:facade',
+      surface: 'energy',
+      type: 'facade_mass',
+      label: 'Facade',
+      parameters: {
+        width: inputs.width,
+        height: inputs.height,
+        depth: inputs.depth,
+      },
+    },
+    {
+      id: 'energy:window',
+      surface: 'energy',
+      type: 'window_glazing',
+      label: 'Window / Glazing',
+      parameters: {
+        glazing: inputs.glazing,
+      },
+    },
+    {
+      id: 'energy:overhang',
+      surface: 'energy',
+      type: 'shade_overhang',
+      label: 'Overhang',
+      parameters: {
+        overhang: inputs.overhang,
+      },
+    },
+    {
+      id: 'energy:leftFin',
+      surface: 'energy',
+      type: 'shade_fin',
+      label: 'Left Fin',
+      parameters: {
+        leftFin: inputs.leftFin,
+      },
+    },
+    {
+      id: 'energy:rightFin',
+      surface: 'energy',
+      type: 'shade_fin',
+      label: 'Right Fin',
+      parameters: {
+        rightFin: inputs.rightFin,
+      },
+    },
+    {
+      id: 'energy:sun',
+      surface: 'energy',
+      type: 'solar_context',
+      label: 'Sun',
+      parameters: {
+        day: inputs.day,
+        hour: inputs.hour,
+      },
+    },
+    {
+      id: 'energy:results',
+      surface: 'energy',
+      type: 'results_summary',
+      label: 'Results Summary',
+    },
+  ];
+}
+
+function formatEnergyParameterLabel(value: string): string {
+  return value.replace(/([A-Z])/g, ' $1').toLowerCase();
+}
+
+class EnergySurfaceErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div
+          data-testid="energy-facade-error"
+          style={{
+            height: '100%',
+            padding: 16,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: GRAPH_THEME.background.knowledgeSurface,
+          }}
+        >
+          <div
+            style={graphDrawerSectionStyle({
+              width: 'min(520px, 100%)',
+              padding: 16,
+              color: GRAPH_THEME.drawer.inputMuted,
+              lineHeight: 1.5,
+            })}
+          >
+            <div
+              style={{
+                color: GRAPH_THEME.drawer.inputText,
+                fontWeight: 700,
+                marginBottom: 6,
+              }}
+            >
+              Energy canvas unavailable
+            </div>
+            <div>{this.state.error.message || 'The Energy surface failed to load.'}</div>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+class KnowledgeSurfaceErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div
+          data-testid="knowledge-surface-error"
+          style={{
+            height: '100%',
+            width: '100%',
+            padding: 16,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: GRAPH_THEME.background.knowledgeSurface,
+          }}
+        >
+          <div
+            style={graphDrawerSectionStyle({
+              width: 'min(560px, 100%)',
+              padding: 16,
+              color: GRAPH_THEME.drawer.inputMuted,
+              lineHeight: 1.5,
+            })}
+          >
+            <div
+              style={{
+                color: GRAPH_THEME.drawer.inputText,
+                fontWeight: 700,
+                marginBottom: 6,
+              }}
+            >
+              Knowledge graph unavailable
+            </div>
+            <div>
+              {this.state.error.message || 'The Knowledge graph failed to load.'}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 const HOME_CHAT_TABS = ['Canvas', 'Knowledge', 'Plan'] as const;
 const HOME_PLAN_TABS = ['Chat', 'Canvas', 'Knowledge'] as const;
@@ -165,6 +412,7 @@ function normalizeWorkspaceSurface(
     normalized === 'canvas' ||
     normalized === 'knowledge' ||
     normalized === 'codegraph' ||
+    normalized === 'energy' ||
     normalized === 'worldsignal'
   ) {
     return normalized as WorkspaceTestingSurface;
@@ -2888,7 +3136,13 @@ export default function AgentBuilder(): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
   const largeSurface = 'chat' as const;
   const [workspaceView, setWorkspaceView] = useState<
-    'chat' | 'plan' | 'canvas' | 'knowledge' | 'codegraph' | 'worldsignal'
+    | 'chat'
+    | 'plan'
+    | 'canvas'
+    | 'knowledge'
+    | 'codegraph'
+    | 'energy'
+    | 'worldsignal'
   >('chat');
   const {
     activeProject,
@@ -4288,6 +4542,114 @@ export default function AgentBuilder(): React.ReactElement {
     () => loadProjectState(activeProject).plan,
   );
   const [stateLoaded, setStateLoaded] = useState(false);
+
+  const [energyInputs, setEnergyInputs] = useState<EnergySurfaceParameters>(
+    () => ({ ...ENERGY_DEFAULT_PARAMETERS }),
+  );
+  const [selectedWorkspaceObjectId, setSelectedWorkspaceObjectId] =
+    useState<EnergyObjectId>('energy:facade');
+  const [latestWorkspaceActionSummary, setLatestWorkspaceActionSummary] =
+    useState<string | null>(null);
+  const energyWorkspaceObjects = useMemo(
+    () => buildEnergyWorkspaceObjects(energyInputs),
+    [energyInputs],
+  );
+  const applyWorkspaceAction = useCallback(
+    (actionCall: WorkspaceActionCall): WorkspaceActionResult => {
+      const action = ENERGY_WORKSPACE_ACTIONS.find(
+        (entry) => entry.id === actionCall.actionId,
+      );
+      if (!action) {
+        return {
+          ok: false,
+          actionId: actionCall.actionId,
+          targetObjectId: actionCall.targetObjectId,
+          summary: `Unknown workspace action: ${safeText(actionCall.actionId)}`,
+          error: 'unknown_action',
+        };
+      }
+
+      if (!isEnergyObjectId(actionCall.targetObjectId)) {
+        return {
+          ok: false,
+          actionId: action.id,
+          targetObjectId: actionCall.targetObjectId,
+          summary: `Unknown workspace object: ${safeText(actionCall.targetObjectId)}`,
+          error: 'unknown_target_object',
+        };
+      }
+
+      const targetObject = energyWorkspaceObjects.find(
+        (entry) => entry.id === actionCall.targetObjectId,
+      );
+      const targetLabel = targetObject?.label || actionCall.targetObjectId;
+      let summary = '';
+
+      if (action.id === 'select_object') {
+        setSelectedWorkspaceObjectId(actionCall.targetObjectId);
+        summary = `Selected ${targetLabel}.`;
+      } else if (action.id === 'reset_energy_surface') {
+        setEnergyInputs({ ...ENERGY_DEFAULT_PARAMETERS });
+        setSelectedWorkspaceObjectId('energy:facade');
+        summary = 'Reset the Energy surface to default parameters.';
+      } else if (action.id === 'update_object_parameter') {
+        const parameter = safeText(actionCall.parameters?.parameter);
+        const value = Number(actionCall.parameters?.value);
+        if (!isEnergyParameterKey(parameter)) {
+          return {
+            ok: false,
+            actionId: action.id,
+            targetObjectId: actionCall.targetObjectId,
+            summary: `Unknown Energy parameter: ${parameter || 'empty'}`,
+            error: 'unknown_parameter',
+          };
+        }
+        if (!ENERGY_OBJECT_PARAMETERS[actionCall.targetObjectId].includes(parameter)) {
+          return {
+            ok: false,
+            actionId: action.id,
+            targetObjectId: actionCall.targetObjectId,
+            summary: `${targetLabel} does not expose ${formatEnergyParameterLabel(parameter)}.`,
+            error: 'parameter_not_allowed_for_object',
+          };
+        }
+        if (!Number.isFinite(value)) {
+          return {
+            ok: false,
+            actionId: action.id,
+            targetObjectId: actionCall.targetObjectId,
+            summary: `Invalid value for ${formatEnergyParameterLabel(parameter)}.`,
+            error: 'invalid_parameter_value',
+          };
+        }
+        setEnergyInputs((current) => ({
+          ...current,
+          [parameter]: value,
+        }));
+        setSelectedWorkspaceObjectId(actionCall.targetObjectId);
+        summary = `Updated ${targetLabel} ${formatEnergyParameterLabel(parameter)} to ${value}.`;
+      }
+
+      const planEventSummary = `[workspace_action] ${summary}`;
+      setLatestWorkspaceActionSummary(planEventSummary);
+      return {
+        ok: true,
+        actionId: action.id,
+        targetObjectId: actionCall.targetObjectId,
+        summary,
+        planEventSummary,
+      };
+    },
+    [energyWorkspaceObjects],
+  );
+
+  useEffect(() => {
+    (window as any).__LIQUIDAITY_APPLY_WORKSPACE_ACTION__ =
+      applyWorkspaceAction;
+    return () => {
+      delete (window as any).__LIQUIDAITY_APPLY_WORKSPACE_ACTION__;
+    };
+  }, [applyWorkspaceAction]);
 
   // links
   const [links, setLinks] = useState<LinkRef[]>(
@@ -6117,68 +6479,70 @@ export default function AgentBuilder(): React.ReactElement {
             minHeight,
           }}
         >
-          <Suspense
-            fallback={
-              <div
-                style={graphDrawerSectionStyle({
-                  width: '100%',
-                  minHeight,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: 8,
-                  color: GRAPH_THEME.drawer.inputMuted,
-                })}
-              >
-                Loading knowledge graph...
-              </div>
-            }
-          >
-            <KnowledgeGraphFramework
-              kind={knowledgeGraphKind}
-              onKindChange={(nextKind) => {
-                setKnowledgeGraphKind(nextKind);
-                setGraphViewContract((prev) => ({
-                  graphKind: nextKind,
-                  projectId:
-                    nextKind === 'codegraph'
-                      ? CODEBASE_MEMORY_PROJECT_NAME
-                      : (activeProject ?? null),
-                  nodeLabelAllowlist: undefined,
-                  edgeTypeAllowlist: undefined,
-                  showLabels: prev?.showLabels ?? true,
-                  maxNodes: undefined,
-                  focusNodeIds: undefined,
-                  focusPaths: undefined,
-                  focusSymbols: undefined,
-                  cameraMode: prev?.cameraMode ?? 'overview',
-                  animationMode: prev?.animationMode ?? 'calm',
-                  narrativeIntent: prev?.narrativeIntent ?? null,
-                }));
-              }}
-              contract={
-                graphViewContract ?? {
-                  graphKind: knowledgeGraphKind,
-                  projectId:
-                    knowledgeGraphKind === 'codegraph'
-                      ? CODEBASE_MEMORY_PROJECT_NAME
-                      : (activeProject ?? null),
-                  showLabels: true,
-                  cameraMode: 'overview',
-                  animationMode: 'calm',
-                  narrativeIntent: null,
+          <KnowledgeSurfaceErrorBoundary key={`knowledge-${knowledgeGraphKind}`}>
+            <Suspense
+              fallback={
+                <div
+                  style={graphDrawerSectionStyle({
+                    width: '100%',
+                    minHeight,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: 8,
+                    color: GRAPH_THEME.drawer.inputMuted,
+                  })}
+                >
+                  Loading knowledge graph...
+                </div>
+              }
+            >
+              <KnowledgeGraphFramework
+                kind={knowledgeGraphKind}
+                onKindChange={(nextKind) => {
+                  setKnowledgeGraphKind(nextKind);
+                  setGraphViewContract((prev) => ({
+                    graphKind: nextKind,
+                    projectId:
+                      nextKind === 'codegraph'
+                        ? CODEBASE_MEMORY_PROJECT_NAME
+                        : (activeProject ?? null),
+                    nodeLabelAllowlist: undefined,
+                    edgeTypeAllowlist: undefined,
+                    showLabels: prev?.showLabels ?? true,
+                    maxNodes: undefined,
+                    focusNodeIds: undefined,
+                    focusPaths: undefined,
+                    focusSymbols: undefined,
+                    cameraMode: prev?.cameraMode ?? 'overview',
+                    animationMode: prev?.animationMode ?? 'calm',
+                    narrativeIntent: prev?.narrativeIntent ?? null,
+                  }));
+                }}
+                contract={
+                  graphViewContract ?? {
+                    graphKind: knowledgeGraphKind,
+                    projectId:
+                      knowledgeGraphKind === 'codegraph'
+                        ? CODEBASE_MEMORY_PROJECT_NAME
+                        : (activeProject ?? null),
+                    showLabels: true,
+                    cameraMode: 'overview',
+                    animationMode: 'calm',
+                    narrativeIntent: null,
+                  }
                 }
-              }
-              onContractChange={(nextContract) =>
-                setGraphViewContract(nextContract)
-              }
-              thinkGraphData={thinkGraphViewData}
-              knowGraphData={knowGraphViewData}
-              codeGraphProjectName={CODEBASE_MEMORY_PROJECT_NAME}
-              onRefreshRequest={loadGraphData}
-              minHeight={minHeight}
-            />
-          </Suspense>
+                onContractChange={(nextContract) =>
+                  setGraphViewContract(nextContract)
+                }
+                thinkGraphData={thinkGraphViewData}
+                knowGraphData={knowGraphViewData}
+                codeGraphProjectName={CODEBASE_MEMORY_PROJECT_NAME}
+                onRefreshRequest={loadGraphData}
+                minHeight={minHeight}
+              />
+            </Suspense>
+          </KnowledgeSurfaceErrorBoundary>
         </div>
       </div>
     </div>
@@ -6302,6 +6666,11 @@ export default function AgentBuilder(): React.ReactElement {
     setWorkspaceView('plan');
   }, [closeObjectDrawer]);
 
+  const showEnergyWorkspace = useCallback(() => {
+    closeObjectDrawer();
+    setWorkspaceView('energy');
+  }, [closeObjectDrawer]);
+
   const showWorldsignalWorkspace = useCallback(() => {
     closeObjectDrawer();
     setWorkspaceView('worldsignal');
@@ -6420,6 +6789,19 @@ export default function AgentBuilder(): React.ReactElement {
             }}
           >
             <Icon d="M12 1v3M12 20v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M1 12h3M20 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" />
+          </button>
+          <button
+            title="Energy"
+            aria-label="Energy"
+            data-testid="rail-energy-button"
+            onClick={showEnergyWorkspace}
+            className="p-2 rounded"
+            style={{
+              color:
+                workspaceView === 'energy' ? GRAPH_THEME.accent.solar : C.text,
+            }}
+          >
+            <Icon d="M4 19h16M6 19V9l6-4 6 4v10M9 19v-7h6v7M8 9h8" />
           </button>
           <div className="flex-1" />
           <button
@@ -6570,6 +6952,42 @@ export default function AgentBuilder(): React.ReactElement {
                       minHeight={420}
                       surfaceRole="companion"
                     />}
+                  {workspaceView === 'energy' && (
+                    <EnergySurfaceErrorBoundary key="energy-surface">
+                      <Suspense
+                        fallback={
+                          <div
+                            data-testid="energy-facade-loading"
+                            style={{
+                              height: '100%',
+                              padding: 16,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              background:
+                                GRAPH_THEME.background.knowledgeSurface,
+                            }}
+                          >
+                            <div
+                              style={graphDrawerSectionStyle({
+                                padding: '12px 14px',
+                                color: GRAPH_THEME.drawer.inputMuted,
+                              })}
+                            >
+                              Loading energy canvas...
+                            </div>
+                          </div>
+                        }
+                      >
+                        <EnergyFacadeSurface
+                          inputs={energyInputs}
+                          selectedObjectId={selectedWorkspaceObjectId}
+                          latestActionSummary={latestWorkspaceActionSummary}
+                          onWorkspaceAction={applyWorkspaceAction}
+                        />
+                      </Suspense>
+                    </EnergySurfaceErrorBoundary>
+                  )}
                   {workspaceView === 'worldsignal' &&
                     <WorldSignalSurface />}
                   {workspaceView === 'plan' && renderPlanSurface('companion')}

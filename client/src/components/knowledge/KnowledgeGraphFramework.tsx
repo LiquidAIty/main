@@ -1,6 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  Suspense,
+  lazy,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
-import { CodeGraphScene } from '../codegraph/CodeGraphScene';
 import { colorForCodeGraphLabel } from '../codegraph/colors';
 import { CodeGraphFilterPanel } from '../codegraph/CodeGraphFilterPanel';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
@@ -20,6 +26,11 @@ import type {
   GraphViewData,
   KnowledgeGraphKind,
 } from '../../types/agentgraph';
+
+const CodeGraphScene = lazy(async () => {
+  const mod = await import('../codegraph/CodeGraphScene');
+  return { default: mod.CodeGraphScene };
+});
 
 type KnowledgeGraphFrameworkProps = {
   kind: KnowledgeGraphKind;
@@ -66,6 +77,65 @@ const DEFAULT_FILTERS: Record<
 const KNOWLEDGE_CONTROLS_DEFAULT_WIDTH = 340;
 const KNOWLEDGE_CONTROLS_MIN_WIDTH = 320;
 const KNOWLEDGE_CONTROLS_MAX_WIDTH = 520;
+
+class CodeGraphSceneErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div
+          data-testid="knowledge-graph-scene-error"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 2,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+            background: GRAPH_THEME.background.knowledgeSurface,
+          }}
+        >
+          <div
+            style={{
+              width: 'min(520px, 100%)',
+              borderRadius: 12,
+              border: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`,
+              background: GRAPH_THEME.drawer.panelBackground,
+              boxShadow: GRAPH_THEME.drawer.panelShadow,
+              color: GRAPH_THEME.drawer.inputMuted,
+              padding: 16,
+              lineHeight: 1.45,
+            }}
+          >
+            <div
+              style={{
+                color: GRAPH_THEME.drawer.inputText,
+                fontWeight: 700,
+                marginBottom: 6,
+              }}
+            >
+              Knowledge graph scene unavailable
+            </div>
+            <div>
+              {this.state.error.message || 'The graph renderer failed to load.'}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 function resolveModeDefaultAllowlist(
   available: string[],
@@ -626,25 +696,46 @@ export default function KnowledgeGraphFramework({
           </div>
         ) : (
           <div style={{ position: 'relative', zIndex: 1, width: '100%', height: '100%' }}>
-            <CodeGraphScene
-              data={displayData}
-              showLabels={showLabels}
-              highlightedIds={highlightedIds}
-              interactionLocked={interactionLocked}
-              cameraAction={cameraCommand?.action || null}
-              cameraActionToken={cameraCommand?.token || 0}
-              onNodeClick={(node) => {
-                const focused = new Set(
-                  (contract.focusNodeIds || []).map((value) => String(value)),
-                );
-                const nodeKey = String(node.id);
-                if (focused.has(nodeKey)) {
-                  applyContractPatch({ focusNodeIds: [] });
-                  return;
+            <CodeGraphSceneErrorBoundary key={`knowledge-scene-${kind}`}>
+              <Suspense
+                fallback={
+                  <div
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      color: GRAPH_THEME.surface.mutedText,
+                      fontSize: 12,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: GRAPH_THEME.surface.base,
+                    }}
+                  >
+                    Loading graph scene...
+                  </div>
                 }
-                applyContractPatch({ focusNodeIds: [nodeKey] });
-              }}
-            />
+              >
+                <CodeGraphScene
+                  data={displayData}
+                  showLabels={showLabels}
+                  highlightedIds={highlightedIds}
+                  interactionLocked={interactionLocked}
+                  cameraAction={cameraCommand?.action || null}
+                  cameraActionToken={cameraCommand?.token || 0}
+                  onNodeClick={(node) => {
+                    const focused = new Set(
+                      (contract.focusNodeIds || []).map((value) => String(value)),
+                    );
+                    const nodeKey = String(node.id);
+                    if (focused.has(nodeKey)) {
+                      applyContractPatch({ focusNodeIds: [] });
+                      return;
+                    }
+                    applyContractPatch({ focusNodeIds: [nodeKey] });
+                  }}
+                />
+              </Suspense>
+            </CodeGraphSceneErrorBoundary>
           </div>
         )}
       </div>

@@ -828,7 +828,6 @@ export default function PlanMissionFlow({
         nodesConnectable={false}
         nodesDraggable={!editMode && !layoutLocked}
         elementsSelectable
-        nodesConnectable
         onConnect={onConnect}
         onConnectStart={onConnectStart}
         onConnectEnd={onConnectEnd}

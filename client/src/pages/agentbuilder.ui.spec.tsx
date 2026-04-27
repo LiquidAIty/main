@@ -225,6 +225,12 @@ vi.mock("../components/assist/PlanMissionFlow", () => ({
   },
 }));
 
+vi.mock("../components/energy/EnergyFacadeSurface", () => ({
+  default: function EnergyFacadeSurfaceMock() {
+    return <div data-testid="energy-facade-surface">Energy Facade Surface</div>;
+  },
+}));
+
 const ASSIST_PROJECT = {
   id: "assist_alpha",
   name: "Alpha Project",
@@ -1253,6 +1259,26 @@ describe("AgentBuilder locked 3-state flow", () => {
     expect(getByTestId(container, "drawer-projects-section")).toBeTruthy();
     expect(container.textContent).toContain("Chat Projects");
     expect(container.textContent).toContain("Alpha Project");
+  });
+
+  it("opens the Energy facade workspace from the rail", async () => {
+    const container = mount(<AgentBuilder />);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
+    });
+
+    click(getByTestId(container, "rail-energy-button"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "energy-facade-surface")).toBeTruthy();
+    });
+
+    expect(
+      getByTestId(container, "workspace-companion-region").getAttribute(
+        "data-workspace",
+      ),
+    ).toBe("energy");
   });
 
   it("creates a new project using inline form without browser prompts", async () => {
