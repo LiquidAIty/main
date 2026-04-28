@@ -160,7 +160,7 @@ const TelescopeCanvas = React.forwardRef<TelescopeCanvasHandle, TelescopeCanvasP
 
     // --- Render -------------------------------------------------------------
 
-    const hasFallback = Boolean(fallbackUrl);
+    const showFallback = Boolean(fallbackUrl) && !osdReady;
 
     return (
       <div
@@ -172,7 +172,7 @@ const TelescopeCanvas = React.forwardRef<TelescopeCanvasHandle, TelescopeCanvasP
           background: '#020408',
         }}
       >
-        {hasFallback && (
+        {showFallback && (
           <img
             src={fallbackUrl}
             alt=""
@@ -195,6 +195,7 @@ const TelescopeCanvas = React.forwardRef<TelescopeCanvasHandle, TelescopeCanvasP
             position: 'absolute',
             inset: 0,
             zIndex: 1,
+            visibility: osdReady ? 'visible' : 'hidden',
           }}
         />
       </div>
