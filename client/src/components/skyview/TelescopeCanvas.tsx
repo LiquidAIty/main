@@ -1,9 +1,9 @@
-import React, { useEffect, useImperativeHandle, useRef } from 'react';
+import React, { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import OpenSeadragon from 'openseadragon';
 import type { TelescopeTileSource } from './telescopeMetadata';
 
 // ---------------------------------------------------------------------------
-// TelescopeCanvas — OpenSeadragon deep-zoom surface
+// TelescopeCanvas — OpenSeadragon deep-zoom surface with full-bleed fallback
 // ---------------------------------------------------------------------------
 
 export type TelescopeCanvasHandle = {
@@ -17,6 +17,7 @@ export type TelescopeCanvasHandle = {
 
 type TelescopeCanvasProps = {
   tileSource: TelescopeTileSource;
+  fallbackUrl?: string;
 };
 
 /**
@@ -27,11 +28,16 @@ type TelescopeCanvasProps = {
  * shared graphVisualTokens control strip.
  *
  * The image becomes the surface: dark background, grab cursor, no graph paper.
+ *
+ * Demo fallback: when a DZI source is selected but the tile pyramid is not
+ * available, a full-bleed `fallbackUrl` image is shown behind OSD so the
+ * stage never looks empty.
  */
 const TelescopeCanvas = React.forwardRef<TelescopeCanvasHandle, TelescopeCanvasProps>(
-  function TelescopeCanvas({ tileSource }, ref) {
+  function TelescopeCanvas({ tileSource, fallbackUrl }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewerRef = useRef<OpenSeadragon.Viewer | null>(null);
+    const [osdReady, setOsdReady] = useState(false);
 
     // --- Viewer lifecycle ---------------------------------------------------
 
@@ -86,6 +92,13 @@ const TelescopeCanvas = React.forwardRef<TelescopeCanvasHandle, TelescopeCanvasP
       const viewer = viewerRef.current;
       if (!viewer) return;
 
+      setOsdReady(false);
+
+      const onOpen = () => setOsdReady(true);
+      const onOpenFailed = () => setOsdReady(false);
+      viewer.addHandler('open', onOpen);
+      viewer.addHandler('open-failed', onOpenFailed);
+
       /*
        * Map our TelescopeTileSource union into OSD's tile source format.
        *
@@ -111,6 +124,11 @@ const TelescopeCanvas = React.forwardRef<TelescopeCanvasHandle, TelescopeCanvasP
       }
 
       viewer.open(osdSource);
+
+      return () => {
+        viewer.removeHandler('open', onOpen);
+        viewer.removeHandler('open-failed', onOpenFailed);
+      };
     }, [tileSource]);
 
     // --- Imperative handle for parent controls ------------------------------
@@ -142,9 +160,10 @@ const TelescopeCanvas = React.forwardRef<TelescopeCanvasHandle, TelescopeCanvasP
 
     // --- Render -------------------------------------------------------------
 
+    const hasFallback = Boolean(fallbackUrl);
+
     return (
       <div
-        ref={containerRef}
         data-testid="telescope-osd-container"
         style={{
           position: 'absolute',
@@ -152,7 +171,33 @@ const TelescopeCanvas = React.forwardRef<TelescopeCanvasHandle, TelescopeCanvasP
           cursor: 'grab',
           background: '#020408',
         }}
-      />
+      >
+        {hasFallback && (
+          <img
+            src={fallbackUrl}
+            alt=""
+            draggable={false}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              objectPosition: 'center center',
+              display: 'block',
+              zIndex: 0,
+            }}
+          />
+        )}
+        <div
+          ref={containerRef}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 1,
+          }}
+        />
+      </div>
     );
   },
 );

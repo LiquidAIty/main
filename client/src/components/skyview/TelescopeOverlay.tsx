@@ -14,7 +14,10 @@ import { tileSourceFromSkyTile, observationMetaFromSkyTile } from './telescopeMe
 // Constants
 // ---------------------------------------------------------------------------
 
-const FIRST_TILE_ID = skyTiles[0]?.id ?? '';
+const SAGITTARIUS_C_ID = 'sagittarius-c';
+const FIRST_TILE_ID =
+  skyTiles.find((t) => t.id === SAGITTARIUS_C_ID)?.id ?? skyTiles[0]?.id ?? '';
+
 
 // ---------------------------------------------------------------------------
 // TelescopeOverlay — full-surface deep-zoom image canvas
@@ -25,8 +28,9 @@ export default function TelescopeOverlay(): React.ReactElement {
 
   const [selectedTileId, setSelectedTileId] = useState(FIRST_TILE_ID);
   const [controlsLocked, setControlsLocked] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(true);
   const [failedImageIds, setFailedImageIds] = useState<Set<string>>(() => new Set());
+
 
   // --- Derived data --------------------------------------------------------
 
@@ -237,7 +241,12 @@ export default function TelescopeOverlay(): React.ReactElement {
         </div>
 
         {/* ── OpenSeadragon deep-zoom surface ────────────────────────────── */}
-        <TelescopeCanvas ref={canvasRef} tileSource={tileSource} />
+        <TelescopeCanvas
+          ref={canvasRef}
+          tileSource={tileSource}
+          fallbackUrl={selectedTile.jwst.displayUrl}
+        />
+
 
         {/* ── Shared vertical control strip ──────────────────────────────── */}
         <div
@@ -377,7 +386,7 @@ export default function TelescopeOverlay(): React.ReactElement {
         {/* ── Right glass inspect drawer ─────────────────────────────────── */}
         <RightGlassDrawer
           isOpen={drawerOpen}
-          title="Inspect"
+          title="Images"
           onClose={() => setDrawerOpen(false)}
           onOpen={() => setDrawerOpen(true)}
           dataTestId="telescope-inspect-drawer"

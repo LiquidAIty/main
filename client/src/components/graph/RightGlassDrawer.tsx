@@ -100,27 +100,47 @@ export default function RightGlassDrawer({
           type="button"
           aria-label={`Open ${title}`}
           onClick={onOpen}
-          className="absolute transition-opacity duration-150 ease-out hover:opacity-100"
+          className="absolute transition-all duration-150 ease-out hover:opacity-100"
           style={{
             top: "50%",
-            right,
-            transform: "translate(100%, -50%)",
-            width: 10,
-            height: 76,
-            border: `1px solid ${GRAPH_THEME.drawer.panelBorder}`,
-            borderLeft: "none",
-            borderTopRightRadius: 7,
-            borderBottomRightRadius: 7,
+            right: 0,
+            transform: "translateY(-50%)",
+            width: 28,
+            height: 96,
+            border: "1px solid rgba(55, 173, 170, 0.55)",
+            borderRight: "none",
+            borderTopLeftRadius: 10,
+            borderBottomLeftRadius: 10,
             cursor: "pointer",
             zIndex,
-            background: `linear-gradient(90deg, ${GRAPH_THEME.drawer.panelBackground}, rgba(17,22,29,0.96))`,
+            background: "rgba(6, 12, 18, 0.72)",
             color: GRAPH_THEME.drawer.inputMuted,
-            opacity: 0.86,
+            opacity: 1,
+            boxShadow: "0 0 18px rgba(45, 212, 191, 0.22)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            overflow: "hidden",
           }}
         >
-          <span className="sr-only">{title}</span>
+          <span
+            style={{
+              writingMode: "vertical-rl",
+              textOrientation: "mixed",
+              transform: "rotate(180deg)",
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              color: "rgba(190, 255, 250, 0.92)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {title}
+          </span>
         </button>
       ) : null}
+
       <aside
         data-testid={dataTestId}
         data-open={isOpen ? "true" : "false"}
