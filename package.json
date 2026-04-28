@@ -61,6 +61,7 @@
     "@swc/helpers": "~0.5.11",
     "@swc/jest": "~0.2.38",
     "@tailwindcss/postcss": "^4.1.12",
+    "@tailwindcss/vite": "^4.2.4",
     "@testing-library/dom": "10.4.0",
     "@testing-library/react": "16.1.0",
     "@types/cors": "^2.8.19",
@@ -102,6 +103,7 @@
     "typescript": "~5.8.2",
     "typescript-eslint": "^8.29.0",
     "vite": "^6.3.5",
+    "vite-tsconfig-paths": "^6.1.1",
     "vitest": "^3.0.0"
   },
   "workspaces": [
