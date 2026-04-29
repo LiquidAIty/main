@@ -139,7 +139,9 @@ export function sanitizeDeckEdges(value: unknown): DeckEdge[] {
       return {
         id: String(edge.id || '').trim(),
         source: String(edge.source || '').trim(),
+        sourceHandle: typeof (edge as DeckEdge).sourceHandle === 'string' ? (edge as DeckEdge).sourceHandle : null,
         target: String(edge.target || '').trim(),
+        targetHandle: typeof (edge as DeckEdge).targetHandle === 'string' ? (edge as DeckEdge).targetHandle : null,
         edgeType: normalizeEdgeType((edge as DeckEdge).edgeType),
         ...(metadata ? { metadata } : {}),
       };
@@ -158,11 +160,13 @@ function normalizeEdgeType(value: unknown): DeckEdgeType {
 }
 
 export function buildDeckEdgeIdentityKey(
-  edge: Pick<DeckEdge, 'source' | 'target' | 'edgeType'>,
+  edge: Pick<DeckEdge, 'source' | 'sourceHandle' | 'target' | 'targetHandle' | 'edgeType'>,
 ): string {
   return [
     String(edge.source || '').trim(),
+    String(edge.sourceHandle ?? '').trim(),
     String(edge.target || '').trim(),
+    String(edge.targetHandle ?? '').trim(),
     normalizeEdgeType(edge.edgeType),
   ].join('::');
 }
@@ -221,7 +225,9 @@ export function validateDeckDocument(
 
     const edgeKey = buildDeckEdgeIdentityKey({
       source: sourceId,
+      sourceHandle: edge.sourceHandle,
       target: targetId,
+      targetHandle: edge.targetHandle,
       edgeType: edge.edgeType,
     });
 

@@ -45,11 +45,13 @@ function normalizeEdgeType(value: unknown): DeckEdgeType {
 }
 
 export function buildDeckEdgeIdentityKey(
-  edge: Pick<DeckEdge, 'source' | 'target' | 'edgeType'>,
+  edge: Pick<DeckEdge, 'source' | 'sourceHandle' | 'target' | 'targetHandle' | 'edgeType'>,
 ): string {
   return [
     String(edge.source || '').trim(),
+    String(edge.sourceHandle ?? '').trim(),
     String(edge.target || '').trim(),
+    String(edge.targetHandle ?? '').trim(),
     normalizeEdgeType(edge.edgeType),
   ].join('::');
 }
@@ -109,7 +111,9 @@ export function validateDeckDocument(
 
     const edgeKey = buildDeckEdgeIdentityKey({
       source: sourceId,
+      sourceHandle: edge.sourceHandle,
       target: targetId,
+      targetHandle: edge.targetHandle,
       edgeType: edge.edgeType,
     });
 

@@ -50,18 +50,17 @@ import {
 } from '../graph/graphWorkspaceContract';
 import TurboFlowEdge from './edges/TurboFlowEdge';
 import AgentCardNode from './nodes/AgentCardNode';
+import MagenticBusNode from './nodes/MagenticBusNode';
 
 const DEV_MODE = import.meta.env.DEV;
 const PERSISTED_NODE_CHANGE_TYPES = new Set<NodeChange['type']>(['add', 'remove', 'replace', 'position']);
 const PERSISTED_EDGE_CHANGE_TYPES = new Set<EdgeChange['type']>(['add', 'remove', 'replace']);
 const FALLBACK_NODE_WIDTH = 144;
 const FALLBACK_NODE_HEIGHT = 88;
-const CANVAS_ROW_X_START = 170;
-const CANVAS_ROW_Y_START = 120;
-const CANVAS_ROW_X_GAP = 196;
 
 const nodeTypes = {
   agentCard: AgentCardNode,
+  magenticBus: MagenticBusNode,
 };
 const edgeTypes = {
   turboFlow: TurboFlowEdge,
@@ -191,80 +190,7 @@ export function isAnyCanvasNodeVisible(nodes: Node[], visibleRect: ViewportRect,
   return nodes.some((node) => isCanvasRectVisible(getNodeCanvasRect(node), visibleRect, padding));
 }
 
-function computeLeftToRightCanvasRows(document: DeckDocument): Map<string, { x: number; y: number }> {
-  const cards = document.nodes.filter(
-    (node) =>
-      isTopLevelCanvasCard(node),
-  );
-  const cardIdSet = new Set(cards.map((node) => node.id));
-  const outgoing = new Map<string, string[]>();
-  const incomingCount = new Map<string, number>();
-  const positionById = new Map(cards.map((node) => [node.id, node.position] as const));
-  cards.forEach((node) => {
-    outgoing.set(node.id, []);
-    incomingCount.set(node.id, 0);
-  });
-
-  document.edges.forEach((edge) => {
-    if (!cardIdSet.has(edge.source) || !cardIdSet.has(edge.target)) return;
-    outgoing.set(edge.source, [...(outgoing.get(edge.source) || []), edge.target]);
-    incomingCount.set(edge.target, Number(incomingCount.get(edge.target) || 0) + 1);
-  });
-
-  const queue = cards
-    .filter((node) => Number(incomingCount.get(node.id) || 0) === 0)
-    .sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x)
-    .map((node) => node.id);
-  const layerById = new Map<string, number>(cards.map((node) => [node.id, 0] as const));
-  const seen = new Set<string>();
-
-  while (queue.length > 0) {
-    const currentId = queue.shift() as string;
-    seen.add(currentId);
-    const currentLayer = Number(layerById.get(currentId) || 0);
-    (outgoing.get(currentId) || []).forEach((nextId) => {
-      layerById.set(nextId, Math.max(Number(layerById.get(nextId) || 0), currentLayer + 1));
-      const remainingIncoming = Number(incomingCount.get(nextId) || 0) - 1;
-      incomingCount.set(nextId, remainingIncoming);
-      if (remainingIncoming === 0) queue.push(nextId);
-    });
-  }
-
-  // Cycle fallback: preserve left-to-right intent by deriving layer from original x buckets.
-  cards.forEach((node) => {
-    if (seen.has(node.id)) return;
-    const bucket = Math.max(0, Math.round((node.position.x - CANVAS_ROW_X_START) / CANVAS_ROW_X_GAP));
-    layerById.set(node.id, bucket);
-  });
-
-  const layout = new Map<string, { x: number; y: number }>();
-  const nodesByLayer = new Map<number, string[]>();
-  cards.forEach((node) => {
-    const layer = Number(layerById.get(node.id) || 0);
-    nodesByLayer.set(layer, [...(nodesByLayer.get(layer) || []), node.id]);
-  });
-  let columnIndex = 0;
-  Array.from(nodesByLayer.keys())
-    .sort((a, b) => a - b)
-    .forEach((layer) => {
-      const ids = (nodesByLayer.get(layer) || []).sort((left, right) => {
-        const leftPos = positionById.get(left) || { x: 0, y: 0 };
-        const rightPos = positionById.get(right) || { x: 0, y: 0 };
-        return leftPos.x - rightPos.x || leftPos.y - rightPos.y;
-      });
-      ids.forEach((nodeId) => {
-        layout.set(nodeId, {
-          x: CANVAS_ROW_X_START + columnIndex * CANVAS_ROW_X_GAP,
-          y: CANVAS_ROW_Y_START,
-        });
-        columnIndex += 1;
-      });
-  });
-
-  return layout;
-}
-
-function toFlowNodes(
+export function toFlowNodes(
   document: DeckDocument,
   selectedCardId: string | null,
   selectedEdgeId: string | null,
@@ -295,11 +221,10 @@ function toFlowNodes(
       .filter((edge) => edge.id === selectedEdgeId || activeEdgeIds.has(edge.id))
       .flatMap((edge) => [edge.source, edge.target]),
   );
-  const rowLayout = computeLeftToRightCanvasRows(document);
   return document.nodes.map((node) => ({
     id: node.id,
-    type: 'agentCard',
-    position: rowLayout.get(node.id) || node.position,
+    type: normalizeRuntimeType(node.runtimeType) === 'magentic_one' ? 'magenticBus' : 'agentCard',
+    position: node.position,
     draggable: true,
     selectable: true,
     focusable: true,
@@ -572,7 +497,7 @@ export function buildDeckEdgeVisualStates(document: DeckDocument): Map<string, D
   );
 }
 
-function toFlowEdges(
+export function toFlowEdges(
   document: DeckDocument,
   selectedEdgeId: string | null,
   hoveredCardId: string | null,
@@ -590,7 +515,9 @@ function toFlowEdges(
     return {
       id: edge.id,
       source: edge.source,
+      sourceHandle: edge.sourceHandle ?? undefined,
       target: edge.target,
+      targetHandle: edge.targetHandle ?? undefined,
       data: {
         edgeType,
         metadata: edge.metadata || null,
@@ -671,9 +598,11 @@ export function mergeFlowEdgesIntoDeck(nextEdges: Edge[], prevEdges: DeckEdge[])
       return {
         ...edgeWithoutMetadata,
         source: nextEdge.source,
+        sourceHandle: nextEdge.sourceHandle ?? null,
         target: nextEdge.target,
-          edgeType:
-            ((nextEdge.data as FlowEdgeData | undefined)?.edgeType as DeckEdgeType | null | undefined) ??
+        targetHandle: nextEdge.targetHandle ?? null,
+        edgeType:
+          ((nextEdge.data as FlowEdgeData | undefined)?.edgeType as DeckEdgeType | null | undefined) ??
           edge.edgeType ??
           'flow',
         ...(metadata ? { metadata } : {}),
@@ -686,7 +615,9 @@ export function mergeFlowEdgesIntoDeck(nextEdges: Edge[], prevEdges: DeckEdge[])
     merged.push({
       id: edge.id,
       source: edge.source,
+      sourceHandle: edge.sourceHandle ?? null,
       target: edge.target,
+      targetHandle: edge.targetHandle ?? null,
       edgeType:
         ((edge.data as FlowEdgeData | undefined)?.edgeType as DeckEdgeType | null | undefined) ??
         'flow',
@@ -695,6 +626,60 @@ export function mergeFlowEdgesIntoDeck(nextEdges: Edge[], prevEdges: DeckEdge[])
   });
 
   return merged;
+}
+
+export function isPlainConnectionAllowedForDocument(
+  document: DeckDocument,
+  connection: Pick<Connection, 'source' | 'sourceHandle' | 'target' | 'targetHandle'>,
+  currentEdges: Edge[],
+  ignoreEdgeId?: string,
+): boolean {
+  if (!connection.source || !connection.target) return false;
+  if (connection.source === connection.target) return false;
+  const edgeType = resolveCanvasConnectionEdgeType(document, connection);
+  if (!edgeType) return false;
+
+  const nextEdgeKey = buildDeckEdgeIdentityKey({
+    source: connection.source,
+    sourceHandle: connection.sourceHandle ?? null,
+    target: connection.target,
+    targetHandle: connection.targetHandle ?? null,
+    edgeType,
+  });
+
+  return !currentEdges.some((edge) => {
+    if (edge.id === ignoreEdgeId) return false;
+    if (!edge.source || !edge.target) return false;
+    return (
+      buildDeckEdgeIdentityKey({
+        source: edge.source,
+        sourceHandle: edge.sourceHandle ?? null,
+        target: edge.target,
+        targetHandle: edge.targetHandle ?? null,
+        edgeType:
+          ((edge.data as { edgeType?: DeckEdgeType | null } | undefined)?.edgeType as DeckEdgeType | null | undefined) ??
+          'flow',
+      }) === nextEdgeKey
+    );
+  });
+}
+
+export function buildDeckEdgeFromConnection(
+  connection: Pick<Connection, 'source' | 'sourceHandle' | 'target' | 'targetHandle'>,
+  edgeId: string,
+  edgeType: DeckEdgeType,
+  metadata: DeckEdgeMetadata | null,
+): DeckEdge | null {
+  if (!connection.source || !connection.target) return null;
+  return {
+    id: edgeId,
+    source: connection.source,
+    sourceHandle: connection.sourceHandle ?? null,
+    target: connection.target,
+    targetHandle: connection.targetHandle ?? null,
+    edgeType,
+    ...(metadata ? { metadata } : {}),
+  };
 }
 
 export default function BuilderCanvas({
@@ -852,34 +837,10 @@ export default function BuilderCanvas({
   }, [pendingDocumentFlushNonce, onPersistGraphMutation, setDocument]);
 
   const isPlainConnectionAllowed = (
-    connection: Pick<Connection, 'source' | 'target'>,
+    connection: Pick<Connection, 'source' | 'sourceHandle' | 'target' | 'targetHandle'>,
     currentEdges: Edge[],
     ignoreEdgeId?: string,
-  ): boolean => {
-    if (!connection.source || !connection.target) return false;
-    if (connection.source === connection.target) return false;
-    if (!resolveCanvasConnectionEdgeType(document, connection)) return false;
-
-    const nextEdgeKey = buildDeckEdgeIdentityKey({
-      source: connection.source,
-      target: connection.target,
-      edgeType: resolveCanvasConnectionEdgeType(document, connection) || 'flow',
-    });
-
-    return !currentEdges.some((edge) => {
-      if (edge.id === ignoreEdgeId) return false;
-      if (!edge.source || !edge.target) return false;
-      return (
-        buildDeckEdgeIdentityKey({
-          source: edge.source,
-          target: edge.target,
-          edgeType:
-            ((edge.data as { edgeType?: DeckEdgeType | null } | undefined)?.edgeType as DeckEdgeType | null | undefined) ??
-            'flow',
-        }) === nextEdgeKey
-      );
-    });
-  };
+  ): boolean => isPlainConnectionAllowedForDocument(document, connection, currentEdges, ignoreEdgeId);
 
   const onNodesChange = (changes: NodeChange[]) => {
     const hasPersistedNodeChange = shouldPersistNodeChanges(changes);
@@ -936,40 +897,42 @@ export default function BuilderCanvas({
   };
   const commitConnection = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target) return;
-    let nextEdgesForMerge: Edge[] | null = null;
-    let shouldPersist = false;
+    const edgeType = resolveCanvasConnectionEdgeType(document, connection);
+    if (!edgeType) return;
+    const edgeId = `edge_${Math.random().toString(36).slice(2, 10)}`;
+    const metadata = resolveCanvasConnectionMetadata(document, connection, edgeType);
+    const nextDeckEdge = buildDeckEdgeFromConnection(connection, edgeId, edgeType, metadata);
+    if (!nextDeckEdge) return;
+
     setEdges((current) => {
       if (!isPlainConnectionAllowed(connection, current)) return current;
-      const edgeId = `edge_${Math.random().toString(36).slice(2, 10)}`;
-
-      const next = addEdge(
+      return addEdge(
         {
           ...connection,
           id: edgeId,
-          data: (() => {
-            const edgeType = resolveCanvasConnectionEdgeType(document, connection) || 'flow';
-            return {
-              edgeType,
-              metadata: resolveCanvasConnectionMetadata(document, connection, edgeType),
-            } satisfies FlowEdgeData;
-          })(),
+          data: {
+            edgeType,
+            metadata,
+          } satisfies FlowEdgeData,
         },
         current,
       );
-      nextEdgesForMerge = next;
-      shouldPersist = true;
-      return next;
     });
-    if (!shouldPersist || !nextEdgesForMerge) return;
     onPersistGraphMutation?.('canvas:connect', {
       source: connection.source,
       target: connection.target,
     });
-    setDocument((prev) => ({
-      ...prev,
-      version: prev.version + 1,
-      edges: mergeFlowEdgesIntoDeck(nextEdgesForMerge as Edge[], prev.edges),
-    }));
+    setDocument((prev) => {
+      const nextEdgeKey = buildDeckEdgeIdentityKey(nextDeckEdge as DeckEdge);
+      if (prev.edges.some((edge) => buildDeckEdgeIdentityKey(edge) === nextEdgeKey)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        version: prev.version + 1,
+        edges: [...prev.edges, nextDeckEdge as DeckEdge],
+      };
+    });
   }, [document, onPersistGraphMutation, setDocument]);
 
   const onConnect = useCallback((connection: Connection) => {
@@ -977,11 +940,16 @@ export default function BuilderCanvas({
   }, [commitConnection]);
 
   const onReconnect: OnReconnect<Edge> = (oldEdge, newConnection) => {
-    let nextEdgesForMerge: Edge[] | null = null;
-    let shouldPersist = false;
+    if (!newConnection.source || !newConnection.target) return;
+    if (newConnection.source === newConnection.target) return;
+    const nextEdgeType = resolveCanvasConnectionEdgeType(document, newConnection);
+    if (!nextEdgeType) return;
+    const nextMetadata =
+      normalizeDeckEdgeMetadata((oldEdge.data as FlowEdgeData | undefined)?.metadata) ??
+      resolveCanvasConnectionMetadata(document, newConnection, nextEdgeType);
+
     setEdges((current) => {
       if (!isPlainConnectionAllowed(newConnection, current, oldEdge.id)) return current;
-      const nextEdgeType = resolveCanvasConnectionEdgeType(document, newConnection) || 'flow';
       const reconnected = reconnectEdge(
         oldEdge,
         newConnection,
@@ -1002,21 +970,47 @@ export default function BuilderCanvas({
             }
           : edge,
       );
-      nextEdgesForMerge = next;
-      shouldPersist = true;
       return next;
     });
-    if (!shouldPersist || !nextEdgesForMerge) return;
     onPersistGraphMutation?.('canvas:reconnect', {
       edgeId: oldEdge.id,
       source: newConnection.source,
       target: newConnection.target,
     });
-    setDocument((prev) => ({
-      ...prev,
-      version: prev.version + 1,
-      edges: mergeFlowEdgesIntoDeck(nextEdgesForMerge as Edge[], prev.edges),
-    }));
+    setDocument((prev) => {
+      const reconnectedDeckEdge = buildDeckEdgeFromConnection(
+        newConnection,
+        oldEdge.id,
+        nextEdgeType,
+        nextMetadata,
+      );
+      if (!reconnectedDeckEdge) return prev;
+      const nextEdgeKey = buildDeckEdgeIdentityKey(reconnectedDeckEdge);
+      if (
+        prev.edges.some(
+          (edge) => edge.id !== oldEdge.id && buildDeckEdgeIdentityKey(edge) === nextEdgeKey,
+        )
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        version: prev.version + 1,
+        edges: prev.edges.map((edge) =>
+          edge.id === oldEdge.id
+            ? {
+                ...edge,
+                source: reconnectedDeckEdge.source,
+                sourceHandle: reconnectedDeckEdge.sourceHandle,
+                target: reconnectedDeckEdge.target,
+                targetHandle: reconnectedDeckEdge.targetHandle,
+                edgeType: reconnectedDeckEdge.edgeType,
+                ...(reconnectedDeckEdge.metadata ? { metadata: reconnectedDeckEdge.metadata } : {}),
+              }
+            : edge,
+        ),
+      };
+    });
     onSelectCard(null);
     onSelectEdge(oldEdge.id);
   };
@@ -1181,7 +1175,7 @@ export default function BuilderCanvas({
           </button>
         </div>
       ) : null}
-      <div style={graphControlStackStyle}>
+      <div style={{ ...graphControlStackStyle, left: 'auto', right: 16 }}>
         <button
           type="button"
           aria-label="Zoom in"

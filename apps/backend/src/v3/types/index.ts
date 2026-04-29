@@ -111,7 +111,9 @@ export type AgentCardInstance = {
 export type DeckEdge = {
   id: string;
   source: string;
+  sourceHandle?: string | null;
   target: string;
+  targetHandle?: string | null;
   edgeType?: DeckEdgeType | null;
   metadata?: DeckEdgeMetadata | null;
 };

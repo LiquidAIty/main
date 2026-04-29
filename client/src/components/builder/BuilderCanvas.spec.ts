@@ -1,3 +1,5 @@
+import React from 'react';
+import { Handle } from '@xyflow/react';
 import type { Edge, EdgeChange, Node, NodeChange } from '@xyflow/react';
 import { describe, expect, it } from 'vitest';
 
@@ -6,8 +8,10 @@ import { buildExecutionPlan } from './deckExecution';
 import {
   buildCanvasDocumentRecoveryKey,
   buildAssistStructureSummaries,
+  buildDeckEdgeFromConnection,
   buildDeckEdgeVisualStates,
   getAssistSwarmBadge,
+  isPlainConnectionAllowedForDocument,
   isAnyCanvasNodeVisible,
   isCanvasRectVisible,
   mergeFlowEdgesIntoDeck,
@@ -16,8 +20,11 @@ import {
   shouldPersistNodeChanges,
   syncFlowEdgesForRender,
   syncFlowNodesForRender,
+  toFlowEdges,
+  toFlowNodes,
 } from './BuilderCanvas';
-import { sanitizeDeckEdges } from './deckValidation';
+import { buildDeckEdgeIdentityKey, sanitizeDeckEdges } from './deckValidation';
+import MagenticBusNode from './nodes/MagenticBusNode';
 
 describe('BuilderCanvas runtime-truth helpers', () => {
   it('does not persist selection-only node or edge changes', () => {
@@ -78,13 +85,17 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       {
         id: 'edge_magentic_assist',
         source: 'card_magentic',
+        sourceHandle: null,
         target: 'card_assist',
+        targetHandle: null,
         edgeType: 'magentic_option',
       },
       {
         id: 'edge_step_1_2',
         source: 'card_step_1',
+        sourceHandle: null,
         target: 'card_step_2',
+        targetHandle: null,
         edgeType: 'flow',
       },
     ]);
@@ -128,7 +139,9 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       {
         id: 'edge_magentic_assist',
         source: 'card_magentic',
+        sourceHandle: null,
         target: 'card_assist',
+        targetHandle: null,
         edgeType: 'magentic_option',
         metadata: {
           role: 'callable_route',
@@ -146,7 +159,9 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       {
         id: 'edge_assist_next',
         source: 'card_assist',
+        sourceHandle: null,
         target: 'card_next',
+        targetHandle: null,
         edgeType: 'flow',
         metadata: {
           role: 'graph_execution',
@@ -787,5 +802,280 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       className: 'edge-flow',
     });
   });
+
+  it('supports DeckEdge sourceHandle and targetHandle fields', () => {
+    const edge: DeckEdge = {
+      id: 'edge_bus_thinkgraph',
+      source: 'card_magentic',
+      sourceHandle: 'bus-out-1',
+      target: 'card_thinkgraph_agent',
+      targetHandle: 'agent-in',
+      edgeType: 'magentic_option',
+    };
+
+    expect(edge.sourceHandle).toBe('bus-out-1');
+    expect(edge.targetHandle).toBe('agent-in');
+  });
+
+  it('preserves handle fields when sanitizing deck edges', () => {
+    const edges = sanitizeDeckEdges([
+      {
+        id: 'edge_bus_thinkgraph',
+        source: 'card_magentic',
+        sourceHandle: 'bus-out-1',
+        target: 'card_thinkgraph_agent',
+        targetHandle: 'agent-in',
+        edgeType: 'magentic_option',
+      },
+    ]);
+
+    expect(edges).toEqual<DeckEdge[]>([
+      {
+        id: 'edge_bus_thinkgraph',
+        source: 'card_magentic',
+        sourceHandle: 'bus-out-1',
+        target: 'card_thinkgraph_agent',
+        targetHandle: 'agent-in',
+        edgeType: 'magentic_option',
+      },
+    ]);
+  });
+
+  it('includes sourceHandle and targetHandle in edge identity', () => {
+    const firstKey = buildDeckEdgeIdentityKey({
+      source: 'card_magentic',
+      sourceHandle: 'bus-out-1',
+      target: 'card_thinkgraph_agent',
+      targetHandle: null,
+      edgeType: 'magentic_option',
+    });
+    const secondKey = buildDeckEdgeIdentityKey({
+      source: 'card_magentic',
+      sourceHandle: 'bus-out-2',
+      target: 'card_thinkgraph_agent',
+      targetHandle: null,
+      edgeType: 'magentic_option',
+    });
+
+    expect(firstKey).not.toBe(secondKey);
+    expect(firstKey).toBe('card_magentic::bus-out-1::card_thinkgraph_agent::::magentic_option');
+  });
+
+  it('allows the same source and target through different handles but rejects exact duplicates', () => {
+    const document = createBusTestDocument();
+    const currentEdges: Edge[] = [
+      {
+        id: 'edge_bus_thinkgraph_1',
+        source: 'card_magentic',
+        sourceHandle: 'bus-out-1',
+        target: 'card_thinkgraph_agent',
+        targetHandle: null,
+        data: { edgeType: 'magentic_option' },
+      } as Edge,
+    ];
+
+    expect(
+      isPlainConnectionAllowedForDocument(
+        document,
+        {
+          source: 'card_magentic',
+          sourceHandle: 'bus-out-2',
+          target: 'card_thinkgraph_agent',
+          targetHandle: null,
+        },
+        currentEdges,
+      ),
+    ).toBe(true);
+
+    expect(
+      isPlainConnectionAllowedForDocument(
+        document,
+        {
+          source: 'card_magentic',
+          sourceHandle: 'bus-out-1',
+          target: 'card_thinkgraph_agent',
+          targetHandle: null,
+        },
+        currentEdges,
+      ),
+    ).toBe(false);
+  });
+
+  it('passes handle ids through React Flow edge mapping', () => {
+    const [edge] = toFlowEdges(
+      createBusTestDocument([
+        {
+          id: 'edge_bus_thinkgraph',
+          source: 'card_magentic',
+          sourceHandle: 'bus-out-3',
+          target: 'card_thinkgraph_agent',
+          targetHandle: 'agent-in',
+          edgeType: 'magentic_option',
+        },
+      ]),
+      null,
+      null,
+      new Set(),
+    );
+
+    expect(edge).toMatchObject({
+      sourceHandle: 'bus-out-3',
+      targetHandle: 'agent-in',
+    });
+  });
+
+  it('captures handle ids when converting React Flow edges back to DeckEdge', () => {
+    expect(
+      buildDeckEdgeFromConnection(
+        {
+          source: 'card_magentic',
+          sourceHandle: 'bus-out-4',
+          target: 'card_research_agent',
+          targetHandle: 'agent-in',
+        },
+        'edge_bus_research',
+        'magentic_option',
+        null,
+      ),
+    ).toEqual<DeckEdge>({
+      id: 'edge_bus_research',
+      source: 'card_magentic',
+      sourceHandle: 'bus-out-4',
+      target: 'card_research_agent',
+      targetHandle: 'agent-in',
+      edgeType: 'magentic_option',
+    });
+
+    const savedEdges = mergeFlowEdgesIntoDeck(
+      [
+        {
+          id: 'edge_bus_research',
+          source: 'card_magentic',
+          sourceHandle: 'bus-out-4',
+          target: 'card_research_agent',
+          targetHandle: 'agent-in',
+          data: { edgeType: 'magentic_option' },
+        } as Edge,
+      ],
+      [],
+    );
+
+    expect(savedEdges).toEqual<DeckEdge[]>([
+      {
+        id: 'edge_bus_research',
+        source: 'card_magentic',
+        sourceHandle: 'bus-out-4',
+        target: 'card_research_agent',
+        targetHandle: 'agent-in',
+        edgeType: 'magentic_option',
+      },
+    ]);
+  });
+
+  it('maps only the Magentic-One card to the magenticBus node type', () => {
+    const nodes = toFlowNodes(
+      createBusTestDocument(),
+      null,
+      null,
+      null,
+      false,
+      null,
+      new Set(),
+      new Set(),
+      {},
+    );
+
+    expect(nodes.find((node) => node.id === 'card_magentic')).toMatchObject({
+      type: 'magenticBus',
+      position: { x: 40, y: 90 },
+    });
+    expect(nodes.find((node) => node.id === 'card_thinkgraph_agent')).toMatchObject({
+      type: 'agentCard',
+      position: { x: 180, y: -120 },
+    });
+  });
+
+  it('renders exactly six real React Flow handles on MagenticBusNode', () => {
+    const handles = collectHandleElements(MagenticBusNode());
+
+    expect(handles).toHaveLength(6);
+    expect(handles.map((handle) => handle.props.id)).toEqual([
+      'bus-in-1',
+      'bus-in-2',
+      'bus-out-1',
+      'bus-out-2',
+      'bus-out-3',
+      'bus-out-4',
+    ]);
+    handles.forEach((handle) => {
+      const style = handle.props.style as Record<string, unknown>;
+      expect(style.width).toBe(18);
+      expect(style.height).toBe(24);
+      expect(style.borderRadius).toBe(8);
+      expect(style.pointerEvents).toBe('all');
+      expect(style.zIndex).toBe(100);
+      expect(style.opacity).toBe(1);
+      expect(style.display).toBeUndefined();
+      expect(style.visibility).toBeUndefined();
+    });
+  });
 });
 
+function createBusTestDocument(edges: DeckEdge[] = []): DeckDocument {
+  return {
+    id: 'deck_bus_test',
+    name: 'Bus Test',
+    promptTemplates: [],
+    version: 1,
+    nodes: [
+      {
+        id: 'card_magentic',
+        kind: 'agent',
+        templateId: 'template_magentic',
+        runtimeType: 'magentic_one',
+        title: 'Magentic-One',
+        position: { x: 40, y: 90 },
+      },
+      {
+        id: 'card_thinkgraph_agent',
+        kind: 'agent',
+        templateId: 'template_thinkgraph_agent',
+        runtimeType: 'assistant_agent',
+        title: 'ThinkGraph',
+        position: { x: 180, y: -120 },
+      },
+      {
+        id: 'card_codegraph_agent',
+        kind: 'agent',
+        templateId: 'template_codegraph_agent',
+        runtimeType: 'assistant_agent',
+        title: 'CodeGraph',
+        position: { x: 180, y: 40 },
+      },
+      {
+        id: 'card_research_agent',
+        kind: 'agent',
+        templateId: 'template_research_agent',
+        runtimeType: 'assistant_agent',
+        title: 'Research',
+        position: { x: 180, y: 200 },
+      },
+    ],
+    edges,
+  };
+}
+
+function collectHandleElements(value: React.ReactNode): React.ReactElement[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => collectHandleElements(entry));
+  }
+  if (!React.isValidElement(value)) {
+    return [];
+  }
+
+  const children = (value.props as { children?: React.ReactNode }).children;
+  return [
+    ...(value.type === Handle ? [value] : []),
+    ...collectHandleElements(children),
+  ];
+}

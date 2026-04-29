@@ -1490,7 +1490,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'Magentic-One',
       subtitle: 'Admin orchestrator / planner',
-      position: { x: -220, y: -120 },
+      position: { x: 40, y: 90 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
