@@ -1490,7 +1490,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'Magentic-One',
       subtitle: 'Admin orchestrator / planner',
-      position: { x: 40, y: 90 },
+      position: { x: 140, y: 120 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -1507,7 +1507,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'ThinkGraph Agent',
       subtitle: 'Provisional / planning memory (AGE)',
-      position: { x: 180, y: -120 },
+      position: { x: 320, y: 140 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -1524,7 +1524,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'CodeGraph Agent',
       subtitle: 'Structural code memory',
-      position: { x: 180, y: 40 },
+      position: { x: 560, y: 140 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -1541,7 +1541,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'Research Agent',
       subtitle: 'Research and analysis worker',
-      position: { x: 180, y: 200 },
+      position: { x: 800, y: 140 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -1558,7 +1558,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'KnowGraph Agent',
       subtitle: 'Grounded / evidence-backed memory (Neo4j)',
-      position: { x: 180, y: 360 },
+      position: { x: 1040, y: 140 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -1892,12 +1892,23 @@ function getSuggestedDeckNodePosition(
     -220,
   );
   const nextColumnX = rightMostX + 320;
+  const visibleTopLevelAgentXs = deck.nodes
+    .filter(
+      (node) =>
+        !cleanOptionalText(node.parentGraphId) &&
+        normalizeRuntimeType(node.runtimeType) !== 'magentic_one',
+    )
+    .map((node) => node.position.x);
+  const wrappedColumnX =
+    nextColumnX > 1040 && visibleTopLevelAgentXs.length > 0
+      ? Math.min(...visibleTopLevelAgentXs)
+      : nextColumnX;
   const occupiedInNextColumn = deck.nodes.filter(
-    (node) => Math.abs(node.position.x - nextColumnX) < 72,
+    (node) => Math.abs(node.position.x - wrappedColumnX) < 72,
   ).length;
   return {
-    x: nextColumnX,
-    y: 40 + occupiedInNextColumn * 180,
+    x: wrappedColumnX,
+    y: (wrappedColumnX === nextColumnX ? 40 : 140) + occupiedInNextColumn * 180,
   };
 }
 

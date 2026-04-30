@@ -901,6 +901,72 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     ).toBe(false);
   });
 
+  it('allows normal agent-to-agent chains and rejects only exact duplicate links', () => {
+    const document = createBusTestDocument();
+    const currentEdges: Edge[] = [
+      {
+        id: 'edge_thinkgraph_codegraph',
+        source: 'card_thinkgraph_agent',
+        sourceHandle: null,
+        target: 'card_codegraph_agent',
+        targetHandle: null,
+        data: { edgeType: 'flow' },
+      } as Edge,
+    ];
+
+    expect(
+      isPlainConnectionAllowedForDocument(
+        document,
+        {
+          source: 'card_thinkgraph_agent',
+          sourceHandle: null,
+          target: 'card_codegraph_agent',
+          targetHandle: null,
+        },
+        [],
+      ),
+    ).toBe(true);
+
+    expect(
+      isPlainConnectionAllowedForDocument(
+        document,
+        {
+          source: 'card_codegraph_agent',
+          sourceHandle: null,
+          target: 'card_research_agent',
+          targetHandle: null,
+        },
+        currentEdges,
+      ),
+    ).toBe(true);
+
+    expect(
+      isPlainConnectionAllowedForDocument(
+        document,
+        {
+          source: 'card_thinkgraph_agent',
+          sourceHandle: null,
+          target: 'card_codegraph_agent',
+          targetHandle: null,
+        },
+        currentEdges,
+      ),
+    ).toBe(false);
+
+    expect(
+      isPlainConnectionAllowedForDocument(
+        document,
+        {
+          source: 'card_magentic',
+          sourceHandle: 'bus-out-1',
+          target: 'card_thinkgraph_agent',
+          targetHandle: null,
+        },
+        currentEdges,
+      ),
+    ).toBe(true);
+  });
+
   it('passes handle ids through React Flow edge mapping', () => {
     const [edge] = toFlowEdges(
       createBusTestDocument([
@@ -987,11 +1053,11 @@ describe('BuilderCanvas runtime-truth helpers', () => {
 
     expect(nodes.find((node) => node.id === 'card_magentic')).toMatchObject({
       type: 'magenticBus',
-      position: { x: 40, y: 90 },
+      position: { x: 40, y: 120 },
     });
     expect(nodes.find((node) => node.id === 'card_thinkgraph_agent')).toMatchObject({
       type: 'agentCard',
-      position: { x: 180, y: -120 },
+      position: { x: 180, y: 140 },
     });
   });
 
@@ -1009,14 +1075,20 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     ]);
     handles.forEach((handle) => {
       const style = handle.props.style as Record<string, unknown>;
-      expect(style.width).toBe(18);
-      expect(style.height).toBe(24);
+      expect(style.width).toBe(14);
+      expect(style.height).toBe(20);
       expect(style.borderRadius).toBe(8);
       expect(style.pointerEvents).toBe('all');
       expect(style.zIndex).toBe(100);
-      expect(style.opacity).toBe(1);
+      expect(style.opacity).toBe(0.86);
       expect(style.display).toBeUndefined();
       expect(style.visibility).toBeUndefined();
+    });
+    handles.slice(0, 2).forEach((handle) => {
+      expect((handle.props.style as Record<string, unknown>).left).toBe(-7);
+    });
+    handles.slice(2).forEach((handle) => {
+      expect((handle.props.style as Record<string, unknown>).right).toBe(-7);
     });
   });
 });
@@ -1034,7 +1106,7 @@ function createBusTestDocument(edges: DeckEdge[] = []): DeckDocument {
         templateId: 'template_magentic',
         runtimeType: 'magentic_one',
         title: 'Magentic-One',
-        position: { x: 40, y: 90 },
+        position: { x: 40, y: 120 },
       },
       {
         id: 'card_thinkgraph_agent',
@@ -1042,7 +1114,7 @@ function createBusTestDocument(edges: DeckEdge[] = []): DeckDocument {
         templateId: 'template_thinkgraph_agent',
         runtimeType: 'assistant_agent',
         title: 'ThinkGraph',
-        position: { x: 180, y: -120 },
+        position: { x: 180, y: 140 },
       },
       {
         id: 'card_codegraph_agent',
@@ -1050,7 +1122,7 @@ function createBusTestDocument(edges: DeckEdge[] = []): DeckDocument {
         templateId: 'template_codegraph_agent',
         runtimeType: 'assistant_agent',
         title: 'CodeGraph',
-        position: { x: 180, y: 40 },
+        position: { x: 420, y: 140 },
       },
       {
         id: 'card_research_agent',
@@ -1058,7 +1130,7 @@ function createBusTestDocument(edges: DeckEdge[] = []): DeckDocument {
         templateId: 'template_research_agent',
         runtimeType: 'assistant_agent',
         title: 'Research',
-        position: { x: 180, y: 200 },
+        position: { x: 660, y: 140 },
       },
     ],
     edges,

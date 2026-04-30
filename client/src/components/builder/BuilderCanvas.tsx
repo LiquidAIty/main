@@ -777,7 +777,7 @@ export default function BuilderCanvas({
     const applyFit = () => {
       const graphNodes = reactFlowInstance
         .getNodes()
-        .filter((node) => node.type === 'agentCard');
+        .filter((node) => node.type === 'agentCard' || node.type === 'magenticBus');
       if (graphNodes.length === 0) return;
       const sortedByX = [...graphNodes].sort(
         (left, right) =>
