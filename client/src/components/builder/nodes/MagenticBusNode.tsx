@@ -1,27 +1,43 @@
 import { Handle, Position } from '@xyflow/react';
 
 const leftHandles = [
-  { id: 'bus-in-1', top: '35%' },
-  { id: 'bus-in-2', top: '65%' },
+  { id: 'bus-in-1', top: '16%' },
+  { id: 'bus-in-2', top: '28%' },
+  { id: 'bus-in-3', top: '40%' },
+  { id: 'bus-in-4', top: '52%' },
+  { id: 'bus-in-5', top: '64%' },
+  { id: 'bus-in-6', top: '76%' },
 ];
 
 const rightHandles = [
-  { id: 'bus-out-1', top: '18%' },
-  { id: 'bus-out-2', top: '39%' },
-  { id: 'bus-out-3', top: '60%' },
-  { id: 'bus-out-4', top: '81%' },
+  { id: 'bus-out-1', top: '16%' },
+  { id: 'bus-out-2', top: '28%' },
+  { id: 'bus-out-3', top: '40%' },
+  { id: 'bus-out-4', top: '52%' },
+  { id: 'bus-out-5', top: '64%' },
+  { id: 'bus-out-6', top: '76%' },
 ];
 
 const handleBaseStyle = {
-  width: 14,
-  height: 20,
-  borderRadius: 8,
+  width: 6,
+  height: 16,
+  borderRadius: 4,
   pointerEvents: 'all' as const,
   zIndex: 100,
-  opacity: 0.86,
-  background: 'linear-gradient(180deg, rgba(83, 234, 226, 0.86), rgba(29, 114, 111, 0.9))',
-  border: '1px solid rgba(209, 255, 251, 0.56)',
-  boxShadow: '0 0 0 1px rgba(10, 17, 22, 0.72), 0 4px 10px rgba(55, 173, 170, 0.14)',
+};
+
+const leftHandleStyle = {
+  ...handleBaseStyle,
+  opacity: 0.35,
+  background: 'rgba(156, 145, 111, 0.6)',
+  border: '1px solid rgba(214, 204, 162, 0.4)',
+};
+
+const rightHandleStyle = {
+  ...handleBaseStyle,
+  opacity: 0.65,
+  background: 'rgba(84, 221, 214, 0.8)',
+  border: '1px solid rgba(191, 255, 250, 0.5)',
 };
 
 export default function MagenticBusNode() {
@@ -29,14 +45,12 @@ export default function MagenticBusNode() {
     <div
       style={{
         position: 'relative',
-        width: 36,
-        height: 420,
-        borderRadius: 12,
-        border: '1px solid rgba(148, 163, 184, 0.24)',
-        background:
-          'linear-gradient(180deg, rgba(17, 24, 32, 0.92), rgba(8, 12, 17, 0.96))',
-        boxShadow:
-          'inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 -1px 0 rgba(255, 255, 255, 0.035), 0 12px 24px rgba(0, 0, 0, 0.22)',
+        width: 26,
+        height: 460,
+        borderRadius: 16,
+        border: '1px solid rgba(84, 221, 214, 0.15)',
+        background: 'rgba(5, 7, 10, 0.85)',
+        backdropFilter: 'blur(10px)',
       }}
     >
       <div
@@ -48,7 +62,7 @@ export default function MagenticBusNode() {
           left: '50%',
           width: 1,
           transform: 'translateX(-50%)',
-          background: 'linear-gradient(180deg, transparent, rgba(148, 163, 184, 0.28), transparent)',
+          background: 'rgba(84, 221, 214, 0.1)',
           pointerEvents: 'none',
         }}
       />
@@ -60,8 +74,8 @@ export default function MagenticBusNode() {
           position={Position.Left}
           aria-label={handle.id}
           style={{
-            ...handleBaseStyle,
-            left: -7,
+            ...leftHandleStyle,
+            left: -3,
             top: handle.top,
           }}
         />
@@ -74,8 +88,8 @@ export default function MagenticBusNode() {
           position={Position.Right}
           aria-label={handle.id}
           style={{
-            ...handleBaseStyle,
-            right: -7,
+            ...rightHandleStyle,
+            right: -3,
             top: handle.top,
           }}
         />
