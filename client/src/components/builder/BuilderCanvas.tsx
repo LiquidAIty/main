@@ -57,6 +57,8 @@ const PERSISTED_NODE_CHANGE_TYPES = new Set<NodeChange['type']>(['add', 'remove'
 const PERSISTED_EDGE_CHANGE_TYPES = new Set<EdgeChange['type']>(['add', 'remove', 'replace']);
 const FALLBACK_NODE_WIDTH = 144;
 const FALLBACK_NODE_HEIGHT = 88;
+const LANDING_BUS_SCREEN_X = 24;
+const LANDING_BUS_SCREEN_Y = 72;
 
 const nodeTypes = {
   agentCard: AgentCardNode,
@@ -93,6 +95,31 @@ export type BuilderCanvasFocusRequest = {
   cardId?: string | null;
   nonce: number;
 };
+
+export type CanvasLandingViewport = {
+  x: number;
+  y: number;
+  zoom: number;
+};
+
+export function buildInitialWorkbenchLandingViewport(document: DeckDocument): CanvasLandingViewport | null {
+  const busNode = document.nodes.find((node) => normalizeRuntimeType(node.runtimeType) === 'magentic_one');
+  const workbenchNode = document.nodes.find(
+    (node) =>
+      String(node.id || '').trim() === 'card_energy_workbench' ||
+      String(node.templateId || '').trim() === 'template_energy_workbench',
+  );
+
+  if (!busNode || !workbenchNode || workbenchNode.position.x <= busNode.position.x) {
+    return null;
+  }
+
+  return {
+    x: LANDING_BUS_SCREEN_X - busNode.position.x,
+    y: LANDING_BUS_SCREEN_Y - busNode.position.y,
+    zoom: GRAPH_WORKSPACE.landingBaselineZoom,
+  };
+}
 
 export function buildCanvasDocumentRecoveryKey(document: DeckDocument): string {
   return JSON.stringify({
@@ -716,7 +743,7 @@ export default function BuilderCanvas({
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
   const [layoutLocked, setLayoutLocked] = useState(false);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
-  const lastInitialFitKeyRef = useRef<string | null>(null);
+  const initialViewportAppliedRef = useRef(false);
   const flowNodes = useMemo(
     () =>
       toFlowNodes(
@@ -752,13 +779,6 @@ export default function BuilderCanvas({
     () => document.edges.find((edge) => edge.id === selectedEdgeId) || null,
     [document.edges, selectedEdgeId],
   );
-  const initialFitKey = useMemo(
-    () =>
-      `${document.nodes.map((node) => node.id).join('|')}::${document.edges
-        .map((edge) => edge.id)
-        .join('|')}`,
-    [document.edges, document.nodes],
-  );
 
   useEffect(() => {
     setNodes((current) => syncFlowNodesForRender(current, flowNodes));
@@ -771,58 +791,25 @@ export default function BuilderCanvas({
   useEffect(() => {
     if (!reactFlowInstance) return;
     if (flowNodes.length === 0) return;
-    if (lastInitialFitKeyRef.current === initialFitKey) return;
-    lastInitialFitKeyRef.current = initialFitKey;
-    let settleTimer: number | null = null;
-    const applyFit = () => {
-      const graphNodes = reactFlowInstance
-        .getNodes()
-        .filter((node) => node.type === 'agentCard' || node.type === 'magenticBus');
-      if (graphNodes.length === 0) return;
-      const sortedByX = [...graphNodes].sort(
-        (left, right) =>
-          (left.positionAbsolute?.x ?? left.position.x) -
-          (right.positionAbsolute?.x ?? right.position.x),
-      );
-      const minX = sortedByX[0]
-        ? sortedByX[0].positionAbsolute?.x ?? sortedByX[0].position.x
-        : 0;
-      const yValues = sortedByX
-        .map((node) => node.positionAbsolute?.y ?? node.position.y)
-        .sort((left, right) => left - right);
-      const centerY = yValues[Math.floor(yValues.length / 2)] ?? 0;
-      // First landing should prioritize the left/start strip at readable scale,
-      // not force-fit the entire row.
-      const fitNodes = sortedByX.filter((node) => {
-        const x = node.positionAbsolute?.x ?? node.position.x;
-        const y = node.positionAbsolute?.y ?? node.position.y;
-        return (
-          x <= minX + GRAPH_WORKSPACE.landingPrimaryBandWidth &&
-          Math.abs(y - centerY) <= GRAPH_WORKSPACE.landingPrimaryBandHalfHeight
-        );
-      });
-      if (fitNodes.length === 0) return;
+    if (initialViewportAppliedRef.current) return;
+    initialViewportAppliedRef.current = true;
+    const landingViewport = buildInitialWorkbenchLandingViewport(document);
+    const frame = window.requestAnimationFrame(() => {
+      if (landingViewport) {
+        reactFlowInstance.setViewport(landingViewport, { duration: 0 });
+        return;
+      }
       reactFlowInstance.fitView({
-        nodes: fitNodes,
         duration: 0,
         padding: 0.11,
         minZoom: GRAPH_WORKSPACE.landingBaselineMinZoom,
         maxZoom: GRAPH_WORKSPACE.landingBaselineMaxZoom,
       });
-    };
-    const frame = window.requestAnimationFrame(() => {
-      applyFit();
-      settleTimer = window.setTimeout(() => {
-        applyFit();
-      }, 96);
     });
     return () => {
       window.cancelAnimationFrame(frame);
-      if (settleTimer != null) {
-        window.clearTimeout(settleTimer);
-      }
     };
-  }, [flowNodes.length, initialFitKey, reactFlowInstance]);
+  }, [document, flowNodes.length, reactFlowInstance]);
 
   useEffect(() => {
     const pendingMutation = pendingDocumentMutationRef.current;

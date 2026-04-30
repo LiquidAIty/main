@@ -10,6 +10,7 @@ import {
   buildAssistStructureSummaries,
   buildDeckEdgeFromConnection,
   buildDeckEdgeVisualStates,
+  buildInitialWorkbenchLandingViewport,
   getAssistSwarmBadge,
   isPlainConnectionAllowedForDocument,
   isAnyCanvasNodeVisible,
@@ -27,6 +28,71 @@ import { buildDeckEdgeIdentityKey, sanitizeDeckEdges } from './deckValidation';
 import MagenticBusNode from './nodes/MagenticBusNode';
 
 describe('BuilderCanvas runtime-truth helpers', () => {
+  it('builds the initial landing viewport around the bus and workbench side', () => {
+    const document: DeckDocument = {
+      id: 'deck_landing',
+      name: 'Landing',
+      promptTemplates: [],
+      version: 1,
+      nodes: [
+        {
+          id: 'card_thinkgraph_agent',
+          kind: 'agent',
+          templateId: 'template_thinkgraph_agent',
+          runtimeType: 'assistant_agent',
+          title: 'ThinkGraph Agent',
+          position: { x: -420, y: 140 },
+        },
+        {
+          id: 'card_magentic',
+          kind: 'agent',
+          templateId: 'template_magentic',
+          runtimeType: 'magentic_one',
+          title: 'Magentic-One',
+          position: { x: 140, y: 120 },
+        },
+        {
+          id: 'card_energy_workbench',
+          kind: 'agent',
+          templateId: 'template_energy_workbench',
+          runtimeType: 'assistant_agent',
+          title: 'NRGSim / Energy',
+          position: { x: 220, y: 140 },
+        },
+      ],
+      edges: [],
+    };
+
+    expect(buildInitialWorkbenchLandingViewport(document)).toEqual({
+      x: -116,
+      y: -48,
+      zoom: 1,
+    });
+    expect(document.nodes[0].position).toEqual({ x: -420, y: 140 });
+  });
+
+  it('does not build a workbench landing viewport when the workbench is absent', () => {
+    const document: DeckDocument = {
+      id: 'deck_landing_without_workbench',
+      name: 'Landing',
+      promptTemplates: [],
+      version: 1,
+      nodes: [
+        {
+          id: 'card_magentic',
+          kind: 'agent',
+          templateId: 'template_magentic',
+          runtimeType: 'magentic_one',
+          title: 'Magentic-One',
+          position: { x: 140, y: 120 },
+        },
+      ],
+      edges: [],
+    };
+
+    expect(buildInitialWorkbenchLandingViewport(document)).toBeNull();
+  });
+
   it('does not persist selection-only node or edge changes', () => {
     const nodeChanges: NodeChange[] = [{ id: 'card_magentic', type: 'select', selected: true }];
     const edgeChanges: EdgeChange[] = [{ id: 'edge_magentic_graph', type: 'select', selected: true }];
@@ -1061,34 +1127,39 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     });
   });
 
-  it('renders exactly six real React Flow handles on MagenticBusNode', () => {
+  it('renders exactly twelve real React Flow handles on MagenticBusNode', () => {
     const handles = collectHandleElements(MagenticBusNode());
 
-    expect(handles).toHaveLength(6);
+    expect(handles).toHaveLength(12);
     expect(handles.map((handle) => handle.props.id)).toEqual([
       'bus-in-1',
       'bus-in-2',
+      'bus-in-3',
+      'bus-in-4',
+      'bus-in-5',
+      'bus-in-6',
       'bus-out-1',
       'bus-out-2',
       'bus-out-3',
       'bus-out-4',
+      'bus-out-5',
+      'bus-out-6',
     ]);
     handles.forEach((handle) => {
       const style = handle.props.style as Record<string, unknown>;
-      expect(style.width).toBe(14);
-      expect(style.height).toBe(20);
-      expect(style.borderRadius).toBe(8);
+      expect(style.width).toBe(6);
+      expect(style.height).toBe(16);
+      expect(style.borderRadius).toBe(4);
       expect(style.pointerEvents).toBe('all');
       expect(style.zIndex).toBe(100);
-      expect(style.opacity).toBe(0.86);
       expect(style.display).toBeUndefined();
       expect(style.visibility).toBeUndefined();
     });
-    handles.slice(0, 2).forEach((handle) => {
-      expect((handle.props.style as Record<string, unknown>).left).toBe(-7);
+    handles.slice(0, 6).forEach((handle) => {
+      expect((handle.props.style as Record<string, unknown>).left).toBe(-3);
     });
-    handles.slice(2).forEach((handle) => {
-      expect((handle.props.style as Record<string, unknown>).right).toBe(-7);
+    handles.slice(6).forEach((handle) => {
+      expect((handle.props.style as Record<string, unknown>).right).toBe(-3);
     });
   });
 });

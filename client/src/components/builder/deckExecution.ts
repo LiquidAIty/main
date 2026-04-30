@@ -52,8 +52,15 @@ export type DeckExecutionPlan = {
   issues: string[];
 };
 
+function isNonRunnableWorkbenchNode(node: AgentCardInstance): boolean {
+  return (
+    String(node.id || '').trim() === 'card_energy_workbench' ||
+    String(node.templateId || '').trim() === 'template_energy_workbench'
+  );
+}
+
 function isRunnableNode(node: AgentCardInstance): boolean {
-  return !String(node.parentGraphId || '').trim();
+  return !String(node.parentGraphId || '').trim() && !isNonRunnableWorkbenchNode(node);
 }
 
 function getValidEdges(document: DeckDocument): DeckEdge[] {

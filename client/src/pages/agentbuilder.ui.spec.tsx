@@ -1261,24 +1261,14 @@ describe("AgentBuilder locked 3-state flow", () => {
     expect(container.textContent).toContain("Alpha Project");
   });
 
-  it("opens the Energy facade workspace from the rail", async () => {
+  it("hides the Energy rail button while the NRGSim workbench is disconnected", async () => {
     const container = mount(<AgentBuilder />);
 
     await waitFor(() => {
       expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
     });
 
-    click(getByTestId(container, "rail-energy-button"));
-
-    await waitFor(() => {
-      expect(queryByTestId(container, "energy-facade-surface")).toBeTruthy();
-    });
-
-    expect(
-      getByTestId(container, "workspace-companion-region").getAttribute(
-        "data-workspace",
-      ),
-    ).toBe("energy");
+    expect(queryByTestId(container, "rail-energy-button")).toBeNull();
   });
 
   it("creates a new project using inline form without browser prompts", async () => {

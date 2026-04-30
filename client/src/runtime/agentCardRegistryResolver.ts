@@ -82,6 +82,14 @@ export function resolveCardDef(card: ResolverCardInput): AgentCardDef | undefine
     if (defId) return findDef(defId);
   }
 
+  if (
+    normalize(card.templateId) === 'template_energy_workbench' ||
+    normalize(card.id) === 'card_energy_workbench' ||
+    normalize(card.title) === 'nrgsim / energy'
+  ) {
+    return findDef('energy');
+  }
+
   // 3. No confident match
   return undefined;
 }

@@ -116,6 +116,7 @@ import {
   type WorkspaceTestingObjectType,
   type WorkspaceTestingSurface,
 } from '../lib/workspaceTestingTelemetry';
+import { resolveAllCards } from '../runtime/agentCardRegistryResolver';
 
 const AgentManager = lazy(async () => {
   const mod = await import('../components/AgentManager');
@@ -695,6 +696,33 @@ function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   if (normalized === 'graph_flow') return 'graph_flow';
   if (normalized === 'local_coder') return 'local_coder';
   return null;
+}
+
+function isEnergyWorkbenchCard(card: AgentCardInstance | null | undefined): boolean {
+  if (!card) return false;
+  return (
+    safeText(card.id).trim() === 'card_energy_workbench' ||
+    safeText(card.templateId).trim() === 'template_energy_workbench'
+  );
+}
+
+export function isEnergyWorkbenchActive(
+  nodes: readonly AgentCardInstance[],
+  edges: readonly DeckEdge[],
+): boolean {
+  for (const resolved of resolveAllCards(nodes, edges).values()) {
+    if (resolved.def?.id === 'energy' && resolved.busConnection !== 'disconnected') {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function shouldShowEnergyRailButton(
+  deck: Pick<DeckDocument, 'nodes' | 'edges'>,
+  workspaceView: string,
+): boolean {
+  return workspaceView === 'energy' || isEnergyWorkbenchActive(deck.nodes, deck.edges);
 }
 
 function isAssistLikeRuntimeType(runtimeType: AgentCardRuntimeType | null): boolean {
@@ -1401,6 +1429,30 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
     }),
   },
+  {
+    id: 'prompt_energy_workbench',
+    content: buildSeedPromptTemplate({
+      role: [
+        'You are the NRGSim / Energy workbench card.',
+        'You represent the visible Building Modeler and Energy surface on the board.',
+      ].join('\n'),
+      goal: [
+        'Expose the Energy workspace as a selectable board capability.',
+        'Stay non-runnable until a dedicated Energy backend runtime exists.',
+      ].join('\n'),
+      constraints: [
+        'Do not call backend model runtime from this card.',
+        'Use the existing Energy surface for interaction.',
+      ].join('\n'),
+      ioSchema: [
+        'Input: user selection or future Energy workbench request.',
+        'Output: open or focus the Energy workspace surface.',
+      ].join('\n'),
+      memoryPolicy: [
+        'This is a staged workbench capability, not an executable agent runtime.',
+      ].join('\n'),
+    }),
+  },
 ];
 
 const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
@@ -1469,13 +1521,23 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     maxTokens: 1200,
     tools: [],
   },
+  {
+    id: 'template_energy_workbench',
+    name: 'NRGSim / Energy',
+    promptTemplate: 'prompt_energy_workbench',
+    model: 'gpt-5-mini',
+    provider: 'openai',
+    temperature: 0.2,
+    maxTokens: 800,
+    tools: [],
+  },
 ];
 
 export const INITIAL_DECK: DeckDocument = {
   id: 'deck_builder',
   name: 'Agent Card Deck',
   promptTemplates: cloneDeckDocument(INITIAL_PROMPT_TEMPLATES),
-  version: 2,
+  version: 3,
   nodes: [
     {
       id: 'card_magentic',
@@ -1507,7 +1569,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'ThinkGraph Agent',
       subtitle: 'Provisional / planning memory (AGE)',
-      position: { x: 320, y: 140 },
+      position: { x: -420, y: 140 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -1524,7 +1586,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'CodeGraph Agent',
       subtitle: 'Structural code memory',
-      position: { x: 560, y: 140 },
+      position: { x: -280, y: 140 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -1541,7 +1603,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'Research Agent',
       subtitle: 'Research and analysis worker',
-      position: { x: 800, y: 140 },
+      position: { x: -140, y: 140 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -1558,7 +1620,24 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'KnowGraph Agent',
       subtitle: 'Grounded / evidence-backed memory (Neo4j)',
-      position: { x: 1040, y: 140 },
+      position: { x: 0, y: 140 },
+      status: 'ready',
+      cloneConfig: { enabled: false, seeds: [] },
+    },
+    {
+      id: 'card_energy_workbench',
+      kind: 'agent',
+      templateId: 'template_energy_workbench',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_energy_workbench',
+        )?.content || '',
+      runtimeBinding: null,
+      runtimeType: 'assistant_agent',
+      parentGraphId: 'workbench_energy',
+      title: 'NRGSim / Energy',
+      subtitle: 'Building Modeler workbench',
+      position: { x: 220, y: 140 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -1639,7 +1718,7 @@ export function filterAuthoringCompatibleEdges(
         return (
           normalizeRuntimeType(sourceNode.runtimeType) === 'magentic_one' &&
           isTopLevelCanvasCard(sourceNode) &&
-          isTopLevelCanvasCard(targetNode) &&
+          (isTopLevelCanvasCard(targetNode) || isEnergyWorkbenchCard(targetNode)) &&
           ['assistant_agent', 'local_coder', 'graph_flow'].includes(
             normalizeRuntimeType(targetNode.runtimeType) || '',
           )
@@ -3177,6 +3256,10 @@ export default function AgentBuilder(): React.ReactElement {
   const [deck, setDeckState] = useState<DeckDocument>(() =>
     hydrateDeckDocument(INITIAL_DECK),
   );
+  const showEnergyRailButton = useMemo(
+    () => shouldShowEnergyRailButton(deck, workspaceView),
+    [deck, workspaceView],
+  );
   const [deckRevision, setDeckRevision] = useState<string | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -3597,6 +3680,7 @@ export default function AgentBuilder(): React.ReactElement {
     () => deck.nodes.find((node) => node.id === selectedCardId) || null,
     [deck.nodes, selectedCardId],
   );
+  const selectedCardIsEnergyWorkbench = isEnergyWorkbenchCard(selectedCard);
   const selectedEdge = useMemo(
     () => deck.edges.find((edge) => edge.id === selectedEdgeId) || null,
     [deck.edges, selectedEdgeId],
@@ -4344,6 +4428,27 @@ export default function AgentBuilder(): React.ReactElement {
           const showCardIdentityFields = tab === BUILDER_NODE_TABS[0];
           return (
             <>
+              {selectedCardIsEnergyWorkbench ? (
+                <div
+                  style={graphDrawerSectionStyle({
+                    padding: '10px 12px',
+                    marginBottom: 10,
+                    color: GRAPH_THEME.drawer.inputMuted,
+                  })}
+                >
+                  <div style={{ marginBottom: 8 }}>
+                    NRGSim is staged as a selectable workbench card. Runtime is
+                    disabled until the dedicated Energy backend exists.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={showEnergyWorkspace}
+                    style={graphDrawerButtonStyle({})}
+                  >
+                    Open Energy Surface
+                  </button>
+                </div>
+              ) : null}
               <Suspense
                 fallback={
                   <div
@@ -4368,7 +4473,10 @@ export default function AgentBuilder(): React.ReactElement {
                   onRunPromptTest={handleRunSelectedCard}
                   promptTestBusy={cardRunBusy}
                   promptTestDisabled={
-                    cardRunBusy || deckLoadBusy || !canvasProjectId
+                    selectedCardIsEnergyWorkbench ||
+                    cardRunBusy ||
+                    deckLoadBusy ||
+                    !canvasProjectId
                   }
                   localConfig={selectedCardConfig}
                   memoryGraphData={selectedCardMemoryGraph}
@@ -6801,19 +6909,21 @@ export default function AgentBuilder(): React.ReactElement {
           >
             <Icon d="M12 1v3M12 20v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M1 12h3M20 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" />
           </button>
-          <button
-            title="Energy"
-            aria-label="Energy"
-            data-testid="rail-energy-button"
-            onClick={showEnergyWorkspace}
-            className="p-2 rounded"
-            style={{
-              color:
-                workspaceView === 'energy' ? GRAPH_THEME.accent.solar : C.text,
-            }}
-          >
-            <Icon d="M4 19h16M6 19V9l6-4 6 4v10M9 19v-7h6v7M8 9h8" />
-          </button>
+          {showEnergyRailButton ? (
+            <button
+              title="Energy"
+              aria-label="Energy"
+              data-testid="rail-energy-button"
+              onClick={showEnergyWorkspace}
+              className="p-2 rounded"
+              style={{
+                color:
+                  workspaceView === 'energy' ? GRAPH_THEME.accent.solar : C.text,
+              }}
+            >
+              <Icon d="M4 19h16M6 19V9l6-4 6 4v10M9 19v-7h6v7M8 9h8" />
+            </button>
+          ) : null}
           <div className="flex-1" />
           <button
             title="Plan"

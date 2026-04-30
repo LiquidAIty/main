@@ -17,6 +17,7 @@
  * - signal:    Reads external data, feeds context to the bus.
  */
 export type AgentCardKind = 'bus' | 'workbench' | 'core' | 'signal';
+export type AgentCapabilityStatus = 'implemented' | 'partial' | 'placeholder';
 
 /**
  * Static definition for a known agent capability.
@@ -51,6 +52,12 @@ export type AgentCardDef = {
   /** Whether this card is connected to the bus by default in a new project. */
   defaultConnected: boolean;
 
+  /** Whether the capability has complete UI/runtime support or is still staged. */
+  capabilityStatus: AgentCapabilityStatus;
+
+  /** Whether this capability can safely run through the deck backend runtime. */
+  runtimeSafe: boolean;
+
   /**
    * The runtimeType value this maps to in AgentCardRuntimeType.
    * Used to identify the card kind in existing deck logic.
@@ -69,6 +76,8 @@ export const AGENT_CARD_REGISTRY: readonly AgentCardDef[] = [
     railEligible: false,
     requiresPlanApproval: false,
     defaultConnected: true,
+    capabilityStatus: 'implemented',
+    runtimeSafe: true,
     runtimeType: 'magentic_one',
   },
 
@@ -82,6 +91,8 @@ export const AGENT_CARD_REGISTRY: readonly AgentCardDef[] = [
     railEligible: true,
     requiresPlanApproval: true,
     defaultConnected: false,
+    capabilityStatus: 'implemented',
+    runtimeSafe: true,
     runtimeType: 'local_coder',
   },
   {
@@ -93,6 +104,8 @@ export const AGENT_CARD_REGISTRY: readonly AgentCardDef[] = [
     railEligible: true,
     requiresPlanApproval: true,
     defaultConnected: false,
+    capabilityStatus: 'partial',
+    runtimeSafe: false,
     runtimeType: 'assistant_agent',
   },
   {
@@ -104,6 +117,8 @@ export const AGENT_CARD_REGISTRY: readonly AgentCardDef[] = [
     railEligible: true,
     requiresPlanApproval: true,
     defaultConnected: false,
+    capabilityStatus: 'partial',
+    runtimeSafe: false,
     runtimeType: 'assistant_agent',
   },
   {
@@ -115,6 +130,8 @@ export const AGENT_CARD_REGISTRY: readonly AgentCardDef[] = [
     railEligible: true,
     requiresPlanApproval: true,
     defaultConnected: false,
+    capabilityStatus: 'partial',
+    runtimeSafe: false,
     runtimeType: 'assistant_agent',
   },
 
@@ -128,6 +145,8 @@ export const AGENT_CARD_REGISTRY: readonly AgentCardDef[] = [
     railEligible: true,
     requiresPlanApproval: false,
     defaultConnected: true,
+    capabilityStatus: 'implemented',
+    runtimeSafe: false,
     runtimeType: 'assistant_agent',
   },
 
@@ -141,6 +160,8 @@ export const AGENT_CARD_REGISTRY: readonly AgentCardDef[] = [
     railEligible: true,
     requiresPlanApproval: false,
     defaultConnected: true,
+    capabilityStatus: 'partial',
+    runtimeSafe: true,
     runtimeType: 'assistant_agent',
   },
   {
@@ -152,6 +173,8 @@ export const AGENT_CARD_REGISTRY: readonly AgentCardDef[] = [
     railEligible: true,
     requiresPlanApproval: false,
     defaultConnected: true,
+    capabilityStatus: 'implemented',
+    runtimeSafe: true,
     runtimeType: 'assistant_agent',
   },
   {
@@ -163,6 +186,8 @@ export const AGENT_CARD_REGISTRY: readonly AgentCardDef[] = [
     railEligible: false,
     requiresPlanApproval: false,
     defaultConnected: true,
+    capabilityStatus: 'placeholder',
+    runtimeSafe: false,
     runtimeType: 'assistant_agent',
   },
 ] as const;

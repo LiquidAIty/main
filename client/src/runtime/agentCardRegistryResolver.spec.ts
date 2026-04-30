@@ -98,6 +98,22 @@ describe('resolveCardDef', () => {
     expect(def).toBeUndefined();
   });
 
+  it('resolves the staged NRGSim/Energy workbench card by template id', () => {
+    const def = resolveCardDef(
+      card('card_energy_workbench', {
+        runtimeType: 'assistant_agent',
+        runtimeBinding: null,
+        templateId: 'template_energy_workbench',
+        title: 'NRGSim / Energy',
+      }),
+    );
+    expect(def).toBeDefined();
+    expect(def!.id).toBe('energy');
+    expect(def!.kind).toBe('workbench');
+    expect(def!.capabilityStatus).toBe('partial');
+    expect(def!.runtimeSafe).toBe(false);
+  });
+
   it('returns undefined for unknown runtimeType', () => {
     const def = resolveCardDef(card('card_alien', { runtimeType: 'alien_runtime' as any }));
     expect(def).toBeUndefined();
@@ -400,5 +416,22 @@ describe('resolveAllCards', () => {
     expect(result.get('coder')!.def?.id).toBe('code');
     expect(result.get('coder')!.def?.kind).toBe('workbench');
     expect(result.get('coder')!.busConnection).toBe('orchestrated');
+  });
+
+  it('keeps disconnected NRGSim/Energy classified but not bus-active', () => {
+    const cards = [
+      card('sol', { runtimeType: 'magentic_one' }),
+      card('card_energy_workbench', {
+        runtimeType: 'assistant_agent',
+        runtimeBinding: null,
+        templateId: 'template_energy_workbench',
+        title: 'NRGSim / Energy',
+      }),
+    ];
+    const result = resolveAllCards(cards, []);
+
+    expect(result.get('card_energy_workbench')!.def?.id).toBe('energy');
+    expect(result.get('card_energy_workbench')!.def?.runtimeSafe).toBe(false);
+    expect(result.get('card_energy_workbench')!.busConnection).toBe('disconnected');
   });
 });

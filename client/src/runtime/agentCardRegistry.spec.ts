@@ -30,6 +30,8 @@ describe('agentCardRegistry', () => {
       expect(typeof def.railEligible).toBe('boolean');
       expect(typeof def.requiresPlanApproval).toBe('boolean');
       expect(typeof def.defaultConnected).toBe('boolean');
+      expect(['implemented', 'partial', 'placeholder']).toContain(def.capabilityStatus);
+      expect(typeof def.runtimeSafe).toBe('boolean');
     }
   });
 
@@ -101,6 +103,15 @@ describe('agentCardRegistry', () => {
     expect(energy!.ownedSurface).toBe('energy');
     expect(energy!.defaultConnected).toBe(false);
     expect(energy!.requiresPlanApproval).toBe(true);
+    expect(energy!.capabilityStatus).toBe('partial');
+    expect(energy!.runtimeSafe).toBe(false);
+  });
+
+  it('does not mark NRGSim/Energy runtime-safe just because it owns a surface', () => {
+    const energy = getCardDef('energy');
+    expect(energy?.ownedSurface).toBe('energy');
+    expect(energy?.railEligible).toBe(true);
+    expect(energy?.runtimeSafe).toBe(false);
   });
 
   // ── Signal agent ─────────────────────────────────────────────────
@@ -199,5 +210,15 @@ describe('agentCardRegistry', () => {
     for (const wb of workbenches) {
       expect(wb.requiresPlanApproval).toBe(true);
     }
+  });
+
+  it('keeps partial or placeholder capabilities out of the runtime-safe set', () => {
+    const staged = AGENT_CARD_REGISTRY.filter(
+      (def) => def.capabilityStatus === 'partial' || def.capabilityStatus === 'placeholder',
+    );
+    expect(staged.map((def) => def.id).sort()).toEqual(
+      ['energy', 'plan', 'telescope', 'trading', 'validator'].sort(),
+    );
+    expect(staged.filter((def) => def.id !== 'plan').every((def) => !def.runtimeSafe)).toBe(true);
   });
 });

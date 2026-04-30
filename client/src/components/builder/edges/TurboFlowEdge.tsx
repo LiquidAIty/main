@@ -13,6 +13,48 @@ type TurboFlowEdgeData = {
   motion?: "idle" | "active" | "running";
 };
 
+export function buildTurboFlowEdgePath({
+  sourceX,
+  sourceY,
+  sourcePosition,
+  targetX,
+  targetY,
+  targetPosition,
+  borderRadius,
+  offset,
+  edgeType,
+}: {
+  sourceX: number;
+  sourceY: number;
+  sourcePosition: EdgeProps["sourcePosition"];
+  targetX: number;
+  targetY: number;
+  targetPosition: EdgeProps["targetPosition"];
+  borderRadius: number;
+  offset: number;
+  edgeType?: DeckEdgeType | null;
+}): string {
+  if (edgeType === "magentic_option" && targetX < sourceX - 24) {
+    if (Math.abs(targetY - sourceY) < 1) {
+      return `M ${sourceX},${sourceY} L ${targetX},${targetY}`;
+    }
+    const midX = Math.round(targetX + (sourceX - targetX) / 2);
+    return `M ${sourceX},${sourceY} L ${midX},${sourceY} L ${midX},${targetY} L ${targetX},${targetY}`;
+  }
+
+  const [edgePath] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+    borderRadius,
+    offset,
+  });
+  return edgePath;
+}
+
 export default function TurboFlowEdge(props: EdgeProps) {
   const {
     sourceX,
@@ -28,7 +70,7 @@ export default function TurboFlowEdge(props: EdgeProps) {
     selected,
   } = props;
   const edgeData = (data || {}) as TurboFlowEdgeData;
-  const [edgePath] = getSmoothStepPath({
+  const edgePath = buildTurboFlowEdgePath({
     sourceX,
     sourceY,
     sourcePosition,
@@ -37,6 +79,7 @@ export default function TurboFlowEdge(props: EdgeProps) {
     targetPosition,
     borderRadius: Number((pathOptions as { borderRadius?: number } | undefined)?.borderRadius || 16),
     offset: Number((pathOptions as { offset?: number } | undefined)?.offset || 26),
+    edgeType: edgeData.edgeType,
   });
   const strokeWidth = Math.max(2.25, Number(style?.strokeWidth || 2.25));
   const opacity = Number(style?.opacity ?? 1);
