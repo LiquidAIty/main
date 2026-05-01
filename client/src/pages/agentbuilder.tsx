@@ -1569,7 +1569,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'ThinkGraph Agent',
       subtitle: 'Provisional / planning memory (AGE)',
-      position: { x: -420, y: 140 },
+      position: { x: 0, y: 140 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -1586,7 +1586,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'CodeGraph Agent',
       subtitle: 'Structural code memory',
-      position: { x: -280, y: 140 },
+      position: { x: -140, y: 140 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -1603,7 +1603,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'Research Agent',
       subtitle: 'Research and analysis worker',
-      position: { x: -140, y: 140 },
+      position: { x: -280, y: 140 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -1620,7 +1620,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'KnowGraph Agent',
       subtitle: 'Grounded / evidence-backed memory (Neo4j)',
-      position: { x: 0, y: 140 },
+      position: { x: -420, y: 140 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -1650,21 +1650,21 @@ export const INITIAL_DECK: DeckDocument = {
       edgeType: 'magentic_option',
     },
     {
-      id: 'edge_thinkgraph_codegraph',
-      source: 'card_thinkgraph_agent',
-      target: 'card_codegraph_agent',
-      edgeType: 'flow',
-    },
-    {
-      id: 'edge_codegraph_research',
-      source: 'card_codegraph_agent',
+      id: 'edge_knowgraph_research',
+      source: 'card_knowgraph_agent',
       target: 'card_research_agent',
       edgeType: 'flow',
     },
     {
-      id: 'edge_research_knowgraph',
+      id: 'edge_research_codegraph',
       source: 'card_research_agent',
-      target: 'card_knowgraph_agent',
+      target: 'card_codegraph_agent',
+      edgeType: 'flow',
+    },
+    {
+      id: 'edge_codegraph_thinkgraph',
+      source: 'card_codegraph_agent',
+      target: 'card_thinkgraph_agent',
       edgeType: 'flow',
     },
   ],
@@ -6921,7 +6921,7 @@ export default function AgentBuilder(): React.ReactElement {
                   workspaceView === 'energy' ? GRAPH_THEME.accent.solar : C.text,
               }}
             >
-              <Icon d="M4 19h16M6 19V9l6-4 6 4v10M9 19v-7h6v7M8 9h8" />
+              <Icon d="M7.2 4.2 13.2 1.6 19 4.7v8.5l-6 3.2-6-3.1V4.2Z M7.2 4.2 13 7.4l6-2.7 M13 7.4v9 M4 6.7l3.2-2.5 M4 6.7v8.5l6 1.2" />
             </button>
           ) : null}
           <div className="flex-1" />

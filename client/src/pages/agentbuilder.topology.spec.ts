@@ -22,10 +22,10 @@ describe('agentbuilder default topology', () => {
 
     expect(bus?.position).toEqual({ x: 140, y: 120 });
     expect(energy?.position).toEqual({ x: 220, y: 140 });
-    expect(byId.get('card_thinkgraph_agent')?.position).toEqual({ x: -420, y: 140 });
-    expect(byId.get('card_codegraph_agent')?.position).toEqual({ x: -280, y: 140 });
-    expect(byId.get('card_research_agent')?.position).toEqual({ x: -140, y: 140 });
-    expect(byId.get('card_knowgraph_agent')?.position).toEqual({ x: 0, y: 140 });
+    expect(byId.get('card_knowgraph_agent')?.position).toEqual({ x: -420, y: 140 });
+    expect(byId.get('card_research_agent')?.position).toEqual({ x: -280, y: 140 });
+    expect(byId.get('card_codegraph_agent')?.position).toEqual({ x: -140, y: 140 });
+    expect(byId.get('card_thinkgraph_agent')?.position).toEqual({ x: 0, y: 140 });
 
     for (const id of [
       'card_thinkgraph_agent',
@@ -45,9 +45,9 @@ describe('agentbuilder default topology', () => {
     );
     const systemBackboneEdges = INITIAL_DECK.edges.filter((edge) => edge.edgeType === 'flow');
     const expectedBackbone = [
-      ['card_thinkgraph_agent', 'card_codegraph_agent'],
-      ['card_codegraph_agent', 'card_research_agent'],
-      ['card_research_agent', 'card_knowgraph_agent'],
+      ['card_knowgraph_agent', 'card_research_agent'],
+      ['card_research_agent', 'card_codegraph_agent'],
+      ['card_codegraph_agent', 'card_thinkgraph_agent'],
     ];
     const nodeYById = new Map(INITIAL_DECK.nodes.map((node) => [node.id, node.position.y]));
 

@@ -57,8 +57,8 @@ const PERSISTED_NODE_CHANGE_TYPES = new Set<NodeChange['type']>(['add', 'remove'
 const PERSISTED_EDGE_CHANGE_TYPES = new Set<EdgeChange['type']>(['add', 'remove', 'replace']);
 const FALLBACK_NODE_WIDTH = 144;
 const FALLBACK_NODE_HEIGHT = 88;
-const LANDING_BUS_SCREEN_X = 24;
-const LANDING_BUS_SCREEN_Y = 72;
+const LANDING_BUS_SCREEN_X = -12;
+const LANDING_BUS_SCREEN_Y = 48;
 
 const nodeTypes = {
   agentCard: AgentCardNode,
