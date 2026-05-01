@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import {
   type Edge,
   addEdge,
@@ -9,6 +9,7 @@ import {
   Handle,
   Position,
   ReactFlow,
+  type Node,
   type NodeProps,
   type ReactFlowInstance,
   applyEdgeChanges,
@@ -31,10 +32,15 @@ import { GRAPH_TEXT, GRAPH_WORKSPACE } from '../graph/graphWorkspaceContract';
 import TurboFlowEdge from '../builder/edges/TurboFlowEdge';
 import {
   buildPlanMissionGraph,
+  type PlanArtifactNodeData,
+  type PlanFrameNodeData,
   type PlanMissionNodeOverrideMap,
   type PlanMissionFlowEdgeData,
   type PlanMissionNodeData,
   type PlanMissionFlowNode,
+  type PlanScene,
+  type PlanScenePath,
+  type PlanScenePurpose,
 } from './planMissionModel';
 
 type PlanMissionFocus = {
@@ -57,6 +63,96 @@ type PlanMissionFlowProps = {
 
 const PLAN_BASELINE_MIN_LOAD_ZOOM = GRAPH_WORKSPACE.landingBaselineMinZoom;
 const PLAN_BASELINE_MAX_LOAD_ZOOM = GRAPH_WORKSPACE.landingBaselineMaxZoom;
+
+const DEFAULT_PLAN_SCENE_DEFS: Array<{
+  id: string;
+  label: string;
+  purpose: PlanScenePurpose;
+  viewport: { x: number; y: number; zoom: number };
+  speakerNote: string;
+}> = [
+  {
+    id: 'scene_overview',
+    label: 'Overview',
+    purpose: 'overview',
+    viewport: { x: 72, y: 96, zoom: 0.58 },
+    speakerNote: 'Briefing Agent can later open with the plan map and orient the audience.',
+  },
+  {
+    id: 'scene_goal_problem',
+    label: 'Goal / Problem',
+    purpose: 'problem',
+    viewport: { x: 90, y: 120, zoom: 0.82 },
+    speakerNote: 'Speaker notes can summarize the user goal, problem framing, and constraints.',
+  },
+  {
+    id: 'scene_evidence_research',
+    label: 'Evidence / Research',
+    purpose: 'evidence',
+    viewport: { x: -260, y: 108, zoom: 0.72 },
+    speakerNote: 'Later this scene can collect dropped evidence, source files, and research artifacts.',
+  },
+  {
+    id: 'scene_approach',
+    label: 'Approach',
+    purpose: 'approach',
+    viewport: { x: -520, y: 112, zoom: 0.7 },
+    speakerNote: 'Briefing Agent can later turn this into the proposed route through the work.',
+  },
+  {
+    id: 'scene_execution_steps',
+    label: 'Execution Steps',
+    purpose: 'execution',
+    viewport: { x: -760, y: 112, zoom: 0.66 },
+    speakerNote: 'This scene can become the step-by-step implementation and dependency view.',
+  },
+  {
+    id: 'scene_agent_roles',
+    label: 'Agent Roles',
+    purpose: 'execution',
+    viewport: { x: -1000, y: 112, zoom: 0.66 },
+    speakerNote: 'Later this scene can explain assigned agents and work ownership.',
+  },
+  {
+    id: 'scene_risks',
+    label: 'Risks',
+    purpose: 'risk',
+    viewport: { x: -1230, y: 112, zoom: 0.66 },
+    speakerNote: 'Speaker notes can call out blockers, assumptions, and review points.',
+  },
+  {
+    id: 'scene_approval_next_step',
+    label: 'Approval / Next Step',
+    purpose: 'approval',
+    viewport: { x: -1460, y: 112, zoom: 0.66 },
+    speakerNote: 'This scene can become the closing approval and next action prompt.',
+  },
+];
+
+function buildDefaultPlanScenePath(): {
+  scenes: PlanScene[];
+  defaultPath: PlanScenePath;
+} {
+  const scenes = DEFAULT_PLAN_SCENE_DEFS.map((scene) => ({
+    ...scene,
+    frameId: null,
+  }));
+  return {
+    scenes,
+    defaultPath: {
+      id: 'default_guided_briefing',
+      label: 'Guided Briefing',
+      sceneIds: scenes.map((scene) => scene.id),
+      steps: scenes.map((scene, index) => ({
+        id: `default_guided_briefing_step_${index + 1}`,
+        sceneId: scene.id,
+        label: scene.label,
+        order: index + 1,
+      })),
+      isDefault: true,
+    },
+  };
+}
 
 function WallAnchorNode() {
   return (
@@ -155,14 +251,221 @@ function MissionNode({ data, selected }: NodeProps<PlanMissionNodeData>) {
   );
 }
 
+function formatFileSize(size: number) {
+  if (!Number.isFinite(size) || size <= 0) return '0 KB';
+  if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function PlanImageNode({ data, selected }: NodeProps<PlanArtifactNodeData>) {
+  const nodeData = data as PlanArtifactNodeData;
+  return (
+    <div
+      style={{
+        width: 220,
+        borderRadius: 10,
+        border: `1px solid ${selected ? 'rgba(55,173,170,0.56)' : 'rgba(167,176,186,0.22)'}`,
+        background: 'rgba(8,12,16,0.88)',
+        boxShadow: selected
+          ? '0 0 0 1px rgba(55,173,170,0.22), 0 16px 34px rgba(0,0,0,0.24)'
+          : '0 12px 28px rgba(0,0,0,0.22)',
+        overflow: 'hidden',
+      }}
+    >
+      {nodeData.previewUrl ? (
+        <img
+          src={nodeData.previewUrl}
+          alt={nodeData.label}
+          draggable={false}
+          style={{
+            display: 'block',
+            width: '100%',
+            height: 140,
+            objectFit: 'cover',
+            background: 'rgba(255,255,255,0.04)',
+          }}
+        />
+      ) : null}
+      <div style={{ padding: '9px 10px', display: 'grid', gap: 3 }}>
+        <div
+          style={{
+            color: GRAPH_THEME.surface.text,
+            fontSize: 12,
+            fontWeight: 700,
+            lineHeight: 1.25,
+            overflowWrap: 'anywhere',
+          }}
+        >
+          {nodeData.fileName || nodeData.label}
+        </div>
+        <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 11 }}>
+          Image - {formatFileSize(nodeData.size)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PlanPdfNode({ data, selected }: NodeProps<PlanArtifactNodeData>) {
+  const nodeData = data as PlanArtifactNodeData;
+  return (
+    <div
+      style={{
+        width: 210,
+        minHeight: 118,
+        borderRadius: 10,
+        border: `1px solid ${selected ? 'rgba(223,146,84,0.54)' : 'rgba(167,176,186,0.22)'}`,
+        background: 'linear-gradient(180deg, rgba(18,20,24,0.92), rgba(8,10,13,0.92))',
+        boxShadow: selected
+          ? '0 0 0 1px rgba(223,146,84,0.18), 0 16px 34px rgba(0,0,0,0.24)'
+          : '0 12px 28px rgba(0,0,0,0.22)',
+        padding: 12,
+        display: 'grid',
+        alignContent: 'space-between',
+        gap: 14,
+      }}
+    >
+      <div
+        aria-hidden
+        style={{
+          width: 34,
+          height: 42,
+          borderRadius: 5,
+          border: '1px solid rgba(223,146,84,0.46)',
+          background: 'rgba(223,146,84,0.12)',
+          color: 'rgba(245,197,150,0.9)',
+          display: 'grid',
+          placeItems: 'center',
+          fontSize: 10,
+          fontWeight: 800,
+        }}
+      >
+        PDF
+      </div>
+      <div style={{ display: 'grid', gap: 4 }}>
+        <div
+          style={{
+            color: GRAPH_THEME.surface.text,
+            fontSize: 12,
+            fontWeight: 700,
+            lineHeight: 1.25,
+            overflowWrap: 'anywhere',
+          }}
+        >
+          {nodeData.fileName || nodeData.label}
+        </div>
+        <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 11 }}>
+          {formatFileSize(nodeData.size)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PlanFrameNode({ data, selected }: NodeProps<PlanFrameNodeData>) {
+  const nodeData = data as PlanFrameNodeData;
+  return (
+    <div
+      style={{
+        width: 480,
+        height: 300,
+        borderRadius: 16,
+        border: `1px solid ${selected ? 'rgba(55,173,170,0.62)' : 'rgba(55,173,170,0.28)'}`,
+        background: 'rgba(55,173,170,0.035)',
+        boxShadow: selected
+          ? 'inset 0 0 0 1px rgba(55,173,170,0.16), 0 0 34px rgba(55,173,170,0.12)'
+          : 'inset 0 0 0 1px rgba(255,255,255,0.025)',
+        position: 'relative',
+        pointerEvents: 'none',
+      }}
+    >
+      <div
+        style={{
+          position: 'absolute',
+          left: 14,
+          top: -28,
+          color: GRAPH_THEME.drawer.inputText,
+          fontSize: 12,
+          fontWeight: 700,
+          padding: '5px 9px',
+          borderRadius: 999,
+          border: '1px solid rgba(55,173,170,0.24)',
+          background: 'rgba(8,12,16,0.88)',
+          boxShadow: '0 8px 20px rgba(0,0,0,0.18)',
+        }}
+      >
+        {nodeData.label || 'Plan Frame'}
+      </div>
+      {nodeData.isLanding ? (
+        <div
+          style={{
+            position: 'absolute',
+            right: 14,
+            bottom: 12,
+            color: GRAPH_THEME.drawer.inputMuted,
+            fontSize: 11,
+          }}
+        >
+          {nodeData.mode}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 const missionNodeTypes = {
   mission: MissionNode,
   wallAnchor: WallAnchorNode,
+  planImage: PlanImageNode,
+  planPdf: PlanPdfNode,
+  planFrame: PlanFrameNode,
 };
 
 const missionEdgeTypes = {
   turboFlow: TurboFlowEdge,
 };
+
+type PlanSurfaceNode =
+  | Node<PlanArtifactNodeData>
+  | Node<PlanFrameNodeData>;
+
+const SUPPORTED_PLAN_ARTIFACT_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'application/pdf',
+]);
+
+function isPlanSurfaceNode(node: { id: string }) {
+  return (
+    node.id.startsWith('plan_artifact_') || node.id.startsWith('plan_frame_')
+  );
+}
+
+function buildPlanArtifactNode(
+  file: File,
+  position: { x: number; y: number },
+  previewUrl: string | undefined,
+  index: number,
+): PlanSurfaceNode | null {
+  if (!SUPPORTED_PLAN_ARTIFACT_MIME_TYPES.has(file.type)) return null;
+  const artifactType = file.type === 'application/pdf' ? 'pdf' : 'image';
+  return {
+    id: `plan_artifact_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
+    type: artifactType === 'pdf' ? 'planPdf' : 'planImage',
+    position,
+    data: {
+      label: file.name,
+      artifactType,
+      fileName: file.name,
+      mimeType: file.type,
+      size: file.size,
+      ...(previewUrl ? { previewUrl } : {}),
+    },
+    draggable: true,
+    selectable: true,
+  };
+}
 
 function resolveNodeStyle(node: PlanMissionFlowNode) {
   void node;
@@ -194,6 +497,7 @@ export default function PlanMissionFlow({
 }: PlanMissionFlowProps) {
   const WALL_ORCH_ID = 'card_magentic';
   const flowHostRef = useRef<HTMLDivElement | null>(null);
+  const objectUrlsRef = useRef<Set<string>>(new Set());
   const pendingConnectionRef = useRef<{
     nodeId: string | null;
     handleType: 'source' | 'target' | null;
@@ -205,6 +509,20 @@ export default function PlanMissionFlow({
   const missionGraph = useMemo(
     () => buildPlanMissionGraph(structuredPlan, nodeOverrides),
     [structuredPlan, nodeOverrides],
+  );
+  const guidedSceneModel = useMemo(
+    () => buildDefaultPlanScenePath(),
+    [structuredPlan],
+  );
+  const guidedScenesById = useMemo(
+    () =>
+      new Map(
+        guidedSceneModel.scenes.map((scene) => [scene.id, scene] as const),
+      ),
+    [guidedSceneModel.scenes],
+  );
+  const [activeSceneId, setActiveSceneId] = useState<string>(
+    guidedSceneModel.defaultPath.sceneIds[0] || '',
   );
   const seededNodes = useMemo(() => {
     const missionNodes = missionGraph.nodes.map((node) => ({
@@ -222,7 +540,14 @@ export default function PlanMissionFlow({
     } as unknown as PlanMissionFlowNode;
     return [wallNode, ...missionNodes];
   }, [missionGraph.nodes]);
-  const [nodes, setNodes] = useNodesState(seededNodes);
+  const [planSurfaceNodes, setPlanSurfaceNodes] = useState<PlanSurfaceNode[]>(
+    [],
+  );
+  const combinedSeededNodes = useMemo(
+    () => [...seededNodes, ...planSurfaceNodes],
+    [planSurfaceNodes, seededNodes],
+  );
+  const [nodes, setNodes] = useNodesState(combinedSeededNodes);
   const [edges, setEdges] = useEdgesState<Edge<PlanMissionFlowEdgeData>>(
     missionGraph.edges,
   );
@@ -235,11 +560,21 @@ export default function PlanMissionFlow({
   );
 
   useEffect(() => {
+    setActiveSceneId((current) =>
+      guidedSceneModel.defaultPath.sceneIds.includes(current)
+        ? current
+        : guidedSceneModel.defaultPath.sceneIds[0] || '',
+    );
+  }, [guidedSceneModel]);
+
+  useEffect(() => {
     setNodes((current) => {
       const byId = new Map(current.map((node) => [node.id, node] as const));
-      return seededNodes.map((node) => {
+      return combinedSeededNodes.map((node) => {
         const existing = byId.get(node.id);
-        const selected = Boolean(selectedNodeId && node.id === selectedNodeId);
+        const selected = isPlanSurfaceNode(node)
+          ? Boolean(existing?.selected)
+          : Boolean(selectedNodeId && node.id === selectedNodeId);
         if (!existing) return { ...node, selected };
         return {
           ...node,
@@ -248,7 +583,14 @@ export default function PlanMissionFlow({
         };
       });
     });
-  }, [seededNodes, selectedNodeId, setNodes]);
+  }, [combinedSeededNodes, selectedNodeId, setNodes]);
+
+  useEffect(() => {
+    return () => {
+      objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      objectUrlsRef.current.clear();
+    };
+  }, []);
 
   useEffect(() => {
     setEdges((current) => {
@@ -395,6 +737,26 @@ export default function PlanMissionFlow({
   }, [WALL_ORCH_ID, editMode, edges, selectedNodeId]);
 
   const onNodesChange = (changes: NodeChange[]) => {
+    const hasSurfaceChange = changes.some((change) =>
+      isPlanSurfaceNode({ id: change.id }),
+    );
+    if (hasSurfaceChange) {
+      setPlanSurfaceNodes((current) => {
+        const next = applyNodeChanges(
+          changes,
+          current,
+        ) as PlanSurfaceNode[];
+        const nextIds = new Set(next.map((node) => node.id));
+        current.forEach((node) => {
+          if (nextIds.has(node.id)) return;
+          const previewUrl = (node.data as PlanArtifactNodeData).previewUrl;
+          if (!previewUrl) return;
+          URL.revokeObjectURL(previewUrl);
+          objectUrlsRef.current.delete(previewUrl);
+        });
+        return next;
+      });
+    }
     setNodes((current) => {
       const next = applyNodeChanges(changes, current);
       if (!onFocusChange) return next;
@@ -410,6 +772,10 @@ export default function PlanMissionFlow({
       }
       const selectedNode = next.find((node) => node.id === selectedChange.id);
       if (!selectedNode) {
+        onFocusChange(null);
+        return next;
+      }
+      if (isPlanSurfaceNode(selectedNode)) {
         onFocusChange(null);
         return next;
       }
@@ -472,6 +838,75 @@ export default function PlanMissionFlow({
   const onConnect = (connection: Connection) => {
     commitWallConnection(connection);
     pendingConnectionRef.current = null;
+  };
+
+  const addPlanFrame = () => {
+    if (!reactFlowInstance || !flowHostRef.current) return;
+    const rect = flowHostRef.current.getBoundingClientRect();
+    const position = reactFlowInstance.screenToFlowPosition({
+      x: rect.left + rect.width / 2 - 240,
+      y: rect.top + rect.height / 2 - 150,
+    });
+    const frameNode: PlanSurfaceNode = {
+      id: `plan_frame_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      type: 'planFrame',
+      position,
+      data: {
+        label: 'Plan Frame',
+        mode: editMode ? 'edit' : 'landing',
+        isLanding: !editMode,
+      },
+      draggable: true,
+      selectable: true,
+      zIndex: -1,
+    };
+    setPlanSurfaceNodes((current) => [...current, frameNode]);
+  };
+
+  const applyPlanScene = (scene: PlanScene) => {
+    setActiveSceneId(scene.id);
+    if (!reactFlowInstance || !scene.viewport) return;
+    reactFlowInstance.setViewport(scene.viewport, {
+      duration: GRAPH_THEME.nav.focusDurationMs,
+    });
+  };
+
+  const onDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!Array.from(event.dataTransfer?.types || []).includes('Files')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  };
+
+  const onDrop = (event: DragEvent<HTMLDivElement>) => {
+    if (!reactFlowInstance) return;
+    const files = Array.from(event.dataTransfer.files || []).filter((file) =>
+      SUPPORTED_PLAN_ARTIFACT_MIME_TYPES.has(file.type),
+    );
+    if (files.length === 0) return;
+    event.preventDefault();
+    const basePosition = reactFlowInstance.screenToFlowPosition({
+      x: event.clientX,
+      y: event.clientY,
+    });
+    const droppedNodes = files
+      .map((file, index) => {
+        const previewUrl = file.type.startsWith('image/')
+          ? URL.createObjectURL(file)
+          : undefined;
+        if (previewUrl) objectUrlsRef.current.add(previewUrl);
+        return buildPlanArtifactNode(
+          file,
+          {
+            x: basePosition.x + index * 24,
+            y: basePosition.y + index * 24,
+          },
+          previewUrl,
+          index,
+        );
+      })
+      .filter(Boolean) as PlanSurfaceNode[];
+    if (droppedNodes.length === 0) return;
+    setPlanSurfaceNodes((current) => [...current, ...droppedNodes]);
   };
 
   const onConnectStart = (
@@ -775,6 +1210,23 @@ export default function PlanMissionFlow({
             />
           </svg>
         </button>
+        <button
+          type="button"
+          aria-label="Add plan frame"
+          onClick={addPlanFrame}
+          style={graphControlButtonStyle()}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+            <path
+              d="M2.25 4V2.25H4M10 2.25h1.75V4M11.75 10v1.75H10M4 11.75H2.25V10"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.25"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
       </div>
       <ReactFlow
         nodes={nodes}
@@ -791,6 +1243,10 @@ export default function PlanMissionFlow({
               selected: entry.id === node.id,
             })),
           );
+          if (isPlanSurfaceNode(node)) {
+            onFocusChange?.(null);
+            return;
+          }
           if (!onFocusChange) return;
           const nodeData = (node.data || {}) as PlanMissionNodeData;
           onFocusChange({
@@ -831,6 +1287,8 @@ export default function PlanMissionFlow({
         onConnect={onConnect}
         onConnectStart={onConnectStart}
         onConnectEnd={onConnectEnd}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
         edgesFocusable={false}
         edgesReconnectable={false}
         connectOnClick={false}
@@ -861,6 +1319,76 @@ export default function PlanMissionFlow({
           color={GRAPH_THEME.background.gridMajor}
         />
       </ReactFlow>
+      <div
+        aria-label={guidedSceneModel.defaultPath.label}
+        style={{
+          position: 'absolute',
+          left: 14,
+          right: 14,
+          bottom: 12,
+          zIndex: 8,
+          display: 'grid',
+          gap: 6,
+          pointerEvents: 'auto',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            overflowX: 'auto',
+            padding: 6,
+            borderRadius: 10,
+            border: `1px solid ${GRAPH_THEME.controls.border}`,
+            background: 'rgba(8,12,16,0.9)',
+            boxShadow: GRAPH_THEME.controls.shadow,
+          }}
+        >
+          {guidedSceneModel.defaultPath.sceneIds.map((sceneId, index) => {
+            const scene = guidedScenesById.get(sceneId);
+            if (!scene) return null;
+            const active = scene.id === activeSceneId;
+            return (
+              <button
+                key={scene.id}
+                type="button"
+                onClick={() => applyPlanScene(scene)}
+                title={scene.speakerNote}
+                style={{
+                  flex: '0 0 auto',
+                  borderRadius: 999,
+                  border: `1px solid ${active ? GRAPH_THEME.accent.primaryBorder : 'rgba(167,176,186,0.18)'}`,
+                  background: active
+                    ? 'rgba(55,173,170,0.18)'
+                    : 'rgba(255,255,255,0.035)',
+                  color: active
+                    ? GRAPH_THEME.surface.text
+                    : GRAPH_THEME.drawer.inputMuted,
+                  fontSize: 11,
+                  fontWeight: active ? 700 : 600,
+                  lineHeight: 1,
+                  padding: '7px 10px',
+                  cursor: 'pointer',
+                }}
+              >
+                {index + 1}. {scene.label}
+              </button>
+            );
+          })}
+        </div>
+        <div
+          style={{
+            color: GRAPH_THEME.drawer.inputMuted,
+            fontSize: 11,
+            lineHeight: 1.3,
+            padding: '0 6px',
+          }}
+        >
+          Briefing Agent placeholder: speaker notes, presentation export, and
+          video path can be generated from these scenes later.
+        </div>
+      </div>
     </div>
   );
 }

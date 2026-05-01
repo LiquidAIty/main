@@ -37,6 +37,62 @@ export type PlanMissionNodeData = {
   editable?: boolean;
 };
 
+export type PlanArtifactNodeData = {
+  label: string;
+  artifactType: 'image' | 'pdf';
+  fileName: string;
+  mimeType: string;
+  size: number;
+  previewUrl?: string;
+};
+
+export type PlanFrameNodeData = {
+  label: string;
+  mode: 'landing' | 'edit' | 'inspect' | 'presentation' | 'workbench';
+  isLanding?: boolean;
+};
+
+export type PlanSavedView = {
+  id: string;
+  label: string;
+  viewport: { x: number; y: number; zoom: number };
+  frameId?: string | null;
+};
+
+export type PlanScenePurpose =
+  | 'overview'
+  | 'problem'
+  | 'evidence'
+  | 'approach'
+  | 'execution'
+  | 'risk'
+  | 'approval'
+  | 'next-step';
+
+export type PlanScene = {
+  id: string;
+  label: string;
+  viewport: { x: number; y: number; zoom: number };
+  frameId?: string | null;
+  speakerNote?: string;
+  purpose?: PlanScenePurpose;
+};
+
+export type PlanScenePathStep = {
+  id: string;
+  sceneId: string;
+  label: string;
+  order: number;
+};
+
+export type PlanScenePath = {
+  id: string;
+  label: string;
+  sceneIds: string[];
+  steps: PlanScenePathStep[];
+  isDefault?: boolean;
+};
+
 export type PlanMissionFlowNode = Node<PlanMissionNodeData>;
 export type PlanMissionEdgeMotion = 'idle' | 'active' | 'running';
 export type PlanMissionNodeOverrideMap = Record<
