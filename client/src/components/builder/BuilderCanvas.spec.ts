@@ -64,8 +64,8 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     };
 
     expect(buildInitialWorkbenchLandingViewport(document)).toEqual({
-      x: -152,
-      y: -72,
+      x: -116,
+      y: -48,
       zoom: 1,
     });
     expect(document.nodes[0].position).toEqual({ x: -420, y: 140 });
