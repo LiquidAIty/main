@@ -19,6 +19,7 @@ import BuilderChat from '../components/builder/BuilderChat';
 import BuilderDrawer from '../components/builder/BuilderDrawer';
 import PlanMissionFlow from '../components/assist/PlanMissionFlow';
 import WorldSignalSurface from '../components/worldsignal/WorldSignalSurface';
+import TelescopeOverlay from '../components/skyview/TelescopeOverlay';
 import type {
   PlanMissionNodeData,
   PlanMissionNodeOverrideMap,
@@ -116,7 +117,6 @@ import {
   type WorkspaceTestingObjectType,
   type WorkspaceTestingSurface,
 } from '../lib/workspaceTestingTelemetry';
-import { resolveAllCards } from '../runtime/agentCardRegistryResolver';
 
 const AgentManager = lazy(async () => {
   const mod = await import('../components/AgentManager');
@@ -414,7 +414,12 @@ function normalizeWorkspaceSurface(
     normalized === 'knowledge' ||
     normalized === 'codegraph' ||
     normalized === 'energy' ||
-    normalized === 'worldsignal'
+    normalized === 'worldsignal' ||
+    normalized === 'trading' ||
+    normalized === 'image' ||
+    normalized === 'code' ||
+    normalized === 'video' ||
+    normalized === 'telescope'
   ) {
     return normalized as WorkspaceTestingSurface;
   }
@@ -706,23 +711,495 @@ function isEnergyWorkbenchCard(card: AgentCardInstance | null | undefined): bool
   );
 }
 
+function isTradingWorkbenchCard(card: AgentCardInstance | null | undefined): boolean {
+  if (!card) return false;
+  return (
+    safeText(card.id).trim() === 'card_trading_workbench' ||
+    safeText(card.templateId).trim() === 'template_trading_workbench'
+  );
+}
+
+function isImageWorkbenchCard(card: AgentCardInstance | null | undefined): boolean {
+  if (!card) return false;
+  return (
+    safeText(card.id).trim() === 'card_image_workbench' ||
+    safeText(card.templateId).trim() === 'template_image_workbench'
+  );
+}
+
+function isCodeWorkbenchCard(card: AgentCardInstance | null | undefined): boolean {
+  if (!card) return false;
+  return (
+    safeText(card.id).trim() === 'card_code_workbench' ||
+    safeText(card.templateId).trim() === 'template_code_workbench'
+  );
+}
+
+function isVideoWorkbenchCard(card: AgentCardInstance | null | undefined): boolean {
+  if (!card) return false;
+  return (
+    safeText(card.id).trim() === 'card_video_workbench' ||
+    safeText(card.templateId).trim() === 'template_video_workbench'
+  );
+}
+
+function isTelescopeWorkbenchCard(
+  card: AgentCardInstance | null | undefined,
+): boolean {
+  if (!card) return false;
+  return (
+    safeText(card.id).trim() === 'card_telescope_workbench' ||
+    safeText(card.templateId).trim() === 'template_telescope_workbench'
+  );
+}
+
+type WorkbenchSurfaceId =
+  | 'energy'
+  | 'trading'
+  | 'image'
+  | 'code'
+  | 'video'
+  | 'telescope';
+
+type WorkbenchCardDescriptor = {
+  id: WorkbenchSurfaceId;
+  title: string;
+  openLabel: string;
+  disabledCopy: string;
+  matches: (card: AgentCardInstance | null | undefined) => boolean;
+};
+
+const WORKBENCH_CARD_DESCRIPTORS: readonly WorkbenchCardDescriptor[] = [
+  {
+    id: 'energy',
+    title: 'NRGSim / Energy',
+    openLabel: 'Open Energy Surface',
+    disabledCopy:
+      'NRGSim is staged as a selectable workbench card. Runtime is disabled until the dedicated Energy backend exists.',
+    matches: isEnergyWorkbenchCard,
+  },
+  {
+    id: 'trading',
+    title: 'Trading Agent',
+    openLabel: 'Open Trading Workspace',
+    disabledCopy:
+      'Trading is staged as a selectable workbench card. Runtime is disabled until the dedicated trading bridge exists.',
+    matches: isTradingWorkbenchCard,
+  },
+  {
+    id: 'image',
+    title: 'Image Maker Agent',
+    openLabel: 'Open Image Workspace',
+    disabledCopy:
+      'Image Maker is staged as a selectable workbench card. Runtime is disabled until the image generation bridge exists.',
+    matches: isImageWorkbenchCard,
+  },
+  {
+    id: 'code',
+    title: 'Code Agent',
+    openLabel: 'Open Code Workspace',
+    disabledCopy:
+      'Code Agent is staged as a selectable workbench card. Runtime is disabled until the canvas-owned code bridge is restored.',
+    matches: isCodeWorkbenchCard,
+  },
+  {
+    id: 'video',
+    title: 'Video Agent',
+    openLabel: 'Open Video Workspace',
+    disabledCopy:
+      'Video Agent is staged as a selectable workbench card. Runtime is disabled until the video generation bridge exists.',
+    matches: isVideoWorkbenchCard,
+  },
+  {
+    id: 'telescope',
+    title: 'Telescope Agent',
+    openLabel: 'Open Telescope Workspace',
+    disabledCopy:
+      'Telescope is staged as a selectable workbench card. Runtime is disabled until the dedicated telescope workbench bridge exists.',
+    matches: isTelescopeWorkbenchCard,
+  },
+] as const;
+
+function resolveWorkbenchDescriptor(
+  card: AgentCardInstance | null | undefined,
+): WorkbenchCardDescriptor | null {
+  if (!card) return null;
+  return (
+    WORKBENCH_CARD_DESCRIPTORS.find((descriptor) => descriptor.matches(card)) ??
+    null
+  );
+}
+
+function isPlanAgentCard(card: AgentCardInstance | null | undefined): boolean {
+  if (!card) return false;
+  const id = safeText(card.id).trim().toLowerCase();
+  const templateId = safeText(card.templateId).trim().toLowerCase();
+  const title = safeText(card.title).trim().toLowerCase();
+  return (
+    id === 'card_plan_agent' ||
+    templateId === 'template_plan_agent' ||
+    title === 'plan agent'
+  );
+}
+
+function isWorldSignalsAgentCard(
+  card: AgentCardInstance | null | undefined,
+): boolean {
+  if (!card) return false;
+  const id = safeText(card.id).trim().toLowerCase();
+  const templateId = safeText(card.templateId).trim().toLowerCase();
+  const title = safeText(card.title).trim().toLowerCase();
+  return (
+    id === 'card_worldsignals_agent' ||
+    templateId === 'template_worldsignals_agent' ||
+    title === 'worldsignals agent'
+  );
+}
+
+function isThinkGraphSystemCard(
+  card: AgentCardInstance | null | undefined,
+): boolean {
+  if (!card) return false;
+  return (
+    safeText(card.id).trim().toLowerCase() === 'card_thinkgraph_agent' ||
+    safeText(card.runtimeBinding).trim().toLowerCase() === 'thinkgraph_agent'
+  );
+}
+
+function isKnowGraphSystemCard(
+  card: AgentCardInstance | null | undefined,
+): boolean {
+  if (!card) return false;
+  const binding = safeText(card.runtimeBinding).trim().toLowerCase();
+  return (
+    safeText(card.id).trim().toLowerCase() === 'card_knowgraph_agent' ||
+    binding === 'knowgraph_agent' ||
+    binding === 'knowgraph'
+  );
+}
+
+function isCodeGraphSystemCard(
+  card: AgentCardInstance | null | undefined,
+): boolean {
+  if (!card) return false;
+  return (
+    safeText(card.id).trim().toLowerCase() === 'card_codegraph_agent' ||
+    safeText(card.runtimeBinding).trim().toLowerCase() === 'codegraph_agent'
+  );
+}
+
+export type ActivationProposalState = {
+  capability:
+    | 'plan'
+    | 'knowledge'
+    | 'energy'
+    | 'worldsignal'
+    | 'image'
+    | 'code'
+    | 'video'
+    | 'trading'
+    | 'telescope';
+  title: string;
+  sourceText: string;
+  status: 'pending' | 'approved';
+};
+
+export type ProgressiveRailVisibility = {
+  showKnowledge: boolean;
+  showPlan: boolean;
+  showWorldsignal: boolean;
+  showEnergy: boolean;
+  showTrading: boolean;
+  showImage: boolean;
+  showCode: boolean;
+  showVideo: boolean;
+  showTelescope: boolean;
+};
+
+function buildBusConnectedCardIds(
+  nodes: readonly AgentCardInstance[],
+  edges: readonly DeckEdge[],
+): Set<string> {
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const busIds = nodes
+    .filter((node) => normalizeRuntimeType(node.runtimeType) === 'magentic_one')
+    .map((node) => node.id);
+  if (busIds.length === 0) return new Set<string>();
+
+  const adjacency = new Map<string, string[]>();
+  const connect = (left: string, right: string) => {
+    const neighbors = adjacency.get(left) || [];
+    neighbors.push(right);
+    adjacency.set(left, neighbors);
+  };
+
+  for (const edge of edges) {
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) continue;
+    const edgeType = normalizeDeckEdgeType(edge.edgeType);
+    if (edgeType !== 'magentic_option' && edgeType !== 'flow') continue;
+    connect(edge.source, edge.target);
+    connect(edge.target, edge.source);
+  }
+
+  const connected = new Set<string>();
+  const queue = [...busIds];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (connected.has(current)) continue;
+    connected.add(current);
+    for (const neighbor of adjacency.get(current) || []) {
+      if (!connected.has(neighbor)) queue.push(neighbor);
+    }
+  }
+
+  return connected;
+}
+
+function buildFlowAdjacency(edges: readonly DeckEdge[]): Map<string, string[]> {
+  const adjacency = new Map<string, string[]>();
+  const connect = (left: string, right: string) => {
+    const neighbors = adjacency.get(left) || [];
+    neighbors.push(right);
+    adjacency.set(left, neighbors);
+  };
+
+  for (const edge of edges) {
+    if (normalizeDeckEdgeType(edge.edgeType) !== 'flow') continue;
+    connect(edge.source, edge.target);
+    connect(edge.target, edge.source);
+  }
+
+  return adjacency;
+}
+
+function areCardsInSameFlowComponent(
+  adjacency: Map<string, string[]>,
+  cardIds: readonly string[],
+): boolean {
+  const [head, ...tail] = cardIds.filter(Boolean);
+  if (!head || tail.length === 0) return false;
+  const visited = new Set<string>();
+  const queue = [head];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    for (const neighbor of adjacency.get(current) || []) {
+      if (!visited.has(neighbor)) queue.push(neighbor);
+    }
+  }
+
+  return tail.every((cardId) => visited.has(cardId));
+}
+
+function resolveFirstMatchingCardId(
+  nodes: readonly AgentCardInstance[],
+  predicate: (card: AgentCardInstance) => boolean,
+): string | null {
+  return nodes.find(predicate)?.id ?? null;
+}
+
+export function isKnowledgeChainActive(
+  nodes: readonly AgentCardInstance[],
+  edges: readonly DeckEdge[],
+): boolean {
+  const thinkGraphId = resolveFirstMatchingCardId(nodes, isThinkGraphSystemCard);
+  const knowGraphId = resolveFirstMatchingCardId(nodes, isKnowGraphSystemCard);
+  const codeGraphId = resolveFirstMatchingCardId(nodes, isCodeGraphSystemCard);
+  if (!thinkGraphId || !knowGraphId || !codeGraphId) return false;
+
+  const busConnected = buildBusConnectedCardIds(nodes, edges);
+  if (
+    !busConnected.has(thinkGraphId) ||
+    !busConnected.has(knowGraphId) ||
+    !busConnected.has(codeGraphId)
+  ) {
+    return false;
+  }
+
+  return areCardsInSameFlowComponent(buildFlowAdjacency(edges), [
+    thinkGraphId,
+    knowGraphId,
+    codeGraphId,
+  ]);
+}
+
+export function isPlanAgentActive(
+  nodes: readonly AgentCardInstance[],
+  edges: readonly DeckEdge[],
+): boolean {
+  const busConnected = buildBusConnectedCardIds(nodes, edges);
+  return nodes.some((node) => busConnected.has(node.id) && isPlanAgentCard(node));
+}
+
+export function isWorldSignalsAgentActive(
+  nodes: readonly AgentCardInstance[],
+  edges: readonly DeckEdge[],
+): boolean {
+  const busConnected = buildBusConnectedCardIds(nodes, edges);
+  return nodes.some(
+    (node) => busConnected.has(node.id) && isWorldSignalsAgentCard(node),
+  );
+}
+
 export function isEnergyWorkbenchActive(
   nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
 ): boolean {
-  for (const resolved of resolveAllCards(nodes, edges).values()) {
-    if (resolved.def?.id === 'energy' && resolved.busConnection !== 'disconnected') {
-      return true;
-    }
-  }
-  return false;
+  return isWorkbenchSurfaceActive(nodes, edges, isEnergyWorkbenchCard);
+}
+
+export function isTradingWorkbenchActive(
+  nodes: readonly AgentCardInstance[],
+  edges: readonly DeckEdge[],
+): boolean {
+  return isWorkbenchSurfaceActive(nodes, edges, isTradingWorkbenchCard);
+}
+
+export function isImageWorkbenchActive(
+  nodes: readonly AgentCardInstance[],
+  edges: readonly DeckEdge[],
+): boolean {
+  return isWorkbenchSurfaceActive(nodes, edges, isImageWorkbenchCard);
+}
+
+export function isCodeWorkbenchActive(
+  nodes: readonly AgentCardInstance[],
+  edges: readonly DeckEdge[],
+): boolean {
+  return isWorkbenchSurfaceActive(nodes, edges, isCodeWorkbenchCard);
+}
+
+export function isVideoWorkbenchActive(
+  nodes: readonly AgentCardInstance[],
+  edges: readonly DeckEdge[],
+): boolean {
+  return isWorkbenchSurfaceActive(nodes, edges, isVideoWorkbenchCard);
+}
+
+export function isTelescopeWorkbenchActive(
+  nodes: readonly AgentCardInstance[],
+  edges: readonly DeckEdge[],
+): boolean {
+  return isWorkbenchSurfaceActive(nodes, edges, isTelescopeWorkbenchCard);
+}
+
+function isWorkbenchSurfaceActive(
+  nodes: readonly AgentCardInstance[],
+  edges: readonly DeckEdge[],
+  predicate: (card: AgentCardInstance | null | undefined) => boolean,
+): boolean {
+  const busConnected = buildBusConnectedCardIds(nodes, edges);
+  return nodes.some(
+    (node) => busConnected.has(node.id) && predicate(node),
+  );
 }
 
 export function shouldShowEnergyRailButton(
   deck: Pick<DeckDocument, 'nodes' | 'edges'>,
   workspaceView: string,
 ): boolean {
-  return workspaceView === 'energy' || isEnergyWorkbenchActive(deck.nodes, deck.edges);
+  return deriveVisibleRailItems({
+    deck,
+    workspaceView,
+    pendingActivationProposal: null,
+  }).showEnergy;
+}
+
+export function deriveVisibleRailItems({
+  deck,
+  workspaceView,
+  pendingActivationProposal,
+}: {
+  deck: Pick<DeckDocument, 'nodes' | 'edges'>;
+  workspaceView: string;
+  pendingActivationProposal: ActivationProposalState | null;
+}): ProgressiveRailVisibility {
+  return {
+    showKnowledge:
+      workspaceView === 'knowledge' ||
+      isKnowledgeChainActive(deck.nodes, deck.edges),
+    showPlan:
+      workspaceView === 'plan' ||
+      pendingActivationProposal !== null ||
+      isPlanAgentActive(deck.nodes, deck.edges),
+    showWorldsignal:
+      workspaceView === 'worldsignal' ||
+      isWorldSignalsAgentActive(deck.nodes, deck.edges),
+    showEnergy:
+      workspaceView === 'energy' ||
+      isEnergyWorkbenchActive(deck.nodes, deck.edges),
+    showTrading:
+      workspaceView === 'trading' ||
+      isTradingWorkbenchActive(deck.nodes, deck.edges),
+    showImage:
+      workspaceView === 'image' ||
+      isImageWorkbenchActive(deck.nodes, deck.edges),
+    showCode:
+      workspaceView === 'code' ||
+      isCodeWorkbenchActive(deck.nodes, deck.edges),
+    showVideo:
+      workspaceView === 'video' ||
+      isVideoWorkbenchActive(deck.nodes, deck.edges),
+    showTelescope:
+      workspaceView === 'telescope' ||
+      isTelescopeWorkbenchActive(deck.nodes, deck.edges),
+  };
+}
+
+function detectActivationProposal(
+  text: string,
+): ActivationProposalState | null {
+  const normalized = safeText(text).trim().toLowerCase();
+  if (!normalized || !/\b(enable|activate|open|use|add)\b/.test(normalized)) {
+    return null;
+  }
+
+  const capability =
+    /\b(plan|planning)\b/.test(normalized)
+      ? 'plan'
+      : /\b(knowledge|research|knowgraph|codegraph|thinkgraph)\b/.test(
+            normalized,
+          )
+        ? 'knowledge'
+        : /\b(energy|nrgsim)\b/.test(normalized)
+          ? 'energy'
+          : /\b(worldsignal|world signals|world)\b/.test(normalized)
+            ? 'worldsignal'
+            : /\b(image|poster|print|shirt)\b/.test(normalized)
+              ? 'image'
+              : /\b(code|coder|openclaude|claude code|localcoder)\b/.test(
+                    normalized,
+                  )
+                ? 'code'
+                : /\b(video|clips|storyboard)\b/.test(normalized)
+                  ? 'video'
+            : /\btrading\b/.test(normalized)
+              ? 'trading'
+              : /\btelescope\b/.test(normalized)
+                ? 'telescope'
+                : null;
+  if (!capability) return null;
+
+  const titleByCapability = {
+    plan: 'Enable Plan',
+    knowledge: 'Enable Research + Knowledge',
+    energy: 'Enable Energy',
+    worldsignal: 'Enable WorldSignals',
+    image: 'Enable Image Maker',
+    code: 'Enable Code Agent',
+    video: 'Enable Video Agent',
+    trading: 'Enable Trading',
+    telescope: 'Enable Telescope',
+  } as const;
+
+  return {
+    capability,
+    title: titleByCapability[capability],
+    sourceText: text.trim(),
+    status: 'pending',
+  };
 }
 
 function isAssistLikeRuntimeType(runtimeType: AgentCardRuntimeType | null): boolean {
@@ -1453,6 +1930,52 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
     }),
   },
+  {
+    id: 'prompt_plan_agent',
+    content: buildSeedPromptTemplate({
+      role: [
+        'You are the Plan Agent.',
+        'You represent planning and approval as a visible, selectable system card.',
+      ].join('\n'),
+      goal: [
+        'Expose the plan workspace and approval surface when the user activates planning.',
+      ].join('\n'),
+      constraints: [
+        'Do not silently rewire the canvas.',
+        'Do not claim an activation was executed unless the graph was actually changed.',
+      ].join('\n'),
+      ioSchema: [
+        'Input: activation proposal or planning context.',
+        'Output: a visible plan/approval workspace for human review.',
+      ].join('\n'),
+      memoryPolicy: [
+        'Keep planning visible and user-approved before graph changes are applied.',
+      ].join('\n'),
+    }),
+  },
+  {
+    id: 'prompt_worldsignals_agent',
+    content: buildSeedPromptTemplate({
+      role: [
+        'You are the WorldSignals Agent.',
+        'You represent the WorldSignals surface as a visible system capability.',
+      ].join('\n'),
+      goal: [
+        'Expose the WorldSignals workspace when the user activates outside-world context.',
+      ].join('\n'),
+      constraints: [
+        'Do not call backend model runtime from this card.',
+        'Use the existing WorldSignals surface for interaction.',
+      ].join('\n'),
+      ioSchema: [
+        'Input: user selection or future WorldSignals request.',
+        'Output: open or focus the WorldSignals workspace surface.',
+      ].join('\n'),
+      memoryPolicy: [
+        'This card is a visible system gateway to the WorldSignals surface.',
+      ].join('\n'),
+    }),
+  },
 ];
 
 const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
@@ -1525,6 +2048,26 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     id: 'template_energy_workbench',
     name: 'NRGSim / Energy',
     promptTemplate: 'prompt_energy_workbench',
+    model: 'gpt-5-mini',
+    provider: 'openai',
+    temperature: 0.2,
+    maxTokens: 800,
+    tools: [],
+  },
+  {
+    id: 'template_plan_agent',
+    name: 'Plan Agent',
+    promptTemplate: 'prompt_plan_agent',
+    model: 'gpt-5-mini',
+    provider: 'openai',
+    temperature: 0.2,
+    maxTokens: 800,
+    tools: [],
+  },
+  {
+    id: 'template_worldsignals_agent',
+    name: 'WorldSignals Agent',
+    promptTemplate: 'prompt_worldsignals_agent',
     model: 'gpt-5-mini',
     provider: 'openai',
     temperature: 0.2,
@@ -1641,14 +2184,42 @@ export const INITIAL_DECK: DeckDocument = {
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
+    {
+      id: 'card_plan_agent',
+      kind: 'agent',
+      templateId: 'template_plan_agent',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_plan_agent',
+        )?.content || '',
+      runtimeBinding: null,
+      runtimeType: 'assistant_agent',
+      parentGraphId: null,
+      title: 'Plan Agent',
+      subtitle: 'Approval and planning surface',
+      position: { x: -140, y: 20 },
+      status: 'ready',
+      cloneConfig: { enabled: false, seeds: [] },
+    },
+    {
+      id: 'card_worldsignals_agent',
+      kind: 'agent',
+      templateId: 'template_worldsignals_agent',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_worldsignals_agent',
+        )?.content || '',
+      runtimeBinding: null,
+      runtimeType: 'assistant_agent',
+      parentGraphId: null,
+      title: 'WorldSignals Agent',
+      subtitle: 'Outside-world context surface',
+      position: { x: 0, y: 20 },
+      status: 'ready',
+      cloneConfig: { enabled: false, seeds: [] },
+    },
   ],
   edges: [
-    {
-      id: 'edge_magentic_thinkgraph',
-      source: 'card_magentic',
-      target: 'card_thinkgraph_agent',
-      edgeType: 'magentic_option',
-    },
     {
       id: 'edge_knowgraph_research',
       source: 'card_knowgraph_agent',
@@ -1684,6 +2255,12 @@ const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
   card_knowgraph: 'knowgraph',
   card_neo4j: 'neo4j',
 };
+
+const BASELINE_OPTIONAL_SYSTEM_CARD_IDS = new Set([
+  'card_plan_agent',
+  'card_worldsignals_agent',
+]);
+
 function cloneDeckDocument<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
@@ -1755,8 +2332,9 @@ function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
       typeof (node as AgentCardInstance).templateId === 'string',
     ),
   );
-  return nextNodes.length > 0
-    ? nextNodes.map((node) => ({
+  const normalizedNodes =
+    nextNodes.length > 0
+      ? nextNodes.map((node) => ({
         id: safeText(node.id).trim(),
         kind: 'agent',
         templateId: safeText(node.templateId).trim(),
@@ -1793,7 +2371,15 @@ function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
             ? node.cloneConfig
             : undefined,
       }))
-    : [];
+      : [];
+  if (normalizedNodes.length === 0) return [];
+
+  const existingIds = new Set(normalizedNodes.map((node) => node.id));
+  const appendedNodes = INITIAL_DECK.nodes
+    .filter((node) => BASELINE_OPTIONAL_SYSTEM_CARD_IDS.has(node.id))
+    .filter((node) => !existingIds.has(node.id))
+    .map((node) => cloneDeckDocument(node));
+  return [...normalizedNodes, ...appendedNodes];
 }
 
 function normalizeDeckPromptTemplates(value: unknown): PromptTemplate[] {
@@ -1821,7 +2407,11 @@ function normalizeDeckEdges(value: unknown): DeckEdge[] {
   if (!Array.isArray(value)) {
     return cloneDeckDocument(INITIAL_DECK.edges);
   }
-  return cloneDeckDocument(sanitizeDeckEdges(value));
+  return cloneDeckDocument(
+    sanitizeDeckEdges(value).filter(
+      (edge) => safeText(edge.id).trim() !== 'edge_magentic_thinkgraph',
+    ),
+  );
 }
 
 function slugifyDeckIdPart(value: string): string {
@@ -3232,6 +3822,11 @@ export default function AgentBuilder(): React.ReactElement {
     | 'knowledge'
     | 'codegraph'
     | 'energy'
+    | 'trading'
+    | 'image'
+    | 'code'
+    | 'video'
+    | 'telescope'
     | 'worldsignal'
   >('chat');
   const {
@@ -3256,9 +3851,16 @@ export default function AgentBuilder(): React.ReactElement {
   const [deck, setDeckState] = useState<DeckDocument>(() =>
     hydrateDeckDocument(INITIAL_DECK),
   );
-  const showEnergyRailButton = useMemo(
-    () => shouldShowEnergyRailButton(deck, workspaceView),
-    [deck, workspaceView],
+  const [pendingActivationProposal, setPendingActivationProposal] =
+    useState<ActivationProposalState | null>(null);
+  const visibleRailItems = useMemo(
+    () =>
+      deriveVisibleRailItems({
+        deck,
+        workspaceView,
+        pendingActivationProposal,
+      }),
+    [deck, pendingActivationProposal, workspaceView],
   );
   const [deckRevision, setDeckRevision] = useState<string | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
@@ -3598,6 +4200,7 @@ export default function AgentBuilder(): React.ReactElement {
         setLatestCardRun(null);
         setLiveDeckEvents([]);
         setMessages(continuity.messages);
+        setPendingActivationProposal(null);
         setPlanSource(continuity.planSource);
         setPlan(continuity.plan);
         setLinks(continuity.links);
@@ -3620,6 +4223,7 @@ export default function AgentBuilder(): React.ReactElement {
         setLiveDeckEvents([]);
         setDeckRevision(null);
         setMessages([...next.messages]);
+        setPendingActivationProposal(null);
         setPlanSource([...next.plan]);
         setPlan([...next.plan]);
         setLinks([...next.links]);
@@ -3664,6 +4268,7 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckSaveBusy(false);
     setDeckRunBusy(false);
     setCardRunBusy(false);
+    setPendingActivationProposal(null);
   }, [canvasProjectId]);
 
   const showDeckBuilder = workspaceView === 'canvas';
@@ -5899,6 +6504,10 @@ export default function AgentBuilder(): React.ReactElement {
     });
 
     setMessages((m) => [...m, { role: 'user', text: trimmed }]);
+    const activationProposal = detectActivationProposal(trimmed);
+    if (activationProposal) {
+      setPendingActivationProposal(activationProposal);
+    }
     setSending(true);
     setDeckRunBusy(true);
     setLatestCardRun(null);
@@ -6712,6 +7321,95 @@ export default function AgentBuilder(): React.ReactElement {
               boxShadow: 'none',
             }}
           >
+            {pendingActivationProposal ? (
+              <div
+                style={graphDrawerSectionStyle({
+                  margin: '12px 12px 10px',
+                  padding: '12px 14px',
+                  borderColor:
+                    pendingActivationProposal.status === 'approved'
+                      ? 'rgba(79,162,173,0.32)'
+                      : 'rgba(226,186,84,0.28)',
+                  background:
+                    pendingActivationProposal.status === 'approved'
+                      ? 'rgba(79,162,173,0.12)'
+                      : 'rgba(226,186,84,0.10)',
+                })}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                  }}
+                >
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: GRAPH_THEME.text.primary,
+                      }}
+                    >
+                      {pendingActivationProposal.title}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 4,
+                        fontSize: 12,
+                        color: GRAPH_THEME.drawer.inputMuted,
+                      }}
+                    >
+                      {pendingActivationProposal.status === 'approved'
+                        ? 'Approved for manual activation on the canvas.'
+                        : 'Pending approval before any graph rewiring.'}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPendingActivationProposal((current) =>
+                          current
+                            ? { ...current, status: 'approved' }
+                            : current,
+                        )
+                      }
+                      className="px-3 py-1 rounded"
+                      style={{
+                        color: GRAPH_THEME.text.primary,
+                        background: 'rgba(79,162,173,0.16)',
+                        border: '1px solid rgba(79,162,173,0.28)',
+                      }}
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPendingActivationProposal(null)}
+                      className="px-3 py-1 rounded"
+                      style={{
+                        color: GRAPH_THEME.drawer.inputMuted,
+                        background: 'transparent',
+                        border: '1px solid rgba(255,255,255,0.12)',
+                      }}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+                <div
+                  style={{
+                    marginTop: 8,
+                    fontSize: 12,
+                    color: GRAPH_THEME.drawer.inputMuted,
+                  }}
+                >
+                  Request: {pendingActivationProposal.sourceText}
+                </div>
+              </div>
+            ) : null}
             <PlanMissionFlow
               structuredPlan={structuredAssistPlan}
               compact={surfaceRole === 'companion'}
@@ -6759,15 +7457,6 @@ export default function AgentBuilder(): React.ReactElement {
       </div>
     </div>
   );
-
-  const showHomeChat = useCallback(() => {
-    closeObjectDrawer();
-    setSelectedEdgeEvidence(null);
-    setSelectedKnowledgeEntityId(null);
-    setSelectedKnowledgeRelationshipId(null);
-    setOpenDrawer(null);
-    setWorkspaceView('chat');
-  }, [closeObjectDrawer]);
 
   const showCanvasWorkspace = useCallback(() => {
     closeObjectDrawer();
@@ -6847,40 +7536,32 @@ export default function AgentBuilder(): React.ReactElement {
             borderRight: `1px solid ${C.border}`,
           }}
         >
-          <button
-            type="button"
-            title="World"
-            aria-label="World"
-            data-testid="rail-moon-orb-button"
-            onClick={showWorldsignalWorkspace}
-            className="p-2 rounded"
-            style={{ color: workspaceView === 'worldsignal' ? C.primary : C.text }}
-          >
-            <div
-              style={{
-                position: 'relative',
-                width: 28,
-                height: 28,
-                borderRadius: '50%',
-                overflow: 'visible',
-                animation: 'builder-orb-float 21s ease-in-out infinite',
-                boxShadow:
-                  'inset 0 1px 1px rgba(255,255,255,0.12), 0 0 14px rgba(79,162,173,0.14), 0 0 26px rgba(125,105,180,0.08)',
-              }}
+          {visibleRailItems.showWorldsignal ? (
+            <button
+              type="button"
+              title="World"
+              aria-label="World"
+              data-testid="rail-moon-orb-button"
+              onClick={showWorldsignalWorkspace}
+              className="p-2 rounded"
+              style={{ color: workspaceView === 'worldsignal' ? C.primary : C.text }}
             >
-              <BuilderRailMoonOrb phase01={moonPhase01} />
-            </div>
-          </button>
-          <button
-            title="Home"
-            aria-label="Home"
-            data-testid="rail-home-button"
-            onClick={showHomeChat}
-            className="p-2 rounded"
-            style={{ color: workspaceView === 'chat' ? C.primary : C.text }}
-          >
-            <Icon d="M4 7l8-4 8 4v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
-          </button>
+              <div
+                style={{
+                  position: 'relative',
+                  width: 28,
+                  height: 28,
+                  borderRadius: '50%',
+                  overflow: 'visible',
+                  animation: 'builder-orb-float 21s ease-in-out infinite',
+                  boxShadow:
+                    'inset 0 1px 1px rgba(255,255,255,0.12), 0 0 14px rgba(79,162,173,0.14), 0 0 26px rgba(125,105,180,0.08)',
+                }}
+              >
+                <BuilderRailMoonOrb phase01={moonPhase01} />
+              </div>
+            </button>
+          ) : null}
           <button
             title="Agents"
             aria-label="Agents"
@@ -6897,19 +7578,21 @@ export default function AgentBuilder(): React.ReactElement {
           >
             <Icon d="M3 12h18M12 3v18" />
           </button>
-          <button
-            title="Knowledge"
-            aria-label="Knowledge"
-            data-testid="rail-burst-button"
-            onClick={showKnowledgeWorkspace}
-            className="p-2 rounded"
-            style={{
-              color: workspaceView === 'knowledge' ? C.primary : C.text,
-            }}
-          >
-            <Icon d="M12 1v3M12 20v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M1 12h3M20 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" />
-          </button>
-          {showEnergyRailButton ? (
+          {visibleRailItems.showKnowledge ? (
+            <button
+              title="Knowledge"
+              aria-label="Knowledge"
+              data-testid="rail-burst-button"
+              onClick={showKnowledgeWorkspace}
+              className="p-2 rounded"
+              style={{
+                color: workspaceView === 'knowledge' ? C.primary : C.text,
+              }}
+            >
+              <Icon d="M12 1v3M12 20v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M1 12h3M20 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" />
+            </button>
+          ) : null}
+          {visibleRailItems.showEnergy ? (
             <button
               title="Energy"
               aria-label="Energy"
@@ -6925,19 +7608,21 @@ export default function AgentBuilder(): React.ReactElement {
             </button>
           ) : null}
           <div className="flex-1" />
-          <button
-            title="Plan"
-            aria-label="Plan"
-            data-testid="rail-orange-button"
-            onClick={showPlanWorkspace}
-            className="p-2 rounded mb-1"
-            style={{
-              color:
-                workspaceView === 'plan' ? GRAPH_THEME.accent.solar : C.text,
-            }}
-          >
-            <Icon d="M3 12l2-2 4 4L21 4" />
-          </button>
+          {visibleRailItems.showPlan ? (
+            <button
+              title="Plan"
+              aria-label="Plan"
+              data-testid="rail-orange-button"
+              onClick={showPlanWorkspace}
+              className="p-2 rounded mb-1"
+              style={{
+                color:
+                  workspaceView === 'plan' ? GRAPH_THEME.accent.solar : C.text,
+              }}
+            >
+              <Icon d="M3 12l2-2 4 4L21 4" />
+            </button>
+          ) : null}
           <button
             title="Menu"
             aria-label="Menu"

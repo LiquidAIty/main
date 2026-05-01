@@ -151,16 +151,33 @@ export function buildInitialWorkbenchLandingViewport(
   });
 }
 
+type SeamRectHost = {
+  getBoundingClientRect: () => { left: number };
+};
+
+function isSeamRectHost(value: unknown): value is SeamRectHost {
+  return Boolean(value && typeof (value as SeamRectHost).getBoundingClientRect === 'function');
+}
+
 function resolveInitialBusSeamCenterX(canvasElement: HTMLDivElement | null): number {
   const canvasRegion = canvasElement?.closest('[data-testid="workspace-canvas-region"]');
-  if (!(canvasRegion instanceof HTMLElement)) {
+  if (!isSeamRectHost(canvasRegion)) {
     return LANDING_BUS_CENTER_X;
   }
   const seamHandle = canvasRegion.previousElementSibling;
-  if (!(seamHandle instanceof HTMLElement)) {
+  if (!isSeamRectHost(seamHandle)) {
     return LANDING_BUS_CENTER_X;
   }
   return seamHandle.getBoundingClientRect().left - canvasRegion.getBoundingClientRect().left;
+}
+
+export function buildPresentationLandingViewport(
+  document: DeckDocument,
+  canvasElement: HTMLDivElement | null,
+): CanvasLandingViewport | null {
+  return buildInitialWorkbenchLandingViewport(document, {
+    desiredBusCenterX: resolveInitialBusSeamCenterX(canvasElement),
+  });
 }
 
 export function buildCanvasDocumentRecoveryKey(document: DeckDocument): string {
@@ -838,9 +855,7 @@ export default function BuilderCanvas({
     if (flowNodes.length === 0) return;
     if (initialViewportAppliedRef.current) return;
     initialViewportAppliedRef.current = true;
-    const landingViewport = buildInitialWorkbenchLandingViewport(document, {
-      desiredBusCenterX: resolveInitialBusSeamCenterX(canvasRef.current),
-    });
+    const landingViewport = buildPresentationLandingViewport(document, canvasRef.current);
     const frame = window.requestAnimationFrame(() => {
       if (landingViewport) {
         reactFlowInstance.setViewport(landingViewport, { duration: 0 });
@@ -1234,14 +1249,14 @@ export default function BuilderCanvas({
         <button
           type="button"
           aria-label="Fit view"
-          onClick={() =>
-            reactFlowInstance?.fitView({
+          onClick={() => {
+            if (!reactFlowInstance) return;
+            const landingViewport = buildPresentationLandingViewport(document, canvasRef.current);
+            if (!landingViewport) return;
+            reactFlowInstance.setViewport(landingViewport, {
               duration: GRAPH_THEME.nav.fitDurationMs,
-              padding: GRAPH_THEME.nav.fitPadding,
-              minZoom: GRAPH_THEME.nav.minZoom,
-              maxZoom: GRAPH_THEME.nav.fitMaxZoom,
-            })
-          }
+            });
+          }}
           style={graphControlButtonStyle({
             borderBottom: `1px solid ${GRAPH_THEME.controls.border}`,
           })}

@@ -11,6 +11,7 @@ import {
   buildDeckEdgeFromConnection,
   buildDeckEdgeVisualStates,
   buildInitialBusSeamViewport,
+  buildPresentationLandingViewport,
   buildInitialWorkbenchLandingViewport,
   getAssistSwarmBadge,
   isPlainConnectionAllowedForDocument,
@@ -95,6 +96,51 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       zoom: 1,
     });
     expect(document.nodes[0].position).toEqual({ x: -420, y: 140 });
+  });
+
+  it('reuses the seam landing viewport for presentation restore actions', () => {
+    const seamHandle = {
+      getBoundingClientRect: () => ({ left: 474, top: 0, right: 484, bottom: 900, width: 10, height: 900 }),
+    };
+    const canvasRegion = {
+      previousElementSibling: seamHandle,
+      getBoundingClientRect: () => ({ left: 484, top: 0, right: 1600, bottom: 900, width: 1116, height: 900 }),
+    };
+    const canvasElement = {
+      closest: (selector: string) => (selector === '[data-testid="workspace-canvas-region"]' ? canvasRegion : null),
+    };
+
+    const documentModel: DeckDocument = {
+      id: 'deck_landing_restore',
+      name: 'Landing Restore',
+      promptTemplates: [],
+      version: 1,
+      nodes: [
+        {
+          id: 'card_magentic',
+          kind: 'agent',
+          templateId: 'template_magentic',
+          runtimeType: 'magentic_one',
+          title: 'Magentic-One',
+          position: { x: 140, y: 120 },
+        },
+        {
+          id: 'card_energy_workbench',
+          kind: 'agent',
+          templateId: 'template_energy_workbench',
+          runtimeType: 'assistant_agent',
+          title: 'NRGSim / Energy',
+          position: { x: 220, y: 140 },
+        },
+      ],
+      edges: [],
+    };
+
+    expect(buildPresentationLandingViewport(documentModel, canvasElement as HTMLDivElement)).toEqual({
+      x: -163,
+      y: -48,
+      zoom: 1,
+    });
   });
 
   it('does not build a workbench landing viewport when the workbench is absent', () => {

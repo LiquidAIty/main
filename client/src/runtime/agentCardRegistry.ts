@@ -1,7 +1,7 @@
 /**
  * Agent Card Registry v0 — Phase 1A
  *
- * Static definitions for the 9 real LiquidAIty agent capabilities.
+ * Static definitions for the current LiquidAIty agent capabilities.
  * This is a UI-only registry. It does NOT modify AgentCardInstance,
  * DeckDocument, DeckEdge, INITIAL_DECK, or any runtime/backend type.
  *
@@ -91,8 +91,8 @@ export const AGENT_CARD_REGISTRY: readonly AgentCardDef[] = [
     railEligible: true,
     requiresPlanApproval: true,
     defaultConnected: false,
-    capabilityStatus: 'implemented',
-    runtimeSafe: true,
+    capabilityStatus: 'partial',
+    runtimeSafe: false,
     runtimeType: 'local_coder',
   },
   {
@@ -131,6 +131,32 @@ export const AGENT_CARD_REGISTRY: readonly AgentCardDef[] = [
     requiresPlanApproval: true,
     defaultConnected: false,
     capabilityStatus: 'partial',
+    runtimeSafe: false,
+    runtimeType: 'assistant_agent',
+  },
+  {
+    id: 'image',
+    name: 'Image Maker Agent',
+    description: 'Image generation, variation, and print-placement workbench.',
+    kind: 'workbench',
+    ownedSurface: 'image',
+    railEligible: true,
+    requiresPlanApproval: true,
+    defaultConnected: false,
+    capabilityStatus: 'partial',
+    runtimeSafe: false,
+    runtimeType: 'assistant_agent',
+  },
+  {
+    id: 'video',
+    name: 'Video Agent',
+    description: 'Storyboard, clip assembly, and publish workflow workbench.',
+    kind: 'workbench',
+    ownedSurface: 'video',
+    railEligible: true,
+    requiresPlanApproval: true,
+    defaultConnected: false,
+    capabilityStatus: 'placeholder',
     runtimeSafe: false,
     runtimeType: 'assistant_agent',
   },
