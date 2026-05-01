@@ -3657,6 +3657,25 @@ function Icon({ d, size = 22 }: { d: string; size?: number }) {
   );
 }
 
+function HexPlusIcon({ size = 28 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 64 64"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="4.25"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M32 5L55 18.25V45.75L32 59L9 45.75V18.25L32 5Z" />
+      <path d="M32 21V43" strokeLinecap="round" />
+      <path d="M21 32H43" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /** Mean synodic month in days (NASA/USNO convention). */
 const SYNODIC_MONTH_DAYS = 29.530588861;
 /** Reference Julian Date of a known new moon (2000-01-06 18:14 UTC ≈ JD 2451550.09765). */
@@ -7576,7 +7595,7 @@ export default function AgentBuilder(): React.ReactElement {
             className="p-2 rounded"
             style={{ color: workspaceView === 'canvas' ? C.primary : C.text }}
           >
-            <Icon d="M3 12h18M12 3v18" />
+            <HexPlusIcon />
           </button>
           {visibleRailItems.showKnowledge ? (
             <button
