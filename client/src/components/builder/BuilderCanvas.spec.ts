@@ -10,6 +10,7 @@ import {
   buildAssistStructureSummaries,
   buildDeckEdgeFromConnection,
   buildDeckEdgeVisualStates,
+  buildInitialBusSeamViewport,
   buildInitialWorkbenchLandingViewport,
   getAssistSwarmBadge,
   isPlainConnectionAllowedForDocument,
@@ -28,6 +29,22 @@ import { buildDeckEdgeIdentityKey, sanitizeDeckEdges } from './deckValidation';
 import MagenticBusNode from './nodes/MagenticBusNode';
 
 describe('BuilderCanvas runtime-truth helpers', () => {
+  it('builds seam viewport math from the bus center rather than the bus left edge', () => {
+    expect(
+      buildInitialBusSeamViewport({
+        busPosition: { x: 140, y: 120 },
+        busWidth: 26,
+        zoom: 1,
+        desiredBusCenterX: 0,
+        desiredBusTopY: 72,
+      }),
+    ).toEqual({
+      x: -153,
+      y: -48,
+      zoom: 1,
+    });
+  });
+
   it('builds the initial landing viewport around the bus and workbench side', () => {
     const document: DeckDocument = {
       id: 'deck_landing',
@@ -64,7 +81,16 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     };
 
     expect(buildInitialWorkbenchLandingViewport(document)).toEqual({
-      x: -116,
+      x: -153,
+      y: -48,
+      zoom: 1,
+    });
+    expect(
+      buildInitialWorkbenchLandingViewport(document, {
+        desiredBusCenterX: -10,
+      }),
+    ).toEqual({
+      x: -163,
       y: -48,
       zoom: 1,
     });

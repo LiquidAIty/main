@@ -57,8 +57,9 @@ const PERSISTED_NODE_CHANGE_TYPES = new Set<NodeChange['type']>(['add', 'remove'
 const PERSISTED_EDGE_CHANGE_TYPES = new Set<EdgeChange['type']>(['add', 'remove', 'replace']);
 const FALLBACK_NODE_WIDTH = 144;
 const FALLBACK_NODE_HEIGHT = 88;
-const LANDING_BUS_SCREEN_X = 24;
-const LANDING_BUS_SCREEN_Y = 72;
+const MAGENTIC_BUS_BODY_WIDTH = 26;
+const LANDING_BUS_TOP_Y = 72;
+const LANDING_BUS_CENTER_X = 0;
 
 const nodeTypes = {
   agentCard: AgentCardNode,
@@ -102,7 +103,34 @@ export type CanvasLandingViewport = {
   zoom: number;
 };
 
-export function buildInitialWorkbenchLandingViewport(document: DeckDocument): CanvasLandingViewport | null {
+export function buildInitialBusSeamViewport({
+  busPosition,
+  zoom,
+  desiredBusCenterX,
+  desiredBusTopY,
+  busWidth = MAGENTIC_BUS_BODY_WIDTH,
+}: {
+  busPosition: { x: number; y: number };
+  zoom: number;
+  desiredBusCenterX: number;
+  desiredBusTopY: number;
+  busWidth?: number;
+}): CanvasLandingViewport {
+  return {
+    x: desiredBusCenterX - (busPosition.x + busWidth / 2) * zoom,
+    y: desiredBusTopY - busPosition.y * zoom,
+    zoom,
+  };
+}
+
+export function buildInitialWorkbenchLandingViewport(
+  document: DeckDocument,
+  options?: {
+    desiredBusCenterX?: number;
+    desiredBusTopY?: number;
+    busWidth?: number;
+  },
+): CanvasLandingViewport | null {
   const busNode = document.nodes.find((node) => normalizeRuntimeType(node.runtimeType) === 'magentic_one');
   const workbenchNode = document.nodes.find(
     (node) =>
@@ -114,11 +142,25 @@ export function buildInitialWorkbenchLandingViewport(document: DeckDocument): Ca
     return null;
   }
 
-  return {
-    x: LANDING_BUS_SCREEN_X - busNode.position.x,
-    y: LANDING_BUS_SCREEN_Y - busNode.position.y,
+  return buildInitialBusSeamViewport({
+    busPosition: busNode.position,
     zoom: GRAPH_WORKSPACE.landingBaselineZoom,
-  };
+    desiredBusCenterX: options?.desiredBusCenterX ?? LANDING_BUS_CENTER_X,
+    desiredBusTopY: options?.desiredBusTopY ?? LANDING_BUS_TOP_Y,
+    busWidth: options?.busWidth ?? MAGENTIC_BUS_BODY_WIDTH,
+  });
+}
+
+function resolveInitialBusSeamCenterX(canvasElement: HTMLDivElement | null): number {
+  const canvasRegion = canvasElement?.closest('[data-testid="workspace-canvas-region"]');
+  if (!(canvasRegion instanceof HTMLElement)) {
+    return LANDING_BUS_CENTER_X;
+  }
+  const seamHandle = canvasRegion.previousElementSibling;
+  if (!(seamHandle instanceof HTMLElement)) {
+    return LANDING_BUS_CENTER_X;
+  }
+  return seamHandle.getBoundingClientRect().left - canvasRegion.getBoundingClientRect().left;
 }
 
 export function buildCanvasDocumentRecoveryKey(document: DeckDocument): string {
@@ -796,18 +838,13 @@ export default function BuilderCanvas({
     if (flowNodes.length === 0) return;
     if (initialViewportAppliedRef.current) return;
     initialViewportAppliedRef.current = true;
-    const landingViewport = buildInitialWorkbenchLandingViewport(document);
+    const landingViewport = buildInitialWorkbenchLandingViewport(document, {
+      desiredBusCenterX: resolveInitialBusSeamCenterX(canvasRef.current),
+    });
     const frame = window.requestAnimationFrame(() => {
       if (landingViewport) {
         reactFlowInstance.setViewport(landingViewport, { duration: 0 });
-        return;
       }
-      reactFlowInstance.fitView({
-        duration: 0,
-        padding: 0.11,
-        minZoom: GRAPH_WORKSPACE.landingBaselineMinZoom,
-        maxZoom: GRAPH_WORKSPACE.landingBaselineMaxZoom,
-      });
     });
     return () => {
       window.cancelAnimationFrame(frame);
