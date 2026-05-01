@@ -510,19 +510,28 @@ export default function PlanMissionFlow({
     () => buildPlanMissionGraph(structuredPlan, nodeOverrides),
     [structuredPlan, nodeOverrides],
   );
-  const guidedSceneModel = useMemo(
+  const initialGuidedSceneModel = useMemo(
     () => buildDefaultPlanScenePath(),
-    [structuredPlan],
+    [],
+  );
+  const [planScenes, setPlanScenes] = useState<PlanScene[]>(
+    initialGuidedSceneModel.scenes,
+  );
+  const [defaultScenePath, setDefaultScenePath] = useState<PlanScenePath>(
+    initialGuidedSceneModel.defaultPath,
   );
   const guidedScenesById = useMemo(
     () =>
       new Map(
-        guidedSceneModel.scenes.map((scene) => [scene.id, scene] as const),
+        planScenes.map((scene) => [scene.id, scene] as const),
       ),
-    [guidedSceneModel.scenes],
+    [planScenes],
   );
   const [activeSceneId, setActiveSceneId] = useState<string>(
-    guidedSceneModel.defaultPath.sceneIds[0] || '',
+    initialGuidedSceneModel.defaultPath.sceneIds[0] || '',
+  );
+  const [landingSceneId, setLandingSceneId] = useState<string>(
+    initialGuidedSceneModel.defaultPath.sceneIds[0] || '',
   );
   const seededNodes = useMemo(() => {
     const missionNodes = missionGraph.nodes.map((node) => ({
@@ -561,11 +570,16 @@ export default function PlanMissionFlow({
 
   useEffect(() => {
     setActiveSceneId((current) =>
-      guidedSceneModel.defaultPath.sceneIds.includes(current)
+      defaultScenePath.sceneIds.includes(current)
         ? current
-        : guidedSceneModel.defaultPath.sceneIds[0] || '',
+        : defaultScenePath.sceneIds[0] || '',
     );
-  }, [guidedSceneModel]);
+    setLandingSceneId((current) =>
+      defaultScenePath.sceneIds.includes(current)
+        ? current
+        : defaultScenePath.sceneIds[0] || '',
+    );
+  }, [defaultScenePath.sceneIds]);
 
   useEffect(() => {
     setNodes((current) => {
@@ -869,6 +883,69 @@ export default function PlanMissionFlow({
     reactFlowInstance.setViewport(scene.viewport, {
       duration: GRAPH_THEME.nav.focusDurationMs,
     });
+  };
+
+  const setActiveSceneToCurrentView = () => {
+    if (!reactFlowInstance || !activeSceneId) return;
+    const viewport = reactFlowInstance.getViewport();
+    setPlanScenes((current) =>
+      current.map((scene) =>
+        scene.id === activeSceneId ? { ...scene, viewport } : scene,
+      ),
+    );
+  };
+
+  const saveCurrentViewAsScene = () => {
+    if (!reactFlowInstance) return;
+    const viewport = reactFlowInstance.getViewport();
+    const nextOrder = defaultScenePath.sceneIds.length + 1;
+    const scene: PlanScene = {
+      id: `scene_manual_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      label: `Scene ${nextOrder}`,
+      viewport,
+      frameId: null,
+      purpose: 'next-step',
+      speakerNote:
+        'Manual scene captured from the current Plan viewport. Speaker notes can be generated later.',
+    };
+    setPlanScenes((current) => [...current, scene]);
+    setDefaultScenePath((current) => ({
+      ...current,
+      sceneIds: [...current.sceneIds, scene.id],
+      steps: [
+        ...current.steps,
+        {
+          id: `${current.id}_step_${nextOrder}`,
+          sceneId: scene.id,
+          label: scene.label,
+          order: nextOrder,
+        },
+      ],
+    }));
+    setActiveSceneId(scene.id);
+  };
+
+  const applySceneByOffset = (offset: number) => {
+    if (defaultScenePath.sceneIds.length === 0) return;
+    const currentIndex = Math.max(
+      0,
+      defaultScenePath.sceneIds.indexOf(activeSceneId),
+    );
+    const nextIndex =
+      (currentIndex + offset + defaultScenePath.sceneIds.length) %
+      defaultScenePath.sceneIds.length;
+    const scene = guidedScenesById.get(defaultScenePath.sceneIds[nextIndex]);
+    if (scene) applyPlanScene(scene);
+  };
+
+  const setActiveSceneAsLanding = () => {
+    if (!activeSceneId) return;
+    setLandingSceneId(activeSceneId);
+  };
+
+  const goToLandingScene = () => {
+    const scene = guidedScenesById.get(landingSceneId);
+    if (scene) applyPlanScene(scene);
   };
 
   const onDragOver = (event: DragEvent<HTMLDivElement>) => {
@@ -1320,7 +1397,7 @@ export default function PlanMissionFlow({
         />
       </ReactFlow>
       <div
-        aria-label={guidedSceneModel.defaultPath.label}
+        aria-label={defaultScenePath.label}
         style={{
           position: 'absolute',
           left: 14,
@@ -1336,6 +1413,103 @@ export default function PlanMissionFlow({
           style={{
             display: 'flex',
             alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+            flexWrap: 'wrap',
+            padding: '0 2px',
+          }}
+        >
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <button
+              type="button"
+              onClick={() => applySceneByOffset(-1)}
+              style={graphControlButtonStyle({
+                width: 30,
+                height: 28,
+                border: `1px solid ${GRAPH_THEME.controls.border}`,
+                borderRadius: 8,
+              })}
+              aria-label="Previous scene"
+            >
+              ‹
+            </button>
+            <button
+              type="button"
+              onClick={() => applySceneByOffset(1)}
+              style={graphControlButtonStyle({
+                width: 30,
+                height: 28,
+                border: `1px solid ${GRAPH_THEME.controls.border}`,
+                borderRadius: 8,
+              })}
+              aria-label="Next scene"
+            >
+              ›
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={setActiveSceneToCurrentView}
+              style={graphControlButtonStyle({
+                width: 'auto',
+                minWidth: 112,
+                height: 28,
+                padding: '0 10px',
+                border: `1px solid ${GRAPH_THEME.accent.primaryBorder}`,
+                borderRadius: 8,
+              })}
+            >
+              Set Scene View
+            </button>
+            <button
+              type="button"
+              onClick={saveCurrentViewAsScene}
+              style={graphControlButtonStyle({
+                width: 'auto',
+                minWidth: 86,
+                height: 28,
+                padding: '0 10px',
+                border: `1px solid ${GRAPH_THEME.controls.border}`,
+                borderRadius: 8,
+              })}
+            >
+              Save Scene
+            </button>
+            <button
+              type="button"
+              onClick={setActiveSceneAsLanding}
+              style={graphControlButtonStyle({
+                width: 'auto',
+                minWidth: 82,
+                height: 28,
+                padding: '0 10px',
+                border: `1px solid ${activeSceneId === landingSceneId ? GRAPH_THEME.accent.primaryBorder : GRAPH_THEME.controls.border}`,
+                borderRadius: 8,
+              })}
+            >
+              Set Landing
+            </button>
+            <button
+              type="button"
+              onClick={goToLandingScene}
+              style={graphControlButtonStyle({
+                width: 'auto',
+                minWidth: 78,
+                height: 28,
+                padding: '0 10px',
+                border: `1px solid ${GRAPH_THEME.controls.border}`,
+                borderRadius: 8,
+              })}
+            >
+              Go Landing
+            </button>
+          </div>
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
             gap: 6,
             overflowX: 'auto',
             padding: 6,
@@ -1345,10 +1519,11 @@ export default function PlanMissionFlow({
             boxShadow: GRAPH_THEME.controls.shadow,
           }}
         >
-          {guidedSceneModel.defaultPath.sceneIds.map((sceneId, index) => {
+          {defaultScenePath.sceneIds.map((sceneId, index) => {
             const scene = guidedScenesById.get(sceneId);
             if (!scene) return null;
             const active = scene.id === activeSceneId;
+            const landing = scene.id === landingSceneId;
             return (
               <button
                 key={scene.id}
@@ -1373,6 +1548,7 @@ export default function PlanMissionFlow({
                 }}
               >
                 {index + 1}. {scene.label}
+                {landing ? ' · Landing' : ''}
               </button>
             );
           })}
