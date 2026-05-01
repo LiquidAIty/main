@@ -1120,10 +1120,14 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     expect(nodes.find((node) => node.id === 'card_magentic')).toMatchObject({
       type: 'magenticBus',
       position: { x: 40, y: 120 },
+      draggable: false,
+      selectable: true,
     });
     expect(nodes.find((node) => node.id === 'card_thinkgraph_agent')).toMatchObject({
       type: 'agentCard',
       position: { x: 180, y: 140 },
+      draggable: true,
+      selectable: true,
     });
   });
 

@@ -248,36 +248,39 @@ export function toFlowNodes(
       .filter((edge) => edge.id === selectedEdgeId || activeEdgeIds.has(edge.id))
       .flatMap((edge) => [edge.source, edge.target]),
   );
-  return document.nodes.map((node) => ({
-    id: node.id,
-    type: normalizeRuntimeType(node.runtimeType) === 'magentic_one' ? 'magenticBus' : 'agentCard',
-    position: node.position,
-    draggable: true,
-    selectable: true,
-    focusable: true,
-    style: hoveredCardId
-      ? {
-          opacity:
-            node.id === hoveredCardId || hoveredRelatedNodeIds.has(node.id) || node.id === selectedCardId
-              ? 1
-              : 0.44,
-        }
-      : undefined,
-    data: {
-      ...node,
-      executionOrder: executionOrderById.get(node.id) || null,
-      isStartCard: startCardIds.has(node.id),
-      isCallableHead: callableHeadIds.has(node.id),
-      assistStructureMode: assistStructureSummaries.get(node.id)?.mode || null,
-      swarmBadge: getAssistSwarmBadge(node, swarmProgressByCardId[node.id] || null),
-      isRuntimeActive: activeCardIds.has(node.id),
-      isHovered: node.id === hoveredCardId,
-      isHoverRelated: hoveredCardId ? hoveredRelatedNodeIds.has(node.id) : false,
-      isFlowLinked: emphasizedFlowNodeIds.has(node.id),
-      isInspecting: inspectMode && selectedCardId === node.id,
-    },
-    selected: node.id === selectedCardId,
-  }));
+  return document.nodes.map((node) => {
+    const isMagenticBus = normalizeRuntimeType(node.runtimeType) === 'magentic_one';
+    return {
+      id: node.id,
+      type: isMagenticBus ? 'magenticBus' : 'agentCard',
+      position: node.position,
+      draggable: !isMagenticBus,
+      selectable: true,
+      focusable: true,
+      style: hoveredCardId
+        ? {
+            opacity:
+              node.id === hoveredCardId || hoveredRelatedNodeIds.has(node.id) || node.id === selectedCardId
+                ? 1
+                : 0.44,
+          }
+        : undefined,
+      data: {
+        ...node,
+        executionOrder: executionOrderById.get(node.id) || null,
+        isStartCard: startCardIds.has(node.id),
+        isCallableHead: callableHeadIds.has(node.id),
+        assistStructureMode: assistStructureSummaries.get(node.id)?.mode || null,
+        swarmBadge: getAssistSwarmBadge(node, swarmProgressByCardId[node.id] || null),
+        isRuntimeActive: activeCardIds.has(node.id),
+        isHovered: node.id === hoveredCardId,
+        isHoverRelated: hoveredCardId ? hoveredRelatedNodeIds.has(node.id) : false,
+        isFlowLinked: emphasizedFlowNodeIds.has(node.id),
+        isInspecting: inspectMode && selectedCardId === node.id,
+      },
+      selected: node.id === selectedCardId,
+    };
+  });
 }
 
 export type DeckEdgeVisualState = {
