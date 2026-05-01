@@ -1915,7 +1915,7 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       goal: [
         'Expose the Energy workspace as a selectable board capability.',
-        'Stay non-runnable until a dedicated Energy backend runtime exists.',
+        'Keep this as a staged capability; a runtime bridge can be attached later.',
       ].join('\n'),
       constraints: [
         'Do not call backend model runtime from this card.',
@@ -1926,7 +1926,7 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Output: open or focus the Energy workspace surface.',
       ].join('\n'),
       memoryPolicy: [
-        'This is a staged workbench capability, not an executable agent runtime.',
+        'Use this as a placeholder workspace until a runtime bridge is connected.',
       ].join('\n'),
     }),
   },
@@ -2129,7 +2129,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'CodeGraph Agent',
       subtitle: 'Structural code memory',
-      position: { x: -140, y: 140 },
+      position: { x: -170, y: 140 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -2146,7 +2146,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'Research Agent',
       subtitle: 'Research and analysis worker',
-      position: { x: -280, y: 140 },
+      position: { x: -340, y: 140 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -2163,7 +2163,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'KnowGraph Agent',
       subtitle: 'Grounded / evidence-backed memory (Neo4j)',
-      position: { x: -420, y: 140 },
+      position: { x: -510, y: 140 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -2180,7 +2180,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: 'workbench_energy',
       title: 'NRGSim / Energy',
       subtitle: 'Building Modeler workbench',
-      position: { x: 220, y: 140 },
+      position: { x: 260, y: 140 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -2197,7 +2197,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'Plan Agent',
       subtitle: 'Approval and planning surface',
-      position: { x: -140, y: 20 },
+      position: { x: 0, y: 380 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -2214,7 +2214,7 @@ export const INITIAL_DECK: DeckDocument = {
       parentGraphId: null,
       title: 'WorldSignals Agent',
       subtitle: 'Outside-world context surface',
-      position: { x: 0, y: 20 },
+      position: { x: 0, y: 260 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -3657,7 +3657,7 @@ function Icon({ d, size = 22 }: { d: string; size?: number }) {
   );
 }
 
-function HexPlusIcon({ size = 28 }: { size?: number }) {
+function HexPlusIcon({ size = 32 }: { size?: number }) {
   return (
     <svg
       width={size}
@@ -3665,13 +3665,13 @@ function HexPlusIcon({ size = 28 }: { size?: number }) {
       viewBox="0 0 64 64"
       fill="none"
       stroke="currentColor"
-      strokeWidth="4.25"
+      strokeWidth="4.75"
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <path d="M32 5L55 18.25V45.75L32 59L9 45.75V18.25L32 5Z" />
-      <path d="M32 21V43" strokeLinecap="round" />
-      <path d="M21 32H43" strokeLinecap="round" />
+      <path d="M32 4.5L55.5 18V46L32 59.5L8.5 46V18L32 4.5Z" />
+      <path d="M32 19V45" strokeLinecap="round" />
+      <path d="M19 32H45" strokeLinecap="round" />
     </svg>
   );
 }
@@ -7626,7 +7626,9 @@ export default function AgentBuilder(): React.ReactElement {
               <Icon d="M7.2 4.2 13.2 1.6 19 4.7v8.5l-6 3.2-6-3.1V4.2Z M7.2 4.2 13 7.4l6-2.7 M13 7.4v9 M4 6.7l3.2-2.5 M4 6.7v8.5l6 1.2" />
             </button>
           ) : null}
+
           <div className="flex-1" />
+
           {visibleRailItems.showPlan ? (
             <button
               title="Plan"
@@ -7642,6 +7644,7 @@ export default function AgentBuilder(): React.ReactElement {
               <Icon d="M3 12l2-2 4 4L21 4" />
             </button>
           ) : null}
+
           <button
             title="Menu"
             aria-label="Menu"
