@@ -82,15 +82,78 @@ export function resolveCardDef(card: ResolverCardInput): AgentCardDef | undefine
     if (defId) return findDef(defId);
   }
 
-  if (
-    normalize(card.templateId) === 'template_energy_workbench' ||
-    normalize(card.id) === 'card_energy_workbench' ||
-    normalize(card.title) === 'nrgsim / energy'
-  ) {
-    return findDef('energy');
+  const stagedDefId = resolveStagedCardDefId(card);
+  if (stagedDefId) {
+    return findDef(stagedDefId);
   }
 
   // 3. No confident match
+  return undefined;
+}
+
+function resolveStagedCardDefId(
+  card: ResolverCardInput,
+): string | undefined {
+  const templateId = normalize(card.templateId);
+  const id = normalize(card.id);
+  const title = normalize(card.title);
+
+  if (
+    templateId === 'template_plan_agent' ||
+    id === 'card_plan_agent' ||
+    title === 'plan agent'
+  ) {
+    return 'plan';
+  }
+
+  if (
+    templateId === 'template_worldsignals_agent' ||
+    id === 'card_worldsignals_agent' ||
+    title === 'worldsignals agent'
+  ) {
+    return 'worldsignals';
+  }
+
+  if (
+    templateId === 'template_energy_workbench' ||
+    id === 'card_energy_workbench' ||
+    title === 'nrgsim / energy'
+  ) {
+    return 'energy';
+  }
+
+  if (
+    templateId === 'template_trading_workbench' ||
+    id === 'card_trading_workbench' ||
+    title === 'trading agent'
+  ) {
+    return 'trading';
+  }
+
+  if (
+    templateId === 'template_image_workbench' ||
+    id === 'card_image_workbench' ||
+    title === 'image maker agent'
+  ) {
+    return 'image';
+  }
+
+  if (
+    templateId === 'template_code_workbench' ||
+    id === 'card_code_workbench' ||
+    title === 'code agent'
+  ) {
+    return 'code';
+  }
+
+  if (
+    templateId === 'template_video_workbench' ||
+    id === 'card_video_workbench' ||
+    title === 'video agent'
+  ) {
+    return 'video';
+  }
+
   return undefined;
 }
 

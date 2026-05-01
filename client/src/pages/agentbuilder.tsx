@@ -19,7 +19,6 @@ import BuilderChat from '../components/builder/BuilderChat';
 import BuilderDrawer from '../components/builder/BuilderDrawer';
 import PlanMissionFlow from '../components/assist/PlanMissionFlow';
 import WorldSignalSurface from '../components/worldsignal/WorldSignalSurface';
-import TelescopeOverlay from '../components/skyview/TelescopeOverlay';
 import type {
   PlanMissionNodeData,
   PlanMissionNodeOverrideMap,
@@ -418,8 +417,7 @@ function normalizeWorkspaceSurface(
     normalized === 'trading' ||
     normalized === 'image' ||
     normalized === 'code' ||
-    normalized === 'video' ||
-    normalized === 'telescope'
+    normalized === 'video'
   ) {
     return normalized as WorkspaceTestingSurface;
   }
@@ -743,23 +741,12 @@ function isVideoWorkbenchCard(card: AgentCardInstance | null | undefined): boole
   );
 }
 
-function isTelescopeWorkbenchCard(
-  card: AgentCardInstance | null | undefined,
-): boolean {
-  if (!card) return false;
-  return (
-    safeText(card.id).trim() === 'card_telescope_workbench' ||
-    safeText(card.templateId).trim() === 'template_telescope_workbench'
-  );
-}
-
 type WorkbenchSurfaceId =
   | 'energy'
   | 'trading'
   | 'image'
   | 'code'
-  | 'video'
-  | 'telescope';
+  | 'video';
 
 type WorkbenchCardDescriptor = {
   id: WorkbenchSurfaceId;
@@ -809,14 +796,6 @@ const WORKBENCH_CARD_DESCRIPTORS: readonly WorkbenchCardDescriptor[] = [
     disabledCopy:
       'Video Agent is staged as a selectable workbench card. Runtime is disabled until the video generation bridge exists.',
     matches: isVideoWorkbenchCard,
-  },
-  {
-    id: 'telescope',
-    title: 'Telescope Agent',
-    openLabel: 'Open Telescope Workspace',
-    disabledCopy:
-      'Telescope is staged as a selectable workbench card. Runtime is disabled until the dedicated telescope workbench bridge exists.',
-    matches: isTelescopeWorkbenchCard,
   },
 ] as const;
 
@@ -897,8 +876,7 @@ export type ActivationProposalState = {
     | 'image'
     | 'code'
     | 'video'
-    | 'trading'
-    | 'telescope';
+    | 'trading';
   title: string;
   sourceText: string;
   status: 'pending' | 'approved';
@@ -913,7 +891,6 @@ export type ProgressiveRailVisibility = {
   showImage: boolean;
   showCode: boolean;
   showVideo: boolean;
-  showTelescope: boolean;
 };
 
 function buildBusConnectedCardIds(
@@ -1078,13 +1055,6 @@ export function isVideoWorkbenchActive(
   return isWorkbenchSurfaceActive(nodes, edges, isVideoWorkbenchCard);
 }
 
-export function isTelescopeWorkbenchActive(
-  nodes: readonly AgentCardInstance[],
-  edges: readonly DeckEdge[],
-): boolean {
-  return isWorkbenchSurfaceActive(nodes, edges, isTelescopeWorkbenchCard);
-}
-
 function isWorkbenchSurfaceActive(
   nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
@@ -1142,9 +1112,6 @@ export function deriveVisibleRailItems({
     showVideo:
       workspaceView === 'video' ||
       isVideoWorkbenchActive(deck.nodes, deck.edges),
-    showTelescope:
-      workspaceView === 'telescope' ||
-      isTelescopeWorkbenchActive(deck.nodes, deck.edges),
   };
 }
 
@@ -1175,11 +1142,9 @@ function detectActivationProposal(
                 ? 'code'
                 : /\b(video|clips|storyboard)\b/.test(normalized)
                   ? 'video'
-            : /\btrading\b/.test(normalized)
-              ? 'trading'
-              : /\btelescope\b/.test(normalized)
-                ? 'telescope'
-                : null;
+                  : /\btrading\b/.test(normalized)
+                    ? 'trading'
+                    : null;
   if (!capability) return null;
 
   const titleByCapability = {
@@ -1191,7 +1156,6 @@ function detectActivationProposal(
     code: 'Enable Code Agent',
     video: 'Enable Video Agent',
     trading: 'Enable Trading',
-    telescope: 'Enable Telescope',
   } as const;
 
   return {
@@ -1976,6 +1940,102 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
     }),
   },
+  {
+    id: 'prompt_trading_workbench',
+    content: buildSeedPromptTemplate({
+      role: [
+        'You are the Trading Agent workbench card.',
+        'You represent the visible trading and market analysis workspace on the board.',
+      ].join('\n'),
+      goal: [
+        'Expose the Trading workspace as a connectable workbench capability.',
+        'Keep this staged until the app-owned trading runtime and broker bridge are restored.',
+      ].join('\n'),
+      constraints: [
+        'Do not call backend model runtime from this card.',
+        'Do not imply live broker execution, order routing, or profit claims.',
+      ].join('\n'),
+      ioSchema: [
+        'Input: user selection or future trading workbench request.',
+        'Output: open or focus the Trading workspace surface.',
+      ].join('\n'),
+      memoryPolicy: [
+        'Treat this as a visible activation stub for the future trading bridge.',
+      ].join('\n'),
+    }),
+  },
+  {
+    id: 'prompt_image_workbench',
+    content: buildSeedPromptTemplate({
+      role: [
+        'You are the Image Maker Agent workbench card.',
+        'You represent the visible image generation and print-placement workspace on the board.',
+      ].join('\n'),
+      goal: [
+        'Expose the Image Maker workspace as a connectable workbench capability.',
+        'Keep this staged until the app-owned image generation bridge is restored.',
+      ].join('\n'),
+      constraints: [
+        'Do not call backend model runtime from this card.',
+        'Do not claim images were generated or exported unless a real bridge exists.',
+      ].join('\n'),
+      ioSchema: [
+        'Input: user selection or future image workbench request.',
+        'Output: open or focus the Image Maker workspace surface.',
+      ].join('\n'),
+      memoryPolicy: [
+        'Treat this as a visible activation stub for the future image workflow.',
+      ].join('\n'),
+    }),
+  },
+  {
+    id: 'prompt_code_workbench',
+    content: buildSeedPromptTemplate({
+      role: [
+        'You are the Code Agent workbench card.',
+        'You represent the visible code workspace on the board.',
+      ].join('\n'),
+      goal: [
+        'Expose the Code workspace as a connectable workbench capability.',
+        'Keep this staged until the app-owned code bridge is restored.',
+      ].join('\n'),
+      constraints: [
+        'Do not call backend model runtime from this card.',
+        'Do not claim files changed, tests passed, or diffs exist unless a real code bridge produced them.',
+      ].join('\n'),
+      ioSchema: [
+        'Input: user selection or future code workbench request.',
+        'Output: open or focus the Code workspace surface.',
+      ].join('\n'),
+      memoryPolicy: [
+        'Treat this as a visible activation stub for the future code workflow.',
+      ].join('\n'),
+    }),
+  },
+  {
+    id: 'prompt_video_workbench',
+    content: buildSeedPromptTemplate({
+      role: [
+        'You are the Video Agent workbench card.',
+        'You represent the visible video workflow workspace on the board.',
+      ].join('\n'),
+      goal: [
+        'Expose the Video workspace as a connectable workbench capability.',
+        'Keep this staged until the app-owned video generation bridge is restored.',
+      ].join('\n'),
+      constraints: [
+        'Do not call backend model runtime from this card.',
+        'Do not claim clips, renders, or exports were produced unless a real bridge exists.',
+      ].join('\n'),
+      ioSchema: [
+        'Input: user selection or future video workbench request.',
+        'Output: open or focus the Video workspace surface.',
+      ].join('\n'),
+      memoryPolicy: [
+        'Treat this as a visible activation stub for the future video workflow.',
+      ].join('\n'),
+    }),
+  },
 ];
 
 const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
@@ -2068,6 +2128,46 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     id: 'template_worldsignals_agent',
     name: 'WorldSignals Agent',
     promptTemplate: 'prompt_worldsignals_agent',
+    model: 'gpt-5-mini',
+    provider: 'openai',
+    temperature: 0.2,
+    maxTokens: 800,
+    tools: [],
+  },
+  {
+    id: 'template_trading_workbench',
+    name: 'Trading Agent',
+    promptTemplate: 'prompt_trading_workbench',
+    model: 'gpt-5-mini',
+    provider: 'openai',
+    temperature: 0.2,
+    maxTokens: 800,
+    tools: [],
+  },
+  {
+    id: 'template_image_workbench',
+    name: 'Image Maker Agent',
+    promptTemplate: 'prompt_image_workbench',
+    model: 'gpt-5-mini',
+    provider: 'openai',
+    temperature: 0.2,
+    maxTokens: 800,
+    tools: [],
+  },
+  {
+    id: 'template_code_workbench',
+    name: 'Code Agent',
+    promptTemplate: 'prompt_code_workbench',
+    model: 'gpt-5-mini',
+    provider: 'openai',
+    temperature: 0.2,
+    maxTokens: 800,
+    tools: [],
+  },
+  {
+    id: 'template_video_workbench',
+    name: 'Video Agent',
+    promptTemplate: 'prompt_video_workbench',
     model: 'gpt-5-mini',
     provider: 'openai',
     temperature: 0.2,
@@ -2185,6 +2285,74 @@ export const INITIAL_DECK: DeckDocument = {
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
+      id: 'card_trading_workbench',
+      kind: 'agent',
+      templateId: 'template_trading_workbench',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_trading_workbench',
+        )?.content || '',
+      runtimeBinding: null,
+      runtimeType: 'assistant_agent',
+      parentGraphId: 'workbench_trading',
+      title: 'Trading Agent',
+      subtitle: 'Market workspace',
+      position: { x: 520, y: 140 },
+      status: 'ready',
+      cloneConfig: { enabled: false, seeds: [] },
+    },
+    {
+      id: 'card_image_workbench',
+      kind: 'agent',
+      templateId: 'template_image_workbench',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_image_workbench',
+        )?.content || '',
+      runtimeBinding: null,
+      runtimeType: 'assistant_agent',
+      parentGraphId: 'workbench_image',
+      title: 'Image Maker Agent',
+      subtitle: 'Generation and print placement',
+      position: { x: 780, y: 140 },
+      status: 'ready',
+      cloneConfig: { enabled: false, seeds: [] },
+    },
+    {
+      id: 'card_code_workbench',
+      kind: 'agent',
+      templateId: 'template_code_workbench',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_code_workbench',
+        )?.content || '',
+      runtimeBinding: null,
+      runtimeType: 'assistant_agent',
+      parentGraphId: 'workbench_code',
+      title: 'Code Agent',
+      subtitle: 'Scoped repo tasks',
+      position: { x: 1040, y: 140 },
+      status: 'ready',
+      cloneConfig: { enabled: false, seeds: [] },
+    },
+    {
+      id: 'card_video_workbench',
+      kind: 'agent',
+      templateId: 'template_video_workbench',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_video_workbench',
+        )?.content || '',
+      runtimeBinding: null,
+      runtimeType: 'assistant_agent',
+      parentGraphId: 'workbench_video',
+      title: 'Video Agent',
+      subtitle: 'Storyboard and clips',
+      position: { x: 780, y: 320 },
+      status: 'ready',
+      cloneConfig: { enabled: false, seeds: [] },
+    },
+    {
       id: 'card_plan_agent',
       kind: 'agent',
       templateId: 'template_plan_agent',
@@ -2256,9 +2424,14 @@ const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
   card_neo4j: 'neo4j',
 };
 
-const BASELINE_OPTIONAL_SYSTEM_CARD_IDS = new Set([
+const BASELINE_OPTIONAL_CARD_IDS = new Set([
   'card_plan_agent',
   'card_worldsignals_agent',
+  'card_energy_workbench',
+  'card_trading_workbench',
+  'card_image_workbench',
+  'card_code_workbench',
+  'card_video_workbench',
 ]);
 
 function cloneDeckDocument<T>(value: T): T {
@@ -2376,7 +2549,7 @@ function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
 
   const existingIds = new Set(normalizedNodes.map((node) => node.id));
   const appendedNodes = INITIAL_DECK.nodes
-    .filter((node) => BASELINE_OPTIONAL_SYSTEM_CARD_IDS.has(node.id))
+    .filter((node) => BASELINE_OPTIONAL_CARD_IDS.has(node.id))
     .filter((node) => !existingIds.has(node.id))
     .map((node) => cloneDeckDocument(node));
   return [...normalizedNodes, ...appendedNodes];
@@ -3845,7 +4018,6 @@ export default function AgentBuilder(): React.ReactElement {
     | 'image'
     | 'code'
     | 'video'
-    | 'telescope'
     | 'worldsignal'
   >('chat');
   const {
@@ -4304,7 +4476,10 @@ export default function AgentBuilder(): React.ReactElement {
     () => deck.nodes.find((node) => node.id === selectedCardId) || null,
     [deck.nodes, selectedCardId],
   );
-  const selectedCardIsEnergyWorkbench = isEnergyWorkbenchCard(selectedCard);
+  const selectedWorkbenchDescriptor = useMemo(
+    () => resolveWorkbenchDescriptor(selectedCard),
+    [selectedCard],
+  );
   const selectedEdge = useMemo(
     () => deck.edges.find((edge) => edge.id === selectedEdgeId) || null,
     [deck.edges, selectedEdgeId],
@@ -5052,7 +5227,7 @@ export default function AgentBuilder(): React.ReactElement {
           const showCardIdentityFields = tab === BUILDER_NODE_TABS[0];
           return (
             <>
-              {selectedCardIsEnergyWorkbench ? (
+              {selectedWorkbenchDescriptor ? (
                 <div
                   style={graphDrawerSectionStyle({
                     padding: '10px 12px',
@@ -5061,15 +5236,16 @@ export default function AgentBuilder(): React.ReactElement {
                   })}
                 >
                   <div style={{ marginBottom: 8 }}>
-                    NRGSim is staged as a selectable workbench card. Runtime is
-                    disabled until the dedicated Energy backend exists.
+                    {selectedWorkbenchDescriptor.disabledCopy}
                   </div>
                   <button
                     type="button"
-                    onClick={showEnergyWorkspace}
+                    onClick={() =>
+                      showWorkbenchWorkspace(selectedWorkbenchDescriptor.id)
+                    }
                     style={graphDrawerButtonStyle({})}
                   >
-                    Open Energy Surface
+                    {selectedWorkbenchDescriptor.openLabel}
                   </button>
                 </div>
               ) : null}
@@ -5097,7 +5273,7 @@ export default function AgentBuilder(): React.ReactElement {
                   onRunPromptTest={handleRunSelectedCard}
                   promptTestBusy={cardRunBusy}
                   promptTestDisabled={
-                    selectedCardIsEnergyWorkbench ||
+                    Boolean(selectedWorkbenchDescriptor) ||
                     cardRunBusy ||
                     deckLoadBusy ||
                     !canvasProjectId
@@ -7493,15 +7669,134 @@ export default function AgentBuilder(): React.ReactElement {
     setWorkspaceView('plan');
   }, [closeObjectDrawer]);
 
-  const showEnergyWorkspace = useCallback(() => {
+  const showWorkbenchWorkspace = useCallback((surface: WorkbenchSurfaceId) => {
     closeObjectDrawer();
-    setWorkspaceView('energy');
+    setWorkspaceView(surface);
   }, [closeObjectDrawer]);
+
+  const showEnergyWorkspace = useCallback(() => {
+    showWorkbenchWorkspace('energy');
+  }, [showWorkbenchWorkspace]);
+
+  const showTradingWorkspace = useCallback(() => {
+    showWorkbenchWorkspace('trading');
+  }, [showWorkbenchWorkspace]);
+
+  const showImageWorkspace = useCallback(() => {
+    showWorkbenchWorkspace('image');
+  }, [showWorkbenchWorkspace]);
+
+  const showCodeWorkspace = useCallback(() => {
+    showWorkbenchWorkspace('code');
+  }, [showWorkbenchWorkspace]);
+
+  const showVideoWorkspace = useCallback(() => {
+    showWorkbenchWorkspace('video');
+  }, [showWorkbenchWorkspace]);
 
   const showWorldsignalWorkspace = useCallback(() => {
     closeObjectDrawer();
     setWorkspaceView('worldsignal');
   }, [closeObjectDrawer]);
+
+  const renderWorkbenchPlaceholderSurface = useCallback(
+    ({
+      testId,
+      title,
+      status,
+      steps,
+      accentColor,
+    }: {
+      testId: string;
+      title: string;
+      status: string;
+      steps: readonly string[];
+      accentColor: string;
+    }) => (
+      <div
+        data-testid={testId}
+        style={{
+          height: '100%',
+          padding: 18,
+          display: 'grid',
+          gap: 14,
+          background: GRAPH_THEME.background.knowledgeSurface,
+          color: GRAPH_THEME.drawer.inputText,
+        }}
+      >
+        <div
+          style={graphDrawerSectionStyle({
+            padding: '16px 18px',
+            display: 'grid',
+            gap: 10,
+          })}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+            }}
+          >
+            <div style={{ fontSize: 22, fontWeight: 700 }}>{title}</div>
+            <div
+              style={{
+                padding: '4px 8px',
+                borderRadius: 999,
+                border: `1px solid ${accentColor}`,
+                color: accentColor,
+                fontSize: 11,
+                letterSpacing: 0.2,
+              }}
+            >
+              {status}
+            </div>
+          </div>
+          <div
+            style={{
+              color: GRAPH_THEME.drawer.inputMuted,
+              fontSize: 13,
+              lineHeight: 1.5,
+            }}
+          >
+            Workspace path is staged. Activation comes from the canvas graph.
+          </div>
+        </div>
+        <div
+          style={graphDrawerSectionStyle({
+            padding: '16px 18px',
+          })}
+        >
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 700,
+              color: GRAPH_THEME.drawer.inputText,
+              marginBottom: 10,
+            }}
+          >
+            Intended Flow
+          </div>
+          <ol
+            style={{
+              margin: 0,
+              paddingLeft: 18,
+              display: 'grid',
+              gap: 8,
+              color: GRAPH_THEME.drawer.inputMuted,
+              lineHeight: 1.5,
+            }}
+          >
+            {steps.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+        </div>
+      </div>
+    ),
+    [],
+  );
 
   const applyCodeGraphViewContract = useCallback(
     (contract: GraphViewContract | null) => {
@@ -7624,6 +7919,68 @@ export default function AgentBuilder(): React.ReactElement {
               }}
             >
               <Icon d="M7.2 4.2 13.2 1.6 19 4.7v8.5l-6 3.2-6-3.1V4.2Z M7.2 4.2 13 7.4l6-2.7 M13 7.4v9 M4 6.7l3.2-2.5 M4 6.7v8.5l6 1.2" />
+            </button>
+          ) : null}
+          {visibleRailItems.showTrading ? (
+            <button
+              title="Trading"
+              aria-label="Trading"
+              data-testid="rail-trading-button"
+              onClick={showTradingWorkspace}
+              className="p-2 rounded"
+              style={{
+                color:
+                  workspaceView === 'trading'
+                    ? GRAPH_THEME.accent.solar
+                    : C.text,
+              }}
+            >
+              <Icon d="M4 18h16M6 15l3-3 3 2 4-6 2 2" />
+            </button>
+          ) : null}
+          {visibleRailItems.showImage ? (
+            <button
+              title="Image"
+              aria-label="Image"
+              data-testid="rail-image-button"
+              onClick={showImageWorkspace}
+              className="p-2 rounded"
+              style={{
+                color:
+                  workspaceView === 'image' ? GRAPH_THEME.accent.solar : C.text,
+              }}
+            >
+              <Icon d="M5 6h14v12H5z M8 14l2.5-2.5L13 14l2-2 2 2 M9 10h.01" />
+            </button>
+          ) : null}
+          {visibleRailItems.showCode ? (
+            <button
+              title="Code"
+              aria-label="Code"
+              data-testid="rail-code-button"
+              onClick={showCodeWorkspace}
+              className="p-2 rounded"
+              style={{
+                color:
+                  workspaceView === 'code' ? GRAPH_THEME.accent.solar : C.text,
+              }}
+            >
+              <Icon d="M9 7 4 12l5 5 M15 7l5 5-5 5 M13 5l-2 14" />
+            </button>
+          ) : null}
+          {visibleRailItems.showVideo ? (
+            <button
+              title="Video"
+              aria-label="Video"
+              data-testid="rail-video-button"
+              onClick={showVideoWorkspace}
+              className="p-2 rounded"
+              style={{
+                color:
+                  workspaceView === 'video' ? GRAPH_THEME.accent.solar : C.text,
+              }}
+            >
+              <Icon d="M5 7h10v10H5z M15 10l4-2v8l-4-2" />
             </button>
           ) : null}
 
@@ -7816,6 +8173,54 @@ export default function AgentBuilder(): React.ReactElement {
                       </Suspense>
                     </EnergySurfaceErrorBoundary>
                   )}
+                  {workspaceView === 'trading' &&
+                    renderWorkbenchPlaceholderSurface({
+                      testId: 'trading-workspace-placeholder',
+                      title: 'Trading Workspace',
+                      status: 'Demo / planned integration',
+                      accentColor: GRAPH_THEME.accent.solar,
+                      steps: [
+                        'Review live market context and current watchlist inputs.',
+                        'Stage thesis, entries, exits, and risk controls inside the app-owned trading bridge later.',
+                        'Keep execution, broker connectivity, and orders out of scope for this demo pass.',
+                      ],
+                    })}
+                  {workspaceView === 'image' &&
+                    renderWorkbenchPlaceholderSurface({
+                      testId: 'image-workspace-placeholder',
+                      title: 'Image Maker',
+                      status: 'Demo / planned integration',
+                      accentColor: GRAPH_THEME.drawer.inputText,
+                      steps: [
+                        'Prompt the image concept and generate variations.',
+                        'Place approved art on shirt, hoodie, poster, or canvas layouts.',
+                        'Export order-ready files later when the generation bridge exists.',
+                      ],
+                    })}
+                  {workspaceView === 'code' &&
+                    renderWorkbenchPlaceholderSurface({
+                      testId: 'code-workspace-placeholder',
+                      title: 'Code Agent Workspace',
+                      status: 'Demo / planned integration',
+                      accentColor: C.primary,
+                      steps: [
+                        'Main Chat creates a scoped code task.',
+                        'Code Agent receives selected object and repo context.',
+                        'A future Claude Code or sandbox bridge executes the task and returns reviewable diffs and tests.',
+                      ],
+                    })}
+                  {workspaceView === 'video' &&
+                    renderWorkbenchPlaceholderSurface({
+                      testId: 'video-workspace-placeholder',
+                      title: 'Video Agent',
+                      status: 'Planned',
+                      accentColor: GRAPH_THEME.drawer.inputMuted,
+                      steps: [
+                        'Draft script or storyboard.',
+                        'Generate or collect clips.',
+                        'Assemble, export, and publish later when the video bridge exists.',
+                      ],
+                    })}
                   {workspaceView === 'worldsignal' &&
                     <WorldSignalSurface />}
                   {workspaceView === 'plan' && renderPlanSurface('companion')}

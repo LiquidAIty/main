@@ -11,8 +11,8 @@ import {
 } from './agentCardRegistry';
 
 describe('agentCardRegistry', () => {
-  it('contains exactly 9 agent definitions', () => {
-    expect(AGENT_CARD_REGISTRY).toHaveLength(9);
+  it('contains exactly 11 agent definitions', () => {
+    expect(AGENT_CARD_REGISTRY).toHaveLength(11);
   });
 
   it('has unique ids', () => {
@@ -41,8 +41,8 @@ describe('agentCardRegistry', () => {
     expect(getCardDefsByKind('bus')).toHaveLength(1);
   });
 
-  it('has exactly 4 workbench agents', () => {
-    expect(getCardDefsByKind('workbench')).toHaveLength(4);
+  it('has exactly 6 workbench agents', () => {
+    expect(getCardDefsByKind('workbench')).toHaveLength(6);
   });
 
   it('has exactly 3 core agents', () => {
@@ -76,6 +76,8 @@ describe('agentCardRegistry', () => {
     expect(code!.ownedSurface).toBe('code');
     expect(code!.defaultConnected).toBe(false);
     expect(code!.requiresPlanApproval).toBe(true);
+    expect(code!.capabilityStatus).toBe('partial');
+    expect(code!.runtimeSafe).toBe(false);
   });
 
   it('defines Trading Agent as a workbench owning trading surface', () => {
@@ -105,6 +107,28 @@ describe('agentCardRegistry', () => {
     expect(energy!.requiresPlanApproval).toBe(true);
     expect(energy!.capabilityStatus).toBe('partial');
     expect(energy!.runtimeSafe).toBe(false);
+  });
+
+  it('defines Image Maker Agent as a workbench owning image surface', () => {
+    const image = getCardDef('image');
+    expect(image).toBeDefined();
+    expect(image!.kind).toBe('workbench');
+    expect(image!.ownedSurface).toBe('image');
+    expect(image!.defaultConnected).toBe(false);
+    expect(image!.requiresPlanApproval).toBe(true);
+    expect(image!.capabilityStatus).toBe('partial');
+    expect(image!.runtimeSafe).toBe(false);
+  });
+
+  it('defines Video Agent as a placeholder workbench owning video surface', () => {
+    const video = getCardDef('video');
+    expect(video).toBeDefined();
+    expect(video!.kind).toBe('workbench');
+    expect(video!.ownedSurface).toBe('video');
+    expect(video!.defaultConnected).toBe(false);
+    expect(video!.requiresPlanApproval).toBe(true);
+    expect(video!.capabilityStatus).toBe('placeholder');
+    expect(video!.runtimeSafe).toBe(false);
   });
 
   it('does not mark NRGSim/Energy runtime-safe just because it owns a surface', () => {
@@ -168,17 +192,17 @@ describe('agentCardRegistry', () => {
     );
   });
 
-  it('returns exactly 4 agents requiring plan approval', () => {
+  it('returns exactly 6 agents requiring plan approval', () => {
     const approvalRequired = getApprovalRequiredDefs();
-    expect(approvalRequired).toHaveLength(4);
+    expect(approvalRequired).toHaveLength(6);
     expect(approvalRequired.map((d) => d.id).sort()).toEqual(
-      ['code', 'energy', 'telescope', 'trading'].sort(),
+      ['code', 'energy', 'image', 'telescope', 'trading', 'video'].sort(),
     );
   });
 
-  it('returns exactly 7 rail-eligible agents', () => {
+  it('returns exactly 9 rail-eligible agents', () => {
     const railEligible = getRailEligibleDefs();
-    expect(railEligible).toHaveLength(7);
+    expect(railEligible).toHaveLength(9);
     // Sol and Validator are not rail-eligible
     expect(railEligible.every((d) => d.id !== 'sol')).toBe(true);
     expect(railEligible.every((d) => d.id !== 'validator')).toBe(true);
@@ -217,7 +241,7 @@ describe('agentCardRegistry', () => {
       (def) => def.capabilityStatus === 'partial' || def.capabilityStatus === 'placeholder',
     );
     expect(staged.map((def) => def.id).sort()).toEqual(
-      ['energy', 'plan', 'telescope', 'trading', 'validator'].sort(),
+      ['code', 'energy', 'image', 'plan', 'telescope', 'trading', 'validator', 'video'].sort(),
     );
     expect(staged.filter((def) => def.id !== 'plan').every((def) => !def.runtimeSafe)).toBe(true);
   });

@@ -11,9 +11,13 @@ vi.mock('../components/energy/EnergyFacadeSurface', () => ({
 import {
   deriveVisibleRailItems,
   INITIAL_DECK,
+  isCodeWorkbenchActive,
   isEnergyWorkbenchActive,
+  isImageWorkbenchActive,
   isKnowledgeChainActive,
   isPlanAgentActive,
+  isTradingWorkbenchActive,
+  isVideoWorkbenchActive,
   isWorldSignalsAgentActive,
   shouldShowEnergyRailButton,
   type ActivationProposalState,
@@ -39,20 +43,28 @@ function connectToBus(
 }
 
 describe('agentbuilder progressive activation startup', () => {
-  it('keeps system cards left of the bus and workbench NRGSim right of it', () => {
+  it('keeps system cards left of the bus and demo workbenches on the visible right side', () => {
     const byId = new Map(INITIAL_DECK.nodes.map((node) => [node.id, node]));
     const bus = byId.get('card_magentic');
     const energy = byId.get('card_energy_workbench');
+    const trading = byId.get('card_trading_workbench');
+    const image = byId.get('card_image_workbench');
+    const code = byId.get('card_code_workbench');
+    const video = byId.get('card_video_workbench');
     const plan = byId.get('card_plan_agent');
     const worldsignals = byId.get('card_worldsignals_agent');
 
     expect(bus?.position).toEqual({ x: 140, y: 120 });
-    expect(energy?.position).toEqual({ x: 220, y: 140 });
-    expect(plan?.position).toEqual({ x: -140, y: 20 });
-    expect(worldsignals?.position).toEqual({ x: 0, y: 20 });
-    expect(byId.get('card_knowgraph_agent')?.position).toEqual({ x: -420, y: 140 });
-    expect(byId.get('card_research_agent')?.position).toEqual({ x: -280, y: 140 });
-    expect(byId.get('card_codegraph_agent')?.position).toEqual({ x: -140, y: 140 });
+    expect(energy?.position).toEqual({ x: 260, y: 140 });
+    expect(trading?.position).toEqual({ x: 520, y: 140 });
+    expect(image?.position).toEqual({ x: 780, y: 140 });
+    expect(code?.position).toEqual({ x: 1040, y: 140 });
+    expect(video?.position).toEqual({ x: 780, y: 320 });
+    expect(plan?.position).toEqual({ x: 0, y: 380 });
+    expect(worldsignals?.position).toEqual({ x: 0, y: 260 });
+    expect(byId.get('card_knowgraph_agent')?.position).toEqual({ x: -510, y: 140 });
+    expect(byId.get('card_research_agent')?.position).toEqual({ x: -340, y: 140 });
+    expect(byId.get('card_codegraph_agent')?.position).toEqual({ x: -170, y: 140 });
     expect(byId.get('card_thinkgraph_agent')?.position).toEqual({ x: 0, y: 140 });
   });
 
@@ -81,6 +93,10 @@ describe('agentbuilder progressive activation startup', () => {
       showPlan: false,
       showWorldsignal: false,
       showEnergy: false,
+      showTrading: false,
+      showImage: false,
+      showCode: false,
+      showVideo: false,
     });
   });
 
@@ -104,6 +120,126 @@ describe('agentbuilder progressive activation startup', () => {
         workspaceView: 'canvas',
         pendingActivationProposal: null,
       }).showEnergy,
+    ).toBe(true);
+  });
+
+  it('keeps Trading hidden until the Trading Agent is connected or open', () => {
+    expect(isTradingWorkbenchActive(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(false);
+    expect(
+      deriveVisibleRailItems({
+        deck: INITIAL_DECK,
+        workspaceView: 'canvas',
+        pendingActivationProposal: null,
+      }).showTrading,
+    ).toBe(false);
+    expect(
+      deriveVisibleRailItems({
+        deck: INITIAL_DECK,
+        workspaceView: 'trading',
+        pendingActivationProposal: null,
+      }).showTrading,
+    ).toBe(true);
+  });
+
+  it('shows Trading when the Trading Agent is connected to the bus', () => {
+    const connectedDeck = connectToBus(
+      INITIAL_DECK,
+      'card_trading_workbench',
+      'edge_magentic_trading',
+    );
+    expect(isTradingWorkbenchActive(connectedDeck.nodes, connectedDeck.edges)).toBe(true);
+    expect(
+      deriveVisibleRailItems({
+        deck: connectedDeck,
+        workspaceView: 'canvas',
+        pendingActivationProposal: null,
+      }).showTrading,
+    ).toBe(true);
+  });
+
+  it('keeps Image hidden until the Image Maker Agent is connected or open', () => {
+    expect(isImageWorkbenchActive(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(false);
+    expect(
+      deriveVisibleRailItems({
+        deck: INITIAL_DECK,
+        workspaceView: 'canvas',
+        pendingActivationProposal: null,
+      }).showImage,
+    ).toBe(false);
+    expect(
+      deriveVisibleRailItems({
+        deck: INITIAL_DECK,
+        workspaceView: 'image',
+        pendingActivationProposal: null,
+      }).showImage,
+    ).toBe(true);
+  });
+
+  it('shows Image when the Image Maker Agent is connected to the bus', () => {
+    const connectedDeck = connectToBus(
+      INITIAL_DECK,
+      'card_image_workbench',
+      'edge_magentic_image',
+    );
+    expect(isImageWorkbenchActive(connectedDeck.nodes, connectedDeck.edges)).toBe(true);
+    expect(
+      deriveVisibleRailItems({
+        deck: connectedDeck,
+        workspaceView: 'canvas',
+        pendingActivationProposal: null,
+      }).showImage,
+    ).toBe(true);
+  });
+
+  it('keeps Code hidden until the Code Agent is connected or open', () => {
+    expect(isCodeWorkbenchActive(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(false);
+    expect(
+      deriveVisibleRailItems({
+        deck: INITIAL_DECK,
+        workspaceView: 'canvas',
+        pendingActivationProposal: null,
+      }).showCode,
+    ).toBe(false);
+    expect(
+      deriveVisibleRailItems({
+        deck: INITIAL_DECK,
+        workspaceView: 'code',
+        pendingActivationProposal: null,
+      }).showCode,
+    ).toBe(true);
+  });
+
+  it('shows Code when the Code Agent is connected to the bus', () => {
+    const connectedDeck = connectToBus(
+      INITIAL_DECK,
+      'card_code_workbench',
+      'edge_magentic_code',
+    );
+    expect(isCodeWorkbenchActive(connectedDeck.nodes, connectedDeck.edges)).toBe(true);
+    expect(
+      deriveVisibleRailItems({
+        deck: connectedDeck,
+        workspaceView: 'canvas',
+        pendingActivationProposal: null,
+      }).showCode,
+    ).toBe(true);
+  });
+
+  it('keeps Video hidden until the Video Agent is connected or open', () => {
+    expect(isVideoWorkbenchActive(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(false);
+    expect(
+      deriveVisibleRailItems({
+        deck: INITIAL_DECK,
+        workspaceView: 'canvas',
+        pendingActivationProposal: null,
+      }).showVideo,
+    ).toBe(false);
+    expect(
+      deriveVisibleRailItems({
+        deck: INITIAL_DECK,
+        workspaceView: 'video',
+        pendingActivationProposal: null,
+      }).showVideo,
     ).toBe(true);
   });
 

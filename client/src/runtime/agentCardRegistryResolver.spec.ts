@@ -114,6 +114,41 @@ describe('resolveCardDef', () => {
     expect(def!.runtimeSafe).toBe(false);
   });
 
+  it('resolves staged Trading, Image, Code, and Video workbench cards by template id', () => {
+    expect(
+      resolveCardDef(
+        card('card_trading_workbench', {
+          templateId: 'template_trading_workbench',
+          title: 'Trading Agent',
+        }),
+      )?.id,
+    ).toBe('trading');
+    expect(
+      resolveCardDef(
+        card('card_image_workbench', {
+          templateId: 'template_image_workbench',
+          title: 'Image Maker Agent',
+        }),
+      )?.id,
+    ).toBe('image');
+    expect(
+      resolveCardDef(
+        card('card_code_workbench', {
+          templateId: 'template_code_workbench',
+          title: 'Code Agent',
+        }),
+      )?.id,
+    ).toBe('code');
+    expect(
+      resolveCardDef(
+        card('card_video_workbench', {
+          templateId: 'template_video_workbench',
+          title: 'Video Agent',
+        }),
+      )?.id,
+    ).toBe('video');
+  });
+
   it('returns undefined for unknown runtimeType', () => {
     const def = resolveCardDef(card('card_alien', { runtimeType: 'alien_runtime' as any }));
     expect(def).toBeUndefined();
@@ -321,20 +356,25 @@ describe('resolveAllCards', () => {
     expect(mysteryResult.busConnection).toBe('disconnected');
   });
 
-  it('resolves the real INITIAL_DECK shape correctly', () => {
-    // Exact shape from agentbuilder.tsx INITIAL_DECK (current 5-card version)
+  it('resolves the current INITIAL_DECK shape correctly', () => {
     const cards: ResolverCardInput[] = [
       { id: 'card_magentic', runtimeType: 'magentic_one', runtimeBinding: null, templateId: 'template_magentic', title: 'Magentic-One' },
+      { id: 'card_plan_agent', runtimeType: 'assistant_agent', runtimeBinding: null, templateId: 'template_plan_agent', title: 'Plan Agent' },
+      { id: 'card_worldsignals_agent', runtimeType: 'assistant_agent', runtimeBinding: null, templateId: 'template_worldsignals_agent', title: 'WorldSignals Agent' },
       { id: 'card_thinkgraph_agent', runtimeType: 'assistant_agent', runtimeBinding: 'thinkgraph_agent', templateId: 'template_thinkgraph_agent', title: 'ThinkGraph Agent' },
       { id: 'card_codegraph_agent', runtimeType: 'assistant_agent', runtimeBinding: 'codegraph_agent', templateId: 'template_codegraph_agent', title: 'CodeGraph Agent' },
       { id: 'card_research_agent', runtimeType: 'assistant_agent', runtimeBinding: 'research_agent', templateId: 'template_research_agent', title: 'Research Agent' },
       { id: 'card_knowgraph_agent', runtimeType: 'assistant_agent', runtimeBinding: 'knowgraph_agent', templateId: 'template_knowgraph_agent', title: 'KnowGraph Agent' },
+      { id: 'card_energy_workbench', runtimeType: 'assistant_agent', runtimeBinding: null, templateId: 'template_energy_workbench', title: 'NRGSim / Energy' },
+      { id: 'card_trading_workbench', runtimeType: 'assistant_agent', runtimeBinding: null, templateId: 'template_trading_workbench', title: 'Trading Agent' },
+      { id: 'card_image_workbench', runtimeType: 'assistant_agent', runtimeBinding: null, templateId: 'template_image_workbench', title: 'Image Maker Agent' },
+      { id: 'card_code_workbench', runtimeType: 'assistant_agent', runtimeBinding: null, templateId: 'template_code_workbench', title: 'Code Agent' },
+      { id: 'card_video_workbench', runtimeType: 'assistant_agent', runtimeBinding: null, templateId: 'template_video_workbench', title: 'Video Agent' },
     ];
     const edges: ResolverEdgeInput[] = [
-      { id: 'edge_magentic_thinkgraph', source: 'card_magentic', target: 'card_thinkgraph_agent', edgeType: 'magentic_option' },
-      { id: 'edge_thinkgraph_codegraph', source: 'card_thinkgraph_agent', target: 'card_codegraph_agent', edgeType: 'flow' },
-      { id: 'edge_codegraph_research', source: 'card_codegraph_agent', target: 'card_research_agent', edgeType: 'flow' },
-      { id: 'edge_research_knowgraph', source: 'card_research_agent', target: 'card_knowgraph_agent', edgeType: 'flow' },
+      { id: 'edge_knowgraph_research', source: 'card_knowgraph_agent', target: 'card_research_agent', edgeType: 'flow' },
+      { id: 'edge_research_codegraph', source: 'card_research_agent', target: 'card_codegraph_agent', edgeType: 'flow' },
+      { id: 'edge_codegraph_thinkgraph', source: 'card_codegraph_agent', target: 'card_thinkgraph_agent', edgeType: 'flow' },
     ];
 
     const result = resolveAllCards(cards, edges);
@@ -342,23 +382,39 @@ describe('resolveAllCards', () => {
     expect(result.get('card_magentic')!.def?.id).toBe('sol');
     expect(result.get('card_magentic')!.busConnection).toBe('orchestrator');
 
+    expect(result.get('card_plan_agent')!.def?.id).toBe('plan');
+    expect(result.get('card_plan_agent')!.busConnection).toBe('disconnected');
+
+    expect(result.get('card_worldsignals_agent')!.def?.id).toBe('worldsignals');
+    expect(result.get('card_worldsignals_agent')!.busConnection).toBe('disconnected');
+
     expect(result.get('card_thinkgraph_agent')!.def?.id).toBe('plan');
-    expect(result.get('card_thinkgraph_agent')!.busConnection).toBe('orchestrated');
+    expect(result.get('card_thinkgraph_agent')!.busConnection).toBe('disconnected');
 
     expect(result.get('card_codegraph_agent')!.def?.id).toBe('knowledge');
-    expect(result.get('card_codegraph_agent')!.busConnection).toBe('delegated');
+    expect(result.get('card_codegraph_agent')!.busConnection).toBe('disconnected');
 
     expect(result.get('card_research_agent')!.def?.id).toBe('knowledge');
-    expect(result.get('card_research_agent')!.busConnection).toBe('delegated');
+    expect(result.get('card_research_agent')!.busConnection).toBe('disconnected');
 
     expect(result.get('card_knowgraph_agent')!.def?.id).toBe('knowledge');
-    expect(result.get('card_knowgraph_agent')!.busConnection).toBe('delegated');
+    expect(result.get('card_knowgraph_agent')!.busConnection).toBe('disconnected');
+
+    expect(result.get('card_energy_workbench')!.def?.id).toBe('energy');
+    expect(result.get('card_energy_workbench')!.busConnection).toBe('disconnected');
+    expect(result.get('card_trading_workbench')!.def?.id).toBe('trading');
+    expect(result.get('card_trading_workbench')!.busConnection).toBe('disconnected');
+    expect(result.get('card_image_workbench')!.def?.id).toBe('image');
+    expect(result.get('card_image_workbench')!.busConnection).toBe('disconnected');
+    expect(result.get('card_code_workbench')!.def?.id).toBe('code');
+    expect(result.get('card_code_workbench')!.busConnection).toBe('disconnected');
+    expect(result.get('card_video_workbench')!.def?.id).toBe('video');
+    expect(result.get('card_video_workbench')!.busConnection).toBe('disconnected');
 
     // No edge was mutated
-    expect(edges[0].edgeType).toBe('magentic_option');
+    expect(edges[0].edgeType).toBe('flow');
     expect(edges[1].edgeType).toBe('flow');
     expect(edges[2].edgeType).toBe('flow');
-    expect(edges[3].edgeType).toBe('flow');
   });
 
   it('resolves the legacy 6-card INITIAL_DECK shape correctly', () => {
