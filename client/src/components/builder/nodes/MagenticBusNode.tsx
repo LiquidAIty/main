@@ -1,21 +1,21 @@
 import { Handle, Position } from '@xyflow/react';
 
 const leftHandles = [
-  { id: 'bus-in-1', top: '16%' },
-  { id: 'bus-in-2', top: '28%' },
-  { id: 'bus-in-3', top: '40%' },
-  { id: 'bus-in-4', top: '52%' },
-  { id: 'bus-in-5', top: '64%' },
-  { id: 'bus-in-6', top: '76%' },
+  { id: 'bus-in-1', top: 48 },
+  { id: 'bus-in-2', top: 120 },
+  { id: 'bus-in-3', top: 192 },
+  { id: 'bus-in-4', top: 264 },
+  { id: 'bus-in-5', top: 336 },
+  { id: 'bus-in-6', top: 408 },
 ];
 
 const rightHandles = [
-  { id: 'bus-out-1', top: '16%' },
-  { id: 'bus-out-2', top: '28%' },
-  { id: 'bus-out-3', top: '40%' },
-  { id: 'bus-out-4', top: '52%' },
-  { id: 'bus-out-5', top: '64%' },
-  { id: 'bus-out-6', top: '76%' },
+  { id: 'bus-out-1', top: 48 },
+  { id: 'bus-out-2', top: 120 },
+  { id: 'bus-out-3', top: 192 },
+  { id: 'bus-out-4', top: 264 },
+  { id: 'bus-out-5', top: 336 },
+  { id: 'bus-out-6', top: 408 },
 ];
 
 const handleBaseStyle = {
@@ -46,8 +46,8 @@ export default function MagenticBusNode() {
       style={{
         position: 'relative',
         width: 26,
-        height: 460,
-        borderRadius: 16,
+        height: 456,
+        borderRadius: 8,
         border: '1px solid rgba(84, 221, 214, 0.15)',
         background: 'rgba(5, 7, 10, 0.85)',
         backdropFilter: 'blur(10px)',
@@ -57,8 +57,8 @@ export default function MagenticBusNode() {
         aria-hidden="true"
         style={{
           position: 'absolute',
-          top: 18,
-          bottom: 18,
+          top: 8,
+          bottom: 8,
           left: '50%',
           width: 1,
           transform: 'translateX(-50%)',
