@@ -52,6 +52,7 @@ type PlanMissionFocus = {
 
 type PlanMissionFlowProps = {
   structuredPlan: StructuredAssistPlanSurface;
+  projectId?: string | null;
   compact?: boolean;
   fullHeight?: boolean;
   nodeOverrides?: PlanMissionNodeOverrideMap;
@@ -63,6 +64,47 @@ type PlanMissionFlowProps = {
 
 const PLAN_BASELINE_MIN_LOAD_ZOOM = GRAPH_WORKSPACE.landingBaselineMinZoom;
 const PLAN_BASELINE_MAX_LOAD_ZOOM = GRAPH_WORKSPACE.landingBaselineMaxZoom;
+const PLAN_LAYOUT_STORAGE_PREFIX = 'liquidaity:plan-layout:v1';
+
+type PlanLayoutViewport = { x: number; y: number; zoom: number };
+
+type PersistedPlanLayout = {
+  nodePositions?: Record<string, { x: number; y: number }>;
+  viewport?: PlanLayoutViewport;
+};
+
+function buildPlanLayoutStorageKey(projectId?: string | null) {
+  const normalizedProjectId = String(projectId || '').trim();
+  if (!normalizedProjectId) return null;
+  return `${PLAN_LAYOUT_STORAGE_PREFIX}:${normalizedProjectId}`;
+}
+
+function readPersistedPlanLayout(
+  storageKey: string | null,
+): PersistedPlanLayout | null {
+  if (!storageKey || typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PersistedPlanLayout;
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function persistPlanLayout(
+  storageKey: string | null,
+  payload: PersistedPlanLayout,
+) {
+  if (!storageKey || typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(payload));
+  } catch {
+    // ignore storage failures
+  }
+}
 
 const DEFAULT_PLAN_SCENE_DEFS: Array<{
   id: string;
@@ -80,14 +122,14 @@ const DEFAULT_PLAN_SCENE_DEFS: Array<{
   },
   {
     id: 'scene_goal_problem',
-    label: 'Goal / Problem',
+    label: 'Goal',
     purpose: 'problem',
     viewport: { x: 90, y: 120, zoom: 0.82 },
     speakerNote: 'Speaker notes can summarize the user goal, problem framing, and constraints.',
   },
   {
     id: 'scene_evidence_research',
-    label: 'Evidence / Research',
+    label: 'Evidence',
     purpose: 'evidence',
     viewport: { x: -260, y: 108, zoom: 0.72 },
     speakerNote: 'Later this scene can collect dropped evidence, source files, and research artifacts.',
@@ -101,14 +143,14 @@ const DEFAULT_PLAN_SCENE_DEFS: Array<{
   },
   {
     id: 'scene_execution_steps',
-    label: 'Execution Steps',
+    label: 'Execute',
     purpose: 'execution',
     viewport: { x: -760, y: 112, zoom: 0.66 },
     speakerNote: 'This scene can become the step-by-step implementation and dependency view.',
   },
   {
     id: 'scene_agent_roles',
-    label: 'Agent Roles',
+    label: 'Roles',
     purpose: 'execution',
     viewport: { x: -1000, y: 112, zoom: 0.66 },
     speakerNote: 'Later this scene can explain assigned agents and work ownership.',
@@ -122,7 +164,7 @@ const DEFAULT_PLAN_SCENE_DEFS: Array<{
   },
   {
     id: 'scene_approval_next_step',
-    label: 'Approval / Next Step',
+    label: 'Next',
     purpose: 'approval',
     viewport: { x: -1460, y: 112, zoom: 0.66 },
     speakerNote: 'This scene can become the closing approval and next action prompt.',
@@ -487,6 +529,7 @@ function resolveNodeStyle(node: PlanMissionFlowNode) {
 
 export default function PlanMissionFlow({
   structuredPlan,
+  projectId = null,
   compact = false,
   fullHeight = false,
   nodeOverrides,
@@ -505,7 +548,14 @@ export default function PlanMissionFlow({
   const [reactFlowInstance, setReactFlowInstance] =
     useState<ReactFlowInstance | null>(null);
   const lastInitialFitKeyRef = useRef<string | null>(null);
-  const [layoutLocked, setLayoutLocked] = useState(false);
+  const restoredViewportRef = useRef<PlanLayoutViewport | null>(null);
+  const hasPersistedLayoutRef = useRef(false);
+  const skipNextLayoutPersistRef = useRef(false);
+  const layoutHydratedRef = useRef(false);
+  const planLayoutStorageKey = useMemo(
+    () => buildPlanLayoutStorageKey(projectId),
+    [projectId],
+  );
   const missionGraph = useMemo(
     () => buildPlanMissionGraph(structuredPlan, nodeOverrides),
     [structuredPlan, nodeOverrides],
@@ -567,6 +617,51 @@ export default function PlanMissionFlow({
         .join('|')}::${compact ? 'compact' : 'full'}::${fullHeight ? 'fullheight' : 'fixed'}`,
     [compact, fullHeight, missionGraph.edges, missionGraph.nodes],
   );
+
+  useEffect(() => {
+    layoutHydratedRef.current = false;
+    restoredViewportRef.current = null;
+    hasPersistedLayoutRef.current = false;
+    const persisted = readPersistedPlanLayout(planLayoutStorageKey);
+    const persistedPositions =
+      persisted?.nodePositions && typeof persisted.nodePositions === 'object'
+        ? persisted.nodePositions
+        : null;
+    if (persistedPositions) {
+      hasPersistedLayoutRef.current = true;
+      skipNextLayoutPersistRef.current = true;
+      setNodes((current) =>
+        current.map((node) => {
+          const nextPosition = persistedPositions[node.id];
+          if (!nextPosition) return node;
+          return {
+            ...node,
+            position: {
+              x: Number(nextPosition.x) || 0,
+              y: Number(nextPosition.y) || 0,
+            },
+          };
+        }),
+      );
+    }
+    const persistedViewport = persisted?.viewport;
+    if (
+      persistedViewport &&
+      Number.isFinite(persistedViewport.x) &&
+      Number.isFinite(persistedViewport.y) &&
+      Number.isFinite(persistedViewport.zoom)
+    ) {
+      hasPersistedLayoutRef.current = true;
+      restoredViewportRef.current = persistedViewport;
+    }
+    layoutHydratedRef.current = true;
+  }, [planLayoutStorageKey, setNodes]);
+
+  useEffect(() => {
+    if (!reactFlowInstance || !restoredViewportRef.current) return;
+    reactFlowInstance.setViewport(restoredViewportRef.current, { duration: 0 });
+    restoredViewportRef.current = null;
+  }, [reactFlowInstance]);
 
   useEffect(() => {
     setActiveSceneId((current) =>
@@ -642,6 +737,8 @@ export default function PlanMissionFlow({
 
   useEffect(() => {
     if (!reactFlowInstance) return;
+    if (hasPersistedLayoutRef.current) return;
+    if (restoredViewportRef.current) return;
     if (lastInitialFitKeyRef.current === initialFitKey) return;
     lastInitialFitKeyRef.current = initialFitKey;
     let settleTimer: number | null = null;
@@ -650,32 +747,10 @@ export default function PlanMissionFlow({
         .getNodes()
         .filter((node) => node.id !== WALL_ORCH_ID);
       if (graphNodes.length === 0) return;
-      const sortedByX = [...graphNodes].sort(
-        (left, right) =>
-          (left.positionAbsolute?.x ?? left.position.x) -
-          (right.positionAbsolute?.x ?? right.position.x),
-      );
-      const minX = sortedByX[0]
-        ? sortedByX[0].positionAbsolute?.x ?? sortedByX[0].position.x
-        : 0;
-      const yValues = sortedByX
-        .map((node) => node.positionAbsolute?.y ?? node.position.y)
-        .sort((left, right) => left - right);
-      const centerY = yValues[Math.floor(yValues.length / 2)] ?? 0;
-      // Prioritize the left/start mission chain for first landing readability.
-      const fitNodes = sortedByX.filter((node) => {
-        const x = node.positionAbsolute?.x ?? node.position.x;
-        const y = node.positionAbsolute?.y ?? node.position.y;
-        return (
-          x <= minX + GRAPH_WORKSPACE.landingPrimaryBandWidth &&
-          Math.abs(y - centerY) <= GRAPH_WORKSPACE.landingPrimaryBandHalfHeight
-        );
-      });
-      if (fitNodes.length === 0) return;
       reactFlowInstance.fitView({
-        nodes: fitNodes,
+        nodes: graphNodes,
         duration: 0,
-        padding: compact ? 0.12 : 0.13,
+        padding: compact ? 0.2 : 0.22,
         minZoom: PLAN_BASELINE_MIN_LOAD_ZOOM,
         maxZoom: PLAN_BASELINE_MAX_LOAD_ZOOM,
       });
@@ -699,6 +774,33 @@ export default function PlanMissionFlow({
     nodes,
     reactFlowInstance,
   ]);
+
+  useEffect(() => {
+    if (!layoutHydratedRef.current) return;
+    if (skipNextLayoutPersistRef.current) {
+      skipNextLayoutPersistRef.current = false;
+      return;
+    }
+    const persisted = readPersistedPlanLayout(planLayoutStorageKey) || {};
+    const nodePositions = Object.fromEntries(
+      nodes
+        .filter((node) => node.id !== WALL_ORCH_ID)
+        .map((node) => [node.id, { x: node.position.x, y: node.position.y }]),
+    );
+    persistPlanLayout(planLayoutStorageKey, {
+      ...persisted,
+      nodePositions,
+    });
+  }, [WALL_ORCH_ID, nodes, planLayoutStorageKey]);
+
+  const persistViewportSnapshot = () => {
+    if (!layoutHydratedRef.current || !reactFlowInstance) return;
+    const persisted = readPersistedPlanLayout(planLayoutStorageKey) || {};
+    persistPlanLayout(planLayoutStorageKey, {
+      ...persisted,
+      viewport: reactFlowInstance.getViewport(),
+    });
+  };
 
   useEffect(() => {
     if (!reactFlowInstance || !editMode || !selectedNodeId) return;
@@ -1239,7 +1341,7 @@ export default function PlanMissionFlow({
           onClick={() =>
             reactFlowInstance?.fitView({
               duration: GRAPH_THEME.nav.fitDurationMs,
-              padding: GRAPH_THEME.nav.fitPadding,
+              padding: compact ? 0.2 : 0.22,
               minZoom: GRAPH_THEME.nav.minZoom,
               maxZoom: GRAPH_THEME.nav.fitMaxZoom,
             })
@@ -1249,53 +1351,6 @@ export default function PlanMissionFlow({
           <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
             <path
               d="M2.25 5.25V2.25h3M8.75 2.25h3v3M11.75 8.75v3h-3M5.25 11.75h-3v-3"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.25"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
-        <button
-          type="button"
-          aria-label={layoutLocked ? 'Unlock graph layout' : 'Lock graph layout'}
-          onClick={() => setLayoutLocked((current) => !current)}
-          style={graphControlButtonStyle({
-            color: layoutLocked
-              ? GRAPH_THEME.accent.primary
-              : GRAPH_THEME.controls.text,
-          })}
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-            <path
-              d="M4.5 6V4.75a2.5 2.5 0 1 1 5 0V6"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.25"
-              strokeLinecap="round"
-            />
-            <rect
-              x="3"
-              y="6"
-              width="8"
-              height="6"
-              rx="1.5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.25"
-            />
-          </svg>
-        </button>
-        <button
-          type="button"
-          aria-label="Add plan frame"
-          onClick={addPlanFrame}
-          style={graphControlButtonStyle()}
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-            <path
-              d="M2.25 4V2.25H4M10 2.25h1.75V4M11.75 10v1.75H10M4 11.75H2.25V10"
               fill="none"
               stroke="currentColor"
               strokeWidth="1.25"
@@ -1351,6 +1406,7 @@ export default function PlanMissionFlow({
           if (!onFocusChange) return;
           onFocusChange(null);
         }}
+        onMoveEnd={persistViewportSnapshot}
         defaultViewport={{
           x: compact ? 56 : 72,
           y: compact ? 86 : 96,
@@ -1359,7 +1415,7 @@ export default function PlanMissionFlow({
         minZoom={GRAPH_THEME.nav.minZoom}
         maxZoom={GRAPH_THEME.nav.maxZoom}
         nodesConnectable={false}
-        nodesDraggable={!editMode && !layoutLocked}
+        nodesDraggable={!editMode}
         elementsSelectable
         onConnect={onConnect}
         onConnectStart={onConnectStart}
@@ -1369,9 +1425,9 @@ export default function PlanMissionFlow({
         edgesFocusable={false}
         edgesReconnectable={false}
         connectOnClick={false}
-        zoomOnScroll={!editMode && !layoutLocked}
-        zoomOnPinch={!editMode && !layoutLocked}
-        panOnDrag={!editMode && !layoutLocked}
+        zoomOnScroll={!editMode}
+        zoomOnPinch={!editMode}
+        panOnDrag={!editMode}
         connectionMode={ConnectionMode.Loose}
         snapToGrid
         snapGrid={[
@@ -1396,175 +1452,6 @@ export default function PlanMissionFlow({
           color={GRAPH_THEME.background.gridMajor}
         />
       </ReactFlow>
-      <div
-        aria-label={defaultScenePath.label}
-        style={{
-          position: 'absolute',
-          left: 14,
-          right: 14,
-          bottom: 12,
-          zIndex: 8,
-          display: 'grid',
-          gap: 6,
-          pointerEvents: 'auto',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 8,
-            flexWrap: 'wrap',
-            padding: '0 2px',
-          }}
-        >
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <button
-              type="button"
-              onClick={() => applySceneByOffset(-1)}
-              style={graphControlButtonStyle({
-                width: 30,
-                height: 28,
-                border: `1px solid ${GRAPH_THEME.controls.border}`,
-                borderRadius: 8,
-              })}
-              aria-label="Previous scene"
-            >
-              ‹
-            </button>
-            <button
-              type="button"
-              onClick={() => applySceneByOffset(1)}
-              style={graphControlButtonStyle({
-                width: 30,
-                height: 28,
-                border: `1px solid ${GRAPH_THEME.controls.border}`,
-                borderRadius: 8,
-              })}
-              aria-label="Next scene"
-            >
-              ›
-            </button>
-          </div>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              onClick={setActiveSceneToCurrentView}
-              style={graphControlButtonStyle({
-                width: 'auto',
-                minWidth: 112,
-                height: 28,
-                padding: '0 10px',
-                border: `1px solid ${GRAPH_THEME.accent.primaryBorder}`,
-                borderRadius: 8,
-              })}
-            >
-              Set Scene View
-            </button>
-            <button
-              type="button"
-              onClick={saveCurrentViewAsScene}
-              style={graphControlButtonStyle({
-                width: 'auto',
-                minWidth: 86,
-                height: 28,
-                padding: '0 10px',
-                border: `1px solid ${GRAPH_THEME.controls.border}`,
-                borderRadius: 8,
-              })}
-            >
-              Save Scene
-            </button>
-            <button
-              type="button"
-              onClick={setActiveSceneAsLanding}
-              style={graphControlButtonStyle({
-                width: 'auto',
-                minWidth: 82,
-                height: 28,
-                padding: '0 10px',
-                border: `1px solid ${activeSceneId === landingSceneId ? GRAPH_THEME.accent.primaryBorder : GRAPH_THEME.controls.border}`,
-                borderRadius: 8,
-              })}
-            >
-              Set Landing
-            </button>
-            <button
-              type="button"
-              onClick={goToLandingScene}
-              style={graphControlButtonStyle({
-                width: 'auto',
-                minWidth: 78,
-                height: 28,
-                padding: '0 10px',
-                border: `1px solid ${GRAPH_THEME.controls.border}`,
-                borderRadius: 8,
-              })}
-            >
-              Go Landing
-            </button>
-          </div>
-        </div>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            overflowX: 'auto',
-            padding: 6,
-            borderRadius: 10,
-            border: `1px solid ${GRAPH_THEME.controls.border}`,
-            background: 'rgba(8,12,16,0.9)',
-            boxShadow: GRAPH_THEME.controls.shadow,
-          }}
-        >
-          {defaultScenePath.sceneIds.map((sceneId, index) => {
-            const scene = guidedScenesById.get(sceneId);
-            if (!scene) return null;
-            const active = scene.id === activeSceneId;
-            const landing = scene.id === landingSceneId;
-            return (
-              <button
-                key={scene.id}
-                type="button"
-                onClick={() => applyPlanScene(scene)}
-                title={scene.speakerNote}
-                style={{
-                  flex: '0 0 auto',
-                  borderRadius: 999,
-                  border: `1px solid ${active ? GRAPH_THEME.accent.primaryBorder : 'rgba(167,176,186,0.18)'}`,
-                  background: active
-                    ? 'rgba(55,173,170,0.18)'
-                    : 'rgba(255,255,255,0.035)',
-                  color: active
-                    ? GRAPH_THEME.surface.text
-                    : GRAPH_THEME.drawer.inputMuted,
-                  fontSize: 11,
-                  fontWeight: active ? 700 : 600,
-                  lineHeight: 1,
-                  padding: '7px 10px',
-                  cursor: 'pointer',
-                }}
-              >
-                {index + 1}. {scene.label}
-                {landing ? ' · Landing' : ''}
-              </button>
-            );
-          })}
-        </div>
-        <div
-          style={{
-            color: GRAPH_THEME.drawer.inputMuted,
-            fontSize: 11,
-            lineHeight: 1.3,
-            padding: '0 6px',
-          }}
-        >
-          Briefing Agent placeholder: speaker notes, presentation export, and
-          video path can be generated from these scenes later.
-        </div>
-      </div>
     </div>
   );
 }

@@ -7607,6 +7607,7 @@ export default function AgentBuilder(): React.ReactElement {
             ) : null}
             <PlanMissionFlow
               structuredPlan={structuredAssistPlan}
+              projectId={activeProject ?? null}
               compact={surfaceRole === 'companion'}
               fullHeight
               nodeOverrides={planNodeDrafts}
