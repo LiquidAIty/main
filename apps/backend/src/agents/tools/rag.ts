@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { DynamicStructuredTool } from '@langchain/core/tools';
 
 const RagSearchSchema = z.object({
   query: z.string().describe('Natural language query or topic to search for'),
@@ -12,11 +11,11 @@ const RagSearchSchema = z.object({
 });
 
 export function createRagTool() {
-  return new DynamicStructuredTool({
+  return {
     name: 'rag_search',
     description: 'Search the knowledge base using weighted RAG (semantic + recency + signal). Returns top-k chunks.',
     schema: RagSearchSchema,
-    func: async (input) => {
+    func: async (input: unknown) => {
       const {
         query,
         k,
@@ -107,6 +106,6 @@ export function createRagTool() {
           items: []
         };
       }
-    }
-  });
+    },
+  };
 }

@@ -50,10 +50,12 @@ services:
     environment:
       - PORT=4000
       - KNOWGRAPH_URL=http://knowgraph:8001
+      - PYTHON_MODELS_URL=http://python-models:8001
     depends_on:
       - neo4j
       - db
       - redis
+      - python-models
     expose:
       - "4000"
     restart: unless-stopped
@@ -68,6 +70,19 @@ services:
       - NEO4J_URI=neo4j://neo4j:7687
     depends_on:
       - neo4j
+    restart: unless-stopped
+
+  python-models:
+    build:
+      context: .
+      dockerfile: apps/python-models/Dockerfile
+    image: liquidaity-python-models
+    environment:
+      - REDIS_HOST=redis
+    depends_on:
+      - redis
+    ports:
+      - "8002:8001"
     restart: unless-stopped
 
   web:

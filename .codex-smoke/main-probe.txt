@@ -1,0 +1,19 @@
+before main
+────────────── LIQUIDAITY BACKEND START ─────────────
+NODE_ENV:         development
+Runtime model:    gpt-5.1-chat-latest
+OPENAI_BASE_URL:  (default)
+OPENAI_API_KEY:   (not set)
+DB_HOST:          localhost
+DB_PORT:          5433
+DB_NAME:          liquidaity
+DB_USER:          liquidaity-user
+───────────────────────────────────────────────────
+
+╔════════════════════════════════════════════════════════════════╗
+║              AGENT MODELS (from Agent Builder)                 ║
+╚════════════════════════════════════════════════════════════════╝
+
+after main require
+[BOOT] listening on :4000
+after 5s

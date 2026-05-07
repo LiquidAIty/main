@@ -10,12 +10,20 @@ const registryHarness = vi.hoisted(() => ({
   getTool: vi.fn(),
 }));
 
+const autogenHarness = vi.hoisted(() => ({
+  orchestrateWithAutoGen: vi.fn(),
+}));
+
 vi.mock('../../llm/client', () => ({
   runLLM: llmHarness.runLLM,
 }));
 
 vi.mock('../../agents/registry', () => ({
   getTool: registryHarness.getTool,
+}));
+
+vi.mock('../../services/autogen/autogenOrchestratorClient', () => ({
+  orchestrateWithAutoGen: autogenHarness.orchestrateWithAutoGen,
 }));
 
 import { resolveEffectiveAgent, runCardWithContract } from './runtime';
@@ -62,6 +70,7 @@ describe('runCardWithContract runtime dispatch', () => {
   beforeEach(() => {
     llmHarness.runLLM.mockReset();
     registryHarness.getTool.mockReset();
+    autogenHarness.orchestrateWithAutoGen.mockReset();
   });
 
   it('runs assistant_agent cards on the local single-agent path', async () => {
@@ -363,6 +372,38 @@ describe('runCardWithContract runtime dispatch', () => {
     expect(result.runtimeType).toBe('magentic_one');
     expect(result.output).toBe('head output');
     expect(llmHarness.runLLM).toHaveBeenCalledTimes(2);
+  });
+
+  it('routes magentic_one to python autogen when executionBackend is enabled', async () => {
+    const magentic = createCard('magentic', 'magentic_one');
+    magentic.runtimeOptions = {
+      executionBackend: 'python_autogen',
+      provider: 'openrouter',
+      modelKey: 'openai/gpt-5.1-chat-latest',
+    };
+    const head = createCard('assist_head', 'assistant_agent');
+    const effectiveMagentic = resolveEffectiveAgent(magentic, templates);
+    if (!effectiveMagentic) throw new Error('missing_effective_agent');
+    autogenHarness.orchestrateWithAutoGen.mockResolvedValue({
+      ok: true,
+      finalResponseText: 'python autogen output',
+    });
+
+    const result = await runCardWithContract(magentic, effectiveMagentic, 'route this', {
+      userInput: 'route this',
+      projectId: 'project_test',
+      deckId: 'deck_test',
+      deckName: 'Deck Test',
+      allCards: [magentic, head],
+      allEdges: [edge('edge_magentic_head', 'magentic', 'assist_head', 'magentic_option')],
+      allTemplates: templates,
+    });
+
+    expect(result.status).toBe('success');
+    expect(result.runtimeType).toBe('magentic_one');
+    expect(result.output).toBe('python autogen output');
+    expect(autogenHarness.orchestrateWithAutoGen).toHaveBeenCalledTimes(1);
+    expect(llmHarness.runLLM).not.toHaveBeenCalled();
   });
 
   it('passes through one optional magentic progress line for the plan stream', async () => {

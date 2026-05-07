@@ -47,7 +47,7 @@ export const ReportRequestSchema = z.object({
   // Content options
   sections: z.array(z.string()).optional().describe('Sections to include in the report'),
   
-  // LangGraph integration
+  // Orchestration context
   agentContext: z.string().optional().describe('Additional context from the agent about what to emphasize'),
   knowledgeGraphData: z.record(z.any()).optional().describe('Data from the knowledge graph'),
   
@@ -76,7 +76,7 @@ export type ReportResponse = z.infer<typeof ReportResponseSchema>;
 
 /**
  * Generate a report using Gemini
- * Can be called directly or from LangGraph
+ * Can be called directly or from backend orchestration.
  * @param request Report generation request
  * @returns Generated report
  * @throws {ReportGenerationError} If there's an error during report generation

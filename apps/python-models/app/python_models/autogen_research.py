@@ -15,10 +15,14 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 
 
 def _load_repo_env() -> None:
-    env_candidates = [
-        Path(__file__).resolve().parents[4] / "apps" / "backend" / ".env",
-        Path(__file__).resolve().parents[3] / ".env",
-    ]
+    resolved = Path(__file__).resolve()
+    env_candidates = []
+    if len(resolved.parents) > 4:
+        env_candidates.append(resolved.parents[4] / "apps" / "backend" / ".env")
+    if len(resolved.parents) > 3:
+        env_candidates.append(resolved.parents[3] / ".env")
+    env_candidates.append(Path.cwd() / "apps" / "backend" / ".env")
+    env_candidates.append(Path.cwd() / ".env")
     for env_path in env_candidates:
         if env_path.exists():
             load_dotenv(env_path, override=False)

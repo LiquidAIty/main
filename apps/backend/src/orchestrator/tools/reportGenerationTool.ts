@@ -1,9 +1,8 @@
 /**
- * Report Generation Tool for LangGraph
+ * Report Generation Tool
  * Allows agents to generate reports and infographics using Gemini
  */
 
-import { Tool } from "langchain/tools";
 import { z } from "zod";
 import { 
   generateReport, 
@@ -22,18 +21,13 @@ const reportParamsSchema = z.object({
 });
 
 /**
- * Tool for generating reports and infographics from LangGraph agents
+ * Tool for generating reports and infographics.
  */
-export class ReportGenerationTool extends Tool {
+export class ReportGenerationTool {
   name = "report_generation";
   description = "Generate comprehensive reports and infographics on any topic using Gemini. Useful for creating visual summaries of knowledge graph data.";
 
-  constructor() {
-    super();
-  }
-
-  /** @ignore */
-  override async _call(arg: string | undefined): Promise<string> {
+  async call(arg: string | undefined): Promise<string> {
     try {
       if (!arg) {
         return JSON.stringify({
@@ -91,7 +85,7 @@ export class ReportGenerationTool extends Tool {
 }
 
 /**
- * Example usage in a LangGraph agent:
+ * Example usage:
  * 
  * ```typescript
  * import { ReportGenerationTool } from "./tools/reportGenerationTool.js";
@@ -124,7 +118,7 @@ export class ReportGenerationTool extends Tool {
 
 /**
  * Function to ask user if they want a report before generating one
- * This can be called from a LangGraph agent
+ * This can be called from an orchestrator before generating a report.
  */
 export async function askUserForReportConfirmation(
   topic: string,

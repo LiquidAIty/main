@@ -5,7 +5,7 @@
     },
     "codebase-memory-mcp": {
       "type": "stdio",
-      "command": "C:\\Projects\\LiquidAIty\\tools\\codebase-memory-mcp\\codebase-memory-mcp.exe"
+      "command": "C:\\cbm\\codebase-memory-mcp.exe"
     }
   }
 }

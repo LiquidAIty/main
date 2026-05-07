@@ -1048,9 +1048,124 @@ async def _orchestrate_card_runtime_context(context: ContextPack) -> Orchestrato
     runtime = context.cardRuntime
     if runtime is None:
         raise RuntimeError("card_runtime_missing")
-    raise RuntimeError(
-        f"card_runtime_sidecar_disabled: runtimeType={runtime.runtimeType} cardId={runtime.cardId}"
+    if runtime.runtimeType != "magentic_one":
+        raise RuntimeError(
+            f"team_runtime_not_supported: runtimeType={runtime.runtimeType} cardId={runtime.cardId}"
+        )
+
+    runtime_options = dict(runtime.runtimeOptions or {})
+    provider = str(runtime_options.get("provider") or context.session.modelProvider).strip().lower()
+    provider_model_id = str(
+        runtime_options.get("modelKey")
+        or context.session.providerModelId
+        or context.session.modelKey
+    ).strip()
+    if not provider_model_id:
+        raise RuntimeError(
+            f"card_runtime_model_missing: runtimeType={runtime.runtimeType} cardId={runtime.cardId}"
+        )
+
+    model_config = AutoGenAgentConfig(
+        provider=provider,
+        provider_model_id=provider_model_id,
+        system_prompt=str(runtime.prompt or context.systemPrompt or "").strip(),
+        temperature=(
+            float(runtime_options.get("temperature"))
+            if runtime_options.get("temperature") is not None
+            else 0.05
+        ),
+        max_tokens=(
+            int(runtime_options.get("maxTokens"))
+            if runtime_options.get("maxTokens") is not None
+            else 850
+        ),
     )
+    _assert_magentic_safe_model(model_config)
+    team_model_client = _build_model_client(model_config)
+    participant_cache: dict[tuple[str, str, float | None, int | None], object] = {}
+
+    started_at = time.perf_counter()
+    try:
+        participants = _build_card_team_participants(context, model_config, participant_cache)
+        team = _build_card_team(context, team_model_client, participants)
+        team_task = _build_card_runtime_task_text(context)
+        result = await team.run(task=team_task)
+        transcript = [_message_to_text(message) for message in result.messages]
+
+        final_pass = await _synthesize_card_runtime_result(context, team_model_client, transcript)
+        know_graph = _ensure_knowgraph_output(
+            final_pass.know_graph,
+            final_pass.think_graph,
+            final_pass.plan,
+            max(1, min(context.maxResearchTasks, 4)),
+        )
+        blackboard_entries = _ensure_blackboard_entries(
+            final_pass.blackboard_entries,
+            final_pass.final_response_text,
+            final_pass.plan,
+            final_pass.think_graph,
+            know_graph,
+        )
+        plan = final_pass.plan
+        think_graph = final_pass.think_graph
+        final_response_text = final_pass.final_response_text
+
+        report_backs = [
+            AssistantResponseReport(
+                sourceAgent="Runtime_Synthesizer",
+                summary="Final assistant response for the current card runtime",
+                finalResponseText=final_response_text,
+            ),
+            PlanUpdateReport(
+                sourceAgent="Runtime_Synthesizer",
+                summary=plan.deltaSummary or "Plan/wiki updated from card runtime output",
+                plan=plan,
+            ),
+            BlackboardWriteReport(
+                sourceAgent="Runtime_Synthesizer",
+                summary="Blackboard updates from card runtime output",
+                entries=blackboard_entries,
+            ),
+            ThinkGraphUpdateReport(
+                sourceAgent="Runtime_Synthesizer",
+                summary="ThinkGraph follow-up priorities from card runtime output",
+                priorityEntities=think_graph.priorityEntities,
+                triplets=think_graph.triplets,
+                openQuestions=think_graph.openQuestions,
+            ),
+            know_graph,
+        ]
+
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        metrics = OrchestratorMetrics(
+            elapsedMs=elapsed_ms,
+            turnsUsed=final_pass.turns_used,
+            reportBackCount=len(report_backs),
+            blackboardWriteCount=len(blackboard_entries),
+            searchTaskCount=len(know_graph.searchTasks),
+            refinementApplied=False,
+        )
+        return OrchestratorRunResponse(
+            ok=True,
+            session=context.session,
+            stopReason=result.stop_reason or final_pass.stop_reason,
+            finalResponseText=final_response_text,
+            blackboardEntries=blackboard_entries,
+            plan=plan,
+            thinkGraph=think_graph,
+            knowGraph=know_graph,
+            reportBacks=report_backs,
+            transcript=transcript[-10:],
+            metrics=metrics,
+        )
+    finally:
+        for client in participant_cache.values():
+            if client is team_model_client:
+                continue
+            close_method = getattr(client, "close", None)
+            if callable(close_method):
+                await close_method()
+        await team_model_client.close()
 
 
 async def _run_orchestrator_pass(

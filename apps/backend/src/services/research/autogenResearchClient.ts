@@ -37,7 +37,7 @@ function buildSidecarBaseUrls(): string[] {
     .filter(Boolean)
     .map(trimBaseUrl);
 
-  const defaults = ['http://localhost:8001', 'http://python-models:8001'];
+  const defaults = ['http://localhost:8002', 'http://localhost:8001', 'http://python-models:8001'];
   return Array.from(new Set([...configured, ...defaults].filter(Boolean)));
 }
 

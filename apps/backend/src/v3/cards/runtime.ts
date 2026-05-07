@@ -7,6 +7,10 @@ import { REPO_DEFAULT_MODEL_KEY, resolveModel, type Provider } from '../../llm/m
 import { runLLM } from '../../llm/client';
 import { getTool, type Tool } from '../../agents/registry';
 import { openClaudeRuntimeService } from '../../coder/openclaude/runtime/service';
+import {
+  orchestrateWithAutoGen,
+  type AutoGenOrchestratorRequest,
+} from '../../services/autogen/autogenOrchestratorClient';
 import { resolveRuntimeBinding } from '../runtimeBinding';
 import {
   buildGraphExecutionInputText,
@@ -478,6 +482,14 @@ function resolveCardSystemPrompt(card: AgentCardInstance, effectiveAgent: AgentT
   return String(card.prompt || effectiveAgent.promptTemplate || '').trim();
 }
 
+function shouldUsePythonAutoGenBackend(card: AgentCardInstance): boolean {
+  return String(card.runtimeOptions?.executionBackend || '').trim().toLowerCase() === 'python_autogen';
+}
+
+function isPythonAutoGenCallableRuntimeType(runtimeType: AgentCardRuntimeType): boolean {
+  return runtimeType === 'assistant_agent' || runtimeType === 'graph_flow';
+}
+
 function resolveModelConfig(
   modelKeyRaw: unknown,
   providerHintRaw: unknown,
@@ -541,6 +553,120 @@ function resolveCardModelConfig(
     runtimeOptions.maxTokens ?? effectiveAgent.maxTokens,
     scope,
   );
+}
+
+function buildPythonAutoGenCardRuntimePayload(
+  card: AgentCardInstance,
+  effectiveAgent: AgentTemplate,
+  runtimeInput: string,
+  context: CardRuntimeContext,
+  modelConfig: ResolvedModelConfig,
+  prompt: string,
+  callableHeads: AgentCardInstance[],
+  startedAt: string,
+): AutoGenOrchestratorRequest {
+  const sessionId = `${context.deckId || 'deck'}:${card.id}:${Date.now()}`;
+  const turnId = `${card.id}:${Date.now()}`;
+  const templates = context.allTemplates || [];
+  const supportedHeads = callableHeads.filter((head) =>
+    isPythonAutoGenCallableRuntimeType(resolveCardRuntimeType(head)),
+  );
+  const participants = supportedHeads
+    .map((head) => {
+      const headAgent = resolveEffectiveAgent(head, templates);
+      if (!headAgent) return null;
+      const headModel = resolveCardModelConfig(head, headAgent, `card_${head.id}`);
+      return {
+        cardId: head.id,
+        title: head.title,
+        runtimeType: resolveCardRuntimeType(head),
+        prompt: resolveCardSystemPrompt(head, headAgent),
+        provider: headModel.provider,
+        providerModelId: headModel.providerModelId,
+        temperature: headModel.temperature,
+        maxTokens: headModel.maxTokens,
+      };
+    })
+    .filter(Boolean);
+
+  const payload: AutoGenOrchestratorRequest = {
+    session: {
+      sessionId,
+      projectId: String(context.projectId || ''),
+      turnId,
+      route: 'deck_runtime',
+      orchestrator: 'magentic_one',
+      modelProvider: modelConfig.provider,
+      modelKey: modelConfig.modelKey,
+      providerModelId: modelConfig.providerModelId,
+      startedAt,
+    },
+    userText: runtimeInput,
+    priorAssistantText: String(context.previousOutput || ''),
+    systemPrompt: prompt,
+    blackboard: {
+      current_goal: '',
+      what_matters_now: [],
+      open_questions: [],
+      findings: [],
+      suggestions: [],
+      next_options: [],
+      next_move: null,
+      store: {},
+    },
+    plan: {
+      anchor: '',
+      whatChanged: [],
+      openQuestions: [],
+      sources: [],
+      deltaSummary: '',
+      status: 'draft',
+    },
+    thinkGraph: {
+      priorityEntities: [],
+      priorityRelationships: [],
+      triplets: [],
+      openQuestions: [],
+    },
+    knowGraph: {
+      gaps: [],
+      graphFacts: [],
+      evidence: [],
+      researchDocumentCount: 0,
+    },
+    attachments: [],
+    maxResearchTasks: 4,
+    cardRuntime: {
+      cardId: card.id,
+      title: card.title,
+      runtimeType: 'magentic_one',
+      prompt,
+      runtimeOptions: card.runtimeOptions || {},
+      magentic: {
+        callableHeads: supportedHeads.map((head) => ({
+          cardId: head.id,
+          title: head.title,
+          runtimeType: resolveCardRuntimeType(head),
+        })),
+      },
+      participants,
+      graphFlow: {
+        deckId: context.deckId || null,
+        deckName: context.deckName || null,
+        edges: (context.allEdges || []).map((edge) => ({
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+          edgeType: edge.edgeType || 'flow',
+        })),
+      },
+      assistant: {
+        provider: modelConfig.provider,
+        providerModelId: modelConfig.providerModelId,
+      },
+    },
+  };
+  return payload;
 }
 
 export function resolveEffectiveAgent(
@@ -1545,6 +1671,56 @@ async function runMagenticCard(
 
   const modelConfig = resolveCardModelConfig(card, effectiveAgent, `card_${card.id}`);
   const prompt = resolveCardSystemPrompt(card, effectiveAgent);
+  if (shouldUsePythonAutoGenBackend(card)) {
+    const supportedHeads = callableHeads.filter((head) =>
+      isPythonAutoGenCallableRuntimeType(resolveCardRuntimeType(head)),
+    );
+    if (supportedHeads.length === 0) {
+      throw new Error(`magentic_callable_heads_required: cardId=${card.id} sidecar=supported_heads_missing`);
+    }
+    const sidecarResponse = await orchestrateWithAutoGen(
+      buildPythonAutoGenCardRuntimePayload(
+        card,
+        effectiveAgent,
+        runtimeInput,
+        context,
+        modelConfig,
+        prompt,
+        supportedHeads,
+        startedAt,
+      ),
+    );
+    const finalText = String(sidecarResponse.finalResponseText || '').trim();
+    if (!finalText) {
+      throw new Error('autogen_orchestrator_missing_final_response');
+    }
+    emitRuntimeEvent(context, {
+      kind: 'magentic_assignment',
+      cardId: card.id,
+      cardTitle: card.title,
+      runtimeType: 'magentic_one',
+      text: `${card.title} routed execution to python_autogen.`,
+      status: 'running',
+    });
+    emitRuntimeMessage(context, {
+      cardId: card.id,
+      cardTitle: card.title,
+      runtimeType: 'magentic_one',
+      role: 'assistant',
+      content: finalText,
+    });
+    return {
+      output: finalText,
+      status: 'success',
+      startedAt,
+      endedAt: new Date().toISOString(),
+      runtimeBinding,
+      runtimeType: 'magentic_one',
+      seed: context.seed,
+      inputSummary: summarizeText(runtimeInput),
+      outputSummary: summarizeText(finalText),
+    };
+  }
   const chooserSchema = {
     type: 'object',
     additionalProperties: false,

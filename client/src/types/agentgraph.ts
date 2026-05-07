@@ -54,6 +54,7 @@ export type AssistExecutionMode = 'single' | 'swarm';
 
 export type AgentCardRuntimeOptions = {
   provider?: 'openai' | 'openrouter' | null;
+  executionBackend?: 'python_autogen' | null;
   modelKey?: string | null;
   temperature?: number | null;
   maxTokens?: number | null;

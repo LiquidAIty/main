@@ -109,6 +109,18 @@ class CardRuntimeConfig(BaseModel):
     assistant: dict | None = None
     magentic: dict | None = None
     graphFlow: dict | None = None
+    participants: list["CardRuntimeParticipant"] = Field(default_factory=list)
+
+
+class CardRuntimeParticipant(BaseModel):
+    cardId: str
+    title: str
+    runtimeType: Literal["assistant_agent", "graph_flow"]
+    prompt: str = ""
+    provider: str
+    providerModelId: str
+    temperature: float | None = None
+    maxTokens: int | None = None
 
 
 class PlanContext(BaseModel):

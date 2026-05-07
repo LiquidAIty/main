@@ -142,6 +142,7 @@ function normalizeRuntimeOptions(value: unknown): AgentCardRuntimeOptions | null
           : null;
   const normalized: AgentCardRuntimeOptions = {
     provider,
+    executionBackend: raw.executionBackend === 'python_autogen' ? 'python_autogen' : null,
     modelKey: typeof raw.modelKey === 'string' ? raw.modelKey.trim() || null : null,
     temperature: Number.isFinite(Number(raw.temperature)) ? Number(raw.temperature) : null,
     maxTokens: Number.isFinite(Number(raw.maxTokens)) ? Number(raw.maxTokens) : null,
