@@ -17,6 +17,7 @@ import type {
   DeckRun,
   DeckRuntimeEvent,
   RuntimeBinding,
+  WorkspaceObjectContext,
 } from "../../types/agentgraph";
 
 function safeText(value: unknown): string {
@@ -59,6 +60,8 @@ export function useBuilderDeckRuntimeActions({
   formatBuilderStatusMessage,
   hydrateDeckDocument,
   selectedCard,
+  workspaceContext,
+  workspaceObjectContext,
   setCardRunBusy,
   setDeck,
   setDeckRevision,
@@ -98,6 +101,8 @@ export function useBuilderDeckRuntimeActions({
   formatBuilderStatusMessage: (message: unknown, fallback: string) => string;
   hydrateDeckDocument: (value: Partial<DeckDocument> | null | undefined) => DeckDocument;
   selectedCard: AgentCardInstance | null;
+  workspaceContext?: unknown;
+  workspaceObjectContext?: WorkspaceObjectContext | null;
   setCardRunBusy: Dispatch<SetStateAction<boolean>>;
   setDeck: Dispatch<SetStateAction<DeckDocument>>;
   setDeckRevision: Dispatch<SetStateAction<string | null>>;
@@ -253,6 +258,8 @@ export function useBuilderDeckRuntimeActions({
           },
           templates,
           input: deckRunInput,
+          workspaceContext,
+          workspaceObjectContext,
         },
         signal: controller.signal,
         onEvent: (event) => {
@@ -354,6 +361,8 @@ export function useBuilderDeckRuntimeActions({
     setLiveDeckEvents,
     templates,
     v3ProjectsApi,
+    workspaceContext,
+    workspaceObjectContext,
   ]);
 
   const handleRunDeck = useCallback(async () => {
@@ -406,6 +415,8 @@ export function useBuilderDeckRuntimeActions({
           },
           templates,
           input: deckRunInput,
+          workspaceContext,
+          workspaceObjectContext,
         },
         signal: controller.signal,
         onEvent: (event) => {
@@ -497,6 +508,8 @@ export function useBuilderDeckRuntimeActions({
     templates,
     uid,
     v3ProjectsApi,
+    workspaceContext,
+    workspaceObjectContext,
   ]);
 
   return {

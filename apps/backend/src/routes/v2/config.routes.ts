@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../../db/pool';
 import { getAgentConfig, repairSystemAgentConfigs, updateAgentConfig, type AgentType } from '../../services/v2/agentConfigStore';
-import { MODEL_REGISTRY } from '../../llm/models.config';
+import { MODEL_REGISTRY, REPO_DEFAULT_MODEL_KEY } from '../../llm/models.config';
 import { DEFAULT_AGENT_BUILDER_PROMPT_TEMPLATE } from '../../prompts/agentBuilderPrompt';
 
 const router = Router();
@@ -43,28 +43,20 @@ function pickMissing(config: {
 
 function pickDefaultOpenAiModelKey(): string | null {
   const envCandidates = [
-    process.env.OPENROUTER_DEFAULT_MODEL,
-    process.env.OPENROUTER_MODEL,
     process.env.OPENAI_MODEL,
     process.env.OPENAI_DEFAULT_MODEL,
     process.env.OPENAI_MODEL_GPT5_MINI,
     process.env.OPENAI_MODEL_GPT5,
   ];
-  const directOpenRouterAliases: Record<string, string> = {
-    'gpt-5.1-chat-latest': 'or-openai-gpt-5.1-chat-latest',
-    'gpt-5-mini': 'or-openai-gpt-5-mini',
-    'gpt-5': 'or-openai-gpt-5',
-    'gpt-5-nano': 'or-openai-gpt-5-nano',
-  };
   for (const candidate of envCandidates) {
     const normalizedCandidate = String(candidate || '').trim();
     if (!normalizedCandidate) continue;
-    if (normalizedCandidate.includes('/')) return normalizedCandidate;
-    const remappedCandidate = directOpenRouterAliases[normalizedCandidate] || normalizedCandidate;
-    if (MODEL_REGISTRY[remappedCandidate]) return remappedCandidate;
+    const model = MODEL_REGISTRY[normalizedCandidate];
+    if (model?.provider === 'openai') return normalizedCandidate;
   }
-  const firstOpenRouter = Object.entries(MODEL_REGISTRY).find(([, m]) => m.provider === 'openrouter');
-  return firstOpenRouter ? firstOpenRouter[0] : null;
+  if (MODEL_REGISTRY[REPO_DEFAULT_MODEL_KEY]) return REPO_DEFAULT_MODEL_KEY;
+  const firstOpenAi = Object.entries(MODEL_REGISTRY).find(([, m]) => m.provider === 'openai');
+  return firstOpenAi ? firstOpenAi[0] : null;
 }
 
 router.post('/:projectId/agents/system/repair', async (req, res) => {

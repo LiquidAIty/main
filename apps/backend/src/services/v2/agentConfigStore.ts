@@ -1,5 +1,5 @@
 import { pool } from '../../db/pool';
-import { MODEL_REGISTRY } from '../../llm/models.config';
+import { MODEL_REGISTRY, REPO_DEFAULT_MODEL_KEY } from '../../llm/models.config';
 
 export type AgentType =
   | 'llm_chat'
@@ -152,27 +152,19 @@ function defaultAgentName(agentType: AgentType): string {
   }
 }
 
-function pickDefaultOpenRouterModelKey(agentType: AgentType): string {
+function pickDefaultOpenAiModelKey(agentType: AgentType): string {
   const candidatesByAgent: Record<AgentType, string[]> = {
-    llm_chat: ['or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5.1-chat', 'or-openai-gpt-5-mini', 'or-openai-gpt-5', 'or-openai-gpt-5-nano'],
-    kg_ingest: ['or-openai-gpt-5-mini', 'or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5-nano', 'or-openai-gpt-5'],
-    knowgraph: ['or-openai-gpt-5-mini', 'or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5-nano', 'or-openai-gpt-5'],
-    neo4j: ['or-openai-gpt-5-mini', 'or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5-nano', 'or-openai-gpt-5'],
-    research_agent: ['or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5.1-chat', 'or-openai-gpt-5-mini', 'or-openai-gpt-5', 'or-openai-gpt-5-nano'],
-    agent_builder: ['or-openai-gpt-5.1-chat-latest', 'or-openai-gpt-5.1-chat', 'or-openai-gpt-5-mini', 'or-openai-gpt-5', 'or-openai-gpt-5-nano'],
+    llm_chat: [REPO_DEFAULT_MODEL_KEY, 'gpt-5-mini', 'gpt-5-nano'],
+    kg_ingest: ['gpt-5-mini', REPO_DEFAULT_MODEL_KEY, 'gpt-5-nano'],
+    knowgraph: ['gpt-5-mini', REPO_DEFAULT_MODEL_KEY, 'gpt-5-nano'],
+    neo4j: ['gpt-5-mini', REPO_DEFAULT_MODEL_KEY, 'gpt-5-nano'],
+    research_agent: [REPO_DEFAULT_MODEL_KEY, 'gpt-5-mini', 'gpt-5-nano'],
+    agent_builder: [REPO_DEFAULT_MODEL_KEY, 'gpt-5-mini', 'gpt-5-nano'],
   };
   const envCandidates = [
-    process.env.OPENROUTER_DEFAULT_MODEL,
-    process.env.OPENROUTER_MODEL,
     process.env.OPENAI_MODEL,
     process.env.OPENAI_DEFAULT_MODEL,
   ].filter((value): value is string => Boolean(value && value.trim()));
-  const directOpenRouterAliases: Record<string, string> = {
-    'gpt-5.1-chat-latest': 'or-openai-gpt-5.1-chat-latest',
-    'gpt-5-mini': 'or-openai-gpt-5-mini',
-    'gpt-5': 'or-openai-gpt-5',
-    'gpt-5-nano': 'or-openai-gpt-5-nano',
-  };
   const options = [...candidatesByAgent[agentType], ...envCandidates];
   const seen = new Set<string>();
 
@@ -181,26 +173,21 @@ function pickDefaultOpenRouterModelKey(agentType: AgentType): string {
     if (!option || seen.has(option)) continue;
     seen.add(option);
 
-    if (option.includes('/')) {
+    const model = MODEL_REGISTRY[option];
+    if (model?.provider === 'openai') {
       return option;
     }
-
-    const remappedOption = directOpenRouterAliases[option] || option;
-    const model = MODEL_REGISTRY[remappedOption];
-    if (model?.provider === 'openrouter') {
-      return remappedOption;
-    }
   }
 
-  const firstOpenRouter = Object.entries(MODEL_REGISTRY).find(([, model]) => model.provider === 'openrouter');
-  if (!firstOpenRouter) {
-    throw new Error('default_openrouter_model_missing');
+  const firstOpenAi = Object.entries(MODEL_REGISTRY).find(([, model]) => model.provider === 'openai');
+  if (!firstOpenAi) {
+    throw new Error('default_openai_model_missing');
   }
-  return firstOpenRouter[0];
+  return firstOpenAi[0];
 }
 
 function pickDefaultModelKey(agentType: AgentType): string {
-  return pickDefaultOpenRouterModelKey(agentType);
+  return pickDefaultOpenAiModelKey(agentType);
 }
 
 function defaultPromptTemplate(agentType: AgentType): string {
@@ -294,22 +281,8 @@ function normalizeProviderValue(value: unknown): 'openai' | 'openrouter' | null 
   return null;
 }
 
-function remapOpenAiModelKeyToOpenRouterAlias(modelKeyRaw: unknown): string | null {
-  const modelKey = String(modelKeyRaw ?? '').trim();
-  if (!modelKey) return null;
-
-  const openRouterAliases: Record<string, string> = {
-    'gpt-5.1-chat-latest': 'or-openai-gpt-5.1-chat-latest',
-    'gpt-5-mini': 'or-openai-gpt-5-mini',
-    'gpt-5': 'or-openai-gpt-5',
-    'gpt-5-nano': 'or-openai-gpt-5-nano',
-  };
-
-  return openRouterAliases[modelKey] || null;
-}
-
 function deriveProviderFromModelKey(modelKeyRaw: unknown): 'openai' | 'openrouter' | null {
-  const modelKey = remapOpenAiModelKeyToOpenRouterAlias(modelKeyRaw) || String(modelKeyRaw ?? '').trim();
+  const modelKey = String(modelKeyRaw ?? '').trim();
   if (!modelKey) return null;
   const entry = MODEL_REGISTRY[modelKey];
   if (entry?.provider === 'openai' || entry?.provider === 'openrouter') {
@@ -326,13 +299,10 @@ function deriveProviderFromModelKey(modelKeyRaw: unknown): 'openai' | 'openroute
 
 function rowToConfig(row: any): AgentConfigRecord {
   const storedModelKey = row.model_key ?? row.model ?? null;
-  const modelKey = remapOpenAiModelKeyToOpenRouterAlias(storedModelKey) || storedModelKey;
+  const modelKey = storedModelKey;
   const storedProvider = normalizeProviderValue(row.provider);
   const derivedProvider = deriveProviderFromModelKey(modelKey);
-  const provider =
-    derivedProvider === 'openrouter' || remapOpenAiModelKeyToOpenRouterAlias(storedModelKey)
-      ? 'openrouter'
-      : storedProvider ?? derivedProvider;
+  const provider = storedProvider ?? derivedProvider;
   const promptTemplate = String(row.prompt_template ?? '').trim() || sectionPromptFallback(row);
   const maxTokens = typeof row.max_tokens === 'number' ? row.max_tokens : 2048;
   const permissions = normalizeJson(row.permissions, {} as Record<string, unknown>);
@@ -471,7 +441,7 @@ export async function ensureAgentConfig(projectId: string, agentType: AgentType)
     agentType === 'llm_chat' ? 0.7 : agentType === 'agent_builder' ? 0.2 : 0;
 
   return updateAgentConfig(projectId, agentType, {
-    provider: 'openrouter',
+    provider: 'openai',
     model_key,
     temperature,
     max_tokens: 2048,
@@ -740,4 +710,3 @@ export async function repairSystemAgentConfigs(projectId: string): Promise<Syste
   }
   return out;
 }
-

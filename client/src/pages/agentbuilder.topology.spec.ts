@@ -51,15 +51,21 @@ describe('agentbuilder progressive activation startup', () => {
     const image = byId.get('card_image_workbench');
     const code = byId.get('card_code_workbench');
     const video = byId.get('card_video_workbench');
+    const assist = byId.get('card_assist');
+    const localCoder = byId.get('card_local_coder');
+    const telescope = byId.get('card_telescope_agent');
     const plan = byId.get('card_plan_agent');
     const worldsignals = byId.get('card_worldsignals_agent');
 
     expect(bus?.position).toEqual({ x: 140, y: 120 });
+    expect(assist?.position).toEqual({ x: 320, y: -40 });
     expect(energy?.position).toEqual({ x: 260, y: 140 });
     expect(trading?.position).toEqual({ x: 520, y: 140 });
     expect(image?.position).toEqual({ x: 780, y: 140 });
     expect(code?.position).toEqual({ x: 1040, y: 140 });
     expect(video?.position).toEqual({ x: 780, y: 320 });
+    expect(localCoder?.position).toEqual({ x: 520, y: 320 });
+    expect(telescope?.position).toEqual({ x: 1040, y: 320 });
     expect(plan?.position).toEqual({ x: 0, y: 380 });
     expect(worldsignals?.position).toEqual({ x: 0, y: 260 });
     expect(byId.get('card_knowgraph_agent')?.position).toEqual({ x: -510, y: 140 });
@@ -68,12 +74,15 @@ describe('agentbuilder progressive activation startup', () => {
     expect(byId.get('card_thinkgraph_agent')?.position).toEqual({ x: 0, y: 140 });
   });
 
-  it('starts with only the horizontal knowledge backbone and no default bus activation edge', () => {
+  it('starts with first-demo Magentic-One heads and the horizontal knowledge backbone', () => {
     const busEdges = INITIAL_DECK.edges.filter(
       (edge) => edge.source === 'card_magentic' || edge.target === 'card_magentic',
     );
     const systemBackboneEdges = INITIAL_DECK.edges.filter((edge) => edge.edgeType === 'flow');
-    expect(busEdges).toHaveLength(0);
+    expect(busEdges.map((edge) => [edge.source, edge.target, edge.edgeType])).toEqual([
+      ['card_magentic', 'card_research_agent', 'magentic_option'],
+      ['card_magentic', 'card_assist', 'magentic_option'],
+    ]);
     expect(systemBackboneEdges.map((edge) => [edge.source, edge.target])).toEqual([
       ['card_knowgraph_agent', 'card_research_agent'],
       ['card_research_agent', 'card_codegraph_agent'],
@@ -81,7 +90,7 @@ describe('agentbuilder progressive activation startup', () => {
     ]);
   });
 
-  it('shows only plus and hamburger in the cold-start baseline', () => {
+  it('shows Knowledge for the first-demo Research activation and keeps other rails hidden', () => {
     expect(
       deriveVisibleRailItems({
         deck: INITIAL_DECK,
@@ -89,7 +98,7 @@ describe('agentbuilder progressive activation startup', () => {
         pendingActivationProposal: null,
       }),
     ).toEqual({
-      showKnowledge: false,
+      showKnowledge: true,
       showPlan: false,
       showWorldsignal: false,
       showEnergy: false,
@@ -243,15 +252,15 @@ describe('agentbuilder progressive activation startup', () => {
     ).toBe(true);
   });
 
-  it('keeps Knowledge hidden until the system chain is activated from the bus', () => {
-    expect(isKnowledgeChainActive(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(false);
+  it('shows Knowledge from the default first-demo Research connection', () => {
+    expect(isKnowledgeChainActive(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(true);
     expect(
       deriveVisibleRailItems({
         deck: INITIAL_DECK,
         workspaceView: 'canvas',
         pendingActivationProposal: null,
       }).showKnowledge,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('shows Knowledge when ThinkGraph activates the connected chain', () => {

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentCardInstance, AgentTemplate, DeckDocument, DeckEdge } from '../types';
 
 const runtimeHarness = vi.hoisted(() => ({
-  calls: [] as Array<{ cardId: string; input: string }>,
+  calls: [] as Array<{ cardId: string; input: string; context: Record<string, unknown> }>,
   runCardWithContract: vi.fn(),
 }));
 
@@ -69,9 +69,9 @@ describe('executeDeck', () => {
       card: AgentCardInstance,
       _agent: AgentTemplate,
       input: string,
-      _context: Record<string, unknown>,
+      context: Record<string, unknown>,
     ) => {
-      runtimeHarness.calls.push({ cardId: card.id, input });
+      runtimeHarness.calls.push({ cardId: card.id, input, context });
       return {
         output: `output:${card.id}`,
         status: 'success',
@@ -98,6 +98,32 @@ describe('executeDeck', () => {
 
     expect(run.status).toBe('success');
     expect(run.steps.map((step) => step.cardId)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('normalizes compact workspace object context for card runtime calls and run snapshots', async () => {
+    const deck = createDeckDocument([createAgent('a', 'A')], []);
+    const run = await executeDeck(deck, templates, {
+      input: 'context test',
+      workspaceObjectContext: {
+        activeSurface: 'canvas',
+        workspaceView: 'canvas',
+        selectedObjectId: 'card_a',
+        selectedObjectType: 'assistant_agent',
+        selectedObjectTitle: 'A',
+        selectedText: 'x'.repeat(260),
+        openObjectSummary: 'y'.repeat(420),
+        activeMagenticParticipants: Array.from({ length: 14 }, (_, index) => `Participant ${index}`),
+        availableCanvasAgents: ['A', 'A', 'B'],
+        excludedAgents: ['Local Coder'],
+      },
+    });
+
+    const context = runtimeHarness.calls[0]?.context.workspaceObjectContext as any;
+    expect(context.selectedText).toHaveLength(240);
+    expect(context.openObjectSummary).toHaveLength(400);
+    expect(context.activeMagenticParticipants).toHaveLength(12);
+    expect(context.availableCanvasAgents).toEqual(['A', 'B']);
+    expect(run.workspaceObjectContext).toEqual(context);
   });
 
   it('ignores legacy blackboard nodes in visible flow routing', async () => {
@@ -133,6 +159,27 @@ describe('executeDeck', () => {
         createAgent('assist_head', 'Assist Head', 'assistant_agent'),
       ],
       [edge('edge_magentic_head', 'magentic', 'assist_head', 'magentic_option')],
+    );
+
+    const run = await executeDeck(deck, templates, { input: 'route this' });
+
+    expect(run.status).toBe('success');
+    expect(run.steps.map((step) => step.cardId)).toEqual(['magentic']);
+  });
+
+  it('treats python_autogen Magentic-One as the run boundary before legacy flow edges', async () => {
+    const magentic = createAgent('magentic', 'Magentic', 'magentic_one');
+    magentic.runtimeOptions = { executionBackend: 'python_autogen' };
+    const deck = createDeckDocument(
+      [
+        magentic,
+        createAgent('legacy_next', 'Legacy Next', 'assistant_agent'),
+        createAgent('assist_head', 'Assist Head', 'assistant_agent'),
+      ],
+      [
+        edge('edge_magentic_head', 'magentic', 'assist_head', 'magentic_option'),
+        edge('edge_magentic_legacy_next', 'magentic', 'legacy_next', 'flow'),
+      ],
     );
 
     const run = await executeDeck(deck, templates, { input: 'route this' });

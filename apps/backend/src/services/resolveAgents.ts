@@ -40,20 +40,6 @@ function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
   return null;
 }
 
-function remapOpenAiModelKeyToOpenRouter(modelKeyRaw: unknown): string | null {
-  const modelKey = String(modelKeyRaw ?? '').trim();
-  if (!modelKey) return null;
-
-  const openRouterAliases: Record<string, string> = {
-    'gpt-5.1-chat-latest': 'or-openai-gpt-5.1-chat-latest',
-    'gpt-5-mini': 'or-openai-gpt-5-mini',
-    'gpt-5': 'or-openai-gpt-5',
-    'gpt-5-nano': 'or-openai-gpt-5-nano',
-  };
-
-  return openRouterAliases[modelKey] || null;
-}
-
 function deriveProviderFromModelKey(modelKeyRaw: unknown): 'openai' | 'openrouter' | null {
   const modelKey = String(modelKeyRaw ?? '').trim();
   if (!modelKey) return null;
@@ -118,13 +104,9 @@ export async function resolveAgentConfig(
   const systemPrompt = String(config.prompt_template || '').trim();
   const storedModelKey = String(config.model_key || '').trim();
   const storedProvider = normalizeProvider(config.provider);
-  const openRouterModelKey = remapOpenAiModelKeyToOpenRouter(storedModelKey);
-  const modelKey = openRouterModelKey || storedModelKey;
+  const modelKey = storedModelKey;
   const derivedProvider = deriveProviderFromModelKey(modelKey);
-  const provider =
-    derivedProvider === 'openrouter' || storedProvider === 'openrouter'
-      ? 'openrouter'
-      : storedProvider ?? derivedProvider;
+  const provider = storedProvider ?? derivedProvider;
 
   if (!systemPrompt) {
     throw new Error(`${agentType}_prompt_missing`);

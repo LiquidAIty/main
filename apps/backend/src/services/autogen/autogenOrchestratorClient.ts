@@ -21,6 +21,7 @@ export type AutoGenOrchestratorRequest = {
   knowGraph?: Record<string, unknown>;
   attachments?: Array<Record<string, unknown>>;
   maxResearchTasks?: number;
+  workspaceObjectContext?: Record<string, unknown> | null;
   cardRuntime?: Record<string, unknown>;
 };
 

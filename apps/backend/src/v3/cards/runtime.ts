@@ -29,6 +29,7 @@ import type {
   GraphViewContract,
   PromptTemplate,
   RuntimeBinding,
+  WorkspaceObjectContext,
 } from '../types';
 
 export type CardRuntimeContext = {
@@ -38,6 +39,7 @@ export type CardRuntimeContext = {
   seed?: string;
   projectId?: string;
   workspaceContext?: DeckWorkspaceContext | null;
+  workspaceObjectContext?: WorkspaceObjectContext | null;
   deckId?: string;
   deckName?: string;
   allCards?: AgentCardInstance[];
@@ -487,7 +489,56 @@ function shouldUsePythonAutoGenBackend(card: AgentCardInstance): boolean {
 }
 
 function isPythonAutoGenCallableRuntimeType(runtimeType: AgentCardRuntimeType): boolean {
-  return runtimeType === 'assistant_agent' || runtimeType === 'graph_flow';
+  return runtimeType === 'assistant_agent';
+}
+
+function getMetadataStringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+}
+
+function resolveAutoGenParticipantRole(
+  card: AgentCardInstance,
+  effectiveAgent: AgentTemplate,
+): string {
+  switch (card.runtimeBinding) {
+    case 'assist':
+      return 'assistant';
+    case 'local_coder':
+      return 'coder';
+    case 'research_agent':
+      return 'researcher';
+    case 'thinkgraph_agent':
+      return 'thinkgraph';
+    case 'codegraph_agent':
+      return 'codegraph';
+    case 'knowgraph_agent':
+    case 'knowgraph':
+      return 'knowgraph';
+    case 'plan_agent':
+      return 'planner';
+    case 'worldsignals_agent':
+      return 'worldsignals';
+    case 'telescope_agent':
+      return 'telescope';
+    case 'energy_agent':
+      return 'energy_modeling';
+    case 'trading_agent':
+      return 'trading';
+    case 'image_agent':
+      return 'image';
+    case 'code_agent':
+      return 'code';
+    case 'video_agent':
+      return 'video';
+    default:
+      return String(effectiveAgent.name || card.title || 'assistant')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '') || 'assistant';
+  }
 }
 
 function resolveModelConfig(
@@ -580,6 +631,13 @@ function buildPythonAutoGenCardRuntimePayload(
         cardId: head.id,
         title: head.title,
         runtimeType: resolveCardRuntimeType(head),
+        runtimeBinding: head.runtimeBinding || null,
+        role: resolveAutoGenParticipantRole(head, headAgent),
+        tools: getConfiguredTools(headAgent),
+        skills: getMetadataStringList(headAgent.skills),
+        personas: getMetadataStringList(headAgent.personas),
+        knowledgeSources: getMetadataStringList(headAgent.knowledgeSources),
+        connectedTo: card.id,
         prompt: resolveCardSystemPrompt(head, headAgent),
         provider: headModel.provider,
         providerModelId: headModel.providerModelId,
@@ -587,7 +645,14 @@ function buildPythonAutoGenCardRuntimePayload(
         maxTokens: headModel.maxTokens,
       };
     })
-    .filter(Boolean);
+    .filter((participant) => participant !== null);
+  const participantIds = new Set(participants.map((participant) => participant.cardId));
+  const activeEdges = (context.allEdges || []).filter(
+    (edge) =>
+      normalizeEdgeType(edge.edgeType) === 'magentic_option' &&
+      edge.source === card.id &&
+      participantIds.has(edge.target),
+  );
 
   const payload: AutoGenOrchestratorRequest = {
     session: {
@@ -636,6 +701,7 @@ function buildPythonAutoGenCardRuntimePayload(
     },
     attachments: [],
     maxResearchTasks: 4,
+    workspaceObjectContext: context.workspaceObjectContext || null,
     cardRuntime: {
       cardId: card.id,
       title: card.title,
@@ -643,17 +709,29 @@ function buildPythonAutoGenCardRuntimePayload(
       prompt,
       runtimeOptions: card.runtimeOptions || {},
       magentic: {
-        callableHeads: supportedHeads.map((head) => ({
-          cardId: head.id,
-          title: head.title,
-          runtimeType: resolveCardRuntimeType(head),
+        callableHeads: participants.map((participant) => ({
+          cardId: participant.cardId,
+          title: participant.title,
+          runtimeType: participant.runtimeType,
+          runtimeBinding: participant.runtimeBinding,
+          role: participant.role,
+          tools: participant.tools,
+          connectedTo: participant.connectedTo,
         })),
+        unsupportedCallableHeads: callableHeads
+          .filter((head) => !isPythonAutoGenCallableRuntimeType(resolveCardRuntimeType(head)))
+          .map((head) => ({
+            cardId: head.id,
+            title: head.title,
+            runtimeType: resolveCardRuntimeType(head),
+            runtimeBinding: head.runtimeBinding || null,
+          })),
       },
       participants,
       graphFlow: {
         deckId: context.deckId || null,
         deckName: context.deckName || null,
-        edges: (context.allEdges || []).map((edge) => ({
+        edges: activeEdges.map((edge) => ({
           id: edge.id,
           source: edge.source,
           target: edge.target,
@@ -1686,7 +1764,7 @@ async function runMagenticCard(
         context,
         modelConfig,
         prompt,
-        supportedHeads,
+        callableHeads,
         startedAt,
       ),
     );

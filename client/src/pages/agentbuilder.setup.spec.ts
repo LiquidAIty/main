@@ -49,49 +49,35 @@ function createDeck(nodes: AgentCardInstance[]): DeckDocument {
 
 describe('agentbuilder authoring flow', () => {
   it('surfaces contextual quick-add actions for the current runtime model', () => {
-    expect(getDeckQuickAddActions(null).map((action) => action.label)).toEqual([
-      'Add Magentic',
-      'Add Assist',
-      'Add Workflow',
-    ]);
-
+    expect(getDeckQuickAddActions(null)).toEqual([]);
+    expect(getDeckQuickAddActions(createCard('card_magentic', 'magentic_one'))).toEqual([]);
+    expect(getDeckQuickAddActions(createCard('card_graph', 'graph_flow'))).toEqual([]);
     expect(
-      getDeckQuickAddActions(createCard('card_magentic', 'magentic_one')).map((action) => action.label),
-    ).toEqual(['Add Callable Assist']);
-
-    expect(
-      getDeckQuickAddActions(createCard('card_graph', 'graph_flow')).map((action) => action.label),
-    ).toEqual(['Add First Assist']);
-
-    expect(
-      getDeckQuickAddActions(
-        createCard('card_graph_step_1', 'assistant_agent', { parentGraphId: 'card_graph' }),
-      ).map((action) => action.label),
-    ).toEqual(['Add Next Assist']);
-
-    expect(
-      getDeckQuickAddActions(createCard('card_assist', 'assistant_agent')).map((action) => action.label),
-    ).toEqual(['Add Next Assist']);
+      getDeckQuickAddActions(createCard('card_graph_step_1', 'assistant_agent', { parentGraphId: 'card_graph' })),
+    ).toEqual([]);
+    expect(getDeckQuickAddActions(createCard('card_assist', 'assistant_agent'))).toEqual([]);
   });
 
-  it('creates top-level Magentic and Assist cards from project-level quick add', () => {
-    const magenticPreset = findDeckNodePreset('magentic');
+  it('creates top-level Assist and Local Coder cards from project-level quick add presets', () => {
     const assistPreset = findDeckNodePreset('assist');
-    if (!magenticPreset || !assistPreset) {
+    const localCoderPreset = findDeckNodePreset('local_coder');
+    if (!assistPreset || !localCoderPreset) {
       throw new Error('missing_presets');
     }
 
     const emptyDeck = createDeck([]);
-    const magenticMutation = buildQuickAddDeckMutation(emptyDeck, magenticPreset, null);
     const assistMutation = buildQuickAddDeckMutation(emptyDeck, assistPreset, null);
-
-    expect(magenticMutation.nextNode.runtimeType).toBe('magentic_one');
-    expect(magenticMutation.nextNode.parentGraphId).toBeNull();
-    expect(magenticMutation.nextEdge).toBeNull();
+    const localCoderMutation = buildQuickAddDeckMutation(emptyDeck, localCoderPreset, null);
 
     expect(assistMutation.nextNode.runtimeType).toBe('assistant_agent');
+    expect(assistMutation.nextNode.runtimeBinding).toBe('assist');
     expect(assistMutation.nextNode.parentGraphId).toBeNull();
     expect(assistMutation.nextEdge).toBeNull();
+
+    expect(localCoderMutation.nextNode.runtimeType).toBe('local_coder');
+    expect(localCoderMutation.nextNode.runtimeBinding).toBe('local_coder');
+    expect(localCoderMutation.nextNode.parentGraphId).toBeNull();
+    expect(localCoderMutation.nextEdge).toBeNull();
   });
 
   it('creates blue callable edges from Magentic to top-level Assist heads', () => {
@@ -191,29 +177,56 @@ describe('agentbuilder authoring flow', () => {
   it('ships the default example using the real magentic-led agent graph', () => {
     expect(INITIAL_DECK.nodes.map((node) => node.title)).toEqual([
       'Magentic-One',
-      'Main Chat',
-      'ThinkGraph',
+      'Assist',
+      'ThinkGraph Agent',
+      'CodeGraph Agent',
       'Research Agent',
-      'KnowGraph',
-      'KnowGraph Persist',
+      'KnowGraph Agent',
+      'NRGSim / Energy',
+      'Local Coder',
+      'Trading Agent',
+      'Image Maker Agent',
+      'Code Agent',
+      'Video Agent',
+      'Telescope Agent',
+      'Plan Agent',
+      'WorldSignals Agent',
     ]);
 
     expect(INITIAL_DECK.nodes.filter((node) => node.runtimeType === 'graph_flow')).toEqual([]);
     expect(INITIAL_DECK.nodes.map((node) => node.runtimeBinding)).toEqual([
       null,
-      'main_chat',
-      'kg_ingest',
+      'assist',
+      'thinkgraph_agent',
+      'codegraph_agent',
       'research_agent',
-      'knowgraph',
-      'neo4j',
+      'knowgraph_agent',
+      'energy_agent',
+      'local_coder',
+      'trading_agent',
+      'image_agent',
+      'code_agent',
+      'video_agent',
+      'telescope_agent',
+      'plan_agent',
+      'worldsignals_agent',
     ]);
     expect(INITIAL_DECK.nodes.map((node) => node.templateId)).toEqual([
       'template_magentic',
-      'template_main_chat',
-      'template_kg_ingest',
-      'template_research',
-      'template_knowgraph',
-      'template_neo4j',
+      'template_assist',
+      'template_thinkgraph_agent',
+      'template_codegraph_agent',
+      'template_research_agent',
+      'template_knowgraph_agent',
+      'template_energy_workbench',
+      'template_local_coder',
+      'template_trading_workbench',
+      'template_image_workbench',
+      'template_code_workbench',
+      'template_video_workbench',
+      'template_telescope_agent',
+      'template_plan_agent',
+      'template_worldsignals_agent',
     ]);
 
     expect(INITIAL_DECK.edges.map((edge) => ({
@@ -221,11 +234,11 @@ describe('agentbuilder authoring flow', () => {
       target: edge.target,
       edgeType: edge.edgeType,
     }))).toEqual([
-      { source: 'card_magentic', target: 'card_main_chat', edgeType: 'magentic_option' },
-      { source: 'card_main_chat', target: 'card_kg_ingest', edgeType: 'flow' },
-      { source: 'card_kg_ingest', target: 'card_research', edgeType: 'flow' },
-      { source: 'card_research', target: 'card_knowgraph', edgeType: 'flow' },
-      { source: 'card_knowgraph', target: 'card_neo4j', edgeType: 'flow' },
+      { source: 'card_magentic', target: 'card_research_agent', edgeType: 'magentic_option' },
+      { source: 'card_magentic', target: 'card_assist', edgeType: 'magentic_option' },
+      { source: 'card_knowgraph_agent', target: 'card_research_agent', edgeType: 'flow' },
+      { source: 'card_research_agent', target: 'card_codegraph_agent', edgeType: 'flow' },
+      { source: 'card_codegraph_agent', target: 'card_thinkgraph_agent', edgeType: 'flow' },
     ]);
   });
 
@@ -255,9 +268,30 @@ describe('agentbuilder authoring flow', () => {
     const loaded = resolveProjectDeckPayload(savedDeck);
 
     expect(loaded.usedFallback).toBe(false);
-    expect(loaded.deck.nodes.map((node) => node.title)).toEqual(['Saved A', 'Saved B']);
+    expect(loaded.deck.nodes.map((node) => node.title)).toEqual([
+      'Saved A',
+      'Saved B',
+      'Assist',
+      'NRGSim / Energy',
+      'Local Coder',
+      'Trading Agent',
+      'Image Maker Agent',
+      'Code Agent',
+      'Video Agent',
+      'Telescope Agent',
+      'Plan Agent',
+      'WorldSignals Agent',
+      'Magentic-One',
+    ]);
     expect(loaded.deck.edges).toEqual([
-      { id: 'edge_saved_a_b', source: 'card_saved_a', target: 'card_saved_b', edgeType: 'flow' },
+      {
+        id: 'edge_saved_a_b',
+        source: 'card_saved_a',
+        sourceHandle: null,
+        target: 'card_saved_b',
+        targetHandle: null,
+        edgeType: 'flow',
+      },
     ]);
   });
 
@@ -355,40 +389,22 @@ describe('agentbuilder authoring flow', () => {
     const savedDeck: DeckDocument = {
       ...JSON.parse(JSON.stringify(INITIAL_DECK)),
       version: 2,
-      edges: [
-        { id: 'edge_magentic_main_chat', source: 'card_magentic', target: 'card_main_chat', edgeType: 'magentic_option' },
-        { id: 'edge_main_chat_kg_ingest', source: 'card_main_chat', target: 'card_kg_ingest', edgeType: 'flow' },
-        { id: 'edge_kg_ingest_research', source: 'card_kg_ingest', target: 'card_research', edgeType: 'flow' },
-        { id: 'edge_kg_ingest_knowgraph', source: 'card_kg_ingest', target: 'card_knowgraph', edgeType: 'flow' },
-        { id: 'edge_research_neo4j', source: 'card_research', target: 'card_neo4j', edgeType: 'flow' },
-        { id: 'edge_knowgraph_neo4j', source: 'card_knowgraph', target: 'card_neo4j', edgeType: 'flow' },
-      ],
     };
 
     const loaded = resolveProjectDeckPayload(savedDeck);
     const rehydrated = hydrateDeckDocument(JSON.parse(JSON.stringify(loaded.deck)));
 
     expect(loaded.usedFallback).toBe(false);
-    expect(rehydrated.nodes.map((node) => node.title)).toEqual([
-      'Magentic-One',
-      'Main Chat',
-      'ThinkGraph',
-      'Research Agent',
-      'KnowGraph',
-      'KnowGraph Persist',
-    ]);
+    expect(rehydrated.nodes.map((node) => node.title)).toEqual(INITIAL_DECK.nodes.map((node) => node.title));
     expect(rehydrated.edges.map((edge) => ({
       source: edge.source,
       target: edge.target,
       edgeType: edge.edgeType,
-    }))).toEqual([
-      { source: 'card_magentic', target: 'card_main_chat', edgeType: 'magentic_option' },
-      { source: 'card_main_chat', target: 'card_kg_ingest', edgeType: 'flow' },
-      { source: 'card_kg_ingest', target: 'card_research', edgeType: 'flow' },
-      { source: 'card_kg_ingest', target: 'card_knowgraph', edgeType: 'flow' },
-      { source: 'card_research', target: 'card_neo4j', edgeType: 'flow' },
-      { source: 'card_knowgraph', target: 'card_neo4j', edgeType: 'flow' },
-    ]);
+    }))).toEqual(INITIAL_DECK.edges.map((edge) => ({
+      source: edge.source,
+      target: edge.target,
+      edgeType: edge.edgeType,
+    })));
   });
 
   it('uses the restored real-agent seed only for true empty-state deck loads', () => {
@@ -396,20 +412,13 @@ describe('agentbuilder authoring flow', () => {
 
     expect(loaded.usedFallback).toBe(true);
     expect(loaded.displayFallbackOnly).toBe(false);
-    expect(loaded.deck.nodes.map((node) => node.title)).toEqual([
-      'Magentic-One',
-      'Main Chat',
-      'ThinkGraph',
-      'Research Agent',
-      'KnowGraph',
-      'KnowGraph Persist',
-    ]);
+    expect(loaded.deck.nodes.map((node) => node.title)).toEqual(INITIAL_DECK.nodes.map((node) => node.title));
   });
 
   it('uses the canonical chain only as a display fallback for truncated saved system decks', () => {
-    const mainChatNode = INITIAL_DECK.nodes.find((node) => node.id === 'card_main_chat');
-    if (!mainChatNode) {
-      throw new Error('missing_main_chat');
+    const assistNode = INITIAL_DECK.nodes.find((node) => node.id === 'card_assist');
+    if (!assistNode) {
+      throw new Error('missing_assist');
     }
 
     const truncatedSystemDeck: DeckDocument = {
@@ -419,9 +428,9 @@ describe('agentbuilder authoring flow', () => {
       version: 4,
       nodes: [
         {
-          ...JSON.parse(JSON.stringify(mainChatNode)),
-          id: 'card_main_chat',
-          title: 'Main Chat',
+          ...JSON.parse(JSON.stringify(assistNode)),
+          id: 'card_assist',
+          title: 'Assist',
         },
       ],
       edges: [],
@@ -445,6 +454,57 @@ describe('agentbuilder authoring flow', () => {
         edgeType: edge.edgeType ?? null,
       })),
     );
+  });
+
+  it('upgrades the older saved deck_builder system deck to the current Agent Canvas seed', () => {
+    const legacyDeck: DeckDocument = {
+      id: 'deck_builder',
+      name: 'Agent Card Deck',
+      promptTemplates: [],
+      version: 2,
+      nodes: [
+        createCard('card_main_chat', 'assistant_agent', {
+          templateId: 'template_main_chat',
+          runtimeBinding: 'main_chat',
+          title: 'Main Chat',
+        }),
+        createCard('card_kg_ingest', 'assistant_agent', {
+          templateId: 'template_kg_ingest',
+          runtimeBinding: 'kg_ingest',
+          title: 'KG Ingest / ThinkGraph',
+        }),
+        createCard('card_research', 'assistant_agent', {
+          templateId: 'template_research',
+          runtimeBinding: 'research_agent',
+          title: 'Research Agent',
+        }),
+        createCard('card_knowgraph', 'assistant_agent', {
+          templateId: 'template_knowgraph',
+          runtimeBinding: 'knowgraph',
+          title: 'KnowGraph',
+        }),
+        createCard('card_neo4j', 'assistant_agent', {
+          templateId: 'template_neo4j',
+          runtimeBinding: 'neo4j',
+          title: 'Neo4j',
+        }),
+      ],
+      edges: [
+        { id: 'edge_main_chat_kg_ingest', source: 'card_main_chat', target: 'card_kg_ingest', edgeType: 'flow' },
+      ],
+    };
+
+    const hydrated = hydrateDeckDocument(legacyDeck);
+
+    expect(hydrated.nodes.map((node) => node.id)).toEqual(INITIAL_DECK.nodes.map((node) => node.id));
+    expect(hydrated.edges.map((edge) => [edge.source, edge.target, edge.edgeType])).toEqual(
+      INITIAL_DECK.edges.map((edge) => [edge.source, edge.target, edge.edgeType]),
+    );
+    expect(hydrated.nodes.find((node) => node.id === 'card_magentic')?.runtimeOptions).toMatchObject({
+      executionBackend: 'python_autogen',
+      provider: 'openai',
+      modelKey: 'gpt-5.1-chat-latest',
+    });
   });
 
   it('preserves the current deck on project load failure instead of silently replacing it with fallback', () => {
@@ -486,7 +546,20 @@ describe('agentbuilder authoring flow', () => {
       edges: [],
     });
 
-    expect(hydrated.nodes.map((node) => node.title)).toEqual(['Lonely']);
+    expect(hydrated.nodes.map((node) => node.title)).toEqual([
+      'Lonely',
+      'Assist',
+      'NRGSim / Energy',
+      'Local Coder',
+      'Trading Agent',
+      'Image Maker Agent',
+      'Code Agent',
+      'Video Agent',
+      'Telescope Agent',
+      'Plan Agent',
+      'WorldSignals Agent',
+      'Magentic-One',
+    ]);
     expect(hydrated.edges).toEqual([]);
   });
 
@@ -509,7 +582,9 @@ describe('agentbuilder authoring flow', () => {
       {
         id: 'edge_a_b',
         source: 'card_a',
+        sourceHandle: null,
         target: 'card_b',
+        targetHandle: null,
         edgeType: 'flow',
       },
     ]);
@@ -536,7 +611,21 @@ describe('agentbuilder authoring flow', () => {
       ],
     });
 
-    expect(hydrated.nodes.map((node) => node.title)).toEqual(['Main Chat', 'Research Agent']);
+    expect(hydrated.nodes.map((node) => node.title)).toEqual([
+      'Main Chat',
+      'Research Agent',
+      'Assist',
+      'NRGSim / Energy',
+      'Local Coder',
+      'Trading Agent',
+      'Image Maker Agent',
+      'Code Agent',
+      'Video Agent',
+      'Telescope Agent',
+      'Plan Agent',
+      'WorldSignals Agent',
+      'Magentic-One',
+    ]);
     expect(hydrated.edges).toEqual([]);
   });
 
@@ -911,4 +1000,3 @@ describe('agentbuilder authoring flow', () => {
     });
   });
 });
-

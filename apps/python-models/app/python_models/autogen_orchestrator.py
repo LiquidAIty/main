@@ -8,10 +8,12 @@ from dataclasses import dataclass
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.teams import MagenticOneGroupChat, RoundRobinGroupChat, SelectorGroupChat
 
-from app.python_models.autogen_research import (
+from app.python_models.autogen_provider_env import (
     AutoGenAgentConfig,
     _assert_magentic_safe_model,
     _build_model_client,
+)
+from app.python_models.autogen_research import (
     _extract_json_object,
     _message_to_text,
 )
@@ -30,6 +32,7 @@ from app.python_models.orchestration_contracts import (
     ThinkGraphContext,
     ThinkGraphUpdateReport,
     TripletInput,
+    WorkspaceObjectContext,
 )
 
 
@@ -794,6 +797,49 @@ def _normalize_agent_name(value: object, fallback: str) -> str:
     return text[:48]
 
 
+def _workspace_object_context_payload(context: WorkspaceObjectContext | None) -> dict[str, object]:
+    if context is None:
+        return {}
+    payload: dict[str, object] = {}
+    text_limits = {
+        "activeSurface": 64,
+        "workspaceView": 64,
+        "selectedObjectId": 96,
+        "selectedObjectType": 64,
+        "selectedObjectTitle": 120,
+        "selectedText": 240,
+        "openObjectSummary": 400,
+    }
+    for key, limit in text_limits.items():
+        value = _trim_text(getattr(context, key), limit)
+        if value:
+            payload[key] = value
+    for key in ("activeMagenticParticipants", "availableCanvasAgents", "excludedAgents"):
+        values = [
+            _trim_text(item, 96)
+            for item in list(getattr(context, key) or [])[:12]
+            if _trim_text(item, 96)
+        ]
+        if values:
+            payload[key] = values
+    return payload
+
+
+def _build_object_awareness_block(context: ContextPack) -> str:
+    payload = _workspace_object_context_payload(context.workspaceObjectContext)
+    if not payload:
+        return ""
+    return "\n".join(
+        [
+            "Object awareness:",
+            json.dumps(payload, ensure_ascii=True),
+            "This context is read-only.",
+            "Do not mutate UI objects, fill fields, run disconnected agents, or execute tools from this context.",
+            "If action is needed, describe the recommended next step only for future Plan Canvas approval.",
+        ]
+    )
+
+
 def _build_card_runtime_payload_json(context: ContextPack) -> str:
     runtime = context.cardRuntime
     if runtime is None:
@@ -816,7 +862,25 @@ def _build_card_runtime_payload_json(context: ContextPack) -> str:
         },
         "assistant": runtime.assistant or {},
         "magentic": runtime.magentic or {},
+        "participants": [
+            {
+                "cardId": item.cardId,
+                "title": item.title,
+                "runtimeType": item.runtimeType,
+                "runtimeBinding": item.runtimeBinding,
+                "role": item.role,
+                "tools": item.tools,
+                "skills": item.skills,
+                "personas": item.personas,
+                "knowledgeSources": item.knowledgeSources,
+                "connectedTo": item.connectedTo,
+                "provider": item.provider,
+                "providerModelId": item.providerModelId,
+            }
+            for item in runtime.participants
+        ],
         "graphFlow": runtime.graphFlow or {},
+        "workspaceObjectContext": _workspace_object_context_payload(context.workspaceObjectContext),
     }
     return json.dumps(payload, ensure_ascii=True)
 
@@ -869,6 +933,10 @@ def _build_card_team_participants(
         seen_names.add(name)
         system_message_parts = [
             str(participant.prompt or "").strip(),
+            f"Canvas role: {participant.role}." if participant.role else "",
+            f"Runtime binding: {participant.runtimeBinding}." if participant.runtimeBinding else "",
+            "Configured canvas tools: " + ", ".join(participant.tools) + "." if participant.tools else "",
+            f"Connected to orchestrator card: {participant.connectedTo}." if participant.connectedTo else "",
             "Stay concise and task-focused.",
             "Do not restate the whole deck, system, or user request.",
             "Contribute only the minimum useful next message for this card runtime.",
@@ -961,6 +1029,9 @@ def _build_card_runtime_task_text(context: ContextPack) -> str:
         "Do not restate the entire context back and forth.",
         "Keep internal messages short and convergent.",
     ]
+    object_awareness = _build_object_awareness_block(context)
+    if object_awareness:
+        task_parts.extend(["", object_awareness])
     task_parts.extend(["", _build_card_runtime_payload_json(context)])
     return "\n".join(task_parts)
 

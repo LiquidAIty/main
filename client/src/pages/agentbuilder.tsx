@@ -91,6 +91,7 @@ import type {
   GraphViewData,
   KnowledgeGraphKind,
   DeckWorkspaceContext,
+  WorkspaceObjectContext,
   PromptTemplate,
   RuntimeBinding,
 } from '../types/agentgraph';
@@ -930,6 +931,79 @@ function buildBusConnectedCardIds(
   }
 
   return connected;
+}
+
+const WORKSPACE_OBJECT_CONTEXT_LIST_LIMIT = 12;
+const WORKSPACE_OBJECT_SELECTED_TEXT_LIMIT = 240;
+const WORKSPACE_OBJECT_SUMMARY_LIMIT = 400;
+
+function compactAwarenessText(value: unknown, limit: number): string | null {
+  const text = safeText(value).replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  return text.length <= limit
+    ? text
+    : `${text.slice(0, Math.max(0, limit - 3)).trim()}...`;
+}
+
+function compactAwarenessList(values: Array<unknown>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const text = compactAwarenessText(value, 96);
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+    if (out.length >= WORKSPACE_OBJECT_CONTEXT_LIST_LIMIT) break;
+  }
+  return out;
+}
+
+function getCardDisplayName(card: AgentCardInstance | null | undefined): string {
+  return (
+    compactAwarenessText(card?.title, 96) ||
+    compactAwarenessText(card?.id, 96) ||
+    'Agent'
+  );
+}
+
+function buildCanvasObjectAwareness(document: DeckDocument): Pick<
+  WorkspaceObjectContext,
+  'activeMagenticParticipants' | 'availableCanvasAgents' | 'excludedAgents'
+> {
+  const topLevelCards = document.nodes.filter((node) => !cleanOptionalText(node.parentGraphId));
+  const nodeMap = new Map(topLevelCards.map((node) => [node.id, node] as const));
+  const magenticIds = new Set(
+    topLevelCards
+      .filter((node) => normalizeRuntimeType(node.runtimeType) === 'magentic_one')
+      .map((node) => node.id),
+  );
+  const activeMagenticParticipants = compactAwarenessList(
+    document.edges
+      .filter(
+        (edge) =>
+          magenticIds.has(edge.source) &&
+          normalizeDeckEdgeType(edge.edgeType) === 'magentic_option',
+      )
+      .map((edge) => nodeMap.get(edge.target))
+      .filter(Boolean)
+      .map((node) => getCardDisplayName(node)),
+  );
+  const availableCanvasAgents = compactAwarenessList(
+    topLevelCards.map((node) => getCardDisplayName(node)),
+  );
+  const excludedAgents = compactAwarenessList(
+    topLevelCards
+      .filter((node) => {
+        const runtimeType = normalizeRuntimeType(node.runtimeType);
+        return runtimeType === 'local_coder' || runtimeType === 'graph_flow';
+      })
+      .map((node) => getCardDisplayName(node)),
+  );
+  return {
+    activeMagenticParticipants,
+    availableCanvasAgents,
+    excludedAgents,
+  };
 }
 
 function buildFlowAdjacency(edges: readonly DeckEdge[]): Map<string, string[]> {
@@ -1941,6 +2015,30 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     }),
   },
   {
+    id: 'prompt_telescope_agent',
+    content: buildSeedPromptTemplate({
+      role: [
+        'You are the Telescope Agent.',
+        'You represent the visible Telescope imagery and inspection workspace on the board.',
+      ].join('\n'),
+      goal: [
+        'Explain and coordinate Telescope/JWST imagery context when the user selects that capability.',
+        'Keep this prompt-only until a safe Telescope tool bridge is connected.',
+      ].join('\n'),
+      constraints: [
+        'Do not claim image tiles, external data pulls, or exports were produced unless a real bridge exists.',
+        'Use only canvas context and explicit user input until direct tooling is available.',
+      ].join('\n'),
+      ioSchema: [
+        'Input: user selection or future Telescope workbench request.',
+        'Output: image/context reasoning or a request to open the Telescope workspace.',
+      ].join('\n'),
+      memoryPolicy: [
+        'Treat this as a visible prompt-level agent until the Telescope tool bridge is available.',
+      ].join('\n'),
+    }),
+  },
+  {
     id: 'prompt_trading_workbench',
     content: buildSeedPromptTemplate({
       role: [
@@ -2043,7 +2141,7 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     id: 'template_magentic',
     name: 'Magentic-One',
     promptTemplate: 'prompt_magentic',
-    model: 'gpt-5-mini',
+    model: 'gpt-5.1-chat-latest',
     provider: 'openai',
     temperature: 0.2,
     maxTokens: 1200,
@@ -2105,6 +2203,16 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     tools: [],
   },
   {
+    id: 'template_local_coder',
+    name: 'Local Coder',
+    promptTemplate: 'prompt_assist',
+    model: 'gpt-5-mini',
+    provider: 'openai',
+    temperature: 0.2,
+    maxTokens: 1200,
+    tools: [],
+  },
+  {
     id: 'template_energy_workbench',
     name: 'NRGSim / Energy',
     promptTemplate: 'prompt_energy_workbench',
@@ -2128,6 +2236,16 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     id: 'template_worldsignals_agent',
     name: 'WorldSignals Agent',
     promptTemplate: 'prompt_worldsignals_agent',
+    model: 'gpt-5-mini',
+    provider: 'openai',
+    temperature: 0.2,
+    maxTokens: 800,
+    tools: [],
+  },
+  {
+    id: 'template_telescope_agent',
+    name: 'Telescope Agent',
+    promptTemplate: 'prompt_telescope_agent',
     model: 'gpt-5-mini',
     provider: 'openai',
     temperature: 0.2,
@@ -2192,10 +2310,34 @@ export const INITIAL_DECK: DeckDocument = {
         )?.content || '',
       runtimeBinding: null,
       runtimeType: 'magentic_one',
+      runtimeOptions: {
+        executionBackend: 'python_autogen',
+        provider: 'openai',
+        modelKey: 'gpt-5.1-chat-latest',
+        maxTurns: 2,
+        maxStalls: 1,
+      },
       parentGraphId: null,
       title: 'Magentic-One',
       subtitle: 'Admin orchestrator / planner',
       position: { x: 140, y: 120 },
+      status: 'ready',
+      cloneConfig: { enabled: false, seeds: [] },
+    },
+    {
+      id: 'card_assist',
+      kind: 'agent',
+      templateId: 'template_assist',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_assist',
+        )?.content || '',
+      runtimeBinding: 'assist',
+      runtimeType: 'assistant_agent',
+      parentGraphId: null,
+      title: 'Assist',
+      subtitle: 'General response and task support',
+      position: { x: 320, y: -40 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -2275,12 +2417,29 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_energy_workbench',
         )?.content || '',
-      runtimeBinding: null,
+      runtimeBinding: 'energy_agent',
       runtimeType: 'assistant_agent',
       parentGraphId: 'workbench_energy',
       title: 'NRGSim / Energy',
       subtitle: 'Building Modeler workbench',
       position: { x: 260, y: 140 },
+      status: 'ready',
+      cloneConfig: { enabled: false, seeds: [] },
+    },
+    {
+      id: 'card_local_coder',
+      kind: 'agent',
+      templateId: 'template_local_coder',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_assist',
+        )?.content || '',
+      runtimeBinding: 'local_coder',
+      runtimeType: 'local_coder',
+      parentGraphId: null,
+      title: 'Local Coder',
+      subtitle: 'Controlled code patch/test execution',
+      position: { x: 520, y: 320 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -2292,7 +2451,7 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_trading_workbench',
         )?.content || '',
-      runtimeBinding: null,
+      runtimeBinding: 'trading_agent',
       runtimeType: 'assistant_agent',
       parentGraphId: 'workbench_trading',
       title: 'Trading Agent',
@@ -2309,7 +2468,7 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_image_workbench',
         )?.content || '',
-      runtimeBinding: null,
+      runtimeBinding: 'image_agent',
       runtimeType: 'assistant_agent',
       parentGraphId: 'workbench_image',
       title: 'Image Maker Agent',
@@ -2326,7 +2485,7 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_code_workbench',
         )?.content || '',
-      runtimeBinding: null,
+      runtimeBinding: 'code_agent',
       runtimeType: 'assistant_agent',
       parentGraphId: 'workbench_code',
       title: 'Code Agent',
@@ -2343,12 +2502,29 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_video_workbench',
         )?.content || '',
-      runtimeBinding: null,
+      runtimeBinding: 'video_agent',
       runtimeType: 'assistant_agent',
       parentGraphId: 'workbench_video',
       title: 'Video Agent',
       subtitle: 'Storyboard and clips',
       position: { x: 780, y: 320 },
+      status: 'ready',
+      cloneConfig: { enabled: false, seeds: [] },
+    },
+    {
+      id: 'card_telescope_agent',
+      kind: 'agent',
+      templateId: 'template_telescope_agent',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_telescope_agent',
+        )?.content || '',
+      runtimeBinding: 'telescope_agent',
+      runtimeType: 'assistant_agent',
+      parentGraphId: null,
+      title: 'Telescope Agent',
+      subtitle: 'JWST imagery and inspection context',
+      position: { x: 1040, y: 320 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -2360,7 +2536,7 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_plan_agent',
         )?.content || '',
-      runtimeBinding: null,
+      runtimeBinding: 'plan_agent',
       runtimeType: 'assistant_agent',
       parentGraphId: null,
       title: 'Plan Agent',
@@ -2377,7 +2553,7 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_worldsignals_agent',
         )?.content || '',
-      runtimeBinding: null,
+      runtimeBinding: 'worldsignals_agent',
       runtimeType: 'assistant_agent',
       parentGraphId: null,
       title: 'WorldSignals Agent',
@@ -2388,6 +2564,18 @@ export const INITIAL_DECK: DeckDocument = {
     },
   ],
   edges: [
+    {
+      id: 'edge_magentic_research',
+      source: 'card_magentic',
+      target: 'card_research_agent',
+      edgeType: 'magentic_option',
+    },
+    {
+      id: 'edge_magentic_assist',
+      source: 'card_magentic',
+      target: 'card_assist',
+      edgeType: 'magentic_option',
+    },
     {
       id: 'edge_knowgraph_research',
       source: 'card_knowgraph_agent',
@@ -2411,11 +2599,21 @@ export const INITIAL_DECK: DeckDocument = {
 
 const BUILDER_DECK_ID = INITIAL_DECK.id;
 const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
+  card_assist: 'assist',
+  card_local_coder: 'local_coder',
   // New specialist graph roles (current seeded Admin model)
   card_thinkgraph_agent: 'thinkgraph_agent',
   card_codegraph_agent: 'codegraph_agent',
   card_research_agent: 'research_agent',
   card_knowgraph_agent: 'knowgraph_agent',
+  card_plan_agent: 'plan_agent',
+  card_worldsignals_agent: 'worldsignals_agent',
+  card_telescope_agent: 'telescope_agent',
+  card_energy_workbench: 'energy_agent',
+  card_trading_workbench: 'trading_agent',
+  card_image_workbench: 'image_agent',
+  card_code_workbench: 'code_agent',
+  card_video_workbench: 'video_agent',
   // Backward compatibility: legacy card IDs for existing saved decks
   card_main_chat: 'main_chat',
   card_kg_ingest: 'kg_ingest',
@@ -2425,13 +2623,23 @@ const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
 };
 
 const BASELINE_OPTIONAL_CARD_IDS = new Set([
+  'card_assist',
+  'card_local_coder',
   'card_plan_agent',
   'card_worldsignals_agent',
+  'card_telescope_agent',
   'card_energy_workbench',
   'card_trading_workbench',
   'card_image_workbench',
   'card_code_workbench',
   'card_video_workbench',
+]);
+const LEGACY_SYSTEM_CARD_IDS = new Set([
+  'card_main_chat',
+  'card_kg_ingest',
+  'card_research',
+  'card_knowgraph',
+  'card_neo4j',
 ]);
 
 function cloneDeckDocument<T>(value: T): T {
@@ -2440,6 +2648,8 @@ function cloneDeckDocument<T>(value: T): T {
 
 function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
   const normalized = safeText(value).trim().toLowerCase();
+  if (normalized === 'assist') return 'assist';
+  if (normalized === 'local_coder') return 'local_coder';
   if (normalized === 'main_chat') return 'main_chat';
   if (normalized === 'kg_ingest') return 'kg_ingest';
   if (normalized === 'research_agent') return 'research_agent';
@@ -2448,6 +2658,14 @@ function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
   if (normalized === 'thinkgraph_agent') return 'thinkgraph_agent';
   if (normalized === 'codegraph_agent') return 'codegraph_agent';
   if (normalized === 'knowgraph_agent') return 'knowgraph_agent';
+  if (normalized === 'plan_agent') return 'plan_agent';
+  if (normalized === 'worldsignals_agent') return 'worldsignals_agent';
+  if (normalized === 'telescope_agent') return 'telescope_agent';
+  if (normalized === 'energy_agent') return 'energy_agent';
+  if (normalized === 'trading_agent') return 'trading_agent';
+  if (normalized === 'image_agent') return 'image_agent';
+  if (normalized === 'code_agent') return 'code_agent';
+  if (normalized === 'video_agent') return 'video_agent';
   return null;
 }
 
@@ -2899,6 +3117,22 @@ function seedCurrentSystemCardsIntoLegacyDeck(
   deck: DeckDocument,
 ): DeckDocument {
   const defaultNodeIds = new Set(INITIAL_DECK.nodes.map((node) => node.id));
+  const legacyCompatibleNodeIds = new Set([
+    ...Array.from(LEGACY_SYSTEM_CARD_IDS),
+    ...Array.from(BASELINE_OPTIONAL_CARD_IDS),
+  ]);
+  const hasOnlyLegacySystemNodes =
+    deck.nodes.length > 0 &&
+    deck.nodes.some((node) => LEGACY_SYSTEM_CARD_IDS.has(node.id)) &&
+    deck.nodes.every((node) => legacyCompatibleNodeIds.has(node.id));
+  if (hasOnlyLegacySystemNodes) {
+    return {
+      ...cloneDeckDocument(INITIAL_DECK),
+      id: deck.id || INITIAL_DECK.id,
+      name: deck.name || INITIAL_DECK.name,
+      version: Math.max(deck.version, INITIAL_DECK.version),
+    };
+  }
   const hasOnlySystemNodes =
     deck.nodes.length > 0 &&
     deck.nodes.every((node) => defaultNodeIds.has(node.id));
@@ -4576,6 +4810,68 @@ export default function AgentBuilder(): React.ReactElement {
       workspaceView,
     ],
   );
+  const activeWorkspaceObjectContext = useMemo<WorkspaceObjectContext>(() => {
+    const canvasAwareness = buildCanvasObjectAwareness(deck);
+    const context: WorkspaceObjectContext = {
+      activeSurface:
+        compactAwarenessText(largeSurface, 64) ||
+        compactAwarenessText(workspaceView, 64) ||
+        'chat',
+      workspaceView: compactAwarenessText(workspaceView, 64),
+      ...canvasAwareness,
+    };
+
+    if (workspaceView === 'canvas' && selectedCard) {
+      const runtimeType = normalizeRuntimeType(selectedCard.runtimeType) || 'assistant_agent';
+      const binding = cleanOptionalText(selectedCard.runtimeBinding);
+      context.selectedObjectId = compactAwarenessText(selectedCard.id, 96);
+      context.selectedObjectType = compactAwarenessText(runtimeType, 64);
+      context.selectedObjectTitle = compactAwarenessText(selectedCard.title, 120);
+      context.selectedText = compactAwarenessText(
+        selectedCard.prompt,
+        WORKSPACE_OBJECT_SELECTED_TEXT_LIMIT,
+      );
+      context.openObjectSummary = compactAwarenessText(
+        [
+          `Selected canvas card: ${getCardDisplayName(selectedCard)}`,
+          `runtimeType=${runtimeType}`,
+          binding ? `runtimeBinding=${binding}` : null,
+          tab ? `activeTab=${tab}` : null,
+        ]
+          .filter(Boolean)
+          .join('; '),
+        WORKSPACE_OBJECT_SUMMARY_LIMIT,
+      );
+    } else if (workspaceView === 'plan' && planMissionFocus) {
+      const nodeData = planMissionFocus.nodeData || {};
+      context.selectedObjectId = compactAwarenessText(planMissionFocus.nodeId, 96);
+      context.selectedObjectType = compactAwarenessText(
+        `plan:${nodeData.kind || planMissionFocus.nodeKind || 'Task'}`,
+        64,
+      );
+      context.selectedObjectTitle = compactAwarenessText(
+        nodeData.label || planMissionFocus.nodeLabel,
+        120,
+      );
+      context.selectedText = compactAwarenessText(
+        nodeData.description || nodeData.starterPrompt,
+        WORKSPACE_OBJECT_SELECTED_TEXT_LIMIT,
+      );
+      context.openObjectSummary = compactAwarenessText(
+        [
+          `Selected Plan Canvas node: ${nodeData.label || planMissionFocus.nodeLabel}`,
+          `kind=${nodeData.kind || planMissionFocus.nodeKind || 'Task'}`,
+          nodeData.status ? `status=${nodeData.status}` : null,
+          nodeData.assignedAgentId ? `assignedAgent=${nodeData.assignedAgentId}` : null,
+        ]
+          .filter(Boolean)
+          .join('; '),
+        WORKSPACE_OBJECT_SUMMARY_LIMIT,
+      );
+    }
+
+    return context;
+  }, [deck, largeSurface, planMissionFocus, selectedCard, tab, workspaceView]);
   const deckValidation = useMemo(
     () => validateDeckDocument(deck, { enforceStartCard: true }),
     [deck],
@@ -4853,6 +5149,8 @@ export default function AgentBuilder(): React.ReactElement {
       formatBuilderStatusMessage,
       hydrateDeckDocument,
       selectedCard,
+      workspaceContext: activeDeckWorkspaceContext,
+      workspaceObjectContext: activeWorkspaceObjectContext,
       setCardRunBusy,
       setDeck,
       setDeckRevision,
@@ -6728,6 +7026,7 @@ export default function AgentBuilder(): React.ReactElement {
             templates: INITIAL_AGENT_TEMPLATES,
             input: trimmed,
             workspaceContext: activeDeckWorkspaceContext,
+            workspaceObjectContext: activeWorkspaceObjectContext,
           },
           signal: controller.signal,
           onEvent: (event) => {

@@ -7,7 +7,7 @@ export type ModelEntry = {
   context?: number;
 };
 
-export const REPO_DEFAULT_MODEL_KEY = "or-openai-gpt-5.1-chat-latest";
+export const REPO_DEFAULT_MODEL_KEY = "gpt-5.1-chat-latest";
 
 export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   // --- OpenAI GPT-5 family ---
@@ -21,6 +21,7 @@ export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   // --- OpenRouter (curated defaults) ---
   "or-openai-gpt-5-mini": { label: "OpenRouter OpenAI GPT-5 Mini", provider: "openrouter", id: "openai/gpt-5-mini", context: 32768 },
   "or-openai-gpt-5.1": { label: "OpenRouter OpenAI GPT-5.1", provider: "openrouter", id: "openai/gpt-5.1", context: 32768 },
+  "openai/gpt-5.1-chat": { label: "OpenRouter OpenAI GPT-5.1 Chat", provider: "openrouter", id: "openai/gpt-5.1-chat", context: 128000 },
   "or-openai-gpt-5.1-chat": { label: "OpenRouter OpenAI GPT-5.1 Chat", provider: "openrouter", id: "openai/gpt-5.1-chat", context: 128000 },
   "or-anthropic-claude-3.7-sonnet": { label: "OpenRouter Claude 3.7 Sonnet", provider: "openrouter", id: "anthropic/claude-3.7-sonnet", context: 200000 },
   "or-google-gemini-2.5-pro": { label: "OpenRouter Gemini 2.5 Pro", provider: "openrouter", id: "google/gemini-2.5-pro", context: 1000000 },
@@ -51,7 +52,7 @@ export function listModels() {
 export type agent_role = 'orchestrator' | 'worker';
 
 export function resolve_model_by_role(role: agent_role) {
-  const p = (process.env.SOL_PRIMARY || 'openrouter').toLowerCase();
+  const p = (process.env.SOL_PRIMARY || 'openai').toLowerCase();
   const via_openai = p === 'openai';
 
   if (role === 'orchestrator') {

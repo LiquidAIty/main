@@ -116,11 +116,31 @@ class CardRuntimeParticipant(BaseModel):
     cardId: str
     title: str
     runtimeType: Literal["assistant_agent", "graph_flow"]
+    runtimeBinding: str | None = None
+    role: str | None = None
+    tools: list[str] = Field(default_factory=list)
+    skills: list[str] = Field(default_factory=list)
+    personas: list[str] = Field(default_factory=list)
+    knowledgeSources: list[str] = Field(default_factory=list)
+    connectedTo: str | None = None
     prompt: str = ""
     provider: str
     providerModelId: str
     temperature: float | None = None
     maxTokens: int | None = None
+
+
+class WorkspaceObjectContext(BaseModel):
+    activeSurface: str | None = None
+    workspaceView: str | None = None
+    selectedObjectId: str | None = None
+    selectedObjectType: str | None = None
+    selectedObjectTitle: str | None = None
+    selectedText: str | None = None
+    openObjectSummary: str | None = None
+    activeMagenticParticipants: list[str] = Field(default_factory=list)
+    availableCanvasAgents: list[str] = Field(default_factory=list)
+    excludedAgents: list[str] = Field(default_factory=list)
 
 
 class PlanContext(BaseModel):
@@ -180,6 +200,7 @@ class ContextPack(BaseModel):
     knowGraph: KnowGraphContext = Field(default_factory=KnowGraphContext)
     attachments: list[AttachmentInput] = Field(default_factory=list)
     maxResearchTasks: int = 6
+    workspaceObjectContext: WorkspaceObjectContext | None = None
     cardRuntime: CardRuntimeConfig | None = None
 
 

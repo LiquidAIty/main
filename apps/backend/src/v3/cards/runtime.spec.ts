@@ -32,8 +32,8 @@ const templates: AgentTemplate[] = [
   {
     id: 'worker',
     name: 'Worker',
-    model: 'or-openai-gpt-5.1-chat-latest',
-    provider: 'openrouter',
+    model: 'gpt-5.1-chat-latest',
+    provider: 'openai',
     temperature: 0.2,
     maxTokens: 1200,
     tools: [],
@@ -80,8 +80,8 @@ describe('runCardWithContract runtime dispatch', () => {
     if (!effective) throw new Error('missing_effective_agent');
     llmHarness.runLLM.mockResolvedValue({
       text: 'assistant output',
-      model: 'openai/gpt-5.1-chat',
-      provider: 'openrouter',
+      model: 'gpt-5.1-chat-latest',
+      provider: 'openai',
       responseId: null,
     });
 
@@ -112,8 +112,8 @@ describe('runCardWithContract runtime dispatch', () => {
     });
     llmHarness.runLLM.mockResolvedValue({
       text: 'final answer using tool output',
-      model: 'openai/gpt-5.1-chat',
-      provider: 'openrouter',
+      model: 'gpt-5.1-chat-latest',
+      provider: 'openai',
       responseId: null,
     });
 
@@ -153,8 +153,8 @@ describe('runCardWithContract runtime dispatch', () => {
     });
     llmHarness.runLLM.mockResolvedValue({
       text: 'final answer using tool output',
-      model: 'openai/gpt-5.1-chat',
-      provider: 'openrouter',
+      model: 'gpt-5.1-chat-latest',
+      provider: 'openai',
       responseId: null,
     });
 
@@ -378,10 +378,14 @@ describe('runCardWithContract runtime dispatch', () => {
     const magentic = createCard('magentic', 'magentic_one');
     magentic.runtimeOptions = {
       executionBackend: 'python_autogen',
-      provider: 'openrouter',
-      modelKey: 'openai/gpt-5.1-chat-latest',
+      provider: 'openai',
+      modelKey: 'gpt-5.1-chat-latest',
     };
     const head = createCard('assist_head', 'assistant_agent');
+    head.runtimeBinding = 'research_agent';
+    const disconnected = createCard('disconnected_assist', 'assistant_agent');
+    const localCoder = createCard('local_coder_head', 'local_coder');
+    const graphFlow = createCard('graph_flow_head', 'graph_flow');
     const effectiveMagentic = resolveEffectiveAgent(magentic, templates);
     if (!effectiveMagentic) throw new Error('missing_effective_agent');
     autogenHarness.orchestrateWithAutoGen.mockResolvedValue({
@@ -394,8 +398,25 @@ describe('runCardWithContract runtime dispatch', () => {
       projectId: 'project_test',
       deckId: 'deck_test',
       deckName: 'Deck Test',
-      allCards: [magentic, head],
-      allEdges: [edge('edge_magentic_head', 'magentic', 'assist_head', 'magentic_option')],
+      workspaceObjectContext: {
+        activeSurface: 'chat',
+        workspaceView: 'canvas',
+        selectedObjectId: 'card_magentic',
+        selectedObjectType: 'magentic_one',
+        selectedObjectTitle: 'Magentic-One',
+        selectedText: 'Answer with one short sentence.',
+        openObjectSummary: 'Magentic-One is selected on the Agent Canvas.',
+        activeMagenticParticipants: ['assist_head'],
+        availableCanvasAgents: ['magentic', 'assist_head', 'disconnected_assist', 'local_coder_head'],
+        excludedAgents: ['local_coder_head'],
+      },
+      allCards: [magentic, head, disconnected, localCoder, graphFlow],
+      allEdges: [
+        edge('edge_magentic_head', 'magentic', 'assist_head', 'magentic_option'),
+        edge('edge_magentic_local_coder', 'magentic', 'local_coder_head', 'magentic_option'),
+        edge('edge_magentic_graph_flow', 'magentic', 'graph_flow_head', 'magentic_option'),
+        edge('edge_unrelated_flow', 'disconnected_assist', 'assist_head', 'flow'),
+      ],
       allTemplates: templates,
     });
 
@@ -403,6 +424,46 @@ describe('runCardWithContract runtime dispatch', () => {
     expect(result.runtimeType).toBe('magentic_one');
     expect(result.output).toBe('python autogen output');
     expect(autogenHarness.orchestrateWithAutoGen).toHaveBeenCalledTimes(1);
+    const request = autogenHarness.orchestrateWithAutoGen.mock.calls[0]?.[0];
+    expect(request.session.modelKey).toBe('gpt-5.1-chat-latest');
+    expect(request.session.providerModelId).toBe('gpt-5.1-chat-latest');
+    expect(request.workspaceObjectContext).toEqual({
+      activeSurface: 'chat',
+      workspaceView: 'canvas',
+      selectedObjectId: 'card_magentic',
+      selectedObjectType: 'magentic_one',
+      selectedObjectTitle: 'Magentic-One',
+      selectedText: 'Answer with one short sentence.',
+      openObjectSummary: 'Magentic-One is selected on the Agent Canvas.',
+      activeMagenticParticipants: ['assist_head'],
+      availableCanvasAgents: ['magentic', 'assist_head', 'disconnected_assist', 'local_coder_head'],
+      excludedAgents: ['local_coder_head'],
+    });
+    expect(request.cardRuntime.participants).toEqual([
+      expect.objectContaining({
+        cardId: 'assist_head',
+        runtimeType: 'assistant_agent',
+        runtimeBinding: 'research_agent',
+        role: 'researcher',
+        connectedTo: 'magentic',
+        providerModelId: 'gpt-5.1-chat-latest',
+      }),
+    ]);
+    expect(request.cardRuntime.participants.map((participant: { cardId: string }) => participant.cardId)).not.toContain(
+      'disconnected_assist',
+    );
+    expect(request.cardRuntime.magentic?.unsupportedCallableHeads).toEqual([
+      expect.objectContaining({ cardId: 'local_coder_head', runtimeType: 'local_coder' }),
+      expect.objectContaining({ cardId: 'graph_flow_head', runtimeType: 'graph_flow' }),
+    ]);
+    expect(request.cardRuntime.graphFlow?.edges).toEqual([
+      {
+        id: 'edge_magentic_head',
+        source: 'magentic',
+        target: 'assist_head',
+        edgeType: 'magentic_option',
+      },
+    ]);
     expect(llmHarness.runLLM).not.toHaveBeenCalled();
   });
 

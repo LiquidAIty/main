@@ -11,8 +11,8 @@ import {
 } from './agentCardRegistry';
 
 describe('agentCardRegistry', () => {
-  it('contains exactly 11 agent definitions', () => {
-    expect(AGENT_CARD_REGISTRY).toHaveLength(11);
+  it('contains exactly 12 agent definitions', () => {
+    expect(AGENT_CARD_REGISTRY).toHaveLength(12);
   });
 
   it('has unique ids', () => {
@@ -45,8 +45,8 @@ describe('agentCardRegistry', () => {
     expect(getCardDefsByKind('workbench')).toHaveLength(6);
   });
 
-  it('has exactly 3 core agents', () => {
-    expect(getCardDefsByKind('core')).toHaveLength(3);
+  it('has exactly 4 core agents', () => {
+    expect(getCardDefsByKind('core')).toHaveLength(4);
   });
 
   it('has exactly 1 signal agent', () => {
@@ -184,11 +184,11 @@ describe('agentCardRegistry', () => {
 
   // ── Cross-cutting queries ────────────────────────────────────────
 
-  it('returns exactly 5 default-connected agents', () => {
+  it('returns exactly 6 default-connected agents', () => {
     const defaults = getDefaultConnectedDefs();
-    expect(defaults).toHaveLength(5);
+    expect(defaults).toHaveLength(6);
     expect(defaults.map((d) => d.id).sort()).toEqual(
-      ['knowledge', 'plan', 'sol', 'validator', 'worldsignals'].sort(),
+      ['assist', 'knowledge', 'plan', 'sol', 'validator', 'worldsignals'].sort(),
     );
   });
 

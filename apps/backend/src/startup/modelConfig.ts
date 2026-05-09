@@ -11,22 +11,8 @@ function systemAgentLabel(agentType: SystemAgentType): string {
   return 'Neo4j';
 }
 
-function remapOpenAiModelKeyToOpenRouter(modelKeyRaw: unknown): string | null {
-  const modelKey = String(modelKeyRaw ?? '').trim();
-  if (!modelKey) return null;
-
-  const openRouterAliases: Record<string, string> = {
-    'gpt-5.1-chat-latest': 'or-openai-gpt-5.1-chat-latest',
-    'gpt-5-mini': 'or-openai-gpt-5-mini',
-    'gpt-5': 'or-openai-gpt-5',
-    'gpt-5-nano': 'or-openai-gpt-5-nano',
-  };
-
-  return openRouterAliases[modelKey] || null;
-}
-
 function resolveProviderModelId(modelKey: string): string {
-  const normalizedModelKey = remapOpenAiModelKeyToOpenRouter(modelKey) || String(modelKey || '').trim();
+  const normalizedModelKey = String(modelKey || '').trim();
   if (!normalizedModelKey) return '(not set)';
   if (normalizedModelKey.includes('/')) return normalizedModelKey;
   try {
@@ -43,7 +29,7 @@ function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
 }
 
 function deriveProviderFromModel(modelKey: string): 'openai' | 'openrouter' | null {
-  const key = remapOpenAiModelKeyToOpenRouter(modelKey) || String(modelKey || '').trim();
+  const key = String(modelKey || '').trim();
   if (!key) return null;
   try {
     return resolveModel(key).provider;
@@ -128,12 +114,10 @@ export async function logModelConfiguration() {
         return;
       }
       const modelKey = String(row.model_key || '').trim();
-      const effectiveModelKey = remapOpenAiModelKeyToOpenRouter(modelKey) || modelKey;
+      const effectiveModelKey = modelKey;
       const derivedProvider = deriveProviderFromModel(effectiveModelKey);
       const provider =
-        remapOpenAiModelKeyToOpenRouter(modelKey)
-          ? 'openrouter'
-          : derivedProvider === 'openrouter'
+        derivedProvider === 'openrouter'
             ? 'openrouter'
             : normalizeProvider(row.provider) ?? derivedProvider ?? 'unknown';
       const providerModelId = resolveProviderModelId(effectiveModelKey);

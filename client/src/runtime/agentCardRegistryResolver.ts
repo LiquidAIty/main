@@ -169,6 +169,16 @@ function resolveStagedCardDefId(
  * are internal runtime workers, not user-facing capabilities.
  */
 const BINDING_TO_REGISTRY_ID: Record<string, string> = {
+  assist: 'assist',
+  plan_agent: 'plan',
+  worldsignals_agent: 'worldsignals',
+  telescope_agent: 'telescope',
+  energy_agent: 'energy',
+  trading_agent: 'trading',
+  image_agent: 'image',
+  code_agent: 'code',
+  video_agent: 'video',
+
   // Plan Agent — ThinkGraph is the planning memory
   thinkgraph_agent: 'plan',
   kg_ingest: 'plan',

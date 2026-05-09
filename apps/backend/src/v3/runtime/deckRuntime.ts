@@ -25,6 +25,7 @@ import type {
   DeckWorkspaceContext,
   GraphViewContract,
   PromptTemplate,
+  WorkspaceObjectContext,
 } from '../types';
 
 // Visible graph edges are the execution truth. Higher-level planning must compile into this runtime, not bypass it.
@@ -33,12 +34,37 @@ export type ExecuteDeckOptions = {
   promptTemplates?: PromptTemplate[];
   projectId?: string;
   workspaceContext?: DeckWorkspaceContext | null;
+  workspaceObjectContext?: WorkspaceObjectContext | null;
   onRuntimeEvent?: (event: DeckRuntimeEvent) => void;
 };
+
+const WORKSPACE_OBJECT_CONTEXT_LIST_LIMIT = 12;
+const WORKSPACE_OBJECT_SELECTED_TEXT_LIMIT = 240;
+const WORKSPACE_OBJECT_SUMMARY_LIMIT = 400;
 
 function cleanOptionalText(value: unknown): string | null {
   const text = String(value || '').trim();
   return text || null;
+}
+
+function cleanLimitedText(value: unknown, limit: number): string | null {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  return text.length <= limit ? text : `${text.slice(0, Math.max(0, limit - 3)).trim()}...`;
+}
+
+function cleanLimitedList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of value) {
+    const text = cleanLimitedText(item, 96);
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+    if (out.length >= WORKSPACE_OBJECT_CONTEXT_LIST_LIMIT) break;
+  }
+  return out;
 }
 
 function normalizeWorkspaceRuntimeType(
@@ -76,8 +102,41 @@ function normalizeWorkspaceContext(value: unknown): DeckWorkspaceContext | null 
   return context;
 }
 
+function normalizeWorkspaceObjectContext(value: unknown): WorkspaceObjectContext | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const context: WorkspaceObjectContext = {
+    activeSurface: cleanLimitedText(raw.activeSurface, 64),
+    workspaceView: cleanLimitedText(raw.workspaceView, 64),
+    selectedObjectId: cleanLimitedText(raw.selectedObjectId, 96),
+    selectedObjectType: cleanLimitedText(raw.selectedObjectType, 64),
+    selectedObjectTitle: cleanLimitedText(raw.selectedObjectTitle, 120),
+    selectedText: cleanLimitedText(raw.selectedText, WORKSPACE_OBJECT_SELECTED_TEXT_LIMIT),
+    openObjectSummary: cleanLimitedText(raw.openObjectSummary, WORKSPACE_OBJECT_SUMMARY_LIMIT),
+    activeMagenticParticipants: cleanLimitedList(raw.activeMagenticParticipants),
+    availableCanvasAgents: cleanLimitedList(raw.availableCanvasAgents),
+    excludedAgents: cleanLimitedList(raw.excludedAgents),
+  };
+  return Object.values(context).some((entry) =>
+    Array.isArray(entry) ? entry.length > 0 : Boolean(entry),
+  )
+    ? context
+    : null;
+}
+
 function isRunnableNode(node: AgentCardInstance | undefined | null): node is AgentCardInstance {
   return Boolean(node && node.kind === 'agent' && !String(node.parentGraphId || '').trim());
+}
+
+function isPythonAutoGenMagenticCard(card: AgentCardInstance): boolean {
+  const runtimeOptions =
+    card.runtimeOptions && typeof card.runtimeOptions === 'object'
+      ? (card.runtimeOptions as Record<string, unknown>)
+      : {};
+  return (
+    card.runtimeType === 'magentic_one' &&
+    String(runtimeOptions.executionBackend || '').trim() === 'python_autogen'
+  );
 }
 
 function normalizeEdgeType(value: unknown): DeckEdgeType {
@@ -126,6 +185,7 @@ function buildRunSnapshot(
   status: DeckRun['status'],
   extra?: Pick<DeckRun, 'endedAt' | 'error'>,
   workspaceContext?: DeckWorkspaceContext | null,
+  workspaceObjectContext?: WorkspaceObjectContext | null,
 ): DeckRun {
   const graphViewContract =
     [...steps]
@@ -146,6 +206,7 @@ function buildRunSnapshot(
     input,
     error: extra?.error,
     workspaceContext: workspaceContext || null,
+    workspaceObjectContext: workspaceObjectContext || null,
     steps,
     events,
     graphViewContract,
@@ -235,6 +296,7 @@ export async function executeDeck(
   const steps: DeckRunStep[] = [];
   const events: DeckRuntimeEvent[] = [];
   const workspaceContext = normalizeWorkspaceContext(options.workspaceContext);
+  const workspaceObjectContext = normalizeWorkspaceObjectContext(options.workspaceObjectContext);
   let latestGraphViewContract: GraphViewContract | null = null;
   const emitRuntimeEvent = (event: Omit<DeckRuntimeEvent, 'id' | 'at'>) => {
     const resolvedGraphViewContract =
@@ -285,6 +347,7 @@ export async function executeDeck(
         error: 'Deck validation failed.',
       },
       workspaceContext,
+      workspaceObjectContext,
     );
   }
 
@@ -319,6 +382,7 @@ export async function executeDeck(
         error: 'Graph execution could not find a runnable start node.',
       },
       workspaceContext,
+      workspaceObjectContext,
     );
   }
 
@@ -394,6 +458,7 @@ export async function executeDeck(
           error: `Template "${card.templateId}" could not be resolved.`,
         },
         workspaceContext,
+        workspaceObjectContext,
       );
     }
 
@@ -425,6 +490,7 @@ export async function executeDeck(
         seed,
         projectId: options.projectId,
         workspaceContext,
+        workspaceObjectContext,
         deckId: document.id,
         deckName: document.name,
         allCards: document.nodes,
@@ -505,6 +571,7 @@ export async function executeDeck(
             error: step.error || `Card "${card.id}" failed.`,
           },
           workspaceContext,
+          workspaceObjectContext,
         );
       }
 
@@ -515,6 +582,30 @@ export async function executeDeck(
 
     scheduler.markSuccess(card.id, variantOutputs.join('\n\n').trim());
     successfulCardIds.add(card.id);
+
+    if (isPythonAutoGenMagenticCard(card)) {
+      emitRuntimeEvent({
+        kind: 'run_completed',
+        text: `Deck ${document.name} completed.`,
+        status: 'success',
+      });
+      return buildRunSnapshot(
+        runId,
+        document,
+        input,
+        startedAt,
+        steps,
+        events,
+        validation,
+        executionPlan,
+        'success',
+        {
+          endedAt: new Date().toISOString(),
+        },
+        workspaceContext,
+        workspaceObjectContext,
+      );
+    }
   }
 
   const unresolvedNodeIds = scheduler.getUnresolvedNodeIds();
@@ -539,6 +630,7 @@ export async function executeDeck(
         error: `Graph execution stalled before all runnable nodes completed: ${unresolvedNodeIds.join(', ')}`,
       },
       workspaceContext,
+      workspaceObjectContext,
     );
   }
 
@@ -561,5 +653,6 @@ export async function executeDeck(
       endedAt: new Date().toISOString(),
     },
     workspaceContext,
+    workspaceObjectContext,
   );
 }

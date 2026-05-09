@@ -4,11 +4,24 @@ export type PromptTemplate = {
 };
 
 export type RuntimeBinding =
+  | 'assist'
+  | 'local_coder'
   | 'main_chat'
   | 'kg_ingest'
   | 'research_agent'
+  | 'thinkgraph_agent'
+  | 'codegraph_agent'
+  | 'knowgraph_agent'
   | 'knowgraph'
-  | 'neo4j';
+  | 'neo4j'
+  | 'plan_agent'
+  | 'worldsignals_agent'
+  | 'telescope_agent'
+  | 'energy_agent'
+  | 'trading_agent'
+  | 'image_agent'
+  | 'code_agent'
+  | 'video_agent';
 
 export type AgentCardRuntimeType =
   | 'assistant_agent'
@@ -316,6 +329,19 @@ export type DeckWorkspaceContext = {
   objectEditor: DeckWorkspaceObjectEditorContext;
 };
 
+export type WorkspaceObjectContext = {
+  activeSurface?: string | null;
+  workspaceView?: string | null;
+  selectedObjectId?: string | null;
+  selectedObjectType?: string | null;
+  selectedObjectTitle?: string | null;
+  selectedText?: string | null;
+  openObjectSummary?: string | null;
+  activeMagenticParticipants?: string[];
+  availableCanvasAgents?: string[];
+  excludedAgents?: string[];
+};
+
 export type DeckRun = {
   id: string;
   deckId: string;
@@ -325,6 +351,7 @@ export type DeckRun = {
   input: string;
   error?: string;
   workspaceContext?: DeckWorkspaceContext | null;
+  workspaceObjectContext?: WorkspaceObjectContext | null;
   steps: DeckRunStep[];
   graphViewContract?: GraphViewContract | null;
   // Temporary legacy alias while clients migrate to graphViewContract.

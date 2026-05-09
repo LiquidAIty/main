@@ -359,19 +359,24 @@ describe('resolveAllCards', () => {
   it('resolves the current INITIAL_DECK shape correctly', () => {
     const cards: ResolverCardInput[] = [
       { id: 'card_magentic', runtimeType: 'magentic_one', runtimeBinding: null, templateId: 'template_magentic', title: 'Magentic-One' },
-      { id: 'card_plan_agent', runtimeType: 'assistant_agent', runtimeBinding: null, templateId: 'template_plan_agent', title: 'Plan Agent' },
-      { id: 'card_worldsignals_agent', runtimeType: 'assistant_agent', runtimeBinding: null, templateId: 'template_worldsignals_agent', title: 'WorldSignals Agent' },
+      { id: 'card_assist', runtimeType: 'assistant_agent', runtimeBinding: 'assist', templateId: 'template_assist', title: 'Assist' },
+      { id: 'card_plan_agent', runtimeType: 'assistant_agent', runtimeBinding: 'plan_agent', templateId: 'template_plan_agent', title: 'Plan Agent' },
+      { id: 'card_worldsignals_agent', runtimeType: 'assistant_agent', runtimeBinding: 'worldsignals_agent', templateId: 'template_worldsignals_agent', title: 'WorldSignals Agent' },
       { id: 'card_thinkgraph_agent', runtimeType: 'assistant_agent', runtimeBinding: 'thinkgraph_agent', templateId: 'template_thinkgraph_agent', title: 'ThinkGraph Agent' },
       { id: 'card_codegraph_agent', runtimeType: 'assistant_agent', runtimeBinding: 'codegraph_agent', templateId: 'template_codegraph_agent', title: 'CodeGraph Agent' },
       { id: 'card_research_agent', runtimeType: 'assistant_agent', runtimeBinding: 'research_agent', templateId: 'template_research_agent', title: 'Research Agent' },
       { id: 'card_knowgraph_agent', runtimeType: 'assistant_agent', runtimeBinding: 'knowgraph_agent', templateId: 'template_knowgraph_agent', title: 'KnowGraph Agent' },
-      { id: 'card_energy_workbench', runtimeType: 'assistant_agent', runtimeBinding: null, templateId: 'template_energy_workbench', title: 'NRGSim / Energy' },
-      { id: 'card_trading_workbench', runtimeType: 'assistant_agent', runtimeBinding: null, templateId: 'template_trading_workbench', title: 'Trading Agent' },
-      { id: 'card_image_workbench', runtimeType: 'assistant_agent', runtimeBinding: null, templateId: 'template_image_workbench', title: 'Image Maker Agent' },
-      { id: 'card_code_workbench', runtimeType: 'assistant_agent', runtimeBinding: null, templateId: 'template_code_workbench', title: 'Code Agent' },
-      { id: 'card_video_workbench', runtimeType: 'assistant_agent', runtimeBinding: null, templateId: 'template_video_workbench', title: 'Video Agent' },
+      { id: 'card_energy_workbench', runtimeType: 'assistant_agent', runtimeBinding: 'energy_agent', templateId: 'template_energy_workbench', title: 'NRGSim / Energy' },
+      { id: 'card_local_coder', runtimeType: 'local_coder', runtimeBinding: 'local_coder', templateId: 'template_local_coder', title: 'Local Coder' },
+      { id: 'card_trading_workbench', runtimeType: 'assistant_agent', runtimeBinding: 'trading_agent', templateId: 'template_trading_workbench', title: 'Trading Agent' },
+      { id: 'card_image_workbench', runtimeType: 'assistant_agent', runtimeBinding: 'image_agent', templateId: 'template_image_workbench', title: 'Image Maker Agent' },
+      { id: 'card_code_workbench', runtimeType: 'assistant_agent', runtimeBinding: 'code_agent', templateId: 'template_code_workbench', title: 'Code Agent' },
+      { id: 'card_video_workbench', runtimeType: 'assistant_agent', runtimeBinding: 'video_agent', templateId: 'template_video_workbench', title: 'Video Agent' },
+      { id: 'card_telescope_agent', runtimeType: 'assistant_agent', runtimeBinding: 'telescope_agent', templateId: 'template_telescope_agent', title: 'Telescope Agent' },
     ];
     const edges: ResolverEdgeInput[] = [
+      { id: 'edge_magentic_research', source: 'card_magentic', target: 'card_research_agent', edgeType: 'magentic_option' },
+      { id: 'edge_magentic_assist', source: 'card_magentic', target: 'card_assist', edgeType: 'magentic_option' },
       { id: 'edge_knowgraph_research', source: 'card_knowgraph_agent', target: 'card_research_agent', edgeType: 'flow' },
       { id: 'edge_research_codegraph', source: 'card_research_agent', target: 'card_codegraph_agent', edgeType: 'flow' },
       { id: 'edge_codegraph_thinkgraph', source: 'card_codegraph_agent', target: 'card_thinkgraph_agent', edgeType: 'flow' },
@@ -382,6 +387,9 @@ describe('resolveAllCards', () => {
     expect(result.get('card_magentic')!.def?.id).toBe('sol');
     expect(result.get('card_magentic')!.busConnection).toBe('orchestrator');
 
+    expect(result.get('card_assist')!.def?.id).toBe('assist');
+    expect(result.get('card_assist')!.busConnection).toBe('orchestrated');
+
     expect(result.get('card_plan_agent')!.def?.id).toBe('plan');
     expect(result.get('card_plan_agent')!.busConnection).toBe('disconnected');
 
@@ -389,19 +397,21 @@ describe('resolveAllCards', () => {
     expect(result.get('card_worldsignals_agent')!.busConnection).toBe('disconnected');
 
     expect(result.get('card_thinkgraph_agent')!.def?.id).toBe('plan');
-    expect(result.get('card_thinkgraph_agent')!.busConnection).toBe('disconnected');
+    expect(result.get('card_thinkgraph_agent')!.busConnection).toBe('delegated');
 
     expect(result.get('card_codegraph_agent')!.def?.id).toBe('knowledge');
-    expect(result.get('card_codegraph_agent')!.busConnection).toBe('disconnected');
+    expect(result.get('card_codegraph_agent')!.busConnection).toBe('delegated');
 
     expect(result.get('card_research_agent')!.def?.id).toBe('knowledge');
-    expect(result.get('card_research_agent')!.busConnection).toBe('disconnected');
+    expect(result.get('card_research_agent')!.busConnection).toBe('orchestrated');
 
     expect(result.get('card_knowgraph_agent')!.def?.id).toBe('knowledge');
     expect(result.get('card_knowgraph_agent')!.busConnection).toBe('disconnected');
 
     expect(result.get('card_energy_workbench')!.def?.id).toBe('energy');
     expect(result.get('card_energy_workbench')!.busConnection).toBe('disconnected');
+    expect(result.get('card_local_coder')!.def?.id).toBe('code');
+    expect(result.get('card_local_coder')!.busConnection).toBe('disconnected');
     expect(result.get('card_trading_workbench')!.def?.id).toBe('trading');
     expect(result.get('card_trading_workbench')!.busConnection).toBe('disconnected');
     expect(result.get('card_image_workbench')!.def?.id).toBe('image');
@@ -410,10 +420,12 @@ describe('resolveAllCards', () => {
     expect(result.get('card_code_workbench')!.busConnection).toBe('disconnected');
     expect(result.get('card_video_workbench')!.def?.id).toBe('video');
     expect(result.get('card_video_workbench')!.busConnection).toBe('disconnected');
+    expect(result.get('card_telescope_agent')!.def?.id).toBe('telescope');
+    expect(result.get('card_telescope_agent')!.busConnection).toBe('disconnected');
 
     // No edge was mutated
-    expect(edges[0].edgeType).toBe('flow');
-    expect(edges[1].edgeType).toBe('flow');
+    expect(edges[0].edgeType).toBe('magentic_option');
+    expect(edges[1].edgeType).toBe('magentic_option');
     expect(edges[2].edgeType).toBe('flow');
   });
 

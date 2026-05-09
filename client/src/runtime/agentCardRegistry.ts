@@ -80,6 +80,19 @@ export const AGENT_CARD_REGISTRY: readonly AgentCardDef[] = [
     runtimeSafe: true,
     runtimeType: 'magentic_one',
   },
+  {
+    id: 'assist',
+    name: 'Assist',
+    description: 'General-purpose response drafting and task support agent.',
+    kind: 'core',
+    ownedSurface: null,
+    railEligible: false,
+    requiresPlanApproval: false,
+    defaultConnected: true,
+    capabilityStatus: 'implemented',
+    runtimeSafe: true,
+    runtimeType: 'assistant_agent',
+  },
 
   // ── Workbench agents (own a canvas) ──────────────────────────────
   {
