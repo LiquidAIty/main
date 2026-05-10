@@ -3,6 +3,7 @@ import type {
   AgentCardRuntimeType,
   RuntimeBinding,
 } from "../../types/agentgraph";
+import { UA_AGENT_DEFINITIONS } from "../../runtime/uaAgentDefinitions";
 
 export type DeckNodePreset = {
   key: string;
@@ -40,20 +41,20 @@ export const DECK_NODE_PRESETS: DeckNodePreset[] = [
     title: "Local Coder",
     subtitle: "Runs via local coder subsystem",
   },
+  ...UA_AGENT_DEFINITIONS.map(
+    (agent): DeckNodePreset => ({
+      key: agent.id,
+      label: agent.name,
+      kind: "agent",
+      templateId: agent.templateId,
+      promptTemplateId: agent.promptTemplateId,
+      runtimeBinding: agent.runtimeBinding,
+      runtimeType: agent.runtimeType,
+      title: agent.name,
+      subtitle: agent.subtitle,
+    }),
+  ),
 ];
-
-function safeText(value: unknown): string {
-  if (value == null) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  try {
-    const json = JSON.stringify(value);
-    if (typeof json === "string") return json;
-  } catch {
-    // ignore
-  }
-  return String(value);
-}
 
 export function findDeckNodePreset(key: string): DeckNodePreset | null {
   return DECK_NODE_PRESETS.find((preset) => preset.key === key) || null;
@@ -70,10 +71,6 @@ export type AssistStarterRecipe = {
   presetKeys: DeckNodePreset["key"][];
   focusNodeIndex: number;
 };
-
-function isGraphOwnedCard(anchorCard: AgentCardInstance | null): boolean {
-  return Boolean(anchorCard && String(anchorCard.parentGraphId || "").trim());
-}
 
 // Left rail plus handles creation directly from presets.
 export function getDeckQuickAddActions(_anchorCard: AgentCardInstance | null): DeckQuickAddAction[] {

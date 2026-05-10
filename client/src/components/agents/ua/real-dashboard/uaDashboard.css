@@ -1,0 +1,81 @@
+.ua-dashboard-host {
+  --color-root: #0a0a0a;
+  --color-surface: #111111;
+  --color-elevated: #1a1a1a;
+  --color-accent: #d4a574;
+  --color-accent-dim: #c9a96e;
+  --color-accent-bright: #e8c49a;
+  --color-text-primary: #f5f0eb;
+  --color-text-secondary: #a39787;
+  --color-text-muted: #6b5f53;
+  --color-border-subtle: rgba(212, 165, 116, 0.12);
+  --color-border-medium: rgba(212, 165, 116, 0.25);
+  --color-node-file: #4a7c9b;
+  --color-node-function: #5a9e6f;
+  --color-node-class: #8b6fb0;
+  --color-node-module: #c9a06c;
+  --color-node-concept: #b07a8a;
+  --color-node-config: #5eead4;
+  --color-node-document: #7dd3fc;
+  --color-node-service: #a78bfa;
+  --color-node-table: #6ee7b7;
+  --color-node-endpoint: #fdba74;
+  --color-node-pipeline: #fda4af;
+  --color-node-schema: #fcd34d;
+  --color-node-resource: #a5b4fc;
+  --color-node-article: #d4a574;
+  --color-node-entity: #7ba4c9;
+  --color-node-topic: #c9b06c;
+  --color-node-claim: #6fb07a;
+  --color-node-source: #8a8a8a;
+  --glass-bg: rgba(20, 20, 20, 0.8);
+  --font-heading: Georgia, "Times New Roman", serif;
+  height: 100%;
+  width: 100%;
+  color: var(--color-text-primary);
+  background: var(--color-root);
+}
+
+.ua-dashboard-host .font-heading { font-family: var(--font-heading); }
+.ua-dashboard-host .bg-root { background: var(--color-root); }
+.ua-dashboard-host .bg-surface { background: var(--color-surface); }
+.ua-dashboard-host .bg-elevated { background: var(--color-elevated); }
+.ua-dashboard-host .text-text-primary { color: var(--color-text-primary); }
+.ua-dashboard-host .text-text-secondary { color: var(--color-text-secondary); }
+.ua-dashboard-host .text-text-muted { color: var(--color-text-muted); }
+.ua-dashboard-host .text-accent,
+.ua-dashboard-host .text-gold { color: var(--color-accent); }
+.ua-dashboard-host .text-accent-dim,
+.ua-dashboard-host .text-gold-dim { color: var(--color-accent-dim); }
+.ua-dashboard-host .text-accent-bright,
+.ua-dashboard-host .text-gold-bright { color: var(--color-accent-bright); }
+.ua-dashboard-host .text-node-file { color: var(--color-node-file); }
+.ua-dashboard-host .text-node-function { color: var(--color-node-function); }
+.ua-dashboard-host .text-node-class { color: var(--color-node-class); }
+.ua-dashboard-host .text-node-module { color: var(--color-node-module); }
+.ua-dashboard-host .text-node-concept { color: var(--color-node-concept); }
+.ua-dashboard-host .text-node-config { color: var(--color-node-config); }
+.ua-dashboard-host .text-node-document { color: var(--color-node-document); }
+.ua-dashboard-host .text-node-service { color: var(--color-node-service); }
+.ua-dashboard-host .text-node-table { color: var(--color-node-table); }
+.ua-dashboard-host .text-node-endpoint { color: var(--color-node-endpoint); }
+.ua-dashboard-host .text-node-pipeline { color: var(--color-node-pipeline); }
+.ua-dashboard-host .text-node-schema { color: var(--color-node-schema); }
+.ua-dashboard-host .text-node-resource { color: var(--color-node-resource); }
+.ua-dashboard-host .text-node-article { color: var(--color-node-article); }
+.ua-dashboard-host .text-node-entity { color: var(--color-node-entity); }
+.ua-dashboard-host .text-node-topic { color: var(--color-node-topic); }
+.ua-dashboard-host .text-node-claim { color: var(--color-node-claim); }
+.ua-dashboard-host .text-node-source { color: var(--color-node-source); }
+.ua-dashboard-host .border-border-subtle { border-color: var(--color-border-subtle); }
+.ua-dashboard-host .border-border-medium { border-color: var(--color-border-medium); }
+.ua-dashboard-host .border-accent,
+.ua-dashboard-host .border-gold { border-color: var(--color-accent); }
+.ua-dashboard-host .glass {
+  background: var(--glass-bg);
+  border: 1px solid var(--color-border-subtle);
+  backdrop-filter: blur(12px);
+}
+.ua-dashboard-host .react-flow__background {
+  background-color: var(--color-root) !important;
+}

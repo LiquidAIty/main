@@ -65,8 +65,9 @@ export type ResolvedCard = {
  * Resolution strategy (first match wins):
  * 1. runtimeType === 'magentic_one' → sol
  * 2. runtimeType === 'local_coder'  → code
- * 3. runtimeBinding match against known binding→id map
- * 4. Otherwise → undefined (unknown card, no guessing)
+ * 3. Staged template id/card shape match
+ * 4. runtimeBinding match against known binding→id map
+ * 5. Otherwise → undefined (unknown card, no guessing)
  */
 export function resolveCardDef(card: ResolverCardInput): AgentCardDef | undefined {
   const rt = normalize(card.runtimeType);
@@ -76,18 +77,19 @@ export function resolveCardDef(card: ResolverCardInput): AgentCardDef | undefine
   if (rt === 'magentic_one') return findDef('sol');
   if (rt === 'local_coder') return findDef('code');
 
-  // 2. runtimeBinding discrimination for assistant_agent cards
-  if (rb) {
-    const defId = BINDING_TO_REGISTRY_ID[rb];
-    if (defId) return findDef(defId);
-  }
-
+  // 2. Staged template discrimination for assistant_agent cards.
   const stagedDefId = resolveStagedCardDefId(card);
   if (stagedDefId) {
     return findDef(stagedDefId);
   }
 
-  // 3. No confident match
+  // 3. runtimeBinding discrimination for assistant_agent cards.
+  if (rb) {
+    const defId = BINDING_TO_REGISTRY_ID[rb];
+    if (defId) return findDef(defId);
+  }
+
+  // 4. No confident match
   return undefined;
 }
 
@@ -97,6 +99,11 @@ function resolveStagedCardDefId(
   const templateId = normalize(card.templateId);
   const id = normalize(card.id);
   const title = normalize(card.title);
+
+  if (templateId) {
+    const registeredByTemplate = AGENT_CARD_REGISTRY.find((def) => normalize(def.templateId) === templateId);
+    if (registeredByTemplate) return registeredByTemplate.id;
+  }
 
   if (
     templateId === 'template_plan_agent' ||

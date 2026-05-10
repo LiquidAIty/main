@@ -149,6 +149,22 @@ describe('resolveCardDef', () => {
     ).toBe('video');
   });
 
+  it('resolves UA staged cards by template before the shared assist binding', () => {
+    const def = resolveCardDef(
+      card('card_ua_project_scanner', {
+        runtimeType: 'assistant_agent',
+        runtimeBinding: 'assist',
+        templateId: 'template_project_scanner',
+        title: 'Project Scanner',
+      }),
+    );
+
+    expect(def).toBeDefined();
+    expect(def!.id).toBe('project_scanner');
+    expect(def!.uiEngine).toBe('ua_dashboard');
+    expect(def!.uiLens).toBe('project_scanner');
+  });
+
   it('returns undefined for unknown runtimeType', () => {
     const def = resolveCardDef(card('card_alien', { runtimeType: 'alien_runtime' as any }));
     expect(def).toBeUndefined();

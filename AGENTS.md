@@ -4,6 +4,8 @@ Drop-in operating instructions for coding agents. Read this file before every ta
 
 **Working code only. Finish the job. Plausibility is not correctness.**
 
+Also read [`policy.md`](policy.md) before coding work. Its MCP-first inverse-audit workflow is mandatory for this repo.
+
 This file follows the [AGENTS.md](https://agents.md) open standard (Linux Foundation / Agentic AI Foundation). Claude Code, Codex, Cursor, Windsurf, Copilot, Aider, Devin, Amp read it natively. For tools that look elsewhere, symlink:
 
 ```bash

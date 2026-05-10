@@ -117,11 +117,22 @@ import {
   type WorkspaceTestingObjectType,
   type WorkspaceTestingSurface,
 } from '../lib/workspaceTestingTelemetry';
+import {
+  getUaAgentDefinitionBySurface,
+  getUiUaAgentDefinitions,
+  UA_AGENT_DEFINITIONS,
+  type UaAgentDefinition,
+  type UaUiAgentDefinition,
+  type UaAgentSurfaceId,
+} from '../runtime/uaAgentDefinitions';
 
 const AgentManager = lazy(async () => {
   const mod = await import('../components/AgentManager');
   return { default: mod.AgentManager };
 });
+const UaAgentPanelHost = lazy(
+  () => import('../components/agents/ua/UaAgentPanelHost'),
+);
 const KnowledgeSummaryPanel = lazy(
   () => import('../components/knowledge/KnowledgeSummaryPanel'),
 );
@@ -133,6 +144,9 @@ const KnowledgeGraphFramework = lazy(
 );
 const EnergyFacadeSurface = lazy(
   () => import('../components/energy/EnergyFacadeSurface'),
+);
+const TradingCanvasSurface = lazy(
+  () => import('../features/trading/TradingCanvasSurface'),
 );
 const CODEBASE_MEMORY_PROJECT_NAME = 'C-Projects-LiquidAIty-main';
 void KnowledgeSummaryPanel;
@@ -742,12 +756,24 @@ function isVideoWorkbenchCard(card: AgentCardInstance | null | undefined): boole
   );
 }
 
+function isUaAgentCard(
+  card: AgentCardInstance | null | undefined,
+  agent: UaAgentDefinition,
+): boolean {
+  if (!card) return false;
+  return (
+    safeText(card.templateId).trim() === agent.templateId ||
+    safeText(card.title).trim() === agent.name
+  );
+}
+
 type WorkbenchSurfaceId =
   | 'energy'
   | 'trading'
   | 'image'
   | 'code'
-  | 'video';
+  | 'video'
+  | UaAgentSurfaceId;
 
 type WorkbenchCardDescriptor = {
   id: WorkbenchSurfaceId;
@@ -798,6 +824,15 @@ const WORKBENCH_CARD_DESCRIPTORS: readonly WorkbenchCardDescriptor[] = [
       'Video Agent is staged as a selectable workbench card. Runtime is disabled until the video generation bridge exists.',
     matches: isVideoWorkbenchCard,
   },
+  ...getUiUaAgentDefinitions().map(
+    (agent): WorkbenchCardDescriptor => ({
+      id: agent.surfaceId,
+      title: agent.name,
+      openLabel: `Open ${agent.name}`,
+      disabledCopy: agent.panel.drawerCopy,
+      matches: (card) => isUaAgentCard(card, agent),
+    }),
+  ),
 ] as const;
 
 function resolveWorkbenchDescriptor(
@@ -892,6 +927,7 @@ export type ProgressiveRailVisibility = {
   showImage: boolean;
   showCode: boolean;
   showVideo: boolean;
+  uaAgents: readonly UaUiAgentDefinition[];
 };
 
 function buildBusConnectedCardIds(
@@ -1129,6 +1165,20 @@ export function isVideoWorkbenchActive(
   return isWorkbenchSurfaceActive(nodes, edges, isVideoWorkbenchCard);
 }
 
+function getVisibleUaRailAgents(
+  nodes: readonly AgentCardInstance[],
+  edges: readonly DeckEdge[],
+  _workspaceView: string,
+): readonly UaUiAgentDefinition[] {
+  const busConnected = buildBusConnectedCardIds(nodes, edges);
+  return getUiUaAgentDefinitions().filter(
+    (agent) =>
+      nodes.some(
+        (node) => busConnected.has(node.id) && isUaAgentCard(node, agent),
+      ),
+  );
+}
+
 function isWorkbenchSurfaceActive(
   nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
@@ -1186,6 +1236,7 @@ export function deriveVisibleRailItems({
     showVideo:
       workspaceView === 'video' ||
       isVideoWorkbenchActive(deck.nodes, deck.edges),
+    uaAgents: getVisibleUaRailAgents(deck.nodes, deck.edges, workspaceView),
   };
 }
 
@@ -1773,6 +1824,38 @@ ${parts.ioSchema}
 ${parts.memoryPolicy}`;
 }
 
+function buildSpecialistGraphProposalPrompt(parts: {
+  role: string;
+  goal: string;
+  proposalTarget: 'CodeGraph' | 'ThinkGraph' | 'KnowGraph' | 'PlanSurface';
+  proposalGuidance: string;
+}): string {
+  return buildSeedPromptTemplate({
+    role: parts.role,
+    goal: parts.goal,
+    constraints: [
+      'You are a LiquidAIty-native Agent Canvas specialist, not a separate plugin or dashboard.',
+      'Magentic-One is the conductor. Stay within the assigned card role and return useful output to the visible deck runtime.',
+      'Do not mutate CodeGraph, ThinkGraph, KnowGraph, Plan Surface, Apache AGE, Neo4j, files, or database state.',
+      'When graph or plan changes would be useful, return proposals only.',
+      'Do not claim a proposal has been written or persisted.',
+    ].join('\n'),
+    ioSchema: [
+      'Output: concise analysis for the user.',
+      'When useful, append one JSON object that contains graphWriteProposals.',
+      'Each graphWriteProposals item must use this exact shape:',
+      '{"target":"CodeGraph|ThinkGraph|KnowGraph|PlanSurface","operation":"upsert_node|upsert_edge|annotate_node|link_plan_step|create_plan_step|flag_uncertainty","confidence":0.0,"reason":"plain reason","payload":{}}',
+      `Default proposal target: ${parts.proposalTarget}.`,
+      parts.proposalGuidance,
+    ].join('\n'),
+    memoryPolicy: [
+      'Use only current input, visible deck context, and explicitly provided source snippets or graph snapshots.',
+      'Treat model-generated structure as provisional unless source-grounded evidence is included in the payload.',
+      'KnowGraph proposals require source/evidence fields in payload; otherwise target ThinkGraph.',
+    ].join('\n'),
+  });
+}
+
 const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   {
     id: 'prompt_magentic',
@@ -1944,6 +2027,10 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
     }),
   },
+  ...UA_AGENT_DEFINITIONS.map((agent): PromptTemplate => ({
+    id: agent.promptTemplateId,
+    content: buildSpecialistGraphProposalPrompt(agent.prompt),
+  })),
   {
     id: 'prompt_energy_workbench',
     content: buildSeedPromptTemplate({
@@ -2202,6 +2289,18 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     maxTokens: 1200,
     tools: [],
   },
+  ...UA_AGENT_DEFINITIONS.map((agent): AgentTemplate => ({
+    id: agent.templateId,
+    name: agent.name,
+    promptTemplate: agent.promptTemplateId,
+    model: 'gpt-5-mini',
+    provider: 'openai',
+    temperature: 0.2,
+    maxTokens: 1400,
+    tools: [],
+    skills: [...agent.skills],
+    personas: [agent.skillId],
+  })),
   {
     id: 'template_local_coder',
     name: 'Local Coder',
@@ -2294,6 +2393,44 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
   },
 ];
 
+const UA_AGENT_CARD_COLUMNS = 3;
+const UA_AGENT_CARD_ORIGIN = { x: 340, y: -180 };
+const UA_AGENT_CARD_GAP = { x: 260, y: 120 };
+
+const UA_AGENT_CARD_IDS = new Set(
+  UA_AGENT_DEFINITIONS.map((agent) => `card_ua_${agent.id}`),
+);
+const UA_AGENT_TEMPLATE_IDS = new Set(
+  UA_AGENT_DEFINITIONS.map((agent) => agent.templateId),
+);
+
+function buildUaAgentSeedNodes(): AgentCardInstance[] {
+  return UA_AGENT_DEFINITIONS.map((agent, index) => {
+    const column = index % UA_AGENT_CARD_COLUMNS;
+    const row = Math.floor(index / UA_AGENT_CARD_COLUMNS);
+    return {
+      id: `card_ua_${agent.id}`,
+      kind: 'agent',
+      templateId: agent.templateId,
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === agent.promptTemplateId,
+        )?.content || '',
+      runtimeBinding: agent.runtimeBinding,
+      runtimeType: agent.runtimeType,
+      parentGraphId: null,
+      title: agent.name,
+      subtitle: agent.subtitle,
+      position: {
+        x: UA_AGENT_CARD_ORIGIN.x + column * UA_AGENT_CARD_GAP.x,
+        y: UA_AGENT_CARD_ORIGIN.y + row * UA_AGENT_CARD_GAP.y,
+      },
+      status: 'ready',
+      cloneConfig: { enabled: false, seeds: [] },
+    };
+  });
+}
+
 export const INITIAL_DECK: DeckDocument = {
   id: 'deck_builder',
   name: 'Agent Card Deck',
@@ -2321,23 +2458,6 @@ export const INITIAL_DECK: DeckDocument = {
       title: 'Magentic-One',
       subtitle: 'Admin orchestrator / planner',
       position: { x: 140, y: 120 },
-      status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
-    },
-    {
-      id: 'card_assist',
-      kind: 'agent',
-      templateId: 'template_assist',
-      prompt:
-        INITIAL_PROMPT_TEMPLATES.find(
-          (template) => template.id === 'prompt_assist',
-        )?.content || '',
-      runtimeBinding: 'assist',
-      runtimeType: 'assistant_agent',
-      parentGraphId: null,
-      title: 'Assist',
-      subtitle: 'General response and task support',
-      position: { x: 320, y: -40 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -2562,39 +2682,9 @@ export const INITIAL_DECK: DeckDocument = {
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
+    ...buildUaAgentSeedNodes(),
   ],
-  edges: [
-    {
-      id: 'edge_magentic_research',
-      source: 'card_magentic',
-      target: 'card_research_agent',
-      edgeType: 'magentic_option',
-    },
-    {
-      id: 'edge_magentic_assist',
-      source: 'card_magentic',
-      target: 'card_assist',
-      edgeType: 'magentic_option',
-    },
-    {
-      id: 'edge_knowgraph_research',
-      source: 'card_knowgraph_agent',
-      target: 'card_research_agent',
-      edgeType: 'flow',
-    },
-    {
-      id: 'edge_research_codegraph',
-      source: 'card_research_agent',
-      target: 'card_codegraph_agent',
-      edgeType: 'flow',
-    },
-    {
-      id: 'edge_codegraph_thinkgraph',
-      source: 'card_codegraph_agent',
-      target: 'card_thinkgraph_agent',
-      edgeType: 'flow',
-    },
-  ],
+  edges: [],
 };
 
 const BUILDER_DECK_ID = INITIAL_DECK.id;
@@ -2623,7 +2713,6 @@ const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
 };
 
 const BASELINE_OPTIONAL_CARD_IDS = new Set([
-  'card_assist',
   'card_local_coder',
   'card_plan_agent',
   'card_worldsignals_agent',
@@ -2633,6 +2722,14 @@ const BASELINE_OPTIONAL_CARD_IDS = new Set([
   'card_image_workbench',
   'card_code_workbench',
   'card_video_workbench',
+]);
+const REMOVED_DEFAULT_CARD_IDS = new Set(['card_assist']);
+const REMOVED_DEFAULT_EDGE_IDS = new Set([
+  'edge_magentic_research',
+  'edge_magentic_assist',
+  'edge_knowgraph_research',
+  'edge_research_codegraph',
+  'edge_codegraph_thinkgraph',
 ]);
 const LEGACY_SYSTEM_CARD_IDS = new Set([
   'card_main_chat',
@@ -2716,6 +2813,9 @@ function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
     Boolean(
       node &&
       typeof node === 'object' &&
+      !REMOVED_DEFAULT_CARD_IDS.has(
+        safeText((node as Partial<AgentCardInstance>).id).trim(),
+      ) &&
       safeText((node as Partial<AgentCardInstance>).kind)
         .trim()
         .toLowerCase() !== 'blackboard' &&
@@ -2727,7 +2827,7 @@ function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
     nextNodes.length > 0
       ? nextNodes.map((node) => ({
         id: safeText(node.id).trim(),
-        kind: 'agent',
+        kind: 'agent' as const,
         templateId: safeText(node.templateId).trim(),
         prompt: typeof node.prompt === 'string' ? node.prompt : '',
         runtimeBinding: normalizeRuntimeBinding(
@@ -2766,9 +2866,26 @@ function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
   if (normalizedNodes.length === 0) return [];
 
   const existingIds = new Set(normalizedNodes.map((node) => node.id));
+  const existingTemplateIds = new Set(
+    normalizedNodes.map((node) => node.templateId),
+  );
   const appendedNodes = INITIAL_DECK.nodes
-    .filter((node) => BASELINE_OPTIONAL_CARD_IDS.has(node.id))
-    .filter((node) => !existingIds.has(node.id))
+    .filter(
+      (node) =>
+        BASELINE_OPTIONAL_CARD_IDS.has(node.id) ||
+        UA_AGENT_CARD_IDS.has(node.id),
+    )
+    .filter((node) => {
+      if (existingIds.has(node.id)) return false;
+      if (
+        UA_AGENT_CARD_IDS.has(node.id) &&
+        UA_AGENT_TEMPLATE_IDS.has(node.templateId) &&
+        existingTemplateIds.has(node.templateId)
+      ) {
+        return false;
+      }
+      return true;
+    })
     .map((node) => cloneDeckDocument(node));
   return [...normalizedNodes, ...appendedNodes];
 }
@@ -2800,7 +2917,9 @@ function normalizeDeckEdges(value: unknown): DeckEdge[] {
   }
   return cloneDeckDocument(
     sanitizeDeckEdges(value).filter(
-      (edge) => safeText(edge.id).trim() !== 'edge_magentic_thinkgraph',
+      (edge) =>
+        safeText(edge.id).trim() !== 'edge_magentic_thinkgraph' &&
+        !REMOVED_DEFAULT_EDGE_IDS.has(safeText(edge.id).trim()),
     ),
   );
 }
@@ -4253,6 +4372,7 @@ export default function AgentBuilder(): React.ReactElement {
     | 'code'
     | 'video'
     | 'worldsignal'
+    | UaAgentSurfaceId
   >('chat');
   const {
     activeProject,
@@ -4286,6 +4406,10 @@ export default function AgentBuilder(): React.ReactElement {
         pendingActivationProposal,
       }),
     [deck, pendingActivationProposal, workspaceView],
+  );
+  const activeUaAgentDefinition = useMemo(
+    () => getUaAgentDefinitionBySurface(workspaceView),
+    [workspaceView],
   );
   const [deckRevision, setDeckRevision] = useState<string | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
@@ -8283,6 +8407,24 @@ export default function AgentBuilder(): React.ReactElement {
               <Icon d="M5 7h10v10H5z M15 10l4-2v8l-4-2" />
             </button>
           ) : null}
+          {visibleRailItems.uaAgents.map((agent) => (
+            <button
+              key={agent.id}
+              title={agent.name}
+              aria-label={agent.name}
+              data-testid={`rail-${agent.id}-button`}
+              onClick={() => showWorkbenchWorkspace(agent.surfaceId)}
+              className="p-2 rounded"
+              style={{
+                color:
+                  workspaceView === agent.surfaceId
+                    ? GRAPH_THEME.accent.solar
+                    : C.text,
+              }}
+            >
+              <Icon d={agent.railIcon} />
+            </button>
+          ))}
 
           <div className="flex-1" />
 
@@ -8473,18 +8615,29 @@ export default function AgentBuilder(): React.ReactElement {
                       </Suspense>
                     </EnergySurfaceErrorBoundary>
                   )}
-                  {workspaceView === 'trading' &&
-                    renderWorkbenchPlaceholderSurface({
-                      testId: 'trading-workspace-placeholder',
-                      title: 'Trading Workspace',
-                      status: 'Demo / planned integration',
-                      accentColor: GRAPH_THEME.accent.solar,
-                      steps: [
-                        'Review live market context and current watchlist inputs.',
-                        'Stage thesis, entries, exits, and risk controls inside the app-owned trading bridge later.',
-                        'Keep execution, broker connectivity, and orders out of scope for this demo pass.',
-                      ],
-                    })}
+                  {workspaceView === 'trading' && (
+                    <Suspense
+                      fallback={
+                        <div
+                          data-testid="trading-canvas-loading"
+                          style={{
+                            height: '100%',
+                            padding: 16,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            background: GRAPH_THEME.background.knowledgeSurface,
+                          }}
+                        >
+                          <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 13 }}>
+                            Loading trading canvas...
+                          </div>
+                        </div>
+                      }
+                    >
+                      <TradingCanvasSurface />
+                    </Suspense>
+                  )}
                   {workspaceView === 'image' &&
                     renderWorkbenchPlaceholderSurface({
                       testId: 'image-workspace-placeholder',
@@ -8521,6 +8674,26 @@ export default function AgentBuilder(): React.ReactElement {
                         'Assemble, export, and publish later when the video bridge exists.',
                       ],
                     })}
+                  {activeUaAgentDefinition && (
+                    <Suspense
+                      fallback={
+                        <div
+                          data-testid="ua-agent-panel-loading"
+                          style={{
+                            height: '100%',
+                            padding: 18,
+                            color: GRAPH_THEME.drawer.inputMuted,
+                          }}
+                        >
+                          Loading agent panel...
+                        </div>
+                      }
+                    >
+                      <UaAgentPanelHost
+                        surfaceId={activeUaAgentDefinition.surfaceId}
+                      />
+                    </Suspense>
+                  )}
                   {workspaceView === 'worldsignal' &&
                     <WorldSignalSurface />}
                   {workspaceView === 'plan' && renderPlanSurface('companion')}
