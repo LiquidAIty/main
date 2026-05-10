@@ -30,18 +30,6 @@ async function fetchLayout(project: string, maxNodes = 50000): Promise<CodeGraph
   return response.json();
 }
 
-function formatCodeGraphLabel(value: string): string {
-  return String(value || "node")
-    .replace(/_/g, " ")
-    .toLowerCase();
-}
-
-function getCodeGraphFileName(filePath?: string): string | null {
-  if (!filePath) return null;
-  const parts = filePath.split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] || filePath;
-}
-
 export function CodeGraphSurface({
   projectId = null,
   viewContract = null,
@@ -59,7 +47,6 @@ export function CodeGraphSurface({
   const [enabledLabels, setEnabledLabels] = useState<Set<string>>(new Set());
   const [enabledEdgeTypes, setEnabledEdgeTypes] = useState<Set<string>>(new Set());
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
-  const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const [interactionLocked, setInteractionLocked] = useState(false);
   const [cameraCommand, setCameraCommand] = useState<{
     token: number;
@@ -68,11 +55,11 @@ export function CodeGraphSurface({
 
   const allLabels = useMemo(
     () => Array.from(new Set((graphData?.nodes ?? []).map((node) => node.label))),
-    [graphData?.nodes]
+    [graphData?.nodes],
   );
   const allEdgeTypes = useMemo(
     () => Array.from(new Set((graphData?.edges ?? []).map((edge) => edge.type))),
-    [graphData?.edges]
+    [graphData?.edges],
   );
 
   const emitViewContract = useCallback(
@@ -84,7 +71,7 @@ export function CodeGraphSurface({
         showLabels: next.nextShowLabels,
       });
     },
-    [onViewContractChange, projectId]
+    [onViewContractChange, projectId],
   );
 
   useEffect(() => {
@@ -134,7 +121,7 @@ export function CodeGraphSurface({
     const nodes = graphData.nodes.filter((node) => enabledLabels.has(node.label));
     const allowedIds = new Set(nodes.map((node) => node.id));
     const edges = graphData.edges.filter(
-      (edge) => enabledEdgeTypes.has(edge.type) && allowedIds.has(edge.source) && allowedIds.has(edge.target)
+      (edge) => enabledEdgeTypes.has(edge.type) && allowedIds.has(edge.source) && allowedIds.has(edge.target),
     );
     return {
       nodes,
@@ -142,62 +129,6 @@ export function CodeGraphSurface({
       total_nodes: graphData.total_nodes,
     };
   }, [enabledEdgeTypes, enabledLabels, graphData]);
-
-  const selectedNodeDetails = useMemo(() => {
-    if (!selectedNode || !filteredData) return null;
-    const node = filteredData.nodes.find((candidate) => candidate.id === selectedNode.id) || selectedNode;
-    const nodeById = new Map(filteredData.nodes.map((candidate) => [candidate.id, candidate]));
-    const incoming = [];
-    const outgoing = [];
-    const fileRefs = new Set<string>();
-    if (node.file_path) fileRefs.add(node.file_path);
-
-    for (const edge of filteredData.edges) {
-      if (edge.source === node.id) {
-        const target = nodeById.get(edge.target);
-        if (target) {
-          outgoing.push({ edge, relatedNode: target });
-          if (target.file_path) fileRefs.add(target.file_path);
-        }
-      }
-      if (edge.target === node.id) {
-        const source = nodeById.get(edge.source);
-        if (source) {
-          incoming.push({ edge, relatedNode: source });
-          if (source.file_path) fileRefs.add(source.file_path);
-        }
-      }
-    }
-
-    const relationshipCount = incoming.length + outgoing.length;
-    const kind = formatCodeGraphLabel(node.label);
-    const fileName = getCodeGraphFileName(node.file_path);
-    const summary = fileName
-      ? `${node.name} is a ${kind} node from ${fileName}. It has ${relationshipCount} visible relationship${
-          relationshipCount === 1 ? "" : "s"
-        } in the current CodeGraph filter set.`
-      : `${node.name} is a ${kind} node with ${relationshipCount} visible relationship${
-          relationshipCount === 1 ? "" : "s"
-        } in the current CodeGraph filter set.`;
-
-    return {
-      node,
-      kind,
-      summary,
-      incoming,
-      outgoing,
-      fileRefs: Array.from(fileRefs).slice(0, 8),
-      relationshipCount,
-    };
-  }, [filteredData, selectedNode]);
-
-  useEffect(() => {
-    if (!selectedNode || !filteredData) return;
-    if (filteredData.nodes.some((node) => node.id === selectedNode.id)) return;
-    setSelectedNode(null);
-    setHighlightedIds(null);
-    setDetailDrawerOpen(false);
-  }, [filteredData, selectedNode]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -290,8 +221,6 @@ export function CodeGraphSurface({
           cameraActionToken={cameraCommand?.token || 0}
           onNodeClick={(node) => {
             setSelectedNode(node);
-            setDetailDrawerOpen(true);
-            setFilterDrawerOpen(false);
             const connected = new Set([node.id]);
             for (const edge of filteredData.edges) {
               if (edge.source === node.id) connected.add(edge.target);
@@ -302,45 +231,16 @@ export function CodeGraphSurface({
         />
       </div>
 
-      <div
-        style={{
-          position: "absolute",
-          zIndex: 4,
-          right: 12,
-          top: 12,
-          display: "flex",
-          gap: 8,
-        }}
-      >
+      <div style={{ position: "absolute", zIndex: 4, right: 12, top: 12, display: "flex", gap: 8 }}>
         <button
           type="button"
-          onClick={() => {
-            setFilterDrawerOpen(true);
-            setDetailDrawerOpen(false);
-          }}
+          onClick={() => setFilterDrawerOpen(true)}
           style={graphDrawerButtonStyle({
             fontSize: 11,
             padding: "6px 9px",
           })}
         >
           Filters
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            if (!selectedNode) return;
-            setDetailDrawerOpen(true);
-            setFilterDrawerOpen(false);
-          }}
-          disabled={!selectedNode}
-          style={graphDrawerButtonStyle({
-            fontSize: 11,
-            padding: "6px 9px",
-            cursor: selectedNode ? "pointer" : "not-allowed",
-            opacity: selectedNode ? 1 : 0.45,
-          })}
-        >
-          Details
         </button>
         <button
           type="button"
@@ -381,11 +281,7 @@ export function CodeGraphSurface({
               const next = new Set(previous);
               if (next.has(label)) next.delete(label);
               else next.add(label);
-              emitViewContract({
-                labels: next,
-                edgeTypes: enabledEdgeTypes,
-                nextShowLabels: showLabels,
-              });
+              emitViewContract({ labels: next, edgeTypes: enabledEdgeTypes, nextShowLabels: showLabels });
               return next;
             });
           }}
@@ -394,22 +290,14 @@ export function CodeGraphSurface({
               const next = new Set(previous);
               if (next.has(type)) next.delete(type);
               else next.add(type);
-              emitViewContract({
-                labels: enabledLabels,
-                edgeTypes: next,
-                nextShowLabels: showLabels,
-              });
+              emitViewContract({ labels: enabledLabels, edgeTypes: next, nextShowLabels: showLabels });
               return next;
             });
           }}
           onToggleShowLabels={() =>
             setShowLabels((previous) => {
               const nextShowLabels = !previous;
-              emitViewContract({
-                labels: enabledLabels,
-                edgeTypes: enabledEdgeTypes,
-                nextShowLabels,
-              });
+              emitViewContract({ labels: enabledLabels, edgeTypes: enabledEdgeTypes, nextShowLabels });
               return nextShowLabels;
             })
           }
@@ -430,224 +318,6 @@ export function CodeGraphSurface({
         />
       </RightGlassDrawer>
 
-      <RightGlassDrawer
-        isOpen={detailDrawerOpen && Boolean(selectedNodeDetails)}
-        title="Node Tour"
-        onClose={() => setDetailDrawerOpen(false)}
-        defaultWidth={380}
-        minWidth={340}
-        maxWidth={560}
-        storageKey="liquidaity.drawer.codegraph-node-tour.width"
-        dataTestId="codegraph-node-tour-drawer"
-        top={48}
-        right={12}
-        bottom={12}
-        zIndex={6}
-      >
-        {selectedNodeDetails ? (
-          <div style={{ display: "grid", gap: 14 }}>
-            <section
-              style={{
-                border: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`,
-                borderRadius: 10,
-                background: GRAPH_THEME.drawer.sectionBackground,
-                padding: 12,
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  marginBottom: 8,
-                }}
-              >
-                <span
-                  style={{
-                    borderRadius: 999,
-                    border: `1px solid ${GRAPH_THEME.accent.primaryBorder}`,
-                    background: GRAPH_THEME.accent.primarySoft,
-                    color: GRAPH_THEME.drawer.inputText,
-                    fontSize: 10,
-                    fontWeight: 700,
-                    padding: "3px 7px",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {selectedNodeDetails.kind}
-                </span>
-                <span style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 11 }}>
-                  {selectedNodeDetails.relationshipCount} relationship
-                  {selectedNodeDetails.relationshipCount === 1 ? "" : "s"}
-                </span>
-              </div>
-              <h2
-                style={{
-                  color: GRAPH_THEME.drawer.inputText,
-                  fontSize: 18,
-                  fontWeight: 750,
-                  lineHeight: 1.18,
-                  margin: "0 0 8px",
-                  overflowWrap: "anywhere",
-                }}
-              >
-                {selectedNodeDetails.node.name}
-              </h2>
-              <p
-                style={{
-                  color: GRAPH_THEME.drawer.inputMuted,
-                  fontSize: 12,
-                  lineHeight: 1.55,
-                  margin: 0,
-                }}
-              >
-                {selectedNodeDetails.summary}
-              </p>
-            </section>
-
-            {selectedNodeDetails.fileRefs.length > 0 ? (
-              <section style={{ display: "grid", gap: 8 }}>
-                <div
-                  style={{
-                    color: GRAPH_THEME.accent.primary,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    letterSpacing: "0.08em",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  Referenced Files
-                </div>
-                <div style={{ display: "grid", gap: 6 }}>
-                  {selectedNodeDetails.fileRefs.map((filePath) => (
-                    <div
-                      key={filePath}
-                      title={filePath}
-                      style={{
-                        border: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`,
-                        borderRadius: 8,
-                        background: "rgba(167,176,186,0.035)",
-                        color: GRAPH_THEME.drawer.inputMuted,
-                        fontFamily: "monospace",
-                        fontSize: 11,
-                        lineHeight: 1.35,
-                        padding: "7px 8px",
-                        overflowWrap: "anywhere",
-                      }}
-                    >
-                      {filePath}
-                    </div>
-                  ))}
-                </div>
-              </section>
-            ) : null}
-
-            <section style={{ display: "grid", gap: 8 }}>
-              <div
-                style={{
-                  color: GRAPH_THEME.accent.primary,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  letterSpacing: "0.08em",
-                  textTransform: "uppercase",
-                }}
-              >
-                Relationships
-              </div>
-              {[...selectedNodeDetails.outgoing, ...selectedNodeDetails.incoming].length > 0 ? (
-                <div style={{ display: "grid", gap: 6 }}>
-                  {[...selectedNodeDetails.outgoing, ...selectedNodeDetails.incoming]
-                    .slice(0, 12)
-                    .map((item, index) => {
-                      const direction = item.edge.source === selectedNodeDetails.node.id ? "to" : "from";
-                      return (
-                        <button
-                          key={`${item.edge.source}-${item.edge.target}-${item.edge.type}-${index}`}
-                          type="button"
-                          onClick={() => {
-                            setSelectedNode(item.relatedNode);
-                            const connected = new Set([item.relatedNode.id]);
-                            for (const edge of filteredData.edges) {
-                              if (edge.source === item.relatedNode.id) connected.add(edge.target);
-                              if (edge.target === item.relatedNode.id) connected.add(edge.source);
-                            }
-                            setHighlightedIds(connected);
-                          }}
-                          style={{
-                            border: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`,
-                            borderRadius: 8,
-                            background: "rgba(167,176,186,0.035)",
-                            color: GRAPH_THEME.drawer.inputMuted,
-                            cursor: "pointer",
-                            display: "grid",
-                            gap: 3,
-                            padding: "8px 9px",
-                            textAlign: "left",
-                          }}
-                        >
-                          <span
-                            style={{
-                              color: GRAPH_THEME.drawer.inputText,
-                              fontSize: 12,
-                              fontWeight: 650,
-                            }}
-                          >
-                            {item.relatedNode.name}
-                          </span>
-                          <span style={{ fontSize: 11 }}>
-                            {formatCodeGraphLabel(item.edge.type)} {direction}{" "}
-                            {formatCodeGraphLabel(item.relatedNode.label)}
-                          </span>
-                        </button>
-                      );
-                    })}
-                </div>
-              ) : (
-                <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12 }}>
-                  No visible relationships under the current filters.
-                </div>
-              )}
-            </section>
-
-            <section
-              style={{
-                border: `1px solid ${GRAPH_THEME.accent.primaryBorder}`,
-                borderRadius: 10,
-                background: "rgba(55,173,170,0.07)",
-                padding: 12,
-              }}
-            >
-              <div
-                style={{
-                  color: GRAPH_THEME.accent.primary,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  letterSpacing: "0.08em",
-                  textTransform: "uppercase",
-                  marginBottom: 6,
-                }}
-              >
-                Tour Step
-              </div>
-              <div
-                style={{
-                  color: GRAPH_THEME.drawer.inputMuted,
-                  fontSize: 12,
-                  lineHeight: 1.55,
-                }}
-              >
-                Start here by reading the node type, file reference, and nearest relationships. Follow an outgoing
-                relationship to see what this code touches next, or an incoming relationship to see what depends on it.
-              </div>
-            </section>
-          </div>
-        ) : (
-          <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12 }}>
-            Select a CodeGraph node to inspect its relationships.
-          </div>
-        )}
-      </RightGlassDrawer>
-
       <div
         style={{
           ...graphControlStackStyle,
@@ -659,9 +329,7 @@ export function CodeGraphSurface({
           type="button"
           aria-label="Zoom in"
           onClick={() => setCameraCommand({ token: Date.now(), action: "zoom_in" })}
-          style={graphControlButtonStyle({
-            borderBottom: `1px solid ${GRAPH_THEME.controls.border}`,
-          })}
+          style={graphControlButtonStyle({ borderBottom: `1px solid ${GRAPH_THEME.controls.border}` })}
         >
           +
         </button>
@@ -669,9 +337,7 @@ export function CodeGraphSurface({
           type="button"
           aria-label="Zoom out"
           onClick={() => setCameraCommand({ token: Date.now(), action: "zoom_out" })}
-          style={graphControlButtonStyle({
-            borderBottom: `1px solid ${GRAPH_THEME.controls.border}`,
-          })}
+          style={graphControlButtonStyle({ borderBottom: `1px solid ${GRAPH_THEME.controls.border}` })}
         >
           -
         </button>
@@ -679,9 +345,7 @@ export function CodeGraphSurface({
           type="button"
           aria-label="Recenter view"
           onClick={() => setCameraCommand({ token: Date.now(), action: "fit_view" })}
-          style={graphControlButtonStyle({
-            borderBottom: `1px solid ${GRAPH_THEME.controls.border}`,
-          })}
+          style={graphControlButtonStyle({ borderBottom: `1px solid ${GRAPH_THEME.controls.border}` })}
         >
           <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
             <path
@@ -729,6 +393,29 @@ export function CodeGraphSurface({
       >
         {filteredData.nodes.length.toLocaleString()} nodes / {filteredData.edges.length.toLocaleString()} edges
       </div>
+
+      {selectedNode ? (
+        <div
+          style={graphGlassPillStyle({
+            position: "absolute",
+            left: 56,
+            bottom: 44,
+            zIndex: 4,
+            maxWidth: 360,
+            fontSize: 12,
+            padding: "8px 10px",
+            lineHeight: 1.35,
+          })}
+        >
+          <div style={{ color: GRAPH_THEME.surface.text, fontWeight: 700, marginBottom: 4 }}>{selectedNode.name}</div>
+          <div style={{ color: GRAPH_THEME.surface.mutedText, marginBottom: 2 }}>{selectedNode.label}</div>
+          {selectedNode.file_path ? (
+            <div style={{ color: "rgba(255,255,255,0.45)", fontFamily: "monospace", fontSize: 11 }}>
+              {selectedNode.file_path}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
