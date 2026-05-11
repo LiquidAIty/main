@@ -132,7 +132,15 @@ class CardRuntimeParticipant(BaseModel):
 
 class WorkspaceObjectContext(BaseModel):
     activeSurface: str | None = None
+    activeWorkbench: str | None = None
+    connectedWorkbenchAgent: bool | None = None
+    repoPath: str | None = None
+    workspaceRoot: str | None = None
+    graphSource: str | None = None
+    analysisStatus: str | None = None
     workspaceView: str | None = None
+    selectedNodeId: str | None = None
+    selectedNodeName: str | None = None
     selectedObjectId: str | None = None
     selectedObjectType: str | None = None
     selectedObjectTitle: str | None = None

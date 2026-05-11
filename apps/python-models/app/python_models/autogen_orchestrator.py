@@ -803,7 +803,14 @@ def _workspace_object_context_payload(context: WorkspaceObjectContext | None) ->
     payload: dict[str, object] = {}
     text_limits = {
         "activeSurface": 64,
+        "activeWorkbench": 64,
+        "repoPath": 220,
+        "workspaceRoot": 220,
+        "graphSource": 64,
+        "analysisStatus": 64,
         "workspaceView": 64,
+        "selectedNodeId": 96,
+        "selectedNodeName": 120,
         "selectedObjectId": 96,
         "selectedObjectType": 64,
         "selectedObjectTitle": 120,
@@ -814,6 +821,8 @@ def _workspace_object_context_payload(context: WorkspaceObjectContext | None) ->
         value = _trim_text(getattr(context, key), limit)
         if value:
             payload[key] = value
+    if context.connectedWorkbenchAgent is not None:
+        payload["connectedWorkbenchAgent"] = bool(context.connectedWorkbenchAgent)
     for key in ("activeMagenticParticipants", "availableCanvasAgents", "excludedAgents"):
         values = [
             _trim_text(item, 96)

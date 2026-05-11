@@ -358,13 +358,30 @@ export type DeckWorkspaceObjectEditorContext = {
 export type DeckWorkspaceContext = {
   workspaceView: string;
   largeSurface: string;
+  activeSurface?: string | null;
+  activeWorkbench?: string | null;
+  connectedWorkbenchAgent?: boolean;
+  repoPath?: string | null;
+  workspaceRoot?: string | null;
+  graphSource?: string | null;
+  analysisStatus?: string | null;
+  selectedNodeId?: string | null;
+  selectedNodeName?: string | null;
   activeTab?: string | null;
   objectEditor: DeckWorkspaceObjectEditorContext;
 };
 
 export type WorkspaceObjectContext = {
   activeSurface?: string | null;
+  activeWorkbench?: string | null;
+  connectedWorkbenchAgent?: boolean;
+  repoPath?: string | null;
+  workspaceRoot?: string | null;
+  graphSource?: string | null;
+  analysisStatus?: string | null;
   workspaceView?: string | null;
+  selectedNodeId?: string | null;
+  selectedNodeName?: string | null;
   selectedObjectId?: string | null;
   selectedObjectType?: string | null;
   selectedObjectTitle?: string | null;

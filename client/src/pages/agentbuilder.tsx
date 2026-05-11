@@ -16,6 +16,8 @@ import BuilderCanvas, {
   type BuilderCanvasFocusRequest,
 } from '../components/builder/BuilderCanvas';
 import BuilderChat from '../components/builder/BuilderChat';
+import { useDashboardStore as useUaDashboardStore } from '../components/agents/ua/real-dashboard/store';
+import type { UaWorkbenchContext } from '../components/agents/ua/UaAgentPanelHost';
 import BuilderDrawer from '../components/builder/BuilderDrawer';
 import PlanMissionFlow from '../components/assist/PlanMissionFlow';
 import WorldSignalSurface from '../components/worldsignal/WorldSignalSurface';
@@ -120,8 +122,9 @@ import {
 import {
   getUaAgentDefinitionBySurface,
   getUiUaAgentDefinitions,
+  UA_INTERNAL_AGENT_DEFINITIONS,
   UA_AGENT_DEFINITIONS,
-  type UaAgentDefinition,
+  UA_WORKBENCH_DEFINITION,
   type UaUiAgentDefinition,
   type UaAgentSurfaceId,
 } from '../runtime/uaAgentDefinitions';
@@ -149,6 +152,7 @@ const TradingCanvasSurface = lazy(
   () => import('../features/trading/TradingCanvasSurface'),
 );
 const CODEBASE_MEMORY_PROJECT_NAME = 'C-Projects-LiquidAIty-main';
+const UA_DEFAULT_REPO_PATH = 'C:\\Projects\\LiquidAIty\\main';
 void KnowledgeSummaryPanel;
 void KnowledgeEvidencePanel;
 
@@ -758,7 +762,7 @@ function isVideoWorkbenchCard(card: AgentCardInstance | null | undefined): boole
 
 function isUaAgentCard(
   card: AgentCardInstance | null | undefined,
-  agent: UaAgentDefinition,
+  agent: UaUiAgentDefinition,
 ): boolean {
   if (!card) return false;
   return (
@@ -2397,19 +2401,22 @@ const UA_AGENT_CARD_COLUMNS = 3;
 const UA_AGENT_CARD_ORIGIN = { x: 340, y: -180 };
 const UA_AGENT_CARD_GAP = { x: 260, y: 120 };
 
-const UA_AGENT_CARD_IDS = new Set(
-  UA_AGENT_DEFINITIONS.map((agent) => `card_ua_${agent.id}`),
+const UA_WORKBENCH_CARD_ID = 'card_understand_anything';
+const UA_WORKBENCH_TEMPLATE_ID = UA_WORKBENCH_DEFINITION.templateId;
+const LEGACY_UA_INTERNAL_TEMPLATE_IDS = new Set(
+  UA_INTERNAL_AGENT_DEFINITIONS.map((agent) => agent.templateId),
 );
-const UA_AGENT_TEMPLATE_IDS = new Set(
-  UA_AGENT_DEFINITIONS.map((agent) => agent.templateId),
+const UA_UI_AGENT_CARD_IDS = new Set([UA_WORKBENCH_CARD_ID]);
+const UA_UI_AGENT_TEMPLATE_IDS = new Set(
+  getUiUaAgentDefinitions().map((agent) => agent.templateId),
 );
 
 function buildUaAgentSeedNodes(): AgentCardInstance[] {
-  return UA_AGENT_DEFINITIONS.map((agent, index) => {
+  return getUiUaAgentDefinitions().map((agent, index) => {
     const column = index % UA_AGENT_CARD_COLUMNS;
     const row = Math.floor(index / UA_AGENT_CARD_COLUMNS);
     return {
-      id: `card_ua_${agent.id}`,
+      id: UA_WORKBENCH_CARD_ID,
       kind: 'agent',
       templateId: agent.templateId,
       prompt:
@@ -2691,6 +2698,7 @@ const BUILDER_DECK_ID = INITIAL_DECK.id;
 const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
   card_assist: 'assist',
   card_local_coder: 'local_coder',
+  card_understand_anything: 'assist',
   // New specialist graph roles (current seeded Admin model)
   card_thinkgraph_agent: 'thinkgraph_agent',
   card_codegraph_agent: 'codegraph_agent',
@@ -2863,23 +2871,49 @@ function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
             : undefined,
       }))
       : [];
-  if (normalizedNodes.length === 0) return [];
+  const collapsedUaNodes = normalizedNodes.reduce<AgentCardInstance[]>(
+    (acc, node) => {
+      const isLegacyUaNode =
+        safeText(node.id).trim().toLowerCase().startsWith('card_ua_') ||
+        LEGACY_UA_INTERNAL_TEMPLATE_IDS.has(node.templateId) ||
+        node.templateId === UA_WORKBENCH_TEMPLATE_ID;
+      if (!isLegacyUaNode) {
+        acc.push(node);
+        return acc;
+      }
+      if (acc.some((existing) => existing.id === UA_WORKBENCH_CARD_ID)) {
+        return acc;
+      }
+      acc.push({
+        ...node,
+        id: UA_WORKBENCH_CARD_ID,
+        templateId: UA_WORKBENCH_TEMPLATE_ID,
+        runtimeBinding: UA_WORKBENCH_DEFINITION.runtimeBinding,
+        runtimeType: UA_WORKBENCH_DEFINITION.runtimeType,
+        title: UA_WORKBENCH_DEFINITION.name,
+        subtitle: UA_WORKBENCH_DEFINITION.subtitle,
+      });
+      return acc;
+    },
+    [],
+  );
+  if (collapsedUaNodes.length === 0) return [];
 
-  const existingIds = new Set(normalizedNodes.map((node) => node.id));
+  const existingIds = new Set(collapsedUaNodes.map((node) => node.id));
   const existingTemplateIds = new Set(
-    normalizedNodes.map((node) => node.templateId),
+    collapsedUaNodes.map((node) => node.templateId),
   );
   const appendedNodes = INITIAL_DECK.nodes
     .filter(
       (node) =>
         BASELINE_OPTIONAL_CARD_IDS.has(node.id) ||
-        UA_AGENT_CARD_IDS.has(node.id),
+        UA_UI_AGENT_CARD_IDS.has(node.id),
     )
     .filter((node) => {
       if (existingIds.has(node.id)) return false;
       if (
-        UA_AGENT_CARD_IDS.has(node.id) &&
-        UA_AGENT_TEMPLATE_IDS.has(node.templateId) &&
+        UA_UI_AGENT_CARD_IDS.has(node.id) &&
+        UA_UI_AGENT_TEMPLATE_IDS.has(node.templateId) &&
         existingTemplateIds.has(node.templateId)
       ) {
         return false;
@@ -2887,7 +2921,7 @@ function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
       return true;
     })
     .map((node) => cloneDeckDocument(node));
-  return [...normalizedNodes, ...appendedNodes];
+  return [...collapsedUaNodes, ...appendedNodes];
 }
 
 function normalizeDeckPromptTemplates(value: unknown): PromptTemplate[] {
@@ -4411,6 +4445,50 @@ export default function AgentBuilder(): React.ReactElement {
     () => getUaAgentDefinitionBySurface(workspaceView),
     [workspaceView],
   );
+  const uaSelectedNodeId = useUaDashboardStore((state) => state.selectedNodeId);
+  const uaGraph = useUaDashboardStore((state) => state.graph);
+  const uaWorkbenchContext = useMemo<UaWorkbenchContext>(() => {
+    const uaSurfaceActive = Boolean(
+      activeUaAgentDefinition &&
+        workspaceView === activeUaAgentDefinition.surfaceId,
+    );
+    const uaCard = uaSurfaceActive
+      ? deck.nodes.find((node) => isUaAgentCard(node, activeUaAgentDefinition))
+      : null;
+    const uaConnected = Boolean(
+      uaCard && buildBusConnectedCardIds(deck.nodes, deck.edges).has(uaCard.id),
+    );
+    const selectedUaNode =
+      uaSelectedNodeId && uaGraph
+        ? uaGraph.nodes.find((node) => node.id === uaSelectedNodeId) ?? null
+        : null;
+    const graphSource = 'sample_fallback' as const;
+    const analysisStatus =
+      graphSource === 'sample_fallback'
+        ? 'needs_repo_scan'
+        : uaGraph?.nodes?.length
+          ? 'graph_loaded'
+          : 'not_started';
+    return {
+      projectId: canvasProjectId || null,
+      repoPath: UA_DEFAULT_REPO_PATH,
+      workspaceRoot: UA_DEFAULT_REPO_PATH,
+      graphSource,
+      analysisStatus,
+      activeLens: activeUaAgentDefinition?.uiLens ?? 'project_scanner',
+      connectedWorkbenchAgent: uaConnected,
+      selectedNodeId: uaSelectedNodeId ?? null,
+      selectedNodeName: selectedUaNode?.name ?? null,
+    };
+  }, [
+    activeUaAgentDefinition,
+    canvasProjectId,
+    deck.edges,
+    deck.nodes,
+    uaGraph,
+    uaSelectedNodeId,
+    workspaceView,
+  ]);
   const [deckRevision, setDeckRevision] = useState<string | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -4894,43 +4972,72 @@ export default function AgentBuilder(): React.ReactElement {
     [deck, selectedCard, selectedCardConfig],
   );
   const activeDeckWorkspaceContext = useMemo<DeckWorkspaceContext>(
-    () => ({
-      workspaceView,
-      largeSurface,
-      activeTab: tab,
-      objectEditor: {
-        open: Boolean(objectDrawerOpen && selectedCard),
-        activeTab: selectedCard ? tab : null,
-        selectedCardId: selectedCard?.id ?? null,
-        selectedCardTitle: selectedCard
-          ? safeText(selectedCard.title || '').trim() || null
+    () => {
+      const uaSurfaceActive = Boolean(
+        activeUaAgentDefinition &&
+          workspaceView === activeUaAgentDefinition.surfaceId,
+      );
+      return {
+        workspaceView,
+        largeSurface,
+        activeSurface: uaSurfaceActive ? 'understand_anything' : null,
+        activeWorkbench: uaSurfaceActive ? 'ua_dashboard' : null,
+        connectedWorkbenchAgent: uaSurfaceActive
+          ? uaWorkbenchContext.connectedWorkbenchAgent
+          : false,
+        repoPath: uaSurfaceActive ? uaWorkbenchContext.repoPath : null,
+        workspaceRoot: uaSurfaceActive ? uaWorkbenchContext.workspaceRoot : null,
+        graphSource: uaSurfaceActive ? uaWorkbenchContext.graphSource : null,
+        analysisStatus: uaSurfaceActive
+          ? uaWorkbenchContext.analysisStatus
           : null,
-        selectedCardRuntimeType: selectedCard?.runtimeType ?? null,
-        editable: Boolean(
-          workspaceView === 'canvas' &&
-          objectDrawerOpen &&
-          selectedCard &&
-          !deckLoadBusy,
-        ),
-        runnable: Boolean(
-          workspaceView === 'canvas' &&
-          selectedCard &&
-          canvasProjectId &&
-          !deckLoadBusy &&
-          !deckRunBusy &&
-          !cardRunBusy,
-        ),
-      },
-    }),
+        selectedNodeId:
+          uaSurfaceActive && uaSelectedNodeId
+            ? compactAwarenessText(uaSelectedNodeId, 96)
+            : null,
+        selectedNodeName:
+          uaSurfaceActive && uaWorkbenchContext.selectedNodeName
+            ? compactAwarenessText(uaWorkbenchContext.selectedNodeName, 120)
+            : null,
+        activeTab: tab,
+        objectEditor: {
+          open: Boolean(objectDrawerOpen && selectedCard),
+          activeTab: selectedCard ? tab : null,
+          selectedCardId: selectedCard?.id ?? null,
+          selectedCardTitle: selectedCard
+            ? safeText(selectedCard.title || '').trim() || null
+            : null,
+          selectedCardRuntimeType: selectedCard?.runtimeType ?? null,
+          editable: Boolean(
+            workspaceView === 'canvas' &&
+              objectDrawerOpen &&
+              selectedCard &&
+              !deckLoadBusy,
+          ),
+          runnable: Boolean(
+            workspaceView === 'canvas' &&
+              selectedCard &&
+              canvasProjectId &&
+              !deckLoadBusy &&
+              !deckRunBusy &&
+              !cardRunBusy,
+          ),
+        },
+      };
+    },
     [
+      activeUaAgentDefinition,
       cardRunBusy,
       canvasProjectId,
+      deck,
       deckLoadBusy,
       deckRunBusy,
       largeSurface,
       objectDrawerOpen,
       selectedCard,
       tab,
+      uaWorkbenchContext,
+      uaSelectedNodeId,
       workspaceView,
     ],
   );
@@ -4944,6 +5051,80 @@ export default function AgentBuilder(): React.ReactElement {
       workspaceView: compactAwarenessText(workspaceView, 64),
       ...canvasAwareness,
     };
+
+    if (
+      activeUaAgentDefinition &&
+      workspaceView === activeUaAgentDefinition.surfaceId
+    ) {
+      const selectedUaNode =
+        uaSelectedNodeId && uaGraph
+          ? uaGraph.nodes.find((node) => node.id === uaSelectedNodeId) || null
+          : null;
+      context.activeSurface = 'understand_anything';
+      context.activeWorkbench = 'ua_dashboard';
+      context.connectedWorkbenchAgent = uaWorkbenchContext.connectedWorkbenchAgent;
+      context.repoPath = compactAwarenessText(uaWorkbenchContext.repoPath, 220);
+      context.workspaceRoot = compactAwarenessText(
+        uaWorkbenchContext.workspaceRoot,
+        220,
+      );
+      context.graphSource = compactAwarenessText(uaWorkbenchContext.graphSource, 64);
+      context.analysisStatus = compactAwarenessText(
+        uaWorkbenchContext.analysisStatus,
+        64,
+      );
+      context.selectedNodeId = compactAwarenessText(uaSelectedNodeId, 96);
+      context.selectedNodeName = compactAwarenessText(
+        selectedUaNode?.name ?? null,
+        120,
+      );
+      if (selectedUaNode) {
+        context.selectedObjectId = compactAwarenessText(selectedUaNode.id, 96);
+        context.selectedObjectType = compactAwarenessText(
+          `ua_node:${selectedUaNode.type}`,
+          64,
+        );
+        context.selectedObjectTitle = compactAwarenessText(
+          selectedUaNode.name,
+          120,
+        );
+        context.selectedText = compactAwarenessText(
+          selectedUaNode.summary,
+          WORKSPACE_OBJECT_SELECTED_TEXT_LIMIT,
+        );
+        context.openObjectSummary = compactAwarenessText(
+          [
+            `UA workbench selected node: ${selectedUaNode.name}`,
+            `type=${selectedUaNode.type}`,
+            `connected=${uaWorkbenchContext.connectedWorkbenchAgent ? 'yes' : 'no'}`,
+            `repo=${uaWorkbenchContext.repoPath}`,
+            `graphSource=${uaWorkbenchContext.graphSource}`,
+            `analysisStatus=${uaWorkbenchContext.analysisStatus}`,
+            `lens=${activeUaAgentDefinition.uiLens}`,
+          ].join('; '),
+          WORKSPACE_OBJECT_SUMMARY_LIMIT,
+        );
+      } else {
+        context.openObjectSummary = compactAwarenessText(
+          [
+            'UA workbench active',
+            `connected=${uaWorkbenchContext.connectedWorkbenchAgent ? 'yes' : 'no'}`,
+            `repo=${uaWorkbenchContext.repoPath}`,
+            `graphSource=${uaWorkbenchContext.graphSource}`,
+            `analysisStatus=${uaWorkbenchContext.analysisStatus}`,
+            `lens=${activeUaAgentDefinition.uiLens}`,
+          ].join('; '),
+          WORKSPACE_OBJECT_SUMMARY_LIMIT,
+        );
+      }
+      return context;
+    }
+
+    context.repoPath = compactAwarenessText(uaWorkbenchContext.repoPath, 220);
+    context.workspaceRoot = compactAwarenessText(
+      uaWorkbenchContext.workspaceRoot,
+      220,
+    );
 
     if (workspaceView === 'canvas' && selectedCard) {
       const runtimeType = normalizeRuntimeType(selectedCard.runtimeType) || 'assistant_agent';
@@ -4995,7 +5176,18 @@ export default function AgentBuilder(): React.ReactElement {
     }
 
     return context;
-  }, [deck, largeSurface, planMissionFocus, selectedCard, tab, workspaceView]);
+  }, [
+    activeUaAgentDefinition,
+    deck,
+    largeSurface,
+    planMissionFocus,
+    selectedCard,
+    tab,
+    uaWorkbenchContext,
+    uaGraph,
+    uaSelectedNodeId,
+    workspaceView,
+  ]);
   const deckValidation = useMemo(
     () => validateDeckDocument(deck, { enforceStartCard: true }),
     [deck],
@@ -7092,7 +7284,16 @@ export default function AgentBuilder(): React.ReactElement {
     const trimmed = t.trim();
     if (!trimmed) return;
     if (sending || deckRunBusy || cardRunBusy || deckLoadBusy) return;
-    if (!canvasProjectId) return;
+    if (!canvasProjectId) {
+      setMessages((m) => [
+        ...m,
+        {
+          role: 'assistant',
+          text: 'Select or create a project before running chat tasks.',
+        },
+      ]);
+      return;
+    }
     const interactionId = createWorkspaceTestingInteractionId('chat');
     const sendStartedAt = Date.now();
     const turnId = `assist:${Date.now()}:${uid()}`;
@@ -7608,8 +7809,7 @@ export default function AgentBuilder(): React.ReactElement {
             sending ||
             deckRunBusy ||
             cardRunBusy ||
-            deckLoadBusy ||
-            !canvasProjectId
+            deckLoadBusy
           }
           colors={C}
         />
@@ -8691,6 +8891,7 @@ export default function AgentBuilder(): React.ReactElement {
                     >
                       <UaAgentPanelHost
                         surfaceId={activeUaAgentDefinition.surfaceId}
+                        workbenchContext={uaWorkbenchContext}
                       />
                     </Suspense>
                   )}

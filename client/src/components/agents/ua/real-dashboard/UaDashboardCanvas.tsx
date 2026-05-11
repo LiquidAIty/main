@@ -1,16 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import type { UaDashboardLens } from "../../../../runtime/uaAgentDefinitions";
+import type { UaWorkbenchContext } from "../UaAgentPanelHost";
 import DomainGraphView from "./components/DomainGraphView";
-import FileExplorer from "./components/FileExplorer";
 import KnowledgeGraphView from "./components/KnowledgeGraphView";
 import NodeInfo from "./components/NodeInfo";
-import ProjectOverview from "./components/ProjectOverview";
-import SearchBar from "./components/SearchBar";
 import { buildUaSampleGraph } from "./sampleGraph";
 import { useDashboardStore, type ViewMode } from "./store";
 import "./uaDashboard.css";
-
-type SidebarTab = "info" | "files";
 
 const LENS_TO_VIEW_MODE: Record<UaDashboardLens, ViewMode> = {
   project_scanner: "structural",
@@ -24,16 +20,12 @@ const LENS_TO_VIEW_MODE: Record<UaDashboardLens, ViewMode> = {
   knowledge_graph_guide: "knowledge",
 };
 
-function getInitialSidebarTab(lens: UaDashboardLens): SidebarTab {
-  return lens === "project_scanner" || lens === "file_analyzer" ? "files" : "info";
-}
-
 export default function UaDashboardCanvas({
   lens,
-  title,
+  workbenchContext,
 }: {
   lens: UaDashboardLens;
-  title: string;
+  workbenchContext: UaWorkbenchContext;
 }) {
   const setGraph = useDashboardStore((s) => s.setGraph);
   const setDomainGraph = useDashboardStore((s) => s.setDomainGraph);
@@ -42,10 +34,23 @@ export default function UaDashboardCanvas({
   const startTour = useDashboardStore((s) => s.startTour);
   const viewMode = useDashboardStore((s) => s.viewMode);
   const selectedNodeId = useDashboardStore((s) => s.selectedNodeId);
-  const graph = useDashboardStore((s) => s.graph);
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => getInitialSidebarTab(lens));
 
-  const graphData = useMemo(() => buildUaSampleGraph("LiquidAIty UA Dashboard"), []);
+  const graphData = useMemo(() => {
+    const projectLabel = workbenchContext.projectId
+      ? `Project ${workbenchContext.projectId}`
+      : "LiquidAIty";
+    const sample = buildUaSampleGraph(projectLabel);
+    return {
+      ...sample,
+      project: {
+        ...sample.project,
+        description:
+          workbenchContext.graphSource === "sample_fallback"
+            ? `Fallback graph for ${workbenchContext.repoPath}; real analysis is not run yet.`
+            : sample.project.description,
+      },
+    };
+  }, [workbenchContext.graphSource, workbenchContext.projectId, workbenchContext.repoPath]);
 
   useEffect(() => {
     const mode = LENS_TO_VIEW_MODE[lens];
@@ -53,7 +58,6 @@ export default function UaDashboardCanvas({
     setDomainGraph(graphData);
     setIsKnowledgeGraph(mode === "knowledge");
     setViewMode(mode);
-    setSidebarTab(getInitialSidebarTab(lens));
     if (lens === "tour_builder" || lens === "knowledge_graph_guide") {
       window.setTimeout(() => startTour(), 0);
     }
@@ -65,35 +69,12 @@ export default function UaDashboardCanvas({
       data-ui-engine="ua_dashboard"
       data-ui-lens={lens}
       data-view-mode={viewMode}
+      data-project-id={workbenchContext.projectId ?? ""}
+      data-repo-path={workbenchContext.repoPath}
+      data-workspace-root={workbenchContext.workspaceRoot}
+      data-graph-source={workbenchContext.graphSource}
+      data-analysis-status={workbenchContext.analysisStatus}
     >
-      <header className="flex items-center px-4 py-3 bg-surface border-b border-border-subtle shrink-0 gap-4">
-        <div className="flex items-center gap-3 min-w-0">
-          <h1 className="font-heading text-lg text-text-primary tracking-wide truncate">
-            {graph?.project.name ?? "Understand Anything"}
-          </h1>
-          <div className="w-px h-5 bg-elevated" />
-          <span className="text-xs text-accent uppercase tracking-wider">{title}</span>
-        </div>
-        <div className="ml-auto flex items-center bg-elevated rounded-lg p-0.5">
-          {(["structural", "domain", "knowledge"] as const).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => setViewMode(mode)}
-              className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                viewMode === mode
-                  ? "bg-accent/20 text-accent"
-                  : "text-text-muted hover:text-text-secondary"
-              }`}
-            >
-              {mode === "structural" ? "Structural" : mode === "domain" ? "Domain" : "Knowledge"}
-            </button>
-          ))}
-        </div>
-      </header>
-
-      <SearchBar />
-
       <div className="flex-1 flex min-h-0 relative">
         <div className="flex-1 min-w-0 min-h-0 relative">
           {viewMode === "domain" ? (
@@ -108,33 +89,13 @@ export default function UaDashboardCanvas({
           )}
         </div>
 
-        <aside className="w-[320px] shrink-0 bg-surface border-l border-border-subtle overflow-hidden flex flex-col">
-          <div className="flex items-center gap-1 p-2 border-b border-border-subtle bg-surface shrink-0">
-            {(["info", "files"] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setSidebarTab(tab)}
-                className={`flex-1 px-3 py-1.5 rounded-md text-xs font-semibold uppercase tracking-wider transition-colors ${
-                  sidebarTab === tab
-                    ? "bg-accent/15 text-accent"
-                    : "text-text-muted hover:text-text-primary hover:bg-elevated"
-                }`}
-              >
-                {tab === "info" ? "Info" : "Files"}
-              </button>
-            ))}
-          </div>
-          <div className="flex-1 min-h-0 overflow-auto">
-            {sidebarTab === "files" ? (
-              <FileExplorer />
-            ) : selectedNodeId ? (
+        {selectedNodeId ? (
+          <aside className="absolute top-3 right-3 bottom-3 w-[340px] max-w-[42vw] bg-surface border border-border-subtle rounded-lg overflow-hidden flex flex-col shadow-lg z-20">
+            <div className="flex-1 min-h-0 overflow-auto">
               <NodeInfo />
-            ) : (
-              <ProjectOverview />
-            )}
-          </div>
-        </aside>
+            </div>
+          </aside>
+        ) : null}
       </div>
     </div>
   );
