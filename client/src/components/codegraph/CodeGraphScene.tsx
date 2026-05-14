@@ -59,7 +59,8 @@ function CameraCommandBridge({
       (minZ + maxZ) / 2,
     );
     const span = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1);
-    const fovRadians = (camera.fov * Math.PI) / 180;
+    const perspectiveCamera = camera as THREE.PerspectiveCamera;
+    const fovRadians = ((perspectiveCamera.fov || 50) * Math.PI) / 180;
     const distance = (span / Math.max(Math.tan(fovRadians / 2), 0.01)) * 0.72;
 
     const direction = new THREE.Vector3()

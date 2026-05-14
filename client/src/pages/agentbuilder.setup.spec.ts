@@ -177,7 +177,6 @@ describe('agentbuilder authoring flow', () => {
   it('ships the default example using the real magentic-led agent graph', () => {
     expect(INITIAL_DECK.nodes.map((node) => node.title)).toEqual([
       'Magentic-One',
-      'Assist',
       'ThinkGraph Agent',
       'CodeGraph Agent',
       'Research Agent',
@@ -188,15 +187,16 @@ describe('agentbuilder authoring flow', () => {
       'Image Maker Agent',
       'Code Agent',
       'Video Agent',
+      'Data Formulator',
       'Telescope Agent',
       'Plan Agent',
       'WorldSignals Agent',
+      'Understand Anything',
     ]);
 
     expect(INITIAL_DECK.nodes.filter((node) => node.runtimeType === 'graph_flow')).toEqual([]);
     expect(INITIAL_DECK.nodes.map((node) => node.runtimeBinding)).toEqual([
       null,
-      'assist',
       'thinkgraph_agent',
       'codegraph_agent',
       'research_agent',
@@ -207,13 +207,14 @@ describe('agentbuilder authoring flow', () => {
       'image_agent',
       'code_agent',
       'video_agent',
+      'data_formulator_agent',
       'telescope_agent',
       'plan_agent',
       'worldsignals_agent',
+      'assist',
     ]);
     expect(INITIAL_DECK.nodes.map((node) => node.templateId)).toEqual([
       'template_magentic',
-      'template_assist',
       'template_thinkgraph_agent',
       'template_codegraph_agent',
       'template_research_agent',
@@ -224,22 +225,18 @@ describe('agentbuilder authoring flow', () => {
       'template_image_workbench',
       'template_code_workbench',
       'template_video_workbench',
+      'template_data_formulator_workbench',
       'template_telescope_agent',
       'template_plan_agent',
       'template_worldsignals_agent',
+      'template_understand_anything_workbench',
     ]);
 
     expect(INITIAL_DECK.edges.map((edge) => ({
       source: edge.source,
       target: edge.target,
       edgeType: edge.edgeType,
-    }))).toEqual([
-      { source: 'card_magentic', target: 'card_research_agent', edgeType: 'magentic_option' },
-      { source: 'card_magentic', target: 'card_assist', edgeType: 'magentic_option' },
-      { source: 'card_knowgraph_agent', target: 'card_research_agent', edgeType: 'flow' },
-      { source: 'card_research_agent', target: 'card_codegraph_agent', edgeType: 'flow' },
-      { source: 'card_codegraph_agent', target: 'card_thinkgraph_agent', edgeType: 'flow' },
-    ]);
+    }))).toEqual([]);
   });
 
   it('prefers a real saved deck over the fallback seed and preserves its visible chain', () => {
@@ -271,16 +268,17 @@ describe('agentbuilder authoring flow', () => {
     expect(loaded.deck.nodes.map((node) => node.title)).toEqual([
       'Saved A',
       'Saved B',
-      'Assist',
       'NRGSim / Energy',
       'Local Coder',
       'Trading Agent',
       'Image Maker Agent',
       'Code Agent',
       'Video Agent',
+      'Data Formulator',
       'Telescope Agent',
       'Plan Agent',
       'WorldSignals Agent',
+      'Understand Anything',
       'Magentic-One',
     ]);
     expect(loaded.deck.edges).toEqual([
@@ -416,9 +414,11 @@ describe('agentbuilder authoring flow', () => {
   });
 
   it('uses the canonical chain only as a display fallback for truncated saved system decks', () => {
-    const assistNode = INITIAL_DECK.nodes.find((node) => node.id === 'card_assist');
-    if (!assistNode) {
-      throw new Error('missing_assist');
+    const orchestratorNode = INITIAL_DECK.nodes.find(
+      (node) => node.id === 'card_magentic',
+    );
+    if (!orchestratorNode) {
+      throw new Error('missing_magentic');
     }
 
     const truncatedSystemDeck: DeckDocument = {
@@ -428,9 +428,9 @@ describe('agentbuilder authoring flow', () => {
       version: 4,
       nodes: [
         {
-          ...JSON.parse(JSON.stringify(assistNode)),
-          id: 'card_assist',
-          title: 'Assist',
+          ...JSON.parse(JSON.stringify(orchestratorNode)),
+          id: 'card_magentic',
+          title: 'Magentic-One',
         },
       ],
       edges: [],
@@ -496,10 +496,28 @@ describe('agentbuilder authoring flow', () => {
 
     const hydrated = hydrateDeckDocument(legacyDeck);
 
-    expect(hydrated.nodes.map((node) => node.id)).toEqual(INITIAL_DECK.nodes.map((node) => node.id));
-    expect(hydrated.edges.map((edge) => [edge.source, edge.target, edge.edgeType])).toEqual(
-      INITIAL_DECK.edges.map((edge) => [edge.source, edge.target, edge.edgeType]),
-    );
+    expect(hydrated.nodes.map((node) => node.id)).toEqual([
+      'card_main_chat',
+      'card_kg_ingest',
+      'card_research',
+      'card_knowgraph',
+      'card_neo4j',
+      'card_energy_workbench',
+      'card_local_coder',
+      'card_trading_workbench',
+      'card_image_workbench',
+      'card_code_workbench',
+      'card_video_workbench',
+      'card_data_formulator_workbench',
+      'card_telescope_agent',
+      'card_plan_agent',
+      'card_worldsignals_agent',
+      'card_understand_anything',
+      'card_magentic',
+    ]);
+    expect(hydrated.edges.map((edge) => [edge.source, edge.target, edge.edgeType])).toEqual([
+      ['card_main_chat', 'card_kg_ingest', 'flow'],
+    ]);
     expect(hydrated.nodes.find((node) => node.id === 'card_magentic')?.runtimeOptions).toMatchObject({
       executionBackend: 'python_autogen',
       provider: 'openai',
@@ -548,16 +566,17 @@ describe('agentbuilder authoring flow', () => {
 
     expect(hydrated.nodes.map((node) => node.title)).toEqual([
       'Lonely',
-      'Assist',
       'NRGSim / Energy',
       'Local Coder',
       'Trading Agent',
       'Image Maker Agent',
       'Code Agent',
       'Video Agent',
+      'Data Formulator',
       'Telescope Agent',
       'Plan Agent',
       'WorldSignals Agent',
+      'Understand Anything',
       'Magentic-One',
     ]);
     expect(hydrated.edges).toEqual([]);
@@ -614,16 +633,17 @@ describe('agentbuilder authoring flow', () => {
     expect(hydrated.nodes.map((node) => node.title)).toEqual([
       'Main Chat',
       'Research Agent',
-      'Assist',
       'NRGSim / Energy',
       'Local Coder',
       'Trading Agent',
       'Image Maker Agent',
       'Code Agent',
       'Video Agent',
+      'Data Formulator',
       'Telescope Agent',
       'Plan Agent',
       'WorldSignals Agent',
+      'Understand Anything',
       'Magentic-One',
     ]);
     expect(hydrated.edges).toEqual([]);

@@ -1,15 +1,18 @@
 .ua-dashboard-host {
-  --color-root: #0a0a0a;
-  --color-surface: #111111;
-  --color-elevated: #1a1a1a;
-  --color-accent: #d4a574;
-  --color-accent-dim: #c9a96e;
-  --color-accent-bright: #e8c49a;
-  --color-text-primary: #f5f0eb;
-  --color-text-secondary: #a39787;
-  --color-text-muted: #6b5f53;
-  --color-border-subtle: rgba(212, 165, 116, 0.12);
-  --color-border-medium: rgba(212, 165, 116, 0.25);
+  --color-root: #0b0e12;
+  --color-surface: rgba(17, 22, 29, 0.92);
+  --color-elevated: rgba(23, 30, 38, 0.86);
+  --color-accent: #37adaa;
+  --color-accent-dim: rgba(55, 173, 170, 0.8);
+  --color-accent-bright: #f2a64a;
+  --color-text-primary: #f5f7fa;
+  --color-text-secondary: #a7b0ba;
+  --color-text-muted: rgba(167, 176, 186, 0.72);
+  --color-border-subtle: rgba(167, 176, 186, 0.2);
+  --color-border-medium: rgba(167, 176, 186, 0.34);
+  --ua-edge-neutral: rgba(167, 176, 186, 0.78);
+  --ua-edge-think: rgba(55, 173, 170, 0.76);
+  --ua-edge-amber: rgba(242, 166, 74, 0.74);
   --color-node-file: #4a7c9b;
   --color-node-function: #5a9e6f;
   --color-node-class: #8b6fb0;
@@ -33,7 +36,10 @@
   height: 100%;
   width: 100%;
   color: var(--color-text-primary);
-  background: var(--color-root);
+  background:
+    radial-gradient(circle at 18% 14%, rgba(55, 173, 170, 0.09), transparent 34%),
+    radial-gradient(circle at 78% 18%, rgba(242, 166, 74, 0.045), transparent 36%),
+    linear-gradient(180deg, rgba(17, 22, 29, 0.96), rgba(11, 14, 18, 0.99));
 }
 
 .ua-dashboard-host .font-heading { font-family: var(--font-heading); }
@@ -77,5 +83,17 @@
   backdrop-filter: blur(12px);
 }
 .ua-dashboard-host .react-flow__background {
-  background-color: var(--color-root) !important;
+  background-color: transparent !important;
+}
+
+.ua-dashboard-host .react-flow__controls {
+  border: 1px solid var(--color-border-subtle);
+  background: rgba(11, 14, 18, 0.9);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+}
+
+.ua-dashboard-host .react-flow__controls-button {
+  background: transparent;
+  border-bottom-color: var(--color-border-subtle);
+  color: var(--color-text-primary);
 }

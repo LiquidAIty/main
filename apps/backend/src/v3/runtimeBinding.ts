@@ -19,6 +19,7 @@ export const RUNTIME_BINDINGS = [
   'image_agent',
   'code_agent',
   'video_agent',
+  'data_formulator_agent',
 ] as const satisfies RuntimeBinding[];
 
 const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
@@ -41,6 +42,7 @@ const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
   card_image_workbench: 'image_agent',
   card_code_workbench: 'code_agent',
   card_video_workbench: 'video_agent',
+  card_data_formulator_workbench: 'data_formulator_agent',
 };
 
 export function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {

@@ -1256,7 +1256,10 @@ function EnergyInspector({
   const renderSolarTimeInput = (key: 'day' | 'hour') => (
     <SolarTimeControl
       key={key}
-      parameter={PARAMETER_META[key]}
+      parameter={{
+        ...PARAMETER_META[key],
+        unit: PARAMETER_META[key].unit ?? '',
+      }}
       value={inputs[key]}
       onChange={(value) => onParameterChange('energy:sun', key, value)}
     />

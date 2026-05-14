@@ -1,0 +1,23 @@
+{
+  "repoName": "data-formulator",
+  "sourcePath": "data-formulator-main",
+  "integrationMode": "absorbed-native",
+  "agentCard": "data-formulator",
+  "surface": "data-formulator",
+  "uiPolicy": "mount-real-data-formulator-ui-no-restyle",
+  "futureDesignTokenPass": true,
+  "allowedUse": [
+    "sidecar process",
+    "backend proxy",
+    "postMessage bridge later"
+  ],
+  "blockedUse": [
+    "iframe embed",
+    "LiquidAIty-native recreation",
+    "deep React imports",
+    "global CSS import into LiquidAIty",
+    "Redux store merge",
+    "UI restyle in this pass",
+    "package dependency merge without audit"
+  ]
+}

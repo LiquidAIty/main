@@ -10,15 +10,7 @@ export type UaGraphProposalTarget =
   | 'PlanSurface';
 
 export type UaAgentSurfaceId =
-  | 'ua_project_scanner'
-  | 'ua_file_analyzer'
-  | 'ua_architecture_analyzer'
-  | 'ua_domain_analyzer'
-  | 'ua_tour_builder'
-  | 'ua_graph_reviewer'
-  | 'ua_article_analyzer'
-  | 'ua_assemble_reviewer'
-  | 'ua_knowledge_graph_guide';
+  | 'ua_dashboard';
 
 export type UaAgentSkillType =
   | 'project_scanner'
@@ -45,6 +37,13 @@ type UaPanelModel = {
   }>;
 };
 
+type UaPromptModel = {
+  role: string;
+  goal: string;
+  proposalTarget: UaGraphProposalTarget;
+  proposalGuidance: string;
+};
+
 type UaAgentDefinitionBase = {
   id: string;
   name: string;
@@ -58,20 +57,22 @@ type UaAgentDefinitionBase = {
   skills: string[];
   runtimeBinding: RuntimeBinding;
   runtimeType: AgentCardRuntimeType;
-  addable: true;
+  addable: boolean;
   defaultConnected: false;
   requiresPlanApproval: boolean;
-  prompt: {
-    role: string;
-    goal: string;
-    proposalTarget: UaGraphProposalTarget;
-    proposalGuidance: string;
-  };
+  prompt: UaPromptModel;
 };
 
-export type UaAgentDefinition = UaAgentDefinitionBase & {
+export type UaInternalAgentDefinition = UaAgentDefinitionBase & {
+  hasUi: false;
+  hasCanvas: false;
+  addable: false;
+};
+
+export type UaUiAgentDefinition = UaAgentDefinitionBase & {
   hasUi: true;
   hasCanvas: true;
+  addable: true;
   uiEngine: UaUiEngine;
   uiLens: UaDashboardLens;
   surfaceId: UaAgentSurfaceId;
@@ -84,9 +85,16 @@ export type UaAgentDefinition = UaAgentDefinitionBase & {
   panel: UaPanelModel;
 };
 
-export type UaUiAgentDefinition = UaAgentDefinition;
+export type UaAgentDefinition =
+  | UaUiAgentDefinition
+  | UaInternalAgentDefinition;
 
-export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
+type UaInternalSeed = Omit<
+  UaInternalAgentDefinition,
+  'hasUi' | 'hasCanvas' | 'addable'
+>;
+
+const INTERNAL_UA_AGENT_SEEDS: readonly UaInternalSeed[] = [
   {
     id: 'project_scanner',
     name: 'Project Scanner',
@@ -100,19 +108,7 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
     skills: ['ua.project_scanner', 'repo_inventory', 'codegraph_proposal'],
     runtimeBinding: 'assist',
     runtimeType: 'assistant_agent',
-    addable: true,
     defaultConnected: false,
-    hasUi: true,
-    hasCanvas: true,
-    uiEngine: 'ua_dashboard',
-    uiLens: 'project_scanner',
-    surfaceId: 'ua_project_scanner',
-    panelKind: 'ua_project_scanner',
-    canvasKind: 'ua_project_scanner',
-    icon: 'M4 6h16M4 12h16M4 18h10',
-    cardIcon: 'M4 6h16M4 12h16M4 18h10',
-    railIcon: 'M4 6h16M4 12h16M4 18h10',
-    controlRailIcon: 'M4 6h16M4 12h16M4 18h10',
     requiresPlanApproval: false,
     prompt: {
       role: 'You are Project Scanner, a codebase inventory specialist for Agent Canvas.',
@@ -120,23 +116,6 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
       proposalTarget: 'CodeGraph',
       proposalGuidance:
         'Prefer source-grounded file, module, service, endpoint, and config proposals. Do not write graph data directly.',
-    },
-    panel: {
-      status: 'Inventory',
-      summary: 'ProjectOverview and FileExplorer style inventory panel.',
-      chips: ['files', 'frameworks', 'entry points', 'subsystems'],
-      drawerCopy:
-        'Project Scanner is available as a panel only after its card is connected to Magentic-One.',
-      sections: [
-        {
-          title: 'Inventory',
-          items: ['Repository roots', 'Package and app boundaries', 'Entrypoints and config files'],
-        },
-        {
-          title: 'Outputs',
-          items: ['Candidate CodeGraph nodes', 'Subsystem groupings', 'Missing-context flags'],
-        },
-      ],
     },
   },
   {
@@ -152,19 +131,7 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
     skills: ['ua.file_analyzer', 'symbol_analysis', 'codegraph_proposal'],
     runtimeBinding: 'assist',
     runtimeType: 'assistant_agent',
-    addable: true,
     defaultConnected: false,
-    hasUi: true,
-    hasCanvas: true,
-    uiEngine: 'ua_dashboard',
-    uiLens: 'file_analyzer',
-    surfaceId: 'ua_file_analyzer',
-    panelKind: 'ua_file_analyzer',
-    canvasKind: 'ua_file_analyzer',
-    icon: 'M6 3h9l3 3v15H6z M14 3v4h4 M8 11h8 M8 15h8',
-    cardIcon: 'M6 3h9l3 3v15H6z M14 3v4h4 M8 11h8 M8 15h8',
-    railIcon: 'M6 3h9l3 3v15H6z M14 3v4h4 M8 11h8 M8 15h8',
-    controlRailIcon: 'M6 3h9l3 3v15H6z M14 3v4h4 M8 11h8 M8 15h8',
     requiresPlanApproval: false,
     prompt: {
       role: 'You are File Analyzer, a source-grounded file and symbol analysis specialist for Agent Canvas.',
@@ -172,23 +139,6 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
       proposalTarget: 'CodeGraph',
       proposalGuidance:
         'Prefer source-grounded file, function, class, interface, route, and schema proposals. Do not write graph data directly.',
-    },
-    panel: {
-      status: 'Source',
-      summary: 'NodeInfo, CodeViewer, and SearchBar style source review panel.',
-      chips: ['symbols', 'imports', 'exports', 'risks'],
-      drawerCopy:
-        'File Analyzer is available as a panel only after its card is connected to Magentic-One.',
-      sections: [
-        {
-          title: 'Entities',
-          items: ['Functions and classes', 'Imports and exports', 'Local responsibilities'],
-        },
-        {
-          title: 'Review',
-          items: ['Risk notes', 'Line-grounded references', 'Candidate structural links'],
-        },
-      ],
     },
   },
   {
@@ -204,19 +154,7 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
     skills: ['ua.architecture_analyzer', 'architecture_review', 'codegraph_proposal'],
     runtimeBinding: 'assist',
     runtimeType: 'assistant_agent',
-    addable: true,
     defaultConnected: false,
-    hasUi: true,
-    hasCanvas: true,
-    uiEngine: 'ua_dashboard',
-    uiLens: 'architecture_analyzer',
-    surfaceId: 'ua_architecture_analyzer',
-    panelKind: 'ua_architecture_analyzer',
-    canvasKind: 'ua_architecture_analyzer',
-    icon: 'M4 18h16 M6 18V8h4v10 M14 18V4h4v14',
-    cardIcon: 'M4 18h16 M6 18V8h4v10 M14 18V4h4v14',
-    railIcon: 'M4 18h16 M6 18V8h4v10 M14 18V4h4v14',
-    controlRailIcon: 'M4 18h16 M6 18V8h4v10 M14 18V4h4v14',
     requiresPlanApproval: false,
     prompt: {
       role: 'You are Architecture Analyzer, a subsystem and dependency analysis specialist for Agent Canvas.',
@@ -224,23 +162,6 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
       proposalTarget: 'CodeGraph',
       proposalGuidance:
         'Prefer source-grounded subsystem, dependency, import, call, config, and route proposals. Do not write graph data directly.',
-    },
-    panel: {
-      status: 'Architecture',
-      summary: 'GraphView, LayerLegend, and LayerCluster style architecture panel.',
-      chips: ['layers', 'services', 'dependencies', 'runtime'],
-      drawerCopy:
-        'Architecture Analyzer is available as a panel only after its card is connected to Magentic-One.',
-      sections: [
-        {
-          title: 'Structure',
-          items: ['Layer boundaries', 'Service responsibilities', 'Runtime handoffs'],
-        },
-        {
-          title: 'Signals',
-          items: ['Dependency direction', 'Cross-cutting risks', 'Boundary violations'],
-        },
-      ],
     },
   },
   {
@@ -256,19 +177,7 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
     skills: ['ua.domain_analyzer', 'domain_graph', 'thinkgraph_proposal'],
     runtimeBinding: 'assist',
     runtimeType: 'assistant_agent',
-    addable: true,
     defaultConnected: false,
-    hasUi: true,
-    hasCanvas: true,
-    uiEngine: 'ua_dashboard',
-    uiLens: 'domain_analyzer',
-    surfaceId: 'ua_domain_analyzer',
-    panelKind: 'ua_domain_analyzer',
-    canvasKind: 'ua_domain_analyzer',
-    icon: 'M12 4a4 4 0 0 1 4 4c0 4-4 8-4 8s-4-4-4-8a4 4 0 0 1 4-4z M6 20h12',
-    cardIcon: 'M12 4a4 4 0 0 1 4 4c0 4-4 8-4 8s-4-4-4-8a4 4 0 0 1 4-4z M6 20h12',
-    railIcon: 'M12 4a4 4 0 0 1 4 4c0 4-4 8-4 8s-4-4-4-8a4 4 0 0 1 4-4z M6 20h12',
-    controlRailIcon: 'M12 4a4 4 0 0 1 4 4c0 4-4 8-4 8s-4-4-4-8a4 4 0 0 1 4-4z M6 20h12',
     requiresPlanApproval: false,
     prompt: {
       role: 'You are Domain Analyzer, a domain concept and business vocabulary specialist for Agent Canvas.',
@@ -276,23 +185,6 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
       proposalTarget: 'ThinkGraph',
       proposalGuidance:
         'Prefer provisional domain concept and uncertainty proposals. Do not write graph data directly.',
-    },
-    panel: {
-      status: 'Domain',
-      summary: 'DomainGraphView, DomainCluster, Flow, and Step style domain panel.',
-      chips: ['domain', 'flow', 'steps', 'uncertainty'],
-      drawerCopy:
-        'Domain Analyzer is available as a panel only after its card is connected to Magentic-One.',
-      sections: [
-        {
-          title: 'Domain Map',
-          items: ['Concept vocabulary', 'Business entities', 'Cross-domain interactions'],
-        },
-        {
-          title: 'Flow Steps',
-          items: ['User or system flows', 'Step responsibilities', 'Uncertain assumptions'],
-        },
-      ],
     },
   },
   {
@@ -308,19 +200,7 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
     skills: ['ua.tour_builder', 'onboarding_tour', 'plan_surface_proposal'],
     runtimeBinding: 'assist',
     runtimeType: 'assistant_agent',
-    addable: true,
     defaultConnected: false,
-    hasUi: true,
-    hasCanvas: true,
-    uiEngine: 'ua_dashboard',
-    uiLens: 'tour_builder',
-    surfaceId: 'ua_tour_builder',
-    panelKind: 'ua_tour_builder',
-    canvasKind: 'ua_tour_builder',
-    icon: 'M5 19V5l7-2 7 2v14l-7 2z M12 3v18',
-    cardIcon: 'M5 19V5l7-2 7 2v14l-7 2z M12 3v18',
-    railIcon: 'M5 19V5l7-2 7 2v14l-7 2z M12 3v18',
-    controlRailIcon: 'M5 19V5l7-2 7 2v14l-7 2z M12 3v18',
     requiresPlanApproval: false,
     prompt: {
       role: 'You are Tour Builder, a guided codebase tour specialist for Agent Canvas.',
@@ -328,23 +208,6 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
       proposalTarget: 'PlanSurface',
       proposalGuidance:
         'Prefer reviewable tour step proposals with titles, descriptions, file paths, symbols, graph node ids, and smoke checks. Do not write plan data directly.',
-    },
-    panel: {
-      status: 'Tour',
-      summary: 'LearnPanel style guided onboarding panel.',
-      chips: ['tour', 'onboarding', 'entry points', 'workflow'],
-      drawerCopy:
-        'Tour Builder is available as a panel only after its card is connected to Magentic-One.',
-      sections: [
-        {
-          title: 'Tour Path',
-          items: ['Entry points', 'Data flow checkpoints', 'Maintenance workflows'],
-        },
-        {
-          title: 'Step Model',
-          items: ['Tour steps', 'Referenced files', 'Expected learning outcomes'],
-        },
-      ],
     },
   },
   {
@@ -360,19 +223,7 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
     skills: ['ua.graph_reviewer', 'graph_validation', 'thinkgraph_proposal'],
     runtimeBinding: 'assist',
     runtimeType: 'assistant_agent',
-    addable: true,
     defaultConnected: false,
-    hasUi: true,
-    hasCanvas: true,
-    uiEngine: 'ua_dashboard',
-    uiLens: 'graph_reviewer',
-    surfaceId: 'ua_graph_reviewer',
-    panelKind: 'ua_graph_reviewer',
-    canvasKind: 'ua_graph_reviewer',
-    icon: 'M6 7a3 3 0 1 0 0.01 0 M18 7a3 3 0 1 0 0.01 0 M12 17a3 3 0 1 0 0.01 0 M8.5 8.5l7 0 M7.5 9.5l3 5 M16.5 9.5l-3 5',
-    cardIcon: 'M6 7a3 3 0 1 0 0.01 0 M18 7a3 3 0 1 0 0.01 0 M12 17a3 3 0 1 0 0.01 0 M8.5 8.5l7 0 M7.5 9.5l3 5 M16.5 9.5l-3 5',
-    railIcon: 'M6 7a3 3 0 1 0 0.01 0 M18 7a3 3 0 1 0 0.01 0 M12 17a3 3 0 1 0 0.01 0 M8.5 8.5l7 0 M7.5 9.5l3 5 M16.5 9.5l-3 5',
-    controlRailIcon: 'M6 7a3 3 0 1 0 0.01 0 M18 7a3 3 0 1 0 0.01 0 M12 17a3 3 0 1 0 0.01 0 M8.5 8.5l7 0 M7.5 9.5l3 5 M16.5 9.5l-3 5',
     requiresPlanApproval: false,
     prompt: {
       role: 'You are Graph Reviewer, a graph QA and consistency specialist for Agent Canvas.',
@@ -380,23 +231,6 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
       proposalTarget: 'ThinkGraph',
       proposalGuidance:
         'Prefer review finding and uncertainty proposals. Do not write graph data directly.',
-    },
-    panel: {
-      status: 'Review',
-      summary: 'WarningBanner and validation issue style graph QA panel.',
-      chips: ['gaps', 'confidence', 'provenance', 'validation'],
-      drawerCopy:
-        'Graph Reviewer is available as a panel only after its card is connected to Magentic-One.',
-      sections: [
-        {
-          title: 'Validation',
-          items: ['Dangling relationships', 'Stale or weak nodes', 'Missing provenance'],
-        },
-        {
-          title: 'Findings',
-          items: ['Confidence notes', 'Contradictions', 'Follow-up proposals'],
-        },
-      ],
     },
   },
   {
@@ -412,19 +246,7 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
     skills: ['ua.article_analyzer', 'knowledge_graph_extraction', 'article_relationships'],
     runtimeBinding: 'assist',
     runtimeType: 'assistant_agent',
-    addable: true,
     defaultConnected: false,
-    hasUi: true,
-    hasCanvas: true,
-    uiEngine: 'ua_dashboard',
-    uiLens: 'article_analyzer',
-    surfaceId: 'ua_article_analyzer',
-    panelKind: 'ua_article_analyzer',
-    canvasKind: 'ua_article_analyzer',
-    icon: 'M6 4h12v16H6z M9 8h6 M9 12h6 M9 16h4',
-    cardIcon: 'M6 4h12v16H6z M9 8h6 M9 12h6 M9 16h4',
-    railIcon: 'M6 4h12v16H6z M9 8h6 M9 12h6 M9 16h4',
-    controlRailIcon: 'M6 4h12v16H6z M9 8h6 M9 12h6 M9 16h4',
     requiresPlanApproval: false,
     prompt: {
       role: 'You are Article Analyzer, a markdown knowledge extraction specialist for Agent Canvas.',
@@ -432,23 +254,6 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
       proposalTarget: 'KnowGraph',
       proposalGuidance:
         'Prefer evidence-backed entity, claim, and relationship proposals. Do not write graph data directly.',
-    },
-    panel: {
-      status: 'Articles',
-      summary: 'KnowledgeGraphView style article knowledge panel.',
-      chips: ['entities', 'claims', 'topics', 'relationships'],
-      drawerCopy:
-        'Article Analyzer is available as a panel only after its card is connected to Magentic-One.',
-      sections: [
-        {
-          title: 'Extraction',
-          items: ['Named entities', 'Claims and decisions', 'Topic clusters'],
-        },
-        {
-          title: 'Relationships',
-          items: ['Builds-on links', 'Contradictions', 'Citations and examples'],
-        },
-      ],
     },
   },
   {
@@ -464,19 +269,7 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
     skills: ['ua.assemble_reviewer', 'assembly_review', 'knowledge_graph_validation'],
     runtimeBinding: 'assist',
     runtimeType: 'assistant_agent',
-    addable: true,
     defaultConnected: false,
-    hasUi: true,
-    hasCanvas: true,
-    uiEngine: 'ua_dashboard',
-    uiLens: 'assemble_reviewer',
-    surfaceId: 'ua_assemble_reviewer',
-    panelKind: 'ua_assemble_reviewer',
-    canvasKind: 'ua_assemble_reviewer',
-    icon: 'M5 5h14v4H5z M5 11h14v8H5z M8 15h3 M13 15h3',
-    cardIcon: 'M5 5h14v4H5z M5 11h14v8H5z M8 15h3 M13 15h3',
-    railIcon: 'M5 5h14v4H5z M5 11h14v8H5z M8 15h3 M13 15h3',
-    controlRailIcon: 'M5 5h14v4H5z M5 11h14v8H5z M8 15h3 M13 15h3',
     requiresPlanApproval: false,
     prompt: {
       role: 'You are Assemble Reviewer, a semantic QA reviewer for assembled Understand-Anything graph output.',
@@ -484,23 +277,6 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
       proposalTarget: 'KnowGraph',
       proposalGuidance:
         'Return review findings only. Do not write graph data directly or mutate assembled files.',
-    },
-    panel: {
-      status: 'Assembly',
-      summary: 'Shared UA dashboard canvas opened in assemble_reviewer lens.',
-      chips: ['merge report', 'recovery', 'cross-batch gaps', 'quality'],
-      drawerCopy:
-        'Assemble Reviewer uses the shared Understand-Anything dashboard canvas when connected to Magentic-One.',
-      sections: [
-        {
-          title: 'Review Inputs',
-          items: ['Merge script report', 'Assembled graph summary', 'Dropped node and edge notes'],
-        },
-        {
-          title: 'Review Focus',
-          items: ['Semantic merge issues', 'Recoverable gaps', 'Cross-batch relationship checks'],
-        },
-      ],
     },
   },
   {
@@ -516,19 +292,7 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
     skills: ['ua.knowledge_graph_guide', 'graph_reference', 'graph_navigation'],
     runtimeBinding: 'assist',
     runtimeType: 'assistant_agent',
-    addable: true,
     defaultConnected: false,
-    hasUi: true,
-    hasCanvas: true,
-    uiEngine: 'ua_dashboard',
-    uiLens: 'knowledge_graph_guide',
-    surfaceId: 'ua_knowledge_graph_guide',
-    panelKind: 'ua_knowledge_graph_guide',
-    canvasKind: 'ua_knowledge_graph_guide',
-    icon: 'M6 4h11a2 2 0 0 1 2 2v14H8a2 2 0 0 1-2-2z M9 8h6 M9 12h7 M9 16h5',
-    cardIcon: 'M6 4h11a2 2 0 0 1 2 2v14H8a2 2 0 0 1-2-2z M9 8h6 M9 12h7 M9 16h5',
-    railIcon: 'M6 4h11a2 2 0 0 1 2 2v14H8a2 2 0 0 1-2-2z M9 8h6 M9 12h7 M9 16h5',
-    controlRailIcon: 'M6 4h11a2 2 0 0 1 2 2v14H8a2 2 0 0 1-2-2z M9 8h6 M9 12h7 M9 16h5',
     requiresPlanApproval: false,
     prompt: {
       role: 'You are Knowledge Graph Guide, a guide for Understand-Anything graph structure and usage.',
@@ -537,25 +301,74 @@ export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
       proposalGuidance:
         'Return guidance and references only. Do not write graph data directly.',
     },
-    panel: {
-      status: 'Guide',
-      summary: 'Shared UA dashboard canvas opened in knowledge_graph_guide lens.',
-      chips: ['node types', 'edge types', 'layers', 'tours'],
-      drawerCopy:
-        'Knowledge Graph Guide uses the shared Understand-Anything dashboard canvas when connected to Magentic-One.',
-      sections: [
-        {
-          title: 'Reference',
-          items: ['Graph file locations', 'Node and edge conventions', 'Layer and tour structure'],
-        },
-        {
-          title: 'Navigation',
-          items: ['Query patterns', 'Relationship tracing', 'Dashboard usage guidance'],
-        },
-      ],
-    },
   },
 ] as const;
+
+export const UA_INTERNAL_AGENT_DEFINITIONS: readonly UaInternalAgentDefinition[] =
+  INTERNAL_UA_AGENT_SEEDS.map((seed) => ({
+    ...seed,
+    hasUi: false,
+    hasCanvas: false,
+    addable: false,
+  }));
+
+export const UA_WORKBENCH_DEFINITION: UaUiAgentDefinition = {
+  id: 'understand-anything',
+  name: 'Understand Anything',
+  description: 'Understand Anything workbench with internal lens routing.',
+  subtitle: 'UA graph dashboard workbench',
+  templateId: 'template_understand_anything_workbench',
+  promptTemplateId: 'prompt_understand_anything_workbench',
+  skillType: 'project_scanner',
+  sourceAgentFile: 'project-scanner.md',
+  skillId: 'ua.understand_anything_workbench',
+  skills: [
+    'ua.project_scanner',
+    'ua.file_analyzer',
+    'ua.architecture_analyzer',
+    'ua.domain_analyzer',
+    'ua.tour_builder',
+    'ua.graph_reviewer',
+    'ua.article_analyzer',
+    'ua.assemble_reviewer',
+    'ua.knowledge_graph_guide',
+  ],
+  runtimeBinding: 'assist',
+  runtimeType: 'assistant_agent',
+  addable: true,
+  defaultConnected: false,
+  hasUi: true,
+  hasCanvas: true,
+  uiEngine: 'ua_dashboard',
+  uiLens: 'project_scanner',
+  surfaceId: 'ua_dashboard',
+  panelKind: 'ua_dashboard',
+  canvasKind: 'ua_dashboard',
+  icon: 'M4 5h16v14H4z M8 9h8 M8 13h8',
+  cardIcon: 'M4 5h16v14H4z M8 9h8 M8 13h8',
+  railIcon: 'M4 5h16v14H4z M8 9h8 M8 13h8',
+  controlRailIcon: 'M4 5h16v14H4z M8 9h8 M8 13h8',
+  requiresPlanApproval: false,
+  prompt: {
+    role: 'You are the Understand Anything Workbench for Agent Canvas.',
+    goal: 'Route analysis requests through the correct internal UA lens and keep work in the shared real UA dashboard.',
+    proposalTarget: 'CodeGraph',
+    proposalGuidance:
+      'Use internal UA lenses for analysis. Do not write graph data directly.',
+  },
+  panel: {
+    status: '',
+    summary: '',
+    chips: [],
+    drawerCopy: '',
+    sections: [],
+  },
+};
+
+export const UA_AGENT_DEFINITIONS: readonly UaAgentDefinition[] = [
+  UA_WORKBENCH_DEFINITION,
+  ...UA_INTERNAL_AGENT_DEFINITIONS,
+];
 
 export function getUaAgentDefinitionBySurface(
   surfaceId: string | null | undefined,

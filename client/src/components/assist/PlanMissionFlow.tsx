@@ -210,7 +210,7 @@ function WallAnchorNode() {
   );
 }
 
-function MissionNode({ data, selected }: NodeProps<PlanMissionNodeData>) {
+function MissionNode({ data, selected }: NodeProps<any>) {
   const nodeData = data as PlanMissionNodeData;
   const status = String(nodeData?.status || 'seeded');
   const shellActive = Boolean(selected || status.toLowerCase() === 'running');
@@ -299,7 +299,7 @@ function formatFileSize(size: number) {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function PlanImageNode({ data, selected }: NodeProps<PlanArtifactNodeData>) {
+function PlanImageNode({ data, selected }: NodeProps<any>) {
   const nodeData = data as PlanArtifactNodeData;
   return (
     <div
@@ -348,7 +348,7 @@ function PlanImageNode({ data, selected }: NodeProps<PlanArtifactNodeData>) {
   );
 }
 
-function PlanPdfNode({ data, selected }: NodeProps<PlanArtifactNodeData>) {
+function PlanPdfNode({ data, selected }: NodeProps<any>) {
   const nodeData = data as PlanArtifactNodeData;
   return (
     <div
@@ -404,7 +404,7 @@ function PlanPdfNode({ data, selected }: NodeProps<PlanArtifactNodeData>) {
   );
 }
 
-function PlanFrameNode({ data, selected }: NodeProps<PlanFrameNodeData>) {
+function PlanFrameNode({ data, selected }: NodeProps<any>) {
   const nodeData = data as PlanFrameNodeData;
   return (
     <div
@@ -455,7 +455,7 @@ function PlanFrameNode({ data, selected }: NodeProps<PlanFrameNodeData>) {
   );
 }
 
-const missionNodeTypes = {
+const missionNodeTypes: any = {
   mission: MissionNode,
   wallAnchor: WallAnchorNode,
   planImage: PlanImageNode,
@@ -847,14 +847,16 @@ export default function PlanMissionFlow({
       return {
         ...edge,
         className: nextClassName,
-        data: nextData as PlanMissionFlowEdgeData,
+        data: nextData as unknown as PlanMissionFlowEdgeData,
       };
     });
   }, [WALL_ORCH_ID, editMode, edges, selectedNodeId]);
 
   const onNodesChange = (changes: NodeChange[]) => {
     const hasSurfaceChange = changes.some((change) =>
-      isPlanSurfaceNode({ id: change.id }),
+      'id' in change && typeof change.id === 'string'
+        ? isPlanSurfaceNode({ id: change.id })
+        : false,
     );
     if (hasSurfaceChange) {
       setPlanSurfaceNodes((current) => {
@@ -874,11 +876,17 @@ export default function PlanMissionFlow({
       });
     }
     setNodes((current) => {
-      const next = applyNodeChanges(changes, current);
+      const next = applyNodeChanges(changes, current) as typeof current;
       if (!onFocusChange) return next;
       const selectedChange = [...changes]
         .reverse()
-        .find((change) => change.type === 'select' && change.selected);
+        .find(
+          (change): change is NodeChange & { id: string; selected: boolean } =>
+            change.type === 'select' &&
+            'id' in change &&
+            typeof change.id === 'string' &&
+            Boolean((change as { selected?: boolean }).selected),
+        );
       if (!selectedChange) {
         const hasSelectionMutation = changes.some(
           (change) => change.type === 'select',
@@ -919,7 +927,7 @@ export default function PlanMissionFlow({
   };
 
   const onEdgesChange = (changes: EdgeChange[]) => {
-    setEdges((current) => applyEdgeChanges(changes, current));
+    setEdges((current) => applyEdgeChanges(changes, current) as typeof current);
   };
 
   const commitWallConnection = (connection: Connection) => {
@@ -1114,10 +1122,20 @@ export default function PlanMissionFlow({
           : null;
     if (clientX == null) return;
     if (Math.abs(clientX - rect.left) > 20) return;
-    const wallConnection =
+    const wallConnection: Connection =
       pending.handleType === 'target'
-        ? { source: WALL_ORCH_ID, target: pending.nodeId }
-        : { source: pending.nodeId, target: WALL_ORCH_ID };
+        ? {
+            source: WALL_ORCH_ID,
+            target: pending.nodeId,
+            sourceHandle: null,
+            targetHandle: null,
+          }
+        : {
+            source: pending.nodeId,
+            target: WALL_ORCH_ID,
+            sourceHandle: null,
+            targetHandle: null,
+          };
     commitWallConnection(wallConnection);
   };
 

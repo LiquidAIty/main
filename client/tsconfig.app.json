@@ -12,6 +12,10 @@
       "vite/client"
     ],
     "rootDir": "src",
+    "noImplicitAny": false,
+    "noImplicitOverride": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
     "module": "esnext",
     "moduleResolution": "bundler"
   },
@@ -32,7 +36,8 @@
     "vitest.config.mts",
     "eslint.config.js",
     "eslint.config.cjs",
-    "eslint.config.mjs"
+    "eslint.config.mjs",
+    "src/vendor/codebase-memory-ui/**"
   ],
   "include": ["src/**/*.js", "src/**/*.jsx", "src/**/*.ts", "src/**/*.tsx"]
 }

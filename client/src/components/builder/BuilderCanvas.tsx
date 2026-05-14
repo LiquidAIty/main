@@ -1318,7 +1318,17 @@ export default function BuilderCanvas({
         connectOnClick={false}
         deleteKeyCode={null}
         nodesDraggable={!layoutLocked}
-        isValidConnection={(connection) => isPlainConnectionAllowed(connection, edges)}
+        isValidConnection={(connection) =>
+          isPlainConnectionAllowed(
+            {
+              source: connection.source,
+              target: connection.target,
+              sourceHandle: connection.sourceHandle ?? null,
+              targetHandle: connection.targetHandle ?? null,
+            },
+            edges,
+          )
+        }
         onInit={setReactFlowInstance}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}

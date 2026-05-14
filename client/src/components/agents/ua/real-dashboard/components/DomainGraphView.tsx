@@ -5,7 +5,6 @@ import {
   Background,
   BackgroundVariant,
   Controls,
-  MiniMap,
 } from "@xyflow/react";
 import type { Edge, Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -16,6 +15,7 @@ import FlowNode from "./FlowNode";
 import type { FlowFlowNode } from "./FlowNode";
 import StepNode from "./StepNode";
 import type { StepFlowNode } from "./StepNode";
+import { GRAPH_THEME } from "../../../../graph/graphVisualTokens";
 import { useDashboardStore } from "../store";
 import { mergeElkPositions, nodesToElkInput } from "../utils/layout";
 import { applyElkLayout } from "../utils/elk-layout";
@@ -75,7 +75,12 @@ function buildDomainOverview(graph: KnowledgeGraph): BuiltGraph {
       source: e.source,
       target: e.target,
       label: e.description ?? "",
-      style: { stroke: "var(--color-accent)", strokeDasharray: "6 3", strokeWidth: 2 },
+      style: {
+        stroke: "var(--ua-edge-think)",
+        strokeDasharray: "6 3",
+        strokeWidth: 2.1,
+        opacity: 0.84,
+      },
       labelStyle: { fill: "var(--color-text-muted)", fontSize: 10 },
       labelBgStyle: { fill: "var(--color-surface)", fillOpacity: 0.9 },
       labelBgPadding: [6, 4] as [number, number],
@@ -156,7 +161,7 @@ function buildDomainDetail(
     id: `fs-${i}-${e.source}-${e.target}`,
     source: e.source,
     target: e.target,
-    style: { stroke: "var(--color-border-medium)", strokeWidth: 1.5 },
+    style: { stroke: "var(--ua-edge-neutral)", strokeWidth: 1.7, opacity: 0.72 },
     animated: false,
   }));
 
@@ -167,6 +172,7 @@ function DomainGraphViewInner() {
   const domainGraph = useDashboardStore((s) => s.domainGraph);
   const activeDomainId = useDashboardStore((s) => s.activeDomainId);
   const clearActiveDomain = useDashboardStore((s) => s.clearActiveDomain);
+  const selectNode = useDashboardStore((s) => s.selectNode);
 
   // Build structural nodes/edges/dims synchronously; only the layout call
   // itself is async, so we memo the structural pieces and run ELK in an
@@ -246,23 +252,31 @@ function DomainGraphViewInner() {
         edges={edges}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.2 }}
-        minZoom={0.1}
-        maxZoom={2}
+        fitViewOptions={{ padding: GRAPH_THEME.nav.fitPadding }}
+        minZoom={GRAPH_THEME.nav.minZoom}
+        maxZoom={GRAPH_THEME.nav.maxZoom}
+        panOnDrag
+        panOnScroll
+        zoomOnScroll
+        zoomOnPinch
+        selectionOnDrag={false}
+        onNodeClick={(_, node) => selectNode(node.id)}
+        onPaneClick={() => selectNode(null)}
         proOptions={{ hideAttribution: true }}
       >
         <Background
-          variant={BackgroundVariant.Dots}
-          gap={20}
-          size={1}
-          color="var(--color-border-subtle)"
+          variant={BackgroundVariant.Lines}
+          gap={GRAPH_THEME.graphPaper.minorStep}
+          size={GRAPH_THEME.graphPaper.lineWidth}
+          color={GRAPH_THEME.background.gridMinor}
+        />
+        <Background
+          variant={BackgroundVariant.Lines}
+          gap={GRAPH_THEME.graphPaper.majorStep}
+          size={GRAPH_THEME.graphPaper.lineWidth}
+          color={GRAPH_THEME.background.gridMajor}
         />
         <Controls />
-        <MiniMap
-          nodeColor="var(--color-accent)"
-          maskColor="var(--glass-bg)"
-          className="!bg-surface !border !border-border-subtle"
-        />
       </ReactFlow>
     </div>
   );

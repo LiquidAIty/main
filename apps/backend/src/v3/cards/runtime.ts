@@ -1742,7 +1742,40 @@ async function runMagenticCard(
 ): Promise<CardRunResult> {
   const callableHeads = resolveCallableHeadCards(card, context);
   if (callableHeads.length === 0) {
-    throw new Error(`magentic_callable_heads_required: cardId=${card.id}`);
+    const modelConfig = resolveCardModelConfig(card, effectiveAgent, `card_${card.id}`);
+    const prompt = [
+      resolveCardSystemPrompt(card, effectiveAgent),
+      'No callable head cards are currently connected to this Magentic-One card.',
+      'Answer the user directly instead of routing to another card.',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    const finalText = await runAssistantModelText(
+      card,
+      effectiveAgent,
+      modelConfig,
+      prompt,
+      runtimeInput,
+      false,
+    );
+    emitRuntimeMessage(context, {
+      cardId: card.id,
+      cardTitle: card.title,
+      runtimeType: 'magentic_one',
+      role: 'assistant',
+      content: finalText,
+    });
+    return {
+      output: finalText,
+      status: 'success',
+      startedAt,
+      endedAt: new Date().toISOString(),
+      runtimeBinding,
+      runtimeType: 'magentic_one',
+      seed: context.seed,
+      inputSummary: summarizeText(runtimeInput),
+      outputSummary: summarizeText(finalText),
+    };
   }
   const graphRelevantTask = isGraphRelevantMagenticTask(runtimeInput, callableHeads);
   const workspaceFocus = toWorkspaceFocusSummary(context.workspaceContext);

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { UA_AGENT_DEFINITIONS } from './uaAgentDefinitions';
+import {
+  UA_INTERNAL_AGENT_DEFINITIONS,
+  UA_WORKBENCH_DEFINITION,
+} from './uaAgentDefinitions';
 import {
   AGENT_CARD_REGISTRY,
   getApprovalRequiredDefs,
@@ -11,8 +14,8 @@ import {
 } from './agentCardRegistry';
 
 describe('agentCardRegistry', () => {
-  it('contains the existing LiquidAIty cards plus all UA cards', () => {
-    expect(AGENT_CARD_REGISTRY).toHaveLength(12 + UA_AGENT_DEFINITIONS.length);
+  it('contains the existing LiquidAIty cards plus one UA workbench card', () => {
+    expect(AGENT_CARD_REGISTRY).toHaveLength(14);
   });
 
   it('has unique ids', () => {
@@ -56,7 +59,7 @@ describe('agentCardRegistry', () => {
 
   it('keeps runtime card kinds available for legacy grouping', () => {
     expect(getCardDefsByKind('bus')).toHaveLength(1);
-    expect(getCardDefsByKind('workbench')).toHaveLength(6 + UA_AGENT_DEFINITIONS.length);
+    expect(getCardDefsByKind('workbench')).toHaveLength(8);
     expect(getCardDefsByKind('core')).toHaveLength(4);
     expect(getCardDefsByKind('signal')).toHaveLength(1);
   });
@@ -69,37 +72,28 @@ describe('agentCardRegistry', () => {
     expect(workbenchIds).not.toContain('knowledge');
   });
 
-  it('normalizes every UA card as a shared UA dashboard workbench', () => {
-    for (const ua of UA_AGENT_DEFINITIONS) {
-      const def = getCardDef(ua.id);
-      expect(def).toBeDefined();
-      expect(def!.agentKind).toBe('workbench');
-      expect(def!.skillId).toBe(ua.skillId);
-      expect(def!.skill.id).toBe(ua.skillId);
-      expect(def!.hasUi).toBe(true);
-      expect(def!.hasCanvas).toBe(true);
-      expect(def!.uiEngine).toBe('ua_dashboard');
-      expect(def!.uiLens).toBe(ua.uiLens);
-      expect(def!.panelKind).toBe(ua.panelKind);
-      expect(def!.canvasKind).toBe(ua.canvasKind);
-      expect(def!.cardIcon).toBeTruthy();
-      expect(def!.railIcon).toBeTruthy();
-      expect(def!.icon).toBe(def!.cardIcon);
-      expect(def!.workspaceSurface).toBe(ua.surfaceId);
-      expect(def!.workbenchId).toBe('ua_dashboard');
-      expect(def!.templateId).toBe(ua.templateId);
-      expect(def!.runtimeBinding).toBe(ua.runtimeBinding);
-      expect(def!.addable).toBe(true);
-      expect(def!.defaultConnected).toBe(false);
-      expect(def!.toolIds.length).toBeGreaterThan(0);
-      expect(def!.knowledgeScopes.length).toBeGreaterThan(0);
-      expect(def!.objectKinds.length).toBeGreaterThan(0);
-    }
+  it('exposes one UA dashboard workbench and keeps internal UA lenses non-UI', () => {
+    const def = getCardDef(UA_WORKBENCH_DEFINITION.id);
+    expect(def).toBeDefined();
+    expect(def!.agentKind).toBe('workbench');
+    expect(def!.skillId).toBe(UA_WORKBENCH_DEFINITION.skillId);
+    expect(def!.hasUi).toBe(true);
+    expect(def!.hasCanvas).toBe(true);
+    expect(def!.uiEngine).toBe('ua_dashboard');
+    expect(def!.uiLens).toBe('project_scanner');
+    expect(def!.panelKind).toBe(UA_WORKBENCH_DEFINITION.panelKind);
+    expect(def!.canvasKind).toBe(UA_WORKBENCH_DEFINITION.canvasKind);
+    expect(def!.workspaceSurface).toBe(UA_WORKBENCH_DEFINITION.surfaceId);
+    expect(def!.templateId).toBe(UA_WORKBENCH_DEFINITION.templateId);
+    expect(def!.addable).toBe(true);
+    expect(def!.defaultConnected).toBe(false);
+    expect(def!.skills).toEqual(UA_WORKBENCH_DEFINITION.skills);
+    expect(UA_INTERNAL_AGENT_DEFINITIONS).toHaveLength(9);
   });
 
   it('keeps rail eligibility metadata separate from default connection state', () => {
     const railEligible = getRailEligibleDefs();
-    expect(railEligible).toHaveLength(18);
+    expect(railEligible).toHaveLength(11);
     expect(railEligible.some((def) => def.id === 'sol')).toBe(false);
     expect(railEligible.some((def) => def.id === 'assist')).toBe(false);
     expect(railEligible.some((def) => def.id === 'validator')).toBe(false);

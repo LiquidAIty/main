@@ -149,18 +149,18 @@ describe('resolveCardDef', () => {
     ).toBe('video');
   });
 
-  it('resolves UA staged cards by template before the shared assist binding', () => {
+  it('resolves the single UA workbench card by template before the shared assist binding', () => {
     const def = resolveCardDef(
-      card('card_ua_project_scanner', {
+      card('card_understand_anything', {
         runtimeType: 'assistant_agent',
         runtimeBinding: 'assist',
-        templateId: 'template_project_scanner',
-        title: 'Project Scanner',
+        templateId: 'template_understand_anything_workbench',
+        title: 'Understand Anything',
       }),
     );
 
     expect(def).toBeDefined();
-    expect(def!.id).toBe('project_scanner');
+    expect(def!.id).toBe('understand-anything');
     expect(def!.uiEngine).toBe('ua_dashboard');
     expect(def!.uiLens).toBe('project_scanner');
   });
@@ -389,6 +389,7 @@ describe('resolveAllCards', () => {
       { id: 'card_code_workbench', runtimeType: 'assistant_agent', runtimeBinding: 'code_agent', templateId: 'template_code_workbench', title: 'Code Agent' },
       { id: 'card_video_workbench', runtimeType: 'assistant_agent', runtimeBinding: 'video_agent', templateId: 'template_video_workbench', title: 'Video Agent' },
       { id: 'card_telescope_agent', runtimeType: 'assistant_agent', runtimeBinding: 'telescope_agent', templateId: 'template_telescope_agent', title: 'Telescope Agent' },
+      { id: 'card_understand_anything', runtimeType: 'assistant_agent', runtimeBinding: 'assist', templateId: 'template_understand_anything_workbench', title: 'Understand Anything' },
     ];
     const edges: ResolverEdgeInput[] = [
       { id: 'edge_magentic_research', source: 'card_magentic', target: 'card_research_agent', edgeType: 'magentic_option' },
@@ -438,6 +439,8 @@ describe('resolveAllCards', () => {
     expect(result.get('card_video_workbench')!.busConnection).toBe('disconnected');
     expect(result.get('card_telescope_agent')!.def?.id).toBe('telescope');
     expect(result.get('card_telescope_agent')!.busConnection).toBe('disconnected');
+    expect(result.get('card_understand_anything')!.def?.id).toBe('understand-anything');
+    expect(result.get('card_understand_anything')!.busConnection).toBe('disconnected');
 
     // No edge was mutated
     expect(edges[0].edgeType).toBe('magentic_option');

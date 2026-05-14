@@ -1,9 +1,10 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { UaDashboardLens } from "../../../../runtime/uaAgentDefinitions";
 import type { UaWorkbenchContext } from "../UaAgentPanelHost";
 import DomainGraphView from "./components/DomainGraphView";
 import KnowledgeGraphView from "./components/KnowledgeGraphView";
 import NodeInfo from "./components/NodeInfo";
+import { loadUaKnowledgeGraph } from "./graphLoader";
 import { buildUaSampleGraph } from "./sampleGraph";
 import { useDashboardStore, type ViewMode } from "./store";
 import "./uaDashboard.css";
@@ -34,8 +35,10 @@ export default function UaDashboardCanvas({
   const startTour = useDashboardStore((s) => s.startTour);
   const viewMode = useDashboardStore((s) => s.viewMode);
   const selectedNodeId = useDashboardStore((s) => s.selectedNodeId);
+  const [resolvedGraphSource, setResolvedGraphSource] = useState(workbenchContext.graphSource);
+  const [resolvedAnalysisStatus, setResolvedAnalysisStatus] = useState(workbenchContext.analysisStatus);
 
-  const graphData = useMemo(() => {
+  const sampleGraphData = useMemo(() => {
     const projectLabel = workbenchContext.projectId
       ? `Project ${workbenchContext.projectId}`
       : "LiquidAIty";
@@ -54,14 +57,45 @@ export default function UaDashboardCanvas({
 
   useEffect(() => {
     const mode = LENS_TO_VIEW_MODE[lens];
-    setGraph(graphData);
-    setDomainGraph(graphData);
-    setIsKnowledgeGraph(mode === "knowledge");
-    setViewMode(mode);
-    if (lens === "tour_builder" || lens === "knowledge_graph_guide") {
-      window.setTimeout(() => startTour(), 0);
+    let cancelled = false;
+    const controller = new AbortController();
+
+    async function loadGraph() {
+      const loaded = await loadUaKnowledgeGraph(
+        workbenchContext.repoPath,
+        controller.signal,
+      );
+      const nextGraph = loaded?.graph ?? sampleGraphData;
+      const nextSource = loaded?.source ?? "sample_fallback";
+      const nextStatus = loaded ? "graph_loaded" : "needs_repo_scan";
+      if (cancelled) return;
+
+      setGraph(nextGraph);
+      setDomainGraph(nextGraph);
+      setIsKnowledgeGraph(mode === "knowledge");
+      setViewMode(mode);
+      setResolvedGraphSource(nextSource);
+      setResolvedAnalysisStatus(nextStatus);
+      if (lens === "tour_builder" || lens === "knowledge_graph_guide") {
+        window.setTimeout(() => startTour(), 0);
+      }
     }
-  }, [graphData, lens, setDomainGraph, setGraph, setIsKnowledgeGraph, setViewMode, startTour]);
+
+    loadGraph();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [
+    lens,
+    sampleGraphData,
+    setDomainGraph,
+    setGraph,
+    setIsKnowledgeGraph,
+    setViewMode,
+    startTour,
+    workbenchContext.repoPath,
+  ]);
 
   return (
     <div
@@ -72,11 +106,16 @@ export default function UaDashboardCanvas({
       data-project-id={workbenchContext.projectId ?? ""}
       data-repo-path={workbenchContext.repoPath}
       data-workspace-root={workbenchContext.workspaceRoot}
-      data-graph-source={workbenchContext.graphSource}
-      data-analysis-status={workbenchContext.analysisStatus}
+      data-graph-source={resolvedGraphSource}
+      data-analysis-status={resolvedAnalysisStatus}
     >
       <div className="flex-1 flex min-h-0 relative">
         <div className="flex-1 min-w-0 min-h-0 relative">
+          {resolvedGraphSource === "sample_fallback" ? (
+            <div className="absolute left-3 top-3 z-10 pointer-events-none rounded-md border border-border-subtle bg-surface/85 px-2 py-1 text-[10px] text-text-secondary">
+              UA graph source: sample fallback. Run `/understand` to generate `.understand-anything/knowledge-graph.json`.
+            </div>
+          ) : null}
           {viewMode === "domain" ? (
             <DomainGraphView />
           ) : (

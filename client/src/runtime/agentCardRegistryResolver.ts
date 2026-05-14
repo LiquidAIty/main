@@ -185,6 +185,7 @@ const BINDING_TO_REGISTRY_ID: Record<string, string> = {
   image_agent: 'image',
   code_agent: 'code',
   video_agent: 'video',
+  data_formulator_agent: 'data-formulator',
 
   // Plan Agent — ThinkGraph is the planning memory
   thinkgraph_agent: 'plan',

@@ -21,7 +21,8 @@ export type RuntimeBinding =
   | 'trading_agent'
   | 'image_agent'
   | 'code_agent'
-  | 'video_agent';
+  | 'video_agent'
+  | 'data_formulator_agent';
 
 export type AgentCardRuntimeType =
   | 'assistant_agent'

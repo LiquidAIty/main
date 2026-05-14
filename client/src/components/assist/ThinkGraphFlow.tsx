@@ -82,9 +82,9 @@ export default function ThinkGraphFlow({
   }, [projection.edges, setEdges]);
 
   const onNodesChange = (changes: NodeChange[]) => {
-    setNodes((current) => applyNodeChanges(changes, current));
+    setNodes((current) => applyNodeChanges(changes, current) as typeof current);
     const selectedChange = changes.find((change) => change.type === "select");
-    if (!selectedChange || !onFocusChange) return;
+    if (!selectedChange || !onFocusChange || !('id' in selectedChange)) return;
     const selectedNode = nodes.find((node) => node.id === selectedChange.id);
     if (!selectedNode || !selectedChange.selected) {
       onFocusChange(null);
@@ -98,7 +98,7 @@ export default function ThinkGraphFlow({
   };
 
   const onEdgesChange = (changes: EdgeChange[]) => {
-    setEdges((current) => applyEdgeChanges(changes, current));
+    setEdges((current) => applyEdgeChanges(changes, current) as typeof current);
   };
 
   return (

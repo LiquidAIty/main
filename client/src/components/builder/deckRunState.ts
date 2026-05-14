@@ -266,7 +266,15 @@ export function resolveDeckRunFinalText(run: DeckRun | null | undefined): string
   if (summarizedStep?.outputSummary) {
     return String(summarizedStep.outputSummary).trim();
   }
-  return "";
+  const failedStep = [...(run.steps || [])]
+    .reverse()
+    .find((step) => step.status === "error" && (cleanOptionalText(step.error) || cleanOptionalText(step.outputSummary)));
+  return (
+    cleanOptionalText(failedStep?.error) ||
+    cleanOptionalText(failedStep?.outputSummary) ||
+    cleanOptionalText(run.error) ||
+    ""
+  );
 }
 
 export function buildReloadStateFromDeckRuns(

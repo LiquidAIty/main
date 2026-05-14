@@ -374,6 +374,26 @@ describe('runCardWithContract runtime dispatch', () => {
     expect(llmHarness.runLLM).toHaveBeenCalledTimes(2);
   });
 
+  it('answers directly when magentic_one has no callable heads', async () => {
+    const magentic = createCard('magentic', 'magentic_one');
+    const effectiveMagentic = resolveEffectiveAgent(magentic, templates);
+    if (!effectiveMagentic) throw new Error('missing_effective_agent');
+
+    llmHarness.runLLM.mockResolvedValueOnce({ text: 'direct output' });
+
+    const result = await runCardWithContract(magentic, effectiveMagentic, 'answer this', {
+      userInput: 'answer this',
+      allCards: [magentic],
+      allEdges: [],
+      allTemplates: templates,
+    });
+
+    expect(result.status).toBe('success');
+    expect(result.runtimeType).toBe('magentic_one');
+    expect(result.output).toBe('direct output');
+    expect(llmHarness.runLLM).toHaveBeenCalledTimes(1);
+  });
+
   it('routes magentic_one to python autogen when executionBackend is enabled', async () => {
     const magentic = createCard('magentic', 'magentic_one');
     magentic.runtimeOptions = {

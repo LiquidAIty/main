@@ -7,7 +7,10 @@
  *
  * Nothing imports this file in production yet.
  */
-import { UA_AGENT_DEFINITIONS } from './uaAgentDefinitions';
+import {
+  UA_INTERNAL_AGENT_DEFINITIONS,
+  UA_WORKBENCH_DEFINITION,
+} from './uaAgentDefinitions';
 
 /**
  * Agent kind in the bus architecture.
@@ -326,10 +329,14 @@ function inferObjectKinds(def: AgentCardDefBase): readonly string[] {
   }
 }
 
-function buildUaSkill(agent: (typeof UA_AGENT_DEFINITIONS)[number]): AgentSkill {
-  const toolIds = UA_TOOL_IDS[agent.id] ?? ['mcp', 'memory'];
-  const knowledgeScopes = UA_KNOWLEDGE_SCOPES[agent.id] ?? ['CodeGraph', 'KnowGraph'];
-  const objectKinds = UA_OBJECT_KINDS[agent.id] ?? ['project', 'file'];
+const UA_INTERNAL_LENSES = UA_INTERNAL_AGENT_DEFINITIONS.map(
+  (agent) => agent.skillType,
+);
+
+function buildUaSkill(agent: typeof UA_WORKBENCH_DEFINITION): AgentSkill {
+  const toolIds = ['mcp', 'memory'];
+  const knowledgeScopes = ['CodeGraph', 'ThinkGraph', 'KnowGraph', 'Artifacts'];
+  const objectKinds = ['project', 'file', 'graph_node', 'graph_edge', 'article'];
 
   return {
     id: agent.skillId,
@@ -340,7 +347,7 @@ function buildUaSkill(agent: (typeof UA_AGENT_DEFINITIONS)[number]): AgentSkill 
     instructions: [
       agent.prompt.goal,
       agent.prompt.proposalGuidance,
-      `Open the shared Understand-Anything dashboard with the ${agent.uiLens} lens when the card is connected and focused.`,
+      `Available internal lenses: ${UA_INTERNAL_LENSES.join(', ')}.`,
     ],
     inputs: ['project context', 'selected object context', 'artifact context'],
     outputs: ['structured findings', 'review notes', 'dashboard lens state'],
@@ -349,7 +356,7 @@ function buildUaSkill(agent: (typeof UA_AGENT_DEFINITIONS)[number]): AgentSkill 
     objectKinds,
     safetyRules: [
       'Do not write graph persistence directly from this card.',
-      'Do not create a separate dashboard for this UA lens.',
+      'Keep UA lens routing internal to this single workbench card.',
       'Do not participate until the card is connected to Magentic-One.',
     ],
     evaluationHints: [
@@ -499,41 +506,55 @@ const RAW_AGENT_CARD_REGISTRY: readonly AgentCardDefBase[] = [
     runtimeSafe: false,
     runtimeType: 'assistant_agent',
   },
+  {
+    id: 'data-formulator',
+    name: 'Data Formulator',
+    description: 'In-process Data Formulator app workbench.',
+    kind: 'workbench',
+    ownedSurface: 'data-formulator',
+    railEligible: true,
+    requiresPlanApproval: false,
+    defaultConnected: false,
+    capabilityStatus: 'partial',
+    runtimeSafe: false,
+    runtimeType: 'assistant_agent',
+    runtimeBinding: 'data_formulator_agent',
+    templateId: 'template_data_formulator_workbench',
+    icon: 'M4 5h16v14H4z M7 9h4 M7 13h4 M13 9h4 M13 13h4',
+  },
 
-  // ── Understand-Anything specialist agents ───────────────────────
-  ...UA_AGENT_DEFINITIONS.map(
-    (agent): AgentCardDefBase => ({
-      id: agent.id,
-      name: agent.name,
-      description: agent.description,
-      kind: 'workbench',
-      ownedSurface: agent.hasUi ? agent.surfaceId : null,
-      railEligible: agent.hasUi,
-      requiresPlanApproval: agent.requiresPlanApproval,
-      defaultConnected: false,
-      capabilityStatus: 'partial',
-      runtimeSafe: true,
-      runtimeType: 'assistant_agent',
-      runtimeBinding: agent.runtimeBinding,
-      templateId: agent.templateId,
-      skills: agent.skills,
-      title: agent.name,
-      agentKind: 'workbench',
-      skillId: agent.skillId,
-      skill: buildUaSkill(agent),
-      icon: agent.cardIcon,
-      addable: agent.addable,
-      hasUi: agent.hasUi,
-      hasCanvas: agent.hasCanvas,
-      uiEngine: agent.uiEngine,
-      uiLens: agent.uiLens,
-      cardIcon: agent.cardIcon,
-      railIcon: agent.railIcon,
-      controlRailIcon: agent.railIcon,
-      panelKind: agent.panelKind,
-      canvasKind: agent.canvasKind,
-    }),
-  ),
+  // ── Understand-Anything workbench ───────────────────────────────
+  {
+    id: UA_WORKBENCH_DEFINITION.id,
+    name: UA_WORKBENCH_DEFINITION.name,
+    description: UA_WORKBENCH_DEFINITION.description,
+    kind: 'workbench',
+    ownedSurface: UA_WORKBENCH_DEFINITION.surfaceId,
+    railEligible: true,
+    requiresPlanApproval: UA_WORKBENCH_DEFINITION.requiresPlanApproval,
+    defaultConnected: false,
+    capabilityStatus: 'partial',
+    runtimeSafe: true,
+    runtimeType: 'assistant_agent',
+    runtimeBinding: UA_WORKBENCH_DEFINITION.runtimeBinding,
+    templateId: UA_WORKBENCH_DEFINITION.templateId,
+    skills: UA_WORKBENCH_DEFINITION.skills,
+    title: UA_WORKBENCH_DEFINITION.name,
+    agentKind: 'workbench',
+    skillId: UA_WORKBENCH_DEFINITION.skillId,
+    skill: buildUaSkill(UA_WORKBENCH_DEFINITION),
+    icon: UA_WORKBENCH_DEFINITION.cardIcon,
+    addable: true,
+    hasUi: true,
+    hasCanvas: true,
+    uiEngine: UA_WORKBENCH_DEFINITION.uiEngine,
+    uiLens: UA_WORKBENCH_DEFINITION.uiLens,
+    cardIcon: UA_WORKBENCH_DEFINITION.cardIcon,
+    railIcon: UA_WORKBENCH_DEFINITION.railIcon,
+    controlRailIcon: UA_WORKBENCH_DEFINITION.railIcon,
+    panelKind: UA_WORKBENCH_DEFINITION.panelKind,
+    canvasKind: UA_WORKBENCH_DEFINITION.canvasKind,
+  },
 
   // ── Signal agent ─────────────────────────────────────────────────
   {

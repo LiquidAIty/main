@@ -15,6 +15,10 @@ export default defineConfig(() => {
         'react',
         'react-dom',
         'scheduler',
+      ],
+      // Work around corrupted nested sourcemaps in three-stdlib pulled by
+      // @react-three/* during esbuild pre-bundling on dev startup.
+      exclude: [
         '@react-three/fiber',
         '@react-three/drei',
         '@react-three/postprocessing',
@@ -30,12 +34,10 @@ export default defineConfig(() => {
         '@react-three/postprocessing',
       ],
       alias: {
-        react: path.resolve(__dirname, 'node_modules/react'),
+        '@data-formulator': path.resolve(__dirname, '../data-formulator-main/src'),
         'react/jsx-runtime': path.resolve(__dirname, 'node_modules/react/jsx-runtime.js'),
         'react/jsx-dev-runtime': path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime.js'),
-        'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
         'react-dom/client': path.resolve(__dirname, 'node_modules/react-dom/client.js'),
-        'react-reconciler': path.resolve(__dirname, 'node_modules/react-reconciler'),
         '@react-three/fiber': path.resolve(
           __dirname,
           'node_modules/@react-three/fiber/dist/react-three-fiber.esm.js',

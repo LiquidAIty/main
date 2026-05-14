@@ -73,9 +73,6 @@ const TelescopeCanvas = React.forwardRef<TelescopeCanvasHandle, TelescopeCanvasP
           dblClickToZoom: true,
           scrollToZoom: false,
         },
-        // Dark background — the image IS the surface
-        // (OSD draws this behind tiles where no image data exists)
-        backgroundColor: '#020408',
       });
 
       viewerRef.current = viewer;
@@ -119,11 +116,11 @@ const TelescopeCanvas = React.forwardRef<TelescopeCanvasHandle, TelescopeCanvasP
           break;
         case 'image':
         default:
-          osdSource = { type: 'image', url: tileSource.url };
+          osdSource = tileSource.url;
           break;
       }
 
-      viewer.open(osdSource);
+      viewer.open(osdSource as unknown as OpenSeadragon.TileSourceSpecifier);
 
       return () => {
         viewer.removeHandler('open', onOpen);

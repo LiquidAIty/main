@@ -5,11 +5,11 @@ import {
   Background,
   BackgroundVariant,
   Controls,
-  MiniMap,
 } from "@xyflow/react";
 import type { Edge, Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
+import { GRAPH_THEME } from "../../../../graph/graphVisualTokens";
 import CustomNode from "./CustomNode";
 import type { CustomNodeData } from "./CustomNode";
 import { useDashboardStore } from "../store";
@@ -22,15 +22,15 @@ const nodeTypes = {
 
 /** Edge style presets by knowledge edge type. */
 const EDGE_STYLES: Record<string, React.CSSProperties> = {
-  related: { stroke: "var(--color-border-medium)", strokeWidth: 0.5, opacity: 0.12 },
+  related: { stroke: "var(--ua-edge-neutral)", strokeWidth: 1.4, opacity: 0.62 },
   cites: { stroke: "var(--color-node-source)", strokeWidth: 1.5, strokeDasharray: "6 3" },
-  contradicts: { stroke: "#c97070", strokeWidth: 2 },
+  contradicts: { stroke: "#c97070", strokeWidth: 2.1, opacity: 0.86 },
   builds_on: { stroke: "var(--color-node-claim)", strokeWidth: 1.5 },
   exemplifies: { stroke: "var(--color-node-entity)", strokeWidth: 1, strokeDasharray: "3 3" },
-  categorized_under: { stroke: "var(--color-border-medium)", strokeWidth: 0.5, opacity: 0.08 },
+  categorized_under: { stroke: "var(--ua-edge-neutral)", strokeWidth: 1.1, opacity: 0.36 },
   authored_by: { stroke: "var(--color-node-entity)", strokeWidth: 1, strokeDasharray: "4 4" },
-  implements: { stroke: "var(--color-node-function)", strokeWidth: 1, opacity: 0.4 },
-  depends_on: { stroke: "var(--color-node-module)", strokeWidth: 1, opacity: 0.4 },
+  implements: { stroke: "var(--ua-edge-think)", strokeWidth: 1.5, opacity: 0.7 },
+  depends_on: { stroke: "var(--ua-edge-amber)", strokeWidth: 1.5, opacity: 0.74 },
 };
 
 /** Compute node size based on connection count. */
@@ -210,7 +210,7 @@ function KnowledgeGraphViewInner() {
             opacity: 1,
           };
         } else {
-          style = { ...baseStyle, opacity: 0.04 };
+          style = { ...baseStyle, opacity: 0.18 };
         }
       } else {
         style = baseStyle;
@@ -250,34 +250,31 @@ function KnowledgeGraphViewInner() {
         edges={edges}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.15 }}
-        minZoom={0.05}
-        maxZoom={2}
+        fitViewOptions={{ padding: GRAPH_THEME.nav.fitPadding }}
+        minZoom={GRAPH_THEME.nav.minZoom}
+        maxZoom={GRAPH_THEME.nav.maxZoom}
+        panOnDrag
+        panOnScroll
+        zoomOnScroll
+        zoomOnPinch
+        selectionOnDrag={false}
+        onNodeClick={(_, node) => selectNode(node.id)}
+        onPaneClick={() => selectNode(null)}
         proOptions={{ hideAttribution: true }}
       >
         <Background
-          variant={BackgroundVariant.Dots}
-          gap={20}
-          size={1}
-          color="var(--color-border-subtle)"
+          variant={BackgroundVariant.Lines}
+          gap={GRAPH_THEME.graphPaper.minorStep}
+          size={GRAPH_THEME.graphPaper.lineWidth}
+          color={GRAPH_THEME.background.gridMinor}
+        />
+        <Background
+          variant={BackgroundVariant.Lines}
+          gap={GRAPH_THEME.graphPaper.majorStep}
+          size={GRAPH_THEME.graphPaper.lineWidth}
+          color={GRAPH_THEME.background.gridMajor}
         />
         <Controls />
-        <MiniMap
-          nodeColor={(n) => {
-            const data = n.data as CustomNodeData | undefined;
-            const type = data?.nodeType ?? "article";
-            const colorMap: Record<string, string> = {
-              article: "var(--color-node-article)",
-              entity: "var(--color-node-entity)",
-              topic: "var(--color-node-topic)",
-              claim: "var(--color-node-claim)",
-              source: "var(--color-node-source)",
-            };
-            return colorMap[type] ?? "var(--color-accent)";
-          }}
-          maskColor="var(--glass-bg)"
-          className="!bg-surface !border !border-border-subtle"
-        />
       </ReactFlow>
     </div>
   );

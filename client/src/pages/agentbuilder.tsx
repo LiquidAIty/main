@@ -17,10 +17,14 @@ import BuilderCanvas, {
 } from '../components/builder/BuilderCanvas';
 import BuilderChat from '../components/builder/BuilderChat';
 import { useDashboardStore as useUaDashboardStore } from '../components/agents/ua/real-dashboard/store';
+import { buildUaGraphCandidateUrls } from '../components/agents/ua/real-dashboard/graphLoader';
 import type { UaWorkbenchContext } from '../components/agents/ua/UaAgentPanelHost';
 import BuilderDrawer from '../components/builder/BuilderDrawer';
 import PlanMissionFlow from '../components/assist/PlanMissionFlow';
 import WorldSignalSurface from '../components/worldsignal/WorldSignalSurface';
+import DataFormulatorSurface, {
+  type DataFormulatorModelConfig,
+} from '../components/dataformulator/DataFormulatorSurface';
 import type {
   PlanMissionNodeData,
   PlanMissionNodeOverrideMap,
@@ -303,7 +307,7 @@ class EnergySurfaceErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { error: Error | null }
 > {
-  state = { error: null };
+  state: { error: Error | null } = { error: null };
 
   static getDerivedStateFromError(error: Error) {
     return { error };
@@ -354,7 +358,7 @@ class KnowledgeSurfaceErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { error: Error | null }
 > {
-  state = { error: null };
+  state: { error: Error | null } = { error: null };
 
   static getDerivedStateFromError(error: Error) {
     return { error };
@@ -760,6 +764,16 @@ function isVideoWorkbenchCard(card: AgentCardInstance | null | undefined): boole
   );
 }
 
+function isDataFormulatorWorkbenchCard(
+  card: AgentCardInstance | null | undefined,
+): boolean {
+  if (!card) return false;
+  return (
+    safeText(card.id).trim() === 'card_data_formulator_workbench' ||
+    safeText(card.templateId).trim() === 'template_data_formulator_workbench'
+  );
+}
+
 function isUaAgentCard(
   card: AgentCardInstance | null | undefined,
   agent: UaUiAgentDefinition,
@@ -777,6 +791,7 @@ type WorkbenchSurfaceId =
   | 'image'
   | 'code'
   | 'video'
+  | 'data-formulator'
   | UaAgentSurfaceId;
 
 type WorkbenchCardDescriptor = {
@@ -827,6 +842,14 @@ const WORKBENCH_CARD_DESCRIPTORS: readonly WorkbenchCardDescriptor[] = [
     disabledCopy:
       'Video Agent is staged as a selectable workbench card. Runtime is disabled until the video generation bridge exists.',
     matches: isVideoWorkbenchCard,
+  },
+  {
+    id: 'data-formulator',
+    title: 'Data Formulator',
+    openLabel: 'Open Data Formulator',
+    disabledCopy:
+      'Data Formulator opens the real in-process app surface.',
+    matches: isDataFormulatorWorkbenchCard,
   },
   ...getUiUaAgentDefinitions().map(
     (agent): WorkbenchCardDescriptor => ({
@@ -931,6 +954,7 @@ export type ProgressiveRailVisibility = {
   showImage: boolean;
   showCode: boolean;
   showVideo: boolean;
+  showDataFormulator: boolean;
   uaAgents: readonly UaUiAgentDefinition[];
 };
 
@@ -1169,6 +1193,13 @@ export function isVideoWorkbenchActive(
   return isWorkbenchSurfaceActive(nodes, edges, isVideoWorkbenchCard);
 }
 
+export function isDataFormulatorWorkbenchActive(
+  nodes: readonly AgentCardInstance[],
+  edges: readonly DeckEdge[],
+): boolean {
+  return isWorkbenchSurfaceActive(nodes, edges, isDataFormulatorWorkbenchCard);
+}
+
 function getVisibleUaRailAgents(
   nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
@@ -1240,6 +1271,9 @@ export function deriveVisibleRailItems({
     showVideo:
       workspaceView === 'video' ||
       isVideoWorkbenchActive(deck.nodes, deck.edges),
+    showDataFormulator:
+      workspaceView === 'data-formulator' ||
+      isDataFormulatorWorkbenchActive(deck.nodes, deck.edges),
     uaAgents: getVisibleUaRailAgents(deck.nodes, deck.edges, workspaceView),
   };
 }
@@ -2395,6 +2429,16 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     maxTokens: 800,
     tools: [],
   },
+  {
+    id: 'template_data_formulator_workbench',
+    name: 'Data Formulator',
+    promptTemplate: 'prompt_assist',
+    model: 'gpt-5-mini',
+    provider: 'openai',
+    temperature: 0.2,
+    maxTokens: 800,
+    tools: [],
+  },
 ];
 
 const UA_AGENT_CARD_COLUMNS = 3;
@@ -2639,6 +2683,23 @@ export const INITIAL_DECK: DeckDocument = {
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
+      id: 'card_data_formulator_workbench',
+      kind: 'agent',
+      templateId: 'template_data_formulator_workbench',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_assist',
+        )?.content || '',
+      runtimeBinding: 'data_formulator_agent',
+      runtimeType: 'assistant_agent',
+      parentGraphId: 'workbench_data_formulator',
+      title: 'Data Formulator',
+      subtitle: 'Embedded upstream app',
+      position: { x: 1220, y: 320 },
+      status: 'ready',
+      cloneConfig: { enabled: false, seeds: [] },
+    },
+    {
       id: 'card_telescope_agent',
       kind: 'agent',
       templateId: 'template_telescope_agent',
@@ -2712,6 +2773,7 @@ const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
   card_image_workbench: 'image_agent',
   card_code_workbench: 'code_agent',
   card_video_workbench: 'video_agent',
+  card_data_formulator_workbench: 'data_formulator_agent',
   // Backward compatibility: legacy card IDs for existing saved decks
   card_main_chat: 'main_chat',
   card_kg_ingest: 'kg_ingest',
@@ -2730,6 +2792,7 @@ const BASELINE_OPTIONAL_CARD_IDS = new Set([
   'card_image_workbench',
   'card_code_workbench',
   'card_video_workbench',
+  'card_data_formulator_workbench',
 ]);
 const REMOVED_DEFAULT_CARD_IDS = new Set(['card_assist']);
 const REMOVED_DEFAULT_EDGE_IDS = new Set([
@@ -2771,6 +2834,7 @@ function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
   if (normalized === 'image_agent') return 'image_agent';
   if (normalized === 'code_agent') return 'code_agent';
   if (normalized === 'video_agent') return 'video_agent';
+  if (normalized === 'data_formulator_agent') return 'data_formulator_agent';
   return null;
 }
 
@@ -3324,6 +3388,10 @@ function seedCurrentSystemCardsIntoLegacyDeck(
         String(existingNode.subtitle || '').trim() === 'Gather upstream inputs'
           ? seedNode.subtitle
           : existingNode.subtitle || seedNode.subtitle;
+      const shouldResetDataFormulatorPosition =
+        seedNode.id === 'card_data_formulator_workbench' &&
+        existingNode.position?.x === 1040 &&
+        existingNode.position?.y === 320;
       return {
         ...cloneDeckDocument(seedNode),
         ...cloneDeckDocument(existingNode),
@@ -3346,7 +3414,9 @@ function seedCurrentSystemCardsIntoLegacyDeck(
         parentGraphId: cleanOptionalText(
           existingNode.parentGraphId ?? seedNode.parentGraphId ?? null,
         ),
-        position: existingNode.position || seedNode.position,
+        position: shouldResetDataFormulatorPosition
+          ? seedNode.position
+          : existingNode.position || seedNode.position,
         overrides: existingNode.overrides,
         status: existingNode.status ?? seedNode.status,
         cloneConfig: existingNode.cloneConfig ?? seedNode.cloneConfig,
@@ -4405,6 +4475,7 @@ export default function AgentBuilder(): React.ReactElement {
     | 'image'
     | 'code'
     | 'video'
+    | 'data-formulator'
     | 'worldsignal'
     | UaAgentSurfaceId
   >('chat');
@@ -4447,12 +4518,54 @@ export default function AgentBuilder(): React.ReactElement {
   );
   const uaSelectedNodeId = useUaDashboardStore((state) => state.selectedNodeId);
   const uaGraph = useUaDashboardStore((state) => state.graph);
+  const [uaGraphSource, setUaGraphSource] = useState<
+    UaWorkbenchContext['graphSource']
+  >('sample_fallback');
+  const [uaAnalysisStatus, setUaAnalysisStatus] = useState<
+    UaWorkbenchContext['analysisStatus']
+  >('needs_repo_scan');
+  useEffect(() => {
+    let cancelled = false;
+    async function probeUaGraphSource() {
+      const urls = buildUaGraphCandidateUrls(UA_DEFAULT_REPO_PATH);
+      for (const url of urls) {
+        try {
+          const response = await fetch(url, {
+            cache: 'no-store',
+            headers: { Accept: 'application/json' },
+          });
+          if (!response.ok) continue;
+          const payload = (await response.json()) as {
+            nodes?: unknown[];
+            edges?: unknown[];
+            project?: unknown;
+          };
+          if (!payload?.project || !Array.isArray(payload.nodes) || !Array.isArray(payload.edges)) {
+            continue;
+          }
+          if (cancelled) return;
+          setUaGraphSource('local_ua_json');
+          setUaAnalysisStatus('graph_loaded');
+          return;
+        } catch {
+          // Continue probing candidate URLs.
+        }
+      }
+      if (cancelled) return;
+      setUaGraphSource('sample_fallback');
+      setUaAnalysisStatus('needs_repo_scan');
+    }
+    probeUaGraphSource();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const uaWorkbenchContext = useMemo<UaWorkbenchContext>(() => {
     const uaSurfaceActive = Boolean(
       activeUaAgentDefinition &&
         workspaceView === activeUaAgentDefinition.surfaceId,
     );
-    const uaCard = uaSurfaceActive
+    const uaCard = uaSurfaceActive && activeUaAgentDefinition
       ? deck.nodes.find((node) => isUaAgentCard(node, activeUaAgentDefinition))
       : null;
     const uaConnected = Boolean(
@@ -4462,13 +4575,8 @@ export default function AgentBuilder(): React.ReactElement {
       uaSelectedNodeId && uaGraph
         ? uaGraph.nodes.find((node) => node.id === uaSelectedNodeId) ?? null
         : null;
-    const graphSource = 'sample_fallback' as const;
-    const analysisStatus =
-      graphSource === 'sample_fallback'
-        ? 'needs_repo_scan'
-        : uaGraph?.nodes?.length
-          ? 'graph_loaded'
-          : 'not_started';
+    const graphSource = uaGraphSource;
+    const analysisStatus = uaAnalysisStatus;
     return {
       projectId: canvasProjectId || null,
       repoPath: UA_DEFAULT_REPO_PATH,
@@ -4486,6 +4594,8 @@ export default function AgentBuilder(): React.ReactElement {
     deck.edges,
     deck.nodes,
     uaGraph,
+    uaAnalysisStatus,
+    uaGraphSource,
     uaSelectedNodeId,
     workspaceView,
   ]);
@@ -4963,9 +5073,37 @@ export default function AgentBuilder(): React.ReactElement {
             name: 'card_schema',
             schema: effectiveAgent.ioSchema,
           }
-        : null,
+      : null,
     };
   }, [effectiveAgent, selectedCard]);
+  const dataFormulatorModelConfig =
+    useMemo<DataFormulatorModelConfig | null>(() => {
+      const card = deck.nodes.find(isDataFormulatorWorkbenchCard);
+      if (!card) return null;
+
+      const agent = resolveEffectiveAgent(card, INITIAL_AGENT_TEMPLATES);
+      if (!agent) return null;
+      const runtimeProvider =
+        card.runtimeOptions?.provider === 'openai' ||
+        card.runtimeOptions?.provider === 'openrouter'
+          ? card.runtimeOptions.provider
+          : null;
+      const provider =
+        runtimeProvider ||
+        (agent.provider === 'openai' || agent.provider === 'openrouter'
+          ? agent.provider
+          : null);
+      const model =
+        cleanOptionalText(card.runtimeOptions?.modelKey) ||
+        cleanOptionalText(agent.model);
+
+      if (!provider || !model) return null;
+      return {
+        provider,
+        model,
+        ready: true,
+      };
+    }, [deck.nodes]);
   const selectedCardMemoryGraph = useMemo<AgentManagerMemoryGraphData | null>(
     () =>
       buildSelectedCardMemoryGraphData(deck, selectedCard, selectedCardConfig),
@@ -8167,7 +8305,7 @@ export default function AgentBuilder(): React.ReactElement {
                       style={{
                         fontSize: 13,
                         fontWeight: 600,
-                        color: GRAPH_THEME.text.primary,
+                        color: C.text,
                       }}
                     >
                       {pendingActivationProposal.title}
@@ -8196,7 +8334,7 @@ export default function AgentBuilder(): React.ReactElement {
                       }
                       className="px-3 py-1 rounded"
                       style={{
-                        color: GRAPH_THEME.text.primary,
+                        color: C.text,
                         background: 'rgba(79,162,173,0.16)',
                         border: '1px solid rgba(79,162,173,0.28)',
                       }}
@@ -8316,6 +8454,10 @@ export default function AgentBuilder(): React.ReactElement {
 
   const showVideoWorkspace = useCallback(() => {
     showWorkbenchWorkspace('video');
+  }, [showWorkbenchWorkspace]);
+
+  const showDataFormulatorWorkspace = useCallback(() => {
+    showWorkbenchWorkspace('data-formulator');
   }, [showWorkbenchWorkspace]);
 
   const showWorldsignalWorkspace = useCallback(() => {
@@ -8607,6 +8749,23 @@ export default function AgentBuilder(): React.ReactElement {
               <Icon d="M5 7h10v10H5z M15 10l4-2v8l-4-2" />
             </button>
           ) : null}
+          {visibleRailItems.showDataFormulator ? (
+            <button
+              title="Data Formulator"
+              aria-label="Data Formulator"
+              data-testid="rail-data-formulator-button"
+              onClick={showDataFormulatorWorkspace}
+              className="p-2 rounded"
+              style={{
+                color:
+                  workspaceView === 'data-formulator'
+                    ? GRAPH_THEME.accent.solar
+                    : C.text,
+              }}
+            >
+              <Icon d="M4 5h16v14H4z M7 9h4 M7 13h4 M13 9h4 M13 13h4" />
+            </button>
+          ) : null}
           {visibleRailItems.uaAgents.map((agent) => (
             <button
               key={agent.id}
@@ -8874,6 +9033,11 @@ export default function AgentBuilder(): React.ReactElement {
                         'Assemble, export, and publish later when the video bridge exists.',
                       ],
                     })}
+                  {workspaceView === 'data-formulator' && (
+                    <DataFormulatorSurface
+                      modelConfig={dataFormulatorModelConfig}
+                    />
+                  )}
                   {activeUaAgentDefinition && (
                     <Suspense
                       fallback={
