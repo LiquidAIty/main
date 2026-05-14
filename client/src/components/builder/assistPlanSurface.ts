@@ -203,21 +203,73 @@ export function buildStructuredAssistPlanSurface(
   );
   const explicitHumanTasks = normalizeTextList(planObj?.humanTasks ?? planObj?.human_tasks);
   const explicitAgentTasks = normalizeTextList(planObj?.agentTasks ?? planObj?.agent_tasks);
+  const structuredSteps = Array.isArray(planObj?.steps)
+    ? (planObj.steps as Array<Record<string, unknown>>)
+        .map((step) => ({
+          title: safeText(step?.title).trim(),
+          assignedAgentId: safeText(step?.assignedAgentId).trim(),
+        }))
+        .filter((step) => step.title)
+    : [];
+  const structuredApprovalGates = Array.isArray(planObj?.approvalGates)
+    ? (planObj.approvalGates as Array<Record<string, unknown>>)
+        .map((gate) => {
+          const title = safeText(gate?.title).trim();
+          const requiredBefore = safeText(gate?.requiredBefore).trim();
+          const reason = safeText(gate?.reason).trim();
+          if (!title || !requiredBefore || !reason) return "";
+          return `Approval gate ${title}: review required before ${requiredBefore}. ${reason}`;
+        })
+        .filter(Boolean)
+    : [];
+  const structuredMissingAgents = Array.isArray(planObj?.missingAgentsProposed)
+    ? (planObj.missingAgentsProposed as Array<Record<string, unknown>>)
+        .map((agent) => {
+          const name = safeText(agent?.name).trim() || safeText(agent?.proposedAgentId).trim();
+          const purpose = safeText(agent?.purpose).trim();
+          const whyNeeded = safeText(agent?.whyNeeded).trim();
+          if (!name || !purpose || !whyNeeded) return "";
+          return `Propose ${name}: ${purpose}. ${whyNeeded} (approval required).`;
+        })
+        .filter(Boolean)
+    : [];
+  const structuredAgentTasks = structuredSteps.map((step) =>
+    step.assignedAgentId ? `${step.title} [agent: ${step.assignedAgentId}]` : step.title,
+  );
+  const structuredWhatMattersNow = Array.isArray(planObj?.availableAgentsConsidered)
+    ? (planObj.availableAgentsConsidered as Array<Record<string, unknown>>)
+        .map((entry) => {
+          const name = safeText(entry?.name).trim() || safeText(entry?.agentId).trim();
+          const reason = safeText(entry?.reasonUseful).trim();
+          return name && reason ? `Available agent ${name}: ${reason}` : "";
+        })
+        .filter(Boolean)
+    : [];
+  const structuredNextSafeStep = safeText(
+    planObj?.nextSafeStep ?? planObj?.next_safe_step,
+  ).trim();
 
   return {
     goal: safeText(planObj?.goal ?? planObj?.title ?? planObj?.objective).trim(),
-    whatMattersNow: normalizeTextList(
-      planObj?.whatMattersNow ??
-      planObj?.what_matters_now ??
-      planObj?.whatWeKnow ??
-      planObj?.what_we_know ??
-      planObj?.knowledge ??
-      planObj?.knownFacts ??
-      planObj?.facts,
-    ),
+    whatMattersNow: [
+      ...normalizeTextList(
+        planObj?.whatMattersNow ??
+        planObj?.what_matters_now ??
+        planObj?.whatWeKnow ??
+        planObj?.what_we_know ??
+        planObj?.knowledge ??
+        planObj?.knownFacts ??
+        planObj?.facts,
+      ),
+      ...structuredWhatMattersNow,
+    ],
     nextMove:
       explicitNextMove.length > 0
         ? explicitNextMove
+        : structuredNextSafeStep
+          ? [structuredNextSafeStep]
+          : structuredSteps.length > 0
+            ? structuredSteps.slice(0, 3).map((step) => step.title)
         : planItems
             .filter((item) => item.status !== "done")
             .slice(0, 3)
@@ -246,11 +298,18 @@ export function buildStructuredAssistPlanSurface(
     humanTasks:
       explicitHumanTasks.length > 0
         ? explicitHumanTasks
-        : normalizeTypedTaskList(planObj?.tasks ?? planObj?.items, "human"),
+        : [
+            ...normalizeTypedTaskList(planObj?.tasks ?? planObj?.items, "human"),
+            ...structuredMissingAgents,
+            ...structuredApprovalGates,
+          ],
     agentTasks:
       explicitAgentTasks.length > 0
         ? explicitAgentTasks
-        : normalizeTypedTaskList(planObj?.tasks ?? planObj?.items, "agent"),
+        : [
+            ...normalizeTypedTaskList(planObj?.tasks ?? planObj?.items, "agent"),
+            ...structuredAgentTasks,
+          ],
     pathOptions: normalizeTextList(
       planObj?.pathOptions ??
       planObj?.path_options ??

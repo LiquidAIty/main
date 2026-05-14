@@ -47,6 +47,77 @@ function cleanOptionalText(value: unknown): string | null {
   return text || null;
 }
 
+function extractJsonObject(text: string): Record<string, unknown> | null {
+  const source = String(text || "").trim();
+  if (!source) return null;
+  const firstBrace = source.indexOf("{");
+  const lastBrace = source.lastIndexOf("}");
+  if (firstBrace < 0 || lastBrace <= firstBrace) return null;
+  try {
+    const parsed = JSON.parse(source.slice(firstBrace, lastBrace + 1));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeTextList(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  return input.map((entry) => safeText(entry).trim()).filter(Boolean);
+}
+
+function normalizeStructuredPlanCandidate(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const goal = safeText(raw.goal).trim();
+  const steps = (Array.isArray(raw.steps) ? raw.steps : [])
+    .map((entry) => {
+      const step = entry as Record<string, unknown>;
+      const title = safeText(step.title).trim();
+      if (!title) return null;
+      return {
+        title,
+        status: "proposed",
+        assignedAgentId: safeText(step.assignedAgentId).trim() || null,
+        relatedObjectId: safeText(step.relatedObjectId).trim() || null,
+        relatedSurface: safeText(step.relatedSurface).trim() || null,
+        relatedFiles: normalizeTextList(step.relatedFiles),
+        validationCommand: safeText(step.validationCommand).trim() || null,
+        resultSummary: "",
+        blocker: "",
+      };
+    })
+    .filter((step): step is NonNullable<typeof step> => Boolean(step));
+  if (!goal && steps.length === 0) return null;
+  const nextSafeStep =
+    safeText(raw.nextSafeStep ?? raw.next_safe_step).trim() ||
+    String((steps[0] as { title?: unknown } | undefined)?.title || "").trim() ||
+    "Await human approval before execution.";
+  return {
+    goal,
+    availableAgentsConsidered: Array.isArray(raw.availableAgentsConsidered) ? raw.availableAgentsConsidered : [],
+    missingAgentsProposed: Array.isArray(raw.missingAgentsProposed) ? raw.missingAgentsProposed : [],
+    steps,
+    approvalGates: Array.isArray(raw.approvalGates) ? raw.approvalGates : [],
+    nextSafeStep,
+  };
+}
+
+function extractStructuredPlanFromRun(run: DeckRun | null | undefined): Record<string, unknown> | null {
+  const steps = [...(run?.steps || [])].reverse();
+  for (const step of steps) {
+    const fromField = normalizeStructuredPlanCandidate(
+      (step as { structuredPlan?: unknown }).structuredPlan,
+    );
+    if (fromField) return fromField;
+    const fromOutput = normalizeStructuredPlanCandidate(extractJsonObject(String(step.output || "")));
+    if (fromOutput) return fromOutput;
+  }
+  return null;
+}
+
 function prefixRuntimeLine(label: string, value: string): string {
   const text = safeText(value).trim();
   return text ? `${label}: ${text}` : "";
@@ -337,22 +408,34 @@ export function buildReloadStateFromDeckRuns(
       .reverse()
       .map((step) => cleanOptionalText(step.outputSummary) || cleanOptionalText(step.output))
       .find(Boolean) || "";
+  const structuredPlan = extractStructuredPlanFromRun(latestRun);
 
-  const plan = (latestRun?.steps || [])
-    .map((step, index) => {
-      const summary = cleanOptionalText(step.outputSummary) || cleanOptionalText(step.error);
-      const text = summary ? `${step.title}: ${summary}` : step.title;
-      return text
-        ? {
-            id: cleanOptionalText(step.id) || `${latestRun?.id || "run"}:step_${index}`,
-            text,
-            status: step.status === "success" || step.status === "skipped" ? "done" : "draft",
-          }
-        : null;
-    })
-    .filter((item): item is PlanItem => Boolean(item));
+  const plan = structuredPlan
+    ? (Array.isArray((structuredPlan as { steps?: unknown }).steps)
+        ? ((structuredPlan as { steps?: Array<Record<string, unknown>> }).steps || [])
+        : []
+      ).map((step, index) => ({
+        id: `plan_step_${index}`,
+        text: safeText(step.title).trim() || `Step ${index + 1}`,
+        status: "draft" as const,
+      }))
+    : (latestRun?.steps || [])
+        .map((step, index) => {
+          const summary = cleanOptionalText(step.outputSummary) || cleanOptionalText(step.error);
+          const text = summary ? `${step.title}: ${summary}` : step.title;
+          return text
+            ? {
+                id: cleanOptionalText(step.id) || `${latestRun?.id || "run"}:step_${index}`,
+                text,
+                status: step.status === "success" || step.status === "skipped" ? "done" : "draft",
+              }
+            : null;
+        })
+        .filter((item): item is PlanItem => Boolean(item));
 
-  const planSource = latestRun
+  const planSource = structuredPlan
+    ? structuredPlan
+    : latestRun
     ? {
         goal: cleanOptionalText(latestRun.input) || "",
         nextMove:

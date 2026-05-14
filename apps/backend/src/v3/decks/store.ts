@@ -234,10 +234,14 @@ function normalizeDeckEdge(value: unknown): DeckEdge | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Record<string, unknown>;
   const metadata = normalizeDeckEdgeMetadata(raw.metadata);
+  const sourceHandle = cleanOptionalText(raw.sourceHandle);
+  const targetHandle = cleanOptionalText(raw.targetHandle);
   return {
     id: String(raw.id || '').trim(),
     source: String(raw.source || '').trim(),
+    sourceHandle,
     target: String(raw.target || '').trim(),
+    targetHandle,
     edgeType: normalizeEdgeType(raw.edgeType),
     ...(metadata ? { metadata } : {}),
   };

@@ -133,12 +133,20 @@ export type DeckEdge = {
   metadata?: DeckEdgeMetadata | null;
 };
 
+export type DeckViewport = {
+  x: number;
+  y: number;
+  zoom: number;
+};
+
 export type DeckDocument = {
   id: string;
   name: string;
   promptTemplates: PromptTemplate[];
   nodes: AgentCardInstance[];
   edges: DeckEdge[];
+  // Deprecated: Agent Canvas intentionally ignores persisted viewport.
+  viewport?: DeckViewport | null;
   version: number;
 };
 
@@ -235,6 +243,7 @@ export type CardRunResult = {
   graphViewContract?: GraphViewContract | null;
   // Temporary legacy alias while clients migrate to graphViewContract.
   codegraphViewContract?: CodeGraphViewContract | null;
+  structuredPlan?: Record<string, unknown> | null;
 };
 
 export type DeckRuntimeEventKind =
@@ -299,6 +308,7 @@ export type DeckRunStep = {
   graphViewContract?: GraphViewContract | null;
   // Temporary legacy alias while clients migrate to graphViewContract.
   codegraphViewContract?: CodeGraphViewContract | null;
+  structuredPlan?: Record<string, unknown> | null;
   routeInfo?: {
     mergeIntent?: DeckEdgeMergeIntent | 'legacy_default' | null;
     inputMode?: 'legacy_text' | 'single_upstream' | 'structured_merge' | null;

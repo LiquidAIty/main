@@ -526,6 +526,7 @@ export async function executeDeck(
         outputSummary: result.outputSummary,
         graphViewContract: toGraphViewContract(result.graphViewContract ?? result.codegraphViewContract),
         codegraphViewContract: toGraphViewContract(result.graphViewContract ?? result.codegraphViewContract),
+        structuredPlan: result.structuredPlan ?? null,
         routeInfo: event.routeInfo,
       };
       if (step.graphViewContract) {

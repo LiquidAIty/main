@@ -7530,9 +7530,13 @@ export default function AgentBuilder(): React.ReactElement {
         }
         const assistantText =
           resolveDeckRunFinalText(run) || 'No response returned.';
+        const continuity = buildReloadStateFromDeckRuns([run], run);
         setLatestDeckRun(run);
         setLiveDeckEvents([]);
         setMessages((m) => [...m, { role: 'assistant', text: assistantText }]);
+        setPlanSource(continuity.planSource);
+        setPlan(continuity.plan);
+        setLinks(continuity.links);
         setDeckStatusMessage('Deck run completed.');
         const responseReceivedAt = Date.now();
         const finalStep =

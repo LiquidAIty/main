@@ -197,6 +197,97 @@ function extractJsonObject(text: string): Record<string, unknown> | null {
   }
 }
 
+function normalizeTextList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => String(entry || '').trim())
+    .filter(Boolean);
+}
+
+function normalizeStructuredPlanCandidate(
+  value: unknown,
+): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+
+  const goal = String(raw.goal || '').trim();
+  const availableAgentsConsidered = (Array.isArray(raw.availableAgentsConsidered) ? raw.availableAgentsConsidered : [])
+    .map((entry) => {
+      const row = entry as Record<string, unknown>;
+      const agentId = String(row.agentId || '').trim();
+      const name = String(row.name || '').trim();
+      const reasonUseful = String(row.reasonUseful || '').trim();
+      if (!agentId || !name || !reasonUseful) return null;
+      return { agentId, name, reasonUseful };
+    })
+    .filter((entry): entry is { agentId: string; name: string; reasonUseful: string } => Boolean(entry));
+  const missingAgentsProposed = (Array.isArray(raw.missingAgentsProposed) ? raw.missingAgentsProposed : [])
+    .map((entry) => {
+      const row = entry as Record<string, unknown>;
+      const proposedAgentId = String(row.proposedAgentId || '').trim();
+      const name = String(row.name || '').trim();
+      const purpose = String(row.purpose || '').trim();
+      const whyNeeded = String(row.whyNeeded || '').trim();
+      if (!proposedAgentId || !name || !purpose || !whyNeeded) return null;
+      return {
+        proposedAgentId,
+        name,
+        purpose,
+        whyNeeded,
+        approvalRequired: true,
+      };
+    })
+    .filter((entry): entry is { proposedAgentId: string; name: string; purpose: string; whyNeeded: string; approvalRequired: true } => Boolean(entry));
+  const steps = (Array.isArray(raw.steps) ? raw.steps : [])
+    .map((entry) => {
+      const row = entry as Record<string, unknown>;
+      const title = String(row.title || '').trim();
+      if (!title) return null;
+      const assignedAgentId = String(row.assignedAgentId || '').trim() || null;
+      const relatedObjectId = String(row.relatedObjectId || '').trim() || null;
+      const relatedSurface = String(row.relatedSurface || '').trim() || null;
+      const relatedFiles = normalizeTextList(row.relatedFiles);
+      const validationCommand = String(row.validationCommand || '').trim() || null;
+      return {
+        title,
+        status: 'proposed',
+        assignedAgentId,
+        relatedObjectId,
+        relatedSurface,
+        relatedFiles,
+        validationCommand,
+        resultSummary: '',
+        blocker: '',
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+  const approvalGates = (Array.isArray(raw.approvalGates) ? raw.approvalGates : [])
+    .map((entry) => {
+      const row = entry as Record<string, unknown>;
+      const title = String(row.title || '').trim();
+      const requiredBefore = String(row.requiredBefore || '').trim();
+      const reason = String(row.reason || '').trim();
+      if (!title || !requiredBefore || !reason) return null;
+      return { title, requiredBefore, reason };
+    })
+    .filter((entry): entry is { title: string; requiredBefore: string; reason: string } => Boolean(entry));
+  const nextSafeStep =
+    String(raw.nextSafeStep || raw.next_safe_step || '').trim() ||
+    String((steps[0] as { title?: unknown } | undefined)?.title || '').trim() ||
+    'Await human approval before execution.';
+
+  if (!goal && steps.length === 0) return null;
+
+  return {
+    goal,
+    availableAgentsConsidered,
+    missingAgentsProposed,
+    steps,
+    approvalGates,
+    nextSafeStep,
+  };
+}
+
 function normalizeCodeGraphViewContractCandidate(value: unknown): GraphViewContract | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -1782,6 +1873,9 @@ async function runMagenticCard(
 
   const modelConfig = resolveCardModelConfig(card, effectiveAgent, `card_${card.id}`);
   const prompt = resolveCardSystemPrompt(card, effectiveAgent);
+  const planningRequested = /\b(plan|planning|roadmap|next step|approval|propose)\b/i.test(
+    runtimeInput,
+  );
   if (shouldUsePythonAutoGenBackend(card)) {
     const supportedHeads = callableHeads.filter((head) =>
       isPythonAutoGenCallableRuntimeType(resolveCardRuntimeType(head)),
@@ -1839,6 +1933,7 @@ async function runMagenticCard(
       selectedCardId: { type: ['string', 'null'] },
       directResponseText: { type: ['string', 'null'] },
       progressText: { type: ['string', 'null'] },
+      structuredPlan: { type: ['object', 'null'], additionalProperties: true },
       graphViewContract: { type: ['object', 'null'], additionalProperties: true },
       // Temporary legacy key accepted during migration.
       codegraphViewContract: { type: ['object', 'null'], additionalProperties: true },
@@ -1858,22 +1953,46 @@ async function runMagenticCard(
     workspaceFocus?.objectEditorOpen
       ? 'Workspace focus currently has an object editor open. Prefer decisions that directly help the open card context when that is compatible with the user request.'
       : null,
-    'Return JSON only with keys selectedCardId, directResponseText, progressText, and graphViewContract.',
+    planningRequested
+      ? 'When the user asks for planning, include structuredPlan and keep every step status as proposed. Do not auto-create agents and do not execute agents.'
+      : null,
+    'Return JSON only with keys selectedCardId, directResponseText, progressText, structuredPlan, and graphViewContract.',
     'Set exactly one of selectedCardId or directResponseText to a non-empty value.',
   ]
     .filter(Boolean)
     .join('\n\n');
+  const allTopLevelCards = (context.allCards || []).filter(
+    (entry) => !String(entry.parentGraphId || '').trim(),
+  );
+  const callableHeadIds = new Set(callableHeads.map((head) => head.id));
   const chooserInput = JSON.stringify(
     {
       userText: runtimeInput,
+      planningRequested,
       callableHeads: callableHeads.map((head) => ({
         cardId: head.id,
         title: head.title,
         runtimeType: resolveCardRuntimeType(head),
         runtimeBinding: head.runtimeBinding || null,
       })),
+      availableCards: allTopLevelCards.map((entry) => ({
+        cardId: entry.id,
+        title: entry.title,
+        runtimeType: resolveCardRuntimeType(entry),
+        runtimeBinding: entry.runtimeBinding || null,
+        callableFromMagentic: callableHeadIds.has(entry.id),
+      })),
+      visibleConnections: (context.allEdges || []).map((edge) => ({
+        edgeId: edge.id,
+        source: edge.source,
+        sourceHandle: edge.sourceHandle ?? null,
+        target: edge.target,
+        targetHandle: edge.targetHandle ?? null,
+        edgeType: normalizeEdgeType(edge.edgeType),
+      })),
       graphRelevantTask,
       workspaceFocus,
+      workspaceObjectContext: context.workspaceObjectContext || null,
       graphContractTemplate: graphRelevantTask
         ? buildGraphRelevantCodeGraphContract(runtimeInput, context.projectId)
         : null,
@@ -1897,6 +2016,18 @@ async function runMagenticCard(
   const directResponseText = String(parsed?.directResponseText || '').trim();
   const selectedCardId = String(parsed?.selectedCardId || '').trim();
   const progressText = String(parsed?.progressText || '').trim();
+  const structuredPlan =
+    normalizeStructuredPlanCandidate(parsed?.structuredPlan) ||
+    normalizeStructuredPlanCandidate(
+      parsed?.directResponseText
+        ? extractJsonObject(String(parsed.directResponseText))
+        : null,
+    );
+  const directPlanResponseText =
+    planningRequested && !directResponseText && structuredPlan
+      ? JSON.stringify(structuredPlan, null, 2)
+      : directResponseText;
+  const delegatedCardId = planningRequested ? '' : selectedCardId;
   const parsedCodegraphViewContract = normalizeCodeGraphViewContractCandidate(
     parsed?.graphViewContract ?? parsed?.codegraphViewContract,
   );
@@ -1908,7 +2039,7 @@ async function runMagenticCard(
       )
     : parsedCodegraphViewContract;
 
-  if (directResponseText) {
+  if (directPlanResponseText) {
     emitRuntimeEvent(context, {
       kind: 'magentic_assignment',
       cardId: card.id,
@@ -1932,10 +2063,10 @@ async function runMagenticCard(
       cardTitle: card.title,
       runtimeType: 'magentic_one',
       role: 'assistant',
-      content: directResponseText,
+      content: directPlanResponseText,
     });
     return {
-      output: directResponseText,
+      output: directPlanResponseText,
       status: 'success',
       startedAt,
       endedAt: new Date().toISOString(),
@@ -1943,15 +2074,37 @@ async function runMagenticCard(
       runtimeType: 'magentic_one',
       seed: context.seed,
       inputSummary: summarizeText(runtimeInput),
-      outputSummary: summarizeText(directResponseText),
+      outputSummary: summarizeText(directPlanResponseText),
       graphViewContract,
       codegraphViewContract: graphViewContract,
+      structuredPlan,
     };
   }
 
-  const selectedHead = callableHeads.find((head) => head.id === selectedCardId);
+  if (planningRequested) {
+    return {
+      output:
+        'Planning was requested, but no structured plan was returned. Ask again with a clearer planning goal.',
+      status: 'error',
+      error: 'magentic_plan_missing',
+      startedAt,
+      endedAt: new Date().toISOString(),
+      runtimeBinding,
+      runtimeType: 'magentic_one',
+      seed: context.seed,
+      inputSummary: summarizeText(runtimeInput),
+      outputSummary: summarizeText(
+        'Planning was requested, but no structured plan was returned.',
+      ),
+      graphViewContract,
+      codegraphViewContract: graphViewContract,
+      structuredPlan: null,
+    };
+  }
+
+  const selectedHead = callableHeads.find((head) => head.id === delegatedCardId);
   if (!selectedHead) {
-    throw new Error(`magentic_invalid_head_selection: cardId=${card.id} selectedCardId=${selectedCardId || 'missing'}`);
+    throw new Error(`magentic_invalid_head_selection: cardId=${card.id} selectedCardId=${delegatedCardId || 'missing'}`);
   }
   const templates = context.allTemplates || [];
   const selectedEffectiveAgent = resolveEffectiveAgent(selectedHead, templates);
@@ -1999,6 +2152,9 @@ async function runMagenticCard(
     );
   }
   const selectedLegacyGraphViewContract = toGraphViewContract(selectedResult.codegraphViewContract);
+  const selectedStructuredPlan =
+    selectedResult.structuredPlan ||
+    normalizeStructuredPlanCandidate(extractJsonObject(selectedResult.output || ''));
 
   return {
     output: selectedResult.output,
@@ -2018,6 +2174,7 @@ async function runMagenticCard(
       selectedResult.graphViewContract ??
       selectedLegacyGraphViewContract ??
       graphViewContract,
+    structuredPlan: selectedStructuredPlan,
   };
 }
 
