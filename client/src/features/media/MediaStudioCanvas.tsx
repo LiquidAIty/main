@@ -3,9 +3,11 @@ import {
   GRAPH_THEME,
   graphDrawerSectionStyle,
 } from '../../components/graph/graphVisualTokens';
+import SceneGraphThreeBlockout from './SceneGraphThreeBlockout';
+import { buildCanvasObjectContext } from './objectAwareCanvasContext';
+import { KoolSkoolsSceneAssetRegistry } from './sceneAssetRegistry';
 import type {
   MediaAnalysisManifest,
-  MediaAsset,
   MediaPrompt,
   MediaRenderJob,
   MediaStyleToken,
@@ -23,6 +25,7 @@ import {
   compileSceneGraphToThreeBlockoutPlan,
   type SceneGraphSource,
 } from './sceneGraphSource';
+import { compileSceneGraphToMotionPlan } from './sceneGraphMotionPlan';
 
 type StudioPanelProps = {
   title: string;
@@ -53,6 +56,15 @@ type OpenRouterPanelState =
   | 'running'
   | 'succeeded'
   | 'failed';
+
+type BlockoutGuardProps = {
+  children: React.ReactNode;
+};
+
+type BlockoutGuardState = {
+  hasError: boolean;
+  message: string;
+};
 
 function StudioPanel({ title, subtitle, children }: StudioPanelProps): React.ReactElement {
   return (
@@ -106,6 +118,41 @@ function Dot({ color }: { color: string }): React.ReactElement {
   );
 }
 
+class BlockoutGuard extends React.Component<BlockoutGuardProps, BlockoutGuardState> {
+  state: BlockoutGuardState = {
+    hasError: false,
+    message: '',
+  };
+
+  static getDerivedStateFromError(error: unknown): BlockoutGuardState {
+    return {
+      hasError: true,
+      message: error instanceof Error ? error.message : '3d_runtime_dependency_or_webgl_missing',
+    };
+  }
+
+  componentDidCatch(): void {}
+
+  render(): React.ReactNode {
+    if (this.state.hasError) {
+      return (
+        <div
+          style={{
+            border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+            borderRadius: 10,
+            padding: 10,
+            fontSize: 12,
+            color: '#D98458',
+          }}
+        >
+          3D preview unavailable: {this.state.message}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const SAMPLE_PROMPT: MediaPrompt = {
   id: 'prompt_a',
   text: 'Sunset city rooftop sequence, cinematic lens, slow camera drift.',
@@ -119,25 +166,6 @@ const SAMPLE_STYLE_TOKENS: MediaStyleToken[] = [
   { id: 'style_grain', label: 'Film grain', value: 'subtle grain', strength: 0.4 },
   { id: 'style_grade', label: 'Teal/orange', value: 'teal orange grade', strength: 0.65 },
   { id: 'style_camera', label: 'Anamorphic', value: 'anamorphic flare', strength: 0.55 },
-];
-
-const SAMPLE_ASSETS: MediaAsset[] = [
-  {
-    id: 'asset_ref_1',
-    kind: 'image',
-    label: 'Rooftop style board',
-    source: 'manual',
-    status: 'ready',
-    createdAt: 'now',
-  },
-  {
-    id: 'asset_clip_1',
-    kind: 'video',
-    label: 'Clip candidate A',
-    source: 'openrouter',
-    status: 'draft',
-    createdAt: 'pending',
-  },
 ];
 
 const SAMPLE_MANIFEST: MediaAnalysisManifest = {
@@ -176,6 +204,9 @@ export default function MediaStudioCanvas({
   const seedFramePlanPreview = compileSceneGraphToSeedFramePlan(activeScene);
   const simulationProxyPlanPreview = compileSceneGraphToSimulationProxyPlan(activeScene);
   const lensHintsPreview = compileSceneGraphToCanvasLensHints(activeScene);
+  const motionPlanPreview = compileSceneGraphToMotionPlan(activeScene);
+  const objectAwareContextPreview = buildCanvasObjectContext(activeScene, 'video');
+  const sceneAssetRegistryPreview = KoolSkoolsSceneAssetRegistry;
   const [submitPrompt, setSubmitPrompt] = React.useState(diffusionPromptPreview);
   const [submitModel, setSubmitModel] = React.useState('google/veo-3');
   const [submitAspectRatio, setSubmitAspectRatio] = React.useState<string>(
@@ -392,6 +423,47 @@ export default function MediaStudioCanvas({
           </div>
           <div style={{ fontSize: 12, color: GRAPH_THEME.drawer.inputMuted }}>
             Ratio {SAMPLE_PROMPT.ratio} · Duration {SAMPLE_PROMPT.durationSeconds}s
+          </div>
+        </StudioPanel>
+
+        <StudioPanel
+          title="3D Blockout Preview"
+          subtitle="SceneGraph -> Three.js/R3F blockout with airflow and comfort bubble."
+        >
+          <BlockoutGuard>
+            <SceneGraphThreeBlockout scene={activeScene} />
+          </BlockoutGuard>
+          <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+            Floor/desk/device forms are concept blockout geometry for camera, keyframe, and seed-frame planning.
+          </div>
+        </StudioPanel>
+
+        <StudioPanel
+          title="Motion Plan"
+          subtitle="SceneGraph keyframes mapped to shot/frame planning for future Theatre sequencing."
+        >
+          <div style={{ fontSize: 12, color: GRAPH_THEME.drawer.inputMuted }}>
+            Sheet {motionPlanPreview.sheetName} · FPS {motionPlanPreview.fps} · Shots {motionPlanPreview.shots.length}
+          </div>
+          <div style={{ display: 'grid', gap: 6 }}>
+            {motionPlanPreview.shots.map((shot) => (
+              <div
+                key={shot.shotId}
+                style={{
+                  display: 'grid',
+                  gap: 2,
+                  border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                  borderRadius: 8,
+                  padding: 8,
+                  fontSize: 11,
+                }}
+              >
+                <div>{shot.shotId} · {shot.cameraIntent}</div>
+                <div style={{ color: GRAPH_THEME.drawer.inputMuted }}>
+                  Frames {shot.startFrame}-{shot.endFrame} ({shot.durationFrames})
+                </div>
+              </div>
+            ))}
           </div>
         </StudioPanel>
 
@@ -658,9 +730,36 @@ export default function MediaStudioCanvas({
           </div>
         </StudioPanel>
 
-        <StudioPanel title="Assets / Jobs" subtitle="Project media memory scaffold.">
+        <StudioPanel title="Object Awareness" subtitle="Structured selected-object context for object-aware agent actions.">
+          <div style={{ fontSize: 12, color: GRAPH_THEME.drawer.inputMuted }}>
+            Canvas {objectAwareContextPreview.canvasId} · Scene {objectAwareContextPreview.sceneId}
+          </div>
+          {objectAwareContextPreview.selected ? (
+            <div
+              style={{
+                border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                borderRadius: 8,
+                padding: 8,
+                fontSize: 11,
+                lineHeight: 1.4,
+                color: GRAPH_THEME.drawer.inputMuted,
+              }}
+            >
+              {JSON.stringify(objectAwareContextPreview.selected, null, 2)}
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: GRAPH_THEME.drawer.inputMuted }}>
+              No selected object context yet.
+            </div>
+          )}
+        </StudioPanel>
+
+        <StudioPanel title="Scene Assets" subtitle="Scene asset registry foundation for render/simulation roles.">
+          <div style={{ fontSize: 12, color: GRAPH_THEME.drawer.inputMuted }}>
+            {sceneAssetRegistryPreview.name} · Assets {sceneAssetRegistryPreview.assets.length}
+          </div>
           <div style={{ display: 'grid', gap: 8 }}>
-            {SAMPLE_ASSETS.map((asset) => (
+            {sceneAssetRegistryPreview.assets.map((asset) => (
               <div
                 key={asset.id}
                 style={{
@@ -671,7 +770,7 @@ export default function MediaStudioCanvas({
                   fontSize: 12,
                 }}
               >
-                <span>{asset.label}</span>
+                <span>{asset.name}</span>
                 <span
                   style={{
                     display: 'inline-flex',
@@ -680,16 +779,8 @@ export default function MediaStudioCanvas({
                     color: GRAPH_THEME.drawer.inputMuted,
                   }}
                 >
-                  <Dot
-                    color={
-                      asset.status === 'ready'
-                        ? GRAPH_THEME.accent.primary
-                        : asset.status === 'error'
-                          ? '#D98458'
-                          : GRAPH_THEME.accent.solar
-                    }
-                  />
-                  {asset.kind}
+                  <Dot color={GRAPH_THEME.accent.primary} />
+                  {asset.renderRole}
                 </span>
               </div>
             ))}
@@ -762,6 +853,7 @@ export default function MediaStudioCanvas({
               {
                 simulationProxy: simulationProxyPlanPreview,
                 lensHints: lensHintsPreview,
+                motionPlan: motionPlanPreview,
               },
               null,
               2,

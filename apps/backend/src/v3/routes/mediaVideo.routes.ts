@@ -403,4 +403,13 @@ router.post('/:projectId/media/video/jobs/:jobId/peepshow', async (req, res) => 
   }
 });
 
+/**
+ * Manual smoke checklist:
+ * 1) Start backend with apps/backend/.env loaded.
+ * 2) POST /api/v3/projects/:projectId/media/video/jobs with prompt+model payload.
+ * 3) Verify response job fields: id, providerJobId, status, resultUrls/resultPayload.
+ * 4) GET /api/v3/projects/:projectId/media/video/jobs/:jobId until terminal status.
+ * 5) If resultUrls includes HTTP(S), POST .../:jobId/peepshow and verify:
+ *    analysis.outputDir, analysis.reportPath, analysis.frameCount, transcript fields.
+ */
 export default router;
