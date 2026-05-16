@@ -274,4 +274,145 @@ describe('mediaVideo.routes', () => {
       await closeServer(server);
     }
   });
+
+  it('submit/poll preserves generation packet metadata', async () => {
+    routeHarness.safeFetch
+      .mockResolvedValueOnce(
+        jsonResponse({
+          id: 'provider_job_packet',
+          status: 'running',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          id: 'provider_job_packet',
+          status: 'running',
+        }),
+      );
+
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const submit = await fetch(`${baseUrl}/project_a/media/video/jobs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: 'packet prompt',
+          model: 'google/veo-3-fast',
+          sourceSceneId: 'scene_alpha',
+          sourceShotId: 'shot_beta',
+          generationPacketId: 'packet_123',
+          sourceType: 'imageFrame',
+          fps: 30,
+          promptBetweenFrames: 'maintain continuity',
+          narration: { text: 'narrate this shot', voice: 'neutral' },
+          outputTargets: ['videoDiffusion', 'peepshowReview'],
+          lineage: { summary: 'from image frame seed' },
+          startFrame: 10,
+          endFrame: 40,
+          durationFrames: 30,
+        }),
+      });
+      const submitPayload = await submit.json();
+      expect(submit.status).toBe(200);
+      expect(submitPayload.ok).toBe(true);
+      expect(submitPayload.job.generationPacketId).toBe('packet_123');
+      expect(submitPayload.job.sourceType).toBe('imageFrame');
+      expect(submitPayload.job.fps).toBe(30);
+      expect(submitPayload.job.promptBetweenFrames).toBe('maintain continuity');
+      expect(submitPayload.job.outputTargets).toEqual([
+        'videoDiffusion',
+        'peepshowReview',
+      ]);
+      expect(submitPayload.job.lineageSummary).toBe('from image frame seed');
+
+      const localJobId = submitPayload.job.id as string;
+      const poll = await fetch(
+        `${baseUrl}/project_a/media/video/jobs/${encodeURIComponent(localJobId)}`,
+      );
+      const pollPayload = await poll.json();
+      expect(poll.status).toBe(200);
+      expect(pollPayload.ok).toBe(true);
+      expect(pollPayload.job.generationPacketId).toBe('packet_123');
+      expect(pollPayload.job.sourceType).toBe('imageFrame');
+      expect(pollPayload.job.outputTargets).toEqual([
+        'videoDiffusion',
+        'peepshowReview',
+      ]);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('rejects invalid sourceType', async () => {
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/project_a/media/video/jobs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: 'bad source type',
+          model: 'google/veo-3',
+          sourceType: 'badSource',
+        }),
+      });
+      const payload = await response.json();
+      expect(response.status).toBe(400);
+      expect(payload.ok).toBe(false);
+      expect(payload.error).toBe('invalid_media_video_submit_payload');
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('rejects invalid frame range', async () => {
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/project_a/media/video/jobs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: 'bad frame range',
+          model: 'google/veo-3',
+          startFrame: 60,
+          endFrame: 10,
+          durationFrames: 50,
+        }),
+      });
+      const payload = await response.json();
+      expect(response.status).toBe(400);
+      expect(payload.ok).toBe(false);
+      expect(payload.error).toBe('invalid_media_video_submit_payload');
+      expect(payload.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: 'endFrame' }),
+        ]),
+      );
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('rejects malformed correctionPacket', async () => {
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/project_a/media/video/jobs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: 'bad correction packet',
+          model: 'google/veo-3',
+          correctionPacket: {
+            preservedWins: 'not-an-array',
+            requiredFixes: ['fix a'],
+          },
+        }),
+      });
+      const payload = await response.json();
+      expect(response.status).toBe(400);
+      expect(payload.ok).toBe(false);
+      expect(payload.error).toBe('invalid_media_video_submit_payload');
+    } finally {
+      await closeServer(server);
+    }
+  });
 });

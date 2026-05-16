@@ -14,6 +14,15 @@ import {
   scoreGenerationReviewAgainstNonNegotiables,
   type GenerationReviewResult,
 } from './modelCascadePlan';
+import {
+  compileGenerationPacketToOpenRouterPayload,
+  compileImageFrameToGenerationPacket,
+  compileSceneGraphShotToGenerationPacket,
+  compileSimulationFrameToGenerationPacket,
+  compileVideoClipToGenerationPacket,
+  type GenerationPacket,
+  type GenerationPacketSourceType,
+} from './generationPacket';
 import type {
   MediaAnalysisManifest,
   MediaPrompt,
@@ -54,6 +63,23 @@ type MediaVideoJobView = {
   model: string;
   sourceSceneId: string | null;
   sourceShotId: string | null;
+  generationPacketId: string | null;
+  sourceType:
+    | 'threeScene'
+    | 'imageFrame'
+    | 'videoClip'
+    | 'simulationFrame'
+    | 'generatedStill'
+    | 'scoutResult'
+    | null;
+  fps: number | null;
+  promptBetweenFrames: string | null;
+  narration: {
+    text: string | null;
+    voice: string | null;
+  } | null;
+  outputTargets: string[];
+  lineageSummary: string | null;
   startFrame: number | null;
   endFrame: number | null;
   durationFrames: number | null;
@@ -245,6 +271,17 @@ export default function MediaStudioCanvas({
     String(SAMPLE_PROMPT.durationSeconds || 8),
   );
   const [submitReferenceImageUrls, setSubmitReferenceImageUrls] = React.useState('');
+  const [shotBuilderSourceType, setShotBuilderSourceType] =
+    React.useState<GenerationPacketSourceType>('threeScene');
+  const [shotBuilderImageUrl, setShotBuilderImageUrl] = React.useState('');
+  const [shotBuilderVideoUrl, setShotBuilderVideoUrl] = React.useState('');
+  const [shotBuilderSimulationRef, setShotBuilderSimulationRef] = React.useState('');
+  const [shotBuilderPrompt, setShotBuilderPrompt] = React.useState(
+    'Preserve geometry and airflow while improving cinematic quality between frames.',
+  );
+  const [shotBuilderNarration, setShotBuilderNarration] = React.useState(
+    'Concept visual: classroom comfort airflow sequence.',
+  );
   const [submitBusy, setSubmitBusy] = React.useState(false);
   const [submitError, setSubmitError] = React.useState<string | null>(null);
   const [jobView, setJobView] = React.useState<MediaVideoJobView | null>(null);
@@ -314,6 +351,69 @@ export default function MediaStudioCanvas({
     }
     return 'Apply correction packet and rerun scout.';
   }, [selectedShot, sampleScoutReview, cascadePlan.promotionRule.minOverallScore]);
+  const shotBuilderPacket = React.useMemo<GenerationPacket | null>(() => {
+    if (!selectedShot) return null;
+    if (shotBuilderSourceType === 'threeScene') {
+      const packet = compileSceneGraphShotToGenerationPacket(activeScene, selectedShot);
+      return {
+        ...packet,
+        promptBetweenFrames: { ...packet.promptBetweenFrames, main: shotBuilderPrompt },
+        narration: { text: shotBuilderNarration },
+      };
+    }
+    if (shotBuilderSourceType === 'imageFrame' || shotBuilderSourceType === 'generatedStill') {
+      const imageUrl = shotBuilderImageUrl.trim() || 'https://example.invalid/image-seed.png';
+      return {
+        ...compileImageFrameToGenerationPacket({
+          packetId: `packet_${activeScene.id}_${selectedShot.shotId}_${shotBuilderSourceType}`,
+          sceneId: activeScene.id,
+          shotId: selectedShot.shotId,
+          imageUrl,
+          fps: 30,
+          durationSec: Math.max(1, selectedShot.durationFrames / 30),
+          prompt: shotBuilderPrompt,
+          narration: shotBuilderNarration,
+          lockedNonNegotiables: selectedShot.lockedNonNegotiables,
+        }),
+        sourceType: shotBuilderSourceType,
+      };
+    }
+    if (shotBuilderSourceType === 'videoClip') {
+      const videoUrl = shotBuilderVideoUrl.trim() || 'https://example.invalid/video-source.mp4';
+      return compileVideoClipToGenerationPacket({
+        packetId: `packet_${activeScene.id}_${selectedShot.shotId}_video`,
+        sceneId: activeScene.id,
+        shotId: selectedShot.shotId,
+        videoUrl,
+        fps: 30,
+        startFrame: selectedShot.startFrame,
+        endFrame: selectedShot.endFrame,
+        prompt: shotBuilderPrompt,
+        correctionPrompt: selectedShot.motionInstruction,
+        lockedNonNegotiables: selectedShot.lockedNonNegotiables,
+      });
+    }
+    return compileSimulationFrameToGenerationPacket({
+      packetId: `packet_${activeScene.id}_${selectedShot.shotId}_simulation`,
+      sceneId: activeScene.id,
+      shotId: selectedShot.shotId,
+      frameUrl: shotBuilderSimulationRef.trim() || 'https://example.invalid/sim-frame.png',
+      fps: 30,
+      durationSec: Math.max(1, selectedShot.durationFrames / 30),
+      prompt: shotBuilderPrompt,
+      narration: shotBuilderNarration,
+      lockedNonNegotiables: selectedShot.lockedNonNegotiables,
+    });
+  }, [
+    activeScene,
+    selectedShot,
+    shotBuilderSourceType,
+    shotBuilderImageUrl,
+    shotBuilderVideoUrl,
+    shotBuilderSimulationRef,
+    shotBuilderPrompt,
+    shotBuilderNarration,
+  ]);
 
   React.useEffect(() => {
     setSubmitPrompt(diffusionPromptPreview);
@@ -372,20 +472,42 @@ export default function MediaStudioCanvas({
         mode === 'scout' && scoutPacketPreview
           ? compileFinalGenerationPacketToOpenRouterPayload(scoutPacketPreview, 'scout')
           : null;
+      const packetPayload =
+        mode === 'scout' && shotBuilderPacket
+          ? compileGenerationPacketToOpenRouterPayload(shotBuilderPacket)
+          : null;
       const response = await fetch(
         `/api/v3/projects/${encodeURIComponent(projectId)}/media/video/jobs`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(
-            cascadePayload
+            mode === 'scout' && packetPayload
               ? {
-                  ...cascadePayload,
+                  ...packetPayload,
+                  model: cascadePlan.scoutModel.modelId,
+                  cascadeId: cascadePlan.id,
+                  cascadeStage: 'scout',
+                  parentJobId: null,
+                  correctionPacket: correctionPacketPreview
+                    ? {
+                        preservedWins: correctionPacketPreview.preservedWins,
+                        requiredFixes: correctionPacketPreview.requiredFixes,
+                        summary: correctionPacketPreview.summary,
+                      }
+                    : undefined,
                   aspectRatio: submitAspectRatio,
                   durationSec,
                   referenceImageUrls: parsedReferenceUrls,
                 }
-              : {
+              : cascadePayload
+                ? {
+                    ...cascadePayload,
+                    aspectRatio: submitAspectRatio,
+                    durationSec,
+                    referenceImageUrls: parsedReferenceUrls,
+                  }
+                : {
                   prompt: submitPrompt,
                   model: submitModel,
                   aspectRatio: submitAspectRatio,
@@ -655,6 +777,144 @@ export default function MediaStudioCanvas({
         </StudioPanel>
 
         <StudioPanel
+          title="Shot Builder"
+          subtitle="Normalize three-scene, image, video, or simulation shot sources into one generation packet."
+        >
+          <div style={{ display: 'grid', gap: 8 }}>
+            <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+              <span style={{ color: GRAPH_THEME.drawer.inputMuted }}>Source type</span>
+              <select
+                value={shotBuilderSourceType}
+                onChange={(event) =>
+                  setShotBuilderSourceType(event.target.value as GenerationPacketSourceType)
+                }
+                style={{
+                  background: GRAPH_THEME.drawer.inputBackground,
+                  color: GRAPH_THEME.drawer.inputText,
+                  border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                  borderRadius: 8,
+                  padding: '8px 10px',
+                  fontSize: 12,
+                }}
+              >
+                <option value="threeScene">threeScene</option>
+                <option value="imageFrame">imageFrame</option>
+                <option value="videoClip">videoClip</option>
+                <option value="simulationFrame">simulationFrame</option>
+                <option value="generatedStill">generatedStill</option>
+              </select>
+            </label>
+            {(shotBuilderSourceType === 'imageFrame' || shotBuilderSourceType === 'generatedStill') ? (
+              <input
+                value={shotBuilderImageUrl}
+                onChange={(event) => setShotBuilderImageUrl(event.target.value)}
+                placeholder="Image URL"
+                style={{
+                  background: GRAPH_THEME.drawer.inputBackground,
+                  color: GRAPH_THEME.drawer.inputText,
+                  border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                  borderRadius: 8,
+                  padding: '8px 10px',
+                  fontSize: 12,
+                }}
+              />
+            ) : null}
+            {shotBuilderSourceType === 'videoClip' ? (
+              <input
+                value={shotBuilderVideoUrl}
+                onChange={(event) => setShotBuilderVideoUrl(event.target.value)}
+                placeholder="Video URL"
+                style={{
+                  background: GRAPH_THEME.drawer.inputBackground,
+                  color: GRAPH_THEME.drawer.inputText,
+                  border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                  borderRadius: 8,
+                  padding: '8px 10px',
+                  fontSize: 12,
+                }}
+              />
+            ) : null}
+            {shotBuilderSourceType === 'simulationFrame' ? (
+              <input
+                value={shotBuilderSimulationRef}
+                onChange={(event) => setShotBuilderSimulationRef(event.target.value)}
+                placeholder="Simulation frame URL/ref"
+                style={{
+                  background: GRAPH_THEME.drawer.inputBackground,
+                  color: GRAPH_THEME.drawer.inputText,
+                  border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                  borderRadius: 8,
+                  padding: '8px 10px',
+                  fontSize: 12,
+                }}
+              />
+            ) : null}
+            <textarea
+              value={shotBuilderPrompt}
+              onChange={(event) => setShotBuilderPrompt(event.target.value)}
+              rows={3}
+              style={{
+                background: GRAPH_THEME.drawer.inputBackground,
+                color: GRAPH_THEME.drawer.inputText,
+                border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                borderRadius: 8,
+                padding: '8px 10px',
+                fontSize: 12,
+                resize: 'vertical',
+              }}
+            />
+            <input
+              value={shotBuilderNarration}
+              onChange={(event) => setShotBuilderNarration(event.target.value)}
+              placeholder="Narration"
+              style={{
+                background: GRAPH_THEME.drawer.inputBackground,
+                color: GRAPH_THEME.drawer.inputText,
+                border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                borderRadius: 8,
+                padding: '8px 10px',
+                fontSize: 12,
+              }}
+            />
+            {shotBuilderPacket ? (
+              <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted, display: 'grid', gap: 3 }}>
+                <div>Shot: {shotBuilderPacket.sourceShotId || 'n/a'} · FPS {shotBuilderPacket.fps}</div>
+                <div>
+                  Frames {shotBuilderPacket.startFrame}-{shotBuilderPacket.endFrame} (
+                  {shotBuilderPacket.durationFrames})
+                </div>
+                <div>
+                  Output targets: {shotBuilderPacket.outputTargets.join(', ')}
+                </div>
+                <div>
+                  Locked rules: {shotBuilderPacket.lockedNonNegotiables.join(' | ') || 'none'}
+                </div>
+              </div>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => {
+                void submitVideoJob('scout');
+              }}
+              disabled={!projectId || submitBusy || !shotBuilderPacket}
+              style={{
+                justifySelf: 'start',
+                border: `1px solid ${GRAPH_THEME.accent.primary}`,
+                color: GRAPH_THEME.accent.primary,
+                background: 'transparent',
+                borderRadius: 8,
+                fontSize: 12,
+                padding: '7px 10px',
+                cursor: !projectId || submitBusy || !shotBuilderPacket ? 'not-allowed' : 'pointer',
+                opacity: !projectId || submitBusy || !shotBuilderPacket ? 0.7 : 1,
+              }}
+            >
+              Use Packet For Scout Job
+            </button>
+          </div>
+        </StudioPanel>
+
+        <StudioPanel
           title="Image / Style Seed"
           subtitle="Reference media + style tokens for prompt-to-image and image-to-video."
         >
@@ -847,6 +1107,12 @@ export default function MediaStudioCanvas({
             <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
               Cascade: {jobView.cascadeId} · Stage {jobView.cascadeStage || 'n/a'} · Parent{' '}
               {jobView.parentJobId || 'none'}
+            </div>
+          ) : null}
+          {jobView?.generationPacketId ? (
+            <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+              Packet: {jobView.generationPacketId} · Source {jobView.sourceType || 'n/a'} · FPS{' '}
+              {jobView.fps ?? 'n/a'}
             </div>
           ) : null}
           {jobView?.sourceShotId ? (

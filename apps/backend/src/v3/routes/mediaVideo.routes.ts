@@ -27,6 +27,23 @@ type LocalMediaVideoJob = {
   sourceSceneId: string | null;
   sourceVideoGraphId: string | null;
   sourceShotId: string | null;
+  generationPacketId: string | null;
+  sourceType:
+    | 'threeScene'
+    | 'imageFrame'
+    | 'videoClip'
+    | 'simulationFrame'
+    | 'generatedStill'
+    | 'scoutResult'
+    | null;
+  fps: number | null;
+  promptBetweenFrames: string | null;
+  narration: {
+    text: string | null;
+    voice: string | null;
+  } | null;
+  outputTargets: string[];
+  lineageSummary: string | null;
   startFrame: number | null;
   endFrame: number | null;
   durationFrames: number | null;
@@ -52,33 +69,86 @@ type LocalMediaVideoJob = {
 
 const router = Router();
 
-const submitSchema = z.object({
-  prompt: z.string().trim().min(1),
-  model: z.string().trim().min(1),
-  aspectRatio: z.string().trim().min(1).max(20).optional(),
-  durationSec: z.number().int().positive().max(120).optional(),
-  sourceSceneId: z.string().trim().min(1).max(200).optional(),
-  sourceVideoGraphId: z.string().trim().min(1).max(200).optional(),
-  sourceShotId: z.string().trim().min(1).max(200).optional(),
-  startFrame: z.number().int().min(0).max(1_000_000).optional(),
-  endFrame: z.number().int().min(0).max(1_000_000).optional(),
-  durationFrames: z.number().int().positive().max(1_000_000).optional(),
-  cameraIntent: z.string().trim().min(1).max(300).optional(),
-  motionInstruction: z.string().trim().min(1).max(2000).optional(),
-  diffusionInstruction: z.string().trim().min(1).max(2000).optional(),
-  lockedNonNegotiables: z.array(z.string().trim().min(1).max(500)).max(100).optional(),
-  cascadeId: z.string().trim().min(1).max(200).optional(),
-  cascadeStage: z.enum(['scout', 'finisher']).optional(),
-  parentJobId: z.string().trim().min(1).max(200).optional(),
-  correctionPacket: z
-    .object({
-      preservedWins: z.array(z.string().trim().min(1).max(500)).max(50).optional(),
-      requiredFixes: z.array(z.string().trim().min(1).max(500)).max(50).optional(),
-      summary: z.string().trim().min(1).max(1000).optional(),
-    })
-    .optional(),
-  referenceImageUrls: z.array(z.string().url()).max(8).optional(),
-});
+const submitSchema = z
+  .object({
+    prompt: z.string().trim().min(1),
+    model: z.string().trim().min(1),
+    aspectRatio: z.string().trim().min(1).max(20).optional(),
+    durationSec: z.number().int().positive().max(120).optional(),
+    sourceSceneId: z.string().trim().min(1).max(200).optional(),
+    sourceVideoGraphId: z.string().trim().min(1).max(200).optional(),
+    sourceShotId: z.string().trim().min(1).max(200).optional(),
+    generationPacketId: z.string().trim().min(1).max(200).optional(),
+    sourceType: z
+      .enum([
+        'threeScene',
+        'imageFrame',
+        'videoClip',
+        'simulationFrame',
+        'generatedStill',
+        'scoutResult',
+      ])
+      .optional(),
+    fps: z.number().int().positive().max(240).optional(),
+    promptBetweenFrames: z.string().trim().min(1).max(4000).optional(),
+    narration: z
+      .object({
+        text: z.string().trim().min(1).max(2000).optional(),
+        voice: z.string().trim().min(1).max(120).optional(),
+      })
+      .optional(),
+    outputTargets: z.array(z.string().trim().min(1).max(120)).max(20).optional(),
+    lineage: z
+      .object({
+        summary: z.string().trim().min(1).max(2000).optional(),
+      })
+      .optional(),
+    startFrame: z.number().int().min(0).max(1_000_000).optional(),
+    endFrame: z.number().int().min(0).max(1_000_000).optional(),
+    durationFrames: z.number().int().positive().max(1_000_000).optional(),
+    cameraIntent: z.string().trim().min(1).max(300).optional(),
+    motionInstruction: z.string().trim().min(1).max(2000).optional(),
+    diffusionInstruction: z.string().trim().min(1).max(2000).optional(),
+    lockedNonNegotiables: z.array(z.string().trim().min(1).max(500)).max(100).optional(),
+    cascadeId: z.string().trim().min(1).max(200).optional(),
+    cascadeStage: z.enum(['scout', 'finisher']).optional(),
+    parentJobId: z.string().trim().min(1).max(200).optional(),
+    correctionPacket: z
+      .object({
+        preservedWins: z.array(z.string().trim().min(1).max(500)).max(50).optional(),
+        requiredFixes: z.array(z.string().trim().min(1).max(500)).max(50).optional(),
+        summary: z.string().trim().min(1).max(1000).optional(),
+      })
+      .optional(),
+    referenceImageUrls: z.array(z.string().url()).max(8).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      typeof value.startFrame === 'number' &&
+      typeof value.endFrame === 'number' &&
+      value.endFrame < value.startFrame
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['endFrame'],
+        message: 'endFrame must be greater than or equal to startFrame',
+      });
+    }
+    if (
+      typeof value.startFrame === 'number' &&
+      typeof value.endFrame === 'number' &&
+      typeof value.durationFrames === 'number'
+    ) {
+      const expectedDuration = Math.max(1, value.endFrame - value.startFrame);
+      if (value.durationFrames !== expectedDuration) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['durationFrames'],
+          message: `durationFrames must equal endFrame-startFrame (${expectedDuration})`,
+        });
+      }
+    }
+  });
 
 const TERMINAL_STATUSES = new Set<LocalJobStatus>(['succeeded', 'failed']);
 
@@ -209,6 +279,18 @@ router.post('/:projectId/media/video/jobs', async (req, res) => {
     sourceSceneId: payload.sourceSceneId ?? null,
     sourceVideoGraphId: payload.sourceVideoGraphId ?? null,
     sourceShotId: payload.sourceShotId ?? null,
+    generationPacketId: payload.generationPacketId ?? null,
+    sourceType: payload.sourceType ?? null,
+    fps: payload.fps ?? null,
+    promptBetweenFrames: payload.promptBetweenFrames ?? null,
+    narration: payload.narration
+      ? {
+          text: payload.narration.text ?? null,
+          voice: payload.narration.voice ?? null,
+        }
+      : null,
+    outputTargets: payload.outputTargets ?? [],
+    lineageSummary: payload.lineage?.summary ?? null,
     startFrame: payload.startFrame ?? null,
     endFrame: payload.endFrame ?? null,
     durationFrames: payload.durationFrames ?? null,
