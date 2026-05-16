@@ -11,6 +11,12 @@ import type {
   MediaRenderJob,
   MediaStyleToken,
 } from './mediaStudioTypes';
+import {
+  compileVideoGraphScriptToOpenRouterPrompt,
+  compileVideoGraphScriptToPeepshowRubric,
+  compileVideoGraphScriptToRemotionProps,
+  type VideoGraphScript,
+} from './videoGraphScript';
 
 type StudioPanelProps = {
   title: string;
@@ -136,7 +142,103 @@ const SAMPLE_RENDER_JOB: MediaRenderJob = {
   updatedAt: 'pending',
 };
 
+const SAMPLE_VIDEO_GRAPH_SCRIPT: VideoGraphScript = {
+  id: 'launch_teaser_v1',
+  title: 'LiquidAIty Launch Teaser',
+  brief: 'Show a rooftop story beat that transitions into product confidence and CTA.',
+  entities: [
+    { id: 'char_host', kind: 'character', label: 'Host silhouette' },
+    {
+      id: 'loc_rooftop',
+      kind: 'location',
+      label: 'City rooftop at sunset',
+      attributes: { weather: 'clear', mood: 'cinematic' },
+    },
+    { id: 'obj_holo', kind: 'object', label: 'Floating graph UI panel' },
+    { id: 'brand_logo', kind: 'brand', label: 'LiquidAIty logo lockup' },
+  ],
+  relationships: [
+    { id: 'rel_1', sourceId: 'loc_rooftop', targetId: 'char_host', relation: 'contains' },
+    { id: 'rel_2', sourceId: 'char_host', targetId: 'obj_holo', relation: 'interacts_with' },
+    { id: 'rel_3', sourceId: 'obj_holo', targetId: 'brand_logo', relation: 'transitions_to' },
+  ],
+  actions: [
+    {
+      id: 'act_1',
+      actorId: 'char_host',
+      verb: 'faces',
+      targetId: 'loc_rooftop',
+      startSecond: 0,
+      endSecond: 2.8,
+      intent: 'establish scene',
+    },
+    {
+      id: 'act_2',
+      actorId: 'char_host',
+      verb: 'gestures toward',
+      targetId: 'obj_holo',
+      startSecond: 2.8,
+      endSecond: 5.4,
+      intent: 'activate product proof',
+    },
+    {
+      id: 'act_3',
+      actorId: 'obj_holo',
+      verb: 'resolves into',
+      targetId: 'brand_logo',
+      startSecond: 5.4,
+      endSecond: 8,
+      intent: 'close with CTA',
+    },
+  ],
+  camera: {
+    shot: 'medium',
+    movement: 'dolly',
+    lens: '35mm',
+    framing: 'rule of thirds, right-weighted subject',
+  },
+  style: {
+    palette: ['#f7934a', '#0f172a', '#37adaa'],
+    lighting: 'sunset rim light',
+    grade: 'teal-orange',
+    texture: 'subtle grain',
+  },
+  timing: {
+    durationSeconds: 8,
+    fps: 30,
+    beats: [
+      { label: 'establish', second: 0.5 },
+      { label: 'product reveal', second: 3.6 },
+      { label: 'brand lockup', second: 6.5 },
+    ],
+  },
+  audio: {
+    voiceover: 'One graph. One runtime. One truth surface.',
+    musicCue: 'hybrid pulse rising',
+    sfx: ['soft whoosh', 'ui confirm tick'],
+  },
+  constraints: [
+    { id: 'c_1', rule: 'No visible watermark text', severity: 'hard' },
+    { id: 'c_2', rule: 'Keep host silhouette readable against skyline', severity: 'soft' },
+  ],
+  reviewCriteria: [
+    { id: 'r_1', label: 'Brand legibility', check: 'Logo readable for at least 1.2s', weight: 0.35 },
+    { id: 'r_2', label: 'Story continuity', check: 'No abrupt jump cuts across major beat boundaries', weight: 0.4 },
+    { id: 'r_3', label: 'Audio sync', check: 'Gesture beat aligns with UI reveal within 6 frames', weight: 0.25 },
+  ],
+};
+
 export default function MediaStudioCanvas(): React.ReactElement {
+  const openRouterPromptPreview = compileVideoGraphScriptToOpenRouterPrompt(
+    SAMPLE_VIDEO_GRAPH_SCRIPT,
+  );
+  const peepshowRubricPreview = compileVideoGraphScriptToPeepshowRubric(
+    SAMPLE_VIDEO_GRAPH_SCRIPT,
+  );
+  const remotionPropsPreview = compileVideoGraphScriptToRemotionProps(
+    SAMPLE_VIDEO_GRAPH_SCRIPT,
+  );
+
   return (
     <div
       data-testid="video-workspace-placeholder"
@@ -311,6 +413,57 @@ export default function MediaStudioCanvas(): React.ReactElement {
                 </span>
               </div>
             ))}
+          </div>
+        </StudioPanel>
+
+        <StudioPanel
+          title="VideoGraphScript"
+          subtitle="Compiler stubs: graph script -> OpenRouter prompt / Peepshow rubric / Remotion props."
+        >
+          <div
+            style={{
+              border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+              borderRadius: 8,
+              padding: 10,
+              fontSize: 11,
+              lineHeight: 1.45,
+              color: GRAPH_THEME.drawer.inputMuted,
+              maxHeight: 188,
+              overflow: 'auto',
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            {openRouterPromptPreview}
+          </div>
+          <div
+            style={{
+              border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+              borderRadius: 8,
+              padding: 10,
+              fontSize: 11,
+              lineHeight: 1.45,
+              color: GRAPH_THEME.drawer.inputMuted,
+              maxHeight: 150,
+              overflow: 'auto',
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            {JSON.stringify(peepshowRubricPreview, null, 2)}
+          </div>
+          <div
+            style={{
+              border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+              borderRadius: 8,
+              padding: 10,
+              fontSize: 11,
+              lineHeight: 1.45,
+              color: GRAPH_THEME.drawer.inputMuted,
+              maxHeight: 150,
+              overflow: 'auto',
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            {JSON.stringify(remotionPropsPreview, null, 2)}
           </div>
         </StudioPanel>
       </div>
