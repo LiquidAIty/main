@@ -42,9 +42,17 @@ type MediaVideoJobView = {
   providerJobId: string | null;
   model: string;
   resultUrls: string[];
+  resultPayload?: unknown;
   errorMessage: string | null;
   updatedAt: string;
 };
+
+type OpenRouterPanelState =
+  | 'idle'
+  | 'submitting'
+  | 'running'
+  | 'succeeded'
+  | 'failed';
 
 function StudioPanel({ title, subtitle, children }: StudioPanelProps): React.ReactElement {
   return (
@@ -192,6 +200,13 @@ export default function MediaStudioCanvas({
   );
 
   const isJobTerminal = jobView?.status === 'succeeded' || jobView?.status === 'failed';
+  const panelState: OpenRouterPanelState = React.useMemo(() => {
+    if (submitBusy) return 'submitting';
+    if (!jobView) return 'idle';
+    if (jobView.status === 'succeeded') return 'succeeded';
+    if (jobView.status === 'failed') return 'failed';
+    return 'running';
+  }, [submitBusy, jobView]);
 
   React.useEffect(() => {
     setSubmitPrompt(diffusionPromptPreview);
@@ -525,6 +540,22 @@ export default function MediaStudioCanvas({
             >
               {submitBusy ? 'Submitting...' : 'Submit Video Job'}
             </button>
+            <span
+              style={{
+                fontSize: 11,
+                padding: '2px 8px',
+                borderRadius: 999,
+                border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                color:
+                  panelState === 'failed'
+                    ? '#D98458'
+                    : panelState === 'succeeded'
+                      ? GRAPH_THEME.accent.primary
+                      : GRAPH_THEME.drawer.inputMuted,
+              }}
+            >
+              {panelState}
+            </span>
             <span style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
               {!projectId
                 ? 'Select a project to enable submit.'
@@ -532,16 +563,20 @@ export default function MediaStudioCanvas({
             </span>
           </div>
           {jobView ? (
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                fontSize: 12,
-              }}
-            >
-              <span>{jobView.id}</span>
-              <span style={{ color: GRAPH_THEME.drawer.inputMuted }}>{jobView.status}</span>
+            <div style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                }}
+              >
+                <span>Local job: {jobView.id}</span>
+                <span style={{ color: GRAPH_THEME.drawer.inputMuted }}>{jobView.status}</span>
+              </div>
+              <div style={{ color: GRAPH_THEME.drawer.inputMuted }}>
+                Updated: {jobView.updatedAt}
+              </div>
             </div>
           ) : null}
           {jobView?.providerJobId ? (
@@ -562,6 +597,23 @@ export default function MediaStudioCanvas({
                   {url}
                 </a>
               ))}
+            </div>
+          ) : null}
+          {jobView?.resultUrls?.length === 0 && jobView?.resultPayload ? (
+            <div
+              style={{
+                border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                borderRadius: 8,
+                padding: 8,
+                fontSize: 11,
+                lineHeight: 1.4,
+                color: GRAPH_THEME.drawer.inputMuted,
+                maxHeight: 120,
+                overflow: 'auto',
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {JSON.stringify(jobView.resultPayload, null, 2)}
             </div>
           ) : null}
           {submitError || jobView?.errorMessage ? (
