@@ -26,6 +26,14 @@ type LocalMediaVideoJob = {
   durationSec: number | null;
   sourceSceneId: string | null;
   sourceVideoGraphId: string | null;
+  sourceShotId: string | null;
+  startFrame: number | null;
+  endFrame: number | null;
+  durationFrames: number | null;
+  cameraIntent: string | null;
+  motionInstruction: string | null;
+  diffusionInstruction: string | null;
+  lockedNonNegotiables: string[];
   referenceImageUrls: string[];
   submittedAt: string;
   updatedAt: string;
@@ -43,6 +51,14 @@ const submitSchema = z.object({
   durationSec: z.number().int().positive().max(120).optional(),
   sourceSceneId: z.string().trim().min(1).max(200).optional(),
   sourceVideoGraphId: z.string().trim().min(1).max(200).optional(),
+  sourceShotId: z.string().trim().min(1).max(200).optional(),
+  startFrame: z.number().int().min(0).max(1_000_000).optional(),
+  endFrame: z.number().int().min(0).max(1_000_000).optional(),
+  durationFrames: z.number().int().positive().max(1_000_000).optional(),
+  cameraIntent: z.string().trim().min(1).max(300).optional(),
+  motionInstruction: z.string().trim().min(1).max(2000).optional(),
+  diffusionInstruction: z.string().trim().min(1).max(2000).optional(),
+  lockedNonNegotiables: z.array(z.string().trim().min(1).max(500)).max(100).optional(),
   referenceImageUrls: z.array(z.string().url()).max(8).optional(),
 });
 
@@ -174,6 +190,14 @@ router.post('/:projectId/media/video/jobs', async (req, res) => {
     durationSec: payload.durationSec ?? null,
     sourceSceneId: payload.sourceSceneId ?? null,
     sourceVideoGraphId: payload.sourceVideoGraphId ?? null,
+    sourceShotId: payload.sourceShotId ?? null,
+    startFrame: payload.startFrame ?? null,
+    endFrame: payload.endFrame ?? null,
+    durationFrames: payload.durationFrames ?? null,
+    cameraIntent: payload.cameraIntent ?? null,
+    motionInstruction: payload.motionInstruction ?? null,
+    diffusionInstruction: payload.diffusionInstruction ?? null,
+    lockedNonNegotiables: payload.lockedNonNegotiables ?? [],
     referenceImageUrls: payload.referenceImageUrls ?? [],
     submittedAt,
     updatedAt: submittedAt,

@@ -44,6 +44,15 @@ type MediaVideoJobView = {
   status: MediaVideoJobStatus;
   providerJobId: string | null;
   model: string;
+  sourceSceneId: string | null;
+  sourceShotId: string | null;
+  startFrame: number | null;
+  endFrame: number | null;
+  durationFrames: number | null;
+  cameraIntent: string | null;
+  motionInstruction: string | null;
+  diffusionInstruction: string | null;
+  lockedNonNegotiables: string[];
   resultUrls: string[];
   resultPayload?: unknown;
   errorMessage: string | null;
@@ -207,6 +216,9 @@ export default function MediaStudioCanvas({
   const motionPlanPreview = compileSceneGraphToMotionPlan(activeScene);
   const objectAwareContextPreview = buildCanvasObjectContext(activeScene, 'video');
   const sceneAssetRegistryPreview = KoolSkoolsSceneAssetRegistry;
+  const [selectedShotId, setSelectedShotId] = React.useState(
+    motionPlanPreview.shots[0]?.shotId ?? '',
+  );
   const [submitPrompt, setSubmitPrompt] = React.useState(diffusionPromptPreview);
   const [submitModel, setSubmitModel] = React.useState('google/veo-3');
   const [submitAspectRatio, setSubmitAspectRatio] = React.useState<string>(
@@ -239,9 +251,20 @@ export default function MediaStudioCanvas({
     return 'running';
   }, [submitBusy, jobView]);
 
+  const selectedShot = React.useMemo(
+    () => motionPlanPreview.shots.find((shot) => shot.shotId === selectedShotId) ?? null,
+    [motionPlanPreview.shots, selectedShotId],
+  );
+
   React.useEffect(() => {
     setSubmitPrompt(diffusionPromptPreview);
   }, [diffusionPromptPreview]);
+
+  React.useEffect(() => {
+    if (!selectedShotId && motionPlanPreview.shots.length) {
+      setSelectedShotId(motionPlanPreview.shots[0].shotId);
+    }
+  }, [motionPlanPreview.shots, selectedShotId]);
 
   React.useEffect(() => {
     if (!projectId || !jobView || isJobTerminal) return;
@@ -298,6 +321,14 @@ export default function MediaStudioCanvas({
             durationSec,
             sourceSceneId: activeScene.id,
             sourceVideoGraphId: null,
+            sourceShotId: selectedShot?.shotId,
+            startFrame: selectedShot?.startFrame,
+            endFrame: selectedShot?.endFrame,
+            durationFrames: selectedShot?.durationFrames,
+            cameraIntent: selectedShot?.cameraIntent,
+            motionInstruction: selectedShot?.motionInstruction,
+            diffusionInstruction: selectedShot?.diffusionInstruction,
+            lockedNonNegotiables: selectedShot?.lockedNonNegotiables ?? [],
             referenceImageUrls: parsedReferenceUrls,
           }),
         },
@@ -445,6 +476,27 @@ export default function MediaStudioCanvas({
           <div style={{ fontSize: 12, color: GRAPH_THEME.drawer.inputMuted }}>
             Sheet {motionPlanPreview.sheetName} · FPS {motionPlanPreview.fps} · Shots {motionPlanPreview.shots.length}
           </div>
+          <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+            <span style={{ color: GRAPH_THEME.drawer.inputMuted }}>Selected shot for video submit</span>
+            <select
+              value={selectedShotId}
+              onChange={(event) => setSelectedShotId(event.target.value)}
+              style={{
+                background: GRAPH_THEME.drawer.inputBackground,
+                color: GRAPH_THEME.drawer.inputText,
+                border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                borderRadius: 8,
+                padding: '8px 10px',
+                fontSize: 12,
+              }}
+            >
+              {motionPlanPreview.shots.map((shot) => (
+                <option key={shot.shotId} value={shot.shotId}>
+                  {shot.shotId} · {shot.cameraIntent}
+                </option>
+              ))}
+            </select>
+          </label>
           <div style={{ display: 'grid', gap: 6 }}>
             {motionPlanPreview.shots.map((shot) => (
               <div
@@ -456,6 +508,10 @@ export default function MediaStudioCanvas({
                   borderRadius: 8,
                   padding: 8,
                   fontSize: 11,
+                  background:
+                    selectedShotId === shot.shotId
+                      ? GRAPH_THEME.drawer.inputBackground
+                      : 'transparent',
                 }}
               >
                 <div>{shot.shotId} · {shot.cameraIntent}</div>
@@ -654,6 +710,38 @@ export default function MediaStudioCanvas({
           {jobView?.providerJobId ? (
             <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
               Provider job: {jobView.providerJobId}
+            </div>
+          ) : null}
+          {jobView?.sourceShotId ? (
+            <div
+              style={{
+                border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                borderRadius: 8,
+                padding: 8,
+                fontSize: 11,
+                lineHeight: 1.45,
+                color: GRAPH_THEME.drawer.inputMuted,
+                display: 'grid',
+                gap: 3,
+              }}
+            >
+              <div>
+                Shot context: {jobView.sourceShotId} · {jobView.sourceSceneId || 'scene-unknown'}
+              </div>
+              <div>
+                Frames {jobView.startFrame ?? '?'}-{jobView.endFrame ?? '?'} (
+                {jobView.durationFrames ?? '?'} frames)
+              </div>
+              {jobView.cameraIntent ? <div>Camera: {jobView.cameraIntent}</div> : null}
+              {jobView.motionInstruction ? <div>Motion: {jobView.motionInstruction}</div> : null}
+              {jobView.diffusionInstruction ? (
+                <div>Diffusion: {jobView.diffusionInstruction}</div>
+              ) : null}
+              {jobView.lockedNonNegotiables.length ? (
+                <div>
+                  Locks: {jobView.lockedNonNegotiables.join(' | ')}
+                </div>
+              ) : null}
             </div>
           ) : null}
           {jobView?.resultUrls?.length ? (
