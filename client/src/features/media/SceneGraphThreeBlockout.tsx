@@ -1,49 +1,103 @@
 import React from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Line, OrbitControls } from '@react-three/drei';
-import type { SceneFlowPath, SceneGraphSource } from './sceneGraphSource';
+import type { SceneGraphSource } from './sceneGraphSource';
+import {
+  compileAssetTemplateToThreePrimitive,
+  KoolSkoolsSceneAssetRegistry,
+  resolveSceneAssetsForSceneGraph,
+  type AssetResolutionResult,
+  type AssetTemplate,
+} from './sceneAssetRegistry';
 
-type SceneGraphThreeBlockoutProps = {
-  scene: SceneGraphSource;
-};
+type SceneGraphThreeBlockoutProps = { scene: SceneGraphSource };
 
-function flowColor(flow: SceneFlowPath): string {
-  if (flow.colorToken === 'blue') return '#3B82F6';
-  if (flow.colorToken === 'orange') return '#F97316';
-  return '#14B8A6';
+function resolveTemplate(result: AssetResolutionResult): AssetTemplate {
+  return {
+    id: result.templateId,
+    name: result.sceneAssetName,
+    category: result.category,
+    source: result.source,
+    geometryKind: result.geometryKind,
+    materialPreset: result.materialPreset,
+    renderRole: result.renderRole,
+    simulationRole: result.simulationRole,
+    dimensionHint: result.dimensionHint,
+    usageHint: result.usageHint,
+    defaultPosition: result.defaultPosition,
+    curvePoints: result.curvePoints,
+    colorHex: result.colorHex,
+    opacity: result.opacity,
+  };
 }
 
-function flowPoints(flow: SceneFlowPath): Array<[number, number, number]> {
-  if (flow.flowType === 'cool_supply') {
-    return [
-      [0.9, 1.05, 0.1],
-      [0.35, 1.1, -0.1],
-      [-0.05, 1.0, -0.35],
-    ];
+function renderResolvedAsset(asset: AssetResolutionResult): React.ReactElement | null {
+  const plan = compileAssetTemplateToThreePrimitive(resolveTemplate(asset));
+  const commonMaterial = {
+    color: plan.colorHex,
+    transparent: plan.opacity < 1,
+    opacity: plan.opacity,
+  };
+
+  if (plan.geometryKind === 'curvePath') {
+    if (!plan.curvePoints.length) return null;
+    return (
+      <Line
+        key={asset.sceneAssetId}
+        points={plan.curvePoints}
+        color={plan.colorHex}
+        lineWidth={2}
+        transparent
+        opacity={plan.opacity}
+      />
+    );
   }
-  if (flow.flowType === 'warm_intake') {
-    return [
-      [-1.2, 0.35, 0.45],
-      [-0.65, 0.4, 0.35],
-      [0.8, 0.7, 0.2],
-    ];
+
+  if (plan.geometryKind === 'primitiveSphere') {
+    const radius = Math.max(0.04, plan.size[0] / 2);
+    return (
+      <mesh key={asset.sceneAssetId} position={plan.position} rotation={plan.rotation}>
+        <sphereGeometry args={[radius, 28, 28]} />
+        <meshStandardMaterial {...commonMaterial} roughness={0.72} />
+      </mesh>
+    );
   }
-  return [
-    [0.35, 1.0, 0.2],
-    [0.05, 1.05, -0.2],
-    [-0.25, 1.0, -0.35],
-  ];
+
+  if (plan.geometryKind === 'primitiveCylinder') {
+    const radius = Math.max(0.04, plan.size[0] / 2);
+    return (
+      <mesh key={asset.sceneAssetId} position={plan.position} rotation={plan.rotation}>
+        <cylinderGeometry args={[radius, radius, Math.max(0.08, plan.size[1]), 20]} />
+        <meshStandardMaterial {...commonMaterial} roughness={0.68} metalness={0.08} />
+      </mesh>
+    );
+  }
+
+  if (plan.geometryKind === 'primitiveCapsule') {
+    const radius = Math.max(0.05, plan.size[0] / 2);
+    const length = Math.max(0.08, plan.size[1] - radius * 2);
+    return (
+      <mesh key={asset.sceneAssetId} position={plan.position} rotation={plan.rotation}>
+        <capsuleGeometry args={[radius, length, 8, 18]} />
+        <meshStandardMaterial {...commonMaterial} roughness={0.74} />
+      </mesh>
+    );
+  }
+
+  return (
+    <mesh key={asset.sceneAssetId} position={plan.position} rotation={plan.rotation}>
+      <boxGeometry args={plan.size} />
+      <meshStandardMaterial {...commonMaterial} roughness={0.78} metalness={0.1} />
+    </mesh>
+  );
 }
 
 function SceneBlockoutMeshes({ scene }: { scene: SceneGraphSource }): React.ReactElement {
-  const hasDesk = scene.props.some((prop) => prop.propType === 'desk');
-  const hasStudent = scene.actors.some((actor) => actor.actorType === 'student');
-  const hasCooler = scene.products.some(
-    (product) =>
-      product.productFamily === 'kool_skools_current' ||
-      product.productFamily === 'koolphase_internal',
+  const resolvedAssets = resolveSceneAssetsForSceneGraph(
+    scene,
+    KoolSkoolsSceneAssetRegistry,
+    'warnAndPrimitive',
   );
-  const hasComfortBubble = scene.flowPaths.some((flow) => flow.flowType === 'comfort_zone');
 
   return (
     <>
@@ -57,62 +111,7 @@ function SceneBlockoutMeshes({ scene }: { scene: SceneGraphSource }): React.Reac
         <meshStandardMaterial color="#1E293B" metalness={0.1} roughness={0.95} />
       </mesh>
 
-      {hasDesk ? (
-        <>
-          <mesh position={[0, 0.38, 0]}>
-            <boxGeometry args={[1.7, 0.08, 0.95]} />
-            <meshStandardMaterial color="#334155" roughness={0.75} />
-          </mesh>
-          <mesh position={[-0.72, 0.19, -0.35]}>
-            <boxGeometry args={[0.08, 0.38, 0.08]} />
-            <meshStandardMaterial color="#1F2937" />
-          </mesh>
-          <mesh position={[0.72, 0.19, -0.35]}>
-            <boxGeometry args={[0.08, 0.38, 0.08]} />
-            <meshStandardMaterial color="#1F2937" />
-          </mesh>
-          <mesh position={[-0.72, 0.19, 0.35]}>
-            <boxGeometry args={[0.08, 0.38, 0.08]} />
-            <meshStandardMaterial color="#1F2937" />
-          </mesh>
-          <mesh position={[0.72, 0.19, 0.35]}>
-            <boxGeometry args={[0.08, 0.38, 0.08]} />
-            <meshStandardMaterial color="#1F2937" />
-          </mesh>
-        </>
-      ) : null}
-
-      {hasCooler ? (
-        <mesh position={[0.9, 0.66, 0.1]}>
-          <boxGeometry args={[0.34, 0.62, 0.26]} />
-          <meshStandardMaterial color="#60A5FA" roughness={0.35} metalness={0.12} />
-        </mesh>
-      ) : null}
-
-      {hasStudent ? (
-        <mesh position={[-0.05, 0.83, -0.35]}>
-          <sphereGeometry args={[0.12, 22, 22]} />
-          <meshStandardMaterial color="#CBD5E1" roughness={0.9} />
-        </mesh>
-      ) : null}
-
-      {hasComfortBubble ? (
-        <mesh position={[-0.05, 0.95, -0.35]}>
-          <sphereGeometry args={[0.62, 40, 40]} />
-          <meshStandardMaterial color="#2DD4BF" opacity={0.12} transparent />
-        </mesh>
-      ) : null}
-
-      {scene.flowPaths.map((flow) => (
-        <Line
-          key={flow.id}
-          points={flowPoints(flow)}
-          color={flowColor(flow)}
-          lineWidth={2}
-          transparent
-          opacity={0.92}
-        />
-      ))}
+      {resolvedAssets.map((asset) => renderResolvedAsset(asset))}
 
       <OrbitControls
         enablePan

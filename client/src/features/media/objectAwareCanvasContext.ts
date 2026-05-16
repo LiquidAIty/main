@@ -1,4 +1,5 @@
 import type { SceneGraphSource } from './sceneGraphSource';
+import type { AssetResolutionResult } from './sceneAssetRegistry';
 
 export type ObjectAwareAction =
   | 'focusCamera'
@@ -13,6 +14,7 @@ export type SelectedSceneObjectContext = {
   selectedObjectId: string;
   objectType: 'set' | 'asset' | 'actor' | 'prop' | 'product' | 'flowPath' | 'overlay' | 'camera';
   objectName: string;
+  sourceAssetId?: string | null;
   properties: Record<string, string | number | boolean | null>;
   relationships: Array<{
     relation: string;
@@ -28,9 +30,23 @@ export type CanvasObjectContext = {
   selected: SelectedSceneObjectContext | null;
 };
 
-function buildProductContext(scene: SceneGraphSource): SelectedSceneObjectContext | null {
+function formatDimensionHint(asset: AssetResolutionResult | null): string | null {
+  if (!asset?.dimensionHint) return null;
+  const dim = asset.dimensionHint;
+  const width = dim.width ?? '?';
+  const height = dim.height ?? '?';
+  const depth = dim.depth ?? '?';
+  return `${width}x${height}x${depth}${dim.unit}`;
+}
+
+function buildProductContext(
+  scene: SceneGraphSource,
+  resolvedAssets?: AssetResolutionResult[],
+): SelectedSceneObjectContext | null {
   const product = scene.products[0];
   if (!product) return null;
+  const matchedAsset =
+    resolvedAssets?.find((asset) => asset.category === 'product') || null;
 
   const relatedFlows = scene.flowPaths.filter(
     (flow) => flow.from === product.id || flow.to === product.id,
@@ -40,6 +56,7 @@ function buildProductContext(scene: SceneGraphSource): SelectedSceneObjectContex
     selectedObjectId: product.id,
     objectType: 'product',
     objectName: product.name,
+    sourceAssetId: matchedAsset?.sceneAssetId ?? null,
     properties: {
       mount: product.mount,
       dimensionsIn:
@@ -47,6 +64,10 @@ function buildProductContext(scene: SceneGraphSource): SelectedSceneObjectContex
           ? `${product.dimensionsIn.width}x${product.dimensionsIn.height}x${product.dimensionsIn.depth}`
           : null,
       productFamily: product.productFamily,
+      sourceTemplateId: matchedAsset?.templateId ?? null,
+      sourceGeometryKind: matchedAsset?.geometryKind ?? null,
+      sourceDimensions: formatDimensionHint(matchedAsset),
+      sourceFallbackStatus: matchedAsset?.fallbackStatus ?? null,
     },
     relationships: relatedFlows.map((flow) => ({
       relation: flow.flowType,
@@ -67,10 +88,11 @@ function buildProductContext(scene: SceneGraphSource): SelectedSceneObjectContex
 export function buildCanvasObjectContext(
   scene: SceneGraphSource,
   canvasId = 'video',
+  resolvedAssets?: AssetResolutionResult[],
 ): CanvasObjectContext {
   return {
     canvasId,
     sceneId: scene.id,
-    selected: buildProductContext(scene),
+    selected: buildProductContext(scene, resolvedAssets),
   };
 }

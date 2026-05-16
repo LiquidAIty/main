@@ -5,7 +5,10 @@ import {
 } from '../../components/graph/graphVisualTokens';
 import SceneGraphThreeBlockout from './SceneGraphThreeBlockout';
 import { buildCanvasObjectContext } from './objectAwareCanvasContext';
-import { KoolSkoolsSceneAssetRegistry } from './sceneAssetRegistry';
+import {
+  KoolSkoolsSceneAssetRegistry,
+  resolveSceneAssetsForSceneGraph,
+} from './sceneAssetRegistry';
 import {
   KoolSkoolsProgressiveVideoCascade,
   compileFinalGenerationPacketToOpenRouterPayload,
@@ -154,21 +157,6 @@ function StudioPanel({ title, subtitle, children }: StudioPanelProps): React.Rea
   );
 }
 
-function Dot({ color }: { color: string }): React.ReactElement {
-  return (
-    <span
-      aria-hidden
-      style={{
-        width: 8,
-        height: 8,
-        borderRadius: 999,
-        display: 'inline-block',
-        background: color,
-      }}
-    />
-  );
-}
-
 class BlockoutGuard extends React.Component<BlockoutGuardProps, BlockoutGuardState> {
   state: BlockoutGuardState = {
     hasError: false,
@@ -256,8 +244,21 @@ export default function MediaStudioCanvas({
   const simulationProxyPlanPreview = compileSceneGraphToSimulationProxyPlan(activeScene);
   const lensHintsPreview = compileSceneGraphToCanvasLensHints(activeScene);
   const motionPlanPreview = compileSceneGraphToMotionPlan(activeScene);
-  const objectAwareContextPreview = buildCanvasObjectContext(activeScene, 'video');
   const sceneAssetRegistryPreview = KoolSkoolsSceneAssetRegistry;
+  const resolvedSceneAssetsPreview = React.useMemo(
+    () =>
+      resolveSceneAssetsForSceneGraph(
+        activeScene,
+        sceneAssetRegistryPreview,
+        'warnAndPrimitive',
+      ),
+    [activeScene, sceneAssetRegistryPreview],
+  );
+  const objectAwareContextPreview = buildCanvasObjectContext(
+    activeScene,
+    'video',
+    resolvedSceneAssetsPreview,
+  );
   const cascadePlan = KoolSkoolsProgressiveVideoCascade;
   const [selectedShotId, setSelectedShotId] = React.useState(
     motionPlanPreview.shots[0]?.shotId ?? '',
@@ -1245,34 +1246,49 @@ export default function MediaStudioCanvas({
           )}
         </StudioPanel>
 
-        <StudioPanel title="Scene Assets" subtitle="Scene asset registry foundation for render/simulation roles.">
+        <StudioPanel title="Scene Assets" subtitle="Resolved asset templates for blockout/render/simulation context.">
           <div style={{ fontSize: 12, color: GRAPH_THEME.drawer.inputMuted }}>
-            {sceneAssetRegistryPreview.name} · Assets {sceneAssetRegistryPreview.assets.length}
+            {sceneAssetRegistryPreview.name} · Resolved {resolvedSceneAssetsPreview.length}
           </div>
           <div style={{ display: 'grid', gap: 8 }}>
-            {sceneAssetRegistryPreview.assets.map((asset) => (
+            {resolvedSceneAssetsPreview.map((asset) => (
               <div
-                key={asset.id}
+                key={asset.sceneAssetId}
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 10,
+                  display: 'grid',
+                  gap: 4,
                   fontSize: 12,
+                  border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                  borderRadius: 8,
+                  padding: 8,
                 }}
               >
-                <span>{asset.name}</span>
-                <span
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    color: GRAPH_THEME.drawer.inputMuted,
-                  }}
-                >
-                  <Dot color={GRAPH_THEME.accent.primary} />
-                  {asset.renderRole}
-                </span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                  <span>{asset.sceneAssetName}</span>
+                  <span style={{ color: GRAPH_THEME.drawer.inputMuted }}>
+                    {asset.category}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+                  source {asset.source} · geometry {asset.geometryKind}
+                </div>
+                <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+                  render {asset.renderRole} · sim {asset.simulationRole}
+                </div>
+                <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+                  fallback {asset.fallbackStatus}
+                </div>
+                {asset.dimensionHint ? (
+                  <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+                    dims {asset.dimensionHint.width ?? '?'}x{asset.dimensionHint.height ?? '?'}x
+                    {asset.dimensionHint.depth ?? '?'} {asset.dimensionHint.unit}
+                  </div>
+                ) : null}
+                {asset.warnings.length ? (
+                  <div style={{ fontSize: 11, color: '#D98458' }}>
+                    {asset.warnings.join(' | ')}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
