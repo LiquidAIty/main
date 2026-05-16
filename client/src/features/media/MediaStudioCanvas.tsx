@@ -6,6 +6,14 @@ import {
 import SceneGraphThreeBlockout from './SceneGraphThreeBlockout';
 import { buildCanvasObjectContext } from './objectAwareCanvasContext';
 import { KoolSkoolsSceneAssetRegistry } from './sceneAssetRegistry';
+import {
+  KoolSkoolsProgressiveVideoCascade,
+  compileFinalGenerationPacketToOpenRouterPayload,
+  compilePeepshowReviewToCorrectionPacket,
+  compileSceneGraphShotToScoutPayload,
+  scoreGenerationReviewAgainstNonNegotiables,
+  type GenerationReviewResult,
+} from './modelCascadePlan';
 import type {
   MediaAnalysisManifest,
   MediaPrompt,
@@ -53,6 +61,14 @@ type MediaVideoJobView = {
   motionInstruction: string | null;
   diffusionInstruction: string | null;
   lockedNonNegotiables: string[];
+  cascadeId: string | null;
+  cascadeStage: 'scout' | 'finisher' | null;
+  parentJobId: string | null;
+  correctionPacket: {
+    preservedWins: string[];
+    requiredFixes: string[];
+    summary: string | null;
+  } | null;
   resultUrls: string[];
   resultPayload?: unknown;
   errorMessage: string | null;
@@ -216,6 +232,7 @@ export default function MediaStudioCanvas({
   const motionPlanPreview = compileSceneGraphToMotionPlan(activeScene);
   const objectAwareContextPreview = buildCanvasObjectContext(activeScene, 'video');
   const sceneAssetRegistryPreview = KoolSkoolsSceneAssetRegistry;
+  const cascadePlan = KoolSkoolsProgressiveVideoCascade;
   const [selectedShotId, setSelectedShotId] = React.useState(
     motionPlanPreview.shots[0]?.shotId ?? '',
   );
@@ -255,6 +272,48 @@ export default function MediaStudioCanvas({
     () => motionPlanPreview.shots.find((shot) => shot.shotId === selectedShotId) ?? null,
     [motionPlanPreview.shots, selectedShotId],
   );
+  const scoutPacketPreview = React.useMemo(() => {
+    if (!selectedShot) return null;
+    return compileSceneGraphShotToScoutPayload(activeScene, selectedShot, cascadePlan);
+  }, [activeScene, selectedShot, cascadePlan]);
+  const sampleScoutReview = React.useMemo<GenerationReviewResult | null>(() => {
+    if (!scoutPacketPreview) return null;
+    return {
+      runId: 'scout-review-demo',
+      peepshowReportReference: 'peepshow://manifest/scout-review-demo',
+      overallScore: 0.84,
+      preservedWins: ['Airflow direction held', 'Product silhouette preserved'],
+      requiredFixes: ['Strengthen side cutaway labels', 'Reduce motion blur near vent lip'],
+      nonNegotiableViolations: [],
+      ruleScores: cascadePlan.scoringRules.map((rule) => ({
+        ruleId: rule.id,
+        score: 0.84,
+        passed: 0.84 >= rule.minPassScore,
+      })),
+    };
+  }, [scoutPacketPreview, cascadePlan.scoringRules]);
+  const correctionPacketPreview = React.useMemo(() => {
+    if (!sampleScoutReview || !selectedShot) return null;
+    return compilePeepshowReviewToCorrectionPacket(
+      sampleScoutReview,
+      selectedShot.lockedNonNegotiables,
+    );
+  }, [sampleScoutReview, selectedShot]);
+  const cascadeScoutScore = React.useMemo(
+    () => (sampleScoutReview ? scoreGenerationReviewAgainstNonNegotiables(sampleScoutReview) : 0),
+    [sampleScoutReview],
+  );
+  const cascadeNextAction = React.useMemo(() => {
+    if (!selectedShot) return 'Select a shot.';
+    if (!sampleScoutReview) return 'Submit scout job.';
+    if (sampleScoutReview.nonNegotiableViolations.length > 0) {
+      return 'Fix non-negotiables and rerun scout.';
+    }
+    if (sampleScoutReview.overallScore >= cascadePlan.promotionRule.minOverallScore) {
+      return 'Promote to finisher job.';
+    }
+    return 'Apply correction packet and rerun scout.';
+  }, [selectedShot, sampleScoutReview, cascadePlan.promotionRule.minOverallScore]);
 
   React.useEffect(() => {
     setSubmitPrompt(diffusionPromptPreview);
@@ -297,7 +356,7 @@ export default function MediaStudioCanvas({
     return () => window.clearInterval(interval);
   }, [projectId, jobView, isJobTerminal]);
 
-  async function submitVideoJob() {
+  async function submitVideoJob(mode: 'default' | 'scout' = 'default') {
     if (!projectId) {
       setSubmitError('Project is required before submitting a media job.');
       return;
@@ -309,28 +368,41 @@ export default function MediaStudioCanvas({
       const durationSecRaw = Number.parseInt(submitDurationSec, 10);
       const durationSec =
         Number.isFinite(durationSecRaw) && durationSecRaw > 0 ? durationSecRaw : undefined;
+      const cascadePayload =
+        mode === 'scout' && scoutPacketPreview
+          ? compileFinalGenerationPacketToOpenRouterPayload(scoutPacketPreview, 'scout')
+          : null;
       const response = await fetch(
         `/api/v3/projects/${encodeURIComponent(projectId)}/media/video/jobs`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            prompt: submitPrompt,
-            model: submitModel,
-            aspectRatio: submitAspectRatio,
-            durationSec,
-            sourceSceneId: activeScene.id,
-            sourceVideoGraphId: null,
-            sourceShotId: selectedShot?.shotId,
-            startFrame: selectedShot?.startFrame,
-            endFrame: selectedShot?.endFrame,
-            durationFrames: selectedShot?.durationFrames,
-            cameraIntent: selectedShot?.cameraIntent,
-            motionInstruction: selectedShot?.motionInstruction,
-            diffusionInstruction: selectedShot?.diffusionInstruction,
-            lockedNonNegotiables: selectedShot?.lockedNonNegotiables ?? [],
-            referenceImageUrls: parsedReferenceUrls,
-          }),
+          body: JSON.stringify(
+            cascadePayload
+              ? {
+                  ...cascadePayload,
+                  aspectRatio: submitAspectRatio,
+                  durationSec,
+                  referenceImageUrls: parsedReferenceUrls,
+                }
+              : {
+                  prompt: submitPrompt,
+                  model: submitModel,
+                  aspectRatio: submitAspectRatio,
+                  durationSec,
+                  sourceSceneId: activeScene.id,
+                  sourceVideoGraphId: null,
+                  sourceShotId: selectedShot?.shotId,
+                  startFrame: selectedShot?.startFrame,
+                  endFrame: selectedShot?.endFrame,
+                  durationFrames: selectedShot?.durationFrames,
+                  cameraIntent: selectedShot?.cameraIntent,
+                  motionInstruction: selectedShot?.motionInstruction,
+                  diffusionInstruction: selectedShot?.diffusionInstruction,
+                  lockedNonNegotiables: selectedShot?.lockedNonNegotiables ?? [],
+                  referenceImageUrls: parsedReferenceUrls,
+                },
+          ),
         },
       );
       const payload = (await response.json().catch(() => null)) as
@@ -352,7 +424,11 @@ export default function MediaStudioCanvas({
         return;
       }
       setJobView(payload.job);
-      setLastResponseNote('Submitted to backend OpenRouter route.');
+      setLastResponseNote(
+        mode === 'scout'
+          ? 'Scout stage submitted to backend OpenRouter route.'
+          : 'Submitted to backend OpenRouter route.',
+      );
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : 'video_job_submit_failed');
     } finally {
@@ -520,6 +596,61 @@ export default function MediaStudioCanvas({
                 </div>
               </div>
             ))}
+          </div>
+        </StudioPanel>
+
+        <StudioPanel
+          title="Model Cascade"
+          subtitle="Scout -> Peepshow review -> correction packet -> finisher -> final review -> Remotion target."
+        >
+          <div style={{ display: 'grid', gap: 6, fontSize: 12 }}>
+            <div style={{ color: GRAPH_THEME.drawer.inputMuted }}>
+              Selected shot: {selectedShot?.shotId || 'none'} · Scout model {cascadePlan.scoutModel.modelId} · Finisher model {cascadePlan.finisherModel.modelId}
+            </div>
+            <div style={{ color: GRAPH_THEME.drawer.inputMuted }}>
+              Review score: {Math.round(cascadeScoutScore * 100)}% · Next action: {cascadeNextAction}
+            </div>
+            <div
+              style={{
+                border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                borderRadius: 8,
+                padding: 8,
+                fontSize: 11,
+                color: GRAPH_THEME.drawer.inputMuted,
+                lineHeight: 1.45,
+                display: 'grid',
+                gap: 3,
+              }}
+            >
+              <div>Scout stage: cheap run for shot framing and geometry lock.</div>
+              <div>Review stage: Peepshow score + non-negotiable checks.</div>
+              <div>Correction packet: preserve wins, apply required fixes.</div>
+              <div>Finisher stage: premium run after promotion threshold.</div>
+              {correctionPacketPreview ? (
+                <div>Correction summary: {correctionPacketPreview.summary}</div>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                void submitVideoJob('scout');
+              }}
+              disabled={!projectId || submitBusy || !scoutPacketPreview}
+              style={{
+                justifySelf: 'start',
+                border: `1px solid ${GRAPH_THEME.accent.primary}`,
+                color: GRAPH_THEME.accent.primary,
+                background: 'transparent',
+                borderRadius: 8,
+                fontSize: 12,
+                padding: '7px 10px',
+                cursor:
+                  !projectId || submitBusy || !scoutPacketPreview ? 'not-allowed' : 'pointer',
+                opacity: !projectId || submitBusy || !scoutPacketPreview ? 0.7 : 1,
+              }}
+            >
+              Submit Scout Job
+            </button>
           </div>
         </StudioPanel>
 
@@ -710,6 +841,12 @@ export default function MediaStudioCanvas({
           {jobView?.providerJobId ? (
             <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
               Provider job: {jobView.providerJobId}
+            </div>
+          ) : null}
+          {jobView?.cascadeId ? (
+            <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+              Cascade: {jobView.cascadeId} · Stage {jobView.cascadeStage || 'n/a'} · Parent{' '}
+              {jobView.parentJobId || 'none'}
             </div>
           ) : null}
           {jobView?.sourceShotId ? (

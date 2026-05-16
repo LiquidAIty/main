@@ -34,6 +34,14 @@ type LocalMediaVideoJob = {
   motionInstruction: string | null;
   diffusionInstruction: string | null;
   lockedNonNegotiables: string[];
+  cascadeId: string | null;
+  cascadeStage: 'scout' | 'finisher' | null;
+  parentJobId: string | null;
+  correctionPacket: {
+    preservedWins: string[];
+    requiredFixes: string[];
+    summary: string | null;
+  } | null;
   referenceImageUrls: string[];
   submittedAt: string;
   updatedAt: string;
@@ -59,6 +67,16 @@ const submitSchema = z.object({
   motionInstruction: z.string().trim().min(1).max(2000).optional(),
   diffusionInstruction: z.string().trim().min(1).max(2000).optional(),
   lockedNonNegotiables: z.array(z.string().trim().min(1).max(500)).max(100).optional(),
+  cascadeId: z.string().trim().min(1).max(200).optional(),
+  cascadeStage: z.enum(['scout', 'finisher']).optional(),
+  parentJobId: z.string().trim().min(1).max(200).optional(),
+  correctionPacket: z
+    .object({
+      preservedWins: z.array(z.string().trim().min(1).max(500)).max(50).optional(),
+      requiredFixes: z.array(z.string().trim().min(1).max(500)).max(50).optional(),
+      summary: z.string().trim().min(1).max(1000).optional(),
+    })
+    .optional(),
   referenceImageUrls: z.array(z.string().url()).max(8).optional(),
 });
 
@@ -198,6 +216,16 @@ router.post('/:projectId/media/video/jobs', async (req, res) => {
     motionInstruction: payload.motionInstruction ?? null,
     diffusionInstruction: payload.diffusionInstruction ?? null,
     lockedNonNegotiables: payload.lockedNonNegotiables ?? [],
+    cascadeId: payload.cascadeId ?? null,
+    cascadeStage: payload.cascadeStage ?? null,
+    parentJobId: payload.parentJobId ?? null,
+    correctionPacket: payload.correctionPacket
+      ? {
+          preservedWins: payload.correctionPacket.preservedWins ?? [],
+          requiredFixes: payload.correctionPacket.requiredFixes ?? [],
+          summary: payload.correctionPacket.summary ?? null,
+        }
+      : null,
     referenceImageUrls: payload.referenceImageUrls ?? [],
     submittedAt,
     updatedAt: submittedAt,
