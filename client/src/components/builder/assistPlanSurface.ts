@@ -16,8 +16,42 @@ export type AnchorSurface = {
   sources: string[];
 };
 
+export type PlanContractMode =
+  | "active_run"
+  | "draft"
+  | "meta"
+  | "template"
+  | "archived";
+
+export type PlanStepStatus =
+  | "proposed"
+  | "approved"
+  | "running"
+  | "blocked"
+  | "done";
+
+export type StructuredAssistPlanStep = {
+  id: string;
+  title: string;
+  status: PlanStepStatus;
+  assignedAgentId: string | null;
+  skillId: string | null;
+  toolIds: string[];
+  generatedPrompt: string;
+  expectedOutput: string;
+  relatedFiles: string[];
+  relatedObjects: string[];
+  relatedSurface: string | null;
+  validationCommand: string | null;
+  approvalRequired: boolean;
+  resultSummary: string;
+  blocker: string;
+};
+
 export type StructuredAssistPlanSurface = {
+  planMode: PlanContractMode;
   goal: string;
+  steps: StructuredAssistPlanStep[];
   whatMattersNow: string[];
   nextMove: string[];
   assumptions: string[];
@@ -46,6 +80,43 @@ function safeText(value: unknown): string {
 }
 
 const uid = () => Math.random().toString(36).slice(2, 8);
+
+function normalizePlanMode(value: unknown): PlanContractMode {
+  const mode = safeText(value).trim().toLowerCase();
+  if (
+    mode === "active_run" ||
+    mode === "draft" ||
+    mode === "meta" ||
+    mode === "template" ||
+    mode === "archived"
+  ) {
+    return mode;
+  }
+  return "draft";
+}
+
+function normalizePlanStepStatus(value: unknown): PlanStepStatus {
+  const status = safeText(value).trim().toLowerCase();
+  if (
+    status === "proposed" ||
+    status === "approved" ||
+    status === "running" ||
+    status === "blocked" ||
+    status === "done"
+  ) {
+    return status;
+  }
+  if (status === "complete") return "done";
+  if (status === "awaiting_review" || status === "review") return "approved";
+  if (status === "ready" || status === "seeded") return "proposed";
+  return "proposed";
+}
+
+function normalizeBoolean(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  const normalized = safeText(value).trim().toLowerCase();
+  return normalized === "true" || normalized === "1" || normalized === "yes";
+}
 
 export function normalizePlanItems(input: unknown): PlanItem[] {
   const source = Array.isArray(input)
@@ -203,13 +274,37 @@ export function buildStructuredAssistPlanSurface(
   );
   const explicitHumanTasks = normalizeTextList(planObj?.humanTasks ?? planObj?.human_tasks);
   const explicitAgentTasks = normalizeTextList(planObj?.agentTasks ?? planObj?.agent_tasks);
-  const structuredSteps = Array.isArray(planObj?.steps)
+  const structuredSteps: StructuredAssistPlanStep[] = Array.isArray(planObj?.steps)
     ? (planObj.steps as Array<Record<string, unknown>>)
-        .map((step) => ({
-          title: safeText(step?.title).trim(),
-          assignedAgentId: safeText(step?.assignedAgentId).trim(),
-        }))
-        .filter((step) => step.title)
+        .map((step, index) => {
+          const title = safeText(step?.title).trim();
+          if (!title) return null;
+          const relatedObjects = normalizeTextList(
+            step?.relatedObjects ??
+            step?.relatedObjectIds ??
+            step?.relatedObjectId,
+          );
+          return {
+            id: safeText(step?.id).trim() || `plan_step_${index + 1}`,
+            title,
+            status: normalizePlanStepStatus(step?.status),
+            assignedAgentId: safeText(step?.assignedAgentId).trim() || null,
+            skillId: safeText(step?.skillId).trim() || null,
+            toolIds: normalizeTextList(step?.toolIds ?? step?.tools),
+            generatedPrompt:
+              safeText(step?.generatedPrompt ?? step?.starterPrompt).trim(),
+            expectedOutput: safeText(step?.expectedOutput).trim(),
+            relatedFiles: normalizeTextList(step?.relatedFiles),
+            relatedObjects,
+            relatedSurface: safeText(step?.relatedSurface).trim() || null,
+            validationCommand:
+              safeText(step?.validationCommand).trim() || null,
+            approvalRequired: normalizeBoolean(step?.approvalRequired),
+            resultSummary: safeText(step?.resultSummary).trim(),
+            blocker: safeText(step?.blocker).trim(),
+          };
+        })
+        .filter((step): step is StructuredAssistPlanStep => Boolean(step))
     : [];
   const structuredApprovalGates = Array.isArray(planObj?.approvalGates)
     ? (planObj.approvalGates as Array<Record<string, unknown>>)
@@ -234,8 +329,13 @@ export function buildStructuredAssistPlanSurface(
         .filter(Boolean)
     : [];
   const structuredAgentTasks = structuredSteps.map((step) =>
-    step.assignedAgentId ? `${step.title} [agent: ${step.assignedAgentId}]` : step.title,
+    step.assignedAgentId
+      ? `${step.title} [agent: ${step.assignedAgentId}]`
+      : step.title,
   );
+  const structuredApprovalTasks = structuredSteps
+    .filter((step) => step.approvalRequired)
+    .map((step) => `Approve step "${step.title}" before execution.`);
   const structuredWhatMattersNow = Array.isArray(planObj?.availableAgentsConsidered)
     ? (planObj.availableAgentsConsidered as Array<Record<string, unknown>>)
         .map((entry) => {
@@ -250,7 +350,9 @@ export function buildStructuredAssistPlanSurface(
   ).trim();
 
   return {
+    planMode: normalizePlanMode(planObj?.planMode ?? planObj?.mode),
     goal: safeText(planObj?.goal ?? planObj?.title ?? planObj?.objective).trim(),
+    steps: structuredSteps,
     whatMattersNow: [
       ...normalizeTextList(
         planObj?.whatMattersNow ??
@@ -300,6 +402,7 @@ export function buildStructuredAssistPlanSurface(
         ? explicitHumanTasks
         : [
             ...normalizeTypedTaskList(planObj?.tasks ?? planObj?.items, "human"),
+            ...structuredApprovalTasks,
             ...structuredMissingAgents,
             ...structuredApprovalGates,
           ],

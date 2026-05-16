@@ -58,7 +58,7 @@ import { resolveEffectiveAgent } from '../components/builder/deckRuntime';
 import {
   buildDeckRuntimeVisualState,
   buildReloadStateFromDeckRuns,
-  resolveDeckRunFinalText,
+  resolveDeckRunChatReply,
   streamDeckRunRequest,
 } from '../components/builder/deckRunState';
 import {
@@ -3630,6 +3630,123 @@ function compactAgentOverrides(
   return Object.keys(filtered).length > 0 ? filtered : undefined;
 }
 
+function normalizeStepStatusForPlanSource(
+  value: unknown,
+): 'proposed' | 'approved' | 'running' | 'blocked' | 'done' {
+  const status = safeText(value).trim().toLowerCase();
+  if (
+    status === 'proposed' ||
+    status === 'approved' ||
+    status === 'running' ||
+    status === 'blocked' ||
+    status === 'done'
+  ) {
+    return status;
+  }
+  if (status === 'complete') return 'done';
+  if (status === 'awaiting_review' || status === 'review') return 'approved';
+  if (status === 'ready' || status === 'seeded') return 'proposed';
+  return 'proposed';
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => safeText(entry).trim()).filter(Boolean);
+}
+
+function buildStructuredPlanStepPatch(
+  patch: Partial<PlanMissionNodeData>,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = {};
+  if ('label' in patch) next.title = safeText(patch.label).trim();
+  if ('status' in patch) {
+    next.status = normalizeStepStatusForPlanSource(patch.status);
+  }
+  if ('assignedAgentId' in patch) {
+    const value = safeText(patch.assignedAgentId).trim();
+    next.assignedAgentId = value || null;
+  }
+  if ('skillId' in patch) {
+    const value = safeText(patch.skillId).trim();
+    next.skillId = value || null;
+  }
+  if ('toolIds' in patch) {
+    next.toolIds = normalizeStringList(patch.toolIds);
+  }
+  if ('starterPrompt' in patch) {
+    next.generatedPrompt = safeText(patch.starterPrompt).trim();
+  }
+  if ('expectedOutput' in patch) {
+    next.expectedOutput = safeText(patch.expectedOutput).trim();
+  }
+  if ('relatedFiles' in patch) {
+    next.relatedFiles = normalizeStringList(patch.relatedFiles);
+  }
+  if ('relatedObjects' in patch) {
+    next.relatedObjects = normalizeStringList(patch.relatedObjects);
+  }
+  if ('relatedSurface' in patch) {
+    const value = safeText(patch.relatedSurface).trim();
+    next.relatedSurface = value || null;
+  }
+  if ('validationCommand' in patch) {
+    const value = safeText(patch.validationCommand).trim();
+    next.validationCommand = value || null;
+  }
+  if ('approvalRequired' in patch) {
+    next.approvalRequired = Boolean(patch.approvalRequired);
+  }
+  if ('resultSummary' in patch) {
+    next.resultSummary = safeText(patch.resultSummary).trim();
+  }
+  if ('blocker' in patch) {
+    next.blocker = safeText(patch.blocker).trim();
+  }
+  return next;
+}
+
+function applyPlanStepPatchToSource(
+  current: unknown,
+  stepId: string,
+  patch: Partial<PlanMissionNodeData>,
+): unknown {
+  if (!current || typeof current !== 'object' || Array.isArray(current)) {
+    return current;
+  }
+  const normalizedStepId = safeText(stepId).trim();
+  if (!normalizedStepId) return current;
+  const record = current as Record<string, unknown>;
+  const rawMode = safeText(record.planMode ?? record.mode).trim().toLowerCase();
+  // Keep explicit template/archive plans immutable in this edit path.
+  if (rawMode === 'template' || rawMode === 'archived') return current;
+  if (!Array.isArray(record.steps)) return current;
+
+  const stepPatch = buildStructuredPlanStepPatch(patch);
+  if (Object.keys(stepPatch).length === 0) return current;
+
+  let changed = false;
+  const nextSteps = record.steps.map((step) => {
+    if (!step || typeof step !== 'object' || Array.isArray(step)) return step;
+    const stepRecord = step as Record<string, unknown>;
+    if (safeText(stepRecord.id).trim() !== normalizedStepId) return step;
+    changed = true;
+    return {
+      ...stepRecord,
+      ...stepPatch,
+    };
+  });
+  if (!changed) return current;
+
+  const nextRecord: Record<string, unknown> = {
+    ...record,
+    steps: nextSteps,
+  };
+  if (!rawMode) {
+    nextRecord.planMode = 'active_run';
+  }
+  return nextRecord;
+}
+
 // helper: load all project-local state (defaults only; real data is fetched from backend)
 function loadProjectState(_projectId: string) {
   return {
@@ -4222,14 +4339,20 @@ function buildThinkGraphSeedFromPlanMissionGraph(
     const nodeData = safeRecord(node.data);
     const status = safeText(nodeData.status || 'seeded').trim().toLowerCase();
     const statusConfidence =
-      status === 'complete'
+      status === 'done' || status === 'complete'
         ? 0.94
         : status === 'running'
           ? 0.82
+          : status === 'approved'
+            ? 0.78
           : status === 'ready'
             ? 0.74
+            : status === 'proposed'
+              ? 0.7
             : status === 'awaiting_review'
               ? 0.68
+              : status === 'blocked'
+                ? 0.55
               : 0.62;
     return {
       id: `plan:${safeText(node.id)}`,
@@ -4646,6 +4769,20 @@ export default function AgentBuilder(): React.ReactElement {
     useState<KnowledgeGraphKind>('knowgraph');
   const [graphViewContract, setGraphViewContract] =
     useState<GraphViewContract | null>(null);
+  // chat + plan intent-contract state must be declared before callbacks/effects that write to them.
+  const [messages, setMessages] = useState<
+    { role: 'assistant' | 'user'; text: string }[]
+  >(() => loadProjectState(activeProject).messages);
+  const [planSource, setPlanSource] = useState<unknown>(
+    () => loadProjectState(activeProject).plan,
+  );
+  const [plan, setPlan] = useState<PlanItem[]>(
+    () => loadProjectState(activeProject).plan,
+  );
+  const [links, setLinks] = useState<LinkRef[]>(
+    () => loadProjectState(activeProject).links,
+  );
+  const [stateLoaded, setStateLoaded] = useState(false);
   const lastLargeSurfaceTelemetryRef = useRef<WorkspaceTestingSurface | null>(
     null,
   );
@@ -5786,15 +5923,49 @@ export default function AgentBuilder(): React.ReactElement {
       kind: (String(
         override.kind ?? baseline.kind ?? planMissionFocus.nodeKind,
       ) || 'Task') as PlanMissionNodeData['kind'],
-      status: (String(override.status ?? baseline.status ?? 'seeded') ||
-        'seeded') as PlanMissionNodeData['status'],
+      status: (String(override.status ?? baseline.status ?? 'proposed') ||
+        'proposed') as PlanMissionNodeData['status'],
       description: String(override.description ?? baseline.description ?? ''),
       assignedAgentId: String(
         override.assignedAgentId ?? baseline.assignedAgentId ?? '',
       ),
+      skillId: String(override.skillId ?? baseline.skillId ?? ''),
+      toolIds: Array.isArray(override.toolIds ?? baseline.toolIds)
+        ? ((override.toolIds ?? baseline.toolIds) as unknown[]).map((entry) =>
+            String(entry ?? ''),
+          )
+        : [],
       starterPrompt: String(
         override.starterPrompt ?? baseline.starterPrompt ?? '',
       ),
+      expectedOutput: String(
+        override.expectedOutput ?? baseline.expectedOutput ?? '',
+      ),
+      relatedFiles: Array.isArray(override.relatedFiles ?? baseline.relatedFiles)
+        ? ((override.relatedFiles ?? baseline.relatedFiles) as unknown[]).map(
+            (entry) => String(entry ?? ''),
+          )
+        : [],
+      relatedObjects: Array.isArray(
+        override.relatedObjects ?? baseline.relatedObjects,
+      )
+        ? (
+            (override.relatedObjects ?? baseline.relatedObjects) as unknown[]
+          ).map((entry) => String(entry ?? ''))
+        : [],
+      relatedSurface: String(
+        override.relatedSurface ?? baseline.relatedSurface ?? '',
+      ),
+      validationCommand: String(
+        override.validationCommand ?? baseline.validationCommand ?? '',
+      ),
+      approvalRequired: Boolean(
+        override.approvalRequired ?? baseline.approvalRequired ?? false,
+      ),
+      resultSummary: String(
+        override.resultSummary ?? baseline.resultSummary ?? '',
+      ),
+      blocker: String(override.blocker ?? baseline.blocker ?? ''),
       updateKey: String(override.updateKey ?? baseline.updateKey ?? ''),
       outputKey: String(override.outputKey ?? baseline.outputKey ?? ''),
       editable: Boolean(override.editable ?? true),
@@ -5802,7 +5973,11 @@ export default function AgentBuilder(): React.ReactElement {
   }, [planMissionFocus, planNodeDrafts]);
 
   const updatePlanNodeDraft = useCallback(
-    (nodeId: string, patch: Partial<PlanMissionNodeData>) => {
+    (
+      nodeId: string,
+      patch: Partial<PlanMissionNodeData>,
+      stepId?: string,
+    ) => {
       setPlanNodeDrafts((current) => ({
         ...current,
         [nodeId]: {
@@ -5810,8 +5985,13 @@ export default function AgentBuilder(): React.ReactElement {
           ...patch,
         },
       }));
+      if (stepId) {
+        // Local intent-contract persistence: write step edits into in-memory planSource.
+        // This survives surface switches in-session; backend persistence remains run/deck scoped.
+        setPlanSource((current) => applyPlanStepPatchToSource(current, stepId, patch));
+      }
     },
-    [],
+    [setPlanSource],
   );
 
   const renderPlanMissionEditorPanel = useCallback(() => {
@@ -5833,9 +6013,10 @@ export default function AgentBuilder(): React.ReactElement {
       field: keyof PlanMissionNodeData,
       value: PlanMissionNodeData[keyof PlanMissionNodeData],
     ) => {
+      const stepId = safeText(selectedPlanNodeDraft.updateKey).trim();
       updatePlanNodeDraft(focusId, {
         [field]: value,
-      } as Partial<PlanMissionNodeData>);
+      } as Partial<PlanMissionNodeData>, stepId);
     };
     return (
       <div style={{ display: 'grid', gap: 10 }}>
@@ -5892,7 +6073,7 @@ export default function AgentBuilder(): React.ReactElement {
           </div>
           <div style={{ display: 'grid', gap: 8 }}>
             <select
-              value={selectedPlanNodeDraft.status || 'seeded'}
+              value={selectedPlanNodeDraft.status || 'proposed'}
               onChange={(event) =>
                 setField(
                   'status',
@@ -5902,13 +6083,11 @@ export default function AgentBuilder(): React.ReactElement {
               style={graphDrawerInputStyle()}
             >
               {[
-                'seeded',
-                'ready',
+                'proposed',
+                'approved',
                 'running',
                 'blocked',
-                'awaiting_review',
-                'complete',
-                'error',
+                'done',
               ].map((status) => (
                 <option key={status} value={status}>
                   {status}
@@ -5923,13 +6102,152 @@ export default function AgentBuilder(): React.ReactElement {
               }
               style={graphDrawerInputStyle()}
             />
+            <input
+              placeholder="Skill id"
+              value={selectedPlanNodeDraft.skillId || ''}
+              onChange={(event) => setField('skillId', event.target.value)}
+              style={graphDrawerInputStyle()}
+            />
+            <input
+              placeholder="Tool ids (comma separated)"
+              value={(selectedPlanNodeDraft.toolIds || []).join(', ')}
+              onChange={(event) =>
+                setField(
+                  'toolIds',
+                  event.target.value
+                    .split(',')
+                    .map((entry) => entry.trim())
+                    .filter(Boolean),
+                )
+              }
+              style={graphDrawerInputStyle()}
+            />
             <textarea
-              placeholder="Starter prompt"
+              placeholder="Generated prompt"
               value={selectedPlanNodeDraft.starterPrompt || ''}
               onChange={(event) =>
                 setField('starterPrompt', event.target.value)
               }
               rows={5}
+              style={{
+                ...graphDrawerInputStyle({
+                  resize: 'vertical',
+                  fontFamily: 'inherit',
+                  fontSize: 12,
+                }),
+              }}
+            />
+            <textarea
+              placeholder="Expected output"
+              value={selectedPlanNodeDraft.expectedOutput || ''}
+              onChange={(event) =>
+                setField('expectedOutput', event.target.value)
+              }
+              rows={3}
+              style={{
+                ...graphDrawerInputStyle({
+                  resize: 'vertical',
+                  fontFamily: 'inherit',
+                  fontSize: 12,
+                }),
+              }}
+            />
+            <textarea
+              placeholder="Related files (one per line)"
+              value={(selectedPlanNodeDraft.relatedFiles || []).join('\n')}
+              onChange={(event) =>
+                setField(
+                  'relatedFiles',
+                  event.target.value
+                    .split(/\r?\n+/)
+                    .map((entry) => entry.trim())
+                    .filter(Boolean),
+                )
+              }
+              rows={3}
+              style={{
+                ...graphDrawerInputStyle({
+                  resize: 'vertical',
+                  fontFamily: 'inherit',
+                  fontSize: 12,
+                }),
+              }}
+            />
+            <textarea
+              placeholder="Related objects (one per line)"
+              value={(selectedPlanNodeDraft.relatedObjects || []).join('\n')}
+              onChange={(event) =>
+                setField(
+                  'relatedObjects',
+                  event.target.value
+                    .split(/\r?\n+/)
+                    .map((entry) => entry.trim())
+                    .filter(Boolean),
+                )
+              }
+              rows={3}
+              style={{
+                ...graphDrawerInputStyle({
+                  resize: 'vertical',
+                  fontFamily: 'inherit',
+                  fontSize: 12,
+                }),
+              }}
+            />
+            <input
+              placeholder="Related surface"
+              value={selectedPlanNodeDraft.relatedSurface || ''}
+              onChange={(event) =>
+                setField('relatedSurface', event.target.value)
+              }
+              style={graphDrawerInputStyle()}
+            />
+            <input
+              placeholder="Validation command"
+              value={selectedPlanNodeDraft.validationCommand || ''}
+              onChange={(event) =>
+                setField('validationCommand', event.target.value)
+              }
+              style={graphDrawerInputStyle()}
+            />
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                color: GRAPH_THEME.drawer.inputText,
+                fontSize: 12,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={Boolean(selectedPlanNodeDraft.approvalRequired)}
+                onChange={(event) =>
+                  setField('approvalRequired', event.target.checked)
+                }
+              />
+              Approval required
+            </label>
+            <textarea
+              placeholder="Result summary"
+              value={selectedPlanNodeDraft.resultSummary || ''}
+              onChange={(event) =>
+                setField('resultSummary', event.target.value)
+              }
+              rows={2}
+              style={{
+                ...graphDrawerInputStyle({
+                  resize: 'vertical',
+                  fontFamily: 'inherit',
+                  fontSize: 12,
+                }),
+              }}
+            />
+            <textarea
+              placeholder="Blocker"
+              value={selectedPlanNodeDraft.blocker || ''}
+              onChange={(event) => setField('blocker', event.target.value)}
+              rows={2}
               style={{
                 ...graphDrawerInputStyle({
                   resize: 'vertical',
@@ -6200,20 +6518,6 @@ export default function AgentBuilder(): React.ReactElement {
     }
   }, [activeProject]);
 
-  // chat state
-  const [messages, setMessages] = useState<
-    { role: 'assistant' | 'user'; text: string }[]
-  >(() => loadProjectState(activeProject).messages);
-
-  // plan
-  const [planSource, setPlanSource] = useState<unknown>(
-    () => loadProjectState(activeProject).plan,
-  );
-  const [plan, setPlan] = useState<PlanItem[]>(
-    () => loadProjectState(activeProject).plan,
-  );
-  const [stateLoaded, setStateLoaded] = useState(false);
-
   const [energyInputs, setEnergyInputs] = useState<EnergySurfaceParameters>(
     () => ({ ...ENERGY_DEFAULT_PARAMETERS }),
   );
@@ -6322,10 +6626,6 @@ export default function AgentBuilder(): React.ReactElement {
     };
   }, [applyWorkspaceAction]);
 
-  // links
-  const [links, setLinks] = useState<LinkRef[]>(
-    () => loadProjectState(activeProject).links,
-  );
   const assistAnchorSurface = useMemo(
     () =>
       normalizeAnchorSurface(planSource, { messages, planItems: plan, links }),
@@ -7529,7 +7829,7 @@ export default function AgentBuilder(): React.ReactElement {
           applyCodeGraphViewContract(runDerivedCodeGraphContract);
         }
         const assistantText =
-          resolveDeckRunFinalText(run) || 'No response returned.';
+          resolveDeckRunChatReply(run) || 'No response returned.';
         const continuity = buildReloadStateFromDeckRuns([run], run);
         setLatestDeckRun(run);
         setLiveDeckEvents([]);

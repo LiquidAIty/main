@@ -1,10 +1,15 @@
 import type { Edge, Node } from '@xyflow/react';
 
-import type { StructuredAssistPlanSurface } from '../builder/assistPlanSurface';
+import type {
+  PlanStepStatus,
+  StructuredAssistPlanStep,
+  StructuredAssistPlanSurface,
+} from '../builder/assistPlanSurface';
 import { GRAPH_THEME } from '../graph/graphVisualTokens';
 
 export type PlanMissionNodeKind =
   | 'Goal'
+  | 'Step'
   | 'Task'
   | 'Research'
   | 'Synthesize'
@@ -14,6 +19,8 @@ export type PlanMissionNodeKind =
   | 'AgentAssignment';
 
 export type PlanMissionNodeStatus =
+  | 'proposed'
+  | 'approved'
   | 'seeded'
   | 'ready'
   | 'running'
@@ -33,7 +40,17 @@ export type PlanMissionNodeData = {
   updateKey?: string;
   outputKey?: string;
   assignedAgentId?: string;
+  skillId?: string;
+  toolIds?: string[];
   starterPrompt?: string;
+  expectedOutput?: string;
+  relatedFiles?: string[];
+  relatedObjects?: string[];
+  relatedSurface?: string;
+  validationCommand?: string;
+  approvalRequired?: boolean;
+  resultSummary?: string;
+  blocker?: string;
   editable?: boolean;
 };
 
@@ -184,237 +201,224 @@ function pickFirst(
   return first || fallback;
 }
 
+function normalizeStatusForNode(stepStatus: PlanStepStatus): PlanMissionNodeStatus {
+  if (
+    stepStatus === 'proposed' ||
+    stepStatus === 'approved' ||
+    stepStatus === 'running' ||
+    stepStatus === 'blocked' ||
+    stepStatus === 'done'
+  ) {
+    return stepStatus;
+  }
+  return 'proposed';
+}
+
+function inferNodeKind(step: StructuredAssistPlanStep): PlanMissionNodeKind {
+  if (step.approvalRequired) return 'Approval';
+  if (step.relatedFiles.length > 0 || step.relatedObjects.length > 0) return 'Task';
+  if (step.expectedOutput || step.resultSummary) return 'Output';
+  return 'Step';
+}
+
+function buildStepDescription(step: StructuredAssistPlanStep): string {
+  const lines: string[] = [];
+  if (step.expectedOutput) lines.push(`Expected: ${step.expectedOutput}`);
+  if (step.relatedSurface) lines.push(`Surface: ${step.relatedSurface}`);
+  if (step.relatedFiles.length > 0) {
+    lines.push(`Files: ${step.relatedFiles.slice(0, 3).join(', ')}`);
+  }
+  if (step.validationCommand) lines.push(`Validate: ${step.validationCommand}`);
+  if (step.blocker) lines.push(`Blocker: ${step.blocker}`);
+  return lines.join(' ');
+}
+
+function toNodeId(step: StructuredAssistPlanStep, index: number): string {
+  const stable = String(step.id || '').trim() || `step_${index + 1}`;
+  const slug = stable
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return `mission_${slug || `step_${index + 1}`}`;
+}
+
 export function buildPlanMissionGraph(
   structuredPlan: StructuredAssistPlanSurface,
   nodeOverrides?: PlanMissionNodeOverrideMap,
 ): PlanMissionGraph {
   const PLAN_X_TIGHTEN_ORIGIN = 56;
   const PLAN_X_TIGHTEN_RATIO = 0.9;
-  const requestText =
+  const goalText =
     String(structuredPlan.goal || '').trim() ||
-    'Research documentation for our current code stack, understand the main frameworks and architecture, gather useful sources, and organize the findings so the system can use them later.';
-  const targetText = pickFirst(
-    structuredPlan.nextMove,
-    'Clarify what parts of the stack and architecture should be researched first.',
-  );
-  const libraryResearchText = pickFirst(
-    structuredPlan.research,
-    'Collect documentation for the main frameworks and libraries in the stack.',
-  );
-  const projectResearchText = pickFirst(
-    structuredPlan.whatMattersNow,
-    'Pull project-specific architecture understanding from code and internal structure.',
-  );
-  const agentAssignmentText = pickFirst(
-    structuredPlan.agentTasks,
-    'Use available research tooling to gather external documentation and supporting context.',
-  );
-  const synthesisText = pickFirst(
-    structuredPlan.pathOptions,
-    'Combine framework docs, project context, and web research into one usable summary.',
-  );
-  const memoryWriteText = pickFirst(
-    structuredPlan.humanTasks,
-    'Write useful structure into ThinkGraph now so later runs can promote and ground the same plan outputs.',
-  );
-  const approvalText =
-    cleanList(structuredPlan.humanTasks).find((item) =>
-      /approve|review|sign[- ]?off/i.test(item),
-    ) ||
-    'Pause for human review before accepting the current research plan output.';
-  const outputText = pickFirst(
-    structuredPlan.whatChanged,
-    'Return a usable final summary, next steps, and stored graph/memory results.',
-  );
-  const noteSource = pickFirst(structuredPlan.sources, '');
-  const noteText =
-    noteSource ||
-    'Seed plan graph for this workspace. This data is editable and designed to be updated in place by runtime status/output writes on stable node IDs.';
+    'Define the implementation intent before any execution.';
+  const modeText = String(structuredPlan.planMode || 'draft')
+    .trim()
+    .toLowerCase();
+  const baseSteps: StructuredAssistPlanStep[] =
+    Array.isArray(structuredPlan.steps) && structuredPlan.steps.length > 0
+      ? structuredPlan.steps
+      : cleanList(structuredPlan.nextMove).map((title, index) => ({
+          id: `fallback_step_${index + 1}`,
+          title,
+          status: 'proposed' as const,
+          assignedAgentId: null,
+          skillId: null,
+          toolIds: [],
+          generatedPrompt: '',
+          expectedOutput: '',
+          relatedFiles: [],
+          relatedObjects: [],
+          relatedSurface: null,
+          validationCommand: null,
+          approvalRequired: true,
+          resultSummary: '',
+          blocker: '',
+        }));
+  const planSteps =
+    baseSteps.length > 0
+      ? baseSteps
+      : [
+          {
+            id: 'fallback_step_1',
+            title: pickFirst(
+              structuredPlan.nextMove,
+              'Define the first safe implementation step.',
+            ),
+            status: 'proposed' as const,
+            assignedAgentId: null,
+            skillId: null,
+            toolIds: [],
+            generatedPrompt: '',
+            expectedOutput: '',
+            relatedFiles: [],
+            relatedObjects: [],
+            relatedSurface: null,
+            validationCommand: null,
+            approvalRequired: true,
+            resultSummary: '',
+            blocker: '',
+          },
+        ];
 
-  const nodes: PlanMissionFlowNode[] = [
+  const nodes: PlanMissionFlowNode[] = [];
+
+  nodes.push(
     makeNode(
-      'mission_user_request',
-      'Research Request: Map Stack Documentation',
+      'mission_goal',
+      'Active Plan Goal',
       'Goal',
       40,
       136,
-      'Understand the current LiquidAIty code stack and gather practical documentation the team can use immediately.',
-      'complete',
-      'user_request',
-      'user_request_text',
+      goalText,
+      modeText === 'archived' ? 'done' : 'approved',
+      'plan_goal',
+      'plan_goal_summary',
       undefined,
-      requestText,
+      'Treat this plan as the editable intent contract before any execution.',
+      false,
     ),
-    makeNode(
-      'mission_define_scope',
-      'Scope Documentation Targets',
-      'Task',
-      296,
-      136,
-      `Define framework targets, architecture surfaces, and knowledge writeback boundaries. ${targetText}`,
-      'ready',
-      'documentation_scope',
-      'documentation_scope_summary',
-      undefined,
-      'Define the documentation target for this plan. Focus on the current code stack, core frameworks, graph/memory architecture, orchestration path, and major UI/runtime surfaces.',
-    ),
-    makeNode(
-      'mission_framework_docs',
-      'Gather Framework Documentation',
-      'Research',
-      552,
-      64,
-      `Collect official docs for core libraries/frameworks in use and map each to runtime responsibilities. ${libraryResearchText}`,
-      'ready',
-      'framework_docs',
-      'framework_docs_findings',
-      'card_research_agent',
-      'Gather documentation for the key frameworks and libraries used in this project. Return structured sources and why each matters.',
-    ),
-    makeNode(
-      'mission_project_context',
-      'Gather Project Architecture Context',
-      'Research',
-      552,
-      208,
-      `Extract structure from repository implementation, plan surfaces, runtime flow, and memory graph seams. ${projectResearchText}`,
-      'ready',
-      'project_architecture_context',
-      'project_architecture_findings',
-      'card_codegraph_agent',
-      'Analyze the current codebase structure and summarize major architecture surfaces, runtime paths, graph systems, and dependencies.',
-    ),
-    makeNode(
-      'mission_web_research',
-      'Run Web Documentation Research',
-      'AgentAssignment',
-      808,
-      136,
-      `Use available research tooling to gather external sources, cross-check claims, and capture concise summaries. ${agentAssignmentText}`,
-      'ready',
-      'web_research_run',
-      'web_research_output',
-      'card_research_agent',
-      'Run documentation-focused research with available web/documentation tools. Prioritize official docs and useful architecture references for this stack.',
-    ),
-    makeNode(
-      'mission_synthesize',
-      'Synthesize Findings Into Plan Brief',
-      'Synthesize',
-      1064,
-      136,
-      `Merge framework docs, project context, and web findings into one operationally useful documentation brief. ${synthesisText}`,
-      'seeded',
-      'synthesized_findings',
-      'synthesized_documentation_summary',
-      undefined,
-      'Synthesize gathered findings into a concise architecture-and-documentation summary for downstream graph and agent use.',
-    ),
-    makeNode(
-      'mission_write_graph',
-      'Write Provisional Knowledge To ThinkGraph',
-      'Task',
-      1320,
-      136,
-      `Store provisional architecture understanding for planning use, preserving traceability and update safety. ${memoryWriteText}`,
-      'seeded',
-      'write_to_graph_memory',
-      'graph_memory_write_result',
-      'card_thinkgraph_agent',
-      'Write provisional architecture and documentation understanding into ThinkGraph in structured form, ready for later refinement.',
-    ),
-    makeNode(
-      'mission_human_review',
-      'Await Human Review',
-      'Approval',
-      1576,
-      136,
-      `Pause before accepting or promoting outputs. Review for correctness, relevance, and confidence. ${approvalText}`,
-      'awaiting_review',
-      'human_review_gate',
-      'human_review_decision',
-    ),
-    makeNode(
-      'mission_deliver_output',
-      'Deliver Documentation Research Output',
-      'Output',
-      1824,
-      136,
-      `Return findings, linked sources, known gaps, and concrete next actions for implementation teams. ${outputText}`,
-      'seeded',
-      'deliver_documentation_output',
-      'final_documentation_output',
-    ),
-    makeNode(
-      'mission_note',
-      'Plan Note: Workspace Seed',
-      'Note',
-      1064,
-      298,
-      noteText,
-      'seeded',
-      'mission_note',
-      'mission_note_text',
-    ),
-  ];
+  );
 
-  const edges: PlanMissionFlowEdge[] = [
-    makeEdge(
-      'edge_request_to_scope',
-      'mission_user_request',
-      'mission_define_scope',
-      'active',
+  const STEP_BASE_X = 296;
+  const STEP_DELTA_X = 244;
+  const STEP_BASE_Y = 136;
+  planSteps.forEach((step, index) => {
+    const nodeId = toNodeId(step, index);
+    const node = makeNode(
+      nodeId,
+      step.title,
+      inferNodeKind(step),
+      STEP_BASE_X + index * STEP_DELTA_X,
+      STEP_BASE_Y,
+      buildStepDescription(step),
+      normalizeStatusForNode(step.status),
+      step.id || `step_${index + 1}`,
+      `step_${index + 1}_output`,
+      step.assignedAgentId || undefined,
+      step.generatedPrompt || undefined,
+      true,
+    );
+    node.data = {
+      ...node.data,
+      skillId: step.skillId || undefined,
+      toolIds: step.toolIds,
+      expectedOutput: step.expectedOutput,
+      relatedFiles: step.relatedFiles,
+      relatedObjects: step.relatedObjects,
+      relatedSurface: step.relatedSurface || undefined,
+      validationCommand: step.validationCommand || undefined,
+      approvalRequired: step.approvalRequired,
+      resultSummary: step.resultSummary,
+      blocker: step.blocker,
+    };
+    nodes.push(node);
+  });
+
+  const noteSource = pickFirst(structuredPlan.sources, '');
+  const modeLabel =
+    modeText === 'active_run'
+      ? 'Active run plan'
+      : modeText === 'template'
+        ? 'Template plan'
+        : modeText === 'archived'
+          ? 'Archived plan'
+          : modeText === 'meta'
+            ? 'Meta plan'
+            : 'Draft plan';
+  const noteText = noteSource || `${modeLabel}: edit steps and approve before execution.`;
+  nodes.push(
+    makeNode(
+      'mission_note',
+      'Plan Note',
+      'Note',
+      STEP_BASE_X + Math.max(1, planSteps.length - 1) * STEP_DELTA_X,
+      STEP_BASE_Y + 156,
+      noteText,
+      'proposed',
+      'plan_note',
+      'plan_note_text',
+      undefined,
+      undefined,
+      false,
     ),
-    makeEdge(
-      'edge_scope_to_framework_docs',
-      'mission_define_scope',
-      'mission_framework_docs',
-      'active',
-    ),
-    makeEdge(
-      'edge_scope_to_project_context',
-      'mission_define_scope',
-      'mission_project_context',
-      'active',
-    ),
-    makeEdge(
-      'edge_framework_docs_to_web_research',
-      'mission_framework_docs',
-      'mission_web_research',
-      'running',
-    ),
-    makeEdge(
-      'edge_project_context_to_web_research',
-      'mission_project_context',
-      'mission_web_research',
-      'running',
-    ),
-    makeEdge(
-      'edge_web_research_to_synthesize',
-      'mission_web_research',
-      'mission_synthesize',
-      'running',
-    ),
-    makeEdge(
-      'edge_synthesize_to_write_graph',
-      'mission_synthesize',
-      'mission_write_graph',
-      'idle',
-    ),
-    makeEdge(
-      'edge_write_graph_to_human_review',
-      'mission_write_graph',
-      'mission_human_review',
-      'active',
-    ),
-    makeEdge(
-      'edge_human_review_to_deliver_output',
-      'mission_human_review',
-      'mission_deliver_output',
-      'idle',
-    ),
-    makeEdge('edge_synthesize_to_note', 'mission_synthesize', 'mission_note'),
-  ];
+  );
+
+  const edges: PlanMissionFlowEdge[] = [];
+  const firstStepNodeId = planSteps.length > 0 ? toNodeId(planSteps[0], 0) : null;
+  if (firstStepNodeId) {
+    edges.push(
+      makeEdge(
+        'edge_goal_to_step_1',
+        'mission_goal',
+        firstStepNodeId,
+        modeText === 'active_run' ? 'active' : 'idle',
+      ),
+    );
+  }
+  for (let index = 0; index < planSteps.length - 1; index += 1) {
+    const sourceStep = planSteps[index];
+    const targetStep = planSteps[index + 1];
+    edges.push(
+      makeEdge(
+        `edge_step_${index + 1}_to_${index + 2}`,
+        toNodeId(sourceStep, index),
+        toNodeId(targetStep, index + 1),
+        sourceStep.status === 'running' ? 'running' : 'idle',
+      ),
+    );
+  }
+  if (planSteps.length > 0) {
+    edges.push(
+      makeEdge(
+        'edge_last_step_to_note',
+        toNodeId(planSteps[planSteps.length - 1], planSteps.length - 1),
+        'mission_note',
+        'idle',
+      ),
+    );
+  } else {
+    edges.push(makeEdge('edge_goal_to_note', 'mission_goal', 'mission_note', 'idle'));
+  }
 
   const mergedNodes =
     nodeOverrides && Object.keys(nodeOverrides).length > 0

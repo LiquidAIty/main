@@ -212,7 +212,7 @@ function WallAnchorNode() {
 
 function MissionNode({ data, selected }: NodeProps<any>) {
   const nodeData = data as PlanMissionNodeData;
-  const status = String(nodeData?.status || 'seeded');
+  const status = String(nodeData?.status || 'proposed');
   const shellActive = Boolean(selected || status.toLowerCase() === 'running');
   const title = String(nodeData?.label || '').trim() || 'Plan Node';
   const subtext = String(nodeData?.kind || '').trim() || 'Task';
@@ -912,13 +912,29 @@ export default function PlanMissionFlow({
           label: String(nodeData.label || selectedNode.id),
           kind: String(nodeData.kind || 'Task') as PlanMissionNodeData['kind'],
           status: String(
-            nodeData.status || 'seeded',
+            nodeData.status || 'proposed',
           ) as PlanMissionNodeData['status'],
           description: String(nodeData.description || ''),
           updateKey: String(nodeData.updateKey || ''),
           outputKey: String(nodeData.outputKey || ''),
           assignedAgentId: String(nodeData.assignedAgentId || ''),
+          skillId: String(nodeData.skillId || ''),
+          toolIds: Array.isArray(nodeData.toolIds)
+            ? nodeData.toolIds.map((entry) => String(entry || ''))
+            : [],
           starterPrompt: String(nodeData.starterPrompt || ''),
+          expectedOutput: String(nodeData.expectedOutput || ''),
+          relatedFiles: Array.isArray(nodeData.relatedFiles)
+            ? nodeData.relatedFiles.map((entry) => String(entry || ''))
+            : [],
+          relatedObjects: Array.isArray(nodeData.relatedObjects)
+            ? nodeData.relatedObjects.map((entry) => String(entry || ''))
+            : [],
+          relatedSurface: String(nodeData.relatedSurface || ''),
+          validationCommand: String(nodeData.validationCommand || ''),
+          approvalRequired: Boolean(nodeData.approvalRequired),
+          resultSummary: String(nodeData.resultSummary || ''),
+          blocker: String(nodeData.blocker || ''),
           editable: Boolean(nodeData.editable ?? true),
         },
       });
@@ -1409,13 +1425,29 @@ export default function PlanMissionFlow({
                 nodeData.kind || 'Task',
               ) as PlanMissionNodeData['kind'],
               status: String(
-                nodeData.status || 'seeded',
+                nodeData.status || 'proposed',
               ) as PlanMissionNodeData['status'],
               description: String(nodeData.description || ''),
               updateKey: String(nodeData.updateKey || ''),
               outputKey: String(nodeData.outputKey || ''),
               assignedAgentId: String(nodeData.assignedAgentId || ''),
+              skillId: String(nodeData.skillId || ''),
+              toolIds: Array.isArray(nodeData.toolIds)
+                ? nodeData.toolIds.map((entry) => String(entry || ''))
+                : [],
               starterPrompt: String(nodeData.starterPrompt || ''),
+              expectedOutput: String(nodeData.expectedOutput || ''),
+              relatedFiles: Array.isArray(nodeData.relatedFiles)
+                ? nodeData.relatedFiles.map((entry) => String(entry || ''))
+                : [],
+              relatedObjects: Array.isArray(nodeData.relatedObjects)
+                ? nodeData.relatedObjects.map((entry) => String(entry || ''))
+                : [],
+              relatedSurface: String(nodeData.relatedSurface || ''),
+              validationCommand: String(nodeData.validationCommand || ''),
+              approvalRequired: Boolean(nodeData.approvalRequired),
+              resultSummary: String(nodeData.resultSummary || ''),
+              blocker: String(nodeData.blocker || ''),
               editable: Boolean(nodeData.editable ?? true),
             },
           });

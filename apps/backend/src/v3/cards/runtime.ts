@@ -204,6 +204,49 @@ function normalizeTextList(value: unknown): string[] {
     .filter(Boolean);
 }
 
+function normalizeBoolean(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+}
+
+function normalizePlanMode(value: unknown): 'active_run' | 'draft' | 'meta' | 'template' | 'archived' {
+  const mode = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (
+    mode === 'active_run' ||
+    mode === 'draft' ||
+    mode === 'meta' ||
+    mode === 'template' ||
+    mode === 'archived'
+  ) {
+    return mode;
+  }
+  return 'draft';
+}
+
+function normalizePlanStepStatus(value: unknown): 'proposed' | 'approved' | 'running' | 'blocked' | 'done' {
+  const status = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (
+    status === 'proposed' ||
+    status === 'approved' ||
+    status === 'running' ||
+    status === 'blocked' ||
+    status === 'done'
+  ) {
+    return status;
+  }
+  if (status === 'complete') return 'done';
+  if (status === 'awaiting_review' || status === 'review') return 'approved';
+  if (status === 'ready' || status === 'seeded') return 'proposed';
+  return 'proposed';
+}
+
 function normalizeStructuredPlanCandidate(
   value: unknown,
 ): Record<string, unknown> | null {
@@ -239,25 +282,37 @@ function normalizeStructuredPlanCandidate(
     })
     .filter((entry): entry is { proposedAgentId: string; name: string; purpose: string; whyNeeded: string; approvalRequired: true } => Boolean(entry));
   const steps = (Array.isArray(raw.steps) ? raw.steps : [])
-    .map((entry) => {
+    .map((entry, index) => {
       const row = entry as Record<string, unknown>;
       const title = String(row.title || '').trim();
       if (!title) return null;
       const assignedAgentId = String(row.assignedAgentId || '').trim() || null;
-      const relatedObjectId = String(row.relatedObjectId || '').trim() || null;
+      const skillId = String(row.skillId || '').trim() || null;
+      const toolIds = normalizeTextList(row.toolIds || row.tools);
+      const generatedPrompt = String(row.generatedPrompt || row.starterPrompt || '').trim();
+      const expectedOutput = String(row.expectedOutput || '').trim();
+      const relatedObjects = normalizeTextList(
+        row.relatedObjects || row.relatedObjectIds || row.relatedObjectId,
+      );
       const relatedSurface = String(row.relatedSurface || '').trim() || null;
       const relatedFiles = normalizeTextList(row.relatedFiles);
       const validationCommand = String(row.validationCommand || '').trim() || null;
       return {
+        id: String(row.id || '').trim() || `plan_step_${index + 1}`,
         title,
-        status: 'proposed',
+        status: normalizePlanStepStatus(row.status),
         assignedAgentId,
-        relatedObjectId,
+        skillId,
+        toolIds,
+        generatedPrompt,
+        expectedOutput,
+        relatedObjects,
         relatedSurface,
         relatedFiles,
         validationCommand,
-        resultSummary: '',
-        blocker: '',
+        approvalRequired: normalizeBoolean(row.approvalRequired),
+        resultSummary: String(row.resultSummary || '').trim(),
+        blocker: String(row.blocker || '').trim(),
       };
     })
     .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
@@ -279,6 +334,7 @@ function normalizeStructuredPlanCandidate(
   if (!goal && steps.length === 0) return null;
 
   return {
+    planMode: normalizePlanMode(raw.planMode || raw.mode),
     goal,
     availableAgentsConsidered,
     missingAgentsProposed,
@@ -1955,6 +2011,9 @@ async function runMagenticCard(
       : null,
     planningRequested
       ? 'When the user asks for planning, include structuredPlan and keep every step status as proposed. Do not auto-create agents and do not execute agents.'
+      : null,
+    planningRequested
+      ? 'For structuredPlan, include planMode (active_run|draft|meta|template|archived) and step fields: id, title, status, assignedAgentId, skillId, toolIds, generatedPrompt, expectedOutput, relatedFiles, relatedObjects, relatedSurface, validationCommand, approvalRequired, resultSummary, blocker.'
       : null,
     'Return JSON only with keys selectedCardId, directResponseText, progressText, structuredPlan, and graphViewContract.',
     'Set exactly one of selectedCardId or directResponseText to a non-empty value.',
