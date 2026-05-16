@@ -9348,7 +9348,7 @@ export default function AgentBuilder(): React.ReactElement {
                         </div>
                       }
                     >
-                      <MediaStudioCanvas />
+                      <MediaStudioCanvas projectId={canvasProjectId || null} />
                     </Suspense>
                   )}
                   {workspaceView === 'data-formulator' && (

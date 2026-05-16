@@ -6,7 +6,6 @@ import {
 import type {
   MediaAnalysisManifest,
   MediaAsset,
-  MediaGenerationJob,
   MediaPrompt,
   MediaRenderJob,
   MediaStyleToken,
@@ -29,6 +28,22 @@ type StudioPanelProps = {
   title: string;
   subtitle?: string;
   children: React.ReactNode;
+};
+
+type MediaStudioCanvasProps = {
+  projectId?: string | null;
+};
+
+type MediaVideoJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
+
+type MediaVideoJobView = {
+  id: string;
+  status: MediaVideoJobStatus;
+  providerJobId: string | null;
+  model: string;
+  resultUrls: string[];
+  errorMessage: string | null;
+  updatedAt: string;
 };
 
 function StudioPanel({ title, subtitle, children }: StudioPanelProps): React.ReactElement {
@@ -117,19 +132,6 @@ const SAMPLE_ASSETS: MediaAsset[] = [
   },
 ];
 
-const SAMPLE_GENERATION_JOBS: MediaGenerationJob[] = [
-  {
-    id: 'job_openrouter_video_1',
-    provider: 'openrouter',
-    status: 'queued',
-    promptId: SAMPLE_PROMPT.id,
-    inputAssetIds: ['asset_ref_1'],
-    outputAssetIds: [],
-    createdAt: 'pending',
-    updatedAt: 'pending',
-  },
-];
-
 const SAMPLE_MANIFEST: MediaAnalysisManifest = {
   id: 'manifest_peepshow_1',
   assetId: 'asset_clip_1',
@@ -154,7 +156,9 @@ const SCENE_LIBRARY: readonly SceneGraphSource[] = [
   KoolPhaseComfortRailInternalSceneGraph,
 ] as const;
 
-export default function MediaStudioCanvas(): React.ReactElement {
+export default function MediaStudioCanvas({
+  projectId = null,
+}: MediaStudioCanvasProps): React.ReactElement {
   const activeScene = KoolSkoolsCurrentCoolerSceneGraph;
   const diffusionPromptPreview = compileSceneGraphToDiffusionPrompt(activeScene);
   const peepshowChecklistPreview = compileSceneGraphToPeepshowChecklist(activeScene);
@@ -164,6 +168,120 @@ export default function MediaStudioCanvas(): React.ReactElement {
   const seedFramePlanPreview = compileSceneGraphToSeedFramePlan(activeScene);
   const simulationProxyPlanPreview = compileSceneGraphToSimulationProxyPlan(activeScene);
   const lensHintsPreview = compileSceneGraphToCanvasLensHints(activeScene);
+  const [submitPrompt, setSubmitPrompt] = React.useState(diffusionPromptPreview);
+  const [submitModel, setSubmitModel] = React.useState('google/veo-3');
+  const [submitAspectRatio, setSubmitAspectRatio] = React.useState<string>(
+    SAMPLE_PROMPT.ratio || '16:9',
+  );
+  const [submitDurationSec, setSubmitDurationSec] = React.useState(
+    String(SAMPLE_PROMPT.durationSeconds || 8),
+  );
+  const [submitReferenceImageUrls, setSubmitReferenceImageUrls] = React.useState('');
+  const [submitBusy, setSubmitBusy] = React.useState(false);
+  const [submitError, setSubmitError] = React.useState<string | null>(null);
+  const [jobView, setJobView] = React.useState<MediaVideoJobView | null>(null);
+  const [lastResponseNote, setLastResponseNote] = React.useState<string | null>(null);
+
+  const parsedReferenceUrls = React.useMemo(
+    () =>
+      submitReferenceImageUrls
+        .split('\n')
+        .map((value) => value.trim())
+        .filter(Boolean),
+    [submitReferenceImageUrls],
+  );
+
+  const isJobTerminal = jobView?.status === 'succeeded' || jobView?.status === 'failed';
+
+  React.useEffect(() => {
+    setSubmitPrompt(diffusionPromptPreview);
+  }, [diffusionPromptPreview]);
+
+  React.useEffect(() => {
+    if (!projectId || !jobView || isJobTerminal) return;
+
+    const interval = window.setInterval(() => {
+      void (async () => {
+        try {
+          const response = await fetch(
+            `/api/v3/projects/${encodeURIComponent(projectId)}/media/video/jobs/${encodeURIComponent(jobView.id)}`,
+          );
+          const payload = (await response.json().catch(() => null)) as
+            | { ok?: boolean; job?: MediaVideoJobView; error?: string; message?: string }
+            | null;
+          if (!response.ok || !payload?.ok || !payload.job) {
+            setSubmitError(
+              payload?.message || payload?.error || `video_job_poll_failed_http_${response.status}`,
+            );
+            return;
+          }
+          setJobView(payload.job);
+          setLastResponseNote(`Last poll ${new Date().toLocaleTimeString()}`);
+        } catch (error) {
+          setSubmitError(
+            error instanceof Error ? error.message : 'video_job_poll_failed',
+          );
+        }
+      })();
+    }, 3000);
+
+    return () => window.clearInterval(interval);
+  }, [projectId, jobView, isJobTerminal]);
+
+  async function submitVideoJob() {
+    if (!projectId) {
+      setSubmitError('Project is required before submitting a media job.');
+      return;
+    }
+    setSubmitBusy(true);
+    setSubmitError(null);
+    setLastResponseNote(null);
+    try {
+      const durationSecRaw = Number.parseInt(submitDurationSec, 10);
+      const durationSec =
+        Number.isFinite(durationSecRaw) && durationSecRaw > 0 ? durationSecRaw : undefined;
+      const response = await fetch(
+        `/api/v3/projects/${encodeURIComponent(projectId)}/media/video/jobs`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: submitPrompt,
+            model: submitModel,
+            aspectRatio: submitAspectRatio,
+            durationSec,
+            sourceSceneId: activeScene.id,
+            sourceVideoGraphId: null,
+            referenceImageUrls: parsedReferenceUrls,
+          }),
+        },
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            job?: MediaVideoJobView;
+            error?: string;
+            message?: string;
+            providerMessage?: string;
+          }
+        | null;
+      if (!response.ok || !payload?.ok || !payload.job) {
+        setSubmitError(
+          payload?.message ||
+            payload?.providerMessage ||
+            payload?.error ||
+            `video_job_submit_failed_http_${response.status}`,
+        );
+        return;
+      }
+      setJobView(payload.job);
+      setLastResponseNote('Submitted to backend OpenRouter route.');
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : 'video_job_submit_failed');
+    } finally {
+      setSubmitBusy(false);
+    }
+  }
 
   return (
     <div
@@ -290,6 +408,74 @@ export default function MediaStudioCanvas(): React.ReactElement {
           title="OpenRouter Video Generation"
           subtitle="Prompt is compiled from SceneGraph Source; backend submit/poll route is the next runtime slice."
         >
+          <div style={{ display: 'grid', gap: 8 }}>
+            <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+              <span style={{ color: GRAPH_THEME.drawer.inputMuted }}>Model</span>
+              <input
+                value={submitModel}
+                onChange={(event) => setSubmitModel(event.target.value)}
+                style={{
+                  background: GRAPH_THEME.drawer.inputBackground,
+                  color: GRAPH_THEME.drawer.inputText,
+                  border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                  borderRadius: 8,
+                  padding: '8px 10px',
+                  fontSize: 12,
+                }}
+              />
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                <span style={{ color: GRAPH_THEME.drawer.inputMuted }}>Aspect</span>
+                <input
+                  value={submitAspectRatio}
+                  onChange={(event) => setSubmitAspectRatio(event.target.value)}
+                  style={{
+                    background: GRAPH_THEME.drawer.inputBackground,
+                    color: GRAPH_THEME.drawer.inputText,
+                    border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                    borderRadius: 8,
+                    padding: '8px 10px',
+                    fontSize: 12,
+                  }}
+                />
+              </label>
+              <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                <span style={{ color: GRAPH_THEME.drawer.inputMuted }}>Duration (sec)</span>
+                <input
+                  value={submitDurationSec}
+                  onChange={(event) => setSubmitDurationSec(event.target.value)}
+                  style={{
+                    background: GRAPH_THEME.drawer.inputBackground,
+                    color: GRAPH_THEME.drawer.inputText,
+                    border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                    borderRadius: 8,
+                    padding: '8px 10px',
+                    fontSize: 12,
+                  }}
+                />
+              </label>
+            </div>
+            <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+              <span style={{ color: GRAPH_THEME.drawer.inputMuted }}>
+                Reference image URLs (optional, one per line)
+              </span>
+              <textarea
+                value={submitReferenceImageUrls}
+                onChange={(event) => setSubmitReferenceImageUrls(event.target.value)}
+                rows={2}
+                style={{
+                  background: GRAPH_THEME.drawer.inputBackground,
+                  color: GRAPH_THEME.drawer.inputText,
+                  border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                  borderRadius: 8,
+                  padding: '8px 10px',
+                  fontSize: 12,
+                  resize: 'vertical',
+                }}
+              />
+            </label>
+          </div>
           <div
             style={{
               border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
@@ -303,11 +489,50 @@ export default function MediaStudioCanvas(): React.ReactElement {
               whiteSpace: 'pre-wrap',
             }}
           >
-            {diffusionPromptPreview}
+            <textarea
+              value={submitPrompt}
+              onChange={(event) => setSubmitPrompt(event.target.value)}
+              rows={8}
+              style={{
+                width: '100%',
+                background: 'transparent',
+                color: GRAPH_THEME.drawer.inputMuted,
+                border: 'none',
+                outline: 'none',
+                fontSize: 11,
+                lineHeight: 1.45,
+                resize: 'vertical',
+              }}
+            />
           </div>
-          {SAMPLE_GENERATION_JOBS.map((job) => (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              type="button"
+              onClick={() => {
+                void submitVideoJob();
+              }}
+              disabled={!projectId || submitBusy}
+              style={{
+                border: `1px solid ${GRAPH_THEME.accent.solar}`,
+                color: GRAPH_THEME.accent.solar,
+                background: 'transparent',
+                borderRadius: 8,
+                fontSize: 12,
+                padding: '7px 10px',
+                cursor: !projectId || submitBusy ? 'not-allowed' : 'pointer',
+                opacity: !projectId || submitBusy ? 0.7 : 1,
+              }}
+            >
+              {submitBusy ? 'Submitting...' : 'Submit Video Job'}
+            </button>
+            <span style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+              {!projectId
+                ? 'Select a project to enable submit.'
+                : lastResponseNote || 'Backend-owned route; key remains server-side.'}
+            </span>
+          </div>
+          {jobView ? (
             <div
-              key={job.id}
               style={{
                 display: 'flex',
                 justifyContent: 'space-between',
@@ -315,10 +540,35 @@ export default function MediaStudioCanvas(): React.ReactElement {
                 fontSize: 12,
               }}
             >
-              <span>{job.id}</span>
-              <span style={{ color: GRAPH_THEME.drawer.inputMuted }}>{job.status}</span>
+              <span>{jobView.id}</span>
+              <span style={{ color: GRAPH_THEME.drawer.inputMuted }}>{jobView.status}</span>
             </div>
-          ))}
+          ) : null}
+          {jobView?.providerJobId ? (
+            <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+              Provider job: {jobView.providerJobId}
+            </div>
+          ) : null}
+          {jobView?.resultUrls?.length ? (
+            <div style={{ display: 'grid', gap: 4 }}>
+              {jobView.resultUrls.map((url) => (
+                <a
+                  key={url}
+                  href={url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ fontSize: 11, color: GRAPH_THEME.accent.primary }}
+                >
+                  {url}
+                </a>
+              ))}
+            </div>
+          ) : null}
+          {submitError || jobView?.errorMessage ? (
+            <div style={{ fontSize: 11, color: '#D98458' }}>
+              {submitError || jobView?.errorMessage}
+            </div>
+          ) : null}
         </StudioPanel>
 
         <StudioPanel
