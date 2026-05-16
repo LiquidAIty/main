@@ -155,6 +155,9 @@ const EnergyFacadeSurface = lazy(
 const TradingCanvasSurface = lazy(
   () => import('../features/trading/TradingCanvasSurface'),
 );
+const MediaStudioCanvas = lazy(
+  () => import('../features/media/MediaStudioCanvas'),
+);
 const CODEBASE_MEMORY_PROJECT_NAME = 'C-Projects-LiquidAIty-main';
 const UA_DEFAULT_REPO_PATH = 'C:\\Projects\\LiquidAIty\\main';
 void KnowledgeSummaryPanel;
@@ -9325,18 +9328,29 @@ export default function AgentBuilder(): React.ReactElement {
                         'A future Claude Code or sandbox bridge executes the task and returns reviewable diffs and tests.',
                       ],
                     })}
-                  {workspaceView === 'video' &&
-                    renderWorkbenchPlaceholderSurface({
-                      testId: 'video-workspace-placeholder',
-                      title: 'Video Agent',
-                      status: 'Planned',
-                      accentColor: GRAPH_THEME.drawer.inputMuted,
-                      steps: [
-                        'Draft script or storyboard.',
-                        'Generate or collect clips.',
-                        'Assemble, export, and publish later when the video bridge exists.',
-                      ],
-                    })}
+                  {workspaceView === 'video' && (
+                    <Suspense
+                      fallback={
+                        <div
+                          data-testid="video-canvas-loading"
+                          style={{
+                            height: '100%',
+                            padding: 16,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            background: GRAPH_THEME.background.knowledgeSurface,
+                          }}
+                        >
+                          <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 13 }}>
+                            Loading media studio...
+                          </div>
+                        </div>
+                      }
+                    >
+                      <MediaStudioCanvas />
+                    </Suspense>
+                  )}
                   {workspaceView === 'data-formulator' && (
                     <DataFormulatorSurface
                       modelConfig={dataFormulatorModelConfig}
