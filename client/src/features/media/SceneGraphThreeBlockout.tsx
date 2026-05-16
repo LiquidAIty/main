@@ -106,11 +106,6 @@ function SceneBlockoutMeshes({ scene }: { scene: SceneGraphSource }): React.Reac
       <directionalLight position={[4, 6, 3]} intensity={1.2} />
       <directionalLight position={[-3, 4, -4]} intensity={0.5} color="#94A3B8" />
 
-      <mesh position={[0, -0.03, 0]} receiveShadow>
-        <boxGeometry args={[6, 0.06, 4.2]} />
-        <meshStandardMaterial color="#1E293B" metalness={0.1} roughness={0.95} />
-      </mesh>
-
       {resolvedAssets.map((asset) => renderResolvedAsset(asset))}
 
       <OrbitControls

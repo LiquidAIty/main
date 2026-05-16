@@ -230,6 +230,24 @@ function inferTemplateIdFromSceneAsset(sceneAsset: SceneAsset): string {
 
 const ASSET_TEMPLATES: AssetTemplate[] = [
   {
+    id: 'template_floor_plane',
+    name: 'Floor plane',
+    category: 'room',
+    source: 'systemBuiltin',
+    geometryKind: 'primitiveBox',
+    materialPreset: 'slateMatte',
+    renderRole: 'threejsPreview',
+    simulationRole: 'energyContext',
+    dimensionHint: { width: 6, height: 0.06, depth: 4.2, unit: 'm' },
+    defaultPosition: [0, -0.03, 0],
+    colorHex: '#1E293B',
+    opacity: 1,
+    usageHint: {
+      lensTargets: ['media', 'building', 'energy'],
+      tags: ['floor', 'room'],
+    },
+  },
+  {
     id: 'template_classroom_shell',
     name: 'Classroom shell',
     category: 'classroom',
@@ -513,6 +531,15 @@ const TEMPLATE_BY_ID = new Map(
 
 const REGISTRY_ASSETS: SceneAssetRef[] = [
   {
+    id: 'asset_floor_plane',
+    name: 'Floor plane',
+    templateId: 'template_floor_plane',
+    source: 'systemBuiltin',
+    renderRole: 'threejsPreview',
+    simulationRole: 'energyContext',
+    tags: ['floor', 'room'],
+  },
+  {
     id: 'asset_classroom_shell',
     name: 'Classroom shell',
     templateId: 'template_classroom_shell',
@@ -659,6 +686,7 @@ const REGISTRY_ASSETS: SceneAssetRef[] = [
 ];
 
 const CLASSROOM_SUPPLEMENT_TEMPLATE_IDS = [
+  'template_floor_plane',
   'template_wall_hint',
   'template_door_hint',
   'template_window_hint',
