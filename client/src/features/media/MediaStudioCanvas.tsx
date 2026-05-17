@@ -231,10 +231,46 @@ const SCENE_LIBRARY: readonly SceneGraphSource[] = [
   KoolPhaseComfortRailInternalSceneGraph,
 ] as const;
 
+function normalizeSceneCandidate(
+  scene: SceneGraphSource | null | undefined,
+): SceneGraphSource {
+  const fallback = KoolSkoolsCurrentCoolerSceneGraph;
+  if (!scene) return fallback;
+  return {
+    ...fallback,
+    ...scene,
+    set: scene.set ?? fallback.set,
+    assets: Array.isArray(scene.assets) ? scene.assets : fallback.assets,
+    actors: Array.isArray(scene.actors) ? scene.actors : fallback.actors,
+    props: Array.isArray(scene.props) ? scene.props : fallback.props,
+    products: Array.isArray(scene.products) ? scene.products : fallback.products,
+    cameras: Array.isArray(scene.cameras) ? scene.cameras : fallback.cameras,
+    keyframes: Array.isArray(scene.keyframes) ? scene.keyframes : fallback.keyframes,
+    flowPaths: Array.isArray(scene.flowPaths) ? scene.flowPaths : fallback.flowPaths,
+    overlays: Array.isArray(scene.overlays) ? scene.overlays : fallback.overlays,
+    visualContracts: Array.isArray(scene.visualContracts)
+      ? scene.visualContracts
+      : fallback.visualContracts,
+    nonNegotiableRules: Array.isArray(scene.nonNegotiableRules)
+      ? scene.nonNegotiableRules
+      : fallback.nonNegotiableRules,
+    outputTargets: Array.isArray(scene.outputTargets)
+      ? scene.outputTargets
+      : fallback.outputTargets,
+    canvasLenses: Array.isArray(scene.canvasLenses)
+      ? scene.canvasLenses
+      : fallback.canvasLenses,
+    diffusionSeedPlan: scene.diffusionSeedPlan ?? fallback.diffusionSeedPlan,
+  };
+}
+
 export default function MediaStudioCanvas({
   projectId = null,
 }: MediaStudioCanvasProps): React.ReactElement {
-  const activeScene = KoolSkoolsCurrentCoolerSceneGraph;
+  const activeScene = React.useMemo(
+    () => normalizeSceneCandidate(SCENE_LIBRARY[0]),
+    [],
+  );
   const diffusionPromptPreview = compileSceneGraphToDiffusionPrompt(activeScene);
   const peepshowChecklistPreview = compileSceneGraphToPeepshowChecklist(activeScene);
   const remotionPlanPreview = compileSceneGraphToRemotionPlan(activeScene);
@@ -245,20 +281,32 @@ export default function MediaStudioCanvas({
   const lensHintsPreview = compileSceneGraphToCanvasLensHints(activeScene);
   const motionPlanPreview = compileSceneGraphToMotionPlan(activeScene);
   const sceneAssetRegistryPreview = KoolSkoolsSceneAssetRegistry;
-  const resolvedSceneAssetsPreview = React.useMemo(
-    () =>
-      resolveSceneAssetsForSceneGraph(
+  const resolvedSceneAssetsPreview = React.useMemo(() => {
+    try {
+      return resolveSceneAssetsForSceneGraph(
         activeScene,
         sceneAssetRegistryPreview,
         'warnAndPrimitive',
-      ),
-    [activeScene, sceneAssetRegistryPreview],
-  );
-  const objectAwareContextPreview = buildCanvasObjectContext(
-    activeScene,
-    'video',
-    resolvedSceneAssetsPreview,
-  );
+      );
+    } catch {
+      return [];
+    }
+  }, [activeScene, sceneAssetRegistryPreview]);
+  const objectAwareContextPreview = React.useMemo(() => {
+    try {
+      return buildCanvasObjectContext(
+        activeScene,
+        'video',
+        resolvedSceneAssetsPreview,
+      );
+    } catch {
+      return {
+        canvasId: 'video',
+        sceneId: activeScene.id,
+        selected: null,
+      };
+    }
+  }, [activeScene, resolvedSceneAssetsPreview]);
   const cascadePlan = KoolSkoolsProgressiveVideoCascade;
   const [selectedShotId, setSelectedShotId] = React.useState(
     motionPlanPreview.shots[0]?.shotId ?? '',
@@ -287,6 +335,20 @@ export default function MediaStudioCanvas({
   const [submitError, setSubmitError] = React.useState<string | null>(null);
   const [jobView, setJobView] = React.useState<MediaVideoJobView | null>(null);
   const [lastResponseNote, setLastResponseNote] = React.useState<string | null>(null);
+  const backendWarning = React.useMemo(() => {
+    if (!projectId) {
+      return 'No active project selected. Media Studio remains usable in local scene mode; backend jobs are disabled.';
+    }
+    if (
+      submitError &&
+      /(failed|fetch|network|http_|ECONNREFUSED|timeout|status of 500)/i.test(
+        submitError,
+      )
+    ) {
+      return `Backend request warning: ${submitError}`;
+    }
+    return null;
+  }, [projectId, submitError]);
 
   const parsedReferenceUrls = React.useMemo(
     () =>
@@ -601,6 +663,20 @@ export default function MediaStudioCanvas({
           </div>
         </div>
       </StudioPanel>
+      {backendWarning ? (
+        <div
+          style={{
+            border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+            borderRadius: 10,
+            padding: '8px 10px',
+            fontSize: 12,
+            color: '#D98458',
+            background: 'rgba(23, 31, 49, 0.55)',
+          }}
+        >
+          {backendWarning}
+        </div>
+      ) : null}
 
       <StudioPanel
         title="SceneGraph Source"
