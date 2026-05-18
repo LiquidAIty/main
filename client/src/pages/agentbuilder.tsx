@@ -16,8 +16,9 @@ import BuilderCanvas, {
   type BuilderCanvasFocusRequest,
 } from '../components/builder/BuilderCanvas';
 import BuilderChat from '../components/builder/BuilderChat';
+import FrontendCrashBoundary from '../components/diagnostics/FrontendCrashBoundary';
 import { useDashboardStore as useUaDashboardStore } from '../components/agents/ua/real-dashboard/store';
-import { buildUaGraphCandidateUrls } from '../components/agents/ua/real-dashboard/graphLoader';
+import { loadUaKnowledgeGraph } from '../components/agents/ua/real-dashboard/graphLoader';
 import type { UaWorkbenchContext } from '../components/agents/ua/UaAgentPanelHost';
 import BuilderDrawer from '../components/builder/BuilderDrawer';
 import PlanMissionFlow from '../components/assist/PlanMissionFlow';
@@ -401,6 +402,59 @@ class KnowledgeSurfaceErrorBoundary extends React.Component<
             </div>
             <div>
               {this.state.error.message || 'The Knowledge graph failed to load.'}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+class UaSurfaceErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div
+          data-testid="ua-surface-error"
+          style={{
+            height: '100%',
+            padding: 16,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: GRAPH_THEME.background.knowledgeSurface,
+          }}
+        >
+          <div
+            style={graphDrawerSectionStyle({
+              width: 'min(560px, 100%)',
+              padding: 16,
+              color: GRAPH_THEME.drawer.inputMuted,
+              lineHeight: 1.5,
+            })}
+          >
+            <div
+              style={{
+                color: GRAPH_THEME.drawer.inputText,
+                fontWeight: 700,
+                marginBottom: 6,
+              }}
+            >
+              UA dashboard unavailable
+            </div>
+            <div>
+              {this.state.error.message || 'The UA dashboard failed to load.'}
             </div>
           </div>
         </div>
@@ -4652,40 +4706,35 @@ export default function AgentBuilder(): React.ReactElement {
   >('needs_repo_scan');
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     async function probeUaGraphSource() {
-      const urls = buildUaGraphCandidateUrls(UA_DEFAULT_REPO_PATH);
-      for (const url of urls) {
-        try {
-          const response = await fetch(url, {
-            cache: 'no-store',
-            headers: { Accept: 'application/json' },
-          });
-          if (!response.ok) continue;
-          const payload = (await response.json()) as {
-            nodes?: unknown[];
-            edges?: unknown[];
-            project?: unknown;
-          };
-          if (!payload?.project || !Array.isArray(payload.nodes) || !Array.isArray(payload.edges)) {
-            continue;
-          }
-          if (cancelled) return;
-          setUaGraphSource('local_ua_json');
-          setUaAnalysisStatus('graph_loaded');
-          return;
-        } catch {
-          // Continue probing candidate URLs.
-        }
+      if (!activeUaAgentDefinition) {
+        setUaGraphSource('sample_fallback');
+        setUaAnalysisStatus('needs_repo_scan');
+        return;
       }
-      if (cancelled) return;
-      setUaGraphSource('sample_fallback');
-      setUaAnalysisStatus('needs_repo_scan');
+      try {
+        const loaded = await loadUaKnowledgeGraph(
+          UA_DEFAULT_REPO_PATH,
+          controller.signal,
+        );
+        if (cancelled) return;
+        const usingLocalGraph = loaded.source === 'local_ua_json';
+        setUaGraphSource(usingLocalGraph ? 'local_ua_json' : 'sample_fallback');
+        setUaAnalysisStatus(usingLocalGraph ? 'graph_loaded' : 'needs_repo_scan');
+      } catch (error) {
+        if (cancelled) return;
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        setUaGraphSource('sample_fallback');
+        setUaAnalysisStatus('needs_repo_scan');
+      }
     }
     probeUaGraphSource();
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, []);
+  }, [activeUaAgentDefinition]);
   const uaWorkbenchContext = useMemo<UaWorkbenchContext>(() => {
     const uaSurfaceActive = Boolean(
       activeUaAgentDefinition &&
@@ -8903,10 +8952,11 @@ export default function AgentBuilder(): React.ReactElement {
   }, []);
 
   return (
-    <div
-      className="h-screen w-full flex overflow-hidden"
-      style={{ background: C.bg, color: C.text }}
-    >
+    <FrontendCrashBoundary scopeLabel="AgentBuilder">
+      <div
+        className="h-screen w-full flex overflow-hidden"
+        style={{ background: C.bg, color: C.text }}
+      >
       <style>{`
         @keyframes builder-orb-float {
           0%, 100% { transform: translateY(0px) scale(1); }
@@ -9357,25 +9407,27 @@ export default function AgentBuilder(): React.ReactElement {
                     />
                   )}
                   {activeUaAgentDefinition && (
-                    <Suspense
-                      fallback={
-                        <div
-                          data-testid="ua-agent-panel-loading"
-                          style={{
-                            height: '100%',
-                            padding: 18,
-                            color: GRAPH_THEME.drawer.inputMuted,
-                          }}
-                        >
-                          Loading agent panel...
-                        </div>
-                      }
-                    >
-                      <UaAgentPanelHost
-                        surfaceId={activeUaAgentDefinition.surfaceId}
-                        workbenchContext={uaWorkbenchContext}
-                      />
-                    </Suspense>
+                    <UaSurfaceErrorBoundary key="ua-surface">
+                      <Suspense
+                        fallback={
+                          <div
+                            data-testid="ua-agent-panel-loading"
+                            style={{
+                              height: '100%',
+                              padding: 18,
+                              color: GRAPH_THEME.drawer.inputMuted,
+                            }}
+                          >
+                            Loading agent panel...
+                          </div>
+                        }
+                      >
+                        <UaAgentPanelHost
+                          surfaceId={activeUaAgentDefinition.surfaceId}
+                          workbenchContext={uaWorkbenchContext}
+                        />
+                      </Suspense>
+                    </UaSurfaceErrorBoundary>
                   )}
                   {workspaceView === 'worldsignal' &&
                     <WorldSignalSurface />}
@@ -9635,6 +9687,7 @@ export default function AgentBuilder(): React.ReactElement {
           </div>
         </BuilderDrawer>
       )}
-    </div>
+      </div>
+    </FrontendCrashBoundary>
   );
 }

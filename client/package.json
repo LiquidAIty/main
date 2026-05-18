@@ -29,7 +29,7 @@
     "@mui/lab": "^5.0.0-alpha.177",
     "@mui/material": "^5.18.0",
     "@radix-ui/react-slot": "^1.2.4",
-    "@react-three/drei": "^9.122.0",
+    "@react-three/drei": "9.110.0",
     "@react-three/fiber": "^8.18.0",
     "@react-three/postprocessing": "^2.19.0",
     "@react-three/rapier": "^1.5.0",
@@ -97,7 +97,7 @@
     "vega-lite": "^6.4.3",
     "vm-browserify": "^1.1.2",
     "zod": "^4.3.6",
-    "zustand": "^5.0.12"
+    "zustand": "^4.5.7"
   },
   "scripts": {
     "build": "vite build",

@@ -61,23 +61,38 @@ export default function UaDashboardCanvas({
     const controller = new AbortController();
 
     async function loadGraph() {
-      const loaded = await loadUaKnowledgeGraph(
-        workbenchContext.repoPath,
-        controller.signal,
-      );
-      const nextGraph = loaded?.graph ?? sampleGraphData;
-      const nextSource = loaded?.source ?? "sample_fallback";
-      const nextStatus = loaded ? "graph_loaded" : "needs_repo_scan";
-      if (cancelled) return;
+      try {
+        const loaded = await loadUaKnowledgeGraph(
+          workbenchContext.repoPath,
+          controller.signal,
+        );
+        const usingLocalGraph = loaded.source === "local_ua_json";
+        const nextGraph = usingLocalGraph ? loaded.graph : sampleGraphData;
+        const nextSource: UaWorkbenchContext["graphSource"] = usingLocalGraph
+          ? "local_ua_json"
+          : "sample_fallback";
+        const nextStatus = usingLocalGraph ? "graph_loaded" : "needs_repo_scan";
+        if (cancelled) return;
 
-      setGraph(nextGraph);
-      setDomainGraph(nextGraph);
-      setIsKnowledgeGraph(mode === "knowledge");
-      setViewMode(mode);
-      setResolvedGraphSource(nextSource);
-      setResolvedAnalysisStatus(nextStatus);
-      if (lens === "tour_builder" || lens === "knowledge_graph_guide") {
-        window.setTimeout(() => startTour(), 0);
+        setGraph(nextGraph);
+        setDomainGraph(nextGraph);
+        setIsKnowledgeGraph(mode === "knowledge");
+        setViewMode(mode);
+        setResolvedGraphSource(nextSource);
+        setResolvedAnalysisStatus(nextStatus);
+        if (lens === "tour_builder" || lens === "knowledge_graph_guide") {
+          window.setTimeout(() => startTour(), 0);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        if (error instanceof DOMException && error.name === "AbortError") return;
+
+        setGraph(sampleGraphData);
+        setDomainGraph(sampleGraphData);
+        setIsKnowledgeGraph(mode === "knowledge");
+        setViewMode(mode);
+        setResolvedGraphSource("sample_fallback");
+        setResolvedAnalysisStatus("needs_repo_scan");
       }
     }
 

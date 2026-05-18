@@ -15,7 +15,15 @@ export default defineConfig(() => {
         'react',
         'react-dom',
         'scheduler',
+        // @react-three/* is intentionally excluded below; include its nested
+        // CJS reconciler constants so Vite pre-bundles named exports like
+        // ConcurrentRoot instead of serving raw CJS in the browser.
+        'react-reconciler',
+        'react-reconciler/constants',
       ],
+      // @react-three/fiber@8 imports default from zustand in one ESM chunk;
+      // force interop so Vite prebundle exposes a default export.
+      needsInterop: ['zustand'],
       // Work around corrupted nested sourcemaps in three-stdlib pulled by
       // @react-three/* during esbuild pre-bundling on dev startup.
       exclude: [

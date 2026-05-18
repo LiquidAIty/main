@@ -2,9 +2,34 @@ import type { KnowledgeGraph } from "./types";
 
 export type UaLoadedGraphResult = {
   graph: KnowledgeGraph;
-  source: "local_ua_json";
-  url: string;
+  source: "local_ua_json" | "empty_fallback";
+  url: string | null;
+  warning?: "missing_graph_file" | "graph_unavailable";
 };
+
+const UA_EMPTY_GRAPH_VERSION = "1.0.0";
+
+function buildEmptyKnowledgeGraph(repoPath: string): KnowledgeGraph {
+  const normalizedRepoPath = normalizeRepoPath(repoPath);
+  const projectName = normalizedRepoPath.split("/").pop() || "LiquidAIty";
+  return {
+    version: UA_EMPTY_GRAPH_VERSION,
+    kind: "codebase",
+    project: {
+      name: projectName,
+      languages: [],
+      frameworks: ["Agent Builder"],
+      description:
+        "No local Understand-Anything knowledge graph file was found. Using an empty fallback graph.",
+      analyzedAt: new Date().toISOString(),
+      gitCommitHash: "unavailable",
+    },
+    nodes: [],
+    edges: [],
+    layers: [],
+    tour: [],
+  };
+}
 
 function normalizeRepoPath(repoPath: string): string {
   return String(repoPath || "").trim().replace(/\\/g, "/");
@@ -41,8 +66,9 @@ function isKnowledgeGraphShape(value: unknown): value is KnowledgeGraph {
 export async function loadUaKnowledgeGraph(
   repoPath: string,
   signal?: AbortSignal,
-): Promise<UaLoadedGraphResult | null> {
+): Promise<UaLoadedGraphResult> {
   const candidates = buildUaGraphCandidateUrls(repoPath);
+  let sawMissingGraphFile = false;
   for (const url of candidates) {
     try {
       const response = await fetch(url, {
@@ -50,6 +76,10 @@ export async function loadUaKnowledgeGraph(
         cache: "no-store",
         headers: { Accept: "application/json" },
       });
+      if (response.status === 404 || response.status === 410) {
+        sawMissingGraphFile = true;
+        continue;
+      }
       if (!response.ok) continue;
       const data: unknown = await response.json();
       if (!isKnowledgeGraphShape(data)) continue;
@@ -58,9 +88,17 @@ export async function loadUaKnowledgeGraph(
         source: "local_ua_json",
         url,
       };
-    } catch {
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw error;
+      }
       // Try next candidate.
     }
   }
-  return null;
+  return {
+    graph: buildEmptyKnowledgeGraph(repoPath),
+    source: "empty_fallback",
+    url: null,
+    warning: sawMissingGraphFile ? "missing_graph_file" : "graph_unavailable",
+  };
 }
