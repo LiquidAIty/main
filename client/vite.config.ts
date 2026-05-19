@@ -22,7 +22,7 @@ export default defineConfig(() => {
         'react-reconciler/constants',
       ],
       // @react-three/fiber@8 imports default from zustand in one ESM chunk;
-      // force interop so Vite prebundle exposes a default export.
+      // keep interop so Vite prebundle exposes a default export.
       needsInterop: ['zustand'],
       // Work around corrupted nested sourcemaps in three-stdlib pulled by
       // @react-three/* during esbuild pre-bundling on dev startup.
@@ -41,21 +41,42 @@ export default defineConfig(() => {
         '@react-three/drei',
         '@react-three/postprocessing',
       ],
-      alias: {
-        '@data-formulator': path.resolve(__dirname, '../data-formulator-main/src'),
-        'react/jsx-runtime': path.resolve(__dirname, 'node_modules/react/jsx-runtime.js'),
-        'react/jsx-dev-runtime': path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime.js'),
-        'react-dom/client': path.resolve(__dirname, 'node_modules/react-dom/client.js'),
-        '@react-three/fiber': path.resolve(
-          __dirname,
-          'node_modules/@react-three/fiber/dist/react-three-fiber.esm.js',
-        ),
-        '@react-three/drei': path.resolve(__dirname, 'node_modules/@react-three/drei/index.js'),
-        '@react-three/postprocessing': path.resolve(
-          __dirname,
-          'node_modules/@react-three/postprocessing/dist/index.js',
-        ),
-      },
+      alias: [
+        {
+          find: '@data-formulator',
+          replacement: path.resolve(__dirname, '../data-formulator-main/src'),
+        },
+        {
+          find: 'react/jsx-runtime',
+          replacement: path.resolve(__dirname, 'node_modules/react/jsx-runtime.js'),
+        },
+        {
+          find: 'react/jsx-dev-runtime',
+          replacement: path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime.js'),
+        },
+        {
+          find: 'react-dom/client',
+          replacement: path.resolve(__dirname, 'node_modules/react-dom/client.js'),
+        },
+        {
+          find: /^@react-three\/fiber$/,
+          replacement: path.resolve(
+            __dirname,
+            'node_modules/@react-three/fiber/dist/react-three-fiber.esm.js',
+          ),
+        },
+        {
+          find: /^@react-three\/drei$/,
+          replacement: path.resolve(__dirname, 'node_modules/@react-three/drei/index.js'),
+        },
+        {
+          find: /^@react-three\/postprocessing$/,
+          replacement: path.resolve(
+            __dirname,
+            'node_modules/@react-three/postprocessing/dist/index.js',
+          ),
+        },
+      ],
     },
     server: {
       host: '::',

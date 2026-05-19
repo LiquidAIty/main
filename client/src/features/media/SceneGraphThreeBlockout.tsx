@@ -1,6 +1,7 @@
 import React from 'react';
 import { Canvas } from '@react-three/fiber';
-import { Line, OrbitControls } from '@react-three/drei';
+import { Line } from '@react-three/drei/core/Line.js';
+import { OrbitControls } from '@react-three/drei/core/OrbitControls.js';
 import type { SceneGraphSource } from './sceneGraphSource';
 import {
   compileAssetTemplateToThreePrimitive,

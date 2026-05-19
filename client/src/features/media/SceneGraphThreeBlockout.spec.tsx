@@ -10,8 +10,11 @@ vi.mock('@react-three/fiber', () => ({
   ),
 }));
 
-vi.mock('@react-three/drei', () => ({
+vi.mock('@react-three/drei/core/Line.js', () => ({
   Line: () => <div data-testid="mock-line" />,
+}));
+
+vi.mock('@react-three/drei/core/OrbitControls.js', () => ({
   OrbitControls: () => null,
 }));
 
