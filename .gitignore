@@ -1,182 +1,50 @@
-# See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
-
-# Environment variables
+# Secrets / private local config
 .env
 .env.*
 !.env.example
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-.env*.local
+*.pem
 
-# compiled output
-dist
-tmp
-out-tsc
-dist/
-build/
-.nx/
-.next/
-out/
-tmp/
-
-# dependencies
-node_modules
+# Dependency folders
+node_modules/
+**/node_modules/
 .pnp
 .pnp.js
-n8n_data
 
-# IDEs and editors
-/.idea
-.project
-.classpath
-.c9/
-*.launch
-.settings/
-*.sublime-workspace
-.idea/
-.vscode/*
-!.vscode/extensions.json
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+# Generated build/cache output
+dist/
+**/dist/
+build/
+**/build/
+.next/
+**/.next/
+.nx/cache/
+**/.nx/cache/
+.nx/workspace-data/
+out/
+out-tsc/
+tmp/
 
 # Logs
-logs
 *.log
+logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 
-# Testing
-coverage/
-coverage/
-
-# misc
-/.sass-cache
-/connect.lock
-/libpeerconnection.log
-npm-debug.log
-yarn-error.log
-testem.log
-/typings
-.DS_Store
-*.pem
-Thumbs.db
-
-# System Files
+# OS junk
 .DS_Store
 Thumbs.db
 
-.nx/cache
-.nx/workspace-data
-.cursor/rules/nx-rules.mdc
-.github/instructions/nx.instructions.md
-
-test-output
-
-vite.config.*.timestamp*
-vitest.config.*.timestamp*
-
-# Debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Local Netlify folder
-.netlify
-
-# TypeScript cache
-*.tsbuildinfo
-next-env.d.ts
-
-# Docker volumes
-neo4j-data/
-neo4j-logs/
-neo4j-import/
-neo4j-plugins/
-
-# Audit files
-audit-*/
-/data/prompt-sources/leaked-system-prompts/
-
-# Python virtual environments / caches
+# Python rebuildable junk
 .venv/
 **/.venv/
 __pycache__/
+**/__pycache__/
 *.py[cod]
 
-# Local checkpoints and test artifacts
-checkpoints/
-test-results/
-
-# Root temp / local scratch artifacts
-tmp-*.json.new
-
-# External vendor subsystems kept inert from parent repo tooling/runtime
-localcoder/node_modules/
-localcoder/dist/
-localcoder/.env
-localcoder/.env.*
-localcoder/.turbo/
-localcoder/.next/
-localcoder/.cache/
-vendor/sim/node_modules/
-vendor/sim/dist/
-
-vendor/vips/
-
-# Avoid tracking nested Git repositories
-**/.git/
-
-# Node/JavaScript/TS
-**/node_modules/
-**/dist/
-**/build/
-**/.next/
-**/.vite/
-**/.nx/cache/
-**/.turbo/
-
-# Python
-**/.venv/
-**/__pycache__/
-
-# Logs and secrets
-*.log
-.env
-**/.env.*
-!**/.env.example
-
-# Temporary and test files
+# Test/cache output
 coverage/
-tmp/
+test-output/
+test-results/
 .codex-temp/
-
-# Large Datasets / Telescope Imagery
-telescope/mast-downloads/
-client/public/telescope-tiles/
-client/public/telescope-datasets/
-*.fits
-*.tif
-*.tiff
-*.dzi
-
-# Binary SDKs / Dev Packages
-**/*.lib
-**/*.dll
-**/*.so
-**/*.dylib
-**/*.a
-**/*.pdb
