@@ -5,15 +5,41 @@ import { cleanup, render, screen } from "@testing-library/react";
 import FrontendCrashBoundary from "./FrontendCrashBoundary";
 import { clearFrontendCrash } from "../../lib/frontendCrashDiagnostics";
 
-async function loadMediaStudioCanvasWithBlockoutMock(
-  blockoutImpl: React.ComponentType<{ scene: { name?: string } }>,
-) {
-  vi.resetModules();
-  vi.doMock("../../features/media/SceneGraphThreeBlockout", () => ({
-    default: blockoutImpl,
-  }));
-  return import("../../features/media/MediaStudioCanvas");
-}
+vi.mock("@xyflow/react", async () => {
+  const ReactModule = await import("react");
+  return {
+    Background: () => <div data-testid="mock-react-flow-background" />,
+    Controls: () => <div data-testid="mock-react-flow-controls" />,
+    MiniMap: () => <div data-testid="mock-react-flow-minimap" />,
+    ReactFlow: ({ children, nodes, onNodeClick }: any) => (
+      <div data-testid="mock-react-flow">
+        {nodes.map((node: any) => (
+          <button
+            key={node.id}
+            type="button"
+            data-testid={`storyboard-node-${node.type}`}
+            onClick={() => onNodeClick?.({}, node)}
+          >
+            {node.type}
+          </button>
+        ))}
+        {children}
+      </div>
+    ),
+    addEdge: (connection: any, edges: any[]) => [
+      ...edges,
+      { id: `${connection.source}-${connection.target}`, ...connection },
+    ],
+    useEdgesState: (initialEdges: any[]) => {
+      const [edges, setEdges] = ReactModule.useState(initialEdges);
+      return [edges, setEdges, vi.fn()];
+    },
+    useNodesState: (initialNodes: any[]) => {
+      const [nodes, setNodes] = ReactModule.useState(initialNodes);
+      return [nodes, setNodes, vi.fn()];
+    },
+  };
+});
 
 function ThrowingChild() {
   throw new Error("boundary_test_crash");
@@ -26,6 +52,7 @@ describe("FrontendCrashBoundary", () => {
     vi.clearAllMocks();
     vi.resetModules();
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("catches child throw and renders diagnostic panel", () => {
@@ -54,10 +81,10 @@ describe("FrontendCrashBoundary", () => {
   });
 
   it("allows MediaStudioCanvas to render under boundary", async () => {
-    const { default: MediaStudioCanvas } =
-      await loadMediaStudioCanvasWithBlockoutMock(({ scene }) => (
-        <div data-testid="mock-blockout">{scene?.name || "unknown-scene"}</div>
-      ));
+    vi.resetModules();
+    const { default: MediaStudioCanvas } = await import(
+      "../../features/media/MediaStudioCanvas"
+    );
 
     render(
       <FrontendCrashBoundary scopeLabel="MediaStudioBoundary">
@@ -65,8 +92,8 @@ describe("FrontendCrashBoundary", () => {
       </FrontendCrashBoundary>,
     );
 
-    expect(screen.getByText(/Active scene:/i)).toBeTruthy();
-    expect(screen.getByTestId("mock-blockout")).toBeTruthy();
+    expect(screen.getByTestId("mock-react-flow")).toBeTruthy();
+    expect(screen.getByTestId("video-storyboard-inspector")).toBeTruthy();
     expect(screen.queryByTestId("frontend-crash-panel")).toBeNull();
   });
 });

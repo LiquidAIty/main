@@ -48,3 +48,4 @@ coverage/
 test-output/
 test-results/
 .codex-temp/
+apps/backend/env
