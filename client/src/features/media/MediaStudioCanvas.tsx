@@ -19,201 +19,321 @@ type MediaStudioCanvasProps = {
   projectId?: string | null;
 };
 
+type VideoTool = 'higgsfield' | 'kling' | 'runway' | 'pika' | 'other';
+
 type StoryboardNodeType =
-  | 'referenceNode'
   | 'shotNode'
-  | 'promptNode'
-  | 'outputNode';
-
-type ReferenceKind = 'image' | 'document' | 'note';
-type OutputKind = 'image' | 'video';
-
-type ReferenceNodeData = {
-  title: string;
-  kind: ReferenceKind;
-  url: string;
-  text: string;
-};
+  | 'startFrameNode'
+  | 'endFrameNode'
+  | 'motionPromptNode'
+  | 'clipOutputNode';
 
 type ShotNodeData = {
   title: string;
   description: string;
   durationSec: string;
+  aspectRatio: string;
+  cameraMove: string;
   status: string;
 };
 
-type PromptNodeData = {
-  prompt: string;
-  negativePrompt: string;
-  motionInstruction: string;
+type FrameNodeData = {
+  imageUrl: string;
+  imagePrompt: string;
+  notes: string;
+};
+
+type MotionPromptNodeData = {
+  videoTool: VideoTool;
+  motionPrompt: string;
+  mustPreserve: string;
+  avoid: string;
   styleNotes: string;
 };
 
-type OutputNodeData = {
-  kind: OutputKind;
-  url: string;
-  jobStatus: string;
+type ClipOutputNodeData = {
+  videoUrl: string;
+  toolUsed: string;
+  status: string;
   notes: string;
 };
 
 type StoryboardNodeData =
-  | ReferenceNodeData
   | ShotNodeData
-  | PromptNodeData
-  | OutputNodeData;
+  | FrameNodeData
+  | MotionPromptNodeData
+  | ClipOutputNodeData;
 
 type StoryboardNode = Node<StoryboardNodeData, StoryboardNodeType>;
 
-const generationDisabledReason =
-  'No real generation route is wired for this storyboard pass.';
-
 const nodeLabels: Record<StoryboardNodeType, string> = {
-  referenceNode: 'Reference',
   shotNode: 'Shot',
-  promptNode: 'Prompt',
-  outputNode: 'Output',
+  startFrameNode: 'Start Frame',
+  endFrameNode: 'End Frame',
+  motionPromptNode: 'Motion Prompt',
+  clipOutputNode: 'Clip Output',
 };
+
+const generateDisabledReason = 'No provider route is wired in this pass.';
 
 const initialNodes: StoryboardNode[] = [
   {
-    id: 'reference-1',
-    type: 'referenceNode',
-    position: { x: 80, y: 140 },
-    data: {
-      title: 'Reference',
-      kind: 'note',
-      url: '',
-      text: 'Add source notes, links, or reference media here.',
-    },
-  },
-  {
     id: 'shot-1',
     type: 'shotNode',
-    position: { x: 340, y: 140 },
+    position: { x: 100, y: 160 },
     data: {
-      title: 'Shot',
-      description: 'Describe the storyboard beat.',
-      durationSec: '8',
+      title: 'Hero shot',
+      description: 'Define the core beat and camera objective.',
+      durationSec: '5',
+      aspectRatio: '16:9',
+      cameraMove: 'slow push-in',
       status: 'draft',
     },
   },
   {
-    id: 'prompt-1',
-    type: 'promptNode',
-    position: { x: 600, y: 140 },
+    id: 'start-frame-1',
+    type: 'startFrameNode',
+    position: { x: 390, y: 70 },
     data: {
-      prompt: 'Write the generation prompt for this shot.',
-      negativePrompt: '',
-      motionInstruction: '',
-      styleNotes: '',
+      imageUrl: '',
+      imagePrompt: 'Crisp starting frame, subject centered, natural light.',
+      notes: '',
     },
   },
   {
-    id: 'output-1',
-    type: 'outputNode',
-    position: { x: 860, y: 140 },
+    id: 'end-frame-1',
+    type: 'endFrameNode',
+    position: { x: 390, y: 260 },
     data: {
-      kind: 'video',
-      url: '',
-      jobStatus: 'not generated',
+      imageUrl: '',
+      imagePrompt: 'Matching ending frame, evolved pose, same identity.',
+      notes: '',
+    },
+  },
+  {
+    id: 'motion-prompt-1',
+    type: 'motionPromptNode',
+    position: { x: 700, y: 160 },
+    data: {
+      videoTool: 'higgsfield',
+      motionPrompt:
+        'Move from start frame to end frame with smooth subject continuity and consistent lighting.',
+      mustPreserve: 'face identity, outfit details',
+      avoid: 'warping, duplicate limbs, sudden zoom jumps',
+      styleNotes: 'cinematic realism',
+    },
+  },
+  {
+    id: 'clip-output-1',
+    type: 'clipOutputNode',
+    position: { x: 1020, y: 160 },
+    data: {
+      videoUrl: '',
+      toolUsed: '',
+      status: 'manual',
       notes: '',
     },
   },
 ];
 
 const initialEdges: Edge[] = [
-  { id: 'reference-1-shot-1', source: 'reference-1', target: 'shot-1' },
-  { id: 'shot-1-prompt-1', source: 'shot-1', target: 'prompt-1' },
-  { id: 'prompt-1-output-1', source: 'prompt-1', target: 'output-1' },
+  { id: 'shot-1-start-frame-1', source: 'shot-1', target: 'start-frame-1' },
+  { id: 'shot-1-end-frame-1', source: 'shot-1', target: 'end-frame-1' },
+  {
+    id: 'start-frame-1-motion-prompt-1',
+    source: 'start-frame-1',
+    target: 'motion-prompt-1',
+  },
+  {
+    id: 'end-frame-1-motion-prompt-1',
+    source: 'end-frame-1',
+    target: 'motion-prompt-1',
+  },
+  {
+    id: 'motion-prompt-1-clip-output-1',
+    source: 'motion-prompt-1',
+    target: 'clip-output-1',
+  },
 ];
 
 function createNodeData(type: StoryboardNodeType): StoryboardNodeData {
-  if (type === 'referenceNode') {
-    return { title: 'Reference', kind: 'note', url: '', text: '' };
-  }
   if (type === 'shotNode') {
-    return { title: 'Shot', description: '', durationSec: '8', status: 'draft' };
-  }
-  if (type === 'promptNode') {
     return {
-      prompt: '',
-      negativePrompt: '',
-      motionInstruction: '',
+      title: 'New shot',
+      description: '',
+      durationSec: '5',
+      aspectRatio: '16:9',
+      cameraMove: '',
+      status: 'draft',
+    };
+  }
+  if (type === 'startFrameNode' || type === 'endFrameNode') {
+    return {
+      imageUrl: '',
+      imagePrompt: '',
+      notes: '',
+    };
+  }
+  if (type === 'motionPromptNode') {
+    return {
+      videoTool: 'higgsfield',
+      motionPrompt: '',
+      mustPreserve: '',
+      avoid: '',
       styleNotes: '',
     };
   }
-  return { kind: 'video', url: '', jobStatus: 'not generated', notes: '' };
+  return {
+    videoUrl: '',
+    toolUsed: '',
+    status: 'manual',
+    notes: '',
+  };
 }
 
 function getNodeTitle(node: StoryboardNode): string {
-  if (node.type === 'promptNode') return 'Prompt';
-  if (node.type === 'outputNode') return `${nodeLabels[node.type]} ${(node.data as OutputNodeData).kind}`;
-  return (node.data as ReferenceNodeData | ShotNodeData).title || nodeLabels[node.type];
+  if (node.type === 'shotNode') {
+    const data = node.data as ShotNodeData;
+    return data.title || nodeLabels.shotNode;
+  }
+  if (node.type === 'motionPromptNode') {
+    const data = node.data as MotionPromptNodeData;
+    return data.videoTool ? `${nodeLabels.motionPromptNode} (${data.videoTool})` : nodeLabels.motionPromptNode;
+  }
+  if (node.type === 'clipOutputNode') {
+    const data = node.data as ClipOutputNodeData;
+    return data.status ? `${nodeLabels.clipOutputNode} (${data.status})` : nodeLabels.clipOutputNode;
+  }
+  return nodeLabels[node.type];
 }
 
-function StoryboardCard({ data, type, selected }: NodeProps<StoryboardNode>): React.ReactElement {
-  const nodeType = type as StoryboardNodeType;
-  const title =
-    nodeType === 'promptNode'
-      ? (data as PromptNodeData).prompt || 'Prompt'
-      : getNodeTitle({ id: '', position: { x: 0, y: 0 }, data, type: nodeType });
-  const detail =
-    nodeType === 'referenceNode'
-      ? (data as ReferenceNodeData).kind
-      : nodeType === 'shotNode'
-        ? `${(data as ShotNodeData).durationSec || '0'}s · ${(data as ShotNodeData).status || 'draft'}`
-        : nodeType === 'promptNode'
-          ? (data as PromptNodeData).motionInstruction || 'No motion instruction yet'
-          : (data as OutputNodeData).jobStatus || 'not generated';
+function getNodeDetail(node: StoryboardNode): string {
+  if (node.type === 'shotNode') {
+    const data = node.data as ShotNodeData;
+    return `${data.durationSec || '0'}s · ${data.aspectRatio || 'ratio?'} · ${data.status || 'draft'}`;
+  }
+  if (node.type === 'startFrameNode' || node.type === 'endFrameNode') {
+    const data = node.data as FrameNodeData;
+    return data.imageUrl ? 'frame URL set' : 'no frame URL';
+  }
+  if (node.type === 'motionPromptNode') {
+    const data = node.data as MotionPromptNodeData;
+    return data.motionPrompt || 'no motion prompt';
+  }
+  const data = node.data as ClipOutputNodeData;
+  return data.videoUrl ? 'clip URL set' : 'no clip URL';
+}
 
+function StoryboardCard({
+  id,
+  data,
+  type,
+  selected,
+}: NodeProps<StoryboardNode>): React.ReactElement {
+  const node = { id, data, type, position: { x: 0, y: 0 } } as StoryboardNode;
   return (
     <div
       style={{
-        width: 190,
+        width: 208,
         borderRadius: 8,
-        border: `1px solid ${
-          selected ? GRAPH_THEME.accent.primary : GRAPH_THEME.drawer.inputBorder
-        }`,
-        background: 'rgba(17, 22, 29, 0.96)',
+        border: `1px solid ${selected ? GRAPH_THEME.accent.primary : GRAPH_THEME.drawer.inputBorder}`,
+        background: 'rgba(17, 22, 29, 0.95)',
         color: GRAPH_THEME.drawer.inputText,
         boxShadow: selected
-          ? '0 0 0 1px rgba(55, 173, 170, 0.24), 0 12px 28px rgba(0, 0, 0, 0.28)'
-          : '0 10px 24px rgba(0, 0, 0, 0.22)',
+          ? '0 0 0 1px rgba(55, 173, 170, 0.26), 0 14px 30px rgba(0, 0, 0, 0.26)'
+          : '0 10px 26px rgba(0, 0, 0, 0.2)',
         padding: 10,
         display: 'grid',
         gap: 6,
       }}
     >
       <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
-        {nodeLabels[nodeType]}
+        {nodeLabels[type as StoryboardNodeType]}
       </div>
       <div
         style={{
           fontSize: 13,
           fontWeight: 700,
-          lineHeight: 1.25,
+          lineHeight: 1.24,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
         }}
       >
-        {title}
+        {getNodeTitle(node)}
       </div>
-      <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
-        {detail}
+      <div
+        style={{
+          fontSize: 11,
+          color: GRAPH_THEME.drawer.inputMuted,
+          lineHeight: 1.35,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {getNodeDetail(node)}
       </div>
     </div>
   );
 }
 
 const nodeTypes = {
-  referenceNode: StoryboardCard,
   shotNode: StoryboardCard,
-  promptNode: StoryboardCard,
-  outputNode: StoryboardCard,
+  startFrameNode: StoryboardCard,
+  endFrameNode: StoryboardCard,
+  motionPromptNode: StoryboardCard,
+  clipOutputNode: StoryboardCard,
 };
 
-function FieldLabel({
+function fieldInputStyle(): React.CSSProperties {
+  return {
+    width: '100%',
+    border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+    borderRadius: 8,
+    background: GRAPH_THEME.drawer.inputBackground,
+    color: GRAPH_THEME.drawer.inputText,
+    padding: '8px 10px',
+    fontSize: 12,
+    outline: 'none',
+  };
+}
+
+function ActionButton({
+  label,
+  onClick,
+  disabled = false,
+  title,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  title?: string;
+}): React.ReactElement {
+  return (
+    <button
+      type="button"
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+        borderRadius: 8,
+        background: disabled
+          ? 'rgba(167, 176, 186, 0.05)'
+          : GRAPH_THEME.drawer.inputBackground,
+        color: disabled ? GRAPH_THEME.drawer.inputMuted : GRAPH_THEME.drawer.inputText,
+        padding: '7px 10px',
+        fontSize: 12,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function Field({
   label,
   children,
 }: {
@@ -228,25 +348,13 @@ function FieldLabel({
   );
 }
 
-function textInputStyle(): React.CSSProperties {
-  return {
-    width: '100%',
-    border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
-    borderRadius: 8,
-    background: GRAPH_THEME.drawer.inputBackground,
-    color: GRAPH_THEME.drawer.inputText,
-    padding: '8px 10px',
-    fontSize: 12,
-    outline: 'none',
-  };
-}
-
 export default function MediaStudioCanvas({
   projectId = null,
 }: MediaStudioCanvasProps): React.ReactElement {
   const [nodes, setNodes, onNodesChange] = useNodesState<StoryboardNode>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-  const [selectedNodeId, setSelectedNodeId] = React.useState<string>('reference-1');
+  const [selectedNodeId, setSelectedNodeId] = React.useState<string>('shot-1');
+  const [copyStatus, setCopyStatus] = React.useState<string | null>(null);
   const nextNodeIdRef = React.useRef(2);
 
   const selectedNode = React.useMemo(
@@ -261,32 +369,54 @@ export default function MediaStudioCanvas({
     [setEdges],
   );
 
-  function addStoryboardNode(type: StoryboardNodeType): void {
-    const id = `${type.replace('Node', '').toLowerCase()}-${nextNodeIdRef.current}`;
-    const offset = nextNodeIdRef.current * 34;
-    nextNodeIdRef.current += 1;
-    setNodes((currentNodes) => [
-      ...currentNodes,
-      {
-        id,
-        type,
-        position: { x: 120 + offset, y: 320 + offset },
-        data: createNodeData(type),
-      },
-    ]);
-    setSelectedNodeId(id);
-  }
+  const addStoryboardNode = React.useCallback(
+    (type: StoryboardNodeType) => {
+      const ordinal = nextNodeIdRef.current;
+      nextNodeIdRef.current += 1;
+      const id = `${type.replace('Node', '').replace('Prompt', '-prompt').replace('Frame', '-frame')}-${ordinal}`;
+      const offset = ordinal * 34;
+      setNodes((currentNodes) => [
+        ...currentNodes,
+        {
+          id,
+          type,
+          position: { x: 140 + offset, y: 340 + (offset % 120) },
+          data: createNodeData(type),
+        },
+      ]);
+      setSelectedNodeId(id);
+    },
+    [setNodes],
+  );
 
-  function updateSelectedNodeData(patch: Partial<StoryboardNodeData>): void {
-    if (!selectedNode) return;
-    setNodes((currentNodes) =>
-      currentNodes.map((node) =>
-        node.id === selectedNode.id
-          ? { ...node, data: { ...node.data, ...patch } as StoryboardNodeData }
-          : node,
-      ),
-    );
-  }
+  const updateSelectedNodeData = React.useCallback(
+    (patch: Partial<StoryboardNodeData>) => {
+      if (!selectedNode) return;
+      setNodes((currentNodes) =>
+        currentNodes.map((node) =>
+          node.id === selectedNode.id
+            ? { ...node, data: { ...node.data, ...patch } as StoryboardNodeData }
+            : node,
+        ),
+      );
+    },
+    [selectedNode, setNodes],
+  );
+
+  const copyText = React.useCallback(async (text: string, label: string) => {
+    if (!text.trim()) {
+      setCopyStatus(`No ${label} to copy.`);
+      return;
+    }
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      }
+      setCopyStatus(`${label} copied.`);
+    } catch {
+      setCopyStatus(`Copy failed for ${label}.`);
+    }
+  }, []);
 
   return (
     <div
@@ -295,7 +425,7 @@ export default function MediaStudioCanvas({
         height: '100%',
         minHeight: 0,
         display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1fr) 320px',
+        gridTemplateColumns: 'minmax(0, 1fr) 330px',
         background: GRAPH_THEME.background.knowledgeSurface,
         color: GRAPH_THEME.drawer.inputText,
       }}
@@ -306,38 +436,31 @@ export default function MediaStudioCanvas({
             display: 'flex',
             alignItems: 'center',
             gap: 8,
-            padding: 12,
+            padding: 10,
             borderBottom: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
             background: 'rgba(11, 14, 18, 0.82)',
+            flexWrap: 'wrap',
           }}
         >
-          {(
-            [
-              ['referenceNode', 'Add Reference'],
-              ['shotNode', 'Add Shot'],
-              ['promptNode', 'Add Prompt'],
-              ['outputNode', 'Add Output'],
-            ] as const
-          ).map(([type, label]) => (
-            <button
-              key={type}
-              type="button"
-              onClick={() => addStoryboardNode(type)}
-              style={{
-                border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
-                borderRadius: 8,
-                background: GRAPH_THEME.drawer.inputBackground,
-                color: GRAPH_THEME.drawer.inputText,
-                padding: '7px 10px',
-                fontSize: 12,
-                cursor: 'pointer',
-              }}
-            >
-              {label}
-            </button>
-          ))}
+          <ActionButton label="Add Shot" onClick={() => addStoryboardNode('shotNode')} />
+          <ActionButton
+            label="Add Start Frame"
+            onClick={() => addStoryboardNode('startFrameNode')}
+          />
+          <ActionButton
+            label="Add End Frame"
+            onClick={() => addStoryboardNode('endFrameNode')}
+          />
+          <ActionButton
+            label="Add Motion Prompt"
+            onClick={() => addStoryboardNode('motionPromptNode')}
+          />
+          <ActionButton
+            label="Add Clip Output"
+            onClick={() => addStoryboardNode('clipOutputNode')}
+          />
           <div style={{ marginLeft: 'auto', fontSize: 12, color: GRAPH_THEME.drawer.inputMuted }}>
-            Video Agent storyboard
+            Video Agent storyboard graph
           </div>
         </div>
 
@@ -353,7 +476,7 @@ export default function MediaStudioCanvas({
             onPaneClick={() => setSelectedNodeId('')}
             fitView
           >
-            <Background color="rgba(167, 176, 186, 0.28)" gap={18} />
+            <Background color="rgba(167, 176, 186, 0.25)" gap={18} />
             <Controls />
             <MiniMap pannable zoomable />
           </ReactFlow>
@@ -364,7 +487,7 @@ export default function MediaStudioCanvas({
         data-testid="video-storyboard-inspector"
         style={{
           borderLeft: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
-          background: 'rgba(11, 14, 18, 0.9)',
+          background: 'rgba(11, 14, 18, 0.91)',
           padding: 14,
           overflow: 'auto',
           display: 'grid',
@@ -372,10 +495,10 @@ export default function MediaStudioCanvas({
           gap: 12,
         }}
       >
-        <div>
+        <div style={{ display: 'grid', gap: 3 }}>
           <div style={{ fontSize: 13, fontWeight: 700 }}>Inspector</div>
           <div style={{ fontSize: 12, color: GRAPH_THEME.drawer.inputMuted }}>
-            {projectId ? `Project ${projectId}` : 'Local component state only'}
+            {projectId ? `Project ${projectId}` : 'Local graph state only'}
           </div>
         </div>
 
@@ -383,12 +506,22 @@ export default function MediaStudioCanvas({
           <InspectorFields
             node={selectedNode}
             onChange={updateSelectedNodeData}
+            onCopy={copyText}
           />
         ) : (
           <div style={{ fontSize: 12, color: GRAPH_THEME.drawer.inputMuted }}>
-            Select a storyboard node to edit its fields.
+            Select a node to edit its fields.
           </div>
         )}
+
+        {copyStatus ? (
+          <div
+            data-testid="copy-status"
+            style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}
+          >
+            {copyStatus}
+          </div>
+        ) : null}
 
         <div
           style={{
@@ -398,26 +531,18 @@ export default function MediaStudioCanvas({
             gap: 8,
           }}
         >
-          <button
-            type="button"
+          <ActionButton
+            label="Generate disabled - no route wired"
+            onClick={() => {}}
             disabled
-            title={generationDisabledReason}
-            style={{
-              border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
-              borderRadius: 8,
-              background: 'rgba(167, 176, 186, 0.05)',
-              color: GRAPH_THEME.drawer.inputMuted,
-              padding: '8px 10px',
-              fontSize: 12,
-              cursor: 'not-allowed',
-            }}
-          >
-            Generate disabled - no route wired
-          </button>
-          <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
-            Future flow note: Video Output -&gt; Peepshow Extract -&gt; Frame References
-            -&gt; New Prompt -&gt; New Output. Peepshow is available at
-            main/peepshow-main, but is not integrated in this pass.
+            title={generateDisabledReason}
+          />
+          <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted, lineHeight: 1.4 }}>
+            Future flow note: ChatGPT Images generate start/end frames. Higgsfield, Kling, Runway,
+            and Pika consume those frames plus motion prompt to create clips. Peepshow later:
+            Clip Output -&gt; Peepshow Extract -&gt; Frame Anchors -&gt; New Shot/Motion Prompt
+            -&gt; New Clip. Peepshow remains vendored at main/peepshow-main and is not integrated
+            in this pass.
           </div>
         </div>
       </aside>
@@ -428,92 +553,210 @@ export default function MediaStudioCanvas({
 function InspectorFields({
   node,
   onChange,
+  onCopy,
 }: {
   node: StoryboardNode;
   onChange: (patch: Partial<StoryboardNodeData>) => void;
+  onCopy: (text: string, label: string) => Promise<void>;
 }): React.ReactElement {
-  if (node.type === 'referenceNode') {
-    const data = node.data as ReferenceNodeData;
-    return (
-      <div style={{ display: 'grid', gap: 10 }}>
-        <FieldLabel label="title">
-          <input value={data.title} onChange={(event) => onChange({ title: event.target.value })} style={textInputStyle()} />
-        </FieldLabel>
-        <FieldLabel label="kind">
-          <select value={data.kind} onChange={(event) => onChange({ kind: event.target.value as ReferenceKind })} style={textInputStyle()}>
-            <option value="image">image</option>
-            <option value="document">document</option>
-            <option value="note">note</option>
-          </select>
-        </FieldLabel>
-        <FieldLabel label="url">
-          <input value={data.url} onChange={(event) => onChange({ url: event.target.value })} style={textInputStyle()} />
-        </FieldLabel>
-        <FieldLabel label="text">
-          <textarea value={data.text} onChange={(event) => onChange({ text: event.target.value })} rows={5} style={textInputStyle()} />
-        </FieldLabel>
-      </div>
-    );
-  }
-
   if (node.type === 'shotNode') {
     const data = node.data as ShotNodeData;
     return (
       <div style={{ display: 'grid', gap: 10 }}>
-        <FieldLabel label="title">
-          <input value={data.title} onChange={(event) => onChange({ title: event.target.value })} style={textInputStyle()} />
-        </FieldLabel>
-        <FieldLabel label="description">
-          <textarea value={data.description} onChange={(event) => onChange({ description: event.target.value })} rows={5} style={textInputStyle()} />
-        </FieldLabel>
-        <FieldLabel label="durationSec">
-          <input value={data.durationSec} onChange={(event) => onChange({ durationSec: event.target.value })} style={textInputStyle()} />
-        </FieldLabel>
-        <FieldLabel label="status">
-          <input value={data.status} onChange={(event) => onChange({ status: event.target.value })} style={textInputStyle()} />
-        </FieldLabel>
+        <Field label="title">
+          <input
+            aria-label="title"
+            value={data.title}
+            onChange={(event) => onChange({ title: event.target.value })}
+            style={fieldInputStyle()}
+          />
+        </Field>
+        <Field label="description">
+          <textarea
+            aria-label="description"
+            value={data.description}
+            onChange={(event) => onChange({ description: event.target.value })}
+            rows={4}
+            style={fieldInputStyle()}
+          />
+        </Field>
+        <Field label="durationSec">
+          <input
+            aria-label="durationSec"
+            value={data.durationSec}
+            onChange={(event) => onChange({ durationSec: event.target.value })}
+            style={fieldInputStyle()}
+          />
+        </Field>
+        <Field label="aspectRatio">
+          <input
+            aria-label="aspectRatio"
+            value={data.aspectRatio}
+            onChange={(event) => onChange({ aspectRatio: event.target.value })}
+            style={fieldInputStyle()}
+          />
+        </Field>
+        <Field label="cameraMove">
+          <input
+            aria-label="cameraMove"
+            value={data.cameraMove}
+            onChange={(event) => onChange({ cameraMove: event.target.value })}
+            style={fieldInputStyle()}
+          />
+        </Field>
+        <Field label="status">
+          <input
+            aria-label="status"
+            value={data.status}
+            onChange={(event) => onChange({ status: event.target.value })}
+            style={fieldInputStyle()}
+          />
+        </Field>
       </div>
     );
   }
 
-  if (node.type === 'promptNode') {
-    const data = node.data as PromptNodeData;
+  if (node.type === 'startFrameNode' || node.type === 'endFrameNode') {
+    const data = node.data as FrameNodeData;
+    const label = node.type === 'startFrameNode' ? 'start frame prompt' : 'end frame prompt';
     return (
       <div style={{ display: 'grid', gap: 10 }}>
-        <FieldLabel label="prompt">
-          <textarea value={data.prompt} onChange={(event) => onChange({ prompt: event.target.value })} rows={5} style={textInputStyle()} />
-        </FieldLabel>
-        <FieldLabel label="negativePrompt">
-          <textarea value={data.negativePrompt} onChange={(event) => onChange({ negativePrompt: event.target.value })} rows={4} style={textInputStyle()} />
-        </FieldLabel>
-        <FieldLabel label="motionInstruction">
-          <textarea value={data.motionInstruction} onChange={(event) => onChange({ motionInstruction: event.target.value })} rows={4} style={textInputStyle()} />
-        </FieldLabel>
-        <FieldLabel label="styleNotes">
-          <textarea value={data.styleNotes} onChange={(event) => onChange({ styleNotes: event.target.value })} rows={4} style={textInputStyle()} />
-        </FieldLabel>
+        <Field label="imageUrl">
+          <input
+            aria-label="imageUrl"
+            value={data.imageUrl}
+            onChange={(event) => onChange({ imageUrl: event.target.value })}
+            style={fieldInputStyle()}
+          />
+        </Field>
+        <Field label="imagePrompt">
+          <textarea
+            aria-label="imagePrompt"
+            value={data.imagePrompt}
+            onChange={(event) => onChange({ imagePrompt: event.target.value })}
+            rows={4}
+            style={fieldInputStyle()}
+          />
+        </Field>
+        <ActionButton
+          label="Copy Image Prompt"
+          onClick={() => {
+            void onCopy(data.imagePrompt, label);
+          }}
+        />
+        <Field label="notes">
+          <textarea
+            aria-label="notes"
+            value={data.notes}
+            onChange={(event) => onChange({ notes: event.target.value })}
+            rows={3}
+            style={fieldInputStyle()}
+          />
+        </Field>
       </div>
     );
   }
 
-  const data = node.data as OutputNodeData;
+  if (node.type === 'motionPromptNode') {
+    const data = node.data as MotionPromptNodeData;
+    return (
+      <div style={{ display: 'grid', gap: 10 }}>
+        <Field label="videoTool">
+          <select
+            aria-label="videoTool"
+            value={data.videoTool}
+            onChange={(event) => onChange({ videoTool: event.target.value as VideoTool })}
+            style={fieldInputStyle()}
+          >
+            <option value="higgsfield">higgsfield</option>
+            <option value="kling">kling</option>
+            <option value="runway">runway</option>
+            <option value="pika">pika</option>
+            <option value="other">other</option>
+          </select>
+        </Field>
+        <Field label="motionPrompt">
+          <textarea
+            aria-label="motionPrompt"
+            value={data.motionPrompt}
+            onChange={(event) => onChange({ motionPrompt: event.target.value })}
+            rows={4}
+            style={fieldInputStyle()}
+          />
+        </Field>
+        <ActionButton
+          label="Copy Video Prompt"
+          onClick={() => {
+            void onCopy(data.motionPrompt, 'video prompt');
+          }}
+        />
+        <Field label="mustPreserve">
+          <textarea
+            aria-label="mustPreserve"
+            value={data.mustPreserve}
+            onChange={(event) => onChange({ mustPreserve: event.target.value })}
+            rows={3}
+            style={fieldInputStyle()}
+          />
+        </Field>
+        <Field label="avoid">
+          <textarea
+            aria-label="avoid"
+            value={data.avoid}
+            onChange={(event) => onChange({ avoid: event.target.value })}
+            rows={3}
+            style={fieldInputStyle()}
+          />
+        </Field>
+        <Field label="styleNotes">
+          <textarea
+            aria-label="styleNotes"
+            value={data.styleNotes}
+            onChange={(event) => onChange({ styleNotes: event.target.value })}
+            rows={3}
+            style={fieldInputStyle()}
+          />
+        </Field>
+      </div>
+    );
+  }
+
+  const data = node.data as ClipOutputNodeData;
   return (
     <div style={{ display: 'grid', gap: 10 }}>
-      <FieldLabel label="kind">
-        <select value={data.kind} onChange={(event) => onChange({ kind: event.target.value as OutputKind })} style={textInputStyle()}>
-          <option value="image">image</option>
-          <option value="video">video</option>
-        </select>
-      </FieldLabel>
-      <FieldLabel label="url">
-        <input value={data.url} onChange={(event) => onChange({ url: event.target.value })} style={textInputStyle()} />
-      </FieldLabel>
-      <FieldLabel label="jobStatus">
-        <input value={data.jobStatus} onChange={(event) => onChange({ jobStatus: event.target.value })} style={textInputStyle()} />
-      </FieldLabel>
-      <FieldLabel label="notes">
-        <textarea value={data.notes} onChange={(event) => onChange({ notes: event.target.value })} rows={5} style={textInputStyle()} />
-      </FieldLabel>
+      <Field label="videoUrl">
+        <input
+          aria-label="videoUrl"
+          value={data.videoUrl}
+          onChange={(event) => onChange({ videoUrl: event.target.value })}
+          style={fieldInputStyle()}
+        />
+      </Field>
+      <Field label="toolUsed">
+        <input
+          aria-label="toolUsed"
+          value={data.toolUsed}
+          onChange={(event) => onChange({ toolUsed: event.target.value })}
+          style={fieldInputStyle()}
+        />
+      </Field>
+      <Field label="status">
+        <input
+          aria-label="status"
+          value={data.status}
+          onChange={(event) => onChange({ status: event.target.value })}
+          style={fieldInputStyle()}
+        />
+      </Field>
+      <Field label="notes">
+        <textarea
+          aria-label="notes"
+          value={data.notes}
+          onChange={(event) => onChange({ notes: event.target.value })}
+          rows={4}
+          style={fieldInputStyle()}
+        />
+      </Field>
     </div>
   );
 }

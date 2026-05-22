@@ -39,62 +39,67 @@ vi.mock('@xyflow/react', async () => {
   };
 });
 
-describe('MediaStudioCanvas storyboard flow', () => {
+describe('MediaStudioCanvas AI-video storyboard graph', () => {
   afterEach(() => {
     cleanup();
   });
 
-  it('renders the default Reference to Shot to Prompt to Output storyboard', async () => {
+  it('renders default graph with 5 required node types', async () => {
     const { default: MediaStudioCanvas } = await import('./MediaStudioCanvas');
-
     render(<MediaStudioCanvas projectId={null} />);
 
     expect(screen.getByTestId('mock-react-flow')).toBeTruthy();
-    expect(screen.getAllByTestId('storyboard-node-referenceNode')).toHaveLength(1);
     expect(screen.getAllByTestId('storyboard-node-shotNode')).toHaveLength(1);
-    expect(screen.getAllByTestId('storyboard-node-promptNode')).toHaveLength(1);
-    expect(screen.getAllByTestId('storyboard-node-outputNode')).toHaveLength(1);
-    expect(screen.getByTestId('video-storyboard-inspector')).toBeTruthy();
-    expect(screen.getByText(/Local component state only/i)).toBeTruthy();
-    expect(
-      (screen.getByText(/Generate disabled - no route wired/i) as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
-    expect(screen.getByText(/Video Output -> Peepshow Extract -> Frame References/i)).toBeTruthy();
+    expect(screen.getAllByTestId('storyboard-node-startFrameNode')).toHaveLength(1);
+    expect(screen.getAllByTestId('storyboard-node-endFrameNode')).toHaveLength(1);
+    expect(screen.getAllByTestId('storyboard-node-motionPromptNode')).toHaveLength(1);
+    expect(screen.getAllByTestId('storyboard-node-clipOutputNode')).toHaveLength(1);
   });
 
-  it('edits selected node fields in local component state', async () => {
+  it('shows image prompt fields for start and end frame nodes', async () => {
     const { default: MediaStudioCanvas } = await import('./MediaStudioCanvas');
-
-    render(<MediaStudioCanvas projectId="project-1" />);
-
-    fireEvent.change(screen.getByLabelText('title'), {
-      target: { value: 'Moodboard reference' },
-    });
-
-    expect(screen.getByDisplayValue('Moodboard reference')).toBeTruthy();
-
-    fireEvent.click(screen.getByTestId('storyboard-node-promptNode'));
-    fireEvent.change(screen.getByLabelText('prompt'), {
-      target: { value: 'A clean product reveal shot.' },
-    });
-
-    expect(screen.getByDisplayValue('A clean product reveal shot.')).toBeTruthy();
-  });
-
-  it('adds each requested node type from the toolbar', async () => {
-    const { default: MediaStudioCanvas } = await import('./MediaStudioCanvas');
-
     render(<MediaStudioCanvas projectId={null} />);
 
-    fireEvent.click(screen.getByText('Add Reference'));
-    fireEvent.click(screen.getByText('Add Shot'));
-    fireEvent.click(screen.getByText('Add Prompt'));
-    fireEvent.click(screen.getByText('Add Output'));
+    fireEvent.click(screen.getByTestId('storyboard-node-startFrameNode'));
+    expect(screen.getByLabelText('imagePrompt')).toBeTruthy();
+    expect(screen.getByText('Copy Image Prompt')).toBeTruthy();
 
-    expect(screen.getAllByTestId('storyboard-node-referenceNode')).toHaveLength(2);
-    expect(screen.getAllByTestId('storyboard-node-shotNode')).toHaveLength(2);
-    expect(screen.getAllByTestId('storyboard-node-promptNode')).toHaveLength(2);
-    expect(screen.getAllByTestId('storyboard-node-outputNode')).toHaveLength(2);
+    fireEvent.click(screen.getByTestId('storyboard-node-endFrameNode'));
+    expect(screen.getByLabelText('imagePrompt')).toBeTruthy();
+    expect(screen.getByText('Copy Image Prompt')).toBeTruthy();
+  });
+
+  it('shows motion prompt editor and copy button', async () => {
+    const { default: MediaStudioCanvas } = await import('./MediaStudioCanvas');
+    render(<MediaStudioCanvas projectId={null} />);
+
+    fireEvent.click(screen.getByTestId('storyboard-node-motionPromptNode'));
+    expect(screen.getByLabelText('motionPrompt')).toBeTruthy();
+    expect(screen.getByLabelText('videoTool')).toBeTruthy();
+    expect(screen.getByText('Copy Video Prompt')).toBeTruthy();
+  });
+
+  it('stores clip output video URL in local state', async () => {
+    const { default: MediaStudioCanvas } = await import('./MediaStudioCanvas');
+    render(<MediaStudioCanvas projectId={null} />);
+
+    fireEvent.click(screen.getByTestId('storyboard-node-clipOutputNode'));
+    fireEvent.change(screen.getByLabelText('videoUrl'), {
+      target: { value: 'https://example.com/result.mp4' },
+    });
+
+    expect(screen.getByDisplayValue('https://example.com/result.mp4')).toBeTruthy();
+  });
+
+  it('does not generate fake output', async () => {
+    const { default: MediaStudioCanvas } = await import('./MediaStudioCanvas');
+    render(<MediaStudioCanvas projectId={null} />);
+
+    expect(
+      (screen.getByText('Generate disabled - no route wired') as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(screen.queryByText('Generated clip')).toBeNull();
+    expect(screen.queryByText(/provider response/i)).toBeNull();
   });
 });
