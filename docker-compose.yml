@@ -77,12 +77,14 @@ services:
       context: .
       dockerfile: apps/python-models/Dockerfile
     image: liquidaity-python-models
+    env_file:
+      - ./apps/backend/.env
     environment:
       - REDIS_HOST=redis
     depends_on:
       - redis
     ports:
-      - "8002:8001"
+      - "8003:8001"
     restart: unless-stopped
 
   web:

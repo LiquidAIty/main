@@ -1,8 +1,6 @@
-import { PrismaClient } from '@prisma/client';
 import type { Request, Response } from 'express';
 import type { User } from './userService';
-
-const prisma = new PrismaClient();
+import { prisma } from '../services/database';
 
 export interface Session {
   id: string;

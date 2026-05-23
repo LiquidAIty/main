@@ -1,8 +1,10 @@
 import React from 'react';
 import {
   Background,
-  Controls,
-  MiniMap,
+  BackgroundVariant,
+  ConnectionMode,
+  Handle,
+  Position,
   ReactFlow,
   addEdge,
   useEdgesState,
@@ -11,293 +13,496 @@ import {
   type Edge,
   type Node,
   type NodeProps,
+  type ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { GRAPH_THEME } from '../../components/graph/graphVisualTokens';
+import {
+  GRAPH_THEME,
+  graphControlButtonStyle,
+  graphControlStackStyle,
+  graphDrawerButtonStyle,
+  graphDrawerInputStyle,
+  graphDrawerSectionStyle,
+  graphGlassCardStyle,
+} from '../../components/graph/graphVisualTokens';
+import RightGlassDrawer from '../../components/graph/RightGlassDrawer';
 
 type MediaStudioCanvasProps = {
   projectId?: string | null;
 };
 
-type VideoTool = 'higgsfield' | 'kling' | 'runway' | 'pika' | 'other';
+type NodeType = 'contextNode' | 'sceneNode' | 'framePackNode' | 'outputNode';
+type SceneApproval = 'draft' | 'approved';
+type FramePackApproval = 'draft' | 'approved';
 
-type StoryboardNodeType =
-  | 'shotNode'
-  | 'startFrameNode'
-  | 'endFrameNode'
-  | 'motionPromptNode'
-  | 'clipOutputNode';
+type ContextNodeData = {
+  title: string;
+  sourceType: 'typed' | 'dropped';
+  content: string;
+};
 
-type ShotNodeData = {
+type SceneNodeData = {
   title: string;
   description: string;
-  durationSec: string;
-  aspectRatio: string;
-  cameraMove: string;
-  status: string;
+  order: number;
+  approvalState: SceneApproval;
 };
 
-type FrameNodeData = {
-  imageUrl: string;
-  imagePrompt: string;
-  notes: string;
-};
-
-type MotionPromptNodeData = {
-  videoTool: VideoTool;
+type FramePackNodeData = {
+  sceneId: string;
+  startImagePrompt: string;
+  endImagePrompt: string;
   motionPrompt: string;
-  mustPreserve: string;
-  avoid: string;
-  styleNotes: string;
+  negativePrompt: string;
+  styleRules: string;
+  continuityRules: string;
+  startImageUrl: string;
+  endImageUrl: string;
+  approvalState: FramePackApproval;
 };
 
-type ClipOutputNodeData = {
+type OutputNodeData = {
   videoUrl: string;
-  toolUsed: string;
   status: string;
   notes: string;
 };
 
 type StoryboardNodeData =
-  | ShotNodeData
-  | FrameNodeData
-  | MotionPromptNodeData
-  | ClipOutputNodeData;
+  | ContextNodeData
+  | SceneNodeData
+  | FramePackNodeData
+  | OutputNodeData;
 
-type StoryboardNode = Node<StoryboardNodeData, StoryboardNodeType>;
+type StoryboardNode = Node<StoryboardNodeData, NodeType>;
+type EdgeSemantic = 'context_for' | 'next' | 'frame_pack_for' | 'output_of';
+type StoryboardEdge = Edge<{
+  lane?: 'story' | 'bridge' | 'output';
+  semantic?: EdgeSemantic;
+}>;
 
-const nodeLabels: Record<StoryboardNodeType, string> = {
-  shotNode: 'Shot',
-  startFrameNode: 'Start Frame',
-  endFrameNode: 'End Frame',
-  motionPromptNode: 'Motion Prompt',
-  clipOutputNode: 'Clip Output',
+type SceneContextSummary = {
+  id: string;
+  title: string;
+  description: string;
+  order: number;
+  approvalState: SceneApproval;
 };
 
-const generateDisabledReason = 'No provider route is wired in this pass.';
+type ContextSummary = {
+  id: string;
+  title: string;
+  sourceType: 'typed' | 'dropped';
+  content: string;
+};
+
+type FramePackSummary = {
+  id: string;
+  data: FramePackNodeData;
+};
+
+type OutputSummary = {
+  id: string;
+  data: OutputNodeData;
+};
+
+export type VideoObjectChatContext = {
+  selectedScene: SceneContextSummary | null;
+  linkedContext: ContextSummary[];
+  previousScene: SceneContextSummary | null;
+  nextScene: SceneContextSummary | null;
+  framePack: FramePackSummary | null;
+  output: OutputSummary | null;
+};
+
+function resolveEdgeSemantic(
+  sourceType: NodeType | undefined,
+  targetType: NodeType | undefined,
+): { semantic: EdgeSemantic; lane: 'story' | 'bridge' | 'output'; className: string } {
+  if (sourceType === 'contextNode' && targetType === 'sceneNode') {
+    return { semantic: 'context_for', lane: 'bridge', className: 'edge-secondary' };
+  }
+  if (sourceType === 'sceneNode' && targetType === 'sceneNode') {
+    return { semantic: 'next', lane: 'story', className: 'edge-primary' };
+  }
+  if (sourceType === 'sceneNode' && targetType === 'framePackNode') {
+    return { semantic: 'frame_pack_for', lane: 'bridge', className: 'edge-secondary' };
+  }
+  if (sourceType === 'framePackNode' && targetType === 'outputNode') {
+    return { semantic: 'output_of', lane: 'output', className: 'edge-secondary' };
+  }
+  return { semantic: 'next', lane: 'bridge', className: 'edge-secondary' };
+}
+
+const NODE_ACCENT: Record<NodeType, string> = {
+  contextNode: GRAPH_THEME.edge.know,
+  sceneNode: GRAPH_THEME.accent.primary,
+  framePackNode: GRAPH_THEME.accent.workflow,
+  outputNode: GRAPH_THEME.accent.primary,
+};
 
 const initialNodes: StoryboardNode[] = [
   {
-    id: 'shot-1',
-    type: 'shotNode',
-    position: { x: 100, y: 160 },
+    id: 'context-1',
+    type: 'contextNode',
+    position: { x: 90, y: 120 },
     data: {
-      title: 'Hero shot',
-      description: 'Define the core beat and camera objective.',
-      durationSec: '5',
-      aspectRatio: '16:9',
-      cameraMove: 'slow push-in',
-      status: 'draft',
+      title: 'Launch concept',
+      sourceType: 'typed',
+      content:
+        'A rooftop teaser at sunset. Show confidence and momentum. End on logo lockup.',
     },
   },
   {
-    id: 'start-frame-1',
-    type: 'startFrameNode',
-    position: { x: 390, y: 70 },
+    id: 'scene-1',
+    type: 'sceneNode',
+    position: { x: 380, y: 80 },
     data: {
-      imageUrl: '',
-      imagePrompt: 'Crisp starting frame, subject centered, natural light.',
-      notes: '',
+      title: 'Arrival shot',
+      description: 'Subject steps into frame with skyline in the background.',
+      order: 1,
+      approvalState: 'approved',
     },
   },
   {
-    id: 'end-frame-1',
-    type: 'endFrameNode',
-    position: { x: 390, y: 260 },
+    id: 'scene-2',
+    type: 'sceneNode',
+    position: { x: 380, y: 240 },
     data: {
-      imageUrl: '',
-      imagePrompt: 'Matching ending frame, evolved pose, same identity.',
-      notes: '',
+      title: 'Reveal shot',
+      description: 'Camera settles on the final hero framing and CTA.',
+      order: 2,
+      approvalState: 'draft',
     },
   },
   {
-    id: 'motion-prompt-1',
-    type: 'motionPromptNode',
-    position: { x: 700, y: 160 },
+    id: 'frame-pack-1',
+    type: 'framePackNode',
+    position: { x: 700, y: 80 },
     data: {
-      videoTool: 'higgsfield',
+      sceneId: 'scene-1',
+      startImagePrompt: 'Subject entering frame, warm sunset light, city skyline.',
+      endImagePrompt: 'Subject centered, confident stance, logo hint in background.',
       motionPrompt:
-        'Move from start frame to end frame with smooth subject continuity and consistent lighting.',
-      mustPreserve: 'face identity, outfit details',
-      avoid: 'warping, duplicate limbs, sudden zoom jumps',
-      styleNotes: 'cinematic realism',
+        'Smooth push-in from wide to medium while preserving identity and lighting.',
+      negativePrompt: 'warping, duplicate limbs, inconsistent identity',
+      styleRules: 'cinematic realism, clean gradients, natural skin tones',
+      continuityRules: 'keep outfit details and skyline geometry consistent',
+      startImageUrl: '',
+      endImageUrl: '',
+      approvalState: 'draft',
     },
   },
   {
-    id: 'clip-output-1',
-    type: 'clipOutputNode',
-    position: { x: 1020, y: 160 },
+    id: 'output-1',
+    type: 'outputNode',
+    position: { x: 1020, y: 80 },
     data: {
       videoUrl: '',
-      toolUsed: '',
-      status: 'manual',
+      status: 'waiting_for_approved_image_pair',
       notes: '',
     },
   },
 ];
 
-const initialEdges: Edge[] = [
-  { id: 'shot-1-start-frame-1', source: 'shot-1', target: 'start-frame-1' },
-  { id: 'shot-1-end-frame-1', source: 'shot-1', target: 'end-frame-1' },
+const initialEdges: StoryboardEdge[] = [
   {
-    id: 'start-frame-1-motion-prompt-1',
-    source: 'start-frame-1',
-    target: 'motion-prompt-1',
+    id: 'context-1-scene-1',
+    source: 'context-1',
+    target: 'scene-1',
+    data: { lane: 'bridge', semantic: 'context_for' },
+    className: 'edge-secondary',
   },
   {
-    id: 'end-frame-1-motion-prompt-1',
-    source: 'end-frame-1',
-    target: 'motion-prompt-1',
+    id: 'scene-1-scene-2',
+    source: 'scene-1',
+    target: 'scene-2',
+    data: { lane: 'story', semantic: 'next' },
+    className: 'edge-primary',
   },
   {
-    id: 'motion-prompt-1-clip-output-1',
-    source: 'motion-prompt-1',
-    target: 'clip-output-1',
+    id: 'scene-1-frame-pack-1',
+    source: 'scene-1',
+    target: 'frame-pack-1',
+    data: { lane: 'bridge', semantic: 'frame_pack_for' },
+    className: 'edge-secondary',
+  },
+  {
+    id: 'frame-pack-1-output-1',
+    source: 'frame-pack-1',
+    target: 'output-1',
+    data: { lane: 'output', semantic: 'output_of' },
+    className: 'edge-secondary',
   },
 ];
 
-function createNodeData(type: StoryboardNodeType): StoryboardNodeData {
-  if (type === 'shotNode') {
-    return {
-      title: 'New shot',
-      description: '',
-      durationSec: '5',
-      aspectRatio: '16:9',
-      cameraMove: '',
-      status: 'draft',
-    };
-  }
-  if (type === 'startFrameNode' || type === 'endFrameNode') {
-    return {
-      imageUrl: '',
-      imagePrompt: '',
-      notes: '',
-    };
-  }
-  if (type === 'motionPromptNode') {
-    return {
-      videoTool: 'higgsfield',
-      motionPrompt: '',
-      mustPreserve: '',
-      avoid: '',
-      styleNotes: '',
-    };
-  }
+function parseStoryboardSceneLines(content: string): string[] {
+  return content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.replace(/^\d+[\).\-\s]+/, '').trim())
+    .filter(Boolean);
+}
+
+function asSceneSummary(node: StoryboardNode): SceneContextSummary {
+  const data = node.data as SceneNodeData;
   return {
-    videoUrl: '',
-    toolUsed: '',
-    status: 'manual',
-    notes: '',
+    id: node.id,
+    title: data.title,
+    description: data.description,
+    order: data.order,
+    approvalState: data.approvalState,
   };
 }
 
-function getNodeTitle(node: StoryboardNode): string {
-  if (node.type === 'shotNode') {
-    const data = node.data as ShotNodeData;
-    return data.title || nodeLabels.shotNode;
-  }
-  if (node.type === 'motionPromptNode') {
-    const data = node.data as MotionPromptNodeData;
-    return data.videoTool ? `${nodeLabels.motionPromptNode} (${data.videoTool})` : nodeLabels.motionPromptNode;
-  }
-  if (node.type === 'clipOutputNode') {
-    const data = node.data as ClipOutputNodeData;
-    return data.status ? `${nodeLabels.clipOutputNode} (${data.status})` : nodeLabels.clipOutputNode;
-  }
-  return nodeLabels[node.type];
+function toSceneNode(node: StoryboardNode | undefined): StoryboardNode | null {
+  if (!node || node.type !== 'sceneNode') return null;
+  return node;
 }
 
-function getNodeDetail(node: StoryboardNode): string {
-  if (node.type === 'shotNode') {
-    const data = node.data as ShotNodeData;
-    return `${data.durationSec || '0'}s · ${data.aspectRatio || 'ratio?'} · ${data.status || 'draft'}`;
+export function buildVideoObjectChatContext(
+  selectedNodeId: string | null,
+  nodes: StoryboardNode[],
+  edges: StoryboardEdge[],
+): VideoObjectChatContext {
+  if (!selectedNodeId) {
+    return {
+      selectedScene: null,
+      linkedContext: [],
+      previousScene: null,
+      nextScene: null,
+      framePack: null,
+      output: null,
+    };
   }
-  if (node.type === 'startFrameNode' || node.type === 'endFrameNode') {
-    const data = node.data as FrameNodeData;
-    return data.imageUrl ? 'frame URL set' : 'no frame URL';
+
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const selected = byId.get(selectedNodeId) ?? null;
+  let selectedSceneNode: StoryboardNode | null = null;
+
+  if (selected?.type === 'sceneNode') {
+    selectedSceneNode = selected;
+  } else if (selected?.type === 'framePackNode') {
+    const sceneEdge = edges.find(
+      (edge) => edge.target === selected.id && toSceneNode(byId.get(edge.source)),
+    );
+    selectedSceneNode = sceneEdge ? (byId.get(sceneEdge.source) as StoryboardNode) : null;
+  } else if (selected?.type === 'outputNode') {
+    const framePackEdge = edges.find(
+      (edge) => edge.target === selected.id && byId.get(edge.source)?.type === 'framePackNode',
+    );
+    if (framePackEdge) {
+      const sceneEdge = edges.find(
+        (edge) =>
+          edge.target === framePackEdge.source && toSceneNode(byId.get(edge.source)),
+      );
+      selectedSceneNode = sceneEdge ? (byId.get(sceneEdge.source) as StoryboardNode) : null;
+    }
+  } else if (selected?.type === 'contextNode') {
+    const firstSceneEdge = edges.find(
+      (edge) => edge.source === selected.id && toSceneNode(byId.get(edge.target)),
+    );
+    selectedSceneNode = firstSceneEdge
+      ? (byId.get(firstSceneEdge.target) as StoryboardNode)
+      : null;
   }
-  if (node.type === 'motionPromptNode') {
-    const data = node.data as MotionPromptNodeData;
-    return data.motionPrompt || 'no motion prompt';
+
+  if (!selectedSceneNode) {
+    return {
+      selectedScene: null,
+      linkedContext: [],
+      previousScene: null,
+      nextScene: null,
+      framePack: null,
+      output: null,
+    };
   }
-  const data = node.data as ClipOutputNodeData;
-  return data.videoUrl ? 'clip URL set' : 'no clip URL';
+
+  const selectedScene = asSceneSummary(selectedSceneNode);
+  const linkedContext = edges
+    .filter((edge) => edge.target === selectedScene.id)
+    .map((edge) => byId.get(edge.source))
+    .filter((node): node is StoryboardNode => Boolean(node))
+    .filter((node) => node.type === 'contextNode')
+    .map((node) => {
+      const data = node.data as ContextNodeData;
+      return {
+        id: node.id,
+        title: data.title,
+        sourceType: data.sourceType,
+        content: data.content,
+      };
+    });
+
+  const previousSceneNode = edges
+    .map((edge) => (edge.target === selectedScene.id ? byId.get(edge.source) : null))
+    .find((node) => node?.type === 'sceneNode');
+  const nextSceneNode = edges
+    .map((edge) => (edge.source === selectedScene.id ? byId.get(edge.target) : null))
+    .find((node) => node?.type === 'sceneNode');
+
+  const framePackNode = edges
+    .map((edge) => (edge.source === selectedScene.id ? byId.get(edge.target) : null))
+    .find((node) => node?.type === 'framePackNode');
+  const outputNode =
+    framePackNode
+      ? edges
+          .map((edge) =>
+            edge.source === framePackNode.id ? byId.get(edge.target) : null,
+          )
+          .find((node) => node?.type === 'outputNode')
+      : null;
+
+  return {
+    selectedScene,
+    linkedContext,
+    previousScene: previousSceneNode
+      ? asSceneSummary(previousSceneNode as StoryboardNode)
+      : null,
+    nextScene: nextSceneNode ? asSceneSummary(nextSceneNode as StoryboardNode) : null,
+    framePack: framePackNode
+      ? { id: framePackNode.id, data: framePackNode.data as FramePackNodeData }
+      : null,
+    output: outputNode
+      ? { id: outputNode.id, data: outputNode.data as OutputNodeData }
+      : null,
+  };
 }
 
-function StoryboardCard({
+export function buildVideoSceneChatContext(
+  selectedNodeId: string | null,
+  nodes: StoryboardNode[],
+  edges: StoryboardEdge[],
+): VideoObjectChatContext {
+  return buildVideoObjectChatContext(selectedNodeId, nodes, edges);
+}
+
+function getSceneTitle(node: StoryboardNode): string {
+  if (node.type === 'contextNode') {
+    const data = node.data as ContextNodeData;
+    return data.title ? `Source: ${data.title}` : 'Source';
+  }
+  if (node.type === 'framePackNode') {
+    const data = node.data as FramePackNodeData;
+    return data.sceneId ? `Image Pair: ${data.sceneId}` : 'Image Pair';
+  }
+  if (node.type === 'outputNode') {
+    const data = node.data as OutputNodeData;
+    return data.videoUrl ? 'Clip: linked' : 'Clip';
+  }
+  const data = node.data as SceneNodeData;
+  return `Scene ${data.order}: ${data.title || 'Untitled'}`;
+}
+
+function getNodeSummary(node: StoryboardNode): string {
+  if (node.type === 'contextNode') {
+    const data = node.data as ContextNodeData;
+    return data.content ? 'material attached' : 'add material';
+  }
+  if (node.type === 'sceneNode') {
+    const data = node.data as SceneNodeData;
+    return `${data.approvalState} · ${data.description || 'Describe this scene'}`;
+  }
+  if (node.type === 'framePackNode') {
+    const data = node.data as FramePackNodeData;
+    return `${data.approvalState} · image pair + motion`;
+  }
+  const data = node.data as OutputNodeData;
+  return data.videoUrl ? 'clip linked' : 'no clip link';
+}
+
+function NodeCard({
   id,
-  data,
   type,
+  data,
   selected,
 }: NodeProps<StoryboardNode>): React.ReactElement {
-  const node = { id, data, type, position: { x: 0, y: 0 } } as StoryboardNode;
+  const node = { id, type, data, position: { x: 0, y: 0 } } as StoryboardNode;
+  const accent = NODE_ACCENT[type as NodeType];
   return (
     <div
-      style={{
-        width: 208,
-        borderRadius: 8,
-        border: `1px solid ${selected ? GRAPH_THEME.accent.primary : GRAPH_THEME.drawer.inputBorder}`,
-        background: 'rgba(17, 22, 29, 0.95)',
-        color: GRAPH_THEME.drawer.inputText,
+      style={graphGlassCardStyle({
+        width: 236,
+        minHeight: 102,
+        padding: '10px 11px',
+        borderRadius: 12,
+        border: selected
+          ? `1px solid ${GRAPH_THEME.accent.primaryBorder}`
+          : `1px solid ${GRAPH_THEME.card.glassBorder}`,
         boxShadow: selected
-          ? '0 0 0 1px rgba(55, 173, 170, 0.26), 0 14px 30px rgba(0, 0, 0, 0.26)'
-          : '0 10px 26px rgba(0, 0, 0, 0.2)',
-        padding: 10,
+          ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 14px 28px ${GRAPH_THEME.accent.primaryGlow}`
+          : `${GRAPH_THEME.card.glassInset}, ${GRAPH_THEME.surface.shadow}`,
         display: 'grid',
         gap: 6,
-      }}
+      })}
     >
-      <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
-        {nodeLabels[type as StoryboardNodeType]}
-      </div>
+      <Handle
+        type="target"
+        position={Position.Left}
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: 999,
+          border: `1px solid ${GRAPH_THEME.accent.primaryBorder}`,
+          background: GRAPH_THEME.background.agentSurface,
+          left: -5,
+        }}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: 999,
+          border: `1px solid ${GRAPH_THEME.accent.primaryBorder}`,
+          background: GRAPH_THEME.background.agentSurface,
+          right: -5,
+        }}
+      />
       <div
         style={{
-          fontSize: 13,
+          height: 3,
+          borderRadius: 999,
+          background: accent,
+          opacity: 0.86,
+        }}
+      />
+      <div
+        style={{
+          fontSize: 14,
           fontWeight: 700,
-          lineHeight: 1.24,
+          lineHeight: 1.2,
+          color: GRAPH_THEME.surface.text,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
         }}
       >
-        {getNodeTitle(node)}
+        {getSceneTitle(node)}
       </div>
       <div
         style={{
           fontSize: 11,
-          color: GRAPH_THEME.drawer.inputMuted,
           lineHeight: 1.35,
+          color: GRAPH_THEME.surface.mutedText,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
         }}
       >
-        {getNodeDetail(node)}
+        {getNodeSummary(node)}
       </div>
     </div>
   );
 }
 
 const nodeTypes = {
-  shotNode: StoryboardCard,
-  startFrameNode: StoryboardCard,
-  endFrameNode: StoryboardCard,
-  motionPromptNode: StoryboardCard,
-  clipOutputNode: StoryboardCard,
+  contextNode: NodeCard,
+  sceneNode: NodeCard,
+  framePackNode: NodeCard,
+  outputNode: NodeCard,
 };
-
-function fieldInputStyle(): React.CSSProperties {
-  return {
-    width: '100%',
-    border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
-    borderRadius: 8,
-    background: GRAPH_THEME.drawer.inputBackground,
-    color: GRAPH_THEME.drawer.inputText,
-    padding: '8px 10px',
-    fontSize: 12,
-    outline: 'none',
-  };
-}
 
 function ActionButton({
   label,
@@ -313,81 +518,383 @@ function ActionButton({
   return (
     <button
       type="button"
-      title={title}
-      disabled={disabled}
       onClick={onClick}
-      style={{
-        border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
-        borderRadius: 8,
-        background: disabled
-          ? 'rgba(167, 176, 186, 0.05)'
-          : GRAPH_THEME.drawer.inputBackground,
+      disabled={disabled}
+      title={title}
+      style={graphDrawerButtonStyle({
+        padding: '6px 9px',
+        borderRadius: 7,
+        fontSize: 11,
+        lineHeight: 1.2,
         color: disabled ? GRAPH_THEME.drawer.inputMuted : GRAPH_THEME.drawer.inputText,
-        padding: '7px 10px',
-        fontSize: 12,
+        opacity: disabled ? 0.72 : 1,
         cursor: disabled ? 'not-allowed' : 'pointer',
-      }}
+      })}
     >
       {label}
     </button>
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}): React.ReactElement {
-  return (
-    <label style={{ display: 'grid', gap: 5, fontSize: 12 }}>
-      <span style={{ color: GRAPH_THEME.drawer.inputMuted }}>{label}</span>
-      {children}
-    </label>
-  );
+function getMaxSceneOrder(nodes: StoryboardNode[]): number {
+  return nodes
+    .filter((node) => node.type === 'sceneNode')
+    .reduce((max, node) => {
+      const order = (node.data as SceneNodeData).order;
+      return order > max ? order : max;
+    }, 0);
+}
+
+function normalizeSceneOrder(nodes: StoryboardNode[]): StoryboardNode[] {
+  const sceneNodes = nodes
+    .filter((node) => node.type === 'sceneNode')
+    .slice()
+    .sort((a, b) => {
+      const aData = a.data as SceneNodeData;
+      const bData = b.data as SceneNodeData;
+      return aData.order - bData.order;
+    });
+  const orderMap = new Map<string, number>();
+  sceneNodes.forEach((node, index) => orderMap.set(node.id, index + 1));
+  return nodes.map((node) => {
+    if (node.type !== 'sceneNode') return node;
+    const data = node.data as SceneNodeData;
+    return { ...node, data: { ...data, order: orderMap.get(node.id) ?? data.order } };
+  });
+}
+
+function sceneNodesInOrder(nodes: StoryboardNode[]): StoryboardNode[] {
+  return nodes
+    .filter((node) => node.type === 'sceneNode')
+    .slice()
+    .sort((a, b) => {
+      const aData = a.data as SceneNodeData;
+      const bData = b.data as SceneNodeData;
+      return aData.order - bData.order;
+    });
 }
 
 export default function MediaStudioCanvas({
   projectId = null,
 }: MediaStudioCanvasProps): React.ReactElement {
+  void projectId;
   const [nodes, setNodes, onNodesChange] = useNodesState<StoryboardNode>(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-  const [selectedNodeId, setSelectedNodeId] = React.useState<string>('shot-1');
-  const [copyStatus, setCopyStatus] = React.useState<string | null>(null);
-  const nextNodeIdRef = React.useRef(2);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<StoryboardEdge>(initialEdges);
+  const [selectedNodeId, setSelectedNodeId] = React.useState<string>('');
+  const [lastSceneSelectionId, setLastSceneSelectionId] = React.useState<string>('scene-1');
+  const [actionStatus, setActionStatus] = React.useState<string | null>(null);
+  const [addMenuOpen, setAddMenuOpen] = React.useState(false);
+  const [reactFlowInstance, setReactFlowInstance] = React.useState<
+    ReactFlowInstance<StoryboardNode, StoryboardEdge> | null
+  >(null);
+  const nextNodeIdRef = React.useRef(3);
+  const hasInitialFitRef = React.useRef(false);
+  const addMenuRef = React.useRef<HTMLDivElement | null>(null);
 
   const selectedNode = React.useMemo(
     () => nodes.find((node) => node.id === selectedNodeId) ?? null,
     [nodes, selectedNodeId],
   );
+  const selectedChatContext = React.useMemo(
+    () => buildVideoObjectChatContext(selectedNodeId, nodes, edges),
+    [selectedNodeId, nodes, edges],
+  );
+  void selectedChatContext;
 
   const onConnect = React.useCallback(
     (connection: Connection) => {
-      setEdges((currentEdges) => addEdge(connection, currentEdges));
+      const sourceType = nodes.find((node) => node.id === connection.source)?.type;
+      const targetType = nodes.find((node) => node.id === connection.target)?.type;
+      const semantic = resolveEdgeSemantic(sourceType, targetType);
+      setEdges((currentEdges) =>
+        addEdge(
+          {
+            ...connection,
+            type: 'smoothstep',
+            markerEnd: 'agent-edge-circle',
+            data: { lane: semantic.lane, semantic: semantic.semantic },
+            className: semantic.className,
+            style: { stroke: GRAPH_THEME.edge.neutral, strokeWidth: 1.5, opacity: 0.7 },
+          },
+          currentEdges,
+        ),
+      );
     },
-    [setEdges],
+    [nodes, setEdges],
   );
 
-  const addStoryboardNode = React.useCallback(
-    (type: StoryboardNodeType) => {
-      const ordinal = nextNodeIdRef.current;
+  React.useEffect(() => {
+    if (!reactFlowInstance) return;
+    if (hasInitialFitRef.current) return;
+    hasInitialFitRef.current = true;
+    const frame = window.requestAnimationFrame(() => {
+      reactFlowInstance.fitView({
+        padding: GRAPH_THEME.nav.fitPadding,
+        minZoom: GRAPH_THEME.nav.minZoom,
+        maxZoom: GRAPH_THEME.nav.fitMaxZoom,
+        duration: 0,
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [reactFlowInstance]);
+
+  React.useEffect(() => {
+    if (!addMenuOpen) return undefined;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!target) return;
+      if (addMenuRef.current?.contains(target as globalThis.Node)) return;
+      setAddMenuOpen(false);
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, [addMenuOpen]);
+
+  const createContextNode = React.useCallback(
+    (title: string, sourceType: 'typed' | 'dropped', content: string) => {
+      const id = `context-${nextNodeIdRef.current}`;
       nextNodeIdRef.current += 1;
-      const id = `${type.replace('Node', '').replace('Prompt', '-prompt').replace('Frame', '-frame')}-${ordinal}`;
-      const offset = ordinal * 34;
-      setNodes((currentNodes) => [
-        ...currentNodes,
-        {
-          id,
-          type,
-          position: { x: 140 + offset, y: 340 + (offset % 120) },
-          data: createNodeData(type),
-        },
-      ]);
+      const yOffset = 100 + (nextNodeIdRef.current % 5) * 56;
+      const newNode: StoryboardNode = {
+        id,
+        type: 'contextNode',
+        position: { x: 90, y: yOffset },
+        data: { title, sourceType, content },
+      };
+      setNodes((current) => [...current, newNode]);
       setSelectedNodeId(id);
+      return newNode;
     },
     [setNodes],
   );
+
+  const addSceneNode = React.useCallback(() => {
+    setNodes((currentNodes) => {
+      const orderedScenes = sceneNodesInOrder(currentNodes);
+      const nextOrder = getMaxSceneOrder(currentNodes) + 1;
+      const id = `scene-${nextNodeIdRef.current}`;
+      nextNodeIdRef.current += 1;
+      const sceneNode: StoryboardNode = {
+        id,
+        type: 'sceneNode',
+        position: { x: 380, y: 80 + (nextOrder - 1) * 150 },
+        data: {
+          title: `Scene ${nextOrder}`,
+          description: '',
+          order: nextOrder,
+          approvalState: 'draft',
+        },
+      };
+      const previousScene = orderedScenes[orderedScenes.length - 1];
+      setEdges((currentEdges) => {
+        if (!previousScene) return currentEdges;
+        const linkId = `${previousScene.id}-${sceneNode.id}`;
+        if (currentEdges.some((edge) => edge.id === linkId)) return currentEdges;
+        return [
+          ...currentEdges,
+          {
+            id: linkId,
+            source: previousScene.id,
+            target: sceneNode.id,
+            data: { lane: 'story', semantic: 'next' },
+            className: 'edge-primary',
+          },
+        ];
+      });
+      setSelectedNodeId(id);
+      return [...currentNodes, sceneNode];
+    });
+  }, [setEdges, setNodes]);
+  const createImagePairFromScene = React.useCallback(() => {
+    const selectedScene =
+      selectedNode?.type === 'sceneNode'
+        ? selectedNode
+        : nodes.find((node) => node.id === lastSceneSelectionId && node.type === 'sceneNode') ?? null;
+    if (!selectedScene) {
+      setActionStatus('Select an approved Scene first.');
+      return;
+    }
+    const sceneData = selectedScene.data as SceneNodeData;
+    if (sceneData.approvalState !== 'approved') {
+      setActionStatus('Approve the Scene before creating an Image Pair.');
+      return;
+    }
+    const existingPair = edges.some(
+      (edge) =>
+        edge.source === selectedScene.id &&
+        nodes.find((node) => node.id === edge.target)?.type === 'framePackNode',
+    );
+    if (existingPair) {
+      setActionStatus('This Scene already has an Image Pair.');
+      return;
+    }
+    const id = `image-pair-${nextNodeIdRef.current}`;
+    nextNodeIdRef.current += 1;
+    const newPair: StoryboardNode = {
+      id,
+      type: 'framePackNode',
+      position: {
+        x: (selectedScene.position.x || 380) + 320,
+        y: selectedScene.position.y || 120,
+      },
+      data: {
+        sceneId: selectedScene.id,
+        startImagePrompt: '',
+        endImagePrompt: '',
+        motionPrompt: '',
+        negativePrompt: '',
+        styleRules: '',
+        continuityRules: '',
+        startImageUrl: '',
+        endImageUrl: '',
+        approvalState: 'draft',
+      },
+    };
+    setNodes((current) => [...current, newPair]);
+    setEdges((current) => [
+      ...current,
+      {
+        id: `${selectedScene.id}-${id}`,
+        source: selectedScene.id,
+        target: id,
+        data: { lane: 'bridge', semantic: 'frame_pack_for' },
+        className: 'edge-secondary',
+      },
+    ]);
+    setSelectedNodeId(id);
+    setActionStatus('Image Pair created.');
+  }, [edges, lastSceneSelectionId, nodes, selectedNode, setEdges, setNodes]);
+
+  const addClipNode = React.useCallback(() => {
+    const selectedPair =
+      selectedNode?.type === 'framePackNode'
+        ? selectedNode
+        : nodes.find((node) => node.type === 'framePackNode') ?? null;
+    const selectedScene =
+      selectedNode?.type === 'sceneNode'
+        ? selectedNode
+        : sceneNodesInOrder(nodes)[0] ?? null;
+    const parent = selectedPair ?? selectedScene;
+    if (!parent) return;
+    const id = `clip-${nextNodeIdRef.current}`;
+    nextNodeIdRef.current += 1;
+    const newClip: StoryboardNode = {
+      id,
+      type: 'outputNode',
+      position: {
+        x: (parent.position.x || 700) + 320,
+        y: parent.position.y || 120,
+      },
+      data: {
+        videoUrl: '',
+        status: 'waiting',
+        notes: '',
+      },
+    };
+    setNodes((current) => [...current, newClip]);
+    setEdges((current) => [
+      ...current,
+      {
+        id: `${parent.id}-${id}`,
+        source: parent.id,
+        target: id,
+        data: { lane: 'output', semantic: 'output_of' },
+        className: 'edge-secondary',
+      },
+    ]);
+    setSelectedNodeId(id);
+  }, [nodes, selectedNode, setEdges, setNodes]);
+
+  const onDropContext: React.DragEventHandler<HTMLDivElement> = React.useCallback(
+    (event) => {
+      event.preventDefault();
+      const plainText = event.dataTransfer.getData('text/plain').trim();
+      const fileName = event.dataTransfer.files[0]?.name ?? '';
+      if (!plainText && !fileName) return;
+      const title = fileName || 'Dropped source';
+      const content = plainText || `Dropped file: ${fileName}`;
+      createContextNode(title, 'dropped', content);
+      setActionStatus('Source added from drop.');
+    },
+    [createContextNode],
+  );
+
+  const createStoryboardFromSource = React.useCallback(() => {
+    const selectedSource =
+      selectedNode?.type === 'contextNode'
+        ? selectedNode
+        : nodes.find((node) => node.type === 'contextNode') ?? null;
+    if (!selectedSource) {
+      setActionStatus('Add or select a Source first.');
+      return;
+    }
+    const sourceData = selectedSource.data as ContextNodeData;
+    const sceneLines = parseStoryboardSceneLines(sourceData.content);
+    if (sceneLines.length === 0) {
+      setActionStatus('Source has no scene lines to convert.');
+      return;
+    }
+
+    setNodes((currentNodes) => {
+      const nextNodes: StoryboardNode[] = [...currentNodes];
+      const startOrder = getMaxSceneOrder(currentNodes);
+      const createdSceneIds: string[] = [];
+      sceneLines.forEach((line, index) => {
+        const sceneOrder = startOrder + index + 1;
+        const id = `scene-${nextNodeIdRef.current}`;
+        nextNodeIdRef.current += 1;
+        nextNodes.push({
+          id,
+          type: 'sceneNode',
+          position: { x: 380, y: 80 + (sceneOrder - 1) * 150 },
+          data: {
+            title: line.slice(0, 44) || `Scene ${sceneOrder}`,
+            description: line,
+            order: sceneOrder,
+            approvalState: 'draft',
+          },
+        });
+        createdSceneIds.push(id);
+      });
+
+      setEdges((currentEdges) => {
+        const appendedEdges = [...currentEdges];
+        if (createdSceneIds.length > 0) {
+          const sourceLinkId = `${selectedSource.id}-${createdSceneIds[0]}`;
+          if (!appendedEdges.some((edge) => edge.id === sourceLinkId)) {
+            appendedEdges.push({
+              id: sourceLinkId,
+              source: selectedSource.id,
+              target: createdSceneIds[0],
+              data: { lane: 'bridge', semantic: 'context_for' },
+              className: 'edge-secondary',
+            });
+          }
+        }
+        for (let index = 0; index < createdSceneIds.length - 1; index += 1) {
+          const source = createdSceneIds[index];
+          const target = createdSceneIds[index + 1];
+          const id = `${source}-${target}`;
+          if (!appendedEdges.some((edge) => edge.id === id)) {
+            appendedEdges.push({
+              id,
+              source,
+              target,
+              data: { lane: 'story', semantic: 'next' },
+              className: 'edge-primary',
+            });
+          }
+        }
+        return appendedEdges;
+      });
+      if (createdSceneIds[0]) {
+        setSelectedNodeId(createdSceneIds[0]);
+        setLastSceneSelectionId(createdSceneIds[0]);
+      }
+      setActionStatus(`Created ${createdSceneIds.length} Scene node(s).`);
+      return normalizeSceneOrder(nextNodes);
+    });
+  }, [nodes, selectedNode, setEdges, setNodes]);
 
   const updateSelectedNodeData = React.useCallback(
     (patch: Partial<StoryboardNodeData>) => {
@@ -403,172 +910,576 @@ export default function MediaStudioCanvas({
     [selectedNode, setNodes],
   );
 
-  const copyText = React.useCallback(async (text: string, label: string) => {
-    if (!text.trim()) {
-      setCopyStatus(`No ${label} to copy.`);
+  const selectedSceneData =
+    selectedNode?.type === 'sceneNode' ? (selectedNode.data as SceneNodeData) : null;
+
+  const copyToClipboard = React.useCallback(
+    async (value: string, successMessage: string, emptyMessage: string) => {
+      if (!value.trim()) {
+        setActionStatus(emptyMessage);
+        return;
+      }
+      const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
+      if (!clipboard?.writeText) {
+        setActionStatus('Clipboard unavailable.');
+        return;
+      }
+      try {
+        await clipboard.writeText(value);
+        setActionStatus(successMessage);
+      } catch {
+        setActionStatus('Clipboard copy failed.');
+      }
+    },
+    [],
+  );
+
+  const approveSelectedScene = React.useCallback(() => {
+    if (!selectedNode || selectedNode.type !== 'sceneNode') return;
+    const sceneData = selectedNode.data as SceneNodeData;
+    if (sceneData.approvalState === 'approved') {
+      setActionStatus('Scene already approved.');
       return;
     }
-    try {
-      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-      }
-      setCopyStatus(`${label} copied.`);
-    } catch {
-      setCopyStatus(`Copy failed for ${label}.`);
-    }
-  }, []);
+    updateSelectedNodeData({ approvalState: 'approved' });
+    setActionStatus('Scene approved.');
+  }, [selectedNode, updateSelectedNodeData]);
 
   return (
     <div
       data-testid="video-workspace-placeholder"
+      className="video-storyboard-flow"
+      data-shared-canvas-theme="graph-paper"
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={onDropContext}
       style={{
         height: '100%',
         minHeight: 0,
         display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1fr) 330px',
-        background: GRAPH_THEME.background.knowledgeSurface,
-        color: GRAPH_THEME.drawer.inputText,
+        gridTemplateColumns: 'minmax(0, 1fr)',
+        background: GRAPH_THEME.background.agentSurface,
+        color: GRAPH_THEME.surface.text,
+        position: 'relative',
+        overflow: 'hidden',
       }}
     >
+      <style>{`
+        .video-storyboard-flow .react-flow__node {
+          transition: filter 180ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .video-storyboard-flow .react-flow__node.selected {
+          filter: drop-shadow(0 0 7px ${GRAPH_THEME.accent.primaryGlow});
+        }
+        .video-storyboard-flow .react-flow__edge {
+          transition: opacity 180ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .video-storyboard-flow .react-flow__edge-text {
+          fill: ${GRAPH_THEME.surface.mutedText};
+          font-size: 10px;
+          letter-spacing: 0.02em;
+          text-transform: lowercase;
+        }
+        .video-storyboard-flow .react-flow__edge.edge-primary .react-flow__edge-path {
+          stroke: ${GRAPH_THEME.accent.primary};
+          stroke-width: 1.9;
+          opacity: 0.9;
+        }
+        .video-storyboard-flow .react-flow__edge.edge-secondary .react-flow__edge-path {
+          stroke: ${GRAPH_THEME.edge.neutral};
+          stroke-width: 1.45;
+          opacity: 0.68;
+        }
+        .video-storyboard-flow .react-flow__handle {
+          transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+        }
+        .video-storyboard-flow .react-flow__handle:hover,
+        .video-storyboard-flow .react-flow__handle.connectionindicator {
+          transform: scale(1.06);
+          box-shadow:
+            0 0 0 2px ${GRAPH_THEME.accent.primarySoft},
+            0 0 0 5px ${GRAPH_THEME.accent.solarSoft};
+        }
+        .video-storyboard-flow .react-flow__connection-path {
+          stroke: ${GRAPH_THEME.accent.primary};
+          stroke-width: 2.2;
+        }
+        .video-storyboard-flow .react-flow__controls,
+        .video-storyboard-flow .react-flow__minimap {
+          background: ${GRAPH_THEME.controls.background};
+          border: 1px solid ${GRAPH_THEME.controls.border};
+          border-radius: 10px;
+          box-shadow: ${GRAPH_THEME.controls.shadow};
+          overflow: hidden;
+        }
+        .video-storyboard-flow .react-flow__controls-button {
+          background: ${GRAPH_THEME.controls.background};
+          border-bottom: 1px solid ${GRAPH_THEME.controls.border};
+          color: ${GRAPH_THEME.controls.text};
+        }
+        .video-storyboard-flow .react-flow__controls-button:hover {
+          background: ${GRAPH_THEME.controls.hoverBackground};
+        }
+        .video-storyboard-flow .react-flow__attribution {
+          display: none;
+        }
+      `}</style>
+
+      <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden>
+        <defs>
+          <marker
+            id="agent-edge-circle"
+            viewBox="-5 -5 10 10"
+            refX="0"
+            refY="0"
+            markerUnits="strokeWidth"
+            markerWidth="10"
+            markerHeight="10"
+            orient="auto"
+          >
+            <circle
+              stroke={GRAPH_THEME.turboFlow.markerStroke}
+              strokeOpacity="0.9"
+              r="2"
+              cx="0"
+              cy="0"
+              fill="none"
+            />
+          </marker>
+        </defs>
+      </svg>
+
       <main style={{ minWidth: 0, minHeight: 0, display: 'grid', gridTemplateRows: 'auto 1fr' }}>
         <div
           style={{
+            ...graphDrawerSectionStyle({
+              borderRadius: 0,
+              border: 'none',
+              borderBottom: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`,
+              background: GRAPH_THEME.drawer.tabRailBackground,
+              padding: '8px 10px',
+            }),
             display: 'flex',
             alignItems: 'center',
+            justifyContent: 'space-between',
             gap: 8,
-            padding: 10,
-            borderBottom: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
-            background: 'rgba(11, 14, 18, 0.82)',
-            flexWrap: 'wrap',
           }}
         >
-          <ActionButton label="Add Shot" onClick={() => addStoryboardNode('shotNode')} />
-          <ActionButton
-            label="Add Start Frame"
-            onClick={() => addStoryboardNode('startFrameNode')}
-          />
-          <ActionButton
-            label="Add End Frame"
-            onClick={() => addStoryboardNode('endFrameNode')}
-          />
-          <ActionButton
-            label="Add Motion Prompt"
-            onClick={() => addStoryboardNode('motionPromptNode')}
-          />
-          <ActionButton
-            label="Add Clip Output"
-            onClick={() => addStoryboardNode('clipOutputNode')}
-          />
-          <div style={{ marginLeft: 'auto', fontSize: 12, color: GRAPH_THEME.drawer.inputMuted }}>
-            Video Agent storyboard graph
+          <div ref={addMenuRef} style={{ position: 'relative' }}>
+            <button
+              type="button"
+              aria-label="Add storyboard object"
+              data-testid="storyboard-add-control"
+              onClick={() => setAddMenuOpen((open) => !open)}
+              style={graphDrawerButtonStyle({
+                width: 28,
+                height: 28,
+                padding: 0,
+                borderRadius: 999,
+                fontSize: 18,
+                lineHeight: 1,
+                fontWeight: 600,
+                color: GRAPH_THEME.drawer.inputText,
+              })}
+            >
+              +
+            </button>
+            {addMenuOpen ? (
+              <div
+                style={graphDrawerSectionStyle({
+                  position: 'absolute',
+                  top: 32,
+                  left: 0,
+                  minWidth: 148,
+                  padding: 6,
+                  zIndex: 12,
+                  display: 'grid',
+                  gap: 4,
+                })}
+              >
+                <ActionButton
+                  label="Add Source"
+                  onClick={() => {
+                    createContextNode('New source', 'typed', '');
+                    setAddMenuOpen(false);
+                  }}
+                />
+                <ActionButton
+                  label="Add Scene"
+                  onClick={() => {
+                    addSceneNode();
+                    setAddMenuOpen(false);
+                  }}
+                />
+                <ActionButton
+                  label="Add Image Pair"
+                  onClick={() => {
+                    createImagePairFromScene();
+                    setAddMenuOpen(false);
+                  }}
+                />
+                <ActionButton
+                  label="Add Clip"
+                  onClick={() => {
+                    addClipNode();
+                    setAddMenuOpen(false);
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
         </div>
 
-        <div style={{ minHeight: 0 }}>
-          <ReactFlow
+        <div style={{ minHeight: 0, position: 'relative' }}>
+          {nodes.length === 0 ? (
+            <div
+              style={{
+                position: 'absolute',
+                left: 16,
+                bottom: 14,
+                zIndex: 6,
+                ...graphDrawerSectionStyle({
+                  padding: '6px 9px',
+                  borderRadius: 999,
+                }),
+                fontSize: 11,
+                color: GRAPH_THEME.drawer.inputMuted,
+                pointerEvents: 'none',
+              }}
+            >
+              Drop source or ask chat.
+            </div>
+          ) : null}
+          <div style={{ ...graphControlStackStyle, left: 'auto', right: 16 }}>
+            <button
+              type="button"
+              aria-label="Zoom in"
+              onClick={() =>
+                reactFlowInstance?.zoomIn({
+                  duration: GRAPH_THEME.nav.zoomDurationMs,
+                })
+              }
+              style={graphControlButtonStyle({
+                borderBottom: `1px solid ${GRAPH_THEME.controls.border}`,
+              })}
+            >
+              +
+            </button>
+            <button
+              type="button"
+              aria-label="Zoom out"
+              onClick={() =>
+                reactFlowInstance?.zoomOut({
+                  duration: GRAPH_THEME.nav.zoomDurationMs,
+                })
+              }
+              style={graphControlButtonStyle({
+                borderBottom: `1px solid ${GRAPH_THEME.controls.border}`,
+              })}
+            >
+              -
+            </button>
+            <button
+              type="button"
+              aria-label="Fit view"
+              onClick={() =>
+                reactFlowInstance?.fitView({
+                  duration: GRAPH_THEME.nav.fitDurationMs,
+                  padding: 0.22,
+                  minZoom: GRAPH_THEME.nav.minZoom,
+                  maxZoom: GRAPH_THEME.nav.fitMaxZoom,
+                })
+              }
+              style={graphControlButtonStyle()}
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+                <path
+                  d="M2.25 5.25V2.25h3M8.75 2.25h3v3M11.75 8.75v3h-3M5.25 11.75h-3v-3"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.25"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          </div>
+
+          <ReactFlow<StoryboardNode, StoryboardEdge>
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
+            onInit={setReactFlowInstance}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            onNodeClick={(_, node) => setSelectedNodeId(node.id)}
-            onPaneClick={() => setSelectedNodeId('')}
+            onNodeClick={(_, node) => {
+              setSelectedNodeId(node.id);
+              if (node.type === 'sceneNode') setLastSceneSelectionId(node.id);
+              setAddMenuOpen(false);
+            }}
+            onPaneClick={() => {
+              setSelectedNodeId('');
+              setAddMenuOpen(false);
+            }}
+            defaultEdgeOptions={{
+              type: 'smoothstep',
+              markerEnd: 'agent-edge-circle',
+              selectable: true,
+              focusable: true,
+              reconnectable: true,
+              interactionWidth: 30,
+            }}
+            defaultViewport={{ x: 72, y: 96, zoom: 0.76 }}
+            minZoom={GRAPH_THEME.nav.minZoom}
+            maxZoom={GRAPH_THEME.nav.maxZoom}
+            panOnDrag
+            panOnScroll
+            zoomOnPinch
+            edgesReconnectable
+            connectionMode={ConnectionMode.Loose}
+            connectOnClick={false}
+            snapToGrid
+            snapGrid={[GRAPH_THEME.graphPaper.minorStep, GRAPH_THEME.graphPaper.minorStep]}
             fitView
+            fitViewOptions={{
+              padding: GRAPH_THEME.nav.fitPadding,
+              minZoom: GRAPH_THEME.nav.minZoom,
+              maxZoom: GRAPH_THEME.nav.fitMaxZoom,
+            }}
+            style={{ background: 'transparent' }}
+            proOptions={{ hideAttribution: true }}
           >
-            <Background color="rgba(167, 176, 186, 0.25)" gap={18} />
-            <Controls />
-            <MiniMap pannable zoomable />
+            <Background
+              variant={BackgroundVariant.Lines}
+              gap={GRAPH_THEME.graphPaper.minorStep}
+              size={GRAPH_THEME.graphPaper.lineWidth}
+              color={GRAPH_THEME.background.gridMinor}
+            />
+            <Background
+              variant={BackgroundVariant.Lines}
+              gap={GRAPH_THEME.graphPaper.majorStep}
+              size={GRAPH_THEME.graphPaper.lineWidth}
+              color={GRAPH_THEME.background.gridMajor}
+            />
           </ReactFlow>
         </div>
       </main>
 
-      <aside
-        data-testid="video-storyboard-inspector"
-        style={{
-          borderLeft: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
-          background: 'rgba(11, 14, 18, 0.91)',
-          padding: 14,
-          overflow: 'auto',
-          display: 'grid',
-          alignContent: 'start',
-          gap: 12,
-        }}
+      <RightGlassDrawer
+        isOpen={Boolean(selectedNode)}
+        title={selectedNode ? getSceneTitle(selectedNode) : 'Object'}
+        onClose={() => setSelectedNodeId('')}
+        dataTestId="video-storyboard-inspector"
+        defaultWidth={420}
+        minWidth={360}
+        maxWidth={700}
+        storageKey={`liquidaity:video-storyboard-drawer:${String(projectId || 'default')}`}
+        top={12}
+        right={12}
+        bottom={12}
       >
-        <div style={{ display: 'grid', gap: 3 }}>
-          <div style={{ fontSize: 13, fontWeight: 700 }}>Inspector</div>
-          <div style={{ fontSize: 12, color: GRAPH_THEME.drawer.inputMuted }}>
-            {projectId ? `Project ${projectId}` : 'Local graph state only'}
-          </div>
-        </div>
-
         {selectedNode ? (
-          <InspectorFields
-            node={selectedNode}
-            onChange={updateSelectedNodeData}
-            onCopy={copyText}
-          />
-        ) : (
-          <div style={{ fontSize: 12, color: GRAPH_THEME.drawer.inputMuted }}>
-            Select a node to edit its fields.
-          </div>
-        )}
+          <div style={{ display: 'grid', gap: 10 }}>
+            <div style={graphDrawerSectionStyle({ padding: '10px 11px' })}>
+              <div
+                data-testid="selected-object-title"
+                style={{ fontSize: 13, fontWeight: 700, color: GRAPH_THEME.drawer.inputText }}
+              >
+                {getSceneTitle(selectedNode)}
+              </div>
+            </div>
 
-        {copyStatus ? (
-          <div
-            data-testid="copy-status"
-            style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}
-          >
-            {copyStatus}
+            <InspectorFields node={selectedNode} onChange={updateSelectedNodeData} />
+
+            <div style={graphDrawerSectionStyle({ padding: '10px 11px', display: 'grid', gap: 7 })}>
+              {selectedNode.type === 'contextNode' ? (
+                <>
+                  <ActionButton
+                    label="Create scenes from source"
+                    onClick={createStoryboardFromSource}
+                  />
+                  <ActionButton
+                    label="Copy for chat"
+                    onClick={() =>
+                      void copyToClipboard(
+                        (selectedNode.data as ContextNodeData).content,
+                        'Source copied for chat.',
+                        'Source is empty.',
+                      )
+                    }
+                  />
+                </>
+              ) : null}
+              {selectedNode.type === 'sceneNode' ? (
+                <>
+                  <ActionButton label="Approve scene" onClick={approveSelectedScene} />
+                  <ActionButton
+                    label="Create Image Pair"
+                    onClick={createImagePairFromScene}
+                    disabled={selectedSceneData?.approvalState !== 'approved'}
+                    title="Approve scene first."
+                  />
+                  <ActionButton
+                    label="Copy for chat"
+                    onClick={() =>
+                      void copyToClipboard(
+                        JSON.stringify(
+                          buildVideoObjectChatContext(selectedNode.id, nodes, edges),
+                          null,
+                          2,
+                        ),
+                        'Scene context copied for chat.',
+                        'Scene context empty.',
+                      )
+                    }
+                  />
+                </>
+              ) : null}
+              {selectedNode.type === 'framePackNode' ? (
+                <>
+                  <ActionButton
+                    label="Copy start prompt"
+                    onClick={() =>
+                      void copyToClipboard(
+                        (selectedNode.data as FramePackNodeData).startImagePrompt,
+                        'Start prompt copied.',
+                        'Start prompt empty.',
+                      )
+                    }
+                  />
+                  <ActionButton
+                    label="Copy end prompt"
+                    onClick={() =>
+                      void copyToClipboard(
+                        (selectedNode.data as FramePackNodeData).endImagePrompt,
+                        'End prompt copied.',
+                        'End prompt empty.',
+                      )
+                    }
+                  />
+                  <ActionButton
+                    label="Copy motion prompt"
+                    onClick={() =>
+                      void copyToClipboard(
+                        (selectedNode.data as FramePackNodeData).motionPrompt,
+                        'Motion prompt copied.',
+                        'Motion prompt empty.',
+                      )
+                    }
+                  />
+                </>
+              ) : null}
+              {selectedNode.type === 'outputNode' ? (
+                <ActionButton
+                  label="Copy clip URL"
+                  onClick={() =>
+                    void copyToClipboard(
+                      (selectedNode.data as OutputNodeData).videoUrl,
+                      'Clip URL copied.',
+                      'Clip URL is empty.',
+                    )
+                  }
+                />
+              ) : null}
+            </div>
+
+            {actionStatus ? (
+              <div
+                data-testid="storyboard-action-status"
+                style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputText }}
+              >
+                {actionStatus}
+              </div>
+            ) : null}
           </div>
         ) : null}
-
-        <div
-          style={{
-            borderTop: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
-            paddingTop: 12,
-            display: 'grid',
-            gap: 8,
-          }}
-        >
-          <ActionButton
-            label="Generate disabled - no route wired"
-            onClick={() => {}}
-            disabled
-            title={generateDisabledReason}
-          />
-          <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted, lineHeight: 1.4 }}>
-            Future flow note: ChatGPT Images generate start/end frames. Higgsfield, Kling, Runway,
-            and Pika consume those frames plus motion prompt to create clips. Peepshow later:
-            Clip Output -&gt; Peepshow Extract -&gt; Frame Anchors -&gt; New Shot/Motion Prompt
-            -&gt; New Clip. Peepshow remains vendored at main/peepshow-main and is not integrated
-            in this pass.
-          </div>
-        </div>
-      </aside>
+      </RightGlassDrawer>
     </div>
+  );
+}
+
+function inputStyle(overrides?: React.CSSProperties): React.CSSProperties {
+  return graphDrawerInputStyle({
+    padding: '7px 9px',
+    borderRadius: 7,
+    fontSize: 12,
+    lineHeight: 1.45,
+    ...overrides,
+  });
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <label style={{ display: 'grid', gap: 6, fontSize: 12 }}>
+      <span style={{ color: GRAPH_THEME.drawer.inputText, fontWeight: 600 }}>
+        {label}
+      </span>
+      {children}
+    </label>
   );
 }
 
 function InspectorFields({
   node,
   onChange,
-  onCopy,
 }: {
   node: StoryboardNode;
   onChange: (patch: Partial<StoryboardNodeData>) => void;
-  onCopy: (text: string, label: string) => Promise<void>;
 }): React.ReactElement {
-  if (node.type === 'shotNode') {
-    const data = node.data as ShotNodeData;
+  if (node.type === 'contextNode') {
+    const data = node.data as ContextNodeData;
     return (
-      <div style={{ display: 'grid', gap: 10 }}>
+      <div style={graphDrawerSectionStyle({ padding: '10px 11px', display: 'grid', gap: 10 })}>
         <Field label="title">
           <input
             aria-label="title"
             value={data.title}
             onChange={(event) => onChange({ title: event.target.value })}
-            style={fieldInputStyle()}
+            style={inputStyle()}
+          />
+        </Field>
+        <Field label="sourceType">
+          <select
+            aria-label="sourceType"
+            value={data.sourceType}
+            onChange={(event) =>
+              onChange({ sourceType: event.target.value as ContextNodeData['sourceType'] })
+            }
+            style={inputStyle()}
+          >
+            <option value="typed">typed</option>
+            <option value="dropped">dropped</option>
+          </select>
+        </Field>
+        <Field label="content">
+          <textarea
+            aria-label="content"
+            value={data.content}
+            onChange={(event) => onChange({ content: event.target.value })}
+            rows={6}
+            style={inputStyle({ resize: 'vertical' })}
+          />
+        </Field>
+      </div>
+    );
+  }
+
+  if (node.type === 'sceneNode') {
+    const data = node.data as SceneNodeData;
+    return (
+      <div style={graphDrawerSectionStyle({ padding: '10px 11px', display: 'grid', gap: 10 })}>
+        <Field label="title">
+          <input
+            aria-label="title"
+            value={data.title}
+            onChange={(event) => onChange({ title: event.target.value })}
+            style={inputStyle()}
           />
         </Field>
         <Field label="description">
@@ -577,167 +1488,137 @@ function InspectorFields({
             value={data.description}
             onChange={(event) => onChange({ description: event.target.value })}
             rows={4}
-            style={fieldInputStyle()}
+            style={inputStyle({ resize: 'vertical' })}
           />
         </Field>
-        <Field label="durationSec">
+        <Field label="order">
           <input
-            aria-label="durationSec"
-            value={data.durationSec}
-            onChange={(event) => onChange({ durationSec: event.target.value })}
-            style={fieldInputStyle()}
+            aria-label="order"
+            value={String(data.order)}
+            onChange={(event) => {
+              const parsed = Number.parseInt(event.target.value, 10);
+              onChange({ order: Number.isFinite(parsed) ? parsed : data.order });
+            }}
+            style={inputStyle()}
           />
         </Field>
-        <Field label="aspectRatio">
-          <input
-            aria-label="aspectRatio"
-            value={data.aspectRatio}
-            onChange={(event) => onChange({ aspectRatio: event.target.value })}
-            style={fieldInputStyle()}
-          />
-        </Field>
-        <Field label="cameraMove">
-          <input
-            aria-label="cameraMove"
-            value={data.cameraMove}
-            onChange={(event) => onChange({ cameraMove: event.target.value })}
-            style={fieldInputStyle()}
-          />
-        </Field>
-        <Field label="status">
-          <input
-            aria-label="status"
-            value={data.status}
-            onChange={(event) => onChange({ status: event.target.value })}
-            style={fieldInputStyle()}
-          />
-        </Field>
-      </div>
-    );
-  }
-
-  if (node.type === 'startFrameNode' || node.type === 'endFrameNode') {
-    const data = node.data as FrameNodeData;
-    const label = node.type === 'startFrameNode' ? 'start frame prompt' : 'end frame prompt';
-    return (
-      <div style={{ display: 'grid', gap: 10 }}>
-        <Field label="imageUrl">
-          <input
-            aria-label="imageUrl"
-            value={data.imageUrl}
-            onChange={(event) => onChange({ imageUrl: event.target.value })}
-            style={fieldInputStyle()}
-          />
-        </Field>
-        <Field label="imagePrompt">
-          <textarea
-            aria-label="imagePrompt"
-            value={data.imagePrompt}
-            onChange={(event) => onChange({ imagePrompt: event.target.value })}
-            rows={4}
-            style={fieldInputStyle()}
-          />
-        </Field>
-        <ActionButton
-          label="Copy Image Prompt"
-          onClick={() => {
-            void onCopy(data.imagePrompt, label);
-          }}
-        />
-        <Field label="notes">
-          <textarea
-            aria-label="notes"
-            value={data.notes}
-            onChange={(event) => onChange({ notes: event.target.value })}
-            rows={3}
-            style={fieldInputStyle()}
-          />
-        </Field>
-      </div>
-    );
-  }
-
-  if (node.type === 'motionPromptNode') {
-    const data = node.data as MotionPromptNodeData;
-    return (
-      <div style={{ display: 'grid', gap: 10 }}>
-        <Field label="videoTool">
+        <Field label="approvalState">
           <select
-            aria-label="videoTool"
-            value={data.videoTool}
-            onChange={(event) => onChange({ videoTool: event.target.value as VideoTool })}
-            style={fieldInputStyle()}
+            aria-label="approvalState"
+            value={data.approvalState}
+            onChange={(event) =>
+              onChange({ approvalState: event.target.value as SceneApproval })
+            }
+            style={inputStyle()}
           >
-            <option value="higgsfield">higgsfield</option>
-            <option value="kling">kling</option>
-            <option value="runway">runway</option>
-            <option value="pika">pika</option>
-            <option value="other">other</option>
+            <option value="draft">draft</option>
+            <option value="approved">approved</option>
           </select>
+        </Field>
+      </div>
+    );
+  }
+
+  if (node.type === 'framePackNode') {
+    const data = node.data as FramePackNodeData;
+    return (
+      <div style={graphDrawerSectionStyle({ padding: '10px 11px', display: 'grid', gap: 10 })}>
+        <Field label="startImagePrompt">
+          <textarea
+            aria-label="startImagePrompt"
+            value={data.startImagePrompt}
+            onChange={(event) => onChange({ startImagePrompt: event.target.value })}
+            rows={3}
+            style={inputStyle({ resize: 'vertical' })}
+          />
+        </Field>
+        <Field label="endImagePrompt">
+          <textarea
+            aria-label="endImagePrompt"
+            value={data.endImagePrompt}
+            onChange={(event) => onChange({ endImagePrompt: event.target.value })}
+            rows={3}
+            style={inputStyle({ resize: 'vertical' })}
+          />
         </Field>
         <Field label="motionPrompt">
           <textarea
             aria-label="motionPrompt"
             value={data.motionPrompt}
             onChange={(event) => onChange({ motionPrompt: event.target.value })}
-            rows={4}
-            style={fieldInputStyle()}
+            rows={3}
+            style={inputStyle({ resize: 'vertical' })}
           />
         </Field>
-        <ActionButton
-          label="Copy Video Prompt"
-          onClick={() => {
-            void onCopy(data.motionPrompt, 'video prompt');
-          }}
-        />
-        <Field label="mustPreserve">
+        <Field label="negativePrompt">
           <textarea
-            aria-label="mustPreserve"
-            value={data.mustPreserve}
-            onChange={(event) => onChange({ mustPreserve: event.target.value })}
-            rows={3}
-            style={fieldInputStyle()}
+            aria-label="negativePrompt"
+            value={data.negativePrompt}
+            onChange={(event) => onChange({ negativePrompt: event.target.value })}
+            rows={2}
+            style={inputStyle({ resize: 'vertical' })}
           />
         </Field>
-        <Field label="avoid">
+        <Field label="styleRules">
           <textarea
-            aria-label="avoid"
-            value={data.avoid}
-            onChange={(event) => onChange({ avoid: event.target.value })}
-            rows={3}
-            style={fieldInputStyle()}
+            aria-label="styleRules"
+            value={data.styleRules}
+            onChange={(event) => onChange({ styleRules: event.target.value })}
+            rows={2}
+            style={inputStyle({ resize: 'vertical' })}
           />
         </Field>
-        <Field label="styleNotes">
+        <Field label="continuityRules">
           <textarea
-            aria-label="styleNotes"
-            value={data.styleNotes}
-            onChange={(event) => onChange({ styleNotes: event.target.value })}
-            rows={3}
-            style={fieldInputStyle()}
+            aria-label="continuityRules"
+            value={data.continuityRules}
+            onChange={(event) => onChange({ continuityRules: event.target.value })}
+            rows={2}
+            style={inputStyle({ resize: 'vertical' })}
           />
+        </Field>
+        <Field label="startImageUrl">
+          <input
+            aria-label="startImageUrl"
+            value={data.startImageUrl}
+            onChange={(event) => onChange({ startImageUrl: event.target.value })}
+            style={inputStyle()}
+          />
+        </Field>
+        <Field label="endImageUrl">
+          <input
+            aria-label="endImageUrl"
+            value={data.endImageUrl}
+            onChange={(event) => onChange({ endImageUrl: event.target.value })}
+            style={inputStyle()}
+          />
+        </Field>
+        <Field label="approvalState">
+          <select
+            aria-label="approvalState"
+            value={data.approvalState}
+            onChange={(event) =>
+              onChange({ approvalState: event.target.value as FramePackApproval })
+            }
+            style={inputStyle()}
+          >
+            <option value="draft">draft</option>
+            <option value="approved">approved</option>
+          </select>
         </Field>
       </div>
     );
   }
 
-  const data = node.data as ClipOutputNodeData;
+  const data = node.data as OutputNodeData;
   return (
-    <div style={{ display: 'grid', gap: 10 }}>
+    <div style={graphDrawerSectionStyle({ padding: '10px 11px', display: 'grid', gap: 10 })}>
       <Field label="videoUrl">
         <input
           aria-label="videoUrl"
           value={data.videoUrl}
           onChange={(event) => onChange({ videoUrl: event.target.value })}
-          style={fieldInputStyle()}
-        />
-      </Field>
-      <Field label="toolUsed">
-        <input
-          aria-label="toolUsed"
-          value={data.toolUsed}
-          onChange={(event) => onChange({ toolUsed: event.target.value })}
-          style={fieldInputStyle()}
+          style={inputStyle()}
         />
       </Field>
       <Field label="status">
@@ -745,7 +1626,7 @@ function InspectorFields({
           aria-label="status"
           value={data.status}
           onChange={(event) => onChange({ status: event.target.value })}
-          style={fieldInputStyle()}
+          style={inputStyle()}
         />
       </Field>
       <Field label="notes">
@@ -754,7 +1635,7 @@ function InspectorFields({
           value={data.notes}
           onChange={(event) => onChange({ notes: event.target.value })}
           rows={4}
-          style={fieldInputStyle()}
+          style={inputStyle({ resize: 'vertical' })}
         />
       </Field>
     </div>

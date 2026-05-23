@@ -1,3 +1,4 @@
+import '../config/env';
 import { Pool } from 'pg';
 
 type PgError = Error & { code?: string };

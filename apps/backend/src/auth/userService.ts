@@ -1,7 +1,6 @@
-import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
+import { prisma } from '../services/database';
 
-const prisma = new PrismaClient();
 const SALT_ROUNDS = 10;
 
 export interface User {

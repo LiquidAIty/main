@@ -10,6 +10,8 @@ type AutoGenOrchestratorSession = {
   startedAt: string;
 };
 
+const AUTOGEN_ORCHESTRATE_ENDPOINT = '/autogen/orchestrate';
+
 export type AutoGenOrchestratorRequest = {
   session: AutoGenOrchestratorSession;
   userText: string;
@@ -54,6 +56,10 @@ function buildSidecarBaseUrls(): string[] {
   return Array.from(new Set([...configured, ...defaults].filter(Boolean)));
 }
 
+function formatCheckedEndpoints(baseUrls: string[]): string {
+  return baseUrls.map((baseUrl) => `${baseUrl}${AUTOGEN_ORCHESTRATE_ENDPOINT}`).join(',');
+}
+
 function isRetryableSidecarError(error: any): boolean {
   const code = String(error?.cause?.code || error?.code || '').trim();
   return code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN';
@@ -72,10 +78,12 @@ export async function orchestrateWithAutoGen(
   const timeout = setTimeout(() => controller.abort(), readTimeoutMs());
   try {
     let lastError: any = null;
+    const baseUrls = buildSidecarBaseUrls();
 
-    for (const baseUrl of buildSidecarBaseUrls()) {
+    for (const baseUrl of baseUrls) {
+      const endpoint = `${baseUrl}${AUTOGEN_ORCHESTRATE_ENDPOINT}`;
       try {
-        const response = await fetch(`${baseUrl}/autogen/orchestrate`, {
+        const response = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -103,8 +111,17 @@ export async function orchestrateWithAutoGen(
       }
     }
 
+    if (lastError && isRetryableSidecarError(lastError)) {
+      const checked = formatCheckedEndpoints(baseUrls);
+      console.error('[AUTOGEN_SIDECAR]', {
+        runtime: 'failed_missing_autogen_sidecar',
+        checkedEndpoints: checked,
+        error: String(lastError?.message || lastError || 'unknown'),
+      });
+      throw new Error(`AutoGen sidecar unavailable. checkedEndpoints=${checked}`);
+    }
     if (lastError) throw lastError;
-    throw new Error('autogen_orchestrator_unreachable');
+    throw new Error(`AutoGen sidecar unavailable. checkedEndpoints=${formatCheckedEndpoints(baseUrls)}`);
   } finally {
     clearTimeout(timeout);
   }

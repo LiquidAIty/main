@@ -1,13 +1,11 @@
+import "./config/env";
 import express from "express";
-import dotenv from "dotenv";
 import type { Server } from "node:http";
 import cookieParser = require("cookie-parser");
 import routes from "./routes";
 import { logModelConfiguration } from "./startup/modelConfig";
 import { getDevTestJsonBodyLimit } from "./services/devTest";
 import { getAllowedCorsOrigins } from "./security/requestAccess";
-
-dotenv.config({ path: "apps/backend/.env" });
 
 const app = express();
 app.set('etag', false);
