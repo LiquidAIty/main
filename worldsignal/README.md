@@ -77,8 +77,8 @@ cd Crucix
 # 2. Install dependencies (just Express)
 npm install
 
-# 3. Copy env template and add your API keys (see below)
-cp .env.example .env
+# 3. Configure API keys in the real env file
+# apps/backend/.env
 
 # 4. Start the dashboard
 npm run dev
@@ -99,7 +99,7 @@ The dashboard opens automatically at `http://localhost:3117` and immediately beg
 ```bash
 git clone https://github.com/calesthio/Crucix.git
 cd Crucix
-cp .env.example .env    # add your API keys
+# configure API keys in apps/backend/.env
 docker compose up -d
 ```
 
@@ -196,10 +196,10 @@ Connect any of 8 LLM providers for enhanced analysis:
 
 ## API Keys Setup
 
-Copy `.env.example` to `.env` at the project root:
+Use the real env file:
 
 ```bash
-cp .env.example .env
+apps/backend/.env
 ```
 
 ### Required for Best Results (all free)
@@ -278,7 +278,7 @@ crucix/
 ├── server.mjs                 # Express dev server (SSE, auto-refresh, LLM, bot commands)
 ├── crucix.config.mjs          # Configuration with env var overrides + delta thresholds
 ├── diag.mjs                   # Diagnostic script — run if server fails to start
-├── .env.example               # All documented env vars
+├── apps/backend/.env          # Real env vars
 ├── package.json               # Runtime: express | Optional: discord.js
 ├── docs/                      # Screenshots for README
 │

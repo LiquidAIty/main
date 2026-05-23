@@ -48,7 +48,7 @@ Remove ALL files matching these patterns:
 
 **IMPORTANT:** Do NOT exclude non-code project files. The following MUST be kept:
 - Documentation: `*.md`, `*.rst`, `*.txt` (except `LICENSE`)
-- Configuration: `*.yaml`, `*.yml`, `*.json`, `*.toml`, `*.xml`, `*.cfg`, `*.ini`, `*.env`, `*.env.example` (include `.env` in the file list but downstream agents should NEVER include `.env` variable values in summaries or output)
+- Configuration: `*.yaml`, `*.yml`, `*.json`, `*.toml`, `*.xml`, `*.cfg`, `*.ini`, `*.env` (include `.env` in the file list but downstream agents should NEVER include `.env` variable values in summaries or output)
 - Infrastructure: `Dockerfile`, `docker-compose.*`, `*.tf`, `Makefile`, `Jenkinsfile`, `Procfile`, `Vagrantfile`
 - CI/CD: `.github/workflows/*`, `.gitlab-ci.yml`, `.circleci/*`, `Jenkinsfile`
 - Data/Schema: `*.sql`, `*.graphql`, `*.gql`, `*.proto`, `*.prisma`, `*.schema.json`

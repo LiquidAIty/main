@@ -36,7 +36,7 @@ Minimum expectations:
 - handle upstream errors and rate limits cleanly
 - degrade gracefully when API keys are missing
 - avoid breaking the full sweep if the source fails
-- document any required environment variables in `.env.example` and `README.md`
+- document any required environment variables in `apps/backend/.env` and `README.md`
 - explain why the source improves signal quality, not just source count
 
 If your source also affects the dashboard:

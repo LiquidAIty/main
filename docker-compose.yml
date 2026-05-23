@@ -50,7 +50,6 @@ services:
     environment:
       - PORT=4000
       - KNOWGRAPH_URL=http://knowgraph:8001
-      - PYTHON_MODELS_URL=http://python-models:8001
     depends_on:
       - neo4j
       - db

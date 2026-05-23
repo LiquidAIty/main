@@ -199,6 +199,32 @@ The OpenRouter key currently exists in `apps/backend/.env`, but the Python sidec
 
 ## Local Startup Order
 
+Canonical full-stack dev command (repo root):
+
+```powershell
+npm run dev
+```
+
+This starts:
+
+1. `docker compose up python-models` (AutoGen sidecar + Redis dependency)
+2. `nx serve backend`
+3. `client` Vite dev server
+
+Canonical AutoGen-only command:
+
+```powershell
+npm run dev:autogen
+```
+
+If AutoGen is unavailable, backend returns a hard failure diagnostic:
+
+```text
+AutoGen sidecar unavailable. checkedEndpoints=...
+```
+
+No TypeScript Magentic fallback is allowed on this runtime path.
+
 1. Verify the existing Postgres host port:
 
 ```powershell

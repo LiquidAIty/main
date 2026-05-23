@@ -11,24 +11,10 @@ from pydantic import BaseModel
 
 
 def _load_repo_env() -> None:
-    resolved = Path(__file__).resolve()
-    repo_root = resolved.parents[4]
-    python_models_root = resolved.parents[2]
-    env_candidates = [
-        python_models_root / ".env",
-        repo_root / "apps" / "backend" / ".env",
-        repo_root / ".env",
-        Path.cwd() / "apps" / "python-models" / ".env",
-        Path.cwd() / "apps" / "backend" / ".env",
-        Path.cwd() / ".env",
-    ]
-    loaded: set[Path] = set()
-    for env_path in env_candidates:
-        resolved_env_path = env_path.resolve()
-        if resolved_env_path in loaded or not resolved_env_path.exists():
-            continue
-        load_dotenv(resolved_env_path, override=False)
-        loaded.add(resolved_env_path)
+    env_path = Path("apps/backend/.env").resolve()
+    if not env_path.exists():
+        raise RuntimeError(f"backend_env_missing: required env file not found at {env_path}")
+    load_dotenv(env_path, override=False)
 
 
 _load_repo_env()

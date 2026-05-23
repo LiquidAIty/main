@@ -30,15 +30,15 @@ function trimBaseUrl(value: string): string {
 }
 
 function buildSidecarBaseUrls(): string[] {
-  const configured = [
-    String(process.env.AUTOGEN_RESEARCH_URL || '').trim(),
-    String(process.env.PYTHON_MODELS_URL || '').trim(),
-  ]
-    .filter(Boolean)
-    .map(trimBaseUrl);
-
-  const defaults = ['http://localhost:8002', 'http://localhost:8001', 'http://python-models:8001'];
-  return Array.from(new Set([...configured, ...defaults].filter(Boolean)));
+  const configured = trimBaseUrl(
+    String(process.env.AUTOGEN_RESEARCH_URL || process.env.AUTOGEN_ORCHESTRATOR_URL || '').trim(),
+  );
+  if (!configured) {
+    throw new Error(
+      'autogen_research_url_missing: set AUTOGEN_ORCHESTRATOR_URL (or AUTOGEN_RESEARCH_URL) in apps/backend/.env',
+    );
+  }
+  return [configured];
 }
 
 function isRetryableSidecarError(error: any): boolean {
