@@ -1,28 +1,77 @@
 # Documentation Map
 
-This folder is the canonical documentation surface for LiquidAIty project/runtime behavior.
+This file declares documentation trust boundaries for LiquidAIty.
+Full markdown-system audit: `docs/DOCUMENTATION_SYSTEM_AUDIT.md`.
 
-## Structure
+## Hierarchy Of Truth
+1. `.specify/memory/constitution.md`  
+   Highest-level Spec Kit governance for spec-driven development.
+2. `AGENTS.md`  
+   Hard coding-agent operating rules for this repo.
+3. `SOUL.md`  
+   Assistant/persona behavior and communication rules.
+4. `docs/architecture.md`  
+   Canonical technical architecture.
+5. `docs/runbooks/full-stack-dev.md`  
+   Canonical local run/verify workflow.
+6. `specs/*`  
+   Feature-level specifications, plans, and tasks.
+7. `.agents/skills/*`  
+   Spec Kit / Codex skill commands. Generated or tool-managed unless explicitly edited.
+8. `CLAUDE.md` and optional `.claude/*`  
+   Claude/Anthropic adapter instructions that point back to canonical hierarchy.
+9. `docs/decisions/*`  
+   Architecture Decision Records (ADRs).
+10. `docs/old/*`  
+    Historical docs only; not current truth unless explicitly referenced.
+11. External subtree docs  
+    Source-project docs only; they do not override LiquidAIty architecture.
 
-```text
-docs/
-├── README.md                     # This index
-├── architecture.md               # System architecture and execution rails
-├── AGENT_RUNTIME_README.md       # Runtime integration specifics and smoke guidance
-├── entity-relationship-architecture-spec.md
-├── runbooks/
-│   └── full-stack-dev.md         # Canonical local start + validation flow
-└── decisions/
-    └── README.md                 # ADR index + template
-```
+## Canonical Docs (LiquidAIty Truth)
+- `SOUL.md`
+- `AGENTS.md`
+- `CLAUDE.md`
+- `policy.md`
+- `docs/architecture.md`
+- `docs/runbooks/full-stack-dev.md`
+- `docs/AGENT_RUNTIME_README.md`
+- `docs/README.md` (this map)
+- `docs/decisions/*` (ADRs and ADR index)
 
-## How To Use
-- Start with `architecture.md` for system model.
-- Use `runbooks/full-stack-dev.md` for operational startup/testing.
-- Record architecture decisions under `docs/decisions/` as ADRs.
-- Keep runtime-specific details in `AGENT_RUNTIME_README.md`.
+Use these first for implementation and governance decisions.
 
-## Documentation Rules
-- Prefer explicit commands and expected outputs.
-- Include file paths for every technical claim.
-- Separate stable architecture from temporary debugging notes.
+## Spec Kit Docs (Generated/Spec Workflow)
+- `.specify/memory/constitution.md`
+- `.specify/templates/*`
+- `.specify/scripts/*`
+- `specs/*` (feature specs, plans, tasks)
+
+These govern spec-first workflow and feature-level intent, not runtime code truth by themselves.
+
+## Historical Docs (Do Not Delete Yet)
+- `docs/old/*`
+- `ROOT_REPO_OPERATING_GUIDE.md`
+- `launch-readiness.md`
+- `MEMORY.md`
+- `CODE.md`
+- `repo-map.md`
+
+Treat as context/history unless explicitly promoted back to canonical.
+
+## External Subtree Docs (Scoped to Their Source Projects)
+- `Understand-Anything-main/**`
+- `localcoder/**`
+- `worldsignal/**`
+- `data-formulator-main/**`
+- `gamecanvas/**`
+- `motioncanvas/**`
+- `spatialcanvas/**`
+- `videocanvas/**`
+- `services/**` (service-local docs)
+
+These do not override LiquidAIty architecture or runtime policy.
+
+## Architecture vs Specs Rule
+- `docs/architecture.md` is canonical for system architecture truth.
+- `specs/*` define feature intent, planning, and tasks.
+- Specs must link to canonical docs instead of duplicating them.

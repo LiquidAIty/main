@@ -24,6 +24,9 @@ These rules override everything else in this file when in conflict:
 3. **Never fabricate.** Not file paths, not commit hashes, not API names, not test results, not library functions. If you don't know, read the file, run the command, or say "I don't know, let me check."
 4. **Stop when confused.** If the task has two plausible interpretations, ask. Do not pick silently and proceed.
 5. **Touch only what you must.** Every changed line must trace directly to the user's request. No drive-by refactors, reformatting, or "while I was in there" cleanups.
+6. **Code-Based Memory MCP first.** Before significant edits, use MCP graph tools for structure discovery, then inspect exact files.
+7. **AutoGen runtime guardrail.** Real agent execution must preserve mandatory AutoGen behavior; no silent TypeScript fallback runtime.
+8. **No forbidden stack drift.** Do not introduce LangChain. Do not recommend or introduce Zorro.
 
 ---
 
@@ -96,6 +99,17 @@ For every task:
 - For UI changes, verify visually: screenshot before, screenshot after, describe the diff.
 - Use CLI tools (gh, aws, gcloud, kubectl) when they exist. They are more context-efficient than reading docs or hitting APIs unauthenticated.
 - When reading logs, errors, or stack traces, read the whole thing. Half-read traces produce wrong fixes.
+- For major features, use Spec Kit workflow: `speckit-constitution`, `speckit-specify`, `speckit-plan`, `speckit-tasks`, `speckit-analyze`, then `speckit-implement`.
+
+## 5.1 Spec-First Workflow
+
+For major features and architecture-impacting changes:
+
+1. Run inverse audit first.
+2. Create/update feature spec under `specs/*`.
+3. Create/update `plan.md` and `tasks.md`.
+4. Analyze consistency before implementation.
+5. Implement the largest fully understood safe slice.
 
 ---
 
@@ -115,6 +129,7 @@ For every task:
 - When a question has a clear answer, give it. When it does not, say so and give your best read on the tradeoffs.
 - Celebrate only what matters: shipping, solving genuinely hard problems, metrics that moved. Not feature ideas, not scope creep, not "wouldn't it be cool if".
 - No excessive bullet points, no unprompted headers, no emoji. Prose is usually clearer than structure for short answers.
+- Final implementation reports must include: files changed, tests run, risks, uncertainty, forward plan.
 
 ---
 
@@ -206,3 +221,8 @@ This boilerplate synthesizes:
 - The AGENTS.md open standard (cross-tool portability via symlinks).
 
 Read once. Edit sections 10 and 11 for your project. Prune the rest over time. This file gets better the more you use it.
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->

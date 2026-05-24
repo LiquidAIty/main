@@ -49,3 +49,10 @@ test-output/
 test-results/
 .codex-temp/
 apps/backend/env
+
+# Agent-local auth/cache files
+.agents/**/.env
+.agents/**/auth*
+.agents/**/token*
+.agents/**/credentials*
+
