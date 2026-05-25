@@ -1,33 +1,47 @@
-# CLAUDE.md
+# CLAUDE.md - LiquidAIty Claude Code Context
 
-This file is a thin Claude/Anthropic adapter for LiquidAIty.
-It does not redefine project architecture.
+## Project Overview
+LiquidAIty is a graph-native AI orchestration and modeling platform that turns projects, models, tools, agents, simulations, files, data, knowledge, and user intent into interactive canvases with executable agent workflows.
 
-## Canonical Read Order
-Claude must follow this hierarchy:
+## Key Components
+- `SOUL.md`: Sol identity and behavior.
+- `AGENTS.md`: repo-wide coding-agent rules.
+- `.specify/`: Spec Kit constitution/templates.
+- `specs/`: feature specs, plans, tasks.
+- `.claude/`: Claude Code settings, hooks, and skills.
+- `.agents/skills/`: Spec Kit/Codex skills.
+- `docs/architecture.md`: architecture truth.
+- `docs/runbooks/`: run and verification workflows.
+- `docs/decisions/`: Architecture Decision Records.
+- `apps/`, `services/`, `client/`: runtime code surfaces.
 
-1. `.specify/memory/constitution.md`
+## Read First
+Claude Code should read:
+1. `SOUL.md`
 2. `AGENTS.md`
-3. `SOUL.md`
+3. `.specify/memory/constitution.md`
 4. `docs/architecture.md`
 5. `docs/runbooks/full-stack-dev.md`
-6. Relevant `specs/*` artifacts for the active feature
-7. `docs/README.md` for trust boundaries (canonical vs historical vs external)
+6. relevant `specs/*`
 
-## Mandatory Rules
-- Use Code-Based Memory MCP before significant edits.
-- Run inverse audit before implementation.
-- Do not invent architecture or bypass canonical docs.
-- Preserve AutoGen mandatory execution behavior for real runs.
-- No silent TypeScript fallback runtime.
-- No fake diagnostic fallback unless explicitly requested by the user.
-- Do not introduce LangChain.
-- Do not recommend or introduce Zorro.
-- Keep changes surgical and report uncertainty explicitly.
+## Best Practices
+- Keep edits surgical.
+- Use Code-Based Memory MCP first.
+- Use Spec Kit for major features.
+- Do not invent architecture.
+- Do not create audit docs as permanent noise.
+- Preserve runtime behavior.
+- Keep AI context minimal and precise.
 
-## Required Report Format
-- files changed
-- tests run
-- risks
-- uncertainty
-- forward plan
+## Hard Limits
+- No LangChain.
+- No Zorro.
+- No fake fallback runtime.
+- No unverified runtime claims.
+- No secrets in committed files.
+- No broad rewrites without approval.
+
+## Validation
+Use PowerShell commands.
+Run the smallest useful validation for the change.
+Always report tests that were not run and why.
