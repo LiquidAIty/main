@@ -8,11 +8,10 @@ LiquidAIty is a general AI-native platform first. Trading, energy modeling, repo
 ## Read Order
 1. `SOUL.md`
 2. `AGENTS.md`
-3. `CLAUDE.md` (if using Claude Code)
-4. `.specify/memory/constitution.md`
-5. `docs/architecture.md`
-6. `docs/runbooks/`
-7. relevant `specs/*`
+3. `.specify/memory/constitution.md`
+4. `docs/architecture.md`
+5. `docs/runbooks/`
+6. relevant `specs/*`
 
 ## Task Skills
 - Agents must not read every `.skills` file globally.
@@ -49,6 +48,34 @@ LiquidAIty is a general AI-native platform first. Trading, energy modeling, repo
   - `$speckit-tasks`
   - `$speckit-implement`
 
+## Progressive Spec Policy
+LiquidAIty does not require every subsystem to be fully specified upfront.
+
+When an agent revisits a meaningful subsystem, it must create or update the closest relevant
+Spec Kit feature folder.
+
+Use:
+- `spec.md` for intent, behavior, scope, and success criteria.
+- `plan.md` for architecture approach, affected files, risks, skills, and validation.
+- `tasks.md` for ordered implementation steps.
+
+If work touches an existing subsystem, improve the existing spec instead of creating duplicate
+specs.
+
+If no matching spec exists, create the smallest useful new spec folder.
+
+Specs should grow as the repo is worked on. Do not create giant speculative specs for untouched
+systems.
+
+Durable lessons discovered during implementation must be placed in the smallest correct home:
+- feature behavior -> relevant `specs/*`
+- architecture decision -> `docs/decisions/*`
+- run/setup command -> `docs/runbooks/full-stack-dev.md`
+- coding rule -> `AGENTS.md`
+- task technique -> matching `.skills/*/SKILL.md`
+
+Do not create random scratch Markdown, audit docs, or duplicate documentation maps.
+
 ## Runtime Rules
 - AutoGen is mandatory for real agent execution.
 - No silent TypeScript fallback runtime.
@@ -76,3 +103,15 @@ LiquidAIty is a general AI-native platform first. Trading, energy modeling, repo
 - risks
 - uncertainty
 - forward plan
+
+## Working Notes
+Agents may keep short working notes in their final report while working.
+
+Durable notes must go into the correct existing place:
+- feature behavior -> `specs/*`
+- architecture decision -> `docs/decisions/*`
+- run command/setup -> `docs/runbooks/full-stack-dev.md`
+- project identity/rules -> `SOUL.md` or `AGENTS.md`
+
+Agents must not create random audit docs, scratch Markdown files, or duplicate documentation maps.
+Temporary reasoning belongs in the final report, not permanent repo files.

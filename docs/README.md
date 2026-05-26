@@ -10,8 +10,9 @@ This is the documentation map for LiquidAIty.
 ## Instruction And Governance Docs
 - `SOUL.md` (Sol identity)
 - `AGENTS.md` (hard coding-agent rules)
-- `CLAUDE.md` (Claude Code entry context)
 - `.specify/memory/constitution.md` (Spec Kit governance)
+- `.skills/` (task-triggered optional skills)
+- `.agents/skills/` (installed Spec Kit/Codex skills)
 
 ## Specs
 - `specs/*` (feature specs, plans, tasks)

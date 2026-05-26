@@ -1,7 +1,7 @@
 <!--
 Sync Impact Report
 - Version change: 1.0.0 -> 1.1.0
-- Modified principles: all consolidated for SOUL + CLAUDE + Spec Kit alignment
+- Modified principles: consolidated for SOUL + coding-agent + Spec Kit alignment
 - Added sections: Governance Metadata, Compliance
 - Removed sections: none
 - Templates requiring updates:
@@ -34,6 +34,9 @@ analysis, then confirm with targeted file inspection.
 Major feature work MUST follow Spec Kit lifecycle:
 `$speckit-constitution` -> `$speckit-specify` -> `$speckit-plan` -> `$speckit-tasks` ->
 `$speckit-implement`.
+When revisiting a meaningful subsystem, agents MUST create or update the closest relevant spec
+folder and keep `spec.md`, `plan.md`, and `tasks.md` current; avoid duplicate specs and
+speculative sprawl for untouched systems.
 
 ## 5. AutoGen Mandatory Execution
 Real agent/deck/card execution MUST route through Python AutoGen when `executionBackend` is
@@ -50,6 +53,8 @@ trading-only framing and Ghostfolio-style framing are historical only.
 ## 8. Documentation Minimalism
 Documentation must stay minimal and canonical. Do not accumulate audit-note files as long-lived
 repo noise. External subtree docs are scoped and do not override LiquidAIty truth.
+Temporary working notes must not become repo noise. Durable knowledge must be stored in specs,
+architecture docs, runbooks, decisions, SOUL.md, or AGENTS.md as appropriate.
 
 ## 9. Runtime Truth Comes From Code
 Docs/specs must not claim behavior that is not implemented and validated. Uncertainty MUST be
