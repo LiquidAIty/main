@@ -62,6 +62,7 @@ export default function BuilderChat({
           display: "grid",
           gap: 14,
           alignContent: "start",
+          overflowX: "hidden",
         }}
       >
         {messages.map((m, i) => {
@@ -80,6 +81,8 @@ export default function BuilderChat({
                   padding: isUser ? "11px 15px 12px 15px" : "11px 16px 12px 16px",
                   color: colors.text,
                   whiteSpace: "pre-wrap",
+                  overflowWrap: "anywhere",
+                  wordBreak: "break-word",
                   lineHeight: 1.55,
                   fontSize: 13.5,
                   letterSpacing: "-0.01em",
