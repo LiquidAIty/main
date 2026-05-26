@@ -1,24 +1,39 @@
-# LiquidAIty Repo Skills
+# LiquidAIty Skills
 
-This folder contains real/adapted agent skills for LiquidAIty coding work.
+Small task-triggered skills for LiquidAIty coding agents.
 
-## Rules
+Do not read every skill globally. Read only the matching skill for the task.
 
-1. Skills do not override `SOUL.md`, `AGENTS.md`, `.specify/memory/constitution.md`, or approved `specs/*`.
-2. Use Code-Based Memory MCP before significant edits.
-3. Use Spec Kit before meaningful implementation.
-4. Update the closest relevant docs/specs when a touched system changes.
-5. Do not create Claude-specific workflow, `CLAUDE.md`, `.claude/`, random audit docs, LangChain, Zorro, Ghostfolio active architecture, or fake fallback runtime.
-6. Use PowerShell command examples by default.
+## Priority
 
-## Approved initial skills
+Skills never override:
 
-- `frontend-senior-engineer` — adapted from a real senior frontend skill found in `diegosouzapw/awesome-omni-skills`.
-- `code-reviewer` — adapted from `TerminalSkills/skills` `code-reviewer`.
-- `test-generator` — adapted from `TerminalSkills/skills` `test-generator`.
-- `monorepo-manager` — adapted from `TerminalSkills/skills` `monorepo-manager`.
-- `security-audit` — adapted from `TerminalSkills/skills` `security-audit`.
+1. SOUL.md
+2. AGENTS.md
+3. .specify/memory/constitution.md
+4. approved specs/*
 
-## Intake area
+## Skill Map
 
-`_incoming/` tracks real public candidates and source attribution before deeper promotion.
+Frontend:
+- frontend/react-vite-typescript — React, Vite, TypeScript frontend work
+- frontend/react-flow-xyflow — React Flow / XYFlow canvases, nodes, edges, handles
+- frontend/threejs-r3f — Three.js / React Three Fiber scenes
+- frontend/liquid-glass-ui — Liquid/glass UI, panels, rails, canvas look
+
+Graph:
+- graph/cypher — generic Cypher query rules
+- graph/neo4j — Neo4j / KnowGraph
+- graph/apache-age — Apache AGE / PostgreSQL graph work
+- graph/graph-memory-design — ThinkGraph, KnowGraph, CodeGraph, ontology/provenance
+
+Data:
+- data/postgres-prisma — PostgreSQL and Prisma work
+
+Workflow:
+- workflow/spec-kit — Spec-first workflow
+- workflow/docs-on-change — docs/specs updates when systems change
+
+## Rule
+
+Read the smallest matching skill. Do not load unrelated skills.

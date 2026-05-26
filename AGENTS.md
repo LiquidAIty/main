@@ -14,6 +14,19 @@ LiquidAIty is a general AI-native platform first. Trading, energy modeling, repo
 6. `docs/runbooks/`
 7. relevant `specs/*`
 
+## Task Skills
+- Agents must not read every `.skills` file globally.
+- Read only the matching task skill.
+- Skills are subordinate to:
+  - `SOUL.md`
+  - `AGENTS.md`
+  - `.specify/memory/constitution.md`
+  - approved `specs/*`
+- Use `.skills/frontend/react-flow-xyflow/SKILL.md` for React Flow / XYFlow work.
+- Use `.skills/frontend/threejs-r3f/SKILL.md` for Three.js / React Three Fiber work.
+- Use `.skills/graph/cypher/SKILL.md` plus Neo4j or Apache AGE skill for graph queries.
+- Use `.skills/workflow/spec-kit/SKILL.md` for meaningful feature work.
+
 ## Required First Step: Use Code-Based Memory MCP
 - Before significant edits, use Code-Based Memory MCP for structural discovery.
 - Use filesystem search only after MCP narrows scope or when scanning docs/config text.
