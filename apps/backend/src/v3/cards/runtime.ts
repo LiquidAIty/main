@@ -25,6 +25,7 @@ import type {
   DeckEdgeType,
   DeckRuntimeEvent,
   DeckWorkspaceContext,
+  MissionSpec,
   PromptTemplate,
   RuntimeBinding,
   WorkspaceObjectContext,
@@ -38,6 +39,9 @@ export type CardRuntimeContext = {
   projectId?: string;
   workspaceContext?: DeckWorkspaceContext | null;
   workspaceObjectContext?: WorkspaceObjectContext | null;
+  missionSpec?: MissionSpec;
+  missionRunId?: string;
+  missionAgentRunId?: string;
   deckId?: string;
   deckName?: string;
   allCards?: AgentCardInstance[];

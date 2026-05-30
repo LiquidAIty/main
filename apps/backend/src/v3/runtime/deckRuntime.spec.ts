@@ -126,6 +126,31 @@ describe('executeDeck', () => {
     expect(run.workspaceObjectContext).toEqual(context);
   });
 
+  it('propagates mission run metadata into runtime context and run snapshot', async () => {
+    const deck = createDeckDocument([createAgent('a', 'A')], []);
+    const run = await executeDeck(deck, templates, {
+      input: 'mission test',
+      missionSpec: {
+        id: 'mission_1',
+        title: 'Mission',
+        userGoal: 'Goal',
+        target: 'deck',
+        readContext: [],
+        runState: 'running',
+        agentRuns: [],
+      },
+      missionRunId: 'mission_run_1',
+      missionAgentRunId: 'agent_run_1',
+    });
+
+    const context = runtimeHarness.calls[0]?.context as any;
+    expect(context.missionRunId).toBe('mission_run_1');
+    expect(context.missionAgentRunId).toBe('agent_run_1');
+    expect(run.mission?.missionRunId).toBe('mission_run_1');
+    expect(run.mission?.missionAgentRunId).toBe('agent_run_1');
+    expect(run.mission?.agentRunStatus).toBe('complete');
+  });
+
   it('ignores legacy blackboard nodes in visible flow routing', async () => {
     const board = {
       id: 'node_blackboard',

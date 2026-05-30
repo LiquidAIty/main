@@ -63,6 +63,12 @@ import {
   streamDeckRunRequest,
 } from '../components/builder/deckRunState';
 import {
+  applyMissionDeckPatch,
+  buildMissionDeckPatch,
+} from '../components/builder/missionExecution';
+import { draftMissionSpecFromChat } from '../components/builder/chatPlanCompanion';
+import { runInternalWorkspaceHarness } from '../components/builder/workspaceHarness';
+import {
   buildDefaultDeckEdgeMetadata,
   sanitizeDeckEdges,
   validateDeckDocument,
@@ -101,6 +107,14 @@ import type {
   WorkspaceObjectContext,
   PromptTemplate,
   RuntimeBinding,
+  MissionRun,
+  MissionSpec,
+  OpenMissionMessage,
+  PlanDraftStatus,
+  ChatPlanDraftResult,
+  WorkspaceHarnessOperation,
+  WorkspaceHarnessPermission,
+  WorkspaceHarnessRequest,
 } from '../types/agentgraph';
 import {
   ENERGY_DEFAULT_PARAMETERS,
@@ -471,9 +485,10 @@ const KNOWLEDGE_VIEW_TABS = ['Chat', 'Canvas', 'Plan'] as const;
 const CODEGRAPH_VIEW_TABS = ['Chat', 'Canvas', 'Knowledge', 'Plan'] as const;
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
 const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime'] as const;
-const AGENTS_CHAT_MIN_WIDTH = 360;
+const AGENTS_CHAT_MIN_WIDTH = 280;
 const AGENTS_CANVAS_MIN_WIDTH = 520;
 const WORKSPACE_COMPANION_MIN_WIDTH = 360;
+const WORKSPACE_COLLAPSE_EDGE_PX = 28;
 const AGENT_EDITOR_DEFAULT_WIDTH = 420;
 type WorkspaceTestingEventDraft = Omit<
   WorkspaceTestingEventInput,
@@ -1385,6 +1400,60 @@ function detectActivationProposal(
     status: 'pending',
   };
 }
+
+function detectWorkspaceHarnessOperation(
+  text: string,
+): WorkspaceHarnessOperation | null {
+  const normalized = safeText(text).trim().toLowerCase();
+  if (!normalized) return null;
+  if (/\b(what context|inspect|show context|current deck)\b/.test(normalized)) {
+    return 'inspect_context';
+  }
+  if (/\b(draft mission|create mission|plan mission)\b/.test(normalized)) {
+    return 'draft_mission';
+  }
+  if (/\b(refine mission|update mission)\b/.test(normalized)) {
+    return 'refine_mission';
+  }
+  if (/\b(generate patch|wire deck|connect agents|seed prompts)\b/.test(normalized)) {
+    return 'generate_deck_patch';
+  }
+  if (/\b(apply patch|apply deck patch)\b/.test(normalized)) {
+    return 'apply_deck_patch';
+  }
+  if (/\b(run approved mission|run mission|execute mission)\b/.test(normalized)) {
+    return 'run_approved_mission';
+  }
+  if (/\b(question|clarify|ambiguous)\b/.test(normalized)) {
+    return 'ask_clarifying_questions';
+  }
+  if (/\b(query graph|traverse graph)\b/.test(normalized)) {
+    return 'query_graph';
+  }
+  return null;
+}
+
+const WORKSPACE_HARNESS_DEFAULT_PERMISSIONS: WorkspaceHarnessPermission[] = [
+  'deck.read',
+  'deck.write',
+  'canvas.read',
+  'canvas.write',
+  'plan.read',
+  'plan.write',
+  'mission.read',
+  'mission.write',
+  'agent.read',
+  'agent.connect',
+  'agent.prompt.read',
+  'agent.prompt.write',
+  'reactflow.nodes.create',
+  'reactflow.nodes.update',
+  'reactflow.edges.create',
+  'reactflow.edges.update',
+  'graph.query',
+  'graph.traverse',
+  'graph.write.request',
+];
 
 function isAssistLikeRuntimeType(runtimeType: AgentCardRuntimeType | null): boolean {
   return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
@@ -2809,7 +2878,44 @@ export const INITIAL_DECK: DeckDocument = {
     },
     ...buildUaAgentSeedNodes(),
   ],
-  edges: [],
+  edges: [
+    {
+      id: 'edge_magentic_plan',
+      source: 'card_magentic',
+      target: 'card_plan_agent',
+      edgeType: 'magentic_option',
+    },
+    {
+      id: 'edge_magentic_local_coder',
+      source: 'card_magentic',
+      target: 'card_local_coder',
+      edgeType: 'magentic_option',
+    },
+    {
+      id: 'edge_magentic_thinkgraph',
+      source: 'card_magentic',
+      target: 'card_thinkgraph_agent',
+      edgeType: 'magentic_option',
+    },
+    {
+      id: 'edge_magentic_knowgraph',
+      source: 'card_magentic',
+      target: 'card_knowgraph_agent',
+      edgeType: 'magentic_option',
+    },
+    {
+      id: 'edge_magentic_research_agent',
+      source: 'card_magentic',
+      target: 'card_research_agent',
+      edgeType: 'magentic_option',
+    },
+    {
+      id: 'edge_magentic_codegraph',
+      source: 'card_magentic',
+      target: 'card_codegraph_agent',
+      edgeType: 'magentic_option',
+    },
+  ],
 };
 
 const BUILDER_DECK_ID = INITIAL_DECK.id;
@@ -2838,6 +2944,16 @@ const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
   card_knowgraph: 'knowgraph',
   card_neo4j: 'neo4j',
 };
+
+const SYSTEM_CAPABILITY_REGISTRY = {
+  openclaudeHarness: {
+    label: 'LocalCoder / OpenClaude Harness',
+    cardId: 'card_local_coder',
+    runtimeBinding: 'local_coder' as const,
+    routePrefix: '/api/coder/openclaude',
+  },
+} as const;
+void SYSTEM_CAPABILITY_REGISTRY;
 
 const BASELINE_OPTIONAL_CARD_IDS = new Set([
   'card_local_coder',
@@ -3399,14 +3515,7 @@ function seedCurrentSystemCardsIntoLegacyDeck(
     deck.nodes.length > 0 &&
     deck.nodes.some((node) => LEGACY_SYSTEM_CARD_IDS.has(node.id)) &&
     deck.nodes.every((node) => legacyCompatibleNodeIds.has(node.id));
-  if (hasOnlyLegacySystemNodes) {
-    return {
-      ...cloneDeckDocument(INITIAL_DECK),
-      id: deck.id || INITIAL_DECK.id,
-      name: deck.name || INITIAL_DECK.name,
-      version: Math.max(deck.version, INITIAL_DECK.version),
-    };
-  }
+  void hasOnlyLegacySystemNodes;
   const hasOnlySystemNodes =
     deck.nodes.length > 0 &&
     deck.nodes.every((node) => defaultNodeIds.has(node.id));
@@ -3445,10 +3554,6 @@ function seedCurrentSystemCardsIntoLegacyDeck(
         String(existingNode.subtitle || '').trim() === 'Gather upstream inputs'
           ? seedNode.subtitle
           : existingNode.subtitle || seedNode.subtitle;
-      const shouldResetDataFormulatorPosition =
-        seedNode.id === 'card_data_formulator_workbench' &&
-        existingNode.position?.x === 1040 &&
-        existingNode.position?.y === 320;
       return {
         ...cloneDeckDocument(seedNode),
         ...cloneDeckDocument(existingNode),
@@ -3471,9 +3576,7 @@ function seedCurrentSystemCardsIntoLegacyDeck(
         parentGraphId: cleanOptionalText(
           existingNode.parentGraphId ?? seedNode.parentGraphId ?? null,
         ),
-        position: shouldResetDataFormulatorPosition
-          ? seedNode.position
-          : existingNode.position || seedNode.position,
+        position: existingNode.position || seedNode.position,
         overrides: existingNode.overrides,
         status: existingNode.status ?? seedNode.status,
         cloneConfig: existingNode.cloneConfig ?? seedNode.cloneConfig,
@@ -3492,23 +3595,8 @@ function seedCurrentSystemCardsIntoLegacyDeck(
       .map((template) => cloneDeckDocument(template)),
   ];
 
-  const nextEdges = isPartialSystemDeckShape
-    ? (() => {
-        const mergedEdges = new Map<string, DeckEdge>();
-        deck.edges.forEach((edge) => {
-          mergedEdges.set(edge.id, cloneDeckDocument(edge));
-        });
-        INITIAL_DECK.edges.forEach((edge) => {
-          if (!mergedEdges.has(edge.id)) {
-            mergedEdges.set(edge.id, cloneDeckDocument(edge));
-          }
-        });
-        return filterAuthoringCompatibleEdges(
-          upgradedNodes,
-          Array.from(mergedEdges.values()),
-        );
-      })()
-    : filterAuthoringCompatibleEdges(upgradedNodes, deck.edges);
+  // Preserve persisted edge state exactly; never infer/merge seed edges during hydration.
+  const nextEdges = filterAuthoringCompatibleEdges(upgradedNodes, deck.edges);
 
   return {
     ...deck,
@@ -4683,6 +4771,20 @@ export default function AgentBuilder(): React.ReactElement {
   );
   const [pendingActivationProposal, setPendingActivationProposal] =
     useState<ActivationProposalState | null>(null);
+  const [latestMissionRun, setLatestMissionRun] = useState<MissionRun | null>(
+    null,
+  );
+  const [openMissionMessage, setOpenMissionMessage] =
+    useState<OpenMissionMessage | null>(null);
+  const [draftMissionSpec, setDraftMissionSpec] = useState<MissionSpec | null>(null);
+  const [planDraftStatus, setPlanDraftStatus] = useState<PlanDraftStatus>('idle');
+  const [latestPlanDraftResult, setLatestPlanDraftResult] =
+    useState<ChatPlanDraftResult | null>(null);
+  const draftMissionSpecRef = useRef<MissionSpec | null>(null);
+  const planDraftRequestSeqRef = useRef(0);
+  useEffect(() => {
+    draftMissionSpecRef.current = draftMissionSpec;
+  }, [draftMissionSpec]);
   const visibleRailItems = useMemo(
     () =>
       deriveVisibleRailItems({
@@ -5002,14 +5104,32 @@ export default function AgentBuilder(): React.ReactElement {
   const lastBuilderDeckWriteReasonRef = useRef<string | null>(null);
   const lastBuilderUiOnlyActionRef = useRef<string | null>(null);
   const lastBuilderDeckFingerprintRef = useRef<string | null>(null);
+  const layoutAutosaveAbortRef = useRef<AbortController | null>(null);
+  const lastDeckPersistReasonRef = useRef<string | null>(null);
+  const [layoutPersistToken, setLayoutPersistToken] = useState(0);
+
+  const LAYOUT_PERSIST_REASONS = useMemo(
+    () =>
+      new Set([
+        'canvas:nodes',
+        'canvas:edges',
+        'canvas:connect',
+        'canvas:reconnect',
+        'edge-delete',
+      ]),
+    [],
+  );
 
   const recordDeckWriteReason = useCallback(
     (reason: string) => {
-      if (!BUILDER_DEV) return;
       lastBuilderDeckWriteReasonRef.current = reason;
+      lastDeckPersistReasonRef.current = reason;
       lastBuilderUiOnlyActionRef.current = null;
+      if (LAYOUT_PERSIST_REASONS.has(reason)) {
+        setLayoutPersistToken((current) => current + 1);
+      }
     },
-    [BUILDER_DEV],
+    [LAYOUT_PERSIST_REASONS],
   );
 
   const recordUiOnlyAction = useCallback(
@@ -5138,6 +5258,16 @@ export default function AgentBuilder(): React.ReactElement {
               ? 'Using default canvas.'
               : 'Canvas loaded.',
         );
+        console.info('[builder][deck-load-proof]', {
+          projectId: canvasProjectId,
+          deckId: BUILDER_DECK_ID,
+          reason: 'deck-load',
+          source: loadResult.usedFallback ? 'fallback' : 'backend_saved_deck',
+          displayFallbackOnly: loadResult.displayFallbackOnly,
+          nodeCount: loadResult.deck.nodes.length,
+          edgeCount: loadResult.deck.edges.length,
+          revision: typeof payload.data?.meta?.deckRevision === 'string' ? payload.data.meta.deckRevision : null,
+        });
       } catch (err: any) {
         if (controller.signal.aborted) return;
         recordDeckWriteReason('deck-load-default-error');
@@ -5188,6 +5318,8 @@ export default function AgentBuilder(): React.ReactElement {
   useEffect(() => {
     deckSaveAbortRef.current?.abort();
     deckSaveAbortRef.current = null;
+    layoutAutosaveAbortRef.current?.abort();
+    layoutAutosaveAbortRef.current = null;
     deckExecutionAbortRef.current?.abort();
     deckExecutionAbortRef.current = null;
     setSending(false);
@@ -5196,6 +5328,103 @@ export default function AgentBuilder(): React.ReactElement {
     setCardRunBusy(false);
     setPendingActivationProposal(null);
   }, [canvasProjectId]);
+
+  useEffect(() => {
+    if (!canvasProjectId || layoutPersistToken === 0 || deckLoadBusy) return;
+    if (deckUsingDisplayFallback) return;
+    const timer = window.setTimeout(() => {
+      const reason = lastDeckPersistReasonRef.current || 'layout-autosave';
+      const revisionBefore = deckRevision;
+      const controller = new AbortController();
+      layoutAutosaveAbortRef.current?.abort();
+      layoutAutosaveAbortRef.current = controller;
+      void (async () => {
+        try {
+          const response = await fetch(
+            `${V3_PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}`,
+            {
+              method: 'PUT',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                document: {
+                  ...deck,
+                  id: BUILDER_DECK_ID,
+                },
+                expectedRevision: deckRevision,
+              }),
+              signal: controller.signal,
+            },
+          );
+          const data = await safeJson(response);
+          if (!response.ok) {
+            console.warn('[builder][deck-save-proof]', {
+              projectId: canvasProjectId,
+              deckId: BUILDER_DECK_ID,
+              reason,
+              nodeCount: deck.nodes.length,
+              edgeCount: deck.edges.length,
+              revisionBefore,
+              revisionAfter: null,
+              ok: false,
+              error: safeText(data?.error || 'deck_save_failed'),
+            });
+            if (BUILDER_DEV) {
+              console.warn('[builder] layout autosave failed', {
+                error: safeText(data?.error || 'deck_save_failed'),
+              });
+            }
+            return;
+          }
+          const revisionAfter =
+            typeof data?.meta?.deckRevision === 'string'
+              ? data.meta.deckRevision
+              : deckRevision;
+          if (typeof data?.meta?.deckRevision === 'string') {
+            setDeckRevision(data.meta.deckRevision);
+          }
+          console.info('[builder][deck-save-proof]', {
+            projectId: canvasProjectId,
+            deckId: BUILDER_DECK_ID,
+            reason,
+            nodeCount: deck.nodes.length,
+            edgeCount: deck.edges.length,
+            revisionBefore,
+            revisionAfter,
+            ok: true,
+          });
+        } catch (error) {
+          if (isAbortLikeError(error)) return;
+          console.warn('[builder][deck-save-proof]', {
+            projectId: canvasProjectId,
+            deckId: BUILDER_DECK_ID,
+            reason,
+            nodeCount: deck.nodes.length,
+            edgeCount: deck.edges.length,
+            revisionBefore,
+            revisionAfter: null,
+            ok: false,
+            error: safeText((error as any)?.message || 'deck_save_exception'),
+          });
+          if (BUILDER_DEV) {
+            console.warn('[builder] layout autosave exception', error);
+          }
+        }
+      })();
+    }, 600);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    BUILDER_DEV,
+    canvasProjectId,
+    deck,
+    deckLoadBusy,
+    deckRevision,
+    deckUsingDisplayFallback,
+    layoutPersistToken,
+  ]);
 
   const showDeckBuilder = workspaceView === 'canvas';
   const runtimeEvents = useMemo(
@@ -5808,6 +6037,9 @@ export default function AgentBuilder(): React.ReactElement {
       v3ProjectsApi: V3_PROJECTS_API,
       activeProjectLatestRef,
       recordDeckWriteReason,
+      onDeckPersistProof: (entry) => {
+        console.info('[builder][deck-save-proof]', entry);
+      },
     });
 
   const handleSaveSelectedCardConfig = useCallback(
@@ -6473,7 +6705,10 @@ export default function AgentBuilder(): React.ReactElement {
                 style={{ marginTop: 10 }}
               >
                 <button
-                  onClick={handleSaveDeck}
+                  onClick={() => {
+                    recordDeckWriteReason('save-board-now');
+                    void handleSaveDeck();
+                  }}
                   disabled={deckSaveBusy || deckLoadBusy || !canvasProjectId}
                   style={graphDrawerButtonStyle({
                     opacity:
@@ -6486,7 +6721,7 @@ export default function AgentBuilder(): React.ReactElement {
                         : 'pointer',
                   })}
                 >
-                  {deckSaveBusy ? 'Saving...' : 'Save Deck'}
+                  {deckSaveBusy ? 'Saving...' : 'Save Board Now'}
                 </button>
                 <button
                   onClick={handleRunDeck}
@@ -7770,6 +8005,370 @@ export default function AgentBuilder(): React.ReactElement {
     };
   }, [tab, activeProject]);
 
+  const runApprovedMissionSequential = useCallback(async (
+    missionSpec: MissionSpec,
+    seedMissionRun: MissionRun,
+  ) => {
+    let missionRun = { ...seedMissionRun };
+    missionSpec.runState = 'running';
+    missionRun = { ...missionRun, status: 'running', updatedAt: new Date().toISOString() };
+    setLatestMissionRun(missionRun);
+    let previousOutput = missionSpec.userGoal;
+    const cardByAgentId: Record<string, string> = {
+      research_agent: 'card_research_agent',
+      knowgraph_agent: 'card_knowgraph_agent',
+      thinkgraph_agent: 'card_thinkgraph_agent',
+    };
+    for (const step of missionRun.agentRuns) {
+      const cardId = cardByAgentId[String(step.agentId || '').toLowerCase()];
+      const card = deck.nodes.find((node) => node.id === cardId);
+      if (!card) {
+        const status = step.required ? 'failed' : 'skipped';
+        step.status = status;
+        step.error = `Unsupported or missing agent card for ${step.agentId}.`;
+        missionRun.results.push({
+          agentRunId: step.id,
+          agentId: step.agentId,
+          status,
+          reason: step.error,
+        });
+        if (step.required) {
+          missionRun.status = 'failed';
+          break;
+        }
+        continue;
+      }
+      step.status = 'running';
+      missionRun.activeAgentRunId = step.id;
+      missionRun.updatedAt = new Date().toISOString();
+      setLatestMissionRun({ ...missionRun, agentRuns: [...missionRun.agentRuns], results: [...missionRun.results] });
+      setOpenMissionMessage({
+        missionRunId: missionRun.id,
+        title: missionSpec.title,
+        status: missionRun.status,
+        activeAgents: missionRun.agentRuns.map((entry) => ({
+          agentRunId: entry.id,
+          label: entry.agentId,
+          status: entry.status,
+          summary: entry.resultSummary,
+        })),
+        latestSummary: step.promptSeed,
+      });
+      const singleCardDeck = buildSingleCardRunDocument(deck, card.id);
+      if (!singleCardDeck) {
+        step.status = step.required ? 'failed' : 'skipped';
+        step.error = `Could not build run scope for ${card.id}.`;
+        if (step.required) missionRun.status = 'failed';
+        continue;
+      }
+      try {
+        const data = await streamDeckRunRequest({
+          endpoint: `${V3_PROJECTS_API}/${canvasProjectId}/decks/run`,
+          body: {
+            deckId: BUILDER_DECK_ID,
+            document: { ...singleCardDeck, id: BUILDER_DECK_ID },
+            templates: INITIAL_AGENT_TEMPLATES,
+            input: `${step.promptSeed}\n\nMission Goal:\n${missionSpec.userGoal}\n\nPrior Result:\n${previousOutput}`,
+            workspaceContext: activeDeckWorkspaceContext,
+            workspaceObjectContext: activeWorkspaceObjectContext,
+            missionSpec,
+            missionRunId: missionRun.id,
+            missionAgentRunId: step.id,
+          },
+        });
+        const run = data?.run as DeckRun | undefined;
+        if (!run) throw new Error('missing_run_payload');
+        const runStep = run.steps.find((entry) => entry.cardId === card.id);
+        const output = safeText(runStep?.output || '');
+        const backendAgentRunStatus = safeText(data?.agentRunStatus || run.mission?.agentRunStatus)
+          .trim()
+          .toLowerCase();
+        const backendResultSummary = compactAwarenessText(
+          data?.resultSummary ?? run.mission?.resultSummary ?? output,
+          220,
+        );
+        previousOutput = output || previousOutput;
+        step.status =
+          backendAgentRunStatus === 'complete'
+            ? 'complete'
+            : backendAgentRunStatus === 'needs_user_input'
+              ? 'needs_user_input'
+              : runStep?.status === 'success'
+                ? 'complete'
+                : 'failed';
+        step.resultSummary = backendResultSummary;
+        if (step.status === 'failed') step.error = safeText(runStep?.error || 'agent_step_failed');
+        missionRun.results.push({
+          agentRunId: step.id,
+          agentId: step.agentId,
+          status: step.status,
+          output: output || null,
+          reason:
+            safeText(data?.needsUserInputReason || data?.errorReason || step.error || '').trim() ||
+            null,
+        });
+        const backendMissionStatus = safeText(data?.missionStatus || run.mission?.missionStatus)
+          .trim()
+          .toLowerCase();
+        if (backendMissionStatus === 'needs_user_input') {
+          missionRun.status = 'needs_user_input';
+          break;
+        }
+        if (step.status === 'failed' && step.required) {
+          missionRun.status = 'failed';
+          break;
+        }
+      } catch (error: any) {
+        step.status = step.required ? 'failed' : 'skipped';
+        step.error = safeText(error?.message || 'agent_step_error');
+        missionRun.results.push({
+          agentRunId: step.id,
+          agentId: step.agentId,
+          status: step.status,
+          reason: step.error,
+        });
+        if (step.required) {
+          missionRun.status = 'failed';
+          break;
+        }
+      }
+    }
+    if (missionRun.status !== 'failed' && missionRun.status !== 'needs_user_input') {
+      missionRun.status = 'complete';
+    }
+    missionRun.activeAgentRunId = null;
+    missionRun.updatedAt = new Date().toISOString();
+    setLatestMissionRun({ ...missionRun, agentRuns: [...missionRun.agentRuns], results: [...missionRun.results] });
+    setOpenMissionMessage({
+      missionRunId: missionRun.id,
+      title: missionSpec.title,
+      status: missionRun.status,
+      activeAgents: missionRun.agentRuns.map((entry) => ({
+        agentRunId: entry.id,
+        label: entry.agentId,
+        status: entry.status,
+        summary: entry.resultSummary,
+      })),
+      latestSummary: missionRun.results[missionRun.results.length - 1]?.reason || missionRun.results[missionRun.results.length - 1]?.output || undefined,
+      suggestedUserActions:
+        missionRun.status === 'needs_user_input'
+          ? ['Answer mission clarification in chat.']
+          : missionRun.status === 'failed'
+            ? ['Review failed required agent step before rerun.']
+            : ['Mission complete.'],
+    });
+    return { missionRun, openMissionMessage };
+  }, [
+    activeDeckWorkspaceContext,
+    activeWorkspaceObjectContext,
+    canvasProjectId,
+    deck,
+  ]);
+
+  const handleApproveMissionExecution = useCallback(async () => {
+    if (!pendingActivationProposal || !canvasProjectId || deckRunBusy) return;
+    const now = new Date().toISOString();
+    const latestDraft = draftMissionSpecRef.current;
+    const baseMissionSpec: MissionSpec = latestDraft
+      ? {
+          ...latestDraft,
+          runState: 'approved',
+          agentRuns: [...latestDraft.agentRuns],
+        }
+      : {
+          id: `mission_${uid()}`,
+          title: pendingActivationProposal.title,
+          userGoal: pendingActivationProposal.sourceText,
+          target: 'agentbuilder_deck',
+          readContext: [],
+          runState: 'approved',
+          agentRuns: [
+            { id: `run_${uid()}`, agentId: 'research_agent', promptSeed: 'Research and gather evidence.', required: true },
+            { id: `run_${uid()}`, agentId: 'knowgraph_agent', promptSeed: 'Convert evidence into grounded knowledge updates.', required: true },
+            { id: `run_${uid()}`, agentId: 'thinkgraph_agent', promptSeed: 'Summarize outcome as provisional plan memory.', required: false },
+          ],
+        };
+    let missionRun: MissionRun = {
+      id: `mission_run_${uid()}`,
+      missionSpecId: baseMissionSpec.id,
+      status: 'wiring',
+      activeAgentRunId: null,
+      agentRuns: baseMissionSpec.agentRuns.map((run, index) => ({
+        id: run.id || `agent_run_${index + 1}`,
+        agentId: run.agentId,
+        status: 'queued',
+        required: run.required !== false,
+        promptSeed: run.promptSeed,
+      })),
+      results: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    setLatestMissionRun(missionRun);
+    setDeckRunBusy(true);
+    try {
+      const harnessRequest: WorkspaceHarnessRequest = {
+        provider: 'internal-workspace',
+        operation: 'generate_deck_patch',
+        userGoal: baseMissionSpec.userGoal,
+        activeCanvasId: canvasProjectId,
+        selectedObject: activeWorkspaceObjectContext,
+        missionSpec: baseMissionSpec,
+        missionRun,
+        currentDeckSummary: {
+          id: deck.id,
+          name: deck.name,
+          nodeCount: deck.nodes.length,
+          edgeCount: deck.edges.length,
+        },
+        availableAgents: deck.nodes.map((node) => ({ id: safeText(node.runtimeBinding || node.id), label: node.title })),
+        graphContextRefs: [],
+        priorResults: [],
+        permissions: WORKSPACE_HARNESS_DEFAULT_PERMISSIONS,
+      };
+      const patchResult = await runInternalWorkspaceHarness(harnessRequest, {
+        currentDeck: deck,
+        buildMissionDeckPatch,
+        applyMissionDeckPatch,
+      });
+      if (patchResult.missionDeckPatch) {
+        const applyResult = await runInternalWorkspaceHarness(
+          { ...harnessRequest, operation: 'apply_deck_patch' },
+          {
+            currentDeck: deck,
+            buildMissionDeckPatch,
+            applyMissionDeckPatch,
+          },
+        );
+        const patchToApply = applyResult.missionDeckPatch || patchResult.missionDeckPatch;
+        setDeck((current) => applyMissionDeckPatch(current, patchToApply));
+      }
+      const runResult = await runInternalWorkspaceHarness(
+        { ...harnessRequest, operation: 'run_approved_mission', missionRun },
+        {
+          currentDeck: deck,
+          buildMissionDeckPatch,
+          applyMissionDeckPatch,
+          runApprovedMission: runApprovedMissionSequential,
+        },
+      );
+      if (runResult.missionRunUpdate) {
+        missionRun = { ...missionRun, ...runResult.missionRunUpdate };
+        setLatestMissionRun(missionRun);
+      }
+      if (runResult.openMissionMessage) {
+        setOpenMissionMessage(runResult.openMissionMessage);
+      }
+      setPendingActivationProposal(null);
+    } finally {
+      setDeckRunBusy(false);
+    }
+  }, [
+    activeWorkspaceObjectContext,
+    canvasProjectId,
+    deck,
+    deckRunBusy,
+    pendingActivationProposal,
+    runApprovedMissionSequential,
+    setDeck,
+  ]);
+
+  const startPlanDraftFromChat = useCallback(
+    (message: string) => {
+      const requestSeq = ++planDraftRequestSeqRef.current;
+      setPlanDraftStatus('drafting');
+      void Promise.resolve().then(() => {
+        try {
+          const selectedObjectForDraft =
+            activeWorkspaceObjectContext?.selectedObjectId
+              ? {
+                  id: activeWorkspaceObjectContext.selectedObjectId,
+                  canvasId: canvasProjectId || 'agentbuilder_deck',
+                  type: activeWorkspaceObjectContext.selectedObjectType || 'workspace_object',
+                  title:
+                    activeWorkspaceObjectContext.selectedObjectTitle ||
+                    activeWorkspaceObjectContext.selectedObjectId,
+                  props: {
+                    selectedText: activeWorkspaceObjectContext.selectedText || null,
+                    openObjectSummary:
+                      activeWorkspaceObjectContext.openObjectSummary || null,
+                  },
+                  editableTargets: [],
+                  graphRefs: [],
+                }
+              : undefined;
+          const result = draftMissionSpecFromChat({
+            userMessage: message,
+            activeCanvasId: canvasProjectId || undefined,
+            selectedObject: selectedObjectForDraft,
+            currentMissionSpec: draftMissionSpecRef.current || undefined,
+            currentDeckSummary: {
+              id: deck.id,
+              name: deck.name,
+              nodeCount: deck.nodes.length,
+              edgeCount: deck.edges.length,
+            },
+            availableAgents: deck.nodes.map((node) => ({
+              id: safeText(node.runtimeBinding || node.id),
+              label: node.title,
+              type: safeText(node.runtimeType || undefined) || undefined,
+              capabilities: [safeText(node.runtimeBinding || node.runtimeType || '')].filter(Boolean),
+            })),
+            graphContextRefs: compactAwarenessList([
+              activeWorkspaceObjectContext?.selectedNodeId,
+              activeWorkspaceObjectContext?.selectedNodeName,
+              knowledgeGraphKind,
+            ]),
+            priorMissionResults:
+              latestMissionRun?.results.map((entry) => ({
+                agentId: entry.agentId,
+                summary: entry.reason || entry.output || null,
+              })) || [],
+          });
+          if (requestSeq !== planDraftRequestSeqRef.current) return;
+          setLatestPlanDraftResult(result);
+          if (result.missionSpec) {
+            setDraftMissionSpec(result.missionSpec);
+          } else if (result.missionSpecPatch && draftMissionSpecRef.current) {
+            setDraftMissionSpec({
+              ...draftMissionSpecRef.current,
+              ...result.missionSpecPatch,
+            });
+          }
+          setPlanDraftStatus(
+            result.status === 'ready' && !result.missionSpec && !result.missionSpecPatch
+              ? 'failed'
+              : result.status,
+          );
+          if (result.status === 'needs_user_input' && result.questions && result.questions.length > 0) {
+            setMessages((current) => [
+              ...current,
+              {
+                role: 'assistant',
+                text: `Plan companion needs input: ${result.questions.join(' | ')}`,
+              },
+            ]);
+          }
+        } catch (error: any) {
+          if (requestSeq !== planDraftRequestSeqRef.current) return;
+          setLatestPlanDraftResult({
+            status: 'failed',
+            summary: 'Plan drafting failed.',
+            errorReason: safeText(error?.message || 'plan_draft_failed'),
+          });
+          setPlanDraftStatus('failed');
+        }
+      });
+    },
+    [
+      activeWorkspaceObjectContext,
+      canvasProjectId,
+      deck,
+      knowledgeGraphKind,
+      latestMissionRun,
+    ],
+  );
+
   const handleSend = (t: string) => {
     const trimmed = t.trim();
     if (!trimmed) return;
@@ -7784,6 +8383,7 @@ export default function AgentBuilder(): React.ReactElement {
       ]);
       return;
     }
+    startPlanDraftFromChat(trimmed);
     const interactionId = createWorkspaceTestingInteractionId('chat');
     const sendStartedAt = Date.now();
     const turnId = `assist:${Date.now()}:${uid()}`;
@@ -8266,6 +8866,15 @@ export default function AgentBuilder(): React.ReactElement {
     [],
   );
 
+  const resolveAgentsChatMaxWidth = useCallback(
+    (reservedWidth: number) => {
+      const shellWidth = workspaceShellRef.current?.clientWidth ?? 0;
+      if (shellWidth <= 0) return AGENTS_CHAT_MIN_WIDTH;
+      return Math.max(AGENTS_CHAT_MIN_WIDTH, shellWidth - reservedWidth);
+    },
+    [],
+  );
+
   useEffect(() => {
     const reservedWidth =
       workspaceView === 'canvas'
@@ -8681,13 +9290,14 @@ export default function AgentBuilder(): React.ReactElement {
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={async () => {
                         setPendingActivationProposal((current) =>
                           current
                             ? { ...current, status: 'approved' }
                             : current,
-                        )
-                      }
+                        );
+                        await handleApproveMissionExecution();
+                      }}
                       className="px-3 py-1 rounded"
                       style={{
                         color: C.text,
@@ -8720,6 +9330,89 @@ export default function AgentBuilder(): React.ReactElement {
                 >
                   Request: {pendingActivationProposal.sourceText}
                 </div>
+              </div>
+            ) : null}
+            {latestMissionRun ? (
+              <div
+                style={graphDrawerSectionStyle({
+                  margin: '0 12px 10px',
+                  padding: '10px 12px',
+                  borderColor: 'rgba(79,162,173,0.25)',
+                  background: 'rgba(79,162,173,0.08)',
+                })}
+              >
+                <div style={{ fontSize: 12, color: C.text }}>
+                  Mission run: {latestMissionRun.status}
+                </div>
+                <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+                  {latestMissionRun.agentRuns
+                    .map((run) => `${run.agentId}:${run.status}`)
+                    .join(' | ')}
+                </div>
+              </div>
+            ) : null}
+            <div
+              style={graphDrawerSectionStyle({
+                margin: '0 12px 10px',
+                padding: '10px 12px',
+                borderColor: 'rgba(255,255,255,0.14)',
+                background: 'rgba(255,255,255,0.03)',
+              })}
+            >
+              <div style={{ fontSize: 12, color: C.text }}>
+                {planDraftStatus === 'drafting'
+                  ? 'Drafting plan...'
+                  : planDraftStatus === 'ready' && draftMissionSpec
+                    ? 'Plan ready'
+                    : planDraftStatus === 'ready'
+                      ? 'Failed to draft plan'
+                    : planDraftStatus === 'needs_user_input'
+                      ? 'Needs input'
+                      : planDraftStatus === 'failed'
+                        ? 'Failed to draft plan'
+                        : 'Plan draft idle'}
+              </div>
+              {draftMissionSpec ? (
+                <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+                  <div>{draftMissionSpec.title}</div>
+                  <div>Goal: {draftMissionSpec.userGoal}</div>
+                  <div>Target: {draftMissionSpec.target}</div>
+                  <div>
+                    Agents:{' '}
+                    {draftMissionSpec.agentRuns
+                      .map((run) => `${run.agentId} (${safeText(run.promptSeed).slice(0, 40)})`)
+                      .join(' | ')}
+                  </div>
+                </div>
+              ) : null}
+              {latestPlanDraftResult?.questions && latestPlanDraftResult.questions.length > 0 ? (
+                <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+                  Questions: {latestPlanDraftResult.questions.join(' | ')}
+                </div>
+              ) : null}
+            </div>
+            {openMissionMessage ? (
+              <div
+                style={graphDrawerSectionStyle({
+                  margin: '0 12px 10px',
+                  padding: '10px 12px',
+                  borderColor: 'rgba(226,186,84,0.28)',
+                  background: 'rgba(226,186,84,0.10)',
+                })}
+              >
+                <div style={{ fontSize: 12, color: C.text }}>
+                  Open mission: {openMissionMessage.title} ({openMissionMessage.status})
+                </div>
+                <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+                  {openMissionMessage.activeAgents
+                    .map((agent) => `${agent.label}:${agent.status}`)
+                    .join(' | ')}
+                </div>
+                {openMissionMessage.latestSummary ? (
+                  <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+                    {openMissionMessage.latestSummary}
+                  </div>
+                ) : null}
               </div>
             ) : null}
             <PlanMissionFlow
@@ -9195,6 +9888,9 @@ export default function AgentBuilder(): React.ReactElement {
                     width: chatPanelWidth,
                     minWidth: AGENTS_CHAT_MIN_WIDTH,
                     flex: '0 0 auto',
+                    transition: chatResizeHandleActive
+                      ? undefined
+                      : 'width 180ms cubic-bezier(.22,.61,.36,1)',
                   }),
             }}
           >
@@ -9216,14 +9912,27 @@ export default function AgentBuilder(): React.ReactElement {
                   workspaceView === 'canvas'
                     ? AGENTS_CANVAS_MIN_WIDTH
                     : WORKSPACE_COMPANION_MIN_WIDTH;
+                let raf = 0;
+                let pendingWidth = sw;
                 const mv = (ev: MouseEvent) => {
                   const d = ev.clientX - sx;
-                  setChatPanelWidth(
-                    clampAgentsChatWidth(sw + d, reservedWidth),
-                  );
+                  pendingWidth = clampAgentsChatWidth(sw + d, reservedWidth);
+                  if (raf !== 0) return;
+                  raf = window.requestAnimationFrame(() => {
+                    raf = 0;
+                    setChatPanelWidth(pendingWidth);
+                  });
                 };
                 const up = () => {
                   setChatResizeHandleActive(false);
+                  if (raf !== 0) {
+                    window.cancelAnimationFrame(raf);
+                    raf = 0;
+                  }
+                  const maxWidth = resolveAgentsChatMaxWidth(reservedWidth);
+                  if (pendingWidth >= maxWidth - WORKSPACE_COLLAPSE_EDGE_PX) {
+                    setWorkspaceView('chat');
+                  }
                   window.removeEventListener('mousemove', mv);
                   window.removeEventListener('mouseup', up);
                 };

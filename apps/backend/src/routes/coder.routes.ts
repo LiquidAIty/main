@@ -3,6 +3,7 @@ import type { OpenClaudeRunRequest } from '../coder/openclaude/contracts';
 import { openClaudeRuntimeService } from '../coder/openclaude/runtime/service';
 
 const router = Router();
+export const OPENCLAUDE_HARNESS_ROUTE_PREFIX = '/coder/openclaude';
 
 router.get('/openclaude/status', (req, res) => {
   const status = openClaudeRuntimeService.getStatus({

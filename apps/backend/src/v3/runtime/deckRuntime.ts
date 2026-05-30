@@ -24,6 +24,9 @@ import type {
   DeckRunStep,
   DeckWorkspaceContext,
   GraphViewContract,
+  MissionAgentRunStatus,
+  MissionRunStatus,
+  MissionSpec,
   PromptTemplate,
   WorkspaceObjectContext,
 } from '../types';
@@ -36,6 +39,9 @@ export type ExecuteDeckOptions = {
   workspaceContext?: DeckWorkspaceContext | null;
   workspaceObjectContext?: WorkspaceObjectContext | null;
   onRuntimeEvent?: (event: DeckRuntimeEvent) => void;
+  missionSpec?: MissionSpec;
+  missionRunId?: string;
+  missionAgentRunId?: string;
 };
 
 const WORKSPACE_OBJECT_CONTEXT_LIST_LIMIT = 12;
@@ -186,6 +192,7 @@ function buildRunSnapshot(
   extra?: Pick<DeckRun, 'endedAt' | 'error'>,
   workspaceContext?: DeckWorkspaceContext | null,
   workspaceObjectContext?: WorkspaceObjectContext | null,
+  mission?: DeckRun['mission'] | null,
 ): DeckRun {
   const graphViewContract =
     [...steps]
@@ -221,6 +228,7 @@ function buildRunSnapshot(
       simpleOrderCardIds: executionPlan.simpleOrderCardIds,
       expandedStepIds: executionPlan.expandedSteps.map((step) => step.executionId),
     },
+    mission: mission || null,
   };
 }
 
@@ -297,6 +305,50 @@ export async function executeDeck(
   const events: DeckRuntimeEvent[] = [];
   const workspaceContext = normalizeWorkspaceContext(options.workspaceContext);
   const workspaceObjectContext = normalizeWorkspaceObjectContext(options.workspaceObjectContext);
+  const missionBase = {
+    missionRunId: options.missionRunId || null,
+    missionAgentRunId: options.missionAgentRunId || null,
+  };
+  const resolveMissionMeta = (
+    runStatus: DeckRun['status'],
+    errorText?: string | null,
+  ): DeckRun['mission'] => {
+    const agentRunStatus: MissionAgentRunStatus | null =
+      runStatus === 'success'
+        ? 'complete'
+        : runStatus === 'running'
+          ? 'running'
+          : runStatus === 'skipped'
+            ? 'skipped'
+            : 'failed';
+    const missionStatusFromSpecRaw = options.missionSpec?.runState || null;
+    const missionStatusFromSpec: MissionRunStatus | null =
+      missionStatusFromSpecRaw === 'approved' ||
+      missionStatusFromSpecRaw === 'wiring' ||
+      missionStatusFromSpecRaw === 'running' ||
+      missionStatusFromSpecRaw === 'complete' ||
+      missionStatusFromSpecRaw === 'failed' ||
+      missionStatusFromSpecRaw === 'cancelled' ||
+      missionStatusFromSpecRaw === 'needs_user_input'
+        ? missionStatusFromSpecRaw
+        : null;
+    const missionStatus: MissionRunStatus | null =
+      runStatus === 'success'
+        ? 'running'
+        : runStatus === 'running'
+          ? 'running'
+          : runStatus === 'skipped'
+            ? missionStatusFromSpec
+            : 'failed';
+    return {
+      ...missionBase,
+      missionStatus,
+      agentRunStatus,
+      resultSummary: null,
+      needsUserInputReason: null,
+      errorReason: errorText || null,
+    };
+  };
   let latestGraphViewContract: GraphViewContract | null = null;
   const emitRuntimeEvent = (event: Omit<DeckRuntimeEvent, 'id' | 'at'>) => {
     const resolvedGraphViewContract =
@@ -348,6 +400,7 @@ export async function executeDeck(
       },
       workspaceContext,
       workspaceObjectContext,
+      resolveMissionMeta('error', 'deck_validation_failed'),
     );
   }
 
@@ -383,6 +436,7 @@ export async function executeDeck(
       },
       workspaceContext,
       workspaceObjectContext,
+      resolveMissionMeta('error', 'deck_missing_start_node'),
     );
   }
 
@@ -459,6 +513,7 @@ export async function executeDeck(
         },
         workspaceContext,
         workspaceObjectContext,
+        resolveMissionMeta('error', `template_not_resolved:${card.templateId}`),
       );
     }
 
@@ -491,6 +546,9 @@ export async function executeDeck(
         projectId: options.projectId,
         workspaceContext,
         workspaceObjectContext,
+        missionSpec: options.missionSpec,
+        missionRunId: options.missionRunId,
+        missionAgentRunId: options.missionAgentRunId,
         deckId: document.id,
         deckName: document.name,
         allCards: document.nodes,
@@ -573,6 +631,7 @@ export async function executeDeck(
           },
           workspaceContext,
           workspaceObjectContext,
+          resolveMissionMeta('error', step.error || `card_failed:${card.id}`),
         );
       }
 
@@ -605,6 +664,7 @@ export async function executeDeck(
         },
         workspaceContext,
         workspaceObjectContext,
+        resolveMissionMeta('success'),
       );
     }
   }
@@ -632,6 +692,7 @@ export async function executeDeck(
       },
       workspaceContext,
       workspaceObjectContext,
+      resolveMissionMeta('error', 'deck_graph_execution_stalled'),
     );
   }
 
@@ -655,5 +716,6 @@ export async function executeDeck(
     },
     workspaceContext,
     workspaceObjectContext,
+    resolveMissionMeta('success'),
   );
 }

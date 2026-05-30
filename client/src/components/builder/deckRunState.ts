@@ -11,13 +11,11 @@ import type {
   StructuredAssistPlanStep,
 } from "./assistPlanSurface";
 import { safeJson } from "./requestGuards";
-import type { DeckDocument, DeckRun, DeckRuntimeEvent } from "../../types/agentgraph";
+import type { DeckDocument, DeckRun, DeckRunResponse, DeckRuntimeEvent } from "../../types/agentgraph";
 
-type DeckRunStreamResult = {
-  ok?: boolean;
+type DeckRunStreamResult = DeckRunResponse & {
   deck?: DeckDocument;
   run?: DeckRun;
-  meta?: Record<string, unknown> | null;
 };
 
 type DeckRuntimeVisualState = {

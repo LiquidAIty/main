@@ -35,6 +35,58 @@ LiquidAIty is a general AI-native platform first. Trading, energy modeling, repo
 - Confirm what already exists, what must remain stable, and what is risky.
 - Surface assumptions explicitly before editing.
 
+## Inverse Audit + Safe 80% Execution Protocol
+For every meaningful task, agents must follow this order:
+
+1. Intent inversion
+   - Restate what the user likely means.
+   - Identify the real product/dev goal.
+   - Identify success criteria.
+   - Identify what would be overreach.
+
+2. Code/context audit
+   - Use Code-Based Memory MCP.
+   - Find existing files, symbols, ownership, state flow, docs, specs, and relevant skills.
+   - Check current behavior before proposing changes.
+   - Do not implement from memory alone.
+
+3. Safe plan
+   - Identify the smallest useful implementation boundary.
+   - Separate low-risk known work from uncertain, hard, risky, or final-detail work.
+   - Select only matching `.skills` files.
+   - Decide whether `spec.md`, `plan.md`, or `tasks.md` must be created or updated.
+
+4. Safe 80% implementation
+   - Implement the largest fully understood safe portion.
+   - If the full task is simple, local, and clearly safe, complete it in one pass.
+   - Do not perform speculative rewrites.
+   - Do not block useful progress waiting for perfect certainty.
+   - Leave confusing, unknown, high-risk, or final-polish details for a later explicit pass.
+
+5. Documentation update
+   - Update the closest durable home only when behavior, architecture, workflow, or reusable knowledge changes.
+   - Route durable knowledge according to Progressive Notes policy.
+   - Do not create scratch Markdown.
+
+6. Validation
+   - Run the smallest useful validation.
+   - If tests are not run, say why.
+
+7. Final report
+   - State inferred intent.
+   - State code/context audited.
+   - State skills activated.
+   - State what was implemented.
+   - State what was intentionally left undone.
+   - State validation result.
+   - State docs/spec updates.
+   - State risks, uncertainty, and recommended next step.
+
+Clarification rule:
+Agents should not ask for clarification when the safe 80% is obvious. Implement the safe
+understood portion and report the uncertain remainder. Ask only when proceeding would risk data
+loss, major architecture damage, security exposure, or wrong product direction.
+
 ## Implementation Rule
 - Implement the largest fully understood safe portion.
 - Keep edits surgical.
@@ -72,15 +124,24 @@ Durable lessons discovered during implementation must be placed in the smallest 
 - architecture decision -> `docs/decisions/*`
 - run/setup command -> `docs/runbooks/full-stack-dev.md`
 - coding rule -> `AGENTS.md`
+- Sol behavior -> `SOUL.md`
 - task technique -> matching `.skills/*/SKILL.md`
+- major retrospective/postmortem -> `docs/audits/*` with clear scope, date, owner, findings, and action items
 
-Do not create random scratch Markdown, audit docs, or duplicate documentation maps.
+Do not create random scratch Markdown, duplicate maps, or unowned audit docs.
 
 ## Runtime Rules
 - AutoGen is mandatory for real agent execution.
 - No silent TypeScript fallback runtime.
 - No fake fallback runtime.
 - Runtime truth comes from code and verified checks.
+- Real-user readiness rule:
+  - no fake success states
+  - no mockups pretending to work
+  - no placeholder "coming soon" behavior treated as live
+  - no random demo wires or hidden board resets
+  - no silent failed saves
+  - if not implemented, state it clearly and report compact status
 
 ## Forbidden / Historical
 - No LangChain.
@@ -104,14 +165,26 @@ Do not create random scratch Markdown, audit docs, or duplicate documentation ma
 - uncertainty
 - forward plan
 
-## Working Notes
-Agents may keep short working notes in their final report while working.
+## Progressive Notes, Not Markdown Sprawl
+Agents must capture useful discoveries, but must route them to the smallest correct durable home.
+Temporary investigation notes belong in the final report, not permanent files.
 
-Durable notes must go into the correct existing place:
+Durable notes must be stored by type:
 - feature behavior -> `specs/*`
+- implementation plan -> `specs/*/plan.md`
+- task checklist -> `specs/*/tasks.md`
 - architecture decision -> `docs/decisions/*`
-- run command/setup -> `docs/runbooks/full-stack-dev.md`
-- project identity/rules -> `SOUL.md` or `AGENTS.md`
+- major audit or postmortem -> `docs/audits/*`
+- run/setup/test finding -> `docs/runbooks/*`
+- coding-agent rule -> `AGENTS.md`
+- Sol identity/behavior -> `SOUL.md`
+- task-specific technique -> matching `.skills/*/SKILL.md`
 
-Agents must not create random audit docs, scratch Markdown files, or duplicate documentation maps.
-Temporary reasoning belongs in the final report, not permanent repo files.
+Agents must not create random scratch Markdown files, duplicate documentation maps, or unowned audit docs.
+
+A new Markdown file is allowed only when it has:
+- a clear owner/purpose
+- a correct folder
+- durable value
+- no better existing home
+- a short title and scoped content

@@ -19,12 +19,20 @@ Use only when:
 ## Do
 
 - Model durable knowledge as entities, relationships, properties, provenance, and confidence.
+- Use `SemanticGraphRecord` (or a strict adapter into it) for durable ThinkGraph/KnowGraph records.
 - Keep current intent separate from stale/historical docs.
 - Keep ThinkGraph, KnowGraph, and CodeGraph roles explicit.
 - Prefer graph-shaped summaries over raw chat dumps.
 - Store source/provenance with useful knowledge.
 - Design for future ingestion/search/routing.
 - Document ontology/entity changes.
+- Require every record to include: `kind`, `label`, `summary`, `sourceRefs`, `confidence`, `provenance`, `writer`, `writeMode`.
+- Treat `GraphUpdateRequest` as request-only unless a graph agent explicitly accepts/applies it.
+- Enforce writer boundaries:
+  - ThinkGraph writes: `thinkgraph-agent`
+  - KnowGraph writes: `knowgraph-agent`
+  - CodeGraph writes: `codegraph-agent` (when enabled)
+  - Sol / WorkspaceHarness / ChatPlanCompanion: request/query only, no direct write
 
 ## Do Not
 
@@ -33,6 +41,8 @@ Use only when:
 - Do not create vague memory blobs with no provenance.
 - Do not overwrite current intent with stale docs.
 - Do not claim graph memory behavior exists unless code supports it.
+- Do not store loose summary blobs with no source refs/provenance.
+- Do not fake graph writes or fake successful persistence.
 
 ## Validate
 

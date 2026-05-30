@@ -28,7 +28,7 @@ Use only when:
 
 ## Do Not
 
-- Do not create random audit docs.
+- Do not create random scratch Markdown, duplicate maps, or unowned audit docs.
 - Do not duplicate the same truth in many files.
 - Do not let docs claim unverified runtime behavior.
 - Do not leave changed behavior undocumented.
@@ -44,6 +44,9 @@ Select-String -Path docs\**\*.md,specs\**\*.md -Pattern "TODO|planned|AutoGen|Sp
 ## Docs
 
 This skill governs docs updates. Use it to decide which existing doc/spec to update.
+Audits are required before implementation. Temporary audit notes belong in final reports.
+Durable audit findings go to canonical homes: `specs/*`, `docs/decisions/*`, `docs/runbooks/*`,
+`AGENTS.md`, `SOUL.md`, matching `.skills/*`, or `docs/audits/*` for major retrospectives.
 
 ## Source
 

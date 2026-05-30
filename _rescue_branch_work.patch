@@ -1,0 +1,3958 @@
+diff --git a/.skills/frontend/react-flow-xyflow/SKILL.md b/.skills/frontend/react-flow-xyflow/SKILL.md
+index a2a3af1d..b87a4f9c 100644
+--- a/.skills/frontend/react-flow-xyflow/SKILL.md
++++ b/.skills/frontend/react-flow-xyflow/SKILL.md
+@@ -26,6 +26,12 @@ Use only when:
+ - Use unique handle IDs when multiple handles share a side/type.
+ - Use `nodrag` on buttons/inputs/selects inside nodes.
+ - Use `useUpdateNodeInternals` when handles are added/removed dynamically.
++- Treat the Agent Builder deck as the user's persistent playing board: saved layout is source-of-truth.
++- Preserve the actual saved React Flow edge array as source-of-truth; never infer edges from card placement or screenshots.
++- Preserve existing node IDs and positions for persisted decks; only assign positions for genuinely new nodes.
++- Keep edge updates non-destructive: preserve user-created edges, avoid duplicates, and never force all-to-all rewires.
++- Distinguish capability wiring vs mission-flow wiring; do not collapse them into one noisy edge pattern.
++- For mission wiring helpers (e.g. `MissionDeckPatch`), merge into existing state without resetting user layout.
+ 
+ ## Do Not
+ 
+@@ -36,6 +42,21 @@ Use only when:
+ - Do not break object-aware selection or chat/canvas context.
+ - Do not add road-sign UI or heavy labels unless requested.
+ - Do not assume all graph canvases share the same node semantics.
++- Do not reapply `INITIAL_DECK` over an existing saved project/deck state.
++- Do not add fake/inferred connections to make the board "look right."
++- Do not auto-connect agents unless explicitly requested by the user.
++- Do not change default seed layout to "fix" existing project persistence.
++- Do not run auto-layout on existing user decks unless explicitly requested.
++- Do not add forced node position resets for specific cards in hydration paths.
++- Do not silently ignore failed deck saves.
++
++## Persistence Rules
++
++- Persist node movement (`drag`/`position`) to project/deck-scoped storage.
++- Persist edge connect/reconnect/delete to project/deck-scoped storage.
++- Hydration must prefer saved deck state; seed defaults apply only when no saved deck exists (or explicit reset/new deck flow).
++- Rebuild/restart/reopen must restore saved layout exactly for the same project/deck.
++- If persistence guarantees cannot be met in current mode, surface that explicitly before changing layout logic.
+ 
+ ## Validate
+ 
+diff --git a/.skills/graph/graph-memory-design/SKILL.md b/.skills/graph/graph-memory-design/SKILL.md
+index 93b8b0d4..a9b63699 100644
+--- a/.skills/graph/graph-memory-design/SKILL.md
++++ b/.skills/graph/graph-memory-design/SKILL.md
+@@ -19,12 +19,20 @@ Use only when:
+ ## Do
+ 
+ - Model durable knowledge as entities, relationships, properties, provenance, and confidence.
++- Use `SemanticGraphRecord` (or a strict adapter into it) for durable ThinkGraph/KnowGraph records.
+ - Keep current intent separate from stale/historical docs.
+ - Keep ThinkGraph, KnowGraph, and CodeGraph roles explicit.
+ - Prefer graph-shaped summaries over raw chat dumps.
+ - Store source/provenance with useful knowledge.
+ - Design for future ingestion/search/routing.
+ - Document ontology/entity changes.
++- Require every record to include: `kind`, `label`, `summary`, `sourceRefs`, `confidence`, `provenance`, `writer`, `writeMode`.
++- Treat `GraphUpdateRequest` as request-only unless a graph agent explicitly accepts/applies it.
++- Enforce writer boundaries:
++  - ThinkGraph writes: `thinkgraph-agent`
++  - KnowGraph writes: `knowgraph-agent`
++  - CodeGraph writes: `codegraph-agent` (when enabled)
++  - Sol / WorkspaceHarness / ChatPlanCompanion: request/query only, no direct write
+ 
+ ## Do Not
+ 
+@@ -33,6 +41,8 @@ Use only when:
+ - Do not create vague memory blobs with no provenance.
+ - Do not overwrite current intent with stale docs.
+ - Do not claim graph memory behavior exists unless code supports it.
++- Do not store loose summary blobs with no source refs/provenance.
++- Do not fake graph writes or fake successful persistence.
+ 
+ ## Validate
+ 
+diff --git a/.skills/workflow/docs-on-change/SKILL.md b/.skills/workflow/docs-on-change/SKILL.md
+index aebc4ef4..6fd2c923 100644
+--- a/.skills/workflow/docs-on-change/SKILL.md
++++ b/.skills/workflow/docs-on-change/SKILL.md
+@@ -28,7 +28,7 @@ Use only when:
+ 
+ ## Do Not
+ 
+-- Do not create random audit docs.
++- Do not create random scratch Markdown, duplicate maps, or unowned audit docs.
+ - Do not duplicate the same truth in many files.
+ - Do not let docs claim unverified runtime behavior.
+ - Do not leave changed behavior undocumented.
+@@ -44,6 +44,9 @@ Select-String -Path docs\**\*.md,specs\**\*.md -Pattern "TODO|planned|AutoGen|Sp
+ ## Docs
+ 
+ This skill governs docs updates. Use it to decide which existing doc/spec to update.
++Audits are required before implementation. Temporary audit notes belong in final reports.
++Durable audit findings go to canonical homes: `specs/*`, `docs/decisions/*`, `docs/runbooks/*`,
++`AGENTS.md`, `SOUL.md`, matching `.skills/*`, or `docs/audits/*` for major retrospectives.
+ 
+ ## Source
+ 
+diff --git a/.skills/workflow/spec-kit/SKILL.md b/.skills/workflow/spec-kit/SKILL.md
+index 383bf141..69d1b5e4 100644
+--- a/.skills/workflow/spec-kit/SKILL.md
++++ b/.skills/workflow/spec-kit/SKILL.md
+@@ -25,14 +25,16 @@ Use only when:
+ - Run Code-Based Memory MCP before significant edits.
+ - Run inverse audit before implementation.
+ - Implement the largest fully understood safe portion.
++- Leave uncertain or final-detail work for a later explicit pass.
+ - Report uncertainty and forward plan.
++- Report what remains intentionally undone.
+ 
+ ## Do Not
+ 
+ - Do not code before the spec is clear.
+ - Do not skip plan/tasks for meaningful work.
+ - Do not make broad speculative rewrites.
+-- Do not create random audit docs.
++- Do not create random scratch Markdown, duplicate maps, or unowned audit docs.
+ - Do not commit unless requested.
+ 
+ ## Validate
+@@ -47,6 +49,9 @@ git status --short
+ Feature change -> relevant specs/*  
+ Dev workflow change -> AGENTS.md or .specify/memory/constitution.md  
+ Architecture decision -> docs/decisions/*
++Audits are required before implementation. Temporary audit notes belong in final reports.
++Durable audit findings go to canonical homes: `specs/*`, `docs/decisions/*`, `docs/runbooks/*`,
++`AGENTS.md`, `SOUL.md`, matching `.skills/*`, or `docs/audits/*` for major retrospectives.
+ 
+ ## Source
+ 
+diff --git a/.specify/memory/constitution.md b/.specify/memory/constitution.md
+index e70fe7e7..8f470727 100644
+--- a/.specify/memory/constitution.md
++++ b/.specify/memory/constitution.md
+@@ -55,11 +55,21 @@ Documentation must stay minimal and canonical. Do not accumulate audit-note file
+ repo noise. External subtree docs are scoped and do not override LiquidAIty truth.
+ Temporary working notes must not become repo noise. Durable knowledge must be stored in specs,
+ architecture docs, runbooks, decisions, SOUL.md, or AGENTS.md as appropriate.
++Audits are required before implementation. Temporary audit notes belong in implementation reports;
++durable audit findings must be routed to canonical homes (`specs/*`, `docs/decisions/*`,
++`docs/runbooks/*`, `AGENTS.md`, `SOUL.md`, matching `.skills/*`, or `docs/audits/*` for major
++retrospectives with clear scope, date, owner, findings, and action items).
++New Markdown files are allowed only when they have clear owner/purpose, correct folder, durable
++value, no better existing home, and scoped content.
+ 
+ ## 9. Runtime Truth Comes From Code
+ Docs/specs must not claim behavior that is not implemented and validated. Uncertainty MUST be
+ stated explicitly.
+ 
++Meaningful work must use intent inversion, code/context audit, safe planning, safe 80%
++implementation, validation, and a final report. Agents must make useful safe progress without
++overreaching into uncertain or high-risk work.
++
+ ## 10. Security And Secrets
+ Secrets MUST not be committed to docs or code. Secret values belong in env files or secret
+ managers.
+diff --git a/AGENTS.md b/AGENTS.md
+index 1ea6f48a..d083a81e 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -35,6 +35,58 @@ LiquidAIty is a general AI-native platform first. Trading, energy modeling, repo
+ - Confirm what already exists, what must remain stable, and what is risky.
+ - Surface assumptions explicitly before editing.
+ 
++## Inverse Audit + Safe 80% Execution Protocol
++For every meaningful task, agents must follow this order:
++
++1. Intent inversion
++   - Restate what the user likely means.
++   - Identify the real product/dev goal.
++   - Identify success criteria.
++   - Identify what would be overreach.
++
++2. Code/context audit
++   - Use Code-Based Memory MCP.
++   - Find existing files, symbols, ownership, state flow, docs, specs, and relevant skills.
++   - Check current behavior before proposing changes.
++   - Do not implement from memory alone.
++
++3. Safe plan
++   - Identify the smallest useful implementation boundary.
++   - Separate low-risk known work from uncertain, hard, risky, or final-detail work.
++   - Select only matching `.skills` files.
++   - Decide whether `spec.md`, `plan.md`, or `tasks.md` must be created or updated.
++
++4. Safe 80% implementation
++   - Implement the largest fully understood safe portion.
++   - If the full task is simple, local, and clearly safe, complete it in one pass.
++   - Do not perform speculative rewrites.
++   - Do not block useful progress waiting for perfect certainty.
++   - Leave confusing, unknown, high-risk, or final-polish details for a later explicit pass.
++
++5. Documentation update
++   - Update the closest durable home only when behavior, architecture, workflow, or reusable knowledge changes.
++   - Route durable knowledge according to Progressive Notes policy.
++   - Do not create scratch Markdown.
++
++6. Validation
++   - Run the smallest useful validation.
++   - If tests are not run, say why.
++
++7. Final report
++   - State inferred intent.
++   - State code/context audited.
++   - State skills activated.
++   - State what was implemented.
++   - State what was intentionally left undone.
++   - State validation result.
++   - State docs/spec updates.
++   - State risks, uncertainty, and recommended next step.
++
++Clarification rule:
++Agents should not ask for clarification when the safe 80% is obvious. Implement the safe
++understood portion and report the uncertain remainder. Ask only when proceeding would risk data
++loss, major architecture damage, security exposure, or wrong product direction.
++
+ ## Implementation Rule
+ - Implement the largest fully understood safe portion.
+ - Keep edits surgical.
+@@ -72,15 +124,24 @@ Durable lessons discovered during implementation must be placed in the smallest
+ - architecture decision -> `docs/decisions/*`
+ - run/setup command -> `docs/runbooks/full-stack-dev.md`
+ - coding rule -> `AGENTS.md`
++- Sol behavior -> `SOUL.md`
+ - task technique -> matching `.skills/*/SKILL.md`
++- major retrospective/postmortem -> `docs/audits/*` with clear scope, date, owner, findings, and action items
+ 
+-Do not create random scratch Markdown, audit docs, or duplicate documentation maps.
++Do not create random scratch Markdown, duplicate maps, or unowned audit docs.
+ 
+ ## Runtime Rules
+ - AutoGen is mandatory for real agent execution.
+ - No silent TypeScript fallback runtime.
+ - No fake fallback runtime.
+ - Runtime truth comes from code and verified checks.
++- Real-user readiness rule:
++  - no fake success states
++  - no mockups pretending to work
++  - no placeholder "coming soon" behavior treated as live
++  - no random demo wires or hidden board resets
++  - no silent failed saves
++  - if not implemented, state it clearly and report compact status
+ 
+ ## Forbidden / Historical
+ - No LangChain.
+@@ -104,14 +165,26 @@ Do not create random scratch Markdown, audit docs, or duplicate documentation ma
+ - uncertainty
+ - forward plan
+ 
+-## Working Notes
+-Agents may keep short working notes in their final report while working.
++## Progressive Notes, Not Markdown Sprawl
++Agents must capture useful discoveries, but must route them to the smallest correct durable home.
++Temporary investigation notes belong in the final report, not permanent files.
+ 
+-Durable notes must go into the correct existing place:
++Durable notes must be stored by type:
+ - feature behavior -> `specs/*`
++- implementation plan -> `specs/*/plan.md`
++- task checklist -> `specs/*/tasks.md`
+ - architecture decision -> `docs/decisions/*`
+-- run command/setup -> `docs/runbooks/full-stack-dev.md`
+-- project identity/rules -> `SOUL.md` or `AGENTS.md`
+-
+-Agents must not create random audit docs, scratch Markdown files, or duplicate documentation maps.
+-Temporary reasoning belongs in the final report, not permanent repo files.
++- major audit or postmortem -> `docs/audits/*`
++- run/setup/test finding -> `docs/runbooks/*`
++- coding-agent rule -> `AGENTS.md`
++- Sol identity/behavior -> `SOUL.md`
++- task-specific technique -> matching `.skills/*/SKILL.md`
++
++Agents must not create random scratch Markdown files, duplicate documentation maps, or unowned audit docs.
++
++A new Markdown file is allowed only when it has:
++- a clear owner/purpose
++- a correct folder
++- durable value
++- no better existing home
++- a short title and scoped content
+diff --git a/SOUL.md b/SOUL.md
+index 062e7a50..7da444f2 100644
+--- a/SOUL.md
++++ b/SOUL.md
+@@ -25,6 +25,7 @@ Sol works from current repo truth, user intent, Spec Kit, graph-native project c
+ - Use PowerShell commands by default.
+ - Be direct when something is not possible.
+ - Do not pretend a task is complete if it is not.
++- Ask for clarification only when proceeding risks data loss, major architecture damage, security exposure, or wrong product direction.
+ 
+ ## Expertise & Knowledge
+ - LiquidAIty architecture
+@@ -58,14 +59,16 @@ Sol works from current repo truth, user intent, Spec Kit, graph-native project c
+ 
+ ## Workflow
+ 1. Understand user intent.
+-2. Use Code-Based Memory MCP.
+-3. Run inverse audit.
+-4. Identify current repo truth.
+-5. Identify the safe implementation boundary.
+-6. Plan.
+-7. Implement the largest fully understood safe portion.
+-8. Validate.
+-9. Report files changed, tests run, risks, uncertainty, and forward plan.
++2. Invert intent to infer the real user goal and success criteria.
++3. Use Code-Based Memory MCP.
++4. Run inverse audit.
++5. Identify current repo truth.
++6. Identify the safe implementation boundary.
++7. Plan.
++8. Implement the largest fully understood safe portion.
++9. Leave confusing, unknown, risky, or final-polish details for a later explicit pass.
++10. Validate.
++11. Report files changed, tests run, risks, uncertainty, what remains, and forward plan.
+ 
+ ## Tool Usage
+ - Use Code-Based Memory MCP before significant edits.
+diff --git a/apps/backend/src/routes/coder.routes.ts b/apps/backend/src/routes/coder.routes.ts
+index c3e6370e..1c63fcdf 100644
+--- a/apps/backend/src/routes/coder.routes.ts
++++ b/apps/backend/src/routes/coder.routes.ts
+@@ -3,6 +3,7 @@ import type { OpenClaudeRunRequest } from '../coder/openclaude/contracts';
+ import { openClaudeRuntimeService } from '../coder/openclaude/runtime/service';
+ 
+ const router = Router();
++export const OPENCLAUDE_HARNESS_ROUTE_PREFIX = '/coder/openclaude';
+ 
+ router.get('/openclaude/status', (req, res) => {
+   const status = openClaudeRuntimeService.getStatus({
+diff --git a/apps/backend/src/v3/cards/runtime.ts b/apps/backend/src/v3/cards/runtime.ts
+index a77f67e5..9f66b933 100644
+--- a/apps/backend/src/v3/cards/runtime.ts
++++ b/apps/backend/src/v3/cards/runtime.ts
+@@ -25,6 +25,7 @@ import type {
+   DeckEdgeType,
+   DeckRuntimeEvent,
+   DeckWorkspaceContext,
++  MissionSpec,
+   PromptTemplate,
+   RuntimeBinding,
+   WorkspaceObjectContext,
+@@ -38,6 +39,9 @@ export type CardRuntimeContext = {
+   projectId?: string;
+   workspaceContext?: DeckWorkspaceContext | null;
+   workspaceObjectContext?: WorkspaceObjectContext | null;
++  missionSpec?: MissionSpec;
++  missionRunId?: string;
++  missionAgentRunId?: string;
+   deckId?: string;
+   deckName?: string;
+   allCards?: AgentCardInstance[];
+diff --git a/apps/backend/src/v3/graph/semanticLanguage.spec.ts b/apps/backend/src/v3/graph/semanticLanguage.spec.ts
+new file mode 100644
+index 00000000..bde05120
+--- /dev/null
++++ b/apps/backend/src/v3/graph/semanticLanguage.spec.ts
+@@ -0,0 +1,51 @@
++import { describe, expect, it } from "vitest";
++
++import {
++  canApplyGraphUpdateRequest,
++  normalizeKnowGraphOutputToSemanticRecords,
++  normalizeThinkGraphOutputToSemanticRecords,
++} from "./semanticLanguage";
++
++describe("semanticLanguage", () => {
++  it("preserves sourceRefs for KnowGraph normalization", () => {
++    const records = normalizeKnowGraphOutputToSemanticRecords([
++      {
++        id: "kg-1",
++        label: "Claim A",
++        summary: "Source-backed claim",
++        sourceRefs: [
++          {
++            type: "url",
++            ref: "https://example.com/a",
++            title: "Example A",
++          },
++        ],
++      },
++    ]);
++    expect(records).toHaveLength(1);
++    expect(records[0].writer).toBe("knowgraph-agent");
++    expect(records[0].sourceRefs[0]?.ref).toBe("https://example.com/a");
++  });
++
++  it("creates decision/summary/action records for ThinkGraph when provided", () => {
++    const records = normalizeThinkGraphOutputToSemanticRecords([
++      { id: "tg-1", kind: "decision", label: "Choose path", summary: "Decision made" },
++      { id: "tg-2", kind: "summary", label: "Mission summary", summary: "Summary text" },
++      { id: "tg-3", kind: "action", label: "Next step", summary: "Do X" },
++    ]);
++    expect(records).toHaveLength(3);
++    expect(records.map((record) => record.kind)).toEqual([
++      "decision",
++      "summary",
++      "action",
++    ]);
++    expect(records.every((record) => record.writer === "thinkgraph-agent")).toBe(true);
++  });
++
++  it("blocks direct graph update apply for non-graph actors", () => {
++    expect(canApplyGraphUpdateRequest("workspace-harness")).toBe(false);
++    expect(canApplyGraphUpdateRequest("sol")).toBe(false);
++    expect(canApplyGraphUpdateRequest("thinkgraph-agent")).toBe(true);
++  });
++});
++
+diff --git a/apps/backend/src/v3/graph/semanticLanguage.ts b/apps/backend/src/v3/graph/semanticLanguage.ts
+new file mode 100644
+index 00000000..78ac2fe9
+--- /dev/null
++++ b/apps/backend/src/v3/graph/semanticLanguage.ts
+@@ -0,0 +1,181 @@
++import type {
++  SemanticGraphRecord,
++  SemanticGraphRecordKind,
++  SemanticGraphSourceRef,
++  SemanticGraphWriter,
++} from "../types";
++
++function asString(value: unknown): string {
++  if (value == null) return "";
++  if (typeof value === "string") return value;
++  if (typeof value === "number" || typeof value === "boolean") return String(value);
++  try {
++    const json = JSON.stringify(value);
++    return typeof json === "string" ? json : String(value);
++  } catch {
++    return String(value);
++  }
++}
++
++function toSourceRefs(input: unknown): SemanticGraphSourceRef[] {
++  if (!Array.isArray(input)) return [];
++  const refs: SemanticGraphSourceRef[] = [];
++  for (const item of input) {
++    if (!item || typeof item !== "object") continue;
++    const raw = item as Record<string, unknown>;
++    const type = asString(raw.type).trim().toLowerCase();
++    const ref = asString(raw.ref).trim();
++    if (!ref) continue;
++    const normalizedType: SemanticGraphSourceRef["type"] =
++      type === "chat" ||
++      type === "url" ||
++      type === "file" ||
++      type === "code" ||
++      type === "mission" ||
++      type === "agent_run" ||
++      type === "graph_record" ||
++      type === "user_input"
++        ? (type as SemanticGraphSourceRef["type"])
++        : "chat";
++    refs.push({
++      type: normalizedType,
++      ref,
++      title: asString(raw.title).trim() || null,
++      summary: asString(raw.summary).trim() || null,
++      excerpt: asString(raw.excerpt).trim() || null,
++      retrievedAt: asString(raw.retrievedAt).trim() || null,
++      confidence: Number.isFinite(Number(raw.confidence)) ? Number(raw.confidence) : null,
++    });
++  }
++  return refs;
++}
++
++function normalizeRecord(
++  input: unknown,
++  options: {
++    graph: SemanticGraphRecord["graph"];
++    defaultKind: SemanticGraphRecordKind;
++    writer: SemanticGraphWriter;
++    now: string;
++  },
++): SemanticGraphRecord | null {
++  if (!input || typeof input !== "object") return null;
++  const raw = input as Record<string, unknown>;
++  const id = asString(raw.id).trim();
++  if (!id) return null;
++  const label = asString(raw.label).trim() || id;
++  const summary = asString(raw.summary).trim() || asString(raw.text).trim() || label;
++  const kindRaw = asString(raw.kind).trim().toLowerCase();
++  const kind: SemanticGraphRecordKind =
++    kindRaw === "entity" ||
++    kindRaw === "relationship" ||
++    kindRaw === "claim" ||
++    kindRaw === "evidence" ||
++    kindRaw === "source" ||
++    kindRaw === "decision" ||
++    kindRaw === "summary" ||
++    kindRaw === "action" ||
++    kindRaw === "question" ||
++    kindRaw === "hypothesis" ||
++    kindRaw === "contradiction" ||
++    kindRaw === "mission" ||
++    kindRaw === "agent_run" ||
++    kindRaw === "file" ||
++    kindRaw === "component" ||
++    kindRaw === "symbol"
++      ? (kindRaw as SemanticGraphRecordKind)
++      : options.defaultKind;
++
++  return {
++    id,
++    graph: options.graph,
++    kind,
++    label,
++    summary,
++    entities: Array.isArray(raw.entities) ? (raw.entities as SemanticGraphRecord["entities"]) : [],
++    relationships: Array.isArray(raw.relationships)
++      ? (raw.relationships as SemanticGraphRecord["relationships"])
++      : [],
++    properties:
++      raw.properties && typeof raw.properties === "object"
++        ? (raw.properties as Record<string, unknown>)
++        : {},
++    sourceRefs: toSourceRefs(raw.sourceRefs),
++    confidence: Number.isFinite(Number(raw.confidence)) ? Number(raw.confidence) : null,
++    vectorText: asString(raw.vectorText).trim() || summary,
++    provenance:
++      raw.provenance && typeof raw.provenance === "object"
++        ? (raw.provenance as SemanticGraphRecord["provenance"])
++        : null,
++    writer: options.writer,
++    writeMode: "agent-owned",
++    createdAt: asString(raw.createdAt).trim() || options.now,
++    updatedAt: asString(raw.updatedAt).trim() || options.now,
++    "@context":
++      raw["@context"] && (typeof raw["@context"] === "string" || Array.isArray(raw["@context"]) || typeof raw["@context"] === "object")
++        ? (raw["@context"] as SemanticGraphRecord["@context"])
++        : undefined,
++    "@id": asString(raw["@id"]).trim() || undefined,
++    "@type":
++      typeof raw["@type"] === "string" || Array.isArray(raw["@type"])
++        ? (raw["@type"] as SemanticGraphRecord["@type"])
++        : undefined,
++  };
++}
++
++export function normalizeKnowGraphOutputToSemanticRecords(
++  payload: unknown,
++): SemanticGraphRecord[] {
++  const now = new Date().toISOString();
++  const rows = Array.isArray(payload)
++    ? payload
++    : payload && typeof payload === "object" && Array.isArray((payload as any).records)
++      ? ((payload as any).records as unknown[])
++      : [];
++
++  const normalized = rows
++    .map((entry) =>
++      normalizeRecord(entry, {
++        graph: "know",
++        defaultKind: "claim",
++        writer: "knowgraph-agent",
++        now,
++      }),
++    )
++    .filter((entry): entry is SemanticGraphRecord => Boolean(entry));
++
++  return normalized;
++}
++
++export function normalizeThinkGraphOutputToSemanticRecords(
++  payload: unknown,
++): SemanticGraphRecord[] {
++  const now = new Date().toISOString();
++  const rows = Array.isArray(payload)
++    ? payload
++    : payload && typeof payload === "object" && Array.isArray((payload as any).records)
++      ? ((payload as any).records as unknown[])
++      : [];
++
++  const normalized = rows
++    .map((entry) =>
++      normalizeRecord(entry, {
++        graph: "think",
++        defaultKind: "summary",
++        writer: "thinkgraph-agent",
++        now,
++      }),
++    )
++    .filter((entry): entry is SemanticGraphRecord => Boolean(entry));
++
++  return normalized;
++}
++
++export function canApplyGraphUpdateRequest(actor: string): boolean {
++  const normalized = asString(actor).trim().toLowerCase();
++  return (
++    normalized === "thinkgraph-agent" ||
++    normalized === "knowgraph-agent" ||
++    normalized === "codegraph-agent"
++  );
++}
+diff --git a/apps/backend/src/v3/routes/decks.routes.ts b/apps/backend/src/v3/routes/decks.routes.ts
+index ccf1acea..c8d69a60 100644
+--- a/apps/backend/src/v3/routes/decks.routes.ts
++++ b/apps/backend/src/v3/routes/decks.routes.ts
+@@ -6,7 +6,15 @@
+ import { Router, type Response } from 'express';
+ import { getDeckDocument, saveDeckDocument, saveDeckRun } from '../decks/store';
+ import { executeDeck } from '../runtime/deckRuntime';
+-import type { AgentTemplate, DeckDocument, PromptTemplate } from '../types';
++import type {
++  AgentTemplate,
++  DeckDocument,
++  DeckRunResponse,
++  MissionAgentRunStatus,
++  MissionRunStatus,
++  MissionSpec,
++  PromptTemplate,
++} from '../types';
+ 
+ const router = Router();
+ 
+@@ -60,6 +68,16 @@ router.post('/:projectId/decks/run', async (req, res) => {
+   const useStream =
+     String(req.query.stream || req.body?.stream || '').trim() === '1' ||
+     req.body?.stream === true;
++  const missionSpec =
++    req.body?.missionSpec && typeof req.body.missionSpec === 'object'
++      ? (req.body.missionSpec as MissionSpec)
++      : undefined;
++  const missionRunId = String(req.body?.missionRunId || '').trim() || undefined;
++  const missionAgentRunId = String(req.body?.missionAgentRunId || '').trim() || undefined;
++  const baseMissionMeta = {
++    missionRunId: missionRunId || null,
++    missionAgentRunId: missionAgentRunId || null,
++  };
+ 
+   if (!deckId) {
+     return res.status(400).json({ ok: false, error: 'deck_id_required' });
+@@ -102,6 +120,9 @@ router.post('/:projectId/decks/run', async (req, res) => {
+       projectId: req.params.projectId,
+       workspaceContext: req.body?.workspaceContext,
+       workspaceObjectContext: req.body?.workspaceObjectContext,
++      missionSpec,
++      missionRunId,
++      missionAgentRunId,
+       onRuntimeEvent: useStream
+         ? (event) => {
+             writeStreamChunk(res, { kind: 'event', event });
+@@ -110,11 +131,31 @@ router.post('/:projectId/decks/run', async (req, res) => {
+     });
+ 
+     const persistedRun = await saveDeckRun(req.params.projectId, deckId, run);
+-    const payload = {
++    const missionStatus =
++      (run.mission?.missionStatus ||
++        (missionSpec?.runState as MissionRunStatus | undefined) ||
++        null) as MissionRunStatus | null;
++    const agentRunStatus =
++      (run.mission?.agentRunStatus ||
++        (run.status === 'success'
++          ? 'complete'
++          : run.status === 'running'
++            ? 'running'
++            : run.status === 'skipped'
++              ? 'skipped'
++              : 'failed')) as MissionAgentRunStatus;
++    const payload: DeckRunResponse = {
+       ok: true,
+       deck,
+       run,
+       meta: persistedRun.meta || deckMeta,
++      missionRunId: run.mission?.missionRunId || baseMissionMeta.missionRunId,
++      missionAgentRunId: run.mission?.missionAgentRunId || baseMissionMeta.missionAgentRunId,
++      missionStatus,
++      agentRunStatus,
++      resultSummary: run.mission?.resultSummary || null,
++      needsUserInputReason: run.mission?.needsUserInputReason || null,
++      errorReason: run.mission?.errorReason || null,
+     };
+     if (useStream) {
+       writeStreamChunk(res, { kind: 'result', ...payload });
+@@ -124,10 +165,24 @@ router.post('/:projectId/decks/run', async (req, res) => {
+   } catch (err: any) {
+     const status = err?.message === 'project_not_found' ? 404 : 500;
+     if (useStream) {
+-      writeStreamChunk(res, { kind: 'error', error: err?.message || 'deck_run_failed' });
++      writeStreamChunk(res, {
++        kind: 'error',
++        error: err?.message || 'deck_run_failed',
++        ...baseMissionMeta,
++        missionStatus: 'failed' as MissionRunStatus,
++        agentRunStatus: 'failed' as MissionAgentRunStatus,
++        errorReason: err?.message || 'deck_run_failed',
++      });
+       return res.status(status).end();
+     }
+-    return res.status(status).json({ ok: false, error: err?.message || 'deck_run_failed' });
++    return res.status(status).json({
++      ok: false,
++      error: err?.message || 'deck_run_failed',
++      ...baseMissionMeta,
++      missionStatus: 'failed' as MissionRunStatus,
++      agentRunStatus: 'failed' as MissionAgentRunStatus,
++      errorReason: err?.message || 'deck_run_failed',
++    } satisfies DeckRunResponse);
+   }
+ });
+ 
+diff --git a/apps/backend/src/v3/runtime/deckRuntime.spec.ts b/apps/backend/src/v3/runtime/deckRuntime.spec.ts
+index e0d8b910..df9a9f97 100644
+--- a/apps/backend/src/v3/runtime/deckRuntime.spec.ts
++++ b/apps/backend/src/v3/runtime/deckRuntime.spec.ts
+@@ -126,6 +126,31 @@ describe('executeDeck', () => {
+     expect(run.workspaceObjectContext).toEqual(context);
+   });
+ 
++  it('propagates mission run metadata into runtime context and run snapshot', async () => {
++    const deck = createDeckDocument([createAgent('a', 'A')], []);
++    const run = await executeDeck(deck, templates, {
++      input: 'mission test',
++      missionSpec: {
++        id: 'mission_1',
++        title: 'Mission',
++        userGoal: 'Goal',
++        target: 'deck',
++        readContext: [],
++        runState: 'running',
++        agentRuns: [],
++      },
++      missionRunId: 'mission_run_1',
++      missionAgentRunId: 'agent_run_1',
++    });
++
++    const context = runtimeHarness.calls[0]?.context as any;
++    expect(context.missionRunId).toBe('mission_run_1');
++    expect(context.missionAgentRunId).toBe('agent_run_1');
++    expect(run.mission?.missionRunId).toBe('mission_run_1');
++    expect(run.mission?.missionAgentRunId).toBe('agent_run_1');
++    expect(run.mission?.agentRunStatus).toBe('complete');
++  });
++
+   it('ignores legacy blackboard nodes in visible flow routing', async () => {
+     const board = {
+       id: 'node_blackboard',
+diff --git a/apps/backend/src/v3/runtime/deckRuntime.ts b/apps/backend/src/v3/runtime/deckRuntime.ts
+index 77d60c51..def09ecd 100644
+--- a/apps/backend/src/v3/runtime/deckRuntime.ts
++++ b/apps/backend/src/v3/runtime/deckRuntime.ts
+@@ -24,6 +24,9 @@ import type {
+   DeckRunStep,
+   DeckWorkspaceContext,
+   GraphViewContract,
++  MissionAgentRunStatus,
++  MissionRunStatus,
++  MissionSpec,
+   PromptTemplate,
+   WorkspaceObjectContext,
+ } from '../types';
+@@ -36,6 +39,9 @@ export type ExecuteDeckOptions = {
+   workspaceContext?: DeckWorkspaceContext | null;
+   workspaceObjectContext?: WorkspaceObjectContext | null;
+   onRuntimeEvent?: (event: DeckRuntimeEvent) => void;
++  missionSpec?: MissionSpec;
++  missionRunId?: string;
++  missionAgentRunId?: string;
+ };
+ 
+ const WORKSPACE_OBJECT_CONTEXT_LIST_LIMIT = 12;
+@@ -186,6 +192,7 @@ function buildRunSnapshot(
+   extra?: Pick<DeckRun, 'endedAt' | 'error'>,
+   workspaceContext?: DeckWorkspaceContext | null,
+   workspaceObjectContext?: WorkspaceObjectContext | null,
++  mission?: DeckRun['mission'] | null,
+ ): DeckRun {
+   const graphViewContract =
+     [...steps]
+@@ -221,6 +228,7 @@ function buildRunSnapshot(
+       simpleOrderCardIds: executionPlan.simpleOrderCardIds,
+       expandedStepIds: executionPlan.expandedSteps.map((step) => step.executionId),
+     },
++    mission: mission || null,
+   };
+ }
+ 
+@@ -297,6 +305,50 @@ export async function executeDeck(
+   const events: DeckRuntimeEvent[] = [];
+   const workspaceContext = normalizeWorkspaceContext(options.workspaceContext);
+   const workspaceObjectContext = normalizeWorkspaceObjectContext(options.workspaceObjectContext);
++  const missionBase = {
++    missionRunId: options.missionRunId || null,
++    missionAgentRunId: options.missionAgentRunId || null,
++  };
++  const resolveMissionMeta = (
++    runStatus: DeckRun['status'],
++    errorText?: string | null,
++  ): DeckRun['mission'] => {
++    const agentRunStatus: MissionAgentRunStatus | null =
++      runStatus === 'success'
++        ? 'complete'
++        : runStatus === 'running'
++          ? 'running'
++          : runStatus === 'skipped'
++            ? 'skipped'
++            : 'failed';
++    const missionStatusFromSpecRaw = options.missionSpec?.runState || null;
++    const missionStatusFromSpec: MissionRunStatus | null =
++      missionStatusFromSpecRaw === 'approved' ||
++      missionStatusFromSpecRaw === 'wiring' ||
++      missionStatusFromSpecRaw === 'running' ||
++      missionStatusFromSpecRaw === 'complete' ||
++      missionStatusFromSpecRaw === 'failed' ||
++      missionStatusFromSpecRaw === 'cancelled' ||
++      missionStatusFromSpecRaw === 'needs_user_input'
++        ? missionStatusFromSpecRaw
++        : null;
++    const missionStatus: MissionRunStatus | null =
++      runStatus === 'success'
++        ? 'running'
++        : runStatus === 'running'
++          ? 'running'
++          : runStatus === 'skipped'
++            ? missionStatusFromSpec
++            : 'failed';
++    return {
++      ...missionBase,
++      missionStatus,
++      agentRunStatus,
++      resultSummary: null,
++      needsUserInputReason: null,
++      errorReason: errorText || null,
++    };
++  };
+   let latestGraphViewContract: GraphViewContract | null = null;
+   const emitRuntimeEvent = (event: Omit<DeckRuntimeEvent, 'id' | 'at'>) => {
+     const resolvedGraphViewContract =
+@@ -348,6 +400,7 @@ export async function executeDeck(
+       },
+       workspaceContext,
+       workspaceObjectContext,
++      resolveMissionMeta('error', 'deck_validation_failed'),
+     );
+   }
+ 
+@@ -383,6 +436,7 @@ export async function executeDeck(
+       },
+       workspaceContext,
+       workspaceObjectContext,
++      resolveMissionMeta('error', 'deck_missing_start_node'),
+     );
+   }
+ 
+@@ -459,6 +513,7 @@ export async function executeDeck(
+         },
+         workspaceContext,
+         workspaceObjectContext,
++        resolveMissionMeta('error', `template_not_resolved:${card.templateId}`),
+       );
+     }
+ 
+@@ -491,6 +546,9 @@ export async function executeDeck(
+         projectId: options.projectId,
+         workspaceContext,
+         workspaceObjectContext,
++        missionSpec: options.missionSpec,
++        missionRunId: options.missionRunId,
++        missionAgentRunId: options.missionAgentRunId,
+         deckId: document.id,
+         deckName: document.name,
+         allCards: document.nodes,
+@@ -573,6 +631,7 @@ export async function executeDeck(
+           },
+           workspaceContext,
+           workspaceObjectContext,
++          resolveMissionMeta('error', step.error || `card_failed:${card.id}`),
+         );
+       }
+ 
+@@ -605,6 +664,7 @@ export async function executeDeck(
+         },
+         workspaceContext,
+         workspaceObjectContext,
++        resolveMissionMeta('success'),
+       );
+     }
+   }
+@@ -632,6 +692,7 @@ export async function executeDeck(
+       },
+       workspaceContext,
+       workspaceObjectContext,
++      resolveMissionMeta('error', 'deck_graph_execution_stalled'),
+     );
+   }
+ 
+@@ -655,5 +716,6 @@ export async function executeDeck(
+     },
+     workspaceContext,
+     workspaceObjectContext,
++    resolveMissionMeta('success'),
+   );
+ }
+diff --git a/apps/backend/src/v3/types/index.ts b/apps/backend/src/v3/types/index.ts
+index 62ad4db1..168e6061 100644
+--- a/apps/backend/src/v3/types/index.ts
++++ b/apps/backend/src/v3/types/index.ts
+@@ -223,6 +223,158 @@ export type GraphViewContract = {
+   narrativeIntent?: string | null;
+ };
+ 
++export type SemanticGraphName = 'think' | 'know' | 'code';
++
++export type SemanticGraphRecordKind =
++  | 'entity'
++  | 'relationship'
++  | 'claim'
++  | 'evidence'
++  | 'source'
++  | 'decision'
++  | 'summary'
++  | 'action'
++  | 'question'
++  | 'hypothesis'
++  | 'contradiction'
++  | 'mission'
++  | 'agent_run'
++  | 'file'
++  | 'component'
++  | 'symbol';
++
++export type SemanticGraphWriter =
++  | 'thinkgraph-agent'
++  | 'knowgraph-agent'
++  | 'codegraph-agent'
++  | 'system';
++
++export type SemanticGraphWriteMode = 'agent-owned' | 'system-owned' | 'read-only';
++
++export type SemanticGraphSourceRefType =
++  | 'chat'
++  | 'url'
++  | 'file'
++  | 'code'
++  | 'mission'
++  | 'agent_run'
++  | 'graph_record'
++  | 'user_input';
++
++export type SemanticGraphEntity = {
++  id: string;
++  label: string;
++  type: string;
++  aliases?: string[];
++  properties?: Record<string, unknown>;
++  confidence?: number | null;
++};
++
++export type SemanticGraphRelationship = {
++  id: string;
++  from: string;
++  to: string;
++  type: string;
++  label?: string | null;
++  properties?: Record<string, unknown>;
++  confidence?: number | null;
++};
++
++export type SemanticGraphSourceRef = {
++  type: SemanticGraphSourceRefType;
++  ref: string;
++  title?: string | null;
++  summary?: string | null;
++  excerpt?: string | null;
++  retrievedAt?: string | null;
++  confidence?: number | null;
++};
++
++export type SemanticGraphProvenance = {
++  createdByAgent?: string | null;
++  missionSpecId?: string | null;
++  missionRunId?: string | null;
++  missionAgentRunId?: string | null;
++  sourceRefs?: SemanticGraphSourceRef[];
++  reasoningSummary?: string | null;
++  createdAt?: string | null;
++};
++
++export type SemanticGraphRecord = {
++  id: string;
++  graph: SemanticGraphName;
++  kind: SemanticGraphRecordKind;
++  label: string;
++  summary: string;
++  entities: SemanticGraphEntity[];
++  relationships: SemanticGraphRelationship[];
++  properties?: Record<string, unknown>;
++  sourceRefs: SemanticGraphSourceRef[];
++  confidence?: number | null;
++  vectorText?: string | null;
++  provenance?: SemanticGraphProvenance | null;
++  writer: SemanticGraphWriter;
++  writeMode: SemanticGraphWriteMode;
++  createdAt: string;
++  updatedAt: string;
++  '@context'?: string | string[] | Record<string, unknown>;
++  '@id'?: string;
++  '@type'?: string | string[];
++};
++
++export type GraphUpdateRequestStatus =
++  | 'pending'
++  | 'accepted'
++  | 'rejected'
++  | 'applied';
++
++export type GraphUpdateRequester =
++  | 'sol'
++  | 'magentic-one'
++  | 'workspace-harness'
++  | 'chat-plan-companion'
++  | 'system';
++
++export type GraphUpdateRequest = {
++  id: string;
++  targetGraph: SemanticGraphName;
++  requestedBy: GraphUpdateRequester;
++  reason: string;
++  proposedRecords: SemanticGraphRecord[];
++  sourceRefs: SemanticGraphSourceRef[];
++  confidence?: number | null;
++  status: GraphUpdateRequestStatus;
++  createdAt: string;
++};
++
++export type GraphSearchRequest = {
++  graph: SemanticGraphName;
++  query: string;
++  limit?: number;
++  includeSourceRefs?: boolean;
++  includeProvenance?: boolean;
++};
++
++export type GraphTraverseRequest = {
++  graph: SemanticGraphName;
++  startNodeId: string;
++  relationshipTypes?: string[];
++  depth?: number;
++  limit?: number;
++  includeSourceRefs?: boolean;
++  includeProvenance?: boolean;
++};
++
++export type GraphNeighborhoodRequest = {
++  graph: SemanticGraphName;
++  startNodeId: string;
++  relationshipTypes?: string[];
++  depth?: number;
++  limit?: number;
++  includeSourceRefs?: boolean;
++  includeProvenance?: boolean;
++};
++
+ export type CardRunResult = {
+   output: string | null;
+   status: DeckRunStatus;
+@@ -353,6 +505,239 @@ export type WorkspaceObjectContext = {
+   excludedAgents?: string[];
+ };
+ 
++export type MissionSpecRunState =
++  | 'draft'
++  | 'approved'
++  | 'wiring'
++  | 'running'
++  | 'complete'
++  | 'failed'
++  | 'cancelled'
++  | 'needs_user_input';
++
++export type MissionAgentRunStatus =
++  | 'queued'
++  | 'running'
++  | 'complete'
++  | 'failed'
++  | 'skipped'
++  | 'needs_user_input';
++
++export type MissionRunStatus =
++  | 'approved'
++  | 'wiring'
++  | 'running'
++  | 'complete'
++  | 'failed'
++  | 'cancelled'
++  | 'needs_user_input';
++
++export type MissionSpec = {
++  id: string;
++  title: string;
++  userGoal: string;
++  target: string;
++  readContext: string[];
++  agentRuns: Array<{
++    id?: string;
++    agentId: string;
++    promptSeed: string;
++    required?: boolean;
++  }>;
++  runState: MissionSpecRunState;
++};
++
++export type MissionRun = {
++  id: string;
++  missionSpecId: string;
++  status: MissionRunStatus;
++  activeAgentRunId: string | null;
++  agentRuns: Array<{
++    id: string;
++    agentId: string;
++    status: MissionAgentRunStatus;
++    required: boolean;
++    promptSeed: string;
++    resultSummary?: string | null;
++    error?: string | null;
++  }>;
++  results: Array<{
++    agentRunId: string;
++    agentId: string;
++    status: MissionAgentRunStatus;
++    output?: string | null;
++    reason?: string | null;
++  }>;
++  createdAt: string;
++  updatedAt: string;
++};
++
++export type MissionDeckPatch = {
++  missionSpecId: string;
++  nodesToCreate: AgentCardInstance[];
++  nodesToUpdate: Array<Pick<AgentCardInstance, 'id'> & Partial<AgentCardInstance>>;
++  edgesToCreate: DeckEdge[];
++  edgesToUpdate: Array<Pick<DeckEdge, 'id'> & Partial<DeckEdge>>;
++  promptFieldsToUpdate: Array<{
++    nodeId: string;
++    prompt: string;
++  }>;
++  runState: MissionSpecRunState;
++};
++
++export type WorkspaceHarnessProvider =
++  | 'internal-workspace'
++  | 'openclaude'
++  | 'claude-code'
++  | 'codex'
++  | 'local';
++
++export type WorkspaceHarnessOperation =
++  | 'inspect_context'
++  | 'draft_mission'
++  | 'refine_mission'
++  | 'generate_deck_patch'
++  | 'apply_deck_patch'
++  | 'connect_agents'
++  | 'seed_prompts'
++  | 'run_approved_mission'
++  | 'query_graph'
++  | 'traverse_graph'
++  | 'ask_clarifying_questions'
++  | 'request_graph_update';
++
++export type WorkspaceHarnessPermission =
++  | 'deck.read'
++  | 'deck.write'
++  | 'canvas.read'
++  | 'canvas.write'
++  | 'plan.read'
++  | 'plan.write'
++  | 'mission.read'
++  | 'mission.write'
++  | 'agent.read'
++  | 'agent.connect'
++  | 'agent.prompt.read'
++  | 'agent.prompt.write'
++  | 'reactflow.nodes.create'
++  | 'reactflow.nodes.update'
++  | 'reactflow.edges.create'
++  | 'reactflow.edges.update'
++  | 'graph.query'
++  | 'graph.traverse'
++  | 'graph.write.request';
++
++export type OpenMissionMessage = {
++  missionRunId: string;
++  title: string;
++  status: MissionRunStatus;
++  activeAgents: Array<{
++    agentRunId: string;
++    label: string;
++    status: MissionAgentRunStatus;
++    summary?: string;
++  }>;
++  latestSummary?: string;
++  suggestedUserActions?: string[];
++};
++
++export type WorkspaceHarnessRequest = {
++  provider: WorkspaceHarnessProvider;
++  operation: WorkspaceHarnessOperation;
++  userGoal: string;
++  activeCanvasId?: string | null;
++  selectedObject?: CanvasObjectContext | WorkspaceObjectContext | null;
++  missionSpec?: MissionSpec | null;
++  missionRun?: MissionRun | null;
++  currentDeckSummary?: {
++    id: string;
++    name: string;
++    nodeCount: number;
++    edgeCount: number;
++  } | null;
++  availableAgents?: Array<{ id: string; label: string }>;
++  graphContextRefs?: string[];
++  priorResults?: Array<{ agentId: string; summary?: string | null }>;
++  permissions: WorkspaceHarnessPermission[];
++};
++
++export type WorkspaceHarnessResult = {
++  status: 'complete' | 'needs_user_input' | 'failed';
++  summary: string;
++  questions?: string[];
++  missionSpecPatch?: Partial<MissionSpec> | null;
++  missionDeckPatch?: MissionDeckPatch | null;
++  missionRunUpdate?: Partial<MissionRun> | null;
++  agentRunUpdates?: Array<{
++    id: string;
++    status: MissionAgentRunStatus;
++    resultSummary?: string | null;
++    error?: string | null;
++  }>;
++  openMissionMessage?: OpenMissionMessage | null;
++  graphUpdateRequests?: GraphUpdateRequest[];
++  suggestedNextAction?: WorkspaceHarnessOperation | null;
++  errorReason?: string | null;
++};
++
++export type PlanDraftStatus =
++  | 'idle'
++  | 'drafting'
++  | 'ready'
++  | 'needs_user_input'
++  | 'failed';
++
++export type ChatPlanDraftRequest = {
++  userMessage: string;
++  activeCanvasId?: string;
++  selectedObject?: CanvasObjectContext;
++  currentMissionSpec?: MissionSpec;
++  currentDeckSummary?: unknown;
++  availableAgents?: Array<{
++    id: string;
++    label: string;
++    type?: string;
++    capabilities?: string[];
++  }>;
++  graphContextRefs?: string[];
++  priorMissionResults?: unknown[];
++};
++
++export type ChatPlanDraftResult = {
++  status: PlanDraftStatus;
++  summary: string;
++  missionSpec?: MissionSpec;
++  missionSpecPatch?: Partial<MissionSpec>;
++  questions?: string[];
++  suggestedNextAction?: string;
++  errorReason?: string;
++};
++
++export type DualChatTurnResult = {
++  chatReply: string;
++  planDraft?: ChatPlanDraftResult;
++};
++
++export type DeckRunMissionMetadata = {
++  missionRunId?: string | null;
++  missionAgentRunId?: string | null;
++  missionStatus?: MissionRunStatus | null;
++  agentRunStatus?: MissionAgentRunStatus | null;
++  resultSummary?: string | null;
++  needsUserInputReason?: string | null;
++  errorReason?: string | null;
++};
++
++export type CanvasObjectContext = {
++  id: string;
++  canvasId: string;
++  type: string;
++  title: string;
++  props: Record<string, unknown>;
++  editableTargets: string[];
++  graphRefs: string[];
++};
++
+ export type DeckRun = {
+   id: string;
+   deckId: string;
+@@ -378,6 +763,36 @@ export type DeckRun = {
+     simpleOrderCardIds: string[];
+     expandedStepIds: string[];
+   };
++  mission?: DeckRunMissionMetadata | null;
++};
++
++export type DeckRunRequest = {
++  deckId?: string;
++  document?: DeckDocument;
++  templates?: AgentTemplate[];
++  promptTemplates?: PromptTemplate[];
++  input?: string;
++  stream?: boolean;
++  workspaceContext?: DeckWorkspaceContext | null;
++  workspaceObjectContext?: WorkspaceObjectContext | null;
++  missionSpec?: MissionSpec;
++  missionRunId?: string;
++  missionAgentRunId?: string;
++};
++
++export type DeckRunResponse = {
++  ok: boolean;
++  deck?: DeckDocument;
++  run?: DeckRun;
++  meta?: Record<string, unknown> | null;
++  error?: string;
++  missionRunId?: string | null;
++  missionAgentRunId?: string | null;
++  missionStatus?: MissionRunStatus | null;
++  agentRunStatus?: MissionAgentRunStatus | null;
++  resultSummary?: string | null;
++  needsUserInputReason?: string | null;
++  errorReason?: string | null;
+ };
+ 
+ export type V3RevisionMeta = {
+diff --git a/client/src/components/builder/chatPlanCompanion.spec.ts b/client/src/components/builder/chatPlanCompanion.spec.ts
+new file mode 100644
+index 00000000..d92669af
+--- /dev/null
++++ b/client/src/components/builder/chatPlanCompanion.spec.ts
+@@ -0,0 +1,77 @@
++import { describe, expect, it } from "vitest";
++
++import type { MissionSpec } from "../../types/agentgraph";
++import { draftMissionSpecFromChat } from "./chatPlanCompanion";
++
++describe("draftMissionSpecFromChat", () => {
++  it("creates a new draft when no mission exists", () => {
++    const result = draftMissionSpecFromChat({
++      userMessage: "research climate risk and add knowgraph",
++      activeCanvasId: "deck_builder",
++      availableAgents: [],
++    });
++    expect(result.status).toBe("ready");
++    expect(result.missionSpec?.agentRuns.length).toBeGreaterThan(0);
++  });
++
++  it("refines existing mission and adds knowgraph", () => {
++    const existing: MissionSpec = {
++      id: "m1",
++      title: "Mission",
++      userGoal: "Goal",
++      target: "deck",
++      readContext: [],
++      runState: "draft",
++      agentRuns: [{ id: "r1", agentId: "research_agent", promptSeed: "research", required: true }],
++    };
++    const result = draftMissionSpecFromChat({
++      userMessage: "add KnowGraph and make it research-heavy",
++      currentMissionSpec: existing,
++    });
++    expect(result.missionSpec?.id).toBe("m1");
++    expect(result.missionSpec?.agentRuns.some((run) => run.agentId === "knowgraph_agent")).toBe(true);
++  });
++
++  it("skip CodeGraph removes CodeGraph run", () => {
++    const existing: MissionSpec = {
++      id: "m2",
++      title: "Mission",
++      userGoal: "Goal",
++      target: "deck",
++      readContext: [],
++      runState: "draft",
++      agentRuns: [{ id: "r2", agentId: "codegraph_agent", promptSeed: "summarize", required: false }],
++    };
++    const result = draftMissionSpecFromChat({
++      userMessage: "skip CodeGraph for this run",
++      currentMissionSpec: existing,
++    });
++    expect(result.missionSpec?.agentRuns.some((run) => run.agentId === "codegraph_agent")).toBe(false);
++  });
++
++  it("vague input returns needs_user_input", () => {
++    const result = draftMissionSpecFromChat({
++      userMessage: "help",
++    });
++    expect(result.status).toBe("needs_user_input");
++  });
++
++  it("continued chat refines same draft instead of creating duplicates", () => {
++    const first = draftMissionSpecFromChat({
++      userMessage: "research AI agent marketplaces and build a knowledge map",
++      activeCanvasId: "deck_builder",
++    });
++    const second = draftMissionSpecFromChat({
++      userMessage: "add KnowGraph and make it source-backed",
++      currentMissionSpec: first.missionSpec,
++    });
++    const third = draftMissionSpecFromChat({
++      userMessage: "skip CodeGraph for now",
++      currentMissionSpec: second.missionSpec,
++    });
++    expect(first.missionSpec?.id).toBeTruthy();
++    expect(second.missionSpec?.id).toBe(first.missionSpec?.id);
++    expect(third.missionSpec?.id).toBe(first.missionSpec?.id);
++    expect(third.missionSpec?.agentRuns.some((run) => run.agentId === "codegraph_agent")).toBe(false);
++  });
++});
+diff --git a/client/src/components/builder/chatPlanCompanion.ts b/client/src/components/builder/chatPlanCompanion.ts
+new file mode 100644
+index 00000000..58fd6634
+--- /dev/null
++++ b/client/src/components/builder/chatPlanCompanion.ts
+@@ -0,0 +1,123 @@
++import type {
++  ChatPlanDraftRequest,
++  ChatPlanDraftResult,
++  MissionSpec,
++} from "../../types/agentgraph";
++
++function safeText(value: unknown): string {
++  return String(value || "").trim();
++}
++
++function ensureAgentRun(
++  missionSpec: MissionSpec,
++  agentId: string,
++  promptSeed: string,
++  required: boolean,
++) {
++  const idx = missionSpec.agentRuns.findIndex((run) => run.agentId === agentId);
++  if (idx >= 0) {
++    missionSpec.agentRuns[idx] = {
++      ...missionSpec.agentRuns[idx],
++      promptSeed,
++      required,
++    };
++    return;
++  }
++  missionSpec.agentRuns.push({
++    id: `run_${Date.now()}_${agentId}`,
++    agentId,
++    promptSeed,
++    required,
++  });
++}
++
++function removeAgentRun(missionSpec: MissionSpec, agentId: string) {
++  missionSpec.agentRuns = missionSpec.agentRuns.filter((run) => run.agentId !== agentId);
++}
++
++function inferMissionType(message: string): "plan_only" | "research_to_knowgraph" | "object_agent_setup" | "graph_query_summary" {
++  if (/\b(query|summarize graph|traverse)\b/i.test(message)) return "graph_query_summary";
++  if (/\b(object|canvas|setup)\b/i.test(message)) return "object_agent_setup";
++  if (/\bresearch|knowgraph|evidence\b/i.test(message)) return "research_to_knowgraph";
++  return "plan_only";
++}
++
++export function draftMissionSpecFromChat(
++  request: ChatPlanDraftRequest,
++): ChatPlanDraftResult {
++  const message = safeText(request.userMessage);
++  if (!message || message.split(/\s+/).length < 2) {
++    return {
++      status: "needs_user_input",
++      summary: "Need more detail to draft a usable mission.",
++      questions: [
++        "What concrete outcome should this mission produce?",
++        "Which object or canvas should this target?",
++      ],
++      suggestedNextAction: "Provide mission goal and target.",
++    };
++  }
++
++  const missionType = inferMissionType(message);
++  const base: MissionSpec = request.currentMissionSpec
++    ? {
++        ...request.currentMissionSpec,
++        agentRuns: [...request.currentMissionSpec.agentRuns],
++      }
++    : {
++        id: `mission_${Date.now()}`,
++        title: message.slice(0, 72),
++        userGoal: message,
++        target: request.activeCanvasId || "agentbuilder_deck",
++        readContext: request.graphContextRefs || [],
++        runState: "draft",
++        agentRuns: [],
++      };
++
++  if (!request.currentMissionSpec) {
++    base.title = message.slice(0, 72);
++    base.userGoal = message;
++  } else if (/\bchange|update|refine|make\b/i.test(message)) {
++    base.userGoal = message;
++  }
++
++  if (missionType === "research_to_knowgraph") {
++    ensureAgentRun(base, "research_agent", "Research the topic and gather evidence-backed findings.", true);
++    ensureAgentRun(base, "knowgraph_agent", "Convert research findings into grounded KnowGraph updates.", true);
++    ensureAgentRun(base, "thinkgraph_agent", "Summarize mission outcome and unresolved questions.", false);
++  } else if (missionType === "object_agent_setup") {
++    ensureAgentRun(base, "plan_agent", "Define object setup steps and expected outputs.", true);
++    ensureAgentRun(base, "thinkgraph_agent", "Capture provisional object setup rationale.", false);
++  } else if (missionType === "graph_query_summary") {
++    ensureAgentRun(base, "codegraph_agent", "Query/traverse graph context and summarize key paths.", false);
++    ensureAgentRun(base, "thinkgraph_agent", "Summarize graph findings for mission context.", false);
++  } else {
++    ensureAgentRun(base, "plan_agent", "Produce a clear execution plan and gate criteria.", true);
++  }
++
++  if (/\badd knowgraph\b/i.test(message)) {
++    ensureAgentRun(base, "knowgraph_agent", "Add grounded knowledge extraction/update step.", true);
++  }
++  if (/\bskip codegraph\b/i.test(message)) {
++    removeAgentRun(base, "codegraph_agent");
++  }
++  if (/\bresearch-heavy|research heavy\b/i.test(message)) {
++    ensureAgentRun(base, "research_agent", "Perform deeper research with broader evidence coverage.", true);
++  }
++  if (/\bask questions first|questions first\b/i.test(message)) {
++    if (base.agentRuns.length > 0) {
++      base.agentRuns[0] = {
++        ...base.agentRuns[0],
++        promptSeed: `Ask clarifying questions first, then proceed: ${base.agentRuns[0].promptSeed}`,
++      };
++    }
++  }
++
++  return {
++    status: "ready",
++    summary: `Plan draft updated (${missionType}).`,
++    missionSpec: base,
++    missionSpecPatch: base,
++    suggestedNextAction: "Review and approve when ready.",
++  };
++}
+diff --git a/client/src/components/builder/deckRunState.ts b/client/src/components/builder/deckRunState.ts
+index 04a10fdb..062b5e87 100644
+--- a/client/src/components/builder/deckRunState.ts
++++ b/client/src/components/builder/deckRunState.ts
+@@ -11,13 +11,11 @@ import type {
+   StructuredAssistPlanStep,
+ } from "./assistPlanSurface";
+ import { safeJson } from "./requestGuards";
+-import type { DeckDocument, DeckRun, DeckRuntimeEvent } from "../../types/agentgraph";
++import type { DeckDocument, DeckRun, DeckRunResponse, DeckRuntimeEvent } from "../../types/agentgraph";
+ 
+-type DeckRunStreamResult = {
+-  ok?: boolean;
++type DeckRunStreamResult = DeckRunResponse & {
+   deck?: DeckDocument;
+   run?: DeckRun;
+-  meta?: Record<string, unknown> | null;
+ };
+ 
+ type DeckRuntimeVisualState = {
+diff --git a/client/src/components/builder/missionExecution.spec.ts b/client/src/components/builder/missionExecution.spec.ts
+new file mode 100644
+index 00000000..d24dcc38
+--- /dev/null
++++ b/client/src/components/builder/missionExecution.spec.ts
+@@ -0,0 +1,53 @@
++import { describe, expect, it } from "vitest";
++
++import type { DeckDocument, MissionSpec } from "../../types/agentgraph";
++import { applyMissionDeckPatch, buildMissionDeckPatch } from "./missionExecution";
++
++const deck: DeckDocument = {
++  id: "deck_builder",
++  name: "Deck",
++  promptTemplates: [],
++  version: 1,
++  nodes: [
++    { id: "card_magentic", templateId: "t", title: "M", position: { x: 0, y: 0 } },
++    { id: "card_research_agent", templateId: "t", title: "R", position: { x: 1, y: 0 } },
++    { id: "card_knowgraph_agent", templateId: "t", title: "K", position: { x: 2, y: 0 } },
++  ],
++  edges: [
++    { id: "edge_user_custom", source: "card_research_agent", target: "card_knowgraph_agent" },
++  ],
++};
++
++const mission: MissionSpec = {
++  id: "mission_1",
++  title: "Run",
++  userGoal: "Goal",
++  target: "deck",
++  readContext: [],
++  runState: "approved",
++  agentRuns: [
++    { id: "a1", agentId: "research_agent", promptSeed: "research this", required: true },
++    { id: "a2", agentId: "knowgraph_agent", promptSeed: "store facts", required: true },
++  ],
++};
++
++describe("missionExecution helpers", () => {
++  it("buildMissionDeckPatch seeds prompts and does not infer new edges", () => {
++    const patch = buildMissionDeckPatch(mission, deck);
++    expect(patch.promptFieldsToUpdate.length).toBe(2);
++    expect(patch.edgesToCreate.length).toBe(0);
++  });
++
++  it("applyMissionDeckPatch preserves existing node positions and user edges", () => {
++    const patch = buildMissionDeckPatch(mission, deck);
++    const once = applyMissionDeckPatch(deck, patch);
++    const twice = applyMissionDeckPatch(once, patch);
++    expect(once.nodes.length).toBeGreaterThanOrEqual(deck.nodes.length);
++    expect(twice.edges.length).toBe(once.edges.length);
++    expect(once.edges.find((edge) => edge.id === "edge_user_custom")).toBeTruthy();
++    expect(once.nodes.find((node) => node.id === "card_research_agent")?.position).toEqual({
++      x: 1,
++      y: 0,
++    });
++  });
++});
+diff --git a/client/src/components/builder/missionExecution.ts b/client/src/components/builder/missionExecution.ts
+new file mode 100644
+index 00000000..215fe441
+--- /dev/null
++++ b/client/src/components/builder/missionExecution.ts
+@@ -0,0 +1,120 @@
++import type {
++  AgentCardInstance,
++  DeckDocument,
++  DeckEdge,
++  MissionDeckPatch,
++  MissionSpec,
++} from "../../types/agentgraph";
++
++const DEFAULT_SYSTEM_CARD_IDS = [
++  "card_plan_agent",
++  "card_local_coder",
++  "card_thinkgraph_agent",
++  "card_knowgraph_agent",
++  "card_research_agent",
++  "card_codegraph_agent",
++] as const;
++
++const AGENT_CARD_MAP: Record<string, string> = {
++  plan_agent: "card_plan_agent",
++  local_coder: "card_local_coder",
++  thinkgraph_agent: "card_thinkgraph_agent",
++  knowgraph_agent: "card_knowgraph_agent",
++  research_agent: "card_research_agent",
++  codegraph_agent: "card_codegraph_agent",
++};
++
++function normalizeAgentId(agentId: string): string {
++  return String(agentId || "").trim().toLowerCase();
++}
++
++export function buildMissionDeckPatch(
++  missionSpec: MissionSpec,
++  currentDeck: DeckDocument,
++): MissionDeckPatch {
++  const nodeById = new Map(currentDeck.nodes.map((n) => [n.id, n] as const));
++  const nodesToCreate: AgentCardInstance[] = [];
++  const nodesToUpdate: Array<Pick<AgentCardInstance, "id"> & Partial<AgentCardInstance>> = [];
++  const edgesToCreate: DeckEdge[] = [];
++  const edgesToUpdate: Array<Pick<DeckEdge, "id"> & Partial<DeckEdge>> = [];
++  const promptFieldsToUpdate: Array<{ nodeId: string; prompt: string }> = [];
++
++  const requiredCards = new Set<string>(DEFAULT_SYSTEM_CARD_IDS);
++  for (const run of missionSpec.agentRuns) {
++    const mapped = AGENT_CARD_MAP[normalizeAgentId(run.agentId)];
++    if (mapped) requiredCards.add(mapped);
++  }
++
++  for (const cardId of requiredCards) {
++    if (!nodeById.has(cardId)) continue;
++    nodesToUpdate.push({ id: cardId, status: "ready" });
++  }
++
++  for (const run of missionSpec.agentRuns) {
++    const cardId = AGENT_CARD_MAP[normalizeAgentId(run.agentId)];
++    if (!cardId || !nodeById.has(cardId)) continue;
++    const promptSeed = String(run.promptSeed || "").trim();
++    if (promptSeed) {
++      promptFieldsToUpdate.push({ nodeId: cardId, prompt: promptSeed });
++    }
++    // Board ownership rule:
++    // mission patching must not infer or auto-create wiring edges from layout/proximity.
++    // explicit edge creation can be added later through an explicit mission graph contract.
++  }
++
++  return {
++    missionSpecId: missionSpec.id,
++    nodesToCreate,
++    nodesToUpdate,
++    edgesToCreate,
++    edgesToUpdate,
++    promptFieldsToUpdate,
++    runState: "wiring",
++  };
++}
++
++export function applyMissionDeckPatch(
++  currentDeck: DeckDocument,
++  patch: MissionDeckPatch,
++): DeckDocument {
++  const nodes = [...currentDeck.nodes];
++  const nodeIndexById = new Map(nodes.map((n, i) => [n.id, i] as const));
++  for (const node of patch.nodesToCreate) {
++    if (nodeIndexById.has(node.id)) continue;
++    nodeIndexById.set(node.id, nodes.length);
++    nodes.push(node);
++  }
++  for (const update of patch.nodesToUpdate) {
++    const idx = nodeIndexById.get(update.id);
++    if (idx == null) continue;
++    nodes[idx] = { ...nodes[idx], ...update };
++  }
++  for (const promptUpdate of patch.promptFieldsToUpdate) {
++    const idx = nodeIndexById.get(promptUpdate.nodeId);
++    if (idx == null) continue;
++    nodes[idx] = { ...nodes[idx], prompt: promptUpdate.prompt };
++  }
++
++  const edges = [...currentDeck.edges];
++  const edgeIndexById = new Map(edges.map((e, i) => [e.id, i] as const));
++  const edgeKey = new Set(edges.map((e) => `${e.source}->${e.target}`));
++  for (const edge of patch.edgesToCreate) {
++    const key = `${edge.source}->${edge.target}`;
++    if (edgeIndexById.has(edge.id) || edgeKey.has(key)) continue;
++    edgeIndexById.set(edge.id, edges.length);
++    edgeKey.add(key);
++    edges.push(edge);
++  }
++  for (const update of patch.edgesToUpdate) {
++    const idx = edgeIndexById.get(update.id);
++    if (idx == null) continue;
++    edges[idx] = { ...edges[idx], ...update };
++  }
++
++  return {
++    ...currentDeck,
++    nodes,
++    edges,
++    version: currentDeck.version + 1,
++  };
++}
+diff --git a/client/src/components/builder/useBuilderDeckRuntimeActions.ts b/client/src/components/builder/useBuilderDeckRuntimeActions.ts
+index 9181b3d4..0e145051 100644
+--- a/client/src/components/builder/useBuilderDeckRuntimeActions.ts
++++ b/client/src/components/builder/useBuilderDeckRuntimeActions.ts
+@@ -76,6 +76,7 @@ export function useBuilderDeckRuntimeActions({
+   v3ProjectsApi,
+   activeProjectLatestRef,
+   recordDeckWriteReason,
++  onDeckPersistProof,
+ }: {
+   builderDev: boolean;
+   buildSingleCardRunDocument: (document: DeckDocument, cardId: string) => DeckDocument | null;
+@@ -117,6 +118,17 @@ export function useBuilderDeckRuntimeActions({
+   v3ProjectsApi: string;
+   activeProjectLatestRef: MutableRefObject<string>;
+   recordDeckWriteReason: (reason: string) => void;
++  onDeckPersistProof?: (entry: {
++    projectId: string;
++    deckId: string;
++    reason: string;
++    nodeCount: number;
++    edgeCount: number;
++    revisionBefore: string | null;
++    revisionAfter: string | null;
++    ok: boolean;
++    error?: string;
++  }) => void;
+ }) {
+   const handleSaveDeck = useCallback(async () => {
+     if (!canvasProjectId) {
+@@ -145,6 +157,7 @@ export function useBuilderDeckRuntimeActions({
+ 
+     try {
+       const endpoint = `${v3ProjectsApi}/${requestProjectId}/decks/${deckId}`;
++      const revisionBefore = deckRevision;
+       const response = await fetch(endpoint, {
+         method: "PUT",
+         headers: {
+@@ -165,6 +178,17 @@ export function useBuilderDeckRuntimeActions({
+       }
+ 
+       if (!response.ok) {
++        onDeckPersistProof?.({
++          projectId: requestProjectId,
++          deckId,
++          reason: "manual-save",
++          nodeCount: deck.nodes.length,
++          edgeCount: deck.edges.length,
++          revisionBefore,
++          revisionAfter: null,
++          ok: false,
++          error: safeText(data?.error || "deck_save_failed"),
++        });
+         throw new Error(safeText(data?.error || "deck_save_failed"));
+       }
+ 
+@@ -183,9 +207,19 @@ export function useBuilderDeckRuntimeActions({
+           return hydrateDeckDocument({ ...(data.deck as DeckDocument), id: deckId });
+         });
+       }
+-      setDeckRevision(
+-        typeof data?.meta?.deckRevision === "string" ? data.meta.deckRevision : deckRevision,
+-      );
++      const revisionAfter =
++        typeof data?.meta?.deckRevision === "string" ? data.meta.deckRevision : deckRevision;
++      setDeckRevision(revisionAfter);
++      onDeckPersistProof?.({
++        projectId: requestProjectId,
++        deckId,
++        reason: "manual-save",
++        nodeCount: deck.nodes.length,
++        edgeCount: deck.edges.length,
++        revisionBefore,
++        revisionAfter,
++        ok: true,
++      });
+       setDeckStatusMessage("Board saved.");
+     } catch (err: any) {
+       if (isAbortLikeError(err) || activeProjectLatestRef.current !== requestProjectId) {
+@@ -195,6 +229,17 @@ export function useBuilderDeckRuntimeActions({
+         safeText(err?.message) === "deck_conflict"
+           ? "A newer saved canvas exists. Reload the workspace before saving again."
+           : "Could not save the current board.";
++      onDeckPersistProof?.({
++        projectId: requestProjectId,
++        deckId,
++        reason: "manual-save",
++        nodeCount: deck.nodes.length,
++        edgeCount: deck.edges.length,
++        revisionBefore: deckRevision,
++        revisionAfter: null,
++        ok: false,
++        error: safeText(err?.message || "deck_save_failed"),
++      });
+       setDeckStatusMessage(formatBuilderStatusMessage(err?.message, fallbackMessage));
+     } finally {
+       if (deckSaveAbortRef.current === controller) {
+@@ -219,6 +264,7 @@ export function useBuilderDeckRuntimeActions({
+     setDeckSaveBusy,
+     setDeckStatusMessage,
+     v3ProjectsApi,
++    onDeckPersistProof,
+   ]);
+ 
+   const handleRunSelectedCard = useCallback(async () => {
+diff --git a/client/src/components/builder/workspaceHarness.spec.ts b/client/src/components/builder/workspaceHarness.spec.ts
+new file mode 100644
+index 00000000..aa60f893
+--- /dev/null
++++ b/client/src/components/builder/workspaceHarness.spec.ts
+@@ -0,0 +1,97 @@
++import { describe, expect, it } from "vitest";
++
++import type { DeckDocument, MissionRun, MissionSpec, WorkspaceHarnessRequest } from "../../types/agentgraph";
++import { applyMissionDeckPatch, buildMissionDeckPatch } from "./missionExecution";
++import { runInternalWorkspaceHarness } from "./workspaceHarness";
++
++const deck: DeckDocument = {
++  id: "deck_builder",
++  name: "Deck",
++  promptTemplates: [],
++  version: 1,
++  nodes: [
++    { id: "card_magentic", templateId: "t", title: "Magentic", position: { x: 0, y: 0 } },
++    { id: "card_research_agent", templateId: "t", title: "Research", position: { x: 1, y: 0 } },
++    { id: "card_knowgraph_agent", templateId: "t", title: "KnowGraph", position: { x: 2, y: 0 } },
++    { id: "card_thinkgraph_agent", templateId: "t", title: "ThinkGraph", position: { x: 3, y: 0 } },
++  ],
++  edges: [],
++};
++
++const missionSpec: MissionSpec = {
++  id: "mission_1",
++  title: "Mission",
++  userGoal: "Run research mission",
++  target: "deck",
++  readContext: [],
++  runState: "approved",
++  agentRuns: [{ id: "a1", agentId: "research_agent", promptSeed: "research", required: true }],
++};
++
++const missionRun: MissionRun = {
++  id: "mr_1",
++  missionSpecId: "mission_1",
++  status: "approved",
++  activeAgentRunId: null,
++  agentRuns: [{ id: "a1", agentId: "research_agent", status: "queued", required: true, promptSeed: "research" }],
++  results: [],
++  createdAt: new Date().toISOString(),
++  updatedAt: new Date().toISOString(),
++};
++
++const baseRequest: WorkspaceHarnessRequest = {
++  provider: "internal-workspace",
++  operation: "inspect_context",
++  userGoal: "inspect deck context",
++  permissions: ["deck.read", "mission.read"],
++};
++
++describe("workspace harness", () => {
++  it("inspect_context returns summary", async () => {
++    const result = await runInternalWorkspaceHarness(baseRequest, {
++      currentDeck: deck,
++      buildMissionDeckPatch,
++      applyMissionDeckPatch,
++    });
++    expect(result.status).toBe("complete");
++  });
++
++  it("draft_mission returns MissionSpec patch", async () => {
++    const result = await runInternalWorkspaceHarness(
++      { ...baseRequest, operation: "draft_mission", userGoal: "build mission" },
++      { currentDeck: deck, buildMissionDeckPatch, applyMissionDeckPatch },
++    );
++    expect(result.missionSpecPatch?.userGoal).toContain("build mission");
++  });
++
++  it("generate_deck_patch returns mission patch", async () => {
++    const result = await runInternalWorkspaceHarness(
++      { ...baseRequest, operation: "generate_deck_patch", missionSpec },
++      { currentDeck: deck, buildMissionDeckPatch, applyMissionDeckPatch },
++    );
++    expect(result.missionDeckPatch?.missionSpecId).toBe("mission_1");
++  });
++
++  it("ask_clarifying_questions returns questions for vague input", async () => {
++    const result = await runInternalWorkspaceHarness(
++      { ...baseRequest, operation: "ask_clarifying_questions", userGoal: "help" },
++      { currentDeck: deck, buildMissionDeckPatch, applyMissionDeckPatch },
++    );
++    expect(result.questions && result.questions.length > 0).toBe(true);
++  });
++
++  it("run_approved_mission delegates to provided mission runner", async () => {
++    const result = await runInternalWorkspaceHarness(
++      { ...baseRequest, operation: "run_approved_mission", missionSpec, missionRun },
++      {
++        currentDeck: deck,
++        buildMissionDeckPatch,
++        applyMissionDeckPatch,
++        runApprovedMission: async (_spec, run) => ({
++          missionRun: { ...run, status: "complete" },
++        }),
++      },
++    );
++    expect(result.status).toBe("complete");
++  });
++});
+diff --git a/client/src/components/builder/workspaceHarness.ts b/client/src/components/builder/workspaceHarness.ts
+new file mode 100644
+index 00000000..a295bb4c
+--- /dev/null
++++ b/client/src/components/builder/workspaceHarness.ts
+@@ -0,0 +1,199 @@
++import type {
++  DeckDocument,
++  MissionDeckPatch,
++  MissionRun,
++  MissionSpec,
++  OpenMissionMessage,
++  WorkspaceHarnessOperation,
++  WorkspaceHarnessRequest,
++  WorkspaceHarnessResult,
++} from "../../types/agentgraph";
++
++type InternalWorkspaceHarnessDeps = {
++  currentDeck: DeckDocument;
++  buildMissionDeckPatch: (missionSpec: MissionSpec, currentDeck: DeckDocument) => MissionDeckPatch;
++  applyMissionDeckPatch: (currentDeck: DeckDocument, patch: MissionDeckPatch) => DeckDocument;
++  runApprovedMission?: (
++    missionSpec: MissionSpec,
++    missionRun: MissionRun,
++  ) => Promise<{
++    missionRun: MissionRun;
++    openMissionMessage?: OpenMissionMessage | null;
++  }>;
++};
++
++function safeText(value: unknown): string {
++  if (value == null) return "";
++  return String(value).trim();
++}
++
++function buildDraftMissionSpec(request: WorkspaceHarnessRequest): MissionSpec {
++  const goal = safeText(request.userGoal) || "Run approved mission.";
++  const available = Array.isArray(request.availableAgents) ? request.availableAgents : [];
++  const idFromAgent = (id: string) => available.some((entry) => entry.id === id);
++  const agentRuns = [
++    idFromAgent("research_agent") ? { agentId: "research_agent", promptSeed: "Research and gather evidence.", required: true } : null,
++    idFromAgent("knowgraph_agent") ? { agentId: "knowgraph_agent", promptSeed: "Convert evidence into grounded knowledge updates.", required: true } : null,
++    idFromAgent("thinkgraph_agent") ? { agentId: "thinkgraph_agent", promptSeed: "Summarize outcome as provisional plan memory.", required: false } : null,
++  ].filter(Boolean) as MissionSpec["agentRuns"];
++  return {
++    id: `mission_${Date.now()}`,
++    title: goal.length > 72 ? `${goal.slice(0, 69)}...` : goal,
++    userGoal: goal,
++    target: request.activeCanvasId || "agentbuilder_deck",
++    readContext: request.graphContextRefs || [],
++    agentRuns,
++    runState: "draft",
++  };
++}
++
++function clarifyingQuestions(request: WorkspaceHarnessRequest): string[] {
++  const questions: string[] = [];
++  if (!safeText(request.userGoal) || safeText(request.userGoal).split(/\s+/).length < 3) {
++    questions.push("What concrete outcome should this mission produce?");
++  }
++  if (!request.selectedObject) {
++    questions.push("Which canvas object or plan block should this mission target?");
++  }
++  if (!request.missionSpec && request.operation !== "inspect_context") {
++    questions.push("Should I draft a MissionSpec from this request before wiring agents?");
++  }
++  return questions;
++}
++
++export async function runInternalWorkspaceHarness(
++  request: WorkspaceHarnessRequest,
++  deps: InternalWorkspaceHarnessDeps,
++): Promise<WorkspaceHarnessResult> {
++  const operation: WorkspaceHarnessOperation = request.operation;
++  const missionSpec = request.missionSpec || buildDraftMissionSpec(request);
++  if (request.provider !== "internal-workspace") {
++    return {
++      status: "failed",
++      summary: "Unsupported harness provider for this pass.",
++      errorReason: "provider_not_supported",
++      suggestedNextAction: "inspect_context",
++    };
++  }
++
++  if (operation === "inspect_context") {
++    return {
++      status: "complete",
++      summary: `Canvas ${request.activeCanvasId || "unknown"} with ${deps.currentDeck.nodes.length} nodes and ${deps.currentDeck.edges.length} edges.`,
++      suggestedNextAction: "draft_mission",
++    };
++  }
++
++  if (operation === "ask_clarifying_questions") {
++    const questions = clarifyingQuestions(request);
++    return {
++      status: questions.length > 0 ? "needs_user_input" : "complete",
++      summary:
++        questions.length > 0
++          ? "Need clarification before workspace mutation."
++          : "Context is clear enough to proceed.",
++      questions,
++      suggestedNextAction: questions.length > 0 ? "ask_clarifying_questions" : "draft_mission",
++    };
++  }
++
++  if (operation === "draft_mission") {
++    return {
++      status: "complete",
++      summary: "Drafted MissionSpec from current workspace context.",
++      missionSpecPatch: missionSpec,
++      suggestedNextAction: "generate_deck_patch",
++    };
++  }
++
++  if (operation === "refine_mission") {
++    return {
++      status: "complete",
++      summary: "Refined MissionSpec draft.",
++      missionSpecPatch: {
++        ...missionSpec,
++        userGoal: safeText(request.userGoal) || missionSpec.userGoal,
++      },
++      suggestedNextAction: "generate_deck_patch",
++    };
++  }
++
++  if (
++    operation === "generate_deck_patch" ||
++    operation === "connect_agents" ||
++    operation === "seed_prompts"
++  ) {
++    const patch = deps.buildMissionDeckPatch(missionSpec, deps.currentDeck);
++    return {
++      status: "complete",
++      summary: "Generated mission deck patch.",
++      missionDeckPatch: patch,
++      suggestedNextAction: "apply_deck_patch",
++    };
++  }
++
++  if (operation === "apply_deck_patch") {
++    const patch = request.missionSpec
++      ? deps.buildMissionDeckPatch(request.missionSpec, deps.currentDeck)
++      : deps.buildMissionDeckPatch(missionSpec, deps.currentDeck);
++    return {
++      status: "complete",
++      summary: "Applied mission deck patch to workspace state.",
++      missionDeckPatch: patch,
++      suggestedNextAction: "run_approved_mission",
++    };
++  }
++
++  if (operation === "run_approved_mission") {
++    if (!request.missionRun || !deps.runApprovedMission) {
++      return {
++        status: "failed",
++        summary: "Mission run execution callback is unavailable.",
++        errorReason: "mission_runner_unavailable",
++      };
++    }
++    const output = await deps.runApprovedMission(missionSpec, request.missionRun);
++    return {
++      status: output.missionRun.status === "needs_user_input" ? "needs_user_input" : "complete",
++      summary: `Mission run ${output.missionRun.status}.`,
++      missionRunUpdate: output.missionRun,
++      openMissionMessage: output.openMissionMessage || null,
++      suggestedNextAction:
++        output.missionRun.status === "complete" ? null : "ask_clarifying_questions",
++    };
++  }
++
++  if (operation === "request_graph_update") {
++    return {
++      status: "complete",
++      summary: "Prepared graph update request for graph-owned agents.",
++      graphUpdateRequests: [
++        {
++          id: `gur_${Date.now()}`,
++          targetGraph: "think",
++          requestedBy: "workspace-harness",
++          reason: "Mission result should be reflected in provisional reasoning graph.",
++          proposedRecords: [],
++          sourceRefs: [],
++          confidence: null,
++          status: "pending",
++          createdAt: new Date().toISOString(),
++        },
++      ],
++    };
++  }
++
++  if (operation === "query_graph" || operation === "traverse_graph") {
++    return {
++      status: "complete",
++      summary: "Graph read operation acknowledged; use existing graph APIs from workspace.",
++      suggestedNextAction: "draft_mission",
++    };
++  }
++
++  return {
++    status: "failed",
++    summary: "Unsupported workspace harness operation.",
++    errorReason: "unsupported_operation",
++  };
++}
+diff --git a/client/src/pages/agentbuilder.tsx b/client/src/pages/agentbuilder.tsx
+index 082c5870..d05704c3 100644
+--- a/client/src/pages/agentbuilder.tsx
++++ b/client/src/pages/agentbuilder.tsx
+@@ -62,6 +62,12 @@ import {
+   resolveDeckRunChatReply,
+   streamDeckRunRequest,
+ } from '../components/builder/deckRunState';
++import {
++  applyMissionDeckPatch,
++  buildMissionDeckPatch,
++} from '../components/builder/missionExecution';
++import { draftMissionSpecFromChat } from '../components/builder/chatPlanCompanion';
++import { runInternalWorkspaceHarness } from '../components/builder/workspaceHarness';
+ import {
+   buildDefaultDeckEdgeMetadata,
+   sanitizeDeckEdges,
+@@ -101,6 +107,14 @@ import type {
+   WorkspaceObjectContext,
+   PromptTemplate,
+   RuntimeBinding,
++  MissionRun,
++  MissionSpec,
++  OpenMissionMessage,
++  PlanDraftStatus,
++  ChatPlanDraftResult,
++  WorkspaceHarnessOperation,
++  WorkspaceHarnessPermission,
++  WorkspaceHarnessRequest,
+ } from '../types/agentgraph';
+ import {
+   ENERGY_DEFAULT_PARAMETERS,
+@@ -471,9 +485,10 @@ const KNOWLEDGE_VIEW_TABS = ['Chat', 'Canvas', 'Plan'] as const;
+ const CODEGRAPH_VIEW_TABS = ['Chat', 'Canvas', 'Knowledge', 'Plan'] as const;
+ const BUILDER_PROJECT_TABS = ['Plan'] as const;
+ const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime'] as const;
+-const AGENTS_CHAT_MIN_WIDTH = 360;
++const AGENTS_CHAT_MIN_WIDTH = 280;
+ const AGENTS_CANVAS_MIN_WIDTH = 520;
+ const WORKSPACE_COMPANION_MIN_WIDTH = 360;
++const WORKSPACE_COLLAPSE_EDGE_PX = 28;
+ const AGENT_EDITOR_DEFAULT_WIDTH = 420;
+ type WorkspaceTestingEventDraft = Omit<
+   WorkspaceTestingEventInput,
+@@ -1386,6 +1401,60 @@ function detectActivationProposal(
+   };
+ }
+ 
++function detectWorkspaceHarnessOperation(
++  text: string,
++): WorkspaceHarnessOperation | null {
++  const normalized = safeText(text).trim().toLowerCase();
++  if (!normalized) return null;
++  if (/\b(what context|inspect|show context|current deck)\b/.test(normalized)) {
++    return 'inspect_context';
++  }
++  if (/\b(draft mission|create mission|plan mission)\b/.test(normalized)) {
++    return 'draft_mission';
++  }
++  if (/\b(refine mission|update mission)\b/.test(normalized)) {
++    return 'refine_mission';
++  }
++  if (/\b(generate patch|wire deck|connect agents|seed prompts)\b/.test(normalized)) {
++    return 'generate_deck_patch';
++  }
++  if (/\b(apply patch|apply deck patch)\b/.test(normalized)) {
++    return 'apply_deck_patch';
++  }
++  if (/\b(run approved mission|run mission|execute mission)\b/.test(normalized)) {
++    return 'run_approved_mission';
++  }
++  if (/\b(question|clarify|ambiguous)\b/.test(normalized)) {
++    return 'ask_clarifying_questions';
++  }
++  if (/\b(query graph|traverse graph)\b/.test(normalized)) {
++    return 'query_graph';
++  }
++  return null;
++}
++
++const WORKSPACE_HARNESS_DEFAULT_PERMISSIONS: WorkspaceHarnessPermission[] = [
++  'deck.read',
++  'deck.write',
++  'canvas.read',
++  'canvas.write',
++  'plan.read',
++  'plan.write',
++  'mission.read',
++  'mission.write',
++  'agent.read',
++  'agent.connect',
++  'agent.prompt.read',
++  'agent.prompt.write',
++  'reactflow.nodes.create',
++  'reactflow.nodes.update',
++  'reactflow.edges.create',
++  'reactflow.edges.update',
++  'graph.query',
++  'graph.traverse',
++  'graph.write.request',
++];
++
+ function isAssistLikeRuntimeType(runtimeType: AgentCardRuntimeType | null): boolean {
+   return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
+ }
+@@ -2809,7 +2878,44 @@ export const INITIAL_DECK: DeckDocument = {
+     },
+     ...buildUaAgentSeedNodes(),
+   ],
+-  edges: [],
++  edges: [
++    {
++      id: 'edge_magentic_plan',
++      source: 'card_magentic',
++      target: 'card_plan_agent',
++      edgeType: 'magentic_option',
++    },
++    {
++      id: 'edge_magentic_local_coder',
++      source: 'card_magentic',
++      target: 'card_local_coder',
++      edgeType: 'magentic_option',
++    },
++    {
++      id: 'edge_magentic_thinkgraph',
++      source: 'card_magentic',
++      target: 'card_thinkgraph_agent',
++      edgeType: 'magentic_option',
++    },
++    {
++      id: 'edge_magentic_knowgraph',
++      source: 'card_magentic',
++      target: 'card_knowgraph_agent',
++      edgeType: 'magentic_option',
++    },
++    {
++      id: 'edge_magentic_research_agent',
++      source: 'card_magentic',
++      target: 'card_research_agent',
++      edgeType: 'magentic_option',
++    },
++    {
++      id: 'edge_magentic_codegraph',
++      source: 'card_magentic',
++      target: 'card_codegraph_agent',
++      edgeType: 'magentic_option',
++    },
++  ],
+ };
+ 
+ const BUILDER_DECK_ID = INITIAL_DECK.id;
+@@ -2839,6 +2945,16 @@ const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
+   card_neo4j: 'neo4j',
+ };
+ 
++const SYSTEM_CAPABILITY_REGISTRY = {
++  openclaudeHarness: {
++    label: 'LocalCoder / OpenClaude Harness',
++    cardId: 'card_local_coder',
++    runtimeBinding: 'local_coder' as const,
++    routePrefix: '/api/coder/openclaude',
++  },
++} as const;
++void SYSTEM_CAPABILITY_REGISTRY;
++
+ const BASELINE_OPTIONAL_CARD_IDS = new Set([
+   'card_local_coder',
+   'card_plan_agent',
+@@ -3399,14 +3515,7 @@ function seedCurrentSystemCardsIntoLegacyDeck(
+     deck.nodes.length > 0 &&
+     deck.nodes.some((node) => LEGACY_SYSTEM_CARD_IDS.has(node.id)) &&
+     deck.nodes.every((node) => legacyCompatibleNodeIds.has(node.id));
+-  if (hasOnlyLegacySystemNodes) {
+-    return {
+-      ...cloneDeckDocument(INITIAL_DECK),
+-      id: deck.id || INITIAL_DECK.id,
+-      name: deck.name || INITIAL_DECK.name,
+-      version: Math.max(deck.version, INITIAL_DECK.version),
+-    };
+-  }
++  void hasOnlyLegacySystemNodes;
+   const hasOnlySystemNodes =
+     deck.nodes.length > 0 &&
+     deck.nodes.every((node) => defaultNodeIds.has(node.id));
+@@ -3445,10 +3554,6 @@ function seedCurrentSystemCardsIntoLegacyDeck(
+         String(existingNode.subtitle || '').trim() === 'Gather upstream inputs'
+           ? seedNode.subtitle
+           : existingNode.subtitle || seedNode.subtitle;
+-      const shouldResetDataFormulatorPosition =
+-        seedNode.id === 'card_data_formulator_workbench' &&
+-        existingNode.position?.x === 1040 &&
+-        existingNode.position?.y === 320;
+       return {
+         ...cloneDeckDocument(seedNode),
+         ...cloneDeckDocument(existingNode),
+@@ -3471,9 +3576,7 @@ function seedCurrentSystemCardsIntoLegacyDeck(
+         parentGraphId: cleanOptionalText(
+           existingNode.parentGraphId ?? seedNode.parentGraphId ?? null,
+         ),
+-        position: shouldResetDataFormulatorPosition
+-          ? seedNode.position
+-          : existingNode.position || seedNode.position,
++        position: existingNode.position || seedNode.position,
+         overrides: existingNode.overrides,
+         status: existingNode.status ?? seedNode.status,
+         cloneConfig: existingNode.cloneConfig ?? seedNode.cloneConfig,
+@@ -3492,23 +3595,8 @@ function seedCurrentSystemCardsIntoLegacyDeck(
+       .map((template) => cloneDeckDocument(template)),
+   ];
+ 
+-  const nextEdges = isPartialSystemDeckShape
+-    ? (() => {
+-        const mergedEdges = new Map<string, DeckEdge>();
+-        deck.edges.forEach((edge) => {
+-          mergedEdges.set(edge.id, cloneDeckDocument(edge));
+-        });
+-        INITIAL_DECK.edges.forEach((edge) => {
+-          if (!mergedEdges.has(edge.id)) {
+-            mergedEdges.set(edge.id, cloneDeckDocument(edge));
+-          }
+-        });
+-        return filterAuthoringCompatibleEdges(
+-          upgradedNodes,
+-          Array.from(mergedEdges.values()),
+-        );
+-      })()
+-    : filterAuthoringCompatibleEdges(upgradedNodes, deck.edges);
++  // Preserve persisted edge state exactly; never infer/merge seed edges during hydration.
++  const nextEdges = filterAuthoringCompatibleEdges(upgradedNodes, deck.edges);
+ 
+   return {
+     ...deck,
+@@ -4683,6 +4771,20 @@ export default function AgentBuilder(): React.ReactElement {
+   );
+   const [pendingActivationProposal, setPendingActivationProposal] =
+     useState<ActivationProposalState | null>(null);
++  const [latestMissionRun, setLatestMissionRun] = useState<MissionRun | null>(
++    null,
++  );
++  const [openMissionMessage, setOpenMissionMessage] =
++    useState<OpenMissionMessage | null>(null);
++  const [draftMissionSpec, setDraftMissionSpec] = useState<MissionSpec | null>(null);
++  const [planDraftStatus, setPlanDraftStatus] = useState<PlanDraftStatus>('idle');
++  const [latestPlanDraftResult, setLatestPlanDraftResult] =
++    useState<ChatPlanDraftResult | null>(null);
++  const draftMissionSpecRef = useRef<MissionSpec | null>(null);
++  const planDraftRequestSeqRef = useRef(0);
++  useEffect(() => {
++    draftMissionSpecRef.current = draftMissionSpec;
++  }, [draftMissionSpec]);
+   const visibleRailItems = useMemo(
+     () =>
+       deriveVisibleRailItems({
+@@ -5002,14 +5104,32 @@ export default function AgentBuilder(): React.ReactElement {
+   const lastBuilderDeckWriteReasonRef = useRef<string | null>(null);
+   const lastBuilderUiOnlyActionRef = useRef<string | null>(null);
+   const lastBuilderDeckFingerprintRef = useRef<string | null>(null);
++  const layoutAutosaveAbortRef = useRef<AbortController | null>(null);
++  const lastDeckPersistReasonRef = useRef<string | null>(null);
++  const [layoutPersistToken, setLayoutPersistToken] = useState(0);
++
++  const LAYOUT_PERSIST_REASONS = useMemo(
++    () =>
++      new Set([
++        'canvas:nodes',
++        'canvas:edges',
++        'canvas:connect',
++        'canvas:reconnect',
++        'edge-delete',
++      ]),
++    [],
++  );
+ 
+   const recordDeckWriteReason = useCallback(
+     (reason: string) => {
+-      if (!BUILDER_DEV) return;
+       lastBuilderDeckWriteReasonRef.current = reason;
++      lastDeckPersistReasonRef.current = reason;
+       lastBuilderUiOnlyActionRef.current = null;
++      if (LAYOUT_PERSIST_REASONS.has(reason)) {
++        setLayoutPersistToken((current) => current + 1);
++      }
+     },
+-    [BUILDER_DEV],
++    [LAYOUT_PERSIST_REASONS],
+   );
+ 
+   const recordUiOnlyAction = useCallback(
+@@ -5138,6 +5258,16 @@ export default function AgentBuilder(): React.ReactElement {
+               ? 'Using default canvas.'
+               : 'Canvas loaded.',
+         );
++        console.info('[builder][deck-load-proof]', {
++          projectId: canvasProjectId,
++          deckId: BUILDER_DECK_ID,
++          reason: 'deck-load',
++          source: loadResult.usedFallback ? 'fallback' : 'backend_saved_deck',
++          displayFallbackOnly: loadResult.displayFallbackOnly,
++          nodeCount: loadResult.deck.nodes.length,
++          edgeCount: loadResult.deck.edges.length,
++          revision: typeof payload.data?.meta?.deckRevision === 'string' ? payload.data.meta.deckRevision : null,
++        });
+       } catch (err: any) {
+         if (controller.signal.aborted) return;
+         recordDeckWriteReason('deck-load-default-error');
+@@ -5188,6 +5318,8 @@ export default function AgentBuilder(): React.ReactElement {
+   useEffect(() => {
+     deckSaveAbortRef.current?.abort();
+     deckSaveAbortRef.current = null;
++    layoutAutosaveAbortRef.current?.abort();
++    layoutAutosaveAbortRef.current = null;
+     deckExecutionAbortRef.current?.abort();
+     deckExecutionAbortRef.current = null;
+     setSending(false);
+@@ -5197,6 +5329,103 @@ export default function AgentBuilder(): React.ReactElement {
+     setPendingActivationProposal(null);
+   }, [canvasProjectId]);
+ 
++  useEffect(() => {
++    if (!canvasProjectId || layoutPersistToken === 0 || deckLoadBusy) return;
++    if (deckUsingDisplayFallback) return;
++    const timer = window.setTimeout(() => {
++      const reason = lastDeckPersistReasonRef.current || 'layout-autosave';
++      const revisionBefore = deckRevision;
++      const controller = new AbortController();
++      layoutAutosaveAbortRef.current?.abort();
++      layoutAutosaveAbortRef.current = controller;
++      void (async () => {
++        try {
++          const response = await fetch(
++            `${V3_PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}`,
++            {
++              method: 'PUT',
++              headers: {
++                'Content-Type': 'application/json',
++              },
++              body: JSON.stringify({
++                document: {
++                  ...deck,
++                  id: BUILDER_DECK_ID,
++                },
++                expectedRevision: deckRevision,
++              }),
++              signal: controller.signal,
++            },
++          );
++          const data = await safeJson(response);
++          if (!response.ok) {
++            console.warn('[builder][deck-save-proof]', {
++              projectId: canvasProjectId,
++              deckId: BUILDER_DECK_ID,
++              reason,
++              nodeCount: deck.nodes.length,
++              edgeCount: deck.edges.length,
++              revisionBefore,
++              revisionAfter: null,
++              ok: false,
++              error: safeText(data?.error || 'deck_save_failed'),
++            });
++            if (BUILDER_DEV) {
++              console.warn('[builder] layout autosave failed', {
++                error: safeText(data?.error || 'deck_save_failed'),
++              });
++            }
++            return;
++          }
++          const revisionAfter =
++            typeof data?.meta?.deckRevision === 'string'
++              ? data.meta.deckRevision
++              : deckRevision;
++          if (typeof data?.meta?.deckRevision === 'string') {
++            setDeckRevision(data.meta.deckRevision);
++          }
++          console.info('[builder][deck-save-proof]', {
++            projectId: canvasProjectId,
++            deckId: BUILDER_DECK_ID,
++            reason,
++            nodeCount: deck.nodes.length,
++            edgeCount: deck.edges.length,
++            revisionBefore,
++            revisionAfter,
++            ok: true,
++          });
++        } catch (error) {
++          if (isAbortLikeError(error)) return;
++          console.warn('[builder][deck-save-proof]', {
++            projectId: canvasProjectId,
++            deckId: BUILDER_DECK_ID,
++            reason,
++            nodeCount: deck.nodes.length,
++            edgeCount: deck.edges.length,
++            revisionBefore,
++            revisionAfter: null,
++            ok: false,
++            error: safeText((error as any)?.message || 'deck_save_exception'),
++          });
++          if (BUILDER_DEV) {
++            console.warn('[builder] layout autosave exception', error);
++          }
++        }
++      })();
++    }, 600);
++    return () => {
++      window.clearTimeout(timer);
++    };
++  }, [
++    BUILDER_DEV,
++    canvasProjectId,
++    deck,
++    deckLoadBusy,
++    deckRevision,
++    deckUsingDisplayFallback,
++    layoutPersistToken,
++  ]);
++
+   const showDeckBuilder = workspaceView === 'canvas';
+   const runtimeEvents = useMemo(
+     () =>
+@@ -5808,6 +6037,9 @@ export default function AgentBuilder(): React.ReactElement {
+       v3ProjectsApi: V3_PROJECTS_API,
+       activeProjectLatestRef,
+       recordDeckWriteReason,
++      onDeckPersistProof: (entry) => {
++        console.info('[builder][deck-save-proof]', entry);
++      },
+     });
+ 
+   const handleSaveSelectedCardConfig = useCallback(
+@@ -6473,7 +6705,10 @@ export default function AgentBuilder(): React.ReactElement {
+                 style={{ marginTop: 10 }}
+               >
+                 <button
+-                  onClick={handleSaveDeck}
++                  onClick={() => {
++                    recordDeckWriteReason('save-board-now');
++                    void handleSaveDeck();
++                  }}
+                   disabled={deckSaveBusy || deckLoadBusy || !canvasProjectId}
+                   style={graphDrawerButtonStyle({
+                     opacity:
+@@ -6486,7 +6721,7 @@ export default function AgentBuilder(): React.ReactElement {
+                         : 'pointer',
+                   })}
+                 >
+-                  {deckSaveBusy ? 'Saving...' : 'Save Deck'}
++                  {deckSaveBusy ? 'Saving...' : 'Save Board Now'}
+                 </button>
+                 <button
+                   onClick={handleRunDeck}
+@@ -7770,6 +8005,370 @@ export default function AgentBuilder(): React.ReactElement {
+     };
+   }, [tab, activeProject]);
+ 
++  const runApprovedMissionSequential = useCallback(async (
++    missionSpec: MissionSpec,
++    seedMissionRun: MissionRun,
++  ) => {
++    let missionRun = { ...seedMissionRun };
++    missionSpec.runState = 'running';
++    missionRun = { ...missionRun, status: 'running', updatedAt: new Date().toISOString() };
++    setLatestMissionRun(missionRun);
++    let previousOutput = missionSpec.userGoal;
++    const cardByAgentId: Record<string, string> = {
++      research_agent: 'card_research_agent',
++      knowgraph_agent: 'card_knowgraph_agent',
++      thinkgraph_agent: 'card_thinkgraph_agent',
++    };
++    for (const step of missionRun.agentRuns) {
++      const cardId = cardByAgentId[String(step.agentId || '').toLowerCase()];
++      const card = deck.nodes.find((node) => node.id === cardId);
++      if (!card) {
++        const status = step.required ? 'failed' : 'skipped';
++        step.status = status;
++        step.error = `Unsupported or missing agent card for ${step.agentId}.`;
++        missionRun.results.push({
++          agentRunId: step.id,
++          agentId: step.agentId,
++          status,
++          reason: step.error,
++        });
++        if (step.required) {
++          missionRun.status = 'failed';
++          break;
++        }
++        continue;
++      }
++      step.status = 'running';
++      missionRun.activeAgentRunId = step.id;
++      missionRun.updatedAt = new Date().toISOString();
++      setLatestMissionRun({ ...missionRun, agentRuns: [...missionRun.agentRuns], results: [...missionRun.results] });
++      setOpenMissionMessage({
++        missionRunId: missionRun.id,
++        title: missionSpec.title,
++        status: missionRun.status,
++        activeAgents: missionRun.agentRuns.map((entry) => ({
++          agentRunId: entry.id,
++          label: entry.agentId,
++          status: entry.status,
++          summary: entry.resultSummary,
++        })),
++        latestSummary: step.promptSeed,
++      });
++      const singleCardDeck = buildSingleCardRunDocument(deck, card.id);
++      if (!singleCardDeck) {
++        step.status = step.required ? 'failed' : 'skipped';
++        step.error = `Could not build run scope for ${card.id}.`;
++        if (step.required) missionRun.status = 'failed';
++        continue;
++      }
++      try {
++        const data = await streamDeckRunRequest({
++          endpoint: `${V3_PROJECTS_API}/${canvasProjectId}/decks/run`,
++          body: {
++            deckId: BUILDER_DECK_ID,
++            document: { ...singleCardDeck, id: BUILDER_DECK_ID },
++            templates: INITIAL_AGENT_TEMPLATES,
++            input: `${step.promptSeed}\n\nMission Goal:\n${missionSpec.userGoal}\n\nPrior Result:\n${previousOutput}`,
++            workspaceContext: activeDeckWorkspaceContext,
++            workspaceObjectContext: activeWorkspaceObjectContext,
++            missionSpec,
++            missionRunId: missionRun.id,
++            missionAgentRunId: step.id,
++          },
++        });
++        const run = data?.run as DeckRun | undefined;
++        if (!run) throw new Error('missing_run_payload');
++        const runStep = run.steps.find((entry) => entry.cardId === card.id);
++        const output = safeText(runStep?.output || '');
++        const backendAgentRunStatus = safeText(data?.agentRunStatus || run.mission?.agentRunStatus)
++          .trim()
++          .toLowerCase();
++        const backendResultSummary = compactAwarenessText(
++          data?.resultSummary ?? run.mission?.resultSummary ?? output,
++          220,
++        );
++        previousOutput = output || previousOutput;
++        step.status =
++          backendAgentRunStatus === 'complete'
++            ? 'complete'
++            : backendAgentRunStatus === 'needs_user_input'
++              ? 'needs_user_input'
++              : runStep?.status === 'success'
++                ? 'complete'
++                : 'failed';
++        step.resultSummary = backendResultSummary;
++        if (step.status === 'failed') step.error = safeText(runStep?.error || 'agent_step_failed');
++        missionRun.results.push({
++          agentRunId: step.id,
++          agentId: step.agentId,
++          status: step.status,
++          output: output || null,
++          reason:
++            safeText(data?.needsUserInputReason || data?.errorReason || step.error || '').trim() ||
++            null,
++        });
++        const backendMissionStatus = safeText(data?.missionStatus || run.mission?.missionStatus)
++          .trim()
++          .toLowerCase();
++        if (backendMissionStatus === 'needs_user_input') {
++          missionRun.status = 'needs_user_input';
++          break;
++        }
++        if (step.status === 'failed' && step.required) {
++          missionRun.status = 'failed';
++          break;
++        }
++      } catch (error: any) {
++        step.status = step.required ? 'failed' : 'skipped';
++        step.error = safeText(error?.message || 'agent_step_error');
++        missionRun.results.push({
++          agentRunId: step.id,
++          agentId: step.agentId,
++          status: step.status,
++          reason: step.error,
++        });
++        if (step.required) {
++          missionRun.status = 'failed';
++          break;
++        }
++      }
++    }
++    if (missionRun.status !== 'failed' && missionRun.status !== 'needs_user_input') {
++      missionRun.status = 'complete';
++    }
++    missionRun.activeAgentRunId = null;
++    missionRun.updatedAt = new Date().toISOString();
++    setLatestMissionRun({ ...missionRun, agentRuns: [...missionRun.agentRuns], results: [...missionRun.results] });
++    setOpenMissionMessage({
++      missionRunId: missionRun.id,
++      title: missionSpec.title,
++      status: missionRun.status,
++      activeAgents: missionRun.agentRuns.map((entry) => ({
++        agentRunId: entry.id,
++        label: entry.agentId,
++        status: entry.status,
++        summary: entry.resultSummary,
++      })),
++      latestSummary: missionRun.results[missionRun.results.length - 1]?.reason || missionRun.results[missionRun.results.length - 1]?.output || undefined,
++      suggestedUserActions:
++        missionRun.status === 'needs_user_input'
++          ? ['Answer mission clarification in chat.']
++          : missionRun.status === 'failed'
++            ? ['Review failed required agent step before rerun.']
++            : ['Mission complete.'],
++    });
++    return { missionRun, openMissionMessage };
++  }, [
++    activeDeckWorkspaceContext,
++    activeWorkspaceObjectContext,
++    canvasProjectId,
++    deck,
++  ]);
++
++  const handleApproveMissionExecution = useCallback(async () => {
++    if (!pendingActivationProposal || !canvasProjectId || deckRunBusy) return;
++    const now = new Date().toISOString();
++    const latestDraft = draftMissionSpecRef.current;
++    const baseMissionSpec: MissionSpec = latestDraft
++      ? {
++          ...latestDraft,
++          runState: 'approved',
++          agentRuns: [...latestDraft.agentRuns],
++        }
++      : {
++          id: `mission_${uid()}`,
++          title: pendingActivationProposal.title,
++          userGoal: pendingActivationProposal.sourceText,
++          target: 'agentbuilder_deck',
++          readContext: [],
++          runState: 'approved',
++          agentRuns: [
++            { id: `run_${uid()}`, agentId: 'research_agent', promptSeed: 'Research and gather evidence.', required: true },
++            { id: `run_${uid()}`, agentId: 'knowgraph_agent', promptSeed: 'Convert evidence into grounded knowledge updates.', required: true },
++            { id: `run_${uid()}`, agentId: 'thinkgraph_agent', promptSeed: 'Summarize outcome as provisional plan memory.', required: false },
++          ],
++        };
++    let missionRun: MissionRun = {
++      id: `mission_run_${uid()}`,
++      missionSpecId: baseMissionSpec.id,
++      status: 'wiring',
++      activeAgentRunId: null,
++      agentRuns: baseMissionSpec.agentRuns.map((run, index) => ({
++        id: run.id || `agent_run_${index + 1}`,
++        agentId: run.agentId,
++        status: 'queued',
++        required: run.required !== false,
++        promptSeed: run.promptSeed,
++      })),
++      results: [],
++      createdAt: now,
++      updatedAt: now,
++    };
++    setLatestMissionRun(missionRun);
++    setDeckRunBusy(true);
++    try {
++      const harnessRequest: WorkspaceHarnessRequest = {
++        provider: 'internal-workspace',
++        operation: 'generate_deck_patch',
++        userGoal: baseMissionSpec.userGoal,
++        activeCanvasId: canvasProjectId,
++        selectedObject: activeWorkspaceObjectContext,
++        missionSpec: baseMissionSpec,
++        missionRun,
++        currentDeckSummary: {
++          id: deck.id,
++          name: deck.name,
++          nodeCount: deck.nodes.length,
++          edgeCount: deck.edges.length,
++        },
++        availableAgents: deck.nodes.map((node) => ({ id: safeText(node.runtimeBinding || node.id), label: node.title })),
++        graphContextRefs: [],
++        priorResults: [],
++        permissions: WORKSPACE_HARNESS_DEFAULT_PERMISSIONS,
++      };
++      const patchResult = await runInternalWorkspaceHarness(harnessRequest, {
++        currentDeck: deck,
++        buildMissionDeckPatch,
++        applyMissionDeckPatch,
++      });
++      if (patchResult.missionDeckPatch) {
++        const applyResult = await runInternalWorkspaceHarness(
++          { ...harnessRequest, operation: 'apply_deck_patch' },
++          {
++            currentDeck: deck,
++            buildMissionDeckPatch,
++            applyMissionDeckPatch,
++          },
++        );
++        const patchToApply = applyResult.missionDeckPatch || patchResult.missionDeckPatch;
++        setDeck((current) => applyMissionDeckPatch(current, patchToApply));
++      }
++      const runResult = await runInternalWorkspaceHarness(
++        { ...harnessRequest, operation: 'run_approved_mission', missionRun },
++        {
++          currentDeck: deck,
++          buildMissionDeckPatch,
++          applyMissionDeckPatch,
++          runApprovedMission: runApprovedMissionSequential,
++        },
++      );
++      if (runResult.missionRunUpdate) {
++        missionRun = { ...missionRun, ...runResult.missionRunUpdate };
++        setLatestMissionRun(missionRun);
++      }
++      if (runResult.openMissionMessage) {
++        setOpenMissionMessage(runResult.openMissionMessage);
++      }
++      setPendingActivationProposal(null);
++    } finally {
++      setDeckRunBusy(false);
++    }
++  }, [
++    activeWorkspaceObjectContext,
++    canvasProjectId,
++    deck,
++    deckRunBusy,
++    pendingActivationProposal,
++    runApprovedMissionSequential,
++    setDeck,
++  ]);
++
++  const startPlanDraftFromChat = useCallback(
++    (message: string) => {
++      const requestSeq = ++planDraftRequestSeqRef.current;
++      setPlanDraftStatus('drafting');
++      void Promise.resolve().then(() => {
++        try {
++          const selectedObjectForDraft =
++            activeWorkspaceObjectContext?.selectedObjectId
++              ? {
++                  id: activeWorkspaceObjectContext.selectedObjectId,
++                  canvasId: canvasProjectId || 'agentbuilder_deck',
++                  type: activeWorkspaceObjectContext.selectedObjectType || 'workspace_object',
++                  title:
++                    activeWorkspaceObjectContext.selectedObjectTitle ||
++                    activeWorkspaceObjectContext.selectedObjectId,
++                  props: {
++                    selectedText: activeWorkspaceObjectContext.selectedText || null,
++                    openObjectSummary:
++                      activeWorkspaceObjectContext.openObjectSummary || null,
++                  },
++                  editableTargets: [],
++                  graphRefs: [],
++                }
++              : undefined;
++          const result = draftMissionSpecFromChat({
++            userMessage: message,
++            activeCanvasId: canvasProjectId || undefined,
++            selectedObject: selectedObjectForDraft,
++            currentMissionSpec: draftMissionSpecRef.current || undefined,
++            currentDeckSummary: {
++              id: deck.id,
++              name: deck.name,
++              nodeCount: deck.nodes.length,
++              edgeCount: deck.edges.length,
++            },
++            availableAgents: deck.nodes.map((node) => ({
++              id: safeText(node.runtimeBinding || node.id),
++              label: node.title,
++              type: safeText(node.runtimeType || undefined) || undefined,
++              capabilities: [safeText(node.runtimeBinding || node.runtimeType || '')].filter(Boolean),
++            })),
++            graphContextRefs: compactAwarenessList([
++              activeWorkspaceObjectContext?.selectedNodeId,
++              activeWorkspaceObjectContext?.selectedNodeName,
++              knowledgeGraphKind,
++            ]),
++            priorMissionResults:
++              latestMissionRun?.results.map((entry) => ({
++                agentId: entry.agentId,
++                summary: entry.reason || entry.output || null,
++              })) || [],
++          });
++          if (requestSeq !== planDraftRequestSeqRef.current) return;
++          setLatestPlanDraftResult(result);
++          if (result.missionSpec) {
++            setDraftMissionSpec(result.missionSpec);
++          } else if (result.missionSpecPatch && draftMissionSpecRef.current) {
++            setDraftMissionSpec({
++              ...draftMissionSpecRef.current,
++              ...result.missionSpecPatch,
++            });
++          }
++          setPlanDraftStatus(
++            result.status === 'ready' && !result.missionSpec && !result.missionSpecPatch
++              ? 'failed'
++              : result.status,
++          );
++          if (result.status === 'needs_user_input' && result.questions && result.questions.length > 0) {
++            setMessages((current) => [
++              ...current,
++              {
++                role: 'assistant',
++                text: `Plan companion needs input: ${result.questions.join(' | ')}`,
++              },
++            ]);
++          }
++        } catch (error: any) {
++          if (requestSeq !== planDraftRequestSeqRef.current) return;
++          setLatestPlanDraftResult({
++            status: 'failed',
++            summary: 'Plan drafting failed.',
++            errorReason: safeText(error?.message || 'plan_draft_failed'),
++          });
++          setPlanDraftStatus('failed');
++        }
++      });
++    },
++    [
++      activeWorkspaceObjectContext,
++      canvasProjectId,
++      deck,
++      knowledgeGraphKind,
++      latestMissionRun,
++    ],
++  );
++
+   const handleSend = (t: string) => {
+     const trimmed = t.trim();
+     if (!trimmed) return;
+@@ -7784,6 +8383,7 @@ export default function AgentBuilder(): React.ReactElement {
+       ]);
+       return;
+     }
++    startPlanDraftFromChat(trimmed);
+     const interactionId = createWorkspaceTestingInteractionId('chat');
+     const sendStartedAt = Date.now();
+     const turnId = `assist:${Date.now()}:${uid()}`;
+@@ -8266,6 +8866,15 @@ export default function AgentBuilder(): React.ReactElement {
+     [],
+   );
+ 
++  const resolveAgentsChatMaxWidth = useCallback(
++    (reservedWidth: number) => {
++      const shellWidth = workspaceShellRef.current?.clientWidth ?? 0;
++      if (shellWidth <= 0) return AGENTS_CHAT_MIN_WIDTH;
++      return Math.max(AGENTS_CHAT_MIN_WIDTH, shellWidth - reservedWidth);
++    },
++    [],
++  );
++
+   useEffect(() => {
+     const reservedWidth =
+       workspaceView === 'canvas'
+@@ -8681,13 +9290,14 @@ export default function AgentBuilder(): React.ReactElement {
+                   <div style={{ display: 'flex', gap: 8 }}>
+                     <button
+                       type="button"
+-                      onClick={() =>
++                      onClick={async () => {
+                         setPendingActivationProposal((current) =>
+                           current
+                             ? { ...current, status: 'approved' }
+                             : current,
+-                        )
+-                      }
++                        );
++                        await handleApproveMissionExecution();
++                      }}
+                       className="px-3 py-1 rounded"
+                       style={{
+                         color: C.text,
+@@ -8722,6 +9332,89 @@ export default function AgentBuilder(): React.ReactElement {
+                 </div>
+               </div>
+             ) : null}
++            {latestMissionRun ? (
++              <div
++                style={graphDrawerSectionStyle({
++                  margin: '0 12px 10px',
++                  padding: '10px 12px',
++                  borderColor: 'rgba(79,162,173,0.25)',
++                  background: 'rgba(79,162,173,0.08)',
++                })}
++              >
++                <div style={{ fontSize: 12, color: C.text }}>
++                  Mission run: {latestMissionRun.status}
++                </div>
++                <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
++                  {latestMissionRun.agentRuns
++                    .map((run) => `${run.agentId}:${run.status}`)
++                    .join(' | ')}
++                </div>
++              </div>
++            ) : null}
++            <div
++              style={graphDrawerSectionStyle({
++                margin: '0 12px 10px',
++                padding: '10px 12px',
++                borderColor: 'rgba(255,255,255,0.14)',
++                background: 'rgba(255,255,255,0.03)',
++              })}
++            >
++              <div style={{ fontSize: 12, color: C.text }}>
++                {planDraftStatus === 'drafting'
++                  ? 'Drafting plan...'
++                  : planDraftStatus === 'ready' && draftMissionSpec
++                    ? 'Plan ready'
++                    : planDraftStatus === 'ready'
++                      ? 'Failed to draft plan'
++                    : planDraftStatus === 'needs_user_input'
++                      ? 'Needs input'
++                      : planDraftStatus === 'failed'
++                        ? 'Failed to draft plan'
++                        : 'Plan draft idle'}
++              </div>
++              {draftMissionSpec ? (
++                <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
++                  <div>{draftMissionSpec.title}</div>
++                  <div>Goal: {draftMissionSpec.userGoal}</div>
++                  <div>Target: {draftMissionSpec.target}</div>
++                  <div>
++                    Agents:{' '}
++                    {draftMissionSpec.agentRuns
++                      .map((run) => `${run.agentId} (${safeText(run.promptSeed).slice(0, 40)})`)
++                      .join(' | ')}
++                  </div>
++                </div>
++              ) : null}
++              {latestPlanDraftResult?.questions && latestPlanDraftResult.questions.length > 0 ? (
++                <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
++                  Questions: {latestPlanDraftResult.questions.join(' | ')}
++                </div>
++              ) : null}
++            </div>
++            {openMissionMessage ? (
++              <div
++                style={graphDrawerSectionStyle({
++                  margin: '0 12px 10px',
++                  padding: '10px 12px',
++                  borderColor: 'rgba(226,186,84,0.28)',
++                  background: 'rgba(226,186,84,0.10)',
++                })}
++              >
++                <div style={{ fontSize: 12, color: C.text }}>
++                  Open mission: {openMissionMessage.title} ({openMissionMessage.status})
++                </div>
++                <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
++                  {openMissionMessage.activeAgents
++                    .map((agent) => `${agent.label}:${agent.status}`)
++                    .join(' | ')}
++                </div>
++                {openMissionMessage.latestSummary ? (
++                  <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
++                    {openMissionMessage.latestSummary}
++                  </div>
++                ) : null}
++              </div>
++            ) : null}
+             <PlanMissionFlow
+               structuredPlan={structuredAssistPlan}
+               projectId={activeProject ?? null}
+@@ -9195,6 +9888,9 @@ export default function AgentBuilder(): React.ReactElement {
+                     width: chatPanelWidth,
+                     minWidth: AGENTS_CHAT_MIN_WIDTH,
+                     flex: '0 0 auto',
++                    transition: chatResizeHandleActive
++                      ? undefined
++                      : 'width 180ms cubic-bezier(.22,.61,.36,1)',
+                   }),
+             }}
+           >
+@@ -9216,14 +9912,27 @@ export default function AgentBuilder(): React.ReactElement {
+                   workspaceView === 'canvas'
+                     ? AGENTS_CANVAS_MIN_WIDTH
+                     : WORKSPACE_COMPANION_MIN_WIDTH;
++                let raf = 0;
++                let pendingWidth = sw;
+                 const mv = (ev: MouseEvent) => {
+                   const d = ev.clientX - sx;
+-                  setChatPanelWidth(
+-                    clampAgentsChatWidth(sw + d, reservedWidth),
+-                  );
++                  pendingWidth = clampAgentsChatWidth(sw + d, reservedWidth);
++                  if (raf !== 0) return;
++                  raf = window.requestAnimationFrame(() => {
++                    raf = 0;
++                    setChatPanelWidth(pendingWidth);
++                  });
+                 };
+                 const up = () => {
+                   setChatResizeHandleActive(false);
++                  if (raf !== 0) {
++                    window.cancelAnimationFrame(raf);
++                    raf = 0;
++                  }
++                  const maxWidth = resolveAgentsChatMaxWidth(reservedWidth);
++                  if (pendingWidth >= maxWidth - WORKSPACE_COLLAPSE_EDGE_PX) {
++                    setWorkspaceView('chat');
++                  }
+                   window.removeEventListener('mousemove', mv);
+                   window.removeEventListener('mouseup', up);
+                 };
+diff --git a/client/src/types/agentgraph.ts b/client/src/types/agentgraph.ts
+index d7ddb8dd..248424c7 100644
+--- a/client/src/types/agentgraph.ts
++++ b/client/src/types/agentgraph.ts
+@@ -264,6 +264,158 @@ export type GraphViewContract = {
+   narrativeIntent?: string | null;
+ };
+ 
++export type SemanticGraphName = 'think' | 'know' | 'code';
++
++export type SemanticGraphRecordKind =
++  | 'entity'
++  | 'relationship'
++  | 'claim'
++  | 'evidence'
++  | 'source'
++  | 'decision'
++  | 'summary'
++  | 'action'
++  | 'question'
++  | 'hypothesis'
++  | 'contradiction'
++  | 'mission'
++  | 'agent_run'
++  | 'file'
++  | 'component'
++  | 'symbol';
++
++export type SemanticGraphWriter =
++  | 'thinkgraph-agent'
++  | 'knowgraph-agent'
++  | 'codegraph-agent'
++  | 'system';
++
++export type SemanticGraphWriteMode = 'agent-owned' | 'system-owned' | 'read-only';
++
++export type SemanticGraphSourceRefType =
++  | 'chat'
++  | 'url'
++  | 'file'
++  | 'code'
++  | 'mission'
++  | 'agent_run'
++  | 'graph_record'
++  | 'user_input';
++
++export type SemanticGraphEntity = {
++  id: string;
++  label: string;
++  type: string;
++  aliases?: string[];
++  properties?: Record<string, unknown>;
++  confidence?: number | null;
++};
++
++export type SemanticGraphRelationship = {
++  id: string;
++  from: string;
++  to: string;
++  type: string;
++  label?: string | null;
++  properties?: Record<string, unknown>;
++  confidence?: number | null;
++};
++
++export type SemanticGraphSourceRef = {
++  type: SemanticGraphSourceRefType;
++  ref: string;
++  title?: string | null;
++  summary?: string | null;
++  excerpt?: string | null;
++  retrievedAt?: string | null;
++  confidence?: number | null;
++};
++
++export type SemanticGraphProvenance = {
++  createdByAgent?: string | null;
++  missionSpecId?: string | null;
++  missionRunId?: string | null;
++  missionAgentRunId?: string | null;
++  sourceRefs?: SemanticGraphSourceRef[];
++  reasoningSummary?: string | null;
++  createdAt?: string | null;
++};
++
++export type SemanticGraphRecord = {
++  id: string;
++  graph: SemanticGraphName;
++  kind: SemanticGraphRecordKind;
++  label: string;
++  summary: string;
++  entities: SemanticGraphEntity[];
++  relationships: SemanticGraphRelationship[];
++  properties?: Record<string, unknown>;
++  sourceRefs: SemanticGraphSourceRef[];
++  confidence?: number | null;
++  vectorText?: string | null;
++  provenance?: SemanticGraphProvenance | null;
++  writer: SemanticGraphWriter;
++  writeMode: SemanticGraphWriteMode;
++  createdAt: string;
++  updatedAt: string;
++  '@context'?: string | string[] | Record<string, unknown>;
++  '@id'?: string;
++  '@type'?: string | string[];
++};
++
++export type GraphUpdateRequestStatus =
++  | 'pending'
++  | 'accepted'
++  | 'rejected'
++  | 'applied';
++
++export type GraphUpdateRequester =
++  | 'sol'
++  | 'magentic-one'
++  | 'workspace-harness'
++  | 'chat-plan-companion'
++  | 'system';
++
++export type GraphUpdateRequest = {
++  id: string;
++  targetGraph: SemanticGraphName;
++  requestedBy: GraphUpdateRequester;
++  reason: string;
++  proposedRecords: SemanticGraphRecord[];
++  sourceRefs: SemanticGraphSourceRef[];
++  confidence?: number | null;
++  status: GraphUpdateRequestStatus;
++  createdAt: string;
++};
++
++export type GraphSearchRequest = {
++  graph: SemanticGraphName;
++  query: string;
++  limit?: number;
++  includeSourceRefs?: boolean;
++  includeProvenance?: boolean;
++};
++
++export type GraphTraverseRequest = {
++  graph: SemanticGraphName;
++  startNodeId: string;
++  relationshipTypes?: string[];
++  depth?: number;
++  limit?: number;
++  includeSourceRefs?: boolean;
++  includeProvenance?: boolean;
++};
++
++export type GraphNeighborhoodRequest = {
++  graph: SemanticGraphName;
++  startNodeId: string;
++  relationshipTypes?: string[];
++  depth?: number;
++  limit?: number;
++  includeSourceRefs?: boolean;
++  includeProvenance?: boolean;
++};
++
+ export type CardRunResult = {
+   output: string | null;
+   status: DeckRunStatus;
+@@ -403,6 +555,239 @@ export type WorkspaceObjectContext = {
+   excludedAgents?: string[];
+ };
+ 
++export type MissionSpecRunState =
++  | 'draft'
++  | 'approved'
++  | 'wiring'
++  | 'running'
++  | 'complete'
++  | 'failed'
++  | 'cancelled'
++  | 'needs_user_input';
++
++export type MissionAgentRunStatus =
++  | 'queued'
++  | 'running'
++  | 'complete'
++  | 'failed'
++  | 'skipped'
++  | 'needs_user_input';
++
++export type MissionRunStatus =
++  | 'approved'
++  | 'wiring'
++  | 'running'
++  | 'complete'
++  | 'failed'
++  | 'cancelled'
++  | 'needs_user_input';
++
++export type MissionSpec = {
++  id: string;
++  title: string;
++  userGoal: string;
++  target: string;
++  readContext: string[];
++  agentRuns: Array<{
++    id?: string;
++    agentId: string;
++    promptSeed: string;
++    required?: boolean;
++  }>;
++  runState: MissionSpecRunState;
++};
++
++export type MissionRun = {
++  id: string;
++  missionSpecId: string;
++  status: MissionRunStatus;
++  activeAgentRunId: string | null;
++  agentRuns: Array<{
++    id: string;
++    agentId: string;
++    status: MissionAgentRunStatus;
++    required: boolean;
++    promptSeed: string;
++    resultSummary?: string | null;
++    error?: string | null;
++  }>;
++  results: Array<{
++    agentRunId: string;
++    agentId: string;
++    status: MissionAgentRunStatus;
++    output?: string | null;
++    reason?: string | null;
++  }>;
++  createdAt: string;
++  updatedAt: string;
++};
++
++export type MissionDeckPatch = {
++  missionSpecId: string;
++  nodesToCreate: AgentCardInstance[];
++  nodesToUpdate: Array<Pick<AgentCardInstance, 'id'> & Partial<AgentCardInstance>>;
++  edgesToCreate: DeckEdge[];
++  edgesToUpdate: Array<Pick<DeckEdge, 'id'> & Partial<DeckEdge>>;
++  promptFieldsToUpdate: Array<{
++    nodeId: string;
++    prompt: string;
++  }>;
++  runState: MissionSpecRunState;
++};
++
++export type WorkspaceHarnessProvider =
++  | "internal-workspace"
++  | "openclaude"
++  | "claude-code"
++  | "codex"
++  | "local";
++
++export type WorkspaceHarnessOperation =
++  | "inspect_context"
++  | "draft_mission"
++  | "refine_mission"
++  | "generate_deck_patch"
++  | "apply_deck_patch"
++  | "connect_agents"
++  | "seed_prompts"
++  | "run_approved_mission"
++  | "query_graph"
++  | "traverse_graph"
++  | "ask_clarifying_questions"
++  | "request_graph_update";
++
++export type WorkspaceHarnessPermission =
++  | "deck.read"
++  | "deck.write"
++  | "canvas.read"
++  | "canvas.write"
++  | "plan.read"
++  | "plan.write"
++  | "mission.read"
++  | "mission.write"
++  | "agent.read"
++  | "agent.connect"
++  | "agent.prompt.read"
++  | "agent.prompt.write"
++  | "reactflow.nodes.create"
++  | "reactflow.nodes.update"
++  | "reactflow.edges.create"
++  | "reactflow.edges.update"
++  | "graph.query"
++  | "graph.traverse"
++  | "graph.write.request";
++
++export type OpenMissionMessage = {
++  missionRunId: string;
++  title: string;
++  status: MissionRunStatus;
++  activeAgents: Array<{
++    agentRunId: string;
++    label: string;
++    status: MissionAgentRunStatus;
++    summary?: string;
++  }>;
++  latestSummary?: string;
++  suggestedUserActions?: string[];
++};
++
++export type WorkspaceHarnessRequest = {
++  provider: WorkspaceHarnessProvider;
++  operation: WorkspaceHarnessOperation;
++  userGoal: string;
++  activeCanvasId?: string | null;
++  selectedObject?: CanvasObjectContext | WorkspaceObjectContext | null;
++  missionSpec?: MissionSpec | null;
++  missionRun?: MissionRun | null;
++  currentDeckSummary?: {
++    id: string;
++    name: string;
++    nodeCount: number;
++    edgeCount: number;
++  } | null;
++  availableAgents?: Array<{ id: string; label: string }>;
++  graphContextRefs?: string[];
++  priorResults?: Array<{ agentId: string; summary?: string | null }>;
++  permissions: WorkspaceHarnessPermission[];
++};
++
++export type WorkspaceHarnessResult = {
++  status: "complete" | "needs_user_input" | "failed";
++  summary: string;
++  questions?: string[];
++  missionSpecPatch?: Partial<MissionSpec> | null;
++  missionDeckPatch?: MissionDeckPatch | null;
++  missionRunUpdate?: Partial<MissionRun> | null;
++  agentRunUpdates?: Array<{
++    id: string;
++    status: MissionAgentRunStatus;
++    resultSummary?: string | null;
++    error?: string | null;
++  }>;
++  openMissionMessage?: OpenMissionMessage | null;
++  graphUpdateRequests?: GraphUpdateRequest[];
++  suggestedNextAction?: WorkspaceHarnessOperation | null;
++  errorReason?: string | null;
++};
++
++export type PlanDraftStatus =
++  | "idle"
++  | "drafting"
++  | "ready"
++  | "needs_user_input"
++  | "failed";
++
++export type ChatPlanDraftRequest = {
++  userMessage: string;
++  activeCanvasId?: string;
++  selectedObject?: CanvasObjectContext;
++  currentMissionSpec?: MissionSpec;
++  currentDeckSummary?: unknown;
++  availableAgents?: Array<{
++    id: string;
++    label: string;
++    type?: string;
++    capabilities?: string[];
++  }>;
++  graphContextRefs?: string[];
++  priorMissionResults?: unknown[];
++};
++
++export type ChatPlanDraftResult = {
++  status: PlanDraftStatus;
++  summary: string;
++  missionSpec?: MissionSpec;
++  missionSpecPatch?: Partial<MissionSpec>;
++  questions?: string[];
++  suggestedNextAction?: string;
++  errorReason?: string;
++};
++
++export type DualChatTurnResult = {
++  chatReply: string;
++  planDraft?: ChatPlanDraftResult;
++};
++
++export type DeckRunMissionMetadata = {
++  missionRunId?: string | null;
++  missionAgentRunId?: string | null;
++  missionStatus?: MissionRunStatus | null;
++  agentRunStatus?: MissionAgentRunStatus | null;
++  resultSummary?: string | null;
++  needsUserInputReason?: string | null;
++  errorReason?: string | null;
++};
++
++export type CanvasObjectContext = {
++  id: string;
++  canvasId: string;
++  type: string;
++  title: string;
++  props: Record<string, unknown>;
++  editableTargets: string[];
++  graphRefs: string[];
++};
++
+ export type DeckRun = {
+   id: string;
+   deckId: string;
+@@ -426,4 +811,20 @@ export type DeckRun = {
+     simpleOrderCardIds: string[];
+     expandedStepIds: string[];
+   };
++  mission?: DeckRunMissionMetadata | null;
++};
++
++export type DeckRunResponse = {
++  ok?: boolean;
++  deck?: DeckDocument;
++  run?: DeckRun;
++  meta?: Record<string, unknown> | null;
++  error?: string;
++  missionRunId?: string | null;
++  missionAgentRunId?: string | null;
++  missionStatus?: MissionRunStatus | null;
++  agentRunStatus?: MissionAgentRunStatus | null;
++  resultSummary?: string | null;
++  needsUserInputReason?: string | null;
++  errorReason?: string | null;
+ };
+diff --git a/docs/launch/LAUNCH_SPINE_AUDIT.md b/docs/launch/LAUNCH_SPINE_AUDIT.md
+new file mode 100644
+index 00000000..908b090c
+--- /dev/null
++++ b/docs/launch/LAUNCH_SPINE_AUDIT.md
+@@ -0,0 +1,299 @@
++# LAUNCH_SPINE_AUDIT
++
++Date: 2026-05-27
++Scope: launch wiring audit + safest first implementation chunk
++
++## Current State
++- Root launch routes send `/` and chat aliases to `client/src/pages/agentbuilder.tsx` through `client/src/app.tsx`.
++- Chat runtime path is deck-run based (`/api/v3/projects/:projectId/decks/run`) and not the legacy `/api/v2/projects/:projectId/agent_builder/chat` path for primary workspace execution.
++- Magentic-One executes through Python AutoGen sidecar (`AUTOGEN_ORCHESTRATOR_URL` -> `/autogen/orchestrate`) with card runtime payload assembly in backend `v3` runtime.
++- LocalCoder/OpenClaude exists as a backend-owned harness with status/run/terminal-launch routes.
++
++## What Was Found
++
++### 1. Landing layout
++- Root app layout file: `client/src/app.tsx`.
++- First screen behavior: `/` redirects to `/agentbuilder`.
++- Chat-first launch shell exists: yes, `AgentBuilder` is default route with chat-centric workspace state.
++- Graph-paper background exists: yes in plan/canvas surfaces (React Flow `Background` layers) and graph visual token system.
++- Chat can dock/shift left: yes, workspace has resizable chat panel and surface switching (`chatPanelWidth`, `workspace-chat-resize-handle`).
++
++### 2. Sol/Magentic-One chat path
++- Main chat component: `client/src/components/builder/BuilderChat.tsx` used by `client/src/pages/agentbuilder.tsx`.
++- Backend route used by chat: `POST /api/v3/projects/:projectId/decks/run` (streaming NDJSON supported).
++- Magentic-One invocation: `apps/backend/src/v3/cards/runtime.ts` -> `runMagenticCard` -> `orchestrateWithAutoGen(...)`.
++- Active canvas/selected object context reaches request: yes via `workspaceObjectContext` in chat send body and backend normalization in `apps/backend/src/v3/runtime/deckRuntime.ts`.
++
++### 3. Magentic bus/default wiring
++- Magentic bus component exists (`MagenticBusNode`, resolver and topology helpers).
++- Backside/system side logic exists conceptually through system cards + magentic_option edges.
++- Deck/project seed is centralized in `INITIAL_DECK` in `client/src/pages/agentbuilder.tsx`.
++- Default cards existed but default edges were empty before this change.
++
++### 4. LocalCoder/OpenClaude implementation
++- Launch mechanism:
++  - Terminal wrapper script: `apps/backend/scripts/openclaude-terminal-launch.ps1`.
++  - Adapter builds launch command against `localcoder/bin/openclaude` and backend env ownership.
++- Route prefix:
++  - `/api/coder/openclaude/status`
++  - `/api/coder/openclaude/run`
++  - `/api/coder/openclaude/terminal/launch`
++- Installed status detection: yes (`OpenClaudeAdapter.getInstallInfo`).
++- Receives task/context: yes (`task`, mode/access/provider/model options, optional system prompt).
++- Minimal chat-side access: indirect today via `local_coder` runtime card under deck runtime.
++
++### 5. Magentic-One terminal/tool hands reality
++- Python sidecar does not create a native terminal participant abstraction; participants are AutoGen assistant participants derived from callable heads.
++- LocalCoder/OpenClaude is not included as participant for Python team calls.
++- `local_coder` is explicitly excluded from Python callable participant types (unsupported heads are recorded in payload).
++- Magentic-One cannot directly inspect repo/files through Python participants today unless routed via supported participant runtime and tooling.
++- OpenClaude is best exposed as a system capability/runtime card (already true via `local_coder` card path).
++
++### 6. Selected object / active canvas state
++- Selected object state is built in `agentbuilder.tsx` and transported as `workspaceObjectContext`.
++- Active canvas/surface is represented with `activeSurface`, `workspaceView`, workbench fields.
++- Selected graph node exists through plan/canvas focus state and card selection state.
++- Selected object to editable target mapping is partial and surface-specific.
++
++### 7. Plan / MissionSpec-related code
++- Plan surfaces exist (`PlanMissionFlow`, plan wiki/document state, structured plan extraction).
++- MissionSpec type did not exist as a named cross-layer contract.
++
++### 8. ThinkGraph and KnowGraph flows
++- ThinkGraph chat extraction path: `apps/backend/src/routes/v2/kg.routes.ts`.
++- KnowGraph ingest/query path: `apps/backend/src/routes/knowgraph.routes.ts` + service `services/knowgraph/*`.
++- ThinkGraph and KnowGraph are separate flows and can be separately invoked.
++- Boundary logging in v2 KG route indicates ThinkGraph chat extraction should not directly write to Neo4j in boundary mode.
++- No direct graph mutation path from Magentic-One runtime itself was added in this chunk.
++
++### 9. CodeGraph/code context state
++- CodeGraph exists as context contract (`graphViewContract` with `graphKind: 'codegraph'`) and runtime output memory.
++- Code-based memory MCP is configured in backend MCP config.
++- Current minimal CodeGraph exposure is context/view-contract based, not full mutation pipeline.
++
++## What Was Changed (Safe First Chunk)
++1. Added/confirmed default backside/system seed connections in `INITIAL_DECK`:
++- Plan / MissionSpec (`card_plan_agent`)
++- LocalCoder / OpenClaude Harness (`card_local_coder`)
++- ThinkGraph Agent (`card_thinkgraph_agent`)
++- KnowGraph Agent (`card_knowgraph_agent`)
++- Research Agent (`card_research_agent`)
++- CodeGraph Context (`card_codegraph_agent`)
++
++2. Added minimal MissionSpec type on both frontend and backend shared deck contracts:
++- `id`
++- `title`
++- `userGoal`
++- `target`
++- `readContext`
++- `agentRuns`
++- `runState`
++
++3. Added minimal generic CanvasObjectContext type on both frontend and backend shared deck contracts:
++- `id`
++- `canvasId`
++- `type`
++- `title`
++- `props`
++- `editableTargets`
++- `graphRefs`
++
++4. Added explicit OpenClaude harness system capability metadata and route-prefix constant:
++- Frontend capability registry marker tied to `card_local_coder` + `/api/coder/openclaude`
++- Backend exported route prefix constant in coder routes
++
++## What Is Missing
++- MissionSpec execution semantics are not wired end-to-end yet (type added, runtime contract integration still pending).
++- CanvasObjectContext mapping to real editable targets and graphRefs remains partial and surface-dependent.
++- Python orchestration still excludes `local_coder` participants; Magentic tool-hands bridge policy needs explicit design pass.
++
++## What Was Intentionally Not Changed
++- No extra approval-control layer was introduced.
++- No OpenClaude log duplication layer was introduced.
++- No direct graph mutation path was added to Magentic-One or OpenClaude harness.
++- Optional/demo canvases were not default-connected.
++
++## Boundary Status
++- Sol/Magentic-One query/traverse: supported through runtime context + graph query paths.
++- Sol/Magentic-One direct graph mutation: not added in this chunk.
++- LocalCoder/OpenClaude workspace/code editing: supported.
++- LocalCoder/OpenClaude direct graph memory mutation: not added in this chunk.
++- Graph mutation ownership remains with graph flows/services.
++
++## Next Safe Implementation Step
++- Wire MissionSpec as the explicit pre-run contract for `decks/run` payloads (non-breaking optional field), then map selected object/canvas to the new minimal CanvasObjectContext fields and feed that into Magentic planning prompts without altering graph-write boundaries.
++
++## Local Route Check Commands
++- Backend local/dev route checks should use port 4000 unless the environment explicitly overrides PORT.
++- OpenClaude status:
++  `Invoke-RestMethod "http://localhost:4000/api/coder/openclaude/status"`
++- OpenClaude terminal launch:
++  `Invoke-RestMethod "http://localhost:4000/api/coder/openclaude/terminal/launch"`
++
++## Approved Mission Execution
++- MissionRun type/status:
++  - Added cross-layer `MissionRun`, `MissionRunStatus`, and `MissionAgentRunStatus`.
++  - Mission statuses now support: `approved`, `wiring`, `running`, `complete`, `failed`, `cancelled`, `needs_user_input`.
++  - Agent run statuses now support: `queued`, `running`, `complete`, `failed`, `skipped`, `needs_user_input`.
++- MissionDeckPatch status:
++  - Added `MissionDeckPatch` contract.
++  - Added pure helpers:
++    - `buildMissionDeckPatch(missionSpec, currentDeck)`
++    - `applyMissionDeckPatch(currentDeck, patch)`
++  - Behavior is non-destructive: avoids duplicate node/edge insertion and does not delete user-created deck content.
++- Approval-to-run behavior:
++  - Plan surface `Approve` now triggers mission run wiring/execution flow.
++  - Flow: `approved -> wiring -> running -> (complete|failed)`.
++- Sequential execution status:
++  - Approved mission steps execute in order.
++  - Current supported chain in this pass: `research_agent -> knowgraph_agent -> thinkgraph_agent`.
++  - Unsupported/missing steps are marked honestly (`skipped` or `failed` based on required flag).
++- Agents that can actually run now:
++  - Research Agent (`card_research_agent`)
++  - KnowGraph Agent (`card_knowgraph_agent`)
++  - ThinkGraph Agent (`card_thinkgraph_agent`)
++  - Via existing `/api/v3/projects/:projectId/decks/run` runtime path.
++- Prompt seeding and result passing:
++  - Mission prompt seeds are written into agent card prompt fields by deck patch.
++  - Each step input includes mission goal + prior step output for simple chained context.
++- UI status:
++  - Plan surface now shows mission status and per-agent run status summary.
++  - No heavy log viewer was added.
++  - OpenClaude terminal logs are not duplicated.
++- Graph boundary status:
++  - Sol/Magentic runtime still does not directly mutate ThinkGraph/KnowGraph/CodeGraph records.
++  - Deck wiring harness only mutates deck/canvas state and invokes existing agent/runtime paths.
++  - ThinkGraph and KnowGraph writes remain owned by their graph agent/service flows.
++- Known limitations:
++  - Approval currently triggers from the existing activation proposal approval affordance.
++  - Mission execution currently uses a fixed initial agent chain and does not yet parse a richer mission graph.
++  - MissionRun persistence is UI session state; it is not yet persisted as a backend run record.
++- Next safe step:
++  - Add explicit `missionSpec` payload support on `/decks/run` with backend-side mission run state persistence and structured per-step result contracts, while preserving graph-write boundaries.
++
++### Backend Mission Run Contract
++- `/api/v3/projects/:projectId/decks/run` now accepts optional mission fields:
++  - `missionSpec?: MissionSpec`
++  - `missionRunId?: string`
++  - `missionAgentRunId?: string`
++- Deck-run responses now include optional mission metadata (without breaking existing consumers):
++  - `missionRunId`
++  - `missionAgentRunId`
++  - `missionStatus`
++  - `agentRunStatus`
++  - `resultSummary`
++  - `needsUserInputReason`
++  - `errorReason`
++- Backend runtime context now carries mission fields into card execution context and returns mission metadata in `run.mission`.
++- Frontend mission execution now sends mission fields on each sequential step and prefers backend mission metadata when present, with existing fallback parsing preserved when metadata is absent.
++- Limitations:
++  - Mission metadata is per-request/per-run payload metadata, not durable mission history storage.
++  - `needs_user_input` is included in the contract, but only populated when runtime path emits that condition.
++- Next safe step:
++  - Persist mission runs server-side (project-scoped) and expose a lightweight read endpoint for resume/inspection while keeping graph mutation boundaries unchanged.
++
++### Workspace Harness / Claude-Code-Style Filter
++- Purpose:
++  - Introduce a provider-neutral workspace action layer used by Sol/Magentic chat for deck/mission/plan actions.
++- Provider design:
++  - Current provider: `internal-workspace`
++  - Future provider targets: `openclaude`, `claude-code`, `codex`, `local`
++- Supported operations in this pass:
++  - `inspect_context`, `draft_mission`, `refine_mission`, `generate_deck_patch`, `apply_deck_patch`, `connect_agents`, `seed_prompts`, `run_approved_mission`, `query_graph`, `traverse_graph`, `ask_clarifying_questions`, `request_graph_update`
++- Excluded operations in this pass:
++  - source-code editing, direct graph writes, arbitrary terminal execution, continuous/scheduled/watch loops
++- Open mission message behavior:
++  - A minimal live mission card is maintained with mission title/status, active agent statuses, latest summary, and final outcome hints.
++- Graph boundary:
++  - Harness may return `graphUpdateRequests` but cannot directly mutate graph records.
++  - ThinkGraph/KnowGraph graph writes remain owned by their graph agents.
++- Next safe step:
++  - Add a backend-managed harness executor endpoint for provider routing/policy while keeping mission execution on existing mission-aware `/decks/run` path.
++
++### Dual Reply Planning
++- Sol reply and plan drafting now run in parallel per chat turn.
++- Users can keep chatting while ChatPlanCompanion drafts/refines the MissionSpec from the same message and current workspace context.
++- ChatPlanCompanion supports first-pass mission types:
++  - `plan_only`
++  - `research_to_knowgraph`
++  - `object_agent_setup`
++  - `graph_query_summary`
++- If intent is vague, ChatPlanCompanion returns `needs_user_input` questions and keeps the draft editable.
++- Approval freezes the current draft MissionSpec and runs it through the existing MissionRun + mission-aware `/decks/run` execution path.
++- Graph boundary remains unchanged:
++  - ChatPlanCompanion does not directly mutate graph records.
++  - ThinkGraph/KnowGraph writes remain graph-agent owned.
++- Next safe step:
++  - Move ChatPlanCompanion drafting logic behind a backend endpoint for centralized policy, validation, and future provider routing.
++
++#### Manual Smoke
++1. Open `/agentbuilder`.
++2. Send: `Research AI agent marketplaces and build a knowledge map.`
++3. Confirm Sol replies normally.
++4. Confirm Plan surface enters `Drafting plan...` then `Plan ready`.
++5. Send: `Add KnowGraph and make it source-backed.`
++6. Confirm the same draft updates (no duplicate unrelated plan).
++7. Send: `Skip CodeGraph for now.`
++8. Confirm CodeGraph is removed/skipped in the draft plan.
++9. Approve.
++10. Confirm mission runs until done through existing MissionRun path.
++11. Confirm graph writes only happen through graph agents.
++
++### Project Deck Layout Persistence
++- The previous default-layout attempt was reverted; changing `INITIAL_DECK` is not a fix for existing projects with persisted decks.
++- Manual canvas layout now persists per project/deck via the existing backend deck save route:
++  - `PUT /api/v3/projects/:projectId/decks/:deckId`
++- Autosave is triggered for layout mutations:
++  - `canvas:nodes` (drag/move position changes)
++  - `canvas:edges`, `canvas:connect`, `canvas:reconnect`, `edge-delete` (connection changes)
++- Seed overwrite protections:
++  - hydration no longer hard-replaces legacy/system-only persisted decks with `INITIAL_DECK`.
++  - existing persisted node positions are preserved during system-card upgrade hydration.
++- Mission patch behavior remains non-destructive for layout:
++  - existing node positions are preserved
++  - existing user edges are not blanket-replaced by seed defaults
++- Known limitations:
++  - autosave is client-debounced and depends on existing deck revision/CAS behavior.
++  - display-fallback mode intentionally does not autosave.
++- Next safe step:
++  - show a lightweight “Last saved” timestamp in the canvas controls so users can verify autosave state immediately.
++
++#### Manual Persistence Smoke Checklist
++1. Open an existing project in `/agentbuilder`.
++2. Move three nodes.
++3. Add one edge.
++4. Remove one edge.
++5. Wait for save/autosave.
++6. Refresh the browser.
++7. Confirm exact layout remains.
++8. Restart frontend dev server.
++9. Reopen the same project.
++10. Confirm exact layout remains.
++11. Restart backend.
++12. Reopen the same project.
++13. Confirm exact layout remains.
++14. Send a chat message.
++15. Confirm layout remains.
++16. Approve/run a mission.
++17. Confirm layout remains.
++
++### Semantic Graph Language (ThinkGraph / KnowGraph)
++- Added first-pass shared semantic graph contracts (frontend + backend v3 types):
++  - `SemanticGraphRecord` (JSON-LD compatible `@context`, `@id`, `@type`)
++  - `SemanticGraphEntity`
++  - `SemanticGraphRelationship`
++  - `SemanticGraphSourceRef`
++  - `SemanticGraphProvenance`
++  - `GraphUpdateRequest` (request-only boundary)
++  - `GraphSearchRequest`, `GraphTraverseRequest`, `GraphNeighborhoodRequest`
++- Writer boundary is explicit in contract:
++  - writers: `thinkgraph-agent`, `knowgraph-agent`, `codegraph-agent`, `system`
++  - write modes: `agent-owned`, `system-owned`, `read-only`
++- Sol / WorkspaceHarness / ChatPlanCompanion are represented as requesters, not direct graph writers.
++- Added normalization adapter stubs on backend:
++  - `normalizeKnowGraphOutputToSemanticRecords(...)`
++  - `normalizeThinkGraphOutputToSemanticRecords(...)`
++  - `canApplyGraphUpdateRequest(actor)` enforces graph-agent-only apply boundary.
++- Persistence status for semantic records:
++  - contract and normalization are implemented;
++  - direct semantic-record persistence path is not yet wired in this pass.
+diff --git a/specs/002-chat-panel-slider-behavior/plan.md b/specs/002-chat-panel-slider-behavior/plan.md
+new file mode 100644
+index 00000000..371bba52
+--- /dev/null
++++ b/specs/002-chat-panel-slider-behavior/plan.md
+@@ -0,0 +1,24 @@
++# Plan: Chat Panel Slider Behavior
++
++## Approach
++Use localized `agentbuilder.tsx` updates to adjust chat width constraints, smooth resize updates, and add a right-edge drag collapse threshold.
++
++## Likely Affected Files
++- `client/src/pages/agentbuilder.tsx`
++- `specs/002-chat-panel-slider-behavior/spec.md`
++- `specs/002-chat-panel-slider-behavior/plan.md`
++- `specs/002-chat-panel-slider-behavior/tasks.md`
++
++## Risks
++- Resize threshold could collapse mode too aggressively.
++- Width range changes could expose edge overflow issues on small screens.
++
++## Skills Used
++- `.skills/frontend/react-vite-typescript/SKILL.md`
++- `.skills/frontend/liquid-glass-ui/SKILL.md`
++- `.skills/workflow/spec-kit/SKILL.md`
++- `.skills/workflow/docs-on-change/SKILL.md`
++
++## Validation
++- Run frontend build/typecheck/tests using existing scripts.
++- Manually verify drag left range, drag-right collapse threshold, and smooth resize behavior.
+diff --git a/specs/002-chat-panel-slider-behavior/spec.md b/specs/002-chat-panel-slider-behavior/spec.md
+new file mode 100644
+index 00000000..d67b4352
+--- /dev/null
++++ b/specs/002-chat-panel-slider-behavior/spec.md
+@@ -0,0 +1,22 @@
++# Specification: Chat Panel Slider Behavior
++
++## Purpose
++Improve chat panel dragging behavior in Agent Builder so users can resize farther left, pull to collapse companion mode, and experience smoother motion.
++
++## Desired Behavior
++- The chat panel divider can move farther left than current behavior.
++- Dragging the divider near the far-right edge collapses the current companion/canvas mode back to chat-only mode.
++- Drag motion feels smooth and predictable.
++- Existing under-chat reveal / canvas-under-chat interaction remains intact.
++
++## Success Criteria
++- Users can resize the chat panel to a visibly smaller minimum width.
++- Users can collapse companion/canvas mode by dragging divider to the right edge threshold.
++- Drag interaction feels smoother during pointer movement.
++- No regression in standard workspace mode switching.
++
++## Out Of Scope
++- Full layout architecture redesign.
++- New animation libraries.
++- Backend/runtime behavior changes.
++- Deep gesture framework rewrite.
+diff --git a/specs/002-chat-panel-slider-behavior/tasks.md b/specs/002-chat-panel-slider-behavior/tasks.md
+new file mode 100644
+index 00000000..6ef54a50
+--- /dev/null
++++ b/specs/002-chat-panel-slider-behavior/tasks.md
+@@ -0,0 +1,9 @@
++# Tasks: Chat Panel Slider Behavior
++
++1. Audit chat panel ownership and resize state in `agentbuilder.tsx`.
++2. Expand safe chat minimum width range for farther-left divider movement.
++3. Smooth drag updates using localized animation-frame scheduling.
++4. Add right-edge drag threshold to collapse companion/canvas mode to chat-only.
++5. Preserve existing workspace/canvas interaction model.
++6. Run frontend validation scripts.
++7. Report implemented safe 80% and remaining polish items.

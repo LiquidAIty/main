@@ -6,7 +6,15 @@
 import { Router, type Response } from 'express';
 import { getDeckDocument, saveDeckDocument, saveDeckRun } from '../decks/store';
 import { executeDeck } from '../runtime/deckRuntime';
-import type { AgentTemplate, DeckDocument, PromptTemplate } from '../types';
+import type {
+  AgentTemplate,
+  DeckDocument,
+  DeckRunResponse,
+  MissionAgentRunStatus,
+  MissionRunStatus,
+  MissionSpec,
+  PromptTemplate,
+} from '../types';
 
 const router = Router();
 
@@ -60,6 +68,16 @@ router.post('/:projectId/decks/run', async (req, res) => {
   const useStream =
     String(req.query.stream || req.body?.stream || '').trim() === '1' ||
     req.body?.stream === true;
+  const missionSpec =
+    req.body?.missionSpec && typeof req.body.missionSpec === 'object'
+      ? (req.body.missionSpec as MissionSpec)
+      : undefined;
+  const missionRunId = String(req.body?.missionRunId || '').trim() || undefined;
+  const missionAgentRunId = String(req.body?.missionAgentRunId || '').trim() || undefined;
+  const baseMissionMeta = {
+    missionRunId: missionRunId || null,
+    missionAgentRunId: missionAgentRunId || null,
+  };
 
   if (!deckId) {
     return res.status(400).json({ ok: false, error: 'deck_id_required' });
@@ -102,6 +120,9 @@ router.post('/:projectId/decks/run', async (req, res) => {
       projectId: req.params.projectId,
       workspaceContext: req.body?.workspaceContext,
       workspaceObjectContext: req.body?.workspaceObjectContext,
+      missionSpec,
+      missionRunId,
+      missionAgentRunId,
       onRuntimeEvent: useStream
         ? (event) => {
             writeStreamChunk(res, { kind: 'event', event });
@@ -110,11 +131,31 @@ router.post('/:projectId/decks/run', async (req, res) => {
     });
 
     const persistedRun = await saveDeckRun(req.params.projectId, deckId, run);
-    const payload = {
+    const missionStatus =
+      (run.mission?.missionStatus ||
+        (missionSpec?.runState as MissionRunStatus | undefined) ||
+        null) as MissionRunStatus | null;
+    const agentRunStatus =
+      (run.mission?.agentRunStatus ||
+        (run.status === 'success'
+          ? 'complete'
+          : run.status === 'running'
+            ? 'running'
+            : run.status === 'skipped'
+              ? 'skipped'
+              : 'failed')) as MissionAgentRunStatus;
+    const payload: DeckRunResponse = {
       ok: true,
       deck,
       run,
       meta: persistedRun.meta || deckMeta,
+      missionRunId: run.mission?.missionRunId || baseMissionMeta.missionRunId,
+      missionAgentRunId: run.mission?.missionAgentRunId || baseMissionMeta.missionAgentRunId,
+      missionStatus,
+      agentRunStatus,
+      resultSummary: run.mission?.resultSummary || null,
+      needsUserInputReason: run.mission?.needsUserInputReason || null,
+      errorReason: run.mission?.errorReason || null,
     };
     if (useStream) {
       writeStreamChunk(res, { kind: 'result', ...payload });
@@ -124,10 +165,24 @@ router.post('/:projectId/decks/run', async (req, res) => {
   } catch (err: any) {
     const status = err?.message === 'project_not_found' ? 404 : 500;
     if (useStream) {
-      writeStreamChunk(res, { kind: 'error', error: err?.message || 'deck_run_failed' });
+      writeStreamChunk(res, {
+        kind: 'error',
+        error: err?.message || 'deck_run_failed',
+        ...baseMissionMeta,
+        missionStatus: 'failed' as MissionRunStatus,
+        agentRunStatus: 'failed' as MissionAgentRunStatus,
+        errorReason: err?.message || 'deck_run_failed',
+      });
       return res.status(status).end();
     }
-    return res.status(status).json({ ok: false, error: err?.message || 'deck_run_failed' });
+    return res.status(status).json({
+      ok: false,
+      error: err?.message || 'deck_run_failed',
+      ...baseMissionMeta,
+      missionStatus: 'failed' as MissionRunStatus,
+      agentRunStatus: 'failed' as MissionAgentRunStatus,
+      errorReason: err?.message || 'deck_run_failed',
+    } satisfies DeckRunResponse);
   }
 });
 

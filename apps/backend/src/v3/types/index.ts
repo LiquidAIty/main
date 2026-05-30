@@ -223,6 +223,158 @@ export type GraphViewContract = {
   narrativeIntent?: string | null;
 };
 
+export type SemanticGraphName = 'think' | 'know' | 'code';
+
+export type SemanticGraphRecordKind =
+  | 'entity'
+  | 'relationship'
+  | 'claim'
+  | 'evidence'
+  | 'source'
+  | 'decision'
+  | 'summary'
+  | 'action'
+  | 'question'
+  | 'hypothesis'
+  | 'contradiction'
+  | 'mission'
+  | 'agent_run'
+  | 'file'
+  | 'component'
+  | 'symbol';
+
+export type SemanticGraphWriter =
+  | 'thinkgraph-agent'
+  | 'knowgraph-agent'
+  | 'codegraph-agent'
+  | 'system';
+
+export type SemanticGraphWriteMode = 'agent-owned' | 'system-owned' | 'read-only';
+
+export type SemanticGraphSourceRefType =
+  | 'chat'
+  | 'url'
+  | 'file'
+  | 'code'
+  | 'mission'
+  | 'agent_run'
+  | 'graph_record'
+  | 'user_input';
+
+export type SemanticGraphEntity = {
+  id: string;
+  label: string;
+  type: string;
+  aliases?: string[];
+  properties?: Record<string, unknown>;
+  confidence?: number | null;
+};
+
+export type SemanticGraphRelationship = {
+  id: string;
+  from: string;
+  to: string;
+  type: string;
+  label?: string | null;
+  properties?: Record<string, unknown>;
+  confidence?: number | null;
+};
+
+export type SemanticGraphSourceRef = {
+  type: SemanticGraphSourceRefType;
+  ref: string;
+  title?: string | null;
+  summary?: string | null;
+  excerpt?: string | null;
+  retrievedAt?: string | null;
+  confidence?: number | null;
+};
+
+export type SemanticGraphProvenance = {
+  createdByAgent?: string | null;
+  missionSpecId?: string | null;
+  missionRunId?: string | null;
+  missionAgentRunId?: string | null;
+  sourceRefs?: SemanticGraphSourceRef[];
+  reasoningSummary?: string | null;
+  createdAt?: string | null;
+};
+
+export type SemanticGraphRecord = {
+  id: string;
+  graph: SemanticGraphName;
+  kind: SemanticGraphRecordKind;
+  label: string;
+  summary: string;
+  entities: SemanticGraphEntity[];
+  relationships: SemanticGraphRelationship[];
+  properties?: Record<string, unknown>;
+  sourceRefs: SemanticGraphSourceRef[];
+  confidence?: number | null;
+  vectorText?: string | null;
+  provenance?: SemanticGraphProvenance | null;
+  writer: SemanticGraphWriter;
+  writeMode: SemanticGraphWriteMode;
+  createdAt: string;
+  updatedAt: string;
+  '@context'?: string | string[] | Record<string, unknown>;
+  '@id'?: string;
+  '@type'?: string | string[];
+};
+
+export type GraphUpdateRequestStatus =
+  | 'pending'
+  | 'accepted'
+  | 'rejected'
+  | 'applied';
+
+export type GraphUpdateRequester =
+  | 'sol'
+  | 'magentic-one'
+  | 'workspace-harness'
+  | 'chat-plan-companion'
+  | 'system';
+
+export type GraphUpdateRequest = {
+  id: string;
+  targetGraph: SemanticGraphName;
+  requestedBy: GraphUpdateRequester;
+  reason: string;
+  proposedRecords: SemanticGraphRecord[];
+  sourceRefs: SemanticGraphSourceRef[];
+  confidence?: number | null;
+  status: GraphUpdateRequestStatus;
+  createdAt: string;
+};
+
+export type GraphSearchRequest = {
+  graph: SemanticGraphName;
+  query: string;
+  limit?: number;
+  includeSourceRefs?: boolean;
+  includeProvenance?: boolean;
+};
+
+export type GraphTraverseRequest = {
+  graph: SemanticGraphName;
+  startNodeId: string;
+  relationshipTypes?: string[];
+  depth?: number;
+  limit?: number;
+  includeSourceRefs?: boolean;
+  includeProvenance?: boolean;
+};
+
+export type GraphNeighborhoodRequest = {
+  graph: SemanticGraphName;
+  startNodeId: string;
+  relationshipTypes?: string[];
+  depth?: number;
+  limit?: number;
+  includeSourceRefs?: boolean;
+  includeProvenance?: boolean;
+};
+
 export type CardRunResult = {
   output: string | null;
   status: DeckRunStatus;
@@ -353,6 +505,239 @@ export type WorkspaceObjectContext = {
   excludedAgents?: string[];
 };
 
+export type MissionSpecRunState =
+  | 'draft'
+  | 'approved'
+  | 'wiring'
+  | 'running'
+  | 'complete'
+  | 'failed'
+  | 'cancelled'
+  | 'needs_user_input';
+
+export type MissionAgentRunStatus =
+  | 'queued'
+  | 'running'
+  | 'complete'
+  | 'failed'
+  | 'skipped'
+  | 'needs_user_input';
+
+export type MissionRunStatus =
+  | 'approved'
+  | 'wiring'
+  | 'running'
+  | 'complete'
+  | 'failed'
+  | 'cancelled'
+  | 'needs_user_input';
+
+export type MissionSpec = {
+  id: string;
+  title: string;
+  userGoal: string;
+  target: string;
+  readContext: string[];
+  agentRuns: Array<{
+    id?: string;
+    agentId: string;
+    promptSeed: string;
+    required?: boolean;
+  }>;
+  runState: MissionSpecRunState;
+};
+
+export type MissionRun = {
+  id: string;
+  missionSpecId: string;
+  status: MissionRunStatus;
+  activeAgentRunId: string | null;
+  agentRuns: Array<{
+    id: string;
+    agentId: string;
+    status: MissionAgentRunStatus;
+    required: boolean;
+    promptSeed: string;
+    resultSummary?: string | null;
+    error?: string | null;
+  }>;
+  results: Array<{
+    agentRunId: string;
+    agentId: string;
+    status: MissionAgentRunStatus;
+    output?: string | null;
+    reason?: string | null;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MissionDeckPatch = {
+  missionSpecId: string;
+  nodesToCreate: AgentCardInstance[];
+  nodesToUpdate: Array<Pick<AgentCardInstance, 'id'> & Partial<AgentCardInstance>>;
+  edgesToCreate: DeckEdge[];
+  edgesToUpdate: Array<Pick<DeckEdge, 'id'> & Partial<DeckEdge>>;
+  promptFieldsToUpdate: Array<{
+    nodeId: string;
+    prompt: string;
+  }>;
+  runState: MissionSpecRunState;
+};
+
+export type WorkspaceHarnessProvider =
+  | 'internal-workspace'
+  | 'openclaude'
+  | 'claude-code'
+  | 'codex'
+  | 'local';
+
+export type WorkspaceHarnessOperation =
+  | 'inspect_context'
+  | 'draft_mission'
+  | 'refine_mission'
+  | 'generate_deck_patch'
+  | 'apply_deck_patch'
+  | 'connect_agents'
+  | 'seed_prompts'
+  | 'run_approved_mission'
+  | 'query_graph'
+  | 'traverse_graph'
+  | 'ask_clarifying_questions'
+  | 'request_graph_update';
+
+export type WorkspaceHarnessPermission =
+  | 'deck.read'
+  | 'deck.write'
+  | 'canvas.read'
+  | 'canvas.write'
+  | 'plan.read'
+  | 'plan.write'
+  | 'mission.read'
+  | 'mission.write'
+  | 'agent.read'
+  | 'agent.connect'
+  | 'agent.prompt.read'
+  | 'agent.prompt.write'
+  | 'reactflow.nodes.create'
+  | 'reactflow.nodes.update'
+  | 'reactflow.edges.create'
+  | 'reactflow.edges.update'
+  | 'graph.query'
+  | 'graph.traverse'
+  | 'graph.write.request';
+
+export type OpenMissionMessage = {
+  missionRunId: string;
+  title: string;
+  status: MissionRunStatus;
+  activeAgents: Array<{
+    agentRunId: string;
+    label: string;
+    status: MissionAgentRunStatus;
+    summary?: string;
+  }>;
+  latestSummary?: string;
+  suggestedUserActions?: string[];
+};
+
+export type WorkspaceHarnessRequest = {
+  provider: WorkspaceHarnessProvider;
+  operation: WorkspaceHarnessOperation;
+  userGoal: string;
+  activeCanvasId?: string | null;
+  selectedObject?: CanvasObjectContext | WorkspaceObjectContext | null;
+  missionSpec?: MissionSpec | null;
+  missionRun?: MissionRun | null;
+  currentDeckSummary?: {
+    id: string;
+    name: string;
+    nodeCount: number;
+    edgeCount: number;
+  } | null;
+  availableAgents?: Array<{ id: string; label: string }>;
+  graphContextRefs?: string[];
+  priorResults?: Array<{ agentId: string; summary?: string | null }>;
+  permissions: WorkspaceHarnessPermission[];
+};
+
+export type WorkspaceHarnessResult = {
+  status: 'complete' | 'needs_user_input' | 'failed';
+  summary: string;
+  questions?: string[];
+  missionSpecPatch?: Partial<MissionSpec> | null;
+  missionDeckPatch?: MissionDeckPatch | null;
+  missionRunUpdate?: Partial<MissionRun> | null;
+  agentRunUpdates?: Array<{
+    id: string;
+    status: MissionAgentRunStatus;
+    resultSummary?: string | null;
+    error?: string | null;
+  }>;
+  openMissionMessage?: OpenMissionMessage | null;
+  graphUpdateRequests?: GraphUpdateRequest[];
+  suggestedNextAction?: WorkspaceHarnessOperation | null;
+  errorReason?: string | null;
+};
+
+export type PlanDraftStatus =
+  | 'idle'
+  | 'drafting'
+  | 'ready'
+  | 'needs_user_input'
+  | 'failed';
+
+export type ChatPlanDraftRequest = {
+  userMessage: string;
+  activeCanvasId?: string;
+  selectedObject?: CanvasObjectContext;
+  currentMissionSpec?: MissionSpec;
+  currentDeckSummary?: unknown;
+  availableAgents?: Array<{
+    id: string;
+    label: string;
+    type?: string;
+    capabilities?: string[];
+  }>;
+  graphContextRefs?: string[];
+  priorMissionResults?: unknown[];
+};
+
+export type ChatPlanDraftResult = {
+  status: PlanDraftStatus;
+  summary: string;
+  missionSpec?: MissionSpec;
+  missionSpecPatch?: Partial<MissionSpec>;
+  questions?: string[];
+  suggestedNextAction?: string;
+  errorReason?: string;
+};
+
+export type DualChatTurnResult = {
+  chatReply: string;
+  planDraft?: ChatPlanDraftResult;
+};
+
+export type DeckRunMissionMetadata = {
+  missionRunId?: string | null;
+  missionAgentRunId?: string | null;
+  missionStatus?: MissionRunStatus | null;
+  agentRunStatus?: MissionAgentRunStatus | null;
+  resultSummary?: string | null;
+  needsUserInputReason?: string | null;
+  errorReason?: string | null;
+};
+
+export type CanvasObjectContext = {
+  id: string;
+  canvasId: string;
+  type: string;
+  title: string;
+  props: Record<string, unknown>;
+  editableTargets: string[];
+  graphRefs: string[];
+};
+
 export type DeckRun = {
   id: string;
   deckId: string;
@@ -378,6 +763,36 @@ export type DeckRun = {
     simpleOrderCardIds: string[];
     expandedStepIds: string[];
   };
+  mission?: DeckRunMissionMetadata | null;
+};
+
+export type DeckRunRequest = {
+  deckId?: string;
+  document?: DeckDocument;
+  templates?: AgentTemplate[];
+  promptTemplates?: PromptTemplate[];
+  input?: string;
+  stream?: boolean;
+  workspaceContext?: DeckWorkspaceContext | null;
+  workspaceObjectContext?: WorkspaceObjectContext | null;
+  missionSpec?: MissionSpec;
+  missionRunId?: string;
+  missionAgentRunId?: string;
+};
+
+export type DeckRunResponse = {
+  ok: boolean;
+  deck?: DeckDocument;
+  run?: DeckRun;
+  meta?: Record<string, unknown> | null;
+  error?: string;
+  missionRunId?: string | null;
+  missionAgentRunId?: string | null;
+  missionStatus?: MissionRunStatus | null;
+  agentRunStatus?: MissionAgentRunStatus | null;
+  resultSummary?: string | null;
+  needsUserInputReason?: string | null;
+  errorReason?: string | null;
 };
 
 export type V3RevisionMeta = {

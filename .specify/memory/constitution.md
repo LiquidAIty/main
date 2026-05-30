@@ -55,10 +55,20 @@ Documentation must stay minimal and canonical. Do not accumulate audit-note file
 repo noise. External subtree docs are scoped and do not override LiquidAIty truth.
 Temporary working notes must not become repo noise. Durable knowledge must be stored in specs,
 architecture docs, runbooks, decisions, SOUL.md, or AGENTS.md as appropriate.
+Audits are required before implementation. Temporary audit notes belong in implementation reports;
+durable audit findings must be routed to canonical homes (`specs/*`, `docs/decisions/*`,
+`docs/runbooks/*`, `AGENTS.md`, `SOUL.md`, matching `.skills/*`, or `docs/audits/*` for major
+retrospectives with clear scope, date, owner, findings, and action items).
+New Markdown files are allowed only when they have clear owner/purpose, correct folder, durable
+value, no better existing home, and scoped content.
 
 ## 9. Runtime Truth Comes From Code
 Docs/specs must not claim behavior that is not implemented and validated. Uncertainty MUST be
 stated explicitly.
+
+Meaningful work must use intent inversion, code/context audit, safe planning, safe 80%
+implementation, validation, and a final report. Agents must make useful safe progress without
+overreaching into uncertain or high-risk work.
 
 ## 10. Security And Secrets
 Secrets MUST not be committed to docs or code. Secret values belong in env files or secret

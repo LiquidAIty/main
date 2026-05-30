@@ -26,6 +26,12 @@ Use only when:
 - Use unique handle IDs when multiple handles share a side/type.
 - Use `nodrag` on buttons/inputs/selects inside nodes.
 - Use `useUpdateNodeInternals` when handles are added/removed dynamically.
+- Treat the Agent Builder deck as the user's persistent playing board: saved layout is source-of-truth.
+- Preserve the actual saved React Flow edge array as source-of-truth; never infer edges from card placement or screenshots.
+- Preserve existing node IDs and positions for persisted decks; only assign positions for genuinely new nodes.
+- Keep edge updates non-destructive: preserve user-created edges, avoid duplicates, and never force all-to-all rewires.
+- Distinguish capability wiring vs mission-flow wiring; do not collapse them into one noisy edge pattern.
+- For mission wiring helpers (e.g. `MissionDeckPatch`), merge into existing state without resetting user layout.
 
 ## Do Not
 
@@ -36,6 +42,21 @@ Use only when:
 - Do not break object-aware selection or chat/canvas context.
 - Do not add road-sign UI or heavy labels unless requested.
 - Do not assume all graph canvases share the same node semantics.
+- Do not reapply `INITIAL_DECK` over an existing saved project/deck state.
+- Do not add fake/inferred connections to make the board "look right."
+- Do not auto-connect agents unless explicitly requested by the user.
+- Do not change default seed layout to "fix" existing project persistence.
+- Do not run auto-layout on existing user decks unless explicitly requested.
+- Do not add forced node position resets for specific cards in hydration paths.
+- Do not silently ignore failed deck saves.
+
+## Persistence Rules
+
+- Persist node movement (`drag`/`position`) to project/deck-scoped storage.
+- Persist edge connect/reconnect/delete to project/deck-scoped storage.
+- Hydration must prefer saved deck state; seed defaults apply only when no saved deck exists (or explicit reset/new deck flow).
+- Rebuild/restart/reopen must restore saved layout exactly for the same project/deck.
+- If persistence guarantees cannot be met in current mode, surface that explicitly before changing layout logic.
 
 ## Validate
 

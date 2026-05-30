@@ -76,6 +76,7 @@ export function useBuilderDeckRuntimeActions({
   v3ProjectsApi,
   activeProjectLatestRef,
   recordDeckWriteReason,
+  onDeckPersistProof,
 }: {
   builderDev: boolean;
   buildSingleCardRunDocument: (document: DeckDocument, cardId: string) => DeckDocument | null;
@@ -117,6 +118,17 @@ export function useBuilderDeckRuntimeActions({
   v3ProjectsApi: string;
   activeProjectLatestRef: MutableRefObject<string>;
   recordDeckWriteReason: (reason: string) => void;
+  onDeckPersistProof?: (entry: {
+    projectId: string;
+    deckId: string;
+    reason: string;
+    nodeCount: number;
+    edgeCount: number;
+    revisionBefore: string | null;
+    revisionAfter: string | null;
+    ok: boolean;
+    error?: string;
+  }) => void;
 }) {
   const handleSaveDeck = useCallback(async () => {
     if (!canvasProjectId) {
@@ -145,6 +157,7 @@ export function useBuilderDeckRuntimeActions({
 
     try {
       const endpoint = `${v3ProjectsApi}/${requestProjectId}/decks/${deckId}`;
+      const revisionBefore = deckRevision;
       const response = await fetch(endpoint, {
         method: "PUT",
         headers: {
@@ -165,6 +178,17 @@ export function useBuilderDeckRuntimeActions({
       }
 
       if (!response.ok) {
+        onDeckPersistProof?.({
+          projectId: requestProjectId,
+          deckId,
+          reason: "manual-save",
+          nodeCount: deck.nodes.length,
+          edgeCount: deck.edges.length,
+          revisionBefore,
+          revisionAfter: null,
+          ok: false,
+          error: safeText(data?.error || "deck_save_failed"),
+        });
         throw new Error(safeText(data?.error || "deck_save_failed"));
       }
 
@@ -183,9 +207,19 @@ export function useBuilderDeckRuntimeActions({
           return hydrateDeckDocument({ ...(data.deck as DeckDocument), id: deckId });
         });
       }
-      setDeckRevision(
-        typeof data?.meta?.deckRevision === "string" ? data.meta.deckRevision : deckRevision,
-      );
+      const revisionAfter =
+        typeof data?.meta?.deckRevision === "string" ? data.meta.deckRevision : deckRevision;
+      setDeckRevision(revisionAfter);
+      onDeckPersistProof?.({
+        projectId: requestProjectId,
+        deckId,
+        reason: "manual-save",
+        nodeCount: deck.nodes.length,
+        edgeCount: deck.edges.length,
+        revisionBefore,
+        revisionAfter,
+        ok: true,
+      });
       setDeckStatusMessage("Board saved.");
     } catch (err: any) {
       if (isAbortLikeError(err) || activeProjectLatestRef.current !== requestProjectId) {
@@ -195,6 +229,17 @@ export function useBuilderDeckRuntimeActions({
         safeText(err?.message) === "deck_conflict"
           ? "A newer saved canvas exists. Reload the workspace before saving again."
           : "Could not save the current board.";
+      onDeckPersistProof?.({
+        projectId: requestProjectId,
+        deckId,
+        reason: "manual-save",
+        nodeCount: deck.nodes.length,
+        edgeCount: deck.edges.length,
+        revisionBefore: deckRevision,
+        revisionAfter: null,
+        ok: false,
+        error: safeText(err?.message || "deck_save_failed"),
+      });
       setDeckStatusMessage(formatBuilderStatusMessage(err?.message, fallbackMessage));
     } finally {
       if (deckSaveAbortRef.current === controller) {
@@ -219,6 +264,7 @@ export function useBuilderDeckRuntimeActions({
     setDeckSaveBusy,
     setDeckStatusMessage,
     v3ProjectsApi,
+    onDeckPersistProof,
   ]);
 
   const handleRunSelectedCard = useCallback(async () => {
