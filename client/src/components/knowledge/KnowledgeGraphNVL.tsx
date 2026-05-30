@@ -26,6 +26,12 @@ export type KnowledgeGraphNode = {
   originSource?: "think" | "know";
   degree?: number;
   last_seen_ts?: string;
+  summary?: string;
+  confidence?: number;
+  sourceRefs?: Array<{ type?: string; ref?: string }>;
+  properties?: Record<string, unknown>;
+  provenance?: Record<string, unknown>;
+  vectorText?: string;
 };
 
 export type KnowledgeGraphRelationship = {
@@ -827,7 +833,7 @@ export default function KnowledgeGraphNVL({
           x: clamp(event.clientX - bounds.left + 12, 8, Math.max(8, bounds.width - 220)),
           y: clamp(event.clientY - bounds.top + 12, 8, Math.max(8, bounds.height - 90)),
           label: link.type || "Relationship",
-          meta: link.sourceType === "know" ? "Know relationship" : "Think relationship",
+          meta: `relationship • ${String(link.source)} -> ${String(link.target)} • confidence ${typeof link.confidence === "number" ? link.confidence.toFixed(2) : "n/a"}`,
         });
         applyPresentationState();
       })
@@ -915,7 +921,7 @@ export default function KnowledgeGraphNVL({
           x: clamp(event.clientX - bounds.left + 12, 8, Math.max(8, bounds.width - 220)),
           y: clamp(event.clientY - bounds.top + 12, 8, Math.max(8, bounds.height - 90)),
           label: node.label || node.id,
-          meta: `${node.type || "Entity"} • ${sourceBadge(sourceForNode(node))}`,
+          meta: `${node.type || "Entity"} • ${sourceBadge(sourceForNode(node))} • confidence ${typeof node.confidence === "number" ? node.confidence.toFixed(2) : "n/a"} • sources ${Array.isArray(node.sourceRefs) ? node.sourceRefs.length : 0}`,
         });
         applyPresentationState();
       })

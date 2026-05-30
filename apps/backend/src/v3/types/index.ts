@@ -241,7 +241,10 @@ export type SemanticGraphRecordKind =
   | 'agent_run'
   | 'file'
   | 'component'
-  | 'symbol';
+  | 'symbol'
+  | 'concept'
+  | 'event'
+  | 'observation';
 
 export type SemanticGraphWriter =
   | 'thinkgraph-agent'
@@ -259,7 +262,9 @@ export type SemanticGraphSourceRefType =
   | 'mission'
   | 'agent_run'
   | 'graph_record'
-  | 'user_input';
+  | 'user_input'
+  | 'tool_result'
+  | 'model_output';
 
 export type SemanticGraphEntity = {
   id: string;
@@ -281,6 +286,7 @@ export type SemanticGraphRelationship = {
 };
 
 export type SemanticGraphSourceRef = {
+  id?: string;
   type: SemanticGraphSourceRefType;
   ref: string;
   title?: string | null;
@@ -350,29 +356,49 @@ export type GraphUpdateRequest = {
 export type GraphSearchRequest = {
   graph: SemanticGraphName;
   query: string;
+  kinds?: SemanticGraphRecordKind[];
+  relationshipTypes?: string[];
+  nodeId?: string;
+  startNodeId?: string;
+  depth?: number;
   limit?: number;
   includeSourceRefs?: boolean;
   includeProvenance?: boolean;
+  confidenceMin?: number;
 };
 
 export type GraphTraverseRequest = {
   graph: SemanticGraphName;
   startNodeId: string;
+  query?: string;
+  kinds?: SemanticGraphRecordKind[];
   relationshipTypes?: string[];
   depth?: number;
   limit?: number;
   includeSourceRefs?: boolean;
   includeProvenance?: boolean;
+  confidenceMin?: number;
 };
 
 export type GraphNeighborhoodRequest = {
   graph: SemanticGraphName;
   startNodeId: string;
+  query?: string;
+  kinds?: SemanticGraphRecordKind[];
   relationshipTypes?: string[];
   depth?: number;
   limit?: number;
   includeSourceRefs?: boolean;
   includeProvenance?: boolean;
+  confidenceMin?: number;
+};
+
+export type GraphReadResult = {
+  records: SemanticGraphRecord[];
+  relationships: SemanticGraphRelationship[];
+  sourceRefs: SemanticGraphSourceRef[];
+  warnings: string[];
+  status: 'ok' | 'unavailable' | 'error';
 };
 
 export type CardRunResult = {

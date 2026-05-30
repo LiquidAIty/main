@@ -297,3 +297,45 @@ Scope: launch wiring audit + safest first implementation chunk
 - Persistence status for semantic records:
   - contract and normalization are implemented;
   - direct semantic-record persistence path is not yet wired in this pass.
+
+### Real Semantic Graph Foundation
+- Existing skills found and updated:
+  - `.skills/frontend/react-flow-xyflow/SKILL.md` (existing, reused)
+  - `.skills/graph/graph-memory-design/SKILL.md` (updated in place; no duplicate skill created)
+- OWL/JSON-LD alignment:
+  - semantic organizing format explicitly aligned to OWL/RDF/JSON-LD concepts in graph-memory skill rules
+  - no custom ontology language introduced
+- Category theory posture:
+  - explicitly treated as emergent structure from typed records/relationships/properties/paths/vectors/ML
+  - not implemented directly and not exposed as product surface
+- Actual files changed:
+  - `.skills/graph/graph-memory-design/SKILL.md`
+  - `client/src/types/agentgraph.ts`
+  - `apps/backend/src/v3/types/index.ts`
+  - `apps/backend/src/v3/graph/semanticLanguage.ts`
+  - `apps/backend/src/v3/graph/semanticLanguage.spec.ts`
+  - `client/src/components/graph/thinkGraphReactFlowAdapter.ts`
+  - `client/src/components/assist/ThinkGraphFlow.tsx`
+  - `client/src/components/knowledge/KnowledgeGraphNVL.tsx`
+- Validation status:
+  - `validateSemanticGraphRecord(record)` added with `ok/errors/warnings`
+  - missing provenance now errors
+  - KnowGraph claim/evidence/source without source refs errors unless clearly low confidence (warn path)
+  - unknown source ref type no longer silently falls back to `chat`
+- Graph UI behavior status:
+  - no synthetic placeholder edges were added
+  - ThinkGraph flow node/edge details now come from actual graph payload fields only
+  - hover metadata expanded to include confidence/source counts where present
+  - node source action opens URL in new tab; non-openable refs show explicit "source target not yet openable."
+- Source-link behavior status:
+  - URL source refs open via browser new tab
+  - non-URL source targets are explicitly reported as not openable yet
+- No fake graph / no road-sign rules:
+  - added to graph-memory skill constraints and semantic normalizer validations
+  - no fake persistence success added
+- Known limitations:
+  - backend normalization validates and filters records but does not persist to Neo4j in this pass
+  - semantic detail panel richness depends on fields present in current graph query payload
+  - KnowledgeGraphFramework still renders through existing shared scene path; no new semantic backend read endpoint introduced
+- Next safe step:
+  - wire a backend `GraphReadResult` endpoint that returns records + relationships + source refs + provenance with confidence filtering, then bind KnowledgeGraphFramework/NVL detail drawer directly to that payload.

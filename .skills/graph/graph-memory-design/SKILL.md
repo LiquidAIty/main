@@ -19,14 +19,19 @@ Use only when:
 ## Do
 
 - Model durable knowledge as entities, relationships, properties, provenance, and confidence.
+- Use OWL/RDF/JSON-LD as the semantic organizing format (`@context`, `@id`, `@type`).
+- Use existing ontology concepts (classes, object properties, data properties, individuals, labels, comments, source refs, provenance).
+- Do not invent a custom ontology language.
 - Use `SemanticGraphRecord` (or a strict adapter into it) for durable ThinkGraph/KnowGraph records.
 - Keep current intent separate from stale/historical docs.
 - Keep ThinkGraph, KnowGraph, and CodeGraph roles explicit.
-- Prefer graph-shaped summaries over raw chat dumps.
+- Graph memory is not raw chat and not loose summaries.
+- Prefer graph-shaped records over transcript dumps.
 - Store source/provenance with useful knowledge.
 - Design for future ingestion/search/routing.
 - Document ontology/entity changes.
 - Require every record to include: `kind`, `label`, `summary`, `sourceRefs`, `confidence`, `provenance`, `writer`, `writeMode`.
+- Category theory is emergent from typed records, typed relationships, data properties, paths, vectors, and later ML. Do not implement or expose category theory directly.
 - Treat `GraphUpdateRequest` as request-only unless a graph agent explicitly accepts/applies it.
 - Enforce writer boundaries:
   - ThinkGraph writes: `thinkgraph-agent`
@@ -43,6 +48,10 @@ Use only when:
 - Do not claim graph memory behavior exists unless code supports it.
 - Do not store loose summary blobs with no source refs/provenance.
 - Do not fake graph writes or fake successful persistence.
+- Do not write fallback junk summaries.
+- Do not generate random word-node graphs or road-sign graph UI.
+- Do not create source-backed claims without `sourceRef`.
+- Do not create graph records without confidence and provenance.
 
 ## Validate
 

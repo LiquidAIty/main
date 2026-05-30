@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -72,6 +72,8 @@ export default function ThinkGraphFlow({
   );
   const [nodes, setNodes] = useNodesState(seededNodes);
   const [edges, setEdges] = useEdgesState(projection.edges);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
   useEffect(() => {
     setNodes(seededNodes);
@@ -99,6 +101,15 @@ export default function ThinkGraphFlow({
 
   const onEdgesChange = (changes: EdgeChange[]) => {
     setEdges((current) => applyEdgeChanges(changes, current) as typeof current);
+  };
+  const selectedNode = nodes.find((node) => node.id === selectedNodeId) || null;
+  const selectedEdge = edges.find((edge) => edge.id === selectedEdgeId) || null;
+  const openSource = (ref: string) => {
+    if (/^https?:\/\//i.test(ref)) {
+      window.open(ref, "_blank", "noopener,noreferrer");
+      return;
+    }
+    window.alert("source target not yet openable.");
   };
 
   return (
@@ -142,6 +153,39 @@ export default function ThinkGraphFlow({
           color="rgba(255,255,255,0.09)"
         />
       </ReactFlow>
+      {(selectedNode || selectedEdge) && (
+        <div style={{ borderTop: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`, padding: "8px 10px", fontSize: 12, color: GRAPH_THEME.drawer.inputText }}>
+          {selectedNode ? (
+            <div>
+              <div><strong>{String(selectedNode.data?.label || selectedNode.id)}</strong></div>
+              <div>kind/type: {String(selectedNode.data?.type || "entity")}</div>
+              <div>summary: {String(selectedNode.data?.summary || "") || "(empty)"}</div>
+              <div>confidence: {typeof selectedNode.data?.confidence === "number" ? selectedNode.data.confidence : "n/a"}</div>
+              <div>source count: {Array.isArray(selectedNode.data?.sourceIds) ? selectedNode.data?.sourceIds.length : 0}</div>
+              {Array.isArray(selectedNode.data?.sourceIds) && selectedNode.data.sourceIds[0] ? (
+                <button type="button" onClick={() => openSource(String(selectedNode.data?.sourceIds?.[0]))} style={{ marginTop: 6 }}>
+                  Open source
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {selectedEdge ? (
+            <div>
+              <div><strong>{String(selectedEdge.label || selectedEdge.id)}</strong></div>
+              <div>source: {selectedEdge.source}</div>
+              <div>target: {selectedEdge.target}</div>
+            </div>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }
+        onNodeClick={(_event, node) => {
+          setSelectedEdgeId(null);
+          setSelectedNodeId(node.id);
+        }}
+        onEdgeClick={(_event, edge) => {
+          setSelectedNodeId(null);
+          setSelectedEdgeId(edge.id);
+        }}

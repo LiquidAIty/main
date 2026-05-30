@@ -37,6 +37,7 @@ export type ThinkGraphFlowNodeData = {
   type: string;
   summary?: string;
   confidence?: number;
+  sourceIds?: string[];
 };
 
 export type ThinkGraphFlowNode = Node<ThinkGraphFlowNodeData>;
@@ -111,6 +112,9 @@ export function toReactFlowGraph(
         type: entity.type,
         summary: entity.summary,
         confidence: entity.confidence,
+        sourceIds: Array.isArray(entity.semanticMetadata?.sourceIds)
+          ? (entity.semanticMetadata?.sourceIds as string[])
+          : [],
       },
       hidden: collapsedSet.has(entity.id),
       selectable: true,
