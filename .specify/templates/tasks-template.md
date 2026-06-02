@@ -246,6 +246,8 @@ With multiple developers:
 - [P] tasks = different files, no dependencies
 - [Story] label maps task to specific user story for traceability
 - Each user story should be independently completable and testable
+- Do not create tasks whose delivered outcome is a fallback, mockup, stub, placeholder, or demo
+  substitute for real behavior
 - Verify tests fail before implementing
 - Commit after each task or logical group
 - Stop at any checkpoint to validate story independently

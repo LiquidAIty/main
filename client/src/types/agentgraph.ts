@@ -339,12 +339,35 @@ export type SemanticGraphSourceRef = {
 
 export type SemanticGraphProvenance = {
   createdByAgent?: string | null;
+  createdByModel?: string | null;
   missionSpecId?: string | null;
   missionRunId?: string | null;
   missionAgentRunId?: string | null;
   sourceRefs?: SemanticGraphSourceRef[];
   reasoningSummary?: string | null;
   createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type SemanticObjectProperty = {
+  id?: string;
+  from: string;
+  to: string;
+  type: string;
+  confidence?: number | null;
+  sourceRefId?: string | null;
+};
+
+export type SemanticDatatypeProperty = {
+  key: string;
+  value: unknown;
+  valueType?: string | null;
+  unit?: string | null;
+};
+
+export type SemanticAnnotationProperty = {
+  key: string;
+  value: unknown;
 };
 
 export type SemanticGraphRecord = {
@@ -356,6 +379,11 @@ export type SemanticGraphRecord = {
   entities: SemanticGraphEntity[];
   relationships: SemanticGraphRelationship[];
   properties?: Record<string, unknown>;
+  owlClass?: string | string[] | null;
+  owlIndividual?: string | null;
+  objectProperties?: SemanticObjectProperty[];
+  datatypeProperties?: SemanticDatatypeProperty[];
+  annotationProperties?: SemanticAnnotationProperty[];
   sourceRefs: SemanticGraphSourceRef[];
   confidence?: number | null;
   vectorText?: string | null;
@@ -388,7 +416,16 @@ export type GraphUpdateRequest = {
   requestedBy: GraphUpdateRequester;
   reason: string;
   proposedRecords: SemanticGraphRecord[];
+  proposedEntities?: SemanticGraphEntity[];
+  proposedRelationships?: SemanticGraphRelationship[];
+  proposedProperties?: Record<string, unknown>;
+  proposedOwlClass?: string | string[] | null;
+  proposedOwlIndividual?: string | null;
+  proposedObjectProperties?: SemanticObjectProperty[];
+  proposedDatatypeProperties?: SemanticDatatypeProperty[];
+  proposedAnnotationProperties?: SemanticAnnotationProperty[];
   sourceRefs: SemanticGraphSourceRef[];
+  provenance?: SemanticGraphProvenance | null;
   confidence?: number | null;
   status: GraphUpdateRequestStatus;
   createdAt: string;

@@ -134,14 +134,17 @@ Do not create random scratch Markdown, duplicate maps, or unowned audit docs.
 - AutoGen is mandatory for real agent execution.
 - No silent TypeScript fallback runtime.
 - No fake fallback runtime.
+- No fallback UI, fallback data, fallback code paths, or fallback services in user-facing flows.
+- No mockups, stubs, placeholders, demos, or "not ready yet" substitutes presented as product behavior.
 - Runtime truth comes from code and verified checks.
 - Real-user readiness rule:
   - no fake success states
   - no mockups pretending to work
   - no placeholder "coming soon" behavior treated as live
+  - no sample fallback data or demo wires treated as product state
   - no random demo wires or hidden board resets
   - no silent failed saves
-  - if not implemented, state it clearly and report compact status
+  - if not implemented, report the real status plainly and fix the implementation instead of adding a substitute path
 
 ## Forbidden / Historical
 - No LangChain.

@@ -42,6 +42,11 @@
 
 [Gates determined based on constitution file]
 
+- No fallback UI, fallback data, fallback runtime, mockup, stub, placeholder, or demo-wire path
+  may be proposed as the shipped behavior for this feature.
+- If part of the feature is broken or not implemented, the plan must describe the real failure
+  mode, required observability, and the concrete implementation work to make it actually work.
+
 ## Project Structure
 
 ### Documentation (this feature)

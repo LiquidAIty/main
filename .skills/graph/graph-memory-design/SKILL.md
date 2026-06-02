@@ -19,7 +19,11 @@ Use only when:
 ## Do
 
 - Model durable knowledge as entities, relationships, properties, provenance, and confidence.
+- Keep `entity` / `relationship` / `property` as the core product concepts.
 - Use OWL/RDF/JSON-LD as the semantic organizing format (`@context`, `@id`, `@type`).
+- OWL adds formal semantics to existing graph concepts: entities -> individuals/class instances, relationships -> object properties, properties -> datatype/annotation properties.
+- JSON-LD preserves semantic identity/exchange while Neo4j/property-graph storage remains the runtime traversal model.
+- Keep vectors attached to semantic records for recall and keep numeric properties first-class for later ML/optimization.
 - Use existing ontology concepts (classes, object properties, data properties, individuals, labels, comments, source refs, provenance).
 - Do not invent a custom ontology language.
 - Use `SemanticGraphRecord` (or a strict adapter into it) for durable ThinkGraph/KnowGraph records.

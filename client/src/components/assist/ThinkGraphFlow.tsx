@@ -86,7 +86,7 @@ export default function ThinkGraphFlow({
   const onNodesChange = (changes: NodeChange[]) => {
     setNodes((current) => applyNodeChanges(changes, current) as typeof current);
     const selectedChange = changes.find((change) => change.type === "select");
-    if (!selectedChange || !onFocusChange || !('id' in selectedChange)) return;
+    if (!selectedChange || !onFocusChange || !("id" in selectedChange)) return;
     const selectedNode = nodes.find((node) => node.id === selectedChange.id);
     if (!selectedNode || !selectedChange.selected) {
       onFocusChange(null);
@@ -102,8 +102,11 @@ export default function ThinkGraphFlow({
   const onEdgesChange = (changes: EdgeChange[]) => {
     setEdges((current) => applyEdgeChanges(changes, current) as typeof current);
   };
+
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) || null;
   const selectedEdge = edges.find((edge) => edge.id === selectedEdgeId) || null;
+  const hasData = nodes.length > 0 || edges.length > 0;
+
   const openSource = (ref: string) => {
     if (/^https?:\/\//i.test(ref)) {
       window.open(ref, "_blank", "noopener,noreferrer");
@@ -124,35 +127,49 @@ export default function ThinkGraphFlow({
         overflow: "hidden",
       }}
     >
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        fitView
-        fitViewOptions={{ padding: compact ? 0.2 : 0.24 }}
-        minZoom={0.25}
-        maxZoom={1.6}
-        nodesConnectable={false}
-        nodesDraggable
-        elementsSelectable
-        edgesFocusable={false}
-        edgesReconnectable={false}
-        connectOnClick={false}
-        connectionMode={ConnectionMode.Loose}
-        proOptions={{ hideAttribution: true }}
-        style={{
-          background:
-            "radial-gradient(circle at 20% 14%, rgba(79,162,173,0.08), transparent 40%), rgba(8,10,13,0.66)",
-        }}
-      >
-        <Background
-          variant={BackgroundVariant.Dots}
-          gap={18}
-          size={1}
-          color="rgba(255,255,255,0.09)"
-        />
-      </ReactFlow>
+      {!hasData ? (
+        <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: GRAPH_THEME.drawer.inputMuted }}>
+          Graph unavailable
+        </div>
+      ) : (
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onNodeClick={(_event, node) => {
+            setSelectedEdgeId(null);
+            setSelectedNodeId(node.id);
+          }}
+          onEdgeClick={(_event, edge) => {
+            setSelectedNodeId(null);
+            setSelectedEdgeId(edge.id);
+          }}
+          fitView
+          fitViewOptions={{ padding: compact ? 0.2 : 0.24 }}
+          minZoom={0.25}
+          maxZoom={1.6}
+          nodesConnectable={false}
+          nodesDraggable
+          elementsSelectable
+          edgesFocusable={false}
+          edgesReconnectable={false}
+          connectOnClick={false}
+          connectionMode={ConnectionMode.Loose}
+          proOptions={{ hideAttribution: true }}
+          style={{
+            background:
+              "radial-gradient(circle at 20% 14%, rgba(79,162,173,0.08), transparent 40%), rgba(8,10,13,0.66)",
+          }}
+        >
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={18}
+            size={1}
+            color="rgba(255,255,255,0.09)"
+          />
+        </ReactFlow>
+      )}
       {(selectedNode || selectedEdge) && (
         <div style={{ borderTop: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`, padding: "8px 10px", fontSize: 12, color: GRAPH_THEME.drawer.inputText }}>
           {selectedNode ? (
@@ -181,11 +198,3 @@ export default function ThinkGraphFlow({
     </div>
   );
 }
-        onNodeClick={(_event, node) => {
-          setSelectedEdgeId(null);
-          setSelectedNodeId(node.id);
-        }}
-        onEdgeClick={(_event, edge) => {
-          setSelectedNodeId(null);
-          setSelectedEdgeId(edge.id);
-        }}

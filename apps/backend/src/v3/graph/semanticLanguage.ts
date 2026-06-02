@@ -1,8 +1,13 @@
 import type {
+  SemanticAnnotationProperty,
+  SemanticDatatypeProperty,
+  SemanticGraphEntity,
   SemanticGraphRecord,
   SemanticGraphRecordKind,
+  SemanticGraphRelationship,
   SemanticGraphSourceRef,
   SemanticGraphSourceRefType,
+  SemanticObjectProperty,
   SemanticGraphWriter,
 } from "../types";
 
@@ -109,24 +114,66 @@ function normalizeRecord(
   if (kindRaw && kindRaw !== kind) {
     warnings.push(`unsupported kind "${kindRaw}", defaulted to "${options.defaultKind}"`);
   }
+
   const sourceRefs = toSourceRefs(raw.sourceRefs, warnings);
+  const entities: SemanticGraphEntity[] = Array.isArray(raw.entities)
+    ? (raw.entities as SemanticGraphEntity[])
+    : [];
+  const relationships: SemanticGraphRelationship[] = Array.isArray(raw.relationships)
+    ? (raw.relationships as SemanticGraphRelationship[])
+    : [];
+  const properties =
+    raw.properties && typeof raw.properties === "object"
+      ? (raw.properties as Record<string, unknown>)
+      : {};
+  const objectProperties: SemanticObjectProperty[] = Array.isArray(raw.objectProperties)
+    ? (raw.objectProperties as SemanticObjectProperty[])
+    : relationships
+        .filter((rel) => Boolean(rel?.from && rel?.to && rel?.type))
+        .map((rel) => ({
+          id: rel.id,
+          from: rel.from,
+          to: rel.to,
+          type: rel.type,
+          confidence: typeof rel.confidence === "number" ? rel.confidence : null,
+        }));
+  const datatypeProperties: SemanticDatatypeProperty[] = Array.isArray(raw.datatypeProperties)
+    ? (raw.datatypeProperties as SemanticDatatypeProperty[])
+    : Object.entries(properties).map(([key, value]) => ({
+        key,
+        value,
+        valueType: Array.isArray(value) ? "array" : value === null ? "null" : typeof value,
+      }));
+  const annotationProperties: SemanticAnnotationProperty[] = Array.isArray(raw.annotationProperties)
+    ? (raw.annotationProperties as SemanticAnnotationProperty[])
+    : [
+        { key: "sourceRefs", value: sourceRefs },
+        { key: "provenance", value: raw.provenance ?? null },
+      ];
+
+  const owlClassRaw = raw.owlClass ?? raw["@type"] ?? kind;
+  const owlClass = typeof owlClassRaw === "string" || Array.isArray(owlClassRaw)
+    ? (owlClassRaw as SemanticGraphRecord["owlClass"])
+    : null;
+  const owlIndividual = asString(raw.owlIndividual).trim() || asString(raw["@id"]).trim() || id;
+
   const record: SemanticGraphRecord = {
     id,
     graph: options.graph,
     kind,
     label,
     summary,
-    entities: Array.isArray(raw.entities) ? (raw.entities as SemanticGraphRecord["entities"]) : [],
-    relationships: Array.isArray(raw.relationships)
-      ? (raw.relationships as SemanticGraphRecord["relationships"])
-      : [],
-    properties:
-      raw.properties && typeof raw.properties === "object"
-        ? (raw.properties as Record<string, unknown>)
-        : {},
+    entities,
+    relationships,
+    properties,
+    owlClass,
+    owlIndividual: owlIndividual || null,
+    objectProperties,
+    datatypeProperties,
+    annotationProperties,
     sourceRefs,
     confidence: Number.isFinite(Number(raw.confidence)) ? Number(raw.confidence) : null,
-    vectorText: asString(raw.vectorText).trim() || null,
+    vectorText: asString(raw.vectorText).trim() || summary || null,
     provenance:
       raw.provenance && typeof raw.provenance === "object"
         ? (raw.provenance as SemanticGraphRecord["provenance"])
@@ -145,9 +192,11 @@ function normalizeRecord(
         ? (raw["@type"] as SemanticGraphRecord["@type"])
         : undefined,
   };
+
   for (const key of Object.keys(raw)) {
     if (key.startsWith("@") && key !== "@context" && key !== "@id" && key !== "@type") {
       warnings.push(`unsupported JSON-LD field "${key}"`);
+      annotationProperties.push({ key, value: raw[key] });
     }
   }
   return { record, warnings };
@@ -159,9 +208,11 @@ export function validateSemanticGraphRecord(
 ): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
-  if (!asString(record.id).trim()) errors.push("missing id");
+  if (!asString(record.id).trim() && !asString(record["@id"]).trim()) errors.push("missing id / @id");
   if (!asString(record.graph).trim()) errors.push("missing graph");
-  if (!asString(record.kind).trim()) errors.push("missing kind");
+  const hasType = Boolean(record["@type"] && asString(record["@type"]).trim());
+  const hasOwlClass = Boolean(record.owlClass && asString(record.owlClass).trim());
+  if (!asString(record.kind).trim() && !hasType && !hasOwlClass) errors.push("missing kind / @type / owlClass");
   if (!asString(record.label).trim()) errors.push("missing label");
   if (!asString(record.writer).trim()) errors.push("missing writer");
   if (!asString(record.writeMode).trim()) errors.push("missing writeMode");
@@ -170,6 +221,26 @@ export function validateSemanticGraphRecord(
   if (!asString(record.vectorText).trim()) warnings.push("no vectorText");
   if (typeof record.confidence === "number" && record.confidence < 0.5) warnings.push("low confidence");
   if (!Array.isArray(record.relationships) || record.relationships.length === 0) warnings.push("no relationships");
+
+  for (const rel of record.relationships || []) {
+    if (!rel?.from || !rel?.to || !rel?.type) {
+      errors.push("malformed relationship / object property assertion");
+      break;
+    }
+  }
+  for (const rel of record.objectProperties || []) {
+    if (!rel?.from || !rel?.to || !rel?.type) {
+      errors.push("malformed relationship / object property assertion");
+      break;
+    }
+  }
+  for (const prop of record.datatypeProperties || []) {
+    if (!prop?.key) {
+      errors.push("malformed property / datatype property assertion");
+      break;
+    }
+  }
+
   if (context?.source === "thinkgraph" && (!record.sourceRefs || record.sourceRefs.length === 0)) {
     warnings.push("ThinkGraph record missing sourceRefs");
   }
@@ -180,8 +251,24 @@ export function validateSemanticGraphRecord(
   ) {
     const confidence = typeof record.confidence === "number" ? record.confidence : 0;
     if (confidence < 0.35) warnings.push("KnowGraph record missing sourceRefs with low confidence");
-    else errors.push("KnowGraph claim/evidence/source missing sourceRefs");
+    else errors.push("KnowGraph source-backed claim/evidence missing sourceRef");
   }
+
+  for (const ref of record.sourceRefs || []) {
+    if (ref.type === "url" && !/^https?:\/\//i.test(ref.ref || "")) {
+      errors.push("URL source missing openable ref");
+    } else if (ref.type !== "url" && !ref.ref) {
+      warnings.push("source target not currently openable");
+    }
+  }
+
+  for (const ann of record.annotationProperties || []) {
+    if (ann?.key?.startsWith("@") && ann.key !== "@context" && ann.key !== "@id" && ann.key !== "@type") {
+      warnings.push("unsupported OWL field retained as annotation");
+      break;
+    }
+  }
+
   return { ok: errors.length === 0, errors, warnings };
 }
 

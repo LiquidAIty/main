@@ -32,6 +32,12 @@ export type KnowledgeGraphNode = {
   properties?: Record<string, unknown>;
   provenance?: Record<string, unknown>;
   vectorText?: string;
+  graph?: string;
+  kind?: string;
+  owlClass?: string | string[];
+  atType?: string | string[];
+  datatypeProperties?: Array<{ key: string; value: unknown; valueType?: string | null; unit?: string | null }>;
+  objectProperties?: Array<{ id?: string; from: string; to: string; type: string; confidence?: number | null }>;
 };
 
 export type KnowledgeGraphRelationship = {
@@ -47,6 +53,7 @@ export type KnowledgeGraphRelationship = {
   last_seen_ts?: string;
   evidence_doc_id?: string;
   evidence_snippet?: string;
+  sourceRefs?: Array<{ type?: string; ref?: string; title?: string | null; excerpt?: string | null }>;
 };
 
 type HoverCard = {

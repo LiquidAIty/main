@@ -339,3 +339,95 @@ Scope: launch wiring audit + safest first implementation chunk
   - KnowledgeGraphFramework still renders through existing shared scene path; no new semantic backend read endpoint introduced
 - Next safe step:
   - wire a backend `GraphReadResult` endpoint that returns records + relationships + source refs + provenance with confidence filtering, then bind KnowledgeGraphFramework/NVL detail drawer directly to that payload.
+
+### Semantic Graph User-Test Checklist
+- Backend semantic validation:
+  - Run: `npm exec --workspace apps/backend vitest run src/v3/graph/semanticLanguage.spec.ts`
+  - Expected: all tests pass (currently 14/14).
+- Build verification:
+  - Run: `npm --workspace apps/backend run build`
+  - Run: `npm --workspace client run build`
+  - Expected: both builds succeed.
+- UI graph verification:
+  - Open Agent Builder and navigate to the graph surfaces already wired in the page.
+  - If graph data exists: nodes/edges render from backend payload only; no synthetic placeholder lines.
+  - If graph data is unavailable: UI shows compact unavailable/empty state, not fake graph data.
+  - For source-link behavior: use ThinkGraph flow detail and click `Open source` for URL refs; non-URL refs must show `source target not yet openable.`
+- Semantic smoke payload route (non-persistent):
+  - GET `/api/knowgraph/semantic-smoke?mode=know`
+  - GET `/api/knowgraph/semantic-smoke?mode=think`
+  - Expected: `smoke: true`, `persisted: false`, normalized semantic records + validation fields.
+- Board safety check:
+  - This pass does not modify Agent Builder board layout behavior.
+  - This pass does not modify `INITIAL_DECK`.
+
+### Semantic Graph Endpoint-UI Bridge (Current Pass)
+- Endpoint added:
+  - `GET /api/knowgraph/semantic-graph?projectId=<id>`
+- Response contract:
+  - returns `GraphReadResult` fields: `records`, `relationships`, `sourceRefs`, `warnings`, `status`
+- Data source truth:
+  - reads real persisted KnowGraph data through existing Neo4j query path
+  - adapts persisted legacy KnowGraph DTO into semantic `GraphReadResult` with warning
+  - does not use smoke data and does not claim semantic persistence writes
+- Main UI bridge:
+  - Agent Builder KnowGraph load now requests semantic endpoint first, with legacy route fallback
+  - main knowledge detail panel now shows semantic fields when available:
+    - label, graph, kind/@type/owlClass, summary, confidence
+    - properties, source refs, vector text preview
+    - relationship source/target/type/confidence/evidence snippet
+  - URL source refs expose `Open source`; internal/non-openable refs show `source target not yet openable.`
+- Honest unavailable state:
+  - if semantic endpoint returns unavailable/empty, UI shows compact status and no fake nodes/edges are generated
+
+#### Manual Test Steps (Bridge Pass)
+1. Run backend semantic tests:
+   - `npm exec --workspace apps/backend vitest run src/v3/graph/semanticLanguage.spec.ts`
+2. Run builds:
+   - `npm --workspace apps/backend run build`
+   - `npm --workspace client run build`
+3. Call semantic endpoint:
+   - `GET /api/knowgraph/semantic-graph?projectId=<yourProjectId>`
+   - Expect `status`, `records[]`, `relationships[]`, `sourceRefs[]`, `warnings[]`
+4. Open Agent Builder Knowledge graph surface:
+   - confirm KnowGraph loads via semantic endpoint path
+   - if data exists: only real nodes/edges render
+   - if data is missing/backend unavailable: compact unavailable status appears
+5. Click a node:
+   - verify detail panel includes semantic fields (summary/properties/source refs/provenance/vectorText when present)
+6. Click an edge:
+   - verify relationship details (type, endpoints, confidence, evidence snippet if present)
+7. In source refs:
+   - URL ref should open in new tab
+   - non-openable internal refs should show `source target not yet openable.`
+8. Failure criteria:
+   - fake placeholder graph content appears
+   - random/inferred edges appear without backing relationships
+   - source open action claims success for non-openable internal refs
+
+### Semantic Seed Test Path (Current Pass)
+- Explicit project-scoped seed endpoint (dev/test only):
+  - `POST /api/knowgraph/semantic-seed?projectId=<yourProjectId>`
+  - validates records first, blocks hard errors, returns `inserted`, `skipped`, and validation warnings/errors
+- Readback endpoint:
+  - `GET /api/knowgraph/semantic-graph?projectId=<yourProjectId>`
+  - returns `records`, `relationships`, `sourceRefs`, `warnings`, `status`
+- Safety notes:
+  - seed is explicit only (never automatic on load)
+  - existing data is not wiped
+  - seeded records are tagged (`seed_group` / `seedTag`) and project-scoped
+  - semantic smoke route remains non-persistent
+
+#### Manual Seed Checklist
+1. Call `POST /api/knowgraph/semantic-seed?projectId=<yourProjectId>`.
+2. Confirm response includes `ok`, `inserted`, `relationshipsInserted`, `skipped`, `validation`.
+3. Call `GET /api/knowgraph/semantic-graph?projectId=<yourProjectId>`.
+4. Confirm response includes non-empty `records`/`relationships`/`sourceRefs`.
+5. Open Agent Builder.
+6. Open KnowGraph in the Knowledge surface.
+7. Confirm seed nodes render (for example LiquidAIty / claim / decision / action records).
+8. Click a node and confirm detail panel shows type/class, summary, properties, source refs, provenance, vector text.
+9. Click an edge and confirm source/target/type and confidence/evidence metadata if present.
+10. For URL source refs, click `Open source` and confirm a new tab opens.
+11. For non-URL refs, confirm UI shows `source target not yet openable.`
+12. If backend data is unavailable, confirm compact unavailable state appears and no fake graph renders.

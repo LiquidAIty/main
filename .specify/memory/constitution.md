@@ -1,22 +1,23 @@
 <!--
 Sync Impact Report
-- Version change: 1.0.0 -> 1.1.0
-- Modified principles: consolidated for SOUL + coding-agent + Spec Kit alignment
+- Version change: 1.1.0 -> 1.2.0
+- Modified principles: 5. AutoGen Mandatory Execution -> 5. AutoGen Mandatory Execution
+- Modified principles: 9. Runtime Truth Comes From Code -> 9. Runtime Truth Comes From Code
 - Added sections: Governance Metadata, Compliance
 - Removed sections: none
 - Templates requiring updates:
-  - ⚠ pending: .specify/templates/plan-template.md
-  - ⚠ pending: .specify/templates/spec-template.md
-  - ⚠ pending: .specify/templates/tasks-template.md
+  - ✅ updated: .specify/templates/plan-template.md
+  - ✅ updated: .specify/templates/tasks-template.md
+  - ✅ reviewed: .specify/templates/spec-template.md
 - Follow-up TODOs: none
 -->
 
 # LiquidAIty Constitution
 
 ## Governance Metadata
-- Constitution Version: `1.1.0`
+- Constitution Version: `1.2.0`
 - Ratification Date: `2026-05-24`
-- Last Amended Date: `2026-05-24`
+- Last Amended Date: `2026-06-01`
 
 ## 1. Sol-Centered Identity
 LiquidAIty agent identity is defined in `SOUL.md`. All coding agents MUST align behavior with
@@ -40,7 +41,8 @@ speculative sprawl for untouched systems.
 
 ## 5. AutoGen Mandatory Execution
 Real agent/deck/card execution MUST route through Python AutoGen when `executionBackend` is
-`python_autogen`. Silent TypeScript fallback and fake success/fallback paths are forbidden.
+`python_autogen`. Silent TypeScript fallback, fake success paths, substitute runtimes, and
+fallback implementations are forbidden.
 
 ## 6. Canvas-First Workbench
 Canvases are first-class work surfaces. Chat and orchestration must remain context-aware of
@@ -65,6 +67,10 @@ value, no better existing home, and scoped content.
 ## 9. Runtime Truth Comes From Code
 Docs/specs must not claim behavior that is not implemented and validated. Uncertainty MUST be
 stated explicitly.
+User-facing flows MUST NOT ship fallback UI, fallback data, stubs, mockups, placeholders, demo
+wires, or "not ready yet" substitute surfaces as product behavior. If a surface is broken or
+unimplemented, the correct response is to expose the real status, add error reporting, and fix the
+implementation rather than inventing alternate behavior.
 
 Meaningful work must use intent inversion, code/context audit, safe planning, safe 80%
 implementation, validation, and a final report. Agents must make useful safe progress without

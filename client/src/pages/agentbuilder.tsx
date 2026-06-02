@@ -26,6 +26,7 @@ import WorldSignalSurface from '../components/worldsignal/WorldSignalSurface';
 import DataFormulatorSurface, {
   type DataFormulatorModelConfig,
 } from '../components/dataformulator/DataFormulatorSurface';
+import TradingCanvasSurface from '../features/trading/TradingCanvasSurface';
 import type {
   PlanMissionNodeData,
   PlanMissionNodeOverrideMap,
@@ -102,6 +103,7 @@ import type {
   DeckRuntimeEvent,
   GraphViewContract,
   GraphViewData,
+  GraphReadResult,
   KnowledgeGraphKind,
   DeckWorkspaceContext,
   WorkspaceObjectContext,
@@ -166,9 +168,6 @@ const KnowledgeGraphFramework = lazy(
 );
 const EnergyFacadeSurface = lazy(
   () => import('../components/energy/EnergyFacadeSurface'),
-);
-const TradingCanvasSurface = lazy(
-  () => import('../features/trading/TradingCanvasSurface'),
 );
 const MediaStudioCanvas = lazy(
   () => import('../features/media/MediaStudioCanvas'),
@@ -1898,6 +1897,17 @@ type KNode = {
   degree?: number;
   createdAtMs?: number;
   confidence?: number;
+  summary?: string;
+  graph?: string;
+  kind?: string;
+  owlClass?: string | string[];
+  atType?: string | string[];
+  properties?: Record<string, unknown>;
+  sourceRefs?: Array<{ type?: string; ref?: string; title?: string | null; summary?: string | null; excerpt?: string | null }>;
+  provenance?: Record<string, unknown> | null;
+  vectorText?: string | null;
+  datatypeProperties?: Array<{ key: string; value: unknown; valueType?: string | null; unit?: string | null }>;
+  objectProperties?: Array<{ id?: string; from: string; to: string; type: string; confidence?: number | null }>;
 };
 
 type KEdge = {
@@ -1916,6 +1926,7 @@ type KEdge = {
   lastSeenMs?: number;
   evidence_doc_id?: string;
   evidence_snippet?: string;
+  sourceRefs?: Array<{ type?: string; ref?: string; title?: string | null; excerpt?: string | null }>;
 };
 
 const KG_SEED_QUERY = [
@@ -4204,6 +4215,27 @@ function normalizeKnowGraphResponseToGraph(payload: any): {
       last_seen_ts: typeof ts === 'string' ? ts : undefined,
       createdAtMs: parseTimestampMs(ts),
       degree: 0,
+      summary: safeText(props.summary || props.description || ''),
+      graph: safeText(props.graph || 'know'),
+      kind: safeText(props.kind || raw?.type || ''),
+      owlClass: props.owlClass as any,
+      atType: props.atType as any,
+      properties: props,
+      sourceRefs: Array.isArray(props.sourceRefs) ? props.sourceRefs : [],
+      provenance:
+        props.provenance && typeof props.provenance === 'object'
+          ? (props.provenance as Record<string, unknown>)
+          : null,
+      vectorText: typeof props.vectorText === 'string' ? props.vectorText : null,
+      datatypeProperties: Array.isArray(props.datatypeProperties)
+        ? (props.datatypeProperties as any[])
+        : [],
+      objectProperties: Array.isArray(props.objectProperties)
+        ? (props.objectProperties as any[])
+        : [],
+      confidence: Number.isFinite(Number(props.confidence))
+        ? Number(props.confidence)
+        : undefined,
     });
   });
 
@@ -4248,6 +4280,7 @@ function normalizeKnowGraphResponseToGraph(payload: any): {
       lastSeenMs: parseTimestampMs(lastSeen),
       evidence_doc_id: safeText(props.document_id || props.doc_id || ''),
       evidence_snippet: safeText(props.snippet || props.evidence_snippet || ''),
+      sourceRefs: Array.isArray(props.sourceRefs) ? props.sourceRefs : [],
     });
   });
 
@@ -4265,6 +4298,82 @@ function normalizeKnowGraphResponseToGraph(payload: any): {
       degree: degreeByNode.get(n.id) || n.degree || 0,
     })),
     edges,
+  };
+}
+
+function semanticReadResultToLegacyKnowGraph(result: GraphReadResult): {
+  nodes: any[];
+  relationships: any[];
+  warnings: string[];
+  status: string;
+} {
+  const records = Array.isArray(result?.records) ? result.records : [];
+  const relationships = Array.isArray(result?.relationships) ? result.relationships : [];
+  const nodeMap = new Map<string, any>();
+  const rels: any[] = [];
+
+  records.forEach((record: any) => {
+    const id = safeText(record?.id || record?.['@id']).trim();
+    if (!id) return;
+    const props =
+      record?.properties && typeof record.properties === 'object'
+        ? (record.properties as Record<string, unknown>)
+        : {};
+    nodeMap.set(id, {
+      id,
+      label: safeText(record?.label || id),
+      type: safeText(record?.kind || record?.owlClass || record?.['@type'] || 'entity'),
+      properties: {
+        ...props,
+        summary: record?.summary ?? null,
+        graph: record?.graph ?? null,
+        kind: record?.kind ?? null,
+        owlClass: record?.owlClass ?? null,
+        atType: record?.['@type'] ?? null,
+        sourceRefs: record?.sourceRefs ?? [],
+        provenance: record?.provenance ?? null,
+        vectorText: record?.vectorText ?? null,
+        datatypeProperties: record?.datatypeProperties ?? [],
+        objectProperties: record?.objectProperties ?? [],
+        confidence: record?.confidence ?? null,
+      },
+    });
+    const relList = Array.isArray(record?.relationships) ? record.relationships : [];
+    relList.forEach((rel: any) => {
+      if (!rel?.from || !rel?.to) return;
+      rels.push({
+        id: safeText(rel.id || `${rel.from}->${rel.to}:${rel.type || 'related_to'}`),
+        from: safeText(rel.from),
+        to: safeText(rel.to),
+        type: safeText(rel.type || 'related_to'),
+        properties: {
+          ...(rel.properties && typeof rel.properties === 'object' ? rel.properties : {}),
+          confidence: rel.confidence ?? null,
+          sourceRefs: record?.sourceRefs ?? [],
+        },
+      });
+    });
+  });
+
+  relationships.forEach((rel: any) => {
+    if (!rel?.from || !rel?.to) return;
+    rels.push({
+      id: safeText(rel.id || `${rel.from}->${rel.to}:${rel.type || 'related_to'}`),
+      from: safeText(rel.from),
+      to: safeText(rel.to),
+      type: safeText(rel.type || 'related_to'),
+      properties: {
+        ...(rel.properties && typeof rel.properties === 'object' ? rel.properties : {}),
+        confidence: rel.confidence ?? null,
+      },
+    });
+  });
+
+  return {
+    nodes: Array.from(nodeMap.values()),
+    relationships: rels,
+    warnings: Array.isArray(result?.warnings) ? result.warnings : [],
+    status: safeText((result as any)?.status || 'ok').toLowerCase(),
   };
 }
 
@@ -4439,6 +4548,18 @@ function buildGraphVizForNVL(graph: { nodes: KNode[]; edges: KEdge[] }) {
       originSource: source,
       last_seen_ts: n.last_seen_ts,
       degree: n.degree || 0,
+      summary: n.summary,
+      confidence: n.confidence,
+      sourceRefs: n.sourceRefs,
+      properties: n.properties,
+      provenance: n.provenance,
+      vectorText: n.vectorText,
+      graph: n.graph,
+      kind: n.kind,
+      owlClass: n.owlClass,
+      atType: n.atType,
+      datatypeProperties: n.datatypeProperties,
+      objectProperties: n.objectProperties,
     };
   });
 
@@ -4464,6 +4585,7 @@ function buildGraphVizForNVL(graph: { nodes: KNode[]; edges: KEdge[] }) {
       last_seen_ts: e.last_seen_ts,
       evidence_doc_id: e.evidence_doc_id,
       evidence_snippet: e.evidence_snippet,
+      sourceRefs: e.sourceRefs,
     });
   });
 
@@ -7365,7 +7487,7 @@ export default function AgentBuilder(): React.ReactElement {
       const requestSeq = opts?.requestSeq ?? nextRequestSequence(requestType);
 
       try {
-        const endpoint = `/api/knowgraph/graph?projectId=${encodeURIComponent(projectId)}`;
+        const endpoint = `/api/knowgraph/semantic-graph?projectId=${encodeURIComponent(projectId)}`;
         const payload = await guardedRequest({
           key: `knowgraph:data:${projectId}`,
           method: 'GET',
@@ -7396,15 +7518,33 @@ export default function AgentBuilder(): React.ReactElement {
         }
         if (activeProjectLatestRef.current !== projectId) return false;
         if (!isLatestRequestSequence(requestType, requestSeq)) return false;
-        const rawNodes = Array.isArray(payload.data?.nodes)
-          ? payload.data.nodes
-          : [];
-        const rawRels = Array.isArray(payload.data?.relationships)
-          ? payload.data.relationships
-          : [];
+        const semanticStatus = safeText(payload.data?.status || '').toLowerCase();
+        const hasSemanticShape =
+          Array.isArray(payload.data?.records) &&
+          Array.isArray(payload.data?.relationships) &&
+          Array.isArray(payload.data?.sourceRefs);
+        let rawNodes: any[] = [];
+        let rawRels: any[] = [];
+        if (hasSemanticShape) {
+          const adapted = semanticReadResultToLegacyKnowGraph(payload.data as GraphReadResult);
+          rawNodes = adapted.nodes;
+          rawRels = adapted.relationships;
+          if (semanticStatus === 'unavailable' && rawNodes.length === 0 && rawRels.length === 0) {
+            setKnowledgeGraphStatus('Graph backend unavailable.');
+          } else if (adapted.warnings.length > 0) {
+            setKnowledgeGraphStatus(`KnowGraph semantic warnings: ${adapted.warnings[0]}`);
+          }
+        } else {
+          const legacyEndpoint = `/api/knowgraph/graph?projectId=${encodeURIComponent(projectId)}`;
+          const legacyRes = await fetch(legacyEndpoint, { credentials: 'include', signal: opts?.signal });
+          const legacyPayload = await safeJson(legacyRes);
+          rawNodes = Array.isArray(legacyPayload?.nodes) ? legacyPayload.nodes : [];
+          rawRels = Array.isArray(legacyPayload?.relationships) ? legacyPayload.relationships : [];
+          setKnowledgeGraphStatus('Using legacy KnowGraph DTO path.');
+        }
         setKnowGraphData({ nodes: rawNodes, relationships: rawRels });
         setGraphError((prev) =>
-          prev && prev.includes('/api/knowgraph/graph') ? null : prev,
+          prev && (prev.includes('/api/knowgraph/graph') || prev.includes('/api/knowgraph/semantic-graph')) ? null : prev,
         );
         return true;
       } catch (err: any) {
@@ -8956,59 +9096,128 @@ export default function AgentBuilder(): React.ReactElement {
 
   const renderKnowledgeWorkspacePanel = () => {
     if (!selectedKnowledgeEntity && !selectedKnowledgeRelationship) return null;
+    const openKnowledgeSource = (ref: string) => {
+      const target = safeText(ref).trim();
+      if (!target) return;
+      if (/^https?:\/\//i.test(target)) {
+        window.open(target, '_blank', 'noopener,noreferrer');
+        return;
+      }
+      window.alert('source target not yet openable.');
+    };
+    const renderSourceRefs = (
+      refs: Array<{
+        type?: string;
+        ref?: string;
+        title?: string | null;
+        summary?: string | null;
+        excerpt?: string | null;
+      }>,
+    ) => {
+      if (!Array.isArray(refs) || refs.length === 0) {
+        return (
+          <div className="text-xs" style={{ color: GRAPH_THEME.drawer.inputMuted }}>
+            No source references.
+          </div>
+        );
+      }
+      return (
+        <div style={{ display: 'grid', gap: 8 }}>
+          {refs.slice(0, 8).map((ref, index) => {
+            const refType = safeText(ref?.type || 'unknown');
+            const refTarget = safeText(ref?.ref || '');
+            const openable = refType.toLowerCase() === 'url' && /^https?:\/\//i.test(refTarget);
+            return (
+              <div
+                key={`${refType}:${refTarget}:${index}`}
+                style={graphDrawerSectionStyle({
+                  borderRadius: 8,
+                  padding: '10px 12px',
+                  display: 'grid',
+                  gap: 6,
+                })}
+              >
+                <div className="text-xs" style={{ color: GRAPH_THEME.drawer.inputMuted }}>
+                  {refType}
+                </div>
+                <div style={{ color: GRAPH_THEME.drawer.inputText, wordBreak: 'break-word' }}>
+                  {safeText(ref?.title || refTarget || 'source')}
+                </div>
+                {safeText(ref?.summary || ref?.excerpt || '') ? (
+                  <div className="text-xs" style={{ color: GRAPH_THEME.drawer.inputMuted }}>
+                    {safeText(ref?.summary || ref?.excerpt || '')}
+                  </div>
+                ) : null}
+                {openable ? (
+                  <button
+                    type="button"
+                    style={graphDrawerButtonStyle}
+                    onClick={() => openKnowledgeSource(refTarget)}
+                  >
+                    Open source
+                  </button>
+                ) : (
+                  <div className="text-xs" style={{ color: GRAPH_THEME.drawer.inputMuted }}>
+                    source target not yet openable.
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      );
+    };
 
     if (selectedKnowledgeEntity) {
+      const topProperties = Object.entries(selectedKnowledgeEntity.properties || {}).slice(0, 8);
       return (
         <div
           data-testid="companion-surface-knowledge-panel"
           style={{ height: '100%', overflow: 'auto' }}
         >
-          <div
-            data-testid="knowledge-panel-entity"
-            style={{
-              display: 'grid',
-              gap: 12,
-              paddingRight: 4,
-            }}
-          >
-            <div
-              style={graphDrawerSectionStyle({
-                borderRadius: 10,
-                padding: '14px 16px',
-              })}
-            >
-              <div
-                style={{
-                  color: GRAPH_THEME.drawer.inputText,
-                  fontSize: 20,
-                  fontWeight: 700,
-                  lineHeight: 1.2,
-                }}
-              >
+          <div data-testid="knowledge-panel-entity" style={{ display: 'grid', gap: 12, paddingRight: 4 }}>
+            <div style={graphDrawerSectionStyle({ borderRadius: 10, padding: '14px 16px' })}>
+              <div style={{ color: GRAPH_THEME.drawer.inputText, fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>
                 {safeText(selectedKnowledgeEntity.label)}
               </div>
-              <div
-                className="text-xs"
-                style={{ color: GRAPH_THEME.drawer.inputMuted, marginTop: 6 }}
-              >
-                {safeText(selectedKnowledgeEntity.type)} •{' '}
-                {safeText(selectedKnowledgeEntity.source)} •{' '}
-                {formatKnowledgeScope(selectedKnowledgeEntity.scope)}
+              <div className="text-xs" style={{ color: GRAPH_THEME.drawer.inputMuted, marginTop: 6 }}>
+                {safeText(selectedKnowledgeEntity.type)} | {safeText(selectedKnowledgeEntity.kind || '')} | {safeText(selectedKnowledgeEntity.graph || selectedKnowledgeEntity.source)}
+              </div>
+              <div className="text-xs" style={{ color: GRAPH_THEME.drawer.inputMuted, marginTop: 4 }}>
+                confidence {typeof selectedKnowledgeEntity.confidence === 'number' ? selectedKnowledgeEntity.confidence.toFixed(2) : 'n/a'} | sources {Array.isArray(selectedKnowledgeEntity.sourceRefs) ? selectedKnowledgeEntity.sourceRefs.length : 0}
               </div>
             </div>
 
-            <div
-              style={graphDrawerSectionStyle({
-                borderRadius: 10,
-                padding: '12px 14px',
-                color: GRAPH_THEME.drawer.inputMuted,
-                lineHeight: 1.6,
-              })}
-            >
+            {safeText(selectedKnowledgeEntity.summary || '') ? (
+              <div style={graphDrawerSectionStyle({ borderRadius: 10, padding: '12px 14px', color: GRAPH_THEME.drawer.inputText, lineHeight: 1.6, whiteSpace: 'pre-wrap' })}>
+                {safeText(selectedKnowledgeEntity.summary || '')}
+              </div>
+            ) : null}
+
+            <div style={graphDrawerSectionStyle({ borderRadius: 10, padding: '12px 14px', color: GRAPH_THEME.drawer.inputMuted, lineHeight: 1.6 })}>
               Degree {selectedKnowledgeEntity.degree || 0}
-              {selectedKnowledgeEntity.last_seen_ts
-                ? ` • ${safeText(selectedKnowledgeEntity.last_seen_ts)}`
-                : ''}
+              {selectedKnowledgeEntity.last_seen_ts ? ` | ${safeText(selectedKnowledgeEntity.last_seen_ts)}` : ''}
+              {selectedKnowledgeEntity.owlClass ? ` | owlClass ${safeText(Array.isArray(selectedKnowledgeEntity.owlClass) ? selectedKnowledgeEntity.owlClass.join(', ') : selectedKnowledgeEntity.owlClass)}` : ''}
+              {selectedKnowledgeEntity.atType ? ` | @type ${safeText(Array.isArray(selectedKnowledgeEntity.atType) ? selectedKnowledgeEntity.atType.join(', ') : selectedKnowledgeEntity.atType)}` : ''}
+            </div>
+
+            {topProperties.length > 0 ? (
+              <div style={graphDrawerSectionStyle({ borderRadius: 10, padding: '12px 14px', color: GRAPH_THEME.drawer.inputText, lineHeight: 1.6 })}>
+                <div className="text-xs" style={{ color: GRAPH_THEME.drawer.inputMuted, marginBottom: 6 }}>Top properties</div>
+                <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{JSON.stringify(Object.fromEntries(topProperties), null, 2)}</pre>
+              </div>
+            ) : null}
+
+            {selectedKnowledgeEntity.vectorText ? (
+              <div style={graphDrawerSectionStyle({ borderRadius: 10, padding: '12px 14px', color: GRAPH_THEME.drawer.inputText, lineHeight: 1.6, whiteSpace: 'pre-wrap' })}>
+                <div className="text-xs" style={{ color: GRAPH_THEME.drawer.inputMuted, marginBottom: 6 }}>vectorText</div>
+                {safeText(selectedKnowledgeEntity.vectorText)}
+              </div>
+            ) : null}
+
+            <div style={graphDrawerSectionStyle({ borderRadius: 10, padding: '12px 14px' })}>
+              <div className="text-xs" style={{ color: GRAPH_THEME.drawer.inputMuted, marginBottom: 8 }}>Sources</div>
+              {renderSourceRefs((selectedKnowledgeEntity.sourceRefs || []) as any[])}
             </div>
           </div>
         </div>
@@ -9016,93 +9225,45 @@ export default function AgentBuilder(): React.ReactElement {
     }
 
     if (!selectedKnowledgeRelationship) return null;
-    const fromLabel =
-      knowledgeEntityById.get(selectedKnowledgeRelationship.from)?.label ||
-      selectedKnowledgeRelationship.from;
-    const toLabel =
-      knowledgeEntityById.get(selectedKnowledgeRelationship.to)?.label ||
-      selectedKnowledgeRelationship.to;
+    const fromLabel = knowledgeEntityById.get(selectedKnowledgeRelationship.from)?.label || selectedKnowledgeRelationship.from;
+    const toLabel = knowledgeEntityById.get(selectedKnowledgeRelationship.to)?.label || selectedKnowledgeRelationship.to;
+    const edgeRefs = Array.isArray(selectedKnowledgeRelationship.sourceRefs)
+      ? selectedKnowledgeRelationship.sourceRefs
+      : [];
 
     return (
-      <div
-        data-testid="companion-surface-knowledge-panel"
-        style={{ height: '100%', overflow: 'auto' }}
-      >
-        <div
-          data-testid="knowledge-panel-relationship"
-          style={{
-            display: 'grid',
-            gap: 12,
-            paddingRight: 4,
-          }}
-        >
-          <div
-            style={graphDrawerSectionStyle({
-              borderRadius: 10,
-              padding: '14px 16px',
-            })}
-          >
-            <div
-              style={{
-                color: GRAPH_THEME.drawer.inputText,
-                fontSize: 20,
-                fontWeight: 700,
-                lineHeight: 1.2,
-              }}
-            >
+      <div data-testid="companion-surface-knowledge-panel" style={{ height: '100%', overflow: 'auto' }}>
+        <div data-testid="knowledge-panel-relationship" style={{ display: 'grid', gap: 12, paddingRight: 4 }}>
+          <div style={graphDrawerSectionStyle({ borderRadius: 10, padding: '14px 16px' })}>
+            <div style={{ color: GRAPH_THEME.drawer.inputText, fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>
               {safeText(selectedKnowledgeRelationship.type)}
             </div>
-            <div
-              className="text-xs"
-              style={{ color: GRAPH_THEME.drawer.inputMuted, marginTop: 6 }}
-            >
-              {safeText(fromLabel)} → {safeText(toLabel)}
+            <div className="text-xs" style={{ color: GRAPH_THEME.drawer.inputMuted, marginTop: 6 }}>
+              {safeText(fromLabel)} {'->'} {safeText(toLabel)}
             </div>
-            <div
-              className="text-xs"
-              style={{ color: GRAPH_THEME.drawer.inputMuted, marginTop: 6 }}
-            >
-              {safeText(selectedKnowledgeRelationship.source)} •{' '}
-              {formatKnowledgeScope(selectedKnowledgeRelationship.scope)}
+            <div className="text-xs" style={{ color: GRAPH_THEME.drawer.inputMuted, marginTop: 6 }}>
+              {safeText(selectedKnowledgeRelationship.source)} | {formatKnowledgeScope(selectedKnowledgeRelationship.scope)} | confidence {typeof selectedKnowledgeRelationship.confidence === 'number' ? selectedKnowledgeRelationship.confidence.toFixed(2) : 'n/a'}
             </div>
           </div>
 
-          {(selectedKnowledgeRelationship.evidence_doc_id ||
-            selectedKnowledgeRelationship.last_seen_ts) && (
-            <div
-              style={graphDrawerSectionStyle({
-                borderRadius: 10,
-                padding: '12px 14px',
-                color: GRAPH_THEME.drawer.inputMuted,
-                lineHeight: 1.6,
-              })}
-            >
-              {selectedKnowledgeRelationship.evidence_doc_id
-                ? `Doc ${safeText(selectedKnowledgeRelationship.evidence_doc_id)}`
-                : ''}
-              {selectedKnowledgeRelationship.evidence_doc_id &&
-              selectedKnowledgeRelationship.last_seen_ts
-                ? ' • '
-                : ''}
-              {selectedKnowledgeRelationship.last_seen_ts
-                ? safeText(selectedKnowledgeRelationship.last_seen_ts)
-                : ''}
+          {(selectedKnowledgeRelationship.evidence_doc_id || selectedKnowledgeRelationship.last_seen_ts) && (
+            <div style={graphDrawerSectionStyle({ borderRadius: 10, padding: '12px 14px', color: GRAPH_THEME.drawer.inputMuted, lineHeight: 1.6 })}>
+              {selectedKnowledgeRelationship.evidence_doc_id ? `Doc ${safeText(selectedKnowledgeRelationship.evidence_doc_id)}` : ''}
+              {selectedKnowledgeRelationship.evidence_doc_id && selectedKnowledgeRelationship.last_seen_ts ? ' | ' : ''}
+              {selectedKnowledgeRelationship.last_seen_ts ? safeText(selectedKnowledgeRelationship.last_seen_ts) : ''}
             </div>
           )}
 
           {selectedKnowledgeRelationship.evidence_snippet && (
-            <div
-              style={graphDrawerSectionStyle({
-                borderRadius: 10,
-                padding: '12px 14px',
-                color: GRAPH_THEME.drawer.inputText,
-                lineHeight: 1.6,
-                whiteSpace: 'pre-wrap',
-              })}
-            >
+            <div style={graphDrawerSectionStyle({ borderRadius: 10, padding: '12px 14px', color: GRAPH_THEME.drawer.inputText, lineHeight: 1.6, whiteSpace: 'pre-wrap' })}>
               {safeText(selectedKnowledgeRelationship.evidence_snippet)}
             </div>
           )}
+
+          <div style={graphDrawerSectionStyle({ borderRadius: 10, padding: '12px 14px' })}>
+            <div className="text-xs" style={{ color: GRAPH_THEME.drawer.inputMuted, marginBottom: 8 }}>Edge sources</div>
+            {renderSourceRefs(edgeRefs as any[])}
+          </div>
         </div>
       </div>
     );
@@ -9120,6 +9281,21 @@ export default function AgentBuilder(): React.ReactElement {
       style={getSurfaceShellStyle(minHeight <= 320)}
     >
       <div className="h-full flex flex-col" style={{ position: 'relative' }}>
+        {knowledgeGraphKind === 'knowgraph' && safeText(knowledgeGraphStatus).trim() ? (
+          <div
+            className="text-xs"
+            style={{
+              marginBottom: 8,
+              padding: '7px 10px',
+              borderRadius: 8,
+              border: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`,
+              background: GRAPH_THEME.drawer.panelBackground,
+              color: GRAPH_THEME.drawer.inputMuted,
+            }}
+          >
+            {safeText(knowledgeGraphStatus)}
+          </div>
+        ) : null}
         <div
           style={{
             display: 'flex',
@@ -10041,27 +10217,7 @@ export default function AgentBuilder(): React.ReactElement {
                     </EnergySurfaceErrorBoundary>
                   )}
                   {workspaceView === 'trading' && (
-                    <Suspense
-                      fallback={
-                        <div
-                          data-testid="trading-canvas-loading"
-                          style={{
-                            height: '100%',
-                            padding: 16,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            background: GRAPH_THEME.background.knowledgeSurface,
-                          }}
-                        >
-                          <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 13 }}>
-                            Loading trading canvas...
-                          </div>
-                        </div>
-                      }
-                    >
-                      <TradingCanvasSurface />
-                    </Suspense>
+                    <TradingCanvasSurface />
                   )}
                   {workspaceView === 'image' &&
                     renderWorkbenchPlaceholderSurface({
