@@ -5226,32 +5226,17 @@ export default function AgentBuilder(): React.ReactElement {
   const lastBuilderDeckWriteReasonRef = useRef<string | null>(null);
   const lastBuilderUiOnlyActionRef = useRef<string | null>(null);
   const lastBuilderDeckFingerprintRef = useRef<string | null>(null);
+  const lastPersistedBoardFingerprintRef = useRef<string | null>(null);
   const layoutAutosaveAbortRef = useRef<AbortController | null>(null);
   const lastDeckPersistReasonRef = useRef<string | null>(null);
-  const [layoutPersistToken, setLayoutPersistToken] = useState(0);
-
-  const LAYOUT_PERSIST_REASONS = useMemo(
-    () =>
-      new Set([
-        'canvas:nodes',
-        'canvas:edges',
-        'canvas:connect',
-        'canvas:reconnect',
-        'edge-delete',
-      ]),
-    [],
-  );
 
   const recordDeckWriteReason = useCallback(
     (reason: string) => {
       lastBuilderDeckWriteReasonRef.current = reason;
       lastDeckPersistReasonRef.current = reason;
       lastBuilderUiOnlyActionRef.current = null;
-      if (LAYOUT_PERSIST_REASONS.has(reason)) {
-        setLayoutPersistToken((current) => current + 1);
-      }
     },
-    [LAYOUT_PERSIST_REASONS],
+    [],
   );
 
   const recordUiOnlyAction = useCallback(
@@ -5346,6 +5331,10 @@ export default function AgentBuilder(): React.ReactElement {
           loadResult.usedFallback ? 'deck-load-default' : 'deck-load',
         );
         setDeck(loadResult.deck);
+        lastPersistedBoardFingerprintRef.current = JSON.stringify({
+          nodes: loadResult.deck.nodes,
+          edges: loadResult.deck.edges,
+        });
         setDeckRevision(
           typeof payload.data?.meta?.deckRevision === 'string'
             ? payload.data.meta.deckRevision
@@ -5393,7 +5382,12 @@ export default function AgentBuilder(): React.ReactElement {
       } catch (err: any) {
         if (controller.signal.aborted) return;
         recordDeckWriteReason('deck-load-default-error');
-        setDeck(hydrateDeckDocument(INITIAL_DECK));
+        const fallbackDeck = hydrateDeckDocument(INITIAL_DECK);
+        setDeck(fallbackDeck);
+        lastPersistedBoardFingerprintRef.current = JSON.stringify({
+          nodes: fallbackDeck.nodes,
+          edges: fallbackDeck.edges,
+        });
         setDeckUsingDisplayFallback(false);
         const next = loadProjectState(canvasProjectId);
         setLatestDeckRun(null);
@@ -5452,10 +5446,16 @@ export default function AgentBuilder(): React.ReactElement {
   }, [canvasProjectId]);
 
   useEffect(() => {
-    if (!canvasProjectId || layoutPersistToken === 0 || deckLoadBusy) return;
+    if (!canvasProjectId || !stateLoaded || deckLoadBusy) return;
     if (deckUsingDisplayFallback) return;
+    const boardFingerprint = JSON.stringify({
+      nodes: deck.nodes,
+      edges: deck.edges,
+    });
+    if (lastPersistedBoardFingerprintRef.current === boardFingerprint) return;
+
     const timer = window.setTimeout(() => {
-      const reason = lastDeckPersistReasonRef.current || 'layout-autosave';
+      const reason = lastDeckPersistReasonRef.current || 'board-autosave';
       const revisionBefore = deckRevision;
       const controller = new AbortController();
       layoutAutosaveAbortRef.current?.abort();
@@ -5506,6 +5506,7 @@ export default function AgentBuilder(): React.ReactElement {
           if (typeof data?.meta?.deckRevision === 'string') {
             setDeckRevision(data.meta.deckRevision);
           }
+          lastPersistedBoardFingerprintRef.current = boardFingerprint;
           console.info('[builder][deck-save-proof]', {
             projectId: canvasProjectId,
             deckId: BUILDER_DECK_ID,
@@ -5534,7 +5535,7 @@ export default function AgentBuilder(): React.ReactElement {
           }
         }
       })();
-    }, 600);
+    }, 500);
     return () => {
       window.clearTimeout(timer);
     };
@@ -5545,7 +5546,7 @@ export default function AgentBuilder(): React.ReactElement {
     deckLoadBusy,
     deckRevision,
     deckUsingDisplayFallback,
-    layoutPersistToken,
+    stateLoaded,
   ]);
 
   const showDeckBuilder = workspaceView === 'canvas';
@@ -6160,6 +6161,12 @@ export default function AgentBuilder(): React.ReactElement {
       activeProjectLatestRef,
       recordDeckWriteReason,
       onDeckPersistProof: (entry) => {
+        if (entry.ok) {
+          lastPersistedBoardFingerprintRef.current = JSON.stringify({
+            nodes: deck.nodes,
+            edges: deck.edges,
+          });
+        }
         console.info('[builder][deck-save-proof]', entry);
       },
     });
