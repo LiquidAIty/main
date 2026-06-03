@@ -1,4 +1,9 @@
-# LAUNCH_SPINE_AUDIT
+# Historical Audit: LAUNCH_SPINE_AUDIT
+
+Warning: historical implementation audit from 2026-05-27.
+This file is not active policy or current source of truth.
+Durable findings belong in living docs such as `docs/AGENT_RUNTIME_README.md`,
+`docs/architecture.md`, `docs/runbooks/full-stack-dev.md`, `AGENTS.md`, or relevant `specs/*`.
 
 Date: 2026-05-27
 Scope: launch wiring audit + safest first implementation chunk

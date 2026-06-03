@@ -12,9 +12,10 @@
 
 ### User Story 1 - Enforce Spec-First Workflow (Priority: P1)
 
-As Jeremiah, I want every meaningful repository change to follow a mandatory sequence
-(spec -> iteration -> plan -> tasks -> implementation -> docs update -> validation)
-so coding agents cannot bypass reasoning and implementation control.
+As Jeremiah, I want every meaningful repository change to follow a disciplined default sequence
+(intent inversion -> MCP audit -> safe slice -> validation -> final report), with Spec Kit used
+only when it clearly reduces risk, so coding agents cannot bypass reasoning and implementation
+control.
 
 **Why this priority**: This is the core control mechanism that prevents architecture drift,
 undocumented changes, and ungoverned implementation.
@@ -25,9 +26,9 @@ change and verifying the agent must produce spec, plan, and tasks before impleme
 **Acceptance Scenarios**:
 
 1. **Given** a meaningful requested change, **When** an agent starts work, **Then** the agent
-   starts with a new or updated spec before implementation actions.
-2. **Given** a meaningful requested change, **When** the agent proceeds, **Then** plan and tasks
-   are created or updated before implementation.
+   starts with an audit-backed implementation path and uses Spec Kit only when the work warrants it.
+2. **Given** a high-risk or multi-step requested change, **When** the agent proceeds, **Then**
+   Spec Kit plan and tasks are created or updated before implementation.
 3. **Given** implementation of a meaningful change, **When** the work completes, **Then** the
    final report includes files changed, docs updated, validation, risks, uncertainty, and forward plan.
 
@@ -49,7 +50,7 @@ it reads `SOUL.md`, `AGENTS.md`, and `.specify/memory/constitution.md` in the re
 1. **Given** a new coding agent session, **When** the agent reads instruction files, **Then**
    it identifies Sol through `SOUL.md` and follows repo law from `AGENTS.md`.
 2. **Given** a meaningful change request, **When** the agent plans work, **Then** it applies
-   Spec Kit lifecycle and MCP-first inverse-audit workflow.
+   optional heavy-mode Spec Kit policy and MCP-first inverse-audit workflow.
 
 ---
 
@@ -67,7 +68,7 @@ are absent and not referenced by active docs.
 **Acceptance Scenarios**:
 
 1. **Given** the active repo instruction structure, **When** audit-noise files are checked,
-   **Then** `DOCUMENTATION_SYSTEM_AUDIT.md` and `docs/AGENT_INSTRUCTION_MAP.md` are absent.
+   **Then** standalone audit docs are not used as the default durable home for findings.
 2. **Given** active docs, **When** references are scanned, **Then** no active workflow requires
    Claude-specific files for core development control.
 
@@ -113,7 +114,8 @@ canonical docs are updated in the same change set.
 - **FR-003**: `AGENTS.md` MUST be the hard coding-agent rule file.
 - **FR-004**: `AGENTS.md` MUST require Code-Based Memory MCP before significant edits.
 - **FR-005**: `AGENTS.md` MUST require inverse audit before implementation.
-- **FR-006**: `AGENTS.md` MUST require Spec Kit for meaningful implementation.
+- **FR-006**: `AGENTS.md` MUST define Spec Kit as optional heavy-mode rather than the default for
+  every meaningful implementation.
 - **FR-007**: `AGENTS.md` MUST require PowerShell commands by default.
 - **FR-008**: `AGENTS.md` MUST require final reports with files changed, docs updated, validation,
   risks, uncertainty, and forward plan.
@@ -121,8 +123,9 @@ canonical docs are updated in the same change set.
   `.specify/templates/`, `.agents/skills/`, and `specs/`.
 - **FR-010**: The active feature folder for this initiative MUST be
   `specs/001-liquidaity-spec-first-development-system/`.
-- **FR-011**: Every meaningful future change MUST start with a new or updated Spec Kit spec.
-- **FR-012**: Every meaningful future change MUST update or create `plan.md` and `tasks.md` before
+- **FR-011**: High-risk or multi-step future changes MUST use Spec Kit when a spec clearly reduces
+  risk.
+- **FR-012**: Heavy-mode work MUST update or create `plan.md` and `tasks.md` before
   implementation.
 - **FR-013**: Every implementation MUST run inverse audit before editing.
 - **FR-014**: Every touched subsystem MUST have relevant documentation updated.
@@ -134,7 +137,14 @@ canonical docs are updated in the same change set.
 - **FR-019**: This feature MUST NOT change package files.
 - **FR-020**: This feature MUST NOT commit automatically.
 - **FR-021**: Runtime guardrails MUST remain explicit: AutoGen mandatory for real execution, no
-  silent fallback runtime, no fake fallback runtime.
+  silent fallback runtime, no fake fallback runtime, lazy loading/loading states/error
+  boundaries/retries/diagnostics/honest unavailable states allowed when truthful, and no fake
+  substitute product behavior.
+- **FR-023**: Audit findings MUST be routed into the closest living source of truth rather than
+  standalone audit Markdown by default.
+- **FR-024**: Temporary audit findings MUST remain in the final report only.
+- **FR-025**: Historical audit files MUST be moved to `docs/old/` or deleted after durable
+  findings are extracted unless the user explicitly approves keeping them active.
 - **FR-022**: Active architecture constraints MUST remain explicit: no LangChain, no Zorro, and no
   Ghostfolio as active architecture.
 
@@ -153,10 +163,9 @@ canonical docs are updated in the same change set.
 
 ### Measurable Outcomes
 
-- **SC-001**: 100% of meaningful development changes include a spec artifact update before
+- **SC-001**: 100% of meaningful development changes follow the default audit-first workflow before
   implementation.
-- **SC-002**: 100% of meaningful development changes include plan and tasks updates before
-  implementation.
+- **SC-002**: 100% of heavy-mode changes include plan and tasks updates before implementation.
 - **SC-003**: 100% of completed implementation reports include files changed, docs updated,
   validation results, risks, uncertainty, and forward plan.
 - **SC-004**: A new coding agent can identify Sol identity and required workflow in under 5 minutes
@@ -171,5 +180,6 @@ canonical docs are updated in the same change set.
 - Trivial typo-only edits may use a lighter process when they do not change behavior or project
   intent.
 - External subtree docs remain in the repo but do not define LiquidAIty canonical truth.
-- Existing Spec Kit installation is valid and reused; no reinstallation is required.
+- Existing Spec Kit installation is valid and reused when heavy-mode is chosen; no reinstallation
+  is required.
 - Validation uses repo-native commands and PowerShell defaults.

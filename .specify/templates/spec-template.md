@@ -8,6 +8,9 @@
 
 **Input**: User description: "$ARGUMENTS"
 
+**Use When**: Spec Kit heavy-mode is warranted because the work is large or risky enough that a
+spec clearly reduces risk.
+
 ## User Scenarios & Testing *(mandatory)*
 
 <!--

@@ -31,6 +31,9 @@ Project selected
 - Real agent/deck execution uses AutoGen sidecar (`python_autogen` rail).
 - If sidecar is unavailable, runtime must fail clearly.
 - No silent TS fallback, no fake success payloads.
+- Lazy loading, loading states, error boundaries, retries, diagnostics, and honest unavailable or
+  disabled states are allowed when they expose real runtime status.
+- No fake substitute product behavior.
 
 ## Key Health Endpoints
 - Backend: `GET http://127.0.0.1:4000/api/health`

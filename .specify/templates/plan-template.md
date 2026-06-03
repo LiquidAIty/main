@@ -4,7 +4,8 @@
 
 **Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
 
-**Note**: This template is filled in by the `/speckit-plan` command. See `.specify/templates/plan-template.md` for the execution workflow.
+**Note**: This template is filled in by the `/speckit-plan` command when Spec Kit heavy-mode is
+used. See `.specify/templates/plan-template.md` for the execution workflow.
 
 ## Summary
 
@@ -42,8 +43,17 @@
 
 [Gates determined based on constitution file]
 
-- No fallback UI, fallback data, fallback runtime, mockup, stub, placeholder, or demo-wire path
-  may be proposed as the shipped behavior for this feature.
+- Spec Kit is heavy-mode. Use this plan only when the work is large or risky enough that a spec
+  clearly reduces risk.
+- Audit findings belong in the closest living source of truth, not standalone audit Markdown by
+  default.
+
+- Lazy loading, loading states, error boundaries, retries, diagnostics, and explicit disabled or
+  unavailable states are allowed when they reflect real runtime status.
+- No fake substitute product behavior such as a fake replacement page, mock product flow, sample
+  data shown as real state, stub workflow presented as live, pretend-success response, or
+  substitute UI that masks broken or missing implementation may be proposed as the shipped
+  behavior for this feature.
 - If part of the feature is broken or not implemented, the plan must describe the real failure
   mode, required observability, and the concrete implementation work to make it actually work.
 

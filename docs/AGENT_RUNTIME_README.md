@@ -8,6 +8,12 @@ LiquidAIty is building a visual AI agent system. React Flow is the visual progra
 
 The system should eventually support direct MCP server/client tooling. Do not bring back LangChain wrappers to get there.
 
+Operational UI/runtime handling may use lazy loading, loading states, error boundaries, retries,
+diagnostics, and honest unavailable or disabled states when they expose real runtime status. Do
+not introduce fake substitute product behavior such as fake replacement pages, mock product flows,
+sample data shown as real state, stub workflows presented as live, pretend-success responses, or
+substitute UI that masks broken or missing implementation.
+
 ## Current Architecture
 
 The current local runtime path is:

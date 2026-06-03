@@ -24,7 +24,8 @@ LiquidAIty is a general AI-native platform first. Trading, energy modeling, repo
 - Use `.skills/frontend/react-flow-xyflow/SKILL.md` for React Flow / XYFlow work.
 - Use `.skills/frontend/threejs-r3f/SKILL.md` for Three.js / React Three Fiber work.
 - Use `.skills/graph/cypher/SKILL.md` plus Neo4j or Apache AGE skill for graph queries.
-- Use `.skills/workflow/spec-kit/SKILL.md` for meaningful feature work.
+- Use `.skills/workflow/spec-kit/SKILL.md` for heavy-mode feature work when a spec clearly
+  reduces risk.
 
 ## Required First Step: Use Code-Based Memory MCP
 - Before significant edits, use Code-Based Memory MCP for structural discovery.
@@ -90,10 +91,25 @@ loss, major architecture damage, security exposure, or wrong product direction.
 ## Implementation Rule
 - Implement the largest fully understood safe portion.
 - Keep edits surgical.
-- Leave uncertain, risky, or broad changes for a follow-up with an audit note and forward plan.
+- Leave uncertain, risky, or broad changes for a follow-up with a final-report note and forward
+  plan.
 
 ## Spec Kit Rule
-- Use Spec Kit for major features:
+- Default workflow is:
+  - intent inversion
+  - Code-Based Memory MCP
+  - inverse audit
+  - safe slice implementation
+  - validation
+  - final report
+- Spec Kit is optional heavy-mode, not the default for every meaningful task.
+- Use Spec Kit when a spec clearly reduces risk, especially for:
+  - major new features
+  - schema or database changes
+  - runtime architecture changes
+  - user-facing behavior contracts
+  - multi-step work with non-obvious sequencing or scope risk
+- Heavy-mode commands remain available when needed:
   - `$speckit-constitution`
   - `$speckit-specify`
   - `$speckit-plan`
@@ -103,21 +119,19 @@ loss, major architecture damage, security exposure, or wrong product direction.
 ## Progressive Spec Policy
 LiquidAIty does not require every subsystem to be fully specified upfront.
 
-When an agent revisits a meaningful subsystem, it must create or update the closest relevant
-Spec Kit feature folder.
+Create or update a Spec Kit feature folder only when the work is in heavy-mode.
 
 Use:
 - `spec.md` for intent, behavior, scope, and success criteria.
 - `plan.md` for architecture approach, affected files, risks, skills, and validation.
 - `tasks.md` for ordered implementation steps.
 
-If work touches an existing subsystem, improve the existing spec instead of creating duplicate
-specs.
+If heavy-mode work touches an existing subsystem, improve the existing spec instead of creating
+duplicate specs.
 
-If no matching spec exists, create the smallest useful new spec folder.
+If no matching heavy-mode spec exists, create the smallest useful new spec folder.
 
-Specs should grow as the repo is worked on. Do not create giant speculative specs for untouched
-systems.
+Do not create giant speculative specs for untouched systems or light safe-slice tasks.
 
 Durable lessons discovered during implementation must be placed in the smallest correct home:
 - feature behavior -> relevant `specs/*`
@@ -126,16 +140,20 @@ Durable lessons discovered during implementation must be placed in the smallest 
 - coding rule -> `AGENTS.md`
 - Sol behavior -> `SOUL.md`
 - task technique -> matching `.skills/*/SKILL.md`
-- major retrospective/postmortem -> `docs/audits/*` with clear scope, date, owner, findings, and action items
+- extracted findings from historical audits -> the closest living source of truth
 
-Do not create random scratch Markdown, duplicate maps, or unowned audit docs.
+Do not create standalone audit files by default, random scratch Markdown, duplicate maps, or
+unowned audit docs.
 
 ## Runtime Rules
 - AutoGen is mandatory for real agent execution.
 - No silent TypeScript fallback runtime.
 - No fake fallback runtime.
-- No fallback UI, fallback data, fallback code paths, or fallback services in user-facing flows.
-- No mockups, stubs, placeholders, demos, or "not ready yet" substitutes presented as product behavior.
+- Lazy loading, loading states, error boundaries, retries, diagnostics, and explicit disabled,
+  unavailable, or hard-failure states are allowed when they reflect real runtime status.
+- No fake substitute product behavior in user-facing flows: no fake replacement pages, mock
+  product flows, sample data shown as real state, stub workflows presented as live,
+  pretend-success responses, or substitute UI that masks broken or missing implementation.
 - Runtime truth comes from code and verified checks.
 - Real-user readiness rule:
   - no fake success states
@@ -170,20 +188,21 @@ Do not create random scratch Markdown, duplicate maps, or unowned audit docs.
 
 ## Progressive Notes, Not Markdown Sprawl
 Agents must capture useful discoveries, but must route them to the smallest correct durable home.
-Temporary investigation notes belong in the final report, not permanent files.
+Temporary investigation and audit notes belong in the final report, not permanent files.
 
 Durable notes must be stored by type:
 - feature behavior -> `specs/*`
 - implementation plan -> `specs/*/plan.md`
 - task checklist -> `specs/*/tasks.md`
 - architecture decision -> `docs/decisions/*`
-- major audit or postmortem -> `docs/audits/*`
 - run/setup/test finding -> `docs/runbooks/*`
 - coding-agent rule -> `AGENTS.md`
 - Sol identity/behavior -> `SOUL.md`
 - task-specific technique -> matching `.skills/*/SKILL.md`
+- extracted findings from historical audits -> the closest living source of truth
 
-Agents must not create random scratch Markdown files, duplicate documentation maps, or unowned audit docs.
+Agents must not create standalone audit files by default, random scratch Markdown files, duplicate
+documentation maps, or unowned audit docs.
 
 A new Markdown file is allowed only when it has:
 - a clear owner/purpose
@@ -191,3 +210,5 @@ A new Markdown file is allowed only when it has:
 - durable value
 - no better existing home
 - a short title and scoped content
+- Historical audit files must be moved to `docs/old/` or deleted after durable findings are
+  extracted, unless the user explicitly approves keeping them active.

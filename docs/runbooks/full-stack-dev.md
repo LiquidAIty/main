@@ -41,3 +41,6 @@ npx vitest run client/src/runtime/agentCardRegistryResolver.spec.ts
 - AutoGen unavailable => hard diagnostic failure.
 - No TypeScript fallback for real execution path.
 - No fake success payloads.
+- Lazy loading, loading states, error boundaries, retries, diagnostics, and honest unavailable or
+  disabled states are acceptable when they report real runtime status.
+- No fake substitute product behavior.

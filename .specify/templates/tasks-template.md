@@ -7,6 +7,8 @@ description: "Task list template for feature implementation"
 
 **Input**: Design documents from `/specs/[###-feature-name]/`
 
+**Use When**: Spec Kit heavy-mode is already in use for this feature.
+
 **Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
 
 **Tests**: The examples below include test tasks. Tests are OPTIONAL - only include them if explicitly requested in the feature specification.
@@ -246,8 +248,11 @@ With multiple developers:
 - [P] tasks = different files, no dependencies
 - [Story] label maps task to specific user story for traceability
 - Each user story should be independently completable and testable
-- Do not create tasks whose delivered outcome is a fallback, mockup, stub, placeholder, or demo
-  substitute for real behavior
+- Do not create tasks whose delivered outcome is fake substitute product behavior such as a fake
+  replacement page, mock product flow, sample data shown as real state, stub workflow presented
+  as live, pretend-success response, or substitute UI that masks broken or missing implementation
+- Do not create standalone audit-file tasks by default; route durable findings into the closest
+  living source of truth
 - Verify tests fail before implementing
 - Commit after each task or logical group
 - Stop at any checkpoint to validate story independently
