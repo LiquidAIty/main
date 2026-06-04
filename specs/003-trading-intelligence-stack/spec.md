@@ -4,7 +4,7 @@
 
 **Created**: 2026-06-03
 
-**Status**: Draft — awaiting user approval. Do not implement from this file yet.
+**Status**: Draft — specification reset in progress. Do not implement from this file yet.
 
 **Input**: User description: "LiquidAIty Trading Intelligence Stack — AI Agentic Trading Desk MVP using FinRL-X as the quant engine, Chronos/Kronos forecast overlays, SEC EDGAR intelligence, and a Shodan-backed OSINT/WorldSignals evidence layer."
 
@@ -27,12 +27,19 @@
 > - Paid market data or SEC APIs are rejected unless explicitly approved by the user later.
 > - FinRL-X paper trading integration requires its own approval gate after backtest gates pass.
 
+> ⚠️ **Current reset truth**
+>
+> - `client/src/config/launchMode.ts` has been removed.
+> - `client/src/pages/agentbuilder.tsx` was restored to the pre-launch-mode git baseline.
+> - No Stage 0 shell reduction should be claimed as complete yet.
+> - Legacy features still exist in source and may still be present in the current shell until a later approved cleanup pass lands.
+
 ---
 
 ## Platform Architecture
 
 LiquidAIty is being narrowed to a focused **AI Agentic Trading Desk** for the MVP launch.
-The broader AI canvas/platform vision remains alive but is hidden until each future mode is ready.
+The broader AI canvas/platform vision remains alive, and much of that legacy surface area still exists in source and current builder state until Stage 0 is explicitly implemented.
 
 ```
 LiquidAIty Canvas (user-facing AI trading desk)
@@ -262,7 +269,7 @@ WAIT / BUY_WATCH / SELL_WATCH with reason, confidence, and disclaimer.
 - **FR-009**: `services/knowgraph/schema.py` syntax MUST be fixed before any graph schema modifications (Stage 0 gate).
 - **FR-010**: Shodan queries MUST use the official Shodan API only. No raw socket scanning. No aggressive enumeration.
 
-#### Stage 0 — Clean House + Security Fence
+#### Stage 0 — Active UI Reduction + Security Fence
 
 - **FR-011**: `apps/backend/.env` MUST be confirmed in `.gitignore`.
 - **FR-012**: All committed API keys (OpenAI, OpenRouter, LangSmith, Tavily, Alpaca) MUST be rotated.
@@ -273,7 +280,7 @@ WAIT / BUY_WATCH / SELL_WATCH with reason, confidence, and disclaimer.
 - **FR-017**: Mock trading buttons (ENTER TRADE, EXIT TRADE) MUST be removed from `tradingui.tsx`.
 - **FR-018**: Mock signals strip and mock chat responses MUST be removed from `tradingui.tsx`.
 - **FR-019**: TradingView CDN widget MUST be removed from `tradingui.tsx`.
-- **FR-020**: All hidden/removed features MUST be documented in `docs/disabled-features.md` before removal.
+- **FR-020**: Any feature intentionally removed from the active shell in Stage 0 MUST be documented in `docs/disabled-features.md` before or with that removal.
 
 #### Stage 1 — Alpaca Candles Endpoint
 
@@ -370,11 +377,11 @@ WAIT / BUY_WATCH / SELL_WATCH with reason, confidence, and disclaimer.
 
 ## Implementation Stages
 
-> Stage 0 must complete and pass its gate criteria before any other stage begins.
+> Stage 0 must be re-specified truthfully and pass its gate criteria before any other stage begins.
 > Stages proceed sequentially. Do not start Stage N+1 before Stage N passes its gate.
 
-### Stage 0 — Clean House + Security Fence
-*Gate: `.env` is gitignored. Keys rotated. Secrets replaced. `schema.py` imports cleanly. Auth on `/api/knowgraph`. No order routes. Mock UI removed from tradingui.tsx. `docs/disabled-features.md` exists and is populated.*
+### Stage 0 — Active UI Reduction + Security Fence
+*Gate: `launchMode.ts` is gone. Active shell cleanup is specified truthfully. `schema.py` imports cleanly. Auth on `/api/knowgraph`. No order routes. Mock UI in `tradingui.tsx` is either removed or explicitly deferred with no false completion claims. `docs/disabled-features.md` reflects source reality. No shell reduction is claimed complete until code changes actually land.*
 
 - Confirm `apps/backend/.env` is in `.gitignore`.
 - Rotate all committed API keys.
@@ -382,7 +389,7 @@ WAIT / BUY_WATCH / SELL_WATCH with reason, confidence, and disclaimer.
 - Apply `authMiddleware` to `/api/knowgraph` routes.
 - Fix corrupted syntax in `services/knowgraph/schema.py` lines 91–99.
 - Remove mock buttons, mock signals, mock chat, TradingView CDN from `tradingui.tsx`.
-- Audit and hide non-trading UI surfaces (see `docs/disabled-features.md`).
+- Audit and reduce non-trading UI surfaces without relying on hidden launch gating (see `docs/disabled-features.md`).
 - Confirm no `/order`, `/execute`, `/buy`, `/sell` routes exist.
 - Confirm no `VITE_ALPACA_*` variables exist.
 
@@ -462,7 +469,7 @@ WAIT / BUY_WATCH / SELL_WATCH with reason, confidence, and disclaimer.
 - Modified: `apps/backend/src/routes/market.routes.ts` — add `POST /api/market/backtest/score`
 
 ### Stage 10 — Future Modes Reopening
-*Gate: Trading Desk MVP Stages 0–9 complete. Each mode reopened one at a time using `docs/disabled-features.md`.*
+*Gate: Trading Desk MVP Stages 0–9 complete. Any later shell-reduction or reopening work happens one mode at a time using `docs/disabled-features.md` as inventory, not as proof that current cleanup already happened.*
 
 - Reopen Design Mode (Understand Anything dashboard)
 - Reopen Code Mode (CodeGraph, Data Formulator, Detailed Mode)
@@ -492,7 +499,7 @@ WAIT / BUY_WATCH / SELL_WATCH with reason, confidence, and disclaimer.
 - **SC-012**: `disclaimer: "Research only — not investment advice."` appears in every signal response and is visible in the UI.
 - **SC-013**: A completed backtest has finite `directional_accuracy` (0.0–1.0) and finite `sharpe_ratio`.
 - **SC-014**: The trading chart renders real Alpaca candles with no TradingView CDN script tag in the DOM.
-- **SC-015**: All disabled features are documented in `docs/disabled-features.md` with git restore steps.
+- **SC-015**: Any feature intentionally removed from the active shell is documented in `docs/disabled-features.md` with git/source recovery guidance.
 
 ---
 
@@ -509,7 +516,7 @@ WAIT / BUY_WATCH / SELL_WATCH with reason, confidence, and disclaimer.
 - Shodan API key (`SHODAN_API_KEY`) must be added to `.env` before Stage 7. The key is not committed.
 - All inference is CPU-only. No CUDA, ROCm, or MPS.
 - The NX monorepo build system and Docker Compose stack are not modified. No new Docker services are added.
-- The broader platform (Understand Anything, NRGSim, Media Studio, etc.) is hidden in Stage 0 but remains in the codebase and recoverable from git at any time.
+- The broader platform (Understand Anything, NRGSim, Media Studio, etc.) remains in the codebase, and no Stage 0 hiding/removal should be assumed until a later approved cleanup pass actually implements it.
 
 ---
 

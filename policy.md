@@ -1,5 +1,9 @@
 # LiquidAIty Coding Policy
 
+> Legacy workflow memo.
+> `AGENTS.md` and `.specify/memory/constitution.md` are the governing workflow sources.
+> Treat this file as supplemental context only.
+
 Read this before planning or editing. `AGENTS.md` is the entry point; this file is the operational workflow for coding work.
 
 ## Critical Workflow

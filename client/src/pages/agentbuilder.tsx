@@ -27,7 +27,6 @@ import DataFormulatorSurface, {
   type DataFormulatorModelConfig,
 } from '../components/dataformulator/DataFormulatorSurface';
 import TradingCanvasSurface from '../features/trading/TradingCanvasSurface';
-import LAUNCH_MODE from '../config/launchMode';
 import type {
   PlanMissionNodeData,
   PlanMissionNodeOverrideMap,
@@ -874,11 +873,15 @@ type WorkbenchCardDescriptor = {
   matches: (card: AgentCardInstance | null | undefined) => boolean;
 };
 
-// Stage 0 — Launch Mode: only include workbench card descriptors for surfaces
-// that are enabled in client/src/config/launchMode.ts.
-// To restore a hidden surface, set its flag to true in launchMode.ts.
 const WORKBENCH_CARD_DESCRIPTORS: readonly WorkbenchCardDescriptor[] = [
-  // Trading — primary launch workflow (always enabled)
+  {
+    id: 'energy',
+    title: 'NRGSim / Energy',
+    openLabel: 'Open Energy Surface',
+    disabledCopy:
+      'NRGSim is staged as a selectable workbench card. Runtime is disabled until the dedicated Energy backend exists.',
+    matches: isEnergyWorkbenchCard,
+  },
   {
     id: 'trading',
     title: 'Trading Agent',
@@ -887,74 +890,47 @@ const WORKBENCH_CARD_DESCRIPTORS: readonly WorkbenchCardDescriptor[] = [
       'Trading is staged as a selectable workbench card. Runtime is disabled until the dedicated trading bridge exists.',
     matches: isTradingWorkbenchCard,
   },
-  // NRGSim / Energy — hidden in Trading Desk MVP (future: Building Mode)
-  ...(LAUNCH_MODE.showEnergy
-    ? [{
-        id: 'energy' as WorkbenchSurfaceId,
-        title: 'NRGSim / Energy',
-        openLabel: 'Open Energy Surface',
-        disabledCopy:
-          'NRGSim is staged as a selectable workbench card. Runtime is disabled until the dedicated Energy backend exists.',
-        matches: isEnergyWorkbenchCard,
-      }]
-    : []),
-  // Image Maker — hidden in Trading Desk MVP (future: Media Mode)
-  ...(LAUNCH_MODE.showImage
-    ? [{
-        id: 'image' as WorkbenchSurfaceId,
-        title: 'Image Maker Agent',
-        openLabel: 'Open Image Workspace',
-        disabledCopy:
-          'Image Maker is staged as a selectable workbench card. Runtime is disabled until the image generation bridge exists.',
-        matches: isImageWorkbenchCard,
-      }]
-    : []),
-  // Code Agent — hidden in Trading Desk MVP (future: Code Mode)
-  ...(LAUNCH_MODE.showCode
-    ? [{
-        id: 'code' as WorkbenchSurfaceId,
-        title: 'Code Agent',
-        openLabel: 'Open Code Workspace',
-        disabledCopy:
-          'Code Agent is staged as a selectable workbench card. Runtime is disabled until the canvas-owned code bridge is restored.',
-        matches: isCodeWorkbenchCard,
-      }]
-    : []),
-  // Video Agent — hidden in Trading Desk MVP (future: Media Mode)
-  ...(LAUNCH_MODE.showVideo
-    ? [{
-        id: 'video' as WorkbenchSurfaceId,
-        title: 'Video Agent',
-        openLabel: 'Open Video Workspace',
-        disabledCopy:
-          'Video Agent is staged as a selectable workbench card. Runtime is disabled until the video generation bridge exists.',
-        matches: isVideoWorkbenchCard,
-      }]
-    : []),
-  // Data Formulator — hidden; not working, must not weaken MVP
-  // Restore only if useful for trading data/chart/EDGAR/WorldSignals transforms
-  ...(LAUNCH_MODE.showDataFormulator
-    ? [{
-        id: 'data-formulator' as WorkbenchSurfaceId,
-        title: 'Data Formulator',
-        openLabel: 'Open Data Formulator',
-        disabledCopy: 'Data Formulator opens the real in-process app surface.',
-        matches: isDataFormulatorWorkbenchCard,
-      }]
-    : []),
-  // Understand Anything — hidden; future: Design Mode / Code Mode
-  // Restore if useful for stock research, EDGAR interpretation, company explainers
-  ...(LAUNCH_MODE.showUnderstandAnything
-    ? getUiUaAgentDefinitions().map(
-        (agent): WorkbenchCardDescriptor => ({
-          id: agent.surfaceId,
-          title: agent.name,
-          openLabel: `Open ${agent.name}`,
-          disabledCopy: agent.panel.drawerCopy,
-          matches: (card) => isUaAgentCard(card, agent),
-        }),
-      )
-    : []),
+  {
+    id: 'image',
+    title: 'Image Maker Agent',
+    openLabel: 'Open Image Workspace',
+    disabledCopy:
+      'Image Maker is staged as a selectable workbench card. Runtime is disabled until the image generation bridge exists.',
+    matches: isImageWorkbenchCard,
+  },
+  {
+    id: 'code',
+    title: 'Code Agent',
+    openLabel: 'Open Code Workspace',
+    disabledCopy:
+      'Code Agent is staged as a selectable workbench card. Runtime is disabled until the canvas-owned code bridge is restored.',
+    matches: isCodeWorkbenchCard,
+  },
+  {
+    id: 'video',
+    title: 'Video Agent',
+    openLabel: 'Open Video Workspace',
+    disabledCopy:
+      'Video Agent is staged as a selectable workbench card. Runtime is disabled until the video generation bridge exists.',
+    matches: isVideoWorkbenchCard,
+  },
+  {
+    id: 'data-formulator',
+    title: 'Data Formulator',
+    openLabel: 'Open Data Formulator',
+    disabledCopy:
+      'Data Formulator opens the real in-process app surface.',
+    matches: isDataFormulatorWorkbenchCard,
+  },
+  ...getUiUaAgentDefinitions().map(
+    (agent): WorkbenchCardDescriptor => ({
+      id: agent.surfaceId,
+      title: agent.name,
+      openLabel: `Open ${agent.name}`,
+      disabledCopy: agent.panel.drawerCopy,
+      matches: (card) => isUaAgentCard(card, agent),
+    }),
+  ),
 ] as const;
 
 function resolveWorkbenchDescriptor(
@@ -1340,55 +1316,36 @@ export function deriveVisibleRailItems({
   workspaceView: string;
   pendingActivationProposal: ActivationProposalState | null;
 }): ProgressiveRailVisibility {
-  // Stage 0 — Launch Mode gates. Surfaces disabled in launchMode.ts are
-  // hidden from the rail regardless of deck state. This avoids scattered
-  // one-off hiding logic across the codebase.
   return {
-    // Always shown — core workspace surfaces
     showKnowledge:
-      LAUNCH_MODE.showKnowledge &&
-      (workspaceView === 'knowledge' ||
-        isKnowledgeChainActive(deck.nodes, deck.edges)),
+      workspaceView === 'knowledge' ||
+      isKnowledgeChainActive(deck.nodes, deck.edges),
     showPlan:
-      LAUNCH_MODE.showPlan &&
-      (workspaceView === 'plan' ||
-        pendingActivationProposal !== null ||
-        isPlanAgentActive(deck.nodes, deck.edges)),
-    // WorldSignals — preserved as show-off / evidence surface
+      workspaceView === 'plan' ||
+      pendingActivationProposal !== null ||
+      isPlanAgentActive(deck.nodes, deck.edges),
     showWorldsignal:
-      LAUNCH_MODE.showWorldSignalDemo &&
-      (workspaceView === 'worldsignal' ||
-        isWorldSignalsAgentActive(deck.nodes, deck.edges)),
-    // Trading — primary launch workflow
-    showTrading:
-      LAUNCH_MODE.showTrading &&
-      (workspaceView === 'trading' ||
-        isTradingWorkbenchActive(deck.nodes, deck.edges)),
-    // Hidden in Trading Desk MVP — gated by launch flags
+      workspaceView === 'worldsignal' ||
+      isWorldSignalsAgentActive(deck.nodes, deck.edges),
     showEnergy:
-      LAUNCH_MODE.showEnergy &&
-      (workspaceView === 'energy' ||
-        isEnergyWorkbenchActive(deck.nodes, deck.edges)),
+      workspaceView === 'energy' ||
+      isEnergyWorkbenchActive(deck.nodes, deck.edges),
+    showTrading:
+      workspaceView === 'trading' ||
+      isTradingWorkbenchActive(deck.nodes, deck.edges),
     showImage:
-      LAUNCH_MODE.showImage &&
-      (workspaceView === 'image' ||
-        isImageWorkbenchActive(deck.nodes, deck.edges)),
+      workspaceView === 'image' ||
+      isImageWorkbenchActive(deck.nodes, deck.edges),
     showCode:
-      LAUNCH_MODE.showCode &&
-      (workspaceView === 'code' ||
-        isCodeWorkbenchActive(deck.nodes, deck.edges)),
+      workspaceView === 'code' ||
+      isCodeWorkbenchActive(deck.nodes, deck.edges),
     showVideo:
-      LAUNCH_MODE.showVideo &&
-      (workspaceView === 'video' ||
-        isVideoWorkbenchActive(deck.nodes, deck.edges)),
+      workspaceView === 'video' ||
+      isVideoWorkbenchActive(deck.nodes, deck.edges),
     showDataFormulator:
-      LAUNCH_MODE.showDataFormulator &&
-      (workspaceView === 'data-formulator' ||
-        isDataFormulatorWorkbenchActive(deck.nodes, deck.edges)),
-    // UA agents hidden unless Understand Anything is enabled
-    uaAgents: LAUNCH_MODE.showUnderstandAnything
-      ? getVisibleUaRailAgents(deck.nodes, deck.edges, workspaceView)
-      : [],
+      workspaceView === 'data-formulator' ||
+      isDataFormulatorWorkbenchActive(deck.nodes, deck.edges),
+    uaAgents: getVisibleUaRailAgents(deck.nodes, deck.edges, workspaceView),
   };
 }
 

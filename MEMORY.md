@@ -1,5 +1,9 @@
 # Working Memory: MCP-First Workflow
 
+> Non-canonical workflow note.
+> This file is subordinate to `AGENTS.md` and `.specify/memory/constitution.md`.
+> Use it as a convenience memo, not as the governing workflow contract.
+
 ## Standing Rule
 
 Use `codebase-memory-mcp` first for structural localization before reading code files.

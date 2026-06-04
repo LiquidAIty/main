@@ -4,6 +4,9 @@ Updated: April 13, 2026
 Status: Internal dogfooding / operator-first phase
 Target: Jeremiah as first real user, then cleanup, then external launch
 
+> Historical planning note.
+> This file is not the current Stage 0 contract and does not override `specs/003-trading-intelligence-stack/*` or `docs/README.md`.
+
 Executive Summary
 What phase are we actually in?
 We are not in true public launch readiness yet.
@@ -660,4 +663,3 @@ onboarding polish
 
 One-line product definition for this phase
 LiquidAIty is a 4-surface workspace where MainChat / Magentic-One uses project-scoped plan, code-graph, and knowledge-graph context to orchestrate canvas agents and route coding work through MCP to external coding agents, first for internal self-use, then for cleanup, then for launch.
-

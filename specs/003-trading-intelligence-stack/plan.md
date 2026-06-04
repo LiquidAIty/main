@@ -2,7 +2,7 @@
 
 **Branch**: `003-trading-intelligence-stack` | **Date**: 2026-06-03 | **Spec**: `specs/003-trading-intelligence-stack/spec.md`
 
-**Status**: Draft — pending user approval. Do not implement from this file yet.
+**Status**: Draft — pending user approval. Current work is still the spec/plan/tasks truth pass, not implementation.
 
 ## Summary
 
@@ -11,6 +11,9 @@ candles, renders them in a controllable chart, uses FinRL-X as the quantitative 
 portfolio-weight engine, overlays Chronos/Kronos forecasts, ingests free SEC EDGAR intelligence,
 collects Shodan/OSINT world signals as trading evidence, and produces research-only signal labels
 (WAIT / BUY_WATCH / SELL_WATCH). No live trading. No order execution.
+
+Before any of that implementation starts, the current requirement is to finish the truthful
+specification reset: document reality, decide Stage 0 shell cleanup scope, and only then implement.
 
 ## Technical Context
 
@@ -44,7 +47,7 @@ collects Shodan/OSINT world signals as trading evidence, and produces research-o
 ## Constitution Check
 
 - Spec Kit heavy-mode: justified — multi-stage, cross-service, explicit safety constraints.
-- No fake substitute product behavior: confirmed — mock candles, mock signals, mock chat all removed in Stage 0.
+- No fake substitute product behavior: not yet satisfied. `tradingui.tsx` still has mock UI that must be removed in the cleanup/spec pass before implementation claims can be trusted.
 - No standalone audit files: findings routed into this plan and `docs/disabled-features.md`.
 - Runtime guardrails explicit: WAIT/BUY_WATCH/SELL_WATCH only; FinRL-X no live execution; Shodan API only.
 
@@ -59,7 +62,7 @@ specs/003-trading-intelligence-stack/
 └── tasks.md         ← filled after user approves spec
 
 docs/
-└── disabled-features.md   ← restoration ledger for hidden UI features
+└── disabled-features.md   ← planning inventory for later shell cleanup / recovery
 ```
 
 ### Source Code (repository root)
@@ -101,7 +104,7 @@ client/src/
 
 | Stage | Name | Key Gate Criteria |
 |---|---|---|
-| 0 | Clean House + Security Fence | .env ignored, keys rotated, schema.py fixed, mock UI removed |
+| 0 | Active UI Reduction + Security Fence | launchMode removed, spec reset in progress, shell cleanup not yet implemented, mock UI cleanup still pending |
 | 1 | Alpaca Candles Endpoint | Real OHLCV returned, HTTP 503 on missing keys |
 | 2 | Lightweight Charts Trading Desk | Real candles render, CDN removed, overlays wired |
 | 3 | FinRL-X Engine Integration | Backtest runs, weights sum ≈ 1.0, no lookahead, no live orders |
@@ -111,7 +114,7 @@ client/src/
 | 7 | OSINT / WorldSignals / Shodan | SignalEvidence in Neo4j, sidebar rendered, rate limits respected |
 | 8 | Research-Only Signals | WAIT default, BUY/SELL forbidden, combined evidence works |
 | 9 | Backtest + Scoring | ForecastRun scored, sharpe_ratio + max_drawdown finite |
-| 10 | Future Modes Reopening | Each mode reopened one at a time from disabled-features.md |
+| 10 | Future Modes Reopening | Any later mode cleanup/reopening handled one at a time using disabled-features.md as inventory |
 
 ## Affected Files
 
@@ -137,21 +140,22 @@ client/src/
 - `services/knowgraph/schema.py` — [MODIFY] fix syntax + add Ticker, Company, Filing, FilingSection, FilingChunk, ForecastRun, BacktestRun, GhostCandle, SignalEvidence, Signal + edges
 
 ### Frontend (React/TypeScript)
-- `client/src/pages/tradingui.tsx` — [MODIFY] major rewrite for Stage 0 + Stage 2
+- `client/src/pages/tradingui.tsx` — [MODIFY] cleanup + chart rewrite after Stage 0 shell/spec pass
 - `client/src/components/trading/TradingChart.tsx` — [NEW]
 - `client/src/components/trading/useTradingChart.ts` — [NEW]
 - `client/src/lib/alpacaClient.ts` — [NEW]
-- `client/src/app.tsx` — [MODIFY] remove `/detailed` route (Stage 0)
+- `client/src/app.tsx` — [MODIFY] route cleanup if/when Stage 0 shell reduction approves it
 
 ### Database / Schema
 - New SQL file for `market.*` tables (candles, forecast_runs, forecast_points, ghost_candles, backtest_runs, backtest_weights)
 
 ### Docs
-- `docs/disabled-features.md` — [CREATED] restoration ledger
+- `docs/disabled-features.md` — [CREATED] planning inventory for later shell cleanup and recovery
 
 ## Constraints
 
-- No runtime code edits outside the market feature surface until Stage 0 gate passes.
+- No implementation claims should assume the shell cleanup is complete until the Stage 0 reset work is accepted and the code changes actually land.
+- Spec Kit order for this work is: `spec.md` → `plan.md` → `tasks.md` → user approval → implementation.
 - No package installs until user approves the spec.
 - No live order execution anywhere in Stages 0–9.
 - No mock candles, mock signals, or mock chat in the Alpaca path.
@@ -169,7 +173,7 @@ client/src/
 - **Shodan rate limits**: Free tier is 1 req/s with monthly caps. 24h Redis cache per company mitigates this.
 - **schema.py syntax corruption**: Must be fixed in Stage 0 before any graph schema work. Blocking dependency.
 - **Key rotation timing**: Exposed keys must be rotated before Stage 0 completes. This is a manual step.
-- **WorldSignals surface refactor**: The existing `WorldSignalSurface.tsx` canvas is 43KB. Stage 7 keeps the backend logic and hides the canvas surface. Care needed to not break the underlying signal wiring.
+- **WorldSignals surface refactor risk**: The existing `WorldSignalSurface.tsx` canvas is 43KB. If a later Stage 0 cleanup trims shell surfaces, care is needed not to break the underlying signal wiring.
 
 ## Validation
 

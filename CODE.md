@@ -1,5 +1,9 @@
 # CODE.md
 
+> Non-canonical working memo.
+> This file does not override `docs/README.md`, `docs/architecture.md`, `AGENTS.md`, `.specify/memory/constitution.md`, or `specs/*`.
+> Do not treat this file as implementation approval or current Stage 0 truth.
+
 ## Current Working State
 The repo is an Nx-style monorepo with active frontend and backend surfaces (`client`, `apps/backend`, `apps/python-models` visible in the code graph index). The main active product shell is in `client/src/pages/agentbuilder.tsx`, which currently acts as orchestration, state container, interaction controller, and layout compositor in one file.
 

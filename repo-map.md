@@ -1,5 +1,8 @@
 # LiquidAIty Repository Map
 
+> Generated repository snapshot.
+> This file is useful for orientation but is not a canonical source of truth for current architecture, workflow, or Stage 0 status.
+
 **Generated:** 2026-04-11T22:41:31.374Z
 
 ---

@@ -1,5 +1,8 @@
 # LiquidAIty Root Operating Guide
 
+> Operator note, not canonical product/spec truth.
+> Re-verify commands, environment details, and operational assumptions against current code and runbooks before relying on this file.
+
 **Last Updated:** 2026-04-14  
 **Purpose:** Single source of truth for repo operations, environment, databases, and critical rules
 
