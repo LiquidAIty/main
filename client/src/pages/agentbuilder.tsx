@@ -12,7 +12,6 @@ import type {
   AgentManagerLocalConfig,
   AgentManagerMemoryGraphData,
 } from '../components/AgentManager';
-import type { BuilderCanvasFocusRequest } from '../components/builder/BuilderCanvas';
 import BuilderChat from '../components/builder/BuilderChat';
 import FrontendCrashBoundary from '../components/diagnostics/FrontendCrashBoundary';
 import { useDashboardStore as useUaDashboardStore } from '../components/agents/ua/real-dashboard/store';
@@ -32,6 +31,9 @@ import AgentBuilderShell from '../features/agentbuilder/core/AgentBuilderShell';
 import AgentBuilderSplitter from '../features/agentbuilder/core/AgentBuilderSplitter';
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
+import useAgentBuilderDeck from '../features/agentbuilder/state/useAgentBuilderDeck';
+import useAgentBuilderProject from '../features/agentbuilder/state/useAgentBuilderProject';
+import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import TradingCanvasSurface from '../features/trading/TradingCanvasSurface';
 import type {
   PlanMissionNodeData,
@@ -92,10 +94,8 @@ import {
   writeCachedGraphPayload,
 } from '../components/builder/requestGuards';
 import {
-  type LatestCardRunRecord,
   useBuilderDeckRuntimeActions,
 } from '../components/builder/useBuilderDeckRuntimeActions';
-import { useBuilderProjects } from '../components/builder/useBuilderProjects';
 import type {
   AgentCardInstance,
   AgentCardRuntimeOptions,
@@ -4761,16 +4761,17 @@ export default function AgentBuilder(): React.ReactElement {
   );
   const {
     activeProject,
+    canvasProjectId,
     assistProjects,
     projectsError,
     setProjectsError,
     setActiveProjectWithUrl,
     refreshProjects,
-  } = useBuilderProjects({
+  } = useAgentBuilderProject({
     projectsApi: PROJECTS_API,
     workspaceView,
+    openCanvasWorkspace: () => setWorkspaceView('canvas'),
   });
-  const [objectDrawerOpen, setObjectDrawerOpen] = useState(false);
   const [chatPanelWidth, setChatPanelWidth] = useState(420);
   const [chatResizeHandleActive, setChatResizeHandleActive] = useState(false);
   const [chatResizeDragging, setChatResizeDragging] = useState(false);
@@ -4782,30 +4783,48 @@ export default function AgentBuilder(): React.ReactElement {
     reservedWidth: number;
   } | null>(null);
   const chatResizeFrameRef = useRef<number | null>(null);
-  const canvasAutoOpenedForProjectRef = useRef(false);
   const [moonPhase01, setMoonPhase01] = useState(() =>
     synodicPhaseFromDate(new Date()),
   );
-  const canvasProjectId = cleanOptionalText(activeProject) ?? '';
-  const [deck, setDeckState] = useState<DeckDocument>(() =>
-    buildProjectlessDeckDocument(),
-  );
-  const [pendingActivationProposal, setPendingActivationProposal] =
-    useState<ActivationProposalState | null>(null);
-  const [latestMissionRun, setLatestMissionRun] = useState<MissionRun | null>(
-    null,
-  );
-  const [openMissionMessage, setOpenMissionMessage] =
-    useState<OpenMissionMessage | null>(null);
-  const [draftMissionSpec, setDraftMissionSpec] = useState<MissionSpec | null>(null);
-  const [planDraftStatus, setPlanDraftStatus] = useState<PlanDraftStatus>('idle');
-  const [latestPlanDraftResult, setLatestPlanDraftResult] =
-    useState<ChatPlanDraftResult | null>(null);
-  const draftMissionSpecRef = useRef<MissionSpec | null>(null);
-  const planDraftRequestSeqRef = useRef(0);
-  useEffect(() => {
-    draftMissionSpecRef.current = draftMissionSpec;
-  }, [draftMissionSpec]);
+  const {
+    deck,
+    setDeckState,
+    pendingActivationProposal,
+    setPendingActivationProposal,
+    latestMissionRun,
+    setLatestMissionRun,
+    openMissionMessage,
+    setOpenMissionMessage,
+    draftMissionSpec,
+    setDraftMissionSpec,
+    planDraftStatus,
+    setPlanDraftStatus,
+    latestPlanDraftResult,
+    setLatestPlanDraftResult,
+    draftMissionSpecRef,
+    planDraftRequestSeqRef,
+    deckRevision,
+    setDeckRevision,
+    latestDeckRun,
+    setLatestDeckRun,
+    setLatestCardRun,
+    liveDeckEvents,
+    setLiveDeckEvents,
+    deckRunBusy,
+    setDeckRunBusy,
+    cardRunBusy,
+    setCardRunBusy,
+    deckLoadBusy,
+    setDeckLoadBusy,
+    deckSaveBusy,
+    setDeckSaveBusy,
+    deckStatusMessage,
+    setDeckStatusMessage,
+    deckLoadError,
+    setDeckLoadError,
+  } = useAgentBuilderDeck({
+    createInitialDeck: buildProjectlessDeckDocument,
+  });
   const visibleRailItems = useMemo(
     () =>
       deriveVisibleRailItems({
@@ -4894,63 +4913,40 @@ export default function AgentBuilder(): React.ReactElement {
     uaGraph,
     uaAnalysisStatus,
     uaGraphSource,
-    uaSelectedNodeId,
-    workspaceView,
+      uaSelectedNodeId,
+      workspaceView,
   ]);
-  const [deckRevision, setDeckRevision] = useState<string | null>(null);
-  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
-  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
-  const [selectedKnowledgeEntityId, setSelectedKnowledgeEntityId] = useState<
-    string | null
-  >(null);
-  const [selectedKnowledgeRelationshipId, setSelectedKnowledgeRelationshipId] =
-    useState<string | null>(null);
-  const [planMissionFocus, setPlanMissionFocus] = useState<{
-    nodeId: string;
-    nodeLabel: string;
-    nodeKind: string;
-    nodeData: PlanMissionNodeData;
-  } | null>(null);
-  const [planNodeDrafts, setPlanNodeDrafts] =
-    useState<PlanMissionNodeOverrideMap>({});
-
-  useEffect(() => {
-    if (!canvasProjectId) {
-      canvasAutoOpenedForProjectRef.current = false;
-      return;
-    }
-    if (workspaceView !== 'chat') {
-      canvasAutoOpenedForProjectRef.current = true;
-      return;
-    }
-    if (canvasAutoOpenedForProjectRef.current) {
-      return;
-    }
-    canvasAutoOpenedForProjectRef.current = true;
-    setWorkspaceView('canvas');
-  }, [canvasProjectId, workspaceView]);
+  const {
+    objectDrawerOpen,
+    setObjectDrawerOpen,
+    selectedCardId,
+    setSelectedCardId,
+    selectedEdgeId,
+    setSelectedEdgeId,
+    selectedKnowledgeEntityId,
+    setSelectedKnowledgeEntityId,
+    selectedKnowledgeRelationshipId,
+    setSelectedKnowledgeRelationshipId,
+    planMissionFocus,
+    setPlanMissionFocus,
+    planNodeDrafts,
+    setPlanNodeDrafts,
+    builderCanvasFocusRequest,
+    setBuilderCanvasFocusRequest,
+    tab,
+    setTab,
+    openDrawer,
+    setOpenDrawer,
+  } = useAgentBuilderSelection({
+    deck,
+  });
   const workspacePanelAlreadyOpen = Boolean(
     (objectDrawerOpen && (selectedCardId || planMissionFocus?.nodeId)) ||
     selectedKnowledgeEntityId ||
     selectedKnowledgeRelationshipId,
   );
-  const [builderCanvasFocusRequest, setBuilderCanvasFocusRequest] =
-    useState<BuilderCanvasFocusRequest | null>(null);
   // TODO: replace manual deck input with plan-driven execution input.
   const [deckRunInput, setDeckRunInput] = useState('');
-  const [latestDeckRun, setLatestDeckRun] = useState<DeckRun | null>(null);
-  const [, setLatestCardRun] = useState<LatestCardRunRecord | null>(null);
-  const [liveDeckEvents, setLiveDeckEvents] = useState<DeckRuntimeEvent[]>([]);
-  const [deckRunBusy, setDeckRunBusy] = useState(false);
-  const [cardRunBusy, setCardRunBusy] = useState(false);
-  const [deckLoadBusy, setDeckLoadBusy] = useState(false);
-  const [deckSaveBusy, setDeckSaveBusy] = useState(false);
-  const [deckStatusMessage, setDeckStatusMessage] = useState<string | null>(
-    null,
-  );
-  const [deckLoadError, setDeckLoadError] = useState<string | null>(null);
-  const [tab, setTab] = useState<string>('Canvas');
-  const [openDrawer, setOpenDrawer] = useState<null | 'navigation'>(null);
   const [showCreateProjectForm, setShowCreateProjectForm] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [sending, setSending] = useState(false);
@@ -5894,18 +5890,6 @@ export default function AgentBuilder(): React.ReactElement {
     lastBuilderDeckWriteReasonRef.current = null;
     lastBuilderUiOnlyActionRef.current = null;
   }, [BUILDER_DEV, deckPersistFingerprint]);
-
-  useEffect(() => {
-    if (!selectedCardId) return;
-    if (deck.nodes.some((node) => node.id === selectedCardId)) return;
-    setSelectedCardId(null);
-  }, [deck.nodes, selectedCardId]);
-
-  useEffect(() => {
-    if (!selectedEdgeId) return;
-    if (deck.edges.some((edge) => edge.id === selectedEdgeId)) return;
-    setSelectedEdgeId(null);
-  }, [deck.edges, selectedEdgeId]);
 
   useEffect(() => {
     if (activeTabs.some((entry) => entry === tab)) return;
