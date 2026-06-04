@@ -4,14 +4,22 @@
   "sourceRoot": "apps/backend/src",
   "projectType": "application",
   "targets": {
+    "clean": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$dist = 'apps/backend/dist'; if (-not (Test-Path $dist)) { exit 0 }; for ($attempt = 1; $attempt -le 5; $attempt++) { try { Remove-Item -LiteralPath $dist -Recurse -Force -ErrorAction Stop; exit 0 } catch { if ($attempt -eq 5) { throw }; Start-Sleep -Milliseconds (200 * $attempt) } }; if (Test-Path $dist) { throw 'backend dist cleanup failed' }\""
+      }
+    },
     "build": {
       "executor": "@nx/js:tsc",
+      "dependsOn": ["clean"],
       "outputs": ["{workspaceRoot}/apps/backend/dist"],
       "options": {
         "outputPath": "apps/backend/dist",
         "main": "apps/backend/src/main.ts",
         "tsConfig": "apps/backend/tsconfig.app.json",
-        "assets": ["apps/backend/src/assets"]
+        "assets": ["apps/backend/src/assets"],
+        "clean": false
       },
       "configurations": {
         "development": {},
