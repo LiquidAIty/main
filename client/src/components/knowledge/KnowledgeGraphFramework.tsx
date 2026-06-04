@@ -78,6 +78,16 @@ const KNOWLEDGE_CONTROLS_DEFAULT_WIDTH = 340;
 const KNOWLEDGE_CONTROLS_MIN_WIDTH = 320;
 const KNOWLEDGE_CONTROLS_MAX_WIDTH = 520;
 
+function compactStatusText(value: unknown, limit = 160): string {
+  const normalized = String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return '';
+  return normalized.length > limit
+    ? `${normalized.slice(0, limit - 1).trimEnd()}...`
+    : normalized;
+}
+
 class CodeGraphSceneErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { error: Error | null }
@@ -95,39 +105,33 @@ class CodeGraphSceneErrorBoundary extends React.Component<
           data-testid="knowledge-graph-scene-error"
           style={{
             position: 'absolute',
-            inset: 0,
-            zIndex: 2,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 16,
-            background: GRAPH_THEME.background.knowledgeSurface,
+            left: 12,
+            right: 12,
+            bottom: 12,
+            zIndex: 4,
+            pointerEvents: 'none',
           }}
         >
           <div
-            style={{
-              width: 'min(520px, 100%)',
-              borderRadius: 12,
-              border: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`,
-              background: GRAPH_THEME.drawer.panelBackground,
-              boxShadow: GRAPH_THEME.drawer.panelShadow,
-              color: GRAPH_THEME.drawer.inputMuted,
-              padding: 16,
-              lineHeight: 1.45,
-            }}
+            style={graphGlassPillStyle({
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: 11,
+              lineHeight: 1.35,
+              maxWidth: 520,
+              padding: '7px 10px',
+              color: GRAPH_THEME.surface.mutedText,
+            })}
           >
-            <div
-              style={{
-                color: GRAPH_THEME.drawer.inputText,
-                fontWeight: 700,
-                marginBottom: 6,
-              }}
-            >
-              Knowledge graph scene unavailable
-            </div>
-            <div>
-              {this.state.error.message || 'The graph renderer failed to load.'}
-            </div>
+            <strong style={{ color: GRAPH_THEME.drawer.inputText }}>
+              Graph scene unavailable.
+            </strong>
+            <span>
+              {compactStatusText(
+                this.state.error.message || 'The graph renderer failed to load.',
+              )}
+            </span>
           </div>
         </div>
       );
@@ -432,6 +436,31 @@ export default function KnowledgeGraphFramework({
     lastGoodCodeGraphData,
     loadingCodeGraph,
   ]);
+  const surfaceStatusMessage = useMemo(() => {
+    if (kind === 'codegraph') {
+      if (loadingCodeGraph) return 'CodeGraph loading...';
+      if (codeGraphError) {
+        return `CodeGraph unavailable: ${compactStatusText(codeGraphError, 180)}`;
+      }
+      if (displayData.nodes.length === 0) {
+        return 'CodeGraph returned zero nodes for the current project.';
+      }
+      return null;
+    }
+    if (kind === 'knowgraph' && filteredData.nodes.length === 0) {
+      return 'KnowGraph returned zero nodes for the selected project.';
+    }
+    if (kind === 'thinkgraph' && filteredData.nodes.length === 0) {
+      return 'ThinkGraph returned zero nodes for the selected project.';
+    }
+    return null;
+  }, [
+    codeGraphError,
+    displayData.nodes.length,
+    filteredData.nodes.length,
+    kind,
+    loadingCodeGraph,
+  ]);
 
   const highlightedIds = useMemo(() => {
     if (!contract.focusNodeIds?.length) return null;
@@ -661,83 +690,53 @@ export default function KnowledgeGraphFramework({
             ].join(', '),
           }}
         />
-        {kind === 'codegraph' &&
-        loadingCodeGraph &&
-        !lastGoodCodeGraphData &&
-        (!codeGraphData || filteredData.nodes.length === 0) ? (
-          <div
-            style={{
-              width: '100%',
-              height: '100%',
-              color: GRAPH_THEME.surface.mutedText,
-              fontSize: 12,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: GRAPH_THEME.surface.base,
-            }}
-          >
-            Loading CodeGraph...
-          </div>
-        ) : kind === 'codegraph' && codeGraphError && !lastGoodCodeGraphData ? (
-          <div
-            style={{
-              width: '100%',
-              height: '100%',
-              color: GRAPH_THEME.accent.solar,
-              fontSize: 12,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: GRAPH_THEME.surface.base,
-            }}
-          >
-            {codeGraphError}
-          </div>
-        ) : (
-          <div style={{ position: 'relative', zIndex: 1, width: '100%', height: '100%' }}>
-            <CodeGraphSceneErrorBoundary key={`knowledge-scene-${kind}`}>
-              <Suspense
-                fallback={
+        <div style={{ position: 'relative', zIndex: 1, width: '100%', height: '100%' }}>
+          <CodeGraphSceneErrorBoundary key={`knowledge-scene-${kind}`}>
+            <Suspense
+              fallback={
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: 12,
+                    bottom: 12,
+                    zIndex: 4,
+                    pointerEvents: 'none',
+                  }}
+                >
                   <div
-                    style={{
-                      width: '100%',
-                      height: '100%',
+                    style={graphGlassPillStyle({
+                      fontSize: 11,
+                      padding: '7px 10px',
                       color: GRAPH_THEME.surface.mutedText,
-                      fontSize: 12,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      background: GRAPH_THEME.surface.base,
-                    }}
+                    })}
                   >
                     Loading graph scene...
                   </div>
-                }
-              >
-                <CodeGraphScene
-                  data={displayData}
-                  showLabels={showLabels}
-                  highlightedIds={highlightedIds}
-                  interactionLocked={interactionLocked}
-                  cameraAction={cameraCommand?.action || null}
-                  cameraActionToken={cameraCommand?.token || 0}
-                  onNodeClick={(node) => {
-                    const focused = new Set(
-                      (contract.focusNodeIds || []).map((value) => String(value)),
-                    );
-                    const nodeKey = String(node.id);
-                    if (focused.has(nodeKey)) {
-                      applyContractPatch({ focusNodeIds: [] });
-                      return;
-                    }
-                    applyContractPatch({ focusNodeIds: [nodeKey] });
-                  }}
-                />
-              </Suspense>
-            </CodeGraphSceneErrorBoundary>
-          </div>
-        )}
+                </div>
+              }
+            >
+              <CodeGraphScene
+                data={displayData}
+                showLabels={showLabels}
+                highlightedIds={highlightedIds}
+                interactionLocked={interactionLocked}
+                cameraAction={cameraCommand?.action || null}
+                cameraActionToken={cameraCommand?.token || 0}
+                onNodeClick={(node) => {
+                  const focused = new Set(
+                    (contract.focusNodeIds || []).map((value) => String(value)),
+                  );
+                  const nodeKey = String(node.id);
+                  if (focused.has(nodeKey)) {
+                    applyContractPatch({ focusNodeIds: [] });
+                    return;
+                  }
+                  applyContractPatch({ focusNodeIds: [nodeKey] });
+                }}
+              />
+            </Suspense>
+          </CodeGraphSceneErrorBoundary>
+        </div>
       </div>
       <div data-no-surface-promote="true" style={graphControlStackStyle}>
         <button
@@ -828,43 +827,21 @@ export default function KnowledgeGraphFramework({
         </button>
       </div>
 
-      <div
-        data-no-surface-promote="true"
-        style={graphGlassPillStyle({
-          position: 'absolute',
-          left: 56,
-          bottom: 184,
-          zIndex: 4,
-          fontSize: 11,
-          padding: '6px 8px',
-          maxWidth: 420,
-          lineHeight: 1.35,
-        })}
-      >
-        <div>
-          Nodes {displayData.nodes.length.toLocaleString()} - Edges{' '}
-          {displayData.edges.length.toLocaleString()}
-        </div>
-        {kind === 'knowgraph' && filteredData.nodes.length === 0 ? (
-          <div style={{ color: GRAPH_THEME.surface.mutedText, marginTop: 2 }}>
-            KnowGraph returned zero nodes from /api/knowgraph/graph for the
-            selected project.
-          </div>
-        ) : null}
-      </div>
-
-      {kind === 'codegraph' && loadingCodeGraph ? (
+      {surfaceStatusMessage ? (
         <div
-        style={graphGlassPillStyle({
-          position: 'absolute',
-          right: 12,
-          bottom: 12,
-          zIndex: 4,
-          fontSize: 11,
-          padding: '6px 8px',
+          data-no-surface-promote="true"
+          style={graphGlassPillStyle({
+            position: 'absolute',
+            left: 12,
+            bottom: 12,
+            zIndex: 4,
+            fontSize: 11,
+            padding: '6px 8px',
+            maxWidth: 520,
+            lineHeight: 1.35,
           })}
         >
-          Loading CodeGraph...
+          {surfaceStatusMessage}
         </div>
       ) : null}
     </div>

@@ -12,9 +12,7 @@ import type {
   AgentManagerLocalConfig,
   AgentManagerMemoryGraphData,
 } from '../components/AgentManager';
-import BuilderCanvas, {
-  type BuilderCanvasFocusRequest,
-} from '../components/builder/BuilderCanvas';
+import type { BuilderCanvasFocusRequest } from '../components/builder/BuilderCanvas';
 import BuilderChat from '../components/builder/BuilderChat';
 import FrontendCrashBoundary from '../components/diagnostics/FrontendCrashBoundary';
 import { useDashboardStore as useUaDashboardStore } from '../components/agents/ua/real-dashboard/store';
@@ -26,6 +24,14 @@ import WorldSignalSurface from '../components/worldsignal/WorldSignalSurface';
 import DataFormulatorSurface, {
   type DataFormulatorModelConfig,
 } from '../components/dataformulator/DataFormulatorSurface';
+import AgentCanvasPane from '../features/agentbuilder/canvas/AgentCanvasPane';
+import AgentBuilderCanvasRegion from '../features/agentbuilder/core/AgentBuilderCanvasRegion';
+import AgentBuilderChatPane from '../features/agentbuilder/core/AgentBuilderChatPane';
+import AgentBuilderRail from '../features/agentbuilder/core/AgentBuilderRail';
+import AgentBuilderShell from '../features/agentbuilder/core/AgentBuilderShell';
+import AgentBuilderSplitter from '../features/agentbuilder/core/AgentBuilderSplitter';
+import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
+import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import TradingCanvasSurface from '../features/trading/TradingCanvasSurface';
 import type {
   PlanMissionNodeData,
@@ -44,7 +50,6 @@ import {
   GRAPH_THEME,
   graphDrawerButtonStyle,
   graphDrawerInputStyle,
-  graphCompanionPanelStyle,
   graphCompanionTabButtonStyle,
   graphCompanionTabGroupStyle,
   graphDrawerSectionStyle,
@@ -569,6 +574,31 @@ function safeText(value: unknown): string {
 function cleanOptionalText(value: unknown): string | null {
   const text = safeText(value).trim();
   return text || null;
+}
+
+const PLAN_RUNTIME_STATUS_PATTERNS = [
+  /\bautogen(?:[_:\-\s]|$)/i,
+  /\bhttp[_:\-\s]?500\b/i,
+  /\bparticipants_required\b/i,
+  /\bassistant_tool_not_supported\b/i,
+  /\bmagentic_callable_heads_required\b/i,
+  /\binternal server error\b/i,
+  /\bhealth check failed\b/i,
+] as const;
+
+function isPlanRuntimeNoiseText(value: unknown): boolean {
+  const normalized = safeText(value).trim();
+  if (!normalized) return false;
+  return PLAN_RUNTIME_STATUS_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function summarizePlanRuntimeMessage(
+  value: unknown,
+  fallback: string,
+): string | null {
+  const normalized = safeText(value).trim();
+  if (!normalized) return null;
+  return isPlanRuntimeNoiseText(normalized) ? fallback : normalized;
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
@@ -1316,6 +1346,8 @@ export function deriveVisibleRailItems({
   workspaceView: string;
   pendingActivationProposal: ActivationProposalState | null;
 }): ProgressiveRailVisibility {
+  // A companion surface stays active only when its board node/workbench is still
+  // connected into the current workflow, or when the user is already inside it.
   return {
     showKnowledge:
       workspaceView === 'knowledge' ||
@@ -4548,43 +4580,6 @@ function buildThinkGraphSeedFromPlanMissionGraph(
   });
 
   return { nodes, edges };
-}
-
-// ---- small components ----
-function Icon({ d, size = 22 }: { d: string; size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d={d} />
-    </svg>
-  );
-}
-
-function HexPlusIcon({ size = 32 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 64 64"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="4.75"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M32 4.5L55.5 18V46L32 59.5L8.5 46V18L32 4.5Z" />
-      <path d="M32 19V45" strokeLinecap="round" />
-      <path d="M19 32H45" strokeLinecap="round" />
-    </svg>
-  );
 }
 
 /** Mean synodic month in days (NASA/USNO convention). */
@@ -9136,44 +9131,28 @@ export default function AgentBuilder(): React.ReactElement {
     surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => {
     return (
-      <div
-        data-testid={`${surfaceRole}-surface-canvas`}
-        style={getSurfaceShellStyle(compact)}
-      >
-        <div
-          style={{
-            height: '100%',
-          }}
-        >
-          <div
-            style={{
-              height: '100%',
-              minHeight: 0,
-            }}
-          >
-            <BuilderCanvas
-              document={deck}
-              setDocument={setDeck}
-              onPersistGraphMutation={recordDeckWriteReason}
-              presentationViewportKey={
-                surfaceRole === 'large' && workspaceView === 'canvas'
-                  ? chatPanelWidth
-                  : null
-              }
-              executionPlan={deckExecutionPlan}
-              activeCardIds={runtimeVisualState.activeCardIds}
-              activeEdgeIds={runtimeVisualState.activeEdgeIds}
-              swarmProgressByCardId={runtimeVisualState.swarmProgressByCardId}
-              selectedCardId={selectedCardId}
-              selectedEdgeId={selectedEdgeId}
-              onSelectCard={handleSelectCard}
-              onSelectEdge={handleSelectEdge}
-              onDeleteSelectedEdge={handleDeleteSelectedEdge}
-              inspectMode={false}
-            />
-          </div>
-        </div>
-      </div>
+      <AgentCanvasPane
+        surfaceRole={surfaceRole}
+        shellStyle={getSurfaceShellStyle(compact)}
+        document={deck}
+        setDocument={setDeck}
+        onPersistGraphMutation={recordDeckWriteReason}
+        presentationViewportKey={
+          surfaceRole === 'large' && workspaceView === 'canvas'
+            ? chatPanelWidth
+            : null
+        }
+        executionPlan={deckExecutionPlan}
+        activeCardIds={runtimeVisualState.activeCardIds}
+        activeEdgeIds={runtimeVisualState.activeEdgeIds}
+        swarmProgressByCardId={runtimeVisualState.swarmProgressByCardId}
+        selectedCardId={selectedCardId}
+        selectedEdgeId={selectedEdgeId}
+        onSelectCard={handleSelectCard}
+        onSelectEdge={handleSelectEdge}
+        onDeleteSelectedEdge={handleDeleteSelectedEdge}
+        inspectMode={false}
+      />
     );
   };
 
@@ -9456,51 +9435,75 @@ export default function AgentBuilder(): React.ReactElement {
     </div>
   );
 
-  const renderPlanSurface = (surfaceRole: 'large' | 'companion' = 'large') => (
-    <div
-      data-testid={`${surfaceRole}-surface-plan`}
-      style={getSurfaceShellStyle(surfaceRole === 'companion', {
-        overflow: surfaceRole === 'companion' ? 'hidden' : 'auto',
-      })}
-    >
+  const renderPlanSurface = (surfaceRole: 'large' | 'companion' = 'large') => {
+    const planDraftHeadline =
+      planDraftStatus === 'drafting'
+        ? 'Drafting plan...'
+        : planDraftStatus === 'ready' && draftMissionSpec
+          ? 'Plan ready'
+          : planDraftStatus === 'ready'
+            ? 'Plan draft unavailable'
+            : planDraftStatus === 'needs_user_input'
+              ? 'Needs input'
+              : planDraftStatus === 'failed'
+                ? 'Plan draft unavailable'
+                : null;
+    const planDraftQuestions = Array.isArray(latestPlanDraftResult?.questions)
+      ? latestPlanDraftResult.questions.filter(Boolean)
+      : [];
+    const showPlanDraftCard = Boolean(
+      planDraftHeadline || draftMissionSpec || planDraftQuestions.length > 0,
+    );
+    const openMissionRuntimeSummary = summarizePlanRuntimeMessage(
+      openMissionMessage?.latestSummary,
+      'Runtime issue surfaced during mission execution.',
+    );
+
+    return (
       <div
-        className="h-full min-h-0"
-        style={{
+        data-testid={`${surfaceRole}-surface-plan`}
+        style={getSurfaceShellStyle(surfaceRole === 'companion', {
           overflow: surfaceRole === 'companion' ? 'hidden' : 'auto',
-          paddingRight: surfaceRole === 'companion' ? 0 : 4,
-        }}
+        })}
       >
-        {!activeProject ? (
-          <div
-            style={graphDrawerSectionStyle({
-              padding: '16px',
-              borderStyle: 'dashed',
-              color: GRAPH_THEME.drawer.inputMuted,
-            })}
-          >
-            Select a project to view its plan.
-          </div>
-        ) : !stateLoaded ? (
-          <div
-            style={graphDrawerSectionStyle({
-              padding: '16px',
-              color: GRAPH_THEME.drawer.inputMuted,
-            })}
-          >
-            Loading plan...
-          </div>
-        ) : (
-          <div
-            className="h-full min-h-0"
-            style={{
-              height: '100%',
-              padding: 0,
-              borderRadius: 0,
-              border: 'none',
-              background: 'transparent',
-              boxShadow: 'none',
-            }}
-          >
+        <div
+          className="h-full min-h-0"
+          style={{
+            overflow: surfaceRole === 'companion' ? 'hidden' : 'auto',
+            paddingRight: surfaceRole === 'companion' ? 0 : 4,
+          }}
+        >
+          {!activeProject ? (
+            <div
+              style={graphDrawerSectionStyle({
+                padding: '16px',
+                borderStyle: 'dashed',
+                color: GRAPH_THEME.drawer.inputMuted,
+              })}
+            >
+              Select a project to view its plan.
+            </div>
+          ) : !stateLoaded ? (
+            <div
+              style={graphDrawerSectionStyle({
+                padding: '16px',
+                color: GRAPH_THEME.drawer.inputMuted,
+              })}
+            >
+              Loading plan...
+            </div>
+          ) : (
+            <div
+              className="h-full min-h-0"
+              style={{
+                height: '100%',
+                padding: 0,
+                borderRadius: 0,
+                border: 'none',
+                background: 'transparent',
+                boxShadow: 'none',
+              }}
+            >
             {pendingActivationProposal ? (
               <div
                 style={graphDrawerSectionStyle({
@@ -9610,46 +9613,40 @@ export default function AgentBuilder(): React.ReactElement {
                 </div>
               </div>
             ) : null}
-            <div
-              style={graphDrawerSectionStyle({
-                margin: '0 12px 10px',
-                padding: '10px 12px',
-                borderColor: 'rgba(255,255,255,0.14)',
-                background: 'rgba(255,255,255,0.03)',
-              })}
-            >
-              <div style={{ fontSize: 12, color: C.text }}>
-                {planDraftStatus === 'drafting'
-                  ? 'Drafting plan...'
-                  : planDraftStatus === 'ready' && draftMissionSpec
-                    ? 'Plan ready'
-                    : planDraftStatus === 'ready'
-                      ? 'Failed to draft plan'
-                    : planDraftStatus === 'needs_user_input'
-                      ? 'Needs input'
-                      : planDraftStatus === 'failed'
-                        ? 'Failed to draft plan'
-                        : 'Plan draft idle'}
-              </div>
-              {draftMissionSpec ? (
-                <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
-                  <div>{draftMissionSpec.title}</div>
-                  <div>Goal: {draftMissionSpec.userGoal}</div>
-                  <div>Target: {draftMissionSpec.target}</div>
-                  <div>
-                    Agents:{' '}
-                    {draftMissionSpec.agentRuns
-                      .map((run) => `${run.agentId} (${safeText(run.promptSeed).slice(0, 40)})`)
-                      .join(' | ')}
+            {showPlanDraftCard ? (
+              <div
+                style={graphDrawerSectionStyle({
+                  margin: '0 12px 10px',
+                  padding: '10px 12px',
+                  borderColor: 'rgba(255,255,255,0.14)',
+                  background: 'rgba(255,255,255,0.03)',
+                })}
+              >
+                {planDraftHeadline ? (
+                  <div style={{ fontSize: 12, color: C.text }}>
+                    {planDraftHeadline}
                   </div>
-                </div>
-              ) : null}
-              {latestPlanDraftResult?.questions && latestPlanDraftResult.questions.length > 0 ? (
-                <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
-                  Questions: {latestPlanDraftResult.questions.join(' | ')}
-                </div>
-              ) : null}
-            </div>
+                ) : null}
+                {draftMissionSpec ? (
+                  <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+                    <div>{draftMissionSpec.title}</div>
+                    <div>Goal: {draftMissionSpec.userGoal}</div>
+                    <div>Target: {draftMissionSpec.target}</div>
+                    <div>
+                      Agents:{' '}
+                      {draftMissionSpec.agentRuns
+                        .map((run) => `${run.agentId} (${safeText(run.promptSeed).slice(0, 40)})`)
+                        .join(' | ')}
+                    </div>
+                  </div>
+                ) : null}
+                {planDraftQuestions.length > 0 ? (
+                  <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+                    Questions: {planDraftQuestions.join(' | ')}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             {openMissionMessage ? (
               <div
                 style={graphDrawerSectionStyle({
@@ -9667,9 +9664,9 @@ export default function AgentBuilder(): React.ReactElement {
                     .map((agent) => `${agent.label}:${agent.status}`)
                     .join(' | ')}
                 </div>
-                {openMissionMessage.latestSummary ? (
+                {openMissionRuntimeSummary ? (
                   <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
-                    {openMissionMessage.latestSummary}
+                    {openMissionRuntimeSummary}
                   </div>
                 ) : null}
               </div>
@@ -9717,11 +9714,12 @@ export default function AgentBuilder(): React.ReactElement {
                 {safeText(planMissionFocus.nodeLabel)}
               </div>
             ) : null}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const showCanvasWorkspace = useCallback(() => {
     closeObjectDrawer();
@@ -9903,532 +9901,288 @@ export default function AgentBuilder(): React.ReactElement {
     setTab(nextTab);
   }, []);
 
+  const workspaceRail = (
+    <AgentBuilderRail
+      colors={C}
+      workspaceView={workspaceView}
+      visibleRailItems={visibleRailItems}
+      moonOrb={<BuilderRailMoonOrb phase01={moonPhase01} />}
+      onShowWorldsignalWorkspace={showWorldsignalWorkspace}
+      onShowCanvasWorkspace={showCanvasWorkspace}
+      onQuickAddAssistNode={() => handleQuickAddDeckNode('assist')}
+      onShowKnowledgeWorkspace={showKnowledgeWorkspace}
+      onShowEnergyWorkspace={showEnergyWorkspace}
+      onShowTradingWorkspace={showTradingWorkspace}
+      onShowImageWorkspace={showImageWorkspace}
+      onShowCodeWorkspace={showCodeWorkspace}
+      onShowVideoWorkspace={showVideoWorkspace}
+      onShowDataFormulatorWorkspace={showDataFormulatorWorkspace}
+      onShowWorkbenchWorkspace={showWorkbenchWorkspace}
+      onShowPlanWorkspace={showPlanWorkspace}
+      onOpenNavigationDrawer={() => setOpenDrawer('navigation')}
+    />
+  );
+
+  const workspaceChatPane = (
+    <AgentBuilderChatPane
+      workspaceView={largeSurface}
+      chatPanelWidth={chatPanelWidth}
+      minWidth={AGENTS_CHAT_MIN_WIDTH}
+      chatResizeHandleActive={chatResizeHandleActive}
+    >
+      {renderChatSurface(activeProject, false, 'large')}
+    </AgentBuilderChatPane>
+  );
+
+  const workspaceSplitter = workspaceView !== 'chat' ? (
+    <AgentBuilderSplitter
+      active={chatResizeHandleActive}
+      dragging={chatResizeDragging}
+      onMouseEnter={() => setChatResizeHandleActive(true)}
+      onMouseLeave={() => {
+        if (!chatResizeDragging) {
+          setChatResizeHandleActive(false);
+        }
+      }}
+      onMouseDown={(event) => {
+        event.preventDefault();
+        setChatResizeHandleActive(true);
+        const reservedWidth =
+          workspaceView === 'canvas'
+            ? AGENTS_CANVAS_MIN_WIDTH
+            : WORKSPACE_COMPANION_MIN_WIDTH;
+        chatResizeSessionRef.current = {
+          startX: event.clientX,
+          startWidth: chatPanelWidth,
+          pendingWidth: chatPanelWidth,
+          reservedWidth,
+        };
+        setChatResizeDragging(true);
+      }}
+    />
+  ) : null;
+
+  const workspaceCanvasRegion = workspaceView === 'canvas' ? (
+    <AgentBuilderCanvasRegion minWidth={AGENTS_CANVAS_MIN_WIDTH}>
+      {renderCanvasSurface(false, 'large')}
+    </AgentBuilderCanvasRegion>
+  ) : null;
+
+  const workspaceCompanionSurfaceHost = (
+    <CompanionSurfaceHost
+      workspaceView={workspaceView}
+      minWidth={WORKSPACE_COMPANION_MIN_WIDTH}
+      hasKnowledgeWorkspaceSelection={hasKnowledgeWorkspaceSelection}
+      hasActiveUaSurface={Boolean(activeUaAgentDefinition)}
+      knowledgeSelectionSurface={renderKnowledgeWorkspacePanel()}
+      knowledgeSurface={
+        <KnowledgeGraphSurface
+          minHeight={420}
+          surfaceRole="companion"
+        />
+      }
+      codegraphSurface={
+        <KnowledgeGraphSurface
+          minHeight={420}
+          surfaceRole="companion"
+        />
+      }
+      energySurface={
+        <EnergySurfaceErrorBoundary key="energy-surface">
+          <Suspense
+            fallback={
+              <div
+                data-testid="energy-facade-loading"
+                style={{
+                  height: '100%',
+                  padding: 16,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background:
+                    GRAPH_THEME.background.knowledgeSurface,
+                }}
+              >
+                <div
+                  style={graphDrawerSectionStyle({
+                    padding: '12px 14px',
+                    color: GRAPH_THEME.drawer.inputMuted,
+                  })}
+                >
+                  Loading energy canvas...
+                </div>
+              </div>
+            }
+          >
+            <EnergyFacadeSurface
+              inputs={energyInputs}
+              selectedObjectId={selectedWorkspaceObjectId}
+              latestActionSummary={latestWorkspaceActionSummary}
+              onWorkspaceAction={applyWorkspaceAction}
+            />
+          </Suspense>
+        </EnergySurfaceErrorBoundary>
+      }
+      tradingSurface={<TradingCanvasSurface />}
+      imageSurface={renderWorkbenchPlaceholderSurface({
+        testId: 'image-workspace-placeholder',
+        title: 'Image Maker',
+        status: 'Demo / planned integration',
+        accentColor: GRAPH_THEME.drawer.inputText,
+        steps: [
+          'Prompt the image concept and generate variations.',
+          'Place approved art on shirt, hoodie, poster, or canvas layouts.',
+          'Export order-ready files later when the generation bridge exists.',
+        ],
+      })}
+      codeSurface={renderWorkbenchPlaceholderSurface({
+        testId: 'code-workspace-placeholder',
+        title: 'Code Agent Workspace',
+        status: 'Demo / planned integration',
+        accentColor: C.primary,
+        steps: [
+          'Main Chat creates a scoped code task.',
+          'Code Agent receives selected object and repo context.',
+          'A future Claude Code or sandbox bridge executes the task and returns reviewable diffs and tests.',
+        ],
+      })}
+      videoSurface={
+        <Suspense
+          fallback={
+            <div
+              data-testid="video-canvas-loading"
+              style={{
+                height: '100%',
+                padding: 16,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: GRAPH_THEME.background.knowledgeSurface,
+              }}
+            >
+              <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 13 }}>
+                Loading media studio...
+              </div>
+            </div>
+          }
+        >
+          <MediaStudioCanvas projectId={canvasProjectId || null} />
+        </Suspense>
+      }
+      dataFormulatorSurface={
+        <DataFormulatorSurface
+          modelConfig={dataFormulatorModelConfig}
+        />
+      }
+      uaSurface={
+        activeUaAgentDefinition ? (
+          <UaSurfaceErrorBoundary key="ua-surface">
+            <Suspense
+              fallback={
+                <div
+                  data-testid="ua-agent-panel-loading"
+                  style={{
+                    height: '100%',
+                    padding: 18,
+                    color: GRAPH_THEME.drawer.inputMuted,
+                  }}
+                >
+                  Loading agent panel...
+                </div>
+              }
+            >
+              <UaAgentPanelHost
+                surfaceId={activeUaAgentDefinition.surfaceId}
+                workbenchContext={uaWorkbenchContext}
+              />
+            </Suspense>
+          </UaSurfaceErrorBoundary>
+        ) : null
+      }
+      worldsignalSurface={<WorldSignalSurface />}
+      planSurface={renderPlanSurface('companion')}
+    />
+  );
+
+  const workspaceDrawer =
+    workspaceView === 'canvas' || workspaceView === 'plan' ? (
+      <RightGlassDrawer
+        isOpen={isObjectDrawerVisible}
+        title={
+          objectDrawerRole === 'plan'
+            ? `Plan Node: ${safeText(selectedPlanNodeDraft?.label || planMissionFocus?.nodeLabel || 'Edit')}`
+            : safeText(selectedCard?.title || 'Agent')
+        }
+        onClose={closeObjectDrawer}
+        defaultWidth={objectDrawerDefaultWidth}
+        minWidth={360}
+        maxWidth={760}
+        storageKey={objectDrawerStorageKey}
+        dataTestId="workspace-object-drawer"
+        right={12}
+        top={48}
+      >
+        {objectDrawerRole === 'agent' && activeTabs.length > 0 ? (
+          <div
+            className="flex min-w-0 overflow-x-auto"
+            style={graphCompanionTabGroupStyle({
+              gap: 6,
+              marginBottom: 10,
+            })}
+          >
+            {activeTabs.map((t) => {
+              const selected = tab === t;
+              return (
+                <button
+                  key={t}
+                  data-testid={`companion-tab-${t.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
+                  aria-pressed={selected}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleCompanionTabClick(t);
+                  }}
+                  className="whitespace-nowrap transition-colors duration-150 ease-out"
+                  style={graphCompanionTabButtonStyle(selected)}
+                >
+                  {t}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        <div
+          data-testid="companion-surface-editor"
+          style={{
+            display: 'grid',
+            gap: 8,
+          }}
+        >
+          {objectDrawerRole === 'plan'
+            ? renderPlanMissionEditorPanel()
+            : renderAgentBuilderPanel()}
+        </div>
+      </RightGlassDrawer>
+    ) : null;
+
   return (
     <FrontendCrashBoundary scopeLabel="AgentBuilder">
       <div
         className="h-screen w-full flex overflow-hidden"
         style={{ background: C.bg, color: C.text }}
       >
-      <style>{`
-        @keyframes builder-orb-float {
-          0%, 100% { transform: translateY(0px) scale(1); }
-          50% { transform: translateY(-0.5px) scale(1.015); }
-        }
-      `}</style>
-      <div className="flex flex-1 overflow-hidden min-h-0">
-        {/* LEFT rail */}
-        <aside
-          className="h-full flex flex-col items-center gap-3 py-3"
-          style={{
-            width: 54,
-            background: C.panel,
-            borderRight: `1px solid ${C.border}`,
-          }}
-        >
-          {visibleRailItems.showWorldsignal ? (
-            <button
-              type="button"
-              title="World"
-              aria-label="World"
-              data-testid="rail-moon-orb-button"
-              onClick={showWorldsignalWorkspace}
-              className="p-2 rounded"
-              style={{ color: workspaceView === 'worldsignal' ? C.primary : C.text }}
-            >
-              <div
-                style={{
-                  position: 'relative',
-                  width: 28,
-                  height: 28,
-                  borderRadius: '50%',
-                  overflow: 'visible',
-                  animation: 'builder-orb-float 21s ease-in-out infinite',
-                  boxShadow:
-                    'inset 0 1px 1px rgba(255,255,255,0.12), 0 0 14px rgba(79,162,173,0.14), 0 0 26px rgba(125,105,180,0.08)',
-                }}
-              >
-                <BuilderRailMoonOrb phase01={moonPhase01} />
-              </div>
-            </button>
-          ) : null}
-          <button
-            title="Agents"
-            aria-label="Agents"
-            data-testid="rail-plus-button"
-            onClick={() => {
-              if (workspaceView === 'canvas') {
-                handleQuickAddDeckNode('assist');
-              } else {
-                showCanvasWorkspace();
-              }
-            }}
-            className="p-2 rounded"
-            style={{ color: workspaceView === 'canvas' ? C.primary : C.text }}
-          >
-            <HexPlusIcon />
-          </button>
-          {visibleRailItems.showKnowledge ? (
-            <button
-              title="Knowledge"
-              aria-label="Knowledge"
-              data-testid="rail-burst-button"
-              onClick={showKnowledgeWorkspace}
-              className="p-2 rounded"
-              style={{
-                color: workspaceView === 'knowledge' ? C.primary : C.text,
-              }}
-            >
-              <Icon d="M12 1v3M12 20v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M1 12h3M20 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" />
-            </button>
-          ) : null}
-          {visibleRailItems.showEnergy ? (
-            <button
-              title="Energy"
-              aria-label="Energy"
-              data-testid="rail-energy-button"
-              onClick={showEnergyWorkspace}
-              className="p-2 rounded"
-              style={{
-                color:
-                  workspaceView === 'energy' ? GRAPH_THEME.accent.solar : C.text,
-              }}
-            >
-              <Icon d="M7.2 4.2 13.2 1.6 19 4.7v8.5l-6 3.2-6-3.1V4.2Z M7.2 4.2 13 7.4l6-2.7 M13 7.4v9 M4 6.7l3.2-2.5 M4 6.7v8.5l6 1.2" />
-            </button>
-          ) : null}
-          {visibleRailItems.showTrading ? (
-            <button
-              title="Trading"
-              aria-label="Trading"
-              data-testid="rail-trading-button"
-              onClick={showTradingWorkspace}
-              className="p-2 rounded"
-              style={{
-                color:
-                  workspaceView === 'trading'
-                    ? GRAPH_THEME.accent.solar
-                    : C.text,
-              }}
-            >
-              <Icon d="M4 18h16M6 15l3-3 3 2 4-6 2 2" />
-            </button>
-          ) : null}
-          {visibleRailItems.showImage ? (
-            <button
-              title="Image"
-              aria-label="Image"
-              data-testid="rail-image-button"
-              onClick={showImageWorkspace}
-              className="p-2 rounded"
-              style={{
-                color:
-                  workspaceView === 'image' ? GRAPH_THEME.accent.solar : C.text,
-              }}
-            >
-              <Icon d="M5 6h14v12H5z M8 14l2.5-2.5L13 14l2-2 2 2 M9 10h.01" />
-            </button>
-          ) : null}
-          {visibleRailItems.showCode ? (
-            <button
-              title="Code"
-              aria-label="Code"
-              data-testid="rail-code-button"
-              onClick={showCodeWorkspace}
-              className="p-2 rounded"
-              style={{
-                color:
-                  workspaceView === 'code' ? GRAPH_THEME.accent.solar : C.text,
-              }}
-            >
-              <Icon d="M9 7 4 12l5 5 M15 7l5 5-5 5 M13 5l-2 14" />
-            </button>
-          ) : null}
-          {visibleRailItems.showVideo ? (
-            <button
-              title="Video"
-              aria-label="Video"
-              data-testid="rail-video-button"
-              onClick={showVideoWorkspace}
-              className="p-2 rounded"
-              style={{
-                color:
-                  workspaceView === 'video' ? GRAPH_THEME.accent.solar : C.text,
-              }}
-            >
-              <Icon d="M5 7h10v10H5z M15 10l4-2v8l-4-2" />
-            </button>
-          ) : null}
-          {visibleRailItems.showDataFormulator ? (
-            <button
-              title="Data Formulator"
-              aria-label="Data Formulator"
-              data-testid="rail-data-formulator-button"
-              onClick={showDataFormulatorWorkspace}
-              className="p-2 rounded"
-              style={{
-                color:
-                  workspaceView === 'data-formulator'
-                    ? GRAPH_THEME.accent.solar
-                    : C.text,
-              }}
-            >
-              <Icon d="M4 5h16v14H4z M7 9h4 M7 13h4 M13 9h4 M13 13h4" />
-            </button>
-          ) : null}
-          {visibleRailItems.uaAgents.map((agent) => (
-            <button
-              key={agent.id}
-              title={agent.name}
-              aria-label={agent.name}
-              data-testid={`rail-${agent.id}-button`}
-              onClick={() => showWorkbenchWorkspace(agent.surfaceId)}
-              className="p-2 rounded"
-              style={{
-                color:
-                  workspaceView === agent.surfaceId
-                    ? GRAPH_THEME.accent.solar
-                    : C.text,
-              }}
-            >
-              <Icon d={agent.railIcon} />
-            </button>
-          ))}
-
-          <div className="flex-1" />
-
-          {visibleRailItems.showPlan ? (
-            <button
-              title="Plan"
-              aria-label="Plan"
-              data-testid="rail-orange-button"
-              onClick={showPlanWorkspace}
-              className="p-2 rounded mb-1"
-              style={{
-                color:
-                  workspaceView === 'plan' ? GRAPH_THEME.accent.solar : C.text,
-              }}
-            >
-              <Icon d="M3 12l2-2 4 4L21 4" />
-            </button>
-          ) : null}
-
-          <button
-            title="Menu"
-            aria-label="Menu"
-            data-testid="rail-three-lines-button"
-            onClick={() => setOpenDrawer('navigation')}
-            className="p-2 rounded"
-            style={{
-              color: C.text,
-              background: 'transparent',
-            }}
-          >
-            <Icon d="M4 7h16M4 12h16M4 17h16" />
-          </button>
-        </aside>
-
-        <div
-          ref={workspaceShellRef}
-          className="flex flex-1 overflow-hidden min-h-0"
-          style={{ position: 'relative' }}
-        >
-          <div
-            data-testid="workspace-large-region"
-            data-surface={largeSurface}
-            className="h-full min-w-0 relative"
-            style={{
-              ...(workspaceView === 'chat'
-                ? {
-                    width: '100%',
-                    minWidth: 0,
-                    flex: '1 1 auto',
-                  }
-                : {
-                    width: chatPanelWidth,
-                    minWidth: AGENTS_CHAT_MIN_WIDTH,
-                    flex: '0 0 auto',
-                    transition: chatResizeHandleActive
-                      ? undefined
-                      : 'width 180ms cubic-bezier(.22,.61,.36,1)',
-                  }),
-            }}
-          >
-            {renderChatSurface(activeProject, false, 'large')}
-          </div>
-
-          {workspaceView !== 'chat' ? (
-            <div
-              data-testid="workspace-chat-resize-handle"
-              aria-label="Resize chat panel"
-              title="Drag to resize chat"
-              onMouseEnter={() => setChatResizeHandleActive(true)}
-              onMouseLeave={() => {
-                if (!chatResizeDragging) {
-                  setChatResizeHandleActive(false);
-                }
-              }}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                setChatResizeHandleActive(true);
-                const reservedWidth =
-                  workspaceView === 'canvas'
-                    ? AGENTS_CANVAS_MIN_WIDTH
-                    : WORKSPACE_COMPANION_MIN_WIDTH;
-                chatResizeSessionRef.current = {
-                  startX: e.clientX,
-                  startWidth: chatPanelWidth,
-                  pendingWidth: chatPanelWidth,
-                  reservedWidth,
-                };
-                setChatResizeDragging(true);
-              }}
-              style={{
-                width: 10,
-                height: '100%',
-                cursor: 'col-resize',
-                flexShrink: 0,
-                position: 'relative',
-                overflow: 'hidden',
-                borderLeft: `1px solid ${chatResizeHandleActive ? 'rgba(79,162,173,0.34)' : 'rgba(79,162,173,0.18)'}`,
-                borderRight: `1px solid ${chatResizeHandleActive ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.06)'}`,
-                boxShadow: chatResizeHandleActive
-                  ? 'inset 0 0 0 1px rgba(79,162,173,0.16), 0 0 10px rgba(79,162,173,0.12)'
-                  : 'none',
-                background:
-                  'linear-gradient(90deg, rgba(79,162,173,0.05), rgba(255,255,255,0.09), rgba(79,162,173,0.05))',
-                transition:
-                  'border-color 120ms ease, box-shadow 120ms ease, background 120ms ease',
-              }}
-            >
-            </div>
-          ) : null}
-
-          {workspaceView === 'canvas' ? (
-            <div
-              data-testid="workspace-canvas-region"
-              className="h-full flex-1 min-w-0 relative"
-              style={{ minWidth: AGENTS_CANVAS_MIN_WIDTH }}
-            >
-              {renderCanvasSurface(false, 'large')}
-            </div>
-          ) : null}
-
-          {workspaceView !== 'canvas' && workspaceView !== 'chat' ? (
-            <aside
-              data-testid="workspace-companion-region"
-              data-workspace={workspaceView}
-              data-open="true"
-              className="h-full relative"
-              style={graphCompanionPanelStyle({
-                minWidth: WORKSPACE_COMPANION_MIN_WIDTH,
-                flex: '1 1 0%',
-                overflow: 'hidden',
-              })}
-            >
-              <div className="h-full flex flex-col overflow-hidden min-h-0 relative">
-                <div
-                  className="flex-1 overflow-hidden text-sm min-h-0"
-                  style={{
-                    color: GRAPH_THEME.drawer.inputMuted,
-                    background: 'transparent',
-                  }}
-                >
-                  {workspaceView === 'knowledge' &&
-                    hasKnowledgeWorkspaceSelection &&
-                    renderKnowledgeWorkspacePanel()}
-                  {workspaceView === 'knowledge' &&
-                    !hasKnowledgeWorkspaceSelection &&
-                    <KnowledgeGraphSurface
-                      minHeight={420}
-                      surfaceRole="companion"
-                    />}
-                  {workspaceView === 'codegraph' &&
-                    <KnowledgeGraphSurface
-                      minHeight={420}
-                      surfaceRole="companion"
-                    />}
-                  {workspaceView === 'energy' && (
-                    <EnergySurfaceErrorBoundary key="energy-surface">
-                      <Suspense
-                        fallback={
-                          <div
-                            data-testid="energy-facade-loading"
-                            style={{
-                              height: '100%',
-                              padding: 16,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              background:
-                                GRAPH_THEME.background.knowledgeSurface,
-                            }}
-                          >
-                            <div
-                              style={graphDrawerSectionStyle({
-                                padding: '12px 14px',
-                                color: GRAPH_THEME.drawer.inputMuted,
-                              })}
-                            >
-                              Loading energy canvas...
-                            </div>
-                          </div>
-                        }
-                      >
-                        <EnergyFacadeSurface
-                          inputs={energyInputs}
-                          selectedObjectId={selectedWorkspaceObjectId}
-                          latestActionSummary={latestWorkspaceActionSummary}
-                          onWorkspaceAction={applyWorkspaceAction}
-                        />
-                      </Suspense>
-                    </EnergySurfaceErrorBoundary>
-                  )}
-                  {workspaceView === 'trading' && (
-                    <TradingCanvasSurface />
-                  )}
-                  {workspaceView === 'image' &&
-                    renderWorkbenchPlaceholderSurface({
-                      testId: 'image-workspace-placeholder',
-                      title: 'Image Maker',
-                      status: 'Demo / planned integration',
-                      accentColor: GRAPH_THEME.drawer.inputText,
-                      steps: [
-                        'Prompt the image concept and generate variations.',
-                        'Place approved art on shirt, hoodie, poster, or canvas layouts.',
-                        'Export order-ready files later when the generation bridge exists.',
-                      ],
-                    })}
-                  {workspaceView === 'code' &&
-                    renderWorkbenchPlaceholderSurface({
-                      testId: 'code-workspace-placeholder',
-                      title: 'Code Agent Workspace',
-                      status: 'Demo / planned integration',
-                      accentColor: C.primary,
-                      steps: [
-                        'Main Chat creates a scoped code task.',
-                        'Code Agent receives selected object and repo context.',
-                        'A future Claude Code or sandbox bridge executes the task and returns reviewable diffs and tests.',
-                      ],
-                    })}
-                  {workspaceView === 'video' && (
-                    <Suspense
-                      fallback={
-                        <div
-                          data-testid="video-canvas-loading"
-                          style={{
-                            height: '100%',
-                            padding: 16,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            background: GRAPH_THEME.background.knowledgeSurface,
-                          }}
-                        >
-                          <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 13 }}>
-                            Loading media studio...
-                          </div>
-                        </div>
-                      }
-                    >
-                      <MediaStudioCanvas projectId={canvasProjectId || null} />
-                    </Suspense>
-                  )}
-                  {workspaceView === 'data-formulator' && (
-                    <DataFormulatorSurface
-                      modelConfig={dataFormulatorModelConfig}
-                    />
-                  )}
-                  {activeUaAgentDefinition && (
-                    <UaSurfaceErrorBoundary key="ua-surface">
-                      <Suspense
-                        fallback={
-                          <div
-                            data-testid="ua-agent-panel-loading"
-                            style={{
-                              height: '100%',
-                              padding: 18,
-                              color: GRAPH_THEME.drawer.inputMuted,
-                            }}
-                          >
-                            Loading agent panel...
-                          </div>
-                        }
-                      >
-                        <UaAgentPanelHost
-                          surfaceId={activeUaAgentDefinition.surfaceId}
-                          workbenchContext={uaWorkbenchContext}
-                        />
-                      </Suspense>
-                    </UaSurfaceErrorBoundary>
-                  )}
-                  {workspaceView === 'worldsignal' &&
-                    <WorldSignalSurface />}
-                  {workspaceView === 'plan' && renderPlanSurface('companion')}
-                </div>
-              </div>
-            </aside>
-          ) : null}
-
-          {workspaceView === 'canvas' || workspaceView === 'plan' ? (
-            <RightGlassDrawer
-              isOpen={isObjectDrawerVisible}
-              title={
-                objectDrawerRole === 'plan'
-                  ? `Plan Node: ${safeText(selectedPlanNodeDraft?.label || planMissionFocus?.nodeLabel || 'Edit')}`
-                  : safeText(selectedCard?.title || 'Agent')
-              }
-              onClose={closeObjectDrawer}
-              defaultWidth={objectDrawerDefaultWidth}
-              minWidth={360}
-              maxWidth={760}
-              storageKey={objectDrawerStorageKey}
-              dataTestId="workspace-object-drawer"
-              right={12}
-              top={48}
-            >
-              {objectDrawerRole === 'agent' && activeTabs.length > 0 ? (
-                <div
-                  className="flex min-w-0 overflow-x-auto"
-                  style={graphCompanionTabGroupStyle({
-                    gap: 6,
-                    marginBottom: 10,
-                  })}
-                >
-                  {activeTabs.map((t) => {
-                    const selected = tab === t;
-                    return (
-                      <button
-                        key={t}
-                        data-testid={`companion-tab-${t.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
-                        aria-pressed={selected}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          handleCompanionTabClick(t);
-                        }}
-                        className="whitespace-nowrap transition-colors duration-150 ease-out"
-                        style={graphCompanionTabButtonStyle(selected)}
-                      >
-                        {t}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-              <div
-                data-testid="companion-surface-editor"
-                style={{
-                  display: 'grid',
-                  gap: 8,
-                }}
-              >
-                {objectDrawerRole === 'plan'
-                  ? renderPlanMissionEditorPanel()
-                  : renderAgentBuilderPanel()}
-              </div>
-            </RightGlassDrawer>
-          ) : null}
-        </div>
-      </div>
+        <AgentBuilderWorkspace
+          rail={workspaceRail}
+          shell={
+            <AgentBuilderShell
+              workspaceShellRef={workspaceShellRef}
+              chatPane={workspaceChatPane}
+              splitter={workspaceSplitter}
+              canvasRegion={workspaceCanvasRegion}
+              companionSurfaceHost={workspaceCompanionSurfaceHost}
+              drawer={workspaceDrawer}
+            />
+          }
+        />
 
       {/* drawers */}
       {openDrawer === 'navigation' && (

@@ -118,6 +118,32 @@ function normalizeBoolean(value: unknown): boolean {
   return normalized === "true" || normalized === "1" || normalized === "yes";
 }
 
+const PLAN_RUNTIME_NOISE_PATTERNS = [
+  /\bautogen(?:[_:\-\s]|$)/i,
+  /\bhttp[_:\-\s]?500\b/i,
+  /\bparticipants_required\b/i,
+  /\bassistant_tool_not_supported\b/i,
+  /\bmagentic_callable_heads_required\b/i,
+  /\binternal server error\b/i,
+  /\bhealth check failed\b/i,
+] as const;
+
+function isPlanRuntimeNoise(value: string): boolean {
+  const normalized = safeText(value).trim();
+  if (!normalized) return false;
+  return PLAN_RUNTIME_NOISE_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function sanitizePlanText(value: unknown): string {
+  const normalized = safeText(value).trim();
+  if (!normalized || isPlanRuntimeNoise(normalized)) return "";
+  return normalized;
+}
+
+function sanitizePlanTextList(input: unknown): string[] {
+  return normalizeTextList(input).filter((entry) => !isPlanRuntimeNoise(entry));
+}
+
 export function normalizePlanItems(input: unknown): PlanItem[] {
   const source = Array.isArray(input)
     ? input
@@ -266,18 +292,22 @@ export function buildStructuredAssistPlanSurface(
 ): StructuredAssistPlanSurface {
   const planObj = input && typeof input === "object" && !Array.isArray(input) ? (input as any) : null;
   const planItems = Array.isArray(context.planItems) ? context.planItems : [];
-  const explicitNextMove = normalizeTextList(
+  const explicitNextMove = sanitizePlanTextList(
     planObj?.nextMove ??
     planObj?.next_move ??
     planObj?.nextTry ??
     planObj?.next_try,
   );
-  const explicitHumanTasks = normalizeTextList(planObj?.humanTasks ?? planObj?.human_tasks);
-  const explicitAgentTasks = normalizeTextList(planObj?.agentTasks ?? planObj?.agent_tasks);
+  const explicitHumanTasks = sanitizePlanTextList(
+    planObj?.humanTasks ?? planObj?.human_tasks,
+  );
+  const explicitAgentTasks = sanitizePlanTextList(
+    planObj?.agentTasks ?? planObj?.agent_tasks,
+  );
   const structuredSteps: StructuredAssistPlanStep[] = Array.isArray(planObj?.steps)
     ? (planObj.steps as Array<Record<string, unknown>>)
         .map((step, index) => {
-          const title = safeText(step?.title).trim();
+          const title = sanitizePlanText(step?.title);
           if (!title) return null;
           const relatedObjects = normalizeTextList(
             step?.relatedObjects ??
@@ -293,15 +323,15 @@ export function buildStructuredAssistPlanSurface(
             toolIds: normalizeTextList(step?.toolIds ?? step?.tools),
             generatedPrompt:
               safeText(step?.generatedPrompt ?? step?.starterPrompt).trim(),
-            expectedOutput: safeText(step?.expectedOutput).trim(),
+            expectedOutput: sanitizePlanText(step?.expectedOutput),
             relatedFiles: normalizeTextList(step?.relatedFiles),
             relatedObjects,
             relatedSurface: safeText(step?.relatedSurface).trim() || null,
             validationCommand:
               safeText(step?.validationCommand).trim() || null,
             approvalRequired: normalizeBoolean(step?.approvalRequired),
-            resultSummary: safeText(step?.resultSummary).trim(),
-            blocker: safeText(step?.blocker).trim(),
+            resultSummary: sanitizePlanText(step?.resultSummary),
+            blocker: sanitizePlanText(step?.blocker),
           };
         })
         .filter((step): step is StructuredAssistPlanStep => Boolean(step))
@@ -345,16 +375,19 @@ export function buildStructuredAssistPlanSurface(
         })
         .filter(Boolean)
     : [];
-  const structuredNextSafeStep = safeText(
+  const structuredNextSafeStep = sanitizePlanText(
     planObj?.nextSafeStep ?? planObj?.next_safe_step,
-  ).trim();
+  );
+  const sanitizedPlanItems = planItems.filter(
+    (item) => !isPlanRuntimeNoise(safeText(item.text).trim()),
+  );
 
   return {
     planMode: normalizePlanMode(planObj?.planMode ?? planObj?.mode),
-    goal: safeText(planObj?.goal ?? planObj?.title ?? planObj?.objective).trim(),
+    goal: sanitizePlanText(planObj?.goal ?? planObj?.title ?? planObj?.objective),
     steps: structuredSteps,
     whatMattersNow: [
-      ...normalizeTextList(
+      ...sanitizePlanTextList(
         planObj?.whatMattersNow ??
         planObj?.what_matters_now ??
         planObj?.whatWeKnow ??
@@ -372,17 +405,17 @@ export function buildStructuredAssistPlanSurface(
           ? [structuredNextSafeStep]
           : structuredSteps.length > 0
             ? structuredSteps.slice(0, 3).map((step) => step.title)
-        : planItems
+        : sanitizedPlanItems
             .filter((item) => item.status !== "done")
             .slice(0, 3)
             .map((item) => safeText(item.text).trim())
             .filter(Boolean),
-    assumptions: normalizeTextList(
+    assumptions: sanitizePlanTextList(
       planObj?.assumptions ??
       planObj?.assumptionList ??
       planObj?.assumption_list,
     ),
-    research: normalizeTextList(
+    research: sanitizePlanTextList(
       planObj?.research ??
       planObj?.researchSection ??
       planObj?.research_section ??
@@ -391,7 +424,7 @@ export function buildStructuredAssistPlanSurface(
     ),
     openQuestions:
       context.anchorSurface?.openQuestions ??
-      normalizeTextList(
+      sanitizePlanTextList(
         planObj?.openQuestions ??
         planObj?.open_questions ??
         planObj?.unknowns ??

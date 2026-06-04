@@ -75,6 +75,20 @@ When no project is selected yet, AgentBuilder must stay project-backed:
 - no fake recovery deck
 - project selection happens first, then the real deck loads
 
+## Active Surface Rule
+
+Companion surfaces are active only when one of these is true:
+
+- the corresponding agent/workbench card is present on the saved board and still connected into the active workflow
+- the surface is part of the core shell needed to operate the current project-backed workspace
+
+Inactive or draft surfaces may remain in source, but they must not be treated as live product state:
+
+- do not show them in the rail just because the code still exists
+- do not expose their inactive controls inside another active surface
+- do not route the user into them as the default companion canvas
+- do not invent fallback canvases to stand in for them
+
 ## Normalization Rules
 
 Hydration may:

@@ -193,14 +193,6 @@ function makeEdge(
   };
 }
 
-function pickFirst(
-  items: string[] | null | undefined,
-  fallback: string,
-): string {
-  const first = cleanList(items)[0];
-  return first || fallback;
-}
-
 function normalizeStatusForNode(stepStatus: PlanStepStatus): PlanMissionNodeStatus {
   if (
     stepStatus === 'proposed' ||
@@ -248,12 +240,6 @@ export function buildPlanMissionGraph(
 ): PlanMissionGraph {
   const PLAN_X_TIGHTEN_ORIGIN = 56;
   const PLAN_X_TIGHTEN_RATIO = 0.9;
-  const goalText =
-    String(structuredPlan.goal || '').trim() ||
-    'Define the implementation intent before any execution.';
-  const modeText = String(structuredPlan.planMode || 'draft')
-    .trim()
-    .toLowerCase();
   const baseSteps: StructuredAssistPlanStep[] =
     Array.isArray(structuredPlan.steps) && structuredPlan.steps.length > 0
       ? structuredPlan.steps
@@ -274,50 +260,13 @@ export function buildPlanMissionGraph(
           resultSummary: '',
           blocker: '',
         }));
-  const planSteps =
-    baseSteps.length > 0
-      ? baseSteps
-      : [
-          {
-            id: 'fallback_step_1',
-            title: pickFirst(
-              structuredPlan.nextMove,
-              'Define the first safe implementation step.',
-            ),
-            status: 'proposed' as const,
-            assignedAgentId: null,
-            skillId: null,
-            toolIds: [],
-            generatedPrompt: '',
-            expectedOutput: '',
-            relatedFiles: [],
-            relatedObjects: [],
-            relatedSurface: null,
-            validationCommand: null,
-            approvalRequired: true,
-            resultSummary: '',
-            blocker: '',
-          },
-        ];
+  const planSteps = baseSteps;
+
+  if (planSteps.length === 0) {
+    return { nodes: [], edges: [] };
+  }
 
   const nodes: PlanMissionFlowNode[] = [];
-
-  nodes.push(
-    makeNode(
-      'mission_goal',
-      'Active Plan Goal',
-      'Goal',
-      40,
-      136,
-      goalText,
-      modeText === 'archived' ? 'done' : 'approved',
-      'plan_goal',
-      'plan_goal_summary',
-      undefined,
-      'Treat this plan as the editable intent contract before any execution.',
-      false,
-    ),
-  );
 
   const STEP_BASE_X = 296;
   const STEP_DELTA_X = 244;
@@ -354,47 +303,7 @@ export function buildPlanMissionGraph(
     nodes.push(node);
   });
 
-  const noteSource = pickFirst(structuredPlan.sources, '');
-  const modeLabel =
-    modeText === 'active_run'
-      ? 'Active run plan'
-      : modeText === 'template'
-        ? 'Template plan'
-        : modeText === 'archived'
-          ? 'Archived plan'
-          : modeText === 'meta'
-            ? 'Meta plan'
-            : 'Draft plan';
-  const noteText = noteSource || `${modeLabel}: edit steps and approve before execution.`;
-  nodes.push(
-    makeNode(
-      'mission_note',
-      'Plan Note',
-      'Note',
-      STEP_BASE_X + Math.max(1, planSteps.length - 1) * STEP_DELTA_X,
-      STEP_BASE_Y + 156,
-      noteText,
-      'proposed',
-      'plan_note',
-      'plan_note_text',
-      undefined,
-      undefined,
-      false,
-    ),
-  );
-
   const edges: PlanMissionFlowEdge[] = [];
-  const firstStepNodeId = planSteps.length > 0 ? toNodeId(planSteps[0], 0) : null;
-  if (firstStepNodeId) {
-    edges.push(
-      makeEdge(
-        'edge_goal_to_step_1',
-        'mission_goal',
-        firstStepNodeId,
-        modeText === 'active_run' ? 'active' : 'idle',
-      ),
-    );
-  }
   for (let index = 0; index < planSteps.length - 1; index += 1) {
     const sourceStep = planSteps[index];
     const targetStep = planSteps[index + 1];
@@ -406,18 +315,6 @@ export function buildPlanMissionGraph(
         sourceStep.status === 'running' ? 'running' : 'idle',
       ),
     );
-  }
-  if (planSteps.length > 0) {
-    edges.push(
-      makeEdge(
-        'edge_last_step_to_note',
-        toNodeId(planSteps[planSteps.length - 1], planSteps.length - 1),
-        'mission_note',
-        'idle',
-      ),
-    );
-  } else {
-    edges.push(makeEdge('edge_goal_to_note', 'mission_goal', 'mission_note', 'idle'));
   }
 
   const mergedNodes =

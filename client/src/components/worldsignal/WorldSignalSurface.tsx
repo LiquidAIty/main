@@ -12,7 +12,6 @@ import {
   graphGlassPillStyle,
   graphPillButtonStyle,
 } from '../graph/graphVisualTokens';
-import TelescopeOverlay from '../skyview/TelescopeOverlay';
 import type { WorldViewportMode } from '../skyview/types';
 
 type WorldsignalHealth = {
@@ -119,6 +118,7 @@ const WIDGET_CONFIG: ReadonlyArray<WidgetConfig> = [
   { id: 'opportunities', label: 'Opportunities' },
   { id: 'sweepDelta', label: 'Sweep Delta' },
 ] as const;
+const ACTIVE_WORLD_VIEWPORT_MODES = ['globe', 'flat'] as const;
 
 function asArray<T = any>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
@@ -127,6 +127,13 @@ function asArray<T = any>(value: unknown): T[] {
 function compactErrorMessage(error: unknown): string {
   const raw = String(error ?? '').trim();
   return raw || 'unknown_error';
+}
+
+function compactStatusText(value: unknown, limit = 140): string {
+  const normalized = compactErrorMessage(value).replace(/\s+/g, ' ');
+  return normalized.length > limit
+    ? `${normalized.slice(0, limit - 1).trimEnd()}...`
+    : normalized;
 }
 
 function toCount(value: unknown): number {
@@ -292,6 +299,14 @@ export default function WorldSignalSurface(): React.ReactElement {
 
   useEffect(() => {
     rendererRef.current?.setFlatMode(viewportMode === 'flat');
+  }, [viewportMode]);
+
+  useEffect(() => {
+    if (viewportMode !== 'telescope') return;
+    setViewportMode('globe');
+    setLayersOpen(false);
+    setWidgetsOpen(false);
+    setActiveWidgetIds([]);
   }, [viewportMode]);
 
   useEffect(() => {
@@ -463,8 +478,22 @@ export default function WorldSignalSurface(): React.ReactElement {
       : isOnline
         ? 'online'
         : health?.status === 'error' || dataResponse?.status === 'error'
-          ? 'error'
-          : 'offline';
+        ? 'error'
+        : 'offline';
+  const surfaceStatusMessages = useMemo(() => {
+    const messages: string[] = [];
+    if (loading) {
+      messages.push('WorldSignals loading live sources.');
+    } else if (!isOnline) {
+      const detail =
+        health?.error || dataResponse?.error || 'worldsignal sidecar unavailable';
+      messages.push(`WorldSignals offline: ${compactStatusText(detail)}`);
+    }
+    if (runtimeError) {
+      messages.push(`Renderer issue: ${compactStatusText(runtimeError)}`);
+    }
+    return messages;
+  }, [dataResponse?.error, health?.error, isOnline, loading, runtimeError]);
 
   const activeContextOpenWidgets = useMemo(() => {
     return activeWidgetIds.map(
@@ -516,12 +545,12 @@ export default function WorldSignalSurface(): React.ReactElement {
     setActiveWidgetIds((prev) => prev.filter((id) => id !== widgetId));
   };
 
-  const setWorldViewportMode = (nextMode: WorldViewportMode) => {
+  const setWorldViewportMode = (
+    nextMode: (typeof ACTIVE_WORLD_VIEWPORT_MODES)[number],
+  ) => {
     setViewportMode(nextMode);
     setLayersOpen(false);
     setWidgetsOpen(false);
-    if (nextMode !== 'telescope') return;
-    setActiveWidgetIds([]);
   };
 
   const handleZoomIn = () => {
@@ -796,27 +825,25 @@ export default function WorldSignalSurface(): React.ReactElement {
       `}</style>
 
       <div className="crx-main" data-testid="worldsignal-crucix-layout">
-        {viewportMode !== 'telescope' ? (
-          <div
-            data-testid="worldsignal-region-tabs"
-            className="crx-region-bar crx-glass-pill-group"
-            style={graphGlassPillStyle({
-              padding: 6,
-              color: GRAPH_THEME.surface.mutedText,
-            })}
-          >
-            {REGION_TABS.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                className={`crx-region-btn ${tab.id === region ? 'active' : ''}`}
-                onClick={() => setRegion(tab.id)}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        ) : null}
+        <div
+          data-testid="worldsignal-region-tabs"
+          className="crx-region-bar crx-glass-pill-group"
+          style={graphGlassPillStyle({
+            padding: 6,
+            color: GRAPH_THEME.surface.mutedText,
+          })}
+        >
+          {REGION_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`crx-region-btn ${tab.id === region ? 'active' : ''}`}
+              onClick={() => setRegion(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
 
         <section
           ref={(node) => {
@@ -825,16 +852,15 @@ export default function WorldSignalSurface(): React.ReactElement {
           data-testid="worldsignal-globe-viewport"
           className="crx-map"
         >
-          <div className={viewportMode === 'telescope' ? 'crx-map-view telescope-muted' : 'crx-map-view'}>
+          <div className="crx-map-view">
             <RendererMount mountRef={mountRef} />
           </div>
 
-          {viewportMode !== 'telescope' ? (
-            <div
-              className="crx-map-controls crx-glass-control-stack"
-              data-testid="worldsignal-map-controls"
-              style={graphControlStackStyle}
-            >
+          <div
+            className="crx-map-controls crx-glass-control-stack"
+            data-testid="worldsignal-map-controls"
+            style={graphControlStackStyle}
+          >
             <button
               type="button"
               className="crx-ctrl"
@@ -908,20 +934,17 @@ export default function WorldSignalSurface(): React.ReactElement {
             >
               ✈
             </button>
-            </div>
-          ) : null}
+          </div>
 
           <div className="crx-map-hint">
-            {viewportMode === 'telescope'
-              ? 'TELESCOPE · DRAG TO PAN · SCROLL TO ZOOM'
-              : viewportMode === 'flat'
-                ? 'SCROLL TO ZOOM · DRAG TO PAN'
-                : 'DRAG TO ROTATE · SCROLL TO ZOOM'}
+            {viewportMode === 'flat'
+              ? 'SCROLL TO ZOOM · DRAG TO PAN'
+              : 'DRAG TO ROTATE · SCROLL TO ZOOM'}
           </div>
 
           <div className="crx-top-controls">
             <div className="crx-mode-switch" data-testid="worldsignal-mode-switch">
-              {(['globe', 'flat', 'telescope'] as const).map((mode) => (
+              {ACTIVE_WORLD_VIEWPORT_MODES.map((mode) => (
                 <button
                   key={mode}
                   type="button"
@@ -930,53 +953,47 @@ export default function WorldSignalSurface(): React.ReactElement {
                   aria-pressed={viewportMode === mode}
                   onClick={() => setWorldViewportMode(mode)}
                 >
-                  {mode === 'globe' ? 'Globe' : mode === 'flat' ? 'Flat' : 'Telescope'}
+                  {mode === 'globe' ? 'Globe' : 'Flat'}
                 </button>
               ))}
             </div>
-            {viewportMode !== 'telescope' ? (
-              <>
-                <button
-                  type="button"
-                  className="crx-compact-btn"
-                  data-testid="worldsignal-layers-control-button"
-                  style={graphPillButtonStyle({
-                    padding: '7px 10px',
-                    color: layersOpen ? GRAPH_THEME.surface.text : GRAPH_THEME.surface.mutedText,
-                    border: `1px solid ${layersOpen ? GRAPH_THEME.accent.primaryBorder : GRAPH_THEME.controls.border}`,
-                  })}
-                  onClick={() => {
-                    setLayersOpen((prev) => !prev);
-                    setWidgetsOpen(false);
-                  }}
-                >
-                  Layers
-                </button>
-                <button
-                  type="button"
-                  className="crx-compact-btn"
-                  data-testid="worldsignal-widgets-control-button"
-                  style={graphPillButtonStyle({
-                    padding: '7px 10px',
-                    color: widgetsOpen ? GRAPH_THEME.surface.text : GRAPH_THEME.surface.mutedText,
-                    border: `1px solid ${widgetsOpen ? GRAPH_THEME.accent.primaryBorder : GRAPH_THEME.controls.border}`,
-                  })}
-                  onClick={() => {
-                    setWidgetsOpen((prev) => !prev);
-                    setLayersOpen(false);
-                  }}
-                >
-                  Widgets
-                </button>
-              </>
-            ) : null}
+            <>
+              <button
+                type="button"
+                className="crx-compact-btn"
+                data-testid="worldsignal-layers-control-button"
+                style={graphPillButtonStyle({
+                  padding: '7px 10px',
+                  color: layersOpen ? GRAPH_THEME.surface.text : GRAPH_THEME.surface.mutedText,
+                  border: `1px solid ${layersOpen ? GRAPH_THEME.accent.primaryBorder : GRAPH_THEME.controls.border}`,
+                })}
+                onClick={() => {
+                  setLayersOpen((prev) => !prev);
+                  setWidgetsOpen(false);
+                }}
+              >
+                Layers
+              </button>
+              <button
+                type="button"
+                className="crx-compact-btn"
+                data-testid="worldsignal-widgets-control-button"
+                style={graphPillButtonStyle({
+                  padding: '7px 10px',
+                  color: widgetsOpen ? GRAPH_THEME.surface.text : GRAPH_THEME.surface.mutedText,
+                  border: `1px solid ${widgetsOpen ? GRAPH_THEME.accent.primaryBorder : GRAPH_THEME.controls.border}`,
+                })}
+                onClick={() => {
+                  setWidgetsOpen((prev) => !prev);
+                  setLayersOpen(false);
+                }}
+              >
+                Widgets
+              </button>
+            </>
           </div>
 
-          {viewportMode === 'telescope' ? (
-            <TelescopeOverlay />
-          ) : null}
-
-          {viewportMode !== 'telescope' && layersOpen ? (
+          {layersOpen ? (
             <div
               className="crx-compact-panel"
               data-testid="worldsignal-layers-control-panel"
@@ -1003,7 +1020,7 @@ export default function WorldSignalSurface(): React.ReactElement {
             </div>
           ) : null}
 
-          {viewportMode !== 'telescope' && widgetsOpen ? (
+          {widgetsOpen ? (
             <div
               className="crx-compact-panel"
               data-testid="worldsignal-widgets-control-panel"
@@ -1027,28 +1044,37 @@ export default function WorldSignalSurface(): React.ReactElement {
             </div>
           ) : null}
 
-          {viewportMode !== 'telescope' && loading ? (
-            <div className="crx-overlay" data-testid="worldsignal-loading">
-              <div className="crx-overlay-title">Preparing World View</div>
-              <div className="crx-overlay-text">Initializing source status and live signals.</div>
+          {surfaceStatusMessages.length > 0 ? (
+            <div
+              data-testid="worldsignal-surface-status"
+              style={{
+                position: 'absolute',
+                right: 12,
+                bottom: 12,
+                zIndex: 8,
+                display: 'grid',
+                gap: 6,
+                justifyItems: 'end',
+              }}
+            >
+              {surfaceStatusMessages.map((message, index) => (
+                <div
+                  key={`${message}-${index}`}
+                  style={graphGlassPillStyle({
+                    fontSize: 11,
+                    padding: '6px 8px',
+                    maxWidth: 360,
+                    lineHeight: 1.35,
+                    color: GRAPH_THEME.surface.mutedText,
+                  })}
+                >
+                  {message}
+                </div>
+              ))}
             </div>
           ) : null}
 
-          {viewportMode !== 'telescope' && !loading && !isOnline ? (
-            <div className="crx-overlay" data-testid="worldsignal-offline">
-              <div className="crx-overlay-title">World view is offline</div>
-              <div className="crx-overlay-text">Start the worldsignal sidecar to view signals.</div>
-            </div>
-          ) : null}
-
-          {viewportMode !== 'telescope' && runtimeError ? (
-            <div className="crx-overlay" data-testid="worldsignal-runtime-error">
-              <div className="crx-overlay-title">Renderer runtime issue</div>
-              <div className="crx-overlay-text">{runtimeError}</div>
-            </div>
-          ) : null}
-
-          {viewportMode !== 'telescope' ? <div className="crx-widget-stack">
+          <div className="crx-widget-stack">
             {activeWidgetIds.map((widgetId) => {
               const widget = WIDGET_CONFIG.find((entry) => entry.id === widgetId);
               if (!widget) return null;
@@ -1073,9 +1099,9 @@ export default function WorldSignalSurface(): React.ReactElement {
                 </section>
               );
             })}
-          </div> : null}
+          </div>
 
-          {viewportMode !== 'telescope' ? <div className="crx-context" data-testid="worldsignal-active-context">
+          <div className="crx-context" data-testid="worldsignal-active-context">
             <span>open: {activeContextOpenWidgets.length ? activeContextOpenWidgets.join(', ') : 'none'}</span>
             <span>
               layers: {visibleLayerIds.length}/{WORLD_SIGNAL_LAYER_CONFIG.length}
@@ -1083,7 +1109,7 @@ export default function WorldSignalSurface(): React.ReactElement {
             <span>selected: {selectedSignalId || 'none'}</span>
             <span>mode: {worldViewContext.rendererMode}</span>
             <span>region: {worldViewContext.selectedRegion}</span>
-          </div> : null}
+          </div>
 
           <div
             data-testid="worldsignal-context-contract"
