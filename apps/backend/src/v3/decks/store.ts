@@ -105,6 +105,25 @@ function cleanOptionalBoolean(value: unknown): boolean | null {
   return typeof value === 'boolean' ? value : null;
 }
 
+function validateDeckIntegrityTransition(
+  currentDeck: DeckDocument | null,
+  nextDeck: DeckDocument,
+  options?: {
+    removedNodeIds?: string[];
+  },
+) {
+  if (!currentDeck || currentDeck.nodes.length === 0) return;
+  if (nextDeck.nodes.length === 0) {
+    throw new Error('deck_integrity_empty_nodes_blocked');
+  }
+  const nextNodeIds = new Set(nextDeck.nodes.map((node) => node.id));
+  const removedNodeIds = currentDeck.nodes
+    .map((node) => node.id)
+    .filter((nodeId) => !nextNodeIds.has(nodeId));
+  if (removedNodeIds.length <= 1) return;
+  throw new Error('deck_integrity_multi_node_reduction_blocked');
+}
+
 function normalizeDeckEdgeMetadata(value: unknown): DeckEdgeMetadata | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Record<string, unknown>;
@@ -428,6 +447,8 @@ export async function saveDeckDocument(
   document: DeckDocument,
   options?: {
     expectedRevision?: string | null;
+    reason?: string | null;
+    removedNodeIds?: string[];
   },
 ): Promise<{
   deck: DeckDocument;
@@ -449,6 +470,9 @@ export async function saveDeckDocument(
     if (expectedRevision && currentDeckMeta?.revision !== expectedRevision) {
       throw new Error('deck_conflict');
     }
+    validateDeckIntegrityTransition(currentDeck, nextDeck, {
+      removedNodeIds: options?.removedNodeIds ?? [],
+    });
     return {
       ...blob,
       decks: {
@@ -495,5 +519,37 @@ export async function saveDeckRun(
   });
   return {
     meta: buildDeckResponseMeta(nextBlob, deckId),
+  };
+}
+
+export async function deleteDeckDocument(
+  projectId: string,
+  deckId: string,
+): Promise<{
+  deleted: boolean;
+}> {
+  const nextBlob = await writeV3ProjectBlobCas(projectId, (blob) => {
+    if (!blob.decks[deckId]) {
+      return blob;
+    }
+    const nextDecks = { ...blob.decks };
+    const nextDeckRuns = { ...blob.deckRuns };
+    const nextDeckMeta = { ...blob.meta.decks };
+    delete nextDecks[deckId];
+    delete nextDeckRuns[deckId];
+    delete nextDeckMeta[deckId];
+    return {
+      ...blob,
+      decks: nextDecks,
+      deckRuns: nextDeckRuns,
+      meta: {
+        ...cloneBlobMeta(blob.meta),
+        decks: nextDeckMeta,
+      },
+    };
+  });
+
+  return {
+    deleted: !(deckId in nextBlob.decks),
   };
 }

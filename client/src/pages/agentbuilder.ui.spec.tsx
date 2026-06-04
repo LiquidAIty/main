@@ -445,21 +445,21 @@ beforeEach(() => {
             ? input.toString()
             : input.url;
 
-      if (url === "/api/v2/projects") {
+      if (url === "/api/projects") {
         return jsonResponse({
           projects: [ASSIST_PROJECT, AGENT_PROJECT],
         });
       }
 
-      if (url === `/api/v3/projects/${ASSIST_PROJECT.id}/decks/deck_builder`) {
+      if (url === `/api/projects/${ASSIST_PROJECT.id}/decks/deck_builder`) {
         return jsonResponse(buildDeckLoadResponse("Loaded chat state"));
       }
 
-      if (url === `/api/v3/projects/${AGENT_PROJECT.id}/decks/deck_builder`) {
+      if (url === `/api/projects/${AGENT_PROJECT.id}/decks/deck_builder`) {
         return jsonResponse(buildDeckLoadResponse("Loaded chat state"));
       }
 
-      if (url === `/api/v3/projects/${ASSIST_PROJECT.id}/decks/run?stream=1`) {
+      if (url === `/api/projects/${ASSIST_PROJECT.id}/decks/deck_builder/run?stream=1`) {
         const body = init?.body ? JSON.parse(String(init.body)) : {};
         deckRunRequests.push(body);
         return jsonResponse({
@@ -533,7 +533,7 @@ beforeEach(() => {
         });
       }
 
-      if (url.startsWith(`/api/v2/projects/${ASSIST_PROJECT.id}/kg/query?`)) {
+      if (url.startsWith(`/api/projects/${ASSIST_PROJECT.id}/kg/query?`)) {
         return jsonResponse({ ok: true, cypher: "MATCH (n) RETURN n", rows: [] });
       }
 

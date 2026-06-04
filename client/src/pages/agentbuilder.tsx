@@ -1875,8 +1875,7 @@ export function buildSingleCardRunDocument(
 }
 
 const uid = () => Math.random().toString(36).slice(2, 8);
-const V2_PROJECTS_API = '/api/v2/projects';
-const V3_PROJECTS_API = '/api/v3/projects';
+const PROJECTS_API = '/api/projects';
 const EMPTY_PROJECT_STATE = {
   messages: [] as { role: 'assistant' | 'user'; text: string }[],
   plan: [] as PlanItem[],
@@ -2889,44 +2888,7 @@ export const INITIAL_DECK: DeckDocument = {
     },
     ...buildUaAgentSeedNodes(),
   ],
-  edges: [
-    {
-      id: 'edge_magentic_plan',
-      source: 'card_magentic',
-      target: 'card_plan_agent',
-      edgeType: 'magentic_option',
-    },
-    {
-      id: 'edge_magentic_local_coder',
-      source: 'card_magentic',
-      target: 'card_local_coder',
-      edgeType: 'magentic_option',
-    },
-    {
-      id: 'edge_magentic_thinkgraph',
-      source: 'card_magentic',
-      target: 'card_thinkgraph_agent',
-      edgeType: 'magentic_option',
-    },
-    {
-      id: 'edge_magentic_knowgraph',
-      source: 'card_magentic',
-      target: 'card_knowgraph_agent',
-      edgeType: 'magentic_option',
-    },
-    {
-      id: 'edge_magentic_research_agent',
-      source: 'card_magentic',
-      target: 'card_research_agent',
-      edgeType: 'magentic_option',
-    },
-    {
-      id: 'edge_magentic_codegraph',
-      source: 'card_magentic',
-      target: 'card_codegraph_agent',
-      edgeType: 'magentic_option',
-    },
-  ],
+  edges: [],
 };
 
 const BUILDER_DECK_ID = INITIAL_DECK.id;
@@ -3147,29 +3109,7 @@ function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
   );
   if (collapsedUaNodes.length === 0) return [];
 
-  const existingIds = new Set(collapsedUaNodes.map((node) => node.id));
-  const existingTemplateIds = new Set(
-    collapsedUaNodes.map((node) => node.templateId),
-  );
-  const appendedNodes = INITIAL_DECK.nodes
-    .filter(
-      (node) =>
-        BASELINE_OPTIONAL_CARD_IDS.has(node.id) ||
-        UA_UI_AGENT_CARD_IDS.has(node.id),
-    )
-    .filter((node) => {
-      if (existingIds.has(node.id)) return false;
-      if (
-        UA_UI_AGENT_CARD_IDS.has(node.id) &&
-        UA_UI_AGENT_TEMPLATE_IDS.has(node.templateId) &&
-        existingTemplateIds.has(node.templateId)
-      ) {
-        return false;
-      }
-      return true;
-    })
-    .map((node) => cloneDeckDocument(node));
-  return [...collapsedUaNodes, ...appendedNodes];
+  return collapsedUaNodes;
 }
 
 function normalizeDeckPromptTemplates(value: unknown): PromptTemplate[] {
@@ -3517,7 +3457,6 @@ function formatBuilderStatusMessage(
 function seedCurrentSystemCardsIntoLegacyDeck(
   deck: DeckDocument,
 ): DeckDocument {
-  const defaultNodeIds = new Set(INITIAL_DECK.nodes.map((node) => node.id));
   const legacyCompatibleNodeIds = new Set([
     ...Array.from(LEGACY_SYSTEM_CARD_IDS),
     ...Array.from(BASELINE_OPTIONAL_CARD_IDS),
@@ -3527,15 +3466,7 @@ function seedCurrentSystemCardsIntoLegacyDeck(
     deck.nodes.some((node) => LEGACY_SYSTEM_CARD_IDS.has(node.id)) &&
     deck.nodes.every((node) => legacyCompatibleNodeIds.has(node.id));
   void hasOnlyLegacySystemNodes;
-  const hasOnlySystemNodes =
-    deck.nodes.length > 0 &&
-    deck.nodes.every((node) => defaultNodeIds.has(node.id));
-  const isExactSystemDeckShape =
-    hasOnlySystemNodes && deck.nodes.length === defaultNodeIds.size;
-  const isPartialSystemDeckShape =
-    hasOnlySystemNodes && deck.nodes.length < defaultNodeIds.size;
-
-  if (!isExactSystemDeckShape && !isPartialSystemDeckShape) {
+  if (!hasOnlyLegacySystemNodes) {
     return deck;
   }
 
@@ -3658,71 +3589,22 @@ export function hydrateDeckDocument(
       (template) => !bannedPromptTemplateIds.has(template.id),
     ),
   };
-  const hasTopLevelMagentic = baseDeck.nodes.some(
-    (node) =>
-      normalizeRuntimeType(node.runtimeType) === 'magentic_one' &&
-      !String(node.parentGraphId || '').trim(),
-  );
-  if (hasTopLevelMagentic) {
-    return baseDeck;
-  }
-  const seedMagentic = INITIAL_DECK.nodes.find(
-    (node) =>
-      normalizeRuntimeType(node.runtimeType) === 'magentic_one' &&
-      !String(node.parentGraphId || '').trim(),
-  );
-  if (!seedMagentic) return baseDeck;
-  return {
-    ...baseDeck,
-    nodes: [...baseDeck.nodes, { ...seedMagentic }],
-  };
-}
-
-function isTruncatedSystemDeckPayload(
-  deckPayload: Partial<DeckDocument>,
-): boolean {
-  if (!Array.isArray(deckPayload.nodes)) {
-    return false;
-  }
-
-  const canonicalNodeIds = new Set(INITIAL_DECK.nodes.map((node) => node.id));
-  const nodeIds = deckPayload.nodes
-    .map((node) => safeText((node as { id?: unknown } | null)?.id).trim())
-    .filter(Boolean);
-
-  if (nodeIds.length === 0) {
-    return false;
-  }
-
-  return (
-    nodeIds.length < canonicalNodeIds.size &&
-    nodeIds.every((nodeId) => canonicalNodeIds.has(nodeId))
-  );
+  return baseDeck;
 }
 
 export function resolveProjectDeckPayload(
   deckPayload: Partial<DeckDocument> | null | undefined,
-): { deck: DeckDocument; usedFallback: boolean; displayFallbackOnly: boolean } {
+): { deck: DeckDocument; usedFallback: boolean } {
   if (!deckPayload || typeof deckPayload !== 'object') {
     return {
       deck: hydrateDeckDocument(INITIAL_DECK),
       usedFallback: true,
-      displayFallbackOnly: false,
-    };
-  }
-
-  if (isTruncatedSystemDeckPayload(deckPayload)) {
-    return {
-      deck: hydrateDeckDocument(deckPayload),
-      usedFallback: true,
-      displayFallbackOnly: true,
     };
   }
 
   return {
     deck: hydrateDeckDocument(deckPayload),
     usedFallback: false,
-    displayFallbackOnly: false,
   };
 }
 
@@ -3734,14 +3616,12 @@ export function resolveProjectDeckLoadResult(
   deck: DeckDocument;
   usedFallback: boolean;
   preservedCurrent: boolean;
-  displayFallbackOnly: boolean;
 } {
   if (preserveCurrentOnFailure) {
     return {
       deck: cloneDeckDocument(currentDeck),
       usedFallback: false,
       preservedCurrent: true,
-      displayFallbackOnly: false,
     };
   }
 
@@ -3750,6 +3630,17 @@ export function resolveProjectDeckLoadResult(
     ...resolved,
     preservedCurrent: false,
   };
+}
+
+function buildProjectlessDeckDocument(): DeckDocument {
+  return hydrateDeckDocument({
+    id: INITIAL_DECK.id,
+    name: INITIAL_DECK.name,
+    version: INITIAL_DECK.version,
+    promptTemplates: INITIAL_DECK.promptTemplates,
+    nodes: [],
+    edges: [],
+  });
 }
 
 function resolveAgentTemplate(
@@ -4868,7 +4759,11 @@ export default function AgentBuilder(): React.ReactElement {
     | 'data-formulator'
     | 'worldsignal'
     | UaAgentSurfaceId
-  >('chat');
+  >(() =>
+    new URLSearchParams(window.location.search).get('projectId')
+      ? 'canvas'
+      : 'chat',
+  );
   const {
     activeProject,
     assistProjects,
@@ -4877,19 +4772,28 @@ export default function AgentBuilder(): React.ReactElement {
     setActiveProjectWithUrl,
     refreshProjects,
   } = useBuilderProjects({
-    projectsApi: V2_PROJECTS_API,
+    projectsApi: PROJECTS_API,
     workspaceView,
   });
   const [objectDrawerOpen, setObjectDrawerOpen] = useState(false);
   const [chatPanelWidth, setChatPanelWidth] = useState(420);
   const [chatResizeHandleActive, setChatResizeHandleActive] = useState(false);
+  const [chatResizeDragging, setChatResizeDragging] = useState(false);
   const workspaceShellRef = useRef<HTMLDivElement | null>(null);
+  const chatResizeSessionRef = useRef<{
+    startX: number;
+    startWidth: number;
+    pendingWidth: number;
+    reservedWidth: number;
+  } | null>(null);
+  const chatResizeFrameRef = useRef<number | null>(null);
+  const canvasAutoOpenedForProjectRef = useRef(false);
   const [moonPhase01, setMoonPhase01] = useState(() =>
     synodicPhaseFromDate(new Date()),
   );
   const canvasProjectId = cleanOptionalText(activeProject) ?? '';
   const [deck, setDeckState] = useState<DeckDocument>(() =>
-    hydrateDeckDocument(INITIAL_DECK),
+    buildProjectlessDeckDocument(),
   );
   const [pendingActivationProposal, setPendingActivationProposal] =
     useState<ActivationProposalState | null>(null);
@@ -5014,6 +4918,22 @@ export default function AgentBuilder(): React.ReactElement {
   } | null>(null);
   const [planNodeDrafts, setPlanNodeDrafts] =
     useState<PlanMissionNodeOverrideMap>({});
+
+  useEffect(() => {
+    if (!canvasProjectId) {
+      canvasAutoOpenedForProjectRef.current = false;
+      return;
+    }
+    if (workspaceView !== 'chat') {
+      canvasAutoOpenedForProjectRef.current = true;
+      return;
+    }
+    if (canvasAutoOpenedForProjectRef.current) {
+      return;
+    }
+    canvasAutoOpenedForProjectRef.current = true;
+    setWorkspaceView('canvas');
+  }, [canvasProjectId, workspaceView]);
   const workspacePanelAlreadyOpen = Boolean(
     (objectDrawerOpen && (selectedCardId || planMissionFocus?.nodeId)) ||
     selectedKnowledgeEntityId ||
@@ -5033,9 +4953,7 @@ export default function AgentBuilder(): React.ReactElement {
   const [deckStatusMessage, setDeckStatusMessage] = useState<string | null>(
     null,
   );
-  const [deckUsingDisplayFallback, setDeckUsingDisplayFallback] =
-    useState(false);
-
+  const [deckLoadError, setDeckLoadError] = useState<string | null>(null);
   const [tab, setTab] = useState<string>('Canvas');
   const [openDrawer, setOpenDrawer] = useState<null | 'navigation'>(null);
   const [showCreateProjectForm, setShowCreateProjectForm] = useState(false);
@@ -5227,6 +5145,10 @@ export default function AgentBuilder(): React.ReactElement {
   const lastBuilderUiOnlyActionRef = useRef<string | null>(null);
   const lastBuilderDeckFingerprintRef = useRef<string | null>(null);
   const lastPersistedBoardFingerprintRef = useRef<string | null>(null);
+  const lastPersistedBoardSnapshotRef = useRef<{
+    nodes: AgentCardInstance[];
+    edges: DeckEdge[];
+  } | null>(null);
   const layoutAutosaveAbortRef = useRef<AbortController | null>(null);
   const lastDeckPersistReasonRef = useRef<string | null>(null);
 
@@ -5245,6 +5167,50 @@ export default function AgentBuilder(): React.ReactElement {
       lastBuilderUiOnlyActionRef.current = action;
     },
     [BUILDER_DEV],
+  );
+
+  const snapshotDeckBoard = useCallback(
+    (document: DeckDocument) => ({
+      nodes: cloneDeckDocument(document.nodes),
+      edges: cloneDeckDocument(document.edges),
+    }),
+    [],
+  );
+
+  const evaluateBoardIntegrityForSave = useCallback(
+    (nextDeck: DeckDocument, reason: string) => {
+      const lastPersisted = lastPersistedBoardSnapshotRef.current;
+      if (!lastPersisted) {
+        return {
+          ok: true,
+          removedNodeIds: [] as string[],
+        };
+      }
+      const nextNodeIds = new Set(nextDeck.nodes.map((node) => node.id));
+      const removedNodeIds = lastPersisted.nodes
+        .map((node) => node.id)
+        .filter((nodeId) => !nextNodeIds.has(nodeId));
+      if (lastPersisted.nodes.length > 0 && nextDeck.nodes.length === 0) {
+        return {
+          ok: false,
+          removedNodeIds,
+          message:
+            'Blocked saving an empty board because the previous saved deck still had nodes.',
+        };
+      }
+      if (removedNodeIds.length > 1) {
+        return {
+          ok: false,
+          removedNodeIds,
+          message: `Blocked saving a partial board because ${removedNodeIds.length} nodes disappeared during ${reason}.`,
+        };
+      }
+      return {
+        ok: true,
+        removedNodeIds,
+      };
+    },
+    [],
   );
 
   const setDeck = useCallback<
@@ -5276,10 +5242,10 @@ export default function AgentBuilder(): React.ReactElement {
 
   useEffect(() => {
     if (!canvasProjectId) {
-      recordDeckWriteReason('builder-reset');
-      setDeck(hydrateDeckDocument(INITIAL_DECK));
+      recordDeckWriteReason('builder-await-project');
+      setDeck(buildProjectlessDeckDocument());
       setDeckRevision(null);
-      setDeckUsingDisplayFallback(false);
+      setDeckLoadError(null);
       setLatestDeckRun(null);
       setLatestCardRun(null);
       setLiveDeckEvents([]);
@@ -5294,15 +5260,15 @@ export default function AgentBuilder(): React.ReactElement {
 
     const controller = new AbortController();
     const deckRefreshStartedAt = Date.now();
-    let usedDisplayFallback = false;
     setDeckLoadBusy(true);
+    setDeckLoadError(null);
     setStateLoaded(false);
     setDeckRevision(null);
     setDeckStatusMessage('Loading canvas...');
 
     void (async () => {
       try {
-        const endpoint = `${V3_PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}`;
+        const endpoint = `${PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}`;
         const payload = await guardedRequest({
           key: `v3-deck:${canvasProjectId}:${BUILDER_DECK_ID}`,
           method: 'GET',
@@ -5335,13 +5301,12 @@ export default function AgentBuilder(): React.ReactElement {
           nodes: loadResult.deck.nodes,
           edges: loadResult.deck.edges,
         });
+        lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(loadResult.deck);
         setDeckRevision(
           typeof payload.data?.meta?.deckRevision === 'string'
             ? payload.data.meta.deckRevision
             : null,
         );
-        setDeckUsingDisplayFallback(loadResult.displayFallbackOnly);
-        usedDisplayFallback = loadResult.displayFallbackOnly;
         const persistedLatestRun =
           payload.data?.latestRun && typeof payload.data.latestRun === 'object'
             ? (payload.data.latestRun as DeckRun)
@@ -5362,33 +5327,22 @@ export default function AgentBuilder(): React.ReactElement {
         setPlan(continuity.plan);
         setLinks(continuity.links);
         setStateLoaded(true);
+        setDeckLoadError(null);
         setDeckStatusMessage(
-          loadResult.displayFallbackOnly
-            ? 'Showing the canonical chain as a temporary fallback for a truncated saved canvas.'
-            : loadResult.usedFallback
-              ? 'Using default canvas.'
-              : 'Canvas loaded.',
+          loadResult.usedFallback ? 'Using default canvas.' : 'Canvas loaded.',
         );
         console.info('[builder][deck-load-proof]', {
           projectId: canvasProjectId,
           deckId: BUILDER_DECK_ID,
           reason: 'deck-load',
           source: loadResult.usedFallback ? 'fallback' : 'backend_saved_deck',
-          displayFallbackOnly: loadResult.displayFallbackOnly,
           nodeCount: loadResult.deck.nodes.length,
           edgeCount: loadResult.deck.edges.length,
           revision: typeof payload.data?.meta?.deckRevision === 'string' ? payload.data.meta.deckRevision : null,
         });
       } catch (err: any) {
         if (controller.signal.aborted) return;
-        recordDeckWriteReason('deck-load-default-error');
-        const fallbackDeck = hydrateDeckDocument(INITIAL_DECK);
-        setDeck(fallbackDeck);
-        lastPersistedBoardFingerprintRef.current = JSON.stringify({
-          nodes: fallbackDeck.nodes,
-          edges: fallbackDeck.edges,
-        });
-        setDeckUsingDisplayFallback(false);
+        recordDeckWriteReason('deck-load-error');
         const next = loadProjectState(canvasProjectId);
         setLatestDeckRun(null);
         setLatestCardRun(null);
@@ -5400,9 +5354,12 @@ export default function AgentBuilder(): React.ReactElement {
         setPlan([...next.plan]);
         setLinks([...next.links]);
         setStateLoaded(true);
-        setDeckStatusMessage(
-          formatBuilderStatusMessage(err?.message, 'Using default canvas.'),
+        const loadErrorMessage = formatBuilderStatusMessage(
+          err?.message,
+          'Canvas data could not be loaded.',
         );
+        setDeckLoadError(loadErrorMessage);
+        setDeckStatusMessage(loadErrorMessage);
       } finally {
         if (!controller.signal.aborted) {
           const completedAt = Date.now();
@@ -5412,7 +5369,6 @@ export default function AgentBuilder(): React.ReactElement {
             metadata: {
               graphType: 'agent',
               source: 'deck_load',
-              usedDisplayFallback,
             },
           });
           recordPostResponseRefreshIfPending('agent_graph', completedAt);
@@ -5429,6 +5385,7 @@ export default function AgentBuilder(): React.ReactElement {
     recordDeckWriteReason,
     recordPostResponseRefreshIfPending,
     canvasProjectId,
+    snapshotDeckBoard,
   ]);
 
   useEffect(() => {
@@ -5446,8 +5403,7 @@ export default function AgentBuilder(): React.ReactElement {
   }, [canvasProjectId]);
 
   useEffect(() => {
-    if (!canvasProjectId || !stateLoaded || deckLoadBusy) return;
-    if (deckUsingDisplayFallback) return;
+    if (!canvasProjectId || !stateLoaded || deckLoadBusy || deckLoadError) return;
     const boardFingerprint = JSON.stringify({
       nodes: deck.nodes,
       edges: deck.edges,
@@ -5456,6 +5412,23 @@ export default function AgentBuilder(): React.ReactElement {
 
     const timer = window.setTimeout(() => {
       const reason = lastDeckPersistReasonRef.current || 'board-autosave';
+      const integrity = evaluateBoardIntegrityForSave(deck, reason);
+      if (!integrity.ok) {
+        setDeckStatusMessage(integrity.message);
+        console.warn('[builder][deck-save-proof]', {
+          projectId: canvasProjectId,
+          deckId: BUILDER_DECK_ID,
+          reason,
+          nodeCount: deck.nodes.length,
+          edgeCount: deck.edges.length,
+          revisionBefore: deckRevision,
+          revisionAfter: null,
+          ok: false,
+          error: 'deck_integrity_blocked',
+          removedNodeIds: integrity.removedNodeIds,
+        });
+        return;
+      }
       const revisionBefore = deckRevision;
       const controller = new AbortController();
       layoutAutosaveAbortRef.current?.abort();
@@ -5463,7 +5436,7 @@ export default function AgentBuilder(): React.ReactElement {
       void (async () => {
         try {
           const response = await fetch(
-            `${V3_PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}`,
+            `${PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}`,
             {
               method: 'PUT',
               headers: {
@@ -5475,12 +5448,23 @@ export default function AgentBuilder(): React.ReactElement {
                   id: BUILDER_DECK_ID,
                 },
                 expectedRevision: deckRevision,
+                integrity: {
+                  reason,
+                  removedNodeIds: integrity.removedNodeIds,
+                },
               }),
               signal: controller.signal,
             },
           );
           const data = await safeJson(response);
           if (!response.ok) {
+            const errorMessage = safeText(data?.error || 'deck_save_failed');
+            if (errorMessage === 'deck_conflict') {
+              setDeckRevision(null);
+            }
+            setDeckStatusMessage(
+              formatBuilderStatusMessage(errorMessage, 'Could not save the current board.'),
+            );
             console.warn('[builder][deck-save-proof]', {
               projectId: canvasProjectId,
               deckId: BUILDER_DECK_ID,
@@ -5490,11 +5474,11 @@ export default function AgentBuilder(): React.ReactElement {
               revisionBefore,
               revisionAfter: null,
               ok: false,
-              error: safeText(data?.error || 'deck_save_failed'),
+              error: errorMessage,
             });
             if (BUILDER_DEV) {
               console.warn('[builder] layout autosave failed', {
-                error: safeText(data?.error || 'deck_save_failed'),
+                error: errorMessage,
               });
             }
             return;
@@ -5507,6 +5491,7 @@ export default function AgentBuilder(): React.ReactElement {
             setDeckRevision(data.meta.deckRevision);
           }
           lastPersistedBoardFingerprintRef.current = boardFingerprint;
+          lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(deck);
           console.info('[builder][deck-save-proof]', {
             projectId: canvasProjectId,
             deckId: BUILDER_DECK_ID,
@@ -5519,6 +5504,12 @@ export default function AgentBuilder(): React.ReactElement {
           });
         } catch (error) {
           if (isAbortLikeError(error)) return;
+          setDeckStatusMessage(
+            formatBuilderStatusMessage(
+              (error as any)?.message,
+              'Could not save the current board.',
+            ),
+          );
           console.warn('[builder][deck-save-proof]', {
             projectId: canvasProjectId,
             deckId: BUILDER_DECK_ID,
@@ -5543,9 +5534,11 @@ export default function AgentBuilder(): React.ReactElement {
     BUILDER_DEV,
     canvasProjectId,
     deck,
+    deckLoadError,
     deckLoadBusy,
     deckRevision,
-    deckUsingDisplayFallback,
+    evaluateBoardIntegrityForSave,
+    snapshotDeckBoard,
     stateLoaded,
   ]);
 
@@ -6138,7 +6131,6 @@ export default function AgentBuilder(): React.ReactElement {
       deckRevision,
       deckRunInput,
       deckSaveAbortRef,
-      deckUsingDisplayFallback,
       deckValidation,
       effectiveAgent,
       formatBuilderStatusMessage,
@@ -6157,7 +6149,7 @@ export default function AgentBuilder(): React.ReactElement {
       setLiveDeckEvents,
       templates: INITIAL_AGENT_TEMPLATES,
       uid,
-      v3ProjectsApi: V3_PROJECTS_API,
+      projectsApi: PROJECTS_API,
       activeProjectLatestRef,
       recordDeckWriteReason,
       onDeckPersistProof: (entry) => {
@@ -6166,6 +6158,7 @@ export default function AgentBuilder(): React.ReactElement {
             nodes: deck.nodes,
             edges: deck.edges,
           });
+          lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(deck);
         }
         console.info('[builder][deck-save-proof]', entry);
       },
@@ -7236,7 +7229,7 @@ export default function AgentBuilder(): React.ReactElement {
         if (opts?.manageLoading !== false) setGraphLoading(true);
       }
       try {
-        const endpoint = `/api/v2/projects/${projectId}/kg/query`;
+        const endpoint = `${PROJECTS_API}/${projectId}/kg/query`;
         const requestParams = { projectId, ...(opts?.queryParams || {}) };
         const requestBody = JSON.stringify({
           cypher: q,
@@ -7378,7 +7371,7 @@ export default function AgentBuilder(): React.ReactElement {
         setGraphLoading(true);
       }
       try {
-        const endpoint = `/api/v2/projects/${projectId}/kg/query?${search.toString()}`;
+        const endpoint = `${PROJECTS_API}/${projectId}/kg/query?${search.toString()}`;
         const payload = await guardedRequest({
           key: `kg:get:${endpoint}`,
           method: 'GET',
@@ -8094,7 +8087,7 @@ export default function AgentBuilder(): React.ReactElement {
         return;
       }
       try {
-        const endpoint = `${V2_PROJECTS_API}/${projectId}/kg/last-trace`;
+        const endpoint = `${PROJECTS_API}/${projectId}/kg/last-trace`;
         const payload = await guardedRequest({
           key: `dashboard:last-trace:${projectId}`,
           method: 'GET',
@@ -8210,7 +8203,7 @@ export default function AgentBuilder(): React.ReactElement {
       }
       try {
         const data = await streamDeckRunRequest({
-          endpoint: `${V3_PROJECTS_API}/${canvasProjectId}/decks/run`,
+          endpoint: `${PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}/run`,
           body: {
             deckId: BUILDER_DECK_ID,
             document: { ...singleCardDeck, id: BUILDER_DECK_ID },
@@ -8576,7 +8569,7 @@ export default function AgentBuilder(): React.ReactElement {
 
     void (async () => {
       try {
-        const endpoint = `${V3_PROJECTS_API}/${requestProjectId}/decks/run`;
+        const endpoint = `${PROJECTS_API}/${requestProjectId}/decks/${BUILDER_DECK_ID}/run`;
         const data = await streamDeckRunRequest({
           endpoint,
           body: {
@@ -8957,7 +8950,7 @@ export default function AgentBuilder(): React.ReactElement {
     const projectType = 'assist';
 
     try {
-      const res = await fetch(V2_PROJECTS_API, {
+      const res = await fetch(PROJECTS_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -8971,7 +8964,9 @@ export default function AgentBuilder(): React.ReactElement {
         throw new Error(text || `HTTP ${res.status}`);
       }
       const data = await res.json().catch(() => null);
-      const newId = (data && data.id) || '';
+      const newId =
+        (data?.project && typeof data.project === 'object' && String(data.project.id || '').trim()) ||
+        String(data?.id || '').trim();
 
       setShowCreateProjectForm(false);
       setNewProjectName('');
@@ -9021,6 +9016,75 @@ export default function AgentBuilder(): React.ReactElement {
     },
     [],
   );
+
+  const finishChatResize = useCallback(
+    (mode: 'commit' | 'cancel') => {
+      const session = chatResizeSessionRef.current;
+      if (!session) return;
+      chatResizeSessionRef.current = null;
+      setChatResizeDragging(false);
+      setChatResizeHandleActive(false);
+      if (chatResizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(chatResizeFrameRef.current);
+        chatResizeFrameRef.current = null;
+      }
+      if (mode === 'cancel') {
+        setChatPanelWidth(session.startWidth);
+        return;
+      }
+      setChatPanelWidth(session.pendingWidth);
+      const maxWidth = resolveAgentsChatMaxWidth(session.reservedWidth);
+      if (session.pendingWidth >= maxWidth - WORKSPACE_COLLAPSE_EDGE_PX) {
+        setWorkspaceView('chat');
+      }
+    },
+    [resolveAgentsChatMaxWidth],
+  );
+
+  useEffect(() => {
+    if (!chatResizeDragging) return;
+    const handleMouseMove = (event: MouseEvent) => {
+      const session = chatResizeSessionRef.current;
+      if (!session) return;
+      const delta = event.clientX - session.startX;
+      session.pendingWidth = clampAgentsChatWidth(
+        session.startWidth + delta,
+        session.reservedWidth,
+      );
+      if (chatResizeFrameRef.current !== null) return;
+      chatResizeFrameRef.current = window.requestAnimationFrame(() => {
+        chatResizeFrameRef.current = null;
+        const activeSession = chatResizeSessionRef.current;
+        if (!activeSession) return;
+        setChatPanelWidth(activeSession.pendingWidth);
+      });
+    };
+    const handleMouseUp = () => finishChatResize('commit');
+    const handleWindowBlur = () => finishChatResize('commit');
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      finishChatResize('cancel');
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [chatResizeDragging, clampAgentsChatWidth, finishChatResize]);
+
+  useEffect(() => {
+    return () => {
+      if (chatResizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(chatResizeFrameRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const reservedWidth =
@@ -9081,21 +9145,33 @@ export default function AgentBuilder(): React.ReactElement {
             height: '100%',
           }}
         >
-          <BuilderCanvas
-            document={deck}
-            setDocument={setDeck}
-            onPersistGraphMutation={recordDeckWriteReason}
-            executionPlan={deckExecutionPlan}
-            activeCardIds={runtimeVisualState.activeCardIds}
-            activeEdgeIds={runtimeVisualState.activeEdgeIds}
-            swarmProgressByCardId={runtimeVisualState.swarmProgressByCardId}
-            selectedCardId={selectedCardId}
-            selectedEdgeId={selectedEdgeId}
-            onSelectCard={handleSelectCard}
-            onSelectEdge={handleSelectEdge}
-            onDeleteSelectedEdge={handleDeleteSelectedEdge}
-            inspectMode={false}
-          />
+          <div
+            style={{
+              height: '100%',
+              minHeight: 0,
+            }}
+          >
+            <BuilderCanvas
+              document={deck}
+              setDocument={setDeck}
+              onPersistGraphMutation={recordDeckWriteReason}
+              presentationViewportKey={
+                surfaceRole === 'large' && workspaceView === 'canvas'
+                  ? chatPanelWidth
+                  : null
+              }
+              executionPlan={deckExecutionPlan}
+              activeCardIds={runtimeVisualState.activeCardIds}
+              activeEdgeIds={runtimeVisualState.activeEdgeIds}
+              swarmProgressByCardId={runtimeVisualState.swarmProgressByCardId}
+              selectedCardId={selectedCardId}
+              selectedEdgeId={selectedEdgeId}
+              onSelectCard={handleSelectCard}
+              onSelectEdge={handleSelectEdge}
+              onDeleteSelectedEdge={handleDeleteSelectedEdge}
+              inspectMode={false}
+            />
+          </div>
         </div>
       </div>
     );
@@ -10086,41 +10162,25 @@ export default function AgentBuilder(): React.ReactElement {
               aria-label="Resize chat panel"
               title="Drag to resize chat"
               onMouseEnter={() => setChatResizeHandleActive(true)}
-              onMouseLeave={() => setChatResizeHandleActive(false)}
+              onMouseLeave={() => {
+                if (!chatResizeDragging) {
+                  setChatResizeHandleActive(false);
+                }
+              }}
               onMouseDown={(e) => {
+                e.preventDefault();
                 setChatResizeHandleActive(true);
-                const sx = e.clientX;
-                const sw = chatPanelWidth;
                 const reservedWidth =
                   workspaceView === 'canvas'
                     ? AGENTS_CANVAS_MIN_WIDTH
                     : WORKSPACE_COMPANION_MIN_WIDTH;
-                let raf = 0;
-                let pendingWidth = sw;
-                const mv = (ev: MouseEvent) => {
-                  const d = ev.clientX - sx;
-                  pendingWidth = clampAgentsChatWidth(sw + d, reservedWidth);
-                  if (raf !== 0) return;
-                  raf = window.requestAnimationFrame(() => {
-                    raf = 0;
-                    setChatPanelWidth(pendingWidth);
-                  });
+                chatResizeSessionRef.current = {
+                  startX: e.clientX,
+                  startWidth: chatPanelWidth,
+                  pendingWidth: chatPanelWidth,
+                  reservedWidth,
                 };
-                const up = () => {
-                  setChatResizeHandleActive(false);
-                  if (raf !== 0) {
-                    window.cancelAnimationFrame(raf);
-                    raf = 0;
-                  }
-                  const maxWidth = resolveAgentsChatMaxWidth(reservedWidth);
-                  if (pendingWidth >= maxWidth - WORKSPACE_COLLAPSE_EDGE_PX) {
-                    setWorkspaceView('chat');
-                  }
-                  window.removeEventListener('mousemove', mv);
-                  window.removeEventListener('mouseup', up);
-                };
-                window.addEventListener('mousemove', mv);
-                window.addEventListener('mouseup', up);
+                setChatResizeDragging(true);
               }}
               style={{
                 width: 10,
@@ -10485,7 +10545,7 @@ export default function AgentBuilder(): React.ReactElement {
                         return;
                       try {
                         const res = await fetch(
-                          `${V2_PROJECTS_API}/${project.id}`,
+                          `${PROJECTS_API}/${project.id}`,
                           { method: 'DELETE' },
                         );
                         if (!res.ok) throw new Error(`HTTP ${res.status}`);

@@ -785,6 +785,7 @@ export default function BuilderCanvas({
   activeEdgeIds = [],
   swarmProgressByCardId = {},
   inspectMode = false,
+  presentationViewportKey = null,
 }: {
   document: DeckDocument;
   setDocument: Dispatch<SetStateAction<DeckDocument>>;
@@ -799,6 +800,7 @@ export default function BuilderCanvas({
   activeEdgeIds?: string[];
   swarmProgressByCardId?: Record<string, { completed: number; total: number }>;
   inspectMode?: boolean;
+  presentationViewportKey?: string | number | null;
 }) {
   const activeCardIdSet = useMemo(() => new Set(activeCardIds), [activeCardIds]);
   const activeEdgeIdSet = useMemo(() => new Set(activeEdgeIds), [activeEdgeIds]);
@@ -834,6 +836,7 @@ export default function BuilderCanvas({
   const [nodes, setNodes] = useNodesState(flowNodes);
   const [edges, setEdges] = useEdgesState(flowEdges);
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const latestDocumentRef = useRef(document);
   const pendingDocumentMutationRef = useRef<((prev: DeckDocument) => DeckDocument) | null>(null);
   const pendingPersistMetaRef = useRef<{ reason: string; detail?: Record<string, unknown> } | null>(null);
   const [pendingDocumentFlushNonce, setPendingDocumentFlushNonce] = useState(0);
@@ -841,6 +844,10 @@ export default function BuilderCanvas({
     () => document.edges.find((edge) => edge.id === selectedEdgeId) || null,
     [document.edges, selectedEdgeId],
   );
+
+  useEffect(() => {
+    latestDocumentRef.current = document;
+  }, [document]);
 
   useEffect(() => {
     setNodes((current) => syncFlowNodesForRender(current, flowNodes));
@@ -865,6 +872,25 @@ export default function BuilderCanvas({
       window.cancelAnimationFrame(frame);
     };
   }, [document, flowNodes.length, reactFlowInstance]);
+
+  useEffect(() => {
+    if (!reactFlowInstance) return;
+    if (!initialViewportAppliedRef.current) return;
+    if (flowNodes.length === 0) return;
+    if (presentationViewportKey == null) return;
+    const frame = window.requestAnimationFrame(() => {
+      const landingViewport = buildPresentationLandingViewport(
+        latestDocumentRef.current,
+        canvasRef.current,
+      );
+      if (landingViewport) {
+        reactFlowInstance.setViewport(landingViewport, { duration: 0 });
+      }
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [flowNodes.length, presentationViewportKey, reactFlowInstance]);
 
   useEffect(() => {
     const pendingMutation = pendingDocumentMutationRef.current;

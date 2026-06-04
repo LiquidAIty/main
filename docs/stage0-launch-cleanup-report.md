@@ -21,6 +21,9 @@ Old feature code remains in the repo and in the canvas ecosystem for reference, 
 - `client/src/config/launchMode.ts` was deleted.
 - `client/src/pages/agentbuilder.tsx` was restored to the pre-launch-mode git baseline, so the builder is no longer running the launch-flag experiment.
 - Old workbench/surface code was kept available so the current board can still be saved with legacy features present.
+- AgentBuilder project/deck runtime now uses the canonical non-versioned `/api/projects/*` path instead of a mixed `/api/v2/projects` + `/api/v3/projects` split.
+- The canvas no longer uses giant roadsign banners to explain missing project state.
+- The saved project deck path is again the live persistence spine for node, edge, and run state.
 
 ## What This Does Not Mean
 
@@ -39,6 +42,13 @@ That means:
 - decide which cards are removed from the active default deck
 - decide which companion surfaces are fully removed from the active shell
 - keep source files recoverable for later re-add
+
+Before that feature cleanup, the current foundation repair must stay true:
+
+- project-backed AgentBuilder first
+- one canonical `/api/projects/*` route family for the builder
+- no local pretend board behavior
+- no optional-node resurrection after deletion
 
 ## Verified Code Facts Still Relevant To Future Stage 0 Planning
 

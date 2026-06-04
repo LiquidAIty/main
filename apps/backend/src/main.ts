@@ -46,7 +46,7 @@ app.use((req, res, next) => {
 
 // Debug logging for non-GET requests to active project/deck routes.
 app.use((req, _res, next) => {
-  if ((req.path.includes('/api/v2/projects') || req.path.includes('/api/v3/projects')) && req.method !== 'GET') {
+  if (req.path.includes('/api/projects') && req.method !== 'GET') {
     console.log('[REQ]', req.method, req.path);
   }
   next();

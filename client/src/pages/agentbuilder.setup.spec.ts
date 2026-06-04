@@ -265,22 +265,7 @@ describe('agentbuilder authoring flow', () => {
     const loaded = resolveProjectDeckPayload(savedDeck);
 
     expect(loaded.usedFallback).toBe(false);
-    expect(loaded.deck.nodes.map((node) => node.title)).toEqual([
-      'Saved A',
-      'Saved B',
-      'NRGSim / Energy',
-      'Local Coder',
-      'Trading Agent',
-      'Image Maker Agent',
-      'Code Agent',
-      'Video Agent',
-      'Data Formulator',
-      'Telescope Agent',
-      'Plan Agent',
-      'WorldSignals Agent',
-      'Understand Anything',
-      'Magentic-One',
-    ]);
+    expect(loaded.deck.nodes.map((node) => node.title)).toEqual(['Saved A', 'Saved B']);
     expect(loaded.deck.edges).toEqual([
       {
         id: 'edge_saved_a_b',
@@ -409,11 +394,10 @@ describe('agentbuilder authoring flow', () => {
     const loaded = resolveProjectDeckPayload(null);
 
     expect(loaded.usedFallback).toBe(true);
-    expect(loaded.displayFallbackOnly).toBe(false);
     expect(loaded.deck.nodes.map((node) => node.title)).toEqual(INITIAL_DECK.nodes.map((node) => node.title));
   });
 
-  it('uses the canonical chain only as a display fallback for truncated saved system decks', () => {
+  it('treats trimmed saved system decks as real saved state instead of fallback display mode', () => {
     const orchestratorNode = INITIAL_DECK.nodes.find(
       (node) => node.id === 'card_magentic',
     );
@@ -438,22 +422,9 @@ describe('agentbuilder authoring flow', () => {
 
     const loaded = resolveProjectDeckPayload(truncatedSystemDeck);
 
-    expect(loaded.usedFallback).toBe(true);
-    expect(loaded.displayFallbackOnly).toBe(true);
-    expect(loaded.deck.nodes.map((node) => node.id)).toEqual(INITIAL_DECK.nodes.map((node) => node.id));
-    expect(
-      loaded.deck.edges.map((edge) => ({
-        source: edge.source,
-        target: edge.target,
-        edgeType: edge.edgeType ?? null,
-      })),
-    ).toEqual(
-      INITIAL_DECK.edges.map((edge) => ({
-        source: edge.source,
-        target: edge.target,
-        edgeType: edge.edgeType ?? null,
-      })),
-    );
+    expect(loaded.usedFallback).toBe(false);
+    expect(loaded.deck.nodes.map((node) => node.id)).toEqual(['card_magentic']);
+    expect(loaded.deck.edges).toEqual([]);
   });
 
   it('upgrades the older saved deck_builder system deck to the current Agent Canvas seed', () => {
@@ -497,11 +468,11 @@ describe('agentbuilder authoring flow', () => {
     const hydrated = hydrateDeckDocument(legacyDeck);
 
     expect(hydrated.nodes.map((node) => node.id)).toEqual([
-      'card_main_chat',
-      'card_kg_ingest',
-      'card_research',
-      'card_knowgraph',
-      'card_neo4j',
+      'card_magentic',
+      'card_thinkgraph_agent',
+      'card_codegraph_agent',
+      'card_research_agent',
+      'card_knowgraph_agent',
       'card_energy_workbench',
       'card_local_coder',
       'card_trading_workbench',
@@ -513,11 +484,8 @@ describe('agentbuilder authoring flow', () => {
       'card_plan_agent',
       'card_worldsignals_agent',
       'card_understand_anything',
-      'card_magentic',
     ]);
-    expect(hydrated.edges.map((edge) => [edge.source, edge.target, edge.edgeType])).toEqual([
-      ['card_main_chat', 'card_kg_ingest', 'flow'],
-    ]);
+    expect(hydrated.edges).toEqual([]);
     expect(hydrated.nodes.find((node) => node.id === 'card_magentic')?.runtimeOptions).toMatchObject({
       executionBackend: 'python_autogen',
       provider: 'openai',
@@ -564,21 +532,7 @@ describe('agentbuilder authoring flow', () => {
       edges: [],
     });
 
-    expect(hydrated.nodes.map((node) => node.title)).toEqual([
-      'Lonely',
-      'NRGSim / Energy',
-      'Local Coder',
-      'Trading Agent',
-      'Image Maker Agent',
-      'Code Agent',
-      'Video Agent',
-      'Data Formulator',
-      'Telescope Agent',
-      'Plan Agent',
-      'WorldSignals Agent',
-      'Understand Anything',
-      'Magentic-One',
-    ]);
+    expect(hydrated.nodes.map((node) => node.title)).toEqual(['Lonely']);
     expect(hydrated.edges).toEqual([]);
   });
 
@@ -633,20 +587,30 @@ describe('agentbuilder authoring flow', () => {
     expect(hydrated.nodes.map((node) => node.title)).toEqual([
       'Main Chat',
       'Research Agent',
-      'NRGSim / Energy',
-      'Local Coder',
-      'Trading Agent',
-      'Image Maker Agent',
-      'Code Agent',
-      'Video Agent',
-      'Data Formulator',
-      'Telescope Agent',
-      'Plan Agent',
-      'WorldSignals Agent',
-      'Understand Anything',
-      'Magentic-One',
     ]);
     expect(hydrated.edges).toEqual([]);
+  });
+
+  it('preserves explicit deletion of optional system cards on reload', () => {
+    const trimmedSavedDeck: DeckDocument = {
+      ...JSON.parse(JSON.stringify(INITIAL_DECK)),
+      version: 5,
+      nodes: INITIAL_DECK.nodes.filter(
+        (node) =>
+          node.id !== 'card_energy_workbench' &&
+          node.id !== 'card_image_workbench' &&
+          node.id !== 'card_worldsignals_agent',
+      ),
+      edges: [],
+    };
+
+    const loaded = resolveProjectDeckPayload(trimmedSavedDeck);
+    const rehydrated = hydrateDeckDocument(JSON.parse(JSON.stringify(loaded.deck)));
+
+    expect(loaded.usedFallback).toBe(false);
+    expect(rehydrated.nodes.map((node) => node.id)).not.toContain('card_energy_workbench');
+    expect(rehydrated.nodes.map((node) => node.id)).not.toContain('card_image_workbench');
+    expect(rehydrated.nodes.map((node) => node.id)).not.toContain('card_worldsignals_agent');
   });
 
   it('drops edges that become invalid after graph ownership changes', () => {

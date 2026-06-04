@@ -54,7 +54,6 @@ export function useBuilderDeckRuntimeActions({
   deckRevision,
   deckRunInput,
   deckSaveAbortRef,
-  deckUsingDisplayFallback,
   deckValidation,
   effectiveAgent,
   formatBuilderStatusMessage,
@@ -73,7 +72,7 @@ export function useBuilderDeckRuntimeActions({
   setLiveDeckEvents,
   templates,
   uid,
-  v3ProjectsApi,
+  projectsApi,
   activeProjectLatestRef,
   recordDeckWriteReason,
   onDeckPersistProof,
@@ -92,7 +91,6 @@ export function useBuilderDeckRuntimeActions({
   deckRevision: string | null;
   deckRunInput: string;
   deckSaveAbortRef: MutableRefObject<AbortController | null>;
-  deckUsingDisplayFallback: boolean;
   deckValidation: {
     ok: boolean;
     errors: Array<{ message: string }>;
@@ -115,7 +113,7 @@ export function useBuilderDeckRuntimeActions({
   setLiveDeckEvents: Dispatch<SetStateAction<DeckRuntimeEvent[]>>;
   templates: AgentTemplate[];
   uid: () => string;
-  v3ProjectsApi: string;
+  projectsApi: string;
   activeProjectLatestRef: MutableRefObject<string>;
   recordDeckWriteReason: (reason: string) => void;
   onDeckPersistProof?: (entry: {
@@ -135,12 +133,6 @@ export function useBuilderDeckRuntimeActions({
       setDeckStatusMessage("Open a canvas before saving.");
       return;
     }
-    if (deckUsingDisplayFallback) {
-      setDeckStatusMessage(
-        "This canvas is a temporary display fallback and will not overwrite the saved deck.",
-      );
-      return;
-    }
 
     const requestedDeckVersion = deck.version;
 
@@ -156,7 +148,7 @@ export function useBuilderDeckRuntimeActions({
     deckSaveAbortRef.current = controller;
 
     try {
-      const endpoint = `${v3ProjectsApi}/${requestProjectId}/decks/${deckId}`;
+      const endpoint = `${projectsApi}/${requestProjectId}/decks/${deckId}`;
       const revisionBefore = deckRevision;
       const response = await fetch(endpoint, {
         method: "PUT",
@@ -255,7 +247,6 @@ export function useBuilderDeckRuntimeActions({
     deckId,
     deckRevision,
     deckSaveAbortRef,
-    deckUsingDisplayFallback,
     formatBuilderStatusMessage,
     hydrateDeckDocument,
     recordDeckWriteReason,
@@ -263,7 +254,7 @@ export function useBuilderDeckRuntimeActions({
     setDeckRevision,
     setDeckSaveBusy,
     setDeckStatusMessage,
-    v3ProjectsApi,
+    projectsApi,
     onDeckPersistProof,
   ]);
 
@@ -293,7 +284,7 @@ export function useBuilderDeckRuntimeActions({
 
     try {
       const selectedCardRunAgent = resolveEffectiveAgent(selectedCard, templates);
-      const endpoint = `${v3ProjectsApi}/${requestProjectId}/decks/run`;
+      const endpoint = `${projectsApi}/${requestProjectId}/decks/${deckId}/run`;
       const data = await streamDeckRunRequest({
         endpoint,
         body: {
@@ -406,7 +397,7 @@ export function useBuilderDeckRuntimeActions({
     setLatestDeckRun,
     setLiveDeckEvents,
     templates,
-    v3ProjectsApi,
+    projectsApi,
     workspaceContext,
     workspaceObjectContext,
   ]);
@@ -450,7 +441,7 @@ export function useBuilderDeckRuntimeActions({
     deckExecutionAbortRef.current = controller;
 
     try {
-      const endpoint = `${v3ProjectsApi}/${requestProjectId}/decks/run`;
+      const endpoint = `${projectsApi}/${requestProjectId}/decks/${deckId}/run`;
       const data = await streamDeckRunRequest({
         endpoint,
         body: {
@@ -553,7 +544,7 @@ export function useBuilderDeckRuntimeActions({
     setLiveDeckEvents,
     templates,
     uid,
-    v3ProjectsApi,
+    projectsApi,
     workspaceContext,
     workspaceObjectContext,
   ]);

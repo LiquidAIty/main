@@ -17,9 +17,14 @@ import { diagnosticRoutes } from './diagnostic.routes';
 import receipts from './receipts.routes';
 import config from './config.routes';
 import coder from './coder.routes';
-import v2Routes from './v2';
 import knowgraphRoutes from './knowgraph.routes';
-import { v3Routes } from '../v3';
+import projectsRoutes from './projects.routes';
+import decksRoutes from './decks.routes';
+import kgRoutes from './v2/kg.routes';
+import devRoutes from './v2/dev.routes';
+import worldsignalRoutes from './v2/worldsignal.routes';
+import knowledgeSeedRoutes from '../v3/routes/knowledgeSeed.routes';
+import mediaVideoRoutes from '../v3/routes/mediaVideo.routes';
 
 const router = Router();
 
@@ -48,7 +53,12 @@ router.use('/receipts', authMiddleware, receipts);
 router.use('/config', authMiddleware, config);
 router.use('/coder', authMiddleware, coder);
 router.use('/knowgraph', authMiddleware, knowgraphRoutes);
-router.use('/v2', authMiddleware, v2Routes);
-router.use('/v3', authMiddleware, v3Routes);
+router.use('/dev', authMiddleware, devRoutes);
+router.use('/worldsignal', authMiddleware, worldsignalRoutes);
+router.use('/projects', authMiddleware, projectsRoutes);
+router.use('/projects', authMiddleware, decksRoutes);
+router.use('/projects/:projectId/kg', authMiddleware, kgRoutes);
+router.use('/projects', authMiddleware, knowledgeSeedRoutes);
+router.use('/projects', authMiddleware, mediaVideoRoutes);
 
 export default router;

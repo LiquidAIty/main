@@ -41,6 +41,16 @@ function inferProjectCardType(card: any): "assist" | "agent" {
   return "assist";
 }
 
+function isAdminProjectCard(card: any): boolean {
+  const rawName = String(card?.name ?? "").trim();
+  const rawCode = String(card?.code ?? "").trim();
+  if (rawName === "ADMIN") return true;
+  if (rawCode === "ADMIN") return true;
+  const codeKey = normalizeProjectCardKey(card?.code);
+  const nameKey = normalizeProjectCardKey(card?.name);
+  return codeKey === "admin" || nameKey === "admin";
+}
+
 function dedupeProjectCards(cards: any[]): any[] {
   const byKey = new Map<string, any>();
 
@@ -57,6 +67,13 @@ function dedupeProjectCards(cards: any[]): any[] {
     };
     const existing = byKey.get(key);
     if (!existing) {
+      byKey.set(key, next);
+      return;
+    }
+
+    const existingExactAdmin = String(existing?.name ?? "").trim() === "ADMIN";
+    const nextExactAdmin = String(next?.name ?? "").trim() === "ADMIN";
+    if (!existingExactAdmin && nextExactAdmin) {
       byKey.set(key, next);
       return;
     }
@@ -157,6 +174,11 @@ export function useBuilderProjects({
       const rawCards = Array.isArray(data?.projects) ? data.projects : [];
       const cards = dedupeProjectCards(rawCards);
       const assistCards = cards.filter((card: any) => inferProjectCardType(card) === "assist");
+      const adminAssistCard =
+        assistCards.find((card: any) => String(card?.name ?? "").trim() === "ADMIN") ??
+        assistCards.find((card: any) => String(card?.code ?? "").trim() === "ADMIN") ??
+        assistCards.find((card: any) => isAdminProjectCard(card)) ??
+        null;
       setProjects(cards);
 
       const search = new URLSearchParams(window.location.search);
@@ -165,7 +187,11 @@ export function useBuilderProjects({
       const currentAssistId = preferredAssistId || activeProject || "";
       const hasCurrentAssist = currentAssistId && assistCards.some((card: any) => card.id === currentAssistId);
       const nextAssistId =
-        (urlIdValid ? urlId : "") || (hasCurrentAssist ? currentAssistId : "") || assistCards[0]?.id || "";
+        (urlIdValid ? urlId : "") ||
+        (hasCurrentAssist ? currentAssistId : "") ||
+        adminAssistCard?.id ||
+        assistCards[0]?.id ||
+        "";
       if (nextAssistId) {
         setActiveProjectWithUrl(nextAssistId);
       } else {

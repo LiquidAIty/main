@@ -21,8 +21,8 @@ The current local runtime path is:
 ```text
 React Flow Agent Builder
 -> client/src/components/builder/useBuilderDeckRuntimeActions.ts
--> POST /api/v3/projects/:projectId/decks/run
--> apps/backend/src/v3/routes/decks.routes.ts
+-> POST /api/projects/:projectId/decks/:deckId/run
+-> apps/backend/src/routes/decks.routes.ts
 -> apps/backend/src/v3/runtime/deckRuntime.ts
 -> apps/backend/src/v3/cards/runtime.ts
 -> runMagenticCard
@@ -38,13 +38,13 @@ React Flow Agent Builder
 
 React Flow is the visual canvas. Do not treat the visual graph as the runtime itself. It is the authoring and trigger surface for decks/cards.
 
-The frontend deck runtime actions live in `client/src/components/builder/useBuilderDeckRuntimeActions.ts`. That file posts deck or selected-card runs to the v3 backend endpoint. It should preserve the deck document and card runtime options, including `runtimeOptions.executionBackend`.
+The frontend deck runtime actions live in `client/src/components/builder/useBuilderDeckRuntimeActions.ts`. That file posts deck or selected-card runs to the canonical `/api/projects/:projectId/decks/:deckId/run` backend endpoint. It should preserve the deck document and card runtime options, including `runtimeOptions.executionBackend`.
 
 Do not touch React Flow visuals while debugging backend or sidecar runtime issues unless the user explicitly opens that scope.
 
-### Backend v3 Deck/Card Runtime
+### Backend Deck/Card Runtime
 
-The deck run route is `POST /api/v3/projects/:projectId/decks/run`, implemented in `apps/backend/src/v3/routes/decks.routes.ts`. It requires a `deckId` and `templates`, loads or accepts a deck document, calls `executeDeck`, then persists the run through the v3 deck store.
+The deck run route is `POST /api/projects/:projectId/decks/:deckId/run`, implemented in `apps/backend/src/routes/decks.routes.ts`. It requires `templates`, loads or accepts a deck document, calls `executeDeck`, then persists the run through the deck store.
 
 `apps/backend/src/v3/runtime/deckRuntime.ts` validates and schedules the deck. It calls `runCardWithContract` for runnable card steps.
 
@@ -54,7 +54,7 @@ The deck run route is `POST /api/v3/projects/:projectId/decks/run`, implemented 
 runtimeOptions.executionBackend === "python_autogen"
 ```
 
-The backend v3 types and deck store already know about `executionBackend?: "python_autogen" | null`, and the store normalizes/preserves that option.
+The backend v3 types and deck store already know about `executionBackend?: "python_autogen" | null`, and the store normalizes/preserves that option. The public route is non-versioned; the current persisted blob still lives in `agent_io_schema.v3_state`.
 
 ### Agent Canvas Projection
 

@@ -25,6 +25,8 @@ The current working order follows Spec Kit:
 - [x] Remove `client/src/config/launchMode.ts`
 - [x] Restore `client/src/pages/agentbuilder.tsx` to the pre-launch-mode git baseline
 - [x] Update docs that incorrectly described launch flags as the long-term architecture
+- [x] Restore AgentBuilder to one canonical project-backed route family at `/api/projects/*`
+- [x] Re-prove real board persistence for node move/delete and edge add/remove on a saved project deck
 - [ ] Rewrite canonical docs/specs so they stop claiming features are already hidden/removed
 - [ ] Decide which legacy feature cards remain on the saved board for reference
 - [ ] Decide which legacy surfaces leave the active MVP shell next
