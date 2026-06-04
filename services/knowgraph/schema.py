@@ -88,12 +88,5 @@ KNOWGRAPH_SCHEMA: dict[str, object] = {
     "patterns": PATTERNS,
     "additional_node_types": False,
     "additional_relationship_types": False,
-    "aChunk", "MENdIONS", "Function"),
-    ("Chunk", "MENTIONS", "Class"),
-    ("Tditional_patterns": False,
+    "additional_patterns": False,
 }
-t"),
-    ("CodeFile", "IMPORTS", "CodeFile"),
-    ("CodeFile", "DEFINES", "Funcion"),
-    ("CodeFile", "DEFINES", "Class"),
-    ("Function", "CALLS", "Function

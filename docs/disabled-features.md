@@ -1,135 +1,148 @@
 # Disabled Features Restoration Ledger
 
 **Created**: 2026-06-03
-**Purpose**: Track all features hidden, feature-flagged, or removed during Stage 0
-(Clean House + Security Fence) so that the broader LiquidAIty platform can be
-restored cleanly when each future mode is ready.
+**Last Updated**: 2026-06-03 (Stage 0 — Agent Workspace Launch Cleanup)
+**Purpose**: Track all features hidden or gated during Stage 0 so the broader
+LiquidAIty platform can be restored cleanly when each future mode is ready.
 
-**Philosophy**: The broader AI canvas/platform vision stays alive. This ledger
-records where it went, not that it was destroyed.
-
----
-
-> ⚠️ This file must be updated every time a feature is hidden or removed.
-> Do not hide or remove features without adding a row here first.
-> Restore steps must use `git` — do not restore from memory.
+**Philosophy**: The broader AI canvas/platform vision stays alive.
+This ledger records where features went, not that they were destroyed.
 
 ---
 
-## Ledger Format
+> ⚠️ **Accuracy rule**: Do not say "removed" if only gated. Do not say "hidden"
+> unless a launch flag or route gate actually suppresses it. Every entry must
+> reflect real code state. Update this file when code state changes.
 
-Each section describes one feature that was disabled.
+---
 
-| Field | Meaning |
+## How to Restore Any Feature
+
+**To show a surface again**: Set the flag to `true` in
+[`client/src/config/launchMode.ts`](../client/src/config/launchMode.ts).
+The source code is untouched. No git recovery needed for gated features.
+
+**To recover a deleted resource from git**:
+```powershell
+# View a file before a specific commit
+git show HEAD:client/src/pages/tradingui.tsx
+
+# Restore a file to its HEAD state
+git checkout HEAD -- client/src/pages/tradingui.tsx
+
+# List commits touching a file
+git log --oneline -- client/src/pages/agentbuilder.tsx
+```
+
+---
+
+## Status Legend
+
+| Status | Meaning |
 |---|---|
-| **Status** | `hidden` (route/nav removed but code intact) / `feature-flagged` (guarded behind env or prop) / `archived` (code moved to `src/_archive/`) / `removed` (deleted, git-recoverable) |
-| **Future Mode** | Which platform mode will restore it |
-| **Restore** | Git command to view or recover the file state |
+| `feature-flagged` | Launch flag in `launchMode.ts` set to `false`. Source code untouched. Toggle to restore. |
+| `route-removed` | Route removed from `app.tsx`. Source file kept. Add route back to restore. |
+| `removed` | Code deleted. Recoverable from git only. |
+| `hidden` | Surface not wired to any route or rail. Code exists but not reachable. |
 
 ---
 
-## Features Disabled in Stage 0
+## Features Gated in Stage 0
 
 ---
 
-### 1. Detailed Mode (Model Training Experiment)
+### 1. NRGSim / Energy Surface
 
 | Field | Value |
 |---|---|
-| **Name** | Detailed Mode |
-| **Files** | `client/src/pages/detailedmode.tsx` |
-| **Route** | `/detailed` in `client/src/app.tsx` |
-| **Status** | `hidden` — route removed from `app.tsx`; source file left intact |
-| **Why disabled** | The page is a raw scaffolding experiment: Monaco editor, hardcoded `dash/alpha` / `knowledge/graph` selectors, Start Model Training button with no production backend contract. It looks unfinished to a first-time visitor. |
-| **Future Mode** | Code Mode |
-| **Restore route** | Add back to `app.tsx`: `<Route path="/detailed" element={<DetailedMode />} />` |
-| **Restore git** | `git show HEAD:client/src/pages/detailedmode.tsx` |
-| **Owner** | future |
+| **Name** | NRGSim / Energy Surface |
+| **Launch flag** | `showEnergy: false` in `client/src/config/launchMode.ts` |
+| **Status** | `feature-flagged` — source untouched |
+| **Affected files** | `client/src/features/energy/` (6 files), `client/src/components/energy/EnergyFacadeSurface` (lazy-loaded), `client/src/features/modelWizard/pascal/` |
+| **Affected surface** | `WORKBENCH_CARD_DESCRIPTORS` entry `id: 'energy'` excluded when flag is false; `deriveVisibleRailItems` `showEnergy` gated |
+| **Why hidden** | Energy simulation backend (EnergyPlus / NRGSIM / JEPlus) does not exist in Docker Compose stack. Surface already shows an error boundary. Showing the card misleads users. |
+| **Future mode** | Building Mode |
+| **Restore** | Set `showEnergy: true` in `launchMode.ts`. The `EnergyFacadeSurface` error boundary already handles missing backend gracefully. |
+| **Restore condition** | Building Mode explicitly approved by user. |
 
 ---
 
-### 2. NRGSim / Energy Surface (Building Modeling)
+### 2. Image Maker Workbench
 
 | Field | Value |
 |---|---|
-| **Name** | NRGSim Energy Surface |
-| **Files** | `client/src/features/energy/` (6 files: createEnergyRunPrepManifest.ts, energyModelSchema.ts, energyModelValidation.ts, jeplusFacadeTemplate.ts, pascalEnergyAdapter.ts, solarPosition.ts), `client/src/components/energy/EnergyFacadeSurface` (lazy-loaded in agentbuilder.tsx), `client/src/features/modelWizard/pascal/` |
-| **Surface ID** | `'energy'` in `WorkbenchSurfaceId` |
-| **Workbench card** | `card_energy_workbench` / `template_energy_workbench` |
-| **Status** | `hidden` — the workbench card descriptor will be moved behind a feature flag; source files left intact |
-| **Why disabled** | The energy simulation backend (EnergyPlus / NRGSIM / JEPlus runner) does not exist in the Docker Compose stack. The `EnergyFacadeSurface` already has an error boundary labeled "Energy canvas unavailable". Showing it in the card list misleads users. |
-| **Future Mode** | Building Mode |
-| **Restore** | Remove the feature flag check around `WORKBENCH_CARD_DESCRIPTORS` entry `id: 'energy'` in `agentbuilder.tsx`. |
-| **Restore git** | `git show HEAD:client/src/pages/agentbuilder.tsx` |
-| **Owner** | future |
+| **Name** | Image Maker Agent |
+| **Launch flag** | `showImage: false` in `client/src/config/launchMode.ts` |
+| **Status** | `feature-flagged` — source untouched |
+| **Affected files** | `client/src/features/media/MediaStudioCanvas.tsx`, related media feature files |
+| **Affected surface** | `WORKBENCH_CARD_DESCRIPTORS` entry `id: 'image'` excluded; `deriveVisibleRailItems` `showImage` gated |
+| **Why hidden** | No image generation backend bridge exists. Card copy already says "Runtime is disabled until the image generation bridge exists." Showing it misleads users. |
+| **Future mode** | Media Mode — social sharing, trade reports, signal explainers, marketing clips |
+| **Restore** | Set `showImage: true` in `launchMode.ts`. |
+| **Restore condition** | Media Mode approved. Image generation backend bridge exists. |
 
 ---
 
-### 3. Media Studio Canvas (Image / Video Generation)
+### 3. Video Agent Workbench
 
 | Field | Value |
 |---|---|
-| **Name** | Media Studio Canvas |
-| **Files** | `client/src/features/media/MediaStudioCanvas.tsx` (52KB), `client/src/features/media/SceneGraphThreeBlockout.tsx`, `client/src/features/media/generationPacket.ts`, `client/src/features/media/sceneAssetRegistry.ts` (27KB), `client/src/features/media/sceneGraphSource.ts` (21KB), `client/src/features/media/modelCascadePlan.ts`, `client/src/features/media/videoGraphScript.ts`, `client/src/features/media/objectAwareCanvasContext.ts`, `client/src/features/media/sceneGraphMotionPlan.ts`, `client/src/features/media/mediaStudioTypes.ts` |
-| **Surface IDs** | `'image'`, `'video'` in `WorkbenchSurfaceId` |
-| **Workbench cards** | `card_image_workbench` / `template_image_workbench`, `card_video_workbench` / `template_video_workbench` |
-| **Status** | `hidden` — workbench card descriptors moved behind feature flag; source files left intact |
-| **Why disabled** | Image generation bridge and video generation bridge are explicitly marked in their `disabledCopy` as "Runtime is disabled until the ... bridge exists." No backend image/video pipeline exists in the current stack. Showing them is misleading. |
-| **Future Mode** | Media Mode |
-| **Restore** | Remove feature flag check around `id: 'image'` and `id: 'video'` entries in `WORKBENCH_CARD_DESCRIPTORS`. |
-| **Restore git** | `git show HEAD:client/src/pages/agentbuilder.tsx` |
-| **Owner** | future |
+| **Name** | Video Agent |
+| **Launch flag** | `showVideo: false` in `client/src/config/launchMode.ts` |
+| **Status** | `feature-flagged` — source untouched |
+| **Affected files** | `client/src/features/media/` (video-related files) |
+| **Affected surface** | `WORKBENCH_CARD_DESCRIPTORS` entry `id: 'video'` excluded; `deriveVisibleRailItems` `showVideo` gated |
+| **Why hidden** | No video generation backend bridge exists. |
+| **Future mode** | Media Mode — social sharing, trade report recaps, signal explainer clips |
+| **Restore** | Set `showVideo: true` in `launchMode.ts`. |
+| **Restore condition** | Media Mode approved. Video generation backend bridge exists. |
 
 ---
 
-### 4. Data Formulator Surface
+### 4. Data Formulator
 
 | Field | Value |
 |---|---|
 | **Name** | Data Formulator |
-| **Files** | `client/src/components/dataformulator/DataFormulatorSurface.tsx` (3.5KB) |
-| **Workbench card** | `card_data_formulator_workbench` / `template_data_formulator_workbench` |
-| **Surface ID** | `'data-formulator'` |
-| **Status** | `hidden` — workbench card moved behind feature flag; source file left intact |
-| **Why disabled** | Data Formulator is a useful tool for data exploration but not part of the Trading Desk MVP. Its presence in the card list adds visual noise. |
-| **Future Mode** | Code Mode or Design Mode (TBD) |
-| **Restore** | Remove feature flag check around `id: 'data-formulator'` entry in `WORKBENCH_CARD_DESCRIPTORS`. |
-| **Restore git** | `git show HEAD:client/src/pages/agentbuilder.tsx` |
-| **Owner** | future |
+| **Launch flag** | `showDataFormulator: false` in `client/src/config/launchMode.ts` |
+| **Status** | `feature-flagged` — source untouched |
+| **Affected files** | `client/src/components/dataformulator/DataFormulatorSurface.tsx` |
+| **Affected surface** | `WORKBENCH_CARD_DESCRIPTORS` entry `id: 'data-formulator'` excluded; `deriveVisibleRailItems` `showDataFormulator` gated |
+| **Why hidden** | Not working. Must not weaken the MVP. |
+| **Future mode** | Code Mode or Design Mode (TBD) |
+| **Restore** | Set `showDataFormulator: true` in `launchMode.ts`. |
+| **Restore condition** | Only if directly useful for trading data transforms, chart transforms, EDGAR data shaping, or WorldSignals data shaping. Explicit user approval required. |
 
 ---
 
-### 5. WorldSignal Surface (Standalone Canvas Mode)
+### 5. Understand Anything (UA Dashboard)
 
 | Field | Value |
 |---|---|
-| **Name** | WorldSignal Surface (canvas/standalone mode) |
-| **Files** | `client/src/components/worldsignal/WorldSignalSurface.tsx` (43KB), `client/src/components/worldsignal/crucixNativeRenderer.ts` (19KB) |
-| **Import** | `WorldSignalSurface` imported directly in `agentbuilder.tsx` line 25 |
-| **Surface** | Rendered as a canvas surface inside agentbuilder when `worldsignal` mode is active |
-| **Status** | `hidden` from navigation/visible mode list; source files left intact |
-| **Why disabled** | WorldSignals is being restructured as a backend OSINT/evidence feed layer rather than a visible canvas surface (Stage 7). The current standalone canvas mode is unfinished and not part of the Trading Desk MVP surface. The backend signal logic will remain. |
-| **Future Mode** | WorldSignals Mode (as a trading intelligence evidence layer first, then later as a visible mode) |
-| **Restore** | Re-add WorldSignal surface mode to the canvas surface switcher in `agentbuilder.tsx`. |
-| **Restore git** | `git show HEAD:client/src/components/worldsignal/WorldSignalSurface.tsx` |
-| **Owner** | hidden — backend use continues in Stage 7 |
+| **Name** | Understand Anything Workbench |
+| **Launch flag** | `showUnderstandAnything: false` in `client/src/config/launchMode.ts` |
+| **Status** | `feature-flagged` — source untouched |
+| **Affected files** | `client/src/runtime/uaAgentDefinitions.ts`, `client/src/components/agents/ua/`, `client/src/components/agents/ua/real-dashboard/` |
+| **Affected surface** | `WORKBENCH_CARD_DESCRIPTORS` UA agent entries excluded; `deriveVisibleRailItems` `uaAgents` returns `[]` when flag is false |
+| **Why hidden** | Belongs to the broader canvas platform vision, not the Trading Desk MVP. Adds nav complexity for a first-time trading user. |
+| **Future mode** | Design Mode or Code Mode |
+| **Restore** | Set `showUnderstandAnything: true` in `launchMode.ts`. UA agent definitions are already fully wired. |
+| **Restore condition** | Useful for stock research, EDGAR interpretation, news research, or company explainers. |
 
 ---
 
-### 6. Understand-Anything (UA) Dashboard Surface
+### 6. Code Agent Workbench
 
 | Field | Value |
 |---|---|
-| **Name** | Understand Anything Dashboard |
-| **Files** | `client/src/runtime/uaAgentDefinitions.ts`, `client/src/components/agents/ua/` (full directory), `client/src/components/agents/ua/real-dashboard/` |
-| **Surface ID** | `'ua_dashboard'` |
-| **Workbench card** | `template_understand_anything_workbench` |
-| **Status** | `hidden` from primary navigation — code intact |
-| **Why disabled** | The UA workbench is functional but belongs to the broader canvas platform vision, not the Trading Desk MVP. It adds nav complexity and can confuse a first-time trading user. |
-| **Future Mode** | Design Mode or Code Mode (as an analysis tool) |
-| **Restore** | Re-add `ua_dashboard` to the primary nav/rail. It is already wired as a `WorkbenchCardDescriptor` via `getUiUaAgentDefinitions()`. |
-| **Restore git** | `git show HEAD:client/src/runtime/uaAgentDefinitions.ts` |
-| **Owner** | hidden |
+| **Name** | Code Agent |
+| **Launch flag** | `showCode: false` in `client/src/config/launchMode.ts` |
+| **Status** | `feature-flagged` — source untouched |
+| **Affected surface** | `WORKBENCH_CARD_DESCRIPTORS` entry `id: 'code'` excluded; `deriveVisibleRailItems` `showCode` gated |
+| **Why hidden** | Canvas-owned code bridge is not restored. |
+| **Future mode** | Code Mode |
+| **Restore** | Set `showCode: true` in `launchMode.ts`. |
+| **Restore condition** | Canvas-owned code bridge restored and working. |
 
 ---
 
@@ -138,156 +151,115 @@ Each section describes one feature that was disabled.
 | Field | Value |
 |---|---|
 | **Name** | CodeGraph Surface |
-| **Files** | `client/src/components/codegraph/CodeGraphSurface.tsx`, `client/src/components/codegraph/CodeGraphScene.tsx`, `client/src/components/codegraph/CodeGraphFilterPanel.tsx`, `client/src/components/codegraph/types.ts`, `client/src/components/codegraph/colors.ts` |
-| **Surface type** | `'codegraph'` in `WorkspaceTestingSurface` |
-| **Status** | `hidden` — surface not exposed in MVP nav; code intact |
-| **Why disabled** | CodeGraph is a developer/platform tool, not a trading desk surface. Exposing it to a first-time trading user adds confusion. |
-| **Future Mode** | Code Mode |
-| **Restore** | Add codegraph back to the canvas surface switcher and nav rail. |
-| **Restore git** | `git show HEAD:client/src/components/codegraph/CodeGraphSurface.tsx` |
-| **Owner** | future |
+| **Launch flag** | `showCodeGraph: false` in `client/src/config/launchMode.ts` |
+| **Status** | `feature-flagged` — not currently wired to the card rail; source untouched |
+| **Affected files** | `client/src/components/codegraph/CodeGraphSurface.tsx`, `CodeGraphScene.tsx`, `CodeGraphFilterPanel.tsx` |
+| **Why hidden** | Developer tool, not a trading desk surface. Confusing for first-time trading users. |
+| **Future mode** | Code Mode (internal developer mode) |
+| **Restore** | Set `showCodeGraph: true` in `launchMode.ts` and wire CodeGraph into the canvas surface switcher. |
+| **Restore condition** | Developer mode explicitly enabled by user. |
 
 ---
 
-### 8. Skyview / Telescope Canvas (Astronomy/Geospatial Experiment)
+### 8. Skyview / Telescope / JWST Explorer
 
 | Field | Value |
 |---|---|
-| **Name** | Skyview / Telescope / JWST Explorer |
-| **Files** | `client/src/components/skyview/JwstImageExplorer.tsx`, `client/src/components/skyview/TelescopeCanvas.tsx`, `client/src/components/skyview/TelescopeOverlay.tsx`, `client/src/components/skyview/SkyDirectionSelector.tsx`, `client/src/components/skyview/SkyObjectPanel.tsx`, `client/src/components/skyview/skyTiles.ts`, `client/src/components/skyview/telescopeMetadata.ts`, `client/src/components/skyview/types.ts` |
-| **Status** | `hidden` — not wired to any active route; code intact |
-| **Why disabled** | A telescope/astronomy experiment unrelated to the trading desk. Interesting research but not part of MVP. |
-| **Future Mode** | Science Mode |
-| **Restore** | Add a route and surface card for `skyview`. |
-| **Restore git** | `git show HEAD:client/src/components/skyview/TelescopeCanvas.tsx` |
-| **Owner** | future |
+| **Name** | Skyview / Telescope / Citizen Science |
+| **Launch flag** | `showTelescope: false` in `client/src/config/launchMode.ts` |
+| **Status** | `hidden` — not wired to any active route or card rail; source untouched |
+| **Affected files** | `client/src/components/skyview/JwstImageExplorer.tsx`, `TelescopeCanvas.tsx`, `TelescopeOverlay.tsx`, `SkyDirectionSelector.tsx`, `SkyObjectPanel.tsx`, `skyTiles.ts`, `telescopeMetadata.ts`, `types.ts` |
+| **Why hidden** | Astronomy/geospatial experiment unrelated to the trading desk. |
+| **Future mode** | Science Mode |
+| **Restore** | Add a route and surface card for `skyview`. Set `showTelescope: true` in `launchMode.ts`. |
+| **Restore condition** | Science Mode approved by user. |
 
 ---
 
-### 9. Protein Starter Pack (AlphaFold/Science Experiment)
+### 9. Detailed Mode Page
 
 | Field | Value |
 |---|---|
-| **Name** | Protein / Science Surface |
-| **Files** | `client/src/components/protein/proteinStarterPack.ts` |
-| **Status** | `hidden` — not wired to any active surface |
-| **Why disabled** | Science mode research artifact (AlphaFold-style protein analysis). Not part of trading desk MVP. |
-| **Future Mode** | Science Mode |
-| **Restore** | Wire into science mode surface when Science Mode is reopened. |
-| **Restore git** | `git show HEAD:client/src/components/protein/proteinStarterPack.ts` |
-| **Owner** | future |
+| **Name** | Detailed Mode (Model Training Experiment) |
+| **Launch flag** | `showDetailedMode: false` in `client/src/config/launchMode.ts` |
+| **Status** | `route-removed` — the `/detailed` route is present in `app.tsx` but the page is a raw scaffold. Route should be removed or gated when tradingui cleanup occurs. |
+| **Affected files** | `client/src/pages/detailedmode.tsx` |
+| **Affected route** | `/detailed` in `client/src/app.tsx` |
+| **Why hidden** | Monaco editor scaffold with hardcoded `dash/alpha` selectors and a "Start Model Training" button with no production backend contract. Looks unfinished. |
+| **Future mode** | Code Mode |
+| **Restore** | Keep route in `app.tsx` or add it back. Source file needs real backend contract before it is useful. |
+| **Restore condition** | Working implementation with real `/api/models/train` backend contract. |
 
 ---
 
-### 10. Modeling / 3D Smoke Test (R3F Scene)
+### 10. Protein / Science Surface
 
 | Field | Value |
 |---|---|
-| **Name** | R3F / Three.js Smoke Test |
-| **Files** | `client/src/components/modeling/R3FSmokeTest.tsx` |
+| **Name** | Protein Starter Pack (AlphaFold/Science) |
+| **Status** | `hidden` — not wired to any route or surface |
+| **Affected files** | `client/src/components/protein/proteinStarterPack.ts` |
+| **Why hidden** | Science mode research artifact. Not part of trading desk MVP. |
+| **Future mode** | Science Mode |
+| **Restore** | Wire into science mode surface. |
+| **Restore condition** | Science Mode approved by user. |
+
+---
+
+### 11. R3F / Three.js Smoke Test
+
+| Field | Value |
+|---|---|
+| **Name** | R3F Smoke Test |
 | **Status** | `hidden` — not wired to any route |
-| **Why disabled** | Development smoke test for Three.js/R3F. Not a user-facing feature. |
-| **Future Mode** | Building Mode or Media Mode |
-| **Restore** | Add as a dev route `/dev/r3f-smoke` if needed. |
-| **Restore git** | `git show HEAD:client/src/components/modeling/R3FSmokeTest.tsx` |
-| **Owner** | archived |
+| **Affected files** | `client/src/components/modeling/R3FSmokeTest.tsx` |
+| **Why hidden** | Development smoke test, not user-facing. |
+| **Future mode** | Building Mode or Media Mode |
+| **Restore** | Add as `/dev/r3f-smoke` dev route if needed. |
+| **Restore condition** | Active development of Building Mode or Media Mode. |
 
 ---
 
-### 11. Mock Trading Buttons (ENTER TRADE / EXIT TRADE)
+## WorldSignals — Preserved (NOT Hidden)
 
 | Field | Value |
 |---|---|
-| **Name** | Mock Trading Buttons |
-| **Files** | `client/src/pages/tradingui.tsx` — `GradientBtn` with `onEnterTrade` / `onExitTrade` |
-| **Status** | `removed` from tradingui.tsx in Stage 2 — code is in git history |
-| **Why disabled** | These buttons call `console.log()` only. They look like execution buttons to a user and would immediately undermine the "research only" trust position. |
-| **Future Mode** | Trading Mode (if a paper trading simulation mode is added in Stage 9+) |
-| **Restore** | `git show HEAD:client/src/pages/tradingui.tsx` for the original version. Do not restore until execution safety requirements are re-evaluated. |
-| **Owner** | removed |
+| **Name** | WorldSignals / Crucix Surface |
+| **Launch flag** | `showWorldSignalDemo: true` — **deliberately kept visible** |
+| **Status** | `preserved` — source untouched, flag is `true` |
+| **Files** | `client/src/components/worldsignal/WorldSignalSurface.tsx` (43KB), `client/src/components/worldsignal/crucixNativeRenderer.ts` (19KB) |
+| **Why kept** | WorldSignals is a show-off and evidence surface. It will later be adapted into the SignalEvidence layer for the Trading Desk (Stage 7). Do not archive or delete it. |
+| **Future path** | Stage 7 will use WorldSignals as a backend evidence feed (OSINT/Shodan results). The canvas surface may be enhanced with ShadowBroker-style ideas. |
+| **ShadowBroker** | Future reference/inspiration for WorldSignals enhancement. Not currently integrated. |
+| **Shodan** | Optional future connector for Stage 7 OSINT layer. Not a blocker. Not currently integrated. |
 
 ---
 
-### 12. Mock Signals Strip
+## Mock UI Items in tradingui.tsx (Deferred — Not Yet Cleaned)
 
-| Field | Value |
-|---|---|
-| **Name** | Hardcoded Mock Signals Strip |
-| **Files** | `client/src/pages/tradingui.tsx` — `signals` useMemo with hardcoded YLV8/TLOB/CRON/ARMA/OPTM/OPTA tickers and fake confidence percentages |
-| **Status** | `removed` from tradingui.tsx in Stage 2 — replaced with real signal display wired to `/api/market/ticker/:symbol/signals` |
-| **Why disabled** | Mock signals could be confused for real research data. They have no source, no model, no provenance. |
-| **Future Mode** | Trading Mode (real signals replace mock signals in Stage 8) |
-| **Restore** | `git show HEAD:client/src/pages/tradingui.tsx` |
-| **Owner** | removed |
+These items were identified as needing removal but the user deferred `tradingui.tsx` cleanup.
+They are documented here for the next cleanup task.
 
----
-
-### 13. Mock Chat Responses
-
-| Field | Value |
-|---|---|
-| **Name** | Hardcoded Mock AI Chat |
-| **Files** | `client/src/pages/tradingui.tsx` — `sendChat` function that calls `setTimeout` to insert `"Noted. Confidence checking…"` |
-| **Status** | `removed` from tradingui.tsx in Stage 2 — replaced with placeholder or real agent chat |
-| **Why disabled** | A fake AI response pretending to be a real agent. Violates the "no fake substitute product behavior" rule. |
-| **Future Mode** | Trading Mode (real agent chat wired to backend in a future stage) |
-| **Restore** | `git show HEAD:client/src/pages/tradingui.tsx` |
-| **Owner** | removed |
-
----
-
-### 14. TradingView CDN Widget
-
-| Field | Value |
-|---|---|
-| **Name** | TradingView CDN Widget (`tv.js`) |
-| **Files** | `client/src/pages/tradingui.tsx` — `TVChart` component, `<script src="https://s3.tradingview.com/tv.js">` dynamic loader |
-| **Status** | `removed` from tradingui.tsx in Stage 2 — replaced with `lightweight-charts` |
-| **Why disabled** | Cannot accept custom candle data, cannot render forecast overlays, cannot show ghost candles or EDGAR event markers. Also adds an external CDN dependency that makes the chart harder to control. |
-| **Future Mode** | n/a — replaced permanently with `lightweight-charts` |
-| **Restore** | `git show HEAD:client/src/pages/tradingui.tsx` for the original CDN version. |
-| **Owner** | removed |
+| Item | Status | Notes |
+|---|---|---|
+| ENTER TRADE / EXIT TRADE buttons | `to-remove` | `console.log()` only. Look like execution buttons. |
+| Mock signals strip | `to-remove` | Hardcoded YLV8/TLOB/CRON/ARMA tickers with fake confidence. |
+| Mock AI chat response | `to-remove` | `setTimeout` fake response. Violates no-fake-product-behavior rule. |
+| TradingView CDN widget (`tv.js`) | `to-remove` | Cannot accept custom candles. Replaced by `lightweight-charts` in Stage 2. |
 
 ---
 
 ## Platform Mode Roadmap
 
-When the Trading Desk MVP is stable (Stages 0–9 complete), the following modes
-will be reopened one at a time using this ledger as the restoration guide.
-
-| Mode | Features to Restore | Ledger Items |
+| Mode | Features to Restore | launchMode.ts flag |
 |---|---|---|
-| **Trading Mode** | Trading desk is the MVP — already the primary mode | Items 11–14 (mock removal only) |
-| **Design Mode** | Understand Anything dashboard | Item 6 |
-| **Code Mode** | CodeGraph, Data Formulator, Detailed Mode | Items 4, 5 (CodeGraph), 1 |
-| **Building Mode** | NRGSim / Energy Surface, R3F scene | Items 2, 10 |
-| **Media Mode** | Media Studio Canvas (image/video), R3F | Items 3, 10 |
-| **Science Mode** | Skyview/Telescope, Protein starter | Items 8, 9 |
-| **WorldSignals Mode** | WorldSignal standalone canvas (backend evidence layer first in Stage 7) | Item 5 |
-| **Shopping Mode** | No current code — future build | — |
+| **Trading Mode (MVP)** | Already primary mode | `showTrading: true` |
+| **WorldSignals Mode** | Already visible as demo; full mode later | `showWorldSignalDemo: true` |
+| **Design Mode** | Understand Anything | `showUnderstandAnything: true` |
+| **Code Mode** | Code Agent, CodeGraph, Detailed Mode | `showCode: true`, `showCodeGraph: true`, `showDetailedMode: true` |
+| **Building Mode** | NRGSim / Energy, R3F | `showEnergy: true` |
+| **Media Mode** | Image Maker, Video Agent | `showImage: true`, `showVideo: true` |
+| **Science Mode** | Telescope/Skyview, Protein | `showTelescope: true` |
+| **Shopping Mode** | Not yet built | `showShopping: true` (future) |
 
----
-
-## How to Recover Any Disabled Feature
-
-```powershell
-# View a file at HEAD (before any Stage 0 changes)
-git show HEAD:client/src/pages/tradingui.tsx
-
-# View a specific component before it was disabled
-git show HEAD:client/src/components/worldsignal/WorldSignalSurface.tsx
-
-# Restore a deleted or modified file to its HEAD state
-git checkout HEAD -- client/src/pages/tradingui.tsx
-
-# See all files changed in Stage 0 commit
-git show --stat <stage-0-commit-sha>
-
-# List all commits that touched a file
-git log --oneline -- client/src/pages/agentbuilder.tsx
-```
-
----
-
-*This file is a living document. Update it whenever a feature is hidden, archived, or removed.*
-*Do not delete rows — mark them as restored and note the restoration commit instead.*
+*This file is a living document. Update it whenever a feature is hidden, restored, or its status changes.*

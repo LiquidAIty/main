@@ -47,7 +47,7 @@ router.use('/kg', authMiddleware, kg);
 router.use('/receipts', authMiddleware, receipts);
 router.use('/config', authMiddleware, config);
 router.use('/coder', authMiddleware, coder);
-router.use('/knowgraph', knowgraphRoutes); // TEMP: Auth bypassed for testing
+router.use('/knowgraph', authMiddleware, knowgraphRoutes);
 router.use('/v2', authMiddleware, v2Routes);
 router.use('/v3', authMiddleware, v3Routes);
 
