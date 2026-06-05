@@ -32,6 +32,7 @@ import AgentBuilderSplitter from '../features/agentbuilder/core/AgentBuilderSpli
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import useAgentBuilderDeck from '../features/agentbuilder/state/useAgentBuilderDeck';
+import useAgentBuilderDeckLoad from '../features/agentbuilder/state/useAgentBuilderDeckLoad';
 import useAgentBuilderProject from '../features/agentbuilder/state/useAgentBuilderProject';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import TradingCanvasSurface from '../features/trading/TradingCanvasSurface';
@@ -4825,6 +4826,10 @@ export default function AgentBuilder(): React.ReactElement {
   } = useAgentBuilderDeck({
     createInitialDeck: buildProjectlessDeckDocument,
   });
+  const currentDeckRef = useRef(deck);
+  useEffect(() => {
+    currentDeckRef.current = deck;
+  }, [deck]);
   const visibleRailItems = useMemo(
     () =>
       deriveVisibleRailItems({
@@ -5230,154 +5235,37 @@ export default function AgentBuilder(): React.ReactElement {
     },
     [BUILDER_DEV],
   );
-
-  useEffect(() => {
-    if (!canvasProjectId) {
-      recordDeckWriteReason('builder-await-project');
-      setDeck(buildProjectlessDeckDocument());
-      setDeckRevision(null);
-      setDeckLoadError(null);
-      setLatestDeckRun(null);
-      setLatestCardRun(null);
-      setLiveDeckEvents([]);
-      setMessages([...EMPTY_PROJECT_STATE.messages]);
-      setPlanSource([...EMPTY_PROJECT_STATE.plan]);
-      setPlan([...EMPTY_PROJECT_STATE.plan]);
-      setLinks([...EMPTY_PROJECT_STATE.links]);
-      setStateLoaded(false);
-      setDeckStatusMessage(null);
-      return;
-    }
-
-    const controller = new AbortController();
-    const deckRefreshStartedAt = Date.now();
-    setDeckLoadBusy(true);
-    setDeckLoadError(null);
-    setStateLoaded(false);
-    setDeckRevision(null);
-    setDeckStatusMessage('Loading canvas...');
-
-    void (async () => {
-      try {
-        const endpoint = `${PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}`;
-        const payload = await guardedRequest({
-          key: `v3-deck:${canvasProjectId}:${BUILDER_DECK_ID}`,
-          method: 'GET',
-          ttlMs: 1_000,
-          signal: controller.signal,
-          fetcher: async (signal) => {
-            const response = await fetch(endpoint, { signal });
-            const data = await safeJson(response);
-            return { response, data };
-          },
-        });
-
-        if (controller.signal.aborted) return;
-        if (!payload.response.ok) {
-          throw new Error(safeText(payload.data?.error || 'deck_load_failed'));
-        }
-
-        const loadResult = resolveProjectDeckLoadResult(
-          deck,
-          payload.data?.deck && typeof payload.data.deck === 'object'
-            ? { ...(payload.data.deck as DeckDocument), id: BUILDER_DECK_ID }
-            : null,
-        );
-
-        recordDeckWriteReason(
-          loadResult.usedFallback ? 'deck-load-default' : 'deck-load',
-        );
-        setDeck(loadResult.deck);
-        lastPersistedBoardFingerprintRef.current = JSON.stringify({
-          nodes: loadResult.deck.nodes,
-          edges: loadResult.deck.edges,
-        });
-        lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(loadResult.deck);
-        setDeckRevision(
-          typeof payload.data?.meta?.deckRevision === 'string'
-            ? payload.data.meta.deckRevision
-            : null,
-        );
-        const persistedLatestRun =
-          payload.data?.latestRun && typeof payload.data.latestRun === 'object'
-            ? (payload.data.latestRun as DeckRun)
-            : null;
-        const persistedRuns = Array.isArray(payload.data?.runs)
-          ? (payload.data.runs as DeckRun[])
-          : [];
-        const continuity = buildReloadStateFromDeckRuns(
-          persistedRuns,
-          persistedLatestRun,
-        );
-        setLatestDeckRun(persistedLatestRun);
-        setLatestCardRun(null);
-        setLiveDeckEvents([]);
-        setMessages(continuity.messages);
-        setPendingActivationProposal(null);
-        setPlanSource(continuity.planSource);
-        setPlan(continuity.plan);
-        setLinks(continuity.links);
-        setStateLoaded(true);
-        setDeckLoadError(null);
-        setDeckStatusMessage(
-          loadResult.usedFallback ? 'Using default canvas.' : 'Canvas loaded.',
-        );
-        console.info('[builder][deck-load-proof]', {
-          projectId: canvasProjectId,
-          deckId: BUILDER_DECK_ID,
-          reason: 'deck-load',
-          source: loadResult.usedFallback ? 'fallback' : 'backend_saved_deck',
-          nodeCount: loadResult.deck.nodes.length,
-          edgeCount: loadResult.deck.edges.length,
-          revision: typeof payload.data?.meta?.deckRevision === 'string' ? payload.data.meta.deckRevision : null,
-        });
-      } catch (err: any) {
-        if (controller.signal.aborted) return;
-        recordDeckWriteReason('deck-load-error');
-        const next = loadProjectState(canvasProjectId);
-        setLatestDeckRun(null);
-        setLatestCardRun(null);
-        setLiveDeckEvents([]);
-        setDeckRevision(null);
-        setMessages([...next.messages]);
-        setPendingActivationProposal(null);
-        setPlanSource([...next.plan]);
-        setPlan([...next.plan]);
-        setLinks([...next.links]);
-        setStateLoaded(true);
-        const loadErrorMessage = formatBuilderStatusMessage(
-          err?.message,
-          'Canvas data could not be loaded.',
-        );
-        setDeckLoadError(loadErrorMessage);
-        setDeckStatusMessage(loadErrorMessage);
-      } finally {
-        if (!controller.signal.aborted) {
-          const completedAt = Date.now();
-          emitWorkspaceTestingEvent({
-            event: 'graph_refresh_completed',
-            durationMs: Math.max(0, completedAt - deckRefreshStartedAt),
-            metadata: {
-              graphType: 'agent',
-              source: 'deck_load',
-            },
-          });
-          recordPostResponseRefreshIfPending('agent_graph', completedAt);
-          setDeckLoadBusy(false);
-        }
-      }
-    })();
-
-    return () => {
-      controller.abort();
-    };
-  }, [
-    emitWorkspaceTestingEvent,
-    recordDeckWriteReason,
-    recordPostResponseRefreshIfPending,
+  useAgentBuilderDeckLoad({
     canvasProjectId,
+    projectsApi: PROJECTS_API,
+    builderDeckId: BUILDER_DECK_ID,
+    currentDeckRef,
+    emptyProjectState: EMPTY_PROJECT_STATE,
+    buildProjectlessDeckDocument,
+    resolveProjectDeckLoadResult,
+    loadProjectState,
+    formatBuilderStatusMessage,
+    recordDeckWriteReason,
     snapshotDeckBoard,
-  ]);
+    lastPersistedBoardFingerprintRef,
+    lastPersistedBoardSnapshotRef,
+    emitWorkspaceTestingEvent,
+    recordPostResponseRefreshIfPending,
+    setDeck,
+    setDeckRevision,
+    setDeckLoadBusy,
+    setDeckLoadError,
+    setLatestDeckRun,
+    setLatestCardRun,
+    setLiveDeckEvents,
+    setMessages,
+    setPendingActivationProposal,
+    setPlanSource,
+    setPlan,
+    setLinks,
+    setStateLoaded,
+    setDeckStatusMessage,
+  });
 
   useEffect(() => {
     deckSaveAbortRef.current?.abort();
