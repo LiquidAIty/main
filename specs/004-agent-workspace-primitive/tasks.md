@@ -84,12 +84,43 @@ Every task below must preserve:
   - Do not touch: runtime behavior.
   - Risk: low.
 
+### P0.6 — Magentic-One / Plan Surface Capability Audit
+
+- [ ] `P0.6-T001` Audit where chat currently creates and updates mission or plan draft state.
+  - Goal: map the current planning path before defining `PlanDraft`.
+  - Likely files: `client/src/pages/agentbuilder.tsx`, `client/src/components/builder/chatPlanCompanion.ts`.
+  - Acceptance test: the current draft-entry path, approval read path, and run-start path are documented.
+  - Do not touch: runtime behavior.
+  - Risk: low.
+
+- [ ] `P0.6-T002` Audit how Plan Canvas currently derives structured nodes, edges, order, and fallback content.
+  - Goal: map what already exists in the plan surface instead of replacing it blindly.
+  - Likely files: `client/src/components/builder/assistPlanSurface.ts`, `client/src/components/assist/planMissionModel.ts`, `client/src/components/assist/PlanMissionFlow.tsx`.
+  - Acceptance test: current structured data, derived data, and fallback data paths are documented.
+  - Do not touch: plan surface behavior.
+  - Risk: low.
+
+- [ ] `P0.6-T003` Audit Magentic-One connected-agent awareness and callable-participant routing.
+  - Goal: verify how connected agents on the board are exposed to Magentic-One today.
+  - Likely files: `apps/backend/src/v3/cards/runtime.ts`, `apps/backend/src/services/autogen/autogenOrchestratorClient.ts`, `apps/python-models/app/python_models/orchestration_contracts.py`, `apps/python-models/app/python_models/autogen_orchestrator.py`.
+  - Acceptance test: callable-head routing, participant visibility, and current structured-output capability are documented.
+  - Do not touch: runtime behavior.
+  - Risk: low.
+
+- [ ] `P0.6-T004` Audit the current research-to-KnowGraph default path.
+  - Goal: verify what already exists for Research Agent, KnowGraph population, and evidence inspection.
+  - Likely files: `client/src/pages/agentbuilder.tsx`, `apps/backend/src/services/research/researchService.ts`, knowledge surface files, related docs.
+  - Acceptance test: existing research path, missing pieces, and future `PlanDraft` mapping inputs are documented.
+  - Do not touch: runtime behavior.
+  - Risk: low.
+
 ### P1 — PlanDraft Schema And Types
 
-- [ ] `P1-T001` Define the primitive draft-plan contract and map it against existing mission and plan structures.
-  - Goal: introduce a durable `PlanDraft` concept without rewriting the existing runtime yet.
-  - Likely files: `client/src/types/agentgraph`, `client/src/components/builder/assistPlanSurface.ts`, `client/src/components/assist/planMissionModel.ts`, `specs/004-agent-workspace-primitive/spec.md`.
-  - Acceptance test: one documented type contract covers plan id, source user request, ordered steps, approval state, revision marker, execution status, and summary.
+- [x] `P1-T001` Define the primitive draft-plan contract and map it against existing mission and plan structures.
+  - Goal: define `PlanDraft` by mapping existing `MissionSpec`, plan surface, mission graph, and run continuity structures instead of replacing them blindly.
+  - Implemented in: `client/src/features/agentbuilder/plan/planDraftTypes.ts`, `client/src/features/agentbuilder/plan/planDraftMapping.ts`, `client/src/features/agentbuilder/plan/planDraftMapping.spec.ts`.
+  - Acceptance test: `npx tsc --noEmit -p client/tsconfig.json` and `npx vitest run client/src/features/agentbuilder/plan/planDraftMapping.spec.ts`.
+  - Note: `PlanDraft` is a contract/model layer only in this stage. Runtime wiring remains for `P2` and `P3`.
   - Do not touch: deck autosave, layout, route family.
   - Risk: medium.
 
@@ -313,4 +344,4 @@ Every task below must preserve:
 
 ## First Recommended Implementation Task
 
-- [ ] `NEXT-T001` Implement `P1-T001`: define `PlanDraft` as the source-of-truth contract before Magentic-One writes to it, before Plan Canvas renders it, and before approval/run logic uses it.
+- [ ] `NEXT-T001` Implement `P1-T002`: map existing `MissionSpec`, `StructuredAssistPlanSurface`, and `PlanMissionGraph` responsibilities to the new `PlanDraft` contract so canonical versus derived structures are explicit before runtime wiring starts.
