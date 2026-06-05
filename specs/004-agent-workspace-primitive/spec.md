@@ -12,7 +12,7 @@
 
 Define the minimum real LiquidAIty primitive that must work before any major vertical, including trading, is implemented.
 
-This primitive is the project-backed AgentBuilder workspace where every Magentic-One turn produces two outputs: a natural-language `chatReply` for chat and a structured `planDraft` for the Plan Canvas. The user may refine that draft across turns, approve the current draft for execution when ready, run the approved work, and get durable graph-backed results that can be reused in future chat.
+This primitive is the project-backed AgentBuilder workspace where every Magentic-One turn produces two outputs: a natural-language `chatReply` for chat and a structured `planDraft` for the Plan Canvas. The user may refine that draft across turns, approve the current draft for execution when ready, run the approved work, return the result to chat, write durable graph-backed results into ThinkGraph, KnowGraph, and CodeGraph, and let future chat use cached project graph context.
 
 ## Hard Boundaries
 
@@ -60,7 +60,20 @@ As a user, I want an approved plan to run through real project-backed agent exec
 2. **Given** a run is in progress, **When** events arrive, **Then** the user can see meaningful progress in chat and/or plan context.
 3. **Given** the run completes, **When** the final result is produced, **Then** the result returns to chat as project-backed state, not an ephemeral placeholder.
 
-### User Story 4 — Results Become Reusable Workspace Memory (Priority: P2)
+### User Story 4 — Default Research Plan Populates KnowGraph (Priority: P1)
+
+As a user, I want the first useful approved plan to be research, so the system can gather evidence, populate KnowGraph, and show the result as navigable evidence instead of a vague placeholder workflow.
+
+**Independent Test**: Approve the default research plan, verify Research Agent gathers evidence and populates KnowGraph, then inspect the resulting graph and source-backed result in chat.
+
+**Acceptance Scenarios**:
+
+1. **Given** an approved default research draft, **When** execution begins, **Then** Research Agent gathers sources and evidence.
+2. **Given** evidence is gathered, **When** extraction completes, **Then** entities, relations, and properties are written into KnowGraph.
+3. **Given** KnowGraph is populated, **When** the user inspects the result, **Then** the graph is navigable and evidence-backed rather than a static summary only.
+4. **Given** the research run completes, **When** the final result is produced, **Then** chat receives a summarized result and ThinkGraph records reasoning/outcome memory.
+
+### User Story 5 — Results Become Reusable Workspace Memory (Priority: P2)
 
 As a user, I want important run results to write into the appropriate graph memory systems, so future chat and planning can reuse prior work.
 
@@ -73,7 +86,7 @@ As a user, I want important run results to write into the appropriate graph memo
 3. **Given** a run produces code structure or codebase knowledge, **When** it is persisted, **Then** it targets CodeGraph.
 4. **Given** a later chat references prior work, **When** Magentic-One plans or answers, **Then** prior project-backed results can inform the next response.
 
-### User Story 5 — Internal Self-Work Through Local Coder + CodeGraph (Priority: P2)
+### User Story 6 — Internal Self-Work Through Local Coder + CodeGraph (Priority: P2)
 
 As a builder, I want the Agent Workspace to support internal code/agent/card/prompt work using Local Coder plus CodeGraph, so the workspace can improve its own agent system safely after the primitive is stable.
 
@@ -101,39 +114,52 @@ As a builder, I want the Agent Workspace to support internal code/agent/card/pro
 - **FR-010**: An approved plan MUST run through the real project-backed deck runtime.
 - **FR-011**: Agent execution MUST emit runtime events that can be surfaced to the user.
 - **FR-012**: Run completion MUST return a final result to chat and project-backed workspace state.
+- **FR-013**: The first default approved plan behavior MUST support research work as the first useful primitive path.
+- **FR-014**: The default research plan MUST support running Research Agent, gathering sources/evidence, extracting entities/relations/properties, populating KnowGraph, returning a summarized result to chat, and recording reasoning/outcome memory in ThinkGraph.
 
 ### Graph Responsibilities
 
-- **FR-013**: Provisional, working, or planning knowledge MUST target ThinkGraph.
-- **FR-014**: Grounded, evidence-backed, or citation-backed knowledge MUST target KnowGraph.
-- **FR-015**: Code structure, symbols, routes, and dependency knowledge MUST target CodeGraph.
-- **FR-016**: The primitive MUST define explicit graph write contracts instead of relying on implicit UI-only side effects.
-- **FR-017**: Future chat/planning MUST be able to reuse prior graph-backed results from the same project.
+- **FR-015**: Provisional, working, or planning knowledge MUST target ThinkGraph.
+- **FR-016**: Grounded, evidence-backed, or citation-backed knowledge MUST target KnowGraph.
+- **FR-017**: Code structure, symbols, routes, and dependency knowledge MUST target CodeGraph.
+- **FR-018**: The primitive MUST define explicit graph write contracts instead of relying on implicit UI-only side effects.
+- **FR-019**: Future chat/planning MUST be able to reuse prior graph-backed results from the same project.
+- **FR-020**: Model input MUST eventually be shapeable by cached project graph context including current project, selected board nodes, selected graph evidence, recent run outputs, relevant ThinkGraph decisions, relevant KnowGraph evidence, and relevant CodeGraph implementation context.
+
+### KnowGraph UI Requirements
+
+- **FR-021**: KnowGraph MUST evolve toward a navigable evidence graph rather than a static summary surface.
+- **FR-022**: The user MUST be able to click nodes and edges to inspect evidence-backed detail.
+- **FR-023**: The user MUST be able to open source links and inspect provenance from the graph context.
+- **FR-024**: The user MUST be able to access screenshots, tables, snippets, or equivalent evidence previews in context.
+- **FR-025**: The user MUST be able to inspect confidence, provenance, and status details for selected evidence.
+- **FR-026**: Selected KnowGraph context MUST be usable to shape the next chat input.
 
 ### Local Coder and CodeGraph
 
-- **FR-018**: Local Coder MUST remain a real helper capability for internal code, agent, card, and prompt work.
-- **FR-019**: CodeGraph MUST remain a first-class helper capability for structural code understanding.
-- **FR-020**: Internal code/agent/card/prompt work MUST not bypass the project-backed workspace flow.
+- **FR-027**: Local Coder MUST remain a real helper capability for internal code, agent, card, and prompt work.
+- **FR-028**: CodeGraph MUST remain a first-class helper capability for structural code understanding.
+- **FR-029**: Internal code/agent/card/prompt work MUST not bypass the project-backed workspace flow.
 
 ### Route and Persistence Truth
 
-- **FR-021**: AgentBuilder project/deck behavior MUST use the canonical `/api/projects/*` route family only.
-- **FR-022**: AgentBuilder MUST NOT use `/api/v2/projects` or `/api/v3/projects` for active project/deck behavior.
-- **FR-023**: Saved project-backed deck state remains authoritative for workspace persistence.
-- **FR-024**: The primitive MUST preserve deck integrity guards and empty/partial save protection.
+- **FR-030**: AgentBuilder project/deck behavior MUST use the canonical `/api/projects/*` route family only.
+- **FR-031**: AgentBuilder MUST NOT use `/api/v2/projects` or `/api/v3/projects` for active project/deck behavior.
+- **FR-032**: Saved project-backed deck state remains authoritative for workspace persistence.
+- **FR-033**: The primitive MUST preserve deck integrity guards and empty/partial save protection.
 
 ### UX and Runtime Guardrails
 
-- **FR-025**: The chat/bus/canvas layout is a protected UX contract and MUST NOT be treated as a generic split-pane by default.
-- **FR-026**: The initial load view SHOULD remain chat-first, with internal helper graph visibility partially tucked under or behind chat until the user manually pans.
-- **FR-027**: The workspace MUST NOT introduce roadsign banners, fake fallback boards, `displayFallback`, or `launchMode.ts`.
-- **FR-028**: Runtime errors MUST NOT be converted into fake canvas nodes, raw runtime error plan content, or substitute success states.
+- **FR-034**: The chat/bus/canvas layout is a protected UX contract and MUST NOT be treated as a generic split-pane by default.
+- **FR-035**: The initial load view SHOULD remain chat-first, with internal helper graph visibility partially tucked under or behind chat until the user manually pans.
+- **FR-036**: The workspace MUST NOT introduce roadsign banners, fake fallback boards, `displayFallback`, or `launchMode.ts`.
+- **FR-037**: Runtime errors MUST NOT be converted into fake canvas nodes, raw runtime error plan content, or substitute success states.
 
 ### Future Extension Boundary
 
-- **FR-029**: Trading is the first planned major vertical after this primitive is implemented and proven.
-- **FR-030**: Add Agent / Template Picker is future work and MUST be specified as a later extension, not implemented in this feature.
+- **FR-038**: Trading is the first planned major vertical after this primitive Stage 0 is implemented and proven.
+- **FR-039**: Add Agent / Template Picker is future work and MUST be specified as a later extension, not implemented in this feature.
+- **FR-040**: Prezi-style camera zoom detail panels are future work and MUST NOT be implemented in Stage 0.
 
 ## Plan Schema Contract
 
@@ -149,6 +175,7 @@ The primitive plan model must support:
 - execution status
 - user-facing summary
 - valid minimal draft state when substantial work is not needed
+- default research-plan compatibility
 
 The plan contract must support at least three user actions:
 
@@ -208,44 +235,58 @@ Minimum event kinds:
 - freeze protected UX/runtime boundaries
 - no trading work yet
 
-### Stage 1 — Direct Chat Primitive
+### Stage 0 Queue
 
-- formalize the two-output Magentic-One turn contract
-- prove every turn emits `chatReply` plus `planDraft`
+Stage 0 is the strict waterfall-style primitive implementation spine:
 
-### Stage 2 — Plan Proposal Primitive
+- 0.0 baseline smoke and savepoint
+- 0.1 route contract freeze
+- 0.2 UI/viewport contract freeze
+- 0.3 project/deck persistence contract
+- 0.4 PlanDraft schema and type mapping
+- 0.5 Magentic-One two-output turn contract: `chatReply` + `planDraft`
+- 0.6 Plan Canvas renders real PlanDraft nodes/edges
+- 0.7 follow-up chat overwrites/refines PlanDraft
+- 0.8 approve/check promotes current PlanDraft to approved
+- 0.9 approved default research plan runs Research Agent
+- 0.10 Research Agent populates KnowGraph
+- 0.11 KnowGraph navigable evidence graph
+- 0.12 run result returns to chat
+- 0.13 run result writes to ThinkGraph / KnowGraph / CodeGraph
+- 0.14 cached graph context shapes next chat input
+- 0.15 Local Coder / CodeGraph draft-helper role documented
+- 0.16 tests/docs/acceptance freeze
 
-- formalize plan schema
-- show current-draft overwrite/refine plus approve/reject/revise flow
+### Stage 1 — First Major Vertical
 
-### Stage 3 — Approved Run Primitive
+- begin trading implementation only after Stage 0 is stable and accepted
 
-- formalize mission/run event schema
-- prove real run execution from approved plans
+## Execution Method
 
-### Stage 4 — Graph Write Primitive
+Use a waterfall spine with agile execution.
 
-- formalize ThinkGraph / KnowGraph / CodeGraph write contracts
-- prove follow-up chat can reuse prior results
-
-### Stage 5 — Internal Self-Work Primitive
-
-- define Local Coder + CodeGraph workflow for internal code/agent/card/prompt work
-
-### Stage 6 — First Major Vertical
-
-- begin trading implementation only after the primitive above is stable and accepted
+- strict numbered stages
+- work in order at first
+- each task has acceptance checks
+- when done, mark done
+- when blocked, document blocker and next smallest unblocker
+- when deferred, move it to `future.md`
+- do not reopen finished decisions unless evidence forces it
+- progress over perfection once implementation starts
+- strictness during specification, momentum during execution
 
 ## Success Criteria
 
 - **SC-001**: A user can open AgentBuilder on a real project and receive both `chatReply` and a valid `planDraft` on every Magentic-One turn.
 - **SC-002**: The `planDraft` may be minimal for simple requests, but it remains valid, visible in the Plan Canvas, and replaceable/refinable on later turns.
-- **SC-003**: An approved plan produces real runtime events and a final result in the same project-backed workspace.
-- **SC-004**: At least one follow-up chat can reuse prior result context from the same project.
-- **SC-005**: ThinkGraph, KnowGraph, and CodeGraph responsibilities are explicitly separated and documented.
-- **SC-006**: Local Coder and CodeGraph remain available as real helper capabilities for internal system work.
-- **SC-007**: No new AgentBuilder route family is introduced; `/api/projects/*` remains the single active project/deck route family.
-- **SC-008**: No fake fallback board, `displayFallback`, or `launchMode.ts` is introduced by primitive implementation.
+- **SC-003**: The default first useful approved plan is research-to-KnowGraph.
+- **SC-004**: An approved plan produces real runtime events and a final result in the same project-backed workspace.
+- **SC-005**: The resulting KnowGraph is navigable as an evidence graph with inspectable provenance.
+- **SC-006**: At least one follow-up chat can reuse prior result context from the same project.
+- **SC-007**: ThinkGraph, KnowGraph, and CodeGraph responsibilities are explicitly separated and documented.
+- **SC-008**: Local Coder and CodeGraph remain available as real helper capabilities for internal system work.
+- **SC-009**: No new AgentBuilder route family is introduced; `/api/projects/*` remains the single active project/deck route family.
+- **SC-010**: No fake fallback board, `displayFallback`, or `launchMode.ts` is introduced by primitive implementation.
 
 ## Assumptions
 

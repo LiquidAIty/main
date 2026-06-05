@@ -54,6 +54,36 @@ Every task below must preserve:
   - Do not touch: runtime code.
   - Risk: low.
 
+### P0.5 — Cleanup Parity Audit
+
+- [ ] `P0.5-T001` Audit the codebase for duplicate route families and mixed runtime paths.
+  - Goal: identify other places that need the same treatment as project route demixing.
+  - Likely files: route/docs audit only.
+  - Acceptance test: checklist exists for duplicate route families and mixed runtime paths.
+  - Do not touch: runtime behavior.
+  - Risk: low.
+
+- [ ] `P0.5-T002` Audit the codebase for stale compatibility fallbacks and fake placeholder UI.
+  - Goal: identify stale fallback systems and fake UI that should later be removed or documented.
+  - Likely files: docs/audit checklist only.
+  - Acceptance test: checklist exists for compatibility fallbacks and fake placeholder UI.
+  - Do not touch: runtime behavior.
+  - Risk: low.
+
+- [ ] `P0.5-T003` Audit active/inactive surface boundaries and overlapping plan/graph models.
+  - Goal: identify old inactive surfaces still leaking active, plus overlapping plan and graph models.
+  - Likely files: docs/audit checklist only.
+  - Acceptance test: checklist exists for inactive-surface leaks and overlapping plan/graph models.
+  - Do not touch: UI layout or surface behavior.
+  - Risk: low.
+
+- [ ] `P0.5-T004` Audit frontend-owned backend orchestration hotspots.
+  - Goal: identify page-owned mission execution, KG orchestration, and other frontend-owned backend logic for later cleanup.
+  - Likely files: docs/audit checklist only.
+  - Acceptance test: checklist exists for frontend-owned backend orchestration hotspots.
+  - Do not touch: runtime behavior.
+  - Risk: low.
+
 ### P1 — PlanDraft Schema And Types
 
 - [ ] `P1-T001` Define the primitive draft-plan contract and map it against existing mission and plan structures.
@@ -143,6 +173,50 @@ Every task below must preserve:
   - Do not touch: layout or persistence conductor behavior.
   - Risk: high.
 
+### P6.5 — Default Research-To-KnowGraph Path
+
+- [ ] `P6.5-T001` Approved default research plan runs Research Agent.
+  - Goal: make research the first useful default executable primitive path.
+  - Likely files: `client/src/pages/agentbuilder.tsx`, plan/run contract files, backend run-path integration files as needed.
+  - Acceptance test: user asks for research, approves the draft, and Research Agent runs through the real plan/run path.
+  - Do not touch: trading code, route family, UI layout.
+  - Risk: high.
+
+- [ ] `P6.5-T002` Research output is normalized into source-backed evidence records.
+  - Goal: turn raw research output into evidence objects suitable for KnowGraph insertion.
+  - Likely files: graph contract docs/types plus backend graph normalization boundary.
+  - Acceptance test: research output becomes normalized evidence records rather than raw text only.
+  - Do not touch: trading code.
+  - Risk: high.
+
+- [ ] `P6.5-T003` Evidence records populate KnowGraph as nodes, edges, and properties with provenance.
+  - Goal: make research output graph-shaped and source-backed.
+  - Likely files: graph contract/types, backend graph write boundary, `docs/graph-responsibilities.md`.
+  - Acceptance test: KnowGraph receives evidence with provenance, not just a chat summary.
+  - Do not touch: route versioning, UI layout.
+  - Risk: high.
+
+- [ ] `P6.5-T004` KnowGraph evidence is visible in the graph surface.
+  - Goal: the user can see resulting evidence in the graph surface after the research run.
+  - Likely files: graph surface wiring and related data-loading boundaries.
+  - Acceptance test: evidence appears in the graph surface after research completes.
+  - Do not touch: fallback UI or fake placeholder graph states.
+  - Risk: high.
+
+- [ ] `P6.5-T005` User can inspect evidence details from graph nodes and edges.
+  - Goal: support inspecting source link, snippet, screenshot or table preview if available, confidence, and provenance.
+  - Likely files: KnowGraph surface/detail presentation contracts plus supporting docs.
+  - Acceptance test: selected evidence reveals inspectable source/provenance detail.
+  - Do not touch: Prezi-style camera zoom future work.
+  - Risk: high.
+
+- [ ] `P6.5-T006` Research result summary returns to chat.
+  - Goal: the run returns a useful chat summary in addition to graph writes.
+  - Likely files: `client/src/pages/agentbuilder.tsx`, `client/src/components/builder/deckRunState.ts`.
+  - Acceptance test: after research completes, chat shows a summary and the graph shows evidence.
+  - Do not touch: trading code.
+  - Risk: high.
+
 ### P7 — Run Result Returns To Chat
 
 - [ ] `P7-T001` Formalize the primitive run event schema used by chat and plan surfaces.
@@ -175,6 +249,43 @@ Every task below must preserve:
   - Do not touch: UI layout, fallback boards.
   - Risk: high.
 
+### P8.5 — Cached Graph Context Shapes Next Chat
+
+- [ ] `P8.5-T001` Define the project context packet shape.
+  - Goal: establish a formal context packet that can shape later Magentic-One turns.
+  - Likely files: `client/src/types/agentgraph`, primitive spec/docs, prompt/context boundary files.
+  - Acceptance test: one documented packet shape exists for project graph-shaped context.
+  - Do not touch: route family or layout.
+  - Risk: high.
+
+- [ ] `P8.5-T002` Define which context sources can populate the project context packet.
+  - Goal: allow the packet to include selected board nodes, recent run outputs, ThinkGraph decisions, KnowGraph evidence, and CodeGraph implementation context.
+  - Likely files: types/docs plus prompt/context boundary files.
+  - Acceptance test: allowed packet sources are explicit and non-ambiguous.
+  - Do not touch: unrelated graph rendering behavior.
+  - Risk: medium-high.
+
+- [ ] `P8.5-T003` Cached project context is injected into the Magentic-One prompt path.
+  - Goal: make graph memory shape future model input rather than act as display only.
+  - Likely files: chat/runtime prompt path files.
+  - Acceptance test: the prompt path can consume the project context packet.
+  - Do not touch: OpenClaude execution work.
+  - Risk: high.
+
+- [ ] `P8.5-T004` Follow-up chat proves it can use prior research and evidence context.
+  - Goal: verify the user does not need to restate the same evidence after a research run.
+  - Likely files: chat/runtime prompt path tests and related docs.
+  - Acceptance test: a follow-up chat uses cached KnowGraph and ThinkGraph context from the same project.
+  - Do not touch: trading code.
+  - Risk: high.
+
+- [ ] `P8.5-T005` Context source and provenance are visible enough to debug.
+  - Goal: make it possible to tell what context shaped the turn.
+  - Likely files: docs, prompt/context display diagnostics, or minimal inspection hooks as later implemented.
+  - Acceptance test: debugging can reveal what context sources influenced the turn.
+  - Do not touch: UI layout redesign.
+  - Risk: medium-high.
+
 ### P9 — Docs, Tests, And Acceptance Cleanup
 
 - [ ] `P9-T001` Add focused implementation tests for the primitive path end to end.
@@ -193,7 +304,7 @@ Every task below must preserve:
 
 ## Explicitly Deferred
 
-- [ ] `D-T001` Trading implementation is deferred until the primitive above is proven.
+- [ ] `D-T001` Trading implementation is deferred until Stage 0 primitive work is proven complete.
 - [ ] `D-T002` OpenClaude terminal execution behavior is deferred.
 - [ ] `D-T003` Add Agent / Template Picker is deferred.
 - [ ] `D-T004` Broad AgentBuilder refactor is deferred.
@@ -202,4 +313,4 @@ Every task below must preserve:
 
 ## First Recommended Implementation Task
 
-- [ ] `NEXT-T001` Implement `P2-T001`: formalize and prove the two-output Magentic-One turn contract, where every turn emits `chatReply` plus `planDraft`, without changing the protected chat/bus/canvas UI contract.
+- [ ] `NEXT-T001` Implement `P1-T001`: define `PlanDraft` as the source-of-truth contract before Magentic-One writes to it, before Plan Canvas renders it, and before approval/run logic uses it.
