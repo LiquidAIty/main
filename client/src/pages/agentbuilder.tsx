@@ -34,6 +34,7 @@ import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurface
 import useAgentBuilderDeck from '../features/agentbuilder/state/useAgentBuilderDeck';
 import useAgentBuilderDeckLoad from '../features/agentbuilder/state/useAgentBuilderDeckLoad';
 import useAgentBuilderProject from '../features/agentbuilder/state/useAgentBuilderProject';
+import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgentBuilderProjectReset';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import TradingCanvasSurface from '../features/trading/TradingCanvasSurface';
 import type {
@@ -5266,20 +5267,17 @@ export default function AgentBuilder(): React.ReactElement {
     setStateLoaded,
     setDeckStatusMessage,
   });
-
-  useEffect(() => {
-    deckSaveAbortRef.current?.abort();
-    deckSaveAbortRef.current = null;
-    layoutAutosaveAbortRef.current?.abort();
-    layoutAutosaveAbortRef.current = null;
-    deckExecutionAbortRef.current?.abort();
-    deckExecutionAbortRef.current = null;
-    setSending(false);
-    setDeckSaveBusy(false);
-    setDeckRunBusy(false);
-    setCardRunBusy(false);
-    setPendingActivationProposal(null);
-  }, [canvasProjectId]);
+  useAgentBuilderProjectReset({
+    canvasProjectId,
+    deckSaveAbortRef,
+    layoutAutosaveAbortRef,
+    deckExecutionAbortRef,
+    setSending,
+    setDeckSaveBusy,
+    setDeckRunBusy,
+    setCardRunBusy,
+    setPendingActivationProposal,
+  });
 
   useEffect(() => {
     if (!canvasProjectId || !stateLoaded || deckLoadBusy || deckLoadError) return;
