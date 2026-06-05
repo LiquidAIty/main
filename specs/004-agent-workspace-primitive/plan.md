@@ -11,9 +11,9 @@ Freeze and formalize the Agent Workspace Primitive before any trading implementa
 The primitive is the project-backed AgentBuilder workspace where:
 
 - the user chats with Magentic-One
-- simple requests may receive a direct reply
-- multi-agent or risky work becomes a structured plan proposal
-- users approve, reject, or revise that plan
+- every turn emits `chatReply` plus `planDraft`
+- the plan draft may be lightweight but must still be valid
+- users approve, reject, or revise the current draft
 - approved plans run real agents
 - events stream back into the workspace
 - results return to chat and write into ThinkGraph, KnowGraph, and CodeGraph according to explicit responsibility boundaries
@@ -73,7 +73,7 @@ Verified current baseline:
 
 ### Partial or missing today
 
-- formal primitive spec for when Magentic answers directly vs when it must propose a plan
+- formal primitive contract requiring both `chatReply` and `planDraft` on every turn
 - explicit durable plan schema contract
 - explicit durable run event schema contract
 - explicit graph write contract across ThinkGraph / KnowGraph / CodeGraph
@@ -110,8 +110,8 @@ Verified current baseline:
 ## MVP Stage Plan
 
 1. Contract freeze and baseline docs
-2. Direct-reply primitive
-3. Plan proposal primitive
+2. Two-output Magentic-One turn primitive
+3. Plan draft refinement and approval primitive
 4. Approved run primitive
 5. Graph write primitive
 6. Local Coder + CodeGraph internal-work primitive
@@ -159,11 +159,12 @@ Planning/documentation validation for this slice:
 
 The first implementation task after approval should be:
 
-**Formalize and prove the direct-reply vs plan-required decision boundary without changing the protected chat/bus/canvas UI contract.**
+**Formalize and prove the two-output Magentic-One turn contract: every turn emits `chatReply` plus `planDraft`, without changing the protected chat/bus/canvas UI contract.**
 
 Reason:
 
 - it is the smallest primitive behavior users experience first
 - it avoids premature trading work
 - it does not require immediate shell refactor
-- it creates the control gate for later approved multi-agent execution
+- it preserves the user decision to avoid a classifier gate
+- it creates the durable draft contract that later approved execution can use
