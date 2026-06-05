@@ -447,6 +447,7 @@ export function chatPlanDraftResultToPlanDraft(
   if (result.missionSpec) {
     return missionSpecToPlanDraft(result.missionSpec, {
       ...options,
+      chatReply: options.chatReply ?? result.chatReply ?? null,
       source: "chat_plan_draft_result",
     });
   }
@@ -461,6 +462,7 @@ export function chatPlanDraftResultToPlanDraft(
       },
       {
         ...options,
+        chatReply: options.chatReply ?? result.chatReply ?? null,
         source: "chat_plan_draft_result",
       },
     );
@@ -474,7 +476,7 @@ export function chatPlanDraftResultToPlanDraft(
     projectId: options.projectId ?? null,
     source: options.source || "chat_plan_draft_result",
     userRequest: summary,
-    chatReply: options.chatReply ?? null,
+    chatReply: options.chatReply ?? result.chatReply ?? null,
     summary,
     approvalState: planDraftStatusToApprovalState(result.status),
     revision: options.revision ?? 1,
@@ -513,9 +515,11 @@ export function planDraftToMissionSpec(planDraft: PlanDraft): MissionSpec {
   };
 }
 
-export function planDraftToPlanMissionGraph(planDraft: PlanDraft): PlanMissionGraph {
-  const structuredPlan: StructuredAssistPlanSurface = {
-    planMode: "draft",
+export function planDraftToStructuredAssistPlanSurface(
+  planDraft: PlanDraft,
+): StructuredAssistPlanSurface {
+  return {
+    planMode: planDraft.approvalState === "approved" ? "approved" : "draft",
     goal: safeText(planDraft.userRequest),
     steps: planDraft.steps.map((step) => ({
       id: step.id,
@@ -547,6 +551,8 @@ export function planDraftToPlanMissionGraph(planDraft: PlanDraft): PlanMissionGr
     whatChanged: [],
     sources: [],
   };
+}
 
-  return buildPlanMissionGraph(structuredPlan);
+export function planDraftToPlanMissionGraph(planDraft: PlanDraft): PlanMissionGraph {
+  return buildPlanMissionGraph(planDraftToStructuredAssistPlanSurface(planDraft));
 }

@@ -16,6 +16,7 @@ import {
   chatPlanDraftResultToPlanDraft,
   missionSpecToPlanDraft,
   planDraftToMissionSpec,
+  planDraftToStructuredAssistPlanSurface,
   planMissionGraphToPlanDraft,
   structuredAssistPlanSurfaceToPlanDraft,
 } from "./planDraftMapping";
@@ -228,5 +229,34 @@ describe("planDraftMapping", () => {
       "research_agent",
       "knowgraph_agent",
     ]);
+  });
+
+  it("bridges PlanDraft into StructuredAssistPlanSurface for the current Plan Canvas path", () => {
+    const missionSpec: MissionSpec = {
+      id: "mission_bridge",
+      title: "Bridge",
+      userGoal: "Research then ground the result",
+      target: "deck_builder",
+      readContext: [],
+      runState: "draft",
+      agentRuns: [
+        {
+          id: "run_research",
+          agentId: "research_agent",
+          promptSeed: "Research the topic and gather evidence.",
+          required: true,
+        },
+      ],
+    };
+
+    const draft = missionSpecToPlanDraft(missionSpec, {
+      chatReply: "I drafted a research step.",
+    });
+    const structuredPlan = planDraftToStructuredAssistPlanSurface(draft);
+
+    expect(structuredPlan.goal).toBe("Research then ground the result");
+    expect(structuredPlan.explicitPlanText).toBe("Bridge");
+    expect(structuredPlan.steps).toHaveLength(1);
+    expect(structuredPlan.steps[0].assignedAgentId).toBe("research_agent");
   });
 });

@@ -183,6 +183,30 @@ The plan contract must support at least three user actions:
 - reject
 - revise
 
+## Plan Structure Ownership
+
+The Stage 0 primitive uses a strict ownership model so future runtime work maps existing structures instead of replacing working behavior blindly.
+
+| Structure | Current location | Role | Ownership | Future direction | Risk if used incorrectly |
+| --- | --- | --- | --- | --- | --- |
+| `PlanDraft` | `client/src/features/agentbuilder/plan/planDraftTypes.ts` | Canonical business truth for the current draft plan | canonical | Own goal, summary, ordered steps, approvalState, requiredAgents, requiredTools, expectedOutputs, risks, graphWriteTargets, revision, and timestamps | Draft state fragments again across chat, plan, and run paths |
+| `MissionSpec` / `MissionRun` | `client/src/types/agentgraph.ts` | Execution adapter for the current approved-run path | adapter | Derive from `PlanDraft` when execution is approved | Execution details leak back into authoring state |
+| `ChatPlanDraftRequest` / `ChatPlanDraftResult` | `client/src/types/agentgraph.ts` | Chat-to-plan request/response envelope | envelope | Carry `chatReply` plus `PlanDraft`-compatible payloads without becoming plan state | Transient chat response fields blur canonical draft ownership |
+| `StructuredAssistPlanSurface` / `StructuredAssistPlanStep` | `client/src/components/builder/assistPlanSurface.ts` | Readable plan presentation model | derived | Map from/to `PlanDraft` as user-facing plan presentation | Presentation fallback fields corrupt executable plan semantics |
+| `PlanMissionGraph` / `PlanMissionFlowNode` / `PlanMissionFlowEdge` | `client/src/components/assist/planMissionModel.ts` | Visual Plan Canvas graph representation | visual-only | Derive nodes and edges from `PlanDraft` steps and dependencies only | Visual geometry or fallback nodes leak into business truth |
+| `deckRunState` `structuredPlan` payload | `client/src/components/builder/deckRunState.ts` | Runtime continuity snapshot from persisted runs | runtime-only | Preserve reload continuity without becoming authoring truth | Stale run artifacts overwrite the current draft |
+| AutoGen `PlanContext` | `apps/python-models/app/python_models/orchestration_contracts.py` | Orchestrator context/result envelope | envelope | Map into/out of `PlanDraft` while remaining backend-side orchestrator context | Sidecar-specific shape drift destabilizes frontend plan state |
+
+Ownership rules:
+
+- `PlanDraft` is the canonical authoring truth.
+- `MissionSpec` is an execution adapter, not the long-term draft owner.
+- `StructuredAssistPlanSurface` is presentation, not execution truth.
+- `PlanMissionGraph` is visual, not business truth.
+- `ChatPlanDraftResult` is an envelope, not the plan object by itself.
+- AutoGen `PlanContext` is an orchestrator envelope, not frontend authoring state.
+- `deckRunState` `structuredPlan` is continuity-only, not the live authoring source of truth.
+
 ## Run Event Schema Contract
 
 The primitive run-event model must support:

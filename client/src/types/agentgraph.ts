@@ -821,6 +821,7 @@ export type ChatPlanDraftResult = {
   summary: string;
   missionSpec?: MissionSpec;
   missionSpecPatch?: Partial<MissionSpec>;
+  chatReply?: string | null;
   questions?: string[];
   suggestedNextAction?: string;
   errorReason?: string;

@@ -124,19 +124,21 @@ Every task below must preserve:
   - Do not touch: deck autosave, layout, route family.
   - Risk: medium.
 
-- [ ] `P1-T002` Map existing `MissionSpec`, `StructuredAssistPlanSurface`, and `PlanMissionGraph` responsibilities to the new primitive contract.
+- [x] `P1-T002` Map existing `MissionSpec`, `StructuredAssistPlanSurface`, and `PlanMissionGraph` responsibilities to the new primitive contract.
   - Goal: document and encode which type is source-of-truth versus derived presentation.
-  - Likely files: `client/src/components/builder/chatPlanCompanion.ts`, `client/src/components/builder/assistPlanSurface.ts`, `client/src/components/assist/planMissionModel.ts`.
-  - Acceptance test: it is clear which structure is the canonical draft and which structures are derived UI views.
+  - Implemented in: `client/src/features/agentbuilder/plan/planDraftOwnership.ts`, `client/src/features/agentbuilder/plan/planDraftTypes.ts`, `specs/004-agent-workspace-primitive/spec.md`, `docs/agentbuilder-current-architecture.md`.
+  - Acceptance test: ownership is explicit for `PlanDraft`, `MissionSpec`, `ChatPlanDraftResult`, `StructuredAssistPlanSurface`, `PlanMissionGraph`, `deckRunState` `structuredPlan`, and AutoGen `PlanContext`.
+  - Note: runtime wiring should not begin until this ownership split is treated as the baseline for `P2`.
   - Do not touch: mission run path, graph writes.
   - Risk: medium.
 
 ### P2 — Magentic-One Two-Output Turn Contract
 
-- [ ] `P2-T001` Formalize the two-output Magentic-One turn contract in the AgentBuilder chat conductor.
+- [x] `P2-T001` Formalize the two-output Magentic-One turn contract in the AgentBuilder chat conductor.
   - Goal: every turn returns both `chatReply` and `planDraft`.
-  - Likely files: `client/src/pages/agentbuilder.tsx`, `client/src/components/builder/chatPlanCompanion.ts`.
-  - Acceptance test: one user turn returns a conversational `chatReply` in chat and a valid `planDraft` for the Plan Canvas.
+  - Implemented in: `client/src/pages/agentbuilder.tsx`, `client/src/components/builder/chatPlanCompanion.ts`, `client/src/features/agentbuilder/state/useAgentBuilderDeck.ts`, `client/src/features/agentbuilder/plan/planDraftMapping.ts`, `client/src/types/agentgraph.ts`.
+  - Acceptance test: one user turn returns a conversational `chatReply` in chat and a valid `planDraft` bridge for the Plan Canvas, while follow-up chat refines the current draft without auto-running an approved mission.
+  - Note: this stage keeps `MissionSpec` approval/run behavior intact and bridges draft authoring through canonical `PlanDraft` state plus existing Plan Canvas structures.
   - Do not touch: layout, routes, persistence rules.
   - Risk: medium.
 
@@ -344,4 +346,4 @@ Every task below must preserve:
 
 ## First Recommended Implementation Task
 
-- [ ] `NEXT-T001` Implement `P1-T002`: map existing `MissionSpec`, `StructuredAssistPlanSurface`, and `PlanMissionGraph` responsibilities to the new `PlanDraft` contract so canonical versus derived structures are explicit before runtime wiring starts.
+- [ ] `NEXT-T001` Implement `P2-T002`: ensure the `planDraft` stays minimal-but-valid for lightweight turns without fake nodes, raw runtime errors, or approval-path regressions.

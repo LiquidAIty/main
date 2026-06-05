@@ -31,6 +31,10 @@ import AgentBuilderShell from '../features/agentbuilder/core/AgentBuilderShell';
 import AgentBuilderSplitter from '../features/agentbuilder/core/AgentBuilderSplitter';
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
+import {
+  chatPlanDraftResultToPlanDraft,
+  planDraftToStructuredAssistPlanSurface,
+} from '../features/agentbuilder/plan/planDraftMapping';
 import useAgentBuilderAutosave from '../features/agentbuilder/state/useAgentBuilderAutosave';
 import useAgentBuilderDeck from '../features/agentbuilder/state/useAgentBuilderDeck';
 import useAgentBuilderDeckLoad from '../features/agentbuilder/state/useAgentBuilderDeckLoad';
@@ -4800,11 +4804,13 @@ export default function AgentBuilder(): React.ReactElement {
     setOpenMissionMessage,
     draftMissionSpec,
     setDraftMissionSpec,
+    setCurrentPlanDraft,
     planDraftStatus,
     setPlanDraftStatus,
     latestPlanDraftResult,
     setLatestPlanDraftResult,
     draftMissionSpecRef,
+    currentPlanDraftRef,
     planDraftRequestSeqRef,
     deckRevision,
     setDeckRevision,
@@ -8211,7 +8217,43 @@ export default function AgentBuilder(): React.ReactElement {
               })) || [],
           });
           if (requestSeq !== planDraftRequestSeqRef.current) return;
-          setLatestPlanDraftResult(result);
+          const previousPlanDraft = currentPlanDraftRef.current;
+          const previousMissionSpec = draftMissionSpecRef.current || undefined;
+          const draftTimestamp = new Date().toISOString();
+          const provisionalPlanDraft = chatPlanDraftResultToPlanDraft(result, {
+            projectId: canvasProjectId || null,
+            currentMissionSpec: previousMissionSpec,
+            revision:
+              previousPlanDraft &&
+              previousMissionSpec &&
+              result.missionSpec &&
+              result.missionSpec.id === previousPlanDraft.missionId
+                ? previousPlanDraft.revision + 1
+                : previousPlanDraft &&
+                    previousMissionSpec &&
+                    !result.missionSpec &&
+                    !result.missionSpecPatch
+                  ? previousPlanDraft.revision
+                  : previousPlanDraft && result.missionSpecPatch
+                    ? previousPlanDraft.revision + 1
+                    : 1,
+            createdAt:
+              previousPlanDraft &&
+              ((result.missionSpec &&
+                result.missionSpec.id === previousPlanDraft.missionId) ||
+                result.missionSpecPatch)
+                ? previousPlanDraft.createdAt
+                : draftTimestamp,
+            updatedAt: draftTimestamp,
+          });
+          setLatestPlanDraftResult({
+            ...result,
+            chatReply: result.chatReply ?? null,
+          });
+          if (provisionalPlanDraft) {
+            setCurrentPlanDraft(provisionalPlanDraft);
+            setPlanSource(planDraftToStructuredAssistPlanSurface(provisionalPlanDraft));
+          }
           if (result.missionSpec) {
             setDraftMissionSpec(result.missionSpec);
           } else if (result.missionSpecPatch && draftMissionSpecRef.current) {
@@ -8239,6 +8281,7 @@ export default function AgentBuilder(): React.ReactElement {
           setLatestPlanDraftResult({
             status: 'failed',
             summary: 'Plan drafting failed.',
+            chatReply: null,
             errorReason: safeText(error?.message || 'plan_draft_failed'),
           });
           setPlanDraftStatus('failed');
@@ -8248,9 +8291,12 @@ export default function AgentBuilder(): React.ReactElement {
     [
       activeWorkspaceObjectContext,
       canvasProjectId,
+      currentPlanDraftRef,
       deck,
       knowledgeGraphKind,
       latestMissionRun,
+      setCurrentPlanDraft,
+      setPlanSource,
     ],
   );
 
@@ -8368,10 +8414,30 @@ export default function AgentBuilder(): React.ReactElement {
         const assistantText =
           resolveDeckRunChatReply(run) || 'No response returned.';
         const continuity = buildReloadStateFromDeckRuns([run], run);
+        const nextDraftWithReply = currentPlanDraftRef.current
+          ? {
+              ...currentPlanDraftRef.current,
+              chatReply: assistantText,
+              updatedAt: new Date().toISOString(),
+            }
+          : null;
         setLatestDeckRun(run);
         setLiveDeckEvents([]);
         setMessages((m) => [...m, { role: 'assistant', text: assistantText }]);
-        setPlanSource(continuity.planSource);
+        setLatestPlanDraftResult((current) =>
+          current
+            ? {
+                ...current,
+                chatReply: assistantText,
+              }
+            : current,
+        );
+        if (nextDraftWithReply) {
+          setCurrentPlanDraft(nextDraftWithReply);
+          setPlanSource(planDraftToStructuredAssistPlanSurface(nextDraftWithReply));
+        } else {
+          setPlanSource(continuity.planSource);
+        }
         setPlan(continuity.plan);
         setLinks(continuity.links);
         setDeckStatusMessage('Deck run completed.');

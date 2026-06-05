@@ -50,6 +50,7 @@ export function draftMissionSpecFromChat(
     return {
       status: "needs_user_input",
       summary: "Need more detail to draft a usable mission.",
+      chatReply: null,
       questions: [
         "What concrete outcome should this mission produce?",
         "Which object or canvas should this target?",
@@ -116,6 +117,7 @@ export function draftMissionSpecFromChat(
   return {
     status: "ready",
     summary: `Plan draft updated (${missionType}).`,
+    chatReply: null,
     missionSpec: base,
     missionSpecPatch: base,
     suggestedNextAction: "Review and approve when ready.",

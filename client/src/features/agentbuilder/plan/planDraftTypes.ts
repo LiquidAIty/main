@@ -1,5 +1,8 @@
 import type { MissionSpecRunState, PlanDraftStatus } from "../../../types/agentgraph";
 
+// Canonical Stage 0 authoring contract for the current draft plan.
+// This type owns business truth for draft planning, but not visual layout,
+// ReactFlow geometry, or backend runtime envelopes.
 export type PlanDraftApprovalState =
   | "draft"
   | "approved"

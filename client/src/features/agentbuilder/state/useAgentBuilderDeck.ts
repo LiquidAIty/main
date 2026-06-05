@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
+import type { PlanDraft } from '../plan/planDraftTypes';
 import type {
   LatestCardRunRecord,
 } from '../../../components/builder/useBuilderDeckRuntimeActions';
@@ -45,10 +46,12 @@ export default function useAgentBuilderDeck({
   const [openMissionMessage, setOpenMissionMessage] =
     useState<OpenMissionMessage | null>(null);
   const [draftMissionSpec, setDraftMissionSpec] = useState<MissionSpec | null>(null);
+  const [currentPlanDraft, setCurrentPlanDraft] = useState<PlanDraft | null>(null);
   const [planDraftStatus, setPlanDraftStatus] = useState<PlanDraftStatus>('idle');
   const [latestPlanDraftResult, setLatestPlanDraftResult] =
     useState<ChatPlanDraftResult | null>(null);
   const draftMissionSpecRef = useRef<MissionSpec | null>(null);
+  const currentPlanDraftRef = useRef<PlanDraft | null>(null);
   const planDraftRequestSeqRef = useRef(0);
   const [deckRevision, setDeckRevision] = useState<string | null>(null);
   const [latestDeckRun, setLatestDeckRun] = useState<DeckRun | null>(null);
@@ -65,6 +68,10 @@ export default function useAgentBuilderDeck({
     draftMissionSpecRef.current = draftMissionSpec;
   }, [draftMissionSpec]);
 
+  useEffect(() => {
+    currentPlanDraftRef.current = currentPlanDraft;
+  }, [currentPlanDraft]);
+
   return {
     deck,
     setDeckState,
@@ -76,11 +83,14 @@ export default function useAgentBuilderDeck({
     setOpenMissionMessage,
     draftMissionSpec,
     setDraftMissionSpec,
+    currentPlanDraft,
+    setCurrentPlanDraft,
     planDraftStatus,
     setPlanDraftStatus,
     latestPlanDraftResult,
     setLatestPlanDraftResult,
     draftMissionSpecRef,
+    currentPlanDraftRef,
     planDraftRequestSeqRef,
     deckRevision,
     setDeckRevision,

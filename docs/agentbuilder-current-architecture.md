@@ -52,6 +52,18 @@ These are safe shell helpers, not the full runtime brain.
 
 These wrap the main Agent canvas surface while leaving ReactFlow runtime internals in `client/src/components/builder/BuilderCanvas.tsx`.
 
+### `client/src/features/agentbuilder/plan/`
+
+- `planDraftTypes.ts`
+- `planDraftMapping.ts`
+- `planDraftOwnership.ts`
+
+Current intent:
+
+- `PlanDraft` is the canonical authoring contract for the current draft plan
+- mapping helpers bridge current overlapping plan/mission structures without changing runtime behavior yet
+- the ownership table freezes which structures are canonical, derived, visual-only, adapter-only, or runtime-only before P2 wiring starts
+
 ### `client/src/features/agentbuilder/state/`
 
 - `useAgentBuilderProject.ts`
@@ -141,6 +153,20 @@ Do not change casually:
 - chat send / Magentic-One runtime path
 - graph write contracts
 - Local Coder / CodeGraph workflow
+
+## Plan Ownership Boundary
+
+The current plan stack overlaps, but the intended ownership is now explicit:
+
+- `PlanDraft`: canonical business truth for draft authoring
+- `MissionSpec` / `MissionRun`: execution adapter for the current approved-run path
+- `StructuredAssistPlanSurface`: readable plan presentation model
+- `PlanMissionGraph`: visual Plan Canvas graph only
+- `ChatPlanDraftResult`: chat envelope around plan-related results
+- AutoGen `PlanContext`: backend/orchestrator envelope
+- `deckRunState` `structuredPlan`: persisted runtime continuity snapshot
+
+Future agents should not promote presentation, visual, or runtime continuity structures back into canonical authoring truth.
 
 ## Future-Agent Warning
 
