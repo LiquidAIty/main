@@ -43,6 +43,11 @@ import {
   graphPillButtonStyle,
 } from '../graph/graphVisualTokens';
 import {
+  buildInitialWorkbenchLandingViewport,
+  buildPresentationLandingViewport,
+  type CanvasLandingViewport,
+} from '../../features/agentbuilder/core/agentBuilderViewportMath';
+import {
   GRAPH_WORKSPACE,
   buildFocusedNodeSet,
   buildUndirectedNeighborMap,
@@ -57,9 +62,6 @@ const PERSISTED_NODE_CHANGE_TYPES = new Set<NodeChange['type']>(['add', 'remove'
 const PERSISTED_EDGE_CHANGE_TYPES = new Set<EdgeChange['type']>(['add', 'remove', 'replace']);
 const FALLBACK_NODE_WIDTH = 144;
 const FALLBACK_NODE_HEIGHT = 88;
-const MAGENTIC_BUS_BODY_WIDTH = 26;
-const LANDING_BUS_TOP_Y = 72;
-const LANDING_BUS_CENTER_X = 0;
 
 const nodeTypes = {
   agentCard: AgentCardNode,
@@ -96,89 +98,6 @@ export type BuilderCanvasFocusRequest = {
   cardId?: string | null;
   nonce: number;
 };
-
-export type CanvasLandingViewport = {
-  x: number;
-  y: number;
-  zoom: number;
-};
-
-export function buildInitialBusSeamViewport({
-  busPosition,
-  zoom,
-  desiredBusCenterX,
-  desiredBusTopY,
-  busWidth = MAGENTIC_BUS_BODY_WIDTH,
-}: {
-  busPosition: { x: number; y: number };
-  zoom: number;
-  desiredBusCenterX: number;
-  desiredBusTopY: number;
-  busWidth?: number;
-}): CanvasLandingViewport {
-  return {
-    x: desiredBusCenterX - (busPosition.x + busWidth / 2) * zoom,
-    y: desiredBusTopY - busPosition.y * zoom,
-    zoom,
-  };
-}
-
-export function buildInitialWorkbenchLandingViewport(
-  document: DeckDocument,
-  options?: {
-    desiredBusCenterX?: number;
-    desiredBusTopY?: number;
-    busWidth?: number;
-  },
-): CanvasLandingViewport | null {
-  const busNode = document.nodes.find((node) => normalizeRuntimeType(node.runtimeType) === 'magentic_one');
-  const workbenchNode = document.nodes.find(
-    (node) =>
-      String(node.id || '').trim() === 'card_energy_workbench' ||
-      String(node.templateId || '').trim() === 'template_energy_workbench',
-  );
-
-  if (!busNode || !workbenchNode || workbenchNode.position.x <= busNode.position.x) {
-    return null;
-  }
-
-  return buildInitialBusSeamViewport({
-    busPosition: busNode.position,
-    zoom: GRAPH_WORKSPACE.landingBaselineZoom,
-    desiredBusCenterX: options?.desiredBusCenterX ?? LANDING_BUS_CENTER_X,
-    desiredBusTopY: options?.desiredBusTopY ?? LANDING_BUS_TOP_Y,
-    busWidth: options?.busWidth ?? MAGENTIC_BUS_BODY_WIDTH,
-  });
-}
-
-type SeamRectHost = {
-  getBoundingClientRect: () => { left: number };
-};
-
-function isSeamRectHost(value: unknown): value is SeamRectHost {
-  return Boolean(value && typeof (value as SeamRectHost).getBoundingClientRect === 'function');
-}
-
-function resolveInitialBusSeamCenterX(canvasElement: HTMLDivElement | null): number {
-  const canvasRegion = canvasElement?.closest('[data-testid="workspace-canvas-region"]');
-  if (!isSeamRectHost(canvasRegion)) {
-    return LANDING_BUS_CENTER_X;
-  }
-  const seamHandle = canvasRegion.previousElementSibling;
-  if (!isSeamRectHost(seamHandle)) {
-    return LANDING_BUS_CENTER_X;
-  }
-  return seamHandle.getBoundingClientRect().left - canvasRegion.getBoundingClientRect().left;
-}
-
-export function buildPresentationLandingViewport(
-  document: DeckDocument,
-  canvasElement: HTMLDivElement | null,
-): CanvasLandingViewport | null {
-  return buildInitialWorkbenchLandingViewport(document, {
-    desiredBusCenterX: resolveInitialBusSeamCenterX(canvasElement),
-  });
-}
 
 export function buildCanvasDocumentRecoveryKey(document: DeckDocument): string {
   return JSON.stringify({
@@ -862,7 +781,11 @@ export default function BuilderCanvas({
     if (flowNodes.length === 0) return;
     if (initialViewportAppliedRef.current) return;
     initialViewportAppliedRef.current = true;
-    const landingViewport = buildPresentationLandingViewport(document, canvasRef.current);
+    const landingViewport = buildPresentationLandingViewport(
+      document,
+      canvasRef.current,
+      GRAPH_WORKSPACE.landingBaselineZoom,
+    );
     const frame = window.requestAnimationFrame(() => {
       if (landingViewport) {
         reactFlowInstance.setViewport(landingViewport, { duration: 0 });
@@ -882,6 +805,7 @@ export default function BuilderCanvas({
       const landingViewport = buildPresentationLandingViewport(
         latestDocumentRef.current,
         canvasRef.current,
+        GRAPH_WORKSPACE.landingBaselineZoom,
       );
       if (landingViewport) {
         reactFlowInstance.setViewport(landingViewport, { duration: 0 });
@@ -1277,7 +1201,11 @@ export default function BuilderCanvas({
           aria-label="Fit view"
           onClick={() => {
             if (!reactFlowInstance) return;
-            const landingViewport = buildPresentationLandingViewport(document, canvasRef.current);
+            const landingViewport = buildPresentationLandingViewport(
+              document,
+              canvasRef.current,
+              GRAPH_WORKSPACE.landingBaselineZoom,
+            );
             if (!landingViewport) return;
             reactFlowInstance.setViewport(landingViewport, {
               duration: GRAPH_THEME.nav.fitDurationMs,

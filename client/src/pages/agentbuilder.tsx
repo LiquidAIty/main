@@ -31,6 +31,7 @@ import AgentBuilderShell from '../features/agentbuilder/core/AgentBuilderShell';
 import AgentBuilderSplitter from '../features/agentbuilder/core/AgentBuilderSplitter';
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
+import useAgentBuilderAutosave from '../features/agentbuilder/state/useAgentBuilderAutosave';
 import useAgentBuilderDeck from '../features/agentbuilder/state/useAgentBuilderDeck';
 import useAgentBuilderDeckLoad from '../features/agentbuilder/state/useAgentBuilderDeckLoad';
 import useAgentBuilderProject from '../features/agentbuilder/state/useAgentBuilderProject';
@@ -5278,146 +5279,27 @@ export default function AgentBuilder(): React.ReactElement {
     setCardRunBusy,
     setPendingActivationProposal,
   });
-
-  useEffect(() => {
-    if (!canvasProjectId || !stateLoaded || deckLoadBusy || deckLoadError) return;
-    const boardFingerprint = JSON.stringify({
-      nodes: deck.nodes,
-      edges: deck.edges,
-    });
-    if (lastPersistedBoardFingerprintRef.current === boardFingerprint) return;
-
-    const timer = window.setTimeout(() => {
-      const reason = lastDeckPersistReasonRef.current || 'board-autosave';
-      const integrity = evaluateBoardIntegrityForSave(deck, reason);
-      if (!integrity.ok) {
-        setDeckStatusMessage(integrity.message);
-        console.warn('[builder][deck-save-proof]', {
-          projectId: canvasProjectId,
-          deckId: BUILDER_DECK_ID,
-          reason,
-          nodeCount: deck.nodes.length,
-          edgeCount: deck.edges.length,
-          revisionBefore: deckRevision,
-          revisionAfter: null,
-          ok: false,
-          error: 'deck_integrity_blocked',
-          removedNodeIds: integrity.removedNodeIds,
-        });
-        return;
-      }
-      const revisionBefore = deckRevision;
-      const controller = new AbortController();
-      layoutAutosaveAbortRef.current?.abort();
-      layoutAutosaveAbortRef.current = controller;
-      void (async () => {
-        try {
-          const response = await fetch(
-            `${PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}`,
-            {
-              method: 'PUT',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                document: {
-                  ...deck,
-                  id: BUILDER_DECK_ID,
-                },
-                expectedRevision: deckRevision,
-                integrity: {
-                  reason,
-                  removedNodeIds: integrity.removedNodeIds,
-                },
-              }),
-              signal: controller.signal,
-            },
-          );
-          const data = await safeJson(response);
-          if (!response.ok) {
-            const errorMessage = safeText(data?.error || 'deck_save_failed');
-            if (errorMessage === 'deck_conflict') {
-              setDeckRevision(null);
-            }
-            setDeckStatusMessage(
-              formatBuilderStatusMessage(errorMessage, 'Could not save the current board.'),
-            );
-            console.warn('[builder][deck-save-proof]', {
-              projectId: canvasProjectId,
-              deckId: BUILDER_DECK_ID,
-              reason,
-              nodeCount: deck.nodes.length,
-              edgeCount: deck.edges.length,
-              revisionBefore,
-              revisionAfter: null,
-              ok: false,
-              error: errorMessage,
-            });
-            if (BUILDER_DEV) {
-              console.warn('[builder] layout autosave failed', {
-                error: errorMessage,
-              });
-            }
-            return;
-          }
-          const revisionAfter =
-            typeof data?.meta?.deckRevision === 'string'
-              ? data.meta.deckRevision
-              : deckRevision;
-          if (typeof data?.meta?.deckRevision === 'string') {
-            setDeckRevision(data.meta.deckRevision);
-          }
-          lastPersistedBoardFingerprintRef.current = boardFingerprint;
-          lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(deck);
-          console.info('[builder][deck-save-proof]', {
-            projectId: canvasProjectId,
-            deckId: BUILDER_DECK_ID,
-            reason,
-            nodeCount: deck.nodes.length,
-            edgeCount: deck.edges.length,
-            revisionBefore,
-            revisionAfter,
-            ok: true,
-          });
-        } catch (error) {
-          if (isAbortLikeError(error)) return;
-          setDeckStatusMessage(
-            formatBuilderStatusMessage(
-              (error as any)?.message,
-              'Could not save the current board.',
-            ),
-          );
-          console.warn('[builder][deck-save-proof]', {
-            projectId: canvasProjectId,
-            deckId: BUILDER_DECK_ID,
-            reason,
-            nodeCount: deck.nodes.length,
-            edgeCount: deck.edges.length,
-            revisionBefore,
-            revisionAfter: null,
-            ok: false,
-            error: safeText((error as any)?.message || 'deck_save_exception'),
-          });
-          if (BUILDER_DEV) {
-            console.warn('[builder] layout autosave exception', error);
-          }
-        }
-      })();
-    }, 500);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [
-    BUILDER_DEV,
+  useAgentBuilderAutosave({
+    builderDev: BUILDER_DEV,
     canvasProjectId,
+    projectsApi: PROJECTS_API,
+    builderDeckId: BUILDER_DECK_ID,
     deck,
-    deckLoadError,
-    deckLoadBusy,
     deckRevision,
+    deckLoadBusy,
+    deckLoadError,
+    stateLoaded,
+    layoutAutosaveAbortRef,
+    lastPersistedBoardFingerprintRef,
+    lastPersistedBoardSnapshotRef,
+    lastDeckPersistReasonRef,
     evaluateBoardIntegrityForSave,
     snapshotDeckBoard,
-    stateLoaded,
-  ]);
+    formatBuilderStatusMessage,
+    isAbortLikeError,
+    setDeckRevision,
+    setDeckStatusMessage,
+  });
 
   const showDeckBuilder = workspaceView === 'canvas';
   const runtimeEvents = useMemo(
@@ -6556,7 +6438,6 @@ export default function AgentBuilder(): React.ReactElement {
       );
     }
 
-    // Editor content based on node selection
     const renderEditorContent = () => {
       if (selectedCard && selectedCardConfig) {
         if (
@@ -6777,7 +6658,6 @@ export default function AgentBuilder(): React.ReactElement {
       );
     };
 
-    // Left rail plus is the only add mechanism - no right panel add UI
     return <div className="space-y-3">{renderEditorContent()}</div>;
   };
 
@@ -9795,10 +9675,10 @@ export default function AgentBuilder(): React.ReactElement {
 
   const workspaceChatPane = (
     <AgentBuilderChatPane
-      workspaceView={largeSurface}
+      workspaceView={workspaceView}
+      surfaceName={largeSurface}
       chatPanelWidth={chatPanelWidth}
       minWidth={AGENTS_CHAT_MIN_WIDTH}
-      chatResizeHandleActive={chatResizeHandleActive}
     >
       {renderChatSurface(activeProject, false, 'large')}
     </AgentBuilderChatPane>

@@ -10,7 +10,6 @@ type AgentBuilderSplitterProps = {
 
 export default function AgentBuilderSplitter({
   active,
-  dragging,
   onMouseEnter,
   onMouseLeave,
   onMouseDown,
@@ -40,25 +39,6 @@ export default function AgentBuilderSplitter({
         transition:
           'border-color 120ms ease, box-shadow 120ms ease, background 120ms ease',
       }}
-    >
-      <div
-        style={{
-          position: 'absolute',
-          left: '50%',
-          top: '50%',
-          transform: 'translate(-50%, -50%)',
-          width: dragging ? 6 : 4,
-          height: 92,
-          borderRadius: 999,
-          background: active
-            ? 'linear-gradient(180deg, rgba(113,235,255,0.2), rgba(113,235,255,0.75), rgba(113,235,255,0.2))'
-            : 'linear-gradient(180deg, rgba(113,235,255,0.08), rgba(113,235,255,0.38), rgba(113,235,255,0.08))',
-          boxShadow: active
-            ? '0 0 12px rgba(113,235,255,0.28)'
-            : '0 0 6px rgba(113,235,255,0.12)',
-          transition: 'width 120ms ease, background 120ms ease, box-shadow 120ms ease',
-        }}
-      />
-    </div>
+    />
   );
 }

@@ -2,23 +2,23 @@ import type { ReactNode } from 'react';
 
 type AgentBuilderChatPaneProps = {
   workspaceView: string;
+  surfaceName: string;
   chatPanelWidth: number;
   minWidth: number;
-  chatResizeHandleActive: boolean;
   children: ReactNode;
 };
 
 export default function AgentBuilderChatPane({
   workspaceView,
+  surfaceName,
   chatPanelWidth,
   minWidth,
-  chatResizeHandleActive,
   children,
 }: AgentBuilderChatPaneProps) {
   return (
     <div
       data-testid="workspace-large-region"
-      data-surface={workspaceView}
+      data-surface={surfaceName}
       className="h-full min-w-0 relative"
       style={{
         ...(workspaceView === 'chat'
@@ -31,9 +31,6 @@ export default function AgentBuilderChatPane({
               width: chatPanelWidth,
               minWidth,
               flex: '0 0 auto',
-              transition: chatResizeHandleActive
-                ? undefined
-                : 'width 180ms cubic-bezier(.22,.61,.36,1)',
             }),
       }}
     >
