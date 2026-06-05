@@ -14,6 +14,17 @@
 **Do not store strategy performance memory in KnowGraph.**
 **Do not store raw external evidence in ThinkGraph.**
 
+For Agent Workspace research planning, keep the default flow explicit:
+
+```
+ThinkGraph intent/context
+  → Research source gathering
+  → KnowGraph evidence ingestion
+  → Context Builder / Magentic-One next-turn context
+```
+
+KnowGraph is not the external search worker. New research plans should not call `knowgraph_query`; existing-KnowGraph search can only use a query tool when that tool is actually implemented and explicitly requested by the user.
+
 ---
 
 ## KnowGraph (Neo4j)

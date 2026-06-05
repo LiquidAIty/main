@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { draftMissionSpecFromChat } from "../../../components/builder/chatPlanCompanion";
 import type {
   ChatPlanDraftResult,
   MissionSpec,
@@ -16,6 +17,7 @@ import {
   chatPlanDraftResultToPlanDraft,
   missionSpecToPlanDraft,
   planDraftToMissionSpec,
+  planDraftToPlanMissionGraph,
   planDraftToStructuredAssistPlanSurface,
   planMissionGraphToPlanDraft,
   structuredAssistPlanSurfaceToPlanDraft,
@@ -258,5 +260,200 @@ describe("planDraftMapping", () => {
     expect(structuredPlan.explicitPlanText).toBe("Bridge");
     expect(structuredPlan.steps).toHaveLength(1);
     expect(structuredPlan.steps[0].assignedAgentId).toBe("research_agent");
+  });
+
+  it("maps simple chat into a minimal valid lightweight PlanDraft", () => {
+    const result = draftMissionSpecFromChat({
+      userMessage: "What can you do?",
+      activeCanvasId: "project_admin",
+    });
+
+    const draft = chatPlanDraftResultToPlanDraft(result, {
+      projectId: "project_admin",
+    });
+
+    expect(draft).not.toBeNull();
+    expect(draft?.approvalState).toBe("draft");
+    expect(draft?.steps).toHaveLength(0);
+    expect(draft?.requiredAgents).toEqual([]);
+    expect(draft?.requiredTools).toEqual([]);
+    expect(draft?.graphWriteTargets).toEqual([]);
+    expect(draft?.summary).toBe(
+      "Lightweight chat turn; no agent execution proposed yet.",
+    );
+  });
+
+  it("maps research requests to a useful multi-step draft", () => {
+    const result = draftMissionSpecFromChat({
+      userMessage:
+        "Make a research plan to populate KnowGraph about lithium battery recycling.",
+      activeCanvasId: "project_admin",
+    });
+
+    const draft = chatPlanDraftResultToPlanDraft(result, {
+      projectId: "project_admin",
+    });
+
+    expect(draft).not.toBeNull();
+    expect(draft?.steps.length).toBeGreaterThanOrEqual(3);
+    expect(draft?.requiredAgents).toEqual(
+      expect.arrayContaining([
+        "thinkgraph_agent",
+        "research_agent",
+        "knowgraph_agent",
+        "magentic_one",
+      ]),
+    );
+  });
+
+  it("strips raw runtime noise from lightweight PlanDraft content", () => {
+    const result: ChatPlanDraftResult = {
+      status: "ready",
+      summary:
+        "autogen_orchestrator_http_500:team_runtime_participants_required runtimeType=magentic_one",
+      chatReply:
+        "assistant_tool_not_supported: cardId=card_thinkgraph_agent tool=thinkgraph_query",
+    };
+
+    const draft = chatPlanDraftResultToPlanDraft(result, {
+      projectId: "project_admin",
+    });
+
+    expect(draft).not.toBeNull();
+    expect(draft?.summary).toBe(
+      "Lightweight chat turn; no agent execution proposed yet.",
+    );
+    expect(draft?.chatReply).toBeNull();
+    expect(draft?.steps).toHaveLength(0);
+  });
+
+  it("refines a prior draft instead of duplicating junk plans", () => {
+    const initialResult = draftMissionSpecFromChat({
+      userMessage: "Make a simple implementation plan for the current workspace.",
+      activeCanvasId: "project_admin",
+    });
+    const initialDraft = chatPlanDraftResultToPlanDraft(initialResult, {
+      projectId: "project_admin",
+    });
+    const refineResult = draftMissionSpecFromChat({
+      userMessage: "Refine it into research and populate KnowGraph with evidence.",
+      activeCanvasId: "project_admin",
+      currentMissionSpec: initialResult.missionSpec,
+    });
+    const refinedDraft = chatPlanDraftResultToPlanDraft(refineResult, {
+      projectId: "project_admin",
+      currentMissionSpec: initialResult.missionSpec,
+      revision: (initialDraft?.revision || 0) + 1,
+    });
+
+    expect(initialDraft).not.toBeNull();
+    expect(refinedDraft).not.toBeNull();
+    expect(refinedDraft?.missionId).toBe(initialDraft?.missionId);
+    expect(refinedDraft?.steps.length).toBeGreaterThan(initialDraft?.steps.length || 0);
+  });
+
+  it("does not create fake canvas nodes for lightweight drafts", () => {
+    const result = draftMissionSpecFromChat({
+      userMessage: "What can you do?",
+      activeCanvasId: "project_admin",
+    });
+    const draft = chatPlanDraftResultToPlanDraft(result, {
+      projectId: "project_admin",
+    });
+
+    expect(draft).not.toBeNull();
+    const structuredPlan = planDraftToStructuredAssistPlanSurface(draft!);
+    expect(structuredPlan.steps).toHaveLength(0);
+    expect(structuredPlan.nextMove).toEqual([]);
+    expect(structuredPlan.explicitPlanText).toBe(
+      "Lightweight chat turn; no agent execution proposed yet.",
+    );
+  });
+
+  it("maps lightweight PlanDraft to an empty PlanMissionGraph without filler nodes", () => {
+    const result = draftMissionSpecFromChat({
+      userMessage: "What can you do?",
+      activeCanvasId: "project_admin",
+    });
+    const draft = chatPlanDraftResultToPlanDraft(result, {
+      projectId: "project_admin",
+    });
+
+    expect(draft).not.toBeNull();
+    const missionGraph = planDraftToPlanMissionGraph(draft!);
+
+    expect(missionGraph.nodes).toHaveLength(0);
+    expect(missionGraph.edges).toHaveLength(0);
+  });
+
+  it("maps research PlanDraft to useful ordered mission nodes and edges", () => {
+    const result = draftMissionSpecFromChat({
+      userMessage:
+        "Make a research plan to populate KnowGraph about lithium battery recycling.",
+      activeCanvasId: "project_admin",
+    });
+    const draft = chatPlanDraftResultToPlanDraft(result, {
+      projectId: "project_admin",
+    });
+
+    expect(draft).not.toBeNull();
+    const missionGraph = planDraftToPlanMissionGraph(draft!);
+
+    expect(missionGraph.nodes.map((node) => node.data.label)).toEqual([
+      "ThinkGraph Agent",
+      "Research Agent",
+      "KnowGraph Agent",
+      "Context Builder / Magentic-One",
+    ]);
+    expect(missionGraph.edges).toHaveLength(3);
+    expect(missionGraph.edges[0].source).toBe(missionGraph.nodes[0].id);
+    expect(missionGraph.edges[0].target).toBe(missionGraph.nodes[1].id);
+    expect(missionGraph.edges[1].source).toBe(missionGraph.nodes[1].id);
+    expect(missionGraph.edges[1].target).toBe(missionGraph.nodes[2].id);
+    expect(missionGraph.edges[2].source).toBe(missionGraph.nodes[2].id);
+    expect(missionGraph.edges[2].target).toBe(missionGraph.nodes[3].id);
+  });
+
+  it("keeps runtime noise out of direct PlanMissionGraph nodes", () => {
+    const result: ChatPlanDraftResult = {
+      status: "ready",
+      summary:
+        "autogen_orchestrator_http_500:team_runtime_participants_required runtimeType=magentic_one",
+      chatReply:
+        "assistant_tool_not_supported: cardId=card_thinkgraph_agent tool=thinkgraph_query",
+    };
+
+    const draft = chatPlanDraftResultToPlanDraft(result, {
+      projectId: "project_admin",
+    });
+
+    expect(draft).not.toBeNull();
+    const missionGraph = planDraftToPlanMissionGraph(draft!);
+    expect(missionGraph.nodes).toHaveLength(0);
+    expect(missionGraph.edges).toHaveLength(0);
+  });
+
+  it("does not route existing KnowGraph search requests to an unsupported query tool", () => {
+    const priorResearch = draftMissionSpecFromChat({
+      userMessage:
+        "Make a research plan to populate KnowGraph about lithium battery recycling.",
+      activeCanvasId: "project_admin",
+    });
+    const result = draftMissionSpecFromChat({
+      userMessage: "Search existing KnowGraph for lithium battery recycling.",
+      activeCanvasId: "project_admin",
+      currentMissionSpec: priorResearch.missionSpec,
+    });
+    const draft = chatPlanDraftResultToPlanDraft(result, {
+      projectId: "project_admin",
+      currentMissionSpec: priorResearch.missionSpec,
+    });
+
+    expect(result.chatReply).toMatch(/not wired as a supported chat tool/i);
+    expect(result.chatReply).toMatch(/will not call an unsupported knowgraph_query tool/i);
+    expect(draft?.requiredAgents).not.toContain("knowgraph_agent");
+    expect(draft?.requiredAgents).not.toContain("research_agent");
+    expect(draft?.requiredAgents).toEqual(["thinkgraph_agent"]);
+    expect(draft?.steps.some((step) => step.requiredTools.includes("knowgraph_query"))).toBe(false);
   });
 });

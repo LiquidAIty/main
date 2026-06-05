@@ -33,6 +33,7 @@ import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWor
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import {
   chatPlanDraftResultToPlanDraft,
+  planDraftToPlanMissionGraph,
   planDraftToStructuredAssistPlanSurface,
 } from '../features/agentbuilder/plan/planDraftMapping';
 import useAgentBuilderAutosave from '../features/agentbuilder/state/useAgentBuilderAutosave';
@@ -2085,8 +2086,14 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'The visible canvas is your full action space.',
         'You may only delegate through visible outgoing magentic_option connections from this card.',
         'Only visibly connected outgoing magentic_option paths are callable.',
-        'If the task can be answered directly without delegation, do so.',
-        'If delegation is needed, choose exactly one connected node for the next assignment and explain why that node is the best next move.',
+        'Every user turn must produce a natural chat reply and a draft plan for review.',
+        'Do not execute connected agents until the user approves the current plan.',
+        'For new research or intelligence requests, plan this order: ThinkGraph Agent frames intent and uncertainty, Research Agent gathers external source-backed evidence, KnowGraph Agent ingests evidence into KnowGraph, and Magentic-One prepares separate ThinkGraph and KnowGraph context packets for the next turn.',
+        'Treat ThinkGraph and KnowGraph as separate streams: ThinkGraph stores subjective reasoning, assumptions, hypotheses, decisions, and uncertainty; KnowGraph stores objective source-backed entities, relationships, provenance, citations, confidence, and source metadata.',
+        'KnowGraph is an evidence ingestion and existing-graph inspection role, not the external search worker.',
+        'Do not call knowgraph_query unless the user explicitly asks to search existing KnowGraph and the tool is implemented in the runtime.',
+        'If a graph query tool is not implemented, say so plainly instead of calling or inventing it.',
+        'Research Agent is the external-source worker for internet/source research.',
         'Do not invent agents, tools, routes, subprocesses, hidden plans, or capabilities that are not present on the canvas.',
         'Do not create workflow steps that are not represented by the visible graph structure.',
         'If no connected node can validly help, stop and return control to the human.',
@@ -2120,6 +2127,7 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       constraints: [
         'ThinkGraph is provisional/subjective memory, not grounded facts.',
+        'For research requests, run before Research Agent to extract intent, assumptions, constraints, uncertainty, hypotheses, and search goals.',
         'Separate candidate claims from grounded evidence.',
         'Keep structure concise and useful for planning.',
         'Do not merge ThinkGraph with KnowGraph or CodeGraph.',
@@ -2174,6 +2182,7 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       constraints: [
         'Focus on research and analysis tasks.',
+        'Use external/source research when available and return evidence objects with links, snippets, claims, tables or screenshots when available, and source metadata.',
         'Produce structured output suitable for downstream processing.',
         'Do not store grounded knowledge yourself; pass findings to KnowGraph Agent.',
       ].join('\n'),
@@ -2200,6 +2209,8 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       constraints: [
         'KnowGraph is grounded/evidence-backed memory, not provisional thought.',
+        'Consume Research Agent outputs for evidence extraction and ingestion; do not act as the external internet search worker.',
+        'Do not call or advertise knowgraph_query unless an existing-graph query tool is implemented and the user explicitly asks to search existing KnowGraph.',
         'Only promote structure backed by sources.',
         'Preserve citations and provenance.',
         'Do not merge KnowGraph with ThinkGraph or CodeGraph.',
@@ -2455,7 +2466,7 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     provider: 'openai',
     temperature: 0.2,
     maxTokens: 1400,
-    tools: ['thinkgraph_query', 'thinkgraph_write', 'entity_extractor'],
+    tools: [],
   },
   {
     id: 'template_codegraph_agent',
@@ -2475,7 +2486,7 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     provider: 'openai',
     temperature: 0.2,
     maxTokens: 1400,
-    tools: ['web_search', 'knowledge_ingest'],
+    tools: [],
   },
   {
     id: 'template_knowgraph_agent',
@@ -2485,12 +2496,7 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     provider: 'openai',
     temperature: 0.2,
     maxTokens: 1400,
-    tools: [
-      'knowgraph_query',
-      'knowgraph_write',
-      'web_search',
-      'knowledge_ingest',
-    ],
+    tools: [],
   },
   {
     id: 'template_assist',
@@ -4804,6 +4810,7 @@ export default function AgentBuilder(): React.ReactElement {
     setOpenMissionMessage,
     draftMissionSpec,
     setDraftMissionSpec,
+    currentPlanDraft,
     setCurrentPlanDraft,
     planDraftStatus,
     setPlanDraftStatus,
@@ -8250,6 +8257,12 @@ export default function AgentBuilder(): React.ReactElement {
             ...result,
             chatReply: result.chatReply ?? null,
           });
+          if (result.chatReply) {
+            setMessages((current) => [
+              ...current,
+              { role: 'assistant', text: result.chatReply || '' },
+            ]);
+          }
           if (provisionalPlanDraft) {
             setCurrentPlanDraft(provisionalPlanDraft);
             setPlanSource(planDraftToStructuredAssistPlanSurface(provisionalPlanDraft));
@@ -8263,9 +8276,7 @@ export default function AgentBuilder(): React.ReactElement {
             });
           }
           setPlanDraftStatus(
-            result.status === 'ready' && !result.missionSpec && !result.missionSpecPatch
-              ? 'failed'
-              : result.status,
+            result.status === 'ready' && !provisionalPlanDraft ? 'failed' : result.status,
           );
           if (result.status === 'needs_user_input' && result.questions && result.questions.length > 0) {
             setMessages((current) => [
@@ -8314,7 +8325,6 @@ export default function AgentBuilder(): React.ReactElement {
       ]);
       return;
     }
-    startPlanDraftFromChat(trimmed);
     const interactionId = createWorkspaceTestingInteractionId('chat');
     const sendStartedAt = Date.now();
     const turnId = `assist:${Date.now()}:${uid()}`;
@@ -8332,7 +8342,7 @@ export default function AgentBuilder(): React.ReactElement {
       surfaceRole: largeSurface === 'chat' ? 'large' : 'companion',
       metadata: {
         messageLength: trimmed.length,
-        responseMode: 'deck_runtime',
+        responseMode: 'plan_draft',
         turnId,
         workspaceView: activeDeckWorkspaceContext.workspaceView,
         objectEditorOpen: activeDeckWorkspaceContext.objectEditor.open,
@@ -8347,189 +8357,54 @@ export default function AgentBuilder(): React.ReactElement {
     if (activationProposal) {
       setPendingActivationProposal(activationProposal);
     }
-    setSending(true);
-    setDeckRunBusy(true);
-    setLatestCardRun(null);
-    setLatestDeckRun(null);
-    setLiveDeckEvents([]);
-    setDeckStatusMessage('Running deck from chat...');
-    const requestProjectId = canvasProjectId;
-    deckExecutionAbortRef.current?.abort();
-    const controller = new AbortController();
-    deckExecutionAbortRef.current = controller;
-
-    void (async () => {
-      try {
-        const endpoint = `${PROJECTS_API}/${requestProjectId}/decks/${BUILDER_DECK_ID}/run`;
-        const data = await streamDeckRunRequest({
-          endpoint,
-          body: {
-            deckId: BUILDER_DECK_ID,
-            document: {
-              ...deck,
-              id: BUILDER_DECK_ID,
-            },
-            templates: INITIAL_AGENT_TEMPLATES,
-            input: trimmed,
-            workspaceContext: activeDeckWorkspaceContext,
-            workspaceObjectContext: activeWorkspaceObjectContext,
-          },
-          signal: controller.signal,
-          onEvent: (event) => {
-            if (
-              controller.signal.aborted ||
-              activeProjectLatestRef.current !== requestProjectId
-            )
-              return;
-            setLiveDeckEvents((current) => [...current, event]);
-            const contract = extractCodeGraphViewContractFromEvent(
-              event,
-              requestProjectId,
-            );
-            if (contract) {
-              applyCodeGraphViewContract(contract);
-            }
-          },
-        });
-        if (
-          controller.signal.aborted ||
-          activeProjectLatestRef.current !== requestProjectId
-        ) {
-          return;
-        }
-        if (!data?.run || typeof data.run !== 'object') {
-          const failure = data as { message?: unknown; error?: unknown };
-          throw new Error(
-            safeText(failure.message || failure.error || 'deck_run_failed'),
-          );
-        }
-        const run = data.run as DeckRun;
-        const runDerivedCodeGraphContract = extractCodeGraphViewContractFromRun(
-          run,
-          requestProjectId,
-        );
-        if (runDerivedCodeGraphContract) {
-          applyCodeGraphViewContract(runDerivedCodeGraphContract);
-        }
-        const assistantText =
-          resolveDeckRunChatReply(run) || 'No response returned.';
-        const continuity = buildReloadStateFromDeckRuns([run], run);
-        const nextDraftWithReply = currentPlanDraftRef.current
-          ? {
-              ...currentPlanDraftRef.current,
-              chatReply: assistantText,
-              updatedAt: new Date().toISOString(),
-            }
-          : null;
-        setLatestDeckRun(run);
-        setLiveDeckEvents([]);
-        setMessages((m) => [...m, { role: 'assistant', text: assistantText }]);
-        setLatestPlanDraftResult((current) =>
-          current
-            ? {
-                ...current,
-                chatReply: assistantText,
-              }
-            : current,
-        );
-        if (nextDraftWithReply) {
-          setCurrentPlanDraft(nextDraftWithReply);
-          setPlanSource(planDraftToStructuredAssistPlanSurface(nextDraftWithReply));
-        } else {
-          setPlanSource(continuity.planSource);
-        }
-        setPlan(continuity.plan);
-        setLinks(continuity.links);
-        setDeckStatusMessage('Deck run completed.');
-        const responseReceivedAt = Date.now();
-        const finalStep =
-          [...(run.steps || [])]
-            .reverse()
-            .find((step) => step.status === 'success') || null;
-        chatLoopTelemetryRef.current = {
-          interactionId,
-          sendStartedAt,
-          responseReceivedAt,
-          refreshRecorded: false,
-        };
-        emitWorkspaceTestingEvent({
-          event: 'chat_response_received',
-          interactionId,
-          durationMs: Math.max(0, responseReceivedAt - sendStartedAt),
-          surface:
-            largeSurface === 'chat' ? 'chat' : normalizeWorkspaceSurface(tab),
-          surfaceRole: largeSurface === 'chat' ? 'large' : 'companion',
-          metadata: {
-            responseMode: 'deck_runtime',
-            turnId,
-            provider: cleanOptionalText(finalStep?.effectiveAgent?.provider),
-            model: cleanOptionalText(finalStep?.effectiveAgent?.model),
-            stopReason: cleanOptionalText(run.status),
-            turnsUsed: Array.isArray(run.steps) ? run.steps.length : null,
-          },
-        });
-
-        loadProjectSubgraph({ force: true });
-        window.setTimeout(() => {
-          if (activeProjectLatestRef.current !== requestProjectId) return;
-          loadProjectSubgraph({ force: true });
-        }, 1500);
-      } catch (err: any) {
-        if (
-          isAbortLikeError(err) ||
-          activeProjectLatestRef.current !== requestProjectId
-        ) {
-          return;
-        }
-        const message = formatBuilderStatusMessage(
-          err?.message,
-          'Deck chat run failed.',
-        );
-        setLiveDeckEvents([]);
-        setLatestDeckRun(null);
-        setDeckStatusMessage(message);
-        setMessages((m) => [
-          ...m,
-          {
-            role: 'assistant',
-            text: `Request failed: ${message}`,
-          },
-        ]);
-        const responseReceivedAt = Date.now();
-        chatLoopTelemetryRef.current = {
-          interactionId,
-          sendStartedAt,
-          responseReceivedAt,
-          refreshRecorded: true,
-        };
-        emitWorkspaceTestingEvent({
-          event: 'chat_response_received',
-          interactionId,
-          durationMs: Math.max(0, responseReceivedAt - sendStartedAt),
-          surface:
-            largeSurface === 'chat' ? 'chat' : normalizeWorkspaceSurface(tab),
-          surfaceRole: largeSurface === 'chat' ? 'large' : 'companion',
-          metadata: {
-            responseMode: 'deck_runtime',
-            turnId,
-            ok: false,
-            error: message,
-          },
-        });
-      } finally {
-        if (deckExecutionAbortRef.current === controller) {
-          deckExecutionAbortRef.current = null;
-        }
-        setSending(false);
-        setDeckRunBusy(false);
-      }
-    })();
+    startPlanDraftFromChat(trimmed);
+    setDeckStatusMessage('Drafting plan for approval.');
+    const responseReceivedAt = Date.now();
+    chatLoopTelemetryRef.current = {
+      interactionId,
+      sendStartedAt,
+      responseReceivedAt,
+      refreshRecorded: true,
+    };
+    emitWorkspaceTestingEvent({
+      event: 'chat_response_received',
+      interactionId,
+      durationMs: Math.max(0, responseReceivedAt - sendStartedAt),
+      surface:
+        largeSurface === 'chat' ? 'chat' : normalizeWorkspaceSurface(tab),
+      surfaceRole: largeSurface === 'chat' ? 'large' : 'companion',
+      metadata: {
+        responseMode: 'plan_draft',
+        turnId,
+        ok: true,
+      },
+    });
   };
 
-  const planMissionGraphSeed = useMemo(
-    () => buildPlanMissionGraph(structuredAssistPlan, planNodeDrafts),
-    [structuredAssistPlan, planNodeDrafts],
-  );
+  const planMissionGraphSeed = useMemo(() => {
+    const baseGraph = currentPlanDraft
+      ? planDraftToPlanMissionGraph(currentPlanDraft)
+      : buildPlanMissionGraph(structuredAssistPlan);
+
+    if (!planNodeDrafts || Object.keys(planNodeDrafts).length === 0) {
+      return baseGraph;
+    }
+
+    return {
+      ...baseGraph,
+      nodes: baseGraph.nodes.map((node) => {
+        const override = planNodeDrafts[node.id];
+        if (!override) return node;
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            ...override,
+          },
+        };
+      }),
+    };
+  }, [currentPlanDraft, planNodeDrafts, structuredAssistPlan]);
 
   const thinkGraphViz = useMemo(() => {
     const ageGraph = prefixThinkGraphIds(ageRowsToGraph(graphResult));
@@ -9255,10 +9130,10 @@ export default function AgentBuilder(): React.ReactElement {
     const planDraftHeadline =
       planDraftStatus === 'drafting'
         ? 'Drafting plan...'
-        : planDraftStatus === 'ready' && draftMissionSpec
+        : planDraftStatus === 'ready' && (draftMissionSpec || currentPlanDraft)
           ? 'Plan ready'
-          : planDraftStatus === 'ready'
-            ? 'Plan draft unavailable'
+        : planDraftStatus === 'ready'
+            ? 'Draft ready'
             : planDraftStatus === 'needs_user_input'
               ? 'Needs input'
               : planDraftStatus === 'failed'
@@ -9268,7 +9143,10 @@ export default function AgentBuilder(): React.ReactElement {
       ? latestPlanDraftResult.questions.filter(Boolean)
       : [];
     const showPlanDraftCard = Boolean(
-      planDraftHeadline || draftMissionSpec || planDraftQuestions.length > 0,
+      planDraftHeadline ||
+        draftMissionSpec ||
+        currentPlanDraft ||
+        planDraftQuestions.length > 0,
     );
     const openMissionRuntimeSummary = summarizePlanRuntimeMessage(
       openMissionMessage?.latestSummary,
@@ -9456,6 +9334,24 @@ export default function AgentBuilder(): React.ReactElement {
                     </div>
                   </div>
                 ) : null}
+                {!draftMissionSpec && currentPlanDraft ? (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      fontSize: 11,
+                      color: GRAPH_THEME.drawer.inputMuted,
+                    }}
+                  >
+                    <div>{currentPlanDraft.summary}</div>
+                    <div>Goal: {currentPlanDraft.userRequest}</div>
+                    <div>
+                      Agents:{' '}
+                      {currentPlanDraft.requiredAgents.length > 0
+                        ? currentPlanDraft.requiredAgents.join(' | ')
+                        : 'none yet'}
+                    </div>
+                  </div>
+                ) : null}
                 {planDraftQuestions.length > 0 ? (
                   <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
                     Questions: {planDraftQuestions.join(' | ')}
@@ -9489,10 +9385,10 @@ export default function AgentBuilder(): React.ReactElement {
             ) : null}
             <PlanMissionFlow
               structuredPlan={structuredAssistPlan}
+              missionGraph={planMissionGraphSeed}
               projectId={activeProject ?? null}
               compact={surfaceRole === 'companion'}
               fullHeight
-              nodeOverrides={planNodeDrafts}
               selectedNodeId={planMissionFocus?.nodeId || null}
               drawerLinked={Boolean(
                 surfaceRole === 'companion' &&

@@ -34,6 +34,7 @@ import {
   buildPlanMissionGraph,
   type PlanArtifactNodeData,
   type PlanFrameNodeData,
+  type PlanMissionGraph,
   type PlanMissionNodeOverrideMap,
   type PlanMissionFlowEdgeData,
   type PlanMissionNodeData,
@@ -52,6 +53,7 @@ type PlanMissionFocus = {
 
 type PlanMissionFlowProps = {
   structuredPlan: StructuredAssistPlanSurface;
+  missionGraph?: PlanMissionGraph;
   projectId?: string | null;
   compact?: boolean;
   fullHeight?: boolean;
@@ -529,6 +531,7 @@ function resolveNodeStyle(node: PlanMissionFlowNode) {
 
 export default function PlanMissionFlow({
   structuredPlan,
+  missionGraph: missionGraphProp,
   projectId = null,
   compact = false,
   fullHeight = false,
@@ -557,8 +560,27 @@ export default function PlanMissionFlow({
     [projectId],
   );
   const missionGraph = useMemo(
-    () => buildPlanMissionGraph(structuredPlan, nodeOverrides),
-    [structuredPlan, nodeOverrides],
+    () => {
+      const baseGraph = missionGraphProp || buildPlanMissionGraph(structuredPlan);
+      if (!nodeOverrides || Object.keys(nodeOverrides).length === 0) {
+        return baseGraph;
+      }
+      return {
+        ...baseGraph,
+        nodes: baseGraph.nodes.map((node) => {
+          const override = nodeOverrides[node.id];
+          if (!override) return node;
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              ...override,
+            },
+          };
+        }),
+      };
+    },
+    [missionGraphProp, nodeOverrides, structuredPlan],
   );
   const initialGuidedSceneModel = useMemo(
     () => buildDefaultPlanScenePath(),

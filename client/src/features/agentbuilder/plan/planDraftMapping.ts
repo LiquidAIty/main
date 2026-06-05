@@ -8,10 +8,12 @@ import type {
 } from "../../../components/builder/assistPlanSurface";
 import {
   buildPlanMissionGraph,
+  type PlanMissionNodeData,
   type PlanMissionFlowEdge,
   type PlanMissionFlowNode,
   type PlanMissionGraph,
 } from "../../../components/assist/planMissionModel";
+import { GRAPH_THEME } from "../../../components/graph/graphVisualTokens";
 import type {
   PlanDraft,
   PlanDraftApprovalState,
@@ -25,6 +27,11 @@ import {
   missionRunStateToPlanDraftApprovalState,
   planDraftStatusToApprovalState,
 } from "./planDraftTypes";
+import {
+  cleanPlanDraftText,
+  ensureMinimalValidPlanDraft,
+  sanitizePlanDraftForCanvas,
+} from "./planDraftGuards";
 
 type PlanDraftMappingOptions = {
   projectId?: string | null;
@@ -143,6 +150,21 @@ function buildDraftEdgesFromOrderedSteps(steps: PlanDraftStep[]): PlanDraftEdge[
   return edges;
 }
 
+function formatAgentStepTitle(assignedAgent: string, index: number): string {
+  switch (assignedAgent) {
+    case "thinkgraph_agent":
+      return "ThinkGraph Agent";
+    case "research_agent":
+      return "Research Agent";
+    case "knowgraph_agent":
+      return "KnowGraph Agent";
+    case "magentic_one":
+      return "Context Builder / Magentic-One";
+    default:
+      return assignedAgent ? assignedAgent.replace(/_/g, " ") : `Step ${index + 1}`;
+  }
+}
+
 function buildAggregateFields(steps: PlanDraftStep[]): Pick<
   PlanDraft,
   "requiredAgents" | "requiredTools" | "expectedOutputs" | "graphWriteTargets" | "risks"
@@ -179,13 +201,13 @@ function buildPlanDraft(
   },
 ): PlanDraft {
   const aggregate = buildAggregateFields(input.steps);
-  return {
+  return ensureMinimalValidPlanDraft({
     missionId: input.missionId,
     projectId: input.projectId ?? null,
     source: input.source,
-    userRequest: input.userRequest,
-    chatReply: input.chatReply ?? null,
-    summary: input.summary,
+    userRequest: cleanPlanDraftText(input.userRequest),
+    chatReply: cleanPlanDraftText(input.chatReply) || null,
+    summary: cleanPlanDraftText(input.summary),
     approvalState: input.approvalState,
     revision: input.revision ?? 1,
     createdAt: input.createdAt ?? null,
@@ -197,7 +219,7 @@ function buildPlanDraft(
     graphWriteTargets: aggregate.graphWriteTargets,
     steps: input.steps,
     edges: input.edges,
-  };
+  });
 }
 
 function missionAgentRunToPlanDraftStep(
@@ -208,7 +230,7 @@ function missionAgentRunToPlanDraftStep(
   const assignedAgent = safeText(run.agentId) || null;
   return {
     id: stepId,
-    title: assignedAgent ? assignedAgent.replace(/_/g, " ") : `Step ${index + 1}`,
+    title: formatAgentStepTitle(assignedAgent || "", index),
     description: safeText(run.promptSeed),
     assignedAgent,
     required: run.required !== false,
@@ -283,6 +305,20 @@ function topologicalNodeIds(
   }
 
   return ordered.length === nodeIds.length ? ordered : nodeIds;
+}
+
+function inferPlanMissionNodeKind(step: PlanDraftStep): PlanMissionNodeData["kind"] {
+  const assignedAgent = safeText(step.assignedAgent).toLowerCase();
+  if (assignedAgent.includes("research")) return "Research";
+  if (step.required) return "Approval";
+  if (
+    assignedAgent.includes("thinkgraph") ||
+    assignedAgent.includes("knowgraph") ||
+    step.expectedOutput
+  ) {
+    return "Output";
+  }
+  return "Step";
 }
 
 export function missionSpecToPlanDraft(
@@ -518,10 +554,11 @@ export function planDraftToMissionSpec(planDraft: PlanDraft): MissionSpec {
 export function planDraftToStructuredAssistPlanSurface(
   planDraft: PlanDraft,
 ): StructuredAssistPlanSurface {
+  const canvasDraft = sanitizePlanDraftForCanvas(planDraft);
   return {
-    planMode: planDraft.approvalState === "approved" ? "approved" : "draft",
-    goal: safeText(planDraft.userRequest),
-    steps: planDraft.steps.map((step) => ({
+    planMode: canvasDraft.approvalState === "approved" ? "approved" : "draft",
+    goal: safeText(canvasDraft.userRequest),
+    steps: canvasDraft.steps.map((step) => ({
       id: step.id,
       title: step.title,
       status: step.status,
@@ -539,14 +576,14 @@ export function planDraftToStructuredAssistPlanSurface(
       blocker: step.status === "blocked" ? step.description : "",
     })),
     whatMattersNow: [],
-    nextMove: planDraft.steps.map((step) => step.title),
+    nextMove: canvasDraft.steps.map((step) => step.title),
     assumptions: [],
     research: [],
     openQuestions: [],
     humanTasks: [],
     agentTasks: [],
     pathOptions: [],
-    explicitPlanText: safeText(planDraft.summary),
+    explicitPlanText: cleanPlanDraftText(canvasDraft.summary),
     hasExplicitPlanDocument: false,
     whatChanged: [],
     sources: [],
@@ -554,5 +591,120 @@ export function planDraftToStructuredAssistPlanSurface(
 }
 
 export function planDraftToPlanMissionGraph(planDraft: PlanDraft): PlanMissionGraph {
-  return buildPlanMissionGraph(planDraftToStructuredAssistPlanSurface(planDraft));
+  const canvasDraft = sanitizePlanDraftForCanvas(planDraft);
+  if (canvasDraft.steps.length === 0) {
+    return { nodes: [], edges: [] };
+  }
+
+  const PLAN_X_TIGHTEN_ORIGIN = 56;
+  const PLAN_X_TIGHTEN_RATIO = 0.9;
+  const STEP_BASE_X = 296;
+  const STEP_DELTA_X = 244;
+  const STEP_BASE_Y = 136;
+
+  const stepOrder = (() => {
+    const stepMap = new Map(canvasDraft.steps.map((step) => [step.id, step] as const));
+    const dependencyEdges =
+      canvasDraft.edges.length > 0
+        ? canvasDraft.edges
+        : canvasDraft.steps.flatMap((step) =>
+            step.dependsOn.map((dependsOnId) => ({
+              fromStepId: dependsOnId,
+              toStepId: step.id,
+              kind: "dependency" as const,
+            })),
+          );
+
+    if (dependencyEdges.length === 0) {
+      return canvasDraft.steps;
+    }
+
+    return topologicalNodeIds(
+      canvasDraft.steps.map((step, index) => ({
+        id: step.id || `step_${index + 1}`,
+        type: "mission",
+        position: { x: 0, y: 0 },
+        data: { label: step.title, kind: inferPlanMissionNodeKind(step) },
+      })) as PlanMissionFlowNode[],
+      dependencyEdges.map((edge, index) => ({
+        id: `draft_edge_${index + 1}`,
+        source: edge.fromStepId,
+        target: edge.toStepId,
+        type: "turboFlow",
+        data: { motion: "idle" },
+      })) as PlanMissionFlowEdge[],
+    )
+      .map((id) => stepMap.get(id))
+      .filter((step): step is PlanDraftStep => Boolean(step));
+  })();
+
+  const nodeIdByStepId = new Map<string, string>();
+  const nodes: PlanMissionFlowNode[] = stepOrder.map((step, index) => {
+    const nodeId = `mission_${safeText(step.id).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || `step_${index + 1}`}`;
+    nodeIdByStepId.set(step.id, nodeId);
+    return {
+      id: nodeId,
+      type: "mission",
+      position: {
+        x: Math.round(
+          PLAN_X_TIGHTEN_ORIGIN +
+            (STEP_BASE_X + index * STEP_DELTA_X - PLAN_X_TIGHTEN_ORIGIN) *
+              PLAN_X_TIGHTEN_RATIO,
+        ),
+        y: STEP_BASE_Y,
+      },
+      data: {
+        label: step.title,
+        kind: inferPlanMissionNodeKind(step),
+        description: safeText(step.description),
+        status: step.status,
+        updateKey: step.id,
+        outputKey: `${step.id}_output`,
+        assignedAgentId: step.assignedAgent || undefined,
+        expectedOutput: step.expectedOutput || undefined,
+        toolIds: step.requiredTools,
+        relatedObjects: step.inputs,
+        approvalRequired: step.required,
+        blocker: step.status === "blocked" ? step.description : "",
+        editable: true,
+      },
+      draggable: true,
+      selectable: true,
+    };
+  });
+
+  const explicitEdges = canvasDraft.edges.length > 0
+    ? canvasDraft.edges
+    : stepOrder.flatMap((step) =>
+        step.dependsOn.map((dependsOnId) => ({
+          fromStepId: dependsOnId,
+          toStepId: step.id,
+          kind: "dependency" as const,
+        })),
+      );
+
+  const edges: PlanMissionFlowEdge[] = explicitEdges
+    .map((edge, index) => {
+      const source = nodeIdByStepId.get(edge.fromStepId);
+      const target = nodeIdByStepId.get(edge.toStepId);
+      if (!source || !target) return null;
+      return {
+        id: `edge_step_${index + 1}`,
+        source,
+        target,
+        type: "turboFlow",
+        data: { motion: "idle" },
+        className: "edge-secondary",
+        animated: false,
+        style: {
+          stroke: GRAPH_THEME.edge.neutral,
+          strokeWidth: 1.45,
+          opacity: 0.58,
+        },
+        markerEnd: "agent-edge-circle",
+      } satisfies PlanMissionFlowEdge;
+    })
+    .filter((edge): edge is PlanMissionFlowEdge => Boolean(edge));
+
+  return { nodes, edges };
 }

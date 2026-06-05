@@ -14,6 +14,19 @@ Define the minimum real LiquidAIty primitive that must work before any major ver
 
 This primitive is the project-backed AgentBuilder workspace where every Magentic-One turn produces two outputs: a natural-language `chatReply` for chat and a structured `planDraft` for the Plan Canvas. The user may refine that draft across turns, approve the current draft for execution when ready, run the approved work, return the result to chat, write durable graph-backed results into ThinkGraph, KnowGraph, and CodeGraph, and let future chat use cached project graph context.
 
+### Research Planning Role Contract
+
+For new research or intelligence requests, the draft plan order is:
+
+1. ThinkGraph Agent preprocesses intent, assumptions, constraints, uncertainty, hypotheses, and search goals.
+2. Research Agent or Research Swarm gathers external source-backed evidence with links, snippets, claims, tables or screenshots when available, and source metadata.
+3. KnowGraph Agent consumes research outputs and ingests objective evidence into KnowGraph as entities, relationships, properties, provenance, citations, and confidence.
+4. Context Builder / Magentic-One prepares separate ThinkGraph and KnowGraph context packets for the next turn, comparing congruence, conflicts, missing evidence, uncertainty, and confidence gaps.
+
+KnowGraph is not the external search worker. `knowgraph_query` must not be advertised or called for new research. Existing-KnowGraph search can use a query tool only when the runtime actually implements it; otherwise the system must say it is unavailable plainly.
+
+ThinkGraph and KnowGraph remain separate streams. ThinkGraph stores subjective reasoning, assumptions, hypotheses, decisions, and uncertainty. KnowGraph stores objective source-backed evidence, provenance, citations, confidence, and source metadata.
+
 ## Hard Boundaries
 
 - This spec does not add trading implementation.

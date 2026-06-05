@@ -142,19 +142,21 @@ Every task below must preserve:
   - Do not touch: layout, routes, persistence rules.
   - Risk: medium.
 
-- [ ] `P2-T002` Ensure the `planDraft` is valid even when the work is lightweight.
+- [x] `P2-T002` Ensure the `planDraft` is valid even when the work is lightweight.
   - Goal: the draft may be minimal, but it must still be renderable and structurally valid.
-  - Likely files: `client/src/pages/agentbuilder.tsx`, `client/src/components/builder/chatPlanCompanion.ts`.
-  - Acceptance test: simple requests still produce a valid minimal draft instead of empty, fake, or error-shaped plan content.
+  - Implemented in: `client/src/components/builder/chatPlanCompanion.ts`, `client/src/features/agentbuilder/plan/planDraftGuards.ts`, `client/src/features/agentbuilder/plan/planDraftMapping.ts`, `client/src/pages/agentbuilder.tsx`.
+  - Acceptance test: simple requests produce a minimal valid draft with no fake agent nodes, no raw runtime-noise plan text, and no approval-path regression; research requests still produce useful multi-step drafts.
+  - Note: lightweight turns now stay `PlanDraft`-truthful and agent-free while real work requests still expand through the existing mission adapter path.
   - Do not touch: mission execution behavior.
   - Risk: medium.
 
 ### P3 — Chat Turn Updates Plan Canvas Draft
 
-- [ ] `P3-T001` Bind the primitive draft-plan contract to the existing structured plan surface.
+- [x] `P3-T001` Bind the primitive draft-plan contract to the existing structured plan surface.
   - Goal: Plan Canvas must render real draft steps from the current plan contract, not ad hoc inferred filler.
-  - Likely files: `client/src/components/builder/assistPlanSurface.ts`, `client/src/components/assist/planMissionModel.ts`, `client/src/pages/agentbuilder.tsx`.
-  - Acceptance test: plan nodes/steps correspond to the actual current draft and no fake fallback goal/note nodes appear.
+  - Implemented in: `client/src/features/agentbuilder/plan/planDraftMapping.ts`, `client/src/components/assist/PlanMissionFlow.tsx`, `client/src/pages/agentbuilder.tsx`, `client/src/components/builder/chatPlanCompanion.ts`.
+  - Acceptance test: plan nodes/steps correspond to the actual current draft, lightweight drafts stay minimal, and no fake fallback goal/note nodes appear.
+  - Note: Research planning role contract fixed: ThinkGraph intent/context -> Research swarm/source gathering -> KnowGraph evidence ingestion -> Context Builder prepares separate ThinkGraph and KnowGraph packets for next-turn context. Ordinary chat turns draft and reply without auto-running the deck before approval.
   - Do not touch: viewport behavior, bus/chat layout.
   - Risk: medium.
 
@@ -346,4 +348,4 @@ Every task below must preserve:
 
 ## First Recommended Implementation Task
 
-- [ ] `NEXT-T001` Implement `P2-T002`: ensure the `planDraft` stays minimal-but-valid for lightweight turns without fake nodes, raw runtime errors, or approval-path regressions.
+- [ ] `NEXT-T001` Implement `P3-T002`: ensure Plan Canvas reflects the current draft from the latest turn without stale plan bleed.
