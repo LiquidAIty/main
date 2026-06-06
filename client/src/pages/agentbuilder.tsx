@@ -8297,7 +8297,7 @@ export default function AgentBuilder(): React.ReactElement {
         ...m,
         {
           role: 'assistant',
-          text: 'Magentic-One ordinary conversational chat path is not yet wired to the backend graph runtime. Real plan requests and approval runs require the backend conductor. Use \'Run Approved Mission\' to execute the existing plan if one is ready.',
+          text: 'Magentic-One chat is not connected yet.',
         },
       ]);
       const responseReceivedAt = Date.now();

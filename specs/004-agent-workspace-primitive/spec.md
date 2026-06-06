@@ -237,7 +237,6 @@ The primitive plan model must support:
 - revision history or revision marker
 - execution status
 - user-facing summary
-- valid minimal draft state when substantial work is not needed
 - default research-plan compatibility
 
 The plan contract must support at least three user actions:

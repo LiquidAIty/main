@@ -88,7 +88,7 @@ Every task below must preserve:
 
 - [ ] `P0.6-T001` Audit where chat currently creates and updates mission or plan draft state.
   - Goal: map the current planning path before defining `PlanDraft`.
-  - Likely files: `client/src/pages/agentbuilder.tsx`, `client/src/components/builder/chatPlanCompanion.ts`.
+  - Likely files: `client/src/pages/agentbuilder.tsx`.
   - Acceptance test: the current draft-entry path, approval read path, and run-start path are documented.
   - Do not touch: runtime behavior.
   - Risk: low.
@@ -136,7 +136,7 @@ Every task below must preserve:
 
 - [x] `P2-T001` Formalize the two-output Magentic-One turn contract in the AgentBuilder chat conductor.
   - Goal: every turn returns both `chatReply` and `planDraft`.
-  - Implemented in: `client/src/pages/agentbuilder.tsx`, `client/src/components/builder/chatPlanCompanion.ts`, `client/src/features/agentbuilder/state/useAgentBuilderDeck.ts`, `client/src/features/agentbuilder/plan/planDraftMapping.ts`, `client/src/types/agentgraph.ts`.
+  - Implemented in: `client/src/pages/agentbuilder.tsx`, `client/src/features/agentbuilder/state/useAgentBuilderDeck.ts`, `client/src/features/agentbuilder/plan/planDraftMapping.ts`, `client/src/types/agentgraph.ts`.
   - Acceptance test: one user turn returns a conversational `chatReply` in chat and a valid `planDraft` bridge for the Plan Canvas, while follow-up chat refines the current draft without auto-running an approved mission.
   - Note: this stage keeps `MissionSpec` approval/run behavior intact and bridges draft authoring through canonical `PlanDraft` state plus existing Plan Canvas structures.
   - Do not touch: layout, routes, persistence rules.
@@ -144,7 +144,7 @@ Every task below must preserve:
 
 - [x] `P2-T002` Ensure the `planDraft` is valid even when the work is lightweight.
   - Goal: the draft may be minimal, but it must still be renderable and structurally valid.
-  - Implemented in: `client/src/components/builder/chatPlanCompanion.ts`, `client/src/features/agentbuilder/plan/planDraftGuards.ts`, `client/src/features/agentbuilder/plan/planDraftMapping.ts`, `client/src/pages/agentbuilder.tsx`.
+  - Implemented in: `client/src/features/agentbuilder/plan/planDraftGuards.ts`, `client/src/features/agentbuilder/plan/planDraftMapping.ts`, `client/src/pages/agentbuilder.tsx`.
   - Acceptance test: simple requests produce a minimal valid draft with no fake agent nodes, no raw runtime-noise plan text, and no approval-path regression; research requests still produce useful multi-step drafts.
   - Note: lightweight turns now stay `PlanDraft`-truthful and agent-free while real work requests still expand through the existing mission adapter path.
   - Do not touch: mission execution behavior.
@@ -154,7 +154,7 @@ Every task below must preserve:
 
 - [x] `P3-T001` Bind the primitive draft-plan contract to the existing structured plan surface.
   - Goal: Plan Canvas must render real draft steps from the current plan contract, not ad hoc inferred filler.
-  - Implemented in: `client/src/features/agentbuilder/plan/planDraftMapping.ts`, `client/src/components/assist/PlanMissionFlow.tsx`, `client/src/pages/agentbuilder.tsx`, `client/src/components/builder/chatPlanCompanion.ts`.
+  - Implemented in: `client/src/features/agentbuilder/plan/planDraftMapping.ts`, `client/src/components/assist/PlanMissionFlow.tsx`, `client/src/pages/agentbuilder.tsx`.
   - Acceptance test: plan nodes/steps correspond to the actual current draft, lightweight drafts stay minimal, and no fake fallback goal/note nodes appear.
   - Note: Research planning role contract fixed: ThinkGraph intent/context -> Research swarm/source gathering -> KnowGraph evidence ingestion -> Context Builder prepares separate ThinkGraph and KnowGraph packets for next-turn context. Ordinary chat turns draft and reply without auto-running the deck before approval.
   - Do not touch: viewport behavior, bus/chat layout.
@@ -162,7 +162,7 @@ Every task below must preserve:
 
 - [x] `P3-T002` Ensure Plan Canvas reflects the current draft from the latest turn.
   - Goal: later turns update the visible draft instead of leaving stale plan content on screen.
-  - Implemented in: `client/src/components/builder/chatPlanCompanion.ts`, `client/src/pages/agentbuilder.tsx`, `client/src/features/agentbuilder/plan/planDraftMapping.spec.ts`.
+  - Implemented in: `client/src/pages/agentbuilder.tsx`.
   - Acceptance test: research/refine turns replace the visible current draft graph, a later lightweight explanatory turn clears stale research plan nodes from the current `PlanDraft` view, and old preserved run-history text does not become the current plan graph.
   - Note: page-owned draft adapter state and plan editor overrides now reset on draft identity change, while lightweight explanatory turns no longer inherit prior research mission structure. This only replaces the current draft view; it does not clear durable ThinkGraph, KnowGraph, CodeGraph, or approved/run-history memory.
   - Do not touch: runtime execution path.
@@ -218,7 +218,7 @@ Every task below must preserve:
 
 - [ ] `P4-T001` Define revise, reject, and overwrite behavior for an existing plan draft.
   - Goal: the user can intentionally replace or refine the current plan without stale plan bleed.
-  - Likely files: `client/src/pages/agentbuilder.tsx`, `client/src/components/builder/chatPlanCompanion.ts`, `client/src/components/builder/assistPlanSurface.ts`.
+  - Likely files: `client/src/pages/agentbuilder.tsx`, `client/src/components/builder/assistPlanSurface.ts`.
   - Acceptance test: revise updates the draft, reject prevents auto-run, and a new plan request does not accidentally preserve obsolete steps.
   - Do not touch: route family, autosave, layout.
   - Risk: medium-high.

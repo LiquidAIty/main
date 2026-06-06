@@ -64,7 +64,6 @@ Verified current baseline:
 - project-backed chat surface with Magentic-One as conductor
 - canonical `/api/projects/*` project/deck load/save/run path
 - project auto-open behavior for canvas workspace
-- plan drafting path from chat via `draftMissionSpecFromChat(...)`
 - mission approval handler and sequential run path in `agentbuilder.tsx`
 - deck run event streaming through `streamDeckRunRequest(...)`
 - persisted run reload continuity through `buildReloadStateFromDeckRuns(...)`
