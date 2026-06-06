@@ -265,6 +265,53 @@ export function buildDeckRuntimeVisualState(
       return;
     }
 
+    if (event.kind === "magentic_trace") {
+      if (event.plan && typeof event.plan === "object" && !Array.isArray(event.plan)) {
+        const p = event.plan as any;
+        if (p.summary) reasoningLines.push(prefixRuntimeLine("Plan Summary", p.summary));
+        if (p.deltaSummary) reasoningLines.push(prefixRuntimeLine("Plan Delta", p.deltaSummary));
+        if (Array.isArray(p.openQuestions)) {
+          p.openQuestions.forEach((q: string) => reasoningLines.push(prefixRuntimeLine("Question", q)));
+        }
+      }
+
+      if (Array.isArray(event.blackboardEntries)) {
+        event.blackboardEntries.forEach((entry: any) => {
+          if (entry && entry.content) {
+            reasoningLines.push(prefixRuntimeLine("Blackboard", entry.content));
+          } else {
+            reasoningLines.push(prefixRuntimeLine("Blackboard", JSON.stringify(entry)));
+          }
+        });
+      }
+
+      if (Array.isArray(event.reportBacks)) {
+        event.reportBacks.forEach((entry: any) => {
+          if (entry && entry.summary) {
+            reportLines.push(prefixRuntimeLine("Report", entry.summary));
+          } else {
+            reportLines.push(prefixRuntimeLine("Report", JSON.stringify(entry)));
+          }
+        });
+      }
+
+      if (Array.isArray(event.transcript)) {
+        event.transcript.slice(-3).forEach((msg: any) => {
+          if (msg && msg.content) {
+            teamLines.push(prefixRuntimeLine("Transcript", msg.content));
+          } else {
+            teamLines.push(prefixRuntimeLine("Transcript", JSON.stringify(msg)));
+          }
+        });
+      }
+
+      if (event.metrics && typeof event.metrics === "object") {
+        reasoningLines.push(prefixRuntimeLine("Metrics", JSON.stringify(event.metrics)));
+      }
+
+      return;
+    }
+
     if (event.kind === "run_completed") {
       activeCardIds.clear();
       activeEdgeIds.clear();

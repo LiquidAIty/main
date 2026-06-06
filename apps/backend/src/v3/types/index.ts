@@ -459,6 +459,15 @@ export type CardRunResult = {
   // Temporary legacy alias while clients migrate to graphViewContract.
   codegraphViewContract?: CodeGraphViewContract | null;
   structuredPlan?: Record<string, unknown> | null;
+  magenticTrace?: {
+    plan?: Record<string, unknown> | unknown[] | null;
+    blackboardEntries?: Record<string, unknown> | unknown[] | null;
+    reportBacks?: Record<string, unknown> | unknown[] | null;
+    transcript?: unknown[] | null;
+    metrics?: Record<string, unknown> | null;
+    thinkGraph?: Record<string, unknown> | unknown[] | null;
+    knowGraph?: Record<string, unknown> | unknown[] | null;
+  } | null;
 };
 
 export type DeckRuntimeEventKind =
@@ -467,6 +476,7 @@ export type DeckRuntimeEventKind =
   | 'step_completed'
   | 'step_skipped'
   | 'magentic_assignment'
+  | 'magentic_trace'
   | 'swarm_progress'
   | 'message'
   | 'run_completed';
@@ -494,6 +504,13 @@ export type DeckRuntimeEvent = {
   graphViewContract?: GraphViewContract | null;
   // Temporary legacy alias while clients migrate to graphViewContract.
   codegraphViewContract?: CodeGraphViewContract | null;
+  plan?: Record<string, unknown> | unknown[] | null;
+  blackboardEntries?: Record<string, unknown> | unknown[] | null;
+  reportBacks?: Record<string, unknown> | unknown[] | null;
+  transcript?: unknown[] | null;
+  metrics?: Record<string, unknown> | null;
+  thinkGraph?: Record<string, unknown> | unknown[] | null;
+  knowGraph?: Record<string, unknown> | unknown[] | null;
 };
 
 export type DeckRunStep = {

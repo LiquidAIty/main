@@ -593,6 +593,21 @@ export async function executeDeck(
 
       steps.push(step);
 
+      if (result.magenticTrace) {
+        emitRuntimeEvent({
+          kind: 'magentic_trace',
+          cardId: card.id,
+          cardTitle: card.title,
+          plan: result.magenticTrace.plan,
+          blackboardEntries: result.magenticTrace.blackboardEntries,
+          reportBacks: result.magenticTrace.reportBacks,
+          transcript: result.magenticTrace.transcript,
+          metrics: result.magenticTrace.metrics,
+          thinkGraph: result.magenticTrace.thinkGraph,
+          knowGraph: result.magenticTrace.knowGraph,
+        });
+      }
+
       emitRuntimeEvent({
         kind: 'step_completed',
         cardId: card.id,

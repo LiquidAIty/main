@@ -1714,6 +1714,15 @@ async function runMagenticCard(
     inputSummary: summarizeText(runtimeInput),
     outputSummary: summarizeText(finalText),
     structuredPlan,
+    magenticTrace: {
+      plan: sidecarResponse.plan,
+      blackboardEntries: sidecarResponse.blackboardEntries,
+      reportBacks: sidecarResponse.reportBacks,
+      transcript: sidecarResponse.transcript,
+      metrics: sidecarResponse.metrics,
+      thinkGraph: sidecarResponse.thinkGraph,
+      knowGraph: sidecarResponse.knowGraph,
+    },
   };
 }
 

@@ -37,6 +37,7 @@ export type AutoGenOrchestratorResponse = {
   plan?: Record<string, unknown>;
   thinkGraph?: Record<string, unknown>;
   knowGraph?: Record<string, unknown>;
+  reportBacks?: Array<Record<string, unknown>>;
 };
 
 function trimBaseUrl(value: string): string {

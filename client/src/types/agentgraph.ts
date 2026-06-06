@@ -497,6 +497,15 @@ export type CardRunResult = {
   outputSummary?: string;
   codegraphViewContract?: CodeGraphViewContract | null;
   structuredPlan?: Record<string, unknown> | null;
+  magenticTrace?: {
+    plan?: Record<string, unknown> | unknown[] | null;
+    blackboardEntries?: Record<string, unknown> | unknown[] | null;
+    reportBacks?: Record<string, unknown> | unknown[] | null;
+    transcript?: unknown[] | null;
+    metrics?: Record<string, unknown> | null;
+    thinkGraph?: Record<string, unknown> | unknown[] | null;
+    knowGraph?: Record<string, unknown> | unknown[] | null;
+  } | null;
 };
 
 export type DeckRuntimeEventKind =
@@ -505,6 +514,7 @@ export type DeckRuntimeEventKind =
   | 'step_completed'
   | 'step_skipped'
   | 'magentic_assignment'
+  | 'magentic_trace'
   | 'swarm_progress'
   | 'message'
   | 'run_completed';
@@ -530,6 +540,13 @@ export type DeckRuntimeEvent = {
   completedWorkers?: number | null;
   totalWorkers?: number | null;
   codegraphViewContract?: CodeGraphViewContract | null;
+  plan?: Record<string, unknown> | unknown[] | null;
+  blackboardEntries?: Record<string, unknown> | unknown[] | null;
+  reportBacks?: Record<string, unknown> | unknown[] | null;
+  transcript?: unknown[] | null;
+  metrics?: Record<string, unknown> | null;
+  thinkGraph?: Record<string, unknown> | unknown[] | null;
+  knowGraph?: Record<string, unknown> | unknown[] | null;
 };
 
 export type DeckRunStep = {
