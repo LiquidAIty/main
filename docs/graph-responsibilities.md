@@ -63,6 +63,7 @@ Terminal access, raw Cypher, or admin-only tooling may still exist for developme
 Current implementation baseline:
 
 - the first read-only builder boundary now lives in `apps/backend/src/services/graphContext/graphContextBuilder.ts`
+- it is exposed via the canonical project route `POST /api/projects/:projectId/context/graph`
 - it returns a stream-separated `GraphContextPacket`
 - it reads KnowGraph through project-scoped Neo4j queries
 - it reads ThinkGraph through project-scoped AGE queries

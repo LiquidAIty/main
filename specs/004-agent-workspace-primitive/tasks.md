@@ -192,6 +192,14 @@ Every task below must preserve:
   - Do not touch: plan execution, UI layout, graph write behavior.
   - Risk: high.
 
+- [x] `P3-T005b` Expose GraphContextBuilder via canonical project route.
+  - Goal: add a read-only canonical endpoint `POST /api/projects/:projectId/context/graph` that returns the `GraphContextPacket`.
+  - Implemented in: `apps/backend/src/routes/projects.routes.ts`.
+  - Acceptance test: frontend or CLI can fetch the assembled packet without raw Cypher.
+  - Note: Canonical project-scoped GraphContext access path. Not yet wired into Magentic-One prompt (comes in P3-T006).
+  - Do not touch: Magentic-One prompt wiring.
+  - Risk: low.
+
 - [ ] `P3-T006` Inject the read-only `GraphContextPacket` into the Magentic-One prompt path.
   - Goal: ensure future turns can consume separated project graph context before answering.
   - Likely files: Magentic-One prompt/runtime path files in frontend/backend sidecar payload builders.
