@@ -40,6 +40,26 @@ Magentic-One should be able to compare these streams for:
 - missing evidence
 - confidence gaps
 
+The frontend contract for that next-turn shaping boundary should be a separate `GraphContextPacket`. It is a prompt-shaping/context contract, not a memory store:
+
+- `PlanDraft` remains the current draft plan
+- `ThinkGraph` remains durable reasoning/context memory
+- `KnowGraph` remains durable evidence/provenance memory
+- `CodeGraph` remains durable implementation/code structure memory
+
+Do not overload `PlanDraft` with graph memory, and do not flatten these three graph streams into one context blob.
+
+Preferred product path for next-turn context:
+
+- build a backend `GraphContextBuilder` or `GraphContextService`
+- query ThinkGraph separately
+- query KnowGraph separately
+- query CodeGraph separately when relevant
+- return one stream-separated `GraphContextPacket`
+- preserve provenance, confidence, and source labels
+
+Terminal access, raw Cypher, or admin-only tooling may still exist for development fallback, but that is not the primary product behavior for normal Magentic-One chat.
+
 ---
 
 ## KnowGraph (Neo4j)

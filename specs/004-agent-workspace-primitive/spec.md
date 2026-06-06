@@ -27,6 +27,40 @@ KnowGraph is not the external search worker. `knowgraph_query` must not be adver
 
 ThinkGraph and KnowGraph remain separate streams. ThinkGraph stores subjective reasoning, assumptions, hypotheses, decisions, and uncertainty. KnowGraph stores objective source-backed evidence, provenance, citations, confidence, and source metadata.
 
+### Graph Context Packet Contract
+
+Before future Magentic-One answers are shaped by prior project memory, the workspace should use a stream-separated `GraphContextPacket` contract rather than overloading `PlanDraft`.
+
+The packet keeps these streams separate:
+
+- `selectedBoardContext`
+- `thinkGraphContext`
+- `knowGraphContext`
+- `codeGraphContext`
+- `comparison`
+- `provenance`
+
+The packet must not merge ThinkGraph and KnowGraph into one undifferentiated blob. It must also not copy grounded KnowGraph evidence into ThinkGraph or treat `PlanDraft` as durable graph memory.
+
+Current readiness reality:
+
+- the backend/sidecar stack already has separate `plan`, `thinkGraph`, `knowGraph`, and `workspaceObjectContext` envelopes
+- research ingestion and KnowGraph write paths are real but mixed across current and legacy surfaces
+- query/read surfaces exist, but they are split across current routes, legacy KG routes, and service helpers
+- Magentic-One does not yet receive a project-built `GraphContextPacket`; today it mostly receives empty/default graph envelopes unless another path pre-populates them
+
+Preferred product-safe query path:
+
+- a backend `GraphContextBuilder` or `GraphContextService`
+- reads ThinkGraph separately
+- reads KnowGraph separately
+- reads CodeGraph separately when relevant
+- returns one stream-separated `GraphContextPacket`
+- preserves provenance/confidence/source labels
+- exposes a safe read-only endpoint or tool boundary for Magentic-One
+
+Raw terminal or ad hoc Cypher access may exist for development or admin fallback, but it is not the normal product path for Agent Workspace chat.
+
 ## Hard Boundaries
 
 - This spec does not add trading implementation.
@@ -141,6 +175,9 @@ As a builder, I want the Agent Workspace to support internal code/agent/card/pro
 - **FR-020**: Model input MUST eventually be shapeable by cached project graph context including current project, selected board nodes, selected graph evidence, recent run outputs, relevant ThinkGraph decisions, relevant KnowGraph evidence, and relevant CodeGraph implementation context.
 - **FR-020a**: Replacing the current `PlanDraft` MUST only replace the current draft view; it MUST NOT clear durable ThinkGraph context, KnowGraph evidence, CodeGraph memory, or preserved approved/run-history continuity.
 - **FR-020b**: Cached project context for future turns MUST remain stream-separated as `thinkGraphContext`, `knowGraphContext`, and optional `codeGraphContext`, with explicit comparison of congruence, conflict, missing evidence, and confidence gaps rather than one merged blob.
+- **FR-020c**: The stream-separated graph context contract MUST support `selectedBoardContext`, `thinkGraphContext`, `knowGraphContext`, `codeGraphContext`, `comparison`, and provenance/debug metadata for future prompt shaping.
+- **FR-020d**: `PlanDraft` MUST remain the current draft-plan contract and MUST NOT become the durable owner of graph memory or next-turn graph context.
+- **FR-020e**: The first runtime path for next-turn graph context MUST be a safe read-only builder/service boundary that queries ThinkGraph, KnowGraph, and CodeGraph separately rather than relying on raw terminal access as the primary product behavior.
 
 ### KnowGraph UI Requirements
 

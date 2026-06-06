@@ -168,6 +168,44 @@ Every task below must preserve:
   - Do not touch: runtime execution path.
   - Risk: medium.
 
+- [x] `P3-T003` Audit graph ingestion, storage, and query readiness before GraphContextPacket runtime wiring.
+  - Goal: verify what graph ingestion, metadata, storage, query routes, and Magentic-One graph payload context already exist before wiring next-turn graph context.
+  - Implemented in: `specs/004-agent-workspace-primitive/spec.md`, `specs/004-agent-workspace-primitive/tasks.md`, `docs/graph-responsibilities.md` via readiness audit and queue refinement.
+  - Acceptance test: repo reality is classified for KnowGraph, ThinkGraph, CodeGraph, Neo4j, AGE/Postgres, query endpoints, sidecar payload context, and recommended primary query path.
+  - Note: audit result says graph ingestion/storage are real but mixed, query surfaces exist but are split across current and legacy paths, and Magentic-One currently receives separate graph envelopes that are usually empty/default rather than a built project `GraphContextPacket`.
+  - Do not touch: runtime behavior, layout, persistence, graph memory.
+  - Risk: low.
+
+- [x] `P3-T004` Define the graph context packet contract for next-turn prompt shaping.
+  - Goal: create an explicit stream-separated graph context contract without overloading `PlanDraft` or rewiring runtime execution yet.
+  - Implemented in: `client/src/features/agentbuilder/context/graphContextPacket.ts`, `client/src/features/agentbuilder/context/graphContextPacket.spec.ts`, `specs/004-agent-workspace-primitive/spec.md`, `docs/graph-responsibilities.md`.
+  - Acceptance test: a typed `GraphContextPacket` exists with separate `thinkGraphContext`, `knowGraphContext`, optional `codeGraphContext`, `selectedBoardContext`, `comparison`, and provenance/debug metadata; pure helpers preserve stream separation and do not imply graph-memory clearing.
+  - Note: this is a contract/model layer only. No graph queries, prompt rewiring, UI changes, route changes, or execution changes are introduced here.
+  - Do not touch: runtime execution path, graph persistence, layout.
+  - Risk: medium.
+
+- [ ] `P3-T005` Build a read-only GraphContextBuilder service or tool boundary.
+  - Goal: create one product-safe backend path that queries ThinkGraph, KnowGraph, and CodeGraph separately and returns a `GraphContextPacket`.
+  - Likely files: backend graph/query service files, `apps/backend/src/routes/*` only if a safe read-only endpoint is chosen, prompt/context boundary files.
+  - Acceptance test: one read-only builder path exists that preserves stream labels, provenance/confidence, and selected-board context without mutating graph memory.
+  - Note: raw terminal/Cypher access may remain a dev-admin fallback, but it is not the normal product path for Magentic-One chat.
+  - Do not touch: plan execution, UI layout, graph write behavior.
+  - Risk: high.
+
+- [ ] `P3-T006` Inject the read-only `GraphContextPacket` into the Magentic-One prompt path.
+  - Goal: ensure future turns can consume separated project graph context before answering.
+  - Likely files: Magentic-One prompt/runtime path files in frontend/backend sidecar payload builders.
+  - Acceptance test: Magentic-One receives `thinkGraphContext`, `knowGraphContext`, and optional `codeGraphContext` from the builder path rather than only empty/default envelopes.
+  - Do not touch: approval/run semantics, layout, routes outside the chosen safe boundary.
+  - Risk: high.
+
+- [ ] `P3-T007` Prove follow-up chat uses prior graph context from the same project.
+  - Goal: verify that prior research/evidence/reasoning context shapes the next turn without the user restating everything.
+  - Likely files: prompt/runtime tests, graph-context docs, maybe minimal diagnostics.
+  - Acceptance test: a follow-up turn uses cached ThinkGraph and KnowGraph context as separate streams and can surface congruence, conflict, missing evidence, or confidence gaps.
+  - Do not touch: trading code, broad refactors, fake context injection.
+  - Risk: high.
+
 ### P4 — Follow-Up Chat Overwrites Or Refines Draft
 
 - [ ] `P4-T001` Define revise, reject, and overwrite behavior for an existing plan draft.
@@ -285,41 +323,13 @@ Every task below must preserve:
   - Do not touch: UI layout, fallback boards.
   - Risk: high.
 
-### P8.5 — Cached Graph Context Shapes Next Chat
+### P8.5 — Expanded Graph Context Quality
 
-- [ ] `P8.5-T001` Define the project context packet shape.
-  - Goal: establish a formal context packet that can shape later Magentic-One turns.
-  - Likely files: `client/src/types/agentgraph`, primitive spec/docs, prompt/context boundary files.
-  - Acceptance test: one documented packet shape exists for project graph-shaped context.
-  - Do not touch: route family or layout.
-  - Risk: high.
-
-- [ ] `P8.5-T002` Define which context sources can populate the project context packet.
-  - Goal: allow the packet to include selected board nodes, recent run outputs, ThinkGraph intent/assumptions/uncertainty context, KnowGraph evidence/provenance/confidence context, and CodeGraph implementation context.
-  - Likely files: types/docs plus prompt/context boundary files.
-  - Acceptance test: allowed packet sources are explicit and non-ambiguous.
-  - Do not touch: unrelated graph rendering behavior.
-  - Risk: medium-high.
-
-- [ ] `P8.5-T003` Cached project context is injected into the Magentic-One prompt path.
-  - Goal: make graph memory shape future model input rather than act as display only.
-  - Likely files: chat/runtime prompt path files.
-  - Acceptance test: the prompt path can consume the project context packet.
-  - Do not touch: OpenClaude execution work.
-  - Risk: high.
-
-- [ ] `P8.5-T004` Follow-up chat proves it can use prior research and evidence context.
-  - Goal: verify the user does not need to restate the same evidence after a research run.
-  - Likely files: chat/runtime prompt path tests and related docs.
-  - Acceptance test: a follow-up chat uses cached ThinkGraph and KnowGraph context from the same project as separate streams and can compare congruence, conflict, missing evidence, and confidence gaps.
-  - Do not touch: trading code.
-  - Risk: high.
-
-- [ ] `P8.5-T005` Context source and provenance are visible enough to debug.
-  - Goal: make it possible to tell what context shaped the turn.
-  - Likely files: docs, prompt/context display diagnostics, or minimal inspection hooks as later implemented.
-  - Acceptance test: debugging can reveal what context sources influenced the turn.
-  - Do not touch: UI layout redesign.
+- [ ] `P8.5-T001` Deepen GraphContextPacket source coverage after the initial runtime path is proven.
+  - Goal: expand beyond the first working builder path once `P3-T005` through `P3-T007` are stable.
+  - Likely files: graph-context builder files, prompt/context docs, minimal diagnostics.
+  - Acceptance test: the packet can safely grow richer source coverage without collapsing stream separation or blurring provenance.
+  - Do not touch: unrelated UI layout or fake context synthesis.
   - Risk: medium-high.
 
 ### P9 — Docs, Tests, And Acceptance Cleanup
@@ -349,4 +359,4 @@ Every task below must preserve:
 
 ## First Recommended Implementation Task
 
-- [ ] `NEXT-T001` Implement `P3-T002`: ensure Plan Canvas reflects the current draft from the latest turn without stale plan bleed.
+- [ ] `NEXT-T001` Implement `P3-T005`: build the read-only GraphContextBuilder service or tool boundary.
