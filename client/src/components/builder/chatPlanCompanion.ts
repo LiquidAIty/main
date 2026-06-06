@@ -1,3 +1,8 @@
+// QUARANTINED: LOCAL DETERMINISTIC PRODUCT BRAIN FORBIDDEN
+// This file is quarantined as a legacy/test helper only.
+// It must NOT be used as the normal product chat path to fake Magentic-One plan generation.
+// Do not let this file drive AgentBuilder ordinary chat.
+// It is preserved only for test fixtures and type mapping references.
 import type {
   ChatPlanDraftRequest,
   ChatPlanDraftResult,

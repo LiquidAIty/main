@@ -11,6 +11,7 @@ import {
   orchestrateWithAutoGen,
   type AutoGenOrchestratorRequest,
 } from '../../services/autogen/autogenOrchestratorClient';
+import { buildGraphContextPacket } from '../../services/graphContext/graphContextBuilder';
 import { resolveRuntimeBinding } from '../runtimeBinding';
 import {
   buildGraphExecutionInputText,
@@ -540,6 +541,7 @@ function buildPythonAutoGenCardRuntimePayload(
   prompt: string,
   callableHeads: AgentCardInstance[],
   startedAt: string,
+  graphContextPacket?: any,
 ): AutoGenOrchestratorRequest {
   const sessionId = `${context.deckId || 'deck'}:${card.id}:${Date.now()}`;
   const turnId = `${card.id}:${Date.now()}`;
@@ -612,13 +614,13 @@ function buildPythonAutoGenCardRuntimePayload(
       deltaSummary: '',
       status: 'draft',
     },
-    thinkGraph: {
+    thinkGraph: graphContextPacket?.thinkGraphContext || {
       priorityEntities: [],
       priorityRelationships: [],
       triplets: [],
       openQuestions: [],
     },
-    knowGraph: {
+    knowGraph: graphContextPacket?.knowGraphContext || {
       gaps: [],
       graphFacts: [],
       evidence: [],
@@ -1669,6 +1671,11 @@ async function runMagenticCard(
   const modelConfig = resolveCardModelConfig(card, effectiveAgent, `card_${card.id}`);
   const prompt = resolveCardSystemPrompt(card, effectiveAgent);
 
+  const graphContextPacket = await buildGraphContextPacket({
+    projectId: String(context.projectId || ''),
+    userMessage: runtimeInput,
+  });
+
   if (!shouldUsePythonAutoGenBackend(card)) {
     logMagenticRuntime(card, 'runtime=python_autogen', {
       note: 'executionBackend was not python_autogen; TypeScript Magentic fallback has been removed.',
@@ -1687,6 +1694,7 @@ async function runMagenticCard(
       prompt,
       callableHeads,
       startedAt,
+      graphContextPacket,
     ),
   );
   const finalText = String(sidecarResponse.finalResponseText || '').trim();

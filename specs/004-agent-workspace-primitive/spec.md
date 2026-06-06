@@ -90,7 +90,7 @@ As a user, I want every Agent Workspace turn to produce both a conversational re
 **Acceptance Scenarios**:
 
 1. **Given** a real project-backed workspace, **When** the user sends any message, **Then** Magentic-One returns both `chatReply` and `planDraft`.
-2. **Given** a lightweight request, **When** the response completes, **Then** the `planDraft` may be minimal but is still valid and renderable.
+2. **Given** an ordinary chat request, **When** the response completes, **Then** Magentic-One may reply without a PlanDraft, and the canvas remains unchanged.
 3. **Given** the response finishes, **When** the next user message is sent, **Then** prior chat/run context remains available in the same project workspace and the current draft can be replaced or refined.
 
 ### User Story 2 — Plan Draft Lives In Plan Canvas Before Agent Work (Priority: P1)
@@ -104,7 +104,7 @@ As a user, I want the Plan Canvas to always show the current structured draft, s
 1. **Given** any user turn, **When** Magentic-One responds, **Then** the current `planDraft` is shown in the Plan Canvas.
 2. **Given** a follow-up user turn, **When** Magentic-One responds again, **Then** the current draft is overwritten or refined rather than silently preserved as stale plan state.
 3. **Given** a current draft, **When** the user reviews it, **Then** the user can approve, reject, or request revision before execution.
-4. **Given** a later lightweight explanatory turn, **When** it replaces the current draft, **Then** stale research plan nodes disappear from the current Plan Canvas view without clearing durable ThinkGraph, KnowGraph, CodeGraph, or preserved run history.
+4. **Given** a later chat explanatory turn without a new plan, **When** it completes, **Then** the current PlanDraft is left intact unless Magentic-One explicitly clears it.
 
 ### User Story 3 — Approved Plan Runs Real Agents (Priority: P1)
 

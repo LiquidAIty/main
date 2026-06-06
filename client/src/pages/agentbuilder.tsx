@@ -82,7 +82,6 @@ import {
   applyMissionDeckPatch,
   buildMissionDeckPatch,
 } from '../components/builder/missionExecution';
-import { draftMissionSpecFromChat } from '../components/builder/chatPlanCompanion';
 import { runInternalWorkspaceHarness } from '../components/builder/workspaceHarness';
 import {
   buildDefaultDeckEdgeMetadata,
@@ -8249,147 +8248,6 @@ export default function AgentBuilder(): React.ReactElement {
     setDeck,
   ]);
 
-  const startPlanDraftFromChat = useCallback(
-    (message: string) => {
-      const requestSeq = ++planDraftRequestSeqRef.current;
-      setPlanDraftStatus('drafting');
-      void Promise.resolve().then(() => {
-        try {
-          const selectedObjectForDraft =
-            activeWorkspaceObjectContext?.selectedObjectId
-              ? {
-                  id: activeWorkspaceObjectContext.selectedObjectId,
-                  canvasId: canvasProjectId || 'agentbuilder_deck',
-                  type: activeWorkspaceObjectContext.selectedObjectType || 'workspace_object',
-                  title:
-                    activeWorkspaceObjectContext.selectedObjectTitle ||
-                    activeWorkspaceObjectContext.selectedObjectId,
-                  props: {
-                    selectedText: activeWorkspaceObjectContext.selectedText || null,
-                    openObjectSummary:
-                      activeWorkspaceObjectContext.openObjectSummary || null,
-                  },
-                  editableTargets: [],
-                  graphRefs: [],
-                }
-              : undefined;
-          const result = draftMissionSpecFromChat({
-            userMessage: message,
-            activeCanvasId: canvasProjectId || undefined,
-            selectedObject: selectedObjectForDraft,
-            currentMissionSpec: draftMissionSpecRef.current || undefined,
-            currentDeckSummary: {
-              id: deck.id,
-              name: deck.name,
-              nodeCount: deck.nodes.length,
-              edgeCount: deck.edges.length,
-            },
-            availableAgents: deck.nodes.map((node) => ({
-              id: safeText(node.runtimeBinding || node.id),
-              label: node.title,
-              type: safeText(node.runtimeType || undefined) || undefined,
-              capabilities: [safeText(node.runtimeBinding || node.runtimeType || '')].filter(Boolean),
-            })),
-            graphContextRefs: compactAwarenessList([
-              activeWorkspaceObjectContext?.selectedNodeId,
-              activeWorkspaceObjectContext?.selectedNodeName,
-              knowledgeGraphKind,
-            ]),
-            priorMissionResults:
-              latestMissionRun?.results.map((entry) => ({
-                agentId: entry.agentId,
-                summary: entry.reason || entry.output || null,
-              })) || [],
-          });
-          if (requestSeq !== planDraftRequestSeqRef.current) return;
-          const previousPlanDraft = currentPlanDraftRef.current;
-          const previousMissionSpec = draftMissionSpecRef.current || undefined;
-          const draftTimestamp = new Date().toISOString();
-          const provisionalPlanDraft = chatPlanDraftResultToPlanDraft(result, {
-            projectId: canvasProjectId || null,
-            currentMissionSpec: previousMissionSpec,
-            revision:
-              previousPlanDraft &&
-              previousMissionSpec &&
-              result.missionSpec &&
-              result.missionSpec.id === previousPlanDraft.missionId
-                ? previousPlanDraft.revision + 1
-                : previousPlanDraft &&
-                    previousMissionSpec &&
-                    !result.missionSpec &&
-                    !result.missionSpecPatch
-                  ? previousPlanDraft.revision
-                  : previousPlanDraft && result.missionSpecPatch
-                    ? previousPlanDraft.revision + 1
-                    : 1,
-            createdAt:
-              previousPlanDraft &&
-              ((result.missionSpec &&
-                result.missionSpec.id === previousPlanDraft.missionId) ||
-                result.missionSpecPatch)
-                ? previousPlanDraft.createdAt
-                : draftTimestamp,
-            updatedAt: draftTimestamp,
-          });
-          setLatestPlanDraftResult({
-            ...result,
-            chatReply: result.chatReply ?? null,
-          });
-          if (result.chatReply) {
-            setMessages((current) => [
-              ...current,
-              { role: 'assistant', text: result.chatReply || '' },
-            ]);
-          }
-          if (provisionalPlanDraft) {
-            setCurrentPlanDraft(provisionalPlanDraft);
-            setPlanSource(planDraftToStructuredAssistPlanSurface(provisionalPlanDraft));
-          }
-          if (result.missionSpec) {
-            setDraftMissionSpec(result.missionSpec);
-          } else if (result.missionSpecPatch && draftMissionSpecRef.current) {
-            setDraftMissionSpec({
-              ...draftMissionSpecRef.current,
-              ...result.missionSpecPatch,
-            });
-          } else {
-            setDraftMissionSpec(null);
-          }
-          setPlanDraftStatus(
-            result.status === 'ready' && !provisionalPlanDraft ? 'failed' : result.status,
-          );
-          if (result.status === 'needs_user_input' && result.questions && result.questions.length > 0) {
-            setMessages((current) => [
-              ...current,
-              {
-                role: 'assistant',
-                text: `Plan companion needs input: ${result.questions.join(' | ')}`,
-              },
-            ]);
-          }
-        } catch (error: any) {
-          if (requestSeq !== planDraftRequestSeqRef.current) return;
-          setLatestPlanDraftResult({
-            status: 'failed',
-            summary: 'Plan drafting failed.',
-            chatReply: null,
-            errorReason: safeText(error?.message || 'plan_draft_failed'),
-          });
-          setPlanDraftStatus('failed');
-        }
-      });
-    },
-    [
-      activeWorkspaceObjectContext,
-      canvasProjectId,
-      currentPlanDraftRef,
-      deck,
-      knowledgeGraphKind,
-      latestMissionRun,
-      setCurrentPlanDraft,
-      setPlanSource,
-    ],
-  );
 
   const handleSend = (t: string) => {
     const trimmed = t.trim();
@@ -8422,7 +8280,7 @@ export default function AgentBuilder(): React.ReactElement {
       surfaceRole: largeSurface === 'chat' ? 'large' : 'companion',
       metadata: {
         messageLength: trimmed.length,
-        responseMode: 'plan_draft',
+        responseMode: 'blocked_honest',
         turnId,
         workspaceView: activeDeckWorkspaceContext.workspaceView,
         objectEditorOpen: activeDeckWorkspaceContext.objectEditor.open,
@@ -8433,32 +8291,35 @@ export default function AgentBuilder(): React.ReactElement {
     });
 
     setMessages((m) => [...m, { role: 'user', text: trimmed }]);
-    const activationProposal = detectActivationProposal(trimmed);
-    if (activationProposal) {
-      setPendingActivationProposal(activationProposal);
-    }
-    startPlanDraftFromChat(trimmed);
-    setDeckStatusMessage('Drafting plan for approval.');
-    const responseReceivedAt = Date.now();
-    chatLoopTelemetryRef.current = {
-      interactionId,
-      sendStartedAt,
-      responseReceivedAt,
-      refreshRecorded: true,
-    };
-    emitWorkspaceTestingEvent({
-      event: 'chat_response_received',
-      interactionId,
-      durationMs: Math.max(0, responseReceivedAt - sendStartedAt),
-      surface:
-        largeSurface === 'chat' ? 'chat' : normalizeWorkspaceSurface(tab),
-      surfaceRole: largeSurface === 'chat' ? 'large' : 'companion',
-      metadata: {
-        responseMode: 'plan_draft',
-        turnId,
-        ok: true,
-      },
-    });
+    
+    setTimeout(() => {
+      setMessages((m) => [
+        ...m,
+        {
+          role: 'assistant',
+          text: 'Magentic-One ordinary conversational chat path is not yet wired to the backend graph runtime. Real plan requests and approval runs require the backend conductor. Use \'Run Approved Mission\' to execute the existing plan if one is ready.',
+        },
+      ]);
+      const responseReceivedAt = Date.now();
+      chatLoopTelemetryRef.current = {
+        interactionId,
+        sendStartedAt,
+        responseReceivedAt,
+        refreshRecorded: true,
+      };
+      emitWorkspaceTestingEvent({
+        event: 'chat_response_received',
+        interactionId,
+        durationMs: Math.max(0, responseReceivedAt - sendStartedAt),
+        surface: largeSurface === 'chat' ? 'chat' : normalizeWorkspaceSurface(tab),
+        surfaceRole: largeSurface === 'chat' ? 'large' : 'companion',
+        metadata: {
+          responseMode: 'blocked_honest',
+          turnId,
+          ok: true,
+        },
+      });
+    }, 100);
   };
 
   const planMissionGraphSeed = useMemo(() => {

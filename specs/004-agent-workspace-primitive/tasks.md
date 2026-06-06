@@ -200,7 +200,7 @@ Every task below must preserve:
   - Do not touch: Magentic-One prompt wiring.
   - Risk: low.
 
-- [ ] `P3-T006` Inject the read-only `GraphContextPacket` into the Magentic-One prompt path.
+- [x] `P3-T006` Inject the read-only `GraphContextPacket` into the Magentic-One prompt path.
   - Goal: ensure future turns can consume separated project graph context before answering.
   - Likely files: Magentic-One prompt/runtime path files in frontend/backend sidecar payload builders.
   - Acceptance test: Magentic-One receives `thinkGraphContext`, `knowGraphContext`, and optional `codeGraphContext` from the builder path rather than only empty/default envelopes.
