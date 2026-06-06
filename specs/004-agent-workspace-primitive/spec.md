@@ -60,6 +60,7 @@ As a user, I want the Plan Canvas to always show the current structured draft, s
 1. **Given** any user turn, **When** Magentic-One responds, **Then** the current `planDraft` is shown in the Plan Canvas.
 2. **Given** a follow-up user turn, **When** Magentic-One responds again, **Then** the current draft is overwritten or refined rather than silently preserved as stale plan state.
 3. **Given** a current draft, **When** the user reviews it, **Then** the user can approve, reject, or request revision before execution.
+4. **Given** a later lightweight explanatory turn, **When** it replaces the current draft, **Then** stale research plan nodes disappear from the current Plan Canvas view without clearing durable ThinkGraph, KnowGraph, CodeGraph, or preserved run history.
 
 ### User Story 3 — Approved Plan Runs Real Agents (Priority: P1)
 
@@ -138,6 +139,8 @@ As a builder, I want the Agent Workspace to support internal code/agent/card/pro
 - **FR-018**: The primitive MUST define explicit graph write contracts instead of relying on implicit UI-only side effects.
 - **FR-019**: Future chat/planning MUST be able to reuse prior graph-backed results from the same project.
 - **FR-020**: Model input MUST eventually be shapeable by cached project graph context including current project, selected board nodes, selected graph evidence, recent run outputs, relevant ThinkGraph decisions, relevant KnowGraph evidence, and relevant CodeGraph implementation context.
+- **FR-020a**: Replacing the current `PlanDraft` MUST only replace the current draft view; it MUST NOT clear durable ThinkGraph context, KnowGraph evidence, CodeGraph memory, or preserved approved/run-history continuity.
+- **FR-020b**: Cached project context for future turns MUST remain stream-separated as `thinkGraphContext`, `knowGraphContext`, and optional `codeGraphContext`, with explicit comparison of congruence, conflict, missing evidence, and confidence gaps rather than one merged blob.
 
 ### KnowGraph UI Requirements
 

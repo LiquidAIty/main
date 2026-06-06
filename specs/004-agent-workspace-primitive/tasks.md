@@ -160,10 +160,11 @@ Every task below must preserve:
   - Do not touch: viewport behavior, bus/chat layout.
   - Risk: medium.
 
-- [ ] `P3-T002` Ensure Plan Canvas reflects the current draft from the latest turn.
+- [x] `P3-T002` Ensure Plan Canvas reflects the current draft from the latest turn.
   - Goal: later turns update the visible draft instead of leaving stale plan content on screen.
-  - Likely files: `client/src/components/builder/assistPlanSurface.ts`, `client/src/components/assist/planMissionModel.ts`.
-  - Acceptance test: after a new turn, the Plan Canvas reflects the current draft rather than prior obsolete steps or raw runtime text.
+  - Implemented in: `client/src/components/builder/chatPlanCompanion.ts`, `client/src/pages/agentbuilder.tsx`, `client/src/features/agentbuilder/plan/planDraftMapping.spec.ts`.
+  - Acceptance test: research/refine turns replace the visible current draft graph, a later lightweight explanatory turn clears stale research plan nodes from the current `PlanDraft` view, and old preserved run-history text does not become the current plan graph.
+  - Note: page-owned draft adapter state and plan editor overrides now reset on draft identity change, while lightweight explanatory turns no longer inherit prior research mission structure. This only replaces the current draft view; it does not clear durable ThinkGraph, KnowGraph, CodeGraph, or approved/run-history memory.
   - Do not touch: runtime execution path.
   - Risk: medium.
 
@@ -294,7 +295,7 @@ Every task below must preserve:
   - Risk: high.
 
 - [ ] `P8.5-T002` Define which context sources can populate the project context packet.
-  - Goal: allow the packet to include selected board nodes, recent run outputs, ThinkGraph decisions, KnowGraph evidence, and CodeGraph implementation context.
+  - Goal: allow the packet to include selected board nodes, recent run outputs, ThinkGraph intent/assumptions/uncertainty context, KnowGraph evidence/provenance/confidence context, and CodeGraph implementation context.
   - Likely files: types/docs plus prompt/context boundary files.
   - Acceptance test: allowed packet sources are explicit and non-ambiguous.
   - Do not touch: unrelated graph rendering behavior.
@@ -310,7 +311,7 @@ Every task below must preserve:
 - [ ] `P8.5-T004` Follow-up chat proves it can use prior research and evidence context.
   - Goal: verify the user does not need to restate the same evidence after a research run.
   - Likely files: chat/runtime prompt path tests and related docs.
-  - Acceptance test: a follow-up chat uses cached KnowGraph and ThinkGraph context from the same project.
+  - Acceptance test: a follow-up chat uses cached ThinkGraph and KnowGraph context from the same project as separate streams and can compare congruence, conflict, missing evidence, and confidence gaps.
   - Do not touch: trading code.
   - Risk: high.
 

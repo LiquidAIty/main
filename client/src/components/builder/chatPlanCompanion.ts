@@ -38,6 +38,18 @@ function removeAgentRun(missionSpec: MissionSpec, agentId: string) {
 function isLightweightUserTurn(message: string): boolean {
   const normalized = safeText(message).toLowerCase();
   if (!normalized) return true;
+  if (
+    /\b(explain|describe)\b/.test(normalized) &&
+    /\b(plan canvas|canvas|chat|workspace|what can you do)\b/.test(normalized)
+  ) {
+    return true;
+  }
+  if (
+    /\bwhat does\b/.test(normalized) &&
+    /\b(plan canvas|canvas|chat|workspace)\b/.test(normalized)
+  ) {
+    return true;
+  }
   if (/\b(research|knowgraph|evidence|object|canvas|setup|query|summarize graph|traverse|implement|build|create|draft|plan|refine|update|make)\b/.test(normalized)) {
     return false;
   }

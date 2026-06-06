@@ -25,6 +25,21 @@ ThinkGraph intent/context
 
 KnowGraph is not the external search worker. New research plans should not call `knowgraph_query`; existing-KnowGraph search can only use a query tool when that tool is actually implemented and explicitly requested by the user.
 
+Replacing the current Agent Workspace `PlanDraft` only replaces the current plan view. It must not delete or clear durable KnowGraph evidence, durable ThinkGraph reasoning/context, CodeGraph memory, or preserved approved/run-history continuity.
+
+For future Agent Workspace turns, context must stay stream-separated:
+
+- `thinkGraphContext`: intent, assumptions, uncertainty, reasoning context, prior decisions
+- `knowGraphContext`: evidence, entities, relations, provenance, citations, confidence
+- `codeGraphContext`: implementation and code-structure context when relevant
+
+Magentic-One should be able to compare these streams for:
+
+- congruence
+- conflict
+- missing evidence
+- confidence gaps
+
 ---
 
 ## KnowGraph (Neo4j)

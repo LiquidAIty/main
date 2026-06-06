@@ -386,6 +386,30 @@ describe("planDraftMapping", () => {
     expect(missionGraph.edges).toHaveLength(0);
   });
 
+  it("maps a lightweight follow-up after research to a minimal graph instead of stale research nodes", () => {
+    const researchResult = draftMissionSpecFromChat({
+      userMessage:
+        "Make a research plan to populate KnowGraph about lithium battery recycling.",
+      activeCanvasId: "project_admin",
+    });
+    const lightweightResult = draftMissionSpecFromChat({
+      userMessage: "Now just explain what the Plan Canvas does.",
+      activeCanvasId: "project_admin",
+      currentMissionSpec: researchResult.missionSpec,
+    });
+
+    const lightweightDraft = chatPlanDraftResultToPlanDraft(lightweightResult, {
+      projectId: "project_admin",
+      currentMissionSpec: researchResult.missionSpec,
+    });
+
+    expect(lightweightDraft).not.toBeNull();
+    const missionGraph = planDraftToPlanMissionGraph(lightweightDraft!);
+    expect(lightweightDraft?.steps).toHaveLength(0);
+    expect(missionGraph.nodes).toHaveLength(0);
+    expect(missionGraph.edges).toHaveLength(0);
+  });
+
   it("maps research PlanDraft to useful ordered mission nodes and edges", () => {
     const result = draftMissionSpecFromChat({
       userMessage:

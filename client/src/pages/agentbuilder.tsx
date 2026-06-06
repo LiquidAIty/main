@@ -6806,10 +6806,21 @@ export default function AgentBuilder(): React.ReactElement {
       }),
     [planSource, plan, assistAnchorSurface],
   );
+  const currentPlanDraftKey = useMemo(
+    () =>
+      currentPlanDraft
+        ? `${safeText(currentPlanDraft.missionId)}::${currentPlanDraft.revision}`
+        : 'no_plan_draft',
+    [currentPlanDraft],
+  );
   useEffect(() => {
     setPlanMissionFocus(null);
     setPlanNodeDrafts({});
   }, [activeProject]);
+  useEffect(() => {
+    setPlanMissionFocus(null);
+    setPlanNodeDrafts({});
+  }, [currentPlanDraftKey]);
   // knowledge graph
   const [cypher, setCypher] = useState('');
   const [graphResult, setGraphResult] = useState<any[]>([]);
@@ -8274,6 +8285,8 @@ export default function AgentBuilder(): React.ReactElement {
               ...draftMissionSpecRef.current,
               ...result.missionSpecPatch,
             });
+          } else {
+            setDraftMissionSpec(null);
           }
           setPlanDraftStatus(
             result.status === 'ready' && !provisionalPlanDraft ? 'failed' : result.status,
