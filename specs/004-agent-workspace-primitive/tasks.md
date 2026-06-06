@@ -184,11 +184,11 @@ Every task below must preserve:
   - Do not touch: runtime execution path, graph persistence, layout.
   - Risk: medium.
 
-- [ ] `P3-T005` Build a read-only GraphContextBuilder service or tool boundary.
+- [x] `P3-T005` Build a read-only GraphContextBuilder service or tool boundary.
   - Goal: create one product-safe backend path that queries ThinkGraph, KnowGraph, and CodeGraph separately and returns a `GraphContextPacket`.
-  - Likely files: backend graph/query service files, `apps/backend/src/routes/*` only if a safe read-only endpoint is chosen, prompt/context boundary files.
-  - Acceptance test: one read-only builder path exists that preserves stream labels, provenance/confidence, and selected-board context without mutating graph memory.
-  - Note: raw terminal/Cypher access may remain a dev-admin fallback, but it is not the normal product path for Magentic-One chat.
+  - Implemented in: `apps/backend/src/services/graphContext/graphContextPacket.ts`, `apps/backend/src/services/graphContext/graphContextBuilder.ts`, `apps/backend/src/services/graphContext/graphContextBuilder.spec.ts`.
+  - Acceptance test: `npx tsc --noEmit -p apps/backend/tsconfig.app.json`, `npx vitest run apps/backend/src/services/graphContext/graphContextBuilder.spec.ts`, `git diff --check`.
+  - Note: the first safe slice is a backend read-only service boundary only. It preserves separate ThinkGraph, KnowGraph, and CodeGraph streams; returns honest partial/unavailable notes; does not mutate graph memory; and does not add a public endpoint yet. Raw terminal/Cypher access may remain a dev-admin fallback, but it is not the normal product path for Magentic-One chat.
   - Do not touch: plan execution, UI layout, graph write behavior.
   - Risk: high.
 
@@ -359,4 +359,4 @@ Every task below must preserve:
 
 ## First Recommended Implementation Task
 
-- [ ] `NEXT-T001` Implement `P3-T005`: build the read-only GraphContextBuilder service or tool boundary.
+- [ ] `NEXT-T001` Implement `P3-T006`: inject the read-only `GraphContextPacket` into the Magentic-One prompt path.

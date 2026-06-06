@@ -61,6 +61,16 @@ Preferred product-safe query path:
 
 Raw terminal or ad hoc Cypher access may exist for development or admin fallback, but it is not the normal product path for Agent Workspace chat.
 
+Current Stage 0 implementation truth:
+
+- a read-only backend builder boundary now exists at `apps/backend/src/services/graphContext/graphContextBuilder.ts`
+- it returns a stream-separated `GraphContextPacket`
+- it uses real project-scoped KnowGraph reads where available
+- it uses real AGE/ThinkGraph reads where available
+- it returns an honest partial CodeGraph stream with debug notes until a canonical backend CodeGraph reader exists
+- it does not write, delete, or merge graph memory
+- it is not wired into Magentic-One prompt shaping yet
+
 ## Hard Boundaries
 
 - This spec does not add trading implementation.

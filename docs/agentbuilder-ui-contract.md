@@ -100,6 +100,51 @@ Still owns:
 - Trading surface placeholder/workspace if present
 - Local Coder as an active helper capability
 
+## Stage 0 First-Use Board Contract
+
+The current ADMIN Stage 0 research/context baseline is:
+
+- active/connected cluster:
+  - `Magentic-One`
+  - `ThinkGraph Agent`
+  - `Research Agent`
+  - `KnowGraph Agent`
+  - `Plan Agent`
+- parked/visible/disconnected future helpers:
+  - `Local Coder`
+  - `CodeGraph Agent`
+  - `Trading Agent`
+  - `WorldSignals Agent`
+
+Rules:
+
+- the first-use research/context primitive depends on `ThinkGraph` and `KnowGraph`, not `CodeGraph`
+- `CodeGraph` remains optional/non-blocking for Stage 0 research/context work
+- `CodeGraph` is preserved for future `Local Coder` / code-editing / self-modification workflows
+- `Plan Agent` may remain connected/available for plan surface and next-turn context work
+- parked cards must remain visible on the board but must not be required for ordinary research-plan drafting
+
+## Graph Rail Contract
+
+- the graph/starburst rail icon is graph-stream-driven, not `CodeGraph`-driven
+- show the graph rail icon when any connected graph stream is active:
+  - `ThinkGraph`
+  - `KnowGraph`
+  - `CodeGraph`
+- with the current ADMIN Stage 0 board, `ThinkGraph` + `KnowGraph` are enough to keep the graph rail visible
+- `CodeGraph` must not be required for graph rail visibility
+- the graph canvas should show only connected graph streams
+- if `CodeGraph` is parked/disconnected, the main graph canvas should not show the `CodeGraph` tab
+
+## Historical Chat Warning
+
+- old preserved chat/run history may still contain historical `assistant_tool_not_supported ... knowgraph_query` text
+- do not treat preserved historical chat bubbles as current runtime failure
+- fresh-turn validation should use:
+  - new prompt behavior
+  - current `PlanDraft` view
+  - current run count / no-auto-run checks
+
 ## Inactive/Draft Surfaces
 
 - Telescope

@@ -34,6 +34,7 @@ const CodeGraphScene = lazy(async () => {
 
 type KnowledgeGraphFrameworkProps = {
   kind: KnowledgeGraphKind;
+  availableKinds?: readonly KnowledgeGraphKind[];
   onKindChange: (kind: KnowledgeGraphKind) => void;
   contract: GraphViewContract;
   onContractChange: (contract: GraphViewContract) => void;
@@ -241,6 +242,7 @@ function edgeSetFromGraph(data: CodeGraphData): string[] {
 
 export default function KnowledgeGraphFramework({
   kind,
+  availableKinds = ['thinkgraph', 'knowgraph', 'codegraph'],
   onKindChange,
   contract,
   onContractChange,
@@ -532,6 +534,18 @@ export default function KnowledgeGraphFramework({
       padding: '6px 8px',
     });
 
+  const visibleKinds = useMemo(
+    () =>
+      availableKinds.filter(
+        (value, index, values) =>
+          values.indexOf(value) === index &&
+          (value === 'thinkgraph' ||
+            value === 'knowgraph' ||
+            value === 'codegraph'),
+      ),
+    [availableKinds],
+  );
+
   return (
     <div
       style={{
@@ -557,27 +571,33 @@ export default function KnowledgeGraphFramework({
         }}
         data-no-surface-promote="true"
       >
-        <button
-          type="button"
-          style={modeButtonStyle('thinkgraph')}
-          onClick={() => onKindChange('thinkgraph')}
-        >
-          ThinkGraph
-        </button>
-        <button
-          type="button"
-          style={modeButtonStyle('knowgraph')}
-          onClick={() => onKindChange('knowgraph')}
-        >
-          KnowGraph
-        </button>
-        <button
-          type="button"
-          style={modeButtonStyle('codegraph')}
-          onClick={() => onKindChange('codegraph')}
-        >
-          CodeGraph
-        </button>
+        {visibleKinds.includes('thinkgraph') ? (
+          <button
+            type="button"
+            style={modeButtonStyle('thinkgraph')}
+            onClick={() => onKindChange('thinkgraph')}
+          >
+            ThinkGraph
+          </button>
+        ) : null}
+        {visibleKinds.includes('knowgraph') ? (
+          <button
+            type="button"
+            style={modeButtonStyle('knowgraph')}
+            onClick={() => onKindChange('knowgraph')}
+          >
+            KnowGraph
+          </button>
+        ) : null}
+        {visibleKinds.includes('codegraph') ? (
+          <button
+            type="button"
+            style={modeButtonStyle('codegraph')}
+            onClick={() => onKindChange('codegraph')}
+          >
+            CodeGraph
+          </button>
+        ) : null}
       </div>
 
       <button

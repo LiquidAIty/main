@@ -60,6 +60,16 @@ Preferred product path for next-turn context:
 
 Terminal access, raw Cypher, or admin-only tooling may still exist for development fallback, but that is not the primary product behavior for normal Magentic-One chat.
 
+Current implementation baseline:
+
+- the first read-only builder boundary now lives in `apps/backend/src/services/graphContext/graphContextBuilder.ts`
+- it returns a stream-separated `GraphContextPacket`
+- it reads KnowGraph through project-scoped Neo4j queries
+- it reads ThinkGraph through project-scoped AGE queries
+- it returns an honest partial CodeGraph stream with explicit debug notes until a canonical backend CodeGraph reader exists
+- it does not write, delete, or clear graph memory
+- it is a service boundary only for now, not yet a prompt-wired runtime path
+
 ---
 
 ## KnowGraph (Neo4j)

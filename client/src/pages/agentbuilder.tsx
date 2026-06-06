@@ -1067,6 +1067,13 @@ export type ProgressiveRailVisibility = {
   uaAgents: readonly UaUiAgentDefinition[];
 };
 
+export type ConnectedGraphStreams = {
+  thinkGraph: boolean;
+  knowGraph: boolean;
+  codeGraph: boolean;
+  anyGraph: boolean;
+};
+
 function buildBusConnectedCardIds(
   nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
@@ -1228,6 +1235,50 @@ export function isKnowledgeChainActive(
   nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
 ): boolean {
+  return deriveConnectedGraphStreams({ nodes, edges }).anyGraph;
+}
+
+export function deriveConnectedGraphStreams(deck: Pick<DeckDocument, 'nodes' | 'edges'>): ConnectedGraphStreams {
+  const busConnected = buildBusConnectedCardIds(deck.nodes, deck.edges);
+  const thinkGraph = deck.nodes.some(
+    (node) => busConnected.has(node.id) && isThinkGraphSystemCard(node),
+  );
+  const knowGraph = deck.nodes.some(
+    (node) => busConnected.has(node.id) && isKnowGraphSystemCard(node),
+  );
+  const codeGraph = deck.nodes.some(
+    (node) => busConnected.has(node.id) && isCodeGraphSystemCard(node),
+  );
+  return {
+    thinkGraph,
+    knowGraph,
+    codeGraph,
+    anyGraph: thinkGraph || knowGraph || codeGraph,
+  };
+}
+
+export function getDefaultConnectedKnowledgeGraphKind(
+  streams: ConnectedGraphStreams,
+): KnowledgeGraphKind {
+  if (streams.knowGraph) return 'knowgraph';
+  if (streams.thinkGraph) return 'thinkgraph';
+  return 'codegraph';
+}
+
+export function getConnectedKnowledgeGraphKinds(
+  streams: ConnectedGraphStreams,
+): KnowledgeGraphKind[] {
+  const kinds: KnowledgeGraphKind[] = [];
+  if (streams.thinkGraph) kinds.push('thinkgraph');
+  if (streams.knowGraph) kinds.push('knowgraph');
+  if (streams.codeGraph) kinds.push('codegraph');
+  return kinds;
+}
+
+export function isLegacyKnowledgeChainFullyConnected(
+  nodes: readonly AgentCardInstance[],
+  edges: readonly DeckEdge[],
+): boolean {
   const thinkGraphId = resolveFirstMatchingCardId(nodes, isThinkGraphSystemCard);
   const knowGraphId = resolveFirstMatchingCardId(nodes, isKnowGraphSystemCard);
   const codeGraphId = resolveFirstMatchingCardId(nodes, isCodeGraphSystemCard);
@@ -1354,12 +1405,9 @@ export function deriveVisibleRailItems({
   workspaceView: string;
   pendingActivationProposal: ActivationProposalState | null;
 }): ProgressiveRailVisibility {
-  // A companion surface stays active only when its board node/workbench is still
-  // connected into the current workflow, or when the user is already inside it.
+  const connectedGraphStreams = deriveConnectedGraphStreams(deck);
   return {
-    showKnowledge:
-      workspaceView === 'knowledge' ||
-      isKnowledgeChainActive(deck.nodes, deck.edges),
+    showKnowledge: connectedGraphStreams.anyGraph,
     showPlan:
       workspaceView === 'plan' ||
       pendingActivationProposal !== null ||
@@ -4854,6 +4902,14 @@ export default function AgentBuilder(): React.ReactElement {
       }),
     [deck, pendingActivationProposal, workspaceView],
   );
+  const connectedGraphStreams = useMemo(
+    () => deriveConnectedGraphStreams(deck),
+    [deck],
+  );
+  const connectedKnowledgeGraphKinds = useMemo(
+    () => getConnectedKnowledgeGraphKinds(connectedGraphStreams),
+    [connectedGraphStreams],
+  );
   const activeUaAgentDefinition = useMemo(
     () => getUaAgentDefinitionBySurface(workspaceView),
     [workspaceView],
@@ -4972,6 +5028,17 @@ export default function AgentBuilder(): React.ReactElement {
   const [sending, setSending] = useState(false);
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
     useState<KnowledgeGraphKind>('knowgraph');
+  useEffect(() => {
+    if (connectedKnowledgeGraphKinds.length === 0) return;
+    if (connectedKnowledgeGraphKinds.includes(knowledgeGraphKind)) return;
+    setKnowledgeGraphKind(
+      getDefaultConnectedKnowledgeGraphKind(connectedGraphStreams),
+    );
+  }, [
+    connectedGraphStreams,
+    connectedKnowledgeGraphKinds,
+    knowledgeGraphKind,
+  ]);
   const [graphViewContract, setGraphViewContract] =
     useState<GraphViewContract | null>(null);
   // chat + plan intent-contract state must be declared before callbacks/effects that write to them.
@@ -9090,6 +9157,7 @@ export default function AgentBuilder(): React.ReactElement {
             >
               <KnowledgeGraphFramework
                 kind={knowledgeGraphKind}
+                availableKinds={connectedKnowledgeGraphKinds}
                 onKindChange={(nextKind) => {
                   setKnowledgeGraphKind(nextKind);
                   setGraphViewContract((prev) => ({
@@ -9454,8 +9522,10 @@ export default function AgentBuilder(): React.ReactElement {
   const showKnowledgeWorkspace = useCallback(() => {
     closeObjectDrawer();
     setWorkspaceView('knowledge');
-    setKnowledgeGraphKind('knowgraph');
-  }, [closeObjectDrawer]);
+    setKnowledgeGraphKind(
+      getDefaultConnectedKnowledgeGraphKind(connectedGraphStreams),
+    );
+  }, [closeObjectDrawer, connectedGraphStreams]);
 
   const showPlanWorkspace = useCallback(() => {
     closeObjectDrawer();
