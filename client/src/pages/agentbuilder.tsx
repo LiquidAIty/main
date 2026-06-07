@@ -5027,6 +5027,7 @@ export default function AgentBuilder(): React.ReactElement {
   );
   // TODO: replace manual deck input with plan-driven execution input.
   const [deckRunInput, setDeckRunInput] = useState('');
+  const [magenticPlanApproval, setMagenticPlanApproval] = useState<Record<string, 'approved' | 'rejected'>>({});
   const [showCreateProjectForm, setShowCreateProjectForm] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [sending, setSending] = useState(false);
@@ -9333,8 +9334,73 @@ export default function AgentBuilder(): React.ReactElement {
                         {typeof plan === 'object' ? JSON.stringify(plan, null, 2) : String(plan)}
                       </pre>
                     )}
-                    <div style={{ marginTop: 12, fontSize: 11, color: C.warn, fontStyle: 'italic' }}>
-                      Plan approval action not wired yet.
+                    <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+                      {!magenticPlanApproval[step.id] && (
+                        <>
+                          <button
+                            onClick={() => {
+                              setMagenticPlanApproval(prev => ({ ...prev, [step.id]: 'approved' }));
+                            }}
+                            style={{
+                              padding: '4px 12px',
+                              background: GRAPH_THEME.drawer.actionSelected,
+                              color: C.bg,
+                              border: 'none',
+                              borderRadius: 4,
+                              cursor: 'pointer',
+                              fontSize: 11,
+                              fontWeight: 600,
+                            }}
+                          >
+                            Approve Plan
+                          </button>
+                          <button
+                            onClick={() => {
+                              setMagenticPlanApproval(prev => ({ ...prev, [step.id]: 'rejected' }));
+                            }}
+                            style={{
+                              padding: '4px 12px',
+                              background: 'rgba(255,100,100,0.1)',
+                              color: 'rgb(255,150,150)',
+                              border: '1px solid rgba(255,100,100,0.2)',
+                              borderRadius: 4,
+                              cursor: 'pointer',
+                              fontSize: 11,
+                              fontWeight: 600,
+                            }}
+                          >
+                            Reject Plan
+                          </button>
+                          <button
+                            onClick={() => {
+                              // Focus chat input for rerun/revision
+                              const input = document.getElementById('drawer-chat-input');
+                              if (input) input.focus();
+                            }}
+                            style={{
+                              padding: '4px 12px',
+                              background: 'transparent',
+                              color: GRAPH_THEME.drawer.inputMuted,
+                              border: '1px solid rgba(255,255,255,0.1)',
+                              borderRadius: 4,
+                              cursor: 'pointer',
+                              fontSize: 11,
+                            }}
+                          >
+                            Revise Prompt / Rerun
+                          </button>
+                        </>
+                      )}
+                      {magenticPlanApproval[step.id] === 'approved' && (
+                        <div style={{ fontSize: 11, color: C.warn, fontStyle: 'italic' }}>
+                          Plan approved. Continuation execution not wired yet.
+                        </div>
+                      )}
+                      {magenticPlanApproval[step.id] === 'rejected' && (
+                        <div style={{ fontSize: 11, color: 'rgb(255,150,150)', fontStyle: 'italic' }}>
+                          Plan rejected. What should be changed? (Submit new instruction)
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
