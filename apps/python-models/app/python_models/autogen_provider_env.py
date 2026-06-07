@@ -12,9 +12,8 @@ from pydantic import BaseModel
 
 def _load_repo_env() -> None:
     env_path = Path("apps/backend/.env").resolve()
-    if not env_path.exists():
-        raise RuntimeError(f"backend_env_missing: required env file not found at {env_path}")
-    load_dotenv(env_path, override=False)
+    if env_path.exists():
+        load_dotenv(env_path, override=False)
 
 
 _load_repo_env()

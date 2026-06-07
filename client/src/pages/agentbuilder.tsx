@@ -8320,7 +8320,7 @@ export default function AgentBuilder(): React.ReactElement {
     });
 
     setMessages((m) => [...m, { role: 'user', text: trimmed }]);
-    
+
     // Instead of faking a plan, directly run the deck with the raw task
     setDeckRunInput(trimmed);
     setMessages((m) => [...m, { role: 'assistant', text: 'Starting Magentic-One run...' }]);
@@ -9332,13 +9332,13 @@ export default function AgentBuilder(): React.ReactElement {
                       <div style={{ marginTop: 8, fontSize: 12, color: C.text }}>
                         {(plan as any)?.task_ledger?.task_plan && (
                           <div style={{ marginBottom: 8 }}>
-                            <div style={{ fontWeight: 600, color: GRAPH_THEME.drawer.headerText }}>Task Plan:</div>
+                            <div style={{ fontWeight: 600, color: GRAPH_THEME.drawer.headerText }}>Proposed Plan:</div>
                             <div style={{ whiteSpace: 'pre-wrap', color: GRAPH_THEME.drawer.inputMuted }}>{(plan as any).task_ledger.task_plan}</div>
                           </div>
                         )}
                         {(plan as any)?.progress_ledger?.next_instruction && (
                           <div style={{ marginBottom: 4 }}>
-                            <div style={{ fontWeight: 600, color: GRAPH_THEME.drawer.headerText }}>Next Instruction:</div>
+                            <div style={{ fontWeight: 600, color: GRAPH_THEME.drawer.headerText }}>Recommended Next Move:</div>
                             <div style={{ whiteSpace: 'pre-wrap', color: GRAPH_THEME.drawer.inputMuted }}>{(plan as any).progress_ledger.next_instruction}</div>
                           </div>
                         )}
@@ -9352,8 +9352,28 @@ export default function AgentBuilder(): React.ReactElement {
                       {!magenticPlanApproval[step.id] && (
                         <>
                           <button
-                            onClick={() => {
+                            onClick={async () => {
                               setMagenticPlanApproval(prev => ({ ...prev, [step.id]: 'approved' }));
+
+                              const approvedMissionSpec = {
+                                runState: 'approved',
+                                task_ledger: (plan as any).task_ledger,
+                                progress_ledger: (plan as any).progress_ledger,
+                              };
+
+                              setMessages((m) => [...m, { role: 'user', text: '(Approved plan)' }]);
+                              setMessages((m) => [...m, { role: 'assistant', text: 'Executing approved plan...' }]);
+
+                              const outcome = await handleRunDeck(deckRunInput || 'Proceed with approved plan', { missionSpec: approvedMissionSpec });
+                              if (!outcome || !outcome.ok) {
+                                setMessages((m) => [
+                                  ...m,
+                                  {
+                                    role: 'assistant',
+                                    text: `Magentic-One run failed: ${outcome?.error || 'Unknown error'}`,
+                                  },
+                                ]);
+                              }
                             }}
                             style={{
                               padding: '4px 12px',
@@ -9366,11 +9386,14 @@ export default function AgentBuilder(): React.ReactElement {
                               fontWeight: 600,
                             }}
                           >
-                            Approve Plan
+                            Approve & Execute
                           </button>
                           <button
                             onClick={() => {
                               setMagenticPlanApproval(prev => ({ ...prev, [step.id]: 'rejected' }));
+                              setTimeout(() => {
+                                document.getElementById('canvas_chat_input')?.focus();
+                              }, 100);
                             }}
                             style={{
                               padding: '4px 12px',
@@ -9383,36 +9406,18 @@ export default function AgentBuilder(): React.ReactElement {
                               fontWeight: 600,
                             }}
                           >
-                            Reject Plan
-                          </button>
-                          <button
-                            onClick={() => {
-                              // Focus chat input for rerun/revision
-                              const input = document.getElementById('drawer-chat-input');
-                              if (input) input.focus();
-                            }}
-                            style={{
-                              padding: '4px 12px',
-                              background: 'transparent',
-                              color: GRAPH_THEME.drawer.inputMuted,
-                              border: '1px solid rgba(255,255,255,0.1)',
-                              borderRadius: 4,
-                              cursor: 'pointer',
-                              fontSize: 11,
-                            }}
-                          >
-                            Revise Prompt / Rerun
+                            Revise Plan
                           </button>
                         </>
                       )}
                       {magenticPlanApproval[step.id] === 'approved' && (
                         <div style={{ fontSize: 11, color: C.warn, fontStyle: 'italic' }}>
-                          Plan approved. Continuation execution not wired yet.
+                          Plan approved and executing.
                         </div>
                       )}
                       {magenticPlanApproval[step.id] === 'rejected' && (
                         <div style={{ fontSize: 11, color: 'rgb(255,150,150)', fontStyle: 'italic' }}>
-                          Plan rejected. What should be changed? (Submit new instruction)
+                          Plan rejected. Provide revision instructions below.
                         </div>
                       )}
                     </div>

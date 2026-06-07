@@ -706,7 +706,7 @@ def _refinement_payload_json(context: ContextPack, result: _PassResult) -> str:
     return json.dumps(refinement_payload, ensure_ascii=True)
 
 
-def _build_team(model_client: object, response_policy: str, max_research_tasks: int, max_turns: int) -> MagenticOneGroupChat:
+def _build_team(model_client: object, response_policy: str, max_research_tasks: int, max_turns: int, is_approved: bool) -> MagenticOneGroupChat:
     research_coordinator = AssistantAgent(
         name="Research_Coordinator",
         model_client=model_client,
@@ -719,6 +719,7 @@ def _build_team(model_client: object, response_policy: str, max_research_tasks: 
                 "Prefer specific, verifyable search queries over broad research themes.",
                 "If unresolved questions or graph gaps remain, emit concrete searchTasks tied to those gaps, triplets, or entities.",
                 "Do not emit search tasks when the answer is already grounded and complete.",
+                "If the current state is draft or planning phase, DO NOT emit search tasks, only propose the research plan.",
                 "Do not restate the full context, system design, or user request back to the team.",
                 "Do not ask the user follow-up questions.",
                 "Reply with compact working notes only.",
@@ -737,6 +738,7 @@ def _build_team(model_client: object, response_policy: str, max_research_tasks: 
                     [
                         response_policy,
                         "You are the final response and state-writing worker for one assistant turn.",
+                        "If the plan is not approved yet, ONLY propose the research plan. Do not execute research or write to KnowGraph.",
                         "Write the answer in one or two short sentences.",
                         "Lead with the direct answer or best next move.",
                         "Use plain language and concise next-step wording.",
@@ -781,6 +783,8 @@ def _build_team(model_client: object, response_policy: str, max_research_tasks: 
                 "- each blackboard summary must be short and concrete",
                 "- plan.whatChanged/openQuestions/sources: short arrays, at most 4 items each",
                 "- thinkGraph arrays: short, at most 4 items",
+                "- emit knowGraph.searchTasks ONLY if the plan is approved",
+                "- if the plan is draft/unapproved, output empty searchTasks and propose the plan instead",
                 f"- knowGraph.searchTasks: at most {max_research_tasks} items",
                 "- emit knowGraph.searchTasks when unresolved questions or graph gaps actually warrant follow-up",
                 "- knowGraph.searchTasks must be specific search queries, not generic research themes",
@@ -1258,7 +1262,8 @@ async def _run_orchestrator_pass(
     task_text: str,
     max_turns: int,
 ) -> _PassResult:
-    team = _build_team(model_client, response_policy, max_research_tasks, max_turns)
+    is_approved = context.plan.status in {"approved", "approved_research"} if getattr(context, "plan", None) else False
+    team = _build_team(model_client, response_policy, max_research_tasks, max_turns, is_approved)
     result = await team.run(task=task_text)
     transcript = [_message_to_text(message) for message in result.messages]
     parsed: dict[str, object] | None = None

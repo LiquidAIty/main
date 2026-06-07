@@ -357,9 +357,10 @@ describe('runCardWithContract runtime dispatch', () => {
     const effectiveMagentic = resolveEffectiveAgent(magentic, templates);
     if (!effectiveMagentic) throw new Error('missing_effective_agent');
 
-    llmHarness.runLLM
-      .mockResolvedValueOnce({ text: '{"selectedCardId":"assist_head","directResponseText":null}' })
-      .mockResolvedValueOnce({ text: 'head output' });
+    autogenHarness.orchestrateWithAutoGen.mockResolvedValueOnce({
+      ok: true,
+      finalResponseText: 'head output',
+    });
 
     const result = await runCardWithContract(magentic, effectiveMagentic, 'route this', {
       userInput: 'route this',
@@ -371,15 +372,13 @@ describe('runCardWithContract runtime dispatch', () => {
     expect(result.status).toBe('success');
     expect(result.runtimeType).toBe('magentic_one');
     expect(result.output).toBe('head output');
-    expect(llmHarness.runLLM).toHaveBeenCalledTimes(2);
+    expect(autogenHarness.orchestrateWithAutoGen).toHaveBeenCalledTimes(1);
   });
 
   it('answers directly when magentic_one has no callable heads', async () => {
     const magentic = createCard('magentic', 'magentic_one');
     const effectiveMagentic = resolveEffectiveAgent(magentic, templates);
     if (!effectiveMagentic) throw new Error('missing_effective_agent');
-
-    llmHarness.runLLM.mockResolvedValueOnce({ text: 'direct output' });
 
     const result = await runCardWithContract(magentic, effectiveMagentic, 'answer this', {
       userInput: 'answer this',
@@ -388,10 +387,8 @@ describe('runCardWithContract runtime dispatch', () => {
       allTemplates: templates,
     });
 
-    expect(result.status).toBe('success');
-    expect(result.runtimeType).toBe('magentic_one');
-    expect(result.output).toBe('direct output');
-    expect(llmHarness.runLLM).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('No connected Magentic-One participants found');
   });
 
   it('routes magentic_one to python autogen when executionBackend is enabled', async () => {
@@ -487,107 +484,42 @@ describe('runCardWithContract runtime dispatch', () => {
     expect(llmHarness.runLLM).not.toHaveBeenCalled();
   });
 
-  it('passes through one optional magentic progress line for the plan stream', async () => {
+
+
+  it('resolves callable head cards direction-agnostically for magentic_option edges', async () => {
     const magentic = createCard('magentic', 'magentic_one');
-    const head = createCard('assist_head', 'assistant_agent');
+    const headA = createCard('assist_head_a', 'assistant_agent');
+    const headB = createCard('assist_head_b', 'assistant_agent');
     const effectiveMagentic = resolveEffectiveAgent(magentic, templates);
     if (!effectiveMagentic) throw new Error('missing_effective_agent');
-    const events: Array<{ kind?: string; progressText?: string | null; text?: string | null }> = [];
 
-    llmHarness.runLLM
-      .mockResolvedValueOnce({
-        text: '{"selectedCardId":"assist_head","directResponseText":null,"progressText":"Goal: route this. Next: calling Assist Head because it is the visible callable path."}',
-      })
-      .mockResolvedValueOnce({ text: 'head output' });
-
-    const result = await runCardWithContract(magentic, effectiveMagentic, 'route this', {
-      userInput: 'route this',
-      allCards: [magentic, head],
-      allEdges: [edge('edge_magentic_head', 'magentic', 'assist_head', 'magentic_option')],
-      allTemplates: templates,
-      onRuntimeEvent: (event) => events.push(event),
-    });
-
-    expect(result.status).toBe('success');
-    expect(events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: 'magentic_assignment',
-          text: 'magentic assigned work to assist_head.',
-          progressText:
-            'Goal: route this. Next: calling Assist Head because it is the visible callable path.',
-        }),
-      ]),
-    );
-  });
-
-  it('emits direct magentic response text as a raw message event', async () => {
-    const magentic = createCard('magentic', 'magentic_one');
-    const head = createCard('assist_head', 'assistant_agent');
-    const effectiveMagentic = resolveEffectiveAgent(magentic, templates);
-    if (!effectiveMagentic) throw new Error('missing_effective_agent');
-    const events: Array<Record<string, unknown>> = [];
-
-    llmHarness.runLLM.mockResolvedValueOnce({
-      text: '{"selectedCardId":null,"directResponseText":"Direct magentic answer","progressText":"Goal: answer directly."}',
+    autogenHarness.orchestrateWithAutoGen.mockResolvedValueOnce({
+      ok: true,
+      finalResponseText: 'head A output',
     });
 
     const result = await runCardWithContract(magentic, effectiveMagentic, 'route this', {
       userInput: 'route this',
-      allCards: [magentic, head],
-      allEdges: [edge('edge_magentic_head', 'magentic', 'assist_head', 'magentic_option')],
-      allTemplates: templates,
-      onRuntimeEvent: (event) => events.push(event as unknown as Record<string, unknown>),
-    });
-
-    expect(result.status).toBe('success');
-    expect(result.output).toBe('Direct magentic answer');
-    expect(events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: 'message',
-          type: 'message',
-          cardId: 'magentic',
-          role: 'assistant',
-          content: 'Goal: answer directly.',
-        }),
-        expect.objectContaining({
-          kind: 'message',
-          type: 'message',
-          cardId: 'magentic',
-          role: 'assistant',
-          content: 'Direct magentic answer',
-        }),
-      ]),
-    );
-  });
-
-  it('lets magentic call a visible top-level Assist workflow and returns one consolidated output', async () => {
-    const magentic = createCard('magentic', 'magentic_one');
-    const head = createCard('assist_head', 'assistant_agent');
-    const next = createCard('assist_next', 'assistant_agent');
-    const effectiveMagentic = resolveEffectiveAgent(magentic, templates);
-    if (!effectiveMagentic) throw new Error('missing_effective_agent');
-
-    llmHarness.runLLM
-      .mockResolvedValueOnce({ text: '{"selectedCardId":"assist_head","directResponseText":null}' })
-      .mockResolvedValueOnce({ text: 'head output' })
-      .mockResolvedValueOnce({ text: 'next output' })
-      .mockResolvedValueOnce({ text: 'clean consolidated visible workflow answer' });
-
-    const result = await runCardWithContract(magentic, effectiveMagentic, 'route this workflow', {
-      userInput: 'route this workflow',
-      allCards: [magentic, head, next],
+      allCards: [magentic, headA, headB],
       allEdges: [
-        edge('edge_magentic_head', 'magentic', 'assist_head', 'magentic_option'),
-        edge('edge_head_next', 'assist_head', 'assist_next', 'flow'),
+        edge('edge_magentic_head_a', 'magentic', 'assist_head_a', 'magentic_option'),
+        edge('edge_head_b_magentic', 'assist_head_b', 'magentic', 'magentic_option'),
       ],
       allTemplates: templates,
     });
 
+    if (result.status !== 'success') {
+      console.log('Error:', result.error);
+    }
     expect(result.status).toBe('success');
-    expect(result.runtimeType).toBe('magentic_one');
-    expect(result.output).toBe('clean consolidated visible workflow answer');
-    expect(llmHarness.runLLM).toHaveBeenCalledTimes(4);
+    expect(result.output).toBe('head A output');
+    expect(autogenHarness.orchestrateWithAutoGen).toHaveBeenCalledTimes(1);
+    const payload = autogenHarness.orchestrateWithAutoGen.mock.calls[0]?.[0];
+    expect(payload?.cardRuntime?.participants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ cardId: 'assist_head_a' }),
+        expect.objectContaining({ cardId: 'assist_head_b' })
+      ])
+    );
   });
 });

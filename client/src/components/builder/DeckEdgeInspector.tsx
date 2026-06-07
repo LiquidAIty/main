@@ -28,7 +28,7 @@ export default function DeckEdgeInspector({
   colors: DeckEdgeInspectorColors;
 }) {
   const connectionMeaning =
-    edge.edgeType === "magentic_option" ? "callable route" : "flow";
+    edge.edgeType === "magentic_option" ? "Magentic option" : "Sequence flow";
   return (
     <div
       style={graphDrawerSectionStyle({

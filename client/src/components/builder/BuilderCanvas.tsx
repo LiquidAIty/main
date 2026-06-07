@@ -210,10 +210,14 @@ export function toFlowNodes(
     (executionPlan?.simpleOrderCardIds || []).map((cardId, index) => [cardId, index + 1] as const),
   );
   const startCardIds = new Set(executionPlan?.startCardIds || []);
+  const magenticNodeIds = new Set(
+    document.nodes.filter(n => normalizeRuntimeType(n.runtimeType) === 'magentic_one').map(n => n.id)
+  );
   const callableHeadIds = new Set(
     document.edges
       .filter((edge) => normalizeEdgeType(edge.edgeType) === 'magentic_option')
-      .map((edge) => edge.target),
+      .map((edge) => magenticNodeIds.has(edge.source) ? edge.target : (magenticNodeIds.has(edge.target) ? edge.source : null))
+      .filter((id): id is string => Boolean(id))
   );
   const assistStructureSummaries = buildAssistStructureSummaries(document);
   const neighborsByNode = buildUndirectedNeighborMap(

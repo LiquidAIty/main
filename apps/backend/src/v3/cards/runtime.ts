@@ -581,8 +581,8 @@ function buildPythonAutoGenCardRuntimePayload(
   const activeEdges = (context.allEdges || []).filter(
     (edge) =>
       normalizeEdgeType(edge.edgeType) === 'magentic_option' &&
-      edge.source === card.id &&
-      participantIds.has(edge.target),
+      ((edge.source === card.id && participantIds.has(edge.target)) ||
+       (edge.target === card.id && participantIds.has(edge.source))),
   );
 
   const safeRuntimeOptions = { ...(card.runtimeOptions || {}) };
@@ -790,11 +790,11 @@ function resolveCallableHeadCards(
   return (context.allEdges || [])
     .filter(
       (edge) =>
-        edge.source === card.id &&
+        (edge.source === card.id || edge.target === card.id) &&
         normalizeEdgeType(edge.edgeType) === 'magentic_option' &&
-        edge.target !== card.id,
+        edge.source !== edge.target,
     )
-    .map((edge) => nodeMap.get(edge.target))
+    .map((edge) => nodeMap.get(edge.source === card.id ? edge.target : edge.source))
     .filter((node): node is AgentCardInstance => Boolean(node && node.kind === 'agent'))
     .filter((node) => !String(node.parentGraphId || '').trim())
     .filter((node) => {
@@ -1698,7 +1698,7 @@ async function runMagenticCard(
 ): Promise<CardRunResult> {
   const callableHeads = resolveCallableHeadCards(card, context);
   if (callableHeads.length === 0) {
-    throw new Error('No connected Magentic-One participants found. Connect agent cards with magentic_option edges.');
+    throw new Error('magentic_callable_heads_required: No connected Magentic-One participants found. Connect agent cards with magentic_option edges.');
   }
 
   const hasCodeGraph = callableHeads.some(
