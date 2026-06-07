@@ -301,6 +301,7 @@ function formatCardRuntimeError(err: unknown): string {
     lower.includes('local_coder_') ||
     lower.includes('magentic_callable_heads_required') ||
     lower.includes('magentic_invalid_head_selection') ||
+    lower.includes('locked research runtime') ||
     lower.includes('graph_flow_') ||
     lower.includes('provider_model_mismatch') ||
     lower.includes('model_not_configured') ||
@@ -596,6 +597,27 @@ function buildPythonAutoGenCardRuntimePayload(
     }
   }
 
+  const mode = String((safeRuntimeOptions as any).mode || process.env.AGENT_DISCOVERY_MODE || 'locked_research_runtime').trim();
+  const isDiscoveryMode = mode === 'discovery_proposal';
+  (safeRuntimeOptions as any).mode = mode;
+
+  const lowerInput = runtimeInput.trim().toLowerCase();
+  const isGenericPrompt = [
+    'test', 'testing', 'hello', 'hi', 'hey', 'run', 'start', 'go', 'do it', 'execute', 'ping'
+  ].includes(lowerInput);
+
+  const isContinuation =
+    lowerInput.includes('continue') ||
+    lowerInput.includes('use previous') ||
+    lowerInput.includes('finish that') ||
+    lowerInput.includes('approve') ||
+    lowerInput.includes('yes');
+
+  let priorAssistantText = String(context.previousOutput || '').trim();
+  if (isGenericPrompt && !isContinuation) {
+    priorAssistantText = '';
+  }
+
   const payload: AutoGenOrchestratorRequest = {
     session: {
       sessionId,
@@ -609,7 +631,7 @@ function buildPythonAutoGenCardRuntimePayload(
       startedAt,
     },
     userText: runtimeInput,
-    priorAssistantText: String(context.previousOutput || ''),
+    priorAssistantText,
     systemPrompt: prompt,
     blackboard: {
       current_goal: '',
@@ -628,8 +650,6 @@ function buildPythonAutoGenCardRuntimePayload(
       sources: [],
       deltaSummary: '',
       status: context.missionSpec?.runState || 'draft',
-      task_ledger: (context.missionSpec as any)?.task_ledger || undefined,
-      progress_ledger: (context.missionSpec as any)?.progress_ledger || undefined,
     },
     thinkGraph: graphContextPacket?.thinkGraphContext || {
       priorityEntities: [],
@@ -681,6 +701,20 @@ function buildPythonAutoGenCardRuntimePayload(
           target: edge.target,
           edgeType: edge.edgeType || 'flow',
         })),
+      },
+      runtimeScope: isDiscoveryMode ? undefined : {
+        projectId: String(context.projectId || ''),
+        deckId: String(context.deckId || ''),
+        magenticCardId: card.id,
+        visibleNodeIds: (context.allCards || []).map((n) => n.id),
+        visibleEdgeIds: (context.allEdges || []).map((e) => e.id),
+        resolvedMagenticOptionIds: callableHeads.map((h) => h.id),
+        selectedWorkflowNodeIds: [],
+        pythonWorkerIds: participants.map((p) => p.cardId),
+        calledAgentIds: [],
+        excludedAgentIds: (context.allCards || [])
+          .filter((n) => n.id !== card.id && !callableHeads.find(h => h.id === n.id))
+          .map((n) => ({ id: n.id, reason: 'not connected by magentic_option or unsupported type' })),
       },
       assistant: {
         provider: modelConfig.provider,
@@ -781,20 +815,21 @@ function isAssistLikeRuntimeType(runtimeType: AgentCardRuntimeType): boolean {
   return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
 }
 
-function resolveCallableHeadCards(
-  card: AgentCardInstance,
-  context: CardRuntimeContext,
+function resolvedMagenticOptions(
+  magenticCardId: string,
+  visibleNodes: AgentCardInstance[],
+  visibleEdges: DeckEdge[]
 ): AgentCardInstance[] {
-  const nodeMap = new Map((context.allCards || []).map((node) => [node.id, node]));
+  const nodeMap = new Map(visibleNodes.map((node) => [node.id, node]));
   const seen = new Set<string>();
-  return (context.allEdges || [])
+  return visibleEdges
     .filter(
       (edge) =>
-        (edge.source === card.id || edge.target === card.id) &&
+        (edge.source === magenticCardId || edge.target === magenticCardId) &&
         normalizeEdgeType(edge.edgeType) === 'magentic_option' &&
         edge.source !== edge.target,
     )
-    .map((edge) => nodeMap.get(edge.source === card.id ? edge.target : edge.source))
+    .map((edge) => nodeMap.get(edge.source === magenticCardId ? edge.target : edge.source))
     .filter((node): node is AgentCardInstance => Boolean(node && node.kind === 'agent'))
     .filter((node) => !String(node.parentGraphId || '').trim())
     .filter((node) => {
@@ -1696,9 +1731,12 @@ async function runMagenticCard(
   runtimeBinding: RuntimeBinding | null,
   startedAt: string,
 ): Promise<CardRunResult> {
-  const callableHeads = resolveCallableHeadCards(card, context);
-  if (callableHeads.length === 0) {
-    throw new Error('magentic_callable_heads_required: No connected Magentic-One participants found. Connect agent cards with magentic_option edges.');
+  const mode = String((card.runtimeOptions as any)?.mode || process.env.AGENT_DISCOVERY_MODE || 'locked_research_runtime').trim();
+  const isDiscoveryMode = mode === 'discovery_proposal';
+
+  const callableHeads = resolvedMagenticOptions(card.id, context.allCards || [], context.allEdges || []);
+  if (!isDiscoveryMode && callableHeads.length === 0) {
+    throw new Error('No valid locked research runtime path resolved. Connect or select the baseline research agents, or explicitly enter discovery_proposal mode.');
   }
 
   const hasCodeGraph = callableHeads.some(

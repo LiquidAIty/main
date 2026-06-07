@@ -1,4 +1,6 @@
-import time, json, os
+import time
+import json
+import os
 from datetime import datetime
 
 def train_job(job_id, payload):

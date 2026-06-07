@@ -61,45 +61,51 @@ Research is not automatic. It is offered only when the ThinkGraph is rich enough
 **Readiness Logic (Graph Richness, not score soup):**
 ```json
 {
-  "status": "chatting | thinkgraph_ready | research_plan_ready | approved_for_research | research_running | knowgraph_ready | dual_graph_answer_ready",
-  "graph_richness": {
-    "entity_count": 0,
-    "relationship_count": 0,
-    "claim_count": 0,
-    "assumption_count": 0,
-    "risk_or_counterargument_count": 0,
-    "open_question_count": 0,
-    "evidence_needed_count": 0,
-    "token_count": 0
-  },
+  "status": "shaping | ready_to_plan_research | plan_ready | approved_for_research | research_running | knowgraph_ready | dual_graph_answer_ready",
+  "token_count": 0,
+  "entity_count": 0,
+  "relationship_count": 0,
+  "claim_count": 0,
+  "assumption_count": 0,
+  "risk_or_counterargument_count": 0,
+  "evidence_needed_count": 0,
+  "researchable_question_count": 0,
   "required_slots": {
-    "has_research_question": false,
-    "has_why_it_matters": false,
-    "has_evidence_needed": false,
-    "has_disconfirming_evidence": false
+    "central_thesis": false,
+    "key_entities": false,
+    "relationships": false,
+    "assumptions": false,
+    "risks_or_counterarguments": false,
+    "evidence_needed": false,
+    "disconfirming_questions": false
   },
-  "missing_for_research": [],
-  "research_offer_ready": false,
+  "missing": [],
+  "researchable_questions": [],
   "research_offer": {
     "question": "",
     "why_now": "",
     "evidence_to_find": [],
     "disconfirming_evidence_to_find": []
-  }
+  },
+  "offer_research": false
 }
 ```
 
 **Baseline Readiness Heuristic:**
-Research planning may be offered when:
-- `entity_count >= 3`
-- `relationship_count >= 2`
-- `claim_count >= 1`
-- `assumption_count >= 1`
-- `risk_or_counterargument_count >= 1`
-- `evidence_needed_count >= 1`
-- `has_research_question = true`
+Set status = ready_to_plan_research only when ThinkGraph has enough graph substance to create a useful research plan:
+- meaningful entities
+- meaningful relationships
+- at least one claim/thesis/intent
+- at least one assumption
+- at least one risk or counterargument
+- at least one evidence-needed question
+- at least one disconfirming question
+- at least two researchable questions
 
-*User-facing language must reflect state smoothly (e.g., "ThinkGraph needs more shape.", "ThinkGraph is ready for research planning.", "Research plan ready for approval.", "Research approved.").*
+Token count is a weak signal only and must not trigger research on its own.
+ThinkGraph should act as a research-question former (e.g. "Which catalysts, dilution events, customer concentration risks, partnership milestones, and deployment evidence would materially change the ASTS/RKLB/PL 6-18 month thesis?").
+
+*User-facing language must reflect state smoothly (e.g., "ThinkGraph needs more shape.", "ThinkGraph is ready to plan research.", "Research plan ready for approval.", "Research approved.").*
 
 **UI / PlanCanvas / ThinkGraph panel:**
 1. On first chat pair, begin populating visible ThinkGraph next to chat.
@@ -271,12 +277,22 @@ As a builder, I want the Agent Workspace to support internal code/agent/card/pro
 - **Expected**: ThinkGraph populated with entities/relationships/claims/assumptions/risks/evidence-needed. `research_offer_ready = true`. "Plan Research" button appears. Research Agent does not run yet.
 
 **Test 3: Plan Research**
-- **Input**: User clicks "Plan Research" or asks to plan research.
+- **Input**: User clicks "Plan Research" or says "Plan Research".
 - **Expected**: Plan Agent creates PlanFlow research plan. Approval required is visible. Research Agent does not run yet.
 
 **Test 4: Approval**
-- **Input**: User approves research.
-- **Expected**: Research Agent runs. KnowGraph Agent stores source-backed evidence/gaps. Magentic-One answers using separated ThinkGraph and KnowGraph context.
+- **Input**: User says "Approve objective research."
+- **Expected**: `status = approved_for_research`. Research Agent runs. KnowGraph Agent stores only source-backed evidence/gaps. Magentic-One answers using separated ThinkGraph and KnowGraph context.
+
+## Lightweight Skills System
+
+A minimal skills layer is used where the Agent prompt = role and boundaries, the Skill pack = reusable reasoning behavior, and Tools = actual capabilities.
+
+**Magentic-One**: `clarify_intent`, `route_by_graph_state`, `preserve_human_approval`, `explain_current_state`, `avoid_worker_job_leakage`
+**ThinkGraph Agent**: `extract_subjective_graph`, `steelman_user_idea`, `form_researchable_questions`, `detect_missing_slots`, `compute_graph_richness`, `mark_provisional`
+**Plan Agent**: `expose_thinkgraph_reveal`, `create_planflow`, `request_approval`, `show_missing_slots`, `show_subjective_vs_objective`
+**Research Agent**: `search_confirming_evidence`, `search_disconfirming_evidence`, `extract_source_claims`, `preserve_provenance`, `avoid_unsourced_claims`
+**KnowGraph Agent**: `normalize_evidence_graph`, `preserve_citations`, `store_contradictions`, `store_evidence_gaps`, `reject_unsourced_reasoning_as_fact`
 
 ## Functional Requirements
 
@@ -350,12 +366,14 @@ The primitive plan model is driven by the ThinkGraph readiness object, not a mon
 
 It must support:
 
-- `status` (chatting, thinkgraph_ready, research_plan_ready, approved_for_research, research_running, knowgraph_ready, dual_graph_answer_ready)
-- `graph_richness` (entity count, relationships, claims, etc.)
-- `required_slots` (has_research_question, etc.)
-- `missing_for_research` (clarification asks)
-- `research_offer_ready` boolean
+- `status` (shaping, ready_to_plan_research, plan_ready, approved_for_research, research_running, knowgraph_ready, dual_graph_answer_ready)
+- `token_count`
+- `entity_count`, `relationship_count`, `claim_count`, `assumption_count`, `risk_or_counterargument_count`, `evidence_needed_count`, `researchable_question_count`
+- `required_slots`
+- `missing` (clarification asks)
+- `researchable_questions`
 - `research_offer` details (question, why_now, evidence_to_find, disconfirming_evidence_to_find)
+- `offer_research` boolean
 
 The plan contract must support at least three user actions in the PlanCanvas:
 
@@ -444,10 +462,10 @@ Stage 0 is the strict waterfall-style primitive implementation spine:
 - 0.2 UI/viewport contract freeze
 - 0.3 project/deck persistence contract
 - 0.4 PlanDraft schema and type mapping
-- 0.5 Magentic-One two-output turn contract: `chatReply` + `planDraft`
-- 0.6 Plan Canvas renders real PlanDraft nodes/edges
-- 0.7 follow-up chat overwrites/refines PlanDraft
-- 0.8 approve/check promotes current PlanDraft to approved
+- 0.5 Post-turn ThinkGraph extraction from chat pairs
+- 0.6 Plan Canvas renders ThinkGraph Reveal and readiness
+- 0.7 follow-up chat updates provisional graph
+- 0.8 approve/check promotes plan state to approved
 - 0.9 approved default research plan runs Research Agent
 - 0.10 Research Agent populates KnowGraph
 - 0.11 KnowGraph navigable evidence graph
@@ -477,8 +495,8 @@ Use a waterfall spine with agile execution.
 
 ## Success Criteria
 
-- **SC-001**: A user can open AgentBuilder on a real project and receive both `chatReply` and a valid `planDraft` on every Magentic-One turn.
-- **SC-002**: The `planDraft` may be minimal for simple requests, but it remains valid, visible in the Plan Canvas, and replaceable/refinable on later turns.
+- **SC-001**: A user can open AgentBuilder on a real project and chat naturally, with ThinkGraph building from the completed user/assistant chat pairs.
+- **SC-002**: Research planning is only offered when the ThinkGraph is sufficiently rich and contains researchable questions.
 - **SC-003**: The default first useful approved plan is research-to-KnowGraph.
 - **SC-004**: An approved plan produces real runtime events and a final result in the same project-backed workspace.
 - **SC-005**: The resulting KnowGraph is navigable as an evidence graph with inspectable provenance.

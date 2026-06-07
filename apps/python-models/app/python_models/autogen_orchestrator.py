@@ -32,7 +32,6 @@ from app.python_models.orchestration_contracts import (
     ThinkGraphContext,
     ThinkGraphUpdateReport,
     TripletInput,
-    WorkspaceObjectContext,
 )
 
 
@@ -167,8 +166,6 @@ def _normalize_plan(raw: object) -> PlanContext:
         "sources": _coerce_string_list(raw.get("sources") or [])[:4],
         "deltaSummary": _short_summary(raw.get("deltaSummary") or raw.get("delta_summary"), "Plan updated", limit=96),
         "status": status,
-        "task_ledger": raw.get("task_ledger") or raw.get("TASK_LEDGER"),
-        "progress_ledger": raw.get("progress_ledger") or raw.get("PROGRESS_LEDGER"),
     }
     return PlanContext.model_validate(payload)
 
@@ -501,7 +498,7 @@ def _ensure_knowgraph_output(
 
 def _normalize_thinkgraph(raw: object) -> ThinkGraphContext:
     if not isinstance(raw, dict):
-        raise RuntimeError("orchestrator_thinkgraph_missing")
+        raw = {}
     payload = {
         "priorityEntities": _coerce_string_list(raw.get("priorityEntities") or raw.get("priority_entities") or [])[:4],
         "priorityRelationships": _coerce_string_list(
@@ -515,7 +512,7 @@ def _normalize_thinkgraph(raw: object) -> ThinkGraphContext:
 
 def _normalize_knowgraph(raw: object, max_research_tasks: int) -> KnowGraphUpdateReport:
     if not isinstance(raw, dict):
-        raise RuntimeError("orchestrator_knowgraph_missing")
+        raw = {}
     payload = {
         "kind": "knowgraph_update",
         "sourceAgent": str(raw.get("sourceAgent") or "Research_Coordinator"),
@@ -710,18 +707,14 @@ def _build_team(model_client: object, response_policy: str, max_research_tasks: 
     research_coordinator = AssistantAgent(
         name="Research_Coordinator",
         model_client=model_client,
-        description="Produces only the minimum useful research directives needed to reduce uncertainty.",
+        description="Assesses routing and stage transitions for the baseline research loop.",
         system_message="\n\n".join(
             [
-                "You are the research coordination worker for one assistant turn.",
-                "Only decide whether follow-up KnowGraph research is needed and what the smallest high-value search task set is.",
-                f"Never emit more than {max_research_tasks} search tasks.",
-                "Prefer specific, verifyable search queries over broad research themes.",
-                "If unresolved questions or graph gaps remain, emit concrete searchTasks tied to those gaps, triplets, or entities.",
-                "Do not emit search tasks when the answer is already grounded and complete.",
-                "If the current state is draft or planning phase, DO NOT emit search tasks, only propose the research plan.",
-                "Do not restate the full context, system design, or user request back to the team.",
-                "Do not ask the user follow-up questions.",
+                "You are the routing and stage coordination worker for one assistant turn.",
+                "Assess whether the user wants to chat, plan research, or approve research.",
+                "Magentic-One is chat/router only. You do not extract graph chunks, nor do you execute research tasks here.",
+                "Graph extraction and research run downstream.",
+                "Do not invent graph data. Do not emit search tasks.",
                 "Reply with compact working notes only.",
             ]
         ).strip(),
@@ -738,12 +731,10 @@ def _build_team(model_client: object, response_policy: str, max_research_tasks: 
                     [
                         response_policy,
                         "You are the final response and state-writing worker for one assistant turn.",
-                        "If the plan is not approved yet, ONLY propose the research plan. Do not execute research or write to KnowGraph.",
-                        "Write the answer in one or two short sentences.",
-                        "Lead with the direct answer or best next move.",
-                        "Use plain language and concise next-step wording.",
+                        "If the plan is not approved yet, ONLY propose the research plan. Do not execute research.",
+                        "Write the answer naturally. Lead with the direct answer or best next move.",
+                        "Magentic-One chats naturally, routes, and reasons with the user.",
                         "Do not narrate the system, architecture, or process unless the user explicitly asked for it.",
-                        "Only ask for clarification if execution is genuinely blocked.",
                         "Do not restate the full context, system design, or worker notes.",
                         "Reply with compact working notes only.",
                     ],
@@ -767,28 +758,22 @@ def _build_team(model_client: object, response_policy: str, max_research_tasks: 
                 "finalResponseText",
                 "blackboardEntries",
                 "plan",
+                "",
+                "Optional top-level keys:",
                 "thinkGraph",
                 "knowGraph",
                 "",
                 "Convergence rules:",
                 "- finish now using the information already in the conversation",
-                "- finalResponseText: at most 2 short sentences, lead with the best next move",
+                "- finalResponseText: natural response, ask clarifying questions if needed",
                 "- answer the user directly, not the system",
                 "- do not restate the whole system or context",
                 "- remove filler and repetition",
-                "- only ask the user for clarification if the task is impossible without it",
                 "- blackboardEntries: at most 4 entries, only real blackboard fields",
                 "- blackboard next_move should be concrete and immediately actionable",
-                "- add what_matters_now only if there is a real immediate focus or verification task",
-                "- each blackboard summary must be short and concrete",
                 "- plan.whatChanged/openQuestions/sources: short arrays, at most 4 items each",
-                "- thinkGraph arrays: short, at most 4 items",
-                "- emit knowGraph.searchTasks ONLY if the plan is approved",
-                "- if the plan is draft/unapproved, output empty searchTasks and propose the plan instead",
-                f"- knowGraph.searchTasks: at most {max_research_tasks} items",
-                "- emit knowGraph.searchTasks when unresolved questions or graph gaps actually warrant follow-up",
-                "- knowGraph.searchTasks must be specific search queries, not generic research themes",
-                "- knowGraph must contain only research directives, not invented evidence",
+                "- Magentic-One is chat/router only. Do NOT perform graph extraction.",
+                "- Leave thinkGraph and knowGraph empty. Downstream agents will populate them.",
             ]
         ),
     )
@@ -803,8 +788,9 @@ def _normalize_agent_name(value: object, fallback: str) -> str:
     return text[:48]
 
 
-def _workspace_object_context_payload(context: WorkspaceObjectContext | None) -> dict[str, object]:
-    if context is None:
+def _workspace_object_context_payload(context: ContextPack) -> dict[str, object]:
+    workspace_context = context.workspaceObjectContext
+    if workspace_context is None:
         return {}
     payload: dict[str, object] = {}
     text_limits = {
@@ -824,15 +810,19 @@ def _workspace_object_context_payload(context: WorkspaceObjectContext | None) ->
         "openObjectSummary": 400,
     }
     for key, limit in text_limits.items():
-        value = _trim_text(getattr(context, key), limit)
+        value = _trim_text(getattr(workspace_context, key), limit)
         if value:
             payload[key] = value
-    if context.connectedWorkbenchAgent is not None:
-        payload["connectedWorkbenchAgent"] = bool(context.connectedWorkbenchAgent)
-    for key in ("activeMagenticParticipants", "availableCanvasAgents", "excludedAgents"):
+    if workspace_context.connectedWorkbenchAgent is not None:
+        payload["connectedWorkbenchAgent"] = bool(workspace_context.connectedWorkbenchAgent)
+
+    is_locked_mode = context.cardRuntime is not None and getattr(context.cardRuntime, "runtimeScope", None) is not None
+    keys_to_include = ("activeMagenticParticipants",) if is_locked_mode else ("activeMagenticParticipants", "availableCanvasAgents", "excludedAgents")
+
+    for key in keys_to_include:
         values = [
             _trim_text(item, 96)
-            for item in list(getattr(context, key) or [])[:12]
+            for item in list(getattr(workspace_context, key) or [])[:12]
             if _trim_text(item, 96)
         ]
         if values:
@@ -841,7 +831,7 @@ def _workspace_object_context_payload(context: WorkspaceObjectContext | None) ->
 
 
 def _build_object_awareness_block(context: ContextPack) -> str:
-    payload = _workspace_object_context_payload(context.workspaceObjectContext)
+    payload = _workspace_object_context_payload(context)
     if not payload:
         return ""
     return "\n".join(
@@ -1070,10 +1060,11 @@ async def _synthesize_card_runtime_result(
         system_message="\n\n".join(
             [
                 "You synthesize the final result of one LiquidAIty agent card runtime.",
-                "Return exactly one JSON object with keys: finalResponseText, blackboardEntries, plan, thinkGraph, knowGraph.",
-                "Keep finalResponseText to one or two short sentences.",
+                "Return exactly one JSON object with keys: finalResponseText, blackboardEntries, plan.",
+                "thinkGraph and knowGraph are optional.",
+                "If the card was a conversational chat, leave thinkGraph and knowGraph empty. Do not invent graph data.",
+                "Keep finalResponseText natural.",
                 "blackboardEntries must be concrete and useful, at most 4 entries.",
-                "Emit knowGraph.searchTasks only when unresolved questions or graph gaps clearly warrant follow-up.",
                 "Do not narrate architecture, system behavior, or process unless the card explicitly asks for it.",
             ]
         ).strip(),

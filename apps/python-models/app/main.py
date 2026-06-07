@@ -1,6 +1,9 @@
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import uuid, redis, rq, os, json
+import uuid
+import redis
+import rq
+import os
 
 from app.python_models.autogen_research import (
     ResearchPlanRequest,

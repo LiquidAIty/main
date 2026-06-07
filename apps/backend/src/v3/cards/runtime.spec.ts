@@ -388,7 +388,7 @@ describe('runCardWithContract runtime dispatch', () => {
     });
 
     expect(result.status).toBe('error');
-    expect(result.error).toContain('No connected Magentic-One participants found');
+    expect(result.error).toContain('No valid locked research runtime path resolved');
   });
 
   it('routes magentic_one to python autogen when executionBackend is enabled', async () => {

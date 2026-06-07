@@ -109,6 +109,7 @@ class CardRuntimeConfig(BaseModel):
     assistant: dict | None = None
     magentic: dict | None = None
     graphFlow: dict | None = None
+    runtimeScope: dict | None = None
     participants: list["CardRuntimeParticipant"] = Field(default_factory=list)
 
 
@@ -151,6 +152,31 @@ class WorkspaceObjectContext(BaseModel):
     excludedAgents: list[str] = Field(default_factory=list)
 
 
+class SearchWorkerPlan(BaseModel):
+    id: str
+    label: str
+    angle: str = ""
+    search_query: str = ""
+    source_targets: list[str] = Field(default_factory=list)
+    expected_evidence: str = ""
+    disconfirming_focus: str = ""
+    priority: Literal["low", "medium", "high"] = "medium"
+    status: Literal["draft", "approved", "running", "complete", "failed"] = "draft"
+
+
+class SearchSwarmPlan(BaseModel):
+    status: Literal["draft", "ready_for_approval", "approved", "running", "complete"] = "draft"
+    research_question: str = ""
+    depth_label: Literal["quick_scan", "standard", "deep_dive", "custom"] = "standard"
+    swarm_count: int = 0
+    estimated_cost_level: Literal["low", "medium", "high", "custom"] = "low"
+    search_workers: list[SearchWorkerPlan] = Field(default_factory=list)
+    coverage: dict[str, bool] = Field(default_factory=dict)
+    missing_coverage: list[str] = Field(default_factory=list)
+    approval_required: bool = True
+    approved: bool = False
+
+
 class PlanContext(BaseModel):
     anchor: str = ""
     whatChanged: list[str] = Field(default_factory=list)
@@ -158,8 +184,24 @@ class PlanContext(BaseModel):
     sources: list[str] = Field(default_factory=list)
     deltaSummary: str = ""
     status: Literal["draft", "grounded", "revised"] = "draft"
-    task_ledger: dict | None = None
-    progress_ledger: dict | None = None
+    searchSwarmPlan: SearchSwarmPlan | None = None
+
+
+class ResearchPack(BaseModel):
+    status: Literal["shaping", "research_pack_ready"] = "shaping"
+    research_question: str = ""
+    entities: list[str] = Field(default_factory=list)
+    relationships: list[str] = Field(default_factory=list)
+    claims: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    counterarguments: list[str] = Field(default_factory=list)
+    evidence_needed: list[str] = Field(default_factory=list)
+    disconfirming_questions: list[str] = Field(default_factory=list)
+    search_terms: list[str] = Field(default_factory=list)
+    source_targets: list[str] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+    why_ready_or_not: str = ""
 
 
 class ThinkGraphContext(BaseModel):
