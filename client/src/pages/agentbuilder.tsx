@@ -8292,14 +8292,11 @@ export default function AgentBuilder(): React.ReactElement {
 
     setMessages((m) => [...m, { role: 'user', text: trimmed }]);
     
+    // Instead of faking a plan, directly run the deck with the raw task
+    setDeckRunInput(trimmed);
     setTimeout(() => {
-      setMessages((m) => [
-        ...m,
-        {
-          role: 'assistant',
-          text: 'Magentic-One chat is not connected yet.',
-        },
-      ]);
+      handleRunDeck(trimmed);
+
       const responseReceivedAt = Date.now();
       chatLoopTelemetryRef.current = {
         interactionId,
@@ -8314,7 +8311,7 @@ export default function AgentBuilder(): React.ReactElement {
         surface: largeSurface === 'chat' ? 'chat' : normalizeWorkspaceSurface(tab),
         surfaceRole: largeSurface === 'chat' ? 'large' : 'companion',
         metadata: {
-          responseMode: 'blocked_honest',
+          responseMode: 'magentic_run',
           turnId,
           ok: true,
         },

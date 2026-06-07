@@ -402,7 +402,9 @@ export function useBuilderDeckRuntimeActions({
     workspaceObjectContext,
   ]);
 
-  const handleRunDeck = useCallback(async () => {
+  const handleRunDeck = useCallback(async (overrideInput?: string) => {
+    const activeInput = typeof overrideInput === "string" ? overrideInput : deckRunInput;
+
     if (!canvasProjectId) {
       const now = new Date().toISOString();
       setLatestDeckRun({
@@ -411,7 +413,7 @@ export function useBuilderDeckRuntimeActions({
         startedAt: now,
         endedAt: now,
         status: "error",
-        input: deckRunInput,
+        input: activeInput,
         error: "Select a project before running the deck.",
         steps: [],
         validationSummary: {
@@ -451,7 +453,7 @@ export function useBuilderDeckRuntimeActions({
             id: deckId,
           },
           templates,
-          input: deckRunInput,
+          input: activeInput,
           workspaceContext,
           workspaceObjectContext,
         },
@@ -501,7 +503,7 @@ export function useBuilderDeckRuntimeActions({
         startedAt: now,
         endedAt: now,
         status: "error",
-        input: deckRunInput,
+        input: activeInput,
         error: friendlyError,
         steps: [],
         validationSummary: {
