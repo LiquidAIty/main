@@ -627,7 +627,9 @@ function buildPythonAutoGenCardRuntimePayload(
       openQuestions: [],
       sources: [],
       deltaSummary: '',
-      status: 'draft',
+      status: context.missionSpec?.runState || 'draft',
+      task_ledger: (context.missionSpec as any)?.task_ledger || undefined,
+      progress_ledger: (context.missionSpec as any)?.progress_ledger || undefined,
     },
     thinkGraph: graphContextPacket?.thinkGraphContext || {
       priorityEntities: [],

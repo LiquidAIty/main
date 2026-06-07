@@ -8326,7 +8326,21 @@ export default function AgentBuilder(): React.ReactElement {
     setMessages((m) => [...m, { role: 'assistant', text: 'Starting Magentic-One run...' }]);
 
     setTimeout(async () => {
-      const outcome = await handleRunDeck(trimmed);
+      let approvedMissionSpec: any = undefined;
+      if (latestDeckRun) {
+        for (const step of latestDeckRun.steps) {
+          if (magenticPlanApproval[step.id] === 'approved' && step.magenticTrace?.plan) {
+            approvedMissionSpec = {
+              runState: 'approved',
+              task_ledger: (step.magenticTrace.plan as any).task_ledger,
+              progress_ledger: (step.magenticTrace.plan as any).progress_ledger,
+            };
+            break;
+          }
+        }
+      }
+
+      const outcome = await handleRunDeck(trimmed, { missionSpec: approvedMissionSpec });
 
       if (!outcome || !outcome.ok) {
         setMessages((m) => [
