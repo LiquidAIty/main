@@ -158,6 +158,8 @@ class PlanContext(BaseModel):
     sources: list[str] = Field(default_factory=list)
     deltaSummary: str = ""
     status: Literal["draft", "grounded", "revised"] = "draft"
+    task_ledger: dict | None = None
+    progress_ledger: dict | None = None
 
 
 class ThinkGraphContext(BaseModel):

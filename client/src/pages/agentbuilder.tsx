@@ -2126,38 +2126,43 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'You are part of the visible team, not a hidden side system.',
       ].join('\n'),
       goal: [
-        'Understand the user goal, make a short working plan for the current task, and decide whether to answer directly or delegate.',
-        'Track whether progress is being made, and revise the next step if progress stalls.',
+        'Understand the user goal, maintain a strict task ledger and progress ledger, and route effectively.',
       ].join('\n'),
       constraints: [
-        'The visible canvas is your full action space.',
-        'You may only delegate through visible outgoing magentic_option connections from this card.',
-        'Only visibly connected outgoing magentic_option paths are callable.',
-        'Every user turn must produce a natural chat reply and a draft plan for review.',
-        'Do not execute connected agents until the user approves the current plan.',
-        'For new research or intelligence requests, plan this order: ThinkGraph Agent frames intent and uncertainty, Research Agent gathers external source-backed evidence, KnowGraph Agent ingests evidence into KnowGraph, and Magentic-One prepares separate ThinkGraph and KnowGraph context packets for the next turn.',
-        'Treat ThinkGraph and KnowGraph as separate streams: ThinkGraph stores subjective reasoning, assumptions, hypotheses, decisions, and uncertainty; KnowGraph stores objective source-backed entities, relationships, provenance, citations, confidence, and source metadata.',
-        'KnowGraph is an evidence ingestion and existing-graph inspection role, not the external search worker.',
-        'Do not call knowgraph_query unless the user explicitly asks to search existing KnowGraph and the tool is implemented in the runtime.',
-        'If a graph query tool is not implemented, say so plainly instead of calling or inventing it.',
-        'Research Agent is the external-source worker for internet/source research.',
+        'Behavior:',
+        '- First create/update task ledger.',
+        '- Inspect connected magentic_option participants.',
+        '- Make a short plan.',
+        '- If approval is required, return proposed plan and stop.',
+        '- If approved or no approval needed, choose next participant.',
+        '- Delegate only through outgoing magentic_option edges.',
+        '- After participant result, update progress ledger.',
+        '- If progress stalls twice, revise task ledger and plan.',
+        '- Return final answer only when task_complete is true or best-guess termination is required.',
+        '',
         'Do not invent agents, tools, routes, subprocesses, hidden plans, or capabilities that are not present on the canvas.',
-        'Do not create workflow steps that are not represented by the visible graph structure.',
         'If no connected node can validly help, stop and return control to the human.',
       ].join('\n'),
       ioSchema: [
-        'Input: user request plus visible callable node summaries and any completed results from this run.',
-        'Output: either a direct answer or one selected connected node for the next assignment.',
-        'Use the plan stream to report short plain-text updates in this shape:',
-        'Goal: ...',
-        'Next: calling [Node Title] because ...',
-        'Progress: ...',
-        'Result: ...',
-        'Waiting: more work, human input, or done.',
+        'Maintain two ledgers in your output:',
+        '',
+        'TASK LEDGER:',
+        '- given_or_verified_facts',
+        '- facts_to_lookup',
+        '- facts_to_derive',
+        '- educated_guesses',
+        '- task_plan',
+        '',
+        'PROGRESS LEDGER:',
+        '- task_complete',
+        '- progress_being_made',
+        '- loop_or_stall_detected',
+        '- next_speaker',
+        '- next_instruction',
+        '- waiting_for_human_approval',
       ].join('\n'),
       memoryPolicy: [
-        'Use only the current request, the visible callable node list, completed results from this run, and explicit deck context.',
-        'Keep the working plan short, update it after each result, and re-plan if progress stalls.',
+        'Keep both ledgers short and concrete. Re-plan only if progress stalls. Use only current input, visible participants, and explicit deck context.',
       ].join('\n'),
     }),
   },
@@ -9308,9 +9313,26 @@ export default function AgentBuilder(): React.ReactElement {
                     <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
                       Proposed Magentic-One Plan
                     </div>
-                    <pre style={{ marginTop: 8, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted, whiteSpace: 'pre-wrap', fontFamily: 'monospace', maxHeight: 300, overflow: 'auto' }}>
-                      {typeof plan === 'object' ? JSON.stringify(plan, null, 2) : String(plan)}
-                    </pre>
+                    {typeof plan === 'object' && ((plan as any)?.task_ledger?.task_plan || (plan as any)?.progress_ledger?.next_instruction) ? (
+                      <div style={{ marginTop: 8, fontSize: 12, color: C.text }}>
+                        {(plan as any)?.task_ledger?.task_plan && (
+                          <div style={{ marginBottom: 8 }}>
+                            <div style={{ fontWeight: 600, color: GRAPH_THEME.drawer.headerText }}>Task Plan:</div>
+                            <div style={{ whiteSpace: 'pre-wrap', color: GRAPH_THEME.drawer.inputMuted }}>{(plan as any).task_ledger.task_plan}</div>
+                          </div>
+                        )}
+                        {(plan as any)?.progress_ledger?.next_instruction && (
+                          <div style={{ marginBottom: 4 }}>
+                            <div style={{ fontWeight: 600, color: GRAPH_THEME.drawer.headerText }}>Next Instruction:</div>
+                            <div style={{ whiteSpace: 'pre-wrap', color: GRAPH_THEME.drawer.inputMuted }}>{(plan as any).progress_ledger.next_instruction}</div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <pre style={{ marginTop: 8, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted, whiteSpace: 'pre-wrap', fontFamily: 'monospace', maxHeight: 300, overflow: 'auto' }}>
+                        {typeof plan === 'object' ? JSON.stringify(plan, null, 2) : String(plan)}
+                      </pre>
+                    )}
                     <div style={{ marginTop: 12, fontSize: 11, color: C.warn, fontStyle: 'italic' }}>
                       Plan approval action not wired yet.
                     </div>

@@ -167,6 +167,8 @@ def _normalize_plan(raw: object) -> PlanContext:
         "sources": _coerce_string_list(raw.get("sources") or [])[:4],
         "deltaSummary": _short_summary(raw.get("deltaSummary") or raw.get("delta_summary"), "Plan updated", limit=96),
         "status": status,
+        "task_ledger": raw.get("task_ledger") or raw.get("TASK_LEDGER"),
+        "progress_ledger": raw.get("progress_ledger") or raw.get("PROGRESS_LEDGER"),
     }
     return PlanContext.model_validate(payload)
 
@@ -858,7 +860,7 @@ def _build_card_runtime_payload_json(context: ContextPack) -> str:
             "cardId": runtime.cardId,
             "title": runtime.title,
             "runtimeType": runtime.runtimeType,
-            "prompt": _trim_text(runtime.prompt, 240),
+            "prompt": runtime.prompt,
             "runtimeOptions": runtime.runtimeOptions,
         },
         "userText": _trim_text(context.userText, 320),
@@ -1288,7 +1290,9 @@ async def orchestrate_context_pack(context: ContextPack) -> OrchestratorRunRespo
         return await _orchestrate_card_runtime_context(context)
 
     max_research_tasks = max(1, min(context.maxResearchTasks, 4))
-    response_policy = _trim_text(context.systemPrompt, 360)
+
+    response_policy = str(context.systemPrompt or "").strip()
+
     model_config = AutoGenAgentConfig(
         provider=context.session.modelProvider,
         provider_model_id=context.session.providerModelId,

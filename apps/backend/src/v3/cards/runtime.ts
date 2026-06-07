@@ -675,6 +675,11 @@ function buildPythonAutoGenCardRuntimePayload(
       },
     },
   };
+
+  if (resolveCardRuntimeType(card) === 'magentic_one' && participants.length === 0) {
+    console.warn(`[AUTOGEN_BUILDER] No connected Magentic-One participants found. Connect agent cards with magentic_option edges.`);
+  }
+
   return payload;
 }
 
