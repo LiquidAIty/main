@@ -126,23 +126,33 @@ def _build_model_client(config: AutoGenAgentConfig) -> OpenAIChatCompletionClien
     provider = str(config.provider or "").strip().lower()
     model_name = str(config.provider_model_id or "").strip()
     temperature = config.temperature if config.temperature is not None else 0.2
-    max_tokens = config.max_tokens if config.max_tokens is not None else 1400
-    if max_tokens <= 0:
-        max_tokens = 1400
+
+    max_tokens = config.max_tokens
+    if max_tokens is not None:
+        try:
+            max_tokens = int(max_tokens)
+            if max_tokens <= 0:
+                print(f"normalized invalid maxTokens value {max_tokens} -> provider default")
+                max_tokens = None
+        except (ValueError, TypeError):
+            print(f"normalized invalid maxTokens value {max_tokens} -> provider default")
+            max_tokens = None
 
     if provider == "openrouter":
         api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
         if not api_key:
             raise RuntimeError("OPENROUTER_API_KEY is required for AutoGen provider execution")
         base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
-        return OpenAIChatCompletionClient(
-            model=model_name,
-            api_key=api_key,
-            base_url=base_url,
-            model_info=_build_model_info(model_name),
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        kwargs: dict[str, Any] = {
+            "model": model_name,
+            "api_key": api_key,
+            "base_url": base_url,
+            "model_info": _build_model_info(model_name),
+            "temperature": temperature,
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        return OpenAIChatCompletionClient(**kwargs)
 
     if provider == "openai":
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
@@ -154,10 +164,12 @@ def _build_model_client(config: AutoGenAgentConfig) -> OpenAIChatCompletionClien
             "model_info": _build_model_info(model_name),
         }
         if _requires_max_completion_tokens(provider, model_name):
-            kwargs["max_completion_tokens"] = max_tokens
+            if max_tokens is not None:
+                kwargs["max_completion_tokens"] = max_tokens
         else:
             kwargs["temperature"] = temperature
-            kwargs["max_tokens"] = max_tokens
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
         base_url = os.getenv("OPENAI_BASE_URL", "").strip()
         if base_url:
             kwargs["base_url"] = base_url

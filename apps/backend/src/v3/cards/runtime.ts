@@ -585,6 +585,17 @@ function buildPythonAutoGenCardRuntimePayload(
       participantIds.has(edge.target),
   );
 
+  const safeRuntimeOptions = { ...(card.runtimeOptions || {}) };
+  const rawMaxTokens = safeRuntimeOptions.maxTokens;
+  if (rawMaxTokens !== undefined && rawMaxTokens !== null) {
+    const numMaxTokens = Number(rawMaxTokens);
+    if (Number.isFinite(numMaxTokens) && numMaxTokens > 0) {
+      safeRuntimeOptions.maxTokens = numMaxTokens;
+    } else {
+      delete safeRuntimeOptions.maxTokens;
+    }
+  }
+
   const payload: AutoGenOrchestratorRequest = {
     session: {
       sessionId,
@@ -638,7 +649,7 @@ function buildPythonAutoGenCardRuntimePayload(
       title: card.title,
       runtimeType: 'magentic_one',
       prompt,
-      runtimeOptions: card.runtimeOptions || {},
+      runtimeOptions: safeRuntimeOptions,
       magentic: {
         callableHeads: participants.map((participant) => ({
           cardId: participant.cardId,
@@ -1607,7 +1618,7 @@ async function runLocalCoderCard(
         ? Number(runtimeOptions.temperature)
         : undefined,
     maxTokens:
-      Number.isFinite(Number(runtimeOptions.maxTokens))
+      Number.isFinite(Number(runtimeOptions.maxTokens)) && Number(runtimeOptions.maxTokens) > 0
         ? Number(runtimeOptions.maxTokens)
         : undefined,
     terminalSteering: mode === 'terminal',

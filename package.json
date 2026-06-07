@@ -8,6 +8,7 @@
     "dev:backend": "npm --workspace apps/backend run serve",
     "dev:autogen": "docker compose up python-models",
     "dev:all": "concurrently --names autogen,backend,frontend --prefix-colors cyan,magenta,green \"npm run dev:autogen\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "mcp:check": "powershell -ExecutionPolicy Bypass -File scripts/check-codebase-memory-mcp.ps1",
     "prisma:generate": "prisma generate --schema=libs/prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --schema=libs/prisma/schema.prisma --name init",
     "prisma:seed": "ts-node prisma/seed.ts",
