@@ -1,39 +1,48 @@
-# Task Breakdown: Backend Runtime Canonicalization
+# Task Breakdown: Backend Runtime Canonical Rebuild
 
-## Phase 0: Freeze and Classify Current Tree
-- `[ ]` Commit existing, safe `v3` card/deck boundary modifications from the prior research-loop task.
-- `[ ]` Ensure `simulate.py` and `mock.json` are excluded from the main commit.
+## Phase 0: Freeze Current Working State
+- `[ ]` Classify existing modified files and ensure only stable boundary/spec changes are committed.
+- `[ ]` Hold `mock.json` and `simulate.py` unless explicitly promoted.
+- `[ ]` Leave existing `v2` and `v3` runtime folders completely untouched.
 
-## Phase 1: Canonical Layout Definition
-- `[ ]` Verify target canonical directories (`src/cards`, `src/decks`, `src/runtime`, `src/services`, etc.) exist or map properly from `v3`.
+## Phase 1: Define Canonical Contracts
+- `[ ]` Identify the minimum interfaces needed for deck execution, card runtime, Magentic-One runtime scope, payload building, and CardRunResult.
+- `[ ]` Create canonical contracts under `apps/backend/src/contracts` or `apps/backend/src/types`.
+- `[ ]` Ensure no dependencies exist on `v2` or `v3` within these canonical contracts.
 
-## Phase 2: Move Active v3 Card/Deck Runtime
-- `[ ]` `git mv apps/backend/src/v3/cards apps/backend/src/cards`
-- `[ ]` `git mv apps/backend/src/v3/decks apps/backend/src/decks`
-- `[ ]` `git mv apps/backend/src/v3/runtime apps/backend/src/runtime`
-- `[ ]` `git mv apps/backend/src/v3/graph apps/backend/src/graph`
-- `[ ]` `git mv apps/backend/src/v3/knowledge apps/backend/src/knowledge`
-- `[ ]` `git mv apps/backend/src/v3/types/* apps/backend/src/types/`
-- `[ ]` Update relative imports inside the moved files.
+## Phase 2: Rebuild Canonical Card/Deck Runtime Beside v3
+- `[ ]` Create clean canonical file: `apps/backend/src/cards/runtime.ts`
+- `[ ]` Create clean canonical file: `apps/backend/src/cards/runtime.spec.ts`
+- `[ ]` Create clean canonical file: `apps/backend/src/decks/deckRuntime.ts`
+- `[ ]` Create clean canonical file: `apps/backend/src/runtime/index.ts`
+- `[ ]` Copy necessary logic from `v3`, stripping stale ledger remnants, old PlanDraft logic, and duplicated state paths.
+- `[ ]` Maintain the locked Magentic-One runtime boundary and generic prompt guard.
+- `[ ]` Write and verify tests proving the canonical runtime produces the correct payload for the Python sidecar.
 
-## Phase 3: Move Active v3/v2 Routes and Services
-- `[ ]` Move `apps/backend/src/v3/routes/*` to `apps/backend/src/routes/`.
-- `[ ]` Move `apps/backend/src/routes/v2/*` to `apps/backend/src/routes/`.
-- `[ ]` Move `apps/backend/src/services/v2/*` to `apps/backend/src/services/`.
-- `[ ]` Update Express route registration in `apps/backend/src/routes/index.ts` to reflect flattened paths.
+## Phase 3: Create Canonical Route Adapter
+- `[ ]` Switch `apps/backend/src/routes/decks.routes.ts` to import from `../runtime/deckRuntime` (or `../decks/deckRuntime`).
+- `[ ]` Verify external API path `/api/projects/:projectId/decks/:deckId/execute` handles requests without errors.
+- `[ ]` Keep `v3` intact as an immediate fallback.
 
-## Phase 4: Remove Duplicate/Stale v2/v3 Imports
-- `[ ]` Run `grep -r "/v3/" apps/backend/src` and fix remaining imports.
-- `[ ]` Run `grep -r "/v2/" apps/backend/src` and fix remaining imports.
-- `[ ]` Verify `apps/backend/src/routes/decks.routes.ts` correctly imports `../runtime/deckRuntime`.
+## Phase 4: Rebuild/Flatten v2 Routes Beside Old v2
+- `[ ]` Create canonical route: `apps/backend/src/routes/kg.routes.ts`
+- `[ ]` Create canonical route: `apps/backend/src/routes/dev.routes.ts`
+- `[ ]` Create canonical route: `apps/backend/src/routes/worldsignal.routes.ts`
+- `[ ]` Create canonical route: `apps/backend/src/routes/agentBuilder.routes.ts`
+- `[ ]` Create canonical service: `apps/backend/src/services/agentConfigStore.ts`
+- `[ ]` Keep external `/api/v2/...` string paths identical.
+- `[ ]` Do not delete `routes/v2` yet.
 
-## Phase 5: Delete Dead v2/v3 Directories
-- `[ ]` Run compilation check `npx tsc --noEmit -p apps/backend/tsconfig.app.json`.
-- `[ ]` Run `npm run mcp:check`.
-- `[ ]` Execute `rm -rf apps/backend/src/v3`.
-- `[ ]` Execute `rm -rf apps/backend/src/routes/v2`.
-- `[ ]` Execute `rm -rf apps/backend/src/services/v2`.
+## Phase 5: Switch Route Registration
+- `[ ]` Update `apps/backend/src/routes/index.ts` to register the new canonical route handler files instead of the `v2` ones.
+- `[ ]` Run validation and confirm frontend WorldSignal and AgentBuilder routes respond correctly.
 
-## Phase 6: Update Research-Loop Specs
-- `[ ]` Update `specs/004-agent-workspace-primitive/spec.md` to remove `/v3/` paths.
-- `[ ]` Update `specs/005-interactive-graph-research-loop/spec.md` to ensure no `/v3/` paths are present.
+## Phase 6: Remove v2/v3 Dependencies
+- `[ ]` Run `grep -r "/v3/" apps/backend/src` and `grep -r "/v2/" apps/backend/src`.
+- `[ ]` Remove or rewrite remaining internal imports pointing to the old folders.
+- `[ ]` Distinguish carefully between internal relative imports and external HTTP path strings.
+
+## Phase 7: Delete Old v2/v3 (Deletion Gate)
+- `[ ]` Delete `apps/backend/src/v3` ONLY AFTER tests pass and no internal imports remain.
+- `[ ]` Delete `apps/backend/src/routes/v2` and `apps/backend/src/services/v2` ONLY AFTER routes pass and no internal imports remain.
+- `[ ]` Verify final state with `npm run mcp:check` and `npx tsc --noEmit`.

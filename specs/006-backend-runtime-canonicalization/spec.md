@@ -1,63 +1,55 @@
-# Backend Runtime Canonicalization
+# Backend Runtime Canonical Rebuild
 
 ## Problem Statement
-The backend architecture has fragmented into `apps/backend/src/v2` and `apps/backend/src/v3`. The `v3` directory is currently housing the active AgentCanvas card/deck runtime and `v2` houses the active worldsignal, dev, and legacy kg routes. This creates confusion, hides duplicate systems (e.g., config stores), and makes it unsafe to implement new features like the Interactive Graph Research Loop without risking regressions or compounding tech debt.
+The backend architecture has fragmented into `apps/backend/src/v2` and `apps/backend/src/v3`. The `v3` directory is currently housing the active AgentCanvas card/deck runtime and `v2` houses the active worldsignal, dev, and legacy kg routes. Directly moving these directories risks breaking the active system. Instead, we must rebuild clean canonical replacements beside the old version, prove the new canonical runtime works, switch routing over, and only then delete the old versioned folders.
+
+## Strategy
+1. Keep existing v2/v3 running as fallback.
+2. Build canonical non-versioned runtime in `apps/backend/src`.
+3. Do not import from v2/v3 in new canonical files unless explicitly temporary and marked.
+4. Prove canonical runtime works via tests.
+5. Switch active route handlers/imports to canonical runtime.
+6. Run validation on the full stack.
+7. Delete v2/v3 only after no internal imports/references remain.
 
 ## Target Canonical Backend Layout
-All runtime logic will be flattened into canonical directories directly under `apps/backend/src/`:
-- `apps/backend/src/cards/` (runtime logic for individual agents/cards)
-- `apps/backend/src/decks/` (orchestration and execution of full graphs)
-- `apps/backend/src/projects/` (project persistence)
-- `apps/backend/src/routes/` (all API endpoints)
-- `apps/backend/src/runtime/` (core orchestrator loops and bindings)
-- `apps/backend/src/contracts/` (type definitions and IO shapes)
-- `apps/backend/src/agents/` (agent configurations)
-- `apps/backend/src/services/` (shared utilities like config store, queues, etc.)
-- `apps/backend/src/graph/` (semantic language and graph structures)
+The rebuilt runtime logic will be structured under `apps/backend/src/`:
+- `apps/backend/src/cards/` (clean card runtime)
+- `apps/backend/src/decks/` (clean deck execution orchestration)
+- `apps/backend/src/runtime/` (core orchestrator loops)
+- `apps/backend/src/graph/` (graph definitions and extractions)
 - `apps/backend/src/knowledge/` (seed operations)
 - `apps/backend/src/types/` (shared interfaces)
+- `apps/backend/src/routes/` (flattened API endpoints)
+- `apps/backend/src/services/` (flattened utilities like config store)
 
-## Active Route Map Summary
-- `/api/v2/kg/*` -> Active (handles RAG chunks and legacy direct ingestion).
-- `/api/v2/dev/*` -> Active.
-- `/api/v2/worldsignal/*` -> Active (called by `WorldSignalSurface.tsx`).
-- `/api/v2/agent_builder/*` -> Active (testing/chat endpoints).
-- `/api/v3/projects/:projectId/knowledge_seed/*` -> Active.
-- `/api/v3/projects/:projectId/media/video/*` -> Active.
-- `/api/projects/:projectId/decks/:deckId/execute` -> Active (canonical route calling `v3/runtime/deckRuntime.ts`).
+## Logic Not To Copy from v2/v3
+When rebuilding, the following stale concepts must be dropped:
+- `task_ledger` / `progress_ledger` remnants.
+- PlanDraft remnants from `missionSpec` legacy.
+- Graph schema pressure embedded in Magentic-One default instructions.
+- Stale `v2` / `v3` naming in interfaces or logging.
+- Fallback to "all agents" if disconnected (Magentic-One must strictly use connected options).
 
-## Active Magentic-One Runtime Path
-1. **Frontend**: `client/src/pages/agentbuilder.tsx` triggers run.
-2. **Backend Route**: `apps/backend/src/routes/decks.routes.ts` handles the API.
-3. **Backend Runtime**: `apps/backend/src/v3/runtime/deckRuntime.ts` calls `apps/backend/src/v3/cards/runtime.ts`.
-4. **Python Sidecar**: `autogen_orchestrator.py` receives the payload.
-5. **UI**: Results bubble back up as `CardRunResult`.
-
-## Duplicate Systems Found
-- **Card/Deck Runtime**: None. `v3` is the sole source of truth for cards/decks.
-- **Agent Config Store**: `apps/backend/src/services/v2/agentConfigStore.ts`. Needs moving to `src/services/agentConfigStore.ts`.
-- **Graph routes**: `routes/v2/kg.routes.ts` overlaps with Python KnowGraph agent logic.
-
-## Migration Rules
-- Move one directory at a time.
-- Use `git mv` to preserve history.
-- Preserve existing API paths (e.g., `/api/v2/worldsignal`) in the Express routers to avoid breaking frontend clients.
-- Update internal relative imports (`../v3/` -> `../`).
-- Tests must pass before the next move.
-
-## Non-goals
-- Do not implement the Interactive Graph Research Loop during this canonicalization.
-- Do not change AgentCanvas wiring or AutoGen logic.
-- Do not rewrite existing frontend queries or API signatures.
-- Do not add discovery/autowiring.
+## Active Route Adapters Preserved
+The external HTTP API signatures must remain unchanged to avoid breaking the frontend:
+- `POST /api/projects/:projectId/decks/:deckId/execute`
+- `GET /api/v2/worldsignal/health`
+- `GET /api/v2/kg/*`
+- `GET /api/v3/projects/:projectId/media/video/*`
+*Note: The URI paths keep "v2" or "v3" but their handler files will reside in canonical `src/routes/`.*
 
 ## Acceptance Criteria
-- No active imports from `apps/backend/src/v2` or `apps/backend/src/v3`.
-- `grep -r "src/v3"` and `grep -r "src/v2"` return empty.
-- Backend compiles and passes `npm run mcp:check`.
-- Existing Magentic-One endpoint functions normally.
-- `apps/backend/src/v2` and `apps/backend/src/v3` are deleted.
-- Interactive Graph Research Loop specs reference canonical backend paths only.
+- Existing Magentic-One deck execution still works through the same frontend API path.
+- Backend TypeScript passes without emitting errors.
+- Runtime/card tests pass.
+- MCP checks pass.
+- `git diff --check` passes cleanly.
+- No active internal imports from `v2` or `v3` remain in the `src/` codebase.
+- External API route compatibility is fully preserved.
+- `v2` and `v3` directories are successfully deleted only after canonical replacements are proven to work.
+- Research-loop specs and tasks reference only canonical paths.
 
 ## Rollback Strategy
-- Perform changes in atomic `git mv` commits. If tests or builds fail, use `git reset --hard HEAD` to restore the pre-migration tree.
+- Because the rebuild happens beside the active `v3` codebase, rollback during the rebuild phase is trivial (delete the canonical draft folders).
+- If the switch-over fails, revert the `src/routes/decks.routes.ts` imports back to `../v3/runtime/deckRuntime`.
