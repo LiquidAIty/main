@@ -1,0 +1,1 @@
+npx codebase-memory-mcp cli search_graph "{\"project\":\"C-Projects-main\",\"name_pattern\":\".*(AgentBuilder|handleRunDeck|streamDeckRunRequest|runMagenticCard|resolveCallableHeadCards|MagenticOneGroupChat|magentic_trace).*\"}"

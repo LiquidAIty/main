@@ -127,6 +127,8 @@ def _build_model_client(config: AutoGenAgentConfig) -> OpenAIChatCompletionClien
     model_name = str(config.provider_model_id or "").strip()
     temperature = config.temperature if config.temperature is not None else 0.2
     max_tokens = config.max_tokens if config.max_tokens is not None else 1400
+    if max_tokens <= 0:
+        max_tokens = 1400
 
     if provider == "openrouter":
         api_key = os.getenv("OPENROUTER_API_KEY", "").strip()

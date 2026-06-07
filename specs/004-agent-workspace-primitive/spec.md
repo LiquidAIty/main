@@ -12,7 +12,7 @@
 
 Define the minimum real LiquidAIty primitive that must work before any major vertical, including trading, is implemented.
 
-This primitive is the project-backed AgentBuilder workspace where every Magentic-One turn produces two outputs: a natural-language `chatReply` for chat and a structured `planDraft` for the Plan Canvas. The user may refine that draft across turns, approve the current draft for execution when ready, run the approved work, return the result to chat, write durable graph-backed results into ThinkGraph, KnowGraph, and CodeGraph, and let future chat use cached project graph context.
+This primitive is the project-backed AgentBuilder workspace where the real Magentic-One deck run is the source of truth. PlanDraft is not the ordinary chat brain. PlanDraft is not required for chat-submitted tasks. PlanDraft is optional future/adapter state. Real Magentic-One run trace is the source of truth for executed work.
 
 ### Research Planning Role Contract
 
@@ -81,17 +81,17 @@ Current Stage 0 implementation truth:
 
 ## User Scenarios & Testing
 
-### User Story 1 — Two-Output Magentic-One Turn (Priority: P1)
+### User Story 1 — Real Magentic-One Source of Truth (Priority: P1)
 
-As a user, I want every Agent Workspace turn to produce both a conversational reply and a valid structured plan draft, so chat stays natural while the Plan Canvas always reflects the current draft.
+As a user, I want chat-submitted tasks to trigger the real Magentic-One runtime, so my work is backed by actual orchestration and not simulated front-end planning.
 
-**Independent Test**: Open AgentBuilder on a real project, send a message, and verify Magentic-One returns both a `chatReply` in chat and a valid `planDraft` in the Plan Canvas.
+**Independent Test**: Open AgentBuilder on a real project, send a message, and verify Magentic-One executes the deck and returns a real run trace.
 
 **Acceptance Scenarios**:
 
-1. **Given** a real project-backed workspace, **When** the user sends any message, **Then** Magentic-One returns both `chatReply` and `planDraft`.
-2. **Given** an ordinary chat request, **When** the response completes, **Then** Magentic-One may reply without a PlanDraft, and the canvas remains unchanged.
-3. **Given** the response finishes, **When** the next user message is sent, **Then** prior chat/run context remains available in the same project workspace and the current draft can be replaced or refined.
+1. **Given** a real project-backed workspace, **When** the user sends any task, **Then** Magentic-One runs the deck natively and returns a real execution trace.
+2. **Given** an ordinary chat request, **When** the response completes, **Then** the actual trace is displayed in the Plan/status surface.
+3. **Given** the response finishes, **When** the next user message is sent, **Then** prior chat/run context remains available in the same project workspace.
 
 ### User Story 2 — Plan Draft Lives In Plan Canvas Before Agent Work (Priority: P1)
 
@@ -161,17 +161,15 @@ As a builder, I want the Agent Workspace to support internal code/agent/card/pro
 ### Core Workspace Primitive
 
 - **FR-001**: Agent Workspace MUST provide a project-backed chat surface where the primary conductor is Magentic-One.
-- **FR-002**: Every Magentic-One turn MUST produce a `chatReply` shown in chat.
-- **FR-003**: Every Magentic-One turn MUST produce a valid `planDraft` shown in the Plan Canvas.
-- **FR-004**: The `planDraft` MAY be minimal when no substantial multi-agent work is needed, but it MUST remain valid and renderable.
-- **FR-005**: Users MUST be able to approve, reject, or revise the current `planDraft` before execution begins.
-- **FR-006**: Approval MUST gate execution only; approval is NOT required to draft or update the plan.
-- **FR-007**: The workspace MUST NOT use an if/else classifier that chooses between chat reply and draft plan output; both outputs are required every turn.
-- **FR-008**: The workspace MUST NOT auto-run work before approval.
-- **FR-009**: The Plan Canvas MUST reflect the current draft rather than fake placeholder nodes or raw runtime error text.
-- **FR-010**: An approved plan MUST run through the real project-backed deck runtime.
-- **FR-011**: Agent execution MUST emit runtime events that can be surfaced to the user.
-- **FR-012**: Run completion MUST return a final result to chat and project-backed workspace state.
+- **FR-002**: Every chat turn MUST trigger the real Magentic-One deck run.
+- **FR-003**: PlanDraft is NOT required for ordinary chat. The real Magentic-One run trace is the source of truth for executed work.
+- **FR-004**: The `planDraft` MAY optionally exist as adapter state, but MUST NOT be the ordinary chat brain.
+- **FR-005**: Users MUST be able to see real Magentic-One progress traces in the UI.
+- **FR-006**: The workspace MUST NOT use an if/else classifier that chooses between chat reply and draft plan output; actual native execution is required.
+- **FR-007**: The Plan Canvas MUST reflect real trace data rather than fake placeholder nodes.
+- **FR-008**: An approved or typed task MUST run through the real project-backed deck runtime.
+- **FR-009**: Agent execution MUST emit runtime events (`magentic_trace`) that can be surfaced to the user.
+- **FR-010**: Run completion MUST return a final result to chat and project-backed workspace state.
 - **FR-013**: The first default approved plan behavior MUST support research work as the first useful primitive path.
 - **FR-014**: The default research plan MUST support running Research Agent, gathering sources/evidence, extracting entities/relations/properties, populating KnowGraph, returning a summarized result to chat, and recording reasoning/outcome memory in ThinkGraph.
 

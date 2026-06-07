@@ -2523,7 +2523,7 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     provider: 'openai',
     temperature: 0.2,
     maxTokens: 1400,
-    tools: ['codegraph_query', 'codegraph_write', 'code_analyzer'],
+    tools: [],
   },
   {
     id: 'template_research_agent',
@@ -8294,8 +8294,29 @@ export default function AgentBuilder(): React.ReactElement {
     
     // Instead of faking a plan, directly run the deck with the raw task
     setDeckRunInput(trimmed);
-    setTimeout(() => {
-      handleRunDeck(trimmed);
+    setMessages((m) => [...m, { role: 'assistant', text: 'Starting Magentic-One run...' }]);
+
+    setTimeout(async () => {
+      const outcome = await handleRunDeck(trimmed);
+
+      if (!outcome || !outcome.ok) {
+        setMessages((m) => [
+          ...m,
+          {
+            role: 'assistant',
+            text: `Magentic-One run failed: ${outcome?.error || 'Unknown error'}`,
+          },
+        ]);
+      } else {
+        const textStr = outcome.finalText ? `\n\nResult:\n${outcome.finalText}` : '';
+        setMessages((m) => [
+          ...m,
+          {
+            role: 'assistant',
+            text: `Magentic-One run completed.${textStr}`,
+          },
+        ]);
+      }
 
       const responseReceivedAt = Date.now();
       chatLoopTelemetryRef.current = {
@@ -8313,7 +8334,7 @@ export default function AgentBuilder(): React.ReactElement {
         metadata: {
           responseMode: 'magentic_run',
           turnId,
-          ok: true,
+          ok: outcome?.ok ?? false,
         },
       });
     }, 100);

@@ -61,10 +61,10 @@ export function ensureMinimalValidPlanDraft(planDraft: PlanDraft): PlanDraft {
     userRequest:
       cleanPlanDraftText(cleaned.userRequest) ||
       cleanPlanDraftText(cleaned.chatReply) ||
-      "Lightweight chat turn",
+      "",
     summary:
       cleanPlanDraftText(cleaned.summary) ||
-      "Lightweight chat turn; no agent execution proposed yet.",
+      "",
     chatReply: cleanPlanDraftText(cleaned.chatReply) || null,
     requiredAgents: cleaned.steps.length > 0 ? cleaned.requiredAgents : [],
     requiredTools: cleaned.steps.length > 0 ? cleaned.requiredTools : [],

@@ -7,7 +7,7 @@ import { useCallback } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 
 import { resolveEffectiveAgent } from "./deckRuntime";
-import { streamDeckRunRequest } from "./deckRunState";
+import { resolveDeckRunFinalText, streamDeckRunRequest } from "./deckRunState";
 import { isAbortLikeError, safeJson } from "./requestGuards";
 import type {
   AgentCardInstance,
@@ -41,6 +41,13 @@ export type LatestCardRunRecord = {
   input: string;
   effectiveAgent: AgentTemplate;
   result: CardRunResult;
+};
+
+export type DeckRunExecutionOutcome = {
+  ok: boolean;
+  run?: DeckRun;
+  finalText?: string;
+  error?: string;
 };
 
 export function useBuilderDeckRuntimeActions({
@@ -402,10 +409,14 @@ export function useBuilderDeckRuntimeActions({
     workspaceObjectContext,
   ]);
 
-  const handleRunDeck = useCallback(async (overrideInput?: string) => {
+  const handleRunDeck = useCallback(async (
+    overrideInput?: string,
+    options?: { propagateError?: boolean },
+  ): Promise<DeckRunExecutionOutcome> => {
     const activeInput = typeof overrideInput === "string" ? overrideInput : deckRunInput;
 
     if (!canvasProjectId) {
+      const missingProjectError = "Select a project before running the deck.";
       const now = new Date().toISOString();
       setLatestDeckRun({
         id: `deck_run_${uid()}`,
@@ -414,7 +425,7 @@ export function useBuilderDeckRuntimeActions({
         endedAt: now,
         status: "error",
         input: activeInput,
-        error: "Select a project before running the deck.",
+        error: missingProjectError,
         steps: [],
         validationSummary: {
           ok: deckValidation.ok,
@@ -427,7 +438,14 @@ export function useBuilderDeckRuntimeActions({
           expandedStepIds: deckExecutionPlan.expandedSteps.map((step) => step.executionId),
         },
       });
-      return;
+      setDeckStatusMessage(missingProjectError);
+      if (options?.propagateError) {
+        throw new Error(missingProjectError);
+      }
+      return {
+        ok: false,
+        error: missingProjectError,
+      };
     }
 
     const requestedDeckVersion = deck.version;
@@ -464,7 +482,10 @@ export function useBuilderDeckRuntimeActions({
         },
       });
       if (controller.signal.aborted || activeProjectLatestRef.current !== requestProjectId) {
-        return;
+        return {
+          ok: false,
+          error: "deck_run_aborted",
+        };
       }
 
       if (!data?.run) {
@@ -490,10 +511,26 @@ export function useBuilderDeckRuntimeActions({
           return hydrateDeckDocument({ ...(data.deck as DeckDocument), id: deckId });
         });
       }
+      if (run.status === 'error') {
+        setDeckStatusMessage("Board run failed.");
+        return {
+          ok: false,
+          error: run.error || resolveDeckRunFinalText(run) || "Board run failed.",
+        };
+      }
+
       setDeckStatusMessage("Board run complete.");
+      return {
+        ok: true,
+        run,
+        finalText: resolveDeckRunFinalText(run),
+      };
     } catch (err: any) {
       if (isAbortLikeError(err) || activeProjectLatestRef.current !== requestProjectId) {
-        return;
+        return {
+          ok: false,
+          error: "deck_run_aborted",
+        };
       }
       const friendlyError = formatBuilderStatusMessage(err?.message, "Board run failed.");
       const now = new Date().toISOString();
@@ -519,6 +556,13 @@ export function useBuilderDeckRuntimeActions({
       });
       setLiveDeckEvents([]);
       setDeckStatusMessage(friendlyError);
+      if (options?.propagateError) {
+        throw new Error(friendlyError);
+      }
+      return {
+        ok: false,
+        error: friendlyError,
+      };
     } finally {
       if (deckExecutionAbortRef.current === controller) {
         deckExecutionAbortRef.current = null;

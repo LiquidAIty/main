@@ -476,6 +476,10 @@ function resolveModelConfig(
 ): ResolvedModelConfig {
   const providerHint = normalizeProvider(providerHintRaw);
   const modelKey = String(modelKeyRaw || '').trim() || REPO_DEFAULT_MODEL_KEY;
+  let maxTokens = coerceNumber(maxTokensRaw, null);
+  if (maxTokens !== null && maxTokens <= 0) {
+    maxTokens = null;
+  }
 
   if (modelKey.includes('/')) {
     const provider = providerHint || 'openrouter';
@@ -487,7 +491,7 @@ function resolveModelConfig(
       modelKey,
       providerModelId: modelKey,
       temperature: coerceNumber(temperatureRaw, null),
-      maxTokens: coerceNumber(maxTokensRaw, null),
+      maxTokens,
     };
   }
 
@@ -501,7 +505,7 @@ function resolveModelConfig(
       modelKey,
       providerModelId: resolved.id,
       temperature: coerceNumber(temperatureRaw, null),
-      maxTokens: coerceNumber(maxTokensRaw, null),
+      maxTokens,
     };
   } catch (error: any) {
     if (!providerHint) {
@@ -512,7 +516,7 @@ function resolveModelConfig(
       modelKey,
       providerModelId: modelKey,
       temperature: coerceNumber(temperatureRaw, null),
-      maxTokens: coerceNumber(maxTokensRaw, null),
+      maxTokens,
     };
   }
 }
@@ -718,8 +722,15 @@ function resolveConfiguredAssistTools(
 ): ResolvedAssistTool[] {
   const seen = new Set<string>();
 
-  return getConfiguredTools(effectiveAgent).map((configuredName) => {
-    const normalizedConfiguredName = normalizeAssistToolName(configuredName);
+  return getConfiguredTools(effectiveAgent)
+    .filter((name) => {
+      // Parked CodeGraph has old unsupported tools in the database JSON.
+      // Filter them out here so they do not crash the deck runtime.
+      if (name.startsWith('codegraph_') || name === 'code_analyzer') return false;
+      return true;
+    })
+    .map((configuredName) => {
+      const normalizedConfiguredName = normalizeAssistToolName(configuredName);
     const lookupName = ASSIST_TOOL_ALIAS_MAP[normalizedConfiguredName] || normalizedConfiguredName;
     const tool = getTool(lookupName) || getTool(configuredName);
     if (!tool) {
@@ -1668,6 +1679,17 @@ async function runMagenticCard(
   startedAt: string,
 ): Promise<CardRunResult> {
   const callableHeads = resolveCallableHeadCards(card, context);
+  if (callableHeads.length === 0) {
+    throw new Error('No connected Magentic-One participants found. Connect agent cards with magentic_option edges.');
+  }
+
+  const hasCodeGraph = callableHeads.some(
+    (head) => head.templateId === 'template_codegraph_agent' || String(head.title).toLowerCase().includes('codegraph')
+  );
+  if (hasCodeGraph) {
+    throw new Error('CodeGraph Agent is connected but codegraph_query is not implemented.');
+  }
+
   const modelConfig = resolveCardModelConfig(card, effectiveAgent, `card_${card.id}`);
   const prompt = resolveCardSystemPrompt(card, effectiveAgent);
 
@@ -1701,6 +1723,19 @@ async function runMagenticCard(
   if (!finalText) {
     throw new Error('autogen_orchestrator_missing_final_response');
   }
+
+  const lowerFinalText = finalText.toLowerCase();
+  if (
+    lowerFinalText.includes('openai_error:') ||
+    lowerFinalText.includes('openrouter_error:') ||
+    lowerFinalText.includes('empty_response') ||
+    lowerFinalText.includes('provider_error') ||
+    lowerFinalText.includes('sidecar_error') ||
+    lowerFinalText.includes('autogen_orchestrator_failed')
+  ) {
+    throw new Error(finalText);
+  }
+
   const structuredPlan = normalizeStructuredPlanCandidate(sidecarResponse.plan ?? null);
 
   return {
