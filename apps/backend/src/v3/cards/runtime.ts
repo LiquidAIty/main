@@ -1706,19 +1706,19 @@ async function runMagenticCard(
     logMagenticRuntime(card, 'runtime=python_autogen');
   }
 
-  const sidecarResponse = await orchestrateWithAutoGen(
-    buildPythonAutoGenCardRuntimePayload(
-      card,
-      effectiveAgent,
-      runtimeInput,
-      context,
-      modelConfig,
-      prompt,
-      callableHeads,
-      startedAt,
-      graphContextPacket,
-    ),
+  const payload = buildPythonAutoGenCardRuntimePayload(
+    card,
+    effectiveAgent,
+    runtimeInput,
+    context,
+    modelConfig,
+    prompt,
+    callableHeads,
+    startedAt,
+    graphContextPacket,
   );
+
+  const sidecarResponse = await orchestrateWithAutoGen(payload);
   const finalText = String(sidecarResponse.finalResponseText || '').trim();
   if (!finalText) {
     throw new Error('autogen_orchestrator_missing_final_response');
@@ -1737,6 +1737,14 @@ async function runMagenticCard(
   }
 
   const structuredPlan = normalizeStructuredPlanCandidate(sidecarResponse.plan ?? null);
+
+  const promptTrace = {
+    magenticCardPromptSource: card.prompt ? 'node.prompt' : 'promptTemplate',
+    participants: callableHeads.map((h: any) => h.title) || [],
+    participantPromptSources: callableHeads.map((h: any) => h.id) || [],
+    sidecarInstructionPresent: true,
+    effectivePromptPreview: (payload.systemPrompt || '').slice(0, 1000)
+  };
 
   return {
     output: finalText,
@@ -1757,6 +1765,7 @@ async function runMagenticCard(
       metrics: sidecarResponse.metrics,
       thinkGraph: sidecarResponse.thinkGraph,
       knowGraph: sidecarResponse.knowGraph,
+      promptTrace,
     },
   };
 }

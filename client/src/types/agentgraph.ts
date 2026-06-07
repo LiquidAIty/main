@@ -505,6 +505,13 @@ export type CardRunResult = {
     metrics?: Record<string, unknown> | null;
     thinkGraph?: Record<string, unknown> | unknown[] | null;
     knowGraph?: Record<string, unknown> | unknown[] | null;
+    promptTrace?: {
+      magenticCardPromptSource: string;
+      participants: string[];
+      participantPromptSources: string[];
+      sidecarInstructionPresent: boolean;
+      effectivePromptPreview: string;
+    } | null;
   } | null;
 };
 
@@ -547,6 +554,13 @@ export type DeckRuntimeEvent = {
   metrics?: Record<string, unknown> | null;
   thinkGraph?: Record<string, unknown> | unknown[] | null;
   knowGraph?: Record<string, unknown> | unknown[] | null;
+  promptTrace?: {
+    magenticCardPromptSource: string;
+    participants: string[];
+    participantPromptSources: string[];
+    sidecarInstructionPresent: boolean;
+    effectivePromptPreview: string;
+  } | null;
 };
 
 export type DeckRunStep = {
@@ -574,6 +588,22 @@ export type DeckRunStep = {
   outputSummary?: string;
   codegraphViewContract?: CodeGraphViewContract | null;
   structuredPlan?: Record<string, unknown> | null;
+  magenticTrace?: {
+    plan?: Record<string, unknown> | unknown[] | null;
+    blackboardEntries?: Record<string, unknown> | unknown[] | null;
+    reportBacks?: Record<string, unknown> | unknown[] | null;
+    transcript?: unknown[] | null;
+    metrics?: Record<string, unknown> | null;
+    thinkGraph?: Record<string, unknown> | unknown[] | null;
+    knowGraph?: Record<string, unknown> | unknown[] | null;
+    promptTrace?: {
+      magenticCardPromptSource: string;
+      participants: string[];
+      participantPromptSources: string[];
+      sidecarInstructionPresent: boolean;
+      effectivePromptPreview: string;
+    } | null;
+  } | null;
   routeInfo?: {
     mergeIntent?: DeckEdgeMergeIntent | 'legacy_default' | null;
     inputMode?: 'legacy_text' | 'single_upstream' | 'structured_merge' | null;

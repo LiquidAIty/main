@@ -605,6 +605,7 @@ export async function executeDeck(
           metrics: result.magenticTrace.metrics,
           thinkGraph: result.magenticTrace.thinkGraph,
           knowGraph: result.magenticTrace.knowGraph,
+          promptTrace: result.magenticTrace.promptTrace,
         });
       }
 

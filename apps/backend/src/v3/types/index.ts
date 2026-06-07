@@ -467,6 +467,13 @@ export type CardRunResult = {
     metrics?: Record<string, unknown> | null;
     thinkGraph?: Record<string, unknown> | unknown[] | null;
     knowGraph?: Record<string, unknown> | unknown[] | null;
+    promptTrace?: {
+      magenticCardPromptSource: string;
+      participants: string[];
+      participantPromptSources: string[];
+      sidecarInstructionPresent: boolean;
+      effectivePromptPreview: string;
+    } | null;
   } | null;
 };
 
@@ -511,6 +518,13 @@ export type DeckRuntimeEvent = {
   metrics?: Record<string, unknown> | null;
   thinkGraph?: Record<string, unknown> | unknown[] | null;
   knowGraph?: Record<string, unknown> | unknown[] | null;
+  promptTrace?: {
+    magenticCardPromptSource: string;
+    participants: string[];
+    participantPromptSources: string[];
+    sidecarInstructionPresent: boolean;
+    effectivePromptPreview: string;
+  } | null;
 };
 
 export type DeckRunStep = {

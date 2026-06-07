@@ -6718,6 +6718,29 @@ export default function AgentBuilder(): React.ReactElement {
                   {latestDeckRun.error}
                 </div>
               )}
+              {latestDeckRun?.steps?.map((step) =>
+                step.magenticTrace?.promptTrace ? (
+                  <details
+                    key={`trace-${step.id}`}
+                    className="text-xs"
+                    style={{
+                      marginTop: 12,
+                      color: GRAPH_THEME.drawer.inputMuted,
+                      border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                      padding: 8,
+                      borderRadius: 4,
+                      background: 'rgba(0,0,0,0.1)'
+                    }}
+                  >
+                    <summary style={{ cursor: 'pointer', outline: 'none', fontWeight: 600 }}>
+                      Prompt Trace (Card: {step.title})
+                    </summary>
+                    <pre style={{ marginTop: 8, whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: 10 }}>
+                      {JSON.stringify(step.magenticTrace.promptTrace, null, 2)}
+                    </pre>
+                  </details>
+                ) : null
+              )}
             </div>
           </>
         );
@@ -9267,6 +9290,50 @@ export default function AgentBuilder(): React.ReactElement {
                 </div>
               </div>
             ) : null}
+            {latestDeckRun?.steps?.map((step) => {
+              if (!step.magenticTrace) return null;
+              const { plan, blackboardEntries, reportBacks, transcript } = step.magenticTrace;
+
+              if (plan) {
+                return (
+                  <div
+                    key={`magentic-plan-${step.id}`}
+                    style={graphDrawerSectionStyle({
+                      margin: '0 12px 10px',
+                      padding: '12px 14px',
+                      borderColor: 'rgba(79,162,173,0.3)',
+                      background: 'rgba(79,162,173,0.05)',
+                    })}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
+                      Proposed Magentic-One Plan
+                    </div>
+                    <pre style={{ marginTop: 8, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted, whiteSpace: 'pre-wrap', fontFamily: 'monospace', maxHeight: 300, overflow: 'auto' }}>
+                      {typeof plan === 'object' ? JSON.stringify(plan, null, 2) : String(plan)}
+                    </pre>
+                    <div style={{ marginTop: 12, fontSize: 11, color: C.warn, fontStyle: 'italic' }}>
+                      Plan approval action not wired yet.
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div
+                  key={`magentic-noplan-${step.id}`}
+                  style={graphDrawerSectionStyle({
+                    margin: '0 12px 10px',
+                    padding: '10px 12px',
+                    borderColor: 'rgba(255,255,255,0.14)',
+                    background: 'rgba(255,255,255,0.03)',
+                  })}
+                >
+                  <div style={{ fontSize: 12, color: C.text }}>
+                    Magentic-One returned no explicit plan. See transcript/reportBacks.
+                  </div>
+                </div>
+              );
+            })}
             {showPlanDraftCard ? (
               <div
                 style={graphDrawerSectionStyle({
