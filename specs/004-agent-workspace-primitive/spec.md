@@ -16,16 +16,121 @@ This primitive is the project-backed AgentBuilder workspace where the real Magen
 
 ### Research Planning Role Contract
 
-For new research or intelligence requests, the draft plan order is:
+For new research or intelligence requests, the approved workflow order is:
 
-1. ThinkGraph Agent preprocesses intent, assumptions, constraints, uncertainty, hypotheses, and search goals.
-2. Research Agent or Research Swarm gathers external source-backed evidence with links, snippets, claims, tables or screenshots when available, and source metadata.
-3. KnowGraph Agent consumes research outputs and ingests objective evidence into KnowGraph as entities, relationships, properties, provenance, citations, and confidence.
-4. Context Builder / Magentic-One prepares separate ThinkGraph and KnowGraph context packets for the next turn, comparing congruence, conflicts, missing evidence, uncertainty, and confidence gaps.
+1. **Magentic-One**: Chats with the user, handles general questions, and routes to ThinkGraph when extracting subjective intent or reasoning is useful.
+2. **ThinkGraph Agent**: Extracts subjective steelman, entities, relationships, claims, hypotheses, assumptions, risks, counterarguments, and open questions from the chat. It decides whether the graph is rich enough to offer research.
+3. **Plan Agent (Canvas)**: Exposes the ThinkGraph "reveal" and the research offer readiness state to the user.
+4. **User Approval**: The user revises the ideas through chat if needed, and explicitly approves the research plan when ready.
+5. **Research Agent**: Runs only after approval. It gathers objective source-backed evidence (confirming and disconfirming) and returns evidence objects.
+6. **KnowGraph Agent**: Consumes research outputs and ingests objective evidence into KnowGraph as entities, relationships, provenance, citations, and evidence gaps.
 
-KnowGraph is not the external search worker. `knowgraph_query` must not be advertised or called for new research. Existing-KnowGraph search can use a query tool only when the runtime actually implements it; otherwise the system must say it is unavailable plainly.
+Research must never be executed prematurely before approval, and KnowGraph must not be written without real source-backed evidence.
+There are no fake frontend PlanDrafts or deterministic tiny-message gates; Magentic-One itself exposes its real plan, and the user approves it.
+KnowGraph is not the external search worker. `knowgraph_query` must not be advertised or called for new research.
 
 ThinkGraph and KnowGraph remain separate streams. ThinkGraph stores subjective reasoning, assumptions, hypotheses, decisions, and uncertainty. KnowGraph stores objective source-backed evidence, provenance, citations, confidence, and source metadata.
+
+### Role Boundaries
+
+- **Magentic-One**: Chat/orchestrator/router. Does not make ThinkGraph itself. Does not make KnowGraph itself. Routes downstream agents and explains current state to user.
+- **ThinkGraph Agent**: Downstream subjective/provisional graph extractor. Extracts useful reasoning from chat/AI answer pairs. Creates visible ThinkGraph nodes/edges/properties. Marks items provisional. Determines whether the graph is rich enough to offer research.
+- **Plan Agent**: Exposes ThinkGraph Reveal. Creates research plan only after ThinkGraph is ready. Exposes PlanFlow/PlanCanvas. Asks approval before research.
+- **Research Agent**: Runs only after approval. Gathers source-backed evidence for and against the thesis.
+- **KnowGraph Agent**: Stores sourced evidence/gaps/provenance in OWL/RDF-compatible shape. Does not store unsourced ThinkGraph reasoning as fact.
+
+### Wire Semantics
+
+- **magentic_option**: Magentic-One membership / option wire. Direction does not matter.
+- **flow**: Directed Assist-agent / graph-node execution wire. Direction matters.
+- Canvas wires are real.
+
+### Research Readiness State Machine & UI
+
+Research is not automatic. It is offered only when the ThinkGraph is rich enough to justify objective research. ThinkGraph earns the research offer, and KnowGraph earns the factual memory.
+
+**State Machine States:**
+- `chatting`
+- `thinkgraph_ready`
+- `research_plan_ready`
+- `approved_for_research`
+- `research_running`
+- `knowgraph_ready`
+- `dual_graph_answer_ready`
+
+**Readiness Logic (Graph Richness, not score soup):**
+```json
+{
+  "status": "chatting | thinkgraph_ready | research_plan_ready | approved_for_research | research_running | knowgraph_ready | dual_graph_answer_ready",
+  "graph_richness": {
+    "entity_count": 0,
+    "relationship_count": 0,
+    "claim_count": 0,
+    "assumption_count": 0,
+    "risk_or_counterargument_count": 0,
+    "open_question_count": 0,
+    "evidence_needed_count": 0,
+    "token_count": 0
+  },
+  "required_slots": {
+    "has_research_question": false,
+    "has_why_it_matters": false,
+    "has_evidence_needed": false,
+    "has_disconfirming_evidence": false
+  },
+  "missing_for_research": [],
+  "research_offer_ready": false,
+  "research_offer": {
+    "question": "",
+    "why_now": "",
+    "evidence_to_find": [],
+    "disconfirming_evidence_to_find": []
+  }
+}
+```
+
+**Baseline Readiness Heuristic:**
+Research planning may be offered when:
+- `entity_count >= 3`
+- `relationship_count >= 2`
+- `claim_count >= 1`
+- `assumption_count >= 1`
+- `risk_or_counterargument_count >= 1`
+- `evidence_needed_count >= 1`
+- `has_research_question = true`
+
+*User-facing language must reflect state smoothly (e.g., "ThinkGraph needs more shape.", "ThinkGraph is ready for research planning.", "Research plan ready for approval.", "Research approved.").*
+
+**UI / PlanCanvas / ThinkGraph panel:**
+1. On first chat pair, begin populating visible ThinkGraph next to chat.
+2. If graph is sparse, show `missing_for_research` and ask clarifying questions.
+3. If graph is ready, show temporary button: "Plan Research".
+4. When clicked, Plan Agent creates research plan in PlanFlow/PlanCanvas.
+5. PlanFlow shows: research question, scope, evidence needed, disconfirming evidence, source targets, expected output, and approval required.
+6. User approves.
+7. Research Agent runs.
+8. KnowGraph populates.
+9. Magentic-One receives dual graph context and answers.
+
+### Dual Graph Context & Traversal
+
+Before answering after research, the system must retrieve:
+- Relevant ThinkGraph reasoning
+- Relevant KnowGraph evidence
+- Contradictions / support / evidence gaps
+- Prior-turn relationships if present
+
+**Traversal Baseline:**
+- Entity match
+- Depth 1-2 neighborhood traversal
+- Recent run context
+- Top evidence gaps
+
+**Visual Baseline:**
+- ThinkGraph lights up when populated
+- Active agent cards light up when called
+- KnowGraph lights up when evidence is written
+- (Full traversal animation can come later)
 
 ### Graph Context Packet Contract
 
@@ -93,18 +198,17 @@ As a user, I want chat-submitted tasks to trigger the real Magentic-One runtime,
 2. **Given** an ordinary chat request, **When** the response completes, **Then** the actual trace is displayed in the Plan/status surface.
 3. **Given** the response finishes, **When** the next user message is sent, **Then** prior chat/run context remains available in the same project workspace.
 
-### User Story 2 — Plan Draft Lives In Plan Canvas Before Agent Work (Priority: P1)
+### User Story 2 — ThinkGraph Earns the Research Offer (Priority: P1)
 
-As a user, I want the Plan Canvas to always show the current structured draft, so I can inspect, refine, and control work before anything runs.
+As a user, I want my chat to progressively build a ThinkGraph of reasoning, and only when it is rich enough, I am offered the ability to plan research.
 
-**Independent Test**: Send a request, verify the Plan Canvas shows the current draft, then send a follow-up and verify the same draft is refined or replaced before execution.
+**Independent Test**: Chat with Magentic-One. Verify ThinkGraph builds visibly. Verify a Plan Research offer appears only when the graph is rich enough.
 
 **Acceptance Scenarios**:
 
-1. **Given** any user turn, **When** Magentic-One responds, **Then** the current `planDraft` is shown in the Plan Canvas.
-2. **Given** a follow-up user turn, **When** Magentic-One responds again, **Then** the current draft is overwritten or refined rather than silently preserved as stale plan state.
-3. **Given** a current draft, **When** the user reviews it, **Then** the user can approve, reject, or request revision before execution.
-4. **Given** a later chat explanatory turn without a new plan, **When** it completes, **Then** the current PlanDraft is left intact unless Magentic-One explicitly clears it.
+1. **Given** an initial user turn, **When** the turn completes, **Then** the ThinkGraph begins to populate visibly beside the chat.
+2. **Given** a sparse ThinkGraph, **When** the user sends a message, **Then** Magentic-One asks clarifying questions instead of offering research.
+3. **Given** a sufficiently rich ThinkGraph, **When** the status updates, **Then** a "Plan Research" option is offered to the user.
 
 ### User Story 3 — Approved Plan Runs Real Agents (Priority: P1)
 
@@ -118,18 +222,18 @@ As a user, I want an approved plan to run through real project-backed agent exec
 2. **Given** a run is in progress, **When** events arrive, **Then** the user can see meaningful progress in chat and/or plan context.
 3. **Given** the run completes, **When** the final result is produced, **Then** the result returns to chat as project-backed state, not an ephemeral placeholder.
 
-### User Story 4 — Default Research Plan Populates KnowGraph (Priority: P1)
+### User Story 4 — Approved Research Runs Agents and Populates KnowGraph (Priority: P1)
 
-As a user, I want the first useful approved plan to be research, so the system can gather evidence, populate KnowGraph, and show the result as navigable evidence instead of a vague placeholder workflow.
+As a user, I want an approved research plan to gather evidence, populate KnowGraph, and show the result as navigable evidence instead of a vague placeholder workflow.
 
 **Independent Test**: Approve the default research plan, verify Research Agent gathers evidence and populates KnowGraph, then inspect the resulting graph and source-backed result in chat.
 
 **Acceptance Scenarios**:
 
-1. **Given** an approved default research draft, **When** execution begins, **Then** Research Agent gathers sources and evidence.
+1. **Given** an approved research offer, **When** execution begins, **Then** Research Agent gathers sources and evidence.
 2. **Given** evidence is gathered, **When** extraction completes, **Then** entities, relations, and properties are written into KnowGraph.
 3. **Given** KnowGraph is populated, **When** the user inspects the result, **Then** the graph is navigable and evidence-backed rather than a static summary only.
-4. **Given** the research run completes, **When** the final result is produced, **Then** chat receives a summarized result and ThinkGraph records reasoning/outcome memory.
+4. **Given** the research run completes, **When** the final result is produced, **Then** chat receives a summarized result and the user can see divergence between subjective ThinkGraph and objective KnowGraph.
 
 ### User Story 5 — Results Become Reusable Workspace Memory (Priority: P2)
 
@@ -156,22 +260,40 @@ As a builder, I want the Agent Workspace to support internal code/agent/card/pro
 2. **Given** Local Coder runs, **When** it performs real work, **Then** the work remains backend-owned rather than frontend-executed.
 3. **Given** CodeGraph participates, **When** it returns structure or proposals, **Then** that output can inform subsequent planning and code work.
 
+### User Story 7 — Acceptance Tests for Research Readiness Flow (Priority: P1)
+
+**Test 1: Weak prompt**
+- **Input**: "knowledge graphs are cool"
+- **Expected**: Normal chat response. ThinkGraph begins sparse population. Status remains `chatting` or `thinkgraph_ready=false`. Asks user to clarify intent. No "Plan Research" offer. No Research Agent execution. No KnowGraph write.
+
+**Test 2: Richer prompt**
+- **Input**: "I want to evaluate whether AST SpaceMobile, Rocket Lab, and Planet Labs are credible asymmetric space/telecom candidates over 6-18 months, focusing on catalysts, dilution risk, partnerships, customer concentration, and evidence against the thesis."
+- **Expected**: ThinkGraph populated with entities/relationships/claims/assumptions/risks/evidence-needed. `research_offer_ready = true`. "Plan Research" button appears. Research Agent does not run yet.
+
+**Test 3: Plan Research**
+- **Input**: User clicks "Plan Research" or asks to plan research.
+- **Expected**: Plan Agent creates PlanFlow research plan. Approval required is visible. Research Agent does not run yet.
+
+**Test 4: Approval**
+- **Input**: User approves research.
+- **Expected**: Research Agent runs. KnowGraph Agent stores source-backed evidence/gaps. Magentic-One answers using separated ThinkGraph and KnowGraph context.
+
 ## Functional Requirements
 
 ### Core Workspace Primitive
 
 - **FR-001**: Agent Workspace MUST provide a project-backed chat surface where the primary conductor is Magentic-One.
 - **FR-002**: Every chat turn MUST trigger the real Magentic-One deck run.
-- **FR-003**: PlanDraft is NOT required for ordinary chat. The real Magentic-One run trace is the source of truth for executed work.
-- **FR-004**: The `planDraft` MAY optionally exist as adapter state, but MUST NOT be the ordinary chat brain.
+- **FR-003**: Magentic-One MUST route downstream rather than planning research itself.
+- **FR-004**: The ThinkGraph Agent MUST determine research readiness based on graph richness, not a generic frontend PlanDraft.
 - **FR-005**: Users MUST be able to see real Magentic-One progress traces in the UI.
-- **FR-006**: The workspace MUST NOT use an if/else classifier that chooses between chat reply and draft plan output; actual native execution is required.
-- **FR-007**: The Plan Canvas MUST reflect real trace data rather than fake placeholder nodes.
+- **FR-006**: The workspace MUST NOT run automated research without user approval of the research plan.
+- **FR-007**: The Plan Canvas MUST reflect the ThinkGraph Reveal and the active research plan state rather than fake placeholder nodes.
 - **FR-008**: An approved or typed task MUST run through the real project-backed deck runtime.
 - **FR-009**: Agent execution MUST emit runtime events (`magentic_trace`) that can be surfaced to the user.
 - **FR-010**: Run completion MUST return a final result to chat and project-backed workspace state.
-- **FR-013**: The first default approved plan behavior MUST support research work as the first useful primitive path.
-- **FR-014**: The default research plan MUST support running Research Agent, gathering sources/evidence, extracting entities/relations/properties, populating KnowGraph, returning a summarized result to chat, and recording reasoning/outcome memory in ThinkGraph.
+- **FR-013**: Research planning MUST only be offered when ThinkGraph has sufficient graph substance (entities, relationships, claims, risks, evidence gaps).
+- **FR-014**: The approved research plan MUST support running Research Agent, gathering objective evidence, populating KnowGraph, and returning a result comparing subjective ThinkGraph with objective KnowGraph.
 
 ### Graph Responsibilities
 
@@ -224,48 +346,42 @@ As a builder, I want the Agent Workspace to support internal code/agent/card/pro
 
 ## Plan Schema Contract
 
-The primitive plan model must support:
+The primitive plan model is driven by the ThinkGraph readiness object, not a monolithic fake frontend draft.
 
-- plan id
-- originating user request
-- latest chat reply paired with the draft turn
-- ordered steps
-- targeted agents/cards per step
-- approval state
-- revision history or revision marker
-- execution status
-- user-facing summary
-- default research-plan compatibility
+It must support:
 
-The plan contract must support at least three user actions:
+- `status` (chatting, thinkgraph_ready, research_plan_ready, approved_for_research, research_running, knowgraph_ready, dual_graph_answer_ready)
+- `graph_richness` (entity count, relationships, claims, etc.)
+- `required_slots` (has_research_question, etc.)
+- `missing_for_research` (clarification asks)
+- `research_offer_ready` boolean
+- `research_offer` details (question, why_now, evidence_to_find, disconfirming_evidence_to_find)
 
-- approve
-- reject
-- revise
+The plan contract must support at least three user actions in the PlanCanvas:
+
+- approve research
+- reject research
+- ask to revise intent via chat
 
 ## Plan Structure Ownership
 
-The Stage 0 primitive uses a strict ownership model so future runtime work maps existing structures instead of replacing working behavior blindly.
+The Stage 0 primitive uses a strict ownership model aligned with the graph richness logic instead of legacy frontend drafting.
 
-| Structure | Current location | Role | Ownership | Future direction | Risk if used incorrectly |
-| --- | --- | --- | --- | --- | --- |
-| `PlanDraft` | `client/src/features/agentbuilder/plan/planDraftTypes.ts` | Canonical business truth for the current draft plan | canonical | Own goal, summary, ordered steps, approvalState, requiredAgents, requiredTools, expectedOutputs, risks, graphWriteTargets, revision, and timestamps | Draft state fragments again across chat, plan, and run paths |
-| `MissionSpec` / `MissionRun` | `client/src/types/agentgraph.ts` | Execution adapter for the current approved-run path | adapter | Derive from `PlanDraft` when execution is approved | Execution details leak back into authoring state |
-| `ChatPlanDraftRequest` / `ChatPlanDraftResult` | `client/src/types/agentgraph.ts` | Chat-to-plan request/response envelope | envelope | Carry `chatReply` plus `PlanDraft`-compatible payloads without becoming plan state | Transient chat response fields blur canonical draft ownership |
-| `StructuredAssistPlanSurface` / `StructuredAssistPlanStep` | `client/src/components/builder/assistPlanSurface.ts` | Readable plan presentation model | derived | Map from/to `PlanDraft` as user-facing plan presentation | Presentation fallback fields corrupt executable plan semantics |
-| `PlanMissionGraph` / `PlanMissionFlowNode` / `PlanMissionFlowEdge` | `client/src/components/assist/planMissionModel.ts` | Visual Plan Canvas graph representation | visual-only | Derive nodes and edges from `PlanDraft` steps and dependencies only | Visual geometry or fallback nodes leak into business truth |
-| `deckRunState` `structuredPlan` payload | `client/src/components/builder/deckRunState.ts` | Runtime continuity snapshot from persisted runs | runtime-only | Preserve reload continuity without becoming authoring truth | Stale run artifacts overwrite the current draft |
-| AutoGen `PlanContext` | `apps/python-models/app/python_models/orchestration_contracts.py` | Orchestrator context/result envelope | envelope | Map into/out of `PlanDraft` while remaining backend-side orchestrator context | Sidecar-specific shape drift destabilizes frontend plan state |
+| Structure | Current location | Role | Ownership | Risk if used incorrectly |
+| --- | --- | --- | --- | --- |
+| `ReadinessObject` | TBD | ThinkGraph's output defining readiness state | canonical | Relying on score soup instead of graph richness |
+| `PlanDraft` | `client/src/features/agentbuilder/plan/planDraftTypes.ts` | Legacy frontend draft wrapper (deprecated) | deprecated | Retaining fake frontend gates and logic |
+| `MissionSpec` / `MissionRun` | `client/src/types/agentgraph.ts` | Execution adapter for the current approved-run path | adapter | Execution details leak back into authoring state |
+| `PlanMissionGraph` | `client/src/components/assist/planMissionModel.ts` | Visual Plan Canvas graph representation | visual-only | Visual geometry or fallback nodes leak into business truth |
+| `deckRunState` `structuredPlan` payload | `client/src/components/builder/deckRunState.ts` | Runtime continuity snapshot from persisted runs | runtime-only | Stale run artifacts overwrite the current draft |
+| AutoGen `PlanContext` | `apps/python-models/app/python_models/orchestration_contracts.py` | Orchestrator context/result envelope | envelope | Sidecar-specific shape drift destabilizes frontend plan state |
 
 Ownership rules:
 
-- `PlanDraft` is the canonical authoring truth.
+- ThinkGraph Readiness Object is the canonical research trigger.
+- `PlanDraft` is deprecated as a monolithic upfront gate.
 - `MissionSpec` is an execution adapter, not the long-term draft owner.
-- `StructuredAssistPlanSurface` is presentation, not execution truth.
 - `PlanMissionGraph` is visual, not business truth.
-- `ChatPlanDraftResult` is an envelope, not the plan object by itself.
-- AutoGen `PlanContext` is an orchestrator envelope, not frontend authoring state.
-- `deckRunState` `structuredPlan` is continuity-only, not the live authoring source of truth.
 
 ## Run Event Schema Contract
 
