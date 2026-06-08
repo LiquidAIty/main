@@ -28,12 +28,24 @@ export type DeckExecutionInput = {
 };
 
 export type DeckExecutionOutput = {
-  status: 'success' | 'error';
+  id: string;
+  deckId: string;
+  input: string;
+  status: 'running' | 'success' | 'error' | 'skipped';
   startedAt: string;
   endedAt: string;
   cardResults: Record<string, CardRunResult>;
   finalOutput?: string;
   error?: string;
+  steps?: any[];
+  events?: any[];
+  mission?: any;
+  workspaceContext?: any;
+  workspaceObjectContext?: any;
+  validationSummary?: any;
+  executionPlanSummary?: any;
+  graphViewContract?: any;
+  codegraphViewContract?: any;
 };
 
 export type RuntimeScope = {
@@ -57,6 +69,8 @@ export type PythonAutoGenPayloadShape = {
   plan?: Record<string, any>;
   thinkGraph?: Record<string, any>;
   knowGraph?: Record<string, any>;
+  blackboard?: Record<string, any>;
+  workspaceObjectContext?: Record<string, any>;
   cardRuntime: {
     cardId: string;
     title: string;

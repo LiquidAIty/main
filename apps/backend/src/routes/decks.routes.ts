@@ -6,10 +6,11 @@ import {
   saveDeckDocument,
   saveDeckRun,
 } from '../v3/decks/store';
-import { executeDeck } from '../v3/runtime/deckRuntime';
+import { executeDeck } from '../decks/deckRuntime';
 import type {
   AgentTemplate,
   DeckDocument,
+  DeckRun,
   DeckRunResponse,
   MissionAgentRunStatus,
   MissionRunStatus,
@@ -194,11 +195,11 @@ router.post('/:projectId/decks/:deckId/run', async (req, res) => {
       missionRunId,
       missionAgentRunId,
       onRuntimeEvent: useStream
-        ? (event) => {
+        ? (event: any) => {
             writeStreamChunk(res, { kind: 'event', event });
           }
         : undefined,
-    });
+    }) as unknown as DeckRun;
 
     const persistedRun = await saveDeckRun(req.params.projectId, deckId, run);
     const missionStatus =

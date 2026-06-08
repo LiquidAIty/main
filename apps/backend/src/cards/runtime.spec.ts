@@ -38,6 +38,7 @@ describe('Canonical Cards Runtime', () => {
       {},
       'test',
       { previousOutput: 'Some Apollo 11 text' },
+      {},
       [{ id: 'agentA', runtimeType: 'assistant_agent' }],
       '2026'
     );
@@ -50,6 +51,7 @@ describe('Canonical Cards Runtime', () => {
       {},
       'test input',
       {},
+      {},
       [{ id: 'agentA', runtimeType: 'assistant_agent' }],
       '2026'
     );
@@ -61,7 +63,7 @@ describe('Canonical Cards Runtime', () => {
     const cardA = { id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent' };
     const context = { deckId: 'deck1', allCards: [cardM, cardA], allEdges: [] };
 
-    const payload = buildPythonAutoGenCardRuntimePayload(cardM, {}, 'hello', context, [cardA], '2026');
+    const payload = buildPythonAutoGenCardRuntimePayload(cardM, {}, 'hello', context, {}, [cardA], '2026');
     
     expect(payload.session.orchestrator).toBe('magentic_one');
     expect(payload.systemPrompt).toBe('test system prompt');

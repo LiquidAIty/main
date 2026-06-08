@@ -1,5 +1,77 @@
 import { CardRunResult, PythonAutoGenPayloadShape } from '../contracts/runtimeContracts';
 import { orchestrateWithAutoGen } from '../services/autogen/autogenOrchestratorClient';
+import { resolveModel } from '../llm/models.config';
+
+function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
+  const provider = String(value ?? '').trim().toLowerCase();
+  if (provider === 'openai' || provider === 'openrouter') return provider;
+  return null;
+}
+
+function coerceNumber(value: unknown, fallback: number | null): number | null {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+export function resolveModelConfig(
+  modelKeyRaw: unknown,
+  providerHintRaw: unknown,
+  temperatureRaw: unknown,
+  maxTokensRaw: unknown,
+  scope: string,
+): any {
+  const providerHint = normalizeProvider(providerHintRaw);
+  const modelKey = String(modelKeyRaw || '').trim() || 'gpt-4o-mini';
+  let maxTokens = coerceNumber(maxTokensRaw, null);
+  if (maxTokens !== null && maxTokens <= 0) {
+    maxTokens = null;
+  }
+
+  if (modelKey.includes('/')) {
+    const provider = providerHint || 'openrouter';
+    return {
+      provider,
+      modelKey,
+      providerModelId: modelKey,
+      temperature: coerceNumber(temperatureRaw, null),
+      maxTokens,
+    };
+  }
+
+  try {
+    const resolved = resolveModel(modelKey);
+    return {
+      provider: resolved.provider,
+      modelKey,
+      providerModelId: resolved.id,
+      temperature: coerceNumber(temperatureRaw, null),
+      maxTokens,
+    };
+  } catch (error: any) {
+    return {
+      provider: providerHint || 'openai',
+      modelKey,
+      providerModelId: modelKey,
+      temperature: coerceNumber(temperatureRaw, null),
+      maxTokens,
+    };
+  }
+}
+
+export function resolveCardModelConfig(
+  card: any,
+  effectiveAgent: any,
+  scope: string,
+): any {
+  const runtimeOptions = card.runtimeOptions || {};
+  return resolveModelConfig(
+    runtimeOptions.modelKey ?? effectiveAgent?.model,
+    runtimeOptions.provider ?? effectiveAgent?.provider,
+    runtimeOptions.temperature ?? effectiveAgent?.temperature,
+    runtimeOptions.maxTokens ?? effectiveAgent?.maxTokens,
+    scope,
+  );
+}
 
 function summarizeText(value: string | null | undefined, maxLength = 220): string {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
@@ -60,6 +132,7 @@ export function buildPythonAutoGenCardRuntimePayload(
   effectiveAgent: any,
   runtimeInput: string,
   context: any,
+  modelConfig: any,
   callableHeads: any[],
   startedAt: string,
   graphContextPacket?: any
@@ -71,10 +144,14 @@ export function buildPythonAutoGenCardRuntimePayload(
   );
   
   const participants = supportedHeads.map((head) => {
+    let mappedRuntimeType = resolveCardRuntimeType(head);
+    if (mappedRuntimeType === 'local_coder') {
+      mappedRuntimeType = 'assistant_agent';
+    }
     return {
-      cardId: head.id,
-      title: head.title,
-      runtimeType: resolveCardRuntimeType(head),
+      cardId: String(head.id || ''),
+      title: String(head.title || 'Agent'),
+      runtimeType: mappedRuntimeType,
       runtimeBinding: head.runtimeBinding || null,
       role: 'assistant',
       tools: [],
@@ -123,6 +200,9 @@ export function buildPythonAutoGenCardRuntimePayload(
       turnId,
       route: 'deck_runtime',
       orchestrator: 'magentic_one',
+      modelProvider: modelConfig.provider,
+      modelKey: modelConfig.modelKey,
+      providerModelId: modelConfig.providerModelId,
       startedAt,
     },
     userText: runtimeInput,
@@ -131,9 +211,16 @@ export function buildPythonAutoGenCardRuntimePayload(
     plan: undefined,
     thinkGraph: undefined,
     knowGraph: undefined,
+    blackboard: {
+      current_goal: '',
+      what_matters_now: [],
+      open_questions: [],
+      findings: [],
+    },
+    workspaceObjectContext: context.workspaceObjectContext,
     cardRuntime: {
-      cardId: card.id,
-      title: card.title,
+      cardId: String(card.id || ''),
+      title: String(card.title || 'Magentic Agent'),
       runtimeType: 'magentic_one',
       prompt: String(card.prompt || '').trim(),
       runtimeOptions: safeRuntimeOptions,
@@ -175,21 +262,32 @@ export async function runCardWithContract(
       throw new Error('No valid locked research runtime path resolved. Connect or select the baseline research agents, or explicitly enter discovery_proposal mode.');
     }
     
+    const modelConfig = resolveCardModelConfig(card, effectiveAgent, `card_${card.id}`);
+
     const payload = buildPythonAutoGenCardRuntimePayload(
       card,
       effectiveAgent,
       input,
       context,
+      modelConfig,
       callableHeads,
       startedAt
     );
 
     // Normally we would call orchestrateWithAutoGen, but here we'll mock success or rely on the real service
-    let finalText = 'mock response';
+    let finalText = '';
     try {
+        console.log('[runCardWithContract] canonical executeDeck entered.');
+        console.log('[runCardWithContract] Sending payload to AutoGen sidecar. Keys:', Object.keys(payload));
+        console.log('[runCardWithContract] Payload session:', payload.session);
+        
         const sidecarResponse = await orchestrateWithAutoGen(payload as any);
+        console.log('[runCardWithContract] sidecar response keys:', Object.keys(sidecarResponse));
+        
         finalText = String(sidecarResponse.finalResponseText || '').trim();
+        console.log('[runCardWithContract] parsed finalResponseText exists:', !!finalText);
     } catch (e: any) {
+        console.error('[runCardWithContract] Exact caught error message:', e?.message || e);
         if (!process.env.JEST_WORKER_ID) {
             throw e;
         }
