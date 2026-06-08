@@ -5,7 +5,7 @@ import os from 'os';
 import path from 'path';
 import { Router } from 'express';
 import { z } from 'zod';
-import { safeFetch } from '../../security/safeFetch';
+import { safeFetch } from '../security/safeFetch';
 import {
   buildOpenRouterVideoSubmitPayload,
   normalizeOpenRouterVideoResponse,

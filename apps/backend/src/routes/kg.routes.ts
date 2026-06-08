@@ -1,25 +1,25 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Router } from 'express';
-import { pool } from '../../db/pool';
+import { pool } from '../db/pool';
 import { createHash } from 'crypto';
 import {
   resolveKgIngestAgent,
   resolveKnowgraphAgent,
   resolveNeo4jAgent,
   resolveResearchAgent,
-} from '../../services/resolveAgents';
-import { runCypherOnGraph } from '../../services/graphService';
+} from '../services/resolveAgents';
+import { runCypherOnGraph } from '../services/graphService';
 import { chunkTextStrictJSON, extractKgFromChunks, type KgEntity, type KgRelationship, type LlmMeta } from './chunking';
 import { runKgQuery } from './query';
-import { syncKgToNeo4j } from '../../services/v2/kgNeo4jSink';
-import { normalizeResearchTargetPacket, runResearchIngest } from '../../services/research/researchService';
-import { isDevTestModeEnabled, requireDevTestMode, resolveAllowedDevLocalFile } from '../../services/devTest';
+import { syncKgToNeo4j } from '../services/kgNeo4jSink';
+import { normalizeResearchTargetPacket, runResearchIngest } from '../services/research/researchService';
+import { isDevTestModeEnabled, requireDevTestMode, resolveAllowedDevLocalFile } from '../services/devTest';
 import {
   enqueueKgIngestJob,
   registerKgIngestWorker,
   type KgIngestQueueJob,
-} from '../../services/v2/kgIngestQueue';
+} from '../services/kgIngestQueue';
 
 const router = Router({ mergeParams: true });
 const GRAPH_NAME = 'graph_liq';

@@ -3,7 +3,7 @@
 // @graph relates_to: ThinkGraph, KnowGraph
 // @graph depends_on: Postgres
 // @graph feeds_to: Magentic-One Runtime
-import { pool } from '../../db/pool';
+import { pool } from '../db/pool';
 
 // Current persisted PlanWiki storage is intentionally human-facing.
 export type Message = {

@@ -1,7 +1,7 @@
 import { Router } from 'express';
-import { createProject } from '../../services/agentBuilderStore';
-import { requireDevTestMode } from '../../services/devTest';
-import { ensureSystemAgentConfigs } from '../../services/v2/agentConfigStore';
+import { createProject } from '../services/agentBuilderStore';
+import { requireDevTestMode } from '../services/devTest';
+import { ensureSystemAgentConfigs } from '../services/agentConfigStore';
 
 const router = Router();
 

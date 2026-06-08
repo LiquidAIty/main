@@ -13,8 +13,8 @@ import {
   normalizeKnowGraphOutputToSemanticRecordsWithValidation,
   normalizeThinkGraphOutputToSemanticRecordsWithValidation,
   validateSemanticGraphRecord,
-} from '../v3/graph/semanticLanguage';
-import type { GraphReadResult, SemanticGraphRecord, SemanticGraphRelationship, SemanticGraphSourceRef } from '../v3/types';
+} from '../graph/semanticLanguage';
+import type { GraphReadResult, SemanticGraphRecord, SemanticGraphRelationship, SemanticGraphSourceRef } from '../types';
 
 const router = Router();
 // DEV TEST LIMIT RAISED: allow large real-document uploads during development and loop testing.

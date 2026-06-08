@@ -4,8 +4,8 @@
 // @graph depends_on: Postgres
 // @graph feeds_to: DeckRunRoute
 import { createHash, randomUUID } from 'crypto';
-import { pool } from '../../db/pool';
-import { resolveRuntimeBinding } from '../runtimeBinding';
+import { pool } from '../db/pool';
+import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
 import type {
   AgentCardInstance,
   AgentCardRuntimeOptions,

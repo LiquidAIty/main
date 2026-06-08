@@ -1,4 +1,4 @@
-import type { RuntimeBinding } from './types';
+import type { RuntimeBinding } from '../types';
 
 export const RUNTIME_BINDINGS = [
   'assist',

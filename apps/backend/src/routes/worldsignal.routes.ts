@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { ensureWorldsignalSidecarRunning } from '../../services/worldsignalSidecar';
+import { ensureWorldsignalSidecarRunning } from '../services/worldsignalSidecar';
 
 const router = Router();
 const WORLDSIGNAL_HEALTH_URL = 'http://127.0.0.1:3117/api/health';

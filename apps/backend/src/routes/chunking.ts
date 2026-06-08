@@ -1,11 +1,11 @@
-import { resolveModel } from '../../llm/models.config';
-import { safeFetch } from '../../security/safeFetch';
+import { resolveModel } from '../llm/models.config';
+import { safeFetch } from '../security/safeFetch';
 import {
   buildResponsesInput,
   buildResponsesPayload,
   extractResponsesFinishReason,
   extractResponsesText,
-} from '../../llm/responses';
+} from '../llm/responses';
 
 export type KgChunk = {
   chunk_id: string;

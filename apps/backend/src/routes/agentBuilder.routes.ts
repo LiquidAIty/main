@@ -1,14 +1,14 @@
 import { Router } from 'express';
-import type { AgentType } from '../../services/v2/agentConfigStore';
-import { resolveAgentConfig } from '../../services/resolveAgents';
-import { resolveModel } from '../../llm/models.config';
-import { safeFetch } from '../../security/safeFetch';
+import type { AgentType } from '../services/agentConfigStore';
+import { resolveAgentConfig } from '../services/resolveAgents';
+import { resolveModel } from '../llm/models.config';
+import { safeFetch } from '../security/safeFetch';
 import {
   buildResponsesInput,
   buildResponsesPayload,
   extractResponsesFinishReason,
   extractResponsesText,
-} from '../../llm/responses';
+} from '../llm/responses';
 
 const router = Router();
 

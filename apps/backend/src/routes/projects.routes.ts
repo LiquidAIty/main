@@ -14,7 +14,7 @@ import {
   saveProjectState,
 } from '../services/agentBuilderStore';
 import { getLastTrace } from '../services/ingestTrace';
-import { ensureSystemAgentConfigs } from '../services/v2/agentConfigStore';
+import { ensureSystemAgentConfigs } from '../services/agentConfigStore';
 import { buildGraphContextPacket } from '../services/graphContext/graphContextBuilder';
 
 const router = Router();

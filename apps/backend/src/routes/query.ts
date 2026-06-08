@@ -1,4 +1,4 @@
-import { runCypherOnGraph } from '../../services/graphService';
+import { runCypherOnGraph } from '../services/graphService';
 
 export async function runKgQuery(params: {
   graphName: string;

@@ -1,5 +1,5 @@
 import { resolveModel } from '../llm/models.config';
-import { ensureAgentConfig, getAgentConfig, type AgentType } from './v2/agentConfigStore';
+import { ensureAgentConfig, getAgentConfig, type AgentType } from './agentConfigStore';
 
 export type RuntimeAgentType = AgentType;
 

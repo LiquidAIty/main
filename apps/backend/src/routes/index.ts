@@ -20,11 +20,11 @@ import coder from './coder.routes';
 import knowgraphRoutes from './knowgraph.routes';
 import projectsRoutes from './projects.routes';
 import decksRoutes from './decks.routes';
-import kgRoutes from './v2/kg.routes';
-import devRoutes from './v2/dev.routes';
-import worldsignalRoutes from './v2/worldsignal.routes';
-import knowledgeSeedRoutes from '../v3/routes/knowledgeSeed.routes';
-import mediaVideoRoutes from '../v3/routes/mediaVideo.routes';
+import kgRoutes from './kg.routes';
+import devRoutes from './dev.routes';
+import worldsignalRoutes from './worldsignal.routes';
+import knowledgeSeedRoutes from './knowledgeSeed.routes';
+import mediaVideoRoutes from './mediaVideo.routes';
 
 const router = Router();
 

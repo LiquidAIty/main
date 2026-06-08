@@ -5,7 +5,7 @@ import {
   getV3ProjectBlob,
   saveDeckDocument,
   saveDeckRun,
-} from '../v3/decks/store';
+} from '../decks/store';
 import { executeDeck } from '../decks/deckRuntime';
 import type {
   AgentTemplate,
@@ -16,7 +16,7 @@ import type {
   MissionRunStatus,
   MissionSpec,
   PromptTemplate,
-} from '../v3/types';
+} from '../types';
 
 const router = Router();
 

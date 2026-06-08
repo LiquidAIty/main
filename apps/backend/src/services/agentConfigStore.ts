@@ -1,5 +1,5 @@
-import { pool } from '../../db/pool';
-import { MODEL_REGISTRY, REPO_DEFAULT_MODEL_KEY } from '../../llm/models.config';
+import { pool } from '../db/pool';
+import { MODEL_REGISTRY, REPO_DEFAULT_MODEL_KEY } from '../llm/models.config';
 
 export type AgentType =
   | 'llm_chat'
