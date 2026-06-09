@@ -766,6 +766,7 @@ def _build_team(model_client: object, response_policy: str, max_research_tasks: 
                 "Convergence rules:",
                 "- finish now using the information already in the conversation",
                 "- finalResponseText: natural response, ask clarifying questions if needed",
+                "- For generic greetings ('hello', 'test', 'check'), reply briefly and ask what the user wants to do.",
                 "- answer the user directly, not the system",
                 "- do not restate the whole system or context",
                 "- remove filler and repetition",
@@ -1313,7 +1314,7 @@ async def orchestrate_context_pack(context: ContextPack) -> OrchestratorRunRespo
                     "Use the compact context below as the single execution context.",
                     "One handoff to each worker is usually enough.",
                     "Do not repeat the context to each other.",
-                    "Produce the final answer plus structured writes for plan/wiki, blackboard, ThinkGraph, and KnowGraph.",
+                    "Produce the final answer plus structured writes for plan/wiki and blackboard. Do not extract graph data.",
                     "",
                     _context_payload_json(context),
                 ]
