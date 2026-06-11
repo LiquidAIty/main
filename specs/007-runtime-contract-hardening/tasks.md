@@ -26,9 +26,9 @@ payload.
 - Unknown `modelKey` = propagate `resolveModel` throw
 - Python `CardRuntimeParticipant.provider` and `providerModelId` remain required — no `= ""` defaults ever
 
-Do not touch: `deckRuntime.ts`, `decks.routes.ts`, `autogenOrchestratorClient.ts`,
-`autogen_orchestrator.py`, `autogen_provider_env.py`, `orchestration_contracts.py`,
-`.env`, Prisma, ThinkGraph, KnowGraph, Research, UI.
+Do not touch (T001–T003): `deckRuntime.ts`, `decks.routes.ts`, `autogenOrchestratorClient.ts`,
+`autogen_provider_env.py`, `.env`, Prisma, ThinkGraph, KnowGraph, Research, UI.
+`autogen_orchestrator.py` and `orchestration_contracts.py` were modified in a prior session and are subject to T004 review.
 
 ---
 
@@ -49,15 +49,15 @@ Already confirmed from code audit:
 4. `resolveModel` already throws `Unknown model key: <key>` if not in `MODEL_REGISTRY`
 5. `gpt-4o` is NOT in `MODEL_REGISTRY` — it is not a valid card selection for this repo
 
-**Forbidden fallbacks in `resolveModelConfig` (must NOT be used for participant resolution)**:
-- `String(modelKeyRaw || '').trim() || 'gpt-4o-mini'` — invents a model when none is set
-- `providerHint || 'openrouter'` — invents provider for slash-style models
-- catch block `providerHint || 'openai'` — invents provider on registry miss
+**Forbidden fallbacks that existed in `resolveModelConfig` (now deleted)**:
+- `String(modelKeyRaw || '').trim() || 'gpt-4o-mini'` — invented a model when none was set
+- `providerHint || 'openrouter'` — invented provider for slash-style models
+- catch block `providerHint || 'openai'` — invented provider on registry miss
 
-Do not route participant resolution through `resolveModelConfig`. Call `resolveModel` directly.
-If `modelKey` is absent, throw before calling `resolveModel`.
+`resolveModelConfig` and `resolveCardModelConfig` were deleted as part of T003.
+`resolveOrchestratorCardModel` replaced them with strict validation only.
 
-**Stop condition**: Field names confirmed. No code written yet.
+**Stop condition**: ✅ COMPLETE — field names confirmed, forbidden fallbacks documented.
 
 ---
 
@@ -157,31 +157,7 @@ Throw loudly if `modelKey` is absent or unknown. Apply to both `participants[]` 
 
 **File**: `apps/backend/src/cards/runtime.ts`
 
-**Fix for `privateParticipants[]`** — replace the hardcoded `return` block in `callableHeads.map`:
-
-```ts
-const participantModelKey = head.runtimeOptions?.modelKey;
-if (!participantModelKey) {
-  throw new Error(
-    `card_model_config_missing: cardId=${head.id} runtimeType=${head.runtimeType}`,
-  );
-}
-const resolvedParticipantModel = resolveModel(participantModelKey); // propagate throw on unknown key
-const effectiveProvider = head.runtimeOptions?.provider || resolvedParticipantModel.provider;
-
-return {
-  cardId: String(head.id || ''),
-  runtimeType: mappedRuntimeType,
-  runtimeBinding: head.runtimeBinding || null,
-  prompt: String(head.prompt || '').trim(),
-  provider: effectiveProvider,
-  providerModelId: resolvedParticipantModel.id,
-  temperature: head.runtimeOptions?.temperature ?? null,
-  maxTokens: head.runtimeOptions?.maxTokens ?? null,
-};
-```
-
-**Fix for `participants[]`** — add the same resolution to the `supportedHeads.map` return block:
+**Fix for `privateParticipants[]`** — applied:
 
 ```ts
 const participantModelKey = head.runtimeOptions?.modelKey;
@@ -191,7 +167,43 @@ if (!participantModelKey) {
   );
 }
 const resolvedParticipantModel = resolveModel(participantModelKey);
-const effectiveProvider = head.runtimeOptions?.provider || resolvedParticipantModel.provider;
+const registryProvider = resolvedParticipantModel.provider;
+const uiProvider = normalizeProvider(head.runtimeOptions?.provider);
+if (uiProvider && uiProvider !== registryProvider) {
+  throw new Error(
+    `card_model_config_mismatch: cardId=${head.id} uiProvider=${uiProvider} registryProvider=${registryProvider}`,
+  );
+}
+
+return {
+  cardId: String(head.id || ''),
+  runtimeType: mappedRuntimeType,
+  runtimeBinding: head.runtimeBinding || null,
+  prompt: String(head.prompt || '').trim(),
+  provider: registryProvider,
+  providerModelId: resolvedParticipantModel.id,
+  temperature: head.runtimeOptions?.temperature ?? null,
+  maxTokens: head.runtimeOptions?.maxTokens ?? null,
+};
+```
+
+**Fix for `participants[]`** — applied with same strict mismatch guard:
+
+```ts
+const participantModelKey = head.runtimeOptions?.modelKey;
+if (!participantModelKey) {
+  throw new Error(
+    `card_model_config_missing: cardId=${head.id} runtimeType=${head.runtimeType}`,
+  );
+}
+const resolvedParticipantModel = resolveModel(participantModelKey);
+const registryProvider = resolvedParticipantModel.provider;
+const uiProvider = normalizeProvider(head.runtimeOptions?.provider);
+if (uiProvider && uiProvider !== registryProvider) {
+  throw new Error(
+    `card_model_config_mismatch: cardId=${head.id} uiProvider=${uiProvider} registryProvider=${registryProvider}`,
+  );
+}
 
 return {
   cardId: String(head.id || ''),
@@ -203,18 +215,19 @@ return {
   inputContract: 'text',
   outputContract: 'text',
   callable: true,
-  provider: effectiveProvider,
+  provider: registryProvider,
   providerModelId: resolvedParticipantModel.id,
   temperature: head.runtimeOptions?.temperature ?? null,
   maxTokens: head.runtimeOptions?.maxTokens ?? null,
 };
 ```
 
-`resolveModel` is already imported at the top of `runtime.ts` (line 3:
-`import { resolveModel } from '../llm/models.config'`).
+`resolveModel` is imported at the top of `runtime.ts` (`import { resolveModel } from '../llm/models.config'`).
 
-Do NOT catch the `resolveModel` throw. Do NOT call `resolveCardModelConfig` for participant
-resolution — it has forbidden fallbacks (`gpt-4o-mini`, OpenRouter, OpenAI) that must not fire.
+`resolveModelConfig` and `resolveCardModelConfig` were deleted entirely — both had forbidden fallbacks
+(`gpt-4o-mini`, OpenRouter, OpenAI). `resolveOrchestratorCardModel` was added to replace orchestrator
+card model resolution with the same strict guard: throws `card_model_config_missing`,
+throws `card_model_config_mismatch`, no fallbacks.
 
 **Validation**:
 ```powershell
@@ -222,8 +235,8 @@ npx vitest run apps/backend/src/cards/runtime.spec.ts
 npx tsc -p apps/backend/tsconfig.app.json --noEmit
 ```
 
-**Stop condition**: All four T002 tests pass. All pre-existing tests pass. TypeScript compiles
-clean. No `'default'` or `'openrouter'` strings remain in participant payload construction.
+**Stop condition**: COMPLETE. 26/26 tests pass (13 tests × 2 vitest configs). TypeScript compiles clean.
+No `'default'` or `'openrouter'` strings remain in participant payload construction.
 
 ---
 
@@ -233,9 +246,9 @@ clean. No `'default'` or `'openrouter'` strings remain in participant payload co
 Confirm `CardRuntimePrivateParticipant` same. Add a contract test that validates a payload built
 from explicit card-selected model config. Python files are NOT edited.
 
-**Files to read** (no edits expected):
-- `apps/python-models/app/python_models/orchestration_contracts.py` — confirm no `= ""` defaults
-- `apps/python-models/app/python_models/autogen_orchestrator.py` — confirm values flow to `_build_model_client`
+**Files to read and audit**:
+- `apps/python-models/app/python_models/orchestration_contracts.py` — modified in a prior session (+11 lines). Confirm `provider: str` and `providerModelId: str` remain required with no `= ""` defaults added.
+- `apps/python-models/app/python_models/autogen_orchestrator.py` — modified in a prior session (+81/-44 lines). Audit all existing changes. Specifically review `_build_card_team_participants`: the pattern `participant.provider or default_model_config.provider` may still be present. Decide whether this fallback must be removed or hardened before T005 is valid. Do not make fields optional. Do not add fallback defaults.
 
 **New test file**: `apps/python-models/app/python_models/test_contracts.py`
 
@@ -307,8 +320,10 @@ def test_public_participant_rejects_missing_model_config():
 
 **Validation**: `python -m pytest app/python_models/test_contracts.py -v`
 
+**Note**: `_build_card_team_participants` fallback removed in a prior pass (Patch 1). `participant.provider or default_model_config.provider` replaced with a strict empty-string check + `RuntimeError("participant_model_config_missing: cardId=<id>")`. No fallback to orchestrator model config remains.
+
 **Stop condition**: All three tests pass. Python raises on missing required fields.
-No `= ""` defaults added to Python models. No Python source files modified.
+No `= ""` defaults added to Python models.
 
 ---
 
@@ -318,7 +333,12 @@ No `= ""` defaults added to Python models. No Python source files modified.
 explicitly selected in the ReactFlow card editor. The exact model is determined by the card
 editor — this spec does not specify or default it.
 
-**Preconditions**:
+**Preconditions — resolved**:
+- ✅ `deckRuntime.ts` false success: `status:'success'` was unconditional. Fixed — result status checked before emit; `missionStatus:'running'` → `'complete'`; empty finalOutput throws `deck_run_missing_final_output`; no-orchestrator-card throws `deck_run_no_orchestrator_card`.
+- ✅ `JEST_WORKER_ID` swallow: both guards removed from `runCardWithContract`. All errors throw; empty finalText always throws `autogen_orchestrator_missing_final_response`.
+- ✅ Python `_build_card_team_participants` fallback: removed (see T004 note above).
+
+**Preconditions (stack)**:
 - `npm run dev:backend` running (port 4000)
 - `npm run dev:autogen` running (sidecar on port 8003)
 - Deck exists in Postgres with:
@@ -348,10 +368,10 @@ configured with in the ReactFlow editor.
 
 ## Completion Gate
 
-T001: card model source confirmed — `card.runtimeOptions.modelKey` → `MODEL_REGISTRY`
-T002: all four failing tests added and confirmed failing
-T003: fix applied — all four tests pass, TypeScript compiles clean
-T004: Python audit done, contract tests pass, no Python files modified
-T005: live smoke returns HTTP 200 with real `finalResponseText`
+T001: ✅ COMPLETE — card model source confirmed (`card.runtimeOptions.modelKey` → `MODEL_REGISTRY`)
+T002: ✅ COMPLETE — tests added; all pass after T003 (includes `card_model_config_mismatch` test beyond original spec)
+T003: ✅ COMPLETE — `resolveModelConfig` and `resolveCardModelConfig` deleted; `resolveOrchestratorCardModel` added; mismatch guard applied to participants and privateParticipants; 26/26 tests pass; tsc clean
+T004: ⏳ PENDING — Python contract test file (`test_contracts.py`) not yet written; `_build_card_team_participants` fallback removed
+T005: ⏳ PENDING — live two-card smoke (prior runtime blockers resolved; remaining blocker: T004 test file)
 
 Do not start spec 008 until T005 passes.

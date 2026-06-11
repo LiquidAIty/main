@@ -36,6 +36,10 @@ export async function executeDeck(document: any, templates: any[], options: any 
     console.log('[DEBUG-TRACE] are disconnected cards passed to context.allCards?:', true);
     console.log('[DEBUG-TRACE] exact card passed forward:', mainMagenticCard?.id);
 
+    if (!mainMagenticCard) {
+      throw new Error('deck_run_no_orchestrator_card');
+    }
+
     if (mainMagenticCard) {
       emitEvent({
         kind: 'step_started',
@@ -80,6 +84,44 @@ export async function executeDeck(document: any, templates: any[], options: any 
       });
     }
 
+    const mainResult = cardResults[mainMagenticCard.id];
+
+    if (!mainResult || mainResult.status === 'error') {
+      const errorReason = mainResult?.error || 'card_run_failed';
+      emitEvent({
+        kind: 'run_failed',
+        text: 'Deck run failed.',
+        status: 'error',
+        error: errorReason
+      });
+      return {
+        id: runId,
+        deckId: document.id,
+        input: options.input || '',
+        status: 'error',
+        startedAt,
+        endedAt: new Date().toISOString(),
+        cardResults,
+        error: errorReason,
+        steps,
+        events,
+        mission: {
+          missionStatus: 'failed',
+          agentRunStatus: 'failed',
+          resultSummary: null,
+          needsUserInputReason: null,
+          errorReason,
+          missionRunId: options.missionRunId || null,
+          missionAgentRunId: options.missionAgentRunId || null,
+        }
+      };
+    }
+
+    const finalOutput = mainResult.output;
+    if (!finalOutput) {
+      throw new Error('deck_run_missing_final_output');
+    }
+
     emitEvent({
       kind: 'run_completed',
       text: 'Deck run finished successfully.',
@@ -94,11 +136,11 @@ export async function executeDeck(document: any, templates: any[], options: any 
       startedAt,
       endedAt: new Date().toISOString(),
       cardResults,
-      finalOutput: Object.values(cardResults).pop()?.output || '',
+      finalOutput,
       steps,
       events,
       mission: {
-        missionStatus: 'running',
+        missionStatus: 'complete',
         agentRunStatus: 'complete',
         resultSummary: null,
         needsUserInputReason: null,

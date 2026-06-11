@@ -325,12 +325,10 @@ export async function runCardWithContract(
         console.log('[runCardWithContract] parsed finalResponseText exists:', !!finalText);
     } catch (e: any) {
         console.error('[runCardWithContract] Exact caught error message:', e?.message || e);
-        if (!process.env.JEST_WORKER_ID) {
-            throw e;
-        }
+        throw e;
     }
-    
-    if (!finalText && !process.env.JEST_WORKER_ID) {
+
+    if (!finalText) {
       throw new Error('autogen_orchestrator_missing_final_response');
     }
 

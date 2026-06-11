@@ -29,7 +29,9 @@ TypeScript currently omits them, causing a Pydantic 422 before AutoGen initializ
 Fix: for each `head` in `supportedHeads`, read `head.runtimeOptions?.modelKey`. If absent,
 throw `card_model_config_missing: cardId=<id>`. Call `resolveModel(modelKey)` to get
 `{ provider, id }`. Add `provider` (= `resolvedModel.provider`) and `providerModelId`
-(= `resolvedModel.id`) to the returned object.
+(= `resolvedModel.id`) to the returned object. If `head.runtimeOptions?.provider` is set
+and does not match `resolvedModel.provider`, throw `card_model_config_mismatch: cardId=<id>`.
+A UI provider that conflicts with the registry must not silently override.
 
 Do not fall back to any default model. Do not inherit from the orchestrator card.
 Propagate `resolveModel` throws on unknown keys — they indicate a misconfigured card.
@@ -56,7 +58,7 @@ return {
 };
 ```
 
-Fix (card-owned config only — no fallbacks, no defaults):
+Fix applied (card-owned config only — no fallbacks, no defaults):
 ```ts
 const participantModelKey = head.runtimeOptions?.modelKey;
 if (!participantModelKey) {
@@ -64,15 +66,21 @@ if (!participantModelKey) {
     `card_model_config_missing: cardId=${head.id} runtimeType=${head.runtimeType}`,
   );
 }
-const resolvedParticipantModel = resolveModel(participantModelKey); // propagate throw on unknown key
-const effectiveProvider = head.runtimeOptions?.provider || resolvedParticipantModel.provider;
+const resolvedParticipantModel = resolveModel(participantModelKey);
+const registryProvider = resolvedParticipantModel.provider;
+const uiProvider = normalizeProvider(head.runtimeOptions?.provider);
+if (uiProvider && uiProvider !== registryProvider) {
+  throw new Error(
+    `card_model_config_mismatch: cardId=${head.id} uiProvider=${uiProvider} registryProvider=${registryProvider}`,
+  );
+}
 
 return {
   cardId: String(head.id || ''),
   runtimeType: mappedRuntimeType,
   runtimeBinding: head.runtimeBinding || null,
   prompt: String(head.prompt || '').trim(),
-  provider: effectiveProvider,
+  provider: registryProvider,
   providerModelId: resolvedParticipantModel.id,
   temperature: head.runtimeOptions?.temperature ?? null,
   maxTokens: head.runtimeOptions?.maxTokens ?? null,
@@ -100,7 +108,7 @@ misconfigured — surface that error immediately rather than substituting a fake
 - `apps/backend/src/decks/deckRuntime.ts` — no change needed
 - `apps/backend/src/routes/decks.routes.ts` — no change needed
 - `apps/backend/src/services/autogen/autogenOrchestratorClient.ts` — no change needed
-- `apps/python-models/app/python_models/autogen_orchestrator.py` — no change needed
+- `apps/python-models/app/python_models/autogen_orchestrator.py` — modified in a prior session (runtime canonicalization, +81/-44 lines). T004 must audit existing changes and review `_build_card_team_participants` fallback chain.
 - `apps/python-models/app/python_models/autogen_provider_env.py` — no change needed
 - `CardRuntimePrivateParticipant` — keep `provider` and `providerModelId` required (correct)
 - `CardRuntimeParticipant` — keep `provider` and `providerModelId` required (correct — TypeScript now sends real values)

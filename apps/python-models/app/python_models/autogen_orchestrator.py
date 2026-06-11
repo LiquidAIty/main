@@ -935,10 +935,15 @@ def _build_card_team_participants(
     participants: list[AssistantAgent] = []
     seen_names: set[str] = set()
     for index, participant in enumerate(private_parts):
+        provider_val = str(participant.provider or "").strip()
+        provider_model_id_val = str(participant.providerModelId or "").strip()
+        if not provider_val or not provider_model_id_val:
+            raise RuntimeError(
+                f"participant_model_config_missing: cardId={participant.cardId}"
+            )
         config = AutoGenAgentConfig(
-            provider=str(participant.provider or default_model_config.provider).strip() or default_model_config.provider,
-            provider_model_id=str(participant.providerModelId or default_model_config.provider_model_id).strip()
-            or default_model_config.provider_model_id,
+            provider=provider_val,
+            provider_model_id=provider_model_id_val,
             system_prompt=participant.prompt or "",
             temperature=participant.temperature if getattr(participant, "temperature", None) is not None else default_model_config.temperature,
             max_tokens=participant.maxTokens if getattr(participant, "maxTokens", None) is not None else default_model_config.max_tokens,

@@ -1,8 +1,8 @@
 # Spec 007: Runtime Contract Hardening for Card-Owned Model Config
 
-**Status**: Ready for implementation.
+**Status**: Partially implemented. T001–T003 TypeScript runtime hardening complete. T004 Python contract proof pending. T005 live two-card smoke pending.
 **Dependency**: Spec 006 complete. Canonical runtime live.
-**Blocks**: Spec 008 (ThinkGraph). Nothing downstream is safe until this is proven.
+**Blocks**: Spec 008 (ThinkGraph). Nothing downstream is safe until T005 passes.
 
 ---
 
