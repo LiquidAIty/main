@@ -371,7 +371,7 @@ configured with in the ReactFlow editor.
 T001: ✅ COMPLETE — card model source confirmed (`card.runtimeOptions.modelKey` → `MODEL_REGISTRY`)
 T002: ✅ COMPLETE — tests added; all pass after T003 (includes `card_model_config_mismatch` test beyond original spec)
 T003: ✅ COMPLETE — `resolveModelConfig` and `resolveCardModelConfig` deleted; `resolveOrchestratorCardModel` added; mismatch guard applied to participants and privateParticipants; 26/26 tests pass; tsc clean
-T004: ⏳ PENDING — Python contract test file (`test_contracts.py`) not yet written; `_build_card_team_participants` fallback removed
-T005: ⏳ PENDING — live two-card smoke (prior runtime blockers resolved; remaining blocker: T004 test file)
+T004: ✅ COMPLETE — Python contract test file added; 12/12 tests pass; required participant model fields and strict builder behavior verified
+T005: ⏳ PENDING — live two-card smoke (T004 complete; remaining blocker: live stack and configured two-card deck)
 
 Do not start spec 008 until T005 passes.
