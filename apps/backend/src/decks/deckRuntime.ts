@@ -27,48 +27,57 @@ export async function executeDeck(document: any, templates: any[], options: any 
       status: 'running'
     });
 
-    for (const card of document.nodes) {
-      if (card.runtimeType === 'magentic_one') {
-        emitEvent({
-          kind: 'step_started',
-          cardId: card.id,
-          text: `Starting card ${card.title || card.id}...`,
-          progressText: `Starting card ${card.title || card.id}...`
-        });
+    const magenticCards = (document.nodes || []).filter((n: any) => n.runtimeType === 'magentic_one');
+    const mainMagenticCard = magenticCards[0];
 
-        const result = await runCardWithContract(card, {}, options.input || '', {
-          deckId: document.id,
-          projectId: options.projectId,
-          allCards: document.nodes,
-          allEdges: document.edges,
-          allTemplates: templates,
-          previousOutput: options.input || ''
-        });
-        cardResults[card.id] = result;
-        steps.push({
-          id: `step_${steps.length + 1}`,
-          executionId: `${card.id}::single`,
-          cardId: card.id,
-          templateId: card.templateId,
-          title: card.title,
-          input: options.input || '',
-          runtimeType: card.runtimeType,
-          output: result.output,
-          status: result.status,
-          error: result.error,
-          startedAt: result.startedAt,
-          endedAt: result.endedAt
-        });
+    console.log('[DEBUG-TRACE] executeDeck selected cards:', magenticCards.map((c:any) => c.id));
+    console.log('[DEBUG-TRACE] execution method: direct Magentic-One run (ExecutionChain is deleted)');
+    console.log('[DEBUG-TRACE] is looping all cards?:', false);
+    console.log('[DEBUG-TRACE] are disconnected cards passed to context.allCards?:', true);
+    console.log('[DEBUG-TRACE] exact card passed forward:', mainMagenticCard?.id);
 
-        emitEvent({
-          kind: result.status === 'error' ? 'step_failed' : 'step_completed',
-          cardId: card.id,
-          text: result.status === 'error' ? `Card ${card.title || card.id} failed.` : `Card ${card.title || card.id} completed.`,
-          progressText: result.status === 'error' ? 'Failed.' : 'Completed.',
-          outputSummary: result.output,
-          error: result.error
-        });
-      }
+    if (mainMagenticCard) {
+      emitEvent({
+        kind: 'step_started',
+        cardId: mainMagenticCard.id,
+        text: `Starting orchestrator (${mainMagenticCard.title || mainMagenticCard.id})...`,
+        progressText: `Starting AutoGen...`
+      });
+
+      const result = await runCardWithContract(mainMagenticCard, {}, options.input || '', {
+        deckId: document.id,
+        projectId: options.projectId,
+        allCards: document.nodes, 
+        allEdges: document.edges,
+        allTemplates: templates,
+        previousOutput: options.input || '',
+        workspaceObjectContext: undefined 
+      });
+
+      cardResults[mainMagenticCard.id] = result;
+      steps.push({
+        id: `step_${steps.length + 1}`,
+        executionId: `${mainMagenticCard.id}::single`,
+        cardId: mainMagenticCard.id,
+        templateId: mainMagenticCard.templateId,
+        title: mainMagenticCard.title,
+        input: options.input || '',
+        runtimeType: mainMagenticCard.runtimeType,
+        output: result.output,
+        status: result.status,
+        error: result.error,
+        startedAt: result.startedAt,
+        endedAt: result.endedAt
+      });
+
+      emitEvent({
+        kind: result.status === 'error' ? 'step_failed' : 'step_completed',
+        cardId: mainMagenticCard.id,
+        text: result.status === 'error' ? `Orchestrator failed.` : `Orchestrator completed.`,
+        progressText: result.status === 'error' ? 'Failed.' : 'Completed.',
+        outputSummary: result.output,
+        error: result.error
+      });
     }
 
     emitEvent({

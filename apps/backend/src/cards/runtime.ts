@@ -13,64 +13,34 @@ function coerceNumber(value: unknown, fallback: number | null): number | null {
   return Number.isFinite(num) ? num : fallback;
 }
 
-export function resolveModelConfig(
-  modelKeyRaw: unknown,
-  providerHintRaw: unknown,
-  temperatureRaw: unknown,
-  maxTokensRaw: unknown,
-  scope: string,
-): any {
-  const providerHint = normalizeProvider(providerHintRaw);
-  const modelKey = String(modelKeyRaw || '').trim() || 'gpt-4o-mini';
-  let maxTokens = coerceNumber(maxTokensRaw, null);
-  if (maxTokens !== null && maxTokens <= 0) {
-    maxTokens = null;
+function resolveOrchestratorCardModel(card: any): {
+  provider: string;
+  modelKey: string;
+  providerModelId: string;
+  temperature: number | null;
+  maxTokens: number | null;
+} {
+  const modelKey = card.runtimeOptions?.modelKey;
+  if (!modelKey) {
+    throw new Error(
+      `card_model_config_missing: cardId=${card.id} runtimeType=${card.runtimeType}`,
+    );
   }
-
-  if (modelKey.includes('/')) {
-    const provider = providerHint || 'openrouter';
-    return {
-      provider,
-      modelKey,
-      providerModelId: modelKey,
-      temperature: coerceNumber(temperatureRaw, null),
-      maxTokens,
-    };
+  const resolved = resolveModel(modelKey);
+  const registryProvider = resolved.provider;
+  const uiProvider = normalizeProvider(card.runtimeOptions?.provider);
+  if (uiProvider && uiProvider !== registryProvider) {
+    throw new Error(
+      `card_model_config_mismatch: cardId=${card.id} uiProvider=${uiProvider} registryProvider=${registryProvider}`,
+    );
   }
-
-  try {
-    const resolved = resolveModel(modelKey);
-    return {
-      provider: resolved.provider,
-      modelKey,
-      providerModelId: resolved.id,
-      temperature: coerceNumber(temperatureRaw, null),
-      maxTokens,
-    };
-  } catch (error: any) {
-    return {
-      provider: providerHint || 'openai',
-      modelKey,
-      providerModelId: modelKey,
-      temperature: coerceNumber(temperatureRaw, null),
-      maxTokens,
-    };
-  }
-}
-
-export function resolveCardModelConfig(
-  card: any,
-  effectiveAgent: any,
-  scope: string,
-): any {
-  const runtimeOptions = card.runtimeOptions || {};
-  return resolveModelConfig(
-    runtimeOptions.modelKey ?? effectiveAgent?.model,
-    runtimeOptions.provider ?? effectiveAgent?.provider,
-    runtimeOptions.temperature ?? effectiveAgent?.temperature,
-    runtimeOptions.maxTokens ?? effectiveAgent?.maxTokens,
-    scope,
-  );
+  return {
+    provider: registryProvider,
+    modelKey,
+    providerModelId: resolved.id,
+    temperature: coerceNumber(card.runtimeOptions?.temperature, null),
+    maxTokens: coerceNumber(card.runtimeOptions?.maxTokens, null),
+  };
 }
 
 function summarizeText(value: string | null | undefined, maxLength = 220): string {
@@ -148,20 +118,68 @@ export function buildPythonAutoGenCardRuntimePayload(
     if (mappedRuntimeType === 'local_coder') {
       mappedRuntimeType = 'assistant_agent';
     }
+
+    const participantModelKey = head.runtimeOptions?.modelKey;
+    if (!participantModelKey) {
+      throw new Error(
+        `card_model_config_missing: cardId=${head.id} runtimeType=${head.runtimeType}`,
+      );
+    }
+    const resolvedModel = resolveModel(participantModelKey);
+    const registryProvider = resolvedModel.provider;
+    const uiProvider = normalizeProvider(head.runtimeOptions?.provider);
+    if (uiProvider && uiProvider !== registryProvider) {
+      throw new Error(
+        `card_model_config_mismatch: cardId=${head.id} uiProvider=${uiProvider} registryProvider=${registryProvider}`,
+      );
+    }
+
     return {
       cardId: String(head.id || ''),
       title: String(head.title || 'Agent'),
       runtimeType: mappedRuntimeType,
-      runtimeBinding: head.runtimeBinding || null,
       role: 'assistant',
-      tools: [],
-      skills: [],
-      personas: [],
-      knowledgeSources: [],
-      connectedTo: card.id,
+      summary: `Participant ${head.title || 'Agent'}`,
+      allowedActions: [],
+      inputContract: 'text',
+      outputContract: 'text',
+      callable: true,
+      provider: registryProvider,
+      providerModelId: resolvedModel.id,
+      temperature: head.runtimeOptions?.temperature ?? null,
+      maxTokens: head.runtimeOptions?.maxTokens ?? null,
+    };
+  });
+
+  const privateParticipants = callableHeads.map((head) => {
+    let mappedRuntimeType = 'assistant_agent';
+    if (head.runtimeType === 'research_agent' || head.templateId?.includes('research')) mappedRuntimeType = 'research_agent';
+    if (head.runtimeType === 'planner_agent' || head.templateId?.includes('plan')) mappedRuntimeType = 'planner_agent';
+
+    const participantModelKey = head.runtimeOptions?.modelKey;
+    if (!participantModelKey) {
+      throw new Error(
+        `card_model_config_missing: cardId=${head.id} runtimeType=${head.runtimeType}`,
+      );
+    }
+    const resolvedModel = resolveModel(participantModelKey);
+    const registryProvider = resolvedModel.provider;
+    const uiProvider = normalizeProvider(head.runtimeOptions?.provider);
+    if (uiProvider && uiProvider !== registryProvider) {
+      throw new Error(
+        `card_model_config_mismatch: cardId=${head.id} uiProvider=${uiProvider} registryProvider=${registryProvider}`,
+      );
+    }
+
+    return {
+      cardId: String(head.id || ''),
+      runtimeType: mappedRuntimeType,
+      runtimeBinding: head.runtimeBinding || null,
       prompt: String(head.prompt || '').trim(),
-      provider: 'openrouter',
-      providerModelId: 'default',
+      provider: registryProvider,
+      providerModelId: resolvedModel.id,
+      temperature: head.runtimeOptions?.temperature ?? null,
+      maxTokens: head.runtimeOptions?.maxTokens ?? null,
     };
   });
 
@@ -217,7 +235,7 @@ export function buildPythonAutoGenCardRuntimePayload(
       open_questions: [],
       findings: [],
     },
-    workspaceObjectContext: context.workspaceObjectContext,
+    workspaceObjectContext: context.workspaceObjectContext ?? undefined,
     cardRuntime: {
       cardId: String(card.id || ''),
       title: String(card.title || 'Magentic Agent'),
@@ -225,19 +243,20 @@ export function buildPythonAutoGenCardRuntimePayload(
       prompt: String(card.prompt || '').trim(),
       runtimeOptions: safeRuntimeOptions,
       participants,
+      privateParticipants,
       runtimeScope: {
         projectId: String(context.projectId || ''),
         deckId: String(context.deckId || ''),
         magenticCardId: card.id,
-        visibleNodeIds: (context.allCards || []).map((n: any) => n.id),
-        visibleEdgeIds: (context.allEdges || []).map((e: any) => e.id),
+        visibleNodeIds: [card.id, ...callableHeads.map((h) => h.id)],
+        visibleEdgeIds: (context.allEdges || [])
+          .filter((e: any) => e.source === card.id || e.target === card.id)
+          .map((e: any) => e.id),
         resolvedMagenticOptionIds: callableHeads.map((h) => h.id),
         selectedWorkflowNodeIds: [],
-        pythonWorkerIds: participants.map((p) => p.cardId),
+        pythonWorkerIds: callableHeads.map((h) => h.id),
         calledAgentIds: [],
-        excludedAgentIds: (context.allCards || [])
-          .filter((n: any) => n.id !== card.id && !callableHeads.find(h => h.id === n.id))
-          .map((n: any) => ({ id: n.id, reason: 'not connected by magentic_option or unsupported type' })),
+        excludedAgentIds: [],
       }
     }
   };
@@ -262,7 +281,7 @@ export async function runCardWithContract(
       throw new Error('No valid locked research runtime path resolved. Connect or select the baseline research agents, or explicitly enter discovery_proposal mode.');
     }
     
-    const modelConfig = resolveCardModelConfig(card, effectiveAgent, `card_${card.id}`);
+    const modelConfig = resolveOrchestratorCardModel(card);
 
     const payload = buildPythonAutoGenCardRuntimePayload(
       card,
@@ -277,6 +296,24 @@ export async function runCardWithContract(
     // Normally we would call orchestrateWithAutoGen, but here we'll mock success or rely on the real service
     let finalText = '';
     try {
+        const payloadStr = JSON.stringify(payload);
+        console.log('[DEBUG-TRACE] runCardWithContract exact payload snapshot:');
+        console.log('[DEBUG-TRACE] task/user input:', payload.userText);
+        console.log('[DEBUG-TRACE] participants public manifest:', JSON.stringify(payload.cardRuntime?.participants || []));
+        console.log('[DEBUG-TRACE] privateParticipants keys only:', (payload.cardRuntime?.privateParticipants || []).map((p:any) => p.cardId));
+        console.log('[DEBUG-TRACE] visibleNodeIds:', payload.cardRuntime?.runtimeScope?.visibleNodeIds);
+        console.log('[DEBUG-TRACE] visibleEdgeIds:', payload.cardRuntime?.runtimeScope?.visibleEdgeIds);
+        console.log('[DEBUG-TRACE] workspaceObjectContext present:', !!payload.workspaceObjectContext);
+        console.log('[DEBUG-TRACE] availableCanvasAgents present:', !!(payload.cardRuntime as any)?.availableCanvasAgents);
+        console.log('[DEBUG-TRACE] excludedAgentIds present:', !!payload.cardRuntime?.runtimeScope?.excludedAgentIds);
+        
+        console.log('[DEBUG-TRACE] Payload string contains forbidden "sample_excerpt_1":', payloadStr.includes('sample_excerpt_1'));
+        console.log('[DEBUG-TRACE] Payload string contains forbidden "DrugX":', payloadStr.includes('DrugX'));
+        console.log('[DEBUG-TRACE] Payload string contains forbidden "HbA1c":', payloadStr.includes('HbA1c'));
+        console.log('[DEBUG-TRACE] Payload string contains forbidden "Provisional ThinkGraph extraction":', payloadStr.includes('Provisional ThinkGraph extraction'));
+        console.log('[DEBUG-TRACE] Payload string contains forbidden "Neo4j:":', payloadStr.includes('Neo4j:'));
+        console.log('[DEBUG-TRACE] Payload string contains forbidden "Research Agent:":', payloadStr.includes('Research Agent:'));
+        
         console.log('[runCardWithContract] canonical executeDeck entered.');
         console.log('[runCardWithContract] Sending payload to AutoGen sidecar. Keys:', Object.keys(payload));
         console.log('[runCardWithContract] Payload session:', payload.session);

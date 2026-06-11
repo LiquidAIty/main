@@ -111,6 +111,17 @@ class CardRuntimeConfig(BaseModel):
     graphFlow: dict | None = None
     runtimeScope: dict | None = None
     participants: list["CardRuntimeParticipant"] = Field(default_factory=list)
+    privateParticipants: list["CardRuntimePrivateParticipant"] = Field(default_factory=list)
+
+class CardRuntimePrivateParticipant(BaseModel):
+    cardId: str
+    runtimeType: Literal["assistant_agent", "graph_flow", "research_agent", "planner_agent"]
+    runtimeBinding: str | None = None
+    prompt: str = ""
+    provider: str
+    providerModelId: str
+    temperature: float | None = None
+    maxTokens: int | None = None
 
 
 class CardRuntimeParticipant(BaseModel):

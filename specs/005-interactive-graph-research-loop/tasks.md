@@ -1,5 +1,21 @@
 # Task Breakdown: Interactive Graph Research Loop
 
+## Status
+
+Phase 1 is complete. Phases 2–6 are superseded.
+
+The research loop is being rebuilt as a sequenced spec series starting with
+`007-runtime-contract-hardening`. Implement from that series, not from this file.
+
+Superseded by:
+- `specs/007-runtime-contract-hardening` — prove the runtime contract is real before adding anything
+- `specs/008-thinkgraph-extraction` — ThinkGraph agent from chat pairs
+- `specs/009-research-pack-planflow` — Research Pack + PlanFlow approval gate
+- `specs/010-research-agent-knowgraph` — Research Agent + KnowGraph ingestion
+- `specs/011-dual-graph-context-injection` — inject dual-graph context into Magentic-One
+
+---
+
 ## Phase 1: Magentic-One Refinement
 - `[x]` Magentic-One lightweight chat/router response implemented
 - `[x]` Remove heavy graph-output pressure from Magentic-One

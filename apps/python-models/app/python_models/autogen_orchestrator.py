@@ -790,9 +790,16 @@ def _normalize_agent_name(value: object, fallback: str) -> str:
 
 
 def _workspace_object_context_payload(context: ContextPack) -> dict[str, object]:
-    workspace_context = context.workspaceObjectContext
+    workspace_context = getattr(context, "workspaceObjectContext", None)
     if workspace_context is None:
         return {}
+    
+    # workspace_context is a dict in Pydantic V2, so handle both dict and object
+    def _get(obj, key):
+        if isinstance(obj, dict):
+            return obj.get(key)
+        return getattr(obj, key, None)
+
     payload: dict[str, object] = {}
     text_limits = {
         "activeSurface": 64,
@@ -811,19 +818,21 @@ def _workspace_object_context_payload(context: ContextPack) -> dict[str, object]
         "openObjectSummary": 400,
     }
     for key, limit in text_limits.items():
-        value = _trim_text(getattr(workspace_context, key), limit)
+        value = _trim_text(_get(workspace_context, key), limit)
         if value:
             payload[key] = value
-    if workspace_context.connectedWorkbenchAgent is not None:
-        payload["connectedWorkbenchAgent"] = bool(workspace_context.connectedWorkbenchAgent)
+            
+    if _get(workspace_context, "connectedWorkbenchAgent") is not None:
+        payload["connectedWorkbenchAgent"] = bool(_get(workspace_context, "connectedWorkbenchAgent"))
 
     is_locked_mode = context.cardRuntime is not None and getattr(context.cardRuntime, "runtimeScope", None) is not None
     keys_to_include = ("activeMagenticParticipants",) if is_locked_mode else ("activeMagenticParticipants", "availableCanvasAgents", "excludedAgents")
 
     for key in keys_to_include:
+        val = _get(workspace_context, key) or []
         values = [
             _trim_text(item, 96)
-            for item in list(getattr(workspace_context, key) or [])[:12]
+            for item in list(val)[:12]
             if _trim_text(item, 96)
         ]
         if values:
@@ -871,7 +880,7 @@ def _build_card_runtime_payload_json(context: ContextPack) -> str:
         "participants": [
             {
                 "cardId": item.cardId,
-                "title": item.title,
+                "title": getattr(item, "title", "Agent") or getattr(item, "displayName", "Agent"),
                 "runtimeType": item.runtimeType,
                 "runtimeBinding": item.runtimeBinding,
                 "role": item.role,
@@ -880,13 +889,11 @@ def _build_card_runtime_payload_json(context: ContextPack) -> str:
                 "personas": item.personas,
                 "knowledgeSources": item.knowledgeSources,
                 "connectedTo": item.connectedTo,
-                "provider": item.provider,
-                "providerModelId": item.providerModelId,
             }
             for item in runtime.participants
         ],
         "graphFlow": runtime.graphFlow or {},
-        "workspaceObjectContext": _workspace_object_context_payload(context.workspaceObjectContext),
+        "workspaceObjectContext": _workspace_object_context_payload(context),
     }
     return json.dumps(payload, ensure_ascii=True)
 
@@ -916,42 +923,58 @@ def _build_card_team_participants(
     runtime = context.cardRuntime
     if runtime is None:
         raise RuntimeError("card_runtime_missing")
-    if not runtime.participants:
+    
+    # Check both privateParticipants and participants (fallback for old payloads)
+    private_parts = runtime.privateParticipants if hasattr(runtime, "privateParticipants") and runtime.privateParticipants else runtime.participants
+
+    if not private_parts:
         raise RuntimeError(
             f"team_runtime_participants_required: runtimeType={runtime.runtimeType} cardId={runtime.cardId}"
         )
 
     participants: list[AssistantAgent] = []
     seen_names: set[str] = set()
-    for index, participant in enumerate(runtime.participants):
+    for index, participant in enumerate(private_parts):
         config = AutoGenAgentConfig(
             provider=str(participant.provider or default_model_config.provider).strip() or default_model_config.provider,
             provider_model_id=str(participant.providerModelId or default_model_config.provider_model_id).strip()
             or default_model_config.provider_model_id,
             system_prompt=participant.prompt or "",
-            temperature=participant.temperature if participant.temperature is not None else default_model_config.temperature,
-            max_tokens=participant.maxTokens if participant.maxTokens is not None else default_model_config.max_tokens,
+            temperature=participant.temperature if getattr(participant, "temperature", None) is not None else default_model_config.temperature,
+            max_tokens=participant.maxTokens if getattr(participant, "maxTokens", None) is not None else default_model_config.max_tokens,
         )
         model_client = _get_cached_model_client(cache, config)
-        name = _normalize_agent_name(participant.title or participant.cardId, f"participant_{index + 1}")
+        title = getattr(participant, "title", participant.cardId)
+        name = _normalize_agent_name(title or participant.cardId, f"participant_{index + 1}")
         if name in seen_names:
             name = _normalize_agent_name(f"{name}_{index + 1}", f"participant_{index + 1}")
         seen_names.add(name)
+        
+        # Pull role/tools from public participant list if we can find it
+        public_part = next((p for p in runtime.participants if p.cardId == participant.cardId), None)
+        role_str = f"Canvas role: {public_part.role}." if public_part and getattr(public_part, "role", None) else ""
+        tools_str = "Configured canvas tools: " + ", ".join(public_part.tools) + "." if public_part and getattr(public_part, "tools", None) else ""
+        connected_str = f"Connected to orchestrator card: {public_part.connectedTo}." if public_part and getattr(public_part, "connectedTo", None) else ""
+        
         system_message_parts = [
             str(participant.prompt or "").strip(),
-            f"Canvas role: {participant.role}." if participant.role else "",
+            role_str,
             f"Runtime binding: {participant.runtimeBinding}." if participant.runtimeBinding else "",
-            "Configured canvas tools: " + ", ".join(participant.tools) + "." if participant.tools else "",
-            f"Connected to orchestrator card: {participant.connectedTo}." if participant.connectedTo else "",
+            tools_str,
+            connected_str,
             "Stay concise and task-focused.",
             "Do not restate the whole deck, system, or user request.",
             "Contribute only the minimum useful next message for this card runtime.",
         ]
+        description_text = str(getattr(public_part, "summary", "")) if public_part else ""
+        if not description_text.strip():
+            description_text = _trim_text(participant.title or participant.cardId, 120)
+
         participants.append(
             AssistantAgent(
                 name=name,
                 model_client=model_client,
-                description=_trim_text(participant.title or participant.cardId, 120),
+                description=description_text,
                 system_message="\n\n".join(part for part in system_message_parts if part).strip(),
             )
         )
@@ -1062,11 +1085,10 @@ async def _synthesize_card_runtime_result(
             [
                 "You synthesize the final result of one LiquidAIty agent card runtime.",
                 "Return exactly one JSON object with keys: finalResponseText, blackboardEntries, plan.",
-                "thinkGraph and knowGraph are optional.",
-                "If the card was a conversational chat, leave thinkGraph and knowGraph empty. Do not invent graph data.",
-                "Keep finalResponseText natural.",
+                "Leave thinkGraph and knowGraph empty.",
+                "Do not perform graph extraction. Do not invent entity/relation/evidence summaries.",
+                "Keep finalResponseText natural and reflect only the actual conversational outcome.",
                 "blackboardEntries must be concrete and useful, at most 4 entries.",
-                "Do not narrate architecture, system behavior, or process unless the card explicitly asks for it.",
             ]
         ).strip(),
     )
@@ -1171,19 +1193,8 @@ async def _orchestrate_card_runtime_context(context: ContextPack) -> Orchestrato
         transcript = [_message_to_text(message) for message in result.messages]
 
         final_pass = await _synthesize_card_runtime_result(context, team_model_client, transcript)
-        know_graph = _ensure_knowgraph_output(
-            final_pass.know_graph,
-            final_pass.think_graph,
-            final_pass.plan,
-            max(1, min(context.maxResearchTasks, 4)),
-        )
-        blackboard_entries = _ensure_blackboard_entries(
-            final_pass.blackboard_entries,
-            final_pass.final_response_text,
-            final_pass.plan,
-            final_pass.think_graph,
-            know_graph,
-        )
+        know_graph = final_pass.know_graph
+        blackboard_entries = final_pass.blackboard_entries
         plan = final_pass.plan
         think_graph = final_pass.think_graph
         final_response_text = final_pass.final_response_text

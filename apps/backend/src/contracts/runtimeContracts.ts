@@ -78,6 +78,7 @@ export type PythonAutoGenPayloadShape = {
     prompt: string;
     runtimeOptions: Record<string, any>;
     participants: any[];
+    privateParticipants?: any[];
     runtimeScope?: RuntimeScope;
   };
 };

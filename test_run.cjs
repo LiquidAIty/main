@@ -43,9 +43,13 @@ async function runTask(input) {
     if (lastChunk.run.status === "error") {
       console.log("UI WILL SHOW => Magentic-One run failed:", lastChunk.run.error);
     } else {
-      console.log("UI WILL SHOW => Magentic-One run completed. Result:", lastChunk.run.output);
+      console.log("UI WILL SHOW => Magentic-One run completed. Result:", lastChunk.run.finalOutput);
     }
-    console.log("Trace:", !!lastChunk.run.magenticTrace ? "Returned" : "Missing");
+    const magenticCard = lastChunk.run.cardResults && lastChunk.run.cardResults["card_magentic"];
+    console.log("Trace returned:", magenticCard && magenticCard.magenticTrace ? "Yes" : "No");
+    if (magenticCard && magenticCard.raw) {
+      console.log("Raw LLM output:", JSON.stringify(magenticCard.raw, null, 2));
+    }
     console.log("-----------------------------------------");
   } else {
     console.log("Raw Response Error:", lastChunk);
