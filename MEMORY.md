@@ -6,11 +6,14 @@
 
 ## Standing Rule
 
-Use `codebase-memory-mcp` first for structural localization before reading code files.
+Refresh/rebuild the repository index, then use `codebase-memory-mcp` for structural localization
+before reading code files. If the index was not refreshed, treat its results as advisory only and
+let filesystem truth win.
 
 ## Per-Task Checklist
 
 - [ ] Identify subsystem involved.
+- [ ] Refresh/rebuild the CBM repository index and report whether it was refreshed.
 - [ ] Rank top 5 files likely controlling behavior.
 - [ ] Map inbound/outbound dependencies around the target symbol/file.
 - [ ] Read only minimum files required for exact confirmation.
@@ -36,6 +39,8 @@ Always separate output into:
 ## Guardrails
 
 - Do not skip structural step unless MCP is unavailable.
+- Do not treat `index_status: ready` as freshness proof.
+- Do not let stale CBM override direct file, Git, package, or test evidence.
 - Do not read broad directories before narrowing candidates.
 - Prefer localized edits in highest-confidence controlling files.
 

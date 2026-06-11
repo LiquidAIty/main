@@ -10,7 +10,10 @@ Read before any implementation work, in this order:
 3. `.specify/memory/constitution.md` — governance and principles
 4. Relevant `specs/*` for the task at hand
 
-Use Code-Based Memory MCP before significant edits. Run inverse audit before implementation. See `docs/runbooks/code-based-memory-mcp.md` for tool status and workarounds.
+Use Code-Based Memory MCP before significant edits. Before trusting it, refresh/rebuild the repo
+index. If the index is stale or out of timestep, CBM is advisory only and filesystem truth wins.
+Run inverse audit before implementation. See `docs/runbooks/code-based-memory-mcp.md` for tool
+status and workarounds.
 
 Before editing AutoGen runtime assumptions, read `docs/runbooks/AUTOGEN_REACTFLOW_RUNTIME_ARCHITECTURE.md` and `docs/runbooks/VENDORED_ROOTS_AND_SUBREPOS.md`.
 

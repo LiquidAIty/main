@@ -28,7 +28,10 @@ LiquidAIty is a general AI-native platform first. Trading, energy modeling, repo
   reduces risk.
 
 ## Required First Step: Use Code-Based Memory MCP
-- Before significant edits, use Code-Based Memory MCP for structural discovery.
+- Before significant edits, refresh/rebuild the Code-Based Memory MCP repository index, then use
+  it for structural discovery.
+- If the index was not refreshed in the current run, treat CBM results as advisory only and say so
+  explicitly. Filesystem, Git, installed-package, and test evidence wins when it disagrees.
 - Use filesystem search only after MCP narrows scope or when scanning docs/config text.
 
 ## Inverse Audit Requirement
