@@ -305,11 +305,10 @@ Valid lifecycle states are `candidate`, `validated`, `approved`, `active`, `depr
 
 ## Success Criteria
 
-1. All eight primitives have unambiguous fields, ownership, rejection rules, and boundaries.
+1. All ten primitives have unambiguous fields, ownership, rejection rules, and boundaries.
 2. An implementation agent can implement ToolSpec/ToolRegistry as one atomic task without
    inventing missing product behavior.
 3. AgentGraph and PlanGraph cannot be reasonably confused after reading the spec.
 4. Planned intent, execution truth, and future memory context have distinct contracts.
 5. No candidate can become or replace an active GraphSkill without successful runtime evidence and
    validation.
-
