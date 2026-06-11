@@ -30,3 +30,7 @@
 18. Exclude every vendored/subrepo path listed in `docs/runbooks/VENDORED_ROOTS_AND_SUBREPOS.md` from implementation assumptions.
 
 Resolved blocker: `standard_autogen_graph_runtime_not_implemented` was replaced by the real v0.4.4 Magentic-One runtime (`apps/python-models/app/python_models/magentic_runtime.py` + `graph_compiler.py`). The persisted-deck smoke (deck `t005-smoke-deck`) returned real non-empty output through backend -> sidecar -> graph compiler -> Magentic-One Orchestrator (Task Ledger / Progress Ledger) -> worker message flow.
+
+**Next contract layer**: `specs/0075-agent-runtime-primitives/` defines the durable tool, card,
+planning, trajectory, context-slice, and GraphSkill contracts. Begin with its atomic T001
+ToolSpec/ToolRegistry task; do not treat the later primitives as implemented.
