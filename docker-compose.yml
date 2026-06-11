@@ -1,7 +1,13 @@
 services:
+  sim-pg:
+    image: apache/age:release_PG16_1.6.0
+    container_name: sim-pg
+    ports:
+      - "5433:5432"
+
   neo4j:
     image: neo4j:5-community
-    container_name: liquidaity-neo4j
+    container_name: neo4j
     environment:
       - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-changeme}
       - NEO4J_PLUGINS=["apoc","apoc-extended"]
@@ -18,87 +24,6 @@ services:
       - neo4j_logs:/logs
     restart: unless-stopped
 
-  db:
-    image: postgres:16-alpine
-    container_name: liquidaity-db
-    environment:
-      - POSTGRES_USER=${DB_USER:-postgres}
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
-      - POSTGRES_DB=${DB_NAME:-liquidaity}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
-
-  redis:
-    image: redis:7-alpine
-    container_name: liquidaity-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    restart: unless-stopped
-
-  backend:
-    build:
-      context: .
-      target: runtime-backend
-    image: liquidaity-backend
-    env_file:
-      - ./apps/backend/.env
-    environment:
-      - PORT=4000
-      - KNOWGRAPH_URL=http://knowgraph:8001
-    depends_on:
-      - neo4j
-      - db
-      - redis
-      - python-models
-    expose:
-      - "4000"
-    restart: unless-stopped
-
-  knowgraph:
-    build: ./services/knowgraph
-    ports:
-      - "8001:8001"
-    env_file:
-      - ./apps/backend/.env
-    environment:
-      - NEO4J_URI=neo4j://neo4j:7687
-    depends_on:
-      - neo4j
-    restart: unless-stopped
-
-  python-models:
-    build:
-      context: .
-      dockerfile: apps/python-models/Dockerfile
-    image: liquidaity-python-models
-    env_file:
-      - ./apps/backend/.env
-    environment:
-      - REDIS_HOST=redis
-    depends_on:
-      - redis
-    ports:
-      - "8003:8001"
-    restart: unless-stopped
-
-  web:
-    build:
-      context: .
-      target: web
-    image: liquidaity-web
-    depends_on:
-      - backend
-    ports:
-      - "80:80"
-    restart: unless-stopped
-
 volumes:
   neo4j_data:
   neo4j_logs:
-  postgres_data:
-  redis_data:

@@ -14,7 +14,7 @@ npm run dev
 Expected services:
 1. frontend (Vite)
 2. backend (Express/Nx)
-3. python-models sidecar (FastAPI + Redis dependency)
+3. python-models sidecar (host-source FastAPI + AutoGen)
 
 ## Mandatory Health Checks
 
@@ -44,3 +44,5 @@ npx vitest run client/src/runtime/agentCardRegistryResolver.spec.ts
 - Lazy loading, loading states, error boundaries, retries, diagnostics, and honest unavailable or
   disabled states are acceptable when they report real runtime status.
 - No fake substitute product behavior.
+- A passing health check proves liveness only. The real AutoGen graph runtime remains unproven until
+  the Spec 007 source-run smoke returns real non-empty output.

@@ -55,7 +55,7 @@ export async function executeDeck(document: any, templates: any[], options: any 
         allEdges: document.edges,
         allTemplates: templates,
         previousOutput: options.input || '',
-        workspaceObjectContext: undefined 
+        workspaceObjectContext: options.workspaceObjectContext
       });
 
       cardResults[mainMagenticCard.id] = result;

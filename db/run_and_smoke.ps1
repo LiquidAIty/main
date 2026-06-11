@@ -1,8 +1,5 @@
-# Copy the ONE file
-docker cp ".\db\00_pg_age_timescale_postgis_vector_FULLSTACK.sql" sim-pg:/tmp/liq_fullstack.sql
-
-# Apply it (prints embedded NOTICE smokelines)
-docker exec -it sim-pg psql -U postgres -d liquidaity -v ON_ERROR_STOP=1 -P pager=off -f /tmp/liq_fullstack.sql
+Get-Content -LiteralPath ".\db\00_pg_age_timescale_postgis_vector_FULLSTACK.sql" -Raw |
+  docker exec -i sim-pg psql -U postgres -d liquidaity -v ON_ERROR_STOP=1 -P pager=off
 
 # Sanity: signatures
 docker exec -it sim-pg psql -U postgres -d liquidaity -P pager=off -c `

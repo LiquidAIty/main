@@ -1,7 +1,6 @@
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
-redis==5.0.1
-rq==1.15.1
 pydantic==2.12.5
+pytest==8.4.2
 autogen-agentchat==0.7.5
-autogen-ext[magentic-one,openai]==0.7.5
+autogen-ext[openai]==0.7.5

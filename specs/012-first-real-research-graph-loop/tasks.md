@@ -1,67 +1,65 @@
 # Tasks: First Real Research-Graph Loop
 
 **Spec**: `specs/012-first-real-research-graph-loop/spec.md`
+
 **Plan**: `specs/012-first-real-research-graph-loop/plan.md`
+
 **Gate**: Spec 007 T005 must pass before T001 begins.
-**Owner**: Fable should execute these tasks in order.
+
+**Status**: All tasks pending.
 
 ## Global Guardrails
 
-- No default/fallback model or provider.
-- No optional participant `provider` or `providerModelId`.
-- No fake deck success, output, graph write, or research question.
-- No heuristic ThinkGraph fallback and no automatic research execution.
-- No UI, Prisma, Docker, env-file, KnowGraph, trading, or broad Research-system changes.
+- Start only from a verified real source-run AutoGen result with real non-empty output.
+- Preserve graph constraints and card settings from the verified run payload.
+- No default/fallback model or provider and no optional participant model fields.
+- No fake transcript, fake deck success, fake output, fake graph write, or invented research question.
+- No mocked AutoGen success, heuristic ThinkGraph fallback, or automatic research execution.
+- No Docker `python-models`, Redis for AutoGen, UI, Prisma, env-file, KnowGraph, trading, or broad Research-system changes.
+- `MissionSpec` does not own graph connections.
+- Vendored/subrepo paths are excluded from active implementation assumptions.
 
-## Phase 1 - Establish Real Chat-Pair Truth
+## Phase 1 - Establish Real Chat/Run-Pair Truth
 
-- [ ] T001 [US1] Verify the successful T005 output shape and select the exact post-success chat-pair capture boundary in `apps/backend/src/routes/decks.routes.ts`, `apps/backend/src/decks/deckRuntime.ts`, `apps/backend/src/decks/store.ts`, and `apps/backend/src/messages/store.ts`.
-  - **Required proof**: Document in the implementation report the exact source of `projectId`, `deckId`, `runId`, `turnId`, user text, real assistant text, and the idempotency key.
-  - **Stop condition**: A focused failing test proves failed or empty-output runs cannot enter the capture path.
-  - **Do not touch**: Python extraction, graph writes, candidate derivation, UI, or Research execution.
+- [ ] T001 Verify the successful Spec 007 output shape and select the exact post-success completed-pair capture boundary.
+  - Required proof: identify the exact sources of project, deck, run, turn, user text, real assistant text, graph/card provenance, and idempotency key.
+  - Stop condition: focused tests prove failed or empty-output runs cannot enter the capture path.
 
-- [ ] T002 [US1] Implement idempotent completed chat-pair capture after a verified real deck success, with focused tests in the closest backend service/route test files.
-  - **Required behavior**: Persist the exact user input and non-empty real final output with shared project/deck/run/turn provenance; trigger no downstream work for failed or empty runs.
-  - **Stop condition**: Tests prove one successful run creates one pair, repeated handling does not duplicate it, and failures create none.
-  - **Do not touch**: ThinkGraph extraction logic, graph persistence, Research services, UI, Prisma, Docker, or env files.
+- [ ] T002 Implement idempotent completed chat/run-pair capture after verified real deck success.
+  - Required behavior: persist exact input and real non-empty output with shared provenance; trigger no downstream work for failed or empty runs.
+  - Stop condition: tests prove one successful run creates one pair, repeated handling does not duplicate it, and failures create none.
 
 ## Phase 2 - Strict ThinkGraph Extraction
 
-- [ ] T003 [US2] Define strict ThinkGraph extraction request/response and downstream-status contracts in `apps/python-models/app/python_models/orchestration_contracts.py` and the narrow matching backend contract location.
-  - **Required behavior**: Contracts carry completed-pair provenance, allow an honest empty record set, and reject missing or malformed required fields.
-  - **Stop condition**: Python and backend contract tests pass, including missing-field, malformed-record, and empty-result cases.
-  - **Do not touch**: Magentic-One output generation, model defaults/fallbacks, graph writes, Research execution, or UI.
+- [ ] T003 Define strict ThinkGraph extraction request/response and downstream-status contracts.
+  - Required behavior: carry completed-pair provenance, allow an honest empty record set, and reject missing or malformed required fields.
+  - Stop condition: Python and backend contract tests pass for required, malformed, and empty-result cases.
 
-- [ ] T004 [US2] Implement a dedicated minimal Python ThinkGraph extraction service and FastAPI endpoint in `apps/python-models/app/python_models/thinkgraph_agent.py` and `apps/python-models/app/main.py`, plus focused tests.
-  - **Required behavior**: Extract only from the completed chat pair, return strict records or an honest empty result, and fail loudly on model/service errors.
-  - **Stop condition**: Real sidecar endpoint tests prove meaningful input produces valid contract output, minimal input may produce empty output, and errors are not replaced with fallback records.
-  - **Do not touch**: `_orchestrate_card_runtime_context` beyond the completed T005 fix, graph persistence, Research execution, KnowGraph, UI, Prisma, Docker, or env files.
+- [ ] T004 Implement a separate minimal Python ThinkGraph extraction service and endpoint.
+  - Required behavior: extract only from the completed pair, return strict records or an honest empty result, and fail loudly.
+  - Stop condition: real sidecar endpoint tests prove valid, empty, and failure cases without fallback records.
 
 ## Phase 3 - Persist Real Provisional Memory
 
-- [ ] T005 [US2] Add the backend extraction client and idempotent project-scoped ThinkGraph AGE persistence using `apps/backend/src/services/graphService.ts`, `apps/backend/src/graph/semanticLanguage.ts`, and focused new services/tests under `apps/backend/src/services/thinkgraph/`.
-  - **Required behavior**: Validate before write; persist to `graph_liq` with `project_id`, `turn_id`, `run_id`, stable record ID, provisional identity, and chat provenance; expose pending/complete/empty/failed downstream state.
-  - **Stop condition**: Tests prove invalid records are rejected, repeated writes are idempotent, extraction failure is visible, and cross-project reads return no records.
-  - **Do not touch**: Existing fallback/auto-research behavior in `apps/backend/src/routes/kg.routes.ts`, Neo4j, Research execution, KnowGraph, UI, Prisma, Docker, or env files.
+- [ ] T005 Add the backend extraction client and idempotent project-scoped Apache AGE persistence.
+  - Required behavior: validate before write; persist to `graph_liq` with project/run/turn/source provenance; expose pending/complete/empty/failed state.
+  - Stop condition: tests prove invalid rejection, idempotency, visible failure, and project isolation.
 
-## Phase 4 - Derive A Candidate, Never Run Research
+## Phase 4 - Derive a Candidate, Never Run Research
 
-- [ ] T006 [US3] Implement Research Pack candidate derivation from persisted real ThinkGraph gaps in a focused backend service under `apps/backend/src/services/researchGraph/`, with focused tests.
-  - **Required behavior**: Candidate questions come only from persisted open questions/evidence gaps and reference their source graph-record IDs; no gaps returns an empty candidate.
-  - **Stop condition**: Tests prove no question is invented and no Research service is invoked.
-  - **Do not touch**: Full Research Pack approval, web research, Research Agent workers, KnowGraph, UI, trading, Prisma, Docker, or env files.
+- [ ] T006 Derive a read-only Research Pack candidate from persisted real ThinkGraph gaps.
+  - Required behavior: questions come only from persisted gaps and reference source record IDs; no gaps returns an empty candidate.
+  - Stop condition: tests prove no question is invented and no Research service is invoked.
 
-- [ ] T007 [US3] Add and mount a project-scoped read-only downstream-status and Research Pack candidate route in `apps/backend/src/routes/researchGraph.routes.ts` and `apps/backend/src/routes/index.ts`, with route tests.
-  - **Required behavior**: Route reads by project and turn/run provenance, returns honest empty/failed/complete state, and cannot launch research or write graph data.
-  - **Stop condition**: Route tests prove project isolation, read-only behavior, source-record provenance, and honest failure output.
-  - **Do not touch**: UI, approval flow, Research execution, KnowGraph, trading, Prisma, Docker, or env files.
+- [ ] T007 Add project-scoped read-only downstream-status and candidate routes.
+  - Required behavior: return honest empty/failed/complete state and never launch research or write graph data.
+  - Stop condition: route tests prove project isolation, read-only behavior, provenance, and honest failures.
 
-## Phase 5 - Prove The Bounded Loop
+## Phase 5 - Prove the Bounded Loop
 
-- [ ] T008 [US1] [US2] [US3] Add and run one real end-to-end smoke covering deck run -> completed chat pair -> strict Python extraction -> validated project-scoped AGE memory -> read-only Research Pack candidate.
-  - **Required behavior**: Use the real backend route, real Python sidecar, real AutoGen deck execution, and real `graph_liq`; verify non-empty real deck output and candidate provenance; also verify honest empty and failed downstream cases.
-  - **Stop condition**: The smoke and all focused contract/unit tests pass without mocks, defaults, fallbacks, fake graph writes, fake research output, or cross-project leakage.
-  - **Do not touch**: Spec 013/trading, full Research execution, KnowGraph, graph-context injection, UI, Prisma, Docker, or env files.
+- [ ] T008 Run one real end-to-end smoke: verified deck run -> completed pair -> strict Python extraction -> validated project-scoped AGE memory -> read-only Research Pack candidate.
+  - Required behavior: use real host-source backend, Python sidecar, AutoGen deck execution, and `graph_liq`; verify real output, preserved graph/card constraints, candidate provenance, honest empty result, and honest failure.
+  - Stop condition: smoke and focused tests pass without mocks, defaults, fallbacks, fake graph writes, fake research output, or cross-project leakage.
 
 ## Dependencies
 
@@ -77,7 +75,4 @@ Spec 007 T005
 -> T008
 ```
 
-## Completion Gate
-
-Spec 012 is complete only when T001-T008 pass and the real end-to-end smoke proves the bounded loop.
-Do not begin Spec 013 or broader Specs 008-011 work before this gate.
+Spec 012 remains pending until all tasks and the real end-to-end smoke pass. Do not begin Spec 013/trading.

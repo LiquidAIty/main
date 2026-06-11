@@ -1,185 +1,95 @@
 # Spec 012: First Real Research-Graph Loop
 
-**Status**: Gated - implementation must not start until Spec 007 T005 passes.
-**Depends on**: Spec 007 T005 real two-card deck smoke.
-**Extends**: The smallest integrated proof slice of Specs 008 and 009.
-**Does not replace**: The broader ThinkGraph, PlanFlow, Research Agent, KnowGraph, dual-context, or UI work in Specs 008-011.
+**Status**: Pending and gated. Implementation must not start until Spec 007 T005 passes.
+
+**Depends on**: A real source-run AutoGen ReactFlow graph runtime smoke with real non-empty output.
+
+**Does not replace**: The broader ThinkGraph, PlanFlow, Research Agent, KnowGraph, dual-context, UI, or trading work.
 
 ## Purpose
 
-Prove the first honest downstream memory and research-planning loop from a real completed
-AutoGen deck run:
+Prove the first honest downstream memory and research-planning loop from a real completed AutoGen deck run:
 
 ```text
-persisted two-card deck
--> Magentic-One plus one assistant_agent through magentic_option
--> strict card-owned model configuration
--> Python AutoGen sidecar
--> non-empty real final output
--> completed chat pair
+real ReactFlow graph payload
+-> real host-source backend and Python AutoGen runtime
+-> GraphFlow execution inside ReactFlow constraints
+-> MagenticOneGroupChat bus
+-> real non-empty final output
+-> completed chat/run pair
 -> separate ThinkGraph extraction
 -> project-scoped Apache AGE memory
 -> read-only Research Pack candidate derived from real graph gaps
 ```
 
-This is the first hard integration job after the execution spine works. Fable should work through
-the existing plan and tasks instead of redesigning the feature or writing a new spec.
-
 ## Entry Gate
 
-Spec 007 T005 must first produce a real successful run through:
+Spec 007 T005 must pass before any Spec 012 implementation begins. The proven run must:
 
-`POST /api/projects/:projectId/decks/:deckId/run`
+- use the real backend route and real host-source Python sidecar
+- return real non-empty Mag One final output
+- preserve ReactFlow nodes, edges, edge relationships, and card settings in the run payload
+- preserve explicit participant provider/model configuration
+- execute ReactFlow-derived paths through the real AutoGen graph runtime
+- produce a real completed chat/run pair suitable for downstream capture
+- use no fake transcript, fake final output, mocked AutoGen success, Docker `python-models`, or Redis
 
-The run must include a `magentic_one` card, one `assistant_agent` connected by a
-`magentic_option` edge, explicit `runtimeOptions.modelKey` on both cards, and a non-empty real
-`run.finalOutput`.
-
-The known T005 blocker at spec creation time is in
-`apps/python-models/app/python_models/autogen_orchestrator.py`:
-`_build_card_team_participants` directly reads `participant.title` even when the selected object
-is a `CardRuntimePrivateParticipant`, whose strict contract has no `title` field. This must be
-fixed and covered by regression tests before Spec 012 begins.
+`MissionSpec` plans inside ReactFlow graph constraints and does not own graph connections.
 
 ## Scope
 
-- Capture a completed chat pair only after a real deck run returns `status: "success"` with a
-  non-empty final output.
-- Preserve project, deck, run, turn, and source provenance for the pair.
-- Trigger a separate strict Python ThinkGraph extraction pass from that completed pair.
+- Capture a completed chat/run pair only after a verified real deck success with non-empty final output.
+- Preserve project, deck, run, turn, source, graph-constraint, and card-setting provenance needed by the bounded loop.
+- Trigger a separate strict Python ThinkGraph extraction pass from the completed pair.
 - Validate extraction output before persistence.
-- Persist only validated, project-scoped provisional ThinkGraph records to the existing Apache AGE
-  graph `graph_liq`.
-- Derive a read-only Research Pack candidate only from persisted open questions, evidence gaps, or
-  evidence-needed relationships.
+- Persist only validated, project-scoped provisional ThinkGraph records to Apache AGE graph `graph_liq`.
+- Derive a read-only Research Pack candidate only from persisted open questions, evidence gaps, or evidence-needed relationships.
 - Expose honest downstream state and a read-only candidate retrieval route.
 - Add an end-to-end smoke proving the complete bounded loop.
 
-## Out Of Scope
+## Out of Scope
 
+- Implementing or repairing the Spec 007 AutoGen runtime inside Spec 012.
 - Full web research execution or Research Agent workers.
 - PlanFlow approval UI or editable research plans.
 - KnowGraph ingestion or sourced evidence writes.
-- Graph context injection into future Magentic-One turns.
+- Graph context injection into later turns.
 - Trading, broker integrations, orders, or portfolio automation.
-- UI work or ReactFlow canvas changes.
-- Prisma, schema migrations, Docker changes, or env-file changes.
-- Reusing heuristic extraction, chunk fallback, fake graph writes, sample output, or invented
-  entities as product truth.
-
-## User Stories
-
-### User Story 1 - Capture a real completed chat pair
-
-As a project user, when my real two-card deck run succeeds, the system records the exact user input
-and real AutoGen final output with enough provenance to drive downstream memory.
-
-**Acceptance scenarios**:
-
-1. A successful run with non-empty output creates one completed chat pair linked to its project,
-   deck, run, and turn.
-2. A failed run or empty output creates no completed chat pair and triggers no extraction.
-3. Reprocessing the same run does not create duplicate chat-pair memory.
-
-### User Story 2 - Persist strict provisional ThinkGraph memory
-
-As a project user, I want useful entities, assumptions, relationships, risks, and open questions
-from the completed pair stored as provisional project memory without invented facts.
-
-**Acceptance scenarios**:
-
-1. A meaningful completed pair produces validated ThinkGraph records scoped by `project_id`.
-2. Minimal or meaningless input may validly produce zero records.
-3. Invalid extraction output is rejected and surfaced as a downstream failure without changing the
-   successful deck-run result.
-4. A project cannot read records belonging to another project.
-
-### User Story 3 - Retrieve a real Research Pack candidate
-
-As a project user, I want a read-only research candidate derived from unresolved graph gaps so I can
-see what could be researched next without automatically running research.
-
-**Acceptance scenarios**:
-
-1. Persisted open questions and evidence gaps produce candidate questions with graph-record
-   provenance.
-2. No graph gaps produces an empty candidate, not invented questions.
-3. Candidate retrieval never launches research and never writes KnowGraph data.
+- UI, Prisma, schema migration, Docker, or env-file changes.
+- Heuristic extraction, fallback records, fake graph writes, sample output, or invented entities.
 
 ## Functional Requirements
 
-- **FR-001**: Deck success remains defined by the existing real runtime result. Downstream
-  extraction must never convert an error into success or a success into fake output.
-- **FR-002**: A completed chat pair must contain `projectId`, `deckId`, `runId`, `turnId`,
-  `userText`, `assistantText`, source metadata, and timestamps.
-- **FR-003**: `assistantText` must come from the non-empty real deck final output.
-- **FR-004**: ThinkGraph extraction must be a separate downstream Python service or endpoint. It
-  must not be folded into Magentic-One orchestration.
-- **FR-005**: The extraction request and response must be strict typed contracts shared at the
-  HTTP boundary.
-- **FR-006**: The extraction response may contain zero records and must not use heuristic or model
-  fallback output.
-- **FR-007**: Backend validation must use the existing semantic-record validation rail before any
-  ThinkGraph write.
-- **FR-008**: ThinkGraph records must be persisted to Apache AGE graph `graph_liq`, scoped by
-  `project_id`, and carry `turn_id`, `run_id`, provisional graph identity, and chat source
-  provenance.
-- **FR-009**: Writes must be idempotent for a repeated run/record combination.
-- **FR-010**: Downstream status must distinguish pending, complete, empty, and failed. Failure
-  details must be visible and must not be swallowed.
-- **FR-011**: A Research Pack candidate must be derived only from persisted real graph gaps and
-  include source ThinkGraph record IDs.
-- **FR-012**: The read route must be project-scoped and read-only. It must not launch research.
-- **FR-013**: No model, provider, graph record, research question, or output may be supplied by a
-  default or fallback path.
-
-## Key Entities
-
-- **CompletedChatPair**: The exact user input and real assistant output from one successful deck
-  run, with project/deck/run/turn provenance.
-- **ThinkGraphExtraction**: Strict request, response, and status for the separate downstream
-  extraction pass.
-- **ThinkGraphMemoryRecord**: A validated provisional semantic record persisted in `graph_liq`.
-- **ResearchPackCandidate**: A read-only set of potential research questions derived from persisted
-  gaps; it is not an approved plan and cannot start research.
-- **ResearchGraphTurnStatus**: Honest downstream state for one completed chat pair.
-
-## Existing Rails To Reuse
-
-- Real run route: `apps/backend/src/routes/decks.routes.ts`
-- Runtime result: `apps/backend/src/decks/deckRuntime.ts`
-- Deck-run persistence: `apps/backend/src/decks/store.ts`
-- Message persistence: `apps/backend/src/messages/store.ts`
-- Python route registration: `apps/python-models/app/main.py`
-- Python runtime contracts: `apps/python-models/app/python_models/orchestration_contracts.py`
-- Semantic validation: `apps/backend/src/graph/semanticLanguage.ts`
-- Apache AGE execution: `apps/backend/src/services/graphService.ts`
-- Existing ThinkGraph graph name and project-scoped reads:
-  `apps/backend/src/services/graphContext/graphContextBuilder.ts`
-- Route mounting: `apps/backend/src/routes/index.ts`
+- **FR-001**: Spec 012 work must remain pending until Spec 007 T005 proves the real source-run runtime.
+- **FR-002**: Deck success remains defined by the verified real runtime result. Downstream work must never invent or rewrite deck truth.
+- **FR-003**: A completed chat/run pair must preserve project, deck, run, turn, user text, real assistant text, source metadata, graph constraints, relevant card settings, and timestamps.
+- **FR-004**: Failed or empty-output runs create no completed pair and trigger no extraction.
+- **FR-005**: Repeated handling of the same successful run is idempotent.
+- **FR-006**: ThinkGraph extraction is a separate strict downstream Python service or endpoint, not part of Mag One orchestration.
+- **FR-007**: Extraction may return an honest empty record set and must not use heuristic/model fallback output.
+- **FR-008**: Backend validation must run before any ThinkGraph write.
+- **FR-009**: ThinkGraph records must be project-scoped, provenance-bearing, and idempotent in `graph_liq`.
+- **FR-010**: Downstream status must distinguish pending, complete, empty, and failed without swallowing errors.
+- **FR-011**: A Research Pack candidate must derive only from persisted real graph gaps and include source record IDs.
+- **FR-012**: Candidate retrieval is project-scoped and read-only; it must not launch research.
+- **FR-013**: No model, provider, graph record, research question, transcript, or output may come from a default, fallback, mock, or fake path.
 
 ## Guardrails
 
-- No default model, fallback model, fallback provider, OpenAI fallback, OpenRouter fallback,
-  `providerModelId="default"`, or optional participant model fields.
-- No fake final output, fake graph writes, heuristic fallback extraction, sample records presented
-  as real, or invented Research Pack questions.
+- No default model, fallback model, fallback provider, OpenAI fallback, OpenRouter fallback, `providerModelId="default"`, or optional participant model fields.
+- No fake transcript, fake final output, mocked AutoGen success, fake graph writes, heuristic fallback extraction, or invented Research Pack questions.
+- No Docker `python-models`, Redis for AutoGen, Microsoft Agent Framework, Semantic Kernel, AutoGen Studio, or RoundRobin/Selector/Ledger product runtime.
 - No automatic research execution.
-- No reuse of the fallback and auto-research behavior currently mixed into
-  `apps/backend/src/routes/kg.routes.ts`.
-- No Neo4j implementation for this slice. Current active ThinkGraph persistence is Apache AGE in
-  Postgres.
-- ThinkGraph extraction failure is an honest downstream failure and does not rewrite the already
-  verified deck-run result.
+- No vendored/subrepo path may be used as active architecture truth.
+- ThinkGraph extraction failure is an honest downstream failure and does not rewrite the verified deck result.
 
 ## Success Criteria
 
-1. Spec 007 T005 passes first with a real non-empty AutoGen result.
-2. One real successful deck run produces one completed chat pair with full provenance.
+1. Spec 007 T005 passes first with real non-empty AutoGen output.
+2. One real successful deck run produces one completed chat/run pair with full provenance.
 3. A separate real Python extraction call returns strict output that passes backend validation.
 4. Valid records are queryable from `graph_liq` only under the correct project.
 5. A read-only route returns a Research Pack candidate derived from persisted real gaps.
-6. Empty/minimal input produces empty/minimal honest output without invented content.
+6. Empty/minimal input produces honest empty/minimal output without invented content.
 7. Failed extraction or persistence is surfaced as failed downstream status.
-8. Automated contract tests plus an end-to-end smoke prove the bounded loop.
-
+8. Automated contract tests and a real end-to-end smoke prove the bounded loop.

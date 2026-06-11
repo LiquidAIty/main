@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
+
+
+RequiredRuntimeString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class TripletInput(BaseModel):
@@ -73,9 +76,9 @@ class ProjectSession(BaseModel):
         "graph_flow",
         "assistant_agent",
     ] = "magentic_one"
-    modelProvider: str
-    modelKey: str
-    providerModelId: str
+    modelProvider: RequiredRuntimeString
+    modelKey: RequiredRuntimeString
+    providerModelId: RequiredRuntimeString
     startedAt: str
 
 
@@ -118,8 +121,8 @@ class CardRuntimePrivateParticipant(BaseModel):
     runtimeType: Literal["assistant_agent", "graph_flow", "research_agent", "planner_agent"]
     runtimeBinding: str | None = None
     prompt: str = ""
-    provider: str
-    providerModelId: str
+    provider: RequiredRuntimeString
+    providerModelId: RequiredRuntimeString
     temperature: float | None = None
     maxTokens: int | None = None
 
@@ -136,8 +139,8 @@ class CardRuntimeParticipant(BaseModel):
     knowledgeSources: list[str] = Field(default_factory=list)
     connectedTo: str | None = None
     prompt: str = ""
-    provider: str
-    providerModelId: str
+    provider: RequiredRuntimeString
+    providerModelId: RequiredRuntimeString
     temperature: float | None = None
     maxTokens: int | None = None
 

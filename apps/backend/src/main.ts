@@ -1,9 +1,6 @@
 import "./config/env";
 import express from "express";
 import type { Server } from "node:http";
-import { spawn } from "child_process";
-import * as fs from "fs";
-import * as path from "path";
 import cookieParser = require("cookie-parser");
 import routes from "./routes";
 import { logModelConfiguration } from "./startup/modelConfig";
@@ -187,29 +184,6 @@ async function startServer() {
     await closeServer(existingServer).catch(() => undefined);
     if (globalThis.__liquidaityBackendServer__ === existingServer) {
       globalThis.__liquidaityBackendServer__ = undefined;
-    }
-  }
-
-  if (process.env.NODE_ENV !== 'production' && process.env.DISABLE_SIDECAR_AUTOSTART !== 'true') {
-    let rootDir = process.cwd();
-    if (!fs.existsSync(path.join(rootDir, 'docker-compose.yml'))) {
-      const altRoot = path.resolve(__dirname, '../../../');
-      if (fs.existsSync(path.join(altRoot, 'docker-compose.yml'))) {
-        rootDir = altRoot;
-      }
-    }
-    if (fs.existsSync(path.join(rootDir, 'docker-compose.yml'))) {
-      console.log('[BOOT] Automatically starting python sidecar in background...');
-      const sidecar = spawn('docker', ['compose', 'up', '-d', 'python-models'], {
-        cwd: rootDir,
-        stdio: 'ignore',
-        shell: true,
-        detached: true
-      });
-      sidecar.on('error', (err) => {
-        console.error('[BOOT] Failed to start python sidecar:', err);
-      });
-      sidecar.unref();
     }
   }
 

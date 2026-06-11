@@ -46,14 +46,9 @@ This is the documentation map for LiquidAIty.
 - `codebase-memory.md`, `MAGENTIC_CBM_CODER_WORKFLOW.md`, and `MAGENTIC_LONGFORM_PROMPT.md` are reference notes, not active product specs.
 
 ## External Subtree Docs
-- `Understand-Anything-main/**`
-- `localcoder/**`
-- `worldsignal/**`
-- `data-formulator-main/**`
-- `gamecanvas/**`
-- `motioncanvas/**`
-- `spatialcanvas/**`
-- `videocanvas/**`
-- `services/**`
+The exact excluded vendored/subrepo paths are owned by
+`docs/runbooks/VENDORED_ROOTS_AND_SUBREPOS.md`. Exclude those paths from active Markdown audits and
+architecture decisions unless the user explicitly promotes one into active scope.
 
-External subtree docs are scoped to their source projects and do not override LiquidAIty truth.
+Active roots such as `services/knowgraph/` are not excluded merely because they live under a
+top-level folder that also contains separate services or experiments.
