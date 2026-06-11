@@ -372,6 +372,6 @@ T001: ✅ COMPLETE — card model source confirmed (`card.runtimeOptions.modelKe
 T002: ✅ COMPLETE — tests added; all pass after T003 (includes `card_model_config_mismatch` test beyond original spec)
 T003: ✅ COMPLETE — `resolveModelConfig` and `resolveCardModelConfig` deleted; `resolveOrchestratorCardModel` added; mismatch guard applied to participants and privateParticipants; 26/26 tests pass; tsc clean
 T004: ✅ COMPLETE — Python contract test file added; 12/12 tests pass; required participant model fields and strict builder behavior verified
-T005: ⏳ PENDING — live two-card smoke (T004 complete; remaining blocker: live stack and configured two-card deck)
+T005: ⏳ PENDING — real two-card smoke reaches Python sidecar but fails in `_build_card_team_participants`: `CardRuntimePrivateParticipant` has no `title`, while the builder directly accesses `participant.title`
 
 Do not start spec 008 until T005 passes.
