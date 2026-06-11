@@ -1,6 +1,6 @@
 # Spec 007: Runtime Contract Hardening
 
-**Status**: T001-T004 complete. Real source-run AutoGen ReactFlow graph runtime smoke pending.
+**Status**: T001-T005 complete. The real source-run AutoGen ReactFlow graph runtime smoke passed on 2026-06-11 against the locked microsoft/autogen v0.4.4 Magentic-One source line. Class names below from the later AgentChat era (MagenticOneGroupChat, AssistantAgent, Swarm, SocietyOfMindAgent, DiGraphBuilder/GraphFlow) are product concepts; the implementation maps them to real v0.4.4 primitives (LedgerOrchestrator Task/Progress Ledger bus, BaseWorker card adapters, card-level fan-out, internal child-subgraph execution, LiquidAIty graph compiler).
 
 **Blocks**: Specs 008-012 implementation until the final runtime smoke passes.
 
@@ -45,9 +45,9 @@ host-source backend
 - Redis and Docker `python-models` are not part of AutoGen execution.
 - Vendored/subrepo paths listed in `docs/runbooks/VENDORED_ROOTS_AND_SUBREPOS.md` are excluded from active implementation assumptions.
 
-## Current Blocker
+## Resolved Blocker
 
-`apps/python-models/app/python_models/autogen_orchestrator.py` currently fails explicitly with `standard_autogen_graph_runtime_not_implemented`. The graph runtime has not been implemented or proven.
+`apps/python-models/app/python_models/autogen_orchestrator.py` previously failed explicitly with `standard_autogen_graph_runtime_not_implemented`. It now executes the real source-run Microsoft AutoGen v0.4.4 / Magentic-One runtime via `magentic_runtime.py` (LedgerOrchestrator bus, BaseWorker card adapters, FunctionTool card tools) and `graph_compiler.py` (strict ReactFlow graph compilation). Empty final output remains a hard error.
 
 ## Acceptance
 

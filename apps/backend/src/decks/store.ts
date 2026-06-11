@@ -142,8 +142,18 @@ function normalizeDeckEdgeMetadata(value: unknown): DeckEdgeMetadata | null {
       ? (raw.mergeIntent as DeckEdgeMergeIntent)
       : null,
     legacyCompatibility: cleanOptionalBoolean(raw.legacyCompatibility),
+    loopMaxIterations: cleanOptionalNumber(raw.loopMaxIterations),
+    loopExitText: cleanOptionalText(raw.loopExitText),
   };
   return Object.values(normalized).some((entry) => entry !== null) ? normalized : null;
+}
+
+function cleanToolNames(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const tools = value
+    .map((tool) => (typeof tool === 'string' ? tool.trim() : ''))
+    .filter(Boolean);
+  return tools.length > 0 ? tools : null;
 }
 
 function normalizeRuntimeOptions(value: unknown): AgentCardRuntimeOptions | null {
@@ -203,6 +213,8 @@ function normalizeRuntimeOptions(value: unknown): AgentCardRuntimeOptions | null
           : raw.localCoderAccess === 'read'
             ? 'read'
             : null,
+    role: cleanOptionalText(raw.role),
+    tools: cleanToolNames(raw.tools),
   };
   return normalized;
 }

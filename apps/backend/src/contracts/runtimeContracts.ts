@@ -61,6 +61,37 @@ export type RuntimeScope = {
   excludedAgentIds: Array<{ id: string; reason: string }>;
 };
 
+export type RuntimeGraphNode = {
+  cardId: string;
+  title: string;
+  kind: string;
+  runtimeType: string;
+  parentGraphId: string | null;
+  prompt: string;
+  role: string | null;
+  tools: string[];
+  fanOut: Record<string, any> | null;
+  isSocietyOfMind: boolean;
+  provider: string | null;
+  providerModelId: string | null;
+  temperature: number | null;
+  maxTokens: number | null;
+};
+
+export type RuntimeGraphEdge = {
+  id: string;
+  source: string;
+  target: string;
+  edgeType: 'flow' | 'magentic_option';
+  loop: Record<string, any> | null;
+  data: Record<string, any>;
+};
+
+export type RuntimeGraph = {
+  nodes: RuntimeGraphNode[];
+  edges: RuntimeGraphEdge[];
+};
+
 export type PythonAutoGenPayloadShape = {
   session: Record<string, any>;
   userText: string;
@@ -77,6 +108,7 @@ export type PythonAutoGenPayloadShape = {
     runtimeType: string;
     prompt: string;
     runtimeOptions: Record<string, any>;
+    graph: RuntimeGraph;
     participants: any[];
     privateParticipants?: any[];
     runtimeScope?: RuntimeScope;

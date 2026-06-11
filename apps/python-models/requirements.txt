@@ -2,5 +2,10 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.12.5
 pytest==8.4.2
-autogen-agentchat==0.7.5
-autogen-ext[openai]==0.7.5
+python-dotenv==1.2.2
+# LiquidAIty AutoGen target: the v0.4.4 Magentic-One line. autogen-agentchat is banned.
+autogen-core==0.4.4
+autogen-ext[openai]==0.4.4
+# PyPI autogen-magentic-one 0.0.1 is an empty name-reservation wheel (no module).
+# The real package is source-installed from the microsoft/autogen v0.4.4 tag.
+autogen-magentic-one @ git+https://github.com/microsoft/autogen.git@v0.4.4#subdirectory=python/packages/autogen-magentic-one

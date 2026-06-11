@@ -197,6 +197,118 @@ describe('Canonical Cards Runtime', () => {
     ).toThrow('card_model_config_mismatch');
   });
 
+  // T005 — graph nodes, graph edges, and card settings must survive into the sidecar payload.
+
+  it('graph nodes and edges survive into the payload with edge relationships intact', () => {
+    const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one', runtimeOptions: { modelKey: 'gpt-5.1-chat-latest' } };
+    const cardA = { id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
+    const cardB = { id: 'agentB', kind: 'agent', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
+
+    const context = {
+      deckId: 'deck1',
+      allCards: [cardM, cardA, cardB],
+      allEdges: [
+        { id: 'mo1', source: 'mag1', target: 'agentA', edgeType: 'magentic_option' },
+        { id: 'mo2', source: 'agentB', target: 'mag1', edgeType: 'magentic_option' },
+        { id: 'f1', source: 'agentA', target: 'agentB', edgeType: 'flow' },
+        {
+          id: 'f2', source: 'agentB', target: 'agentA', edgeType: 'flow',
+          data: { loop: { maxIterations: 2, exitOnText: 'DONE' } },
+        },
+      ],
+    };
+
+    const payload = buildPythonAutoGenCardRuntimePayload(
+      cardM, {}, 'hello', context, { provider: 'openai', providerModelId: 'gpt-5.1-chat-latest' },
+      [cardA, cardB], '2026',
+    );
+
+    const graph = payload.cardRuntime.graph;
+    expect(graph.nodes.map((n) => n.cardId)).toEqual(['mag1', 'agentA', 'agentB']);
+    expect(graph.edges.map((e) => e.id)).toEqual(['mo1', 'mo2', 'f1', 'f2']);
+    const flowEdge = graph.edges.find((e) => e.id === 'f1');
+    expect(flowEdge).toMatchObject({ source: 'agentA', target: 'agentB', edgeType: 'flow' });
+    const loopEdge = graph.edges.find((e) => e.id === 'f2');
+    expect(loopEdge?.loop).toEqual({ maxIterations: 2, exitOnText: 'DONE' });
+    const magenticEdge = graph.edges.find((e) => e.id === 'mo1');
+    expect(magenticEdge?.edgeType).toBe('magentic_option');
+  });
+
+  it('card settings survive: tools, fan-out, isSocietyOfMind, explicit model config, instructions, role', () => {
+    const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
+    const cardFan = {
+      id: 'fan1', kind: 'agent', runtimeType: 'assistant_agent', title: 'Fan',
+      prompt: 'Fan instructions.',
+      runtimeOptions: {
+        modelKey: 'gpt-5-nano',
+        role: 'fan-out specialist',
+        tools: ['current_datetime'],
+        fanOut: { enabled: true, count: 2, items: ['x', 'y'] },
+      },
+    };
+    const cardSom = {
+      id: 'som1', kind: 'agent', runtimeType: 'assistant_agent', title: 'Som',
+      prompt: 'Som instructions.',
+      runtimeOptions: { modelKey: 'gpt-5-nano' },
+    };
+    const child = {
+      id: 'child1', kind: 'agent', runtimeType: 'assistant_agent', parentGraphId: 'som1',
+      prompt: 'Child instructions.',
+      runtimeOptions: { modelKey: 'gpt-5-mini', tools: ['calculator'] },
+    };
+
+    const context = {
+      deckId: 'deck1',
+      allCards: [cardM, cardFan, cardSom, child],
+      allEdges: [
+        { id: 'mo1', source: 'mag1', target: 'fan1', edgeType: 'magentic_option' },
+        { id: 'mo2', source: 'mag1', target: 'som1', edgeType: 'magentic_option' },
+      ],
+    };
+
+    const payload = buildPythonAutoGenCardRuntimePayload(
+      cardM, {}, 'hello', context, {}, [cardFan, cardSom], '2026',
+    );
+
+    const fanParticipant = payload.cardRuntime.participants.find((p) => p.cardId === 'fan1');
+    expect(fanParticipant?.tools).toEqual(['current_datetime']);
+    expect(fanParticipant?.fanOut).toEqual({ enabled: true, count: 2, items: ['x', 'y'] });
+    expect(fanParticipant?.isSocietyOfMind).toBe(false);
+    expect(fanParticipant?.prompt).toBe('Fan instructions.');
+    expect(fanParticipant?.provider).toBe('openai');
+    expect(fanParticipant?.providerModelId).toBe('gpt-5-nano');
+
+    const somParticipant = payload.cardRuntime.participants.find((p) => p.cardId === 'som1');
+    expect(somParticipant?.isSocietyOfMind).toBe(true);
+
+    const graph = payload.cardRuntime.graph;
+    const fanNode = graph.nodes.find((n) => n.cardId === 'fan1');
+    expect(fanNode?.role).toBe('fan-out specialist');
+    expect(fanNode?.fanOut).toEqual({ enabled: true, count: 2, items: ['x', 'y'] });
+    const childNode = graph.nodes.find((n) => n.cardId === 'child1');
+    expect(childNode).toBeDefined();
+    expect(childNode?.parentGraphId).toBe('som1');
+    expect(childNode?.tools).toEqual(['calculator']);
+    expect(childNode?.provider).toBe('openai');
+    expect(childNode?.providerModelId).toBe('gpt-5-mini');
+    expect(childNode?.prompt).toBe('Child instructions.');
+  });
+
+  it('child subgraph node without explicit model config fails loudly', () => {
+    const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
+    const cardSom = {
+      id: 'som1', kind: 'agent', runtimeType: 'assistant_agent',
+      runtimeOptions: { modelKey: 'gpt-5-nano' },
+    };
+    const child = { id: 'child1', kind: 'agent', runtimeType: 'assistant_agent', parentGraphId: 'som1' };
+
+    const context = { deckId: 'deck1', allCards: [cardM, cardSom, child], allEdges: [] };
+
+    expect(() =>
+      buildPythonAutoGenCardRuntimePayload(cardM, {}, 'hello', context, {}, [cardSom], '2026'),
+    ).toThrow('card_model_config_missing');
+  });
+
   it('providerModelId is never default or empty string in any participant payload', () => {
     const selectedModelKey = 'gpt-5-nano';  // fixture — not a default
 

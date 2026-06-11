@@ -6,7 +6,7 @@
 - T002: COMPLETE - prove strict backend runtime contracts.
 - T003: COMPLETE - remove runtime defaults, fallbacks, swallowed errors, and fake-success paths.
 - T004: COMPLETE - prove strict Python participant payload contracts.
-- T005: PENDING - Prove real source-run AutoGen ReactFlow graph runtime smoke.
+- T005: COMPLETE - Real source-run AutoGen ReactFlow graph runtime smoke passed (2026-06-11) against the locked microsoft/autogen v0.4.4 Magentic-One source line (autogen-core==0.4.4, autogen-ext==0.4.4, autogen-magentic-one source-installed from tag v0.4.4; autogen-agentchat removed).
 
 ## T005 Requirements
 
@@ -29,4 +29,4 @@
 17. Return real non-empty output; never use fake final output, mocked transcript, mocked sidecar success, or swallowed failure.
 18. Exclude every vendored/subrepo path listed in `docs/runbooks/VENDORED_ROOTS_AND_SUBREPOS.md` from implementation assumptions.
 
-Current explicit blocker: `standard_autogen_graph_runtime_not_implemented`.
+Resolved blocker: `standard_autogen_graph_runtime_not_implemented` was replaced by the real v0.4.4 Magentic-One runtime (`apps/python-models/app/python_models/magentic_runtime.py` + `graph_compiler.py`). The persisted-deck smoke (deck `t005-smoke-deck`) returned real non-empty output through backend -> sidecar -> graph compiler -> Magentic-One Orchestrator (Task Ledger / Progress Ledger) -> worker message flow.

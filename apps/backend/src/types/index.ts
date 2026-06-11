@@ -59,6 +59,8 @@ export type DeckEdgeMetadata = {
   weight?: number | null;
   mergeIntent?: DeckEdgeMergeIntent | null;
   legacyCompatibility?: boolean | null;
+  loopMaxIterations?: number | null;
+  loopExitText?: string | null;
 };
 
 export type AssistExecutionMode = 'single' | 'swarm';
@@ -82,6 +84,8 @@ export type AgentCardRuntimeOptions = {
   allowRepeatedSpeaker?: boolean | null;
   localCoderMode?: 'headless' | 'terminal' | null;
   localCoderAccess?: 'read' | 'patch' | 'test' | null;
+  role?: string | null;
+  tools?: string[] | null;
 };
 
 export type DeckNodeKind = 'agent';

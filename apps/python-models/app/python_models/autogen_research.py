@@ -1,17 +1,17 @@
-from __future__ import annotations
+"""Research-plan contracts for the Assist loop.
 
-import json
-from typing import Any
+The previous implementation of ``plan_research_with_autogen`` was built on
+the banned AgentChat package line. The v0.4.4 Magentic-One runtime lives in
+``magentic_runtime.py`` / ``autogen_orchestrator.py``; this research-plan
+path has not been ported and fails loudly instead of importing the banned
+package.
+"""
+
+from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from autogen_agentchat.agents import AssistantAgent
-from autogen_agentchat.teams import MagenticOneGroupChat
-from app.python_models.autogen_provider_env import (
-    AutoGenAgentConfig,
-    _assert_magentic_safe_model,
-    _build_model_client,
-)
+from app.python_models.autogen_provider_env import AutoGenAgentConfig
 
 
 class TripletInput(BaseModel):
@@ -72,165 +72,5 @@ class ResearchPlanResponse(BaseModel):
     transcript: list[str] = Field(default_factory=list)
 
 
-def _task_payload_json(request: ResearchPlanRequest) -> str:
-    payload = {
-        "project_id": request.project_id,
-        "turn_id": request.turn_id,
-        "query": request.query,
-        "priority_entities": request.priority_entities[: request.max_tasks],
-        "priority_relationships": request.priority_relationships[: request.max_tasks],
-        "triplets": [triplet.model_dump() for triplet in request.triplets[: request.max_tasks]],
-        "gaps": [gap.model_dump() for gap in request.gaps[: request.max_tasks]],
-        "open_questions": request.open_questions[: request.max_tasks],
-        "draft_tasks": [task.model_dump() for task in request.draft_tasks[: request.max_tasks]],
-        "max_tasks": max(1, min(int(request.max_tasks or 6), 10)),
-    }
-    return json.dumps(payload, indent=2)
-
-
-def _extract_json_object(text: str) -> dict[str, Any] | None:
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        return None
-    try:
-        return json.loads(text[start : end + 1])
-    except json.JSONDecodeError:
-        return None
-
-
-def _normalize_task(raw: Any) -> SearchTaskOutput | None:
-    if not isinstance(raw, dict):
-        return None
-    query = str(raw.get("query") or "").strip()
-    if not query:
-        return None
-    intent = str(raw.get("intent") or "verify").strip().lower() or "verify"
-    priority = str(raw.get("priority") or "high").strip().lower() or "high"
-    triplet_raw = raw.get("triplet")
-    triplet = None
-    if isinstance(triplet_raw, dict):
-        entity_a = str(triplet_raw.get("entityA") or "").strip()
-        rel = str(triplet_raw.get("relationshipType") or "").strip()
-        entity_b = str(triplet_raw.get("entityB") or "").strip()
-        if entity_a and rel and entity_b:
-            triplet = TripletInput(
-                entityA=entity_a,
-                relationshipType=rel,
-                entityB=entity_b,
-                confidence=None,
-                source=str(triplet_raw.get("source") or "").strip() or None,
-            )
-    return SearchTaskOutput(query=query, intent=intent, priority=priority, triplet=triplet)
-
-
-def _message_to_text(message: Any) -> str:
-    content = getattr(message, "content", None)
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        try:
-            return json.dumps(content, ensure_ascii=True)
-        except TypeError:
-            return str(content)
-    to_text = getattr(message, "to_text", None)
-    if callable(to_text):
-        try:
-            return str(to_text())
-        except Exception:
-            return str(message)
-    return str(message)
-
-
 async def plan_research_with_autogen(request: ResearchPlanRequest) -> ResearchPlanResponse:
-    _assert_magentic_safe_model(request.agent)
-    model_client = _build_model_client(request.agent)
-    task_json = _task_payload_json(request)
-
-    planner = AssistantAgent(
-        name="Research_Planner",
-        model_client=model_client,
-        description="Designs graph-grounded web research tasks for the Assist loop.",
-        system_message="\n\n".join(
-            [
-                request.agent.system_prompt.strip(),
-                "You are the research planning specialist for the LiquidAIty Assist loop.",
-                "Produce only a research task plan, not a final answer to the user.",
-                "Keep the plan anchored to the provided triplets, evidence gaps, priority entities, and open questions.",
-                "Favor specific web-searchable queries that verify, compare, explain, resolve conflict, or deepen evidence.",
-                "Keep the plan compact and avoid duplicate or generic tasks.",
-            ]
-        ).strip(),
-    )
-
-    reviewer = AssistantAgent(
-        name="Research_Reviewer",
-        model_client=model_client,
-        description="Reviews and tightens research tasks so they stay grounded and useful.",
-        system_message="\n\n".join(
-            [
-                request.agent.system_prompt.strip(),
-                "You review research plans for graph grounding, specificity, and duplication.",
-                "Push the plan toward a machine-readable final task list.",
-                "Do not answer the user's question directly.",
-            ]
-        ).strip(),
-    )
-    team = MagenticOneGroupChat(
-        [planner, reviewer],
-        model_client=model_client,
-        max_turns=10,
-        max_stalls=2,
-        final_answer_prompt="\n".join(
-            [
-                "We are working on the following research planning task:",
-                "{task}",
-                "",
-                "Based on the conversation above, return exactly one JSON object with a top-level \"searchTasks\" array.",
-                "Each search task item must include: query, intent, priority.",
-                "Include an optional triplet object with entityA, relationshipType, entityB when available.",
-                "Return JSON only. Do not wrap it in markdown. Do not add commentary.",
-            ]
-        ),
-    )
-
-    try:
-        result = await team.run(
-            task="\n".join(
-                [
-                    "Build a web research search plan for the following Assist research request.",
-                    "Stay grounded in the graph and evidence hints provided below.",
-                    "Do not answer the user question directly.",
-                    "Produce a machine-readable research plan when ready.",
-                    "",
-                    task_json,
-                ]
-            )
-        )
-        transcript = [_message_to_text(message) for message in result.messages]
-        parsed: dict[str, Any] | None = None
-        for text in reversed(transcript):
-            parsed = _extract_json_object(text)
-            if parsed:
-                break
-        if not parsed:
-            raise RuntimeError("autogen_research_plan_missing_json")
-        raw_tasks = parsed.get("searchTasks")
-        if not isinstance(raw_tasks, list):
-            raise RuntimeError("autogen_research_plan_missing_search_tasks")
-        tasks = [task for task in (_normalize_task(item) for item in raw_tasks) if task is not None]
-        if not tasks:
-            raise RuntimeError("autogen_research_plan_empty_tasks")
-        return ResearchPlanResponse(
-            ok=True,
-            planner="autogen_magentic_one",
-            project_id=request.project_id,
-            turn_id=request.turn_id,
-            query=request.query,
-            planned_task_count=len(tasks),
-            search_tasks=tasks[: request.max_tasks],
-            stop_reason=result.stop_reason,
-            transcript=transcript[-10:],
-        )
-    finally:
-        await model_client.close()
+    raise RuntimeError("autogen_research_plan_not_ported_to_v044_runtime")

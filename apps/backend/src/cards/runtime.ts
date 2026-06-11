@@ -1,4 +1,10 @@
-import { CardRunResult, PythonAutoGenPayloadShape } from '../contracts/runtimeContracts';
+import {
+  CardRunResult,
+  PythonAutoGenPayloadShape,
+  RuntimeGraph,
+  RuntimeGraphEdge,
+  RuntimeGraphNode,
+} from '../contracts/runtimeContracts';
 import { orchestrateWithAutoGen } from '../services/autogen/autogenOrchestratorClient';
 import { resolveModel } from '../llm/models.config';
 
@@ -97,6 +103,149 @@ function isPythonAutoGenCallableRuntimeType(runtimeType: string): boolean {
   return runtimeType === 'assistant_agent';
 }
 
+function resolveCardModelStrict(card: any): {
+  provider: string;
+  providerModelId: string;
+} {
+  const modelKey = card.runtimeOptions?.modelKey;
+  if (!modelKey) {
+    throw new Error(
+      `card_model_config_missing: cardId=${card.id} runtimeType=${card.runtimeType}`,
+    );
+  }
+  const resolved = resolveModel(modelKey);
+  const uiProvider = normalizeProvider(card.runtimeOptions?.provider);
+  if (uiProvider && uiProvider !== resolved.provider) {
+    throw new Error(
+      `card_model_config_mismatch: cardId=${card.id} uiProvider=${uiProvider} registryProvider=${resolved.provider}`,
+    );
+  }
+  return { provider: resolved.provider, providerModelId: resolved.id };
+}
+
+function resolveCardTools(card: any): string[] {
+  const fromOptions = card.runtimeOptions?.tools;
+  if (Array.isArray(fromOptions)) return fromOptions.map((tool: any) => String(tool));
+  if (Array.isArray(card.tools)) return card.tools.map((tool: any) => String(tool));
+  return [];
+}
+
+function resolveCardFanOut(card: any): Record<string, any> | null {
+  const fanOut = card.runtimeOptions?.fanOut;
+  if (fanOut && typeof fanOut === 'object') return fanOut;
+  // The persisted card-editor fan-out setting is executionMode='swarm'.
+  if (card.runtimeOptions?.executionMode === 'swarm') {
+    const count = coerceNumber(card.runtimeOptions?.swarmMaxWorkers, null);
+    return {
+      enabled: true,
+      count: count && count > 0 ? count : 2,
+      items: [],
+    };
+  }
+  return null;
+}
+
+function cardHasChildSubgraph(cardId: string, allCards: any[]): boolean {
+  return allCards.some((node) => String(node.parentGraphId || '').trim() === String(cardId));
+}
+
+export function buildRuntimeGraph(
+  orchestratorCard: any,
+  callableHeads: any[],
+  allCards: any[],
+  allEdges: any[],
+  orchestratorModel: { provider?: string; providerModelId?: string },
+): RuntimeGraph {
+  const headIds = new Set(callableHeads.map((head) => String(head.id)));
+  const childCards = allCards.filter((node) =>
+    headIds.has(String(node.parentGraphId || '').trim()),
+  );
+
+  const toGraphNode = (
+    card: any,
+    overrides: Partial<RuntimeGraphNode> = {},
+  ): RuntimeGraphNode => ({
+    cardId: String(card.id || ''),
+    title: String(card.title || ''),
+    kind: String(card.kind || 'agent'),
+    runtimeType: resolveCardRuntimeType(card),
+    parentGraphId: String(card.parentGraphId || '').trim() || null,
+    prompt: String(card.prompt || '').trim(),
+    role: card.runtimeOptions?.role ? String(card.runtimeOptions.role) : null,
+    tools: resolveCardTools(card),
+    fanOut: resolveCardFanOut(card),
+    isSocietyOfMind:
+      Boolean(card.runtimeOptions?.isSocietyOfMind) ||
+      cardHasChildSubgraph(card.id, allCards),
+    provider: null,
+    providerModelId: null,
+    temperature: coerceNumber(card.runtimeOptions?.temperature, null),
+    maxTokens: coerceNumber(card.runtimeOptions?.maxTokens, null),
+    ...overrides,
+  });
+
+  const nodes: RuntimeGraphNode[] = [
+    toGraphNode(orchestratorCard, {
+      runtimeType: 'magentic_one',
+      provider: orchestratorModel.provider ?? null,
+      providerModelId: orchestratorModel.providerModelId ?? null,
+      isSocietyOfMind: false,
+    }),
+  ];
+
+  for (const head of callableHeads) {
+    const model = resolveCardModelStrict(head);
+    nodes.push(
+      toGraphNode(head, {
+        provider: model.provider,
+        providerModelId: model.providerModelId,
+      }),
+    );
+  }
+
+  for (const child of childCards) {
+    const model = resolveCardModelStrict(child);
+    nodes.push(
+      toGraphNode(child, {
+        provider: model.provider,
+        providerModelId: model.providerModelId,
+        isSocietyOfMind: false,
+      }),
+    );
+  }
+
+  const includedIds = new Set(nodes.map((node) => node.cardId));
+  const edges: RuntimeGraphEdge[] = (allEdges || [])
+    .filter(
+      (edge: any) =>
+        includedIds.has(String(edge.source)) && includedIds.has(String(edge.target)),
+    )
+    .map((edge: any) => ({
+      id: String(edge.id || `${edge.source}->${edge.target}`),
+      source: String(edge.source),
+      target: String(edge.target),
+      edgeType: normalizeEdgeType(edge.edgeType) as 'flow' | 'magentic_option',
+      loop:
+        edge.loop && typeof edge.loop === 'object'
+          ? edge.loop
+          : edge.data?.loop && typeof edge.data.loop === 'object'
+            ? edge.data.loop
+            : edge.metadata?.loop && typeof edge.metadata.loop === 'object'
+              ? edge.metadata.loop
+              : Number(edge.metadata?.loopMaxIterations) >= 1
+                ? {
+                    maxIterations: Number(edge.metadata.loopMaxIterations),
+                    exitOnText: edge.metadata?.loopExitText
+                      ? String(edge.metadata.loopExitText)
+                      : null,
+                  }
+                : null,
+      data: edge.data && typeof edge.data === 'object' ? edge.data : {},
+    }));
+
+  return { nodes, edges };
+}
+
 export function buildPythonAutoGenCardRuntimePayload(
   card: any,
   effectiveAgent: any,
@@ -119,20 +268,7 @@ export function buildPythonAutoGenCardRuntimePayload(
       mappedRuntimeType = 'assistant_agent';
     }
 
-    const participantModelKey = head.runtimeOptions?.modelKey;
-    if (!participantModelKey) {
-      throw new Error(
-        `card_model_config_missing: cardId=${head.id} runtimeType=${head.runtimeType}`,
-      );
-    }
-    const resolvedModel = resolveModel(participantModelKey);
-    const registryProvider = resolvedModel.provider;
-    const uiProvider = normalizeProvider(head.runtimeOptions?.provider);
-    if (uiProvider && uiProvider !== registryProvider) {
-      throw new Error(
-        `card_model_config_mismatch: cardId=${head.id} uiProvider=${uiProvider} registryProvider=${registryProvider}`,
-      );
-    }
+    const model = resolveCardModelStrict(head);
 
     return {
       cardId: String(head.id || ''),
@@ -144,8 +280,14 @@ export function buildPythonAutoGenCardRuntimePayload(
       inputContract: 'text',
       outputContract: 'text',
       callable: true,
-      provider: registryProvider,
-      providerModelId: resolvedModel.id,
+      prompt: String(head.prompt || '').trim(),
+      tools: resolveCardTools(head),
+      fanOut: resolveCardFanOut(head),
+      isSocietyOfMind:
+        Boolean(head.runtimeOptions?.isSocietyOfMind) ||
+        cardHasChildSubgraph(head.id, context.allCards || []),
+      provider: model.provider,
+      providerModelId: model.providerModelId,
       temperature: head.runtimeOptions?.temperature ?? null,
       maxTokens: head.runtimeOptions?.maxTokens ?? null,
     };
@@ -156,32 +298,30 @@ export function buildPythonAutoGenCardRuntimePayload(
     if (head.runtimeType === 'research_agent' || head.templateId?.includes('research')) mappedRuntimeType = 'research_agent';
     if (head.runtimeType === 'planner_agent' || head.templateId?.includes('plan')) mappedRuntimeType = 'planner_agent';
 
-    const participantModelKey = head.runtimeOptions?.modelKey;
-    if (!participantModelKey) {
-      throw new Error(
-        `card_model_config_missing: cardId=${head.id} runtimeType=${head.runtimeType}`,
-      );
-    }
-    const resolvedModel = resolveModel(participantModelKey);
-    const registryProvider = resolvedModel.provider;
-    const uiProvider = normalizeProvider(head.runtimeOptions?.provider);
-    if (uiProvider && uiProvider !== registryProvider) {
-      throw new Error(
-        `card_model_config_mismatch: cardId=${head.id} uiProvider=${uiProvider} registryProvider=${registryProvider}`,
-      );
-    }
+    const model = resolveCardModelStrict(head);
 
     return {
       cardId: String(head.id || ''),
       runtimeType: mappedRuntimeType,
       runtimeBinding: head.runtimeBinding || null,
       prompt: String(head.prompt || '').trim(),
-      provider: registryProvider,
-      providerModelId: resolvedModel.id,
+      provider: model.provider,
+      providerModelId: model.providerModelId,
       temperature: head.runtimeOptions?.temperature ?? null,
       maxTokens: head.runtimeOptions?.maxTokens ?? null,
     };
   });
+
+  const runtimeGraph = buildRuntimeGraph(
+    card,
+    callableHeads,
+    context.allCards || [],
+    context.allEdges || [],
+    {
+      provider: modelConfig?.provider,
+      providerModelId: modelConfig?.providerModelId,
+    },
+  );
 
   const safeRuntimeOptions = { ...(card.runtimeOptions || {}) };
   const rawMaxTokens = safeRuntimeOptions.maxTokens;
@@ -242,6 +382,7 @@ export function buildPythonAutoGenCardRuntimePayload(
       runtimeType: 'magentic_one',
       prompt: String(card.prompt || '').trim(),
       runtimeOptions: safeRuntimeOptions,
+      graph: runtimeGraph,
       participants,
       privateParticipants,
       runtimeScope: {

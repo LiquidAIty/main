@@ -11,9 +11,14 @@ from pydantic import BaseModel
 
 
 def _load_repo_env() -> None:
-    env_path = Path("apps/backend/.env").resolve()
-    if env_path.exists():
-        load_dotenv(env_path, override=False)
+    # The sidecar starts with CWD apps/python-models (npm run dev:autogen),
+    # so resolve apps/backend/.env from both CWD and the repo root above this file.
+    candidates = [Path.cwd(), *Path(__file__).resolve().parents]
+    for base in candidates:
+        env_path = base / "apps" / "backend" / ".env"
+        if env_path.exists():
+            load_dotenv(env_path, override=False)
+            return
 
 
 _load_repo_env()
@@ -37,65 +42,53 @@ MAGENTIC_SAFE_OPENAI_PREFIXES = (
     "gpt-5.1-chat-latest",
 )
 
-
-def _detect_model_family(model_name: str) -> str:
-    lower = str(model_name or "").strip().lower()
-    if "gpt-5" in lower:
-        return ModelFamily.GPT_5
-    if "gpt-4o" in lower:
-        return ModelFamily.GPT_4O
-    if "gpt-4.1" in lower:
-        return ModelFamily.GPT_41
-    if lower.startswith("o4") or "/o4" in lower:
-        return ModelFamily.O4
-    if lower.startswith("o3") or "/o3" in lower:
-        return ModelFamily.O3
-    if lower.startswith("o1") or "/o1" in lower:
-        return ModelFamily.O1
-    if "claude-4-sonnet" in lower:
-        return ModelFamily.CLAUDE_4_SONNET
-    if "claude-4-opus" in lower:
-        return ModelFamily.CLAUDE_4_OPUS
-    if "claude-3.7-sonnet" in lower:
-        return ModelFamily.CLAUDE_3_7_SONNET
-    if "claude-3.5-sonnet" in lower:
-        return ModelFamily.CLAUDE_3_5_SONNET
-    if "claude-3.5-haiku" in lower:
-        return ModelFamily.CLAUDE_3_5_HAIKU
-    if "claude-3-haiku" in lower:
-        return ModelFamily.CLAUDE_3_HAIKU
-    if "gemini-2.5-pro" in lower:
-        return ModelFamily.GEMINI_2_5_PRO
-    if "gemini-2.5-flash" in lower:
-        return ModelFamily.GEMINI_2_5_FLASH
-    if "gemini-2.0-flash" in lower:
-        return ModelFamily.GEMINI_2_0_FLASH
-    if "llama-4-maverick" in lower:
-        return ModelFamily.LLAMA_4_MAVERICK
-    if "llama-4-scout" in lower:
-        return ModelFamily.LLAMA_4_SCOUT
-    if "llama-3.3-70b" in lower:
-        return ModelFamily.LLAMA_3_3_70B
-    if "llama-3.3-8b" in lower:
-        return ModelFamily.LLAMA_3_3_8B
-    if "deepseek-r1" in lower or "kimi-k2" in lower:
-        return ModelFamily.R1
-    return "openrouter-compatible"
-
-
-def _build_model_info(model_name: str) -> dict[str, Any]:
-    return {
-        "vision": False,
-        "function_calling": False,
-        "json_output": False,
-        "family": _detect_model_family(model_name),
-        "structured_output": False,
-        "multiple_system_messages": True,
-    }
+# Model name fragments whose real APIs support OpenAI-style function calling
+# and JSON mode. autogen-core 0.4.4 enforces these flags loudly: a model
+# without function_calling cannot receive tools, and a model without
+# json_output cannot serve the Magentic-One ledger.
+_OPENAI_TOOL_CAPABLE_FRAGMENTS = (
+    "gpt-4",
+    "gpt-4o",
+    "gpt-4.1",
+    "gpt-5",
+    "o1",
+    "o3",
+    "o4",
+)
 
 
 def _normalize_model_name(model_name: str) -> str:
     return str(model_name or "").strip().lower()
+
+
+def _detect_model_family(model_name: str) -> str:
+    # autogen-core 0.4.4 only knows GPT_35 / GPT_4 / GPT_4O / O1 / UNKNOWN.
+    lower = _normalize_model_name(model_name)
+    if "gpt-4o" in lower:
+        return ModelFamily.GPT_4O
+    if lower.startswith("o1") or "/o1" in lower:
+        return ModelFamily.O1
+    if "gpt-4" in lower:
+        return ModelFamily.GPT_4
+    if "gpt-3.5" in lower or "gpt-35" in lower:
+        return ModelFamily.GPT_35
+    return ModelFamily.UNKNOWN
+
+
+def _supports_tools_and_json(model_name: str) -> bool:
+    lower = _normalize_model_name(model_name)
+    bare = lower.split("/", 1)[-1]
+    return any(bare.startswith(fragment) or f"-{fragment}" in bare for fragment in _OPENAI_TOOL_CAPABLE_FRAGMENTS)
+
+
+def _build_model_info(model_name: str) -> dict[str, Any]:
+    capable = _supports_tools_and_json(model_name)
+    return {
+        "vision": False,
+        "function_calling": capable,
+        "json_output": capable,
+        "family": _detect_model_family(model_name),
+    }
 
 
 def _requires_max_completion_tokens(provider: str, model_name: str) -> bool:
@@ -124,6 +117,14 @@ def _assert_magentic_safe_model(config: AutoGenAgentConfig) -> None:
 def _build_model_client(config: AutoGenAgentConfig) -> OpenAIChatCompletionClient:
     provider = str(config.provider or "").strip().lower()
     model_name = str(config.provider_model_id or "").strip()
+    if not provider or not model_name:
+        raise RuntimeError(
+            f"card_model_config_missing: provider={provider or 'missing'} model={model_name or 'missing'}"
+        )
+    if provider == "default" or model_name.lower() == "default":
+        raise RuntimeError(
+            f"card_model_config_default_forbidden: provider={provider} model={model_name}"
+        )
     temperature = config.temperature if config.temperature is not None else 0.2
 
     max_tokens = config.max_tokens
