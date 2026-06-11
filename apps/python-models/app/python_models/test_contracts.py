@@ -133,3 +133,21 @@ def test_private_participant_rejects_empty_model_config(field, value):
 
     with pytest.raises(ValidationError):
         CardRuntimePrivateParticipant(**payload)
+
+
+@pytest.mark.parametrize("participant_type", [CardRuntimeParticipant, CardRuntimePrivateParticipant])
+@pytest.mark.parametrize("field", ["provider", "providerModelId"])
+@pytest.mark.parametrize("value", ["default", " DEFAULT "])
+def test_participant_contracts_reject_default_model_config(participant_type, field, value):
+    payload = {
+        "cardId": "agentA",
+        "runtimeType": "assistant_agent",
+        "provider": SELECTED_PROVIDER,
+        "providerModelId": SELECTED_PROVIDER_MODEL_ID,
+    }
+    if participant_type is CardRuntimeParticipant:
+        payload["title"] = "Agent A"
+    payload[field] = value
+
+    with pytest.raises(ValidationError, match="provider_model_default_forbidden"):
+        participant_type(**payload)

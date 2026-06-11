@@ -273,18 +273,17 @@ class SubgraphRunner:
                 label=node_id,
             )
 
-        for level in self._subgraph.levels:
-            await asyncio.gather(*(run_node(node_id) for node_id in level))
-
-        for loop in self._subgraph.loops:
-            iterations = 1  # the first pass already executed once
-            while iterations < loop.max_iterations:
-                source_output = outputs.get(loop.edge.source, "")
-                if loop.exit_on_text and loop.exit_on_text.lower() in source_output.lower():
+        scheduler = GraphScheduler(self._subgraph)
+        if self._subgraph.flow_edges:
+            while True:
+                ready = scheduler.next_obligations()
+                if not ready:
                     break
-                for node_id in loop.cycle_node_ids:
-                    await run_node(node_id)
-                iterations += 1
+                await asyncio.gather(*(run_node(node_id) for node_id in ready))
+                for node_id in ready:
+                    scheduler.on_agent_spoken(node_id, outputs[node_id])
+        else:
+            await asyncio.gather(*(run_node(node_id) for node_id in self._subgraph.node_ids))
 
         terminal_ids = self._subgraph.terminal_node_ids or list(outputs.keys())
         final_parts = [outputs[node_id] for node_id in terminal_ids if node_id in outputs]
@@ -406,10 +405,7 @@ class GraphScheduler:
     def on_agent_spoken(self, node_id: str, text: str) -> None:
         self._spoken.add(node_id)
         self._queued.discard(node_id)
-        for target in self._successors.get(node_id, []):
-            predecessors = self._predecessors.get(target, [])
-            if all(pred in self._spoken for pred in predecessors):
-                self._enqueue(target)
+        continued_loop = False
         for index, loop in enumerate(self._loops):
             if loop.edge.source != node_id:
                 continue
@@ -422,6 +418,13 @@ class GraphScheduler:
             for cycle_node in loop.cycle_node_ids:
                 self._spoken.discard(cycle_node)
             self._enqueue(loop.edge.target)
+            continued_loop = True
+        if continued_loop:
+            return
+        for target in self._successors.get(node_id, []):
+            predecessors = self._predecessors.get(target, [])
+            if all(pred in self._spoken for pred in predecessors):
+                self._enqueue(target)
 
     def next_obligation(self) -> str | None:
         while self._queue:
@@ -430,6 +433,14 @@ class GraphScheduler:
                 self._queued.discard(node_id)
                 return node_id
         return None
+
+    def next_obligations(self) -> list[str]:
+        obligations: list[str] = []
+        while True:
+            obligation = self.next_obligation()
+            if obligation is None:
+                return obligations
+            obligations.append(obligation)
 
 
 # ---------------------------------------------------------------------------
