@@ -20,6 +20,7 @@ raw diff container, or authority to implement OutOfScopeObservations.
 * direct-read file and symbol evidence
 * relevant CodeGraph relationships
 * required validations
+* one KnowGraph Skill Memory Packet (see `specs/skill-packet-fable-handoff-spec.md`)
 
 ## Outputs
 

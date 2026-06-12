@@ -14,8 +14,10 @@ from unittest import mock
 
 import skill_ingest
 from skill_ingest import (
+    NO_MATCHING_SKILL_RULE,
     SkillIngestError,
     _run_read,
+    build_fable_prompt,
     build_skill_packet,
     get_skill,
     match_skills,
@@ -316,6 +318,51 @@ class ReadOnlyTests(unittest.TestCase):
             match_skills(FailingDriver(), None, skill_id="codebasedmemory")
 
 
+class HandoffTests(unittest.TestCase):
+    TASK = "Neo4j skill ingestion guardrails"
+
+    def _packet(self):
+        return build_skill_packet(FakeReadDriver(), None, prompt=self.TASK, limit=3)
+
+    def test_prompt_contains_required_sections_in_order(self):
+        rendered = build_fable_prompt(self.TASK, self._packet(), spec="specs/x-spec.md")
+        positions = [
+            rendered.index("## Task Prompt"),
+            rendered.index("## Source Spec"),
+            rendered.index("## Skill Memory Packet"),
+            rendered.index("## Required Behavior"),
+        ]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn(self.TASK, rendered)
+        self.assertIn("specs/x-spec.md", rendered)
+
+    def test_prompt_embeds_packet_json_and_generating_command(self):
+        packet = self._packet()
+        rendered = build_fable_prompt(self.TASK, packet)
+        self.assertIn("services/knowgraph/skill_ingest.py packet --prompt", rendered)
+        self.assertIn(json.dumps(packet, indent=2, sort_keys=True), rendered)
+        self.assertIn("none declared", rendered)
+
+    def test_prompt_obligates_guardrails_writeback_and_reingest(self):
+        rendered = build_fable_prompt(self.TASK, self._packet())
+        self.assertIn("guardrail in the packet as a hard constraint", rendered)
+        self.assertIn("packet query patterns", rendered)
+        self.assertIn("@attempt_result", rendered)
+        self.assertIn("ingest --repo-root .", rendered)
+        self.assertIn("never fake success", rendered)
+
+    def test_prompt_is_deterministic(self):
+        first = build_fable_prompt(self.TASK, self._packet(), spec="specs/x.md")
+        second = build_fable_prompt(self.TASK, self._packet(), spec="specs/x.md")
+        self.assertEqual(first, second)
+
+    def test_empty_packet_triggers_new_skill_rule(self):
+        empty = {"packet_version": 1, "query": {"prompt": "zzz", "limit": 3}, "skills": []}
+        rendered = build_fable_prompt("zzz", empty)
+        self.assertIn(NO_MATCHING_SKILL_RULE, rendered)
+        self.assertNotIn("```json", rendered)
+
+
 class CliTests(unittest.TestCase):
     def _patched(self, driver):
         return (
@@ -337,6 +384,15 @@ class CliTests(unittest.TestCase):
             self.assertEqual(skill_ingest.main(["match", "--skill-id", "codebasedmemory"]), 0)
             self.assertEqual(
                 skill_ingest.main(["packet", "--prompt", "neo4j ingestion guardrails", "--json"]),
+                0,
+            )
+            self.assertEqual(
+                skill_ingest.main(["handoff", "--prompt", "neo4j ingestion guardrails"]),
+                0,
+            )
+            # empty packet still renders a valid handoff prompt (new-skill rule)
+            self.assertEqual(
+                skill_ingest.main(["handoff", "--prompt", "zzzqqqxxx"]),
                 0,
             )
 
