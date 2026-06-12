@@ -736,11 +736,9 @@ export type MissionRun = {
 
 export type PlanFlowNodeType =
   | 'PlanRoute'
-  | 'Spec'
   | 'Task'
   | 'Decision'
   | 'Assumption'
-  | 'MissionSpecDraft'
   | 'MagenticOnePlan'
   | 'RuntimeRun'
   | 'Proof'
@@ -750,8 +748,6 @@ export type PlanFlowNodeType =
 
 export type PlanFlowSource =
   | 'plan_md'
-  | 'spec_md'
-  | 'task_ledger'
   | 'user'
   | 'magentic_one'
   | 'sol'

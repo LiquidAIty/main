@@ -62,7 +62,7 @@ describe('PlanFlow projection adapter', () => {
     expect(projection.nodes.filter((node) => node.type === 'Task')).toHaveLength(2);
   });
 
-  it('lays out markdown nodes as readable route, spec, and task lanes', () => {
+  it('lays out the living route above real planner tasks', () => {
     const markdown = {
       packet_version: 1,
       source: 'planflow_markdown_projection',
@@ -77,25 +77,15 @@ describe('PlanFlow projection adapter', () => {
           status: 'running',
           links: [],
         },
-        ...Array.from({ length: 6 }, (_, index) => ({
-          id: `spec-${index}`,
-          type: 'Spec' as const,
-          title: `Spec ${index}`,
-          source: 'spec_md' as const,
-          sourcePath: `specs/${index}.md`,
-          provenance: `specs/${index}.md`,
-          status: 'pending' as const,
-          links: ['route'],
-        })),
         {
           id: 'task',
           type: 'Task',
           title: 'Task',
-          source: 'task_ledger',
-          sourcePath: 'specs/tasks.md',
-          provenance: 'Task ledger',
+          source: 'magentic_one',
+          sourcePath: 'deck-run:run-1/step:step-1',
+          provenance: 'Real planner task',
           status: 'pending',
-          links: ['spec-0'],
+          links: ['route'],
         },
       ],
       edges: [],
@@ -104,11 +94,8 @@ describe('PlanFlow projection adapter', () => {
 
     const graph = buildPlanFlowMissionGraph(markdown, null);
     const route = graph.nodes.find((node) => node.id === 'route');
-    const specs = graph.nodes.filter((node) => node.data.kind === 'Spec');
     const task = graph.nodes.find((node) => node.id === 'task');
 
-    expect(new Set(specs.map((node) => node.position.x)).size).toBeGreaterThan(1);
-    expect(Math.max(...specs.map((node) => node.position.y))).toBeLessThan(task!.position.y);
-    expect(route!.position.y).toBeLessThan(Math.min(...specs.map((node) => node.position.y)));
+    expect(route!.position.y).toBeLessThan(task!.position.y);
   });
 });

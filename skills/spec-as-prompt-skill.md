@@ -1,4 +1,4 @@
-# Skill: Spec As Prompt
+# Skill: Prompt As Spec And Task
 
 @skill id=spec-as-prompt
 @type Skill
@@ -9,66 +9,50 @@
 
 ## Vector Summary
 
-Use one temporary, reviewable CoderPacket as the active spec-as-prompt for a bounded part of
-`PLAN.md`; do not create durable spec files for ordinary work.
+Use one temporary, reviewable CoderPacket prompt as both the complete spec and the complete task for
+a bounded part of `PLAN.md`. Never create spec files or task files.
 
 ## Procedure
 
 1. Read `PLAN.md` and current PlanFlow state.
 2. Pull a Context Packet with fresh CBM/code anchors and relevant skills.
-3. Define one bounded active job with requirements, scope, proof, and stop conditions.
-4. Let the user review or edit it.
+3. Create one active CoderPacket prompt containing requirements, scope, proof, and stop conditions.
+4. Let the user review or edit the active prompt.
 5. Send it to a coder only after Go.
-6. Compare the returned CoderReport against it.
-7. Discard or archive the temporary job state; do not create `spec.md` by default.
+6. Compare the returned CoderReport against every prompt requirement.
+7. Keep durable direction in `PLAN.md` and reusable learning in skills.
 
 ## Guardrails
 
-@guardrail id=spec-as-prompt.no-spec-sprawl
+@guardrail id=spec-as-prompt.no-spec-folder
+@guardrail id=spec-as-prompt.no-spec-files
+@guardrail id=spec-as-prompt.no-task-files
 @guardrail id=spec-as-prompt.one-active-job
-@guardrail id=spec-as-prompt.durable-spec-explicit-only
 
-* Durable `spec.md` exists only by explicit user export/save or for a rare stable long-term
-  contract.
-* Existing `specs/*.md` are legacy/source documents during transition.
-* PlanFlow may show one active CoderPacket, not a spec library.
+* The active CoderPacket prompt is both spec and task.
+* There is no `specs/` folder, task file, task ledger, or spec export.
+* PlanFlow shows one active CoderPacket, never a spec or task library.
 
 ## Query Patterns
 
-@query id=spec-as-prompt.current-law "direct-read PLAN.md and AGENTS.md, then retrieve fresh CBM and relevant skills before creating one active CoderPacket"
+@query id=spec-as-prompt.current-law "direct-read PLAN.md and AGENTS.md, retrieve fresh CBM and relevant skills, then create one active CoderPacket prompt as both spec and task"
 
-## Documentation Refactor Attempt
+## Core-Law Cleanup Attempt
 
-@attempt id=spec-as-prompt.core-doc-model-refactor
+@attempt id=spec-as-prompt.remove-spec-and-task-files
 @status active
-@source_prompt "refactor core documentation around the living plan, Context Packet, one active CoderPacket, structured CoderReport, and no spec sprawl"
+@source_prompt "remove the specs folder and make the active prompt both spec and task"
 @requires_fresh_cbm true
 
-@attempt_result id=spec-as-prompt.core-doc-model-refactor
+@attempt_result id=spec-as-prompt.remove-spec-and-task-files
 @status succeeded
 @cbm_after nodes=4650 edges=8255
-@proved_by PLAN.md and AGENTS.md define spec-as-prompt/CoderPacket as default and durable spec files as explicit-only exceptions
-@validated_by focused documentation audits and successful skill ingestion
+@proved_by the specs folder and obsolete active task file were removed
+@proved_by the Spec-Kit scaffold was removed and PlanFlow no longer scans or renders a spec/task-file hierarchy
+@proved_by SkillGraph ingestion replaces importer-owned memory and live retrieval contains no legacy spec relationships
+@validated_by 51 SkillGraph tests, 5 focused PlanFlow tests, backend TypeScript compile, client TypeScript compile, focused audits, and live skill ingestion
 @touches_code PLAN.md
 @touches_code AGENTS.md
-
-## Work Done
-
-Replaced the old default-spec/task-file planning model with a living `PLAN.md`, one temporary
-CoderPacket, structured CoderReport comparison, Context Packet pull, and explicit-only durable
-spec policy.
-
-## Actual Graph And Code Delta
-
-Documentation and durable skills only; no implementation or runtime behavior changed. Fresh CBM
-remains ready at 4650/8255.
-
-Reasoning receipt:
-
-* chosen approach: make `PLAN.md` and `AGENTS.md` the product/execution authority and use skills
-  for reusable learning.
-* rejected alternatives: deleting historical specs, creating a new feature spec, or implementing
-  the active-job loop in a documentation pass.
-* failed/blocked paths: none.
-* guardrails created: one active job, no spec sprawl, durable specs explicit-only.
-* retry direction: wire the active CoderPacket/CoderReport loop.
+@touches_code services/knowgraph/skill_ingest.py
+@touches_code apps/backend/src/services/planflow/planFlowProjection.ts
+@touches_code client/src/features/agentbuilder/plan/planFlowProjection.ts

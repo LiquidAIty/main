@@ -20,16 +20,10 @@ function toMissionStatus(status: PlanFlowNode['status']): PlanMissionNodeStatus 
 
 function planNodePosition(node: PlanFlowNode, index: number): { x: number; y: number } {
   if (node.type === 'PlanRoute') return { x: 40, y: 48 };
-  if (node.type === 'Spec') {
-    return {
-      x: 360 + (index % 4) * 300,
-      y: 190 + Math.floor(index / 4) * 178,
-    };
-  }
   if (node.type === 'Task') {
     return {
       x: 360 + (index % 4) * 300,
-      y: 940 + Math.floor(index / 4) * 178,
+      y: 320 + Math.floor(index / 4) * 178,
     };
   }
   if (node.type === 'MagenticOnePlan') {

@@ -4,7 +4,7 @@
 // @graph depends_on: Apache AGE, Postgres
 // @graph feeds_to: ThinkGraphContextPacket
 //
-// Minimal ThinkGraph memory (specs/thinkgraph-planning-memory-spec.md).
+// Minimal ThinkGraph memory for real planning and run events.
 // Stores real events and their PlanFlow links in the existing AGE graph and
 // reads them back as a versioned context packet. It never invents planner state.
 import { runCypherOnGraph } from '../graphService';

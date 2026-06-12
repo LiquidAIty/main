@@ -9,14 +9,14 @@ comparison, proof, memory, and next job.
 `PLAN.md` is the durable living plan and current route. Keep it concise and current.
 
 PlanFlow is Magentic-One/Sol's visible thinking and control surface. It shows the living plan,
-active job, active spec-as-prompt, report/run status, blockers, proof summary, and next step. It is
+active job prompt, report/run status, blockers, proof summary, and next step. It is
 not a doc map, spec library, skill library, markdown graph, road-sign display, fake planner
 summary, or fake execution preview.
 
 ## Execution Contract
 
-The default execution spec is the current **CoderPacket**, also called the spec-as-prompt, active
-job contract, or temporary execution spec.
+The current **CoderPacket prompt** is both the complete execution spec and the complete task. It is
+also called the spec-as-prompt, task-as-prompt, or active job contract.
 
 When coding:
 
@@ -37,12 +37,12 @@ Do not broaden scope or start the next job without instruction.
 ## CoderPacket
 
 A CoderPacket is one bounded part of `PLAN.md`, created from the Context Packet, living plan,
-relevant skills, and fresh code anchors. It is reviewable and temporary. It is not saved as a
-durable `spec.md` by default.
+relevant skills, and fresh code anchors. It is reviewable and temporary. It contains all current
+requirements, scope, proof, and stop conditions.
 
-Durable spec files are allowed only when explicitly exported/saved by the user or for a rare stable
-long-term contract. Existing `specs/*.md` files are legacy/source documents during transition and
-do not override `PLAN.md`, `AGENTS.md`, or the active CoderPacket.
+Do not create spec files, task files, task ledgers, or a `specs/` folder. Do not export or preserve
+the active prompt as a spec file. Durable product direction belongs in `PLAN.md`; reusable learning
+belongs in `skills/*.md`; current execution requirements belong only in the active CoderPacket.
 
 ## CoderReport
 
@@ -78,9 +78,8 @@ Markdown is an execution layer, but avoid documentation sprawl:
 * `PLAN.md` is the living product and route.
 * `AGENTS.md` is execution law.
 * `skills/*.md` are reusable learning.
-* CoderPacket is the default temporary spec-as-prompt.
-* Existing `specs/*.md` are legacy/source docs during transition.
-* Do not create a new durable spec or task file for ordinary work.
+* The active CoderPacket prompt is both the current spec and task.
+* Do not create spec files, task files, task ledgers, or a `specs/` folder.
 * Do not create random notes, progress files, evidence files, handoff files, or completed-task
   piles.
 
@@ -94,6 +93,7 @@ Markdown is an execution layer, but avoid documentation sprawl:
 * No Run Preview pretending to be execution.
 * No road-sign UI as product law.
 * No spec sprawl.
+* No spec files or task files.
 * No destructive git operations without explicit instruction.
 * Preserve the real ReactFlow/TypeScript control plane, Node backend, Python sidecar, and
   Microsoft AutoGen v0.4.4 / Magentic-One runtime unless explicitly changed by the user.

@@ -9,13 +9,11 @@ import { GRAPH_THEME } from '../graph/graphVisualTokens';
 
 export type PlanMissionNodeKind =
   | 'PlanRoute'
-  | 'Spec'
   | 'Goal'
   | 'Step'
   | 'Task'
   | 'Decision'
   | 'Assumption'
-  | 'MissionSpecDraft'
   | 'MagenticOnePlan'
   | 'RuntimeRun'
   | 'Proof'

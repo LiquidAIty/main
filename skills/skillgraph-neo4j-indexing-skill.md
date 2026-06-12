@@ -17,13 +17,15 @@ or coding.
 2. Retrieve procedures, proof rules, failures, and reusable lessons.
 3. Use relevant skills in the Context Packet and CoderPacket.
 4. Update skills only when learning is reusable.
-5. Re-ingest skills and prove retrieval after changes.
+5. Re-ingest skills as a complete deterministic projection replacement and prove retrieval after
+   changes.
 
 ## Guardrails
 
 @guardrail id=skillgraph-neo4j-indexing.skills-not-planflow-nodes
 @guardrail id=skillgraph-neo4j-indexing.reusable-learning-only
 @guardrail id=skillgraph-neo4j-indexing.no-fake-ingestion-success
+@guardrail id=skillgraph-neo4j-indexing.no-stale-importer-owned-memory
 
 ## Query Patterns
 

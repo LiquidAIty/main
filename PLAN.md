@@ -59,7 +59,7 @@ planning, execution, or success.
 
 PlanFlow is Magentic-One/Sol's visible thinking and control surface.
 
-PlanFlow shows the living plan, current active job, active spec-as-prompt when one exists,
+PlanFlow shows the living plan, current active job prompt when one exists,
 run/report status, blockers, proof summary, and next step. It may expose selected supporting
 evidence on demand.
 
@@ -104,26 +104,26 @@ no-stub/no-fallback laws, CoderReport expectations, adapter lessons, and reusabl
 
 Skills are not PlanFlow canvas nodes and are updated only when learning is reusable.
 
-### Spec-As-Prompt / CoderPacket
+### Active Prompt / CoderPacket
 
-The default spec is not a permanent file. The default spec is the shape of the temporary active job
-prompt.
+The active CoderPacket prompt is both the spec and the task. There is no separate spec file, task
+file, spec folder, or task ledger.
 
-Use the terms **spec-as-prompt**, **spec-shaped CoderPacket**, **active job contract**, and
-**temporary execution spec**.
+Use the terms **spec-as-prompt**, **task-as-prompt**, **active CoderPacket**, and **active job
+contract**.
 
 A CoderPacket:
 
-* matches one bounded part of `PLAN.md`
+* is the complete bounded spec and task for one part of `PLAN.md`
 * is created from Context Packet, `PLAN.md`, relevant skills, and fresh CBM/code anchors
 * is shown in PlanFlow only while active
 * can be reviewed and edited by the user
 * is sent to a coder when the user clicks Go
-* is not saved as `spec.md` by default
+* is never converted into a spec file or task file
 
-Durable `spec.md` files exist only when explicitly exported/saved by the user or when a rare stable
-long-term contract genuinely needs one. Existing `specs/*.md` files are legacy/source documents
-during transition, not the default planning model.
+The repository does not keep a `specs/` folder or task files. Durable product direction belongs in
+`PLAN.md`; reusable learning belongs in `skills/*.md`; current execution requirements belong only
+in the active CoderPacket prompt.
 
 ### CoderReport
 
@@ -164,8 +164,7 @@ There is no vendor lock-in. Adapters are product direction only in the current d
 ## Current Route
 
 1. Make this living plan and `AGENTS.md` the clear product and execution law.
-2. Treat existing specs as legacy/source documents; use one active CoderPacket as the default
-   spec-as-prompt.
+2. Use one active CoderPacket prompt as both the current spec and task; keep no spec or task files.
 3. Wire PlanFlow around the living plan, one active CoderPacket, CoderReport comparison, blockers,
    proof, and next step.
 4. Have Magentic-One/Sol initiate Context Packet assembly from ThinkGraph, SkillGraph/Neo4j,
@@ -175,8 +174,9 @@ There is no vendor lock-in. Adapters are product direction only in the current d
 
 ## Active Work
 
-Documentation and core-law cleanup is active. No runtime, adapter, or LocalCoder wiring belongs in
-this pass.
+The spec/task-file model has been removed. The root planning spec/task trees and Spec-Kit scaffold
+are gone, SkillGraph handoff treats the active CoderPacket prompt as both spec and task, and
+PlanFlow's repository projection now reads only the living `PLAN.md`.
 
 ## Code And Context Anchors
 
@@ -190,7 +190,7 @@ this pass.
 
 ## Durable Decisions
 
-* Spec-as-prompt/CoderPacket is the default; durable spec files are exceptional.
+* The active CoderPacket prompt is both spec and task; spec and task files do not exist.
 * PlanFlow shows active planning state, not document or skill libraries.
 * CoderPacket in, CoderReport out is the adapter boundary.
 * Fresh CBM is required before code edits.
@@ -199,7 +199,6 @@ this pass.
 
 ## Blockers
 
-* The current UI and implementation still reflect parts of the legacy document-map/spec model.
 * The active CoderPacket/CoderReport comparison loop is not wired yet.
 * Coder adapters are not wired yet.
 

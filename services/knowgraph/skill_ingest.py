@@ -9,7 +9,7 @@ Two-lane design:
 
 * Canonical lane (this module): ``@``-prefixed graphable lines are parsed
   deterministically into stable Skill / SkillAttempt / FailedAttempt /
-  Guardrail / Decision / QueryPattern / Spec / ProofClaim / Validation /
+  Guardrail / Decision / QueryPattern / ProofClaim / Validation /
   CodeGraphReference nodes and relationships. No LLM is involved and the
   parser never invents IDs, labels, or defaults.
 * Semantic retrieval lane (integration point only): prose sections are
@@ -27,7 +27,7 @@ CLI:
     python services/knowgraph/skill_ingest.py get --skill-id codebasedmemory
     python services/knowgraph/skill_ingest.py match --prompt "Neo4j skill ingestion guardrails"
     python services/knowgraph/skill_ingest.py packet --prompt "fix KnowGraph retrieval" --json
-    python services/knowgraph/skill_ingest.py handoff --prompt "<task prompt>" --spec specs/x.md
+    python services/knowgraph/skill_ingest.py handoff --prompt "<active CoderPacket prompt>"
 
 Retrieval commands (get/match/packet/handoff) are read-only: fixed Cypher, no
 LLM, no generated queries, and a runtime guard that rejects write clauses.
@@ -47,6 +47,11 @@ from typing import Any
 
 IMPORT_KIND = "skill_markdown"
 SOURCE = "repo"
+RESET_SKILL_GRAPH_CYPHER = """
+MATCH (n)
+WHERE n.import_kind = $import_kind
+DETACH DELETE n
+"""
 
 # Graphable line keys that open a new record context.
 RECORD_OPENERS = {"skill", "attempt", "failed_attempt", "decision", "attempt_result"}
@@ -56,9 +61,7 @@ ATTRIBUTE_KEYS = {
     "type",
     "status",
     "requires",
-    "applies_to",
     "related_to",
-    "source_spec",
     "source_prompt",
     "requires_fresh_cbm",
     "because",
@@ -136,7 +139,6 @@ class _Record:
     rid: str
     line: int
     props: dict[str, Any] = field(default_factory=dict)
-    specs: list[str] = field(default_factory=list)
     related: list[str] = field(default_factory=list)
     requires: list[str] = field(default_factory=list)
     rejected: list[str] = field(default_factory=list)
@@ -370,8 +372,6 @@ def parse_skill_markdown(text: str, source_path: str) -> ParsedSkill:
             current.props["type"] = rest
         elif key == "requires":
             current.requires.append(rest)
-        elif key in ("applies_to", "source_spec"):
-            current.specs.append(_strip_quotes(rest))
         elif key == "related_to":
             current.related.append(_strip_quotes(rest))
         elif key == "source_prompt":
@@ -440,7 +440,6 @@ def parse_skill_markdown(text: str, source_path: str) -> ParsedSkill:
         attempt.proofs.extend(result.proofs)
         attempt.validations.extend(result.validations)
         attempt.code_refs.extend(result.code_refs)
-        attempt.specs.extend(result.specs)
 
     for prop_key, value in frontmatter.items():
         skill.props.setdefault(f"fm_{prop_key}", value)
@@ -514,12 +513,6 @@ def build_upsert_statements(parsed: ParsedSkill) -> tuple[list[Statement], list[
         skill_props["related_to"] = parsed.skill.related
     nodes.append(_node_stmt("Skill", skill_id, skill_props, parsed))
 
-    spec_ids = sorted({*parsed.skill.specs, *(s for a in parsed.attempts.values() for s in a.specs)})
-    for spec_id in spec_ids:
-        nodes.append(_node_stmt("Spec", spec_id, {"path": spec_id}, parsed))
-    for spec_id in sorted(set(parsed.skill.specs)):
-        edges.append(_edge_stmt("Skill", skill_id, "APPLIES_TO", "Spec", spec_id))
-
     for related_id in sorted(set(parsed.skill.related)):
         edges.append(_edge_stmt("Skill", skill_id, "RELATED_TO", "Skill", related_id))
 
@@ -541,8 +534,6 @@ def build_upsert_statements(parsed: ParsedSkill) -> tuple[list[Statement], list[
     for attempt in sorted(parsed.attempts.values(), key=lambda r: r.rid):
         nodes.append(_node_stmt("SkillAttempt", attempt.rid, attempt.props, parsed))
         edges.append(_edge_stmt("Skill", skill_id, "HAS_ATTEMPT", "SkillAttempt", attempt.rid))
-        for spec_id in sorted(set(attempt.specs)):
-            edges.append(_edge_stmt("SkillAttempt", attempt.rid, "USED_SPEC", "Spec", spec_id))
         attach_evidence("SkillAttempt", attempt)
 
     for failed in sorted(parsed.failed_attempts.values(), key=lambda r: r.rid):
@@ -732,18 +723,26 @@ def ingest_command(args: argparse.Namespace) -> int:
 
     statements = all_nodes + all_edges
     if args.dry_run:
-        print(f"DRY_RUN total_statements={len(statements)} (nothing written to Neo4j)")
+        print(
+            f"DRY_RUN replace_projection=true total_statements={len(statements)} "
+            "(nothing written to Neo4j)"
+        )
         return 0
 
     config = load_neo4j_config(repo_root)
     print(f"NEO4J config_source={config['config_source']} uri={config['uri']}")
     driver = _connect(config)
     try:
+        driver.execute_query(
+            RESET_SKILL_GRAPH_CYPHER,
+            parameters_={"import_kind": IMPORT_KIND},
+            database_=config["database"],
+        )
         totals = _execute_statements(driver, config["database"], statements)
     finally:
         driver.close()
     print(
-        f"RESULT skills={len(parsed_list)} nodes_created={totals['nodes_created']} "
+        f"RESULT replace_projection=true skills={len(parsed_list)} nodes_created={totals['nodes_created']} "
         f"relationships_created={totals['relationships_created']} "
         f"properties_set={totals['properties_set']}"
     )
@@ -784,9 +783,6 @@ def list_command(args: argparse.Namespace) -> int:
 
         where = ["s.import_kind = $import_kind"]
         params: dict[str, Any] = {"import_kind": IMPORT_KIND}
-        if args.spec:
-            where.append("EXISTS { MATCH (s)-[:APPLIES_TO]->(sp:Spec) WHERE sp.id CONTAINS $spec }")
-            params["spec"] = args.spec
         if args.text:
             where.append(
                 "(s.id CONTAINS $text OR coalesce(s.status,'') CONTAINS $text "
@@ -825,7 +821,6 @@ _WRITE_CLAUSE_RE = re.compile(
 
 MATCH_WEIGHTS = {
     "skill_id_exact": 100,
-    "spec_exact": 90,
     "skill_field": 70,
     "guardrail_text": 60,
     "decision_text": 60,
@@ -845,14 +840,6 @@ _MATCH_SKILL_EXACT = """
 MATCH (s:Skill {id: $skill_id})
 WHERE s.import_kind = 'skill_markdown'
 RETURN s.id AS skill_id, 'skill_id_exact' AS kind, s.id AS evidence
-"""
-
-_MATCH_SPEC_EXACT = """
-MATCH (s:Skill)
-WHERE s.import_kind = 'skill_markdown' AND (
-  EXISTS { MATCH (s)-[:APPLIES_TO]->(:Spec {id: $spec}) } OR
-  EXISTS { MATCH (s)-[:HAS_ATTEMPT]->(:SkillAttempt)-[:USED_SPEC]->(:Spec {id: $spec}) })
-RETURN s.id AS skill_id, 'spec_exact' AS kind, $spec AS evidence
 """
 
 _MATCH_PROMPT_TOKENS = """
@@ -962,19 +949,16 @@ def match_skills(
     database: str | None,
     *,
     skill_id: str | None = None,
-    spec: str | None = None,
     prompt: str | None = None,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
-    """Seed matching (exact id, exact spec, prompt tokens) plus one-hop
+    """Seed matching (exact id or prompt tokens) plus one-hop
     RELATED_TO expansion, with simple fixed ranking."""
-    if not (skill_id or spec or prompt):
-        raise SkillIngestError("match requires --skill-id, --spec, or --prompt")
+    if not (skill_id or prompt):
+        raise SkillIngestError("match requires --skill-id or --prompt")
     rows: list = []
     if skill_id:
         rows.extend(_run_read(driver, database, _MATCH_SKILL_EXACT, {"skill_id": skill_id}))
-    if spec:
-        rows.extend(_run_read(driver, database, _MATCH_SPEC_EXACT, {"spec": spec}))
     if prompt:
         tokens = tokenize_prompt(prompt)
         if tokens:
@@ -1001,7 +985,6 @@ def get_skill(driver, database: str | None, skill_id: str) -> dict[str, Any] | N
         "source_path": props.get("source_path"),
         "requires": list(props.get("requires") or []),
         "related_to": list(props.get("related_to") or []),
-        "applies_to": [],
         "guardrails": [],
         "decisions": [],
         "query_patterns": [],
@@ -1012,9 +995,7 @@ def get_skill(driver, database: str | None, skill_id: str) -> dict[str, Any] | N
     owners: dict[str, dict[str, Any]] = {}
     for row in _run_read(driver, database, _GET_SKILL_ONE_HOP, {"skill_id": skill_id}):
         rel, item = row["rel"], dict(row["props"])
-        if rel == "APPLIES_TO":
-            view["applies_to"].append(item.get("id"))
-        elif rel == "HAS_GUARDRAIL":
+        if rel == "HAS_GUARDRAIL":
             view["guardrails"].append({"id": item.get("id"), "text": item.get("text")})
         elif rel == "HAS_DECISION":
             view["decisions"].append(
@@ -1036,7 +1017,6 @@ def get_skill(driver, database: str | None, skill_id: str) -> dict[str, Any] | N
                 "source_prompt": item.get("source_prompt"),
                 "cbm_after_nodes": item.get("cbm_after_nodes"),
                 "cbm_after_edges": item.get("cbm_after_edges"),
-                "used_specs": [],
                 "proof_claims": [],
                 "validations": [],
                 "touched_code": [],
@@ -1049,7 +1029,6 @@ def get_skill(driver, database: str | None, skill_id: str) -> dict[str, Any] | N
                 "failed_because": item.get("failed_because"),
                 "retry_with": item.get("retry_with"),
                 "created_guardrails": [],
-                "used_specs": [],
                 "proof_claims": [],
                 "validations": [],
                 "touched_code": [],
@@ -1080,8 +1059,6 @@ def get_skill(driver, database: str | None, skill_id: str) -> dict[str, Any] | N
             owner["validations"].append(item.get("text"))
         elif rel == "TOUCHED_CODE":
             owner["touched_code"].append(item.get("ref") or item.get("id"))
-        elif rel == "USED_SPEC":
-            owner["used_specs"].append(item.get("id"))
         elif rel == "CREATED_GUARDRAIL":
             owner.setdefault("created_guardrails", []).append(item.get("id"))
     return view
@@ -1103,17 +1080,16 @@ def build_skill_packet(
     database: str | None,
     *,
     skill_id: str | None = None,
-    spec: str | None = None,
     prompt: str | None = None,
     limit: int = 3,
 ) -> dict[str, Any]:
     """Compact deterministic skill packet for Fable/Codex handoff."""
     matches = match_skills(
-        driver, database, skill_id=skill_id, spec=spec, prompt=prompt, limit=limit
+        driver, database, skill_id=skill_id, prompt=prompt, limit=limit
     )
     packet: dict[str, Any] = {
         "packet_version": 1,
-        "query": {"skill_id": skill_id, "spec": spec, "prompt": prompt, "limit": limit},
+        "query": {"skill_id": skill_id, "prompt": prompt, "limit": limit},
         "skills": [],
     }
     for match in matches:
@@ -1139,7 +1115,6 @@ def build_skill_packet(
                 "match_reasons": match["match_reasons"],
                 "status": view["status"],
                 "source_path": view["source_path"],
-                "applies_to": view["applies_to"],
                 "requires": view["requires"],
                 "related_to": view["related_to"],
                 "guardrails": view["guardrails"],
@@ -1182,7 +1157,7 @@ _FABLE_REQUIRED_BEHAVIOR = """## Required Behavior
    trust stale paths or copied snippets.
 5. Honor packet decisions and reasoning receipts; do not relitigate rejected alternatives
    without new evidence.
-6. Run the validation commands from the packet and the task spec honestly; never fake success.
+6. Run the validation commands from the packet and active CoderPacket prompt honestly; never fake success.
 7. Append the bounded attempt and its @attempt_result (status, @cbm_after, proof) to the
    matching skills/*.md file, or create the smallest useful new one-file skill.
 8. Re-ingest skills after closeout: py -3.12 services/knowgraph/skill_ingest.py ingest --repo-root .
@@ -1193,8 +1168,8 @@ CODE_EVIDENCE_SOURCE = "codegraph_cbm"
 
 _CODE_EVIDENCE_PLACEHOLDER = (
     "Not provided. The scout should compose a Code Evidence Packet from fresh "
-    "Codebase-Memory tools per specs/codegraph-context-reader-spec.md and attach "
-    "it with --code-evidence <packet.json>. Fable must then gather current code "
+    "Codebase-Memory tools and attach it with --code-evidence <packet.json>. "
+    "The coder must then gather current code "
     "evidence itself via fresh CBM before any claim or edit."
 )
 
@@ -1202,8 +1177,8 @@ _CODE_EVIDENCE_PLACEHOLDER = (
 def load_code_evidence(path: Path) -> dict[str, Any]:
     """Load and loudly validate a scout-composed Code Evidence Packet.
 
-    Contract: specs/codegraph-context-reader-spec.md. Host code never composes
-    this packet itself — CBM tools are only available to the scout layer.
+    Host code never composes this packet itself; CBM tools are only available
+    to the scout layer.
     """
     if not path.is_file():
         raise SkillIngestError(f"code evidence packet not found: {path}")
@@ -1225,15 +1200,13 @@ def load_code_evidence(path: Path) -> dict[str, Any]:
 def build_fable_prompt(
     task_prompt: str,
     packet: dict[str, Any],
-    spec: str | None = None,
     code_evidence: dict[str, Any] | None = None,
 ) -> str:
     """Render the deterministic Fable handoff prompt embedding a skill packet
     and, when provided, a scout-composed Code Evidence Packet.
 
-    Contracts: specs/skill-packet-fable-handoff-spec.md and
-    specs/codegraph-context-reader-spec.md. Both packets come from
-    deterministic tooling, never from an LLM.
+    The bounded task prompt is the active CoderPacket and complete execution
+    contract. Packets come from deterministic tooling, never from an LLM.
     """
     query = packet.get("query", {})
     command = (
@@ -1256,11 +1229,9 @@ def build_fable_prompt(
         evidence_section = _CODE_EVIDENCE_PLACEHOLDER
     return "\n\n".join(
         [
-            "# Fable Implementation Attempt",
-            "## Task Prompt",
+            "# Active CoderPacket",
+            "## Active Prompt (Spec And Task)",
             task_prompt.strip(),
-            "## Source Spec",
-            spec or "none declared",
             "## Skill Memory Packet",
             packet_section,
             "## Code Evidence Packet",
@@ -1280,14 +1251,11 @@ def handoff_command(args: argparse.Namespace) -> int:
             driver,
             database,
             skill_id=args.skill_id,
-            spec=args.spec,
             prompt=args.prompt,
             limit=args.limit,
         )
         print(
-            build_fable_prompt(
-                args.prompt, packet, spec=args.spec, code_evidence=code_evidence
-            )
+            build_fable_prompt(args.prompt, packet, code_evidence=code_evidence)
         )
         return 0
 
@@ -1313,8 +1281,6 @@ def _print_skill_text(view: dict[str, Any]) -> None:
     )
     for requirement in view["requires"]:
         print(f"  REQUIRES {requirement}")
-    for spec_id in view["applies_to"]:
-        print(f"  APPLIES_TO {spec_id}")
     for related in view["related_to"]:
         print(f"  RELATED_TO {related}")
     for guardrail in view["guardrails"]:
@@ -1377,7 +1343,6 @@ def match_command(args: argparse.Namespace) -> int:
             driver,
             database,
             skill_id=args.skill_id,
-            spec=args.spec,
             prompt=args.prompt,
             limit=args.limit,
         )
@@ -1399,7 +1364,6 @@ def packet_command(args: argparse.Namespace) -> int:
             driver,
             database,
             skill_id=args.skill_id,
-            spec=args.spec,
             prompt=args.prompt,
             limit=args.limit,
         )
@@ -1435,7 +1399,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     lister = sub.add_parser("list", help="list indexed skills from Neo4j")
     lister.add_argument("--repo-root", default=".")
     lister.add_argument("--skill-id")
-    lister.add_argument("--spec", help="filter by spec path substring")
     lister.add_argument("--text", help="filter by id/status/type substring")
     lister.set_defaults(func=list_command)
 
@@ -1445,10 +1408,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     getter.add_argument("--json", action="store_true")
     getter.set_defaults(func=get_command)
 
-    matcher = sub.add_parser("match", help="match skills by id, spec path, or prompt text")
+    matcher = sub.add_parser("match", help="match skills by id or prompt text")
     matcher.add_argument("--repo-root", default=".")
     matcher.add_argument("--skill-id")
-    matcher.add_argument("--spec", help="exact spec path, e.g. specs/x-spec.md")
     matcher.add_argument("--prompt", help="free text matched case-insensitively")
     matcher.add_argument("--limit", type=int, default=10)
     matcher.add_argument("--json", action="store_true")
@@ -1457,7 +1419,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     packeter = sub.add_parser("packet", help="compact skill packet for Fable/Codex handoff")
     packeter.add_argument("--repo-root", default=".")
     packeter.add_argument("--skill-id")
-    packeter.add_argument("--spec")
     packeter.add_argument("--prompt")
     packeter.add_argument("--limit", type=int, default=3)
     packeter.add_argument("--json", action="store_true")
@@ -1469,12 +1430,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     handoff.add_argument("--repo-root", default=".")
     handoff.add_argument("--prompt", required=True, help="the bounded task prompt")
     handoff.add_argument("--skill-id", help="optional exact skill selector")
-    handoff.add_argument("--spec", help="optional spec path; also shown as Source Spec")
     handoff.add_argument("--limit", type=int, default=3)
     handoff.add_argument(
         "--code-evidence",
-        help="path to a scout-composed Code Evidence Packet JSON "
-        "(specs/codegraph-context-reader-spec.md)",
+        help="path to a scout-composed Code Evidence Packet JSON",
     )
     handoff.set_defaults(func=handoff_command)
     return parser

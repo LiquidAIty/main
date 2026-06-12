@@ -8,8 +8,6 @@
 
 **Tech Stack:** TypeScript, `ignore` npm package, Vitest
 
-**Spec:** `docs/superpowers/specs/2026-04-10-understandignore-design.md`
-
 ---
 
 ## File Structure

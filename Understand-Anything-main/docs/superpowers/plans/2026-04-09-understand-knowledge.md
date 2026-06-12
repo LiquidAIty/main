@@ -8,8 +8,6 @@
 
 **Tech Stack:** TypeScript, Zod (schema validation), React + ReactFlow (dashboard), dagre (layout), TailwindCSS v4, Vitest (testing)
 
-**Spec:** `docs/superpowers/specs/2026-04-09-understand-knowledge-design.md`
-
 ---
 
 ## File Structure

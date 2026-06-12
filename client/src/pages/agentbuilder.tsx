@@ -9060,7 +9060,7 @@ export default function AgentBuilder(): React.ReactElement {
                 PlanFlow Canvas
               </div>
               <div style={{ marginTop: 4, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
-                PlanFlow shows PLAN.md, specs, task ledgers, and real planning/runtime events as a navigable map.{' '}
+                PlanFlow shows the living PLAN.md, one active CoderPacket prompt, and real planning/runtime events.{' '}
                 {planFlowMissionGraph.nodes.some((node) => node.data.source === 'magentic_one')
                   ? 'A real Magentic-One planning proposal is shown with provenance.'
                   : 'Magentic-One planning proposal pending.'}

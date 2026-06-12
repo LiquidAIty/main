@@ -45,8 +45,7 @@ INGEST_SKILL = {
 
 ONE_HOP = {
     "codebasedmemory": [
-        ("APPLIES_TO", "Spec", {"id": "specs/codebasedmemory-skill.md", "path": "specs/codebasedmemory-skill.md"}),
-        ("HAS_QUERY", "QueryPattern", {"id": "skill_match_for_task", "text": "search skills using user prompt and specs"}),
+        ("HAS_QUERY", "QueryPattern", {"id": "skill_match_for_task", "text": "search skills using user prompt and active CoderPacket"}),
         ("HAS_SECTION", "SkillSection", {
             "id": "codebasedmemory.section.vector-summary", "heading": "Vector Summary",
             "order": 0, "text": "Use fresh Code-Based Memory to navigate the repo graph before work.",
@@ -57,7 +56,6 @@ ONE_HOP = {
         }),
     ],
     "knowgraph-skill-ingestion": [
-        ("APPLIES_TO", "Spec", {"id": "specs/knowgraph-skill-ingestion-spec.md", "path": "specs/knowgraph-skill-ingestion-spec.md"}),
         ("HAS_GUARDRAIL", "Guardrail", {"id": "knowgraph-skill-ingestion.no-llm-extraction", "text": ""}),
         ("HAS_GUARDRAIL", "Guardrail", {"id": "knowgraph-skill-ingestion.no-fake-neo4j-success", "text": ""}),
         ("HAS_DECISION", "Decision", {
@@ -87,8 +85,6 @@ ATTEMPT_EVIDENCE = {
          {"id": "v1", "text": "python -m unittest discover"}),
         ("knowgraph-skill-ingestion.prepare-001", "TOUCHED_CODE", "CodeGraphReference",
          {"id": "services/knowgraph/skill_ingest.py", "ref": "services/knowgraph/skill_ingest.py"}),
-        ("knowgraph-skill-ingestion.prepare-001", "USED_SPEC", "Spec",
-         {"id": "specs/knowgraph-skill-ingestion-spec.md"}),
     ],
     "codebasedmemory": [],
 }
@@ -118,14 +114,6 @@ class FakeReadDriver:
             if sid in SKILLS:
                 return _result([{"skill_id": sid, "kind": "skill_id_exact", "evidence": sid}])
             return _result([])
-        if "'spec_exact'" in cypher:
-            rows = []
-            for sid in sorted(SKILLS):
-                spec_ids = {p["id"] for rel, _l, p in ONE_HOP[sid] if rel == "APPLIES_TO"}
-                spec_ids |= {p["id"] for _o, rel, _l, p in ATTEMPT_EVIDENCE[sid] if rel == "USED_SPEC"}
-                if params["spec"] in spec_ids:
-                    rows.append({"skill_id": sid, "kind": "spec_exact", "evidence": params["spec"]})
-            return _result(rows)
         if "UNION ALL" in cypher:
             return _result(self._prompt_rows(params["tokens"]))
         if "'related_skill'" in cypher:
@@ -202,7 +190,6 @@ class GetSkillTests(unittest.TestCase):
         view = get_skill(FakeReadDriver(), None, "codebasedmemory")
         self.assertEqual(view["skill_id"], "codebasedmemory")
         self.assertEqual(view["status"], "active")
-        self.assertIn("specs/codebasedmemory-skill.md", view["applies_to"])
         self.assertEqual(view["query_patterns"][0]["id"], "skill_match_for_task")
         headings = [section["heading"] for section in view["sections"]]
         self.assertEqual(headings, ["Vector Summary", "Core Rule"])  # sorted by order
@@ -214,7 +201,6 @@ class GetSkillTests(unittest.TestCase):
         self.assertIn("24 unit tests passed", attempt["proof_claims"])
         self.assertIn("python -m unittest discover", attempt["validations"])
         self.assertIn("services/knowgraph/skill_ingest.py", attempt["touched_code"])
-        self.assertIn("specs/knowgraph-skill-ingestion-spec.md", attempt["used_specs"])
 
     def test_get_missing_skill_returns_none(self):
         self.assertIsNone(get_skill(FakeReadDriver(), None, "missing-skill"))
@@ -226,13 +212,6 @@ class MatchTests(unittest.TestCase):
         self.assertEqual(matches[0]["skill_id"], "codebasedmemory")
         self.assertEqual(matches[0]["match_reasons"][0]["kind"], "skill_id_exact")
         self.assertGreaterEqual(matches[0]["score"], 100)
-
-    def test_match_by_spec_path(self):
-        matches = match_skills(
-            FakeReadDriver(), None, spec="specs/knowgraph-skill-ingestion-spec.md"
-        )
-        self.assertEqual(matches[0]["skill_id"], "knowgraph-skill-ingestion")
-        self.assertEqual(matches[0]["match_reasons"][0]["kind"], "spec_exact")
 
     def test_match_by_prompt_over_sections_and_guardrails(self):
         matches = match_skills(
@@ -276,7 +255,6 @@ class PacketTests(unittest.TestCase):
         self.assertTrue(top["query_patterns"])
         self.assertTrue(top["sections"])
         self.assertTrue(top["attempts"][0]["proof_claims"])
-        self.assertIn("specs/knowgraph-skill-ingestion-spec.md", top["applies_to"])
 
     def test_packet_json_is_deterministic(self):
         kwargs = {"prompt": "Neo4j skill ingestion guardrails", "limit": 3}
@@ -326,23 +304,21 @@ class HandoffTests(unittest.TestCase):
         return build_skill_packet(FakeReadDriver(), None, prompt=self.TASK, limit=3)
 
     def test_prompt_contains_required_sections_in_order(self):
-        rendered = build_fable_prompt(self.TASK, self._packet(), spec="specs/x-spec.md")
+        rendered = build_fable_prompt(self.TASK, self._packet())
         positions = [
-            rendered.index("## Task Prompt"),
-            rendered.index("## Source Spec"),
+            rendered.index("## Active Prompt (Spec And Task)"),
             rendered.index("## Skill Memory Packet"),
             rendered.index("## Required Behavior"),
         ]
         self.assertEqual(positions, sorted(positions))
         self.assertIn(self.TASK, rendered)
-        self.assertIn("specs/x-spec.md", rendered)
 
     def test_prompt_embeds_packet_json_and_generating_command(self):
         packet = self._packet()
         rendered = build_fable_prompt(self.TASK, packet)
         self.assertIn("services/knowgraph/skill_ingest.py packet --prompt", rendered)
         self.assertIn(json.dumps(packet, indent=2, sort_keys=True), rendered)
-        self.assertIn("none declared", rendered)
+        self.assertEqual(rendered.count("## Active Prompt (Spec And Task)"), 1)
 
     def test_prompt_obligates_guardrails_writeback_and_reingest(self):
         rendered = build_fable_prompt(self.TASK, self._packet())
@@ -353,8 +329,8 @@ class HandoffTests(unittest.TestCase):
         self.assertIn("never fake success", rendered)
 
     def test_prompt_is_deterministic(self):
-        first = build_fable_prompt(self.TASK, self._packet(), spec="specs/x.md")
-        second = build_fable_prompt(self.TASK, self._packet(), spec="specs/x.md")
+        first = build_fable_prompt(self.TASK, self._packet())
+        second = build_fable_prompt(self.TASK, self._packet())
         self.assertEqual(first, second)
 
     def test_empty_packet_triggers_new_skill_rule(self):
@@ -368,7 +344,7 @@ class CodeEvidenceTests(unittest.TestCase):
     EVIDENCE = {
         "packet_version": 1,
         "source": "codegraph_cbm",
-        "query": {"prompt": "task", "spec": None, "skill_packet_used": True},
+        "query": {"prompt": "task", "skill_packet_used": True},
         "cbm": {"method": "full", "status": "ready", "nodes": 10, "edges": 20},
         "files": ["services/knowgraph/skill_ingest.py"],
         "symbols": ["skill_ingest.build_fable_prompt"],
@@ -385,12 +361,9 @@ class CodeEvidenceTests(unittest.TestCase):
         return build_skill_packet(FakeReadDriver(), None, prompt="ingestion guardrails", limit=2)
 
     def test_code_evidence_section_placed_after_skill_packet(self):
-        rendered = build_fable_prompt(
-            "task", self._packet(), spec="specs/x.md", code_evidence=self.EVIDENCE
-        )
+        rendered = build_fable_prompt("task", self._packet(), code_evidence=self.EVIDENCE)
         order = [
-            rendered.index("## Task Prompt"),
-            rendered.index("## Source Spec"),
+            rendered.index("## Active Prompt (Spec And Task)"),
             rendered.index("## Skill Memory Packet"),
             rendered.index("## Code Evidence Packet"),
             rendered.index("## Required Behavior"),
@@ -402,7 +375,7 @@ class CodeEvidenceTests(unittest.TestCase):
         rendered = build_fable_prompt("task", self._packet())
         self.assertIn("## Code Evidence Packet", rendered)
         self.assertIn("Not provided", rendered)
-        self.assertIn("codegraph-context-reader-spec.md", rendered)
+        self.assertIn("fresh Codebase-Memory tools", rendered)
 
     def test_load_code_evidence_validates_loudly(self):
         import tempfile

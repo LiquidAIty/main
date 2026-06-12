@@ -31,7 +31,6 @@ Deterministic example skill used by the unit tests.
 @skill id=example-skill
 @type Skill
 @status active
-@source_spec specs/example-spec.md
 @requires fresh_cbm_index
 
 ## Guardrails
@@ -44,7 +43,6 @@ Never fake Neo4j success.
 
 @attempt id=example-skill.attempt-001
 @status active
-@source_spec specs/example-spec.md
 @source_prompt "do the example thing"
 @requires_fresh_cbm true
 @validated_by python -m unittest
@@ -137,7 +135,6 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(parsed.skill.props["status"], "active")
         self.assertEqual(parsed.skill.props["type"], "Skill")
         self.assertIn("fresh_cbm_index", parsed.skill.requires)
-        self.assertIn("specs/example-spec.md", parsed.skill.specs)
 
     def test_parses_attempt(self):
         parsed = parse_minimal()
@@ -145,7 +142,6 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(attempt.props["status"], "active")
         self.assertEqual(attempt.props["source_prompt"], "do the example thing")
         self.assertTrue(attempt.props["requires_fresh_cbm"])
-        self.assertIn("specs/example-spec.md", attempt.specs)
         self.assertIn("python -m unittest", attempt.validations)
         self.assertIn("services/knowgraph/skill_ingest.py", attempt.code_refs)
 
@@ -247,11 +243,9 @@ class ParserTests(unittest.TestCase):
         parsed = parse_skill_markdown(path.read_text(encoding="utf-8"), "skills/codebasedmemory.md")
         self.assertEqual(parsed.skill_id, "codebasedmemory")
         self.assertEqual(parsed.skill.props["status"], "active")
-        self.assertIn("specs/codebasedmemory-skill.md", parsed.skill.specs)
-        self.assertIn("skill_example_current_code", parsed.queries)
-        self.assertIn("skill_match_for_task", parsed.queries)
-        # @node/@edge/@stores/... lines are foreign but explicitly warned.
-        self.assertTrue(parsed.warnings)
+        self.assertIn("codebasedmemory.current-code", parsed.queries)
+        self.assertIn("codebasedmemory.skill-match", parsed.queries)
+        self.assertFalse(parsed.warnings)
 
 
 class UpsertPlanTests(unittest.TestCase):
@@ -277,12 +271,10 @@ class UpsertPlanTests(unittest.TestCase):
         rels = {re.search(r"MERGE \(a\)-\[:(\w+)\]", cypher).group(1) for cypher, _ in edges}
         self.assertLessEqual(
             {
-                "APPLIES_TO",
                 "HAS_ATTEMPT",
                 "HAS_GUARDRAIL",
                 "HAS_DECISION",
                 "HAS_QUERY",
-                "USED_SPEC",
                 "VALIDATED_BY",
                 "TOUCHED_CODE",
                 "CREATED_GUARDRAIL",
