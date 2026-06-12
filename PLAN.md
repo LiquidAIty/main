@@ -40,6 +40,8 @@ ingestion, and the research-to-chat loop are deferred until the coding loop is u
    changes, blockers, proof, and next step.
 8. **Memory**: ThinkGraph records the job and outcome; reusable learning updates skills; the next
    job is prepared.
+9. **Bounded repeat**: Magentic-One/Sol may prepare exactly one next CoderPacket, but execution
+   stops for user review and Go. The coding loop is iterative, not uncontrolled recursion.
 
 ## Product Parts
 
@@ -154,12 +156,44 @@ Coder adapters follow one rule: **CoderPacket in, CoderReport out**.
 
 Planned adapters:
 
-* LocalCoder / RepoCoder adapter wrapping the already-tested local coder
+* LocalCoder / RepoCoder adapter wrapping the vendored `localcoder/` runtime through its real
+  machine-facing execution boundary
 * manual adapter for copying CoderPacket out and pasting CoderReport back
 * CLI/headless adapter for external coding tools
 * MCP adapter for agent tools where available
 
 There is no vendor lock-in. Adapters are product direction only in the current documentation pass.
+
+### LocalCoder / OpenClaude Audit
+
+`localcoder/` is a vendored OpenClaude-derived runtime, not a nested Git subrepository. It contains
+real repository tools, permissions, MCP support, and a bidirectional gRPC agent service. The
+backend-owned terminal launcher reads `apps/backend/.env` and passes
+`apps/backend/mcp.config.json` when present.
+
+The current backend OpenClaude harness is scaffolding, not a real LocalCoder adapter:
+
+* `POST /api/coder/openclaude/run` accepts a plain `task` string and returns plain `output`, not a
+  CoderPacket and CoderReport.
+* Both current headless and terminal run modes call the host `runLLM` client. They do not invoke
+  LocalCoder's coding-agent/tool runtime.
+* Terminal mode can report `used: true` from launcher availability without launching or proving a
+  terminal run.
+* The current provider resolver contains a model fallback, which violates the no-fallback law.
+* User chat currently starts a Magentic-One deck run directly. It does not assemble the complete
+  Context Packet, create an active CoderPacket, wait for Go, invoke LocalCoder, compare a
+  CoderReport, or persist the completed loop.
+* A `local_coder` participant in the Magentic-One payload is currently mapped to a generic
+  `assistant_agent`; it is not routed to the dedicated LocalCoder harness.
+
+The preferred real adapter foundation is LocalCoder's bidirectional gRPC `AgentService.Chat`
+boundary because it streams text, tool starts, tool results, permission requests, completion, and
+errors. The backend must own its lifecycle, environment, repository root, permission policy, MCP
+configuration, event translation, and structured report assembly. The current gRPC implementation
+still needs that host hardening: its start script is not supervised by the backend or passed the
+backend MCP config, it may hydrate a saved provider profile, the server currently initializes with
+no MCP clients, exposes the runtime's available tools without a CoderPacket access-policy mapping,
+and emits a final text response rather than a CoderReport.
 
 ## Current Route
 
@@ -169,14 +203,26 @@ There is no vendor lock-in. Adapters are product direction only in the current d
    proof, and next step.
 4. Have Magentic-One/Sol initiate Context Packet assembly from ThinkGraph, SkillGraph/Neo4j,
    CodeGraph/CBM, and relevant KnowGraph context.
-5. Add coder adapters behind the CoderPacket-in/CoderReport-out contract.
-6. After the coding loop is useful, build the deferred research loop.
+5. Define backend-owned CoderPacket, CoderRunEvent, permission-decision, and CoderReport transport
+   contracts.
+6. Replace the current plain-LLM OpenClaude run facade with a real LocalCoder gRPC adapter using
+   the backend-owned environment, repository root, MCP configuration, explicit model, and explicit
+   permission policy.
+7. Connect PlanFlow Go to that adapter, stream real run events, compare the returned CoderReport
+   against the active CoderPacket, persist the outcome, and prepare exactly one next job.
+8. Remove or quarantine misleading harness behavior only after the real route replaces it.
+9. After the coding loop is useful, build the deferred research loop.
 
 ## Active Work
 
 The spec/task-file model has been removed. The root planning spec/task trees and Spec-Kit scaffold
 are gone, SkillGraph handoff treats the active CoderPacket prompt as both spec and task, and
 PlanFlow's repository projection now reads only the living `PLAN.md`.
+
+The LocalCoder/OpenClaude and chat-to-coder audit is complete. The vendored runtime has a viable
+gRPC execution boundary and backend-owned env/MCP launcher scaffolding, but the product loop is not
+wired to it. Current OpenClaude run routes are a plain-LLM facade and must not be treated as coder
+execution.
 
 ## Code And Context Anchors
 
@@ -187,12 +233,22 @@ PlanFlow's repository projection now reads only the living `PLAN.md`.
 * SkillGraph / Neo4j: reusable skill retrieval
 * ThinkGraph: structured plan/job/report/proof memory
 * PlanFlow: visible active planning and control surface
+* `localcoder/src/grpc/server.ts` and `localcoder/src/proto/openclaude.proto`: preferred real
+  LocalCoder adapter boundary
+* `apps/backend/src/coder/openclaude/*`: current harness scaffolding to replace behind structured
+  adapter contracts
+* `client/src/pages/agentbuilder.tsx`: current chat path that starts a Magentic-One deck run
 
 ## Durable Decisions
 
 * The active CoderPacket prompt is both spec and task; spec and task files do not exist.
 * PlanFlow shows active planning state, not document or skill libraries.
 * CoderPacket in, CoderReport out is the adapter boundary.
+* Chat-to-coder repeats only as bounded user-gated jobs; preparing a next job does not execute it.
+* Real coder execution requires LocalCoder tool/runtime events and proof. A plain LLM response is
+  not a coder run.
+* LocalCoder gRPC is the preferred first machine-facing adapter foundation; terminal remains an
+  optional interactive surface.
 * Fresh CBM is required before code edits.
 * No stubs, fake fallbacks, silent fallbacks, hidden success, fake planning, or fake execution.
 * Research is deferred, not deleted.
@@ -200,10 +256,24 @@ PlanFlow's repository projection now reads only the living `PLAN.md`.
 ## Blockers
 
 * The active CoderPacket/CoderReport comparison loop is not wired yet.
-* Coder adapters are not wired yet.
+* Chat currently starts a Magentic-One deck run directly instead of producing and gating one
+  active CoderPacket.
+* Current Agent Builder chat/loading status copy still refers to removed `specs`, despite PlanFlow
+  now projecting only `PLAN.md`.
+* The Local Coder card currently maps to a generic assistant participant.
+* The OpenClaude harness calls `runLLM` rather than the vendored LocalCoder runtime.
+* OpenClaude contracts are plain task/output rather than CoderPacket/CoderReport.
+* The current OpenClaude provider resolver contains a forbidden model fallback.
+* The LocalCoder gRPC launcher is not backend-supervised and is not passed the backend MCP config.
+* The LocalCoder gRPC server currently initializes `mcpClients: []`, exposes available runtime
+  tools without mapping CoderPacket access policy, and returns final text rather than CoderReport.
+* LocalCoder dependencies/build output are absent in this workspace and Bun is not installed, so
+  the vendored gRPC runtime cannot be smoke-run yet.
 
 ## Next Step
 
-Wire PlanFlow active job loop: dynamic `PLAN.md` visible/editable, Magentic-One/Sol context pull
-from ThinkGraph + SkillGraph/Neo4j + CodeGraph/CBM, one active CoderPacket/spec-as-prompt, then
-LocalCoder/RepoCoder wrapper receives CoderPacket and returns CoderReport.
+Implement the backend adapter foundation first: define structured CoderPacket/CoderRunEvent/
+CoderReport contracts, start and supervise the vendored LocalCoder gRPC service with backend-owned
+env and MCP configuration, send one CoderPacket, translate permission and tool events, and return
+one proof-bearing CoderReport without provider/model fallback. Then wire PlanFlow Go and the
+user-gated next-job loop to that proven adapter.
