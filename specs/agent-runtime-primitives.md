@@ -292,6 +292,31 @@ unselected registered tool never reaches the worker. The only layer not exercise
 model-client exchange; no fake finalOutput exists on this path. Proof: 70 pytest passed
 (`-k smoke`: 3 passed). No bug was found; no runtime code changed.
 
+#### T001 Live Sidecar Smoke (2026-06-12)
+
+The previously unproven model-client layer is now proven live, with zero code changes:
+
+* Sidecar started for real: `.venv\Scripts\python.exe -m uvicorn app.main:app --port 8003` from
+  `apps/python-models` (the sidecar self-loads `apps/backend/.env`).
+* `POST http://localhost:8003/autogen/orchestrate` — the exact endpoint
+  `orchestrateWithAutoGen` calls — with a magentic_one ContextPack whose worker card selected
+  `["current_datetime", "calculator"]`, provider `openai`, model `gpt-5.1-chat-latest`
+  (magentic-safe approved list).
+* Real model exchange through the real LedgerOrchestrator: `ok=True`,
+  `stopReason=magentic_one_complete`, `turnsUsed=1`, `elapsedMs=22187`, final response:
+  "The current UTC datetime is 2026-06-12T12:55:04.823559+00:00, and the result of 2 + 3 * 4
+  is 14." The microsecond-precision timestamp and exact arithmetic prove both FunctionTools
+  executed for real inside the live exchange.
+* Loud failure live: the same payload with `tools=["made_up_tool"]` returned HTTP 500
+  `card_tool_unknown: made_up_tool (known: calculator,current_datetime)` before any model call.
+* No fake finalOutput, no provider fallback, no mocked success anywhere on the path.
+
+Chat-window status: the full code chain exists (client `resolveDeckRunChatReply` ->
+`decks.routes.ts` POST /:projectId/decks/:deckId/run -> `deckRuntime.ts` ->
+`cards/runtime.ts` payload builder (vitest-proven) -> `autogenOrchestratorClient` -> the sidecar
+endpoint proven live here). The backend route and chat UI were not executed in this smoke (they
+need the full app stack with database); wiring verification is the next task.
+
 ## Completed Summaries
 
 None yet.

@@ -261,11 +261,79 @@ Skill update:
 * Failed Attempt added: no
 * Query Pattern added: no
 
+## Live Chat Runtime Smoke Attempt
+
+@attempt id=magentic-one-runtime.live-chat-runtime-smoke
+@status active
+@source_spec specs/agent-runtime-primitives.md
+@source_prompt "prove the T001 path live: real sidecar, real OpenAI model exchange, selected tools executing, loud failures, no fake output"
+@requires_fresh_cbm true
+
+@attempt_result id=magentic-one-runtime.live-chat-runtime-smoke
+@status succeeded
+@cbm_after nodes=5289 edges=9506
+@proved_by live POST to the sidecar /autogen/orchestrate with openai gpt-5.1-chat-latest returned ok=True stopReason=magentic_one_complete in 22187ms with both tool results in the final text
+@proved_by the final response contained a microsecond-precision tool-produced UTC timestamp and 14 for 2+3*4, impossible without real FunctionTool execution inside the live exchange
+@proved_by unknown tool in the live payload returned HTTP 500 card_tool_unknown before any model call
+@proved_by regression suite 70 pytest passed after the smoke with zero code changes
+@validated_by uvicorn app.main:app --port 8003 then POST /autogen/orchestrate with the magentic_one ContextPack selecting current_datetime and calculator
+@touches_code apps/python-models/app/main.py
+@touches_code apps/python-models/app/python_models/autogen_orchestrator.py
+@touches_code apps/backend/src/services/autogen/autogenOrchestratorClient.ts
+
+### Work Done
+
+No code changed. Started the real sidecar (`uvicorn app.main:app --port 8003`; it self-loads
+`apps/backend/.env` via `autogen_provider_env._load_repo_env`), then drove the exact HTTP surface
+the backend calls with a real paid OpenAI exchange. Positive smoke: selected tools traveled the
+payload, resolved through the typed ToolRegistry, and executed inside the live LedgerOrchestrator
+mission. Negative smoke: unknown tool failed loudly over HTTP before any model spend.
+
+### Proof
+
+ok=True, stopReason=magentic_one_complete, turnsUsed=1, elapsedMs=22187, final:
+"The current UTC datetime is 2026-06-12T12:55:04.823559+00:00, and the result of 2 + 3 * 4 is
+14." Negative: HTTP 500 "card_tool_unknown: made_up_tool (known: calculator,current_datetime)".
+Regression: 70 pytest passed.
+
+### Actual Graph And Code Delta
+
+Zero code delta; spec and skill write-backs only. CBM 5289/9506 unchanged (committed-HEAD
+indexer). The proven-live boundary moved from unit/contract level to the real sidecar HTTP
+surface with a real provider exchange.
+
+Reasoning receipt:
+
+* chosen approach: Path C — sidecar live mission via the exact endpoint
+  `orchestrateWithAutoGen` calls, with the magentic-safe approved model; cheapest honest proof of
+  the unproven layer and identical payload shape to the vitest-proven backend builder.
+* rejected alternatives: full backend+chat stack execution (needs database and app shell — large,
+  many unrelated failure modes for a smoke); mocking the model client (banned); unapproved
+  models (magentic_model_not_approved guard).
+* failed/blocked paths: none; provider call succeeded first try.
+* guardrails created: none new; existing loud-failure guards proven live.
+* retry direction: not needed. Remaining unexecuted layers are the backend deck-run route and the
+  chat UI, whose code chain exists end to end (resolveDeckRunChatReply -> decks.routes.ts ->
+  deckRuntime.ts -> cards/runtime.ts -> autogenOrchestratorClient -> sidecar).
+
+Skill update:
+
+* Current Procedure updated: no
+* Successful Example added: yes
+* Failed Attempt added: no
+* Query Pattern added: yes
+
+@query id=magentic-one-runtime.live-smoke "from apps/python-models: .venv uvicorn app.main:app --port 8003; then POST /autogen/orchestrate with a magentic_one ContextPack selecting current_datetime and calculator, provider openai, model gpt-5.1-chat-latest"
+
 ## Successful Examples
 
 Audit-001 (2026-06-12): the first real learn-loop consumption of this skill — packet retrieval
 surfaced it first, its guardrails bounded the audit, and direct-read evidence confirmed the
 pending primitive without speculative implementation.
+
+Live smoke (2026-06-12): the first real paid model exchange through the full sidecar surface —
+selected tools executed inside a live Magentic-One mission and unknown tools failed loudly before
+any model spend.
 
 T001 (2026-06-12): first real runtime implementation through the loop — typed ToolSpec +
 ToolRegistry landed exactly per spec with 67 pytest / 19 vitest / tsc clean, real FunctionTool
