@@ -36,8 +36,26 @@ the narrow Markdown-to-Neo4j skill ingestion contract.
 
 ## Current Procedure
 
-No proven ingestion procedure exists yet. The current evidence supports a deterministic host-Python
-importer beside `services/knowgraph/app.py`, using the already declared Neo4j driver directly.
+Proven by attempt prepare-001:
+
+1. Refresh or prove fresh CBM, then direct-read `services/knowgraph/skill_ingest.py` and the
+   current `skills/*.md` files.
+2. Run `python services/knowgraph/skill_ingest.py ingest --repo-root .` from the repo root.
+   Connection settings resolve from the process environment first, then
+   `services/knowgraph/.env`, then `apps/backend/.env` (read-only fallback).
+3. The importer parses optional frontmatter and the narrow graphable line grammar, fails loudly on
+   malformed important lines, warns explicitly on foreign graphable lines, and skips unfilled
+   closeout template placeholders with a warning.
+4. Canonical lane: deterministic MERGE upserts keyed on stable ids produce Skill, SkillAttempt,
+   FailedAttempt, Guardrail, Decision, QueryPattern, Spec, ProofClaim, Validation,
+   CodeGraphReference, and SkillSection nodes plus their relationships, each stamped with
+   source="repo", source_path, skill_id, import_kind="skill_markdown".
+5. Semantic lane integration point: prose sections become SkillSection nodes, and
+   `build_semantic_documents()` returns payloads shaped for the existing GraphRAG
+   `ingest_text_document` pipeline; the CLI never invokes that pipeline and the LLM lane is never
+   the authority for canonical skill metadata.
+6. Re-run the same ingest to prove idempotency (second run must create 0 nodes / 0 relationships).
+7. Verify with `python services/knowgraph/skill_ingest.py list --skill-id <skill-id>`.
 
 ## Active Attempt
 
@@ -197,33 +215,69 @@ Unit tests must prove:
 Fable closeout:
 
 @attempt_result id=knowgraph-skill-ingestion.prepare-001
-@status succeeded|failed|blocked
-@cbm_after nodes=<count> edges=<count>
+@status succeeded
+@cbm_after nodes=5289 edges=9506
+@proved_by 24 unit tests passed via python -m unittest discover -s services/knowgraph -p test_skill_ingest.py
+@proved_by live Neo4j double ingest idempotent: first run created 57 nodes and 58 relationships, second run created 0 and 0
+@proved_by list --skill-id codebasedmemory returned the indexed skill with spec, query, and section relationships
+@validated_by python -m unittest discover -s services/knowgraph -p "test_skill_ingest.py" -v
+@touches_code services/knowgraph/skill_ingest.py
+@touches_code services/knowgraph/test_skill_ingest.py
+@query id=knowgraph-skill-ingestion.cli-list "python services/knowgraph/skill_ingest.py list --skill-id <skill-id>"
 
 ### Work Done
 
-Pending Fable.
+Created `services/knowgraph/skill_ingest.py`: deterministic two-lane importer with `ingest` and
+`list` CLI commands, narrow graphable line parser, stable-id MERGE upserts, loud Neo4j and parse
+failures, explicit warnings for foreign graphable lines and unfilled closeout placeholders, and a
+non-invoked `build_semantic_documents()` integration point for the existing GraphRAG lane.
+Created `services/knowgraph/test_skill_ingest.py`: 24 unit tests covering parser, stable ids,
+idempotent upsert plan against a fake MERGE-semantics driver, propagated Neo4j errors, non-zero
+CLI exits, real repo skill files as fixtures, and semantic-lane payload shape. No other runtime
+files were changed; no dependency files were edited (the already-declared `neo4j` wheel was
+installed into the host Python used for the live proof).
 
 ### Proof
 
-Pending Fable.
+* `python -m unittest discover -s services/knowgraph -p "test_skill_ingest.py" -v`: 24 tests, OK.
+* First live ingest: RESULT skills=2 nodes_created=57 relationships_created=58.
+* Second live ingest: RESULT skills=2 nodes_created=0 relationships_created=0 (idempotent).
+* `list --skill-id codebasedmemory`: returned skill with APPLIES_TO spec, 2 query patterns, and
+  section nodes.
+* Wrong credentials fail loudly: NEO4J_FAILURE AuthError Neo.ClientError.Security.Unauthorized,
+  exit code 2.
 
 ### Actual Graph And Code Delta
 
-Pending Fable.
+Neo4j gained 57 nodes and 58 relationships across 2 skills: Skill, SkillAttempt, Guardrail,
+Decision, QueryPattern, Spec, ProofClaim, Validation, CodeGraphReference, and SkillSection records
+for `codebasedmemory` and `knowgraph-skill-ingestion`, all stamped source="repo",
+import_kind="skill_markdown". Code delta: two new files under `services/knowgraph/`. CBM after
+reads 5289 nodes / 9506 edges, unchanged from before, because the CBM indexer only sees
+git-tracked files and committing was out of scope for this attempt.
 
 Reasoning receipt:
 
-* chosen approach:
-* rejected alternatives:
-* failed or blocked paths:
-* guardrails created:
-* retry direction:
+* chosen approach: standalone deterministic host-Python CLI beside the existing KnowGraph service,
+  direct `Driver.execute_query` MERGE upserts, env config resolved from process environment with
+  read-only `.env` fallbacks, prose captured as SkillSection nodes plus a GraphRAG payload builder
+  that the CLI never calls.
+* rejected alternatives: routing skill Markdown through the LLM GraphRAG extraction pipeline
+  (non-deterministic authority, needs LLM/embedding config); adding a backend route or UI;
+  invoking `ingest_text_document` in this pass.
+* failed or blocked paths: `apps/backend/.env` declares NEO4J_PASSWORD=changeme but the running
+  Neo4j container was started with NEO4J_AUTH=neo4j/password, so the first live ingest failed
+  loudly with AuthError; the live proof used corrected credentials via shell environment
+  variables. New untracked files are invisible to the CBM indexer until committed.
+* guardrails created: closeout template placeholders (values containing | or <>) are detected and
+  skipped with explicit warnings so unfilled templates never become graph data.
+* retry direction: none needed; next bounded task is skill retrieval/matching from prompt/spec
+  context.
 
 Skill update:
 
-* Current Procedure updated: no
-* Successful Example added: no
+* Current Procedure updated: yes
+* Successful Example added: yes
 * Failed Attempt added: no
 * Query Pattern added: yes
 
@@ -246,7 +300,12 @@ Skill update:
 
 ## Successful Examples
 
-None yet.
+Attempt prepare-001 (2026-06-11): ingested `skills/codebasedmemory.md` and
+`skills/knowgraph-skill-ingestion-skill.md` into live Neo4j; first run created 57 nodes / 58
+relationships, second run created 0 / 0, and
+`python services/knowgraph/skill_ingest.py list --skill-id codebasedmemory` returned the indexed
+skill with its spec, query patterns, and prose sections. Retrieve current code fresh via CBM query
+on `services/knowgraph/skill_ingest.py`; do not copy snippets from this file.
 
 ## Failed Attempts And Guardrails
 
