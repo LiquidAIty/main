@@ -1,5 +1,8 @@
 # AutoSkill Policy Spec
 
+> Transition policy: this is a legacy/source document, not the default planning memory or active
+> job contract. `PLAN.md`, `AGENTS.md`, and the current CoderPacket/spec-as-prompt are authoritative.
+
 ## Purpose
 
 Define when skills are created and updated, so skill memory compounds without flooding the repo

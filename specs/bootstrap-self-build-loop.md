@@ -1,5 +1,8 @@
 # Bootstrap Self-Build Loop
 
+> Transition policy: this is a legacy/source document, not the default planning memory or active
+> job contract. `PLAN.md`, `AGENTS.md`, and the current CoderPacket/spec-as-prompt are authoritative.
+
 ## Purpose
 
 Define the temporary outside planning triangle that lets CodeSpine / LiquidAIty remember and

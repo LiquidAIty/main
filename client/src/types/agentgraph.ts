@@ -82,6 +82,7 @@ export type AgentCardRuntimeOptions = {
   allowRepeatedSpeaker?: boolean | null;
   localCoderMode?: 'headless' | 'terminal' | null;
   localCoderAccess?: 'read' | 'patch' | 'test' | null;
+  tools?: string[] | null;
 };
 
 export type DeckNodeKind = 'agent';
@@ -121,6 +122,7 @@ export type AgentCardInstance = {
   runtimeType?: AgentCardRuntimeType | null;
   runtimeOptions?: AgentCardRuntimeOptions | null;
   parentGraphId?: string | null;
+  tools?: string[];
 
   title: string;
   subtitle?: string;
@@ -732,6 +734,65 @@ export type MissionRun = {
   updatedAt: string;
 };
 
+export type PlanFlowNodeType =
+  | 'PlanRoute'
+  | 'Spec'
+  | 'Task'
+  | 'Decision'
+  | 'Assumption'
+  | 'MissionSpecDraft'
+  | 'MagenticOnePlan'
+  | 'RuntimeRun'
+  | 'Proof'
+  | 'SkillReference'
+  | 'CodeEvidenceReference'
+  | 'ThinkGraphEvent';
+
+export type PlanFlowSource =
+  | 'plan_md'
+  | 'spec_md'
+  | 'task_ledger'
+  | 'user'
+  | 'magentic_one'
+  | 'sol'
+  | 'model'
+  | 'thinkgraph'
+  | 'skillgraph'
+  | 'codegraph';
+
+export type PlanFlowStatus =
+  | 'draft'
+  | 'approved'
+  | 'running'
+  | 'complete'
+  | 'failed'
+  | 'blocked'
+  | 'pending';
+
+export type PlanFlowNode = {
+  id: string;
+  type: PlanFlowNodeType;
+  title: string;
+  source: PlanFlowSource;
+  sourcePath: string;
+  provenance: string;
+  status: PlanFlowStatus;
+  links: string[];
+};
+
+export type PlanFlowProjection = {
+  packet_version: 1;
+  source: 'planflow_markdown_projection';
+  nodes: PlanFlowNode[];
+  edges: Array<{
+    id: string;
+    source: string;
+    target: string;
+    type: 'contains' | 'defines_task';
+  }>;
+  warnings: string[];
+};
+
 export type MissionDeckPatch = {
   missionSpecId: string;
   nodesToCreate: AgentCardInstance[];
@@ -838,45 +899,6 @@ export type WorkspaceHarnessResult = {
   graphUpdateRequests?: GraphUpdateRequest[];
   suggestedNextAction?: WorkspaceHarnessOperation | null;
   errorReason?: string | null;
-};
-
-export type PlanDraftStatus =
-  | "idle"
-  | "drafting"
-  | "ready"
-  | "needs_user_input"
-  | "failed";
-
-export type ChatPlanDraftRequest = {
-  userMessage: string;
-  activeCanvasId?: string;
-  selectedObject?: CanvasObjectContext;
-  currentMissionSpec?: MissionSpec;
-  currentDeckSummary?: unknown;
-  availableAgents?: Array<{
-    id: string;
-    label: string;
-    type?: string;
-    capabilities?: string[];
-  }>;
-  graphContextRefs?: string[];
-  priorMissionResults?: unknown[];
-};
-
-export type ChatPlanDraftResult = {
-  status: PlanDraftStatus;
-  summary: string;
-  missionSpec?: MissionSpec;
-  missionSpecPatch?: Partial<MissionSpec>;
-  chatReply?: string | null;
-  questions?: string[];
-  suggestedNextAction?: string;
-  errorReason?: string;
-};
-
-export type DualChatTurnResult = {
-  chatReply: string;
-  planDraft?: ChatPlanDraftResult;
 };
 
 export type DeckRunMissionMetadata = {

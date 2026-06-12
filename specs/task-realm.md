@@ -1,5 +1,8 @@
 # TaskRealm
 
+> Transition policy: this is a legacy/source document, not the default planning memory or active
+> job contract. Ordinary work uses one bounded CoderPacket/spec-as-prompt.
+
 ## Purpose
 
 Define the scoped graph slice within which an agent may act for one user request.

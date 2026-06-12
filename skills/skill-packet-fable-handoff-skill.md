@@ -1,5 +1,16 @@
 # Skill: Skill Packet Fable Handoff
 
+> Product-law transition: skill packets remain useful Context Packet inputs, but the default
+> active job contract is one temporary CoderPacket/spec-as-prompt, not a durable spec file.
+
+## Current Product Law
+
+Skill retrieval contributes relevant reusable learning to the planner-initiated Context Packet.
+An unmatched task does not require a placeholder skill; create/update a skill only when reusable
+learning emerges. Missing required context blocks CoderPacket readiness rather than becoming an
+acceptable placeholder. The existing deterministic handoff helper is transition/source evidence
+until it is adapted to this contract.
+
 @skill id=skill-packet-fable-handoff
 @type Skill
 @status learning
@@ -37,7 +48,8 @@ changing the handoff contract between scout/planner retrieval and Fable executio
 
 Proven by attempt prepare-001:
 
-1. Scout reads `AGENTS.md`, `PLAN.md`, and relevant specs, then refreshes or proves fresh CBM.
+1. Scout reads `AGENTS.md`, `PLAN.md`, and the current CoderPacket when one exists, then refreshes
+   or proves fresh CBM.
 2. Scout renders the bounded Fable prompt with
    `py -3.12 services/knowgraph/skill_ingest.py handoff --prompt "<task>" [--spec <path>] [--limit 3]`,
    which retrieves the deterministic skill packet and emits, in order: Task Prompt, Source Spec,

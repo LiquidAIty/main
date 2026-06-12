@@ -20,6 +20,12 @@ import {
   registerKgIngestWorker,
   type KgIngestQueueJob,
 } from '../services/kgIngestQueue';
+import {
+  readThinkGraphContextPacket,
+  recordThinkGraphEvent,
+  recordThinkGraphRunEvent,
+} from '../services/thinkgraph/thinkgraphMemory';
+import { buildMarkdownPlanFlowProjection } from '../services/planflow/planFlowProjection';
 
 const router = Router({ mergeParams: true });
 const GRAPH_NAME = 'graph_liq';
@@ -1785,6 +1791,129 @@ router.post('/query', async (req, res) => {
   }
 });
 
+router.get('/planflow/projection', async (req, res) => {
+  const projectId = String((req.params as any).projectId || '').trim();
+  if (!projectId) {
+    return res.status(400).json({ ok: false, error: 'projectId is required' });
+  }
+  try {
+    const projection = await buildMarkdownPlanFlowProjection();
+    const warnings = [...projection.warnings];
+    let thinkGraphEventId: string | null = null;
+    try {
+      const written = await recordThinkGraphEvent({
+        projectId,
+        eventType: 'planflow_loaded_from_markdown',
+        title: 'PlanFlow loaded from authoritative markdown',
+        summary: `${projection.nodes.length} nodes and ${projection.edges.length} edges projected from PLAN.md/specs`,
+        status: 'complete',
+        planFlowNodeIds: projection.nodes.map((node) => node.id),
+      });
+      thinkGraphEventId = written.id;
+    } catch (err: any) {
+      warnings.push(`thinkgraph_planflow_event_failed: ${err?.message || String(err)}`);
+    }
+    return res.json({
+      ok: true,
+      projection: { ...projection, warnings },
+      thinkGraphEventId,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err?.message || 'planflow_projection_failed' });
+  }
+});
+
+// ThinkGraph memory (minimal): real events in the dedicated AGE graph,
+// plus a versioned context-packet read path.
+router.post('/thinkgraph/event', async (req, res) => {
+  const projectId = String((req.params as any).projectId || '').trim();
+  if (!projectId) {
+    return res.status(400).json({ ok: false, error: 'projectId is required' });
+  }
+  try {
+    const body = req.body || {};
+    const eventType = String(body.eventType || '').trim();
+    if (![
+      'planflow_loaded_from_markdown',
+      'run_requested',
+      'run_started',
+      'run_completed',
+      'run_failed',
+      'proof_recorded',
+      'blocker_found',
+    ].includes(eventType)) {
+      return res.status(400).json({ ok: false, error: 'thinkgraph_event_type_required' });
+    }
+    const written = await recordThinkGraphEvent({
+      projectId,
+      eventType: eventType as any,
+      title: String(body.title || ''),
+      summary: String(body.summary || ''),
+      status: body.status,
+      planFlowNodeIds: Array.isArray(body.planFlowNodeIds) ? body.planFlowNodeIds : [],
+      deckId: body.deckId,
+      deckTitle: body.deckTitle,
+      task: body.task,
+      cards: Array.isArray(body.cards) ? body.cards : [],
+      tools: Array.isArray(body.tools) ? body.tools : [],
+      runtimeRoute: body.runtimeRoute,
+      finalOutput: body.finalOutput ?? null,
+      error: body.error ?? null,
+      assumptions: Array.isArray(body.assumptions) ? body.assumptions : [],
+      nextTask: body.nextTask,
+    });
+    return res.json({ ok: true, ...written });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err?.message || 'thinkgraph_write_failed' });
+  }
+});
+
+router.post('/thinkgraph/run', async (req, res) => {
+  const projectId = String((req.params as any).projectId || '').trim();
+  if (!projectId) {
+    return res.status(400).json({ ok: false, error: 'projectId is required' });
+  }
+  try {
+    const body = req.body || {};
+    const eventType = String(body.eventType || '').trim();
+    if (!['run_requested', 'run_started', 'run_completed', 'run_failed'].includes(eventType)) {
+      return res.status(400).json({ ok: false, error: 'thinkgraph_run_event_type_required' });
+    }
+    const written = await recordThinkGraphRunEvent({
+      projectId,
+      deckId: String(body.deckId || ''),
+      eventType: eventType as 'run_requested' | 'run_started' | 'run_completed' | 'run_failed',
+      deckTitle: String(body.deckTitle || ''),
+      task: String(body.task || ''),
+      cards: Array.isArray(body.cards) ? body.cards : [],
+      tools: Array.isArray(body.tools) ? body.tools : [],
+      runtimeRoute: String(body.runtimeRoute || ''),
+      status: body.status,
+      finalOutput: body.finalOutput ?? null,
+      error: body.error ?? null,
+      assumptions: Array.isArray(body.assumptions) ? body.assumptions : [],
+      nextTask: String(body.nextTask || ''),
+    });
+    return res.json({ ok: true, ...written });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err?.message || 'thinkgraph_write_failed' });
+  }
+});
+
+router.get('/thinkgraph/context', async (req, res) => {
+  const projectId = String((req.params as any).projectId || '').trim();
+  if (!projectId) {
+    return res.status(400).json({ ok: false, error: 'projectId is required' });
+  }
+  try {
+    const limit = Number((req.query as any)?.limit || 10);
+    const packet = await readThinkGraphContextPacket(projectId, limit);
+    return res.json({ ok: true, packet });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err?.message || 'thinkgraph_read_failed' });
+  }
+});
+
 router.get('/status', async (req, res) => {
   const projectId = String((req.params as any).projectId || '');
   if (!projectId) {
@@ -1913,4 +2042,3 @@ router.get('/status', async (req, res) => {
 });
 
 export default router;
-

@@ -1,5 +1,8 @@
 # KnowGraph Skill Retrieval Spec
 
+> Transition policy: this is a legacy/source document, not the default planning memory or active
+> job contract. `PLAN.md`, `AGENTS.md`, and the current CoderPacket/spec-as-prompt are authoritative.
+
 ## Purpose
 
 Retrieve useful skill memory from KnowGraph before agents do work. Codex, Fable, and Sol ask what

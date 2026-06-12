@@ -1,88 +1,72 @@
 # ThinkGraph Planning Memory Spec
 
-## Purpose
+> Transition policy: this is a legacy/source implementation document. Current product law lives
+> in `PLAN.md`, `AGENTS.md`, and the active CoderPacket/spec-as-prompt.
 
-Define ThinkGraph as the project reasoning / current-route graph that improves planning and
-prompt writing. ThinkGraph is the next graph after the SkillGraph packet and Code Evidence Packet
-handoff proved out.
+## Current Product Boundary
 
-## What ThinkGraph Is Not
+ThinkGraph is structured reasoning and event memory for the active engineering loop.
 
-* ThinkGraph is not SkillGraph: SkillGraph stores learned agent execution memory — attempts,
-  failures, guardrails, decisions about how to do work, proof requirements, query patterns.
-* ThinkGraph is not CodeGraph: CodeGraph/CBM stores current code facts.
-* ThinkGraph is not KnowGraph: KnowGraph stores broader knowledge, research, and public imports.
+ThinkGraph stores:
 
-## What ThinkGraph Stores
+* why the living plan changed
+* what context was used
+* what CoderPacket/job was created
+* what CoderReport the coder returned
+* what matched, missed, or changed
+* what proof exists
+* what failed or is blocked
+* what should happen next
 
-Project reasoning state:
+ThinkGraph does not replace `PLAN.md`, SkillGraph, CodeGraph, or KnowGraph. It does not store fake
+AI plans, invented reasoning, hidden success, or markdown sprawl.
 
-* current route
-* active decisions
-* user goals
-* why a path was chosen
-* deferred choices
-* plan dependencies
-* next intended task
-* assumptions
-* open questions
+## PlanFlow Boundary
 
-## Role
+PlanFlow is Magentic-One/Sol's visible thinking and control surface. It shows:
 
-* ThinkGraph feeds the prompt writer (`specs/graph-context-prompt-writer-spec.md`) so generated
-  Fable/Codex handoffs carry the current route, active decisions, and why-now reasoning.
-* ThinkGraph does not replace `PLAN.md` yet. `PLAN.md` remains the human-readable route;
-  ThinkGraph is a queryable projection of planning/reasoning state.
-* Implementation is deferred until the handoff loop proves itself on a real implementation
-  attempt. Creating this spec now keeps the boundary clean so other passes do not absorb
-  planning state into the wrong graph.
+* the living plan
+* one current active job
+* the active CoderPacket/spec-as-prompt
+* CoderReport comparison and run/report status
+* blockers
+* proof summary
+* next step
 
-## ThinkGraph Context Packet
+PlanFlow is not a spec/document/skill library, markdown graph, road-sign display, deterministic
+fake plan, or Run Preview. Supporting sources and evidence may be opened on demand, but PlanFlow
+must not dump every source document onto the canvas.
 
-Later implementation should produce a ThinkGraph Context Packet for handoffs:
+## Context Packet
 
-```json
-{
-  "packet_version": 1,
-  "source": "thinkgraph",
-  "current_route": [],
-  "active_decisions": [],
-  "deferred_decisions": [],
-  "assumptions": [],
-  "open_questions": [],
-  "next_task": "",
-  "why_now": "",
-  "warnings": []
-}
-```
+ThinkGraph contributes bounded reasoning, event, proof, and blocker context to the Context Packet
+initiated by Magentic-One/Sol. The Context Packet also receives user input, current PlanFlow state,
+`PLAN.md`, fresh CBM/CodeGraph evidence, relevant SkillGraph/Neo4j skills, and KnowGraph when
+relevant.
 
-It joins the handoff after the Code Evidence Packet, through the prompt writer only.
+## Existing Implementation Evidence
 
-## Clean Overlap
+The current implementation already has useful transition rails:
 
-* SkillGraph: learned agent execution memory.
-* ThinkGraph: project planning / current-route reasoning.
-* CodeGraph/CBM: current code facts.
-* KnowGraph: broader knowledge/research/imports.
-* The prompt writer combines them; the graphs are not physically merged. Storage can differ
-  underneath; agents consume packets and tools, not raw databases.
+* real `ThinkGraphEvent` storage and readback
+* links between real events and PlanFlow-related identifiers
+* loud failure for unsupported event types/status
+* real run requested/completed/failed events
+* a provenance-backed markdown projection
 
-## MVP
+The markdown projection is implementation/source evidence during transition. It is not the final
+PlanFlow product model and must not make PlanFlow a spec library.
 
-* This spec exists now; no runtime code in this pass.
-* First implementation target: a deterministic ThinkGraph Context Packet builder that reads
-  planning state (initially projectable from `PLAN.md` and active specs) and emits the packet
-  shape above for the prompt writer.
+## Runtime Boundary
 
-## Not Included Yet
-
-* runtime implementation
-* UI planning surface
-* automatic PLAN.md generation
-* merging with SkillGraph/KnowGraph storage
+PlanFlow and ThinkGraph do not execute work. Runtime results remain runtime evidence. Only a real
+planner/model/orchestrator path may claim Magentic-One/Sol provenance. No fake final output,
+provider/model fallback, or mocked success is allowed.
 
 ## Acceptance
 
-* ThinkGraph's boundary against SkillGraph, CodeGraph, and KnowGraph is explicit.
-* The packet shape is defined and versioned.
-* PLAN.md remains the human-readable route until a future spec changes that.
+* ThinkGraph stores real structured reasoning/events/proof/blockers only.
+* PlanFlow centers the living plan and one active CoderPacket.
+* CoderReport is compared against the active CoderPacket.
+* Existing markdown/spec projection is treated as transition evidence, not product law.
+* Skills remain in SkillGraph/Neo4j and code facts remain in CodeGraph/CBM.

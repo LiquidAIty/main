@@ -8,10 +8,15 @@ export function resolveEffectiveAgent(
   if (!template) return null;
 
   const overrides = card.overrides || {};
+  const selectedTools = Array.isArray(card.runtimeOptions?.tools)
+    ? card.runtimeOptions.tools
+    : Array.isArray(card.tools)
+      ? card.tools
+      : [];
   return {
     ...template,
     ...overrides,
-    tools: Array.isArray(overrides.tools) ? overrides.tools : template.tools,
+    tools: selectedTools,
     skills: Array.isArray(overrides.skills) ? overrides.skills : template.skills,
     personas: Array.isArray(overrides.personas) ? overrides.personas : template.personas,
     knowledgeSources: Array.isArray(overrides.knowledgeSources)

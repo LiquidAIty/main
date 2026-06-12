@@ -56,12 +56,14 @@ describe("workspace harness", () => {
     expect(result.status).toBe("complete");
   });
 
-  it("draft_mission returns MissionSpec patch", async () => {
+  it("draft_mission refuses to synthesize a fake MissionSpec", async () => {
     const result = await runInternalWorkspaceHarness(
       { ...baseRequest, operation: "draft_mission", userGoal: "build mission" },
       { currentDeck: deck, buildMissionDeckPatch, applyMissionDeckPatch },
     );
-    expect(result.missionSpecPatch?.userGoal).toContain("build mission");
+    expect(result.status).toBe("needs_user_input");
+    expect(result.missionSpecPatch).toBeUndefined();
+    expect(result.summary).toContain("provenance");
   });
 
   it("generate_deck_patch returns mission patch", async () => {

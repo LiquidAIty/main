@@ -14,28 +14,31 @@
 
 Compose a compact Code Evidence Packet from fresh Codebase-Memory / CodeGraph lookups — relevant
 files, symbols, routes, tests, snippets, call paths, queries used, and warnings — and embed it in
-the Fable handoff after the Skill Memory Packet so Fable starts with current code truth.
+the planner-initiated Context Packet so the active CoderPacket and coder start with current code
+truth.
 
 ## Use When
 
 Use when preparing code evidence for a Fable attempt, defining what fresh CBM lookups feed the
-handoff, or changing the Code Evidence Packet contract.
+Context Packet/CoderPacket, or changing the Code Evidence Packet contract.
 
 ## Guardrails
 
 @guardrail id=codegraph-context-reader.cbm-tools-only
 @guardrail id=codegraph-context-reader.no-copied-code-in-skills
 @guardrail id=codegraph-context-reader.no-fake-cbm-access
+@guardrail id=codegraph-context-reader.missing-code-evidence-blocks
 
 * Use Codebase-Memory MCP tools as the API; never read or depend on the hidden CBM SQLite file.
 * CodeGraph supplies fresh code evidence only; agent learning memory lives in SkillGraph.
 * Skill files store code refs and query patterns, never copied code snippets.
-* Host code never fakes CBM access: the scout composes the packet; the renderer only validates
-  and embeds it, and a missing packet renders an explicit placeholder.
+* Host code never fakes CBM access: the scout composes the packet and the renderer validates it.
+* Missing or stale required code evidence blocks CoderPacket readiness; it is not acceptable
+  context.
 
 ## Current Procedure
 
-Proven by attempt prepare-001:
+Legacy implementation evidence from attempt prepare-001:
 
 1. Scout refreshes CBM and records method/status/nodes/edges into the packet's `cbm` field.
 2. Scout runs the Skill Memory Packet query patterns first, then CBM graph tools
@@ -47,8 +50,9 @@ Proven by attempt prepare-001:
 4. Scout saves the packet JSON and renders the handoff:
    `py -3.12 services/knowgraph/skill_ingest.py handoff --prompt "<task>" --spec "<spec>" --code-evidence <packet.json>`.
    The renderer validates `source=codegraph_cbm` and `packet_version` loudly and embeds the JSON
-   verbatim as `## Code Evidence Packet` after the Skill Memory Packet; a missing packet renders
-   an explicit placeholder obligating Fable to gather fresh evidence itself.
+   verbatim as `## Code Evidence Packet` after the Skill Memory Packet. The current helper's
+   missing-packet placeholder is implementation debt; current product law requires blocking
+   CoderPacket readiness until fresh evidence exists.
 5. Fable verifies packet refs by direct read before relying on them (Required Behavior 4).
 
 ## Active Attempt

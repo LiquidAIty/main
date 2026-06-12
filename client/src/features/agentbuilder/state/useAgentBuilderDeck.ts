@@ -1,18 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 
-import type { PlanDraft } from '../plan/planDraftTypes';
 import type {
   LatestCardRunRecord,
 } from '../../../components/builder/useBuilderDeckRuntimeActions';
 import type {
-  ChatPlanDraftResult,
   DeckDocument,
   DeckRun,
   DeckRuntimeEvent,
   MissionRun,
-  MissionSpec,
   OpenMissionMessage,
-  PlanDraftStatus,
 } from '../../../types/agentgraph';
 
 type ActivationProposalState = {
@@ -45,14 +41,6 @@ export default function useAgentBuilderDeck({
   );
   const [openMissionMessage, setOpenMissionMessage] =
     useState<OpenMissionMessage | null>(null);
-  const [draftMissionSpec, setDraftMissionSpec] = useState<MissionSpec | null>(null);
-  const [currentPlanDraft, setCurrentPlanDraft] = useState<PlanDraft | null>(null);
-  const [planDraftStatus, setPlanDraftStatus] = useState<PlanDraftStatus>('idle');
-  const [latestPlanDraftResult, setLatestPlanDraftResult] =
-    useState<ChatPlanDraftResult | null>(null);
-  const draftMissionSpecRef = useRef<MissionSpec | null>(null);
-  const currentPlanDraftRef = useRef<PlanDraft | null>(null);
-  const planDraftRequestSeqRef = useRef(0);
   const [deckRevision, setDeckRevision] = useState<string | null>(null);
   const [latestDeckRun, setLatestDeckRun] = useState<DeckRun | null>(null);
   const [latestCardRun, setLatestCardRun] = useState<LatestCardRunRecord | null>(null);
@@ -64,14 +52,6 @@ export default function useAgentBuilderDeck({
   const [deckStatusMessage, setDeckStatusMessage] = useState<string | null>(null);
   const [deckLoadError, setDeckLoadError] = useState<string | null>(null);
 
-  useEffect(() => {
-    draftMissionSpecRef.current = draftMissionSpec;
-  }, [draftMissionSpec]);
-
-  useEffect(() => {
-    currentPlanDraftRef.current = currentPlanDraft;
-  }, [currentPlanDraft]);
-
   return {
     deck,
     setDeckState,
@@ -81,17 +61,6 @@ export default function useAgentBuilderDeck({
     setLatestMissionRun,
     openMissionMessage,
     setOpenMissionMessage,
-    draftMissionSpec,
-    setDraftMissionSpec,
-    currentPlanDraft,
-    setCurrentPlanDraft,
-    planDraftStatus,
-    setPlanDraftStatus,
-    latestPlanDraftResult,
-    setLatestPlanDraftResult,
-    draftMissionSpecRef,
-    currentPlanDraftRef,
-    planDraftRequestSeqRef,
     deckRevision,
     setDeckRevision,
     latestDeckRun,

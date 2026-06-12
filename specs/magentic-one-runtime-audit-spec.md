@@ -1,5 +1,8 @@
 # Magentic-One Runtime Audit Spec
 
+> Transition policy: this is a legacy/source audit record, not the default planning memory or
+> active job contract.
+
 ## Purpose
 
 Record the first bounded Magentic-One / AutoGen runtime audit (2026-06-12) and define the next

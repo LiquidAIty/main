@@ -1,5 +1,8 @@
 # Skill Packet Fable Handoff Spec
 
+> Transition policy: this is a legacy/source handoff model. Relevant skill memory now contributes
+> to the Context Packet and one active CoderPacket/spec-as-prompt.
+
 ## Purpose
 
 Every real Fable implementation attempt begins with relevant KnowGraph skill memory. The scout or

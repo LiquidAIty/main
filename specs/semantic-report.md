@@ -1,5 +1,8 @@
 # SemanticReport
 
+> Transition policy: this is a legacy/source report model. The current product return contract is
+> CoderReport as defined by `PLAN.md`, `AGENTS.md`, and `skills/coder-report-protocol-skill.md`.
+
 ## Purpose
 
 Define FableCoder's graph-friendly, evidence-bound report after coding and validation.

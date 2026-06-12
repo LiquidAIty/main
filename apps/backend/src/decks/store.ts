@@ -252,6 +252,7 @@ function normalizeDeckNode(value: unknown): AgentCardInstance | null {
     runtimeType: normalizeRuntimeType(raw.runtimeType) || 'assistant_agent',
     runtimeOptions: normalizeRuntimeOptions(raw.runtimeOptions),
     parentGraphId: typeof raw.parentGraphId === 'string' ? raw.parentGraphId.trim() || null : null,
+    tools: cleanToolNames(raw.tools) || undefined,
     title: title || String(raw.id || '').trim(),
     subtitle,
     position,

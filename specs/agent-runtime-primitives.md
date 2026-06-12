@@ -10,6 +10,9 @@ last_updated: 2026-06-11
 
 # Agent Runtime Primitives
 
+> Transition policy: this is a legacy/source document, not the default planning memory or active
+> job contract. `PLAN.md`, `AGENTS.md`, and the current CoderPacket/spec-as-prompt are authoritative.
+
 ## Spec
 
 ### Purpose
@@ -62,6 +65,20 @@ smallest required runtime primitives before future graph skills and richer orche
    evidence.
 10. **GraphSkill**: Approved reusable skill that passed validation and can be selected by future
     agents.
+
+### PlanFlow And Runtime Boundary
+
+* PlanFlow is Magentic-One/Sol's visible thinking/control surface for the living plan, one active
+  CoderPacket, report/run status, blockers, proof summary, and next step.
+* Existing markdown projection is transition/source evidence, not the final PlanFlow product
+  model and not permission to display a spec/document library.
+* Runtime status, ordinary run history, and final output remain runtime evidence and do not become
+  planning authority.
+* Real Magentic-One trace plans may appear only as proposals with runtime-trace provenance.
+* Selected runtime tools come only from `runtimeOptions.tools` or direct `card.tools`; legacy
+  override fields are not a runtime tool source.
+* The execution rail remains ReactFlow/deck/card -> backend deck route -> deck runtime -> card
+  runtime -> Python sidecar -> real AutoGen v0.4.4 / Magentic-One.
 
 ### AgentGraph Versus PlanGraph
 
@@ -316,6 +333,33 @@ Chat-window status: the full code chain exists (client `resolveDeckRunChatReply`
 `cards/runtime.ts` payload builder (vitest-proven) -> `autogenOrchestratorClient` -> the sidecar
 endpoint proven live here). The backend route and chat UI were not executed in this smoke (they
 need the full app stack with database); wiring verification is the next task.
+
+#### T001 Live Backend Deck-Run Smoke (2026-06-12)
+
+The backend layer is now proven live end to end, with zero code changes:
+
+* Timeout pre-check: `AUTOGEN_ORCHESTRATOR_TIMEOUT_MS=180000` was already set in
+  `apps/backend/.env` — sufficient (the live mission took ~25s through the stack); no config
+  change was needed.
+* Services: real sidecar (`npm run dev:autogen`, :8003) and real backend
+  (`npm run dev:backend`, :4000, Postgres-backed deck store, anonymous loopback session via
+  `authMiddleware`).
+* Real API sequence: `POST /api/projects` created project
+  75ae5307-b02b-45b7-9f3d-45223fb977f4; `POST /api/projects/:id/decks` persisted a deck whose
+  worker card selected `["current_datetime", "calculator"]` with `modelKey=gpt-5.1-chat-latest`;
+  `POST /api/projects/:id/decks/smoke-deck-1/run` executed the persisted deck.
+* Result: `ok=true`, `run.status=success`, `agentRunStatus=complete`, chat-suitable
+  `finalOutput`: "Current UTC datetime: 2026-06-12T13:19:02.858729+00:00 / Value of 2+3*4: 14" —
+  both tools executed for real inside the live OpenAI exchange, returned through
+  DeckRunResponse.
+* Loud failure live through the backend: a persisted deck selecting `made_up_tool` returned
+  `run.status=error` with errorReason
+  `card_tool_unknown: made_up_tool (cardId=agentA, known: current_datetime,calculator)` —
+  rejected at payload build by the T001 backend validation, before any sidecar call or model
+  spend.
+
+Remaining unexecuted layer: the chat UI itself (client `resolveDeckRunChatReply` calling this
+proven route from the browser). That is minimal chat wiring verification, not runtime work.
 
 ## Completed Summaries
 

@@ -1,5 +1,8 @@
 # Progressive Skill Loop Spec
 
+> Transition policy: this is a legacy/source document. Reusable learning still belongs in skills,
+> but ordinary jobs now use one temporary CoderPacket/spec-as-prompt rather than durable specs.
+
 ## Purpose
 
 Stop progressive work from breaking unrelated systems by making skills the durable memory of

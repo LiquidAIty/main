@@ -34,9 +34,11 @@ Direct-read evidence (2026-06-12):
 * `apps/python-models/app/python_models/orchestration_contracts.py`,
   `apps/backend/src/contracts/runtimeContracts.ts`, and `apps/backend/src/cards/runtime.ts`
   exist.
-* `apps/python-models/app/python_models/tool_registry.py` does not exist yet: T001
-  ToolSpec/ToolRegistry in `specs/agent-runtime-primitives.md` is still ready-for-fable.
+* `apps/python-models/app/python_models/tool_registry.py` and typed ToolSpec contracts are
+  implemented and proven; runtime tools come only from selected card/runtime options.
 * The PyPI `magentic-one` wheel is an empty stub; the runtime line is source-run v0.4.4.
+* PlanFlow is a separate provenance-backed planning canvas. Runtime status and ordinary run
+  history never become planning authority; only a real Magentic-One trace plan may be proposed.
 
 ## Guardrails
 
@@ -44,12 +46,15 @@ Direct-read evidence (2026-06-12):
 @guardrail id=magentic-one-runtime.no-banned-frameworks
 @guardrail id=magentic-one-runtime.no-fake-runtime-success
 @guardrail id=magentic-one-runtime.selected-tools-only
+@guardrail id=magentic-one-runtime.runtime-is-not-plan-authority
 
 * The runtime line is source-run AutoGen v0.4.4 / Magentic-One; do not swap rails.
 * No AgentChat, AutoGen Studio, Semantic Kernel, LangChain, or Microsoft Agent Framework.
 * No fake finalOutput, mocked sidecar success, or provider/model fallback.
 * Tools resolve only from selected enabled ToolSpecs; unknown/disabled/unselected/empty/
   schema-missing tools fail loudly; Python never invents tools.
+* Runtime events/results stay runtime evidence. Only a real trace plan may enter PlanFlow as a
+  proposal.
 
 ## Rejected Paths
 
@@ -325,7 +330,135 @@ Skill update:
 
 @query id=magentic-one-runtime.live-smoke "from apps/python-models: .venv uvicorn app.main:app --port 8003; then POST /autogen/orchestrate with a magentic_one ContextPack selecting current_datetime and calculator, provider openai, model gpt-5.1-chat-latest"
 
+## Backend Chat Route Smoke Attempt
+
+@attempt id=magentic-one-runtime.backend-chat-route-smoke
+@status active
+@source_spec specs/agent-runtime-primitives.md
+@source_prompt "prove the real backend deck-run route reaches the live Magentic-One sidecar with selected tools and returns a chat-suitable reply"
+@requires_fresh_cbm true
+
+@attempt_result id=magentic-one-runtime.backend-chat-route-smoke
+@status succeeded
+@cbm_after nodes=5289 edges=9506
+@proved_by POST /api/projects then /decks then /decks/smoke-deck-1/run against the real backend returned run.status=success with finalOutput carrying the tool-produced UTC timestamp 2026-06-12T13:19:02.858729+00:00 and 14 for 2+3*4
+@proved_by a persisted deck selecting made_up_tool returned run.status=error with card_tool_unknown before any sidecar call or model spend
+@proved_by AUTOGEN_ORCHESTRATOR_TIMEOUT_MS=180000 was already configured; no env change was needed
+@validated_by npm run dev:autogen and npm run dev:backend then the three-call API sequence over an anonymous loopback session
+@touches_code apps/backend/src/routes/decks.routes.ts
+@touches_code apps/backend/src/decks/deckRuntime.ts
+@touches_code apps/backend/src/decks/store.ts
+@touches_code apps/backend/src/middleware/auth.ts
+
+### Work Done
+
+No code changed. Verified the timeout config first (the prior attempt's 20s concern was already
+resolved by `AUTOGEN_ORCHESTRATOR_TIMEOUT_MS=180000` in `apps/backend/.env`). Started both real
+services, then drove the real persisted-deck path: project created over the API, deck persisted
+in the Postgres-backed V3 project blob with a worker card selecting current_datetime and
+calculator, deck executed through POST /:projectId/decks/:deckId/run -> executeDeck ->
+runCardWithContract -> payload builder -> orchestrateWithAutoGen -> live sidecar -> real OpenAI
+gpt-5.1-chat-latest -> DeckRunResponse with chat-suitable finalOutput.
+
+### Proof
+
+Positive: ok=true, run.status=success, agentRunStatus=complete, finalOutput "Current UTC
+datetime: 2026-06-12T13:19:02.858729+00:00 / Value of 2+3*4: 14". Negative: run.status=error,
+errorReason "card_tool_unknown: made_up_tool (cardId=agentA, known: current_datetime,calculator)"
+from the T001 backend validation, before any model spend. No fake finalOutput: the success output
+came from real tool execution; the failure was reported as a failure.
+
+### Actual Graph And Code Delta
+
+Zero code delta; spec and skill write-backs only. CBM 5289/9506 unchanged (committed-HEAD
+indexer). The proven-live boundary moved from the sidecar HTTP surface to the full backend
+deck-run route; only the browser chat UI layer remains unexecuted.
+
+Reasoning receipt:
+
+* chosen approach: the real persisted-deck route (the repo's intended chat path) with the
+  anonymous loopback session that authMiddleware grants local dev callers; deck and project
+  created through the real API, not seeded by hand.
+* rejected alternatives: editing env files (unnecessary — timeout already 180000); a synthetic
+  route harness (the real route worked); driving the chat UI browser layer in the same pass
+  (separate minimal wiring task).
+* failed/blocked paths: none; every call succeeded first try.
+* guardrails created: none new; T001 backend tool validation proven live at the route level.
+* retry direction: not needed. Next layer is client `resolveDeckRunChatReply` calling this route
+  from the browser.
+
+Skill update:
+
+* Current Procedure updated: no
+* Successful Example added: yes
+* Failed Attempt added: no
+* Query Pattern added: yes
+
+@query id=magentic-one-runtime.backend-smoke "start npm run dev:autogen and npm run dev:backend; POST /api/projects, then /api/projects/:id/decks with a magentic_one deck selecting current_datetime and calculator, then /decks/:deckId/run with input and a templates array"
+
+## Runtime UI No-Fake-Plan Attempt
+
+@attempt id=magentic-one-runtime.reactflow-runtime-no-fake-plan
+@status active
+@source_spec specs/agent-runtime-primitives.md
+@source_prompt "preserve the proven ReactFlow deck-run AutoGen path while removing deterministic client planner claims and overrides.tools from runtime selection"
+@requires_fresh_cbm true
+
+Bounded scope: keep the real deck-run/finalOutput/loud-error path intact, remove deterministic
+client summaries that pretend to be planner output, and enforce runtimeOptions.tools/card.tools
+as the selected-tool source.
+
+## ReactFlow Runtime / PlanFlow Boundary Attempt
+
+@attempt id=magentic-one-runtime.reactflow-runtime-planflow-boundary
+@status active
+@source_spec specs/agent-runtime-primitives.md
+@source_prompt "preserve the proven ReactFlow runtime while PlanFlow projects authoritative markdown and only real Magentic-One trace plans use planner provenance"
+@requires_fresh_cbm true
+
+Bounded scope: keep runtime status/results separate from PlanFlow source nodes, preserve the
+real deck-run route and loud failures, and prove selected tools come only from
+runtimeOptions.tools/card.tools.
+
+@attempt_result id=magentic-one-runtime.reactflow-runtime-no-fake-plan
+@status succeeded
+@cbm_after nodes=4650 edges=8255
+@proved_by production client no longer turns deterministic summaries or ordinary run history into PlanFlow and selected tools have no overrides.tools source
+@validated_by exact audit, runtime.spec.ts, and backend tsc
+@touches_code client/src/components/builder/deckRunState.ts
+@touches_code client/src/components/builder/deckRuntime.ts
+@touches_code apps/backend/src/routes/decks.routes.ts
+
+@attempt_result id=magentic-one-runtime.reactflow-runtime-planflow-boundary
+@status succeeded
+@cbm_after nodes=4650 edges=8255
+@proved_by ReactFlow Plan canvas rendered authoritative markdown while real deck-run route and Magentic-One trace-plan proposal path remained separate
+@validated_by runtime.spec.ts, backend tsc, PlanFlow adapter tests, and browser smoke with zero console errors
+@touches_code client/src/pages/agentbuilder.tsx
+@touches_code client/src/features/agentbuilder/plan/planFlowProjection.ts
+@touches_code apps/backend/src/routes/decks.routes.ts
+
+### PlanFlow Boundary Result
+
+Runtime behavior was preserved while fake planning claims were removed. Selected tools resolve
+only from `runtimeOptions.tools` or direct `card.tools`. Real final output remains preferred;
+ordinary run history cannot become a plan. The Plan workspace renders markdown authority and
+shows a Magentic-One proposal only when a real trace plan exists.
+
+Reasoning receipt:
+
+* chosen approach: keep the proven execution chain untouched and adapt only its real trace plan
+  into the separate PlanFlow proposal surface.
+* rejected alternatives: runtime-derived fallback plans, fake final output, provider/model
+  fallback, and legacy override tool selection.
+* guardrail created: runtime evidence is not planning authority.
+* retry direction: wire a true proposal/approval workflow without changing the execution rail.
+
 ## Successful Examples
+
+Backend route smoke (2026-06-12): the full backend deck-run path executed live — persisted deck,
+real OpenAI exchange, both tools executed, chat-suitable finalOutput returned, and unknown tools
+rejected loudly at the backend before any spend.
 
 Audit-001 (2026-06-12): the first real learn-loop consumption of this skill — packet retrieval
 surfaced it first, its guardrails bounded the audit, and direct-read evidence confirmed the

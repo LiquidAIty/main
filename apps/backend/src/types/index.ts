@@ -119,6 +119,7 @@ export type AgentCardInstance = {
   runtimeType?: AgentCardRuntimeType | null;
   runtimeOptions?: AgentCardRuntimeOptions | null;
   parentGraphId?: string | null;
+  tools?: string[];
   title: string;
   subtitle?: string;
   position: { x: number; y: number };
@@ -778,44 +779,6 @@ export type WorkspaceHarnessResult = {
   errorReason?: string | null;
 };
 
-export type PlanDraftStatus =
-  | 'idle'
-  | 'drafting'
-  | 'ready'
-  | 'needs_user_input'
-  | 'failed';
-
-export type ChatPlanDraftRequest = {
-  userMessage: string;
-  activeCanvasId?: string;
-  selectedObject?: CanvasObjectContext;
-  currentMissionSpec?: MissionSpec;
-  currentDeckSummary?: unknown;
-  availableAgents?: Array<{
-    id: string;
-    label: string;
-    type?: string;
-    capabilities?: string[];
-  }>;
-  graphContextRefs?: string[];
-  priorMissionResults?: unknown[];
-};
-
-export type ChatPlanDraftResult = {
-  status: PlanDraftStatus;
-  summary: string;
-  missionSpec?: MissionSpec;
-  missionSpecPatch?: Partial<MissionSpec>;
-  questions?: string[];
-  suggestedNextAction?: string;
-  errorReason?: string;
-};
-
-export type DualChatTurnResult = {
-  chatReply: string;
-  planDraft?: ChatPlanDraftResult;
-};
-
 export type DeckRunMissionMetadata = {
   missionRunId?: string | null;
   missionAgentRunId?: string | null;
@@ -876,6 +839,7 @@ export type DeckRunRequest = {
   missionSpec?: MissionSpec;
   missionRunId?: string;
   missionAgentRunId?: string;
+  planFlowNodeIds?: string[];
 };
 
 export type DeckRunResponse = {

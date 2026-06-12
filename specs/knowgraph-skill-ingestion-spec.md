@@ -1,5 +1,8 @@
 # KnowGraph Skill Ingestion Spec
 
+> Transition policy: this is a legacy/source document, not the default planning memory or active
+> job contract. `PLAN.md`, `AGENTS.md`, and the current CoderPacket/spec-as-prompt are authoritative.
+
 ## Purpose
 
 Make graphable Markdown skill files queryable through KnowGraph / Neo4j so Codex and Fable can find

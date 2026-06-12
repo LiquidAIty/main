@@ -7,6 +7,7 @@ import {
   saveDeckRun,
 } from '../decks/store';
 import { executeDeck } from '../decks/deckRuntime';
+import { recordThinkGraphRunEvent } from '../services/thinkgraph/thinkgraphMemory';
 import type {
   AgentTemplate,
   DeckDocument,
@@ -177,6 +178,22 @@ router.post('/:projectId/decks/:deckId/run', async (req, res) => {
     if (!deck) {
       return res.status(404).json({ ok: false, error: 'deck_not_found' });
     }
+    const cardTitles = (deck.nodes || []).map((node: any) => String(node.title || node.id));
+    const selectedTools = Array.from(
+      new Set(
+        (deck.nodes || []).flatMap((node: any) => {
+          const runtimeTools = Array.isArray(node.runtimeOptions?.tools)
+            ? node.runtimeOptions.tools
+            : Array.isArray(node.tools)
+              ? node.tools
+              : [];
+          return runtimeTools.map((tool: unknown) => String(tool));
+        }),
+      ),
+    );
+    const planFlowNodeIds = Array.isArray(req.body?.planFlowNodeIds)
+      ? req.body.planFlowNodeIds.map((nodeId: unknown) => String(nodeId))
+      : [];
 
     console.log('[DEBUG-TRACE] POST /run received deck:', deckId);
     console.log('[DEBUG-TRACE] user input:', req.body?.input);
@@ -196,6 +213,29 @@ router.post('/:projectId/decks/:deckId/run', async (req, res) => {
       res.flushHeaders?.();
     }
 
+    void recordThinkGraphRunEvent({
+      projectId: req.params.projectId,
+      deckId,
+      eventType: 'run_requested',
+      deckTitle: String(deck.name || deckId),
+      task: String(req.body?.input || ''),
+      cards: cardTitles,
+      tools: selectedTools,
+      runtimeRoute: 'chat/reactflow -> deck-run route -> deckRuntime -> autogen sidecar -> magentic-one',
+      status: 'running',
+      finalOutput: null,
+      error: null,
+      assumptions: [],
+      nextTask: '',
+      planFlowNodeIds,
+    }).catch((err: any) => {
+      console.error('[THINKGRAPH] run requested event failed', {
+        projectId: req.params.projectId,
+        deckId,
+        error: err?.message || String(err),
+      });
+    });
+
     const run = await executeDeck(deck, templates, {
       input: String(req.body?.input || ''),
       promptTemplates: promptTemplates.length > 0 ? promptTemplates : deck.promptTemplates,
@@ -213,6 +253,41 @@ router.post('/:projectId/decks/:deckId/run', async (req, res) => {
     }) as unknown as DeckRun;
 
     const persistedRun = await saveDeckRun(req.params.projectId, deckId, run);
+
+    // ThinkGraph: record the completed/failed real runtime event.
+    // Failure is logged loudly but never blocks or fakes the run response.
+    {
+      const lastOutputStep = [...(run.steps || [])]
+        .reverse()
+        .find((step) => step.status === 'success' && String(step.output || '').trim());
+      void recordThinkGraphRunEvent({
+        projectId: req.params.projectId,
+        deckId,
+        eventType: run.status === 'success' ? 'run_completed' : 'run_failed',
+        deckTitle: String(deck.name || deckId),
+        task: String(req.body?.input || ''),
+        cards: cardTitles,
+        tools: selectedTools,
+        runtimeRoute: 'chat/reactflow -> deck-run route -> deckRuntime -> autogen sidecar -> magentic-one',
+        status: run.status === 'success' ? 'success' : run.status === 'skipped' ? 'skipped' : 'error',
+        finalOutput: String(lastOutputStep?.output || ''),
+        error: run.mission?.errorReason || run.error || null,
+        assumptions: [],
+        nextTask: '',
+        planFlowNodeIds,
+      }).then(
+        (written) => {
+          console.log('[THINKGRAPH] run recorded', { projectId: req.params.projectId, deckId, id: written.id });
+        },
+        (err: any) => {
+          console.error('[THINKGRAPH] run record failed', {
+            projectId: req.params.projectId,
+            deckId,
+            error: err?.message || String(err),
+          });
+        },
+      );
+    }
     const missionStatus =
       (run.mission?.missionStatus ||
         (missionSpec?.runState as MissionRunStatus | undefined) ||
@@ -246,6 +321,30 @@ router.post('/:projectId/decks/:deckId/run', async (req, res) => {
     return res.json(payload);
   } catch (err: any) {
     const status = err?.message === 'project_not_found' ? 404 : 500;
+    void recordThinkGraphRunEvent({
+      projectId: req.params.projectId,
+      deckId,
+      eventType: 'run_failed',
+      deckTitle: deckId,
+      task: String(req.body?.input || ''),
+      cards: [],
+      tools: [],
+      runtimeRoute: 'chat/reactflow -> deck-run route -> deckRuntime -> autogen sidecar -> magentic-one',
+      status: 'error',
+      finalOutput: null,
+      error: err?.message || 'deck_run_failed',
+      assumptions: [],
+      nextTask: '',
+      planFlowNodeIds: Array.isArray(req.body?.planFlowNodeIds)
+        ? req.body.planFlowNodeIds.map((nodeId: unknown) => String(nodeId))
+        : [],
+    }).catch((thinkGraphError: any) => {
+      console.error('[THINKGRAPH] run failed event failed', {
+        projectId: req.params.projectId,
+        deckId,
+        error: thinkGraphError?.message || String(thinkGraphError),
+      });
+    });
     if (useStream) {
       writeStreamChunk(res, {
         kind: 'error',

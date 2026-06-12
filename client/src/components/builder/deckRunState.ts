@@ -460,10 +460,11 @@ function buildStructuredPlanSummary(structuredPlan: Record<string, unknown> | nu
 }
 
 export function resolveDeckRunChatReply(run: DeckRun | null | undefined): string {
+  const finalText = resolveDeckRunFinalText(run);
+  if (finalText) return finalText;
   const structuredPlan = extractStructuredPlanFromRun(run);
   const summary = buildStructuredPlanSummary(structuredPlan);
-  if (summary) return summary;
-  return resolveDeckRunFinalText(run);
+  return summary;
 }
 
 export function buildReloadStateFromDeckRuns(
@@ -510,79 +511,10 @@ export function buildReloadStateFromDeckRuns(
     return entries;
   });
 
-  const latestEvents = Array.isArray(latestRun?.events) ? latestRun.events : [];
-  const latestProgressText =
-    [...latestEvents]
-      .reverse()
-      .map((event) => cleanOptionalText(event.progressText) || cleanOptionalText(event.text))
-      .find(Boolean) || "";
-  const latestAssignmentText =
-    [...latestEvents]
-      .reverse()
-      .filter((event) => event.kind === "magentic_assignment")
-      .map((event) => cleanOptionalText(event.text))
-      .find(Boolean) || "";
-  const latestResultSummary =
-    [...(latestRun?.steps || [])]
-      .reverse()
-      .map((step) => cleanOptionalText(step.outputSummary) || cleanOptionalText(step.output))
-      .find(Boolean) || "";
-  const structuredPlan = extractStructuredPlanFromRun(latestRun);
-
-  const plan = structuredPlan
-    ? (Array.isArray((structuredPlan as { steps?: unknown }).steps)
-        ? ((structuredPlan as { steps?: Array<Record<string, unknown>> }).steps || [])
-        : []
-      ).map((step, index) => ({
-        id: safeText(step.id).trim() || `plan_step_${index}`,
-        text: safeText(step.title).trim() || `Step ${index + 1}`,
-        status:
-          safeText(step.status).trim().toLowerCase() === "done"
-            ? ("done" as const)
-            : safeText(step.status).trim().toLowerCase() === "approved"
-              ? ("approved" as const)
-              : ("draft" as const),
-      }))
-    : (latestRun?.steps || [])
-        .map((step, index) => {
-          const summary = cleanOptionalText(step.outputSummary) || cleanOptionalText(step.error);
-          const text = summary ? `${step.title}: ${summary}` : step.title;
-          return text
-            ? {
-                id: cleanOptionalText(step.id) || `${latestRun?.id || "run"}:step_${index}`,
-                text,
-                status: step.status === "success" || step.status === "skipped" ? "done" : "draft",
-              }
-            : null;
-        })
-        .filter((item): item is PlanItem => Boolean(item));
-
-  const planSource = structuredPlan
-    ? structuredPlan
-    : latestRun
-    ? {
-        goal: cleanOptionalText(latestRun.input) || "",
-        nextMove:
-          latestRun.status === "success"
-            ? ["Waiting for the next user input."]
-            : [cleanOptionalText(latestProgressText || latestRun.error || "")].filter(Boolean),
-        whatMattersNow: [cleanOptionalText(latestAssignmentText || latestProgressText || "")].filter(Boolean),
-        whatChanged: [cleanOptionalText(latestResultSummary || "")].filter(Boolean),
-        sources: [] as string[],
-        anchor: [
-          cleanOptionalText(latestRun.input) ? `Goal: ${String(latestRun.input).trim()}` : "",
-          latestProgressText ? `Progress: ${latestProgressText}` : "",
-          latestResultSummary ? `Result: ${latestResultSummary}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      }
-    : [...EMPTY_PROJECT_STATE.plan];
-
   return {
     messages,
-    planSource,
-    plan,
+    planSource: [...EMPTY_PROJECT_STATE.plan],
+    plan: [...EMPTY_PROJECT_STATE.plan],
     links: [...EMPTY_PROJECT_STATE.links],
   };
 }

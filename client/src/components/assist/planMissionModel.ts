@@ -8,9 +8,20 @@ import type {
 import { GRAPH_THEME } from '../graph/graphVisualTokens';
 
 export type PlanMissionNodeKind =
+  | 'PlanRoute'
+  | 'Spec'
   | 'Goal'
   | 'Step'
   | 'Task'
+  | 'Decision'
+  | 'Assumption'
+  | 'MissionSpecDraft'
+  | 'MagenticOnePlan'
+  | 'RuntimeRun'
+  | 'Proof'
+  | 'SkillReference'
+  | 'CodeEvidenceReference'
+  | 'ThinkGraphEvent'
   | 'Research'
   | 'Synthesize'
   | 'Approval'
@@ -51,6 +62,10 @@ export type PlanMissionNodeData = {
   approvalRequired?: boolean;
   resultSummary?: string;
   blocker?: string;
+  source?: string;
+  sourcePath?: string;
+  provenance?: string;
+  links?: string[];
   editable?: boolean;
 };
 

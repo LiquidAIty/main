@@ -1,5 +1,8 @@
 # Code-Based Memory Skill Spec
 
+> Transition policy: this is a legacy/source document, not the default planning memory or active
+> job contract. `PLAN.md`, `AGENTS.md`, and the current CoderPacket/spec-as-prompt are authoritative.
+
 ## Purpose
 
 Define the reusable Code-Based Memory skill used by LiquidAIty agents to navigate code

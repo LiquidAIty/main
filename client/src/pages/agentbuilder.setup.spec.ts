@@ -822,7 +822,7 @@ describe('agentbuilder authoring flow', () => {
     ]);
   });
 
-  it('hydrates reload-time chat and plan continuity from saved deck runs', () => {
+  it('hydrates reload-time chat without turning ordinary run history into a plan', () => {
     const latestRun: DeckRun = {
       id: 'deck_run_latest',
       deckId: 'deck_builder',
@@ -877,19 +877,8 @@ describe('agentbuilder authoring flow', () => {
       { role: 'user', text: 'Map the next move' },
       { role: 'assistant', text: 'Here is the next move.' },
     ]);
-    expect(continuity.planSource).toEqual(
-      expect.objectContaining({
-        goal: 'Map the next move',
-        nextMove: ['Waiting for the next user input.'],
-        whatMattersNow: ['Magentic-One assigned work to Main Chat.'],
-      }),
-    );
-    expect(continuity.plan).toEqual([
-      expect.objectContaining({
-        text: 'Magentic-One: Here is the next move.',
-        status: 'done',
-      }),
-    ]);
+    expect(continuity.planSource).toEqual([]);
+    expect(continuity.plan).toEqual([]);
     expect(continuity.links).toEqual([]);
   });
 

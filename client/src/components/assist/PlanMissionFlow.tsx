@@ -28,7 +28,6 @@ import {
   graphControlButtonStyle,
   graphControlStackStyle,
 } from '../graph/graphVisualTokens';
-import { GRAPH_TEXT, GRAPH_WORKSPACE } from '../graph/graphWorkspaceContract';
 import TurboFlowEdge from '../builder/edges/TurboFlowEdge';
 import {
   buildPlanMissionGraph,
@@ -64,9 +63,32 @@ type PlanMissionFlowProps = {
   onFocusChange?: (focus: PlanMissionFocus) => void;
 };
 
-const PLAN_BASELINE_MIN_LOAD_ZOOM = GRAPH_WORKSPACE.landingBaselineMinZoom;
-const PLAN_BASELINE_MAX_LOAD_ZOOM = GRAPH_WORKSPACE.landingBaselineMaxZoom;
-const PLAN_LAYOUT_STORAGE_PREFIX = 'liquidaity:plan-layout:v1';
+function toPlanMissionFocus(node: PlanMissionFlowNode): Exclude<PlanMissionFocus, null> {
+  const nodeData = (node.data || {}) as PlanMissionNodeData;
+  return {
+    nodeId: node.id,
+    nodeLabel: String(nodeData.label || node.id),
+    nodeKind: String(nodeData.kind || 'Task'),
+    nodeData: {
+      ...nodeData,
+      label: String(nodeData.label || node.id),
+      kind: String(nodeData.kind || 'Task') as PlanMissionNodeData['kind'],
+      status: String(nodeData.status || 'proposed') as PlanMissionNodeData['status'],
+      description: String(nodeData.description || ''),
+      relatedFiles: Array.isArray(nodeData.relatedFiles)
+        ? nodeData.relatedFiles.map((entry) => String(entry || ''))
+        : [],
+      relatedObjects: Array.isArray(nodeData.relatedObjects)
+        ? nodeData.relatedObjects.map((entry) => String(entry || ''))
+        : [],
+      links: Array.isArray(nodeData.links)
+        ? nodeData.links.map((entry) => String(entry || ''))
+        : [],
+    },
+  };
+}
+
+const PLAN_LAYOUT_STORAGE_PREFIX = 'liquidaity:plan-layout:v2';
 
 type PlanLayoutViewport = { x: number; y: number; zoom: number };
 
@@ -217,7 +239,22 @@ function MissionNode({ data, selected }: NodeProps<any>) {
   const status = String(nodeData?.status || 'proposed');
   const shellActive = Boolean(selected || status.toLowerCase() === 'running');
   const title = String(nodeData?.label || '').trim() || 'Plan Node';
-  const subtext = String(nodeData?.kind || '').trim() || 'Task';
+  const kind = String(nodeData?.kind || '').trim() || 'Task';
+  const source = String(nodeData?.source || 'unknown').trim();
+  const badge =
+    kind === 'PlanRoute'
+      ? 'PLAN'
+      : kind === 'MagenticOnePlan'
+        ? 'PLAN PROPOSAL'
+        : kind === 'RuntimeRun'
+          ? 'RUN'
+          : kind === 'ThinkGraphEvent'
+            ? 'THINK'
+            : kind === 'SkillReference'
+              ? 'SKILL'
+              : kind === 'CodeEvidenceReference'
+                ? 'CODE'
+                : kind.toUpperCase();
   return (
     <>
       <Handle
@@ -244,19 +281,39 @@ function MissionNode({ data, selected }: NodeProps<any>) {
             : 'inset 0 1px 0 rgba(255,255,255,0.03)',
           padding: '8px 9px',
           background: GRAPH_THEME.card.glassBackground,
-          width: 160,
-          minHeight: 106,
+          width: 260,
+          minHeight: 142,
         }}
       >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span
+            style={{
+              padding: '3px 7px',
+              borderRadius: 999,
+              border: `1px solid ${GRAPH_THEME.accent.primaryBorder}`,
+              background: GRAPH_THEME.accent.primarySoft,
+              color: GRAPH_THEME.surface.text,
+              fontSize: 10,
+              fontWeight: 800,
+              letterSpacing: '0.06em',
+            }}
+          >
+            {badge}
+          </span>
+          <span style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 10.5 }}>
+            {status}
+          </span>
+        </div>
         <div
           style={{
-            fontSize: GRAPH_TEXT.titlePx,
+            fontSize: 15,
             fontWeight: 700,
-            lineHeight: 1.18,
+            lineHeight: 1.28,
             letterSpacing: '-0.01em',
             color: GRAPH_THEME.surface.text,
             position: 'relative',
             zIndex: 1,
+            overflowWrap: 'break-word',
           }}
         >
           {title}
@@ -264,20 +321,15 @@ function MissionNode({ data, selected }: NodeProps<any>) {
         <div
           style={{
             color: 'rgba(167, 176, 186, 0.84)',
-            fontSize: GRAPH_TEXT.bodyPx,
+            fontSize: 11.5,
             lineHeight: 1.3,
-            maxWidth: 132,
             whiteSpace: 'normal',
-            overflowWrap: 'anywhere',
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
+            overflowWrap: 'break-word',
             position: 'relative',
             zIndex: 1,
           }}
         >
-          {subtext}
+          Source: {source}
         </div>
       </div>
       <Handle
@@ -520,8 +572,8 @@ function resolveNodeStyle(node: PlanMissionFlowNode) {
     color: GRAPH_THEME.drawer.inputText,
     fontSize: 12.5,
     lineHeight: 1.35,
-    width: 160,
-    minHeight: 106,
+    width: 260,
+    minHeight: 142,
     padding: 0,
     boxShadow: 'none',
     backdropFilter: 'none',
@@ -632,6 +684,14 @@ export default function PlanMissionFlow({
   const [edges, setEdges] = useEdgesState<Edge<PlanMissionFlowEdgeData>>(
     missionGraph.edges,
   );
+  const selectedMissionNode = useMemo(
+    () =>
+      nodes.find(
+        (node) => Boolean(node.selected) && !isPlanSurfaceNode(node) && node.id !== WALL_ORCH_ID,
+      ) || null,
+    [WALL_ORCH_ID, nodes],
+  );
+  const selectedMissionData = selectedMissionNode?.data as PlanMissionNodeData | undefined;
   const initialFitKey = useMemo(
     () =>
       `${missionGraph.nodes.map((node) => node.id).join('|')}::${missionGraph.edges
@@ -772,9 +832,9 @@ export default function PlanMissionFlow({
       reactFlowInstance.fitView({
         nodes: graphNodes,
         duration: 0,
-        padding: compact ? 0.2 : 0.22,
-        minZoom: PLAN_BASELINE_MIN_LOAD_ZOOM,
-        maxZoom: PLAN_BASELINE_MAX_LOAD_ZOOM,
+        padding: compact ? 0.14 : 0.12,
+        minZoom: compact ? 0.62 : 0.6,
+        maxZoom: compact ? 0.78 : 0.84,
       });
     };
     const frame = window.requestAnimationFrame(() => {
@@ -821,6 +881,34 @@ export default function PlanMissionFlow({
     persistPlanLayout(planLayoutStorageKey, {
       ...persisted,
       viewport: reactFlowInstance.getViewport(),
+    });
+  };
+
+  const resetPlanView = () => {
+    if (!reactFlowInstance) return;
+    const positions = new Map(
+      combinedSeededNodes.map((node) => [node.id, node.position] as const),
+    );
+    setNodes((current) =>
+      current.map((node) => ({
+        ...node,
+        position: positions.get(node.id) || node.position,
+      })),
+    );
+    if (planLayoutStorageKey && typeof window !== 'undefined') {
+      window.localStorage.removeItem(planLayoutStorageKey);
+    }
+    window.requestAnimationFrame(() => {
+      const graphNodes = reactFlowInstance
+        .getNodes()
+        .filter((node) => node.id !== WALL_ORCH_ID);
+      reactFlowInstance.fitView({
+        nodes: graphNodes,
+        duration: GRAPH_THEME.nav.fitDurationMs,
+        padding: 0.12,
+        minZoom: compact ? 0.62 : 0.6,
+        maxZoom: compact ? 0.78 : 0.84,
+      });
     });
   };
 
@@ -897,71 +985,27 @@ export default function PlanMissionFlow({
         return next;
       });
     }
-    setNodes((current) => {
-      const next = applyNodeChanges(changes, current) as typeof current;
-      if (!onFocusChange) return next;
-      const selectedChange = [...changes]
-        .reverse()
-        .find(
-          (change): change is NodeChange & { id: string; selected: boolean } =>
-            change.type === 'select' &&
-            'id' in change &&
-            typeof change.id === 'string' &&
-            Boolean((change as { selected?: boolean }).selected),
-        );
-      if (!selectedChange) {
-        const hasSelectionMutation = changes.some(
-          (change) => change.type === 'select',
-        );
-        if (hasSelectionMutation) onFocusChange(null);
-        return next;
-      }
-      const selectedNode = next.find((node) => node.id === selectedChange.id);
-      if (!selectedNode) {
-        onFocusChange(null);
-        return next;
-      }
-      if (isPlanSurfaceNode(selectedNode)) {
-        onFocusChange(null);
-        return next;
-      }
-      const nodeData = (selectedNode.data || {}) as PlanMissionNodeData;
-      onFocusChange({
-        nodeId: selectedNode.id,
-        nodeLabel: String(nodeData.label || selectedNode.id),
-        nodeKind: String(nodeData.kind || 'Task'),
-        nodeData: {
-          label: String(nodeData.label || selectedNode.id),
-          kind: String(nodeData.kind || 'Task') as PlanMissionNodeData['kind'],
-          status: String(
-            nodeData.status || 'proposed',
-          ) as PlanMissionNodeData['status'],
-          description: String(nodeData.description || ''),
-          updateKey: String(nodeData.updateKey || ''),
-          outputKey: String(nodeData.outputKey || ''),
-          assignedAgentId: String(nodeData.assignedAgentId || ''),
-          skillId: String(nodeData.skillId || ''),
-          toolIds: Array.isArray(nodeData.toolIds)
-            ? nodeData.toolIds.map((entry) => String(entry || ''))
-            : [],
-          starterPrompt: String(nodeData.starterPrompt || ''),
-          expectedOutput: String(nodeData.expectedOutput || ''),
-          relatedFiles: Array.isArray(nodeData.relatedFiles)
-            ? nodeData.relatedFiles.map((entry) => String(entry || ''))
-            : [],
-          relatedObjects: Array.isArray(nodeData.relatedObjects)
-            ? nodeData.relatedObjects.map((entry) => String(entry || ''))
-            : [],
-          relatedSurface: String(nodeData.relatedSurface || ''),
-          validationCommand: String(nodeData.validationCommand || ''),
-          approvalRequired: Boolean(nodeData.approvalRequired),
-          resultSummary: String(nodeData.resultSummary || ''),
-          blocker: String(nodeData.blocker || ''),
-          editable: Boolean(nodeData.editable ?? true),
-        },
-      });
-      return next;
-    });
+    setNodes((current) => applyNodeChanges(changes, current) as typeof current);
+    if (!onFocusChange) return;
+    const selectedChange = [...changes]
+      .reverse()
+      .find(
+        (change): change is NodeChange & { id: string; selected: boolean } =>
+          change.type === 'select' &&
+          'id' in change &&
+          typeof change.id === 'string' &&
+          Boolean((change as { selected?: boolean }).selected),
+      );
+    if (!selectedChange) {
+      if (changes.some((change) => change.type === 'select')) onFocusChange(null);
+      return;
+    }
+    const selectedNode = nodes.find((node) => node.id === selectedChange.id);
+    onFocusChange(
+      selectedNode && !isPlanSurfaceNode(selectedNode)
+        ? toPlanMissionFocus(selectedNode as PlanMissionFlowNode)
+        : null,
+    );
   };
 
   const onEdgesChange = (changes: EdgeChange[]) => {
@@ -1186,7 +1230,7 @@ export default function PlanMissionFlow({
       data-has-focus={selectedNodeId ? 'true' : 'false'}
       data-drawer-linked={drawerLinked ? 'true' : 'false'}
       style={{
-        height: fullHeight ? '100%' : compact ? 240 : 420,
+        height: fullHeight ? '100%' : compact ? 600 : 680,
         minHeight: fullHeight ? 300 : undefined,
         width: '100%',
         borderRadius: 0,
@@ -1250,7 +1294,99 @@ export default function PlanMissionFlow({
         .plan-flow .react-flow__attribution {
           display: none;
         }
+        .plan-flow .react-flow__node-mission {
+          cursor: pointer;
+        }
       `}</style>
+      <div
+        style={{
+          position: 'absolute',
+          top: 14,
+          left: 16,
+          zIndex: 18,
+          display: 'flex',
+          gap: 6,
+          flexWrap: 'wrap',
+          maxWidth: 'calc(100% - 340px)',
+          pointerEvents: 'none',
+        }}
+      >
+        {['PLAN Route', 'SPEC Durable work', 'TASK Ledger item', 'RUN / PROOF Runtime evidence', 'THINK Memory event'].map(
+          (label) => (
+            <span
+              key={label}
+              style={{
+                padding: '5px 8px',
+                borderRadius: 999,
+                border: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`,
+                background: 'rgba(11,14,18,0.88)',
+                color: GRAPH_THEME.surface.mutedText,
+                fontSize: 10.5,
+                fontWeight: 600,
+              }}
+            >
+              {label}
+            </span>
+          ),
+        )}
+      </div>
+      {selectedMissionNode && selectedMissionData ? (
+        <aside
+          aria-label="Selected PlanFlow node details"
+          data-testid="planflow-node-details"
+          style={{
+            position: 'absolute',
+            top: 14,
+            right: 14,
+            zIndex: 22,
+            width: 300,
+            maxHeight: 'calc(100% - 28px)',
+            overflow: 'auto',
+            padding: 14,
+            borderRadius: 12,
+            border: `1px solid ${GRAPH_THEME.accent.primaryBorder}`,
+            background: 'rgba(11,14,18,0.96)',
+            color: GRAPH_THEME.surface.text,
+            boxShadow: '0 18px 44px rgba(0,0,0,0.34)',
+          }}
+        >
+          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.08em', color: GRAPH_THEME.accent.primary }}>
+            {String(selectedMissionData.kind || 'Task').toUpperCase()}
+          </div>
+          <div style={{ marginTop: 5, fontSize: 15, fontWeight: 750, lineHeight: 1.3 }}>
+            {selectedMissionData.label}
+          </div>
+          <div style={{ marginTop: 12, display: 'grid', gap: 8, fontSize: 11.5 }}>
+            {[
+              ['Status', selectedMissionData.status],
+              ['Source', selectedMissionData.source],
+              ['Source path', selectedMissionData.sourcePath],
+              ['Provenance', selectedMissionData.provenance],
+            ].map(([label, value]) =>
+              value ? (
+                <div key={label}>
+                  <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 10 }}>{label}</div>
+                  <div style={{ marginTop: 2, overflowWrap: 'anywhere' }}>{String(value)}</div>
+                </div>
+              ) : null,
+            )}
+            {selectedMissionData.description ? (
+              <div>
+                <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 10 }}>Summary</div>
+                <div style={{ marginTop: 2, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                  {selectedMissionData.description}
+                </div>
+              </div>
+            ) : null}
+            <div>
+              <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 10 }}>Linked nodes</div>
+              <div style={{ marginTop: 2, overflowWrap: 'anywhere' }}>
+                {(selectedMissionData.links || selectedMissionData.relatedObjects || []).join(', ') || 'None'}
+              </div>
+            </div>
+          </div>
+        </aside>
+      ) : null}
       {drawerLinked ? (
         <div
           aria-hidden
@@ -1393,15 +1529,9 @@ export default function PlanMissionFlow({
         </button>
         <button
           type="button"
-          aria-label="Fit view"
-          onClick={() =>
-            reactFlowInstance?.fitView({
-              duration: GRAPH_THEME.nav.fitDurationMs,
-              padding: compact ? 0.2 : 0.22,
-              minZoom: GRAPH_THEME.nav.minZoom,
-              maxZoom: GRAPH_THEME.nav.fitMaxZoom,
-            })
-          }
+          aria-label="Reset and fit PlanFlow view"
+          title="Reset node layout and fit view"
+          onClick={resetPlanView}
           style={graphControlButtonStyle()}
         >
           <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
@@ -1436,43 +1566,7 @@ export default function PlanMissionFlow({
             return;
           }
           if (!onFocusChange) return;
-          const nodeData = (node.data || {}) as PlanMissionNodeData;
-          onFocusChange({
-            nodeId: node.id,
-            nodeLabel: String(nodeData.label || node.id),
-            nodeKind: String(nodeData.kind || 'Task'),
-            nodeData: {
-              label: String(nodeData.label || node.id),
-              kind: String(
-                nodeData.kind || 'Task',
-              ) as PlanMissionNodeData['kind'],
-              status: String(
-                nodeData.status || 'proposed',
-              ) as PlanMissionNodeData['status'],
-              description: String(nodeData.description || ''),
-              updateKey: String(nodeData.updateKey || ''),
-              outputKey: String(nodeData.outputKey || ''),
-              assignedAgentId: String(nodeData.assignedAgentId || ''),
-              skillId: String(nodeData.skillId || ''),
-              toolIds: Array.isArray(nodeData.toolIds)
-                ? nodeData.toolIds.map((entry) => String(entry || ''))
-                : [],
-              starterPrompt: String(nodeData.starterPrompt || ''),
-              expectedOutput: String(nodeData.expectedOutput || ''),
-              relatedFiles: Array.isArray(nodeData.relatedFiles)
-                ? nodeData.relatedFiles.map((entry) => String(entry || ''))
-                : [],
-              relatedObjects: Array.isArray(nodeData.relatedObjects)
-                ? nodeData.relatedObjects.map((entry) => String(entry || ''))
-                : [],
-              relatedSurface: String(nodeData.relatedSurface || ''),
-              validationCommand: String(nodeData.validationCommand || ''),
-              approvalRequired: Boolean(nodeData.approvalRequired),
-              resultSummary: String(nodeData.resultSummary || ''),
-              blocker: String(nodeData.blocker || ''),
-              editable: Boolean(nodeData.editable ?? true),
-            },
-          });
+          onFocusChange(toPlanMissionFocus(node as PlanMissionFlowNode));
         }}
         onPaneClick={() => {
           if (!onFocusChange) return;
@@ -1482,7 +1576,7 @@ export default function PlanMissionFlow({
         defaultViewport={{
           x: compact ? 56 : 72,
           y: compact ? 86 : 96,
-          zoom: compact ? 0.7 : 0.76,
+          zoom: compact ? 0.62 : 0.72,
         }}
         minZoom={GRAPH_THEME.nav.minZoom}
         maxZoom={GRAPH_THEME.nav.maxZoom}

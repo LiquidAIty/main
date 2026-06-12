@@ -18,7 +18,6 @@ import { useDashboardStore as useUaDashboardStore } from '../components/agents/u
 import { loadUaKnowledgeGraph } from '../components/agents/ua/real-dashboard/graphLoader';
 import type { UaWorkbenchContext } from '../components/agents/ua/UaAgentPanelHost';
 import BuilderDrawer from '../components/builder/BuilderDrawer';
-import PlanMissionFlow from '../components/assist/PlanMissionFlow';
 import WorldSignalSurface from '../components/worldsignal/WorldSignalSurface';
 import DataFormulatorSurface, {
   type DataFormulatorModelConfig,
@@ -31,11 +30,6 @@ import AgentBuilderShell from '../features/agentbuilder/core/AgentBuilderShell';
 import AgentBuilderSplitter from '../features/agentbuilder/core/AgentBuilderSplitter';
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
-import {
-  chatPlanDraftResultToPlanDraft,
-  planDraftToPlanMissionGraph,
-  planDraftToStructuredAssistPlanSurface,
-} from '../features/agentbuilder/plan/planDraftMapping';
 import useAgentBuilderAutosave from '../features/agentbuilder/state/useAgentBuilderAutosave';
 import useAgentBuilderDeck from '../features/agentbuilder/state/useAgentBuilderDeck';
 import useAgentBuilderDeckLoad from '../features/agentbuilder/state/useAgentBuilderDeckLoad';
@@ -47,13 +41,12 @@ import type {
   PlanMissionNodeData,
   PlanMissionNodeOverrideMap,
 } from '../components/assist/planMissionModel';
-import { buildPlanMissionGraph } from '../components/assist/planMissionModel';
 import {
-  buildStructuredAssistPlanSurface,
   type LinkRef,
-  normalizeAnchorSurface,
   type PlanItem,
+  type StructuredAssistPlanSurface,
 } from '../components/builder/assistPlanSurface';
+import { buildPlanFlowMissionGraph } from '../features/agentbuilder/plan/planFlowProjection';
 import { buildExecutionPlan } from '../components/builder/deckExecution';
 import DeckExecutionPathSummary from '../components/builder/DeckExecutionPathSummary';
 import {
@@ -124,8 +117,7 @@ import type {
   MissionRun,
   MissionSpec,
   OpenMissionMessage,
-  PlanDraftStatus,
-  ChatPlanDraftResult,
+  PlanFlowProjection,
   WorkspaceHarnessOperation,
   WorkspaceHarnessPermission,
   WorkspaceHarnessRequest,
@@ -177,6 +169,9 @@ const KnowledgeEvidencePanel = lazy(
 );
 const KnowledgeGraphFramework = lazy(
   () => import('../components/knowledge/KnowledgeGraphFramework'),
+);
+const PlanMissionFlow = lazy(
+  () => import('../components/assist/PlanMissionFlow'),
 );
 const EnergyFacadeSurface = lazy(
   () => import('../components/energy/EnergyFacadeSurface'),
@@ -1968,6 +1963,23 @@ const EMPTY_PROJECT_STATE = {
   plan: [] as PlanItem[],
   links: [] as LinkRef[],
 };
+const EMPTY_PLANFLOW_STRUCTURED_PLAN: StructuredAssistPlanSurface = {
+  planMode: 'draft',
+  goal: '',
+  steps: [],
+  whatMattersNow: [],
+  nextMove: [],
+  assumptions: [],
+  research: [],
+  openQuestions: [],
+  humanTasks: [],
+  agentTasks: [],
+  pathOptions: [],
+  explicitPlanText: '',
+  hasExplicitPlanDocument: false,
+  whatChanged: [],
+  sources: [],
+};
 
 const KG_CACHE_PREFIX = 'agentbuilder:kg-cache:v1';
 const KG_CACHE_TTL_MS = 60_000;
@@ -2130,7 +2142,7 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'route downstream agents/workflows when useful',
         'explain current state and next step',
         'preserve human-in-loop control',
-        'use Plan Agent / PlanCanvas / PlanFlow to expose plan/reveal/approval/result state',
+        'use Plan Agent for real runtime proposals; PlanFlow projects authoritative sources and provenance-backed proposals',
       ].join('\n'),
       constraints: [
         'Do not dump raw JSON in normal chat unless in debug mode.',
@@ -2151,7 +2163,7 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         '5. If ThinkGraph is sparse, ask the user to clarify.',
         '6. If ThinkGraph is rich enough, offer Plan Research.',
         '7. If user asks to Plan Research, route to Plan Agent.',
-        '8. Plan Agent creates a research plan in PlanFlow/PlanCanvas.',
+        '8. A real Plan Agent proposal may join PlanFlow only with runtime provenance.',
         '9. Wait for human approval.',
         '10. Only after approval may Research Agent run.',
         '11. Only after source-backed evidence exists may KnowGraph Agent write evidence/gaps.',
@@ -2276,7 +2288,7 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Return evidence objects with source, snippet, claim, date if available, provenance.',
       ].join('\n'),
       memoryPolicy: [
-        'Use researchable questions and evidence targets from PlanFlow/ThinkGraph.',
+        'Use researchable questions and evidence targets from provenance-backed PlanFlow nodes and real ThinkGraph events.',
         'Active Skills: search_confirming_evidence, search_disconfirming_evidence, extract_source_claims, preserve_provenance, avoid_unsourced_claims',
       ].join('\n'),
     }),
@@ -2366,7 +2378,7 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       goal: [
         'Read ThinkGraph readiness.',
-        'Expose ThinkGraph Reveal in PlanCanvas/PlanFlow.',
+        'Expose real ThinkGraph events beside provenance-backed PlanFlow nodes.',
         'Expose graph richness / missing pieces when idea is not ready.',
         'Offer Plan Research when ThinkGraph is ready.',
         'Create research plan after user asks to plan research.',
@@ -2383,7 +2395,7 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       memoryPolicy: [
         'Keep planning visible and user-approved before graph changes are applied.',
-        'Active Skills: expose_thinkgraph_reveal, create_planflow, request_approval, show_missing_slots, show_subjective_vs_objective',
+        'Active Skills: expose_thinkgraph_events, project_planflow_sources, request_approval, show_missing_slots, show_subjective_vs_objective',
       ].join('\n'),
     }),
   },
@@ -4613,73 +4625,6 @@ function buildGraphVizForNVL(graph: { nodes: KNode[]; edges: KEdge[] }) {
   return { entities, relationships };
 }
 
-function buildThinkGraphSeedFromPlanMissionGraph(
-  missionGraph: ReturnType<typeof buildPlanMissionGraph>,
-): { nodes: KNode[]; edges: KEdge[] } {
-  const resolveThinkNodeType = (kindRaw: string): 'entity' | 'concept' | 'goal' | 'hypothesis' => {
-    const kind = safeText(kindRaw).trim().toLowerCase();
-    if (kind === 'goal' || kind === 'output') return 'goal';
-    if (kind === 'approval' || kind === 'note') return 'hypothesis';
-    if (kind === 'research' || kind === 'synthesize') return 'concept';
-    return 'entity';
-  };
-  const nodes: KNode[] = missionGraph.nodes.map((node, index) => {
-    const nodeData = safeRecord(node.data);
-    const status = safeText(nodeData.status || 'seeded').trim().toLowerCase();
-    const statusConfidence =
-      status === 'done' || status === 'complete'
-        ? 0.94
-        : status === 'running'
-          ? 0.82
-          : status === 'approved'
-            ? 0.78
-          : status === 'ready'
-            ? 0.74
-            : status === 'proposed'
-              ? 0.7
-            : status === 'awaiting_review'
-              ? 0.68
-              : status === 'blocked'
-                ? 0.55
-              : 0.62;
-    return {
-      id: `plan:${safeText(node.id)}`,
-      rawId: safeText(node.id),
-      graphSource: 'think',
-      scope: 'project',
-      label: safeText(nodeData.label || node.id),
-      type: resolveThinkNodeType(safeText(nodeData.kind || 'task')),
-      confidence: statusConfidence,
-      createdAtMs: Date.now() - Math.max(0, (missionGraph.nodes.length - index) * 1_000),
-    };
-  });
-
-  const edges: KEdge[] = missionGraph.edges.map((edge) => {
-    const edgeData = safeRecord(edge.data);
-    const motion = safeText(edgeData.motion || 'idle').trim().toLowerCase();
-    const edgeConfidence =
-      motion === 'running' ? 0.9 : motion === 'active' ? 0.78 : 0.62;
-    const source = `plan:${safeText(edge.source)}`;
-    const target = `plan:${safeText(edge.target)}`;
-    const type = motion === 'running' ? 'supports' : 'depends_on';
-    return {
-      id: `plan:${safeText(edge.id)}`,
-      rawId: safeText(edge.id),
-      graphSource: 'think',
-      scope: 'project',
-      a: source,
-      b: target,
-      source,
-      target,
-      type,
-      confidence: edgeConfidence,
-      weight: edgeConfidence,
-    };
-  });
-
-  return { nodes, edges };
-}
-
 /** Mean synodic month in days (NASA/USNO convention). */
 const SYNODIC_MONTH_DAYS = 29.530588861;
 /** Reference Julian Date of a known new moon (2000-01-06 18:14 UTC ≈ JD 2451550.09765). */
@@ -4893,17 +4838,6 @@ export default function AgentBuilder(): React.ReactElement {
     setLatestMissionRun,
     openMissionMessage,
     setOpenMissionMessage,
-    draftMissionSpec,
-    setDraftMissionSpec,
-    currentPlanDraft,
-    setCurrentPlanDraft,
-    planDraftStatus,
-    setPlanDraftStatus,
-    latestPlanDraftResult,
-    setLatestPlanDraftResult,
-    draftMissionSpecRef,
-    currentPlanDraftRef,
-    planDraftRequestSeqRef,
     deckRevision,
     setDeckRevision,
     latestDeckRun,
@@ -5093,6 +5027,56 @@ export default function AgentBuilder(): React.ReactElement {
     () => loadProjectState(activeProject).links,
   );
   const [stateLoaded, setStateLoaded] = useState(false);
+  const [planFlowProjection, setPlanFlowProjection] =
+    useState<PlanFlowProjection | null>(null);
+  const [planFlowLoadStatus, setPlanFlowLoadStatus] = useState<
+    'idle' | 'loading' | 'ready' | 'error'
+  >('idle');
+  const [planFlowLoadMessage, setPlanFlowLoadMessage] = useState('');
+  const planFlowMissionGraph = useMemo(
+    () => buildPlanFlowMissionGraph(planFlowProjection, latestDeckRun),
+    [latestDeckRun, planFlowProjection],
+  );
+  useEffect(() => {
+    const projectId = activeProject;
+    if (!projectId) {
+      setPlanFlowProjection(null);
+      setPlanFlowLoadStatus('idle');
+      setPlanFlowLoadMessage('');
+      return;
+    }
+    const controller = new AbortController();
+    setPlanFlowLoadStatus('loading');
+    setPlanFlowLoadMessage('Loading authoritative PLAN.md and specs...');
+    void fetch(`${PROJECTS_API}/${projectId}/kg/planflow/projection`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const data = await safeJson(response);
+        if (!response.ok || !data?.ok || !data?.projection) {
+          throw new Error(safeText(data?.error || 'planflow_projection_failed'));
+        }
+        if (controller.signal.aborted) return;
+        const projection = data.projection as PlanFlowProjection;
+        setPlanFlowProjection(projection);
+        setPlanFlowLoadStatus('ready');
+        const warnings = Array.isArray(projection.warnings) ? projection.warnings : [];
+        setPlanFlowLoadMessage(
+          warnings.length > 0
+            ? `PlanFlow loaded with ${warnings.length} warning${warnings.length === 1 ? '' : 's'}.`
+            : 'PlanFlow loaded from PLAN.md and specs.',
+        );
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setPlanFlowProjection(null);
+        setPlanFlowLoadStatus('error');
+        setPlanFlowLoadMessage(
+          `PlanFlow markdown projection unavailable: ${error?.message || String(error)}`,
+        );
+      });
+    return () => controller.abort();
+  }, [activeProject]);
   const lastLargeSurfaceTelemetryRef = useRef<WorkspaceTestingSurface | null>(
     null,
   );
@@ -6044,9 +6028,6 @@ export default function AgentBuilder(): React.ReactElement {
           normalizeRuntimeType(nextConfig.runtime_type) ??
           normalizeRuntimeType(selectedCard.runtimeType) ??
           'assistant_agent';
-        const nextRuntimeOptions = normalizeRuntimeOptions(
-          nextConfig.runtime_options,
-        );
         const nextParentGraphId = cleanOptionalText(nextConfig.parent_graph_id);
         const nextProvider =
           nextConfig.provider === 'openai' ||
@@ -6068,6 +6049,10 @@ export default function AgentBuilder(): React.ReactElement {
               .map((tool) => tool.trim())
               .filter(Boolean)
           : [];
+        const nextRuntimeOptions = normalizeRuntimeOptions({
+          ...(nextConfig.runtime_options || {}),
+          tools: nextTools,
+        });
         const nextKnowledgeSources = Array.isArray(nextConfig.knowledge_sources)
           ? nextConfig.knowledge_sources
               .filter((entry): entry is string => typeof entry === 'string')
@@ -6098,9 +6083,6 @@ export default function AgentBuilder(): React.ReactElement {
             nextMaxTokens !== (selectedTemplate.maxTokens ?? null)
               ? nextMaxTokens
               : undefined,
-          tools: !sameStringArray(nextTools, selectedTemplate.tools)
-            ? nextTools
-            : undefined,
           knowledgeSources: !sameStringArray(
             nextKnowledgeSources,
             selectedTemplate.knowledgeSources,
@@ -6921,34 +6903,10 @@ export default function AgentBuilder(): React.ReactElement {
     };
   }, [applyWorkspaceAction]);
 
-  const assistAnchorSurface = useMemo(
-    () =>
-      normalizeAnchorSurface(planSource, { messages, planItems: plan, links }),
-    [planSource, messages, plan, links],
-  );
-  const structuredAssistPlan = useMemo(
-    () =>
-      buildStructuredAssistPlanSurface(planSource, {
-        planItems: plan,
-        anchorSurface: assistAnchorSurface,
-      }),
-    [planSource, plan, assistAnchorSurface],
-  );
-  const currentPlanDraftKey = useMemo(
-    () =>
-      currentPlanDraft
-        ? `${safeText(currentPlanDraft.missionId)}::${currentPlanDraft.revision}`
-        : 'no_plan_draft',
-    [currentPlanDraft],
-  );
   useEffect(() => {
     setPlanMissionFocus(null);
     setPlanNodeDrafts({});
   }, [activeProject]);
-  useEffect(() => {
-    setPlanMissionFocus(null);
-    setPlanNodeDrafts({});
-  }, [currentPlanDraftKey]);
   // knowledge graph
   const [cypher, setCypher] = useState('');
   const [graphResult, setGraphResult] = useState<any[]>([]);
@@ -8202,119 +8160,11 @@ export default function AgentBuilder(): React.ReactElement {
     deck,
   ]);
 
-  const handleApproveMissionExecution = useCallback(async () => {
-    if (!pendingActivationProposal || !canvasProjectId || deckRunBusy) return;
-    const now = new Date().toISOString();
-    const latestDraft = draftMissionSpecRef.current;
-    const baseMissionSpec: MissionSpec = latestDraft
-      ? {
-          ...latestDraft,
-          runState: 'approved',
-          agentRuns: [...latestDraft.agentRuns],
-        }
-      : {
-          id: `mission_${uid()}`,
-          title: pendingActivationProposal.title,
-          userGoal: pendingActivationProposal.sourceText,
-          target: 'agentbuilder_deck',
-          readContext: [],
-          runState: 'approved',
-          agentRuns: [
-            { id: `run_${uid()}`, agentId: 'research_agent', promptSeed: 'Research and gather evidence.', required: true },
-            { id: `run_${uid()}`, agentId: 'knowgraph_agent', promptSeed: 'Convert evidence into grounded knowledge updates.', required: true },
-            { id: `run_${uid()}`, agentId: 'thinkgraph_agent', promptSeed: 'Summarize outcome as provisional plan memory.', required: false },
-          ],
-        };
-    let missionRun: MissionRun = {
-      id: `mission_run_${uid()}`,
-      missionSpecId: baseMissionSpec.id,
-      status: 'wiring',
-      activeAgentRunId: null,
-      agentRuns: baseMissionSpec.agentRuns.map((run, index) => ({
-        id: run.id || `agent_run_${index + 1}`,
-        agentId: run.agentId,
-        status: 'queued',
-        required: run.required !== false,
-        promptSeed: run.promptSeed,
-      })),
-      results: [],
-      createdAt: now,
-      updatedAt: now,
-    };
-    setLatestMissionRun(missionRun);
-    setDeckRunBusy(true);
-    try {
-      const harnessRequest: WorkspaceHarnessRequest = {
-        provider: 'internal-workspace',
-        operation: 'generate_deck_patch',
-        userGoal: baseMissionSpec.userGoal,
-        activeCanvasId: canvasProjectId,
-        selectedObject: activeWorkspaceObjectContext,
-        missionSpec: baseMissionSpec,
-        missionRun,
-        currentDeckSummary: {
-          id: deck.id,
-          name: deck.name,
-          nodeCount: deck.nodes.length,
-          edgeCount: deck.edges.length,
-        },
-        availableAgents: deck.nodes.map((node) => ({ id: safeText(node.runtimeBinding || node.id), label: node.title })),
-        graphContextRefs: [],
-        priorResults: [],
-        permissions: WORKSPACE_HARNESS_DEFAULT_PERMISSIONS,
-      };
-      const patchResult = await runInternalWorkspaceHarness(harnessRequest, {
-        currentDeck: deck,
-        buildMissionDeckPatch,
-        applyMissionDeckPatch,
-      });
-      if (patchResult.missionDeckPatch) {
-        const applyResult = await runInternalWorkspaceHarness(
-          { ...harnessRequest, operation: 'apply_deck_patch' },
-          {
-            currentDeck: deck,
-            buildMissionDeckPatch,
-            applyMissionDeckPatch,
-          },
-        );
-        const patchToApply = applyResult.missionDeckPatch || patchResult.missionDeckPatch;
-        setDeck((current) => applyMissionDeckPatch(current, patchToApply));
-      }
-      const runResult = await runInternalWorkspaceHarness(
-        { ...harnessRequest, operation: 'run_approved_mission', missionRun },
-        {
-          currentDeck: deck,
-          buildMissionDeckPatch,
-          applyMissionDeckPatch,
-          runApprovedMission: runApprovedMissionSequential,
-        },
-      );
-      if (runResult.missionRunUpdate) {
-        missionRun = { ...missionRun, ...runResult.missionRunUpdate };
-        setLatestMissionRun(missionRun);
-      }
-      if (runResult.openMissionMessage) {
-        setOpenMissionMessage(runResult.openMissionMessage);
-      }
-      setPendingActivationProposal(null);
-    } finally {
-      setDeckRunBusy(false);
-    }
-  }, [
-    activeWorkspaceObjectContext,
-    canvasProjectId,
-    deck,
-    deckRunBusy,
-    pendingActivationProposal,
-    runApprovedMissionSequential,
-    setDeck,
-  ]);
-
-
   const handleSend = (t: string) => {
     const trimmed = t.trim();
     if (!trimmed) return;
     if (sending || deckRunBusy || cardRunBusy || deckLoadBusy) return;
+
     if (!canvasProjectId) {
       setMessages((m) => [
         ...m,
@@ -8354,9 +8204,17 @@ export default function AgentBuilder(): React.ReactElement {
 
     setMessages((m) => [...m, { role: 'user', text: trimmed }]);
 
-    // Instead of faking a plan, directly run the deck with the raw task
+    // PlanFlow is projected from authoritative markdown. The selected deck runs
+    // through the real runtime; a genuine orchestrator proposal may join the
+    // canvas only when it appears in the runtime trace.
     setDeckRunInput(trimmed);
-    setMessages((m) => [...m, { role: 'assistant', text: 'Starting Magentic-One run...' }]);
+    setMessages((m) => [
+      ...m,
+      {
+        role: 'assistant',
+        text: 'PlanFlow remains grounded in PLAN.md/specs. Runtime started.',
+      },
+    ]);
 
     setTimeout(async () => {
       let approvedMissionSpec: any = undefined;
@@ -8416,38 +8274,9 @@ export default function AgentBuilder(): React.ReactElement {
     }, 100);
   };
 
-  const planMissionGraphSeed = useMemo(() => {
-    const baseGraph = currentPlanDraft
-      ? planDraftToPlanMissionGraph(currentPlanDraft)
-      : buildPlanMissionGraph(structuredAssistPlan);
-
-    if (!planNodeDrafts || Object.keys(planNodeDrafts).length === 0) {
-      return baseGraph;
-    }
-
-    return {
-      ...baseGraph,
-      nodes: baseGraph.nodes.map((node) => {
-        const override = planNodeDrafts[node.id];
-        if (!override) return node;
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            ...override,
-          },
-        };
-      }),
-    };
-  }, [currentPlanDraft, planNodeDrafts, structuredAssistPlan]);
-
   const thinkGraphViz = useMemo(() => {
-    const ageGraph = prefixThinkGraphIds(ageRowsToGraph(graphResult));
-    if (ageGraph.nodes.length > 0 || ageGraph.edges.length > 0) {
-      return ageGraph;
-    }
-    return buildThinkGraphSeedFromPlanMissionGraph(planMissionGraphSeed);
-  }, [graphResult, planMissionGraphSeed]);
+    return prefixThinkGraphIds(ageRowsToGraph(graphResult));
+  }, [graphResult]);
 
   const knowGraphViz = useMemo(() => {
     const result = normalizeKnowGraphResponseToGraph(knowGraphData);
@@ -9163,27 +8992,6 @@ export default function AgentBuilder(): React.ReactElement {
   );
 
   const renderPlanSurface = (surfaceRole: 'large' | 'companion' = 'large') => {
-    const planDraftHeadline =
-      planDraftStatus === 'drafting'
-        ? 'Drafting plan...'
-        : planDraftStatus === 'ready' && (draftMissionSpec || currentPlanDraft)
-          ? 'Plan ready'
-        : planDraftStatus === 'ready'
-            ? 'Draft ready'
-            : planDraftStatus === 'needs_user_input'
-              ? 'Needs input'
-              : planDraftStatus === 'failed'
-                ? 'Plan draft unavailable'
-                : null;
-    const planDraftQuestions = Array.isArray(latestPlanDraftResult?.questions)
-      ? latestPlanDraftResult.questions.filter(Boolean)
-      : [];
-    const showPlanDraftCard = Boolean(
-      planDraftHeadline ||
-        draftMissionSpec ||
-        currentPlanDraft ||
-        planDraftQuestions.length > 0,
-    );
     const openMissionRuntimeSummary = summarizePlanRuntimeMessage(
       openMissionMessage?.latestSummary,
       'Runtime issue surfaced during mission execution.',
@@ -9234,95 +9042,52 @@ export default function AgentBuilder(): React.ReactElement {
                 boxShadow: 'none',
               }}
             >
-            {pendingActivationProposal ? (
-              <div
-                style={graphDrawerSectionStyle({
-                  margin: '12px 12px 10px',
-                  padding: '12px 14px',
-                  borderColor:
-                    pendingActivationProposal.status === 'approved'
-                      ? 'rgba(79,162,173,0.32)'
-                      : 'rgba(226,186,84,0.28)',
-                  background:
-                    pendingActivationProposal.status === 'approved'
-                      ? 'rgba(79,162,173,0.12)'
-                      : 'rgba(226,186,84,0.10)',
-                })}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 12,
-                  }}
-                >
-                  <div>
-                    <div
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 600,
-                        color: C.text,
-                      }}
-                    >
-                      {pendingActivationProposal.title}
-                    </div>
-                    <div
-                      style={{
-                        marginTop: 4,
-                        fontSize: 12,
-                        color: GRAPH_THEME.drawer.inputMuted,
-                      }}
-                    >
-                      {pendingActivationProposal.status === 'approved'
-                        ? 'Approved for manual activation on the canvas.'
-                        : 'Pending approval before any graph rewiring.'}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setPendingActivationProposal((current) =>
-                          current
-                            ? { ...current, status: 'approved' }
-                            : current,
-                        );
-                        await handleApproveMissionExecution();
-                      }}
-                      className="px-3 py-1 rounded"
-                      style={{
-                        color: C.text,
-                        background: 'rgba(79,162,173,0.16)',
-                        border: '1px solid rgba(79,162,173,0.28)',
-                      }}
-                    >
-                      Approve
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPendingActivationProposal(null)}
-                      className="px-3 py-1 rounded"
-                      style={{
-                        color: GRAPH_THEME.drawer.inputMuted,
-                        background: 'transparent',
-                        border: '1px solid rgba(255,255,255,0.12)',
-                      }}
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                </div>
-                <div
-                  style={{
-                    marginTop: 8,
-                    fontSize: 12,
-                    color: GRAPH_THEME.drawer.inputMuted,
-                  }}
-                >
-                  Request: {pendingActivationProposal.sourceText}
-                </div>
+            <div
+              style={graphDrawerSectionStyle({
+                margin: '0 12px 10px',
+                padding: '10px 12px',
+                borderColor:
+                  planFlowLoadStatus === 'error'
+                    ? 'rgba(255,100,100,0.28)'
+                    : 'rgba(79,162,173,0.25)',
+                background:
+                  planFlowLoadStatus === 'error'
+                    ? 'rgba(255,100,100,0.06)'
+                    : 'rgba(79,162,173,0.06)',
+              })}
+            >
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
+                PlanFlow Canvas
               </div>
+              <div style={{ marginTop: 4, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+                PlanFlow shows PLAN.md, specs, task ledgers, and real planning/runtime events as a navigable map.{' '}
+                {planFlowMissionGraph.nodes.some((node) => node.data.source === 'magentic_one')
+                  ? 'A real Magentic-One planning proposal is shown with provenance.'
+                  : 'Magentic-One planning proposal pending.'}
+              </div>
+              <div style={{ marginTop: 4, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+                {planFlowLoadMessage || 'Select a node for source, provenance, status, links, and summary.'}
+              </div>
+            </div>
+            {planFlowMissionGraph.nodes.length > 0 ? (
+              <Suspense
+                fallback={
+                  <div style={{ padding: 16, color: GRAPH_THEME.drawer.inputMuted }}>
+                    Loading PlanFlow canvas...
+                  </div>
+                }
+              >
+                <PlanMissionFlow
+                  structuredPlan={EMPTY_PLANFLOW_STRUCTURED_PLAN}
+                  missionGraph={planFlowMissionGraph}
+                  projectId={activeProject}
+                  compact={surfaceRole === 'companion'}
+                  nodeOverrides={planNodeDrafts}
+                  selectedNodeId={planMissionFocus?.nodeId || null}
+                  drawerLinked
+                  onFocusChange={setPlanMissionFocus}
+                />
+              </Suspense>
             ) : null}
             {latestMissionRun ? (
               <div
@@ -9458,74 +9223,8 @@ export default function AgentBuilder(): React.ReactElement {
                 );
               }
 
-              return (
-                <div
-                  key={`magentic-noplan-${step.id}`}
-                  style={graphDrawerSectionStyle({
-                    margin: '0 12px 10px',
-                    padding: '10px 12px',
-                    borderColor: 'rgba(255,255,255,0.14)',
-                    background: 'rgba(255,255,255,0.03)',
-                  })}
-                >
-                  <div style={{ fontSize: 12, color: C.text }}>
-                    Magentic-One returned no explicit plan. See transcript/reportBacks.
-                  </div>
-                </div>
-              );
+              return null;
             })}
-            {showPlanDraftCard ? (
-              <div
-                style={graphDrawerSectionStyle({
-                  margin: '0 12px 10px',
-                  padding: '10px 12px',
-                  borderColor: 'rgba(255,255,255,0.14)',
-                  background: 'rgba(255,255,255,0.03)',
-                })}
-              >
-                {planDraftHeadline ? (
-                  <div style={{ fontSize: 12, color: C.text }}>
-                    {planDraftHeadline}
-                  </div>
-                ) : null}
-                {draftMissionSpec ? (
-                  <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
-                    <div>{draftMissionSpec.title}</div>
-                    <div>Goal: {draftMissionSpec.userGoal}</div>
-                    <div>Target: {draftMissionSpec.target}</div>
-                    <div>
-                      Agents:{' '}
-                      {draftMissionSpec.agentRuns
-                        .map((run) => `${run.agentId} (${safeText(run.promptSeed).slice(0, 40)})`)
-                        .join(' | ')}
-                    </div>
-                  </div>
-                ) : null}
-                {!draftMissionSpec && currentPlanDraft ? (
-                  <div
-                    style={{
-                      marginTop: 6,
-                      fontSize: 11,
-                      color: GRAPH_THEME.drawer.inputMuted,
-                    }}
-                  >
-                    <div>{currentPlanDraft.summary}</div>
-                    <div>Goal: {currentPlanDraft.userRequest}</div>
-                    <div>
-                      Agents:{' '}
-                      {currentPlanDraft.requiredAgents.length > 0
-                        ? currentPlanDraft.requiredAgents.join(' | ')
-                        : 'none yet'}
-                    </div>
-                  </div>
-                ) : null}
-                {planDraftQuestions.length > 0 ? (
-                  <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
-                    Questions: {planDraftQuestions.join(' | ')}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
             {openMissionMessage ? (
               <div
                 style={graphDrawerSectionStyle({
@@ -9550,37 +9249,6 @@ export default function AgentBuilder(): React.ReactElement {
                 ) : null}
               </div>
             ) : null}
-            <PlanMissionFlow
-              structuredPlan={structuredAssistPlan}
-              missionGraph={planMissionGraphSeed}
-              projectId={activeProject ?? null}
-              compact={surfaceRole === 'companion'}
-              fullHeight
-              selectedNodeId={planMissionFocus?.nodeId || null}
-              drawerLinked={Boolean(
-                surfaceRole === 'companion' &&
-                  workspaceView === 'plan' &&
-                  objectDrawerOpen &&
-                  planMissionFocus?.nodeId,
-              )}
-              editMode={Boolean(
-                workspaceView === 'plan' &&
-                objectDrawerOpen &&
-                planMissionFocus?.nodeId,
-              )}
-              onFocusChange={(focus) => {
-                setPlanMissionFocus(focus);
-                if (focus) {
-                  setSelectedCardId(null);
-                  setSelectedEdgeId(null);
-                  setObjectDrawerOpen(true);
-                  return;
-                }
-                if (workspaceView === 'plan') {
-                  setObjectDrawerOpen(false);
-                }
-              }}
-            />
             {planMissionFocus ? (
               <div
                 className="text-xs"

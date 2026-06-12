@@ -1,5 +1,8 @@
 # CodeTaskPacket
 
+> Transition policy: this is a legacy/source document. The current product term and default active
+> job contract is CoderPacket/spec-as-prompt; no durable spec file is created by default.
+
 ## Purpose
 
 Define the isolated, evidence-grounded execution packet handed to FableCoder.

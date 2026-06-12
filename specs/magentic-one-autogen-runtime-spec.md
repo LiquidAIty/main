@@ -1,5 +1,8 @@
 # Magentic-One / AutoGen Runtime Spec
 
+> Transition policy: this is a legacy/source runtime contract. It does not define the default
+> planning model; `PLAN.md`, `AGENTS.md`, and the current CoderPacket/spec-as-prompt do.
+
 ## Purpose
 
 Define the correct Magentic-One / Sol runtime architecture before future runtime edits, so

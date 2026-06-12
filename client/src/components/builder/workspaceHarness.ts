@@ -27,26 +27,6 @@ function safeText(value: unknown): string {
   return String(value).trim();
 }
 
-function buildDraftMissionSpec(request: WorkspaceHarnessRequest): MissionSpec {
-  const goal = safeText(request.userGoal) || "Run approved mission.";
-  const available = Array.isArray(request.availableAgents) ? request.availableAgents : [];
-  const idFromAgent = (id: string) => available.some((entry) => entry.id === id);
-  const agentRuns = [
-    idFromAgent("research_agent") ? { agentId: "research_agent", promptSeed: "Research and gather evidence.", required: true } : null,
-    idFromAgent("knowgraph_agent") ? { agentId: "knowgraph_agent", promptSeed: "Convert evidence into grounded knowledge updates.", required: true } : null,
-    idFromAgent("thinkgraph_agent") ? { agentId: "thinkgraph_agent", promptSeed: "Summarize outcome as provisional plan memory.", required: false } : null,
-  ].filter(Boolean) as MissionSpec["agentRuns"];
-  return {
-    id: `mission_${Date.now()}`,
-    title: goal.length > 72 ? `${goal.slice(0, 69)}...` : goal,
-    userGoal: goal,
-    target: request.activeCanvasId || "agentbuilder_deck",
-    readContext: request.graphContextRefs || [],
-    agentRuns,
-    runState: "draft",
-  };
-}
-
 function clarifyingQuestions(request: WorkspaceHarnessRequest): string[] {
   const questions: string[] = [];
   if (!safeText(request.userGoal) || safeText(request.userGoal).split(/\s+/).length < 3) {
@@ -56,7 +36,7 @@ function clarifyingQuestions(request: WorkspaceHarnessRequest): string[] {
     questions.push("Which canvas object or plan block should this mission target?");
   }
   if (!request.missionSpec && request.operation !== "inspect_context") {
-    questions.push("Should I draft a MissionSpec from this request before wiring agents?");
+    questions.push("Provide a user-authored or real-planner MissionSpec before wiring agents.");
   }
   return questions;
 }
@@ -66,7 +46,7 @@ export async function runInternalWorkspaceHarness(
   deps: InternalWorkspaceHarnessDeps,
 ): Promise<WorkspaceHarnessResult> {
   const operation: WorkspaceHarnessOperation = request.operation;
-  const missionSpec = request.missionSpec || buildDraftMissionSpec(request);
+  const missionSpec = request.missionSpec;
   if (request.provider !== "internal-workspace") {
     return {
       status: "failed",
@@ -99,14 +79,21 @@ export async function runInternalWorkspaceHarness(
 
   if (operation === "draft_mission") {
     return {
-      status: "complete",
-      summary: "Drafted MissionSpec from current workspace context.",
-      missionSpecPatch: missionSpec,
-      suggestedNextAction: "generate_deck_patch",
+      status: "needs_user_input",
+      summary: "MissionSpec drafting requires user-authored or real-planner provenance.",
+      questions: ["Provide or approve a provenance-backed MissionSpec draft."],
+      suggestedNextAction: "ask_clarifying_questions",
     };
   }
 
   if (operation === "refine_mission") {
+    if (!missionSpec) {
+      return {
+        status: "failed",
+        summary: "MissionSpec is required before refinement.",
+        errorReason: "mission_spec_required",
+      };
+    }
     return {
       status: "complete",
       summary: "Refined MissionSpec draft.",
@@ -123,6 +110,13 @@ export async function runInternalWorkspaceHarness(
     operation === "connect_agents" ||
     operation === "seed_prompts"
   ) {
+    if (!missionSpec) {
+      return {
+        status: "failed",
+        summary: "MissionSpec is required before deck mutation.",
+        errorReason: "mission_spec_required",
+      };
+    }
     const patch = deps.buildMissionDeckPatch(missionSpec, deps.currentDeck);
     return {
       status: "complete",
@@ -133,9 +127,14 @@ export async function runInternalWorkspaceHarness(
   }
 
   if (operation === "apply_deck_patch") {
-    const patch = request.missionSpec
-      ? deps.buildMissionDeckPatch(request.missionSpec, deps.currentDeck)
-      : deps.buildMissionDeckPatch(missionSpec, deps.currentDeck);
+    if (!missionSpec) {
+      return {
+        status: "failed",
+        summary: "MissionSpec is required before applying a deck patch.",
+        errorReason: "mission_spec_required",
+      };
+    }
+    const patch = deps.buildMissionDeckPatch(missionSpec, deps.currentDeck);
     return {
       status: "complete",
       summary: "Applied mission deck patch to workspace state.",
@@ -145,6 +144,13 @@ export async function runInternalWorkspaceHarness(
   }
 
   if (operation === "run_approved_mission") {
+    if (!missionSpec) {
+      return {
+        status: "failed",
+        summary: "MissionSpec is required before mission execution.",
+        errorReason: "mission_spec_required",
+      };
+    }
     if (!request.missionRun || !deps.runApprovedMission) {
       return {
         status: "failed",

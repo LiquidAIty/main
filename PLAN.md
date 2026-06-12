@@ -1,154 +1,210 @@
-# Bootstrap Self-Build Plan
+# LiquidAIty Living Plan
 
-## Current Phase
+## What LiquidAIty Is
 
-Outside-loop bootstrap planning. ChatGPT plans, Codex scouts and scaffolds, and FableCoder
-implements bounded CodeTaskPackets. ThinkGraph receives task memory; CodeGraph supplies repo
-structure; KnowGraph supplies reusable validated knowledge.
+LiquidAIty is an agentic engineering workbench. It automates the manual vibe-coding loop:
 
-`PLAN.md` is the living full route. Specs define durable parts of that route. Skills are the
-durable progressive-work memory.
+user chats with planning AI -> planning AI understands the repo/project -> planning AI creates one
+bounded coding job -> user sends the job to a coder -> coder returns a structured report ->
+planning AI compares the report against the job -> the system remembers proof, blockers, and
+lessons -> the next job is prepared.
 
-ChatGPT or the future UI planner writes PLAN/spec intent. A prompt remains raw intent until real
-work begins. Codex or another middle scout reads PLAN, relevant specs, relevant skills, and fresh
-CBM, then attaches the bounded attempt to a matching one-file skill or creates the smallest useful
-new skill stub. Fable executes the attempt and writes result, proof, and CBM-after evidence into
-that skill.
+The user describes what they want done. The user is not asked to prompt a prompt.
 
-Success updates reusable procedure, proof, example, validation, and query metadata. Failure updates
-failed-attempt, guardrail, and bounded-retry metadata. Fresh CBM every time is the freshness
-mechanism. Code examples are retrieved fresh by CBM/CodeGraph query; raw diffs are not durable
-memory.
+## First Launch Wedge
 
-## Skill Knowledge Route
+LiquidAIty first launches as an agentic engineering / vibe-coding workbench.
 
-Skills are authored as graphable Markdown in `skills/*.md`. Skills and their active attempts,
-failed attempts, guardrails, decisions, reasoning receipts, proof claims, validations, and query
-patterns live in KnowGraph / Neo4j for now. KnowGraph stores current known skill knowledge,
-including in-progress learning attempts.
+The first user value is:
 
-ThinkGraph is reserved for later UI and frontside planning memory. CodeGraph / CBM remains the
-source for current code structure, files, symbols, call paths, and code evidence.
+plan the job -> gather project context -> create a bounded spec-as-prompt -> send it to a coder ->
+read a structured report -> compare report versus job -> remember proof and lessons -> prepare the
+next job.
 
-Before writing a Fable attempt, the planner or Codex uses KnowGraph skills together with fresh
-CodeGraph / CBM evidence. Fable receives the required skills, guardrails, relevant failed attempts,
-proof requirements, and query-ready examples. Successful and failed attempts update KnowGraph
-skill memory.
+Research remains part of the product, but recursive research, research swarms, broader KnowGraph
+ingestion, and the research-to-chat loop are deferred until the coding loop is useful.
 
-## Current 11-Day Fast Build Route
+## Product Loop
 
-LiquidAIty is an agent workbench where the system writes better prompts from graph context, sends
-bounded work to coder agents, and learns from every attempt.
+1. **User chat**: the user describes the desired outcome normally.
+2. **Magentic-One / Sol**: the planner initiates context gathering, reasons over the project, and
+   proposes the next bounded job.
+3. **Context Packet**: the planner receives current user input, PlanFlow state, this living plan,
+   ThinkGraph memory, fresh CodeGraph/CBM evidence, relevant SkillGraph memory, and KnowGraph
+   research only when relevant.
+4. **CoderPacket**: the planner creates one reviewable active job contract, shaped like a temporary
+   execution spec.
+5. **User Go**: after review or edits, the user sends the CoderPacket through a coder adapter.
+6. **CoderReport**: the coder returns structured results and proof, not a vague done message.
+7. **Comparison**: PlanFlow compares CoderReport against CoderPacket and exposes matches, misses,
+   changes, blockers, proof, and next step.
+8. **Memory**: ThinkGraph records the job and outcome; reusable learning updates skills; the next
+   job is prepared.
 
-AutoSkill turns AI-edited repos into learning repos: every run can produce or update reusable
-skill memory so future agents avoid repeated mistakes.
+## Product Parts
 
-Core spine:
+### User Chat
 
-1. User asks in the UI.
-2. Sol / Magentic-One front-door planner interprets the ask.
-3. SkillGraph retrieves learned memory.
-4. CodeGraph/CBM retrieves fresh code evidence.
-5. ThinkGraph provides current project route/reasoning.
-6. KnowGraph provides broader research/knowledge when relevant.
-7. Prompt writer builds a bounded handoff.
-8. Fable/OpenClaude-style coder executes.
-9. Result/failure/proof writes back into skills.
-10. Graphs re-index.
-11. Next attempt starts smarter.
+User chat is the front door. The user describes goals, changes, problems, and constraints in normal
+language. Chat starts planning; it is not a prompt-template editor.
 
-Runtime route stays fixed: the UI front door is unchanged; Sol / Magentic-One orchestration
-remains the front-door workflow; cloud/API models are the normal backend with local Qwen 7B as
-the fallback when no API/internet/billing is available or the user chooses local; the AutoGen
-Python sidecar remains the real agent runtime rail; ReactFlow/TypeScript remains the control
-plane; the Fable/OpenClaude-style coder is reached only through bounded handoffs
-(`specs/magentic-one-autogen-runtime-spec.md`).
+### Magentic-One / Sol
 
-Feature direction: the prompt writer is a product surface, not a side effect. The UI should
-eventually show and let the user edit the generated handoff before execution. The generated
-handoff is not just text; it is graph-backed context
-(`specs/graph-context-prompt-writer-spec.md`).
+Magentic-One/Sol is the planner and thinking agent. It starts from user chat, initiates the Context
+Packet pull, and uses current plan state, reasoning memory, relevant skills, fresh code evidence,
+and user input to choose the next bounded job. It must not fake repository understanding,
+planning, execution, or success.
 
-Architecture rule: do not physically merge CodeGraph, SkillGraph, ThinkGraph, and KnowGraph yet.
-Create clean graph context contracts and packets. Storage can differ underneath. Agents consume
-packets and tools, not raw databases.
+### PlanFlow
 
-Graph roles stay separated: SkillGraph holds learned attempts, failures, guardrails, decisions,
-proof requirements, and query patterns; CodeGraph/CBM holds fresh code evidence; ThinkGraph holds
-project reasoning and the current route (`specs/thinkgraph-planning-memory-spec.md`); KnowGraph
-holds broader knowledge, research, and public skill imports. Skill creation follows
-`specs/autoskill-policy-spec.md`.
+PlanFlow is Magentic-One/Sol's visible thinking and control surface.
 
-Retrieval roadmap note: Neo4j full-text/vector/GraphRAG retrieval remains planned. MVP retrieval
-stays deterministic for now. Semantic SkillSection retrieval should be added after the first full
-learn loop works. This feature stays on the roadmap.
+PlanFlow shows the living plan, current active job, active spec-as-prompt when one exists,
+run/report status, blockers, proof summary, and next step. It may expose selected supporting
+evidence on demand.
 
-## Later Acceleration
+PlanFlow is not a document map, spec library, skill library, markdown graph, set of road signs,
+fake planner summary, or fake execution preview. It does not show every spec, skill, or document.
 
-* Future agent: GitHub Skill Scout. Purpose: scrape open-source public skills, repos, prompts,
-  and patterns, import inspiration into KnowGraph, and help write better local skills. Not in the
-  immediate implementation pass; it belongs after local SkillGraph retrieval and the
-  prompt-writer loop prove useful.
+### PLAN.md
 
-## Build Order
+This file is the durable repo-backed living plan. It is always present and can change often through
+PlanFlow. It holds product identity, launch wedge, current route, active work, code/context anchors,
+blockers, next step, durable decisions, and concise status/proof notes.
 
-* Establish Code-Based Memory as the first foundational reusable skill.
-* Ingest graphable Markdown skills into KnowGraph / Neo4j through a deterministic host-source
-  importer and provide a minimal skill listing query.
-* Establish TaskRealm, CodeTaskPacket, and SemanticReport formats.
-* Execute `tasks/active/T001-bootstrap-codegraph-thinkgraph.md` to restore a real CodeGraph
-  planning-context reader.
-* Persist SemanticReports as ThinkGraph-style task memory.
-* Feed ThinkGraph, CodeGraph, and KnowGraph context into planner prompts.
-* Move planning into the UI.
-* Replace the Codex middle-scout role with LocalScout.
+`PLAN.md` is not decoration, old prompt storage, a spec library, or a completed-task archive.
 
-## Foundational Skill
+### Context Packet
 
-Every code task begins with fresh CBM and refreshes CBM again after changes. Completed tasks may
-produce query-ready, graph-backed SkillExamples so future agents can retrieve the current code
-pattern without relying on stale paths, raw diffs, or completed-task log piles.
+The Context Packet is graph and code context initiated by Magentic-One/Sol before it creates the
+next active job. It is assembled from:
 
-Reusable completed tasks move into matching skill examples. Non-reusable results become
-graph/semantic memory. Future agents, including cheap/local agents, query matching skills before
-doing bounded work so they do not rediscover the process.
+* user input
+* current PlanFlow state
+* `PLAN.md`
+* ThinkGraph reasoning, events, proof, and blockers
+* fresh Codebase Memory / CodeGraph evidence
+* relevant skills indexed through SkillGraph / Neo4j
+* KnowGraph research when relevant
 
-Skills are one-file graphable Markdown artifacts by default. They may contain OWL-ish graph lines,
-query patterns, proof metadata, and compact completed-task lessons. Current code examples are
-retrieved fresh from CBM/CodeGraph by query. Separate JSON, example, or query files are unnecessary
-for one skill unless a future importer/exporter explicitly generates them.
+Its purpose is to help the planner understand the project before creating a CoderPacket. Missing or
+stale code evidence is a blocker, not permission to guess.
 
-## Skill Graph Compounding
+### Codebase Memory / CodeGraph
 
-Skills are the durable continuity layer for progressive code work. Every successful code task must
-create or update a graphable skill connected to its specs, source task, touched CodeGraph nodes,
-changed files/symbols, proof claims, validation commands, and related skills.
+Fresh code evidence is core. Magentic-One/Sol uses CBM/CodeGraph to create code anchors and bound
+the active job. The coder also uses Codebase Memory directly while working. CBM is a structural map;
+direct reads, tests, compile output, and real smoke results win when they disagree.
 
-Before creating a real implementation attempt, the middle scout searches skills using the user
-prompt, relevant specs, fresh CBM graph structure, touched subsystem, guardrails, and related
-skills. A matching skill receives the bounded attempt. If none match, the middle scout creates the
-smallest useful one-file skill stub and appends the attempt there.
+### SkillGraph / Neo4j / skills/*.md
 
-Future planner and frontend use GraphRAG over PLAN, specs, skills, and fresh CodeGraph evidence:
+`skills/*.md` are durable reusable learning indexed and retrieved through SkillGraph / Neo4j.
+Skills teach future agents how work is broken down, proof rules, failed attempts, guardrails,
+no-stub/no-fallback laws, CoderReport expectations, adapter lessons, and reusable procedures.
 
-1. Receive the user prompt and read PLAN/spec intent.
-2. Refresh CBM and find relevant CodeGraph nodes/files/symbols.
-3. Query the skill graph for matching skills and proven patterns.
-4. Append a bounded attempt to the matching skill or create a short skill stub.
-5. Give Fable the bounded skill attempt.
-6. Update the skill with success or failure evidence.
+Skills are not PlanFlow canvas nodes and are updated only when learning is reusable.
 
-This lets cheap/local agents execute bounded work without rediscovering repo-specific workflows.
-The first real attempt is `knowgraph-skill-ingestion.prepare-001` in
-`skills/knowgraph-skill-ingestion-skill.md`.
+### Spec-As-Prompt / CoderPacket
 
-## Prepared Future Work
+The default spec is not a permanent file. The default spec is the shape of the temporary active job
+prompt.
 
-`tasks/active/T001-bootstrap-codegraph-thinkgraph.md`: restore CodeGraph context enough for
-evidence-grounded planning without implementing the later autonomous runtime. It is not executed or
-treated as a new attempt by this process-normalization pass.
+Use the terms **spec-as-prompt**, **spec-shaped CoderPacket**, **active job contract**, and
+**temporary execution spec**.
 
-## Deferred Work
+A CoderPacket:
 
-UI planning, LocalScout, a local coding runner, full autonomous execution, marketplace work, a giant
-graph UI, and broader runtime changes are deferred.
+* matches one bounded part of `PLAN.md`
+* is created from Context Packet, `PLAN.md`, relevant skills, and fresh CBM/code anchors
+* is shown in PlanFlow only while active
+* can be reviewed and edited by the user
+* is sent to a coder when the user clicks Go
+* is not saved as `spec.md` by default
+
+Durable `spec.md` files exist only when explicitly exported/saved by the user or when a rare stable
+long-term contract genuinely needs one. Existing `specs/*.md` files are legacy/source documents
+during transition, not the default planning model.
+
+### CoderReport
+
+CoderReport is the structured response to a CoderPacket. It includes:
+
+* verdict
+* comparison against CoderPacket
+* completed, incomplete, and changed requirements
+* files changed
+* proof commands and proof results
+* blockers and assumptions
+* chosen approach and rejected alternatives
+* reusable skill updates
+* next recommended task
+
+PlanFlow compares CoderReport against the active CoderPacket. Hidden success and vague done claims
+are forbidden.
+
+### ThinkGraph
+
+ThinkGraph stores structured reasoning and event memory: why the plan changed, context used, job
+created, coder response, matches and misses, proof, failures, blockers, and recommended next step.
+ThinkGraph is not markdown sprawl and does not invent planning or success.
+
+### Coder Adapters
+
+Coder adapters follow one rule: **CoderPacket in, CoderReport out**.
+
+Planned adapters:
+
+* LocalCoder / RepoCoder adapter wrapping the already-tested local coder
+* manual adapter for copying CoderPacket out and pasting CoderReport back
+* CLI/headless adapter for external coding tools
+* MCP adapter for agent tools where available
+
+There is no vendor lock-in. Adapters are product direction only in the current documentation pass.
+
+## Current Route
+
+1. Make this living plan and `AGENTS.md` the clear product and execution law.
+2. Treat existing specs as legacy/source documents; use one active CoderPacket as the default
+   spec-as-prompt.
+3. Wire PlanFlow around the living plan, one active CoderPacket, CoderReport comparison, blockers,
+   proof, and next step.
+4. Have Magentic-One/Sol initiate Context Packet assembly from ThinkGraph, SkillGraph/Neo4j,
+   CodeGraph/CBM, and relevant KnowGraph context.
+5. Add coder adapters behind the CoderPacket-in/CoderReport-out contract.
+6. After the coding loop is useful, build the deferred research loop.
+
+## Active Work
+
+Documentation and core-law cleanup is active. No runtime, adapter, or LocalCoder wiring belongs in
+this pass.
+
+## Code And Context Anchors
+
+* `AGENTS.md`: execution law
+* `PLAN.md`: living product route
+* `skills/*.md`: reusable learning
+* Codebase Memory MCP / CodeGraph: fresh code structure and anchors
+* SkillGraph / Neo4j: reusable skill retrieval
+* ThinkGraph: structured plan/job/report/proof memory
+* PlanFlow: visible active planning and control surface
+
+## Durable Decisions
+
+* Spec-as-prompt/CoderPacket is the default; durable spec files are exceptional.
+* PlanFlow shows active planning state, not document or skill libraries.
+* CoderPacket in, CoderReport out is the adapter boundary.
+* Fresh CBM is required before code edits.
+* No stubs, fake fallbacks, silent fallbacks, hidden success, fake planning, or fake execution.
+* Research is deferred, not deleted.
+
+## Blockers
+
+* The current UI and implementation still reflect parts of the legacy document-map/spec model.
+* The active CoderPacket/CoderReport comparison loop is not wired yet.
+* Coder adapters are not wired yet.
+
+## Next Step
+
+Wire PlanFlow active job loop: dynamic `PLAN.md` visible/editable, Magentic-One/Sol context pull
+from ThinkGraph + SkillGraph/Neo4j + CodeGraph/CBM, one active CoderPacket/spec-as-prompt, then
+LocalCoder/RepoCoder wrapper receives CoderPacket and returns CoderReport.

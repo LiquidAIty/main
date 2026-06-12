@@ -1,82 +1,52 @@
 # Graph Context Prompt Writer Spec
 
-## Purpose
+> Transition policy: this is a legacy/source implementation document. Current product law lives
+> in `PLAN.md`, `AGENTS.md`, and the active CoderPacket/spec-as-prompt.
 
-Define the prompt writer as a core product surface: the system writes better starting prompts
-from graph context, then sends bounded work to coder agents. This is useful standalone — a
-graph-backed prompt writer for AI work — and the full app uses it to reach coder execution
-quickly.
+## Current Product Role
 
-## Inputs
+The useful part of the existing prompt-writer work is deterministic packet composition. In the
+current product model, that work supports the Context Packet and the active CoderPacket.
 
-The prompt writer consumes:
+The user is not prompting a prompt. The user chats normally. Magentic-One/Sol initiates context
+gathering and creates one bounded, reviewable CoderPacket from:
 
-* Task Prompt
-* Source Spec
-* Skill Memory Packet (`specs/skill-packet-fable-handoff-spec.md`)
-* Code Evidence Packet (`specs/codegraph-context-reader-spec.md`)
-* later: ThinkGraph Context Packet (`specs/thinkgraph-planning-memory-spec.md`)
-* later: KnowGraph Research Packet
+* user input
+* PlanFlow state
+* `PLAN.md`
+* ThinkGraph reasoning/events/proof/blockers
+* fresh CodeGraph/CBM evidence
+* relevant SkillGraph/Neo4j skills
+* KnowGraph when relevant
 
-## Output
+## Existing Implementation Evidence
 
-A bounded Fable/Codex handoff. The generated handoff is not just text; it is graph-backed
-context. The UI should eventually let the user inspect and edit the generated handoff before
-execution.
+`services/knowgraph/skill_ingest.py` contains a deterministic handoff renderer and validated packet
+composition patterns. Those patterns remain useful source evidence for future Context Packet and
+CoderPacket composition.
 
-## Handoff Anatomy
+They are not product permission to make users author prompt templates, create permanent specs for
+ordinary work, or build a prompt-maker surface before the active coding loop.
 
-The standardized anatomy of a generated handoff:
+## CoderPacket Output
 
-1. Purpose
-2. Task
-3. Context
-4. Effort
-5. Boundaries
-6. Verification Rules
-7. Stop Conditions
-8. Output Format
+The target output is one temporary spec-as-prompt / active job contract with:
 
-## Mapping From The Existing Five-Section Fable Handoff
+* purpose and bounded task
+* current context and code anchors
+* allowed scope and forbidden boundaries
+* requirements
+* proof rules
+* stop conditions
+* CoderReport return contract
 
-The implemented five-section handoff (`skill_ingest.py handoff`) maps into the anatomy:
+It is shown in PlanFlow while active, can be reviewed/edited by the user, and is sent through a
+coder adapter after Go. It is not saved as a durable spec by default.
 
-| Existing section | Anatomy slots |
-| --- | --- |
-| Task Prompt | Purpose, Task |
-| Source Spec | Context |
-| Skill Memory Packet | Context, Boundaries (guardrails), Verification (proof claims, validations) |
-| Code Evidence Packet | Context, Verification (refs, proof commands) |
-| Required Behavior / Proof | Boundaries, Verification Rules, Stop Conditions, Output Format |
+## Guardrails
 
-The five-section renderer is the working MVP of this spec; the anatomy is the target shape future
-iterations grow into. Do not rewrite the working renderer to chase the anatomy; extend it when a
-bounded pass needs a missing slot.
-
-## Current Repo Evidence
-
-* `services/knowgraph/skill_ingest.py` implements `handoff` with Task Prompt, Source Spec, Skill
-  Memory Packet, Code Evidence Packet, and Required Behavior sections, deterministic output, and
-  loud validation of attached packets.
-* Packet retrieval and code-evidence embedding are tested
-  (`services/knowgraph/test_skill_retrieve.py`).
-
-## Product Direction
-
-* Prompt writing is a first-class surface, not a side effect of execution.
-* The UI should eventually render the generated handoff for inspection/editing before execution.
-* Each packet keeps its own contract and source-of-truth graph; the prompt writer composes, it
-  does not merge storage.
-
-## Not Included Yet
-
-* UI implementation
-* ThinkGraph/KnowGraph packet implementation
-* model routing
-* LLM-rewritten handoffs (the writer stays deterministic until a spec changes that)
-
-## Acceptance
-
-* The prompt writer's inputs, output, and anatomy are explicit.
-* The existing five-section handoff is mapped into the anatomy without rewriting working code.
-* Future packet types join through the prompt writer, not through direct graph coupling.
+* Deterministic packet composition must not invent context.
+* Missing/stale CBM evidence is a blocker.
+* UI copy/export cannot manufacture planning or runtime state.
+* Do not expose a spec library or prompt-template workflow as the core product.
+* No fake planner output, hidden success, or silent fallback.

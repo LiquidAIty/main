@@ -1,98 +1,108 @@
 # AGENTS.md
 
-## Documentation Model
+## Product Law
 
-Markdown is an agent execution layer. Keep it current, scoped, and queryable.
+LiquidAIty is an agentic engineering workbench. The first launch wedge automates the coding loop:
+user chat -> planner context pull -> one bounded CoderPacket -> coder -> structured CoderReport ->
+comparison, proof, memory, and next job.
 
-* `AGENTS.md` is repo law.
-* `PLAN.md` is the full current idea and route.
-* `specs/*.md` are durable parts of the plan.
-* `skills/*.md` are living progressive-work artifacts containing bounded attempts, reusable
-  procedures, guardrails, proofs, and graphable examples.
+`PLAN.md` is the durable living plan and current route. Keep it concise and current.
 
-Do not create root `SPEC.md`, root `SKILL.md`, `KNOWLEDGE.md`, duplicate agent laws, random notes,
-progress, evidence, handoff files, or completed-task piles.
+PlanFlow is Magentic-One/Sol's visible thinking and control surface. It shows the living plan,
+active job, active spec-as-prompt, report/run status, blockers, proof summary, and next step. It is
+not a doc map, spec library, skill library, markdown graph, road-sign display, fake planner
+summary, or fake execution preview.
 
-## Progressive Skill Loop
+## Execution Contract
 
-A prompt is raw intent. A real code or task prompt becomes a bounded attempt inside a skill file
-only when implementation work begins. Process-normalization and steering prompts do not become
-attempts unless they explicitly start real implementation work.
+The default execution spec is the current **CoderPacket**, also called the spec-as-prompt, active
+job contract, or temporary execution spec.
 
-Before writing an attempt, Codex must read `AGENTS.md`, `PLAN.md`, relevant specs, relevant skills,
-and fresh CBM graph context. Codex must search existing skills using prompt meaning, referenced
-specs, fresh CBM files/symbols/nodes, touched subsystem, existing guardrails, and related skills.
+When coding:
 
-If a matching skill exists, append the attempt there. If no matching skill exists, create a short
-new one-file skill stub and append the attempt there. Record:
+1. Read `AGENTS.md` and `PLAN.md`.
+2. Read the current CoderPacket when one exists.
+3. Refresh Codebase Memory MCP and record ready status, nodes, and edges.
+4. Use graph tools before focused text search for code discovery.
+5. Direct-read relevant files before claims or edits.
+6. Break the spec-as-prompt into bounded tasks and execute scoped work only.
+7. Prove the work with tests, compile, direct reads, or real smoke evidence.
+8. Compare actual work against every CoderPacket requirement.
+9. Return a structured CoderReport.
+10. Refresh or prove fresh CBM after code changes.
+11. Update skills only when the learning is reusable.
 
-`No matching skill found; successful completion must create a new skill.`
+Do not broaden scope or start the next job without instruction.
 
-Every code change must attach to a skill. Fable executes only the bounded attempt.
+## CoderPacket
 
-Every successful code attempt updates a skill with task-inverted action steps, graphable example
-metadata, proof claims, validation or smoke commands, a query-ready pattern, and touched
-nodes/files/symbols. Every failed attempt updates a skill with failed proof, why it failed, a
-guardrail, and a bounded retry direction.
+A CoderPacket is one bounded part of `PLAN.md`, created from the Context Packet, living plan,
+relevant skills, and fresh code anchors. It is reviewable and temporary. It is not saved as a
+durable `spec.md` by default.
 
-One skill equals one graphable Markdown file at `skills/<skillname>.md` by default. Do not split one
-skill into subfolders or separate JSON, query, or example files unless explicitly requested. Fresh
-CBM query every time is the freshness mechanism. Do not store raw diffs as durable skill memory.
-Retrieve code examples fresh through CBM/CodeGraph queries unless a tiny snippet is essential.
+Durable spec files are allowed only when explicitly exported/saved by the user or for a rare stable
+long-term contract. Existing `specs/*.md` files are legacy/source documents during transition and
+do not override `PLAN.md`, `AGENTS.md`, or the active CoderPacket.
 
-## Skills
+## CoderReport
 
-A skill is a reusable procedure, not a task log. By default, one skill is one
-`skills/<skillname>.md` file. Do not split a skill into subfiles unless explicitly requested.
+Every coding job returns a structured CoderReport containing:
 
-Skills may contain OWL-ish graphable Markdown lines that later import into JSON, Postgres, or
-ThinkGraph. Retrieve current code snippets fresh by graph query and direct reads instead of storing
-copied code as durable skill memory.
+* verdict
+* comparison against CoderPacket
+* completed, incomplete, and changed requirements
+* files changed
+* proof commands and proof results
+* blockers and assumptions
+* chosen approach and rejected alternatives
+* reusable skill updates
+* next recommended task
 
-Every skill/example query refreshes or proves fresh CBM first. Fresh graph queries are the
-freshness mechanism; do not use stale-check cache logic or cached paths as truth.
+Never return vague done or hide incomplete proof.
 
-Durable skill memory is graphable nodes, edges, proof claims, validation commands, query shapes,
-source-task metadata, and small reusable how-to text. Raw diffs and giant patches are not durable
-memory.
+## Context And Memory
 
-Skills form a growing graph. Connect each successful code task's skill to relevant specs, source
-tasks, touched CodeGraph nodes, changed files, changed symbols, proof claims, validation commands,
-and related skills.
+* Magentic-One/Sol initiates Context Packet assembly before creating the next job.
+* Context Packet combines user input, PlanFlow state, `PLAN.md`, ThinkGraph, fresh CBM/CodeGraph,
+  relevant SkillGraph/Neo4j skills, and KnowGraph only when relevant.
+* Codebase Memory / CodeGraph is the structural map. Direct reads and proof win on disagreement.
+* ThinkGraph stores structured reasoning, events, jobs, reports, proof, blockers, and next steps.
+* `skills/*.md` store reusable learning and are indexed through SkillGraph / Neo4j.
+* Skills are not PlanFlow nodes and are updated only for reusable procedures, guardrails, failed
+  attempts, proof rules, or adapter lessons.
 
-## Required Workflow
+## Documentation Policy
 
-1. Read `AGENTS.md`, `PLAN.md`, and relevant specs.
-2. Refresh or prove fresh CBM and confirm ready status.
-3. Record counts and relevant graph nodes, edges, files, and symbols.
-4. Search the skill graph using prompt, specs, current graph structure, subsystem, and guardrails.
-5. For real implementation work, append a bounded attempt to a matching skill or create the
-   smallest useful one-file skill stub.
-6. Use graph tools before focused text search.
-7. Use focused grep/rg only for exact checks or unavailable graph-backed source search.
-8. Direct-read files before claims, edits, or citations.
-9. Work only inside the bounded skill attempt.
-10. Run required proof without faking success.
-11. Refresh or prove fresh CBM after changes.
-12. Record actual graph/code delta and update the skill with success or failure evidence.
+Markdown is an execution layer, but avoid documentation sprawl:
 
-CBM is a structural map, not unquestioned truth. Direct reads, command output, installed-package
-proof, tests, compile, and real smoke results win when they disagree with CBM.
+* `PLAN.md` is the living product and route.
+* `AGENTS.md` is execution law.
+* `skills/*.md` are reusable learning.
+* CoderPacket is the default temporary spec-as-prompt.
+* Existing `specs/*.md` are legacy/source docs during transition.
+* Do not create a new durable spec or task file for ordinary work.
+* Do not create random notes, progress files, evidence files, handoff files, or completed-task
+  piles.
 
-## Scope And Runtime Guardrails
+## Hard Guardrails
 
-Do not broaden scope or start the next task without instruction. Do not commit, push, branch,
-stash, reset, rebase, merge, or tag unless explicitly requested.
+* No commit or push unless the user explicitly requests it.
+* No stubs or placeholder implementations.
+* No fake fallback, silent fallback, provider/model fallback, or invented tool.
+* No hidden success, fake final output, mocked success, or vague done claim.
+* No deterministic fake planning or fake Magentic-One/Sol provenance.
+* No Run Preview pretending to be execution.
+* No road-sign UI as product law.
+* No spec sprawl.
+* No destructive git operations without explicit instruction.
+* Preserve the real ReactFlow/TypeScript control plane, Node backend, Python sidecar, and
+  Microsoft AutoGen v0.4.4 / Magentic-One runtime unless explicitly changed by the user.
 
-Preserve the ReactFlow/TypeScript control plane, host Node backend, host Python sidecar, and real
-Microsoft AutoGen v0.4.4 / Magentic-One runtime. No provider/model fallback, fake `finalOutput`,
-mocked sidecar success, Python-invented tools, AgentChat, AutoGen Studio, Semantic Kernel,
-Microsoft Agent Framework, LangChain runtime foundation, Redis/RQ AutoGen runtime, or Docker
-python-models runtime unless explicitly reversed by the user.
+## Editing And Proof
 
-## Reporting
+Use existing repo patterns and keep edits scoped. Use `apply_patch` for manual edits. Never revert
+unrelated user changes. Tests scale with risk. Report blockers honestly and do not fake proof.
 
-Serious runs report verdict, files read, CBM before, relevant graph structure, work done, proof,
-CBM after, actual graph/code delta, promotion result, risks, and next state.
-
-Do not include routine git output, patch dumps, or large grep output.
+For serious runs report verdict, files read, CBM before/after, work done, CoderPacket comparison,
+proof, actual graph/code delta, reusable skill updates, risks, and next state. Do not include
+routine git output or patch dumps.

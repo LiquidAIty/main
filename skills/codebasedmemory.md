@@ -36,7 +36,7 @@ strictly necessary.
 
 1. Read `AGENTS.md`.
 2. Read `PLAN.md`.
-3. Read the relevant spec and matching skills.
+3. Read the current CoderPacket/spec-as-prompt when one exists and matching skills.
 4. Refresh or prove fresh CBM.
 5. Record status, nodes, and edges.
 6. Query graph for relevant nodes, edges, files, and symbols.
@@ -50,13 +50,12 @@ strictly necessary.
 
 ## Skill Graph Compounding Rule
 
-Before creating a real implementation attempt, search skills using the user prompt, referenced specs, fresh CBM
+Before creating a real implementation attempt, search skills using the user prompt, current CoderPacket, fresh CBM
 nodes/files/symbols, touched subsystem, known guardrails, and related skills.
 
 * If matching skills exist, append the bounded attempt to the matching skill.
-* If no matching skill exists, write:
-  `No matching skill found; successful completion must create a new skill.`
-  Then create the smallest useful one-file skill stub and append the bounded attempt.
+* If no matching skill exists, execute the bounded CoderPacket without inventing skill memory.
+  Create a skill after the attempt only when the result contains reusable learning.
 * Every successful code attempt creates or updates graphable skill memory.
 * Existing matching skills receive a new example, proof claim, guardrail, smoke test, query pattern,
   or related-skill edge.
@@ -201,7 +200,7 @@ Direct-read every match before treating it as truth.
 @edge skill_example:codebasedmemory.create_skill PROVED claim:graph_first_direct_read_second
 @edge skill_example:codebasedmemory.create_skill VALIDATED_BY validation:markdown_normalization
 @query skill_example_current_code "refresh CBM, resolve touched nodes/files from this skill example, return current snippets from graph-resolved files"
-@query skill_match_for_task "search skills using user prompt, specs, fresh CBM nodes/files/symbols, subsystem, guardrails, and related skills"
+@query skill_match_for_task "search skills using user prompt, current CoderPacket, fresh CBM nodes/files/symbols, subsystem, guardrails, and related skills"
 
 Markdown is the authoring format. Future importers may convert these lines into JSON, Postgres, or
 ThinkGraph records.
