@@ -1,217 +1,98 @@
 # AGENTS.md
 
-## Project Definition
-LiquidAIty is a graph-native AI orchestration and modeling platform that turns projects, models, tools, agents, simulations, files, data, knowledge, and user intent into interactive canvases with executable agent workflows.
+## Documentation Model
 
-LiquidAIty is a general AI-native platform first. Trading, energy modeling, repo eating, research, media, simulations, and KnowledgeCoin-style knowledge assets are downstream use cases.
+Markdown is an agent execution layer. Keep it current, scoped, and queryable.
 
-## Read Order
-1. `SOUL.md`
-2. `AGENTS.md`
-3. `.specify/memory/constitution.md`
-4. `docs/architecture.md`
-5. `docs/runbooks/`
-6. relevant `specs/*`
+* `AGENTS.md` is repo law.
+* `PLAN.md` is the full current idea and route.
+* `specs/*.md` are durable parts of the plan.
+* `skills/*.md` are living progressive-work artifacts containing bounded attempts, reusable
+  procedures, guardrails, proofs, and graphable examples.
 
-## Task Skills
-- Agents must not read every `.skills` file globally.
-- Read only the matching task skill.
-- Skills are subordinate to:
-  - `SOUL.md`
-  - `AGENTS.md`
-  - `.specify/memory/constitution.md`
-  - approved `specs/*`
-- Use `.skills/frontend/react-flow-xyflow/SKILL.md` for React Flow / XYFlow work.
-- Use `.skills/frontend/threejs-r3f/SKILL.md` for Three.js / React Three Fiber work.
-- Use `.skills/graph/cypher/SKILL.md` plus Neo4j or Apache AGE skill for graph queries.
-- Use `.skills/workflow/spec-kit/SKILL.md` for heavy-mode feature work when a spec clearly
-  reduces risk.
+Do not create root `SPEC.md`, root `SKILL.md`, `KNOWLEDGE.md`, duplicate agent laws, random notes,
+progress, evidence, handoff files, or completed-task piles.
 
-## Required First Step: Use Code-Based Memory MCP
-- Before significant edits, refresh/rebuild the Code-Based Memory MCP repository index, then use
-  it for structural discovery.
-- If the index was not refreshed in the current run, treat CBM results as advisory only and say so
-  explicitly. Filesystem, Git, installed-package, and test evidence wins when it disagrees.
-- Use filesystem search only after MCP narrows scope or when scanning docs/config text.
+## Progressive Skill Loop
 
-## Inverse Audit Requirement
-- Run inverse audit before implementation.
-- Confirm what already exists, what must remain stable, and what is risky.
-- Surface assumptions explicitly before editing.
+A prompt is raw intent. A real code or task prompt becomes a bounded attempt inside a skill file
+only when implementation work begins. Process-normalization and steering prompts do not become
+attempts unless they explicitly start real implementation work.
 
-## Inverse Audit + Safe 80% Execution Protocol
-For every meaningful task, agents must follow this order:
+Before writing an attempt, Codex must read `AGENTS.md`, `PLAN.md`, relevant specs, relevant skills,
+and fresh CBM graph context. Codex must search existing skills using prompt meaning, referenced
+specs, fresh CBM files/symbols/nodes, touched subsystem, existing guardrails, and related skills.
 
-1. Intent inversion
-   - Restate what the user likely means.
-   - Identify the real product/dev goal.
-   - Identify success criteria.
-   - Identify what would be overreach.
+If a matching skill exists, append the attempt there. If no matching skill exists, create a short
+new one-file skill stub and append the attempt there. Record:
 
-2. Code/context audit
-   - Use Code-Based Memory MCP.
-   - Find existing files, symbols, ownership, state flow, docs, specs, and relevant skills.
-   - Check current behavior before proposing changes.
-   - Do not implement from memory alone.
+`No matching skill found; successful completion must create a new skill.`
 
-3. Safe plan
-   - Identify the smallest useful implementation boundary.
-   - Separate low-risk known work from uncertain, hard, risky, or final-detail work.
-   - Select only matching `.skills` files.
-   - Decide whether `spec.md`, `plan.md`, or `tasks.md` must be created or updated.
+Every code change must attach to a skill. Fable executes only the bounded attempt.
 
-4. Safe 80% implementation
-   - Implement the largest fully understood safe portion.
-   - If the full task is simple, local, and clearly safe, complete it in one pass.
-   - Do not perform speculative rewrites.
-   - Do not block useful progress waiting for perfect certainty.
-   - Leave confusing, unknown, high-risk, or final-polish details for a later explicit pass.
+Every successful code attempt updates a skill with task-inverted action steps, graphable example
+metadata, proof claims, validation or smoke commands, a query-ready pattern, and touched
+nodes/files/symbols. Every failed attempt updates a skill with failed proof, why it failed, a
+guardrail, and a bounded retry direction.
 
-5. Documentation update
-   - Update the closest durable home only when behavior, architecture, workflow, or reusable knowledge changes.
-   - Route durable knowledge according to Progressive Notes policy.
-   - Do not create scratch Markdown.
+One skill equals one graphable Markdown file at `skills/<skillname>.md` by default. Do not split one
+skill into subfolders or separate JSON, query, or example files unless explicitly requested. Fresh
+CBM query every time is the freshness mechanism. Do not store raw diffs as durable skill memory.
+Retrieve code examples fresh through CBM/CodeGraph queries unless a tiny snippet is essential.
 
-6. Validation
-   - Run the smallest useful validation.
-   - If tests are not run, say why.
+## Skills
 
-7. Final report
-   - State inferred intent.
-   - State code/context audited.
-   - State skills activated.
-   - State what was implemented.
-   - State what was intentionally left undone.
-   - State validation result.
-   - State docs/spec updates.
-   - State risks, uncertainty, and recommended next step.
+A skill is a reusable procedure, not a task log. By default, one skill is one
+`skills/<skillname>.md` file. Do not split a skill into subfiles unless explicitly requested.
 
-Clarification rule:
-Agents should not ask for clarification when the safe 80% is obvious. Implement the safe
-understood portion and report the uncertain remainder. Ask only when proceeding would risk data
-loss, major architecture damage, security exposure, or wrong product direction.
+Skills may contain OWL-ish graphable Markdown lines that later import into JSON, Postgres, or
+ThinkGraph. Retrieve current code snippets fresh by graph query and direct reads instead of storing
+copied code as durable skill memory.
 
-## Implementation Rule
-- Implement the largest fully understood safe portion.
-- Keep edits surgical.
-- Leave uncertain, risky, or broad changes for a follow-up with a final-report note and forward
-  plan.
+Every skill/example query refreshes or proves fresh CBM first. Fresh graph queries are the
+freshness mechanism; do not use stale-check cache logic or cached paths as truth.
 
-## Spec Kit Rule
-- Default workflow is:
-  - intent inversion
-  - Code-Based Memory MCP
-  - inverse audit
-  - safe slice implementation
-  - validation
-  - final report
-- Spec Kit is optional heavy-mode, not the default for every meaningful task.
-- Use Spec Kit when a spec clearly reduces risk, especially for:
-  - major new features
-  - schema or database changes
-  - runtime architecture changes
-  - user-facing behavior contracts
-  - multi-step work with non-obvious sequencing or scope risk
-- Heavy-mode commands remain available when needed:
-  - `$speckit-constitution`
-  - `$speckit-specify`
-  - `$speckit-plan`
-  - `$speckit-tasks`
-  - `$speckit-implement`
+Durable skill memory is graphable nodes, edges, proof claims, validation commands, query shapes,
+source-task metadata, and small reusable how-to text. Raw diffs and giant patches are not durable
+memory.
 
-## Progressive Spec Policy
-LiquidAIty does not require every subsystem to be fully specified upfront.
+Skills form a growing graph. Connect each successful code task's skill to relevant specs, source
+tasks, touched CodeGraph nodes, changed files, changed symbols, proof claims, validation commands,
+and related skills.
 
-Create or update a Spec Kit feature folder only when the work is in heavy-mode.
+## Required Workflow
 
-Use:
-- `spec.md` for intent, behavior, scope, and success criteria.
-- `plan.md` for architecture approach, affected files, risks, skills, and validation.
-- `tasks.md` for ordered implementation steps.
+1. Read `AGENTS.md`, `PLAN.md`, and relevant specs.
+2. Refresh or prove fresh CBM and confirm ready status.
+3. Record counts and relevant graph nodes, edges, files, and symbols.
+4. Search the skill graph using prompt, specs, current graph structure, subsystem, and guardrails.
+5. For real implementation work, append a bounded attempt to a matching skill or create the
+   smallest useful one-file skill stub.
+6. Use graph tools before focused text search.
+7. Use focused grep/rg only for exact checks or unavailable graph-backed source search.
+8. Direct-read files before claims, edits, or citations.
+9. Work only inside the bounded skill attempt.
+10. Run required proof without faking success.
+11. Refresh or prove fresh CBM after changes.
+12. Record actual graph/code delta and update the skill with success or failure evidence.
 
-If heavy-mode work touches an existing subsystem, improve the existing spec instead of creating
-duplicate specs.
+CBM is a structural map, not unquestioned truth. Direct reads, command output, installed-package
+proof, tests, compile, and real smoke results win when they disagree with CBM.
 
-If no matching heavy-mode spec exists, create the smallest useful new spec folder.
+## Scope And Runtime Guardrails
 
-Do not create giant speculative specs for untouched systems or light safe-slice tasks.
+Do not broaden scope or start the next task without instruction. Do not commit, push, branch,
+stash, reset, rebase, merge, or tag unless explicitly requested.
 
-Durable lessons discovered during implementation must be placed in the smallest correct home:
-- feature behavior -> relevant `specs/*`
-- architecture decision -> `docs/decisions/*`
-- run/setup command -> `docs/runbooks/full-stack-dev.md`
-- coding rule -> `AGENTS.md`
-- Sol behavior -> `SOUL.md`
-- task technique -> matching `.skills/*/SKILL.md`
-- extracted findings from historical audits -> the closest living source of truth
+Preserve the ReactFlow/TypeScript control plane, host Node backend, host Python sidecar, and real
+Microsoft AutoGen v0.4.4 / Magentic-One runtime. No provider/model fallback, fake `finalOutput`,
+mocked sidecar success, Python-invented tools, AgentChat, AutoGen Studio, Semantic Kernel,
+Microsoft Agent Framework, LangChain runtime foundation, Redis/RQ AutoGen runtime, or Docker
+python-models runtime unless explicitly reversed by the user.
 
-Do not create standalone audit files by default, random scratch Markdown, duplicate maps, or
-unowned audit docs.
+## Reporting
 
-## Runtime Rules
-- AutoGen is mandatory for real agent execution.
-- No silent TypeScript fallback runtime.
-- No fake fallback runtime.
-- Lazy loading, loading states, error boundaries, retries, diagnostics, and explicit disabled,
-  unavailable, or hard-failure states are allowed when they reflect real runtime status.
-- No fake substitute product behavior in user-facing flows: no fake replacement pages, mock
-  product flows, sample data shown as real state, stub workflows presented as live,
-  pretend-success responses, or substitute UI that masks broken or missing implementation.
-- Runtime truth comes from code and verified checks.
-- Real-user readiness rule:
-  - no fake success states
-  - no mockups pretending to work
-  - no placeholder "coming soon" behavior treated as live
-  - no sample fallback data or demo wires treated as product state
-  - no random demo wires or hidden board resets
-  - no silent failed saves
-  - if not implemented, report the real status plainly and fix the implementation instead of adding a substitute path
+Serious runs report verdict, files read, CBM before, relevant graph structure, work done, proof,
+CBM after, actual graph/code delta, promotion result, risks, and next state.
 
-## Forbidden / Historical
-- No LangChain.
-- No Zorro.
-- Ghostfolio is historical only, not active architecture.
-
-## Command Style
-- Use PowerShell commands by default.
-- Do not commit automatically.
-- Keep secrets out of committed files.
-
-## Testing / Validation
-- Run the smallest useful validation for the changed surface.
-- State what was not run.
-- Never claim tests/smokes passed unless run and read.
-
-## Final Report Format
-- files changed
-- tests run
-- risks
-- uncertainty
-- forward plan
-
-## Progressive Notes, Not Markdown Sprawl
-Agents must capture useful discoveries, but must route them to the smallest correct durable home.
-Temporary investigation and audit notes belong in the final report, not permanent files.
-
-Durable notes must be stored by type:
-- feature behavior -> `specs/*`
-- implementation plan -> `specs/*/plan.md`
-- task checklist -> `specs/*/tasks.md`
-- architecture decision -> `docs/decisions/*`
-- run/setup/test finding -> `docs/runbooks/*`
-- coding-agent rule -> `AGENTS.md`
-- Sol identity/behavior -> `SOUL.md`
-- task-specific technique -> matching `.skills/*/SKILL.md`
-- extracted findings from historical audits -> the closest living source of truth
-
-Agents must not create standalone audit files by default, random scratch Markdown files, duplicate
-documentation maps, or unowned audit docs.
-
-A new Markdown file is allowed only when it has:
-- a clear owner/purpose
-- a correct folder
-- durable value
-- no better existing home
-- a short title and scoped content
-- Historical audit files must be moved to `docs/old/` or deleted after durable findings are
-  extracted, unless the user explicitly approves keeping them active.
+Do not include routine git output, patch dumps, or large grep output.
