@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -361,6 +362,79 @@ class HandoffTests(unittest.TestCase):
         rendered = build_fable_prompt("zzz", empty)
         self.assertIn(NO_MATCHING_SKILL_RULE, rendered)
         self.assertNotIn("```json", rendered)
+
+
+class CodeEvidenceTests(unittest.TestCase):
+    EVIDENCE = {
+        "packet_version": 1,
+        "source": "codegraph_cbm",
+        "query": {"prompt": "task", "spec": None, "skill_packet_used": True},
+        "cbm": {"method": "full", "status": "ready", "nodes": 10, "edges": 20},
+        "files": ["services/knowgraph/skill_ingest.py"],
+        "symbols": ["skill_ingest.build_fable_prompt"],
+        "routes": [],
+        "tests": ["services/knowgraph/test_skill_retrieve.py"],
+        "snippets": [{"ref": "services/knowgraph/skill_ingest.py:1", "text": "# header"}],
+        "call_paths": [],
+        "queries_used": [{"tool": "search_graph", "query": "fable prompt"}],
+        "warnings": [],
+        "proof_commands": ["py -3.12 -m unittest discover -s services/knowgraph"],
+    }
+
+    def _packet(self):
+        return build_skill_packet(FakeReadDriver(), None, prompt="ingestion guardrails", limit=2)
+
+    def test_code_evidence_section_placed_after_skill_packet(self):
+        rendered = build_fable_prompt(
+            "task", self._packet(), spec="specs/x.md", code_evidence=self.EVIDENCE
+        )
+        order = [
+            rendered.index("## Task Prompt"),
+            rendered.index("## Source Spec"),
+            rendered.index("## Skill Memory Packet"),
+            rendered.index("## Code Evidence Packet"),
+            rendered.index("## Required Behavior"),
+        ]
+        self.assertEqual(order, sorted(order))
+        self.assertIn(json.dumps(self.EVIDENCE, indent=2, sort_keys=True), rendered)
+
+    def test_missing_code_evidence_renders_explicit_placeholder(self):
+        rendered = build_fable_prompt("task", self._packet())
+        self.assertIn("## Code Evidence Packet", rendered)
+        self.assertIn("Not provided", rendered)
+        self.assertIn("codegraph-context-reader-spec.md", rendered)
+
+    def test_load_code_evidence_validates_loudly(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            good = Path(tmp) / "good.json"
+            good.write_text(json.dumps(self.EVIDENCE), encoding="utf-8")
+            loaded = skill_ingest.load_code_evidence(good)
+            self.assertEqual(loaded["source"], "codegraph_cbm")
+
+            missing = Path(tmp) / "missing.json"
+            with self.assertRaisesRegex(SkillIngestError, "not found"):
+                skill_ingest.load_code_evidence(missing)
+
+            bad_json = Path(tmp) / "bad.json"
+            bad_json.write_text("{not json", encoding="utf-8")
+            with self.assertRaisesRegex(SkillIngestError, "not valid JSON"):
+                skill_ingest.load_code_evidence(bad_json)
+
+            wrong_source = Path(tmp) / "wrong.json"
+            wrong_source.write_text(
+                json.dumps({"packet_version": 1, "source": "made_up"}), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(SkillIngestError, "source must be"):
+                skill_ingest.load_code_evidence(wrong_source)
+
+            no_version = Path(tmp) / "nover.json"
+            no_version.write_text(
+                json.dumps({"source": "codegraph_cbm"}), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(SkillIngestError, "packet_version"):
+                skill_ingest.load_code_evidence(no_version)
 
 
 class CliTests(unittest.TestCase):

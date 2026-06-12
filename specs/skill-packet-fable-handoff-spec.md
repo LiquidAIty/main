@@ -55,7 +55,11 @@ The Fable prompt must contain, in order:
 2. `## Source Spec` — the spec path, or `none declared`.
 3. `## Skill Memory Packet` — the generating command line and the packet JSON verbatim in a fenced
    block. If the packet matched no skills, the section instead carries the new-skill rule line.
-4. `## Required Behavior` — fixed obligations:
+4. `## Code Evidence Packet` — the scout-composed fresh code evidence JSON
+   (`specs/codegraph-context-reader-spec.md`), attached via `--code-evidence <packet.json>`; when
+   absent, an explicit placeholder tells the scout to attach one and obligates Fable to gather
+   current code evidence itself via fresh CBM.
+5. `## Required Behavior` — fixed obligations:
    * refresh or prove fresh CBM before code work and record counts;
    * treat every packet guardrail as a hard constraint;
    * do not retry packet failed attempts except along their recorded retry direction;
