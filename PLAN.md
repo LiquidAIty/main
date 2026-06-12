@@ -35,6 +35,61 @@ CodeGraph / CBM evidence. Fable receives the required skills, guardrails, releva
 proof requirements, and query-ready examples. Successful and failed attempts update KnowGraph
 skill memory.
 
+## Current 11-Day Fast Build Route
+
+LiquidAIty is an agent workbench where the system writes better prompts from graph context, sends
+bounded work to coder agents, and learns from every attempt.
+
+AutoSkill turns AI-edited repos into learning repos: every run can produce or update reusable
+skill memory so future agents avoid repeated mistakes.
+
+Core spine:
+
+1. User asks in the UI.
+2. Sol / Magentic-One front-door planner interprets the ask.
+3. SkillGraph retrieves learned memory.
+4. CodeGraph/CBM retrieves fresh code evidence.
+5. ThinkGraph provides current project route/reasoning.
+6. KnowGraph provides broader research/knowledge when relevant.
+7. Prompt writer builds a bounded handoff.
+8. Fable/OpenClaude-style coder executes.
+9. Result/failure/proof writes back into skills.
+10. Graphs re-index.
+11. Next attempt starts smarter.
+
+Runtime route stays fixed: the UI front door is unchanged; Sol / Magentic-One orchestration
+remains the front-door workflow; cloud/API models are the normal backend with local Qwen 7B as
+the fallback when no API/internet/billing is available or the user chooses local; the AutoGen
+Python sidecar remains the real agent runtime rail; ReactFlow/TypeScript remains the control
+plane; the Fable/OpenClaude-style coder is reached only through bounded handoffs
+(`specs/magentic-one-autogen-runtime-spec.md`).
+
+Feature direction: the prompt writer is a product surface, not a side effect. The UI should
+eventually show and let the user edit the generated handoff before execution. The generated
+handoff is not just text; it is graph-backed context
+(`specs/graph-context-prompt-writer-spec.md`).
+
+Architecture rule: do not physically merge CodeGraph, SkillGraph, ThinkGraph, and KnowGraph yet.
+Create clean graph context contracts and packets. Storage can differ underneath. Agents consume
+packets and tools, not raw databases.
+
+Graph roles stay separated: SkillGraph holds learned attempts, failures, guardrails, decisions,
+proof requirements, and query patterns; CodeGraph/CBM holds fresh code evidence; ThinkGraph holds
+project reasoning and the current route (`specs/thinkgraph-planning-memory-spec.md`); KnowGraph
+holds broader knowledge, research, and public skill imports. Skill creation follows
+`specs/autoskill-policy-spec.md`.
+
+Retrieval roadmap note: Neo4j full-text/vector/GraphRAG retrieval remains planned. MVP retrieval
+stays deterministic for now. Semantic SkillSection retrieval should be added after the first full
+learn loop works. This feature stays on the roadmap.
+
+## Later Acceleration
+
+* Future agent: GitHub Skill Scout. Purpose: scrape open-source public skills, repos, prompts,
+  and patterns, import inspiration into KnowGraph, and help write better local skills. Not in the
+  immediate implementation pass; it belongs after local SkillGraph retrieval and the
+  prompt-writer loop prove useful.
+
 ## Build Order
 
 * Establish Code-Based Memory as the first foundational reusable skill.
