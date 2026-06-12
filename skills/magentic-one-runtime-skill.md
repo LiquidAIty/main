@@ -204,6 +204,63 @@ Skill update:
 * Failed Attempt added: no
 * Query Pattern added: no (t001-proof query already present)
 
+## T001 Runtime Smoke Attempt
+
+@attempt id=magentic-one-runtime.t001-runtime-smoke
+@status active
+@source_spec specs/agent-runtime-primitives.md
+@source_prompt "prove the T001 ToolSpec/ToolRegistry path through the real backend payload shape, contracts, compiler, registry, and real FunctionTool execution"
+@requires_fresh_cbm true
+
+@attempt_result id=magentic-one-runtime.t001-runtime-smoke
+@status succeeded
+@cbm_after nodes=5289 edges=9506
+@proved_by 70 pytest passed including 3 new cross-layer smoke tests; pytest -k smoke 3 passed
+@proved_by backend payload shape validated through ContextPack, compiled through compile_card_graph, resolved through the typed ToolRegistry, and both tools actually executed: current_datetime returned parseable ISO-8601 UTC and calculator returned 14.0 for 2+3*4
+@proved_by unknown tool in the payload failed loudly with card_tool_unknown at resolution and an unselected registered tool never reached the worker
+@validated_by .venv pytest app/python_models/test_tool_registry.py -k smoke -v
+@touches_code apps/python-models/app/python_models/test_tool_registry.py
+
+### Work Done
+
+Added three smoke tests to `test_tool_registry.py` exercising the real cross-layer path:
+backend `buildPythonAutoGenCardRuntimePayload` shape -> `ContextPack` contract ->
+`compile_card_graph` -> `build_card_tools` (typed registry) -> real FunctionTool execution.
+No runtime code changed: the smoke found no bug in the T001 path.
+
+### Proof
+
+70 pytest passed (67 prior + 3 smoke); `-k smoke` selects exactly the 3 new tests, all passed.
+Backend files unchanged, so vitest/tsc were not required this pass (both passed yesterday on the
+same surface). The only layer not exercised is the paid model-client exchange itself; tool travel
+and execution are real, and outputs come from actually running the tools — no fake finalOutput
+path exists.
+
+### Actual Graph And Code Delta
+
+One test file extended by three tests; no production code changed. CBM reads 5289/9506 unchanged
+(indexer reflects committed HEAD state, established previously).
+
+Reasoning receipt:
+
+* chosen approach: deterministic cross-layer smoke binding the vitest-proven backend payload
+  shape to the Python contract/compiler/registry/execution chain, stopping exactly at the
+  model-client boundary.
+* rejected alternatives: full live LLM mission smoke (requires provider billing and a running
+  backend; nondeterministic; not the smallest honest proof of the T001 surface); mocking the
+  model client inside run_magentic_mission (banned: mocked sidecar success).
+* failed/blocked paths: none.
+* guardrails created: none new; existing guardrails held.
+* retry direction: none needed; the remaining unproven layer is the real persisted-deck mission
+  smoke with live model calls, which needs explicit user authorization for billing.
+
+Skill update:
+
+* Current Procedure updated: no
+* Successful Example added: yes
+* Failed Attempt added: no
+* Query Pattern added: no
+
 ## Successful Examples
 
 Audit-001 (2026-06-12): the first real learn-loop consumption of this skill — packet retrieval

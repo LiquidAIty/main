@@ -279,6 +279,19 @@ in one prompt does not exist). `test_contracts.py`/`test_graph_compiler.py` requ
 T001 complete and proven. Next: one real chat/runtime smoke using selected card tools through the
 Sol/Magentic-One path (T005-style persisted-deck smoke), then T002 when its task run is activated.
 
+#### T001 Runtime Smoke (2026-06-12)
+
+Three cross-layer smoke tests added to `test_tool_registry.py` prove the selected-tools path
+without touching runtime code: the exact backend `buildPythonAutoGenCardRuntimePayload` shape
+(proven separately by `runtime.spec.ts` "known enabled tools pass through unchanged") validates
+through `ContextPack`, compiles through `compile_card_graph` with the worker node keeping its
+Tools-tab selection, resolves through the typed ToolRegistry, and the resolved FunctionTools
+actually execute (`current_datetime` returns parseable ISO-8601 UTC; `calculator` "2+3*4" ->
+"14.0"). An unknown tool in the payload fails loudly at resolution (`card_tool_unknown`); an
+unselected registered tool never reaches the worker. The only layer not exercised is the paid
+model-client exchange; no fake finalOutput exists on this path. Proof: 70 pytest passed
+(`-k smoke`: 3 passed). No bug was found; no runtime code changed.
+
 ## Completed Summaries
 
 None yet.

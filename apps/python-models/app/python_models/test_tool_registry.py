@@ -193,3 +193,144 @@ def test_build_card_tools_unknown_message_preserved():
 
     with pytest.raises(RuntimeError, match="card_tool_unknown"):
         build_card_tools(["nonexistent_tool"])
+
+
+# ---------------------------------------------------------------------------
+# T001 runtime smoke: the real cross-layer path.
+#
+# backend payload shape (proven by apps/backend/src/cards/runtime.spec.ts
+# "known enabled tools pass through unchanged") -> ContextPack contract ->
+# graph compiler -> typed ToolRegistry -> real FunctionTool execution.
+#
+# The only layer not exercised is the paid model-client exchange itself; tool
+# travel and execution are real end to end. No fake finalOutput exists on this
+# path: outputs come from actually running the tools.
+# ---------------------------------------------------------------------------
+
+_SMOKE_PROVIDER = "openai"
+_SMOKE_MODEL_ID = "gpt-5.1-chat-latest"
+
+
+def _smoke_payload(selected_tools: list[str]) -> dict:
+    """Exactly the buildPythonAutoGenCardRuntimePayload shape the backend emits."""
+    return {
+        "session": {
+            "sessionId": "smoke-s1",
+            "projectId": "smoke-p1",
+            "turnId": "smoke-t1",
+            "route": "deck_runtime",
+            "orchestrator": "magentic_one",
+            "modelProvider": _SMOKE_PROVIDER,
+            "modelKey": _SMOKE_MODEL_ID,
+            "providerModelId": _SMOKE_MODEL_ID,
+            "startedAt": "2026-06-12T00:00:00Z",
+        },
+        "userText": "What time is it, and what is 2+3*4?",
+        "cardRuntime": {
+            "cardId": "mag1",
+            "title": "Orchestrator",
+            "runtimeType": "magentic_one",
+            "graph": {
+                "nodes": [
+                    {
+                        "cardId": "mag1",
+                        "title": "Orchestrator",
+                        "runtimeType": "magentic_one",
+                        "prompt": "Coordinate.",
+                        "provider": _SMOKE_PROVIDER,
+                        "providerModelId": _SMOKE_MODEL_ID,
+                    },
+                    {
+                        "cardId": "agentA",
+                        "title": "Agent A",
+                        "runtimeType": "assistant_agent",
+                        "prompt": "Use your tools.",
+                        "tools": selected_tools,
+                        "provider": _SMOKE_PROVIDER,
+                        "providerModelId": _SMOKE_MODEL_ID,
+                    },
+                ],
+                "edges": [
+                    {
+                        "id": "mo-agentA",
+                        "source": "mag1",
+                        "target": "agentA",
+                        "edgeType": "magentic_option",
+                    }
+                ],
+            },
+            "participants": [
+                {
+                    "cardId": "agentA",
+                    "title": "Agent A",
+                    "runtimeType": "assistant_agent",
+                    "tools": selected_tools,
+                    "provider": _SMOKE_PROVIDER,
+                    "providerModelId": _SMOKE_MODEL_ID,
+                }
+            ],
+        },
+    }
+
+
+def test_smoke_selected_tools_travel_payload_to_real_execution():
+    from app.python_models.graph_compiler import compile_card_graph
+    from app.python_models.magentic_runtime import build_card_tools
+    from app.python_models.orchestration_contracts import ContextPack
+
+    pack = ContextPack.model_validate(_smoke_payload(["current_datetime", "calculator"]))
+    card = pack.cardRuntime
+    assert card is not None
+
+    # The graph compiler accepts the payload and the worker node keeps its
+    # Tools-tab selection.
+    compiled = compile_card_graph(card)
+    assert "agentA" in compiled.participant_ids
+    node = next(n for n in card.graph.nodes if n.cardId == "agentA")
+    assert node.tools == ["current_datetime", "calculator"]
+
+    # The same selection resolves through the typed ToolRegistry into real
+    # FunctionTools, which then actually execute.
+    tools = build_card_tools(list(node.tools))
+    assert [tool.name for tool in tools] == ["current_datetime", "calculator"]
+
+    by_name = {tool.name: tool for tool in tools}
+    token = CancellationToken()
+
+    datetime_value = asyncio.run(by_name["current_datetime"].run_json({}, token))
+    parsed = datetime.fromisoformat(
+        by_name["current_datetime"].return_value_as_string(datetime_value)
+    )
+    assert parsed.tzinfo is not None
+
+    calc_value = asyncio.run(by_name["calculator"].run_json({"expression": "2+3*4"}, token))
+    assert by_name["calculator"].return_value_as_string(calc_value) == "14.0"
+
+
+def test_smoke_unknown_tool_in_payload_fails_loudly_at_resolution():
+    from app.python_models.graph_compiler import compile_card_graph
+    from app.python_models.magentic_runtime import build_card_tools
+    from app.python_models.orchestration_contracts import ContextPack
+
+    pack = ContextPack.model_validate(_smoke_payload(["made_up_tool"]))
+    card = pack.cardRuntime
+    assert card is not None
+    compile_card_graph(card)
+    node = next(n for n in card.graph.nodes if n.cardId == "agentA")
+
+    with pytest.raises(RuntimeError, match="card_tool_unknown: made_up_tool"):
+        build_card_tools(list(node.tools))
+
+
+def test_smoke_unselected_tool_never_reaches_the_worker():
+    from app.python_models.magentic_runtime import build_card_tools
+    from app.python_models.orchestration_contracts import ContextPack
+
+    pack = ContextPack.model_validate(_smoke_payload(["calculator"]))
+    card = pack.cardRuntime
+    assert card is not None
+    node = next(n for n in card.graph.nodes if n.cardId == "agentA")
+
+    tools = build_card_tools(list(node.tools))
+    assert [tool.name for tool in tools] == ["calculator"]
+    assert "current_datetime" not in {tool.name for tool in tools}
