@@ -91,19 +91,24 @@ smallest required runtime primitives before future graph skills and richer orche
 
 ### T001 - ToolSpec / ToolRegistry
 
-Status: ready-for-fable
+Status: completed (2026-06-12, Fable)
 
 User request: Implement only ToolSpec and ToolRegistry as the first Agent Runtime Primitives task.
 
 #### CBM Before
 
-* method:
-* index status:
-* nodes:
-* edges:
-* relevant graph nodes:
-* relevant graph edges:
-* relevant files/symbols:
+* method: full repository index
+* index status: indexed/ready
+* nodes: 5289
+* edges: 9506
+* relevant graph nodes: magentic_runtime.tool_current_datetime, magentic_runtime.tool_calculator,
+  magentic_runtime.build_card_tools, run_magentic_mission, CardWorkerAgent, FanOutWorkerAgent,
+  SocietyOfMindWorkerAgent
+* relevant graph edges: build_card_tools callers at magentic_runtime.py lines 640/662/686
+* relevant files/symbols: magentic_runtime.py inline _TOOL_REGISTRY (124-127) and build_card_tools
+  (130-143); orchestration_contracts.py RequiredRuntimeString and
+  provider_model_default_forbidden; cards/runtime.ts resolveCardTools (126-131);
+  RuntimeGraphNode.tools in runtimeContracts.ts
 
 #### Intended Delta
 
@@ -188,25 +193,91 @@ status/diff/diff-stat. Do not fake success.
 
 #### Work Done
 
+* Added `ToolSpec` pydantic contract to `orchestration_contracts.py`: required non-empty name and
+  description, `enabled` flag, required `inputSchema`/`outputSchema` dicts validated for
+  completeness (`tool_schema_missing`, `tool_schema_incomplete: missing type`).
+* Created `tool_registry.py`: `ToolRegistry` with `register` (rejects non-ToolSpec, duplicate,
+  non-callable adapter), `resolve_one`/`resolve_selected` (loud `card_tool_name_empty`,
+  `card_tool_unknown`, `card_tool_disabled`, `card_tool_schema_missing`; selected-only
+  resolution; whole-selection abort on any invalid entry — no fallback or substitution), and
+  `build_default_tool_registry()` binding the real `tool_current_datetime` and `tool_calculator`
+  callables (moved verbatim from `magentic_runtime.py`) to schema-complete enabled specs.
+* `magentic_runtime.py` minimal integration: inline `_TOOL_REGISTRY`/`build_card_tools` replaced
+  by a thin `build_card_tools` resolving through `DEFAULT_TOOL_REGISTRY`; same function name,
+  signature, call sites, and error message prefixes; orphaned `ast`/`operator`/`datetime`/
+  `Callable` imports removed; `run_magentic_mission` untouched.
+* Added `ToolSpec` type and `RUNTIME_TOOL_SPECS` to `runtimeContracts.ts`; `resolveCardTools` in
+  `cards/runtime.ts` now validates card-Tools-tab selections against known enabled specs with
+  loud `card_tool_name_empty`/`card_tool_unknown`/`card_tool_disabled`.
+* Added `test_tool_registry.py` (20 tests) and three T001 tests to `runtime.spec.ts`.
+  `test_contracts.py` and `test_graph_compiler.py` needed no changes and still pass, including
+  `test_unknown_card_tool_fails_loudly` against the new path.
+
 #### Changed-File Manifest
+
+* `apps/python-models/app/python_models/orchestration_contracts.py` (ToolSpec added)
+* `apps/python-models/app/python_models/tool_registry.py` (new)
+* `apps/python-models/app/python_models/test_tool_registry.py` (new)
+* `apps/python-models/app/python_models/magentic_runtime.py` (registry integration only)
+* `apps/backend/src/contracts/runtimeContracts.ts` (ToolSpec + RUNTIME_TOOL_SPECS)
+* `apps/backend/src/cards/runtime.ts` (resolveCardTools validation)
+* `apps/backend/src/cards/runtime.spec.ts` (3 T001 tests)
+* `specs/agent-runtime-primitives.md` (this write-back)
+* `skills/magentic-one-runtime-skill.md` (attempt closeout)
 
 #### Proof
 
+* pytest (`test_tool_registry.py` + `test_contracts.py` + `test_graph_compiler.py`):
+  **67 passed**. Covers: selected enabled spec resolves to its declared adapter; unknown,
+  disabled, empty-name, missing-inputSchema, missing-outputSchema, empty-schema, and
+  schema-incomplete all fail loudly; registered-but-unselected cannot resolve; invalid selection
+  aborts without substitution; duplicate registration fails; real FunctionTool behavior proven by
+  executing `run_json` (`calculator` "2+3*4" -> "14.0"; `current_datetime` ISO-8601 parseable);
+  AgentChat ban (`test_runtime_modules_do_not_import_agentchat`) and v0.4.4 source test still
+  pass; `providerModelId="default"` rejection still passes.
+* vitest `runtime.spec.ts`: **19 tests passed** (both project configs, 38 total), including the
+  new card_tool_unknown / card_tool_name_empty / pass-through tests.
+* `npx tsc -p apps/backend/tsconfig.app.json --noEmit`: exit 0.
+* No fake finalOutput or mocked sidecar success introduced; no provider fallback added.
+
 #### CBM After
 
-* method:
-* index status:
-* nodes:
-* edges:
-* actual graph/code delta:
+* method: full repository index
+* index status: indexed/ready
+* nodes: 5289
+* edges: 9506
+* actual graph/code delta: counts unchanged because the CBM indexer reads the committed HEAD
+  state, not the working tree (verified: the index still lists tool_current_datetime/
+  tool_calculator inside magentic_runtime.py after they moved to tool_registry.py). Real delta by
+  direct read and tests: two new sidecar modules, ToolSpec contracts in both languages, registry
+  integration, 23 new tests.
 
 #### Summary of Task Done
 
+T001 implemented exactly: typed ToolSpec (TS + Python) and a loud-failing Python ToolRegistry
+resolving only selected, enabled, schema-complete card tools, wrapping the existing real
+current_datetime/calculator FunctionTool behavior. No T002+ primitive touched.
+
 #### Expected Versus Actual
+
+Expected files matched, with one correction: the runtime contracts file is
+`apps/backend/src/contracts/runtimeContracts.ts` (an `agents/runtimeContracts.ts` path referenced
+in one prompt does not exist). `test_contracts.py`/`test_graph_compiler.py` required no edits.
 
 #### Risks
 
+* CBM indexes committed state; until this work is committed, graph queries return the pre-T001
+  runtime shape. Direct-read before trusting CBM for these files.
+* Backend now rejects unknown card tools at payload build time (previously deferred to the
+  sidecar); any stored deck with a stale tool name will fail loudly at the backend instead —
+  same failure class, earlier surface.
+* `DEFAULT_TOOL_REGISTRY` is module-level; future dynamic per-card registries (T002+) should
+  construct their own `ToolRegistry` rather than mutating the default.
+
 #### Next State
+
+T001 complete and proven. Next: one real chat/runtime smoke using selected card tools through the
+Sol/Magentic-One path (T005-style persisted-deck smoke), then T002 when its task run is activated.
 
 ## Completed Summaries
 

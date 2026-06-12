@@ -134,11 +134,85 @@ do-not-touch list, and proof commands are recorded in
 `tool_calculator` must keep executing through real FunctionTool behavior. No runtime code was
 changed by the audit.
 
+## T001 Implementation Attempt
+
+@attempt id=magentic-one-runtime.t001-toolspec-toolregistry
+@status active
+@source_spec specs/agent-runtime-primitives.md
+@source_prompt "implement T001 only: typed ToolSpec contracts and a Python ToolRegistry resolving selected enabled schema-complete card tools while preserving real FunctionTool behavior"
+@requires_fresh_cbm true
+
+@attempt_result id=magentic-one-runtime.t001-toolspec-toolregistry
+@status succeeded
+@cbm_after nodes=5289 edges=9506
+@proved_by pytest 67 passed including 20 new tool registry tests with real FunctionTool run_json execution
+@proved_by vitest runtime.spec.ts 19 tests passed including new card_tool_unknown and card_tool_name_empty tests, tsc noEmit exit 0
+@proved_by AgentChat ban, v0.4.4 source check, providerModelId default rejection, and unknown-tool loud failure all still pass on the new path
+@validated_by .venv pytest test_tool_registry.py test_contracts.py test_graph_compiler.py -v; npx vitest run apps/backend/src/cards/runtime.spec.ts; npx tsc -p apps/backend/tsconfig.app.json --noEmit
+@touches_code apps/python-models/app/python_models/tool_registry.py
+@touches_code apps/python-models/app/python_models/orchestration_contracts.py
+@touches_code apps/python-models/app/python_models/magentic_runtime.py
+@touches_code apps/backend/src/contracts/runtimeContracts.ts
+@touches_code apps/backend/src/cards/runtime.ts
+
+### Work Done
+
+Typed ToolSpec contract in both languages (pydantic in `orchestration_contracts.py`, type plus
+`RUNTIME_TOOL_SPECS` in `runtimeContracts.ts`); new `tool_registry.py` with loud-failing
+selected-only resolution and the real `tool_current_datetime`/`tool_calculator` callables moved
+verbatim; `build_card_tools` in `magentic_runtime.py` now a thin resolve through
+`DEFAULT_TOOL_REGISTRY` with identical name, signature, call sites, and error prefixes;
+`resolveCardTools` in `cards/runtime.ts` validates Tools-tab selections against known enabled
+specs; 23 new tests. `run_magentic_mission` untouched; no T002+ primitive touched.
+
+### Proof
+
+67 pytest passed; 19 vitest passed; tsc clean. Loud-failure matrix proven: unknown, empty name,
+disabled, registered-but-unselected, missing inputSchema, missing outputSchema, empty schema,
+schema-incomplete, duplicate registration, non-callable adapter, mutated-spec resolve. Real
+FunctionTool behavior proven by executing calculator ("2+3*4" -> "14.0") and current_datetime
+(ISO-8601 parseable) through `run_json`.
+
+### Actual Graph And Code Delta
+
+Two new sidecar modules, ToolSpec contracts in both languages, registry-backed tool resolution at
+backend and sidecar, 23 new tests. CBM after reads 5289/9506 unchanged because the indexer reads
+committed HEAD state, not the working tree (verified: pre-T001 symbols still listed); direct
+reads and test output are the delta evidence.
+
+Reasoning receipt:
+
+* chosen approach: move the real callables into the new registry module and re-export through
+  magentic_runtime, keeping `build_card_tools` name/signature/messages stable so callers and
+  existing tests need zero changes; validate specs at construction (pydantic) plus defensively at
+  resolve.
+* rejected alternatives: importing callables from magentic_runtime into tool_registry (circular
+  import); auto-selecting or substituting tools on failure (forbidden); editing
+  `test_graph_compiler.py` (unnecessary — message compatibility preserved).
+* failed/blocked paths: the prompt's `apps/backend/src/agents/runtimeContracts.ts` path does not
+  exist; the real file is `apps/backend/src/contracts/runtimeContracts.ts` (reported, not
+  widened).
+* guardrails created: backend now fails loudly on unknown/disabled/empty card tools at payload
+  build; mutated specs cannot resolve; DEFAULT_TOOL_REGISTRY must not be mutated by future
+  per-card registries.
+* retry direction: none needed.
+
+Skill update:
+
+* Current Procedure updated: no (seed procedure still accurate)
+* Successful Example added: yes
+* Failed Attempt added: no
+* Query Pattern added: no (t001-proof query already present)
+
 ## Successful Examples
 
 Audit-001 (2026-06-12): the first real learn-loop consumption of this skill — packet retrieval
 surfaced it first, its guardrails bounded the audit, and direct-read evidence confirmed the
 pending primitive without speculative implementation.
+
+T001 (2026-06-12): first real runtime implementation through the loop — typed ToolSpec +
+ToolRegistry landed exactly per spec with 67 pytest / 19 vitest / tsc clean, real FunctionTool
+behavior preserved for current_datetime and calculator, and the full loud-failure matrix proven.
 
 ## Failed Attempts And Guardrails
 

@@ -309,6 +309,44 @@ describe('Canonical Cards Runtime', () => {
     ).toThrow('card_model_config_missing');
   });
 
+  // T001 — ToolSpec: only known enabled card tools pass into the payload.
+
+  it('unknown card tool fails loudly with card_tool_unknown', () => {
+    const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
+    const cardA = {
+      id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent',
+      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['made_up_tool'] },
+    };
+
+    expect(() =>
+      buildPythonAutoGenCardRuntimePayload(cardM, {}, 'test', {}, {}, [cardA], '2026'),
+    ).toThrow('card_tool_unknown: made_up_tool');
+  });
+
+  it('empty card tool name fails loudly with card_tool_name_empty', () => {
+    const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
+    const cardA = {
+      id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent',
+      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['  '] },
+    };
+
+    expect(() =>
+      buildPythonAutoGenCardRuntimePayload(cardM, {}, 'test', {}, {}, [cardA], '2026'),
+    ).toThrow('card_tool_name_empty');
+  });
+
+  it('known enabled tools pass through unchanged', () => {
+    const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
+    const cardA = {
+      id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent',
+      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['current_datetime', 'calculator'] },
+    };
+
+    const payload = buildPythonAutoGenCardRuntimePayload(cardM, {}, 'test', {}, {}, [cardA], '2026');
+    const participant = payload.cardRuntime.participants.find((p) => p.cardId === 'agentA');
+    expect(participant?.tools).toEqual(['current_datetime', 'calculator']);
+  });
+
   it('providerModelId is never default or empty string in any participant payload', () => {
     const selectedModelKey = 'gpt-5-nano';  // fixture — not a default
 

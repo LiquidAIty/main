@@ -29,16 +29,13 @@ Product concept -> v0.4.4 primitive map:
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import json
 import logging
-import operator
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Optional, Tuple
+from typing import Any, Awaitable, Optional, Tuple
 
 from autogen_core import (
     EVENT_LOGGER_NAME,
@@ -77,70 +74,24 @@ from app.python_models.graph_compiler import (
     compile_card_graph,
 )
 from app.python_models.orchestration_contracts import ContextPack, GraphNodeInput
+from app.python_models.tool_registry import (
+    DEFAULT_TOOL_REGISTRY,
+    tool_calculator,
+    tool_current_datetime,
+)
 
 
 # ---------------------------------------------------------------------------
-# Card tools: real FunctionTool implementations. Unknown tool names fail loudly.
+# Card tools: typed ToolRegistry resolution (T001). The card Tools tab is the
+# only allowed source; unknown/disabled/unselected/schema-missing fail loudly.
+# The real callables live in tool_registry.py and keep executing through real
+# FunctionTool behavior.
 # ---------------------------------------------------------------------------
-
-_SAFE_BIN_OPS: dict[type[ast.AST], Callable[[Any, Any], Any]] = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.FloorDiv: operator.floordiv,
-    ast.Mod: operator.mod,
-    ast.Pow: operator.pow,
-}
-_SAFE_UNARY_OPS: dict[type[ast.AST], Callable[[Any], Any]] = {
-    ast.UAdd: operator.pos,
-    ast.USub: operator.neg,
-}
-
-
-def _eval_arithmetic(node: ast.AST) -> float:
-    if isinstance(node, ast.Expression):
-        return _eval_arithmetic(node.body)
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-        return float(node.value)
-    if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_BIN_OPS:
-        return _SAFE_BIN_OPS[type(node.op)](_eval_arithmetic(node.left), _eval_arithmetic(node.right))
-    if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_UNARY_OPS:
-        return _SAFE_UNARY_OPS[type(node.op)](_eval_arithmetic(node.operand))
-    raise ValueError(f"calculator_unsupported_expression: {ast.dump(node)}")
-
-
-def tool_current_datetime() -> str:
-    """Return the current UTC date and time in ISO-8601 format."""
-    return datetime.now(timezone.utc).isoformat()
-
-
-def tool_calculator(expression: str) -> str:
-    """Evaluate a basic arithmetic expression (+ - * / // % ** and parentheses)."""
-    parsed = ast.parse(expression, mode="eval")
-    return str(_eval_arithmetic(parsed))
-
-
-_TOOL_REGISTRY: dict[str, tuple[Callable[..., Any], str]] = {
-    "current_datetime": (tool_current_datetime, "Return the current UTC date and time in ISO-8601 format."),
-    "calculator": (tool_calculator, "Evaluate a basic arithmetic expression and return the numeric result."),
-}
 
 
 def build_card_tools(tool_names: list[str]) -> list[FunctionTool]:
-    tools: list[FunctionTool] = []
-    for raw_name in tool_names or []:
-        name = str(raw_name or "").strip()
-        if not name:
-            raise RuntimeError("card_tool_name_empty")
-        entry = _TOOL_REGISTRY.get(name)
-        if entry is None:
-            raise RuntimeError(
-                f"card_tool_unknown: {name} (known: {','.join(sorted(_TOOL_REGISTRY))})"
-            )
-        func, description = entry
-        tools.append(FunctionTool(func, description=description, name=name))
-    return tools
+    """Resolve the card Tools tab selection through the typed ToolRegistry."""
+    return DEFAULT_TOOL_REGISTRY.resolve_selected(tool_names)
 
 
 # ---------------------------------------------------------------------------

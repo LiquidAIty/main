@@ -1,5 +1,37 @@
 export type DeckRunStatus = 'idle' | 'running' | 'success' | 'error' | 'skipped';
 
+// T001: canonical typed description of a tool the runtime may expose. The
+// agent card Tools tab is the only source of selected tool access; unknown,
+// disabled, unselected, empty, or schema-missing tools fail loudly.
+export type ToolSpec = {
+  name: string;
+  description: string;
+  enabled: boolean;
+  inputSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
+};
+
+export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
+  {
+    name: 'current_datetime',
+    description: 'Return the current UTC date and time in ISO-8601 format.',
+    enabled: true,
+    inputSchema: { type: 'object', properties: {}, required: [] },
+    outputSchema: { type: 'string', description: 'ISO-8601 UTC datetime' },
+  },
+  {
+    name: 'calculator',
+    description: 'Evaluate a basic arithmetic expression and return the numeric result.',
+    enabled: true,
+    inputSchema: {
+      type: 'object',
+      properties: { expression: { type: 'string' } },
+      required: ['expression'],
+    },
+    outputSchema: { type: 'string', description: 'numeric result as a string' },
+  },
+];
+
 export type CardRunResult = {
   output: string | null;
   status: DeckRunStatus;

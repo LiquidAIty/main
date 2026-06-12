@@ -1,6 +1,7 @@
 import {
   CardRunResult,
   PythonAutoGenPayloadShape,
+  RUNTIME_TOOL_SPECS,
   RuntimeGraph,
   RuntimeGraphEdge,
   RuntimeGraphNode,
@@ -125,9 +126,25 @@ function resolveCardModelStrict(card: any): {
 
 function resolveCardTools(card: any): string[] {
   const fromOptions = card.runtimeOptions?.tools;
-  if (Array.isArray(fromOptions)) return fromOptions.map((tool: any) => String(tool));
-  if (Array.isArray(card.tools)) return card.tools.map((tool: any) => String(tool));
-  return [];
+  const raw = Array.isArray(fromOptions) ? fromOptions : Array.isArray(card.tools) ? card.tools : [];
+  // T001: the card Tools tab is the only allowed source, and only known
+  // enabled ToolSpecs pass through. No fallback or substitution.
+  return raw.map((tool: any) => {
+    const name = String(tool ?? '').trim();
+    if (!name) {
+      throw new Error(`card_tool_name_empty: cardId=${card.id}`);
+    }
+    const spec = RUNTIME_TOOL_SPECS.find((candidate) => candidate.name === name);
+    if (!spec) {
+      throw new Error(
+        `card_tool_unknown: ${name} (cardId=${card.id}, known: ${RUNTIME_TOOL_SPECS.map((s) => s.name).join(',')})`,
+      );
+    }
+    if (!spec.enabled) {
+      throw new Error(`card_tool_disabled: ${name} (cardId=${card.id})`);
+    }
+    return name;
+  });
 }
 
 function resolveCardFanOut(card: any): Record<string, any> | null {
