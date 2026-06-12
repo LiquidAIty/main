@@ -1,0 +1,355 @@
+"""Unit tests for the read-only KnowGraph skill retrieval MVP.
+
+No live Neo4j is required: a fake driver emulates the fixed retrieval Cypher
+over an in-memory fixture graph and records every executed query so the
+read-only guarantee can be proven.
+"""
+
+from __future__ import annotations
+
+import json
+import unittest
+from types import SimpleNamespace
+from unittest import mock
+
+import skill_ingest
+from skill_ingest import (
+    SkillIngestError,
+    _run_read,
+    build_skill_packet,
+    get_skill,
+    match_skills,
+    tokenize_prompt,
+)
+
+CBM_SKILL = {
+    "id": "codebasedmemory",
+    "status": "active",
+    "type": "Skill",
+    "source_path": "skills/codebasedmemory.md",
+    "import_kind": "skill_markdown",
+    "requires": ["fresh_cbm_index"],
+}
+
+INGEST_SKILL = {
+    "id": "knowgraph-skill-ingestion",
+    "status": "learning",
+    "type": "Skill",
+    "source_path": "skills/knowgraph-skill-ingestion-skill.md",
+    "import_kind": "skill_markdown",
+    "requires": ["fresh_cbm_index", "neo4j_knowgraph"],
+}
+
+ONE_HOP = {
+    "codebasedmemory": [
+        ("APPLIES_TO", "Spec", {"id": "specs/codebasedmemory-skill.md", "path": "specs/codebasedmemory-skill.md"}),
+        ("HAS_QUERY", "QueryPattern", {"id": "skill_match_for_task", "text": "search skills using user prompt and specs"}),
+        ("HAS_SECTION", "SkillSection", {
+            "id": "codebasedmemory.section.vector-summary", "heading": "Vector Summary",
+            "order": 0, "text": "Use fresh Code-Based Memory to navigate the repo graph before work.",
+        }),
+        ("HAS_SECTION", "SkillSection", {
+            "id": "codebasedmemory.section.core-rule", "heading": "Core Rule",
+            "order": 2, "text": "Fresh CBM index every time. No stale cache logic.",
+        }),
+    ],
+    "knowgraph-skill-ingestion": [
+        ("APPLIES_TO", "Spec", {"id": "specs/knowgraph-skill-ingestion-spec.md", "path": "specs/knowgraph-skill-ingestion-spec.md"}),
+        ("HAS_GUARDRAIL", "Guardrail", {"id": "knowgraph-skill-ingestion.no-llm-extraction", "text": ""}),
+        ("HAS_GUARDRAIL", "Guardrail", {"id": "knowgraph-skill-ingestion.no-fake-neo4j-success", "text": ""}),
+        ("HAS_DECISION", "Decision", {
+            "id": "knowgraph-skill-ingestion.use-deterministic-host-python-importer",
+            "because": "graphable Markdown already declares exact entities",
+            "use_instead": "services/knowgraph/skill_ingest.py with direct Neo4j upserts",
+            "rejected": ["existing GraphRAG extraction path"],
+        }),
+        ("HAS_QUERY", "QueryPattern", {"id": "knowgraph-skill-ingestion.list-skills", "text": "MATCH (s:Skill) RETURN s ORDER BY s.id"}),
+        ("HAS_ATTEMPT", "SkillAttempt", {
+            "id": "knowgraph-skill-ingestion.prepare-001", "status": "active",
+            "result_status": "succeeded", "cbm_after_nodes": 5289, "cbm_after_edges": 9506,
+        }),
+        ("HAS_SECTION", "SkillSection", {
+            "id": "knowgraph-skill-ingestion.section.guardrails", "heading": "Guardrails",
+            "order": 1, "text": "Neo4j ingestion guardrails: never send skill Markdown through LLM extraction.",
+        }),
+        ("RELATED_TO", "Skill", {"id": "codebasedmemory"}),
+    ],
+}
+
+ATTEMPT_EVIDENCE = {
+    "knowgraph-skill-ingestion": [
+        ("knowgraph-skill-ingestion.prepare-001", "PROVED", "ProofClaim",
+         {"id": "p1", "text": "24 unit tests passed"}),
+        ("knowgraph-skill-ingestion.prepare-001", "VALIDATED_BY", "Validation",
+         {"id": "v1", "text": "python -m unittest discover"}),
+        ("knowgraph-skill-ingestion.prepare-001", "TOUCHED_CODE", "CodeGraphReference",
+         {"id": "services/knowgraph/skill_ingest.py", "ref": "services/knowgraph/skill_ingest.py"}),
+        ("knowgraph-skill-ingestion.prepare-001", "USED_SPEC", "Spec",
+         {"id": "specs/knowgraph-skill-ingestion-spec.md"}),
+    ],
+    "codebasedmemory": [],
+}
+
+SKILLS = {"codebasedmemory": CBM_SKILL, "knowgraph-skill-ingestion": INGEST_SKILL}
+RELATED_PAIRS = [("knowgraph-skill-ingestion", "codebasedmemory")]
+
+
+def _result(rows):
+    return SimpleNamespace(records=rows, summary=None)
+
+
+class FakeReadDriver:
+    """Emulates the fixed retrieval Cypher over the fixture graph."""
+
+    def __init__(self) -> None:
+        self.executed: list[str] = []
+
+    def close(self) -> None:
+        pass
+
+    def execute_query(self, cypher, parameters_=None, database_=None):
+        params = parameters_ or {}
+        self.executed.append(cypher)
+        if "'skill_id_exact'" in cypher:
+            sid = params["skill_id"]
+            if sid in SKILLS:
+                return _result([{"skill_id": sid, "kind": "skill_id_exact", "evidence": sid}])
+            return _result([])
+        if "'spec_exact'" in cypher:
+            rows = []
+            for sid in sorted(SKILLS):
+                spec_ids = {p["id"] for rel, _l, p in ONE_HOP[sid] if rel == "APPLIES_TO"}
+                spec_ids |= {p["id"] for _o, rel, _l, p in ATTEMPT_EVIDENCE[sid] if rel == "USED_SPEC"}
+                if params["spec"] in spec_ids:
+                    rows.append({"skill_id": sid, "kind": "spec_exact", "evidence": params["spec"]})
+            return _result(rows)
+        if "UNION ALL" in cypher:
+            return _result(self._prompt_rows(params["tokens"]))
+        if "'related_skill'" in cypher:
+            rows = []
+            for left, right in RELATED_PAIRS:
+                for matched, other in ((left, right), (right, left)):
+                    if matched in params["skill_ids"] and other not in params["skill_ids"]:
+                        rows.append({"skill_id": other, "kind": "related_skill", "evidence": matched})
+            return _result(rows)
+        if "properties(s) AS props" in cypher:
+            sid = params["skill_id"]
+            return _result([{"props": SKILLS[sid]}] if sid in SKILLS else [])
+        if "owner_id" in cypher:
+            rows = [
+                {"owner_id": owner, "rel": rel, "label": label, "id": p.get("id"), "props": p}
+                for owner, rel, label, p in ATTEMPT_EVIDENCE.get(params["skill_id"], [])
+            ]
+            return _result(rows)
+        if "-[r]->" in cypher:
+            rows = [
+                {"rel": rel, "label": label, "id": p.get("id"), "props": p}
+                for rel, label, p in sorted(
+                    ONE_HOP.get(params["skill_id"], []),
+                    key=lambda item: (item[0], item[1], item[2].get("id") or ""),
+                )
+            ]
+            return _result(rows)
+        raise AssertionError(f"unrouted retrieval cypher: {cypher[:80]}")
+
+    @staticmethod
+    def _match(tokens, *fields) -> bool:
+        blob = " ".join(field or "" for field in fields).lower()
+        return any(token in blob for token in tokens)
+
+    def _prompt_rows(self, tokens):
+        rows = []
+        for sid in sorted(SKILLS):
+            props = SKILLS[sid]
+            if self._match(tokens, props["id"], props["source_path"]):
+                rows.append({"skill_id": sid, "kind": "skill_field", "evidence": sid})
+            for rel, _label, p in ONE_HOP[sid]:
+                if rel == "HAS_GUARDRAIL" and self._match(tokens, p["id"], p.get("text")):
+                    rows.append({"skill_id": sid, "kind": "guardrail_text", "evidence": p["id"]})
+                elif rel == "HAS_DECISION" and self._match(
+                    tokens, p["id"], p.get("because"), p.get("use_instead")
+                ):
+                    rows.append({"skill_id": sid, "kind": "decision_text", "evidence": p["id"]})
+                elif rel == "HAS_QUERY" and self._match(tokens, p["id"], p.get("text")):
+                    rows.append({"skill_id": sid, "kind": "query_text", "evidence": p["id"]})
+                elif rel == "HAS_SECTION":
+                    if self._match(tokens, p.get("heading")):
+                        rows.append({"skill_id": sid, "kind": "section_heading", "evidence": p["id"]})
+                    if self._match(tokens, p.get("text")):
+                        rows.append({"skill_id": sid, "kind": "section_text", "evidence": p["id"]})
+        return rows
+
+
+class FailingDriver:
+    def execute_query(self, cypher, parameters_=None, database_=None):
+        raise RuntimeError("Neo.ClientError.Security.Unauthorized")
+
+    def close(self) -> None:
+        pass
+
+
+class TokenizeTests(unittest.TestCase):
+    def test_tokenize_drops_stopwords_and_short_tokens(self):
+        tokens = tokenize_prompt("Use the Neo4j skill ingestion guardrails for a fix")
+        self.assertEqual(tokens, ["fix", "guardrails", "ingestion", "neo4j"])
+
+
+class GetSkillTests(unittest.TestCase):
+    def test_get_skill_by_id(self):
+        view = get_skill(FakeReadDriver(), None, "codebasedmemory")
+        self.assertEqual(view["skill_id"], "codebasedmemory")
+        self.assertEqual(view["status"], "active")
+        self.assertIn("specs/codebasedmemory-skill.md", view["applies_to"])
+        self.assertEqual(view["query_patterns"][0]["id"], "skill_match_for_task")
+        headings = [section["heading"] for section in view["sections"]]
+        self.assertEqual(headings, ["Vector Summary", "Core Rule"])  # sorted by order
+
+    def test_get_skill_includes_attempt_evidence(self):
+        view = get_skill(FakeReadDriver(), None, "knowgraph-skill-ingestion")
+        attempt = view["attempts"][0]
+        self.assertEqual(attempt["result_status"], "succeeded")
+        self.assertIn("24 unit tests passed", attempt["proof_claims"])
+        self.assertIn("python -m unittest discover", attempt["validations"])
+        self.assertIn("services/knowgraph/skill_ingest.py", attempt["touched_code"])
+        self.assertIn("specs/knowgraph-skill-ingestion-spec.md", attempt["used_specs"])
+
+    def test_get_missing_skill_returns_none(self):
+        self.assertIsNone(get_skill(FakeReadDriver(), None, "missing-skill"))
+
+
+class MatchTests(unittest.TestCase):
+    def test_match_by_skill_id(self):
+        matches = match_skills(FakeReadDriver(), None, skill_id="codebasedmemory")
+        self.assertEqual(matches[0]["skill_id"], "codebasedmemory")
+        self.assertEqual(matches[0]["match_reasons"][0]["kind"], "skill_id_exact")
+        self.assertGreaterEqual(matches[0]["score"], 100)
+
+    def test_match_by_spec_path(self):
+        matches = match_skills(
+            FakeReadDriver(), None, spec="specs/knowgraph-skill-ingestion-spec.md"
+        )
+        self.assertEqual(matches[0]["skill_id"], "knowgraph-skill-ingestion")
+        self.assertEqual(matches[0]["match_reasons"][0]["kind"], "spec_exact")
+
+    def test_match_by_prompt_over_sections_and_guardrails(self):
+        matches = match_skills(
+            FakeReadDriver(), None, prompt="Neo4j skill ingestion guardrails", limit=5
+        )
+        self.assertEqual(matches[0]["skill_id"], "knowgraph-skill-ingestion")
+        kinds = {reason["kind"] for reason in matches[0]["match_reasons"]}
+        self.assertIn("guardrail_text", kinds)
+        self.assertIn("section_heading", kinds)
+
+    def test_match_expands_related_skills(self):
+        matches = match_skills(
+            FakeReadDriver(), None, prompt="ingestion guardrails", limit=5
+        )
+        by_id = {match["skill_id"]: match for match in matches}
+        self.assertIn("codebasedmemory", by_id)
+        kinds = {reason["kind"] for reason in by_id["codebasedmemory"]["match_reasons"]}
+        self.assertIn("related_skill", kinds)
+        # related-only match ranks below the direct match
+        self.assertEqual(matches[0]["skill_id"], "knowgraph-skill-ingestion")
+
+    def test_match_requires_a_selector(self):
+        with self.assertRaisesRegex(SkillIngestError, "match requires"):
+            match_skills(FakeReadDriver(), None)
+
+    def test_match_is_deterministic(self):
+        first = match_skills(FakeReadDriver(), None, prompt="neo4j ingestion guardrails")
+        second = match_skills(FakeReadDriver(), None, prompt="neo4j ingestion guardrails")
+        self.assertEqual(first, second)
+
+
+class PacketTests(unittest.TestCase):
+    def test_packet_contains_guardrails_decisions_sections_queries(self):
+        packet = build_skill_packet(
+            FakeReadDriver(), None, prompt="Neo4j skill ingestion guardrails", limit=3
+        )
+        top = packet["skills"][0]
+        self.assertEqual(top["skill_id"], "knowgraph-skill-ingestion")
+        self.assertTrue(top["guardrails"])
+        self.assertTrue(top["decisions"])
+        self.assertTrue(top["query_patterns"])
+        self.assertTrue(top["sections"])
+        self.assertTrue(top["attempts"][0]["proof_claims"])
+        self.assertIn("specs/knowgraph-skill-ingestion-spec.md", top["applies_to"])
+
+    def test_packet_json_is_deterministic(self):
+        kwargs = {"prompt": "Neo4j skill ingestion guardrails", "limit": 3}
+        first = build_skill_packet(FakeReadDriver(), None, **kwargs)
+        second = build_skill_packet(FakeReadDriver(), None, **kwargs)
+        self.assertEqual(
+            json.dumps(first, sort_keys=True), json.dumps(second, sort_keys=True)
+        )
+
+    def test_packet_is_compact_for_prompt_handoff(self):
+        packet = build_skill_packet(
+            FakeReadDriver(), None, prompt="Neo4j skill ingestion guardrails", limit=3
+        )
+        self.assertLess(len(json.dumps(packet)), 8000)
+
+    def test_packet_sections_are_matched_or_summary_only(self):
+        packet = build_skill_packet(
+            FakeReadDriver(), None, prompt="Neo4j skill ingestion guardrails", limit=3
+        )
+        for skill in packet["skills"]:
+            self.assertLessEqual(len(skill["sections"]), 4)
+
+
+class ReadOnlyTests(unittest.TestCase):
+    def test_retrieval_runs_no_write_queries(self):
+        driver = FakeReadDriver()
+        get_skill(driver, None, "codebasedmemory")
+        match_skills(driver, None, prompt="neo4j ingestion guardrails")
+        build_skill_packet(driver, None, skill_id="codebasedmemory")
+        self.assertTrue(driver.executed)
+        for cypher in driver.executed:
+            self.assertIsNone(skill_ingest._WRITE_CLAUSE_RE.search(cypher), cypher)
+
+    def test_run_read_refuses_write_cypher(self):
+        with self.assertRaisesRegex(SkillIngestError, "non-read-only"):
+            _run_read(FakeReadDriver(), None, "MERGE (n:Skill {id: $id})", {"id": "x"})
+
+    def test_neo4j_errors_propagate(self):
+        with self.assertRaisesRegex(RuntimeError, "Unauthorized"):
+            match_skills(FailingDriver(), None, skill_id="codebasedmemory")
+
+
+class CliTests(unittest.TestCase):
+    def _patched(self, driver):
+        return (
+            mock.patch.object(
+                skill_ingest,
+                "load_neo4j_config",
+                return_value={
+                    "uri": "bolt://test", "user": "neo4j", "password": "x",
+                    "database": None, "config_source": "test",
+                },
+            ),
+            mock.patch.object(skill_ingest, "_connect", return_value=driver),
+        )
+
+    def test_cli_get_and_match_and_packet_succeed(self):
+        config_patch, connect_patch = self._patched(FakeReadDriver())
+        with config_patch, connect_patch:
+            self.assertEqual(skill_ingest.main(["get", "--skill-id", "codebasedmemory"]), 0)
+            self.assertEqual(skill_ingest.main(["match", "--skill-id", "codebasedmemory"]), 0)
+            self.assertEqual(
+                skill_ingest.main(["packet", "--prompt", "neo4j ingestion guardrails", "--json"]),
+                0,
+            )
+
+    def test_cli_get_missing_skill_returns_nonzero(self):
+        config_patch, connect_patch = self._patched(FakeReadDriver())
+        with config_patch, connect_patch:
+            self.assertEqual(skill_ingest.main(["get", "--skill-id", "nope"]), 1)
+
+    def test_cli_returns_2_on_neo4j_failure(self):
+        config_patch, connect_patch = self._patched(FailingDriver())
+        with config_patch, connect_patch:
+            self.assertEqual(skill_ingest.main(["get", "--skill-id", "codebasedmemory"]), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

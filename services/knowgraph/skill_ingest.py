@@ -24,12 +24,19 @@ CLI:
 
     python services/knowgraph/skill_ingest.py ingest --repo-root .
     python services/knowgraph/skill_ingest.py list --skill-id codebasedmemory
+    python services/knowgraph/skill_ingest.py get --skill-id codebasedmemory
+    python services/knowgraph/skill_ingest.py match --prompt "Neo4j skill ingestion guardrails"
+    python services/knowgraph/skill_ingest.py packet --prompt "fix KnowGraph retrieval" --json
+
+Retrieval commands (get/match/packet) are read-only: fixed Cypher, no LLM, no
+generated queries, and a runtime guard that rejects write clauses.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import re
 import os
 import sys
@@ -807,6 +814,485 @@ def list_command(args: argparse.Namespace) -> int:
         driver.close()
 
 
+# ---------------------------------------------------------------------------
+# Read-only retrieval (skill retrieval MVP)
+# ---------------------------------------------------------------------------
+
+_WRITE_CLAUSE_RE = re.compile(
+    r"\b(MERGE|CREATE|SET|DELETE|DETACH|REMOVE|DROP|LOAD\s+CSV)\b", re.IGNORECASE
+)
+
+MATCH_WEIGHTS = {
+    "skill_id_exact": 100,
+    "spec_exact": 90,
+    "skill_field": 70,
+    "guardrail_text": 60,
+    "decision_text": 60,
+    "query_text": 60,
+    "failed_attempt_text": 60,
+    "section_heading": 50,
+    "section_text": 30,
+    "related_skill": 20,
+}
+
+_STOPWORDS = {
+    "the", "and", "for", "with", "this", "that", "from", "into", "over", "what",
+    "when", "how", "are", "can", "use", "not", "all", "any", "skill", "skills",
+}
+
+_MATCH_SKILL_EXACT = """
+MATCH (s:Skill {id: $skill_id})
+WHERE s.import_kind = 'skill_markdown'
+RETURN s.id AS skill_id, 'skill_id_exact' AS kind, s.id AS evidence
+"""
+
+_MATCH_SPEC_EXACT = """
+MATCH (s:Skill)
+WHERE s.import_kind = 'skill_markdown' AND (
+  EXISTS { MATCH (s)-[:APPLIES_TO]->(:Spec {id: $spec}) } OR
+  EXISTS { MATCH (s)-[:HAS_ATTEMPT]->(:SkillAttempt)-[:USED_SPEC]->(:Spec {id: $spec}) })
+RETURN s.id AS skill_id, 'spec_exact' AS kind, $spec AS evidence
+"""
+
+_MATCH_PROMPT_TOKENS = """
+MATCH (s:Skill)
+WHERE s.import_kind = 'skill_markdown'
+  AND any(t IN $tokens WHERE toLower(s.id) CONTAINS t
+          OR toLower(coalesce(s.source_path, '')) CONTAINS t)
+RETURN s.id AS skill_id, 'skill_field' AS kind, s.id AS evidence
+UNION ALL
+MATCH (s:Skill)-[:HAS_GUARDRAIL]->(g:Guardrail)
+WHERE any(t IN $tokens WHERE toLower(g.id + ' ' + coalesce(g.text, '')) CONTAINS t)
+RETURN s.id AS skill_id, 'guardrail_text' AS kind, g.id AS evidence
+UNION ALL
+MATCH (s:Skill)-[:HAS_DECISION]->(d:Decision)
+WHERE any(t IN $tokens WHERE toLower(d.id + ' ' + coalesce(d.because, '') + ' '
+          + coalesce(d.use_instead, '')) CONTAINS t)
+RETURN s.id AS skill_id, 'decision_text' AS kind, d.id AS evidence
+UNION ALL
+MATCH (s:Skill)-[:HAS_QUERY]->(q:QueryPattern)
+WHERE any(t IN $tokens WHERE toLower(q.id + ' ' + coalesce(q.text, '')) CONTAINS t)
+RETURN s.id AS skill_id, 'query_text' AS kind, q.id AS evidence
+UNION ALL
+MATCH (s:Skill)-[:HAS_FAILED_ATTEMPT]->(f:FailedAttempt)
+WHERE any(t IN $tokens WHERE toLower(f.id + ' ' + coalesce(f.failed_because, '')) CONTAINS t)
+RETURN s.id AS skill_id, 'failed_attempt_text' AS kind, f.id AS evidence
+UNION ALL
+MATCH (s:Skill)-[:HAS_SECTION]->(x:SkillSection)
+WHERE any(t IN $tokens WHERE toLower(coalesce(x.heading, '')) CONTAINS t)
+RETURN s.id AS skill_id, 'section_heading' AS kind, x.id AS evidence
+UNION ALL
+MATCH (s:Skill)-[:HAS_SECTION]->(x:SkillSection)
+WHERE any(t IN $tokens WHERE toLower(coalesce(x.text, '')) CONTAINS t)
+RETURN s.id AS skill_id, 'section_text' AS kind, x.id AS evidence
+"""
+
+_MATCH_RELATED = """
+MATCH (s:Skill)-[:RELATED_TO]-(r:Skill)
+WHERE s.id IN $skill_ids AND NOT r.id IN $skill_ids
+RETURN r.id AS skill_id, 'related_skill' AS kind, s.id AS evidence
+"""
+
+_GET_SKILL_PROPS = """
+MATCH (s:Skill {id: $skill_id})
+RETURN properties(s) AS props
+"""
+
+_GET_SKILL_ONE_HOP = """
+MATCH (s:Skill {id: $skill_id})-[r]->(x)
+RETURN type(r) AS rel, head(labels(x)) AS label, x.id AS id, properties(x) AS props
+ORDER BY rel, label, id
+"""
+
+_GET_ATTEMPT_EVIDENCE = """
+MATCH (s:Skill {id: $skill_id})-[:HAS_ATTEMPT|HAS_FAILED_ATTEMPT]->(a)-[r2]->(x)
+RETURN a.id AS owner_id, type(r2) AS rel, head(labels(x)) AS label,
+       x.id AS id, properties(x) AS props
+ORDER BY owner_id, rel, label, id
+"""
+
+
+def _run_read(driver, database: str | None, cypher: str, params: dict[str, Any]) -> list:
+    """Execute fixed retrieval Cypher; refuse anything containing write clauses."""
+    if _WRITE_CLAUSE_RE.search(cypher):
+        raise SkillIngestError(
+            f"refusing non-read-only retrieval cypher: {cypher.strip()[:80]!r}"
+        )
+    result = driver.execute_query(cypher, parameters_=params, database_=database)
+    return list(result.records)
+
+
+def tokenize_prompt(prompt: str) -> list[str]:
+    tokens = {
+        token
+        for token in re.split(r"[^a-z0-9]+", prompt.lower())
+        if len(token) >= 3 and token not in _STOPWORDS
+    }
+    return sorted(tokens)
+
+
+def _aggregate_matches(rows: list) -> list[dict[str, Any]]:
+    per_skill: dict[str, dict[str, list[str]]] = {}
+    for row in rows:
+        kinds = per_skill.setdefault(row["skill_id"], {})
+        evidence = kinds.setdefault(row["kind"], [])
+        if row["evidence"] not in evidence:
+            evidence.append(row["evidence"])
+    matches = []
+    for skill_id in sorted(per_skill):
+        kinds = per_skill[skill_id]
+        reasons = [
+            {"kind": kind, "weight": MATCH_WEIGHTS[kind], "evidence": sorted(kinds[kind])[:3]}
+            for kind in sorted(kinds, key=lambda k: (-MATCH_WEIGHTS[k], k))
+        ]
+        matches.append(
+            {
+                "skill_id": skill_id,
+                "score": sum(MATCH_WEIGHTS[kind] for kind in kinds),
+                "match_reasons": reasons,
+            }
+        )
+    matches.sort(key=lambda match: (-match["score"], match["skill_id"]))
+    return matches
+
+
+def match_skills(
+    driver,
+    database: str | None,
+    *,
+    skill_id: str | None = None,
+    spec: str | None = None,
+    prompt: str | None = None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Seed matching (exact id, exact spec, prompt tokens) plus one-hop
+    RELATED_TO expansion, with simple fixed ranking."""
+    if not (skill_id or spec or prompt):
+        raise SkillIngestError("match requires --skill-id, --spec, or --prompt")
+    rows: list = []
+    if skill_id:
+        rows.extend(_run_read(driver, database, _MATCH_SKILL_EXACT, {"skill_id": skill_id}))
+    if spec:
+        rows.extend(_run_read(driver, database, _MATCH_SPEC_EXACT, {"spec": spec}))
+    if prompt:
+        tokens = tokenize_prompt(prompt)
+        if tokens:
+            rows.extend(_run_read(driver, database, _MATCH_PROMPT_TOKENS, {"tokens": tokens}))
+    matches = _aggregate_matches(rows)
+    if matches:
+        seed_ids = [match["skill_id"] for match in matches]
+        related_rows = _run_read(driver, database, _MATCH_RELATED, {"skill_ids": seed_ids})
+        if related_rows:
+            matches = _aggregate_matches(rows + related_rows)
+    return matches[:limit]
+
+
+def get_skill(driver, database: str | None, skill_id: str) -> dict[str, Any] | None:
+    """Full deterministic one-hop view of one skill, or None if absent."""
+    props_rows = _run_read(driver, database, _GET_SKILL_PROPS, {"skill_id": skill_id})
+    if not props_rows:
+        return None
+    props = dict(props_rows[0]["props"])
+    view: dict[str, Any] = {
+        "skill_id": skill_id,
+        "status": props.get("status"),
+        "type": props.get("type"),
+        "source_path": props.get("source_path"),
+        "requires": list(props.get("requires") or []),
+        "related_to": list(props.get("related_to") or []),
+        "applies_to": [],
+        "guardrails": [],
+        "decisions": [],
+        "query_patterns": [],
+        "attempts": [],
+        "failed_attempts": [],
+        "sections": [],
+    }
+    owners: dict[str, dict[str, Any]] = {}
+    for row in _run_read(driver, database, _GET_SKILL_ONE_HOP, {"skill_id": skill_id}):
+        rel, item = row["rel"], dict(row["props"])
+        if rel == "APPLIES_TO":
+            view["applies_to"].append(item.get("id"))
+        elif rel == "HAS_GUARDRAIL":
+            view["guardrails"].append({"id": item.get("id"), "text": item.get("text")})
+        elif rel == "HAS_DECISION":
+            view["decisions"].append(
+                {
+                    "id": item.get("id"),
+                    "because": item.get("because"),
+                    "rejected": list(item.get("rejected") or []),
+                    "use_instead": item.get("use_instead"),
+                    "proved_by": item.get("proved_by"),
+                }
+            )
+        elif rel == "HAS_QUERY":
+            view["query_patterns"].append({"id": item.get("id"), "text": item.get("text")})
+        elif rel == "HAS_ATTEMPT":
+            attempt = {
+                "id": item.get("id"),
+                "status": item.get("status"),
+                "result_status": item.get("result_status"),
+                "source_prompt": item.get("source_prompt"),
+                "cbm_after_nodes": item.get("cbm_after_nodes"),
+                "cbm_after_edges": item.get("cbm_after_edges"),
+                "used_specs": [],
+                "proof_claims": [],
+                "validations": [],
+                "touched_code": [],
+            }
+            view["attempts"].append(attempt)
+            owners[attempt["id"]] = attempt
+        elif rel == "HAS_FAILED_ATTEMPT":
+            failed = {
+                "id": item.get("id"),
+                "failed_because": item.get("failed_because"),
+                "retry_with": item.get("retry_with"),
+                "created_guardrails": [],
+                "used_specs": [],
+                "proof_claims": [],
+                "validations": [],
+                "touched_code": [],
+            }
+            view["failed_attempts"].append(failed)
+            owners[failed["id"]] = failed
+        elif rel == "HAS_SECTION":
+            view["sections"].append(
+                {
+                    "id": item.get("id"),
+                    "heading": item.get("heading"),
+                    "order": item.get("order"),
+                    "text": item.get("text") or "",
+                }
+            )
+        elif rel == "RELATED_TO":
+            if item.get("id") not in view["related_to"]:
+                view["related_to"].append(item.get("id"))
+    view["sections"].sort(key=lambda s: (s["order"] if s["order"] is not None else 0, s["id"]))
+    for row in _run_read(driver, database, _GET_ATTEMPT_EVIDENCE, {"skill_id": skill_id}):
+        owner = owners.get(row["owner_id"])
+        if owner is None:
+            continue
+        rel, item = row["rel"], dict(row["props"])
+        if rel == "PROVED":
+            owner["proof_claims"].append(item.get("text"))
+        elif rel == "VALIDATED_BY":
+            owner["validations"].append(item.get("text"))
+        elif rel == "TOUCHED_CODE":
+            owner["touched_code"].append(item.get("ref") or item.get("id"))
+        elif rel == "USED_SPEC":
+            owner["used_specs"].append(item.get("id"))
+        elif rel == "CREATED_GUARDRAIL":
+            owner.setdefault("created_guardrails", []).append(item.get("id"))
+    return view
+
+
+def _truncate(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + " ...[truncated]"
+
+
+_PACKET_SUMMARY_HEADINGS = ("vector summary", "use when", "current procedure")
+_PACKET_MAX_SECTIONS = 4
+_PACKET_SECTION_TEXT_LIMIT = 600
+
+
+def build_skill_packet(
+    driver,
+    database: str | None,
+    *,
+    skill_id: str | None = None,
+    spec: str | None = None,
+    prompt: str | None = None,
+    limit: int = 3,
+) -> dict[str, Any]:
+    """Compact deterministic skill packet for Fable/Codex handoff."""
+    matches = match_skills(
+        driver, database, skill_id=skill_id, spec=spec, prompt=prompt, limit=limit
+    )
+    packet: dict[str, Any] = {
+        "packet_version": 1,
+        "query": {"skill_id": skill_id, "spec": spec, "prompt": prompt, "limit": limit},
+        "skills": [],
+    }
+    for match in matches:
+        view = get_skill(driver, database, match["skill_id"])
+        if view is None:
+            continue
+        matched_section_ids = {
+            evidence
+            for reason in match["match_reasons"]
+            if reason["kind"] in ("section_heading", "section_text")
+            for evidence in reason["evidence"]
+        }
+        sections = [
+            section
+            for section in view["sections"]
+            if section["id"] in matched_section_ids
+            or (section["heading"] or "").lower() in _PACKET_SUMMARY_HEADINGS
+        ][:_PACKET_MAX_SECTIONS]
+        packet["skills"].append(
+            {
+                "skill_id": view["skill_id"],
+                "score": match["score"],
+                "match_reasons": match["match_reasons"],
+                "status": view["status"],
+                "source_path": view["source_path"],
+                "applies_to": view["applies_to"],
+                "requires": view["requires"],
+                "related_to": view["related_to"],
+                "guardrails": view["guardrails"],
+                "decisions": view["decisions"],
+                "failed_attempts": view["failed_attempts"],
+                "query_patterns": view["query_patterns"],
+                "attempts": [
+                    {
+                        "id": attempt["id"],
+                        "status": attempt["status"],
+                        "result_status": attempt["result_status"],
+                        "proof_claims": attempt["proof_claims"],
+                        "validations": attempt["validations"],
+                    }
+                    for attempt in view["attempts"]
+                ],
+                "sections": [
+                    {
+                        "heading": section["heading"],
+                        "text": _truncate(section["text"], _PACKET_SECTION_TEXT_LIMIT),
+                    }
+                    for section in sections
+                ],
+            }
+        )
+    return packet
+
+
+def _to_json(payload: Any) -> str:
+    return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def _print_match_text(matches: list[dict[str, Any]]) -> None:
+    for match in matches:
+        reasons = "; ".join(
+            f"{reason['kind']}({','.join(reason['evidence'])})" for reason in match["match_reasons"]
+        )
+        print(f"MATCH skill={match['skill_id']} score={match['score']} reasons={reasons}")
+
+
+def _print_skill_text(view: dict[str, Any]) -> None:
+    print(
+        f"SKILL {view['skill_id']} status={view['status']} type={view['type']} "
+        f"source_path={view['source_path']}"
+    )
+    for requirement in view["requires"]:
+        print(f"  REQUIRES {requirement}")
+    for spec_id in view["applies_to"]:
+        print(f"  APPLIES_TO {spec_id}")
+    for related in view["related_to"]:
+        print(f"  RELATED_TO {related}")
+    for guardrail in view["guardrails"]:
+        text = f": {guardrail['text']}" if guardrail.get("text") else ""
+        print(f"  GUARDRAIL {guardrail['id']}{text}")
+    for decision in view["decisions"]:
+        print(f"  DECISION {decision['id']}")
+        if decision.get("because"):
+            print(f"    because: {decision['because']}")
+        for rejected in decision["rejected"]:
+            print(f"    rejected: {rejected}")
+        if decision.get("use_instead"):
+            print(f"    use_instead: {decision['use_instead']}")
+    for query in view["query_patterns"]:
+        print(f"  QUERY {query['id']}: {query['text']}")
+    for attempt in view["attempts"]:
+        print(
+            f"  ATTEMPT {attempt['id']} status={attempt['status']} "
+            f"result={attempt['result_status']}"
+        )
+        for proof in attempt["proof_claims"]:
+            print(f"    PROOF {proof}")
+        for validation in attempt["validations"]:
+            print(f"    VALIDATION {validation}")
+        for code_ref in attempt["touched_code"]:
+            print(f"    TOUCHED_CODE {code_ref}")
+    for failed in view["failed_attempts"]:
+        print(f"  FAILED_ATTEMPT {failed['id']} because={failed.get('failed_because')}")
+    for section in view["sections"]:
+        print(f"  SECTION {section['heading']} ({len(section['text'])} chars)")
+
+
+def _with_read_driver(args: argparse.Namespace, action) -> int:
+    config = load_neo4j_config(Path(args.repo_root).resolve())
+    driver = _connect(config)
+    try:
+        return action(driver, config["database"])
+    finally:
+        driver.close()
+
+
+def get_command(args: argparse.Namespace) -> int:
+    def action(driver, database) -> int:
+        view = get_skill(driver, database, args.skill_id)
+        if view is None:
+            print(f"NOT_FOUND skill_id={args.skill_id}")
+            return 1
+        if args.json:
+            print(_to_json(view))
+        else:
+            _print_skill_text(view)
+        return 0
+
+    return _with_read_driver(args, action)
+
+
+def match_command(args: argparse.Namespace) -> int:
+    def action(driver, database) -> int:
+        matches = match_skills(
+            driver,
+            database,
+            skill_id=args.skill_id,
+            spec=args.spec,
+            prompt=args.prompt,
+            limit=args.limit,
+        )
+        if args.json:
+            print(_to_json(matches))
+        elif matches:
+            _print_match_text(matches)
+        if not matches:
+            print("NO_MATCHES")
+            return 1
+        return 0
+
+    return _with_read_driver(args, action)
+
+
+def packet_command(args: argparse.Namespace) -> int:
+    def action(driver, database) -> int:
+        packet = build_skill_packet(
+            driver,
+            database,
+            skill_id=args.skill_id,
+            spec=args.spec,
+            prompt=args.prompt,
+            limit=args.limit,
+        )
+        if args.json:
+            print(_to_json(packet))
+        else:
+            for skill in packet["skills"]:
+                print(
+                    f"PACKET_SKILL {skill['skill_id']} score={skill['score']} "
+                    f"guardrails={len(skill['guardrails'])} decisions={len(skill['decisions'])} "
+                    f"queries={len(skill['query_patterns'])} sections={len(skill['sections'])}"
+                )
+        if not packet["skills"]:
+            print("NO_MATCHES")
+            return 1
+        return 0
+
+    return _with_read_driver(args, action)
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Deterministic skills/*.md -> KnowGraph/Neo4j importer"
@@ -825,6 +1311,30 @@ def build_arg_parser() -> argparse.ArgumentParser:
     lister.add_argument("--spec", help="filter by spec path substring")
     lister.add_argument("--text", help="filter by id/status/type substring")
     lister.set_defaults(func=list_command)
+
+    getter = sub.add_parser("get", help="full deterministic view of one skill")
+    getter.add_argument("--repo-root", default=".")
+    getter.add_argument("--skill-id", required=True)
+    getter.add_argument("--json", action="store_true")
+    getter.set_defaults(func=get_command)
+
+    matcher = sub.add_parser("match", help="match skills by id, spec path, or prompt text")
+    matcher.add_argument("--repo-root", default=".")
+    matcher.add_argument("--skill-id")
+    matcher.add_argument("--spec", help="exact spec path, e.g. specs/x-spec.md")
+    matcher.add_argument("--prompt", help="free text matched case-insensitively")
+    matcher.add_argument("--limit", type=int, default=10)
+    matcher.add_argument("--json", action="store_true")
+    matcher.set_defaults(func=match_command)
+
+    packeter = sub.add_parser("packet", help="compact skill packet for Fable/Codex handoff")
+    packeter.add_argument("--repo-root", default=".")
+    packeter.add_argument("--skill-id")
+    packeter.add_argument("--spec")
+    packeter.add_argument("--prompt")
+    packeter.add_argument("--limit", type=int, default=3)
+    packeter.add_argument("--json", action="store_true")
+    packeter.set_defaults(func=packet_command)
     return parser
 
 
