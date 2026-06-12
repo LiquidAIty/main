@@ -107,9 +107,38 @@ Bounded scope: seed pass only — spec plus this evidence-backed skill stub. No 
 Seed result: spec and skill exist; runtime untouched; T001 ToolSpec/ToolRegistry remains the
 first bounded runtime implementation target.
 
+## Audit Attempt
+
+@attempt id=magentic-one-runtime.audit-001
+@status active
+@source_spec specs/magentic-one-runtime-audit-spec.md
+@source_prompt "run the first bounded Magentic-One runtime audit and identify the smallest safe next implementation task"
+@requires_fresh_cbm true
+
+@attempt_result id=magentic-one-runtime.audit-001
+@status succeeded
+@cbm_after nodes=5289 edges=9506
+@proved_by Skill Memory Packet ranked this skill first at score 330 and the audit consumed its guardrails and rejected paths
+@proved_by direct reads confirmed inline _TOOL_REGISTRY and build_card_tools with loud failures but no typed ToolSpec, no tool_registry.py, no test_tool_registry.py, and zero ToolSpec matches in apps/backend/src
+@proved_by provider_model_default_forbidden in orchestration_contracts.py and card_model_config_missing/mismatch in cards/runtime.ts confirm no-fallback guards already exist
+@validated_by grep ToolSpec apps/backend/src returned no files and glob confirmed tool_registry.py absent
+@touches_code apps/python-models/app/python_models/magentic_runtime.py
+@touches_code apps/python-models/app/python_models/orchestration_contracts.py
+@touches_code apps/backend/src/cards/runtime.ts
+@query id=magentic-one-runtime.t001-proof "from apps/python-models: .venv pytest test_tool_registry.py test_contracts.py test_graph_compiler.py -v; from root: npx vitest run apps/backend/src/cards/runtime.spec.ts; npx tsc -p apps/backend/tsconfig.app.json --noEmit"
+
+Audit result: T001 ToolSpec/ToolRegistry confirmed pending. Next bounded task, allowed files,
+do-not-touch list, and proof commands are recorded in
+`specs/magentic-one-runtime-audit-spec.md`. The integration point is
+`_TOOL_REGISTRY`/`build_card_tools` in `magentic_runtime.py`; `tool_current_datetime` and
+`tool_calculator` must keep executing through real FunctionTool behavior. No runtime code was
+changed by the audit.
+
 ## Successful Examples
 
-None yet; seed pass only.
+Audit-001 (2026-06-12): the first real learn-loop consumption of this skill — packet retrieval
+surfaced it first, its guardrails bounded the audit, and direct-read evidence confirmed the
+pending primitive without speculative implementation.
 
 ## Failed Attempts And Guardrails
 
