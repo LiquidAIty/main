@@ -19,6 +19,19 @@ context is a blocker.
 4. Let tests, compile, real smoke, and direct reads win when CBM disagrees.
 5. Refresh or prove fresh CBM after code changes.
 
+## Working-Tree Visibility Rule
+
+In the current Codebase Memory 0.6.1 workspace integration, an untracked-only addition may fail to
+invalidate a cached moderate index. A later moderate refresh triggered by tracked file changes did
+perform a real re-index and picked up the untracked file. Therefore:
+
+* Do not claim the graph indexes committed HEAD only.
+* Treat unchanged node/edge counts plus missing new symbols as a possible no-op/cache invalidation
+  miss; confirm with a later real refresh and symbol search.
+* `detect_changes` reports worktree differences from HEAD, not whether the current graph includes
+  those changes. When changes exist and `index_status` exposes no indexed revision/time, record
+  freshness as unverified and keep a visible blocker.
+
 ## Guardrails
 
 @guardrail id=codebase-memory-indexing.no-fake-code-understanding

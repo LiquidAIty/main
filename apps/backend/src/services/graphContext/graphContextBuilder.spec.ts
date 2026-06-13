@@ -1,8 +1,121 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildGraphContextPacket } from './graphContextBuilder';
+import {
+  buildGraphContextPacket,
+  readCodeGraphContextFromCbm,
+} from './graphContextBuilder';
+import { createEmptyGraphContextPacket } from './graphContextPacket';
 
 describe('graphContextBuilder', () => {
+  it('queries the real CBM tool boundary and returns files, symbols, queries, and freshness', async () => {
+    const calls: string[] = [];
+    const result = await readCodeGraphContextFromCbm(
+      {
+        projectId: 'project_admin',
+        repoPath: 'C:\\Projects\\main',
+        userMessage: 'Context Packet Codebase Memory',
+        maxItems: 5,
+      },
+      {
+        now: () => '2026-06-13T00:00:00.000Z',
+        callTool: async (tool) => {
+          calls.push(tool);
+          if (tool === 'list_projects') {
+            return {
+              projects: [{ name: 'C-Projects-main', root_path: 'C:/Projects/main' }],
+            };
+          }
+          if (tool === 'index_status') {
+            return { project: 'C-Projects-main', status: 'ready', nodes: 4640, edges: 8596 };
+          }
+          if (tool === 'search_graph') {
+            return {
+              results: [
+                {
+                  name: 'buildGraphContextPacket',
+                  qualified_name:
+                    'C-Projects-main.apps.backend.src.services.graphContext.graphContextBuilder.buildGraphContextPacket',
+                  label: 'Function',
+                  file_path: 'apps/backend/src/services/graphContext/graphContextBuilder.ts',
+                },
+              ],
+            };
+          }
+          return { changed_count: 0, changed_files: [] };
+        },
+      },
+    );
+
+    expect(calls).toEqual(['list_projects', 'index_status', 'search_graph', 'detect_changes']);
+    expect(result.data.relevantFiles).toEqual([
+      'apps/backend/src/services/graphContext/graphContextBuilder.ts',
+    ]);
+    expect(result.data.relevantSymbols).toContain(
+      'C-Projects-main.apps.backend.src.services.graphContext.graphContextBuilder.buildGraphContextPacket',
+    );
+    expect(result.data.codeAnchors).toEqual(result.data.relevantFiles);
+    expect(result.data.cbmQueries).toEqual([
+      'search_graph query="Context Packet Codebase Memory"',
+    ]);
+    expect(result.data.freshness).toMatchObject({
+      status: 'fresh',
+      project: 'C-Projects-main',
+      nodes: 4640,
+      edges: 8596,
+    });
+    expect(result.data.blocker).toBeNull();
+  });
+
+  it('returns a visible blocker when the CBM tool boundary is unavailable', async () => {
+    const result = await readCodeGraphContextFromCbm(
+      {
+        projectId: 'project_admin',
+        repoPath: 'C:\\Projects\\main',
+        userMessage: 'Context Packet',
+      },
+      {
+        callTool: async () => {
+          throw new Error('stdio server offline');
+        },
+      },
+    );
+
+    expect(result.data.relevantFiles).toEqual([]);
+    expect(result.data.freshness?.status).toBe('unavailable');
+    expect(result.data.blocker).toContain('cbm_unavailable: stdio server offline');
+    expect(result.debugNotes).toContain('cbm_unavailable: stdio server offline');
+  });
+
+  it('does not silently accept an empty CBM search result', async () => {
+    const result = await readCodeGraphContextFromCbm(
+      {
+        projectId: 'project_admin',
+        repoPath: 'C:\\Projects\\main',
+        userMessage: 'symbol that does not exist',
+      },
+      {
+        callTool: async (tool) => {
+          if (tool === 'list_projects') {
+            return {
+              projects: [{ name: 'C-Projects-main', root_path: 'C:/Projects/main' }],
+            };
+          }
+          if (tool === 'index_status') {
+            return { project: 'C-Projects-main', status: 'ready', nodes: 4640, edges: 8596 };
+          }
+          if (tool === 'search_graph') return { results: [] };
+          return { changed_count: 0, changed_files: [] };
+        },
+      },
+    );
+
+    expect(result.data.freshness?.status).toBe('fresh');
+    expect(result.data.blocker).toBe('cbm_no_matching_code_evidence: symbol that does not exist');
+    expect(result.debugNotes).toContain(
+      'cbm_no_matching_code_evidence: symbol that does not exist',
+    );
+  });
+
   it('returns a valid packet for empty or unavailable graph data', async () => {
     const packet = await buildGraphContextPacket(
       {
@@ -42,15 +155,27 @@ describe('graphContextBuilder', () => {
         readCodeGraphContext: async () => ({
           data: {
             relevantFiles: [],
+            relevantSymbols: [],
+            codeAnchors: [],
+            cbmQueries: ['search_graph query="What do we know?"'],
             components: [],
             routes: [],
             schemas: [],
             tools: [],
             agentCards: [],
             promptTemplates: [],
-            implementationNotes: ['CodeGraph backend reader not wired yet.'],
+            implementationNotes: ['cbm_unavailable: test boundary offline'],
+            freshness: {
+              status: 'unavailable',
+              project: null,
+              nodes: null,
+              edges: null,
+              checkedAt: '2026-06-06T00:00:00.000Z',
+              detail: 'cbm_unavailable: test boundary offline',
+            },
+            blocker: 'cbm_unavailable: test boundary offline',
           },
-          debugNotes: ['codegraph_partial: backend read path not wired yet'],
+          debugNotes: ['cbm_unavailable: test boundary offline'],
         }),
       },
     );
@@ -60,7 +185,7 @@ describe('graphContextBuilder', () => {
     expect(packet.knowGraphContext.evidence).toEqual([]);
     expect(packet.provenance.debugNotes).toContain('thinkgraph_unavailable: no project-scoped rows found');
     expect(packet.provenance.debugNotes).toContain('knowgraph_unavailable: no project-scoped records found');
-    expect(packet.codeGraphContext?.implementationNotes[0]).toContain('CodeGraph backend reader not wired yet');
+    expect(packet.codeGraphContext?.implementationNotes[0]).toContain('cbm_unavailable');
   });
 
   it('keeps ThinkGraph, KnowGraph, and CodeGraph streams separated', async () => {
@@ -166,5 +291,52 @@ describe('graphContextBuilder', () => {
     expect(packet.knowGraphContext.entities).toHaveLength(1);
     expect(packet.thinkGraphContext.intent).toEqual([]);
     expect(packet.comparison.conflicts).toEqual([]);
+  });
+
+  it('returns promptly with a visible non-critical KnowGraph timeout', async () => {
+    const emptyPacket = createEmptyGraphContextPacket();
+    const startedAt = Date.now();
+    const packet = await buildGraphContextPacket(
+      { projectId: 'project_admin', userMessage: 'Context Packet' },
+      {
+        sourceTimeoutMs: { graph_thinkgraph: 10, knowgraph: 10, codegraph_cbm: 10 },
+        readThinkGraphContext: async () => ({ data: emptyPacket.thinkGraphContext }),
+        readKnowGraphContext: () => new Promise(() => undefined),
+        readCodeGraphContext: async () => ({ data: emptyPacket.codeGraphContext }),
+      },
+    );
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(packet.provenance.sourceDiagnostics).toContainEqual(
+      expect.objectContaining({
+        source: 'knowgraph',
+        critical: false,
+        status: 'timed_out',
+        blocker: 'source_timeout:knowgraph:10ms',
+      }),
+    );
+  });
+
+  it('records a critical CBM timeout without inventing code context', async () => {
+    const emptyPacket = createEmptyGraphContextPacket();
+    const packet = await buildGraphContextPacket(
+      { projectId: 'project_admin', userMessage: 'Context Packet' },
+      {
+        sourceTimeoutMs: { graph_thinkgraph: 10, knowgraph: 10, codegraph_cbm: 10 },
+        readThinkGraphContext: async () => ({ data: emptyPacket.thinkGraphContext }),
+        readKnowGraphContext: async () => ({ data: emptyPacket.knowGraphContext }),
+        readCodeGraphContext: () => new Promise(() => undefined),
+      },
+    );
+
+    expect(packet.codeGraphContext).toBeNull();
+    expect(packet.provenance.sourceDiagnostics).toContainEqual(
+      expect.objectContaining({
+        source: 'codegraph_cbm',
+        critical: true,
+        status: 'timed_out',
+        blocker: 'source_timeout:codegraph_cbm:10ms',
+      }),
+    );
   });
 });

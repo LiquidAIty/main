@@ -19,8 +19,6 @@ describe('PlanFlow markdown projection', () => {
     ]);
     expect(projection.nodes.every((node) => Boolean(node.provenance))).toBe(true);
     expect(projection.edges).toEqual([]);
-    expect(projection.warnings).toContain(
-      'planflow_active_coderpacket_pending: active prompt projection is not wired yet',
-    );
+    expect(projection.warnings).toEqual([]);
   });
 });

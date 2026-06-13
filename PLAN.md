@@ -234,6 +234,36 @@ Go gate, sends only that accepted packet to the LocalCoder route, and renders th
 CoderReport comparison, blockers, proof, and next recommended task. A blocked report remains visible
 even when the route correctly returns HTTP 424, and no next job starts automatically.
 
+Normal Agent Builder chat now runs the real Magentic-One deck path and then asks the backend
+planning service to assemble a Context Packet from user input, PlanFlow state, this living plan,
+dedicated ThinkGraph memory, SkillGraph/Neo4j, graph context, selected workspace context, and
+KnowGraph only when relevant. The configured planner model must return one schema-validated
+CoderPacket; missing planner configuration or invalid output blocks loudly. PlanFlow receives that
+packet automatically, keeps it editable, and preserves the existing user-gated Go route.
+
+CoderPacket creation and LocalCoder CoderReport reconciliation are summarized into ThinkGraph,
+including completed, incomplete, blocked, changed, and out-of-scope requirements, proof summary,
+blockers, and the next narrower focus. Raw large prompts and outputs are not copied into ThinkGraph.
+
+The backend graph-context builder now queries the configured Codebase Memory MCP directly. Context
+Packets carry the actual query, matching files and symbols, graph node/edge counts, freshness
+status, and a visible blocker when CBM is stale, unavailable, or returns no matching evidence.
+CoderPackets trust only CBM-derived anchors or record the exact CBM blocker, and packet-created
+ThinkGraph events persist a bounded summary of that evidence.
+
+The Sol coder-planner now resolves only explicit configuration:
+`SOL_CODER_PLANNER_MODEL_KEY`, an explicit provider/model pair, or an explicitly set
+`SOL_PRIMARY=openai|openrouter` with its matching provider key. Context Packet assembly records
+bounded per-source diagnostics for PLAN.md, ThinkGraph, SkillGraph, graph context, CBM/CodeGraph,
+KnowGraph, PlanFlow state, and selected context. Critical source timeout/failure blocks; a
+non-critical failure continues only with visible Context Packet warnings and CoderPacket
+guardrails.
+
+One live no-execution `POST /api/coder/planflow/prepare` created and persisted active CoderPacket
+`coderpacket:project_admin:2026-06-13T13:01:58.416Z`. The ThinkGraph event records explicit
+`SOL_PRIMARY` / OpenAI / `gpt-5.1-chat-latest` provenance, real CBM anchors, stale-CBM blocker, and
+all source diagnostics. No LocalCoder job ran.
+
 ## Code And Context Anchors
 
 * `AGENTS.md`: execution law
@@ -267,11 +297,16 @@ even when the route correctly returns HTTP 424, and no next job starts automatic
 
 ## Blockers
 
-* PlanFlow accepts and runs a validated active CoderPacket, but Magentic-One/Sol does not yet create
-  that packet from a Context Packet.
-* Chat currently starts a Magentic-One deck run directly instead of producing one active
-  CoderPacket for PlanFlow review.
-* Active CoderPacket and CoderReport state is not yet persisted to ThinkGraph.
+* Codebase Memory 0.6.1 initially missed an untracked-only planning-service addition during a
+  no-op moderate refresh. After tracked graph-context files changed, a real moderate refresh moved
+  the graph from 4,640 nodes / 8,596 edges to 4,676 / 8,784 and indexed the previously missing
+  planning-service symbols. This indicates an untracked-only/cache invalidation miss, not a
+  committed-HEAD-only index. `detect_changes` reports worktree differences from HEAD, while
+  `index_status` exposes no indexed revision/time, so freshness remains unverified when changes
+  exist.
+* The live prepare smoke exposed a non-critical KnowGraph Cypher failure: its DISTINCT/aggregation
+  query orders by `n.updated_at` / `n.created_at` after `n` is no longer in scope. The timeout and
+  diagnostic boundary kept this visible without blocking the active CoderPacket.
 * The Local Coder card currently maps to a generic assistant participant.
 * The LocalCoder gRPC launcher is not backend-supervised and is not passed the backend MCP config.
 * The LocalCoder gRPC server currently initializes `mcpClients: []`, exposes available runtime
@@ -279,9 +314,11 @@ even when the route correctly returns HTTP 424, and no next job starts automatic
 * LocalCoder dependencies/build output are absent in this workspace and Bun is not installed, so
   the real LocalCoder process route cannot be live-smoked yet.
 * Client TypeScript compile currently has unrelated existing `agentbuilder.tsx` type errors.
+* The full AgentBuilder UI test suite is currently blocked before collection by an unresolved `d3`
+  import in `client/src/components/worldsignal/crucixNativeRenderer.ts`.
 
 ## Next Step
 
-Have Magentic-One/Sol assemble a real Context Packet and prepare one validated active CoderPacket
-for PlanFlow review. Persist the accepted packet and returned CoderReport/comparison to ThinkGraph,
-then prepare at most one next packet without automatically executing it.
+Fix and prove the bounded KnowGraph Context Packet query exposed by the live source diagnostic,
+then add a narrow CBM freshness proof that exposes the indexed revision/time or reliably
+invalidates untracked-only additions.

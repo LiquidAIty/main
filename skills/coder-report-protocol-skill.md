@@ -28,6 +28,12 @@ return vague done or hidden success.
 * reusable skill updates
 * next recommended task
 
+## Reconciliation Projection
+
+Project every report comparison into completed, incomplete, blocked, changed, and out-of-scope
+lists. Persist those summaries plus proof and the next narrower focus to ThinkGraph. A partial,
+blocked, or failed report may seed one next packet, but must never execute it automatically.
+
 ## Guardrails
 
 @guardrail id=coder-report-protocol.no-vague-done

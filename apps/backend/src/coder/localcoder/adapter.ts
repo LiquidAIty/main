@@ -233,6 +233,7 @@ function buildBlockedReport(
     failedCommands: [],
     blockers: [blocker],
     assumptions: [],
+    outOfScopeFindings: [],
     nextRecommendedTask,
     rawOutput,
   };
@@ -250,6 +251,7 @@ function buildFailedReport(packetId: string, error: string, rawOutput: string): 
     failedCommands: [],
     blockers: [error],
     assumptions: [],
+    outOfScopeFindings: [],
     nextRecommendedTask: 'Inspect LocalCoder stderr and repair the runtime before retrying.',
     rawOutput,
   };

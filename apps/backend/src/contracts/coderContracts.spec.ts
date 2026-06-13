@@ -55,6 +55,7 @@ describe('coder contracts', () => {
       failedCommands: [],
       blockers: [],
       assumptions: [],
+      outOfScopeFindings: [],
       nextRecommendedTask: 'Wire PlanFlow.',
       rawOutput: '{}',
     });
@@ -62,6 +63,12 @@ describe('coder contracts', () => {
       matchesPacket: true,
       comparedRequirements: 1,
       unresolvedRequirements: [],
+      completedRequirements: ['Wire the adapter.'],
+      incompleteRequirements: [],
+      blockedRequirements: [],
+      changedRequirements: [],
+      outOfScopeFindings: [],
+      nextNarrowerFocus: 'Wire PlanFlow.',
     });
   });
 });

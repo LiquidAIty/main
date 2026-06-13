@@ -96,6 +96,9 @@ export type KnowGraphContextPacket = {
 
 export type CodeGraphContextPacket = {
   relevantFiles: string[];
+  relevantSymbols?: string[];
+  codeAnchors?: string[];
+  cbmQueries?: string[];
   components: string[];
   routes: string[];
   schemas: string[];
@@ -103,6 +106,15 @@ export type CodeGraphContextPacket = {
   agentCards: string[];
   promptTemplates: string[];
   implementationNotes: string[];
+  freshness?: {
+    status: 'fresh' | 'stale' | 'unavailable';
+    project: string | null;
+    nodes: number | null;
+    edges: number | null;
+    checkedAt: string;
+    detail: string;
+  };
+  blocker?: string | null;
 };
 
 export type GraphContextComparisonItem = {
@@ -122,7 +134,18 @@ export type GraphContextProvenance = {
   generatedAt: string | null;
   sourceLabels: string[];
   debugNotes: string[];
+  sourceDiagnostics: GraphContextSourceDiagnostic[];
   packetVersion: string;
+};
+
+export type GraphContextSourceDiagnostic = {
+  source: 'graph_thinkgraph' | 'knowgraph' | 'codegraph_cbm';
+  critical: boolean;
+  status: 'ok' | 'empty' | 'blocked' | 'timed_out' | 'failed' | 'skipped';
+  elapsedMs: number;
+  evidenceCount: number;
+  summary: string;
+  blocker: string;
 };
 
 export type GraphContextPacket = {
@@ -214,6 +237,7 @@ export function createEmptyGraphContextPacket(args?: {
       generatedAt: args?.generatedAt ?? null,
       sourceLabels: [],
       debugNotes: [],
+      sourceDiagnostics: [],
       packetVersion: 'stage0.v1',
     },
   };

@@ -41,6 +41,7 @@ function structuredStdout(): string {
       failedCommands: [],
       blockers: [],
       assumptions: [],
+      outOfScopeFindings: [],
       nextRecommendedTask: 'Wire UI.',
       rawOutput: '',
     },

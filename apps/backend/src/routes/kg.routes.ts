@@ -1805,7 +1805,7 @@ router.get('/planflow/projection', async (req, res) => {
         projectId,
         eventType: 'planflow_loaded_from_markdown',
         title: 'PlanFlow loaded from authoritative markdown',
-        summary: `${projection.nodes.length} nodes and ${projection.edges.length} edges projected from PLAN.md/specs`,
+        summary: `${projection.nodes.length} nodes and ${projection.edges.length} edges projected from PLAN.md`,
         status: 'complete',
         planFlowNodeIds: projection.nodes.map((node) => node.id),
       });
@@ -1841,6 +1841,8 @@ router.post('/thinkgraph/event', async (req, res) => {
       'run_failed',
       'proof_recorded',
       'blocker_found',
+      'coder_packet_created',
+      'coder_report_recorded',
     ].includes(eventType)) {
       return res.status(400).json({ ok: false, error: 'thinkgraph_event_type_required' });
     }
@@ -1861,6 +1863,27 @@ router.post('/thinkgraph/event', async (req, res) => {
       error: body.error ?? null,
       assumptions: Array.isArray(body.assumptions) ? body.assumptions : [],
       nextTask: body.nextTask,
+      coderPacketId: body.coderPacketId,
+      coderPacketObjective: body.coderPacketObjective,
+      coderReportStatus: body.coderReportStatus,
+      completedRequirements: Array.isArray(body.completedRequirements) ? body.completedRequirements : [],
+      incompleteRequirements: Array.isArray(body.incompleteRequirements) ? body.incompleteRequirements : [],
+      blockedRequirements: Array.isArray(body.blockedRequirements) ? body.blockedRequirements : [],
+      changedRequirements: Array.isArray(body.changedRequirements) ? body.changedRequirements : [],
+      outOfScopeFindings: Array.isArray(body.outOfScopeFindings) ? body.outOfScopeFindings : [],
+      proofSummary: Array.isArray(body.proofSummary) ? body.proofSummary : [],
+      contextEvidenceSummary: Array.isArray(body.contextEvidenceSummary)
+        ? body.contextEvidenceSummary
+        : [],
+      cbmStatus: body.cbmStatus,
+      codeAnchors: Array.isArray(body.codeAnchors) ? body.codeAnchors : [],
+      cbmBlocker: body.cbmBlocker,
+      sourceDiagnosticsSummary: Array.isArray(body.sourceDiagnosticsSummary)
+        ? body.sourceDiagnosticsSummary
+        : [],
+      plannerProvider: body.plannerProvider,
+      plannerModel: body.plannerModel,
+      plannerConfigSource: body.plannerConfigSource,
     });
     return res.json({ ok: true, ...written });
   } catch (err: any) {

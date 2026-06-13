@@ -1,4 +1,9 @@
+import path from 'node:path';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { pool } from '../../db/pool';
+import { loadMcpServersConfig } from '../../agents/mcp/mcpConfig';
 import { runCypherOnGraph } from '../graphService';
 import {
   compareThinkAndKnowContext,
@@ -7,6 +12,7 @@ import {
   type CodeGraphContextPacket,
   type GraphContextConfidenceLevel,
   type GraphContextPacket,
+  type GraphContextSourceDiagnostic,
   type KnowGraphContextPacket,
   type ThinkGraphContextPacket,
 } from './graphContextPacket';
@@ -43,6 +49,7 @@ type ThinkGraphRelationRow = {
 
 export type BuildGraphContextPacketArgs = {
   projectId: string;
+  repoPath?: string | null;
   userMessage?: string | null;
   selectedBoardNodeIds?: string[];
   selectedGraphNodeIds?: string[];
@@ -52,8 +59,17 @@ export type BuildGraphContextPacketArgs = {
   turnId?: string | null;
 };
 
+type CbmToolCaller = (tool: string, args: Record<string, unknown>) => Promise<Record<string, any>>;
+
+type CbmBoundaryDeps = {
+  callTool?: CbmToolCaller;
+  now?: () => string;
+};
+
 export type GraphContextBuilderDeps = {
   now?: () => string;
+  clock?: () => number;
+  sourceTimeoutMs?: Partial<Record<GraphContextSourceDiagnostic['source'], number>>;
   readThinkGraphContext?: (
     args: BuildGraphContextPacketArgs,
   ) => Promise<GraphContextStreamResult<ThinkGraphContextPacket>>;
@@ -63,6 +79,12 @@ export type GraphContextBuilderDeps = {
   readCodeGraphContext?: (
     args: BuildGraphContextPacketArgs,
   ) => Promise<GraphContextStreamResult<CodeGraphContextPacket | null>>;
+};
+
+const GRAPH_SOURCE_TIMEOUT_MS: Record<GraphContextSourceDiagnostic['source'], number> = {
+  graph_thinkgraph: 5_000,
+  knowgraph: 5_000,
+  codegraph_cbm: 20_000,
 };
 
 function clampMaxItems(value: unknown): number {
@@ -139,6 +161,326 @@ function toPlainJson(value: any): any {
     out[key] = toPlainJson(child);
   }
   return out;
+}
+
+function asRecord(value: unknown): Record<string, any> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, any>)
+    : null;
+}
+
+function parseJsonText(value: unknown): Record<string, any> | null {
+  if (typeof value !== 'string') return null;
+  try {
+    return asRecord(JSON.parse(value));
+  } catch {
+    return null;
+  }
+}
+
+function normalizeMcpToolResult(value: unknown): Record<string, any> {
+  const record = asRecord(value);
+  if (!record) return {};
+  if (record.structuredContent && typeof record.structuredContent === 'object') {
+    return asRecord(record.structuredContent) || {};
+  }
+  if (Array.isArray(record.content)) {
+    for (const block of record.content) {
+      const blockRecord = asRecord(block);
+      const parsed = parseJsonText(blockRecord?.text);
+      if (parsed) return parsed;
+    }
+  }
+  return record;
+}
+
+async function withTimeout<T>(label: string, ms: number, fn: () => Promise<T>): Promise<T> {
+  let timeoutId: NodeJS.Timeout | null = null;
+  try {
+    return await Promise.race([
+      fn(),
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`${label}_timeout_${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+function normalizeFsPath(value: unknown): string {
+  return path.resolve(String(value ?? '')).replace(/\\/g, '/').toLowerCase();
+}
+
+function graphEvidenceCount(source: GraphContextSourceDiagnostic['source'], data: unknown): number {
+  const record = asRecord(data);
+  if (!record) return 0;
+  if (source === 'graph_thinkgraph') {
+    return [
+      'intent',
+      'assumptions',
+      'hypotheses',
+      'uncertainties',
+      'goals',
+      'decisions',
+      'outcomes',
+      'reasoningNotes',
+    ].reduce((count, key) => count + (Array.isArray(record[key]) ? record[key].length : 0), 0);
+  }
+  if (source === 'knowgraph') {
+    return ['entities', 'relations', 'evidence', 'sources', 'citations'].reduce(
+      (count, key) => count + (Array.isArray(record[key]) ? record[key].length : 0),
+      0,
+    );
+  }
+  return ['relevantFiles', 'relevantSymbols', 'codeAnchors'].reduce(
+    (count, key) => count + (Array.isArray(record[key]) ? record[key].length : 0),
+    0,
+  );
+}
+
+async function settleGraphSource<T>(args: {
+  source: GraphContextSourceDiagnostic['source'];
+  critical: boolean;
+  timeoutMs: number;
+  clock: () => number;
+  operation: () => Promise<GraphContextStreamResult<T>>;
+}): Promise<{
+  result: PromiseSettledResult<GraphContextStreamResult<T>>;
+  diagnostic: GraphContextSourceDiagnostic;
+}> {
+  const startedAt = args.clock();
+  let timeoutId: NodeJS.Timeout | null = null;
+  try {
+    const value = await Promise.race([
+      args.operation(),
+      new Promise<GraphContextStreamResult<T>>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error(`source_timeout:${args.source}:${args.timeoutMs}ms`)),
+          args.timeoutMs,
+        );
+      }),
+    ]);
+    const evidenceCount = graphEvidenceCount(args.source, value.data);
+    const blocker =
+      args.source === 'codegraph_cbm'
+        ? String(asRecord(value.data)?.blocker || '').trim()
+        : '';
+    return {
+      result: { status: 'fulfilled', value },
+      diagnostic: {
+        source: args.source,
+        critical: args.critical,
+        status: blocker ? 'blocked' : evidenceCount > 0 ? 'ok' : 'empty',
+        elapsedMs: Math.max(0, Math.round(args.clock() - startedAt)),
+        evidenceCount,
+        summary: blocker || `${args.source} returned ${evidenceCount} evidence item(s)`,
+        blocker,
+      },
+    };
+  } catch (error) {
+    const blocker = error instanceof Error ? error.message : String(error);
+    return {
+      result: { status: 'rejected', reason: error },
+      diagnostic: {
+        source: args.source,
+        critical: args.critical,
+        status: blocker.startsWith('source_timeout:') ? 'timed_out' : 'failed',
+        elapsedMs: Math.max(0, Math.round(args.clock() - startedAt)),
+        evidenceCount: 0,
+        summary: blocker,
+        blocker,
+      },
+    };
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+async function createCodebaseMemoryMcpCaller(
+  repoPath: string,
+): Promise<{ callTool: CbmToolCaller; close: () => Promise<void> }> {
+  const config = loadMcpServersConfig();
+  const server = config['codebase-memory'] as
+    | { transport?: 'stdio'; command?: string; args?: string[] }
+    | undefined;
+  if (!server?.command) {
+    throw new Error('cbm_mcp_config_missing: codebase-memory stdio command not configured');
+  }
+  if (server.transport && server.transport !== 'stdio') {
+    throw new Error(`cbm_mcp_transport_unsupported: ${server.transport}`);
+  }
+
+  const client = new Client({ name: 'liquidaity-codegraph-context', version: '1.0.0' });
+  const transport = new StdioClientTransport({
+    command: server.command,
+    args: server.args || [],
+    cwd: repoPath,
+    stderr: 'pipe',
+  });
+  await withTimeout('cbm_mcp_connect', 15_000, () => client.connect(transport));
+  return {
+    callTool: async (tool, args) => {
+      const result = await withTimeout('cbm_mcp_call', 30_000, () =>
+        client.request(
+          {
+            method: 'tools/call',
+            params: { name: tool, arguments: args },
+          },
+          CallToolResultSchema,
+        ),
+      );
+      if (result.isError) {
+        throw new Error(`cbm_tool_failed: ${tool}`);
+      }
+      return normalizeMcpToolResult(result);
+    },
+    close: () => transport.close().catch(() => undefined),
+  };
+}
+
+function unavailableCodeGraphContext(
+  checkedAt: string,
+  blocker: string,
+  queries: string[] = [],
+): GraphContextStreamResult<CodeGraphContextPacket> {
+  return {
+    data: {
+      relevantFiles: [],
+      relevantSymbols: [],
+      codeAnchors: [],
+      cbmQueries: queries,
+      components: [],
+      routes: [],
+      schemas: [],
+      tools: [],
+      agentCards: [],
+      promptTemplates: [],
+      implementationNotes: [blocker],
+      freshness: {
+        status: 'unavailable',
+        project: null,
+        nodes: null,
+        edges: null,
+        checkedAt,
+        detail: blocker,
+      },
+      blocker,
+    },
+    sourceLabels: ['CodeGraph/Codebase Memory MCP'],
+    debugNotes: [blocker],
+  };
+}
+
+export async function readCodeGraphContextFromCbm(
+  args: BuildGraphContextPacketArgs,
+  deps: CbmBoundaryDeps = {},
+): Promise<GraphContextStreamResult<CodeGraphContextPacket>> {
+  const checkedAt = (deps.now ?? (() => new Date().toISOString()))();
+  const repoPath = path.resolve(args.repoPath || process.cwd());
+  const query = String(args.userMessage || '').trim();
+  const queries = query ? [`search_graph query="${query.replace(/"/g, "'")}"`] : [];
+  if (!query) {
+    return unavailableCodeGraphContext(checkedAt, 'cbm_query_terms_required', queries);
+  }
+
+  let session: Awaited<ReturnType<typeof createCodebaseMemoryMcpCaller>> | null = null;
+  try {
+    session = deps.callTool ? null : await createCodebaseMemoryMcpCaller(repoPath);
+    const callTool = deps.callTool ?? session!.callTool;
+    const projectList = await callTool('list_projects', {});
+    const projects = Array.isArray(projectList.projects) ? projectList.projects : [];
+    const project = projects
+      .map(asRecord)
+      .find((candidate) => normalizeFsPath(candidate?.root_path) === normalizeFsPath(repoPath));
+    const projectName = String(project?.name || '').trim();
+    if (!projectName) {
+      return unavailableCodeGraphContext(
+        checkedAt,
+        `cbm_project_not_indexed: ${repoPath}`,
+        queries,
+      );
+    }
+
+    const [status, search, changes] = await Promise.all([
+      callTool('index_status', { project: projectName }),
+      callTool('search_graph', {
+        project: projectName,
+        query,
+        limit: clampMaxItems(args.maxItems),
+      }),
+      callTool('detect_changes', { project: projectName, depth: 1 }),
+    ]);
+    const results = Array.isArray(search.results) ? search.results.map(asRecord).filter(Boolean) : [];
+    const relevantFiles = dedupeStrings(results.map((result) => String(result?.file_path || '')));
+    const relevantSymbols = dedupeStrings(
+      results.map((result) => String(result?.qualified_name || result?.name || '')),
+    );
+    const changedCount = Number(changes.changed_count || 0);
+    const statusReady = String(status.status || '').toLowerCase() === 'ready';
+    const freshnessStatus = !statusReady ? 'unavailable' : changedCount > 0 ? 'stale' : 'fresh';
+    const freshnessDetail = !statusReady
+      ? `cbm_index_not_ready: ${String(status.status || 'unknown')}`
+      : changedCount > 0
+        ? `cbm_freshness_unverified: ${changedCount} tracked working-tree file(s) differ from HEAD and index_status exposes no indexed revision`
+        : 'cbm_fresh: indexed graph matches tracked HEAD changes';
+    const evidenceBlocker =
+      relevantFiles.length === 0 || relevantSymbols.length === 0
+        ? `cbm_no_matching_code_evidence: ${query}`
+        : null;
+    const blocker = freshnessStatus === 'fresh' ? evidenceBlocker : freshnessDetail;
+
+    return {
+      data: {
+        relevantFiles,
+        relevantSymbols,
+        codeAnchors: relevantFiles,
+        cbmQueries: queries,
+        components: dedupeStrings(
+          results
+            .filter((result) => ['Function', 'Method', 'Class', 'Interface'].includes(String(result?.label)))
+            .map((result) => String(result?.name || '')),
+        ),
+        routes: dedupeStrings(
+          results
+            .filter((result) => String(result?.label) === 'Route')
+            .map((result) => String(result?.name || '')),
+        ),
+        schemas: dedupeStrings(
+          results
+            .filter((result) => ['Type', 'Interface'].includes(String(result?.label)))
+            .map((result) => String(result?.name || '')),
+        ),
+        tools: ['list_projects', 'index_status', 'search_graph', 'detect_changes'],
+        agentCards: [],
+        promptTemplates: [],
+        implementationNotes: [
+          `CodeGraph context returned ${relevantFiles.length} file(s) and ${relevantSymbols.length} symbol(s).`,
+          freshnessDetail,
+          ...(evidenceBlocker ? [evidenceBlocker] : []),
+        ],
+        freshness: {
+          status: freshnessStatus,
+          project: projectName,
+          nodes: Number.isFinite(Number(status.nodes)) ? Number(status.nodes) : null,
+          edges: Number.isFinite(Number(status.edges)) ? Number(status.edges) : null,
+          checkedAt,
+          detail: freshnessDetail,
+        },
+        blocker,
+      },
+      sourceLabels: ['CodeGraph/Codebase Memory MCP'],
+      debugNotes: blocker ? [blocker] : [],
+    };
+  } catch (error) {
+    return unavailableCodeGraphContext(
+      checkedAt,
+      `cbm_unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      queries,
+    );
+  } finally {
+    await session?.close();
+  }
 }
 
 function asAgeRowObject<T extends Record<string, any>>(raw: unknown): T | null {
@@ -528,31 +870,12 @@ async function readThinkGraphContextFromAge(
   };
 }
 
-async function readCodeGraphContextFallback(): Promise<GraphContextStreamResult<CodeGraphContextPacket | null>> {
-  return {
-    data: {
-      relevantFiles: [],
-      components: [],
-      routes: [],
-      schemas: [],
-      tools: [],
-      agentCards: [],
-      promptTemplates: [],
-      implementationNotes: [
-        'CodeGraph builder stream is currently read-only and partial.',
-        'No backend CodeGraph query boundary is wired yet; UI layout/read surface exists separately.',
-      ],
-    },
-    sourceLabels: ['CodeGraph'],
-    debugNotes: ['codegraph_partial: backend read path not wired yet'],
-  };
-}
-
 export async function buildGraphContextPacket(
   args: BuildGraphContextPacketArgs,
   deps: GraphContextBuilderDeps = {},
 ): Promise<GraphContextPacket> {
   const now = deps.now ?? (() => new Date().toISOString());
+  const clock = deps.clock ?? (() => Date.now());
   const packetBase = createEmptyGraphContextPacket({
     projectId: args.projectId,
     requestId: args.requestId ?? null,
@@ -576,11 +899,32 @@ export async function buildGraphContextPacket(
     ],
   });
 
-  const [thinkResult, knowResult, codeResult] = await Promise.allSettled([
-    (deps.readThinkGraphContext ?? readThinkGraphContextFromAge)(args),
-    (deps.readKnowGraphContext ?? readKnowGraphContextFromNeo4j)(args),
-    (deps.readCodeGraphContext ?? readCodeGraphContextFallback)(args),
+  const [thinkSettled, knowSettled, codeSettled] = await Promise.all([
+    settleGraphSource({
+      source: 'graph_thinkgraph',
+      critical: false,
+      timeoutMs: deps.sourceTimeoutMs?.graph_thinkgraph ?? GRAPH_SOURCE_TIMEOUT_MS.graph_thinkgraph,
+      clock,
+      operation: () => (deps.readThinkGraphContext ?? readThinkGraphContextFromAge)(args),
+    }),
+    settleGraphSource({
+      source: 'knowgraph',
+      critical: false,
+      timeoutMs: deps.sourceTimeoutMs?.knowgraph ?? GRAPH_SOURCE_TIMEOUT_MS.knowgraph,
+      clock,
+      operation: () => (deps.readKnowGraphContext ?? readKnowGraphContextFromNeo4j)(args),
+    }),
+    settleGraphSource({
+      source: 'codegraph_cbm',
+      critical: true,
+      timeoutMs: deps.sourceTimeoutMs?.codegraph_cbm ?? GRAPH_SOURCE_TIMEOUT_MS.codegraph_cbm,
+      clock,
+      operation: () => (deps.readCodeGraphContext ?? readCodeGraphContextFromCbm)(args),
+    }),
   ]);
+  const thinkResult = thinkSettled.result;
+  const knowResult = knowSettled.result;
+  const codeResult = codeSettled.result;
 
   const sourceLabels = new Set<string>();
   const debugNotes = new Set<string>();
@@ -642,6 +986,11 @@ export async function buildGraphContextPacket(
     ...packet.provenance,
     sourceLabels: Array.from(sourceLabels),
     debugNotes: Array.from(debugNotes),
+    sourceDiagnostics: [
+      thinkSettled.diagnostic,
+      knowSettled.diagnostic,
+      codeSettled.diagnostic,
+    ],
   };
 
   return packet;

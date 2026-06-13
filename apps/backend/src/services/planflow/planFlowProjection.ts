@@ -99,9 +99,7 @@ export function projectMarkdownPlanningDocuments(
       },
     ],
     edges: [],
-    warnings: [
-      'planflow_active_coderpacket_pending: active prompt projection is not wired yet',
-    ],
+    warnings: [],
   };
 }
 

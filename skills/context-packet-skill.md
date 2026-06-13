@@ -22,6 +22,29 @@ CoderPacket.
 5. Add KnowGraph research only when relevant.
 6. Report missing or stale context as a blocker; never guess.
 
+## Backend Planning Boundary
+
+* Assemble Context Packet fields before invoking the planner model; the client must not construct a
+  deterministic CoderPacket.
+* Keep trusted `projectId`, `repoPath`, `PLAN.md` excerpt, code anchors, and CBM queries backend
+  owned when validating planner output.
+* Require explicit planner model configuration and schema-validated output. Missing configuration,
+  missing anchors, or invalid output blocks loudly.
+* Persist only summarized packet provenance and outcome reconciliation to ThinkGraph; do not copy
+  huge prompts or raw coder output into planning memory.
+* Query the configured Codebase Memory MCP from the backend. Carry the exact query, matching files
+  and symbols, graph counts, freshness status, and blocker into the Context Packet.
+* Treat only CBM-returned files as trusted code anchors. `PLAN.md` paths and selected-object paths
+  may become query hints, but they are not proof that CodeGraph found those files.
+* A stale, unavailable, or empty CBM result must remain visible in the CoderPacket and ThinkGraph;
+  do not silently replace it with guessed anchors.
+* Bound every Context Packet source independently and persist a diagnostic containing source,
+  criticality, status, elapsed time, evidence count, and blocker. A critical timeout/failure
+  blocks assembly. A non-critical timeout/failure may continue only when it is visible in Context
+  Packet warnings and CoderPacket guardrails.
+* A timeout race bounds the caller but does not cancel the underlying operation. Source adapters
+  still need deterministic client/session cleanup, especially in one-shot smoke harnesses.
+
 ## Guardrails
 
 @guardrail id=context-packet.planner-initiated

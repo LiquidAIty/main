@@ -48,6 +48,10 @@ import {
 } from '../components/builder/assistPlanSurface';
 import { buildPlanFlowMissionGraph } from '../features/agentbuilder/plan/planFlowProjection';
 import ActiveCoderJobPanel from '../features/agentbuilder/plan/ActiveCoderJobPanel';
+import {
+  prepareActiveCoderPacket,
+  type CoderPacket,
+} from '../features/agentbuilder/plan/coderLoop';
 import { buildExecutionPlan } from '../components/builder/deckExecution';
 import DeckExecutionPathSummary from '../components/builder/DeckExecutionPathSummary';
 import {
@@ -5034,6 +5038,11 @@ export default function AgentBuilder(): React.ReactElement {
     'idle' | 'loading' | 'ready' | 'error'
   >('idle');
   const [planFlowLoadMessage, setPlanFlowLoadMessage] = useState('');
+  const [activeCoderPacket, setActiveCoderPacket] = useState<CoderPacket | null>(null);
+  const [coderPacketPreparationStatus, setCoderPacketPreparationStatus] = useState<
+    'idle' | 'preparing' | 'ready' | 'blocked'
+  >('idle');
+  const [coderPacketPreparationMessage, setCoderPacketPreparationMessage] = useState('');
   const planFlowMissionGraph = useMemo(
     () => buildPlanFlowMissionGraph(planFlowProjection, latestDeckRun),
     [latestDeckRun, planFlowProjection],
@@ -5077,6 +5086,11 @@ export default function AgentBuilder(): React.ReactElement {
         );
       });
     return () => controller.abort();
+  }, [activeProject]);
+  useEffect(() => {
+    setActiveCoderPacket(null);
+    setCoderPacketPreparationStatus('idle');
+    setCoderPacketPreparationMessage('');
   }, [activeProject]);
   const lastLargeSurfaceTelemetryRef = useRef<WorkspaceTestingSurface | null>(
     null,
@@ -8204,6 +8218,11 @@ export default function AgentBuilder(): React.ReactElement {
     });
 
     setMessages((m) => [...m, { role: 'user', text: trimmed }]);
+    setActiveCoderPacket(null);
+    setCoderPacketPreparationStatus('preparing');
+    setCoderPacketPreparationMessage(
+      'Waiting for the real Magentic-One run, then assembling PLAN.md, ThinkGraph, SkillGraph, and CodeGraph context.',
+    );
 
     // PlanFlow is projected from authoritative markdown. The selected deck runs
     // through the real runtime; a genuine orchestrator proposal may join the
@@ -8235,6 +8254,10 @@ export default function AgentBuilder(): React.ReactElement {
       const outcome = await handleRunDeck(trimmed, { missionSpec: approvedMissionSpec });
 
       if (!outcome || !outcome.ok) {
+        setCoderPacketPreparationStatus('blocked');
+        setCoderPacketPreparationMessage(
+          `Magentic-One generation path blocked: ${outcome?.error || 'Unknown error'}`,
+        );
         setMessages((m) => [
           ...m,
           {
@@ -8243,6 +8266,40 @@ export default function AgentBuilder(): React.ReactElement {
           },
         ]);
       } else {
+        try {
+          const realMagenticPlans = (outcome.run?.steps || [])
+            .map((step) => step.magenticTrace?.plan)
+            .filter((candidate) => candidate && typeof candidate === 'object');
+          const prepared = await prepareActiveCoderPacket({
+            projectId: canvasProjectId,
+            userInput: trimmed,
+            repoPath:
+              activeDeckWorkspaceContext.repoPath ||
+              activeDeckWorkspaceContext.workspaceRoot ||
+              null,
+            planFlowState: {
+              projection: planFlowProjection || {},
+              magenticRunId: outcome.run?.id || '',
+              magenticRunStatus: outcome.run?.status || '',
+              realMagenticPlans,
+            },
+            selectedContext: {
+              ...activeDeckWorkspaceContext,
+              ...activeWorkspaceObjectContext,
+            },
+          });
+          setActiveCoderPacket(prepared.packet);
+          setCoderPacketPreparationStatus('ready');
+          setCoderPacketPreparationMessage(
+            `${prepared.plannerProvenance.source} created one validated packet with ${prepared.plannerProvenance.contextSources.length} real context sources.`,
+          );
+        } catch (error) {
+          setActiveCoderPacket(null);
+          setCoderPacketPreparationStatus('blocked');
+          setCoderPacketPreparationMessage(
+            error instanceof Error ? error.message : 'Active CoderPacket preparation failed.',
+          );
+        }
         const textStr = outcome.finalText ? `\n\nResult:\n${outcome.finalText}` : '';
         setMessages((m) => [
           ...m,
@@ -9070,7 +9127,13 @@ export default function AgentBuilder(): React.ReactElement {
                 {planFlowLoadMessage || 'Select a node for source, provenance, status, links, and summary.'}
               </div>
             </div>
-            <ActiveCoderJobPanel projectId={activeProject} />
+            <ActiveCoderJobPanel
+              projectId={activeProject}
+              preparedPacket={activeCoderPacket}
+              preparationStatus={coderPacketPreparationStatus}
+              preparationMessage={coderPacketPreparationMessage}
+              planSummary={planFlowProjection?.nodes?.[0]?.title || ''}
+            />
             {planFlowMissionGraph.nodes.length > 0 ? (
               <Suspense
                 fallback={

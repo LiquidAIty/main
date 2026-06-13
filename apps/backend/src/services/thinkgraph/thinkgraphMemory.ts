@@ -23,6 +23,8 @@ const EVENT_TYPES = new Set<ThinkGraphEventType>([
   'run_failed',
   'proof_recorded',
   'blocker_found',
+  'coder_packet_created',
+  'coder_report_recorded',
 ]);
 const EVENT_STATUSES = new Set<ThinkGraphEvent['status']>([
   'pending',
@@ -42,7 +44,9 @@ export type ThinkGraphEventType =
   | 'run_completed'
   | 'run_failed'
   | 'proof_recorded'
-  | 'blocker_found';
+  | 'blocker_found'
+  | 'coder_packet_created'
+  | 'coder_report_recorded';
 
 export type ThinkGraphEvent = {
   projectId: string;
@@ -61,6 +65,23 @@ export type ThinkGraphEvent = {
   error?: string | null;
   assumptions?: string[];
   nextTask?: string;
+  coderPacketId?: string;
+  coderPacketObjective?: string;
+  coderReportStatus?: string;
+  completedRequirements?: string[];
+  incompleteRequirements?: string[];
+  blockedRequirements?: string[];
+  changedRequirements?: string[];
+  outOfScopeFindings?: string[];
+  proofSummary?: string[];
+  contextEvidenceSummary?: string[];
+  cbmStatus?: string;
+  codeAnchors?: string[];
+  cbmBlocker?: string;
+  sourceDiagnosticsSummary?: string[];
+  plannerProvider?: string;
+  plannerModel?: string;
+  plannerConfigSource?: string;
 };
 
 export type ThinkGraphRunEvent = {
@@ -111,6 +132,23 @@ export type ThinkGraphContextEvent = {
   final_output: string;
   error: string;
   next_task: string;
+  coder_packet_id: string;
+  coder_packet_objective: string;
+  coder_report_status: string;
+  completed_requirements: string[];
+  incomplete_requirements: string[];
+  blocked_requirements: string[];
+  changed_requirements: string[];
+  out_of_scope_findings: string[];
+  proof_summary: string[];
+  context_evidence_summary: string[];
+  cbm_status: string;
+  code_anchors: string[];
+  cbm_blocker: string;
+  source_diagnostics_summary: string[];
+  planner_provider: string;
+  planner_model: string;
+  planner_config_source: string;
 };
 
 function clampText(value: unknown): string {
@@ -159,7 +197,24 @@ export async function recordThinkGraphEvent(record: ThinkGraphEvent): Promise<{ 
       final_output: $finalOutput,
       error: $error,
       assumptions: $assumptions,
-      next_task: $nextTask
+      next_task: $nextTask,
+      coder_packet_id: $coderPacketId,
+      coder_packet_objective: $coderPacketObjective,
+      coder_report_status: $coderReportStatus,
+      completed_requirements: $completedRequirements,
+      incomplete_requirements: $incompleteRequirements,
+      blocked_requirements: $blockedRequirements,
+      changed_requirements: $changedRequirements,
+      out_of_scope_findings: $outOfScopeFindings,
+      proof_summary: $proofSummary,
+      context_evidence_summary: $contextEvidenceSummary,
+      cbm_status: $cbmStatus,
+      code_anchors: $codeAnchors,
+      cbm_blocker: $cbmBlocker,
+      source_diagnostics_summary: $sourceDiagnosticsSummary,
+      planner_provider: $plannerProvider,
+      planner_model: $plannerModel,
+      planner_config_source: $plannerConfigSource
     })
     RETURN r.id
   `;
@@ -182,6 +237,23 @@ export async function recordThinkGraphEvent(record: ThinkGraphEvent): Promise<{ 
     error: clampText(record.error),
     assumptions: cleanList(record.assumptions),
     nextTask: clampText(record.nextTask),
+    coderPacketId: clampText(record.coderPacketId),
+    coderPacketObjective: clampText(record.coderPacketObjective),
+    coderReportStatus: clampText(record.coderReportStatus),
+    completedRequirements: cleanList(record.completedRequirements),
+    incompleteRequirements: cleanList(record.incompleteRequirements),
+    blockedRequirements: cleanList(record.blockedRequirements),
+    changedRequirements: cleanList(record.changedRequirements),
+    outOfScopeFindings: cleanList(record.outOfScopeFindings),
+    proofSummary: cleanList(record.proofSummary),
+    contextEvidenceSummary: cleanList(record.contextEvidenceSummary),
+    cbmStatus: clampText(record.cbmStatus),
+    codeAnchors: cleanList(record.codeAnchors),
+    cbmBlocker: clampText(record.cbmBlocker),
+    sourceDiagnosticsSummary: cleanList(record.sourceDiagnosticsSummary),
+    plannerProvider: clampText(record.plannerProvider),
+    plannerModel: clampText(record.plannerModel),
+    plannerConfigSource: clampText(record.plannerConfigSource),
   });
   if (planFlowNodeIds.length > 0) {
     await runCypherOnGraph(
@@ -246,7 +318,24 @@ export async function readThinkGraphContextPacket(
       task: r.task, cards: r.cards, tools: r.tools,
       runtime_route: r.runtime_route, status: r.status,
       final_output: r.final_output, error: r.error,
-      assumptions: r.assumptions, next_task: r.next_task
+      assumptions: r.assumptions, next_task: r.next_task,
+      coder_packet_id: r.coder_packet_id,
+      coder_packet_objective: r.coder_packet_objective,
+      coder_report_status: r.coder_report_status,
+      completed_requirements: r.completed_requirements,
+      incomplete_requirements: r.incomplete_requirements,
+      blocked_requirements: r.blocked_requirements,
+      changed_requirements: r.changed_requirements,
+      out_of_scope_findings: r.out_of_scope_findings,
+      proof_summary: r.proof_summary,
+      context_evidence_summary: r.context_evidence_summary,
+      cbm_status: r.cbm_status,
+      code_anchors: r.code_anchors,
+      cbm_blocker: r.cbm_blocker,
+      source_diagnostics_summary: r.source_diagnostics_summary,
+      planner_provider: r.planner_provider,
+      planner_model: r.planner_model,
+      planner_config_source: r.planner_config_source
     }
     ORDER BY r.ts DESC
     LIMIT ${safeLimit}
@@ -275,6 +364,23 @@ export async function readThinkGraphContextPacket(
       final_output: String(row.final_output ?? ''),
       error: String(row.error ?? ''),
       next_task: String(row.next_task ?? ''),
+      coder_packet_id: String(row.coder_packet_id ?? ''),
+      coder_packet_objective: String(row.coder_packet_objective ?? ''),
+      coder_report_status: String(row.coder_report_status ?? ''),
+      completed_requirements: cleanList(row.completed_requirements),
+      incomplete_requirements: cleanList(row.incomplete_requirements),
+      blocked_requirements: cleanList(row.blocked_requirements),
+      changed_requirements: cleanList(row.changed_requirements),
+      out_of_scope_findings: cleanList(row.out_of_scope_findings),
+      proof_summary: cleanList(row.proof_summary),
+      context_evidence_summary: cleanList(row.context_evidence_summary),
+      cbm_status: String(row.cbm_status ?? ''),
+      code_anchors: cleanList(row.code_anchors),
+      cbm_blocker: String(row.cbm_blocker ?? ''),
+      source_diagnostics_summary: cleanList(row.source_diagnostics_summary),
+      planner_provider: String(row.planner_provider ?? ''),
+      planner_model: String(row.planner_model ?? ''),
+      planner_config_source: String(row.planner_config_source ?? ''),
     }));
 
   const latest = recentEvents[0] || null;

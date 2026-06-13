@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { parseCoderPacketJson, runLocalCoderPacket } from './coderLoop';
+import {
+  parseCoderPacketJson,
+  prepareActiveCoderPacket,
+  runLocalCoderPacket,
+} from './coderLoop';
 
 const packet = {
   id: 'packet-1',
@@ -43,6 +47,7 @@ describe('LocalCoder run client', () => {
         failedCommands: [],
         blockers: ['bun command is unavailable'],
         assumptions: [],
+        outOfScopeFindings: [],
         nextRecommendedTask: 'Install Bun.',
         rawOutput: '',
       },
@@ -50,7 +55,14 @@ describe('LocalCoder run client', () => {
         matchesPacket: false,
         comparedRequirements: 0,
         unresolvedRequirements: [],
+        completedRequirements: [],
+        incompleteRequirements: [],
+        blockedRequirements: [],
+        changedRequirements: [],
+        outOfScopeFindings: [],
+        nextNarrowerFocus: 'Install Bun.',
       },
+      thinkGraphPersistence: { ok: true },
     };
     const fetchImpl = vi.fn().mockResolvedValue({
       status: 424,
@@ -68,6 +80,40 @@ describe('LocalCoder run client', () => {
 
     await expect(runLocalCoderPacket(packet, fetchImpl as any)).rejects.toThrow(
       'localcoder_run_failed',
+    );
+  });
+});
+
+describe('active CoderPacket preparation client', () => {
+  it('accepts one backend-planned packet with real planner provenance', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      status: 200,
+      json: async () => ({
+        ok: true,
+        contextPacket: {
+          userInput: 'Wire PlanFlow',
+          planExcerpt: 'Living plan',
+        },
+        packet,
+        plannerProvenance: {
+          source: 'backend_planning_service',
+          provider: 'openai',
+          model: 'gpt-5',
+          configSource: 'SOL_CODER_PLANNER_MODEL_KEY',
+          contextSources: ['PLAN.md', 'ThinkGraph', 'SkillGraph/Neo4j', 'CodeGraph/CBM query plan'],
+        },
+      }),
+    });
+
+    const result = await prepareActiveCoderPacket(
+      { projectId: 'project-1', userInput: 'Wire PlanFlow' },
+      fetchImpl as any,
+    );
+
+    expect(result.packet).toEqual(packet);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      '/api/coder/planflow/prepare',
+      expect.objectContaining({ method: 'POST' }),
     );
   });
 });

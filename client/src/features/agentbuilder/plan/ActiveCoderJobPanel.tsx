@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import {
   parseCoderPacketJson,
@@ -27,8 +27,16 @@ function list(items: string[]) {
 
 export default function ActiveCoderJobPanel({
   projectId,
+  preparedPacket,
+  preparationStatus = 'idle',
+  preparationMessage = '',
+  planSummary = '',
 }: {
   projectId: string;
+  preparedPacket?: CoderPacket | null;
+  preparationStatus?: 'idle' | 'preparing' | 'ready' | 'blocked';
+  preparationMessage?: string;
+  planSummary?: string;
 }) {
   const [draft, setDraft] = useState('');
   const [packet, setPacket] = useState<CoderPacket | null>(null);
@@ -38,7 +46,23 @@ export default function ActiveCoderJobPanel({
   );
   const [running, setRunning] = useState(false);
 
-  const acceptPacket = () => {
+  useEffect(() => {
+    if (!preparedPacket) return;
+    if (preparedPacket.projectId !== projectId) {
+      setPacket(null);
+      setDraft('');
+      setMessage(
+        `Prepared CoderPacket projectId ${preparedPacket.projectId} does not match active project ${projectId}.`,
+      );
+      return;
+    }
+    setPacket(preparedPacket);
+    setDraft(JSON.stringify(preparedPacket, null, 2));
+    setResult(null);
+    setMessage('Active CoderPacket prepared from real project context. Review it, then click Go.');
+  }, [preparedPacket, projectId]);
+
+  const applyEdits = () => {
     try {
       const nextPacket = parseCoderPacketJson(draft);
       if (nextPacket.projectId !== projectId) {
@@ -48,7 +72,7 @@ export default function ActiveCoderJobPanel({
       }
       setPacket(nextPacket);
       setResult(null);
-      setMessage('Active CoderPacket accepted. Review it, then click Go.');
+      setMessage('Active CoderPacket edits validated. Review it, then click Go.');
     } catch (error) {
       setPacket(null);
       setResult(null);
@@ -80,14 +104,35 @@ export default function ActiveCoderJobPanel({
       <div style={{ ...mutedStyle, marginTop: 4 }}>
         The accepted packet is the complete spec and task. Go executes exactly this one job.
       </div>
+      <div style={{ ...mutedStyle, marginTop: 6, whiteSpace: 'pre-wrap' }}>
+        PLAN.md: {planSummary || 'Living plan summary unavailable.'}
+        {'\n'}Preparation: {preparationStatus}
+        {preparationMessage ? ` - ${preparationMessage}` : ''}
+      </div>
 
       {!packet ? (
+        <div style={{ ...mutedStyle, marginTop: 10 }}>
+          {preparationStatus === 'preparing'
+            ? 'Magentic-One/Sol context is being assembled into one active CoderPacket.'
+            : preparationStatus === 'blocked'
+              ? 'Active CoderPacket preparation is blocked. The exact blocker remains visible above.'
+              : 'Chat normally to prepare one active CoderPacket from real project context.'}
+        </div>
+      ) : (
         <>
+          <div style={{ marginTop: 10, color: '#e7f0f2', fontSize: 12 }}>
+            <strong>{packet.objective}</strong>
+          </div>
+          <div style={{ ...mutedStyle, whiteSpace: 'pre-wrap', marginTop: 6 }}>
+            Repo: {packet.repoPath}
+            {'\n'}Allowed files: {list(packet.allowedFiles)}
+            {'\n'}Proof required: {list(packet.proofRequired)}
+            {'\n'}Stop conditions: {list(packet.stopConditions)}
+          </div>
           <textarea
-            aria-label="CoderPacket JSON"
+            aria-label="Active CoderPacket JSON"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder="Paste one Magentic-One/Sol generated CoderPacket JSON here."
             style={{
               width: '100%',
               minHeight: 150,
@@ -102,22 +147,10 @@ export default function ActiveCoderJobPanel({
               fontSize: 11,
             }}
           />
-          <button type="button" onClick={acceptPacket} disabled={!draft.trim()}>
-            Accept CoderPacket
-          </button>
-        </>
-      ) : (
-        <>
-          <div style={{ marginTop: 10, color: '#e7f0f2', fontSize: 12 }}>
-            <strong>{packet.objective}</strong>
-          </div>
-          <div style={{ ...mutedStyle, whiteSpace: 'pre-wrap', marginTop: 6 }}>
-            Repo: {packet.repoPath}
-            {'\n'}Allowed files: {list(packet.allowedFiles)}
-            {'\n'}Proof required: {list(packet.proofRequired)}
-            {'\n'}Stop conditions: {list(packet.stopConditions)}
-          </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <button type="button" onClick={applyEdits} disabled={running || !draft.trim()}>
+              Apply edits
+            </button>
             <button type="button" onClick={runPacket} disabled={running}>
               {running ? 'Running...' : 'Go'}
             </button>
@@ -125,6 +158,7 @@ export default function ActiveCoderJobPanel({
               type="button"
               onClick={() => {
                 setPacket(null);
+                setDraft('');
                 setResult(null);
                 setMessage('Active CoderPacket cleared without execution.');
               }}
@@ -147,14 +181,21 @@ export default function ActiveCoderJobPanel({
           <div style={{ ...mutedStyle, marginTop: 8, whiteSpace: 'pre-wrap' }}>
             Compared requirements: {result.comparison.comparedRequirements}
             {'\n'}Matches packet: {result.comparison.matchesPacket ? 'yes' : 'no'}
-            {'\n'}Unresolved: {list(result.comparison.unresolvedRequirements)}
+            {'\n'}Completed: {list(result.comparison.completedRequirements)}
+            {'\n'}Incomplete: {list(result.comparison.incompleteRequirements)}
+            {'\n'}Blocked: {list(result.comparison.blockedRequirements)}
+            {'\n'}Changed: {list(result.comparison.changedRequirements)}
+            {'\n'}Out of scope: {list(result.comparison.outOfScopeFindings)}
             {'\n'}Blockers: {list(result.report.blockers)}
             {'\n'}Proof: {result.report.proofResults.length > 0
               ? result.report.proofResults
                   .map((proof) => `${proof.status}: ${proof.command}`)
                   .join('\n')
               : 'None'}
-            {'\n'}Next recommended task: {result.report.nextRecommendedTask || 'None'}
+            {'\n'}Next narrower focus: {result.comparison.nextNarrowerFocus || 'None'}
+            {'\n'}ThinkGraph persistence: {result.thinkGraphPersistence?.ok === false
+              ? `blocked - ${result.thinkGraphPersistence.error || 'unknown error'}`
+              : 'recorded'}
           </div>
         </div>
       ) : null}

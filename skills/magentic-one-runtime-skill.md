@@ -81,6 +81,22 @@ or any no-edit language in `forbiddenWork`/`stopConditions` -> `plan`; `writeMod
 rights). Route tests force a broken `LOCALCODER_COMMAND` so they block during discovery and
 never spawn a real coder.
 
+## Chat-To-Active-Job Rule
+
+Normal Agent Builder chat may run the real Magentic-One deck path first, then send real runtime
+provenance and selected workspace context to a backend Context Packet/planning service. The backend
+planner must be explicitly configured and schema-validated. PlanFlow receives one editable
+CoderPacket and waits for user Go; neither chat nor the planner automatically executes LocalCoder.
+
+## Explicit Sol Planner Configuration Rule
+
+The coder planner may use `SOL_CODER_PLANNER_MODEL_KEY`, an explicit
+`SOL_CODER_PLANNER_PROVIDER` + `SOL_CODER_PLANNER_MODEL_ID` pair, or an explicitly set
+`SOL_PRIMARY=openai|openrouter` with its matching provider key. Do not call a role resolver that
+defaults missing `SOL_PRIMARY`; resolve the explicitly selected provider through the real model
+registry and persist the non-secret config source/provider/model provenance. Missing, conflicting,
+or invalid configuration blocks before packet generation and ThinkGraph success persistence.
+
 ## MCP Config Normalization Rule
 
 OpenClaude (`localcoder/src/services/mcp/types.ts`) discriminates MCP servers by a `type`

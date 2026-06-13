@@ -246,6 +246,7 @@ const AGENT_PROJECT = {
 };
 
 let deckRunRequests: Array<Record<string, unknown>> = [];
+let coderPrepareRequests: Array<Record<string, unknown>> = [];
 
 const mountedRoots: Array<() => void> = [];
 
@@ -430,6 +431,7 @@ beforeEach(() => {
   setWorkspaceTestingEnabled(true);
   clearWorkspaceTestingEvents();
   deckRunRequests = [];
+  coderPrepareRequests = [];
   Object.defineProperty(HTMLElement.prototype, "scrollTo", {
     configurable: true,
     value: vi.fn(),
@@ -529,6 +531,41 @@ beforeEach(() => {
               simpleOrderCardIds: ["card_magentic"],
               expandedStepIds: ["card_magentic::single"],
             },
+          },
+        });
+      }
+
+      if (url === "/api/coder/planflow/prepare") {
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        coderPrepareRequests.push(body);
+        return jsonResponse({
+          ok: true,
+          contextPacket: {
+            userInput: String(body.userInput || ""),
+            planExcerpt: "LiquidAIty Living Plan",
+          },
+          packet: {
+            id: "packet-ui-1",
+            projectId: ASSIST_PROJECT.id,
+            repoPath: "C:\\Projects\\main",
+            objective: "Wire one active job.",
+            planExcerpt: "LiquidAIty Living Plan",
+            contextSummary: "Real context assembled.",
+            codeAnchors: ["client/src/pages/agentbuilder.tsx"],
+            cbmQueries: ["search_graph PlanFlow"],
+            guardrails: ["No fake success."],
+            allowedFiles: ["client/src/features/agentbuilder/plan/*"],
+            forbiddenWork: ["Do not auto-run the next job."],
+            proofRequired: ["Run focused client checks."],
+            reportFormat: "Make a bounded task list and return a task-by-task CoderReport.",
+            stopConditions: ["Stop after one report."],
+            writeMode: "edit",
+          },
+          plannerProvenance: {
+            source: "backend_planning_service",
+            provider: "openai",
+            model: "gpt-5",
+            contextSources: ["PLAN.md", "ThinkGraph", "SkillGraph/Neo4j", "CodeGraph/CBM query plan"],
           },
         });
       }
@@ -1470,5 +1507,35 @@ describe("AgentBuilder locked 3-state flow", () => {
           typeof event.durationMs === "number",
       ),
     ).toBe(true);
+  });
+
+  it("prepares one active CoderPacket after the real Magentic chat run and displays it in PlanFlow", async () => {
+    const container = mount(<AgentBuilder />);
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
+    });
+
+    const input = queryChatInput(container);
+    if (!(input instanceof HTMLInputElement)) throw new Error("missing chat input");
+    fireEvent.change(input, { target: { value: "Wire one active job" } });
+    click(getSendButton(container));
+
+    await waitFor(() => {
+      expect(coderPrepareRequests).toHaveLength(1);
+    });
+
+    click(getButtonByTitle(container, "Orange"));
+
+    await waitFor(() => {
+      expect(queryByTestId(container, "active-coder-job-panel")).toBeTruthy();
+      expect(container.textContent).toContain("Wire one active job.");
+    });
+
+    expect(coderPrepareRequests[0]).toMatchObject({
+      projectId: ASSIST_PROJECT.id,
+      userInput: "Wire one active job",
+    });
+    expect(container.textContent).not.toContain("Paste one Magentic-One/Sol generated CoderPacket");
   });
 });
