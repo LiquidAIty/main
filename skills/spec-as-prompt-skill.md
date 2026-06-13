@@ -56,3 +56,25 @@ a bounded part of `PLAN.md`. Never create spec files or task files.
 @touches_code services/knowgraph/skill_ingest.py
 @touches_code apps/backend/src/services/planflow/planFlowProjection.ts
 @touches_code client/src/features/agentbuilder/plan/planFlowProjection.ts
+
+## First PlanFlow Go Attempt
+
+@attempt id=spec-as-prompt.planflow-go
+@status succeeded
+@source_prompt "implement the first real LiquidAIty chat-to-coder loop"
+@requires_fresh_cbm true
+
+@attempt_result id=spec-as-prompt.planflow-go
+@status succeeded
+@cbm_before nodes=4620 edges=8499
+@cbm_after nodes=4640 edges=8596
+@proved_by PlanFlow accepts exactly one validated CoderPacket for the selected project before Go
+@proved_by Go sends the accepted packet to POST /api/coder/localcoder/run and renders blocked reports returned with HTTP 424
+@proved_by the report comparison, blockers, proof, and next recommended task remain visible without starting another job
+@validated_by 7 focused client checks, 19 combined focused checks, clean backend TypeScript compile, and live browser proof
+@guardrail never manufacture planner provenance from raw chat text
+@guardrail preserve blocked and failed CoderReports instead of treating non-2xx as absent output
+@touches_code client/src/features/agentbuilder/plan/coderLoop.ts
+@touches_code client/src/features/agentbuilder/plan/ActiveCoderJobPanel.tsx
+@touches_code client/src/pages/agentbuilder.tsx
+@touches_code apps/backend/src/coder/localcoder/adapter.ts

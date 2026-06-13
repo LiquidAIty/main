@@ -219,10 +219,20 @@ The spec/task-file model has been removed. The root planning spec/task trees and
 are gone, SkillGraph handoff treats the active CoderPacket prompt as both spec and task, and
 PlanFlow's repository projection now reads only the living `PLAN.md`.
 
-The LocalCoder/OpenClaude and chat-to-coder audit is complete. The vendored runtime has a viable
-gRPC execution boundary and backend-owned env/MCP launcher scaffolding, but the product loop is not
-wired to it. Current OpenClaude run routes are a plain-LLM facade and must not be treated as coder
-execution.
+The first real backend CoderPacket-to-LocalCoder boundary is wired. Shared validated CoderPacket and
+CoderReport contracts exist, `POST /api/coder/localcoder/run` accepts one packet and returns its
+report plus comparison, and the process adapter invokes the vendored LocalCoder noninteractive
+entrypoint with backend env, MCP config, explicit model, and structured report schema.
+
+The old plain-task OpenClaude run route is retired, terminal mode cannot claim it was used without
+launching, and OpenClaude provider/model resolution no longer silently falls back. In the current
+workspace the real LocalCoder route correctly returns blocked because Bun, LocalCoder dependencies,
+and built `dist/cli.mjs` are absent.
+
+PlanFlow now accepts one validated active CoderPacket for the selected project, exposes an explicit
+Go gate, sends only that accepted packet to the LocalCoder route, and renders the returned
+CoderReport comparison, blockers, proof, and next recommended task. A blocked report remains visible
+even when the route correctly returns HTTP 424, and no next job starts automatically.
 
 ## Code And Context Anchors
 
@@ -237,6 +247,8 @@ execution.
   LocalCoder adapter boundary
 * `apps/backend/src/coder/openclaude/*`: current harness scaffolding to replace behind structured
   adapter contracts
+* `apps/backend/src/contracts/coderContracts.ts`: validated CoderPacket/CoderReport and comparison
+* `apps/backend/src/coder/localcoder/*`: real process-backed LocalCoder adapter and service
 * `client/src/pages/agentbuilder.tsx`: current chat path that starts a Magentic-One deck run
 
 ## Durable Decisions
@@ -255,25 +267,21 @@ execution.
 
 ## Blockers
 
-* The active CoderPacket/CoderReport comparison loop is not wired yet.
-* Chat currently starts a Magentic-One deck run directly instead of producing and gating one
-  active CoderPacket.
-* Current Agent Builder chat/loading status copy still refers to removed `specs`, despite PlanFlow
-  now projecting only `PLAN.md`.
+* PlanFlow accepts and runs a validated active CoderPacket, but Magentic-One/Sol does not yet create
+  that packet from a Context Packet.
+* Chat currently starts a Magentic-One deck run directly instead of producing one active
+  CoderPacket for PlanFlow review.
+* Active CoderPacket and CoderReport state is not yet persisted to ThinkGraph.
 * The Local Coder card currently maps to a generic assistant participant.
-* The OpenClaude harness calls `runLLM` rather than the vendored LocalCoder runtime.
-* OpenClaude contracts are plain task/output rather than CoderPacket/CoderReport.
-* The current OpenClaude provider resolver contains a forbidden model fallback.
 * The LocalCoder gRPC launcher is not backend-supervised and is not passed the backend MCP config.
 * The LocalCoder gRPC server currently initializes `mcpClients: []`, exposes available runtime
   tools without mapping CoderPacket access policy, and returns final text rather than CoderReport.
 * LocalCoder dependencies/build output are absent in this workspace and Bun is not installed, so
-  the vendored gRPC runtime cannot be smoke-run yet.
+  the real LocalCoder process route cannot be live-smoked yet.
+* Client TypeScript compile currently has unrelated existing `agentbuilder.tsx` type errors.
 
 ## Next Step
 
-Implement the backend adapter foundation first: define structured CoderPacket/CoderRunEvent/
-CoderReport contracts, start and supervise the vendored LocalCoder gRPC service with backend-owned
-env and MCP configuration, send one CoderPacket, translate permission and tool events, and return
-one proof-bearing CoderReport without provider/model fallback. Then wire PlanFlow Go and the
-user-gated next-job loop to that proven adapter.
+Have Magentic-One/Sol assemble a real Context Packet and prepare one validated active CoderPacket
+for PlanFlow review. Persist the accepted packet and returned CoderReport/comparison to ThinkGraph,
+then prepare at most one next packet without automatically executing it.

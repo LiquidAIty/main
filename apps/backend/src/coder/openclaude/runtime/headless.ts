@@ -1,19 +1,17 @@
 import type { OpenClaudeRunRequest, OpenClaudeRunResult } from '../contracts';
-import { runOpenClaudeWithCanonicalRuntime } from '../provider/openai53';
 
 export async function runOpenClaudeHeadless(
   request: OpenClaudeRunRequest,
 ): Promise<OpenClaudeRunResult> {
-  const response = await runOpenClaudeWithCanonicalRuntime(request);
   return {
-    ok: true,
+    ok: false,
     mode: 'headless',
     access: request.access || 'patch',
-    state: 'idle',
-    output: response.text,
-    provider: response.provider,
-    model: response.model,
-    responseId: response.responseId,
+    state: 'error',
+    error: 'coder_packet_required_use_localcoder_run',
+    provider: request.provider || null,
+    model: request.providerModelId || '',
+    responseId: null,
     terminal: {
       available: false,
       used: false,

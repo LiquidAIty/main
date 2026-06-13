@@ -1,36 +1,25 @@
 import type { OpenClaudeAdapter } from '../adapter';
 import type { OpenClaudeRunRequest, OpenClaudeRunResult } from '../contracts';
-import {
-  resolveOpenClaudeProviderTarget,
-  runOpenClaudeWithCanonicalRuntime,
-} from '../provider/openai53';
 
 export async function runOpenClaudeTerminal(
   adapter: OpenClaudeAdapter,
   request: OpenClaudeRunRequest,
 ): Promise<OpenClaudeRunResult> {
-  const response = await runOpenClaudeWithCanonicalRuntime(request);
-  const target = resolveOpenClaudeProviderTarget(request);
-  const launchCommand = adapter.buildBackendOwnedTerminalLaunchCommand({
-    modelKey: target.modelKey,
-    provider: target.provider,
-    providerModelId: target.providerModelId,
-  });
+  const launchCommand = adapter.buildBackendOwnedTerminalLaunchCommand();
   const terminalAvailable = Boolean(launchCommand);
-  const terminalSteering = request.terminalSteering !== false;
 
   return {
-    ok: true,
+    ok: false,
     mode: 'terminal',
     access: request.access || 'patch',
-    state: 'idle',
-    output: response.text,
-    provider: response.provider,
-    model: response.model,
-    responseId: response.responseId,
+    state: 'error',
+    error: 'terminal_launch_not_executed_use_localcoder_run',
+    provider: request.provider || null,
+    model: request.providerModelId || '',
+    responseId: null,
     terminal: {
       available: terminalAvailable,
-      used: terminalAvailable && terminalSteering,
+      used: false,
       envOwner: 'backend',
       runtimeOwner: 'backend',
       launchCommand,

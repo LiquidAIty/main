@@ -22,14 +22,21 @@ export class OpenClaudeRuntimeService {
 
   getStatus(request: Partial<OpenClaudeRunRequest> = {}): OpenClaudeStatus {
     const install = this.adapter.getInstallInfo();
-    const target = resolveOpenClaudeProviderTarget({
-      task: '',
-      mode: request.mode,
-      access: request.access,
-      modelKey: request.modelKey,
-      provider: request.provider,
-      providerModelId: request.providerModelId,
-    });
+    let target: ReturnType<typeof resolveOpenClaudeProviderTarget> | null = null;
+    let configurationError: string | undefined;
+    try {
+      target = resolveOpenClaudeProviderTarget({
+        task: '',
+        mode: request.mode,
+        access: request.access,
+        modelKey: request.modelKey,
+        provider: request.provider,
+        providerModelId: request.providerModelId,
+      });
+    } catch (error) {
+      configurationError =
+        error instanceof Error ? error.message : 'openclaude_configuration_invalid';
+    }
 
     return {
       installed: install.installed,
@@ -39,9 +46,10 @@ export class OpenClaudeRuntimeService {
       mode: request.mode || DEFAULT_MODE,
       access: request.access || DEFAULT_ACCESS,
       state: this.state,
-      modelKey: target.modelKey,
-      provider: target.provider,
-      providerModelId: target.providerModelId,
+      modelKey: target?.modelKey || '',
+      provider: target?.provider || null,
+      providerModelId: target?.providerModelId || '',
+      ...(configurationError ? { configurationError } : {}),
     };
   }
 
@@ -58,20 +66,37 @@ export class OpenClaudeRuntimeService {
         runtimeOwner: 'backend',
         envPath: this.adapter.getBackendEnvPath(),
         rootPath: install.rootPath,
-        provider: 'openai',
+        provider: null,
         modelKey: '',
         providerModelId: '',
         error: 'openclaude_not_installed',
       };
     }
 
-    const target = resolveOpenClaudeProviderTarget({
-      task: '',
-      mode: 'terminal',
-      modelKey: request.modelKey,
-      provider: request.provider,
-      providerModelId: request.providerModelId,
-    });
+    let target: ReturnType<typeof resolveOpenClaudeProviderTarget>;
+    try {
+      target = resolveOpenClaudeProviderTarget({
+        task: '',
+        mode: 'terminal',
+        modelKey: request.modelKey,
+        provider: request.provider,
+        providerModelId: request.providerModelId,
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        terminalAvailable: install.terminalEntrypoint !== null,
+        launchCommand: null,
+        envOwner: 'backend',
+        runtimeOwner: 'backend',
+        envPath: this.adapter.getBackendEnvPath(),
+        rootPath: install.rootPath,
+        provider: null,
+        modelKey: '',
+        providerModelId: '',
+        error: error instanceof Error ? error.message : 'openclaude_configuration_invalid',
+      };
+    }
 
     const launchCommand = this.adapter.buildBackendOwnedTerminalLaunchCommand({
       modelKey: target.modelKey,
@@ -103,7 +128,7 @@ export class OpenClaudeRuntimeService {
         access: request.access || DEFAULT_ACCESS,
         state: 'error',
         error: 'task_required',
-        provider: 'openai',
+        provider: null,
         model: '',
         responseId: null,
         terminal: {
@@ -124,7 +149,7 @@ export class OpenClaudeRuntimeService {
         access: request.access || DEFAULT_ACCESS,
         state: 'error',
         error: 'openclaude_not_installed',
-        provider: 'openai',
+        provider: null,
         model: '',
         responseId: null,
         terminal: {
@@ -148,26 +173,21 @@ export class OpenClaudeRuntimeService {
       return result;
     } catch (err: unknown) {
       this.state = 'error';
-      const target = resolveOpenClaudeProviderTarget(request);
       return {
         ok: false,
         mode: request.mode || DEFAULT_MODE,
         access: request.access || DEFAULT_ACCESS,
         state: 'error',
         error: err instanceof Error ? err.message : 'openclaude_runtime_failed',
-        provider: target.provider,
-        model: target.providerModelId,
+        provider: request.provider || null,
+        model: request.providerModelId || '',
         responseId: null,
         terminal: {
           available: install.terminalEntrypoint !== null,
           used: false,
           envOwner: 'backend',
           runtimeOwner: 'backend',
-          launchCommand: this.adapter.buildBackendOwnedTerminalLaunchCommand({
-            modelKey: target.modelKey,
-            provider: target.provider,
-            providerModelId: target.providerModelId,
-          }),
+          launchCommand: null,
         },
       };
     }

@@ -13,8 +13,9 @@ export type OpenClaudeStatus = {
   access: OpenClaudeAccess;
   state: OpenClaudeState;
   modelKey: string;
-  provider: OpenClaudeProvider;
+  provider: OpenClaudeProvider | null;
   providerModelId: string;
+  configurationError?: string;
 };
 
 export type OpenClaudeRunRequest = {
@@ -37,7 +38,7 @@ export type OpenClaudeRunResult = {
   state: OpenClaudeState;
   output?: string;
   error?: string;
-  provider: OpenClaudeProvider;
+  provider: OpenClaudeProvider | null;
   model: string;
   responseId: string | null;
   terminal: {
@@ -57,7 +58,7 @@ export type OpenClaudeTerminalLaunchResult = {
   runtimeOwner: 'backend';
   envPath: string;
   rootPath: string;
-  provider: OpenClaudeProvider;
+  provider: OpenClaudeProvider | null;
   modelKey: string;
   providerModelId: string;
   error?: string;

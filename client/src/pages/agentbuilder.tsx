@@ -47,6 +47,7 @@ import {
   type StructuredAssistPlanSurface,
 } from '../components/builder/assistPlanSurface';
 import { buildPlanFlowMissionGraph } from '../features/agentbuilder/plan/planFlowProjection';
+import ActiveCoderJobPanel from '../features/agentbuilder/plan/ActiveCoderJobPanel';
 import { buildExecutionPlan } from '../components/builder/deckExecution';
 import DeckExecutionPathSummary from '../components/builder/DeckExecutionPathSummary';
 import {
@@ -5047,7 +5048,7 @@ export default function AgentBuilder(): React.ReactElement {
     }
     const controller = new AbortController();
     setPlanFlowLoadStatus('loading');
-    setPlanFlowLoadMessage('Loading authoritative PLAN.md and specs...');
+    setPlanFlowLoadMessage('Loading authoritative PLAN.md...');
     void fetch(`${PROJECTS_API}/${projectId}/kg/planflow/projection`, {
       signal: controller.signal,
     })
@@ -5064,7 +5065,7 @@ export default function AgentBuilder(): React.ReactElement {
         setPlanFlowLoadMessage(
           warnings.length > 0
             ? `PlanFlow loaded with ${warnings.length} warning${warnings.length === 1 ? '' : 's'}.`
-            : 'PlanFlow loaded from PLAN.md and specs.',
+            : 'PlanFlow loaded from PLAN.md.',
         );
       })
       .catch((error) => {
@@ -8212,7 +8213,7 @@ export default function AgentBuilder(): React.ReactElement {
       ...m,
       {
         role: 'assistant',
-        text: 'PlanFlow remains grounded in PLAN.md/specs. Runtime started.',
+        text: 'PlanFlow remains grounded in PLAN.md. Runtime started.',
       },
     ]);
 
@@ -9069,6 +9070,7 @@ export default function AgentBuilder(): React.ReactElement {
                 {planFlowLoadMessage || 'Select a node for source, provenance, status, links, and summary.'}
               </div>
             </div>
+            <ActiveCoderJobPanel projectId={activeProject} />
             {planFlowMissionGraph.nodes.length > 0 ? (
               <Suspense
                 fallback={

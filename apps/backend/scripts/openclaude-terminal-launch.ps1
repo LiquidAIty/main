@@ -1,6 +1,6 @@
 param(
-  [string]$ModelKey = "gpt-5.3-codex",
-  [string]$Provider = "openai",
+  [string]$ModelKey = "",
+  [string]$Provider = "",
   [string]$ProviderModelId = ""
 )
 
@@ -44,6 +44,16 @@ $openClaudeBin = Join-Path $repoRoot "localcoder\bin\openclaude"
 
 Import-DotEnv -Path $backendEnvPath
 
+if (-not $ModelKey) {
+  throw "openclaude_terminal_model_key_required"
+}
+if (-not $Provider) {
+  throw "openclaude_terminal_provider_required"
+}
+if (-not $ProviderModelId) {
+  throw "openclaude_terminal_provider_model_id_required"
+}
+
 if (-not (Test-Path -LiteralPath $openClaudeBin)) {
   throw "openclaude_terminal_missing: expected $openClaudeBin"
 }
@@ -56,18 +66,21 @@ Remove-Item Env:CLAUDE_CODE_USE_GEMINI -ErrorAction SilentlyContinue
 
 $providerNormalized = ($Provider ?? "").Trim().ToLowerInvariant()
 if ($providerNormalized -eq "openrouter") {
-  $env:OPENAI_BASE_URL = if ($env:OPENROUTER_BASE_URL) { $env:OPENROUTER_BASE_URL } else { "https://api.openrouter.ai/v1" }
+  if (-not $env:OPENROUTER_BASE_URL) {
+    throw "openclaude_terminal_env_missing: OPENROUTER_BASE_URL"
+  }
+  $env:OPENAI_BASE_URL = $env:OPENROUTER_BASE_URL
   $env:OPENAI_API_KEY = $env:OPENROUTER_API_KEY
-  $env:OPENAI_MODEL = if ($ProviderModelId) { $ProviderModelId } else { "openai/gpt-5.3-codex" }
+  $env:OPENAI_MODEL = $ProviderModelId
+}
+elseif ($providerNormalized -eq "openai") {
+  if (-not $env:OPENAI_BASE_URL) {
+    throw "openclaude_terminal_env_missing: OPENAI_BASE_URL"
+  }
+  $env:OPENAI_MODEL = $ProviderModelId
 }
 else {
-  $env:OPENAI_BASE_URL = if ($env:OPENAI_BASE_URL) { $env:OPENAI_BASE_URL } else { "https://api.openai.com/v1" }
-  if ($ProviderModelId) {
-    $env:OPENAI_MODEL = $ProviderModelId
-  }
-  elseif (-not $env:OPENAI_MODEL) {
-    $env:OPENAI_MODEL = $ModelKey
-  }
+  throw "openclaude_terminal_provider_unknown: $Provider"
 }
 
 if (-not $env:OPENAI_API_KEY -or -not $env:OPENAI_API_KEY.Trim()) {
