@@ -37,9 +37,31 @@ const planningMocks = vi.hoisted(() => {
   };
 });
 
+const cbmScopeMocks = vi.hoisted(() => ({
+  runLocalCoderCbmScopeGate: vi.fn(async () => ({
+    indexRan: true,
+    indexStatus: 'indexed',
+    project: 'C-Projects-main',
+    sourceRoot: 'C:/Projects/main',
+    nodes: 10,
+    edges: 20,
+    indexedFiles: 11,
+    requiredFiles: [],
+    missingRequiredFiles: [],
+    excludedFilesFound: [],
+    scopeStatus: 'ok',
+    editAllowed: true,
+    blockedReason: '',
+  })),
+}));
+
 vi.mock('../services/coderPlanning/coderPlanningService', () => ({
   persistCoderRunOutcome: planningMocks.persistCoderRunOutcome,
   prepareActiveCoderPacket: planningMocks.prepareActiveCoderPacket,
+}));
+
+vi.mock('../services/graphContext/cbmScopeGate', () => ({
+  runLocalCoderCbmScopeGate: cbmScopeMocks.runLocalCoderCbmScopeGate,
 }));
 
 async function createApiServer(): Promise<{ server: Server; baseUrl: string }> {
@@ -188,9 +210,49 @@ describe('coder routes', () => {
         expect(payload.report.blockers.join(' ')).toContain(
           'localcoder_explicit_command_script_not_found',
         );
+        expect(payload.cbmScopeGate.editAllowed).toBe(true);
       } finally {
         await closeServer(server);
       }
     });
+  });
+
+  it('cannot bypass a blocked CBM freshness/scope gate through the LocalCoder route', async () => {
+    cbmScopeMocks.runLocalCoderCbmScopeGate.mockResolvedValueOnce({
+      indexRan: true,
+      indexStatus: 'indexed',
+      project: 'C-Projects-main',
+      sourceRoot: 'C:/Projects/main',
+      nodes: 10,
+      edges: 20,
+      indexedFiles: 10,
+      requiredFiles: ['repo-intake/localcoder-boundary.md'],
+      missingRequiredFiles: ['repo-intake/localcoder-boundary.md'],
+      excludedFilesFound: [],
+      scopeStatus: 'blocked',
+      editAllowed: false,
+      blockedReason: 'cbm_scope_required_files_missing: repo-intake/localcoder-boundary.md',
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/localcoder/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...planningMocks.packet,
+          id: 'packet-scope-blocked',
+          writeMode: 'read-only',
+        }),
+      });
+      const payload = await response.json();
+
+      expect(response.status).toBe(424);
+      expect(payload.ok).toBe(false);
+      expect(payload.report.status).toBe('blocked');
+      expect(payload.report.blockers.join(' ')).toContain('cbm_scope_required_files_missing');
+      expect(payload.cbmScopeGate.editAllowed).toBe(false);
+    } finally {
+      await closeServer(server);
+    }
   });
 });

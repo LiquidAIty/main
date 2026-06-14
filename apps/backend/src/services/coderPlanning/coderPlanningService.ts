@@ -314,6 +314,7 @@ function cbmEvidenceSummary(contextPacket: CoderContextPacket): {
   const codeGraphContext = toRecord(contextPacket.codeGraphContext);
   const freshness = toRecord(codeGraphContext.freshness);
   const status = String(freshness.status || 'unavailable').trim();
+  const diagnosticStatus = String(freshness.diagnosticStatus || 'unknown').trim();
   const blocker = String(codeGraphContext.blocker || '').trim();
   const symbols = Array.isArray(codeGraphContext.relevantSymbols)
     ? cleanList(codeGraphContext.relevantSymbols, 12)
@@ -324,8 +325,12 @@ function cbmEvidenceSummary(contextPacket: CoderContextPacket): {
     blocker,
     summary: cleanList([
       `CBM status: ${status}`,
+      `CBM freshness diagnostic: ${diagnosticStatus}`,
       `CBM project: ${String(freshness.project || 'unknown')}`,
       `CBM graph: ${String(freshness.nodes ?? 'unknown')} nodes / ${String(freshness.edges ?? 'unknown')} edges`,
+      `CBM indexed files: ${String(freshness.indexedFileCount ?? 'unknown')}`,
+      `CBM indexed revision: ${String(freshness.indexedRevision || 'unknown')}`,
+      `CBM indexed at: ${String(freshness.indexedAt || 'unknown')}`,
       ...symbols.map((symbol) => `CBM symbol: ${symbol}`),
       ...(blocker ? [`CBM blocker: ${blocker}`] : []),
     ], 20),

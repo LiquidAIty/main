@@ -1,11 +1,27 @@
 import { describe, it, expect } from 'vitest';
-import { resolvedMagenticOptions, buildPythonAutoGenCardRuntimePayload, runCardWithContract } from './runtime';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { RUNTIME_TOOL_SPECS } from '../contracts/runtimeContracts';
+import {
+  MAG_ONE_CODING_RUN_SYSTEM_PROMPT,
+  buildMagOneRoutingDiagnostics,
+  resolvedMagenticOptions,
+  buildPythonAutoGenCardRuntimePayload,
+  runCardWithContract,
+} from './runtime';
 
 describe('Canonical Cards Runtime', () => {
-  it('No Magentic options throws clear locked runtime error', async () => {
+  it('PLAN.md documents current dogfood root and future explicit external roots', () => {
+    const plan = readFileSync(path.join(process.cwd(), 'PLAN.md'), 'utf8');
+    expect(plan).toContain('`C:\\Projects\\main`');
+    expect(plan).toContain('The same CoderPacket-in/CoderReport-out lifecycle will later target explicit external repo roots');
+    expect(plan).toContain('vendored\n`localcoder/` runtime stays excluded from CBM');
+  });
+
+  it('a coding workflow with no Magentic options reports the required-agent blocker', async () => {
     const card = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     await expect(runCardWithContract(card, {}, 'test', { allCards: [card], allEdges: [] }))
-      .rejects.toThrow(/No valid locked research runtime path resolved/);
+      .rejects.toThrow(/MAGONE_CODER_CONSOLE_BLOCKED_PARTICIPANT_GATE/);
   });
 
   it('magentic_option direction-agnostic', () => {
@@ -66,11 +82,139 @@ describe('Canonical Cards Runtime', () => {
     const payload = buildPythonAutoGenCardRuntimePayload(cardM, {}, 'hello', context, {}, [cardA], '2026');
 
     expect(payload.session.orchestrator).toBe('magentic_one');
-    expect(payload.systemPrompt).toBe('test system prompt');
+    expect(payload.systemPrompt).toContain('test system prompt');
+    expect(payload.systemPrompt).toContain('disconnected cards are ineligible');
     expect(payload.cardRuntime.runtimeScope?.pythonWorkerIds).toContain('agentA');
     // Ensure task_ledger, progress_ledger are completely absent
     expect((payload as any).task_ledger).toBeUndefined();
     expect((payload as any).progress_ledger).toBeUndefined();
+  });
+
+  it('Mag One coding-run prompt states bus eligibility, coding path, and graph-memory tool limits', () => {
+    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain(
+      'direct connection to the vertical\nMagentic bus means an agent is eligible',
+    );
+    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain('disconnected cards are ineligible');
+    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain(
+      'Plan Agent is the approval/planning surface',
+    );
+    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain(
+      'CodeGraph Agent owns structural code memory',
+    );
+    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain(
+      'Local Coder is the controlled patch/test/runtime worker',
+    );
+    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain(
+      'ThinkGraph Agent',
+    );
+    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain('stores project decisions');
+    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain(
+      'do not ask graph-memory',
+    );
+    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain('agents to run tools they do not own');
+    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain('coder_console_task');
+    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain('watch in Code Console');
+    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain(
+      'Ordinary chat must not invoke coder_console_task',
+    );
+  });
+
+  it('routing diagnostics use current bus edges and ignore stale research-shaped flow topology', () => {
+    const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
+    const plan = { id: 'plan', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'plan_agent', title: 'Plan Agent' };
+    const think = { id: 'think', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'thinkgraph_agent', title: 'ThinkGraph Agent' };
+    const codegraph = { id: 'codegraph', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'codegraph_agent', title: 'CodeGraph Agent' };
+    const coder = { id: 'coder', kind: 'agent', runtimeType: 'local_coder', runtimeBinding: 'local_coder', title: 'Local Coder' };
+    const know = { id: 'know', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'knowgraph_agent', title: 'KnowGraph Agent' };
+    const research = { id: 'research', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'research_agent', title: 'Research Agent' };
+    const diagnostics = buildMagOneRoutingDiagnostics(
+      mag,
+      [mag, plan, think, codegraph, coder, know, research],
+      [
+        { id: 'p', source: 'plan', target: 'mag', edgeType: 'magentic_option' },
+        { id: 't', source: 'think', target: 'mag', edgeType: 'magentic_option' },
+        { id: 'old1', source: 'know', target: 'research', edgeType: 'flow' },
+        { id: 'old2', source: 'research', target: 'think', edgeType: 'flow' },
+      ],
+      'fix the LocalCoder runtime',
+      { projectId: 'admin', deckId: 'deck_builder' },
+    );
+
+    expect(diagnostics.projectId).toBe('admin');
+    expect(diagnostics.workflowType).toBe('coding');
+    expect(diagnostics.eligibleBusConnectedAgents.map((agent) => agent.id)).toEqual(['plan', 'think']);
+    expect(diagnostics.selectedExecutionPath.map((agent) => agent.id)).toEqual(['plan', 'think']);
+    expect(diagnostics.disconnectedAgentsIgnored.map((agent) => agent.id)).toEqual(
+      expect.arrayContaining(['codegraph', 'coder', 'know', 'research']),
+    );
+    expect(diagnostics.missingRequiredAgents).toEqual(['CodeGraph Agent', 'Local Coder']);
+    expect(diagnostics.blockedReason).toContain('MAGONE_CODER_CONSOLE_BLOCKED_PARTICIPANT_GATE');
+  });
+
+  it('coding routing exposes coder_console_task only through the bus-connected Local Coder', () => {
+    const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
+    const plan = { id: 'plan', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'plan_agent', title: 'Plan Agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
+    const codegraph = { id: 'codegraph', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'codegraph_agent', title: 'CodeGraph Agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
+    const coder = {
+      id: 'coder',
+      kind: 'agent',
+      runtimeType: 'local_coder',
+      runtimeBinding: 'local_coder',
+      title: 'Local Coder',
+      runtimeOptions: { modelKey: 'gpt-5-nano' },
+    };
+    const think = { id: 'think', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'thinkgraph_agent', title: 'ThinkGraph Agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
+    const allCards = [mag, plan, codegraph, coder, think];
+    const allEdges = [plan, codegraph, coder, think].map((agent) => ({
+      id: `edge-${agent.id}`,
+      source: agent.id,
+      target: mag.id,
+      edgeType: 'magentic_option',
+    }));
+    const callable = resolvedMagenticOptions(mag.id, allCards, allEdges);
+    const payload = buildPythonAutoGenCardRuntimePayload(
+      mag,
+      {},
+      'fix the code',
+      { projectId: 'admin', deckId: 'deck', allCards, allEdges },
+      {},
+      callable,
+      '2026',
+    );
+
+    expect(payload.cardRuntime.runtimeScope?.routingDiagnostics?.selectedExecutionPath.map((agent) => agent.id))
+      .toEqual(['plan', 'codegraph', 'coder', 'think']);
+    expect(payload.cardRuntime.runtimeScope?.routingDiagnostics?.blockedReason).toBeNull();
+    const coderParticipant = payload.cardRuntime.participants.find((agent) => agent.cardId === 'coder');
+    expect(coderParticipant?.runtimeType).toBe('assistant_agent');
+    expect(coderParticipant?.role).toBe('local_coder');
+    expect(coderParticipant?.tools).toEqual(['coder_console_task']);
+    expect(payload.cardRuntime.runtimeScope?.pythonWorkerIds).toContain('coder');
+  });
+
+  it('ordinary chat excludes the Local Coder and coder_console_task', () => {
+    const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
+    const coder = {
+      id: 'coder',
+      kind: 'agent',
+      runtimeType: 'local_coder',
+      runtimeBinding: 'local_coder',
+      title: 'Local Coder',
+      runtimeOptions: { modelKey: 'gpt-5-nano' },
+    };
+    const allCards = [mag, coder];
+    const allEdges = [{ id: 'edge-coder', source: coder.id, target: mag.id, edgeType: 'magentic_option' }];
+    const payload = buildPythonAutoGenCardRuntimePayload(
+      mag,
+      {},
+      'hello, how are you?',
+      { projectId: 'admin', deckId: 'deck', allCards, allEdges },
+      {},
+      resolvedMagenticOptions(mag.id, allCards, allEdges),
+      '2026',
+    );
+    expect(payload.cardRuntime.participants.map((agent) => agent.cardId)).not.toContain('coder');
+    expect(JSON.stringify(payload.cardRuntime.participants)).not.toContain('coder_console_task');
   });
 
   it('disconnected cards do not appear in model-visible workspace context or payload participants', () => {
@@ -345,6 +489,38 @@ describe('Canonical Cards Runtime', () => {
     const payload = buildPythonAutoGenCardRuntimePayload(cardM, {}, 'test', {}, {}, [cardA], '2026');
     const participant = payload.cardRuntime.participants.find((p) => p.cardId === 'agentA');
     expect(participant?.tools).toEqual(['current_datetime', 'calculator']);
+  });
+
+  it('coder_console_task advertises explicit asynchronous status and delivery contracts', () => {
+    const spec = RUNTIME_TOOL_SPECS.find((tool) => tool.name === 'coder_console_task');
+    expect((spec?.outputSchema.properties as any).status.enum).toEqual([
+      'started', 'queued', 'running', 'completed', 'failed', 'blocked',
+    ]);
+    expect((spec?.outputSchema.properties as any).delivery_status.enum).toEqual([
+      'accepted', 'queued', 'blocked',
+    ]);
+  });
+
+  it('coder_console_task cannot be selected by a non-Local-Coder card', () => {
+    const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
+    const cardA = {
+      id: 'agentA',
+      kind: 'agent',
+      runtimeType: 'assistant_agent',
+      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['coder_console_task'] },
+    };
+    expect(() =>
+      buildPythonAutoGenCardRuntimePayload(cardM, {}, 'fix code', {}, {}, [cardA], '2026'),
+    ).toThrow('coder_console_tool_requires_local_coder_card');
+  });
+
+  it('does not add a direct chat-to-console bypass', () => {
+    const chatRoute = readFileSync(
+      path.join(process.cwd(), 'apps/backend/src/routes/agentBuilder.routes.ts'),
+      'utf8',
+    );
+    expect(chatRoute).not.toContain('/openclaude/console/task');
+    expect(chatRoute).not.toContain('routeCodingTaskToConsole');
   });
 
   it('providerModelId is never default or empty string in any participant payload', () => {

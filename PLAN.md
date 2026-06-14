@@ -164,6 +164,32 @@ Planned adapters:
 
 There is no vendor lock-in. Adapters are product direction only in the current documentation pass.
 
+### Coding-Run Architecture
+
+LiquidAIty currently dogfoods its own coding loop against the explicit target root
+`C:\Projects\main`. Approved coder runs may edit LiquidAIty-owned source in this repo. The vendored
+`localcoder/` runtime stays excluded from CBM and is not edited unless a future active CoderPacket
+explicitly targets vendored runtime work.
+
+The user chats with Magentic-One/Sol first. Sol classifies the workflow and reads the current
+AgentBuilder canvas: cards directly connected to the Magentic bus are eligible participants;
+disconnected cards are not callable, and bus position does not prescribe execution order. A coding
+workflow uses eligible Plan Agent, CodeGraph/CBM, Local Coder, and ThinkGraph roles in that logical
+order. Missing required Plan, CodeGraph, or Local Coder connectivity blocks the coding workflow
+clearly.
+
+Before code action, Plan Agent creates or validates the plan and the user approves edit work.
+CodeGraph/CBM must pass a root-bound scoped gate before coding context or edits. Local Coder receives
+one bounded CoderPacket and runs in read-only/plan mode unless the approved packet explicitly sets
+`writeMode: edit`. It must return a strict CoderReport. ThinkGraph records decisions, proof,
+blockers, and the report; CBM refreshes after successful changes; skills update only for reusable
+learning.
+
+The same CoderPacket-in/CoderReport-out lifecycle will later target explicit external repo roots,
+user projects, UI apps, dashboards, and client workspaces. Codex, Claude, LocalCoder/OpenClaude, or
+other coder workers may execute bounded jobs, but Magentic-One/Sol remains the planner/router and
+workers may not invent scope, silently fall back, or bypass the target-root CBM gate.
+
 ### LocalCoder / OpenClaude Audit
 
 `localcoder/` is a vendored OpenClaude-derived runtime, not a nested Git subrepository. It contains
@@ -186,14 +212,70 @@ The current backend OpenClaude harness is scaffolding, not a real LocalCoder ada
 * A `local_coder` participant in the Magentic-One payload is currently mapped to a generic
   `assistant_agent`; it is not routed to the dedicated LocalCoder harness.
 
-The preferred real adapter foundation is LocalCoder's bidirectional gRPC `AgentService.Chat`
-boundary because it streams text, tool starts, tool results, permission requests, completion, and
-errors. The backend must own its lifecycle, environment, repository root, permission policy, MCP
-configuration, event translation, and structured report assembly. The current gRPC implementation
-still needs that host hardening: its start script is not supervised by the backend or passed the
-backend MCP config, it may hydrate a saved provider profile, the server currently initializes with
-no MCP clients, exposes the runtime's available tools without a CoderPacket access-policy mapping,
-and emits a final text response rather than a CoderReport.
+The active machine-facing adapter is the backend-owned CLI/process boundary. It owns the target
+root, environment, explicit provider/model, permission mode, normalized MCP configuration, bounded
+timeout, and strict CoderReport validation. LocalCoder's gRPC surface remains a possible future
+interface but is not part of the current route.
+
+### OpenClaude Console Bridge
+
+OpenClaude/LocalCoder is a real CLI coder engine, not a log source. LiquidAIty runs it as the actual
+coder with its normal tool/runtime abilities; it does not neuter it into a read-only viewer. Mag
+One/Sol is the planner/controller on top: it owns the task, checks the canvas bus participants and
+the root-bound CBM/CodeGraph scoped gate, and sends the bounded task into the session. The Console
+Bridge shows the live OpenClaude CLI in an in-app terminal panel.
+
+* The bridge is the smallest owned backend that spawns the real OpenClaude CLI as a long-lived,
+  streamed process (`apps/backend/src/coder/openclaude/console/`). It reuses the LocalCoder adapter's
+  runtime discovery, so the terminal and the headless job invoke the exact same vendored CLI.
+* Process backend: interactive sessions run on a real PTY via `node-pty` (a true TTY, so the
+  OpenClaude REPL behaves like a normal terminal); `print`/`task` one-shots use `child_process`
+  stdio pipes. The active backend is reported per session as `transportMode: pty | pipe` and a pipe
+  fallback is never silently presented as a PTY.
+* Frontend: the terminal panel renders with `@xterm/xterm` (+ fit addon); a plain-text transcript
+  mirror is kept for reliability and accessibility.
+* Transport: stdout/stderr/PTY output stream to the client over SSE
+  (`GET /api/coder/openclaude/console/sessions/:id/stream`) — the existing-equivalent-stream option;
+  input is forwarded to stdin/PTY (`POST .../input`), resize via `POST .../resize`; start/stop/status
+  are plain JSON routes. No gRPC, and no WebSocket server was added to the boot path.
+* Modes are explicit. `interactive` is the default (the CLI itself "starts an interactive session by
+  default") and gets the PTY. `print` is one-shot non-interactive. `task` is a Mag One prompt/SPEC/
+  CoderPacket delivered into a session. OpenClaude keeps its normal CLI abilities — the bridge adds no
+  artificial command/tool restrictions and does not force read-only.
+* Mag One has two paths and they do not compete: a quick diagnostics terminal/tool (when one exists)
+  for CLI help, bounded checks, and path/runtime inspection; and the OpenClaude Console Bridge for
+  real coder work — implementation, debugging, edits, test/fix loops, and active SPEC/CoderPacket
+  execution. There is no current Mag One terminal tool in the runtime tool set, so the bridge is the
+  active coder path; no second competing coder path is created.
+* CBM/CodeGraph informs Mag One planning and gates routing; it does not remove OpenClaude's normal
+  capabilities. A disconnected Local Coder or a non-`ok` scoped gate blocks task routing loudly.
+* Dogfood target root is `C:\Projects\main`. The same flow will later point at other repos, UI apps,
+  dashboards, and client projects via an explicit target root. Vendored `localcoder/` stays excluded
+  from CBM unless a SPEC targets vendored runtime work.
+* This is not a sandbox: the session runs with the local environment's permissions, and the panel
+  says so. Secrets (API keys, bearer tokens) are redacted from streamed output and diagnostics, and
+  the full environment is never printed. Success is reported honestly: a started/streaming session is
+  real terminal usability, but terminal output is not a CoderReport unless the strict CoderReport
+  path validates one.
+
+### Coder Console Naming Firewall
+
+User-facing UI must not expose `Claude`, `OpenClaude`, or `LocalCoder`. The public product names are:
+
+* `Coder` — the user-facing agent role / canvas card.
+* `Code Console` — the user-facing terminal feature (left rail item and panel title).
+* `Coder Engine` — the user-facing runtime label.
+* `Coder Session` — the user-facing task/session label.
+
+Internal implementation names may remain for now: the vendored folder `localcoder/`, the binary path
+`localcoder/bin/openclaude`, the backend namespace `apps/backend/src/coder/openclaude/console/*`, and
+existing route paths, filenames, imports, and test ids. A broad internal rename is a later SPEC. The
+clean display names live in one place: `client/src/features/agentbuilder/console/coderConsoleNames.ts`.
+
+Raw terminal output may still print the underlying CLI banner (Claude/OpenClaude/LocalCoder) in
+developer mode, and proof/debug transcripts are never silently mutated. For public terminals an
+optional display-only redaction layer (`redactCoderBranding`) maps those terms to clean names and the
+UI marks the view as redacted — redaction must never become fake proof.
 
 ## Current Route
 
@@ -205,9 +287,8 @@ and emits a final text response rather than a CoderReport.
    CodeGraph/CBM, and relevant KnowGraph context.
 5. Define backend-owned CoderPacket, CoderRunEvent, permission-decision, and CoderReport transport
    contracts.
-6. Replace the current plain-LLM OpenClaude run facade with a real LocalCoder gRPC adapter using
-   the backend-owned environment, repository root, MCP configuration, explicit model, and explicit
-   permission policy.
+6. Harden the real LocalCoder CLI/process adapter with stage diagnostics, explicit target root,
+   MCP diagnostics, explicit model, bounded timeout, and explicit permission policy.
 7. Connect PlanFlow Go to that adapter, stream real run events, compare the returned CoderReport
    against the active CoderPacket, persist the outcome, and prepare exactly one next job.
 8. Remove or quarantine misleading harness behavior only after the real route replaces it.
@@ -225,9 +306,19 @@ report plus comparison, and the process adapter invokes the vendored LocalCoder 
 entrypoint with backend env, MCP config, explicit model, and structured report schema.
 
 The old plain-task OpenClaude run route is retired, terminal mode cannot claim it was used without
-launching, and OpenClaude provider/model resolution no longer silently falls back. In the current
-workspace the real LocalCoder route correctly returns blocked because Bun, LocalCoder dependencies,
-and built `dist/cli.mjs` are absent.
+launching, and OpenClaude provider/model resolution no longer silently falls back. The LocalCoder
+service now runs a real same-run CBM index and bounded scope gate before invoking the CLI/process
+adapter. The gate requires the repo-owned LocalCoder boundary/control-plane files and rejects
+vendored or generated runtime files in the index.
+
+The root `localcoder/` runtime remains excluded from CBM while
+`apps/backend/src/coder/localcoder/**` and `repo-intake/localcoder-boundary.md` are indexed. Live
+read-only adapter diagnostics found the vendored-built CLI ready and reached it without gRPC.
+`gpt-5.1-chat-latest` timed out with identical stage evidence with production MCP and explicitly
+disabled diagnostic MCP, and still returned no stdout or CoderReport during the one allowed
+120-second smoke. LocalCoder-known `gpt-5.3-codex` failed immediately because the configured
+account cannot access it; `gpt-5.4` also timed out without returning output. The timeout path killed
+the child, left no LocalCoder process, and changed no tracked repo or vendored file.
 
 PlanFlow now accepts one validated active CoderPacket for the selected project, exposes an explicit
 Go gate, sends only that accepted packet to the LocalCoder route, and renders the returned
@@ -264,6 +355,38 @@ One live no-execution `POST /api/coder/planflow/prepare` created and persisted a
 `SOL_PRIMARY` / OpenAI / `gpt-5.1-chat-latest` provenance, real CBM anchors, stale-CBM blocker, and
 all source diagnostics. No LocalCoder job ran.
 
+The bounded KnowGraph Context Packet node and relationship queries now carry their graph variables
+and timestamp `sortKey` through scoped `WITH DISTINCT` clauses before ordering and limiting. A
+source-only live diagnostic reached real Neo4j without the former out-of-scope-variable error and
+returned an honest `empty` KnowGraph diagnostic in 998 ms. The diagnostic smoke did not call
+prepare, write a ThinkGraph event, or run LocalCoder.
+
+CBM freshness now has an additive honest diagnostic at the existing CodeGraph Context Packet
+boundary. It ties `list_projects` source root to the requested repo, reads CBM's real indexed
+`File` inventory through `query_graph`, and compares it with a bounded direct filesystem source
+inventory without using git status/diff. `ok` requires matching complete inventories plus a real
+indexed revision or timestamp. CBM 0.6.1 exposes neither revision nor timestamp in this workspace.
+A source-only live diagnostic returned `stale`: 408 indexed files, 16,850 bounded on-disk source
+files, and bounded examples absent from the CBM inventory. It wrote no ThinkGraph event and ran no
+LocalCoder job.
+
+The Python / AutoGen rails now register `coder_console_task` in `DEFAULT_TOOL_REGISTRY`. A
+bus-connected Local Coder becomes a real AutoGen participant with that selected tool, using the
+smallest safe default for persisted Local Coder cards that predate tool metadata. Ordinary chat
+excludes the coder participant; coding runs require current Local Coder and CodeGraph bus
+participants, build a compact read-only SPEC-style prompt, and call the existing TypeScript Console
+Bridge route without spawning OpenClaude from Python.
+
+A live persisted-canvas smoke reached the full chat/deck -> Magentic-One -> Python rails ->
+`coder_console_task` -> TypeScript Console Bridge -> OpenClaude/OpenRouter chain. Magentic-One now
+prioritizes the bus-connected Local Coder tool owner for coding dispatch, returns the real started
+session/status before waiting for console completion, and stops only its own queued rails work.
+Persisted run `deck_run_9u3wi67q` returned in about 26 seconds with Code Console session
+`occ_1781418561747_1`, target root, OpenRouter/Kimi provider/model, and watch-surface message. The
+Code Console task remained visible and running after chat returned, then exited code 0. Repeated
+delivery to a running noninteractive task session still blocks loudly instead of reporting routed
+success when `submitLine()` cannot deliver input.
+
 ## Code And Context Anchors
 
 * `AGENTS.md`: execution law
@@ -273,12 +396,13 @@ all source diagnostics. No LocalCoder job ran.
 * SkillGraph / Neo4j: reusable skill retrieval
 * ThinkGraph: structured plan/job/report/proof memory
 * PlanFlow: visible active planning and control surface
-* `localcoder/src/grpc/server.ts` and `localcoder/src/proto/openclaude.proto`: preferred real
-  LocalCoder adapter boundary
 * `apps/backend/src/coder/openclaude/*`: current harness scaffolding to replace behind structured
   adapter contracts
 * `apps/backend/src/contracts/coderContracts.ts`: validated CoderPacket/CoderReport and comparison
 * `apps/backend/src/coder/localcoder/*`: real process-backed LocalCoder adapter and service
+* `apps/backend/src/coder/openclaude/console/*`: OpenClaude Console Bridge session manager and Mag
+  One task router
+* `client/src/features/agentbuilder/console/*`: console panel, API client, and rail visibility rule
 * `client/src/pages/agentbuilder.tsx`: current chat path that starts a Magentic-One deck run
 
 ## Durable Decisions
@@ -289,36 +413,37 @@ all source diagnostics. No LocalCoder job ran.
 * Chat-to-coder repeats only as bounded user-gated jobs; preparing a next job does not execute it.
 * Real coder execution requires LocalCoder tool/runtime events and proof. A plain LLM response is
   not a coder run.
-* LocalCoder gRPC is the preferred first machine-facing adapter foundation; terminal remains an
-  optional interactive surface.
+* The backend-owned LocalCoder CLI/process adapter is the active machine-facing boundary; gRPC is
+  not wired.
 * Fresh CBM is required before code edits.
 * No stubs, fake fallbacks, silent fallbacks, hidden success, fake planning, or fake execution.
 * Research is deferred, not deleted.
 
 ## Blockers
 
-* Codebase Memory 0.6.1 initially missed an untracked-only planning-service addition during a
-  no-op moderate refresh. After tracked graph-context files changed, a real moderate refresh moved
-  the graph from 4,640 nodes / 8,596 edges to 4,676 / 8,784 and indexed the previously missing
-  planning-service symbols. This indicates an untracked-only/cache invalidation miss, not a
-  committed-HEAD-only index. `detect_changes` reports worktree differences from HEAD, while
-  `index_status` exposes no indexed revision/time, so freshness remains unverified when changes
-  exist.
-* The live prepare smoke exposed a non-critical KnowGraph Cypher failure: its DISTINCT/aggregation
-  query orders by `n.updated_at` / `n.created_at` after `n` is no longer in scope. The timeout and
-  diagnostic boundary kept this visible without blocking the active CoderPacket.
-* The Local Coder card currently maps to a generic assistant participant.
-* The LocalCoder gRPC launcher is not backend-supervised and is not passed the backend MCP config.
-* The LocalCoder gRPC server currently initializes `mcpClients: []`, exposes available runtime
-  tools without mapping CoderPacket access policy, and returns final text rather than CoderReport.
-* LocalCoder dependencies/build output are absent in this workspace and Bun is not installed, so
-  the real LocalCoder process route cannot be live-smoked yet.
+* CBM 0.6.1 exposes source root and indexed File inventory but no indexed revision/time or chunk
+  count. The new inventory diagnostic detects missing/new-file risk and blocks freshness claims,
+  but it cannot prove an index is current after files change unless CBM exposes a real revision or
+  timestamp.
+* The current persisted admin canvas connects ThinkGraph, KnowGraph, CodeGraph, Plan Agent, and
+  Local Coder to five distinct Magentic bus handles. Research, WorldSignals, and Trading remain
+  disconnected. The current canvas therefore satisfies the coding-workflow participant gate.
+* The vendored-built LocalCoder CLI is ready and starts through the backend process adapter, but
+  current and alternate-model read-only smokes return no valid CoderReport. Production MCP and
+  explicitly disabled diagnostic MCP both time out for `gpt-5.1-chat-latest`, so MCP is not the
+  differentiating blocker. The repeated missing-context-window warning remains correlated, not
+  proven causal.
 * Client TypeScript compile currently has unrelated existing `agentbuilder.tsx` type errors.
 * The full AgentBuilder UI test suite is currently blocked before collection by an unresolved `d3`
   import in `client/src/components/worldsignal/crucixNativeRenderer.ts`.
+* Refreshed CBM still omits `coder_console_task` and several Console Bridge boundary files even
+  though the scoped gate passes; direct reads, tests, compile, and live smoke remain authoritative.
+* Permission brokering for a long-running coder task remains deferred; permission requests stay
+  visible in Code Console and are not auto-approved.
 
 ## Next Step
 
-Fix and prove the bounded KnowGraph Context Packet query exposed by the live source diagnostic,
-then add a narrow CBM freshness proof that exposes the indexed revision/time or reliably
-invalidates untracked-only additions.
+Narrow the next SPEC to the separate CBM coverage issue: make refreshed Codebase Memory index the
+Python `coder_console_task` symbol and the owned Console Bridge boundary files without indexing or
+editing vendored `localcoder/`, changing the now-working async lifecycle, or weakening the scoped
+gate.

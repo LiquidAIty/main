@@ -1,12 +1,163 @@
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  LOCALCODER_CBM_REQUIRED_FILES,
+  runLocalCoderCbmScopeGate,
+} from './cbmScopeGate';
+import {
+  assessCbmFreshness,
   buildGraphContextPacket,
+  listRelevantSourceFiles,
+  KNOWGRAPH_NODE_CONTEXT_QUERY,
+  KNOWGRAPH_RELATION_CONTEXT_QUERY,
   readCodeGraphContextFromCbm,
 } from './graphContextBuilder';
 import { createEmptyGraphContextPacket } from './graphContextPacket';
 
 describe('graphContextBuilder', () => {
+  const indexedBuilderFile =
+    'apps/backend/src/services/graphContext/graphContextBuilder.ts';
+
+  it('honors root-anchored CBM exclusions without hiding the owned nested LocalCoder adapter', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'liquidaity-cbm-scope-'));
+    const files = [
+      '.cbmignore',
+      'localcoder/src/vendored.ts',
+      'worldsignal/server.mjs',
+      'apps/backend/src/coder/localcoder/adapter.ts',
+      'apps/backend/src/contracts/coderContracts.ts',
+    ];
+    for (const file of files) {
+      const absolute = path.join(root, file);
+      await mkdir(path.dirname(absolute), { recursive: true });
+      await writeFile(
+        absolute,
+        file === '.cbmignore' ? '/localcoder/\n/worldsignal/\nnode_modules/\n' : 'export {};\n',
+      );
+    }
+
+    const inventory = await listRelevantSourceFiles(root);
+
+    expect(inventory.files).toContain('apps/backend/src/coder/localcoder/adapter.ts');
+    expect(inventory.files).toContain('apps/backend/src/contracts/coderContracts.ts');
+    expect(inventory.files).not.toContain('localcoder/src/vendored.ts');
+    expect(inventory.files).not.toContain('worldsignal/server.mjs');
+  });
+
+  it('runs a real index action before allowing the LocalCoder scoped CBM gate', async () => {
+    const calls: string[] = [];
+    const result = await runLocalCoderCbmScopeGate('C:\\Projects\\main', {
+      callTool: async (tool) => {
+        calls.push(tool);
+        if (tool === 'index_repository') return { status: 'indexed' };
+        if (tool === 'list_projects') {
+          return {
+            projects: [{ name: 'C-Projects-main', root_path: 'C:/Projects/main' }],
+          };
+        }
+        if (tool === 'index_status') {
+          return { status: 'ready', nodes: 10, edges: 20 };
+        }
+        return {
+          rows: LOCALCODER_CBM_REQUIRED_FILES.map((file) => [file]),
+          total: LOCALCODER_CBM_REQUIRED_FILES.length,
+        };
+      },
+    });
+
+    expect(calls).toEqual(['index_repository', 'list_projects', 'index_status', 'query_graph']);
+    expect(result).toMatchObject({
+      indexRan: true,
+      indexStatus: 'indexed',
+      sourceRoot: 'C:/Projects/main',
+      scopeStatus: 'ok',
+      editAllowed: true,
+      missingRequiredFiles: [],
+      excludedFilesFound: [],
+    });
+    expect(result.requiredFiles).toContain('repo-intake/localcoder-boundary.md');
+    expect(result.requiredFiles).toContain('apps/backend/src/coder/localcoder/adapter.ts');
+  });
+
+  it('blocks the LocalCoder scoped CBM gate when required boundary files are missing', async () => {
+    const result = await runLocalCoderCbmScopeGate('C:\\Projects\\main', {
+      callTool: async (tool) => {
+        if (tool === 'index_repository') return { status: 'indexed' };
+        if (tool === 'list_projects') {
+          return {
+            projects: [{ name: 'C-Projects-main', root_path: 'C:/Projects/main' }],
+          };
+        }
+        if (tool === 'index_status') return { status: 'ready' };
+        return {
+          rows: LOCALCODER_CBM_REQUIRED_FILES
+            .filter((file) => file !== 'repo-intake/localcoder-boundary.md')
+            .map((file) => [file]),
+        };
+      },
+    });
+
+    expect(result.editAllowed).toBe(false);
+    expect(result.missingRequiredFiles).toEqual(['repo-intake/localcoder-boundary.md']);
+    expect(result.blockedReason).toContain('cbm_scope_required_files_missing');
+  });
+
+  it('blocks the LocalCoder scoped CBM gate when vendored LocalCoder source is indexed', async () => {
+    const result = await runLocalCoderCbmScopeGate('C:\\Projects\\main', {
+      callTool: async (tool) => {
+        if (tool === 'index_repository') return { status: 'indexed' };
+        if (tool === 'list_projects') {
+          return {
+            projects: [{ name: 'C-Projects-main', root_path: 'C:/Projects/main' }],
+          };
+        }
+        if (tool === 'index_status') return { status: 'ready' };
+        return {
+          rows: [
+            ...LOCALCODER_CBM_REQUIRED_FILES.map((file) => [file]),
+            ['localcoder/src/grpc/server.ts'],
+          ],
+        };
+      },
+    });
+
+    expect(result.editAllowed).toBe(false);
+    expect(result.excludedFilesFound).toEqual(['localcoder/src/grpc/server.ts']);
+    expect(result.blockedReason).toContain('cbm_scope_excluded_files_indexed');
+  });
+
+  it('stops the LocalCoder scoped CBM gate immediately when indexing fails', async () => {
+    const calls: string[] = [];
+    const result = await runLocalCoderCbmScopeGate('C:\\Projects\\main', {
+      callTool: async (tool) => {
+        calls.push(tool);
+        return { status: 'failed' };
+      },
+    });
+
+    expect(calls).toEqual(['index_repository']);
+    expect(result.editAllowed).toBe(false);
+    expect(result.blockedReason).toBe('cbm_scope_index_failed: failed');
+  });
+
+  it('keeps KnowGraph sort variables in scope while preserving bounded returned fields', () => {
+    expect(KNOWGRAPH_NODE_CONTEXT_QUERY).toContain('WITH DISTINCT n,');
+    expect(KNOWGRAPH_NODE_CONTEXT_QUERY).toContain('AS sortKey');
+    expect(KNOWGRAPH_NODE_CONTEXT_QUERY).toContain('ORDER BY sortKey DESC');
+    expect(KNOWGRAPH_NODE_CONTEXT_QUERY).toContain('LIMIT toInteger($limit)');
+    expect(KNOWGRAPH_NODE_CONTEXT_QUERY).not.toMatch(
+      /RETURN DISTINCT[\s\S]*ORDER BY coalesce\(n\./,
+    );
+    expect(KNOWGRAPH_RELATION_CONTEXT_QUERY).toContain('WITH DISTINCT a, r, b,');
+    expect(KNOWGRAPH_RELATION_CONTEXT_QUERY).toContain('ORDER BY sortKey DESC');
+    expect(KNOWGRAPH_RELATION_CONTEXT_QUERY).not.toMatch(
+      /RETURN DISTINCT[\s\S]*ORDER BY coalesce\(r\./,
+    );
+  });
+
   it('queries the real CBM tool boundary and returns files, symbols, queries, and freshness', async () => {
     const calls: string[] = [];
     const result = await readCodeGraphContextFromCbm(
@@ -26,7 +177,13 @@ describe('graphContextBuilder', () => {
             };
           }
           if (tool === 'index_status') {
-            return { project: 'C-Projects-main', status: 'ready', nodes: 4640, edges: 8596 };
+            return {
+              project: 'C-Projects-main',
+              status: 'ready',
+              nodes: 4640,
+              edges: 8596,
+              indexed_revision: 'revision-1',
+            };
           }
           if (tool === 'search_graph') {
             return {
@@ -41,12 +198,17 @@ describe('graphContextBuilder', () => {
               ],
             };
           }
-          return { changed_count: 0, changed_files: [] };
+          return { columns: ['file_path'], rows: [[indexedBuilderFile]], total: 1 };
         },
+        listSourceFiles: async () => ({
+          files: [indexedBuilderFile],
+          complete: true,
+          reason: '',
+        }),
       },
     );
 
-    expect(calls).toEqual(['list_projects', 'index_status', 'search_graph', 'detect_changes']);
+    expect(calls).toEqual(['list_projects', 'index_status', 'search_graph', 'query_graph']);
     expect(result.data.relevantFiles).toEqual([
       'apps/backend/src/services/graphContext/graphContextBuilder.ts',
     ]);
@@ -59,11 +221,166 @@ describe('graphContextBuilder', () => {
     ]);
     expect(result.data.freshness).toMatchObject({
       status: 'fresh',
+      diagnosticStatus: 'ok',
       project: 'C-Projects-main',
       nodes: 4640,
       edges: 8596,
+      indexedFileCount: 1,
+      indexedRevision: 'revision-1',
+      sourceRoot: 'C:/Projects/main',
+      filesystemFileCount: 1,
+      missingFileCount: 0,
     });
     expect(result.data.blocker).toBeNull();
+  });
+
+  it('returns unknown without inventing an indexed revision or timestamp', async () => {
+    const result = await readCodeGraphContextFromCbm(
+      {
+        projectId: 'project_admin',
+        repoPath: 'C:\\Projects\\main',
+        userMessage: 'Context Packet Codebase Memory',
+      },
+      {
+        callTool: async (tool) => {
+          if (tool === 'list_projects') {
+            return {
+              projects: [{ name: 'C-Projects-main', root_path: 'C:/Projects/main' }],
+            };
+          }
+          if (tool === 'index_status') {
+            return { project: 'C-Projects-main', status: 'ready', nodes: 4640, edges: 8596 };
+          }
+          if (tool === 'search_graph') {
+            return {
+              results: [
+                {
+                  name: 'buildGraphContextPacket',
+                  qualified_name: 'buildGraphContextPacket',
+                  label: 'Function',
+                  file_path: indexedBuilderFile,
+                },
+              ],
+            };
+          }
+          return { columns: ['file_path'], rows: [[indexedBuilderFile]], total: 1 };
+        },
+        listSourceFiles: async () => ({
+          files: [indexedBuilderFile],
+          complete: true,
+          reason: '',
+        }),
+      },
+    );
+
+    expect(result.data.freshness).toMatchObject({
+      status: 'stale',
+      diagnosticStatus: 'unknown',
+      indexedRevision: null,
+      indexedAt: null,
+      detail: 'cbm_freshness_unknown: inventories match but CBM exposes no indexed revision or timestamp',
+    });
+    expect(result.data.blocker).toContain('cbm_freshness_unknown');
+  });
+
+  it('never reports ok when the indexed source root cannot be verified', () => {
+    expect(
+      assessCbmFreshness({
+        statusReady: true,
+        sourceRoot: 'C:\\Projects\\other',
+        requestedRoot: 'C:\\Projects\\main',
+        indexedFiles: [indexedBuilderFile],
+        indexedInventoryComplete: true,
+        filesystemFiles: [indexedBuilderFile],
+        filesystemInventoryComplete: true,
+        indexedRevision: 'revision-1',
+        indexedAt: null,
+      }),
+    ).toMatchObject({
+      status: 'stale',
+      diagnosticStatus: 'unknown',
+      reason: expect.stringContaining('source root cannot be tied'),
+    });
+  });
+
+  it('returns an unknown diagnostic when no indexed project root matches the requested root', async () => {
+    const result = await readCodeGraphContextFromCbm(
+      {
+        projectId: 'project_admin',
+        repoPath: 'C:\\Projects\\main',
+        userMessage: 'Context Packet Codebase Memory',
+      },
+      {
+        callTool: async () => ({
+          projects: [{ name: 'C-Projects-other', root_path: 'C:/Projects/other' }],
+        }),
+      },
+    );
+
+    expect(result.data.freshness).toMatchObject({
+      status: 'unavailable',
+      diagnosticStatus: 'unknown',
+      indexedRevision: null,
+      indexedAt: null,
+    });
+    expect(result.data.blocker).toContain('cbm_project_not_indexed');
+  });
+
+  it('detects a newly added source file absent from CBM without git status or diff', async () => {
+    const newFile = 'apps/backend/src/services/graphContext/newSource.ts';
+    const result = await readCodeGraphContextFromCbm(
+      {
+        projectId: 'project_admin',
+        repoPath: 'C:\\Projects\\main',
+        userMessage: 'Context Packet Codebase Memory',
+      },
+      {
+        callTool: async (tool) => {
+          if (tool === 'list_projects') {
+            return {
+              projects: [{ name: 'C-Projects-main', root_path: 'C:/Projects/main' }],
+            };
+          }
+          if (tool === 'index_status') {
+            return {
+              project: 'C-Projects-main',
+              status: 'ready',
+              nodes: 4640,
+              edges: 8596,
+              indexed_at: '2026-06-13T00:00:00.000Z',
+            };
+          }
+          if (tool === 'search_graph') {
+            return {
+              results: [
+                {
+                  name: 'buildGraphContextPacket',
+                  qualified_name: 'buildGraphContextPacket',
+                  label: 'Function',
+                  file_path: indexedBuilderFile,
+                },
+              ],
+            };
+          }
+          return { columns: ['file_path'], rows: [[indexedBuilderFile]], total: 1 };
+        },
+        listSourceFiles: async () => ({
+          files: [indexedBuilderFile, newFile],
+          complete: true,
+          reason: '',
+        }),
+      },
+    );
+
+    expect(result.data.freshness).toMatchObject({
+      status: 'stale',
+      diagnosticStatus: 'stale',
+      indexedAt: '2026-06-13T00:00:00.000Z',
+      missingFileCount: 1,
+      missingFiles: [newFile],
+    });
+    expect(result.data.blocker).toContain('cbm_new_file_risk');
+    expect(result.data.tools).not.toContain('detect_changes');
   });
 
   it('returns a visible blocker when the CBM tool boundary is unavailable', async () => {
@@ -101,11 +418,22 @@ describe('graphContextBuilder', () => {
             };
           }
           if (tool === 'index_status') {
-            return { project: 'C-Projects-main', status: 'ready', nodes: 4640, edges: 8596 };
+            return {
+              project: 'C-Projects-main',
+              status: 'ready',
+              nodes: 4640,
+              edges: 8596,
+              indexed_revision: 'revision-1',
+            };
           }
           if (tool === 'search_graph') return { results: [] };
-          return { changed_count: 0, changed_files: [] };
+          return { columns: ['file_path'], rows: [[indexedBuilderFile]], total: 1 };
         },
+        listSourceFiles: async () => ({
+          files: [indexedBuilderFile],
+          complete: true,
+          reason: '',
+        }),
       },
     );
 
@@ -186,6 +514,15 @@ describe('graphContextBuilder', () => {
     expect(packet.provenance.debugNotes).toContain('thinkgraph_unavailable: no project-scoped rows found');
     expect(packet.provenance.debugNotes).toContain('knowgraph_unavailable: no project-scoped records found');
     expect(packet.codeGraphContext?.implementationNotes[0]).toContain('cbm_unavailable');
+    expect(packet.provenance.sourceDiagnostics).toContainEqual(
+      expect.objectContaining({
+        source: 'knowgraph',
+        critical: false,
+        status: 'empty',
+        evidenceCount: 0,
+        elapsedMs: expect.any(Number),
+      }),
+    );
   });
 
   it('keeps ThinkGraph, KnowGraph, and CodeGraph streams separated', async () => {
@@ -253,6 +590,15 @@ describe('graphContextBuilder', () => {
     expect(packet.thinkGraphContext.reasoningNotes).not.toContain('Federal overview of recycling capacity.');
     expect(packet.codeGraphContext?.relevantFiles).toEqual(['client/src/pages/agentbuilder.tsx']);
     expect(packet.provenance.sourceLabels).toEqual(['ThinkGraph', 'KnowGraph', 'CodeGraph']);
+    expect(packet.provenance.sourceDiagnostics).toContainEqual(
+      expect.objectContaining({
+        source: 'knowgraph',
+        critical: false,
+        status: 'ok',
+        evidenceCount: expect.any(Number),
+        elapsedMs: expect.any(Number),
+      }),
+    );
   });
 
   it('preserves project id and reports unavailable streams honestly without inventing conflicts', async () => {
@@ -315,6 +661,35 @@ describe('graphContextBuilder', () => {
         blocker: 'source_timeout:knowgraph:10ms',
       }),
     );
+  });
+
+  it('records a non-critical KnowGraph failure without inventing evidence or blocking the packet', async () => {
+    const emptyPacket = createEmptyGraphContextPacket();
+    const packet = await buildGraphContextPacket(
+      { projectId: 'project_admin', userMessage: 'Context Packet' },
+      {
+        readThinkGraphContext: async () => ({ data: emptyPacket.thinkGraphContext }),
+        readKnowGraphContext: async () => {
+          throw new Error(`neo4j query failed ${'x'.repeat(1_000)}`);
+        },
+        readCodeGraphContext: async () => ({ data: emptyPacket.codeGraphContext }),
+      },
+    );
+
+    expect(packet.knowGraphContext.evidence).toEqual([]);
+    const diagnostic = packet.provenance.sourceDiagnostics.find(
+      (item) => item.source === 'knowgraph',
+    );
+    expect(diagnostic).toMatchObject({
+      source: 'knowgraph',
+      critical: false,
+      status: 'failed',
+      evidenceCount: 0,
+      elapsedMs: expect.any(Number),
+    });
+    expect(diagnostic?.blocker).toMatch(/^neo4j query failed/);
+    expect(diagnostic?.blocker).toHaveLength(500);
+    expect(diagnostic?.blocker).toContain('...[truncated]');
   });
 
   it('records a critical CBM timeout without inventing code context', async () => {

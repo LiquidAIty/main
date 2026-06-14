@@ -44,7 +44,7 @@ export type ResolverEdgeInput = {
  */
 export type BusConnection =
   | 'orchestrator'  // IS the bus (Sol / Magentic-One)
-  | 'orchestrated'  // Direct magentic_option edge target from Sol
+  | 'orchestrated'  // Direct magentic_option edge peer of Sol
   | 'delegated'     // Flow edge downstream from an orchestrated card
   | 'disconnected'; // No bus edge path
 
@@ -206,7 +206,7 @@ const BINDING_TO_REGISTRY_ID: Record<string, string> = {
  *
  * Rules:
  * - Card with runtimeType 'magentic_one' → 'orchestrator'
- * - Card that is the target of a magentic_option edge from Sol → 'orchestrated'
+ * - Card joined to Sol by a direct magentic_option edge → 'orchestrated'
  * - Card that is the target of a flow edge from an orchestrated card → 'delegated'
  * - Everything else → 'disconnected'
  *
@@ -233,17 +233,19 @@ export function resolveBusConnections(
     }
   }
 
-  // Mark orchestrated cards (magentic_option targets from Sol)
+  // Mark direct bus peers. Persisted ReactFlow edges may point toward or away
+  // from the Magentic card; direction does not change bus eligibility.
   const orchestratedIds = new Set<string>();
   for (const edge of edges) {
-    if (
-      normalize(edge.edgeType) === 'magentic_option' &&
-      solIds.has(edge.source) &&
-      result.has(edge.target)
-    ) {
-      result.set(edge.target, 'orchestrated');
-      orchestratedIds.add(edge.target);
-    }
+    if (normalize(edge.edgeType) !== 'magentic_option') continue;
+    const peerId = solIds.has(edge.source)
+      ? edge.target
+      : solIds.has(edge.target)
+        ? edge.source
+        : null;
+    if (!peerId || !result.has(peerId) || solIds.has(peerId)) continue;
+    result.set(peerId, 'orchestrated');
+    orchestratedIds.add(peerId);
   }
 
   // Build flow adjacency for delegation propagation

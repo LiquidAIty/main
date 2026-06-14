@@ -1,3 +1,4 @@
+import { promises as fs, type Dirent } from 'node:fs';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -19,6 +20,36 @@ import {
 
 const THINKGRAPH_GRAPH_NAME = 'graph_liq';
 const DEFAULT_MAX_ITEMS = 12;
+
+export const KNOWGRAPH_NODE_CONTEXT_QUERY = `
+  MATCH (n)
+  WHERE toString(n.project_id) IN $projectScopeIds
+  WITH DISTINCT n,
+    coalesce(n.updated_at, n.created_at, n.updatedAt, n.createdAt, '') AS sortKey
+  ORDER BY sortKey DESC
+  LIMIT toInteger($limit)
+  RETURN
+    elementId(n) AS node_id,
+    labels(n) AS node_labels,
+    properties(n) AS node_props
+`;
+
+export const KNOWGRAPH_RELATION_CONTEXT_QUERY = `
+  MATCH (a)-[r]->(b)
+  WHERE toString(a.project_id) IN $projectScopeIds
+    AND toString(b.project_id) IN $projectScopeIds
+    AND toString(r.project_id) IN $projectScopeIds
+  WITH DISTINCT a, r, b,
+    coalesce(r.updated_at, r.created_at, r.updatedAt, r.createdAt, '') AS sortKey
+  ORDER BY sortKey DESC
+  LIMIT toInteger($limit)
+  RETURN
+    elementId(r) AS rel_id,
+    type(r) AS rel_type,
+    properties(r) AS rel_props,
+    elementId(a) AS from_id,
+    elementId(b) AS to_id
+`;
 
 type GraphContextStreamResult<T> = {
   data: T;
@@ -59,11 +90,21 @@ export type BuildGraphContextPacketArgs = {
   turnId?: string | null;
 };
 
-type CbmToolCaller = (tool: string, args: Record<string, unknown>) => Promise<Record<string, any>>;
+export type CbmToolCaller = (
+  tool: string,
+  args: Record<string, unknown>,
+) => Promise<Record<string, any>>;
+
+type CbmFilesystemInventory = {
+  files: string[];
+  complete: boolean;
+  reason: string;
+};
 
 type CbmBoundaryDeps = {
   callTool?: CbmToolCaller;
   now?: () => string;
+  listSourceFiles?: (repoPath: string) => Promise<CbmFilesystemInventory>;
 };
 
 export type GraphContextBuilderDeps = {
@@ -86,6 +127,56 @@ const GRAPH_SOURCE_TIMEOUT_MS: Record<GraphContextSourceDiagnostic['source'], nu
   knowgraph: 5_000,
   codegraph_cbm: 20_000,
 };
+
+const CBM_INVENTORY_MAX_FILES = 20_000;
+const CBM_INVENTORY_IGNORED_DIRS = new Set([
+  '.git',
+  '.nx',
+  '.cache',
+  '.codebase-memory',
+  'node_modules',
+  'dist',
+  'build',
+  'coverage',
+  'tmp',
+  'temp',
+]);
+const CBM_INVENTORY_EXTENSIONS = new Set([
+  '.c',
+  '.cc',
+  '.cpp',
+  '.cs',
+  '.css',
+  '.go',
+  '.h',
+  '.hpp',
+  '.html',
+  '.java',
+  '.js',
+  '.jsx',
+  '.json',
+  '.md',
+  '.mjs',
+  '.php',
+  '.prisma',
+  '.ps1',
+  '.py',
+  '.rb',
+  '.rs',
+  '.scss',
+  '.sh',
+  '.sql',
+  '.ts',
+  '.tsx',
+  '.vue',
+  '.yaml',
+  '.yml',
+]);
+const CBM_INVENTORY_FILENAMES = new Set([
+  'dockerfile',
+  'makefile',
+  'nginx.conf',
+]);
 
 function clampMaxItems(value: unknown): number {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -212,6 +303,220 @@ function normalizeFsPath(value: unknown): string {
   return path.resolve(String(value ?? '')).replace(/\\/g, '/').toLowerCase();
 }
 
+function normalizeRelativePath(value: unknown): string {
+  return String(value ?? '').trim().replace(/\\/g, '/').replace(/^[/]+/, '');
+}
+
+type CbmIgnoreRule = {
+  pattern: string;
+  rootAnchored: boolean;
+  directoryOnly: boolean;
+};
+
+async function readCbmIgnoreRules(repoPath: string): Promise<CbmIgnoreRule[]> {
+  let content = '';
+  try {
+    content = await fs.readFile(path.join(repoPath, '.cbmignore'), 'utf8');
+  } catch {
+    return [];
+  }
+  return content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#') && !line.startsWith('!'))
+    .map((line) => ({
+      pattern: line.replace(/^[/]+|[/]+$/g, ''),
+      rootAnchored: line.startsWith('/'),
+      directoryOnly: line.endsWith('/'),
+    }))
+    .filter((rule) => rule.pattern.length > 0);
+}
+
+function isCbmIgnoredPath(
+  relativePath: string,
+  isDirectory: boolean,
+  rules: CbmIgnoreRule[],
+): boolean {
+  const normalized = normalizeRelativePath(relativePath);
+  const segments = normalized.split('/').filter(Boolean);
+  const basename = segments.at(-1) || '';
+  return rules.some((rule) => {
+    const pattern = normalizeRelativePath(rule.pattern);
+    if (rule.directoryOnly) {
+      if (!isDirectory && normalized === pattern) return false;
+      if (rule.rootAnchored || pattern.includes('/')) {
+        return normalized === pattern || normalized.startsWith(`${pattern}/`);
+      }
+      return segments.includes(pattern);
+    }
+    if (pattern.startsWith('*.')) return basename.endsWith(pattern.slice(1));
+    if (rule.rootAnchored || pattern.includes('/')) return normalized === pattern;
+    return basename === pattern;
+  });
+}
+
+export async function listRelevantSourceFiles(repoPath: string): Promise<CbmFilesystemInventory> {
+  const files: string[] = [];
+  const pending = [path.resolve(repoPath)];
+  const ignoreRules = await readCbmIgnoreRules(repoPath);
+  let complete = true;
+  let reason = '';
+
+  while (pending.length > 0 && files.length < CBM_INVENTORY_MAX_FILES) {
+    const directory = pending.pop()!;
+    let entries: Dirent[];
+    try {
+      entries = await fs.readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      complete = false;
+      reason = `cbm_filesystem_inventory_failed: ${boundedDiagnosticText(error)}`;
+      continue;
+    }
+    for (const entry of entries) {
+      const absolutePath = path.join(directory, entry.name);
+      const relativePath = normalizeRelativePath(path.relative(repoPath, absolutePath));
+      if (entry.isDirectory()) {
+        if (
+          !CBM_INVENTORY_IGNORED_DIRS.has(entry.name.toLowerCase()) &&
+          !isCbmIgnoredPath(relativePath, true, ignoreRules)
+        ) {
+          pending.push(absolutePath);
+        }
+        continue;
+      }
+      if (
+        !entry.isFile() ||
+        entry.name.toLowerCase().startsWith('.env') ||
+        isCbmIgnoredPath(relativePath, false, ignoreRules)
+      ) {
+        continue;
+      }
+      const lowerName = entry.name.toLowerCase();
+      if (
+        !CBM_INVENTORY_EXTENSIONS.has(path.extname(lowerName)) &&
+        !CBM_INVENTORY_FILENAMES.has(lowerName)
+      ) {
+        continue;
+      }
+      files.push(relativePath);
+      if (files.length >= CBM_INVENTORY_MAX_FILES) {
+        complete = false;
+        reason = `cbm_filesystem_inventory_limit_reached:${CBM_INVENTORY_MAX_FILES}`;
+        break;
+      }
+    }
+  }
+
+  return { files: dedupeStrings(files), complete, reason };
+}
+
+function readOptionalText(record: Record<string, any>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = String(record[key] ?? '').trim();
+    if (value) return value;
+  }
+  return null;
+}
+
+function readOptionalCount(record: Record<string, any>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = Number(record[key]);
+    if (Number.isFinite(value) && value >= 0) return value;
+  }
+  return null;
+}
+
+function indexedFilesFromQueryGraph(result: Record<string, any>): {
+  files: string[];
+  total: number | null;
+  complete: boolean;
+} {
+  const rows = Array.isArray(result.rows) ? result.rows : [];
+  const files = dedupeStrings(
+    rows.map((row) =>
+      normalizeRelativePath(Array.isArray(row) ? row[0] : asRecord(row)?.file_path),
+    ),
+  );
+  const total = Number.isFinite(Number(result.total)) ? Number(result.total) : null;
+  return {
+    files,
+    total,
+    complete: total !== null && files.length === total,
+  };
+}
+
+export function assessCbmFreshness(args: {
+  statusReady: boolean;
+  sourceRoot: string | null;
+  requestedRoot: string;
+  indexedFiles: string[];
+  indexedInventoryComplete: boolean;
+  filesystemFiles: string[];
+  filesystemInventoryComplete: boolean;
+  indexedRevision: string | null;
+  indexedAt: string | null;
+}): {
+  status: 'fresh' | 'stale' | 'unavailable';
+  diagnosticStatus: 'ok' | 'stale' | 'unknown' | 'failed';
+  reason: string;
+  missingFiles: string[];
+} {
+  if (!args.statusReady) {
+    return {
+      status: 'unavailable',
+      diagnosticStatus: 'failed',
+      reason: 'cbm_index_not_ready',
+      missingFiles: [],
+    };
+  }
+  if (
+    !args.sourceRoot ||
+    normalizeFsPath(args.sourceRoot) !== normalizeFsPath(args.requestedRoot)
+  ) {
+    return {
+      status: 'stale',
+      diagnosticStatus: 'unknown',
+      reason: 'cbm_freshness_unknown: indexed source root cannot be tied to requested project root',
+      missingFiles: [],
+    };
+  }
+  if (!args.indexedInventoryComplete || !args.filesystemInventoryComplete) {
+    return {
+      status: 'stale',
+      diagnosticStatus: 'unknown',
+      reason: 'cbm_freshness_unknown: indexed or filesystem file inventory is incomplete',
+      missingFiles: [],
+    };
+  }
+  const indexed = new Set(args.indexedFiles.map((file) => normalizeRelativePath(file).toLowerCase()));
+  const missingFiles = args.filesystemFiles
+    .map(normalizeRelativePath)
+    .filter((file) => !indexed.has(file.toLowerCase()))
+    .slice(0, 20);
+  if (missingFiles.length > 0) {
+    return {
+      status: 'stale',
+      diagnosticStatus: 'stale',
+      reason: `cbm_new_file_risk: ${missingFiles.length} bounded on-disk source file(s) are absent from the indexed File inventory`,
+      missingFiles,
+    };
+  }
+  if (!args.indexedRevision && !args.indexedAt) {
+    return {
+      status: 'stale',
+      diagnosticStatus: 'unknown',
+      reason: 'cbm_freshness_unknown: inventories match but CBM exposes no indexed revision or timestamp',
+      missingFiles: [],
+    };
+  }
+  return {
+    status: 'fresh',
+    diagnosticStatus: 'ok',
+    reason: 'cbm_freshness_proven: root and complete file inventories match with indexed revision or timestamp',
+    missingFiles: [],
+  };
+}
+
 function graphEvidenceCount(source: GraphContextSourceDiagnostic['source'], data: unknown): number {
   const record = asRecord(data);
   if (!record) return 0;
@@ -237,6 +542,11 @@ function graphEvidenceCount(source: GraphContextSourceDiagnostic['source'], data
     (count, key) => count + (Array.isArray(record[key]) ? record[key].length : 0),
     0,
   );
+}
+
+function boundedDiagnosticText(value: unknown, maxLength = 500): string {
+  const text = value instanceof Error ? value.message : String(value);
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 14)}...[truncated]`;
 }
 
 async function settleGraphSource<T>(args: {
@@ -279,7 +589,7 @@ async function settleGraphSource<T>(args: {
       },
     };
   } catch (error) {
-    const blocker = error instanceof Error ? error.message : String(error);
+    const blocker = boundedDiagnosticText(error);
     return {
       result: { status: 'rejected', reason: error },
       diagnostic: {
@@ -297,7 +607,7 @@ async function settleGraphSource<T>(args: {
   }
 }
 
-async function createCodebaseMemoryMcpCaller(
+export async function createCodebaseMemoryMcpCaller(
   repoPath: string,
 ): Promise<{ callTool: CbmToolCaller; close: () => Promise<void> }> {
   const config = loadMcpServersConfig();
@@ -343,6 +653,7 @@ function unavailableCodeGraphContext(
   checkedAt: string,
   blocker: string,
   queries: string[] = [],
+  diagnosticStatus: 'unknown' | 'failed' = 'failed',
 ): GraphContextStreamResult<CodeGraphContextPacket> {
   return {
     data: {
@@ -359,11 +670,20 @@ function unavailableCodeGraphContext(
       implementationNotes: [blocker],
       freshness: {
         status: 'unavailable',
+        diagnosticStatus,
         project: null,
         nodes: null,
         edges: null,
         checkedAt,
         detail: blocker,
+        indexedFileCount: null,
+        indexedChunkCount: null,
+        indexedRevision: null,
+        indexedAt: null,
+        sourceRoot: null,
+        filesystemFileCount: null,
+        missingFileCount: 0,
+        missingFiles: [],
       },
       blocker,
     },
@@ -399,36 +719,62 @@ export async function readCodeGraphContextFromCbm(
         checkedAt,
         `cbm_project_not_indexed: ${repoPath}`,
         queries,
+        'unknown',
       );
     }
 
-    const [status, search, changes] = await Promise.all([
+    const [status, search, indexedInventoryResult, filesystemInventory] = await Promise.all([
       callTool('index_status', { project: projectName }),
       callTool('search_graph', {
         project: projectName,
         query,
         limit: clampMaxItems(args.maxItems),
       }),
-      callTool('detect_changes', { project: projectName, depth: 1 }),
+      callTool('query_graph', {
+        project: projectName,
+        query: 'MATCH (f:File) RETURN f.file_path AS file_path',
+        max_rows: CBM_INVENTORY_MAX_FILES,
+      }),
+      (deps.listSourceFiles ?? listRelevantSourceFiles)(repoPath),
     ]);
     const results = Array.isArray(search.results) ? search.results.map(asRecord).filter(Boolean) : [];
     const relevantFiles = dedupeStrings(results.map((result) => String(result?.file_path || '')));
     const relevantSymbols = dedupeStrings(
       results.map((result) => String(result?.qualified_name || result?.name || '')),
     );
-    const changedCount = Number(changes.changed_count || 0);
     const statusReady = String(status.status || '').toLowerCase() === 'ready';
-    const freshnessStatus = !statusReady ? 'unavailable' : changedCount > 0 ? 'stale' : 'fresh';
-    const freshnessDetail = !statusReady
-      ? `cbm_index_not_ready: ${String(status.status || 'unknown')}`
-      : changedCount > 0
-        ? `cbm_freshness_unverified: ${changedCount} tracked working-tree file(s) differ from HEAD and index_status exposes no indexed revision`
-        : 'cbm_fresh: indexed graph matches tracked HEAD changes';
+    const sourceRoot = String(project?.root_path || '').trim() || null;
+    const indexedInventory = indexedFilesFromQueryGraph(indexedInventoryResult);
+    const indexedRevision = readOptionalText(status, [
+      'indexed_revision',
+      'indexedRevision',
+      'revision',
+      'commit',
+    ]);
+    const indexedAt = readOptionalText(status, [
+      'indexed_at',
+      'indexedAt',
+      'indexed_timestamp',
+      'last_indexed_at',
+      'lastIndexedAt',
+    ]);
+    const freshness = assessCbmFreshness({
+      statusReady,
+      sourceRoot,
+      requestedRoot: repoPath,
+      indexedFiles: indexedInventory.files,
+      indexedInventoryComplete: indexedInventory.complete,
+      filesystemFiles: filesystemInventory.files,
+      filesystemInventoryComplete: filesystemInventory.complete,
+      indexedRevision,
+      indexedAt,
+    });
+    const freshnessDetail = freshness.reason;
     const evidenceBlocker =
       relevantFiles.length === 0 || relevantSymbols.length === 0
         ? `cbm_no_matching_code_evidence: ${query}`
         : null;
-    const blocker = freshnessStatus === 'fresh' ? evidenceBlocker : freshnessDetail;
+    const blocker = freshness.status === 'fresh' ? evidenceBlocker : freshnessDetail;
 
     return {
       data: {
@@ -451,21 +797,32 @@ export async function readCodeGraphContextFromCbm(
             .filter((result) => ['Type', 'Interface'].includes(String(result?.label)))
             .map((result) => String(result?.name || '')),
         ),
-        tools: ['list_projects', 'index_status', 'search_graph', 'detect_changes'],
+        tools: ['list_projects', 'index_status', 'search_graph', 'query_graph'],
         agentCards: [],
         promptTemplates: [],
         implementationNotes: [
           `CodeGraph context returned ${relevantFiles.length} file(s) and ${relevantSymbols.length} symbol(s).`,
           freshnessDetail,
+          `CBM indexed File inventory: ${indexedInventory.total ?? 'unknown'}; bounded filesystem inventory: ${filesystemInventory.files.length}.`,
+          ...freshness.missingFiles.map((file) => `CBM missing indexed file: ${file}`),
           ...(evidenceBlocker ? [evidenceBlocker] : []),
         ],
         freshness: {
-          status: freshnessStatus,
+          status: freshness.status,
+          diagnosticStatus: freshness.diagnosticStatus,
           project: projectName,
           nodes: Number.isFinite(Number(status.nodes)) ? Number(status.nodes) : null,
           edges: Number.isFinite(Number(status.edges)) ? Number(status.edges) : null,
           checkedAt,
           detail: freshnessDetail,
+          indexedFileCount: indexedInventory.total,
+          indexedChunkCount: readOptionalCount(status, ['indexed_chunk_count', 'chunk_count', 'chunks']),
+          indexedRevision,
+          indexedAt,
+          sourceRoot,
+          filesystemFileCount: filesystemInventory.files.length,
+          missingFileCount: freshness.missingFiles.length,
+          missingFiles: freshness.missingFiles,
         },
         blocker,
       },
@@ -556,34 +913,12 @@ async function readKnowGraphContextFromNeo4j(
 
   try {
     const nodeResult = await session.run(
-      `
-        MATCH (n)
-        WHERE toString(n.project_id) IN $projectScopeIds
-        RETURN DISTINCT
-          elementId(n) AS node_id,
-          labels(n) AS node_labels,
-          properties(n) AS node_props
-        ORDER BY coalesce(n.updated_at, n.created_at, '') DESC
-        LIMIT toInteger($limit)
-      `,
+      KNOWGRAPH_NODE_CONTEXT_QUERY,
       { projectScopeIds, limit: maxItems },
     );
 
     const relResult = await session.run(
-      `
-        MATCH (a)-[r]->(b)
-        WHERE toString(a.project_id) IN $projectScopeIds
-          AND toString(b.project_id) IN $projectScopeIds
-          AND toString(r.project_id) IN $projectScopeIds
-        RETURN DISTINCT
-          elementId(r) AS rel_id,
-          type(r) AS rel_type,
-          properties(r) AS rel_props,
-          elementId(a) AS from_id,
-          elementId(b) AS to_id
-        ORDER BY coalesce(r.updated_at, r.created_at, '') DESC
-        LIMIT toInteger($limit)
-      `,
+      KNOWGRAPH_RELATION_CONTEXT_QUERY,
       { projectScopeIds, limit: maxItems },
     );
 

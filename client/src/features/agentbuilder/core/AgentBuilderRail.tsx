@@ -21,6 +21,10 @@ type RailVisibility = {
   showVideo: boolean;
   showDataFormulator: boolean;
   uaAgents: readonly UaUiAgentDefinition[];
+  // Terminal icon for the OpenClaude Console Bridge. Optional so existing
+  // callers keep compiling; shown when Local Coder is bus-connected or a
+  // console session exists.
+  showOpenClaudeConsole?: boolean;
 };
 
 type AgentBuilderRailProps = {
@@ -41,6 +45,8 @@ type AgentBuilderRailProps = {
   onShowWorkbenchWorkspace: (surfaceId: UaUiAgentDefinition['surfaceId']) => void;
   onShowPlanWorkspace: () => void;
   onOpenNavigationDrawer: () => void;
+  openClaudeConsoleActive?: boolean;
+  onOpenOpenClaudeConsole?: () => void;
 };
 
 function Icon({ d, size = 22 }: { d: string; size?: number }) {
@@ -97,6 +103,8 @@ export default function AgentBuilderRail({
   onShowWorkbenchWorkspace,
   onShowPlanWorkspace,
   onOpenNavigationDrawer,
+  openClaudeConsoleActive,
+  onOpenOpenClaudeConsole,
 }: AgentBuilderRailProps) {
   return (
     <aside
@@ -275,6 +283,19 @@ export default function AgentBuilderRail({
           <Icon d={agent.railIcon} />
         </button>
       ))}
+      {visibleRailItems.showOpenClaudeConsole ? (
+        <button
+          type="button"
+          title="Code Console"
+          aria-label="Code Console"
+          data-testid="rail-openclaude-console-button"
+          onClick={onOpenOpenClaudeConsole}
+          className="p-2 rounded"
+          style={{ color: openClaudeConsoleActive ? colors.primary : colors.text }}
+        >
+          <Icon d="M4 5h16v14H4z M7 9l3 3-3 3 M13 15h4" />
+        </button>
+      ) : null}
 
       <div className="flex-1" />
 

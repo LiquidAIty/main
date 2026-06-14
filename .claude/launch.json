@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev:frontend"],
       "port": 5173
+    },
+    {
+      "name": "preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--workspace", "client", "exec", "--", "vite", "--port", "5199", "--strictPort"],
+      "port": 5199
     }
   ]
 }

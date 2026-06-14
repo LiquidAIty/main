@@ -44,6 +44,10 @@ CoderPacket.
   Packet warnings and CoderPacket guardrails.
 * A timeout race bounds the caller but does not cancel the underlying operation. Source adapters
   still need deterministic client/session cleanup, especially in one-shot smoke harnesses.
+* In bounded Cypher retrieval, never order after `RETURN DISTINCT` by a graph variable that was
+  projected away. Carry the graph variable and a timestamp alias through `WITH DISTINCT`, apply
+  `ORDER BY` and `LIMIT` while both are in scope, then return the required fields. Prove the real
+  query with a source-only diagnostic because copied query fixtures can miss scope failures.
 
 ## Guardrails
 

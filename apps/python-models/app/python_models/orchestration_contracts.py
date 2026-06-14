@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 
 RequiredRuntimeString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+CoderTaskStatus = Literal["started", "queued", "running", "completed", "failed", "blocked"]
+CoderTaskDeliveryStatus = Literal["accepted", "queued", "blocked"]
 
 
 def _reject_default_model_value(value: str | None) -> str | None:

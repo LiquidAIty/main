@@ -9,12 +9,18 @@ import {
   type CoderReport,
 } from '../../contracts/coderContracts';
 
-type ProcessResult = {
+export type ProcessResult = {
   started: boolean;
   exitCode: number | null;
   stdout: string;
   stderr: string;
   error?: string;
+  firstStdoutAt?: string | null;
+  firstStderrAt?: string | null;
+  lastStdoutLine?: string;
+  lastStderrLine?: string;
+  exitSignal?: NodeJS.Signals | null;
+  timeoutKilled?: boolean;
 };
 
 type RunProcessOptions = {
@@ -57,6 +63,25 @@ export type RuntimeSource =
   | 'vendored_built'
   | 'none';
 
+/**
+ * A runnable OpenClaude command resolved for the Console Bridge. Unlike the
+ * one-shot job path, the bridge owns the spawned process directly (long-lived,
+ * streamed), so it needs the raw command/baseArgs/shell rather than a built
+ * argv. `envMissing` is advisory: an interactive/help session may start without
+ * provider keys, but a real `print`/`task` run cannot.
+ */
+export type ConsoleRuntimeResolution =
+  | {
+      ready: true;
+      command: string;
+      baseArgs: string[];
+      describe: string;
+      shell: boolean;
+      source: RuntimeSource;
+      envMissing: string[];
+    }
+  | { ready: false; missing: string[] };
+
 export type LocalCoderRuntimeInspection = {
   ready: boolean;
   source: RuntimeSource;
@@ -71,6 +96,44 @@ export type LocalCoderAdapterOptions = {
   workspaceRoot?: string;
   env?: NodeJS.ProcessEnv;
   runProcess?: RunProcess;
+  diagnosticMcpMode?: 'production' | 'disabled';
+};
+
+export type LocalCoderRuntimeStage =
+  | 'preflight'
+  | 'prompt_bounds'
+  | 'process_not_started'
+  | 'process_timeout'
+  | 'process_exit_failed'
+  | 'json_parse'
+  | 'coder_report_validation'
+  | 'completed';
+
+export type LocalCoderRuntimeDiagnostics = {
+  commandPath: string;
+  argvShape: string[];
+  workingDirectory: string;
+  provider: string;
+  model: string;
+  permissionMode: LocalCoderPermissionMode;
+  timeoutMs: number;
+  promptDelivery: 'argv';
+  promptLength: number;
+  stdinClosed: true;
+  mcpMode: 'production' | 'disabled';
+  mcpConfigPassed: boolean;
+  firstStdoutAt: string | null;
+  firstStderrAt: string | null;
+  lastStdoutLine: string;
+  lastStderrLine: string;
+  exitCode: number | null;
+  exitSignal: NodeJS.Signals | null;
+  timeoutKilled: boolean;
+  jsonParseStarted: boolean;
+  coderReportValidationStarted: boolean;
+  runtimeStage: LocalCoderRuntimeStage;
+  warningLines: string[];
+  validCoderReportReturned: boolean;
 };
 
 const EXPLICIT_ENV_NAMES = [
@@ -81,6 +144,15 @@ const EXPLICIT_ENV_NAMES = [
 ] as const;
 
 const WINDOWS_EXEC_EXTENSIONS = ['.exe', '.cmd', '.bat', '.com'];
+const DEFAULT_LOCALCODER_RUN_TIMEOUT_MS = 300_000;
+const MAX_LOCALCODER_ARGV_PROMPT_CHARS = 16_000;
+const MAX_DIAGNOSTIC_LINE_CHARS = 500;
+
+function localCoderRunTimeoutMs(env: NodeJS.ProcessEnv): number {
+  const configured = Number.parseInt(String(env.LOCALCODER_RUN_TIMEOUT_MS || ''), 10);
+  if (!Number.isFinite(configured)) return DEFAULT_LOCALCODER_RUN_TIMEOUT_MS;
+  return Math.max(1_000, Math.min(3_600_000, configured));
+}
 
 export function resolveLocalCoderWorkspaceRoot(startPath: string): string {
   let candidate = path.resolve(startPath);
@@ -174,13 +246,26 @@ async function runChildProcess(
   return await new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
+    let firstStdoutAt: string | null = null;
+    let firstStderrAt: string | null = null;
+    let timedOut = false;
+    let timeoutKilled = false;
     let settled = false;
     let timer: NodeJS.Timeout | null = null;
+    let killFallbackTimer: NodeJS.Timeout | null = null;
     const finish = (result: ProcessResult) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      resolve(result);
+      if (killFallbackTimer) clearTimeout(killFallbackTimer);
+      resolve({
+        ...result,
+        firstStdoutAt,
+        firstStderrAt,
+        lastStdoutLine: lastBoundedLine(stdout),
+        lastStderrLine: lastBoundedLine(stderr),
+        timeoutKilled,
+      });
     };
     const child = spawn(command, args, {
       cwd: options.cwd,
@@ -191,29 +276,70 @@ async function runChildProcess(
     });
     if (options.timeoutMs && options.timeoutMs > 0) {
       timer = setTimeout(() => {
-        child.kill();
-        finish({
-          started: true,
-          exitCode: null,
-          stdout,
-          stderr,
-          error: `process_timeout_after_${options.timeoutMs}ms`,
-        });
+        timedOut = true;
+        timeoutKilled = child.kill();
+        killFallbackTimer = setTimeout(() => {
+          finish({
+            started: true,
+            exitCode: null,
+            stdout,
+            stderr,
+            error: `process_timeout_after_${options.timeoutMs}ms`,
+          });
+        }, 5_000);
       }, options.timeoutMs);
     }
     child.stdout?.on('data', (chunk) => {
+      if (!firstStdoutAt) firstStdoutAt = new Date().toISOString();
       stdout += String(chunk);
     });
     child.stderr?.on('data', (chunk) => {
+      if (!firstStderrAt) firstStderrAt = new Date().toISOString();
       stderr += String(chunk);
     });
     child.on('error', (error) => {
       finish({ started: false, exitCode: null, stdout, stderr, error: error.message });
     });
-    child.on('close', (exitCode) => {
-      finish({ started: true, exitCode, stdout, stderr });
+    child.on('close', (exitCode, exitSignal) => {
+      finish({
+        started: true,
+        exitCode,
+        stdout,
+        stderr,
+        exitSignal,
+        error: timedOut ? `process_timeout_after_${options.timeoutMs}ms` : undefined,
+      });
     });
   });
+}
+
+function lastBoundedLine(value: string): string {
+  const lines = value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+  const line = lines.length > 0 ? lines[lines.length - 1] : '';
+  return line.slice(0, MAX_DIAGNOSTIC_LINE_CHARS);
+}
+
+function warningLines(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /warn|context.?window|missing from/i.test(line))
+    .slice(-10)
+    .map((line) => line.slice(0, MAX_DIAGNOSTIC_LINE_CHARS));
+}
+
+function redactArgv(args: string[]): string[] {
+  const redacted = [...args];
+  const redactValueAfter = (flag: string, replacement: (value: string) => string) => {
+    const index = redacted.indexOf(flag);
+    if (index >= 0 && index + 1 < redacted.length) {
+      redacted[index + 1] = replacement(redacted[index + 1]);
+    }
+  };
+  redactValueAfter('--print', (value) => `<prompt:${value.length} chars>`);
+  redactValueAfter('--json-schema', () => '<coder-report-schema>');
+  redactValueAfter('--mcp-config', () => '<generated-mcp-config>');
+  return redacted;
 }
 
 function buildBlockedReport(
@@ -373,7 +499,15 @@ function buildCoderPrompt(packet: CoderPacket): string {
   ].join('\n\n');
 }
 
-function parseLocalCoderOutput(stdout: string, packetId: string): CoderReport | null {
+function parseLocalCoderOutput(
+  stdout: string,
+  packetId: string,
+): {
+  report: CoderReport | null;
+  jsonParseStarted: boolean;
+  coderReportValidationStarted: boolean;
+} {
+  let coderReportValidationStarted = false;
   try {
     const envelope = JSON.parse(stdout) as Record<string, unknown>;
     const candidates = [
@@ -393,21 +527,84 @@ function parseLocalCoderOutput(stdout: string, packetId: string): CoderReport | 
               }
             })()
           : candidate;
+      coderReportValidationStarted = true;
       const parsed = coderReportSchema.safeParse(parsedCandidate);
       if (parsed.success && parsed.data.coderPacketId === packetId) {
-        return { ...parsed.data, rawOutput: stdout };
+        return {
+          report: { ...parsed.data, rawOutput: stdout },
+          jsonParseStarted: true,
+          coderReportValidationStarted,
+        };
       }
     }
   } catch {
-    return null;
+    return {
+      report: null,
+      jsonParseStarted: true,
+      coderReportValidationStarted,
+    };
   }
-  return null;
+  return {
+    report: null,
+    jsonParseStarted: true,
+    coderReportValidationStarted,
+  };
+}
+
+function createRuntimeDiagnostics(
+  packet: CoderPacket,
+  workingDirectory: string,
+  prompt: string,
+  env: NodeJS.ProcessEnv,
+  mcpMode: 'production' | 'disabled',
+): LocalCoderRuntimeDiagnostics {
+  return {
+    commandPath: '',
+    argvShape: [],
+    workingDirectory,
+    provider: 'openai',
+    model: String(env.OPENAI_MODEL || ''),
+    permissionMode: deriveLocalCoderPermissionMode(packet),
+    timeoutMs: localCoderRunTimeoutMs(env),
+    promptDelivery: 'argv',
+    promptLength: prompt.length,
+    stdinClosed: true,
+    mcpMode,
+    mcpConfigPassed: false,
+    firstStdoutAt: null,
+    firstStderrAt: null,
+    lastStdoutLine: '',
+    lastStderrLine: '',
+    exitCode: null,
+    exitSignal: null,
+    timeoutKilled: false,
+    jsonParseStarted: false,
+    coderReportValidationStarted: false,
+    runtimeStage: 'preflight',
+    warningLines: [],
+    validCoderReportReturned: false,
+  };
+}
+
+function applyProcessDiagnostics(
+  diagnostics: LocalCoderRuntimeDiagnostics,
+  result: ProcessResult,
+): void {
+  diagnostics.firstStdoutAt = result.firstStdoutAt ?? null;
+  diagnostics.firstStderrAt = result.firstStderrAt ?? null;
+  diagnostics.lastStdoutLine = result.lastStdoutLine ?? lastBoundedLine(result.stdout);
+  diagnostics.lastStderrLine = result.lastStderrLine ?? lastBoundedLine(result.stderr);
+  diagnostics.exitCode = result.exitCode;
+  diagnostics.exitSignal = result.exitSignal ?? null;
+  diagnostics.timeoutKilled = result.timeoutKilled ?? false;
+  diagnostics.warningLines = warningLines([result.stdout, result.stderr].filter(Boolean).join('\n'));
 }
 
 export class LocalCoderAdapter {
   private readonly workspaceRoot: string;
   private readonly env: NodeJS.ProcessEnv;
   private readonly runProcess: RunProcess;
+  private readonly diagnosticMcpMode: 'production' | 'disabled';
 
   constructor(options: LocalCoderAdapterOptions = {}) {
     this.workspaceRoot = options.workspaceRoot
@@ -415,6 +612,7 @@ export class LocalCoderAdapter {
       : resolveLocalCoderWorkspaceRoot(process.cwd());
     this.env = options.env || process.env;
     this.runProcess = options.runProcess || runChildProcess;
+    this.diagnosticMcpMode = options.diagnosticMcpMode || 'production';
   }
 
   private vendoredRoot(): string {
@@ -571,6 +769,28 @@ export class LocalCoderAdapter {
     return this.resolveVendoredRuntime();
   }
 
+  /**
+   * Resolve a runnable OpenClaude command for the Console Bridge without
+   * spawning anything. Reuses the same discovery order as the job adapter
+   * (explicit env command -> PATH openclaude -> built vendored runtime) so the
+   * live terminal and the headless job invoke the exact same CLI.
+   */
+  resolveConsoleRuntime(): ConsoleRuntimeResolution {
+    const runtime = this.discoverRuntime();
+    if (!runtime.ready) {
+      return { ready: false, missing: runtime.missing };
+    }
+    return {
+      ready: true,
+      command: runtime.command,
+      baseArgs: [...runtime.baseArgs],
+      describe: runtime.describe,
+      shell: runtime.shell,
+      source: runtime.source,
+      envMissing: this.envMissing(),
+    };
+  }
+
   private envMissing(): string[] {
     const missing: string[] = [];
     if (!String(this.env.OPENAI_API_KEY || '').trim()) {
@@ -602,6 +822,13 @@ export class LocalCoderAdapter {
    * so it stays visible in the CoderReport.
    */
   private prepareMcpConfig(): McpPrepResult {
+    if (this.diagnosticMcpMode === 'disabled') {
+      return {
+        flags: [],
+        note: 'localcoder_mcp_diagnostic_disabled_explicit',
+        tempPath: null,
+      };
+    }
     const configPath = this.mcpConfigPath();
     if (!existsSync(configPath)) {
       return { flags: [], note: `localcoder_mcp_config_absent: ${configPath}`, tempPath: null };
@@ -650,10 +877,10 @@ export class LocalCoderAdapter {
     return { flags: ['--mcp-config', tempPath, '--strict-mcp-config'], note, tempPath };
   }
 
-  private jobArgs(packet: CoderPacket, mcpFlags: string[]): string[] {
+  private jobArgs(packet: CoderPacket, mcpFlags: string[], prompt: string): string[] {
     const args = [
       '--print',
-      buildCoderPrompt(packet),
+      prompt,
       '--output-format',
       'json',
       '--json-schema',
@@ -733,39 +960,76 @@ export class LocalCoderAdapter {
     };
   }
 
-  async run(packet: CoderPacket): Promise<CoderReport> {
+  async runWithDiagnostics(packet: CoderPacket): Promise<{
+    report: CoderReport;
+    runtimeDiagnostics: LocalCoderRuntimeDiagnostics;
+  }> {
     const setupCommand = buildSetupCommand(this.vendoredRoot());
     const resolvedRepo = path.resolve(packet.repoPath);
+    const prompt = buildCoderPrompt(packet);
+    const runtimeDiagnostics = createRuntimeDiagnostics(
+      packet,
+      resolvedRepo,
+      prompt,
+      this.env,
+      this.diagnosticMcpMode,
+    );
     if (!existsSync(resolvedRepo)) {
-      return buildBlockedReport(
-        packet.id,
-        `localcoder_repo_path_missing: ${resolvedRepo}`,
-        setupCommand,
-      );
+      return {
+        report: buildBlockedReport(
+          packet.id,
+          `localcoder_repo_path_missing: ${resolvedRepo}`,
+          setupCommand,
+        ),
+        runtimeDiagnostics,
+      };
     }
 
     const runtime = this.discoverRuntime();
     if (!runtime.ready) {
-      return buildBlockedReport(packet.id, runtime.missing.join('; '), setupCommand);
+      return {
+        report: buildBlockedReport(packet.id, runtime.missing.join('; '), setupCommand),
+        runtimeDiagnostics,
+      };
     }
+    runtimeDiagnostics.commandPath = runtime.describe;
 
     const envMissing = this.envMissing();
     if (envMissing.length > 0) {
-      return buildBlockedReport(packet.id, envMissing.join('; '), setupCommand);
+      return {
+        report: buildBlockedReport(packet.id, envMissing.join('; '), setupCommand),
+        runtimeDiagnostics,
+      };
+    }
+
+    if (prompt.length > MAX_LOCALCODER_ARGV_PROMPT_CHARS) {
+      runtimeDiagnostics.runtimeStage = 'prompt_bounds';
+      return {
+        report: buildBlockedReport(
+          packet.id,
+          `localcoder_argv_prompt_too_large: ${prompt.length} > ${MAX_LOCALCODER_ARGV_PROMPT_CHARS}`,
+          'Create a narrower CoderPacket before retrying the argv-based CLI adapter.',
+        ),
+        runtimeDiagnostics,
+      };
     }
 
     const mcp = this.prepareMcpConfig();
+    const args = [...runtime.baseArgs, ...this.jobArgs(packet, mcp.flags, prompt)];
+    runtimeDiagnostics.argvShape = redactArgv(args);
+    runtimeDiagnostics.mcpConfigPassed = mcp.flags.includes('--mcp-config');
     const withMcpNote = (report: CoderReport): CoderReport => ({
       ...report,
       assumptions: [...report.assumptions, mcp.note],
     });
     const result = await this.runProcess(
       runtime.command,
-      [...runtime.baseArgs, ...this.jobArgs(packet, mcp.flags)],
+      args,
       {
         cwd: resolvedRepo,
         env: { ...this.env, CLAUDE_CODE_USE_OPENAI: '1' },
         shell: runtime.shell,
+        timeoutMs: localCoderRunTimeoutMs(this.env),
       },
     );
     if (mcp.tempPath) {
@@ -775,30 +1039,64 @@ export class LocalCoderAdapter {
         // best-effort cleanup of the generated MCP config
       }
     }
+    applyProcessDiagnostics(runtimeDiagnostics, result);
     const rawOutput = [result.stdout, result.stderr].filter(Boolean).join('\n');
     if (!result.started) {
-      return withMcpNote(
-        buildBlockedReport(
+      runtimeDiagnostics.runtimeStage = 'process_not_started';
+      return {
+        report: withMcpNote(buildBlockedReport(
           packet.id,
           `localcoder_process_not_started: ${result.error || 'unknown spawn error'}`,
           setupCommand,
           rawOutput,
+        )),
+        runtimeDiagnostics,
+      };
+    }
+    if (result.error) {
+      runtimeDiagnostics.runtimeStage = result.error.startsWith('process_timeout_after_')
+        ? 'process_timeout'
+        : 'process_exit_failed';
+      return {
+        report: withMcpNote(
+          buildFailedReport(packet.id, `localcoder_process_failed: ${result.error}`, rawOutput),
         ),
-      );
+        runtimeDiagnostics,
+      };
     }
     if (result.exitCode !== 0) {
-      return withMcpNote(
-        buildFailedReport(
+      runtimeDiagnostics.runtimeStage = 'process_exit_failed';
+      return {
+        report: withMcpNote(buildFailedReport(
           packet.id,
           `localcoder_process_failed: exitCode=${String(result.exitCode)}`,
           rawOutput,
-        ),
-      );
+        )),
+        runtimeDiagnostics,
+      };
     }
-    const report = parseLocalCoderOutput(result.stdout, packet.id);
-    if (!report) {
-      return withMcpNote(buildFailedReport(packet.id, 'localcoder_coder_report_invalid', rawOutput));
+    runtimeDiagnostics.runtimeStage = 'json_parse';
+    const parsed = parseLocalCoderOutput(result.stdout, packet.id);
+    runtimeDiagnostics.jsonParseStarted = parsed.jsonParseStarted;
+    runtimeDiagnostics.coderReportValidationStarted = parsed.coderReportValidationStarted;
+    if (!parsed.report) {
+      runtimeDiagnostics.runtimeStage = parsed.coderReportValidationStarted
+        ? 'coder_report_validation'
+        : 'json_parse';
+      return {
+        report: withMcpNote(buildFailedReport(packet.id, 'localcoder_coder_report_invalid', rawOutput)),
+        runtimeDiagnostics,
+      };
     }
-    return withMcpNote(report);
+    runtimeDiagnostics.runtimeStage = 'completed';
+    runtimeDiagnostics.validCoderReportReturned = true;
+    return {
+      report: withMcpNote(parsed.report),
+      runtimeDiagnostics,
+    };
+  }
+
+  async run(packet: CoderPacket): Promise<CoderReport> {
+    return (await this.runWithDiagnostics(packet)).report;
   }
 }

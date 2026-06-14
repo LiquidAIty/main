@@ -1,4 +1,6 @@
 export type DeckRunStatus = 'idle' | 'running' | 'success' | 'error' | 'skipped';
+export type CoderTaskStatus = 'started' | 'queued' | 'running' | 'completed' | 'failed' | 'blocked';
+export type CoderTaskDeliveryStatus = 'accepted' | 'queued' | 'blocked';
 
 // T001: canonical typed description of a tool the runtime may expose. The
 // agent card Tools tab is the only source of selected tool access; unknown,
@@ -29,6 +31,41 @@ export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
       required: ['expression'],
     },
     outputSchema: { type: 'string', description: 'numeric result as a string' },
+  },
+  {
+    name: 'coder_console_task',
+    description: 'Send one bounded coding task to the owned Code Console backend.',
+    enabled: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' },
+        target_root: { type: 'string' },
+        goal: { type: 'string' },
+        prompt: { type: 'string' },
+        edit_mode: { type: 'string', default: 'read_only' },
+        session_id: { type: ['string', 'null'] },
+      },
+      required: ['project_id', 'target_root', 'goal'],
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        status: {
+          type: 'string',
+          enum: ['started', 'queued', 'running', 'completed', 'failed', 'blocked'],
+        },
+        session_id: { type: ['string', 'null'] },
+        target_root: { type: 'string' },
+        provider: { type: ['string', 'null'] },
+        model: { type: ['string', 'null'] },
+        transport: { type: ['string', 'null'] },
+        watch_surface: { type: 'string' },
+        message: { type: 'string' },
+        delivery_status: { type: 'string', enum: ['accepted', 'queued', 'blocked'] },
+        blocker: { type: ['string', 'null'] },
+      },
+    },
   },
 ];
 
@@ -91,6 +128,28 @@ export type RuntimeScope = {
   pythonWorkerIds: string[];
   calledAgentIds: string[];
   excludedAgentIds: Array<{ id: string; reason: string }>;
+  routingDiagnostics?: MagOneRoutingDiagnostics;
+};
+
+export type MagOneWorkflowType = 'coding' | 'general';
+
+export type MagOneRoutingAgent = {
+  id: string;
+  title: string;
+  role: string;
+  reason: string;
+};
+
+export type MagOneRoutingDiagnostics = {
+  projectId: string;
+  deckId: string;
+  workflowType: MagOneWorkflowType;
+  eligibleBusConnectedAgents: MagOneRoutingAgent[];
+  selectedExecutionPath: MagOneRoutingAgent[];
+  ignoredEligibleAgents: MagOneRoutingAgent[];
+  disconnectedAgentsIgnored: MagOneRoutingAgent[];
+  missingRequiredAgents: string[];
+  blockedReason: string | null;
 };
 
 export type RuntimeGraphNode = {

@@ -7,9 +7,21 @@ import {
   persistCoderRunOutcome,
   prepareActiveCoderPacket,
 } from '../services/coderPlanning/coderPlanningService';
+import {
+  openClaudeConsoleSessionManager,
+  type ConsoleMode,
+} from '../coder/openclaude/console/consoleSession';
+import { routeCodingTaskToConsole } from '../coder/openclaude/console/consoleTaskRouter';
+import { buildMagOneRoutingDiagnostics } from '../cards/runtime';
 
 const router = Router();
 export const OPENCLAUDE_HARNESS_ROUTE_PREFIX = '/coder/openclaude';
+
+const CONSOLE_MODES: ConsoleMode[] = ['interactive', 'print', 'task'];
+
+function parseConsoleMode(value: unknown): ConsoleMode {
+  return CONSOLE_MODES.includes(value as ConsoleMode) ? (value as ConsoleMode) : 'interactive';
+}
 
 router.get('/openclaude/status', (req, res) => {
   const status = openClaudeRuntimeService.getStatus({
@@ -40,6 +52,134 @@ router.post('/openclaude/run', async (req, res) => {
     ok: false,
     error: 'openclaude_plain_task_run_removed_use_localcoder_run',
   });
+});
+
+// ── OpenClaude Console Bridge ──────────────────────────────────────────────
+// Runs the real OpenClaude CLI as a long-lived, streamed process for the in-app
+// terminal view. Not a sandbox; not a CoderReport. See PLAN.md.
+
+router.post('/openclaude/console/sessions', (req, res) => {
+  const started = openClaudeConsoleSessionManager.start({
+    targetRoot: typeof req.body?.targetRoot === 'string' ? req.body.targetRoot : undefined,
+    mode: parseConsoleMode(req.body?.mode),
+    model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+    provider: typeof req.body?.provider === 'string' ? req.body.provider : undefined,
+    prompt: typeof req.body?.prompt === 'string' ? req.body.prompt : undefined,
+    args: Array.isArray(req.body?.args) ? req.body.args.map((a: unknown) => String(a)) : undefined,
+  });
+  if (!started.ok) {
+    return res.status(424).json({ ok: false, error: started.error, missing: started.missing });
+  }
+  const info = started.session.info;
+  // A child that failed to spawn is reported honestly, never as a live session.
+  return res.status(info.state === 'failed' ? 502 : 200).json({
+    ok: info.state !== 'failed',
+    session: info,
+  });
+});
+
+router.get('/openclaude/console/sessions', (_req, res) => {
+  return res.json({ ok: true, sessions: openClaudeConsoleSessionManager.list() });
+});
+
+router.get('/openclaude/console/sessions/:id', (req, res) => {
+  const session = openClaudeConsoleSessionManager.get(req.params.id);
+  if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
+  return res.json({ ok: true, session: session.info, transcript: session.transcript() });
+});
+
+router.get('/openclaude/console/sessions/:id/stream', (req, res) => {
+  const session = openClaudeConsoleSessionManager.get(req.params.id);
+  if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write(`event: info\ndata: ${JSON.stringify(session.info)}\n\n`);
+  const unsubscribe = session.subscribe((event) => {
+    if (event.kind === 'chunk') {
+      res.write(`event: chunk\ndata: ${JSON.stringify(event.chunk)}\n\n`);
+    } else {
+      res.write(`event: lifecycle\ndata: ${JSON.stringify(event.info)}\n\n`);
+    }
+  });
+  req.on('close', () => {
+    unsubscribe();
+    res.end();
+  });
+  return undefined;
+});
+
+router.post('/openclaude/console/sessions/:id/input', (req, res) => {
+  const session = openClaudeConsoleSessionManager.get(req.params.id);
+  if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
+  const data = typeof req.body?.data === 'string' ? req.body.data : '';
+  const delivered = session.write(data);
+  return res.status(delivered ? 200 : 409).json({
+    ok: delivered,
+    delivered,
+    interactiveSupported: session.info.interactiveSupported,
+  });
+});
+
+router.post('/openclaude/console/sessions/:id/resize', (req, res) => {
+  const session = openClaudeConsoleSessionManager.get(req.params.id);
+  if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
+  const cols = Number(req.body?.cols);
+  const rows = Number(req.body?.rows);
+  if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) {
+    return res.status(400).json({ ok: false, error: 'console_resize_invalid_dimensions' });
+  }
+  const resized = session.resize(Math.floor(cols), Math.floor(rows));
+  return res.status(resized ? 200 : 409).json({
+    ok: resized,
+    resized,
+    transportMode: session.info.transportMode,
+  });
+});
+
+router.post('/openclaude/console/sessions/:id/stop', (req, res) => {
+  const session = openClaudeConsoleSessionManager.get(req.params.id);
+  if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
+  const stopped = session.stop();
+  return res.json({ ok: true, stopped, session: session.info });
+});
+
+router.post('/openclaude/console/task', async (req, res) => {
+  const cards = Array.isArray(req.body?.cards) ? req.body.cards : [];
+  const edges = Array.isArray(req.body?.edges) ? req.body.edges : [];
+  const task = String(req.body?.task || '');
+  const repoPath = String(req.body?.repoPath || '');
+  const projectId = String(req.body?.projectId || '');
+  if (!repoPath) {
+    return res.status(400).json({ ok: false, error: 'console_task_repo_path_required' });
+  }
+  const magenticCard = cards.find(
+    (card: any) => String(card?.runtimeType || '').trim().toLowerCase() === 'magentic_one',
+  );
+  if (!magenticCard) {
+    return res.status(400).json({ ok: false, error: 'console_task_magentic_card_missing' });
+  }
+  const routing = buildMagOneRoutingDiagnostics(magenticCard, cards, edges, task, { projectId });
+  const localCoderBusConnected = routing.eligibleBusConnectedAgents.some(
+    (agent) => agent.role === 'local_coder',
+  );
+  const codeGraphBusConnected = routing.eligibleBusConnectedAgents.some(
+    (agent) => agent.role === 'codegraph',
+  );
+  const result = await routeCodingTaskToConsole({
+    repoPath,
+    task,
+    localCoderBusConnected,
+    codeGraphBusConnected,
+    editMode: typeof req.body?.editMode === 'string' ? req.body.editMode : undefined,
+    sessionId: typeof req.body?.sessionId === 'string' ? req.body.sessionId : undefined,
+    model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+    provider: typeof req.body?.provider === 'string' ? req.body.provider : undefined,
+  });
+  return res.status(result.routed ? 200 : 424).json({ ok: result.routed, routing, ...result });
 });
 
 router.get('/localcoder/status', async (req, res) => {

@@ -1,13 +1,15 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { CoderPacket } from '../../contracts/coderContracts';
+import type { LocalCoderCbmScopeGateResult } from '../../services/graphContext/cbmScopeGate';
 import {
   LocalCoderAdapter,
   deriveLocalCoderPermissionMode,
   resolveLocalCoderWorkspaceRoot,
 } from './adapter';
+import { LocalCoderService } from './service';
 
 function packet(repoPath: string): CoderPacket {
   return {
@@ -94,6 +96,14 @@ function createLauncherScript(): string {
   mkdirSync(dir, { recursive: true });
   const scriptPath = path.join(dir, 'openclaude.mjs');
   writeFileSync(scriptPath, 'process.exit(0);');
+  return scriptPath;
+}
+
+function createHungLauncherScript(): string {
+  const dir = path.join(tmpdir(), `liquidaity-cli-hung-${Date.now()}-${Math.random()}`);
+  mkdirSync(dir, { recursive: true });
+  const scriptPath = path.join(dir, 'openclaude.mjs');
+  writeFileSync(scriptPath, 'setInterval(() => {}, 1000);');
   return scriptPath;
 }
 
@@ -342,6 +352,159 @@ describe('LocalCoderAdapter', () => {
     expect(report.summary).toContain('localcoder_process_failed');
   });
 
+  it('applies a bounded run timeout and returns failed when the process times out', async () => {
+    const root = createRuntimeFixture();
+    let timeoutMs: number | undefined;
+    const adapter = new LocalCoderAdapter({
+      workspaceRoot: root,
+      env: {
+        PATH: '',
+        OPENAI_API_KEY: 'key',
+        OPENAI_MODEL: 'gpt-5.3-codex',
+        LOCALCODER_RUN_TIMEOUT_MS: '2500',
+      },
+      runProcess: async (_command, _args, options) => {
+        timeoutMs = options.timeoutMs;
+        return {
+          started: true,
+          exitCode: null,
+          stdout: '',
+          stderr: '',
+          error: 'process_timeout_after_2500ms',
+        };
+      },
+    });
+
+    const { report, runtimeDiagnostics } = await adapter.runWithDiagnostics(packet(root));
+
+    expect(timeoutMs).toBe(2500);
+    expect(report.status).toBe('failed');
+    expect(report.summary).toBe('localcoder_process_failed: process_timeout_after_2500ms');
+    expect(runtimeDiagnostics.runtimeStage).toBe('process_timeout');
+  });
+
+  it('returns bounded redacted argv/process diagnostics without exposing the prompt or MCP temp path', async () => {
+    const root = createRuntimeFixture();
+    const adapter = new LocalCoderAdapter({
+      workspaceRoot: root,
+      env: { PATH: '', OPENAI_API_KEY: 'secret-key', OPENAI_MODEL: 'gpt-5.3-codex' },
+      runProcess: async () => ({
+        started: true,
+        exitCode: 0,
+        stdout: structuredStdout(),
+        stderr: '',
+        firstStdoutAt: '2026-06-13T12:00:00.000Z',
+        exitSignal: null,
+        timeoutKilled: false,
+      }),
+    });
+
+    const { runtimeDiagnostics } = await adapter.runWithDiagnostics(packet(root));
+
+    expect(runtimeDiagnostics.runtimeStage).toBe('completed');
+    expect(runtimeDiagnostics.promptDelivery).toBe('argv');
+    expect(runtimeDiagnostics.stdinClosed).toBe(true);
+    expect(runtimeDiagnostics.provider).toBe('openai');
+    expect(runtimeDiagnostics.model).toBe('gpt-5.3-codex');
+    expect(runtimeDiagnostics.mcpConfigPassed).toBe(true);
+    expect(runtimeDiagnostics.firstStdoutAt).toBe('2026-06-13T12:00:00.000Z');
+    expect(runtimeDiagnostics.argvShape.join(' ')).toContain('<prompt:');
+    expect(runtimeDiagnostics.argvShape).toContain('<coder-report-schema>');
+    expect(runtimeDiagnostics.argvShape).toContain('<generated-mcp-config>');
+    expect(runtimeDiagnostics.argvShape.join(' ')).not.toContain('Execute this LiquidAIty CoderPacket');
+    expect(runtimeDiagnostics.argvShape.join(' ')).not.toContain('grpc');
+    expect(JSON.stringify(runtimeDiagnostics)).not.toContain('secret-key');
+  });
+
+  it('blocks before spawn when the argv prompt exceeds the owned Windows-safe bound', async () => {
+    const root = createRuntimeFixture();
+    const runProcess = vi.fn();
+    const adapter = new LocalCoderAdapter({
+      workspaceRoot: root,
+      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.3-codex' },
+      runProcess,
+    });
+
+    const { report, runtimeDiagnostics } = await adapter.runWithDiagnostics({
+      ...packet(root),
+      objective: 'x'.repeat(20_000),
+    });
+
+    expect(runProcess).not.toHaveBeenCalled();
+    expect(report.status).toBe('blocked');
+    expect(report.summary).toContain('localcoder_argv_prompt_too_large');
+    expect(runtimeDiagnostics.runtimeStage).toBe('prompt_bounds');
+  });
+
+  it('kills a real child process on timeout and records stage evidence', async () => {
+    const root = createBareWorkspace();
+    const script = createHungLauncherScript();
+    const adapter = new LocalCoderAdapter({
+      workspaceRoot: root,
+      env: {
+        PATH: '',
+        LOCALCODER_COMMAND: `node ${script}`,
+        OPENAI_API_KEY: 'key',
+        OPENAI_MODEL: 'gpt-5.3-codex',
+        LOCALCODER_RUN_TIMEOUT_MS: '1000',
+      },
+      diagnosticMcpMode: 'disabled',
+    });
+
+    const { report, runtimeDiagnostics } = await adapter.runWithDiagnostics(packet(root));
+
+    expect(report.status).toBe('failed');
+    expect(runtimeDiagnostics.runtimeStage).toBe('process_timeout');
+    expect(runtimeDiagnostics.timeoutKilled).toBe(true);
+    expect(runtimeDiagnostics.exitCode).not.toBe(0);
+  }, 10_000);
+
+  it('captures a missing context-window warning without claiming it caused the timeout', async () => {
+    const root = createRuntimeFixture();
+    const adapter = new LocalCoderAdapter({
+      workspaceRoot: root,
+      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.1-chat-latest' },
+      runProcess: async () => ({
+        started: true,
+        exitCode: null,
+        stdout: '',
+        stderr: 'Warning: gpt-5.1-chat-latest is missing from context-window table',
+        error: 'process_timeout_after_30000ms',
+        timeoutKilled: true,
+      }),
+    });
+
+    const { runtimeDiagnostics } = await adapter.runWithDiagnostics(packet(root));
+
+    expect(runtimeDiagnostics.runtimeStage).toBe('process_timeout');
+    expect(runtimeDiagnostics.warningLines).toEqual([
+      'Warning: gpt-5.1-chat-latest is missing from context-window table',
+    ]);
+    expect(JSON.stringify(runtimeDiagnostics)).not.toContain('caused');
+  });
+
+  it('starts strict JSON validation and cannot fake success from malformed output', async () => {
+    const root = createRuntimeFixture();
+    const adapter = new LocalCoderAdapter({
+      workspaceRoot: root,
+      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.3-codex' },
+      runProcess: async () => ({
+        started: true,
+        exitCode: 0,
+        stdout: JSON.stringify({ structured_output: { status: 'succeeded' } }),
+        stderr: '',
+      }),
+    });
+
+    const { report, runtimeDiagnostics } = await adapter.runWithDiagnostics(packet(root));
+
+    expect(report.status).toBe('failed');
+    expect(runtimeDiagnostics.jsonParseStarted).toBe(true);
+    expect(runtimeDiagnostics.coderReportValidationStarted).toBe(true);
+    expect(runtimeDiagnostics.runtimeStage).toBe('coder_report_validation');
+    expect(runtimeDiagnostics.validCoderReportReturned).toBe(false);
+  });
+
   it('blocks when required env API keys are missing even with a runnable command', async () => {
     const root = createBareWorkspace();
     const script = createLauncherScript();
@@ -509,5 +672,152 @@ describe('LocalCoderAdapter MCP config handling', () => {
     expect(capture.args).not.toContain('--mcp-config');
     expect(report.status).toBe('succeeded');
     expect(report.assumptions.join(' ')).toContain('localcoder_mcp_config_absent');
+  });
+
+  it('supports only an explicit diagnostic MCP-disabled mode and records it visibly', async () => {
+    const root = createRuntimeFixture(VALID_MCP_CONFIG);
+    let capturedArgs: string[] = [];
+    const adapter = new LocalCoderAdapter({
+      workspaceRoot: root,
+      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.3-codex' },
+      diagnosticMcpMode: 'disabled',
+      runProcess: async (_command, args) => {
+        capturedArgs = args;
+        return { started: true, exitCode: 0, stdout: structuredStdout(), stderr: '' };
+      },
+    });
+
+    const { report, runtimeDiagnostics } = await adapter.runWithDiagnostics(packet(root));
+
+    expect(capturedArgs).not.toContain('--mcp-config');
+    expect(runtimeDiagnostics.mcpMode).toBe('disabled');
+    expect(runtimeDiagnostics.mcpConfigPassed).toBe(false);
+    expect(report.assumptions).toContain('localcoder_mcp_diagnostic_disabled_explicit');
+  });
+});
+
+describe('LocalCoderService CBM scope gate', () => {
+  const okGate: LocalCoderCbmScopeGateResult = {
+    indexRan: true,
+    indexStatus: 'indexed',
+    project: 'C-Projects-main',
+    sourceRoot: 'C:/Projects/main',
+    nodes: 10,
+    edges: 20,
+    indexedFiles: 11,
+    requiredFiles: [],
+    missingRequiredFiles: [],
+    excludedFilesFound: [],
+    scopeStatus: 'ok',
+    editAllowed: true,
+    blockedReason: '',
+  };
+
+  it('does not invoke the process adapter when the CBM scope gate blocks', async () => {
+    const run = vi.fn(async () => {
+      throw new Error('adapter must not run');
+    });
+    const service = new LocalCoderService(
+      { inspectRuntime: vi.fn(), run },
+      async () => ({
+        ...okGate,
+        scopeStatus: 'blocked',
+        editAllowed: false,
+        blockedReason: 'cbm_scope_required_files_missing: boundary',
+      }),
+    );
+
+    const result = await service.run({ ...packet(process.cwd()), writeMode: 'read-only' });
+
+    expect(run).not.toHaveBeenCalled();
+    expect(result.report.status).toBe('blocked');
+    expect(result.report.blockers).toContain('cbm_scope_required_files_missing: boundary');
+    expect(result.cbmScopeGate.editAllowed).toBe(false);
+  });
+
+  it('invokes the process adapter only after the CBM scope gate allows it', async () => {
+    const run = vi.fn(async () => ({
+      coderPacketId: 'packet-1',
+      status: 'succeeded' as const,
+      summary: 'Done.',
+      specComparison: [],
+      filesChanged: [],
+      proofCommands: [],
+      proofResults: [],
+      failedCommands: [],
+      blockers: [],
+      assumptions: [],
+      outOfScopeFindings: [],
+      nextRecommendedTask: '',
+      rawOutput: '',
+    }));
+    const service = new LocalCoderService(
+      { inspectRuntime: vi.fn(), run },
+      async () => okGate,
+    );
+
+    const result = await service.run({ ...packet(process.cwd()), writeMode: 'read-only' });
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(result.report.status).toBe('succeeded');
+    expect(result.cbmScopeGate.editAllowed).toBe(true);
+  });
+
+  it('propagates owned adapter runtime diagnostics separately from the strict CoderReport', async () => {
+    const report = {
+      coderPacketId: 'packet-1',
+      status: 'failed' as const,
+      summary: 'localcoder_process_failed: process_timeout_after_30000ms',
+      specComparison: [],
+      filesChanged: [],
+      proofCommands: [],
+      proofResults: [],
+      failedCommands: [],
+      blockers: ['timeout'],
+      assumptions: [],
+      outOfScopeFindings: [],
+      nextRecommendedTask: '',
+      rawOutput: '',
+    };
+    const runtimeDiagnostics = {
+      commandPath: 'node openclaude',
+      argvShape: ['--print', '<prompt:100 chars>'],
+      workingDirectory: process.cwd(),
+      provider: 'openai',
+      model: 'gpt-5.1-chat-latest',
+      permissionMode: 'plan' as const,
+      timeoutMs: 30_000,
+      promptDelivery: 'argv' as const,
+      promptLength: 100,
+      stdinClosed: true as const,
+      mcpMode: 'production' as const,
+      mcpConfigPassed: true,
+      firstStdoutAt: null,
+      firstStderrAt: '2026-06-13T12:00:00.000Z',
+      lastStdoutLine: '',
+      lastStderrLine: 'warning',
+      exitCode: null,
+      exitSignal: null,
+      timeoutKilled: true,
+      jsonParseStarted: false,
+      coderReportValidationStarted: false,
+      runtimeStage: 'process_timeout' as const,
+      warningLines: ['warning'],
+      validCoderReportReturned: false,
+    };
+    const service = new LocalCoderService(
+      {
+        inspectRuntime: vi.fn(),
+        run: vi.fn(async () => report),
+        runWithDiagnostics: vi.fn(async () => ({ report, runtimeDiagnostics })),
+      },
+      async () => okGate,
+    );
+
+    const result = await service.run({ ...packet(process.cwd()), writeMode: 'read-only' });
+
+    expect(result.report).toEqual(report);
+    expect(result.runtimeDiagnostics).toEqual(runtimeDiagnostics);
+    expect(result.report).not.toHaveProperty('runtimeDiagnostics');
   });
 });

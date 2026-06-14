@@ -76,6 +76,10 @@ from app.python_models.graph_compiler import (
 from app.python_models.orchestration_contracts import ContextPack, GraphNodeInput
 from app.python_models.tool_registry import (
     DEFAULT_TOOL_REGISTRY,
+    reset_current_coder_dispatch_future,
+    reset_current_coder_tool_context,
+    set_current_coder_dispatch_future,
+    set_current_coder_tool_context,
     tool_calculator,
     tool_current_datetime,
 )
@@ -91,7 +95,12 @@ from app.python_models.tool_registry import (
 
 def build_card_tools(tool_names: list[str]) -> list[FunctionTool]:
     """Resolve the card Tools tab selection through the typed ToolRegistry."""
-    return DEFAULT_TOOL_REGISTRY.resolve_selected(tool_names)
+    try:
+        return DEFAULT_TOOL_REGISTRY.resolve_selected(tool_names)
+    except RuntimeError as error:
+        if "coder_console_task" in tool_names and "card_tool_unknown" in str(error):
+            raise RuntimeError("MAGONE_CODER_CONSOLE_TOOL_NOT_REGISTERED") from error
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +346,11 @@ class GraphScheduler:
     Orchestrator serves these obligations before consulting its Progress
     Ledger, so every ReactFlow edge-defined path executes."""
 
-    def __init__(self, top_level: CompiledSubgraph) -> None:
+    def __init__(
+        self,
+        top_level: CompiledSubgraph,
+        priority_node_ids: list[str] | None = None,
+    ) -> None:
         self._successors = top_level.successors
         self._predecessors = top_level.predecessors
         self._loops = list(top_level.loops)
@@ -345,7 +358,14 @@ class GraphScheduler:
         self._queued: set[str] = set()
         self._queue: list[str] = []
         self._loop_iterations: dict[int, int] = {}
-        for node_id in top_level.entry_node_ids:
+        priority = [
+            node_id
+            for node_id in (priority_node_ids or [])
+            if node_id in top_level.entry_node_ids
+        ]
+        for node_id in priority + [
+            node_id for node_id in top_level.entry_node_ids if node_id not in priority
+        ]:
             self._enqueue(node_id)
 
     def _enqueue(self, node_id: str) -> None:
@@ -476,6 +496,35 @@ class MagenticRunResult:
     stop_reason: str = "magentic_one_complete"
 
 
+def _cancel_agent_processing(created_agents: list[Any]) -> None:
+    for agent in created_agents:
+        processing_task = getattr(agent, "_processing_task", None)
+        if processing_task is not None:
+            processing_task.cancel()
+
+
+async def wait_for_runtime_or_coder_dispatch(
+    runtime: SingleThreadedAgentRuntime,
+    dispatch_future: asyncio.Future[dict[str, Any]],
+    created_agents: list[Any],
+) -> dict[str, Any] | None:
+    """Stop Mag One rails once Code Console accepts or blocks a real dispatch."""
+    idle_task = asyncio.create_task(runtime.stop_when_idle())
+    done, _ = await asyncio.wait(
+        {idle_task, dispatch_future},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    if dispatch_future in done:
+        if not idle_task.done():
+            idle_task.cancel()
+            await asyncio.gather(idle_task, return_exceptions=True)
+        _cancel_agent_processing(created_agents)
+        await runtime.stop()
+        return dispatch_future.result()
+    await idle_task
+    return None
+
+
 def _sanitize_agent_name(title: str, used: set[str]) -> str:
     base = re.sub(r"[^A-Za-z0-9_]+", "_", str(title or "Agent")).strip("_") or "Agent"
     name = base
@@ -498,6 +547,13 @@ def _compose_task_text(context: ContextPack) -> str:
     user_text = str(context.userText or "").strip()
     if user_text:
         parts.append(f"Task:\n{user_text}")
+    workspace = context.workspaceObjectContext
+    if workspace is not None:
+        target_root = str(workspace.repoPath or workspace.workspaceRoot or "").strip()
+        if target_root:
+            parts.append(
+                f"Execution context:\nProject ID: {context.session.projectId}\nTarget root: {target_root}"
+            )
     task = "\n\n".join(parts)
     if not task.strip():
         raise RuntimeError("autogen_runtime_empty_task")
@@ -514,6 +570,14 @@ def _participant_system_prompt(node: GraphNodeInput, prompt_fallback: str) -> st
         parts.append(f"Your role: {role}")
     if not parts:
         parts.append(f"You are the agent card '{node.title or node.cardId}'. Complete the instruction you are given.")
+    if str(node.role or "").strip().lower() == "local_coder":
+        parts.append(
+            "For coding work, call your selected coder_console_task exactly once. "
+            "Pass the current project id, explicit target root, user goal, a compact task prompt, "
+            "and edit_mode=read_only unless an approved future workflow explicitly permits edits. "
+            "Do not perform the coding task yourself and do not ask the user to type in the terminal. "
+            "Return the tool's status, session id, target root, provider/model, watch surface, and blocker."
+        )
     parts.append("Be concise and complete the requested step directly.")
     return "\n\n".join(parts)
 
@@ -660,7 +724,22 @@ async def run_magentic_mission(context: ContextPack) -> MagenticRunResult:
         node_id_by_name[name] = participant_id
         participant_proxies.append(proxy)
 
-    scheduler = GraphScheduler(compiled.top_level)
+    coder_dispatch_priority = [
+        participant_id
+        for participant_id in compiled.participant_ids
+        if str(
+            compiled.nodes[participant_id].role
+            or participants_by_id[participant_id].role
+            or ""
+        ).strip().lower()
+        == "local_coder"
+        and "coder_console_task"
+        in list(compiled.nodes[participant_id].tools or participants_by_id[participant_id].tools or [])
+    ]
+    scheduler = GraphScheduler(
+        compiled.top_level,
+        priority_node_ids=coder_dispatch_priority,
+    )
     orchestrator_holder: dict[str, LiquidAItyGraphOrchestrator] = {}
 
     def orchestrator_factory() -> LiquidAItyGraphOrchestrator:
@@ -687,6 +766,10 @@ async def run_magentic_mission(context: ContextPack) -> MagenticRunResult:
     event_logger.addHandler(transcript_handler)
 
     started = time.monotonic()
+    dispatch_future = asyncio.get_running_loop().create_future()
+    tool_context_token = set_current_coder_tool_context(context)
+    dispatch_token = set_current_coder_dispatch_future(dispatch_future)
+    dispatch_result: dict[str, Any] | None = None
     try:
         runtime.start()
         task_text = _compose_task_text(context)
@@ -694,16 +777,27 @@ async def run_magentic_mission(context: ContextPack) -> MagenticRunResult:
             BroadcastMessage(content=UserMessage(content=task_text, source="User")),
             topic_id=DefaultTopicId(),
         )
-        await runtime.stop_when_idle()
+        dispatch_result = await wait_for_runtime_or_coder_dispatch(
+            runtime,
+            dispatch_future,
+            created_agents,
+        )
     finally:
+        reset_current_coder_dispatch_future(dispatch_token)
+        reset_current_coder_tool_context(tool_context_token)
         event_logger.removeHandler(transcript_handler)
         event_logger.setLevel(previous_level)
-        for agent in created_agents:
-            processing_task = getattr(agent, "_processing_task", None)
-            if processing_task is not None:
-                processing_task.cancel()
+        _cancel_agent_processing(created_agents)
 
     orchestrator = orchestrator_holder.get("orchestrator")
+    if dispatch_result is not None:
+        return MagenticRunResult(
+            final_text=str(dispatch_result["message"]),
+            transcript=transcript_handler.lines[-60:],
+            rounds_used=orchestrator._num_rounds if orchestrator is not None else 0,
+            graph_dispatches=list(orchestrator.graph_dispatches) if orchestrator is not None else [],
+            stop_reason=f"coder_console_{dispatch_result['status']}",
+        )
     if orchestrator is None:
         raise RuntimeError("magentic_orchestrator_not_instantiated")
 

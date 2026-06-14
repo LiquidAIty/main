@@ -31,6 +31,18 @@ perform a real re-index and picked up the untracked file. Therefore:
 * `detect_changes` reports worktree differences from HEAD, not whether the current graph includes
   those changes. When changes exist and `index_status` exposes no indexed revision/time, record
   freshness as unverified and keep a visible blocker.
+* Prefer a direct filesystem source inventory compared with CBM `File` nodes for non-git
+  new-file-risk detection. Any on-disk source file absent from the indexed inventory makes
+  freshness stale. Matching inventories are still only unknown unless CBM exposes a real indexed
+  revision or timestamp tied to the verified project root.
+* Never substitute the diagnostic check time for CBM's indexed time, and never invent a revision
+  or chunk count. Preserve missing metadata as null and keep the exact unknown/stale reason visible.
+* Root-anchor vendored-repository exclusions such as `/localcoder/`. An unanchored `localcoder/`
+  rule can also hide a repo-owned nested boundary such as `apps/backend/src/coder/localcoder/`.
+* A bounded adapter gate may prove same-run freshness by requiring a real successful index action,
+  a matching project root, ready status, all required control-plane files, and no excluded vendored
+  files before allowing the adapter to start. Missing scope evidence blocks; search is not a
+  fallback.
 
 ## Guardrails
 

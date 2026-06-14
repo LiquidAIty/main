@@ -1,8 +1,9 @@
-localcoder/
-worldsignal/
-data-formulator-main/
-Understand-Anything-main/
+/localcoder/
+/worldsignal/
+/data-formulator-main/
+/Understand-Anything-main/
 client/src/vendor/codebase-memory-ui/
+/vendor/
 node_modules/
 dist/
 build/

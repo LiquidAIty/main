@@ -30,6 +30,8 @@ import AgentBuilderShell from '../features/agentbuilder/core/AgentBuilderShell';
 import AgentBuilderSplitter from '../features/agentbuilder/core/AgentBuilderSplitter';
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
+import OpenClaudeConsolePanel from '../features/agentbuilder/console/OpenClaudeConsolePanel';
+import { shouldShowOpenClaudeConsoleRail } from '../features/agentbuilder/console/consoleVisibility';
 import useAgentBuilderAutosave from '../features/agentbuilder/state/useAgentBuilderAutosave';
 import useAgentBuilderDeck from '../features/agentbuilder/state/useAgentBuilderDeck';
 import useAgentBuilderDeckLoad from '../features/agentbuilder/state/useAgentBuilderDeckLoad';
@@ -1064,6 +1066,7 @@ export type ProgressiveRailVisibility = {
   showVideo: boolean;
   showDataFormulator: boolean;
   uaAgents: readonly UaUiAgentDefinition[];
+  showOpenClaudeConsole: boolean;
 };
 
 export type ConnectedGraphStreams = {
@@ -1433,6 +1436,10 @@ export function deriveVisibleRailItems({
       workspaceView === 'data-formulator' ||
       isDataFormulatorWorkbenchActive(deck.nodes, deck.edges),
     uaAgents: getVisibleUaRailAgents(deck.nodes, deck.edges, workspaceView),
+    showOpenClaudeConsole: shouldShowOpenClaudeConsoleRail({
+      cards: deck.nodes,
+      edges: deck.edges,
+    }),
   };
 }
 
@@ -4869,6 +4876,7 @@ export default function AgentBuilder(): React.ReactElement {
   useEffect(() => {
     currentDeckRef.current = deck;
   }, [deck]);
+  const [openClaudeConsoleOpen, setOpenClaudeConsoleOpen] = useState(false);
   const visibleRailItems = useMemo(
     () =>
       deriveVisibleRailItems({
@@ -9534,6 +9542,8 @@ export default function AgentBuilder(): React.ReactElement {
       onShowWorkbenchWorkspace={showWorkbenchWorkspace}
       onShowPlanWorkspace={showPlanWorkspace}
       onOpenNavigationDrawer={() => setOpenDrawer('navigation')}
+      openClaudeConsoleActive={openClaudeConsoleOpen}
+      onOpenOpenClaudeConsole={() => setOpenClaudeConsoleOpen((prev) => !prev)}
     />
   );
 
@@ -9793,7 +9803,17 @@ export default function AgentBuilder(): React.ReactElement {
               splitter={workspaceSplitter}
               canvasRegion={workspaceCanvasRegion}
               companionSurfaceHost={workspaceCompanionSurfaceHost}
-              drawer={workspaceDrawer}
+              drawer={
+                <>
+                  {workspaceDrawer}
+                  <OpenClaudeConsolePanel
+                    open={openClaudeConsoleOpen}
+                    targetRoot="C:/Projects/main"
+                    projectId={typeof activeProject === 'string' ? activeProject : undefined}
+                    onClose={() => setOpenClaudeConsoleOpen(false)}
+                  />
+                </>
+              }
             />
           }
         />

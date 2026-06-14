@@ -108,11 +108,20 @@ export type CodeGraphContextPacket = {
   implementationNotes: string[];
   freshness?: {
     status: 'fresh' | 'stale' | 'unavailable';
+    diagnosticStatus?: 'ok' | 'stale' | 'unknown' | 'failed';
     project: string | null;
     nodes: number | null;
     edges: number | null;
     checkedAt: string;
     detail: string;
+    indexedFileCount?: number | null;
+    indexedChunkCount?: number | null;
+    indexedRevision?: string | null;
+    indexedAt?: string | null;
+    sourceRoot?: string | null;
+    filesystemFileCount?: number | null;
+    missingFileCount?: number;
+    missingFiles?: string[];
   };
   blocker?: string | null;
 };

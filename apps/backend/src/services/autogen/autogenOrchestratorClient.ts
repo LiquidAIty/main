@@ -116,10 +116,12 @@ export async function orchestrateWithAutoGen(
         checkedEndpoints: checked,
         error: String(lastError?.message || lastError || 'unknown'),
       });
-      throw new Error(`AutoGen sidecar unavailable. checkedEndpoints=${checked}`);
+      throw new Error(`PYTHON_AUTOGEN_RAILS_UNAVAILABLE: checkedEndpoints=${checked}`);
     }
     if (lastError) throw lastError;
-    throw new Error(`AutoGen sidecar unavailable. checkedEndpoints=${formatCheckedEndpoints(baseUrls)}`);
+    throw new Error(
+      `PYTHON_AUTOGEN_RAILS_UNAVAILABLE: checkedEndpoints=${formatCheckedEndpoints(baseUrls)}`,
+    );
   } finally {
     clearTimeout(timeout);
   }

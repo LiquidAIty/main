@@ -9,6 +9,7 @@ or substitution occurs.
 from __future__ import annotations
 
 import asyncio
+import inspect
 from datetime import datetime
 
 import pytest
@@ -21,7 +22,14 @@ from app.python_models.orchestration_contracts import ToolSpec
 from app.python_models.tool_registry import (
     DEFAULT_TOOL_REGISTRY,
     ToolRegistry,
+    _post_console_task,
     build_default_tool_registry,
+    build_compact_coder_prompt,
+    coder_console_task,
+    reset_current_coder_dispatch_future,
+    reset_current_coder_tool_context,
+    set_current_coder_dispatch_future,
+    set_current_coder_tool_context,
     tool_calculator,
     tool_current_datetime,
 )
@@ -334,3 +342,266 @@ def test_smoke_unselected_tool_never_reaches_the_worker():
     tools = build_card_tools(list(node.tools))
     assert [tool.name for tool in tools] == ["calculator"]
     assert "current_datetime" not in {tool.name for tool in tools}
+
+
+# ---------------------------------------------------------------------------
+# Coder Console tool.
+# ---------------------------------------------------------------------------
+
+
+def _coder_context(
+    target_root: str,
+    *,
+    user_text: str = "Ask Coder to inspect the repo code.",
+    include_local_coder: bool = True,
+    include_codegraph: bool = True,
+) -> dict:
+    participants = []
+    nodes = [
+        {
+            "cardId": "mag",
+            "title": "Magentic-One",
+            "runtimeType": "magentic_one",
+        }
+    ]
+    edges = []
+    if include_codegraph:
+        participants.append(
+            {
+                "cardId": "codegraph",
+                "title": "CodeGraph Agent",
+                "runtimeType": "assistant_agent",
+                "runtimeBinding": "codegraph_agent",
+                "role": "codegraph",
+                "provider": "openai",
+                "providerModelId": "gpt-5.1-chat-latest",
+            }
+        )
+        nodes.append(
+            {
+                "cardId": "codegraph",
+                "title": "CodeGraph Agent",
+                "runtimeType": "assistant_agent",
+                "role": "codegraph",
+            }
+        )
+        edges.append(
+            {
+                "id": "edge-codegraph",
+                "source": "mag",
+                "target": "codegraph",
+                "edgeType": "magentic_option",
+            }
+        )
+    if include_local_coder:
+        participants.append(
+            {
+                "cardId": "coder",
+                "title": "Local Coder",
+                "runtimeType": "assistant_agent",
+                "runtimeBinding": "local_coder",
+                "role": "local_coder",
+                "tools": ["coder_console_task"],
+                "provider": "openai",
+                "providerModelId": "gpt-5.1-chat-latest",
+            }
+        )
+        nodes.append(
+            {
+                "cardId": "coder",
+                "title": "Local Coder",
+                "runtimeType": "local_coder",
+                "role": "local_coder",
+                "tools": ["coder_console_task"],
+            }
+        )
+        edges.append(
+            {
+                "id": "edge-coder",
+                "source": "mag",
+                "target": "coder",
+                "edgeType": "magentic_option",
+            }
+        )
+    return {
+        "session": {
+            "sessionId": "session-1",
+            "projectId": "project-1",
+            "turnId": "turn-1",
+            "route": "deck_runtime",
+            "orchestrator": "magentic_one",
+            "modelProvider": "openai",
+            "modelKey": "gpt-5.1-chat-latest",
+            "providerModelId": "gpt-5.1-chat-latest",
+            "startedAt": "2026-06-14T00:00:00Z",
+        },
+        "userText": user_text,
+        "workspaceObjectContext": {"repoPath": target_root, "workspaceRoot": target_root},
+        "cardRuntime": {
+            "cardId": "mag",
+            "title": "Magentic-One",
+            "runtimeType": "magentic_one",
+            "graph": {"nodes": nodes, "edges": edges},
+            "participants": participants,
+        },
+    }
+
+
+def test_coder_console_task_is_registered_with_required_schema():
+    spec = DEFAULT_TOOL_REGISTRY._specs["coder_console_task"]
+    properties = spec.inputSchema["properties"]
+    assert {"project_id", "target_root", "goal", "prompt", "edit_mode", "session_id"} <= set(
+        properties
+    )
+    assert spec.inputSchema["required"] == ["project_id", "target_root", "goal"]
+    assert spec.outputSchema["type"] == "object"
+    assert spec.outputSchema["properties"]["status"]["enum"] == [
+        "started",
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "blocked",
+    ]
+
+
+def test_compact_coder_prompt_contains_required_fields(tmp_path):
+    prompt = build_compact_coder_prompt(
+        target_root=str(tmp_path),
+        goal="Inspect the console bridge.",
+        prompt="Report the implementing files. Do not edit.",
+    )
+    assert f"Target root: {tmp_path}" in prompt
+    assert "User goal: Inspect the console bridge." in prompt
+    assert "Current state summary:" in prompt
+    assert "Constraints:" in prompt
+    assert "Read first:" in prompt
+    assert "Edit mode: read_only" in prompt
+    assert "Expected proof:" in prompt
+    assert "Expected result format:" in prompt
+    assert "gRPC" in prompt
+    assert "vendored localcoder/" in prompt
+
+
+def test_coder_console_task_calls_owned_typescript_route_and_returns_status(monkeypatch, tmp_path):
+    from app.python_models.orchestration_contracts import ContextPack
+
+    captured: dict = {}
+
+    def fake_post(payload: dict):
+        captured.update(payload)
+        return 200, {
+            "routed": True,
+            "session": {
+                "id": "occ_123",
+                "targetRoot": str(tmp_path),
+                "provider": "openrouter",
+                "model": "kimi-k2-thinking",
+                "transportMode": "pipe",
+            },
+        }
+
+    monkeypatch.setattr("app.python_models.tool_registry._post_console_task", fake_post)
+    context = ContextPack.model_validate(_coder_context(str(tmp_path)))
+    loop = asyncio.new_event_loop()
+    dispatch_future = loop.create_future()
+    dispatch_token = set_current_coder_dispatch_future(dispatch_future)
+    token = set_current_coder_tool_context(context)
+    try:
+        result = loop.run_until_complete(
+            coder_console_task(
+                project_id="project-1",
+                target_root=str(tmp_path),
+                goal="Inspect the console bridge.",
+                prompt="Report implementing files. Do not edit.",
+            )
+        )
+    finally:
+        reset_current_coder_tool_context(token)
+        reset_current_coder_dispatch_future(dispatch_token)
+        loop.close()
+
+    assert result["status"] == "started"
+    assert result["status"] != "completed"
+    assert result["session_id"] == "occ_123"
+    assert result["provider"] == "openrouter"
+    assert result["model"] == "kimi-k2-thinking"
+    assert result["transport"] == "pipe"
+    assert result["watch_surface"] == "Code Console"
+    assert result["delivery_status"] == "accepted"
+    assert dispatch_future.result() == result
+    assert "Watch the terminal in Code Console" in result["message"]
+    assert captured["projectId"] == "project-1"
+    assert captured["repoPath"] == str(tmp_path)
+    assert captured["editMode"] == "read_only"
+    assert any(card["runtimeType"] == "local_coder" for card in captured["cards"])
+    assert "COMPACT CODER TASK" in captured["task"]
+
+
+@pytest.mark.parametrize(
+    ("include_local_coder", "include_codegraph", "expected"),
+    [
+        (False, True, "Local Coder"),
+        (True, False, "CodeGraph Agent"),
+    ],
+)
+def test_coder_console_task_blocks_disconnected_required_participants(
+    monkeypatch,
+    tmp_path,
+    include_local_coder,
+    include_codegraph,
+    expected,
+):
+    from app.python_models.orchestration_contracts import ContextPack
+
+    post = lambda payload: pytest.fail(f"unexpected route call: {payload}")
+    monkeypatch.setattr("app.python_models.tool_registry._post_console_task", post)
+    context = ContextPack.model_validate(
+        _coder_context(
+            str(tmp_path),
+            include_local_coder=include_local_coder,
+            include_codegraph=include_codegraph,
+        )
+    )
+    token = set_current_coder_tool_context(context)
+    try:
+        result = asyncio.run(
+            coder_console_task("project-1", str(tmp_path), "Inspect code.")
+        )
+    finally:
+        reset_current_coder_tool_context(token)
+    assert result["status"] == "blocked"
+    assert result["delivery_status"] == "blocked"
+    assert expected in result["blocker"]
+
+
+def test_coder_console_task_does_not_run_for_ordinary_chat(monkeypatch, tmp_path):
+    from app.python_models.orchestration_contracts import ContextPack
+
+    post = lambda payload: pytest.fail(f"unexpected route call: {payload}")
+    monkeypatch.setattr("app.python_models.tool_registry._post_console_task", post)
+    context = ContextPack.model_validate(
+        _coder_context(str(tmp_path), user_text="Hello, how are you?")
+    )
+    token = set_current_coder_tool_context(context)
+    try:
+        result = asyncio.run(
+            coder_console_task("project-1", str(tmp_path), "Say hello.")
+        )
+    finally:
+        reset_current_coder_tool_context(token)
+    assert result["blocker"] == "coder_console_not_allowed_for_ordinary_chat"
+
+
+def test_coder_console_tool_missing_fails_with_required_code(monkeypatch):
+    from app.python_models.magentic_runtime import build_card_tools
+
+    monkeypatch.delitem(DEFAULT_TOOL_REGISTRY._specs, "coder_console_task")
+    with pytest.raises(RuntimeError, match="MAGONE_CODER_CONSOLE_TOOL_NOT_REGISTERED"):
+        build_card_tools(["coder_console_task"])
+
+
+def test_coder_console_transport_is_http_route_not_grpc():
+    source = inspect.getsource(_post_console_task)
+    assert "/api/coder/openclaude/console/task" in source
+    assert "grpc" not in source.lower()

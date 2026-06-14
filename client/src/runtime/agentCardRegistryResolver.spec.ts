@@ -219,6 +219,16 @@ describe('resolveBusConnections', () => {
     expect(result.get('agent_a')).toBe('orchestrated');
   });
 
+  it('marks an incoming magentic_option source as orchestrated from current persisted graph state', () => {
+    const cards = [
+      card('sol', { runtimeType: 'magentic_one' }),
+      card('plan_agent'),
+    ];
+    const edges = [edge('e1', 'plan_agent', 'sol', 'magentic_option')];
+    const result = resolveBusConnections(cards, edges);
+    expect(result.get('plan_agent')).toBe('orchestrated');
+  });
+
   it('marks flow target from orchestrated card as delegated', () => {
     const cards = [
       card('sol', { runtimeType: 'magentic_one' }),

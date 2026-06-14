@@ -34,10 +34,11 @@
     "googleapis": "^155.0.1",
     "ioredis": "^5.7.0",
     "multer": "^2.0.2",
+    "node-pty": "^1.1.0",
     "pg": "^8.16.3",
     "redis": "^5.8.1",
-    "uuid": "^10.0.0",
     "tslib": "^2.8.1",
+    "uuid": "^10.0.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
