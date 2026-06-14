@@ -62,6 +62,25 @@ def test_context_pack_with_explicit_participant_models_validates():
     assert pack.cardRuntime.privateParticipants[0].providerModelId == SELECTED_PROVIDER_MODEL_ID
 
 
+def test_context_pack_accepts_compact_magone_routing_metadata():
+    payload = _complete_payload()
+    payload["routingManifest"] = {
+        "intent": "coding",
+        "agents": [{"cardId": "coder", "capabilities": ["coding.execute"]}],
+    }
+    payload["codingWorkflowPacket"] = {
+        "intent": "coding",
+        "projectId": "p1",
+        "targetRoot": "C:\\Projects\\main",
+        "selectedPrimaryAgent": "coder",
+        "tool": "coder_console_task",
+        "compactSpec": "compact",
+    }
+    pack = ContextPack.model_validate(payload)
+    assert pack.routingManifest["intent"] == "coding"
+    assert pack.codingWorkflowPacket["tool"] == "coder_console_task"
+
+
 @pytest.mark.parametrize(
     ("participant_type", "values", "missing_field"),
     [

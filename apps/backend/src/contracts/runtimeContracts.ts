@@ -45,6 +45,8 @@ export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
         prompt: { type: 'string' },
         edit_mode: { type: 'string', default: 'read_only' },
         session_id: { type: ['string', 'null'] },
+        coding_run_id: { type: ['string', 'null'] },
+        result_status_url: { type: ['string', 'null'] },
       },
       required: ['project_id', 'target_root', 'goal'],
     },
@@ -152,6 +154,45 @@ export type MagOneRoutingDiagnostics = {
   blockedReason: string | null;
 };
 
+export type MagOneRoutingManifest = {
+  intent: MagOneWorkflowType;
+  agents: Array<{
+    cardId: string;
+    kind: string;
+    runtimeType: string;
+    label: string;
+    busConnected: boolean;
+    role: string;
+    capabilities: string[];
+    tools: string[];
+    requiredGates: string[];
+    preferredIntents: string[];
+    priority: number;
+    blockedReason: string | null;
+    defaultEditMode?: 'read_only';
+    watchSurface?: 'Code Console';
+    async?: boolean;
+  }>;
+};
+
+export type MagOneCodingWorkflowPacket = {
+  projectId: string;
+  targetRoot: string;
+  userGoal: string;
+  intent: 'coding';
+  selectedPrimaryAgent: string;
+  selectedSupportAgents: string[];
+  tool: 'coder_console_task';
+  requiredGates: Array<{ name: string; status: 'available' | 'blocked' }>;
+  compactSpec: string;
+  asyncLifecycle: {
+    dispatch: true;
+    returnStartedStatus: true;
+    provideCodingRunId: true;
+    provideResultStatusUrl: true;
+  };
+};
+
 export type RuntimeGraphNode = {
   cardId: string;
   title: string;
@@ -193,6 +234,8 @@ export type PythonAutoGenPayloadShape = {
   knowGraph?: Record<string, any>;
   blackboard?: Record<string, any>;
   workspaceObjectContext?: Record<string, any>;
+  routingManifest?: MagOneRoutingManifest;
+  codingWorkflowPacket?: MagOneCodingWorkflowPacket;
   cardRuntime: {
     cardId: string;
     title: string;

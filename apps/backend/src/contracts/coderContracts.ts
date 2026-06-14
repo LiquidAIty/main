@@ -102,6 +102,45 @@ export type ContextSourceDiagnostic = z.infer<typeof contextSourceDiagnosticSche
 export type CoderPacket = z.infer<typeof coderPacketSchema>;
 export type CoderReport = z.infer<typeof coderReportSchema>;
 
+export const codingRunStatusSchema = z.enum([
+  'requested',
+  'planned',
+  'awaiting_approval',
+  'approved',
+  'dispatched',
+  'running',
+  'completed',
+  'failed',
+  'blocked',
+]);
+
+export const codingRunLifecycleSchema = z.object({
+  id: nonEmptyText,
+  projectId: nonEmptyText,
+  targetRoot: nonEmptyText,
+  userGoal: nonEmptyText,
+  generatedSpec: nonEmptyText,
+  editMode: z.enum(['read_only', 'edit']),
+  sessionId: z.string().nullable(),
+  provider: z.string().nullable(),
+  model: z.string().nullable(),
+  status: codingRunStatusSchema,
+  resultSummary: z.string(),
+  proofCommands: z.array(z.string()),
+  proofFiles: z.array(z.string()),
+  validatedCoderReport: z.boolean(),
+  coderReport: coderReportSchema.nullable(),
+  blocker: z.string().nullable(),
+  createdAt: nonEmptyText,
+  updatedAt: nonEmptyText,
+  completedAt: z.string().nullable(),
+  memoryRecordStatus: z.enum(['pending', 'recorded', 'skipped', 'failed']),
+  memoryRecordDetail: z.string(),
+}).strict();
+
+export type CodingRunStatus = z.infer<typeof codingRunStatusSchema>;
+export type CodingRunLifecycle = z.infer<typeof codingRunLifecycleSchema>;
+
 export const coderPacketJsonSchema = {
   type: 'object',
   additionalProperties: false,
@@ -213,6 +252,10 @@ export function parseCoderPacket(value: unknown): CoderPacket {
 
 export function parseCoderReport(value: unknown): CoderReport {
   return coderReportSchema.parse(value);
+}
+
+export function parseCodingRunLifecycle(value: unknown): CodingRunLifecycle {
+  return codingRunLifecycleSchema.parse(value);
 }
 
 export function compareCoderReportToPacket(

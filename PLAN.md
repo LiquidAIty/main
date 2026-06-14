@@ -387,6 +387,24 @@ Code Console task remained visible and running after chat returned, then exited 
 delivery to a running noninteractive task session still blocks loudly instead of reporting routed
 success when `submitLine()` cannot deliver input.
 
+The owned Coder Console route now wraps that existing dispatch path in a small coding-run lifecycle.
+Each tool dispatch carries the user goal and compact generated SPEC, records explicit user approval,
+returns a retrievable coding-run id with the asynchronous session status, and exposes
+`GET /api/coder/openclaude/console/runs/:id` for final collection. The collector polls the existing
+session manager after exit, returns a bounded transcript-based result honestly, validates a strict
+CoderReport only when one is actually present, extracts bounded proof commands/files, and records
+the terminal outcome to ThinkGraph when that existing write path succeeds. Vague coding requests
+are blocked before `coder_console_task` dispatch; explicit execute/implement/apply/fix/proceed
+language is required for the temporary approval path.
+
+Persisted-canvas coding runs now carry a compact Mag One routing manifest and coding workflow
+packet before Python planning. The manifest identifies the bus-connected Local Coder as the primary
+`coding.execute` / `coding.inspect` owner, CodeGraph as required `code.context` support, ThinkGraph
+as optional result memory, and `coder_console_task` as the single execution tool. Python rails use
+the compact workflow packet instead of the large generic canvas prompt for clear coding intent and
+return `MAGONE_CODING_DISPATCH_TIMEOUT_BEFORE_TOOL_CALL` after a bounded 45-second pre-tool budget
+rather than waiting for the opaque outer backend abort.
+
 ## Code And Context Anchors
 
 * `AGENTS.md`: execution law
@@ -436,14 +454,14 @@ success when `submitLine()` cannot deliver input.
 * Client TypeScript compile currently has unrelated existing `agentbuilder.tsx` type errors.
 * The full AgentBuilder UI test suite is currently blocked before collection by an unresolved `d3`
   import in `client/src/components/worldsignal/crucixNativeRenderer.ts`.
-* Refreshed CBM still omits `coder_console_task` and several Console Bridge boundary files even
-  though the scoped gate passes; direct reads, tests, compile, and live smoke remain authoritative.
+* Refreshed CBM still omits `coder_console_task` and several Console Bridge boundary files. The
+  lifecycle SPEC used the already-ready owned graph plus direct reads and did not run the older
+  moderate-index scope helper because this job explicitly forbade indexing all or broadening CBM.
 * Permission brokering for a long-running coder task remains deferred; permission requests stay
   visible in Code Console and are not auto-approved.
 
 ## Next Step
 
-Narrow the next SPEC to the separate CBM coverage issue: make refreshed Codebase Memory index the
-Python `coder_console_task` symbol and the owned Console Bridge boundary files without indexing or
-editing vendored `localcoder/`, changing the now-working async lifecycle, or weakening the scoped
-gate.
+Run the complete persisted-canvas Mag One smoke against the compact routing packet and coding-run
+id/status endpoint, then surface the retrievable final result in chat without redesigning PlanFlow
+or changing the working Coder Console execution path.

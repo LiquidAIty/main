@@ -507,13 +507,23 @@ async def wait_for_runtime_or_coder_dispatch(
     runtime: SingleThreadedAgentRuntime,
     dispatch_future: asyncio.Future[dict[str, Any]],
     created_agents: list[Any],
+    *,
+    dispatch_timeout_seconds: float | None = None,
+    timeout_result: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Stop Mag One rails once Code Console accepts or blocks a real dispatch."""
     idle_task = asyncio.create_task(runtime.stop_when_idle())
     done, _ = await asyncio.wait(
         {idle_task, dispatch_future},
+        timeout=dispatch_timeout_seconds,
         return_when=asyncio.FIRST_COMPLETED,
     )
+    if not done and timeout_result is not None:
+        idle_task.cancel()
+        await asyncio.gather(idle_task, return_exceptions=True)
+        _cancel_agent_processing(created_agents)
+        await runtime.stop()
+        return timeout_result
     if dispatch_future in done:
         if not idle_task.done():
             idle_task.cancel()
@@ -537,6 +547,11 @@ def _sanitize_agent_name(title: str, used: set[str]) -> str:
 
 
 def _compose_task_text(context: ContextPack) -> str:
+    coding_packet = context.codingWorkflowPacket or {}
+    if str(coding_packet.get("intent") or "").strip().lower() == "coding":
+        compact_spec = str(coding_packet.get("compactSpec") or "").strip()
+        if compact_spec:
+            return compact_spec
     parts: list[str] = []
     system_prompt = str(context.systemPrompt or "").strip()
     if system_prompt:
@@ -781,6 +796,21 @@ async def run_magentic_mission(context: ContextPack) -> MagenticRunResult:
             runtime,
             dispatch_future,
             created_agents,
+            dispatch_timeout_seconds=45.0 if context.codingWorkflowPacket else None,
+            timeout_result=(
+                {
+                    "status": "blocked",
+                    "message": (
+                        "MAGONE_CODING_DISPATCH_TIMEOUT_BEFORE_TOOL_CALL: "
+                        f"intent=coding selected_agent={str((context.codingWorkflowPacket or {}).get('selectedPrimaryAgent') or 'unavailable')} "
+                        f"tool=coder_console_task available={bool(coder_dispatch_priority)} elapsed_seconds=45 "
+                        "next=inspect Mag One Local Coder tool selection"
+                    ),
+                    "blocker": "MAGONE_CODING_DISPATCH_TIMEOUT_BEFORE_TOOL_CALL",
+                }
+                if context.codingWorkflowPacket
+                else None
+            ),
         )
     finally:
         reset_current_coder_dispatch_future(dispatch_token)

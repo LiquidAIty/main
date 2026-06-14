@@ -2,6 +2,8 @@ import {
   CardRunResult,
   MagOneRoutingAgent,
   MagOneRoutingDiagnostics,
+  MagOneRoutingManifest,
+  MagOneCodingWorkflowPacket,
   PythonAutoGenPayloadShape,
   RUNTIME_TOOL_SPECS,
   RuntimeGraph,
@@ -139,10 +141,10 @@ function resolveMagOneAgentRole(card: any): string {
   return 'other';
 }
 
-function isCodingWorkflow(userText: string): boolean {
-  return /\b(code|coding|coder|repo|repository|bug|fix|patch|edit|compile|test|runtime|localcoder|openclaude|typescript|javascript|python|cbm|codegraph)\b/i.test(
+export function classifyMagOneIntent(userText: string): 'coding' | 'general' {
+  return /\b(code|coding|coder|repo|repository|bug|fix|patch|edit|compile|test|runtime|localcoder|openclaude|codex|typescript|javascript|python|cbm|codegraph)\b|report\s+(?:the\s+)?files?\s+that\s+implement/i.test(
     userText,
-  );
+  ) ? 'coding' : 'general';
 }
 
 function routingAgent(card: any, reason: string): MagOneRoutingAgent {
@@ -163,7 +165,7 @@ export function buildMagOneRoutingDiagnostics(
 ): MagOneRoutingDiagnostics {
   const eligible = resolvedMagenticOptions(magenticCard.id, allCards, allEdges);
   const eligibleIds = new Set(eligible.map((card) => String(card.id)));
-  const workflowType = isCodingWorkflow(userText) ? 'coding' : 'general';
+  const workflowType = classifyMagOneIntent(userText);
   const canvasRuntimeCards = allCards.filter(
     (card) =>
       card.id !== magenticCard.id &&
@@ -222,6 +224,106 @@ export function buildMagOneRoutingDiagnostics(
       missingRequiredAgents.length > 0
         ? `MAGONE_CODER_CONSOLE_BLOCKED_PARTICIPANT_GATE: missing=${missingRequiredAgents.join(', ')}`
         : null,
+  };
+}
+
+function roleCapabilities(role: string): string[] {
+  if (role === 'local_coder') return ['coding.execute', 'coding.inspect'];
+  if (role === 'codegraph') return ['code.context'];
+  if (role === 'thinkgraph') return ['project.memory.record'];
+  if (role === 'plan') return ['coding.plan'];
+  return [];
+}
+
+export function buildMagOneRoutingManifest(
+  magenticCard: any,
+  allCards: any[],
+  allEdges: any[],
+  userText: string,
+): MagOneRoutingManifest {
+  const intent = classifyMagOneIntent(userText);
+  const connected = new Set(
+    resolvedMagenticOptions(magenticCard.id, allCards, allEdges).map((card) => String(card.id)),
+  );
+  const priorityByRole: Record<string, number> = {
+    local_coder: 100,
+    codegraph: 90,
+    plan: 80,
+    thinkgraph: 70,
+  };
+  return {
+    intent,
+    agents: allCards
+      .filter((card) => card.id !== magenticCard.id && card.kind === 'agent')
+      .map((card) => {
+        const role = resolveMagOneAgentRole(card);
+        const busConnected = connected.has(String(card.id));
+        const localCoder = role === 'local_coder';
+        return {
+          cardId: String(card.id),
+          kind: String(card.kind || 'agent'),
+          runtimeType: resolveCardRuntimeType(card),
+          label: String(card.title || card.id),
+          busConnected,
+          role,
+          capabilities: roleCapabilities(role),
+          tools: busConnected ? resolveCardTools(card) : [],
+          requiredGates: localCoder ? ['CodeGraph.connected', 'CBM.scope.ok'] : [],
+          preferredIntents: roleCapabilities(role).length > 0 ? ['coding'] : [],
+          priority: priorityByRole[role] || 0,
+          blockedReason: busConnected ? null : 'not_bus_connected',
+          ...(localCoder
+            ? { defaultEditMode: 'read_only' as const, watchSurface: 'Code Console' as const, async: true }
+            : {}),
+        };
+      }),
+  };
+}
+
+export function buildMagOneCodingWorkflowPacket(
+  userGoal: string,
+  diagnostics: MagOneRoutingDiagnostics,
+  manifest: MagOneRoutingManifest,
+  executionContext: { projectId?: string; targetRoot?: string } = {},
+): MagOneCodingWorkflowPacket | undefined {
+  if (manifest.intent !== 'coding') return undefined;
+  const coder = manifest.agents.find((agent) => agent.role === 'local_coder' && agent.busConnected);
+  const support = manifest.agents.filter(
+    (agent) => agent.busConnected && ['codegraph', 'thinkgraph'].includes(agent.role),
+  );
+  return {
+    projectId: String(executionContext.projectId || ''),
+    targetRoot: String(executionContext.targetRoot || ''),
+    userGoal: summarizeText(userGoal, 1_200),
+    intent: 'coding',
+    selectedPrimaryAgent: coder?.cardId || '',
+    selectedSupportAgents: support.map((agent) => agent.cardId),
+    tool: 'coder_console_task',
+    requiredGates: [
+      { name: 'LocalCoder.connected', status: coder ? 'available' : 'blocked' },
+      {
+        name: 'CodeGraph.connected',
+        status: support.some((agent) => agent.role === 'codegraph') ? 'available' : 'blocked',
+      },
+      { name: 'participant.routing', status: diagnostics.blockedReason ? 'blocked' : 'available' },
+    ],
+    compactSpec: [
+      'COMPACT MAG ONE CODING WORKFLOW',
+      `Project ID: ${String(executionContext.projectId || '')}`,
+      `Target root: ${String(executionContext.targetRoot || '')}`,
+      `User goal: ${summarizeText(userGoal, 1_200)}`,
+      `Primary agent: ${coder?.label || 'unavailable'}`,
+      `Support agents: ${support.map((agent) => agent.label).join(', ') || 'none'}`,
+      'Tool: coder_console_task',
+      'Edit mode: read_only',
+      'Action: dispatch exactly once, then return started/blocked status with coding_run_id and result_status_url.',
+    ].join('\n'),
+    asyncLifecycle: {
+      dispatch: true,
+      returnStartedStatus: true,
+      provideCodingRunId: true,
+      provideResultStatusUrl: true,
+    },
   };
 }
 
@@ -445,6 +547,23 @@ export function buildPythonAutoGenCardRuntimePayload(
     runtimeInput,
     { projectId: context.projectId, deckId: context.deckId },
   );
+  const routingManifest = buildMagOneRoutingManifest(
+    card,
+    context.allCards || [card, ...callableHeads],
+    context.allEdges || [],
+    runtimeInput,
+  );
+  const codingWorkflowPacket = buildMagOneCodingWorkflowPacket(
+    runtimeInput,
+    routingDiagnostics,
+    routingManifest,
+    {
+      projectId: context.projectId,
+      targetRoot:
+        context.workspaceObjectContext?.repoPath ||
+        context.workspaceObjectContext?.workspaceRoot,
+    },
+  );
   const selectedWorkflowIds = new Set(
     routingDiagnostics.selectedExecutionPath.map((agent) => agent.id),
   );
@@ -571,6 +690,8 @@ export function buildPythonAutoGenCardRuntimePayload(
       findings: [],
     },
     workspaceObjectContext: context.workspaceObjectContext ?? undefined,
+    routingManifest,
+    codingWorkflowPacket,
     cardRuntime: {
       cardId: String(card.id || ''),
       title: String(card.title || 'Magentic Agent'),

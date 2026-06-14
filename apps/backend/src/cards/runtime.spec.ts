@@ -4,6 +4,8 @@ import path from 'node:path';
 import { RUNTIME_TOOL_SPECS } from '../contracts/runtimeContracts';
 import {
   MAG_ONE_CODING_RUN_SYSTEM_PROMPT,
+  buildMagOneRoutingManifest,
+  classifyMagOneIntent,
   buildMagOneRoutingDiagnostics,
   resolvedMagenticOptions,
   buildPythonAutoGenCardRuntimePayload,
@@ -190,6 +192,51 @@ describe('Canonical Cards Runtime', () => {
     expect(coderParticipant?.role).toBe('local_coder');
     expect(coderParticipant?.tools).toEqual(['coder_console_task']);
     expect(payload.cardRuntime.runtimeScope?.pythonWorkerIds).toContain('coder');
+    expect(payload.routingManifest?.intent).toBe('coding');
+    expect(payload.routingManifest?.agents.find((agent) => agent.cardId === 'coder')).toMatchObject({
+      busConnected: true,
+      capabilities: ['coding.execute', 'coding.inspect'],
+      tools: ['coder_console_task'],
+      requiredGates: ['CodeGraph.connected', 'CBM.scope.ok'],
+      defaultEditMode: 'read_only',
+      watchSurface: 'Code Console',
+      async: true,
+    });
+    expect(payload.codingWorkflowPacket).toMatchObject({
+      intent: 'coding',
+      projectId: 'admin',
+      selectedPrimaryAgent: 'coder',
+      selectedSupportAgents: ['codegraph', 'think'],
+      tool: 'coder_console_task',
+    });
+    expect(payload.codingWorkflowPacket?.compactSpec).toContain('Project ID: admin');
+    expect(payload.codingWorkflowPacket?.compactSpec.length).toBeLessThan(2_000);
+  });
+
+  it('classifies clear coding intent and keeps disconnected distractors unavailable', () => {
+    expect(classifyMagOneIntent('Plan and execute a read-only coder task: inspect this repo.')).toBe('coding');
+    expect(classifyMagOneIntent('Report files that implement the bridge.')).toBe('coding');
+    expect(classifyMagOneIntent('Hello, how are you?')).toBe('general');
+    const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
+    const coder = { id: 'coder', kind: 'agent', runtimeType: 'local_coder', title: 'Local Coder' };
+    const codegraph = { id: 'codegraph', kind: 'agent', runtimeType: 'assistant_agent', title: 'CodeGraph Agent' };
+    const research = { id: 'research', kind: 'agent', runtimeType: 'assistant_agent', title: 'Research Agent' };
+    const manifest = buildMagOneRoutingManifest(
+      mag,
+      [mag, coder, codegraph, research],
+      [
+        { id: 'coder-edge', source: coder.id, target: mag.id, edgeType: 'magentic_option' },
+        { id: 'code-edge', source: codegraph.id, target: mag.id, edgeType: 'magentic_option' },
+      ],
+      'inspect this repo',
+    );
+    expect(manifest.agents.find((agent) => agent.cardId === 'coder')?.capabilities).toContain('coding.execute');
+    expect(manifest.agents.find((agent) => agent.cardId === 'codegraph')?.capabilities).toContain('code.context');
+    expect(manifest.agents.find((agent) => agent.cardId === 'research')).toMatchObject({
+      busConnected: false,
+      blockedReason: 'not_bus_connected',
+      priority: 0,
+    });
   });
 
   it('ordinary chat excludes the Local Coder and coder_console_task', () => {

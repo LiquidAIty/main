@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   compareCoderReportToPacket,
+  parseCodingRunLifecycle,
   parseCoderPacket,
   parseCoderReport,
 } from './coderContracts';
@@ -29,6 +30,32 @@ describe('coder contracts', () => {
 
   it('rejects an incomplete CoderPacket', () => {
     expect(() => parseCoderPacket({ id: 'packet-1' })).toThrow();
+  });
+
+  it('validates the small coding-run lifecycle contract', () => {
+    expect(parseCodingRunLifecycle({
+      id: 'run-1',
+      projectId: 'project-1',
+      targetRoot: 'C:\\Projects\\main',
+      userGoal: 'Inspect code.',
+      generatedSpec: 'Read-only inspection.',
+      editMode: 'read_only',
+      sessionId: null,
+      provider: null,
+      model: null,
+      status: 'awaiting_approval',
+      resultSummary: '',
+      proofCommands: [],
+      proofFiles: [],
+      validatedCoderReport: false,
+      coderReport: null,
+      blocker: null,
+      createdAt: '2026-06-14T00:00:00.000Z',
+      updatedAt: '2026-06-14T00:00:00.000Z',
+      completedAt: null,
+      memoryRecordStatus: 'pending',
+      memoryRecordDetail: '',
+    }).status).toBe('awaiting_approval');
   });
 
   it('validates and compares a CoderReport', () => {

@@ -367,6 +367,8 @@ class ContextPack(BaseModel):
     attachments: list[AttachmentInput] = Field(default_factory=list)
     maxResearchTasks: int = 6
     workspaceObjectContext: WorkspaceObjectContext | None = None
+    routingManifest: dict | None = None
+    codingWorkflowPacket: dict | None = None
     cardRuntime: CardRuntimeConfig | None = None
 
 

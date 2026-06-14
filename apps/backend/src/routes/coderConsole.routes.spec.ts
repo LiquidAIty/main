@@ -217,8 +217,12 @@ describe('OpenClaude console bridge routes', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          projectId: 'project-1',
           repoPath: 'C:/Projects/main',
           task: 'fix the failing code test',
+          userGoal: 'fix the failing code test',
+          generatedSpec: 'Compact SPEC for the fix.',
+          explicitApproval: true,
           cards: [
             { id: 'mag', kind: 'agent', runtimeType: 'magentic_one' },
             { id: 'lc', kind: 'agent', runtimeType: 'local_coder', title: 'Local Coder' },
@@ -249,8 +253,12 @@ describe('OpenClaude console bridge routes', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          projectId: 'project-1',
           repoPath: 'C:/Projects/main',
           task: 'fix the failing code test',
+          userGoal: 'fix the failing code test',
+          generatedSpec: 'Compact SPEC for the fix.',
+          explicitApproval: true,
           cards: [
             { id: 'mag', kind: 'agent', runtimeType: 'magentic_one' },
             { id: 'lc', kind: 'agent', runtimeType: 'local_coder', title: 'Local Coder' },
@@ -274,8 +282,12 @@ describe('OpenClaude console bridge routes', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          projectId: 'project-1',
           repoPath: 'C:/Projects/main',
           task: 'fix the failing code test',
+          userGoal: 'fix the failing code test',
+          generatedSpec: 'Compact SPEC for the fix.',
+          explicitApproval: true,
           cards: [
             { id: 'mag', kind: 'agent', runtimeType: 'magentic_one' },
             { id: 'lc', kind: 'agent', runtimeType: 'local_coder', title: 'Local Coder' },
@@ -297,10 +309,47 @@ describe('OpenClaude console bridge routes', () => {
       const response = await fetch(`${baseUrl}/openclaude/console/task`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repoPath: 'C:/Projects/main', task: 'fix code', cards: [], edges: [] }),
+        body: JSON.stringify({
+          projectId: 'project-1',
+          repoPath: 'C:/Projects/main',
+          task: 'fix code',
+          userGoal: 'fix code',
+          generatedSpec: 'Compact SPEC.',
+          explicitApproval: true,
+          cards: [],
+          edges: [],
+        }),
       });
       expect(response.status).toBe(400);
       expect((await response.json()).error).toBe('console_task_magentic_card_missing');
+    } finally {
+      await close(server);
+    }
+  });
+
+  it('creates a plan/SPEC but does not dispatch without explicit approval', async () => {
+    const { server, baseUrl } = await createApiServer();
+    try {
+      routerMocks.routeCodingTaskToConsole.mockClear();
+      const response = await fetch(`${baseUrl}/openclaude/console/task`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          repoPath: 'C:/Projects/main',
+          task: 'inspect code',
+          userGoal: 'inspect code',
+          generatedSpec: 'Read-only inspection SPEC.',
+          explicitApproval: false,
+          cards: [],
+          edges: [],
+        }),
+      });
+      const payload = await response.json();
+      expect(response.status).toBe(409);
+      expect(payload.codingRun.status).toBe('awaiting_approval');
+      expect(payload.codingRun.generatedSpec).toBe('Read-only inspection SPEC.');
+      expect(routerMocks.routeCodingTaskToConsole).not.toHaveBeenCalled();
     } finally {
       await close(server);
     }

@@ -90,6 +90,11 @@ _CODING_WORKFLOW_PATTERN = re.compile(
     r"localcoder|openclaude|typescript|javascript|python|cbm|codegraph)\b",
     re.IGNORECASE,
 )
+_EXPLICIT_CODER_EXECUTION_PATTERN = re.compile(
+    r"\b(execute|implement|apply|fix|patch|edit|change|run\s+(?:the\s+)?coder|"
+    r"plan\s+and\s+execute|do\s+it|proceed|approved?|go\s+ahead)\b",
+    re.IGNORECASE,
+)
 _DEFAULT_CODER_CONSOLE_BACKEND_URL = "http://127.0.0.1:4000"
 
 
@@ -249,6 +254,11 @@ async def coder_console_task(
         return _blocked_coder_result(normalized_root, "coder_console_project_id_mismatch")
     if not _CODING_WORKFLOW_PATTERN.search(context.userText or ""):
         return _blocked_coder_result(normalized_root, "coder_console_not_allowed_for_ordinary_chat")
+    if not _EXPLICIT_CODER_EXECUTION_PATTERN.search(context.userText or ""):
+        return _blocked_coder_result(
+            normalized_root,
+            "coder_console_explicit_user_approval_required",
+        )
     if str(edit_mode or "read_only").strip().lower() != "read_only":
         return _blocked_coder_result(
             normalized_root,
@@ -301,6 +311,9 @@ async def coder_console_task(
         "projectId": context.session.projectId,
         "repoPath": normalized_root,
         "task": task_prompt,
+        "userGoal": _compact_text(goal),
+        "generatedSpec": task_prompt,
+        "explicitApproval": True,
         "cards": cards,
         "edges": [edge.model_dump() for edge in graph.edges],
         "editMode": "read_only",
@@ -315,6 +328,12 @@ async def coder_console_task(
     routed = bool(response.get("routed"))
     blocker = None if routed else str(response.get("blocked") or response.get("error") or "coder_console_tool_call_blocked")
     result_session_id = str(session.get("id") or "") or None
+    coding_run_id = str((response.get("codingRun") or {}).get("id") or "") or None
+    result_status_url = (
+        f"/api/coder/openclaude/console/runs/{coding_run_id}"
+        if coding_run_id
+        else None
+    )
     provider = str(session.get("provider") or "") or None
     model = str(session.get("model") or "") or None
     transport = str(session.get("transportMode") or "") or None
@@ -322,7 +341,9 @@ async def coder_console_task(
         message = (
             f"Mag One started a coder task in Code Console session {result_session_id}. "
             f"Target: {normalized_root}. Provider: {provider or 'unknown'}. "
-            f"Model: {model or 'unknown'}. Watch the terminal in Code Console."
+            f"Model: {model or 'unknown'}. Coding run: {coding_run_id or 'unavailable'}. "
+            f"Result status: {result_status_url or 'unavailable'}. "
+            "Watch the terminal in Code Console."
         )
     else:
         message = f"Mag One could not start the coder task. Blocker: {blocker}"
@@ -337,6 +358,8 @@ async def coder_console_task(
         "message": message,
         "delivery_status": "accepted" if routed else "blocked",
         "blocker": blocker,
+        "coding_run_id": coding_run_id,
+        "result_status_url": result_status_url,
     })
 
 
@@ -454,6 +477,8 @@ def build_default_tool_registry() -> ToolRegistry:
                         "enum": ["accepted", "queued", "blocked"],
                     },
                     "blocker": {"type": ["string", "null"]},
+                    "coding_run_id": {"type": ["string", "null"]},
+                    "result_status_url": {"type": ["string", "null"]},
                 },
             },
         ),

@@ -352,7 +352,7 @@ def test_smoke_unselected_tool_never_reaches_the_worker():
 def _coder_context(
     target_root: str,
     *,
-    user_text: str = "Ask Coder to inspect the repo code.",
+    user_text: str = "Plan and execute a read-only coder task to inspect the repo code.",
     include_local_coder: bool = True,
     include_codegraph: bool = True,
 ) -> dict:
@@ -492,6 +492,7 @@ def test_coder_console_task_calls_owned_typescript_route_and_returns_status(monk
         captured.update(payload)
         return 200, {
             "routed": True,
+            "codingRun": {"id": "coding_run_123"},
             "session": {
                 "id": "occ_123",
                 "targetRoot": str(tmp_path),
@@ -529,11 +530,17 @@ def test_coder_console_task_calls_owned_typescript_route_and_returns_status(monk
     assert result["transport"] == "pipe"
     assert result["watch_surface"] == "Code Console"
     assert result["delivery_status"] == "accepted"
+    assert result["coding_run_id"] == "coding_run_123"
+    assert result["result_status_url"] == "/api/coder/openclaude/console/runs/coding_run_123"
     assert dispatch_future.result() == result
     assert "Watch the terminal in Code Console" in result["message"]
+    assert "Coding run: coding_run_123" in result["message"]
     assert captured["projectId"] == "project-1"
     assert captured["repoPath"] == str(tmp_path)
     assert captured["editMode"] == "read_only"
+    assert captured["explicitApproval"] is True
+    assert captured["generatedSpec"] == captured["task"]
+    assert captured["userGoal"] == "Inspect the console bridge."
     assert any(card["runtimeType"] == "local_coder" for card in captured["cards"])
     assert "COMPACT CODER TASK" in captured["task"]
 
@@ -591,6 +598,24 @@ def test_coder_console_task_does_not_run_for_ordinary_chat(monkeypatch, tmp_path
     finally:
         reset_current_coder_tool_context(token)
     assert result["blocker"] == "coder_console_not_allowed_for_ordinary_chat"
+
+
+def test_coder_console_task_does_not_execute_a_vague_coding_request(monkeypatch, tmp_path):
+    from app.python_models.orchestration_contracts import ContextPack
+
+    post = lambda payload: pytest.fail(f"unexpected route call: {payload}")
+    monkeypatch.setattr("app.python_models.tool_registry._post_console_task", post)
+    context = ContextPack.model_validate(
+        _coder_context(str(tmp_path), user_text="Can you inspect the repo code?")
+    )
+    token = set_current_coder_tool_context(context)
+    try:
+        result = asyncio.run(
+            coder_console_task("project-1", str(tmp_path), "Inspect code.")
+        )
+    finally:
+        reset_current_coder_tool_context(token)
+    assert result["blocker"] == "coder_console_explicit_user_approval_required"
 
 
 def test_coder_console_tool_missing_fails_with_required_code(monkeypatch):

@@ -12,6 +12,7 @@ import {
   type ConsoleMode,
 } from '../coder/openclaude/console/consoleSession';
 import { routeCodingTaskToConsole } from '../coder/openclaude/console/consoleTaskRouter';
+import { codingRunLifecycleService } from '../coder/openclaude/console/codingRunLifecycle';
 import { buildMagOneRoutingDiagnostics } from '../cards/runtime';
 
 const router = Router();
@@ -153,9 +154,27 @@ router.post('/openclaude/console/task', async (req, res) => {
   const task = String(req.body?.task || '');
   const repoPath = String(req.body?.repoPath || '');
   const projectId = String(req.body?.projectId || '');
+  const userGoal = String(req.body?.userGoal || '').trim();
+  const generatedSpec = String(req.body?.generatedSpec || task).trim();
+  const explicitApproval = req.body?.explicitApproval === true;
   if (!repoPath) {
     return res.status(400).json({ ok: false, error: 'console_task_repo_path_required' });
   }
+  const codingRun = codingRunLifecycleService.request({
+    projectId,
+    targetRoot: repoPath,
+    userGoal: userGoal || task,
+    generatedSpec,
+    editMode: req.body?.editMode === 'edit' ? 'edit' : 'read_only',
+  });
+  if (!explicitApproval) {
+    return res.status(409).json({
+      ok: false,
+      error: 'coding_run_explicit_approval_required',
+      codingRun,
+    });
+  }
+  codingRunLifecycleService.approve(codingRun.id);
   const magenticCard = cards.find(
     (card: any) => String(card?.runtimeType || '').trim().toLowerCase() === 'magentic_one',
   );
@@ -179,7 +198,33 @@ router.post('/openclaude/console/task', async (req, res) => {
     model: typeof req.body?.model === 'string' ? req.body.model : undefined,
     provider: typeof req.body?.provider === 'string' ? req.body.provider : undefined,
   });
-  return res.status(result.routed ? 200 : 424).json({ ok: result.routed, routing, ...result });
+  const updatedRun =
+    result.routed && result.session
+      ? codingRunLifecycleService.dispatched(
+          codingRun.id,
+          result.session.id,
+          result.session.provider,
+          result.session.model,
+        )
+      : codingRunLifecycleService.blocked(codingRun.id, result.blocked || 'coder_console_dispatch_blocked');
+  return res.status(result.routed ? 200 : 424).json({
+    ok: result.routed,
+    routing,
+    ...result,
+    codingRun: updatedRun,
+  });
+});
+
+router.get('/openclaude/console/runs/:id', async (req, res) => {
+  const run = await codingRunLifecycleService.refresh(req.params.id);
+  if (!run) return res.status(404).json({ ok: false, error: 'coding_run_not_found' });
+  return res.json({
+    ok: true,
+    codingRun: run,
+    consoleTranscriptPath: run.sessionId
+      ? `/api/coder/openclaude/console/sessions/${run.sessionId}`
+      : null,
+  });
 });
 
 router.get('/localcoder/status', async (req, res) => {
