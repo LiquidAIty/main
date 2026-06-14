@@ -285,6 +285,7 @@ function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument
   return {
     id: String(raw.id || fallbackId).trim() || fallbackId,
     name: String(raw.name || 'Deck').trim() || 'Deck',
+    workspaceRoot: cleanOptionalText(raw.workspaceRoot),
     promptTemplates: Array.isArray(raw.promptTemplates)
       ? (raw.promptTemplates as PromptTemplate[]).filter(
           (template) =>

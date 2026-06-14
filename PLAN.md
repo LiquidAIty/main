@@ -405,6 +405,13 @@ the compact workflow packet instead of the large generic canvas prompt for clear
 return `MAGONE_CODING_DISPATCH_TIMEOUT_BEFORE_TOOL_CALL` after a bounded 45-second pre-tool budget
 rather than waiting for the opaque outer backend abort.
 
+Normal persisted canvases now carry an owned workspace root in the deck document so Mag One receives
+the target root even when a specialized workbench is not active. Coding-run references and terminal
+results update a cached Plan Surface execution state and TaskResult first; chat displays only a
+compact mirror derived from that state. The Plan state retains the generated SPEC, coding run,
+console session, target root, proof, blocker, ThinkGraph status, next needed action, and next SPEC
+candidate.
+
 ## Code And Context Anchors
 
 * `AGENTS.md`: execution law
@@ -462,6 +469,5 @@ rather than waiting for the opaque outer backend abort.
 
 ## Next Step
 
-Run the complete persisted-canvas Mag One smoke against the compact routing packet and coding-run
-id/status endpoint, then surface the retrievable final result in chat without redesigning PlanFlow
-or changing the working Coder Console execution path.
+Run the complete persisted-canvas Mag One smoke and verify target-root propagation, TaskResult
+creation in Plan Surface, and the compact chat mirror.

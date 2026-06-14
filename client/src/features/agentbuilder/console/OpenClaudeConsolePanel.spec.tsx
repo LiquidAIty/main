@@ -37,6 +37,7 @@ function fakeClient(overrides: Partial<OpenClaudeConsoleClient> = {}): OpenClaud
   return {
     startSession: vi.fn(async () => ({ ok: true, session: runningSession() })),
     getSession: vi.fn(async () => null),
+    getCodingRun: vi.fn(async () => null),
     sendInput: vi.fn(async () => true),
     resizeSession: vi.fn(async () => true),
     stopSession: vi.fn(async () => true),

@@ -43,6 +43,43 @@ export type StartSessionResult =
   | { ok: true; session: ConsoleSessionInfo }
   | { ok: false; error: string; missing: string[] };
 
+export type CodingRunStatus =
+  | 'requested'
+  | 'planned'
+  | 'awaiting_approval'
+  | 'approved'
+  | 'dispatched'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'blocked';
+
+export type CodingRunLifecycle = {
+  id: string;
+  projectId: string;
+  targetRoot: string;
+  userGoal: string;
+  generatedSpec: string;
+  sessionId: string | null;
+  status: CodingRunStatus;
+  resultSummary: string;
+  proofCommands: string[];
+  proofFiles: string[];
+  validatedCoderReport: boolean;
+  coderReport: {
+    filesChanged: string[];
+    nextRecommendedTask: string;
+  } | null;
+  blocker: string | null;
+  memoryRecordStatus: 'pending' | 'recorded' | 'skipped' | 'failed';
+  memoryRecordDetail: string;
+};
+
+export type CodingRunResult = {
+  codingRun: CodingRunLifecycle;
+  consoleTranscriptPath: string | null;
+};
+
 const BASE = '/api/coder/openclaude/console';
 
 async function postJson(path: string, body: unknown): Promise<Response> {
@@ -64,6 +101,7 @@ export type OpenClaudeConsoleClient = {
     args?: string[];
   }): Promise<StartSessionResult>;
   getSession(id: string): Promise<{ session: ConsoleSessionInfo; transcript: ConsoleOutputChunk[] } | null>;
+  getCodingRun(idOrStatusUrl: string): Promise<CodingRunResult | null>;
   sendInput(id: string, data: string): Promise<boolean>;
   resizeSession(id: string, cols: number, rows: number): Promise<boolean>;
   stopSession(id: string): Promise<boolean>;
@@ -93,6 +131,22 @@ export const openClaudeConsoleClient: OpenClaudeConsoleClient = {
     return {
       session: payload.session as ConsoleSessionInfo,
       transcript: (payload.transcript || []) as ConsoleOutputChunk[],
+    };
+  },
+  async getCodingRun(idOrStatusUrl) {
+    const url = idOrStatusUrl.startsWith('/')
+      ? idOrStatusUrl
+      : `${BASE}/runs/${encodeURIComponent(idOrStatusUrl)}`;
+    const response = await fetch(url, { credentials: 'include' });
+    if (!response.ok) return null;
+    const payload = await response.json().catch(() => null);
+    if (!payload?.ok || !payload?.codingRun) return null;
+    return {
+      codingRun: payload.codingRun as CodingRunLifecycle,
+      consoleTranscriptPath:
+        typeof payload.consoleTranscriptPath === 'string'
+          ? payload.consoleTranscriptPath
+          : null,
     };
   },
   async sendInput(id, data) {

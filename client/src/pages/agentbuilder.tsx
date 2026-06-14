@@ -31,6 +31,11 @@ import AgentBuilderSplitter from '../features/agentbuilder/core/AgentBuilderSpli
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import OpenClaudeConsolePanel from '../features/agentbuilder/console/OpenClaudeConsolePanel';
+import {
+  extractCodingRunReference,
+  pollCodingRunUntilTerminal,
+} from '../features/agentbuilder/console/codingRunResultSurface';
+import { openClaudeConsoleClient } from '../features/agentbuilder/console/openClaudeConsoleClient';
 import { shouldShowOpenClaudeConsoleRail } from '../features/agentbuilder/console/consoleVisibility';
 import useAgentBuilderAutosave from '../features/agentbuilder/state/useAgentBuilderAutosave';
 import useAgentBuilderDeck from '../features/agentbuilder/state/useAgentBuilderDeck';
@@ -54,6 +59,16 @@ import {
   prepareActiveCoderPacket,
   type CoderPacket,
 } from '../features/agentbuilder/plan/coderLoop';
+import {
+  blockPlanExecutionState,
+  cachePlanExecutionState,
+  completePlanExecutionState,
+  createPlanExecutionState,
+  formatPlanExecutionChatMirror,
+  readCachedPlanExecutionState,
+  type PlanExecutionState,
+} from '../features/agentbuilder/plan/planExecutionState';
+import { resolveDeckWorkspaceRoot } from '../features/agentbuilder/state/deckWorkspaceRoot';
 import { buildExecutionPlan } from '../components/builder/deckExecution';
 import DeckExecutionPathSummary from '../components/builder/DeckExecutionPathSummary';
 import {
@@ -187,7 +202,7 @@ const MediaStudioCanvas = lazy(
   () => import('../features/media/MediaStudioCanvas'),
 );
 const CODEBASE_MEMORY_PROJECT_NAME = 'C-Projects-LiquidAIty-main';
-const UA_DEFAULT_REPO_PATH = 'C:\\Projects\\LiquidAIty\\main';
+const UA_DEFAULT_REPO_PATH = 'C:\\Projects\\main';
 void KnowledgeSummaryPanel;
 void KnowledgeEvidencePanel;
 
@@ -2775,6 +2790,7 @@ function buildUaAgentSeedNodes(): AgentCardInstance[] {
 export const INITIAL_DECK: DeckDocument = {
   id: 'deck_builder',
   name: 'Agent Card Deck',
+  workspaceRoot: UA_DEFAULT_REPO_PATH,
   promptTemplates: cloneDeckDocument(INITIAL_PROMPT_TEMPLATES),
   version: 3,
   nodes: [
@@ -5047,6 +5063,7 @@ export default function AgentBuilder(): React.ReactElement {
   >('idle');
   const [planFlowLoadMessage, setPlanFlowLoadMessage] = useState('');
   const [activeCoderPacket, setActiveCoderPacket] = useState<CoderPacket | null>(null);
+  const [planExecutionState, setPlanExecutionState] = useState<PlanExecutionState | null>(null);
   const [coderPacketPreparationStatus, setCoderPacketPreparationStatus] = useState<
     'idle' | 'preparing' | 'ready' | 'blocked'
   >('idle');
@@ -5097,6 +5114,7 @@ export default function AgentBuilder(): React.ReactElement {
   }, [activeProject]);
   useEffect(() => {
     setActiveCoderPacket(null);
+    setPlanExecutionState(activeProject ? readCachedPlanExecutionState(activeProject) : null);
     setCoderPacketPreparationStatus('idle');
     setCoderPacketPreparationMessage('');
   }, [activeProject]);
@@ -5110,6 +5128,7 @@ export default function AgentBuilder(): React.ReactElement {
     responseReceivedAt: number | null;
     refreshRecorded: boolean;
   } | null>(null);
+  const surfacedCodingRunIdsRef = useRef(new Set<string>());
   const pendingPanelOpenTelemetryRef = useRef<{
     objectType: WorkspaceTestingObjectType;
     objectId: string;
@@ -5541,8 +5560,14 @@ export default function AgentBuilder(): React.ReactElement {
         connectedWorkbenchAgent: uaSurfaceActive
           ? uaWorkbenchContext.connectedWorkbenchAgent
           : false,
-        repoPath: uaSurfaceActive ? uaWorkbenchContext.repoPath : null,
-        workspaceRoot: uaSurfaceActive ? uaWorkbenchContext.workspaceRoot : null,
+        repoPath: resolveDeckWorkspaceRoot(
+          deck,
+          uaSurfaceActive ? uaWorkbenchContext.repoPath : null,
+        ),
+        workspaceRoot: resolveDeckWorkspaceRoot(
+          deck,
+          uaSurfaceActive ? uaWorkbenchContext.workspaceRoot : null,
+        ),
         graphSource: uaSurfaceActive ? uaWorkbenchContext.graphSource : null,
         analysisStatus: uaSurfaceActive
           ? uaWorkbenchContext.analysisStatus
@@ -8316,6 +8341,62 @@ export default function AgentBuilder(): React.ReactElement {
             text: `Magentic-One run completed.${textStr}`,
           },
         ]);
+        const codingRunReference = extractCodingRunReference(outcome.finalText || '');
+        if (
+          codingRunReference &&
+          !surfacedCodingRunIdsRef.current.has(codingRunReference.codingRunId)
+        ) {
+          surfacedCodingRunIdsRef.current.add(codingRunReference.codingRunId);
+          const startedPlanExecution = createPlanExecutionState({
+            projectId: canvasProjectId,
+            userGoal: trimmed,
+            specPrompt: trimmed,
+            targetRoot:
+              activeDeckWorkspaceContext.repoPath ||
+              activeDeckWorkspaceContext.workspaceRoot ||
+              '',
+            codingRunId: codingRunReference.codingRunId,
+            consoleSessionId: codingRunReference.consoleSessionId,
+            resultStatusUrl: codingRunReference.resultStatusUrl,
+          });
+          setPlanExecutionState(startedPlanExecution);
+          cachePlanExecutionState(startedPlanExecution);
+          void pollCodingRunUntilTerminal(codingRunReference, {
+            getCodingRun: openClaudeConsoleClient.getCodingRun,
+            getSession: openClaudeConsoleClient.getSession,
+          })
+            .then((result) => {
+              const completedPlanExecution = completePlanExecutionState(
+                startedPlanExecution,
+                result,
+              );
+              setPlanExecutionState(completedPlanExecution);
+              cachePlanExecutionState(completedPlanExecution);
+              setMessages((m) => [
+                ...m,
+                {
+                  role: 'assistant',
+                  text: formatPlanExecutionChatMirror(completedPlanExecution),
+                },
+              ]);
+            })
+            .catch((error) => {
+              const blocker = error instanceof Error ? error.message : String(error);
+              const blockedPlanExecution = blockPlanExecutionState(
+                startedPlanExecution,
+                blocker,
+              );
+              setPlanExecutionState(blockedPlanExecution);
+              cachePlanExecutionState(blockedPlanExecution);
+              setMessages((m) => [
+                ...m,
+                {
+                  role: 'assistant',
+                  text: formatPlanExecutionChatMirror(blockedPlanExecution),
+                },
+              ]);
+            });
+        }
       }
 
       const responseReceivedAt = Date.now();
@@ -9138,6 +9219,7 @@ export default function AgentBuilder(): React.ReactElement {
             <ActiveCoderJobPanel
               projectId={activeProject}
               preparedPacket={activeCoderPacket}
+              executionState={planExecutionState}
               preparationStatus={coderPacketPreparationStatus}
               preparationMessage={coderPacketPreparationMessage}
               planSummary={planFlowProjection?.nodes?.[0]?.title || ''}

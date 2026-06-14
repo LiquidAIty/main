@@ -44,4 +44,41 @@ describe('ActiveCoderJobPanel', () => {
     expect(screen.queryByLabelText('CoderPacket JSON')).toBeNull();
     expect(screen.getByText(/PLAN.md: LiquidAIty Living Plan/)).toBeTruthy();
   });
+
+  it('renders canonical Plan execution state and TaskResult', () => {
+    render(
+      <ActiveCoderJobPanel
+        projectId="project-1"
+        executionState={{
+          plan_surface_id: 'plan-surface:project-1',
+          user_goal: 'Inspect the repo.',
+          spec_prompt: 'Inspect the repo.',
+          coding_run_id: 'coding_run_1',
+          console_session_id: 'occ_1',
+          target_root: 'C:\\Projects\\main',
+          status: 'completed',
+          result_status_url: '/api/coder/openclaude/console/runs/coding_run_1',
+          proof_files: ['apps/backend/src/routes/coder.routes.ts'],
+          blocker: null,
+          next_needed: 'Review result.',
+          next_spec_candidate: 'Review result.',
+          thinkgraph_status: 'recorded',
+          exit_code: 0,
+          task_result: {
+            task: 'Inspect the repo.',
+            status: 'completed',
+            files_changed: [],
+            proof: ['file: apps/backend/src/routes/coder.routes.ts'],
+            result: 'Inspection complete.',
+            blocker_or_issue: null,
+            next_needed: 'Review result.',
+            validated_coder_report: false,
+            transcript_derived: true,
+          },
+        }}
+      />,
+    );
+    expect(screen.getByTestId('plan-execution-state').textContent).toContain('coding_run_1');
+    expect(screen.getByTestId('plan-task-result').textContent).toContain('Inspection complete.');
+  });
 });

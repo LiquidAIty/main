@@ -6,6 +6,7 @@ import {
   type CoderPacket,
   type CoderRunResponse,
 } from './coderLoop';
+import type { PlanExecutionState } from './planExecutionState';
 
 const panelStyle = {
   margin: '0 12px 10px',
@@ -31,12 +32,14 @@ export default function ActiveCoderJobPanel({
   preparationStatus = 'idle',
   preparationMessage = '',
   planSummary = '',
+  executionState = null,
 }: {
   projectId: string;
   preparedPacket?: CoderPacket | null;
   preparationStatus?: 'idle' | 'preparing' | 'ready' | 'blocked';
   preparationMessage?: string;
   planSummary?: string;
+  executionState?: PlanExecutionState | null;
 }) {
   const [draft, setDraft] = useState('');
   const [packet, setPacket] = useState<CoderPacket | null>(null);
@@ -171,6 +174,28 @@ export default function ActiveCoderJobPanel({
       )}
 
       <div style={{ ...mutedStyle, marginTop: 10 }}>{message}</div>
+
+      {executionState ? (
+        <div data-testid="plan-execution-state" style={{ marginTop: 12, color: '#e7f0f2', fontSize: 12 }}>
+          <div><strong>Plan execution: {executionState.status}</strong></div>
+          <div style={{ ...mutedStyle, marginTop: 5, whiteSpace: 'pre-wrap' }}>
+            Coding run: {executionState.coding_run_id}
+            {'\n'}Target root: {executionState.target_root}
+            {'\n'}Session: {executionState.console_session_id || 'unavailable'}
+            {'\n'}Result status: {executionState.result_status_url}
+            {'\n'}Blocker: {executionState.blocker || 'None'}
+            {'\n'}Next needed: {executionState.next_needed}
+            {'\n'}Next SPEC candidate: {executionState.next_spec_candidate || 'Pending result'}
+          </div>
+          {executionState.task_result ? (
+            <div data-testid="plan-task-result" style={{ ...mutedStyle, marginTop: 8, whiteSpace: 'pre-wrap' }}>
+              TaskResult: {executionState.task_result.status}
+              {'\n'}Result: {executionState.task_result.result}
+              {'\n'}Proof: {list(executionState.task_result.proof)}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {result ? (
         <div style={{ marginTop: 12, color: '#e7f0f2', fontSize: 12 }}>

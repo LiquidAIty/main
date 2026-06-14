@@ -147,6 +147,7 @@ export type DeckViewport = {
 export type DeckDocument = {
   id: string;
   name: string;
+  workspaceRoot?: string | null;
   promptTemplates: PromptTemplate[];
   nodes: AgentCardInstance[];
   edges: DeckEdge[];
