@@ -5057,12 +5057,10 @@ export default function AgentBuilder(): React.ReactElement {
     () => loadProjectState(activeProject).links,
   );
   const [stateLoaded, setStateLoaded] = useState(false);
+  // PLAN.md projection is retained only as optional Mag One planning context.
+  // It is never projected onto the ReactFlow canvas (canvas = real Mag One only).
   const [planFlowProjection, setPlanFlowProjection] =
     useState<PlanFlowProjection | null>(null);
-  const [planFlowLoadStatus, setPlanFlowLoadStatus] = useState<
-    'idle' | 'loading' | 'ready' | 'error'
-  >('idle');
-  const [planFlowLoadMessage, setPlanFlowLoadMessage] = useState('');
   const [activeCoderPacket, setActiveCoderPacket] = useState<CoderPacket | null>(null);
   const [planExecutionState, setPlanExecutionState] = useState<PlanExecutionState | null>(null);
   const [coderPacketPreparationStatus, setCoderPacketPreparationStatus] = useState<
@@ -5070,20 +5068,16 @@ export default function AgentBuilder(): React.ReactElement {
   >('idle');
   const [coderPacketPreparationMessage, setCoderPacketPreparationMessage] = useState('');
   const planFlowMissionGraph = useMemo(
-    () => buildPlanFlowMissionGraph(planFlowProjection, latestDeckRun),
-    [latestDeckRun, planFlowProjection],
+    () => buildPlanFlowMissionGraph(latestDeckRun),
+    [latestDeckRun],
   );
   useEffect(() => {
     const projectId = activeProject;
     if (!projectId) {
       setPlanFlowProjection(null);
-      setPlanFlowLoadStatus('idle');
-      setPlanFlowLoadMessage('');
       return;
     }
     const controller = new AbortController();
-    setPlanFlowLoadStatus('loading');
-    setPlanFlowLoadMessage('Loading authoritative PLAN.md...');
     void fetch(`${PROJECTS_API}/${projectId}/kg/planflow/projection`, {
       signal: controller.signal,
     })
@@ -5093,23 +5087,11 @@ export default function AgentBuilder(): React.ReactElement {
           throw new Error(safeText(data?.error || 'planflow_projection_failed'));
         }
         if (controller.signal.aborted) return;
-        const projection = data.projection as PlanFlowProjection;
-        setPlanFlowProjection(projection);
-        setPlanFlowLoadStatus('ready');
-        const warnings = Array.isArray(projection.warnings) ? projection.warnings : [];
-        setPlanFlowLoadMessage(
-          warnings.length > 0
-            ? `PlanFlow loaded with ${warnings.length} warning${warnings.length === 1 ? '' : 's'}.`
-            : 'PlanFlow loaded from PLAN.md.',
-        );
+        setPlanFlowProjection(data.projection as PlanFlowProjection);
       })
-      .catch((error) => {
+      .catch(() => {
         if (controller.signal.aborted) return;
         setPlanFlowProjection(null);
-        setPlanFlowLoadStatus('error');
-        setPlanFlowLoadMessage(
-          `PlanFlow markdown projection unavailable: ${error?.message || String(error)}`,
-        );
       });
     return () => controller.abort();
   }, [activeProject]);
@@ -8263,13 +8245,6 @@ export default function AgentBuilder(): React.ReactElement {
     // through the real runtime; a genuine orchestrator proposal may join the
     // canvas only when it appears in the runtime trace.
     setDeckRunInput(trimmed);
-    setMessages((m) => [
-      ...m,
-      {
-        role: 'assistant',
-        text: 'PlanFlow remains grounded in PLAN.md. Runtime started.',
-      },
-    ]);
 
     setTimeout(async () => {
       let approvedMissionSpec: any = undefined;
@@ -8305,6 +8280,33 @@ export default function AgentBuilder(): React.ReactElement {
           const realMagenticPlans = (outcome.run?.steps || [])
             .map((step) => step.magenticTrace?.plan)
             .filter((candidate) => candidate && typeof candidate === 'object');
+            
+          const finalPlan: any = realMagenticPlans[realMagenticPlans.length - 1];
+          if (finalPlan) {
+            let chatSummary = 'Magentic-One responded with an active ledger.';
+            if (finalPlan.task_ledger) {
+              const ledgerPlan = String(
+                finalPlan.task_ledger.plan ?? finalPlan.task_ledger.task_plan ?? '',
+              ).trim();
+              chatSummary += `\nTask Ledger: ${ledgerPlan ? ledgerPlan.split('\n').length : 0} items.`;
+            }
+            if (finalPlan.progress_ledger) {
+              if (finalPlan.progress_ledger.next_action) {
+                chatSummary += `\nNext Action: ${finalPlan.progress_ledger.next_action}`;
+              } else {
+                chatSummary += `\nmagone_next_action_missing`;
+              }
+              if (finalPlan.progress_ledger.blocker) {
+                chatSummary += `\nBlocker: ${finalPlan.progress_ledger.blocker}`;
+              }
+            } else {
+              chatSummary += `\nmagone_next_action_missing`;
+            }
+            setMessages((m) => [...m, { role: 'assistant', text: chatSummary }]);
+          } else {
+            setMessages((m) => [...m, { role: 'assistant', text: 'magone_next_action_missing' }]);
+          }
+
           const prepared = await prepareActiveCoderPacket({
             projectId: canvasProjectId,
             userInput: trimmed,
@@ -8323,21 +8325,41 @@ export default function AgentBuilder(): React.ReactElement {
               ...activeWorkspaceObjectContext,
             },
           });
-          if (prepared.packet.writeMode === 'read-only') {
+          if (prepared.packet.writeMode === 'read-only' || finalPlan?.progress_ledger?.next_action?.includes('Local Coder') || finalPlan?.progress_ledger?.next_action?.includes('run_read_only_coder_task')) {
             setCoderPacketPreparationStatus('ready');
             setCoderPacketPreparationMessage(
               `${prepared.plannerProvenance.source} prepared a read-only audit. Auto-dispatching...`,
             );
             try {
-              const runOutcome = await runLocalCoderPacket(prepared.packet);
-              // Store result back in the state, e.g. update PlanFlow Execution State if applicable,
-              // but we might just need to rely on the side effects (like updating plan execution state).
-              setCoderPacketPreparationMessage(
-                `Read-only audit auto-dispatched. Status: ${runOutcome.report.status}.`,
-              );
+              const runOutcome = await fetch('/api/coder/openclaude/console/task', {
+                 method: 'POST',
+                 headers: { 'Content-Type': 'application/json' },
+                 body: JSON.stringify({
+                   task: trimmed,
+                   repoPath: activeDeckWorkspaceContext.repoPath || activeDeckWorkspaceContext.workspaceRoot || null,
+                   projectId: canvasProjectId,
+                   workflowOption: 'run_read_only_coder_task',
+                   editMode: 'read_only',
+                   generatedSpec: prepared.packet.objective,
+                   cards: deck.nodes.map(n => n.data),
+                   edges: deck.edges,
+                 })
+              }).then(res => res.json());
+
+              if (runOutcome.ok && runOutcome.codingRun) {
+                setCoderPacketPreparationMessage(
+                  `Read-only audit auto-dispatched. Status: ${runOutcome.codingRun.status}. Console Session: ${runOutcome.codingRun.sessionId}`,
+                );
+                setMessages((m) => [...m, { role: 'assistant', text: `Dispatched Code Console.\nRun ID: ${runOutcome.codingRun.id}\nSession ID: ${runOutcome.codingRun.sessionId}\nResult Status URL: /api/coder/openclaude/console/runs/${runOutcome.codingRun.id}` }]);
+              } else {
+                setCoderPacketPreparationMessage(
+                  `Auto-dispatch failed: ${runOutcome.error || 'Unknown'}`,
+                );
+                setMessages((m) => [...m, { role: 'assistant', text: `Auto-dispatch failed: ${runOutcome.error || 'Unknown'}` }]);
+              }
             } catch (err) {
               setCoderPacketPreparationMessage(
-                `Auto-dispatch failed: ${err instanceof Error ? err.message : String(err)}`,
+                `Auto-dispatch error: ${err instanceof Error ? err.message : String(err)}`,
               );
             }
           } else {
@@ -9210,33 +9232,18 @@ export default function AgentBuilder(): React.ReactElement {
                 boxShadow: 'none',
               }}
             >
-            <div
-              style={graphDrawerSectionStyle({
-                margin: '0 12px 10px',
-                padding: '10px 12px',
-                borderColor:
-                  planFlowLoadStatus === 'error'
-                    ? 'rgba(255,100,100,0.28)'
-                    : 'rgba(79,162,173,0.25)',
-                background:
-                  planFlowLoadStatus === 'error'
-                    ? 'rgba(255,100,100,0.06)'
-                    : 'rgba(79,162,173,0.06)',
-              })}
-            >
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
-                PlanFlow Canvas
+            {planFlowMissionGraph.nodes.length === 0 ? (
+              <div
+                style={{
+                  margin: '0 12px 10px',
+                  fontSize: 11,
+                  color: GRAPH_THEME.drawer.inputMuted,
+                }}
+              >
+                No Magentic-One ledger yet. Send a request; real TaskLedger /
+                ProgressLedger nodes appear here only from Mag One output.
               </div>
-              <div style={{ marginTop: 4, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
-                PlanFlow shows the living PLAN.md, one active CoderPacket prompt, and real planning/runtime events.{' '}
-                {planFlowMissionGraph.nodes.some((node) => node.data.source === 'magentic_one')
-                  ? 'A real Magentic-One planning proposal is shown with provenance.'
-                  : 'Magentic-One planning proposal pending.'}
-              </div>
-              <div style={{ marginTop: 4, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
-                {planFlowLoadMessage || 'Select a node for source, provenance, status, links, and summary.'}
-              </div>
-            </div>
+            ) : null}
             <ActiveCoderJobPanel
               projectId={activeProject}
               preparedPacket={activeCoderPacket}
@@ -9302,7 +9309,7 @@ export default function AgentBuilder(): React.ReactElement {
                     <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
                       Proposed Magentic-One Plan
                     </div>
-                    {typeof plan === 'object' && ((plan as any)?.task_ledger?.task_plan || (plan as any)?.progress_ledger?.next_instruction) ? (
+                    {typeof plan === 'object' && (((plan as any)?.task_ledger?.plan ?? (plan as any)?.task_ledger?.task_plan) || (plan as any)?.progress_ledger?.next_instruction) ? (
                       <div style={{ marginTop: 8, fontSize: 12, color: GRAPH_THEME.drawer.inputMuted }}>
                         The task ledger and proposed progress have been mapped to the Plan Surface.
                       </div>
@@ -9422,8 +9429,43 @@ export default function AgentBuilder(): React.ReactElement {
                   marginTop: 8,
                 }}
               >
-                Focus: {safeText(planMissionFocus.nodeKind)} -{' '}
-                {safeText(planMissionFocus.nodeLabel)}
+                <div>
+                  Focus: {safeText(planMissionFocus.nodeKind)} -{' '}
+                  {safeText(planMissionFocus.nodeLabel)}
+                </div>
+                {planMissionFocus.nodeData?.source ? (
+                  <div style={{ marginTop: 4 }}>
+                    Source: {safeText(planMissionFocus.nodeData.source)}
+                    {planMissionFocus.nodeData.provenance
+                      ? ` - ${safeText(planMissionFocus.nodeData.provenance)}`
+                      : ''}
+                  </div>
+                ) : null}
+                {(planMissionFocus.nodeData as { summary?: string })?.summary ? (
+                  <div style={{ marginTop: 6, whiteSpace: 'pre-wrap', color: C.text }}>
+                    {safeText((planMissionFocus.nodeData as { summary?: string }).summary)}
+                  </div>
+                ) : null}
+                {(planMissionFocus.nodeData as { payloadJson?: string })?.payloadJson ? (
+                  <pre
+                    aria-label="Mag One node payload"
+                    style={{
+                      marginTop: 6,
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                      whiteSpace: 'pre-wrap',
+                      maxHeight: 280,
+                      overflow: 'auto',
+                      color: GRAPH_THEME.drawer.inputMuted,
+                    }}
+                  >
+                    {(planMissionFocus.nodeData as { payloadJson?: string }).payloadJson}
+                  </pre>
+                ) : (
+                  <div style={{ marginTop: 6 }}>
+                    No raw payload on this node (honest missing state).
+                  </div>
+                )}
               </div>
             ) : null}
             </div>

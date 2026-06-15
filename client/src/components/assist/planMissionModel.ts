@@ -21,6 +21,9 @@ export type PlanMissionNodeKind =
   | 'Decision'
   | 'Assumption'
   | 'MagenticOnePlan'
+  | 'SelectedAction'
+  | 'CodeConsoleRun'
+  | 'MagOneTraceEvent'
   | 'RuntimeRun'
   | 'Proof'
   | 'SkillReference'
@@ -71,6 +74,10 @@ export type PlanMissionNodeData = {
   provenance?: string;
   links?: string[];
   editable?: boolean;
+  /** Concise human summary derived from the real Mag One payload. */
+  summary?: string;
+  /** Pretty-printed full real payload for the read-only inspector view. */
+  payloadJson?: string;
 };
 
 export type PlanArtifactNodeData = {

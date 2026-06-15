@@ -742,6 +742,9 @@ export type PlanFlowNodeType =
   | 'ProgressLedger'
   | 'TaskResult'
   | 'NextSpecCandidate'
+  | 'SelectedAction'
+  | 'CodeConsoleRun'
+  | 'MagOneTraceEvent'
   | 'PlanRoute'
   | 'Task'
   | 'Decision'
@@ -781,6 +784,10 @@ export type PlanFlowNode = {
   provenance: string;
   status: PlanFlowStatus;
   links: string[];
+  /** Concise human summary derived only from the real Mag One payload. */
+  summary?: string;
+  /** Full real payload (TaskLedger/ProgressLedger/run/event) for the inspector. */
+  payload?: unknown;
 };
 
 export type PlanFlowProjection = {
