@@ -9230,29 +9230,17 @@ export default function AgentBuilder(): React.ReactElement {
                 border: 'none',
                 background: 'transparent',
                 boxShadow: 'none',
+                display: 'flex',
+                flexDirection: 'column',
               }}
             >
-            {planFlowMissionGraph.nodes.length === 0 ? (
-              <div
-                style={{
-                  margin: '0 12px 10px',
-                  fontSize: 11,
-                  color: GRAPH_THEME.drawer.inputMuted,
-                }}
-              >
-                No Magentic-One ledger yet. Send a request; real TaskLedger /
-                ProgressLedger nodes appear here only from Mag One output.
-              </div>
-            ) : null}
-            <ActiveCoderJobPanel
-              projectId={activeProject}
-              preparedPacket={activeCoderPacket}
-              executionState={planExecutionState}
-              preparationStatus={coderPacketPreparationStatus}
-              preparationMessage={coderPacketPreparationMessage}
-              planSummary={planFlowProjection?.nodes?.[0]?.title || ''}
-            />
-            {planFlowMissionGraph.nodes.length > 0 ? (
+            {/*
+              ReactFlow is the PlanFlow canvas and stays mounted at all times.
+              Empty graph still shows the graph-paper viewport (nodes/edges = []).
+              No text billboard, Active CoderPacket card, or PLAN.md card sits on
+              or above the canvas; status/controls live below or in the inspector.
+            */}
+            <div style={{ flex: '1 1 auto', minHeight: 480, position: 'relative' }}>
               <Suspense
                 fallback={
                   <div style={{ padding: 16, color: GRAPH_THEME.drawer.inputMuted }}>
@@ -9265,12 +9253,23 @@ export default function AgentBuilder(): React.ReactElement {
                   missionGraph={planFlowMissionGraph}
                   projectId={activeProject}
                   compact={surfaceRole === 'companion'}
+                  fullHeight
                   nodeOverrides={planNodeDrafts}
                   selectedNodeId={planMissionFocus?.nodeId || null}
                   drawerLinked
                   onFocusChange={setPlanMissionFocus}
                 />
               </Suspense>
+            </div>
+            {activeCoderPacket ? (
+              <ActiveCoderJobPanel
+                projectId={activeProject}
+                preparedPacket={activeCoderPacket}
+                executionState={planExecutionState}
+                preparationStatus={coderPacketPreparationStatus}
+                preparationMessage={coderPacketPreparationMessage}
+                planSummary={planFlowProjection?.nodes?.[0]?.title || ''}
+              />
             ) : null}
             {latestMissionRun ? (
               <div

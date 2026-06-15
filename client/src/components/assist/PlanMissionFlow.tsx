@@ -6,6 +6,7 @@ import {
   BackgroundVariant,
   type Connection,
   ConnectionMode,
+  Controls,
   Handle,
   Position,
   ReactFlow,
@@ -1310,38 +1311,6 @@ export default function PlanMissionFlow({
           cursor: pointer;
         }
       `}</style>
-      <div
-        style={{
-          position: 'absolute',
-          top: 14,
-          left: 16,
-          zIndex: 18,
-          display: 'flex',
-          gap: 6,
-          flexWrap: 'wrap',
-          maxWidth: 'calc(100% - 340px)',
-          pointerEvents: 'none',
-        }}
-      >
-        {['Current Mission', 'Task Ledger', 'Current SPEC', 'Progress Ledger', 'TaskResult', 'Next SPEC Candidate'].map(
-          (label) => (
-            <span
-              key={label}
-              style={{
-                padding: '5px 8px',
-                borderRadius: 999,
-                border: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`,
-                background: 'rgba(11,14,18,0.88)',
-                color: GRAPH_THEME.surface.mutedText,
-                fontSize: 10.5,
-                fontWeight: 600,
-              }}
-            >
-              {label}
-            </span>
-          ),
-        )}
-      </div>
       {selectedMissionNode && selectedMissionData ? (
         <aside
           aria-label="Selected PlanFlow node details"
@@ -1629,6 +1598,7 @@ export default function PlanMissionFlow({
           size={GRAPH_THEME.graphPaper.lineWidth}
           color={GRAPH_THEME.background.gridMajor}
         />
+        <Controls showInteractive={!editMode} />
       </ReactFlow>
     </div>
   );
