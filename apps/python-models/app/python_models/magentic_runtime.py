@@ -569,6 +569,43 @@ def _compose_task_text(context: ContextPack) -> str:
             parts.append(
                 f"Execution context:\nProject ID: {context.session.projectId}\nTarget root: {target_root}"
             )
+
+    parts.append(
+        "REQUIRED OUTPUT FORMAT:\n"
+        "You must update your Task Ledger and Progress Ledger. At the very end of your final answer, "
+        "output a single markdown JSON block exactly matching this schema:\n"
+        "```json\n"
+        "{\n"
+        "  \"task_ledger\": {\n"
+        "    \"user_goal\": \"\",\n"
+        "    \"facts\": [],\n"
+        "    \"assumptions\": [],\n"
+        "    \"plan\": \"\",\n"
+        "    \"current_spec\": \"\",\n"
+        "    \"required_agents_tools\": [],\n"
+        "    \"approval_state\": \"\",\n"
+        "    \"target_root\": \"\",\n"
+        "    \"cbm_context_summary\": \"\",\n"
+        "    \"skillgraph_context_summary\": \"\"\n"
+        "  },\n"
+        "  \"progress_ledger\": {\n"
+        "    \"is_complete\": false,\n"
+        "    \"is_stuck\": false,\n"
+        "    \"progress_summary\": \"\",\n"
+        "    \"next_actor\": \"\",\n"
+        "    \"next_action\": \"\",\n"
+        "    \"next_instruction\": \"\",\n"
+        "    \"blocker\": \"\",\n"
+        "    \"task_result\": \"\",\n"
+        "    \"next_needed\": \"\",\n"
+        "    \"next_spec_candidate\": \"\"\n"
+        "  }\n"
+        "}\n"
+        "```\n"
+        "If you select the Local Coder read-only action, ensure your current_spec says: "
+        "no edits, no commit, no push. You must select the next action from your available tools/agents."
+    )
+
     task = "\n\n".join(parts)
     if not task.strip():
         raise RuntimeError("autogen_runtime_empty_task")

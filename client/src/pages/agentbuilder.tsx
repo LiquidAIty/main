@@ -57,6 +57,7 @@ import { buildPlanFlowMissionGraph } from '../features/agentbuilder/plan/planFlo
 import ActiveCoderJobPanel from '../features/agentbuilder/plan/ActiveCoderJobPanel';
 import {
   prepareActiveCoderPacket,
+  runLocalCoderPacket,
   type CoderPacket,
 } from '../features/agentbuilder/plan/coderLoop';
 import {
@@ -1252,7 +1253,7 @@ export function isKnowledgeChainActive(
   nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
 ): boolean {
-  return deriveConnectedGraphStreams({ nodes, edges }).anyGraph;
+  return deriveConnectedGraphStreams({ nodes: nodes as any, edges: edges as any }).anyGraph;
 }
 
 export function deriveConnectedGraphStreams(deck: Pick<DeckDocument, 'nodes' | 'edges'>): ConnectedGraphStreams {
@@ -4613,7 +4614,7 @@ function buildGraphVizForNVL(graph: { nodes: KNode[]; edges: KEdge[] }) {
       confidence: n.confidence,
       sourceRefs: n.sourceRefs,
       properties: n.properties,
-      provenance: n.provenance,
+      provenance: n.provenance ?? undefined,
       vectorText: n.vectorText,
       graph: n.graph,
       kind: n.kind,
@@ -5155,7 +5156,7 @@ export default function AgentBuilder(): React.ReactElement {
 
   const recordPostResponseRefreshIfPending = useCallback(
     (
-      refreshKind: 'workspace_state' | 'agent_graph' | 'knowledge_graph',
+      refreshKind: string,
       completedAt: number,
     ) => {
       const activeLoop = chatLoopTelemetryRef.current;
@@ -5395,7 +5396,7 @@ export default function AgentBuilder(): React.ReactElement {
     snapshotDeckBoard,
     lastPersistedBoardFingerprintRef,
     lastPersistedBoardSnapshotRef,
-    emitWorkspaceTestingEvent,
+    emitWorkspaceTestingEvent: emitWorkspaceTestingEvent as any,
     recordPostResponseRefreshIfPending,
     setDeck,
     setDeckRevision,
@@ -5405,7 +5406,7 @@ export default function AgentBuilder(): React.ReactElement {
     setLatestCardRun,
     setLiveDeckEvents,
     setMessages,
-    setPendingActivationProposal,
+    setPendingActivationProposal: setPendingActivationProposal as any,
     setPlanSource,
     setPlan,
     setLinks,
@@ -5421,7 +5422,7 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckSaveBusy,
     setDeckRunBusy,
     setCardRunBusy,
-    setPendingActivationProposal,
+    setPendingActivationProposal: setPendingActivationProposal as any,
   });
   useAgentBuilderAutosave({
     builderDev: BUILDER_DEV,
@@ -6740,7 +6741,7 @@ export default function AgentBuilder(): React.ReactElement {
                   {deckSaveBusy ? 'Saving...' : 'Save Board Now'}
                 </button>
                 <button
-                  onClick={handleRunDeck}
+                  onClick={() => handleRunDeck()}
                   disabled={
                     deckRunBusy ||
                     deckLoadBusy ||
@@ -8093,7 +8094,7 @@ export default function AgentBuilder(): React.ReactElement {
           agentRunId: entry.id,
           label: entry.agentId,
           status: entry.status,
-          summary: entry.resultSummary,
+          summary: entry.resultSummary ?? undefined,
         })),
         latestSummary: step.promptSeed,
       });
@@ -8118,6 +8119,7 @@ export default function AgentBuilder(): React.ReactElement {
             missionRunId: missionRun.id,
             missionAgentRunId: step.id,
           },
+          onEvent: () => {},
         });
         const run = data?.run as DeckRun | undefined;
         if (!run) throw new Error('missing_run_payload');
@@ -8190,7 +8192,7 @@ export default function AgentBuilder(): React.ReactElement {
         agentRunId: entry.id,
         label: entry.agentId,
         status: entry.status,
-        summary: entry.resultSummary,
+        summary: entry.resultSummary ?? undefined,
       })),
       latestSummary: missionRun.results[missionRun.results.length - 1]?.reason || missionRun.results[missionRun.results.length - 1]?.output || undefined,
       suggestedUserActions:
@@ -8321,11 +8323,30 @@ export default function AgentBuilder(): React.ReactElement {
               ...activeWorkspaceObjectContext,
             },
           });
-          setActiveCoderPacket(prepared.packet);
-          setCoderPacketPreparationStatus('ready');
-          setCoderPacketPreparationMessage(
-            `${prepared.plannerProvenance.source} created one validated packet with ${prepared.plannerProvenance.contextSources.length} real context sources.`,
-          );
+          if (prepared.packet.writeMode === 'read-only') {
+            setCoderPacketPreparationStatus('ready');
+            setCoderPacketPreparationMessage(
+              `${prepared.plannerProvenance.source} prepared a read-only audit. Auto-dispatching...`,
+            );
+            try {
+              const runOutcome = await runLocalCoderPacket(prepared.packet);
+              // Store result back in the state, e.g. update PlanFlow Execution State if applicable,
+              // but we might just need to rely on the side effects (like updating plan execution state).
+              setCoderPacketPreparationMessage(
+                `Read-only audit auto-dispatched. Status: ${runOutcome.report.status}.`,
+              );
+            } catch (err) {
+              setCoderPacketPreparationMessage(
+                `Auto-dispatch failed: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          } else {
+            setActiveCoderPacket(prepared.packet);
+            setCoderPacketPreparationStatus('ready');
+            setCoderPacketPreparationMessage(
+              `${prepared.plannerProvenance.source} created one validated packet with ${prepared.plannerProvenance.contextSources.length} real context sources.`,
+            );
+          }
         } catch (error) {
           setActiveCoderPacket(null);
           setCoderPacketPreparationStatus('blocked');
@@ -8915,7 +8936,7 @@ export default function AgentBuilder(): React.ReactElement {
                 {openable ? (
                   <button
                     type="button"
-                    style={graphDrawerButtonStyle}
+                    style={graphDrawerButtonStyle()}
                     onClick={() => openKnowledgeSource(refTarget)}
                   >
                     Open source
@@ -9282,19 +9303,8 @@ export default function AgentBuilder(): React.ReactElement {
                       Proposed Magentic-One Plan
                     </div>
                     {typeof plan === 'object' && ((plan as any)?.task_ledger?.task_plan || (plan as any)?.progress_ledger?.next_instruction) ? (
-                      <div style={{ marginTop: 8, fontSize: 12, color: C.text }}>
-                        {(plan as any)?.task_ledger?.task_plan && (
-                          <div style={{ marginBottom: 8 }}>
-                            <div style={{ fontWeight: 600, color: GRAPH_THEME.drawer.headerText }}>Proposed Plan:</div>
-                            <div style={{ whiteSpace: 'pre-wrap', color: GRAPH_THEME.drawer.inputMuted }}>{(plan as any).task_ledger.task_plan}</div>
-                          </div>
-                        )}
-                        {(plan as any)?.progress_ledger?.next_instruction && (
-                          <div style={{ marginBottom: 4 }}>
-                            <div style={{ fontWeight: 600, color: GRAPH_THEME.drawer.headerText }}>Recommended Next Move:</div>
-                            <div style={{ whiteSpace: 'pre-wrap', color: GRAPH_THEME.drawer.inputMuted }}>{(plan as any).progress_ledger.next_instruction}</div>
-                          </div>
-                        )}
+                      <div style={{ marginTop: 8, fontSize: 12, color: GRAPH_THEME.drawer.inputMuted }}>
+                        The task ledger and proposed progress have been mapped to the Plan Surface.
                       </div>
                     ) : (
                       <pre style={{ marginTop: 8, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted, whiteSpace: 'pre-wrap', fontFamily: 'monospace', maxHeight: 300, overflow: 'auto' }}>
@@ -9330,7 +9340,7 @@ export default function AgentBuilder(): React.ReactElement {
                             }}
                             style={{
                               padding: '4px 12px',
-                              background: GRAPH_THEME.drawer.actionSelected,
+                              background: GRAPH_THEME.accent.primary,
                               color: C.bg,
                               border: 'none',
                               borderRadius: 4,

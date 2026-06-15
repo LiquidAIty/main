@@ -167,7 +167,31 @@ router.post('/openclaude/console/task', async (req, res) => {
     generatedSpec,
     editMode: req.body?.editMode === 'edit' ? 'edit' : 'read_only',
   });
-  if (!explicitApproval) {
+  const workflowOption = req.body?.workflowOption;
+  
+  if (!workflowOption) {
+    return res.status(400).json({
+      ok: false,
+      error: 'magone_next_action_missing',
+    });
+  }
+
+  const isSelectedReadOnlyWorkflow = workflowOption === 'run_read_only_coder_task';
+  const editModeRequested = req.body?.editMode === 'edit' ? 'edit' : 'read_only';
+
+  if (workflowOption === 'draft_spec_for_approval' || workflowOption === 'plan_only' || workflowOption === 'report_blocker' || workflowOption === 'answer_general') {
+    return res.status(200).json({
+      ok: true,
+      workflowOption,
+      dispatched: false,
+      codingRun,
+    });
+  }
+
+  // Otherwise, if it's run_read_only_coder_task, we require editMode: read_only and we can auto dispatch
+  const readOnlyAutoDispatch = isSelectedReadOnlyWorkflow && editModeRequested === 'read_only';
+  
+  if (!explicitApproval && !readOnlyAutoDispatch) {
     return res.status(409).json({
       ok: false,
       error: 'coding_run_explicit_approval_required',
@@ -210,6 +234,7 @@ router.post('/openclaude/console/task', async (req, res) => {
   return res.status(result.routed ? 200 : 424).json({
     ok: result.routed,
     routing,
+    autoDispatchedReadOnly: !explicitApproval && readOnlyAutoDispatch,
     ...result,
     codingRun: updatedRun,
   });
@@ -250,6 +275,7 @@ router.post('/planflow/prepare', async (req, res) => {
         req.body?.selectedContext && typeof req.body.selectedContext === 'object'
           ? req.body.selectedContext
           : {},
+      workflowOption: typeof req.body?.workflowOption === 'string' ? req.body.workflowOption : undefined,
     });
     return res.json({ ok: true, ...result });
   } catch (error) {

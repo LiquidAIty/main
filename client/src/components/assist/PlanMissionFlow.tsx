@@ -242,19 +242,31 @@ function MissionNode({ data, selected }: NodeProps<any>) {
   const kind = String(nodeData?.kind || '').trim() || 'Task';
   const source = String(nodeData?.source || 'unknown').trim();
   const badge =
-    kind === 'PlanRoute'
-      ? 'PLAN'
-      : kind === 'MagenticOnePlan'
-        ? 'PLAN PROPOSAL'
-        : kind === 'RuntimeRun'
-          ? 'RUN'
-          : kind === 'ThinkGraphEvent'
-            ? 'THINK'
-            : kind === 'SkillReference'
-              ? 'SKILL'
-              : kind === 'CodeEvidenceReference'
-                ? 'CODE'
-                : kind.toUpperCase();
+    kind === 'CurrentMission'
+      ? 'CURRENT MISSION'
+      : kind === 'TaskLedger'
+        ? 'TASK LEDGER'
+        : kind === 'CurrentSpec'
+          ? 'CURRENT SPEC'
+          : kind === 'ProgressLedger'
+            ? 'PROGRESS LEDGER'
+            : kind === 'TaskResult'
+              ? 'TASK RESULT'
+              : kind === 'NextSpecCandidate'
+                ? 'NEXT SPEC'
+                : kind === 'PlanRoute'
+                  ? 'PLAN'
+                  : kind === 'MagenticOnePlan'
+                    ? 'PLAN PROPOSAL'
+                    : kind === 'RuntimeRun'
+                      ? 'RUN'
+                      : kind === 'ThinkGraphEvent'
+                        ? 'THINK'
+                        : kind === 'SkillReference'
+                          ? 'SKILL'
+                          : kind === 'CodeEvidenceReference'
+                            ? 'CODE'
+                            : kind.toUpperCase();
   return (
     <>
       <Handle
@@ -1311,7 +1323,7 @@ export default function PlanMissionFlow({
           pointerEvents: 'none',
         }}
       >
-        {['PLAN Route', 'SPEC Durable work', 'TASK Ledger item', 'RUN / PROOF Runtime evidence', 'THINK Memory event'].map(
+        {['Current Mission', 'Task Ledger', 'Current SPEC', 'Progress Ledger', 'TaskResult', 'Next SPEC Candidate'].map(
           (label) => (
             <span
               key={label}

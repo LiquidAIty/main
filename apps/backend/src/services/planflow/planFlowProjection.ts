@@ -5,6 +5,12 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 export type PlanFlowNodeType =
+  | 'CurrentMission'
+  | 'TaskLedger'
+  | 'CurrentSpec'
+  | 'ProgressLedger'
+  | 'TaskResult'
+  | 'NextSpecCandidate'
   | 'PlanRoute'
   | 'Task'
   | 'Decision'
@@ -82,14 +88,16 @@ function firstHeading(content: string, fallback: string): string {
 export function projectMarkdownPlanningDocuments(
   plan: MarkdownPlanningDocument,
 ): PlanFlowProjection {
-  const planRouteId = `planflow:route:${slug(plan.sourcePath)}`;
+  const planRouteId = `planflow:mission:${slug(plan.sourcePath)}`;
+  const taskLedgerId = `planflow:taskledger:${slug(plan.sourcePath)}`;
+  const progressLedgerId = `planflow:progressledger:${slug(plan.sourcePath)}`;
   return {
     packet_version: 1,
     source: 'planflow_markdown_projection',
     nodes: [
       {
         id: planRouteId,
-        type: 'PlanRoute',
+        type: 'CurrentMission',
         title: firstHeading(plan.content, 'PLAN.md'),
         source: 'plan_md',
         sourcePath: plan.sourcePath,
@@ -97,8 +105,31 @@ export function projectMarkdownPlanningDocuments(
         status: 'running',
         links: [],
       },
+      {
+        id: taskLedgerId,
+        type: 'TaskLedger',
+        title: 'Task Ledger',
+        source: 'plan_md',
+        sourcePath: plan.sourcePath,
+        provenance: `${plan.sourcePath} content`,
+        status: 'running',
+        links: [planRouteId],
+      },
+      {
+        id: progressLedgerId,
+        type: 'ProgressLedger',
+        title: 'Progress Ledger',
+        source: 'plan_md',
+        sourcePath: plan.sourcePath,
+        provenance: `Execution State`,
+        status: 'running',
+        links: [taskLedgerId],
+      },
     ],
-    edges: [],
+    edges: [
+      { id: `${planRouteId}-to-${taskLedgerId}`, source: planRouteId, target: taskLedgerId, type: 'contains' },
+      { id: `${taskLedgerId}-to-${progressLedgerId}`, source: taskLedgerId, target: progressLedgerId, type: 'contains' },
+    ],
     warnings: [],
   };
 }

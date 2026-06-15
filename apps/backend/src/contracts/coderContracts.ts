@@ -42,6 +42,26 @@ export const coderContextPacketSchema = z.object({
 
 export const coderWriteModeSchema = z.enum(['read-only', 'edit']);
 
+export const availableWorkflowOptionsSchema = z.enum([
+  'plan_only',
+  'draft_spec_for_approval',
+  'run_read_only_coder_task',
+  'report_blocker',
+  'answer_general',
+]);
+export type AvailableWorkflowOptions = z.infer<typeof availableWorkflowOptionsSchema>;
+
+export const magOnePlanningContextSchema = z.object({
+  planFlowState: contextRecord,
+  cbmInsight: contextRecord,
+  skillGraphStatus: contextSourceStatusSchema,
+  approvalDecision: z.enum(['approved', 'rejected', 'pending']),
+  contextPacket: coderContextPacketSchema,
+  workflowOptions: z.array(availableWorkflowOptionsSchema),
+}).strict();
+
+export type MagOnePlanningContext = z.infer<typeof magOnePlanningContextSchema>;
+
 export const coderPacketSchema = z.object({
   id: nonEmptyText,
   projectId: nonEmptyText,

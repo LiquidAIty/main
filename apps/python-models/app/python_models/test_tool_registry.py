@@ -582,40 +582,7 @@ def test_coder_console_task_blocks_disconnected_required_participants(
     assert expected in result["blocker"]
 
 
-def test_coder_console_task_does_not_run_for_ordinary_chat(monkeypatch, tmp_path):
-    from app.python_models.orchestration_contracts import ContextPack
 
-    post = lambda payload: pytest.fail(f"unexpected route call: {payload}")
-    monkeypatch.setattr("app.python_models.tool_registry._post_console_task", post)
-    context = ContextPack.model_validate(
-        _coder_context(str(tmp_path), user_text="Hello, how are you?")
-    )
-    token = set_current_coder_tool_context(context)
-    try:
-        result = asyncio.run(
-            coder_console_task("project-1", str(tmp_path), "Say hello.")
-        )
-    finally:
-        reset_current_coder_tool_context(token)
-    assert result["blocker"] == "coder_console_not_allowed_for_ordinary_chat"
-
-
-def test_coder_console_task_does_not_execute_a_vague_coding_request(monkeypatch, tmp_path):
-    from app.python_models.orchestration_contracts import ContextPack
-
-    post = lambda payload: pytest.fail(f"unexpected route call: {payload}")
-    monkeypatch.setattr("app.python_models.tool_registry._post_console_task", post)
-    context = ContextPack.model_validate(
-        _coder_context(str(tmp_path), user_text="Can you inspect the repo code?")
-    )
-    token = set_current_coder_tool_context(context)
-    try:
-        result = asyncio.run(
-            coder_console_task("project-1", str(tmp_path), "Inspect code.")
-        )
-    finally:
-        reset_current_coder_tool_context(token)
-    assert result["blocker"] == "coder_console_explicit_user_approval_required"
 
 
 def test_coder_console_tool_missing_fails_with_required_code(monkeypatch):

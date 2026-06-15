@@ -13,7 +13,11 @@ from app.python_models.orchestration_contracts import (
     KnowGraphUpdateReport,
     OrchestratorMetrics,
     OrchestratorRunResponse,
+    TaskLedger,
+    ProgressLedger,
 )
+import json
+import re
 
 
 async def orchestrate_context_pack(context: ContextPack) -> OrchestratorRunResponse:
@@ -28,11 +32,32 @@ async def orchestrate_context_pack(context: ContextPack) -> OrchestratorRunRespo
     result = await run_magentic_mission(context)
     elapsed_ms = int((time.monotonic() - started) * 1000)
 
+    # Extract ledgers from the final text
+    final_text = result.final_text
+    task_ledger = None
+    progress_ledger = None
+    
+    match = re.search(r'```json\s*(\{.*?\})\s*```', final_text, re.DOTALL)
+    if match:
+        try:
+            data = json.loads(match.group(1))
+            if "task_ledger" in data:
+                task_ledger = TaskLedger(**data["task_ledger"])
+            if "progress_ledger" in data:
+                progress_ledger = ProgressLedger(**data["progress_ledger"])
+        except Exception:
+            pass
+
+    if task_ledger is not None:
+        context.plan.task_ledger = task_ledger
+    if progress_ledger is not None:
+        context.plan.progress_ledger = progress_ledger
+
     return OrchestratorRunResponse(
         ok=True,
         session=context.session,
         stopReason=result.stop_reason,
-        finalResponseText=result.final_text,
+        finalResponseText=final_text,
         plan=context.plan,
         thinkGraph=context.thinkGraph,
         knowGraph=KnowGraphUpdateReport(

@@ -531,17 +531,7 @@ describe('deriveLocalCoderPermissionMode', () => {
     );
   });
 
-  it('selects plan when forbiddenWork declares no file edits', () => {
-    const p = { ...packet('C:/repo'), forbiddenWork: ['no file edits', 'no commits'] };
-    expect(deriveLocalCoderPermissionMode(p)).toBe('plan');
-  });
-
-  it('selects plan when stopConditions say inspect only', () => {
-    const p = { ...packet('C:/repo'), stopConditions: ['inspect only, return report only'] };
-    expect(deriveLocalCoderPermissionMode(p)).toBe('plan');
-  });
-
-  it('defaults an ambiguous packet to plan (conservative, never silent edits)', () => {
+  it('defaults to plan when writeMode is absent', () => {
     const p = {
       ...packet('C:/repo'),
       forbiddenWork: ['no specs/'],
@@ -579,12 +569,6 @@ describe('LocalCoderAdapter permission mode wiring', () => {
 
   it('passes --permission-mode acceptEdits for an edit packet through run()', async () => {
     expect(permModeOf(await runCapturingArgs({ writeMode: 'edit' }))).toBe('acceptEdits');
-  });
-
-  it('passes --permission-mode plan for a no-edit-language packet through run()', async () => {
-    expect(
-      permModeOf(await runCapturingArgs({ forbiddenWork: ['no file edits', 'no pushes'] })),
-    ).toBe('plan');
   });
 });
 

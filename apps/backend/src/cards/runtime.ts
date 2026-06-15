@@ -141,11 +141,7 @@ function resolveMagOneAgentRole(card: any): string {
   return 'other';
 }
 
-export function classifyMagOneIntent(userText: string): 'coding' | 'general' {
-  return /\b(code|coding|coder|repo|repository|bug|fix|patch|edit|compile|test|runtime|localcoder|openclaude|codex|typescript|javascript|python|cbm|codegraph)\b|report\s+(?:the\s+)?files?\s+that\s+implement/i.test(
-    userText,
-  ) ? 'coding' : 'general';
-}
+
 
 function routingAgent(card: any, reason: string): MagOneRoutingAgent {
   return {
@@ -165,7 +161,7 @@ export function buildMagOneRoutingDiagnostics(
 ): MagOneRoutingDiagnostics {
   const eligible = resolvedMagenticOptions(magenticCard.id, allCards, allEdges);
   const eligibleIds = new Set(eligible.map((card) => String(card.id)));
-  const workflowType = classifyMagOneIntent(userText);
+  const workflowType = 'coding';
   const canvasRuntimeCards = allCards.filter(
     (card) =>
       card.id !== magenticCard.id &&
@@ -241,7 +237,7 @@ export function buildMagOneRoutingManifest(
   allEdges: any[],
   userText: string,
 ): MagOneRoutingManifest {
-  const intent = classifyMagOneIntent(userText);
+  const intent = 'coding';
   const connected = new Set(
     resolvedMagenticOptions(magenticCard.id, allCards, allEdges).map((card) => String(card.id)),
   );
@@ -316,7 +312,8 @@ export function buildMagOneCodingWorkflowPacket(
       `Support agents: ${support.map((agent) => agent.label).join(', ') || 'none'}`,
       'Tool: coder_console_task',
       'Edit mode: read_only',
-      'Action: dispatch exactly once, then return started/blocked status with coding_run_id and result_status_url.',
+      'Available Workflow Options: plan_only, draft_spec_for_approval, run_read_only_coder_task, report_blocker, answer_general',
+      'Action: You must choose exactly one workflow option and state it clearly. If you choose run_read_only_coder_task, dispatch coder_console_task exactly once, then return started/blocked status. If you choose draft_spec_for_approval, you can optionally dispatch coder_console_task with workflow_option="draft_spec_for_approval" or just provide the draft in your final response.',
     ].join('\n'),
     asyncLifecycle: {
       dispatch: true,
@@ -324,6 +321,13 @@ export function buildMagOneCodingWorkflowPacket(
       provideCodingRunId: true,
       provideResultStatusUrl: true,
     },
+    workflowOptions: [
+      'plan_only',
+      'draft_spec_for_approval',
+      'run_read_only_coder_task',
+      'report_blocker',
+      'answer_general',
+    ],
   };
 }
 

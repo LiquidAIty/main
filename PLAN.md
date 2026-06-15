@@ -26,47 +26,53 @@ ingestion, and the research-to-chat loop are deferred until the coding loop is u
 
 ## Product Loop
 
-1. **User chat**: the user describes the desired outcome normally.
-2. **Magentic-One / Sol**: the planner initiates context gathering, reasons over the project, and
-   proposes the next bounded job.
-3. **Context Packet**: the planner receives current user input, PlanFlow state, this living plan,
-   ThinkGraph memory, fresh CodeGraph/CBM evidence, relevant SkillGraph memory, and KnowGraph
-   research only when relevant.
-4. **CoderPacket**: the planner creates one reviewable active job contract, shaped like a temporary
-   execution spec.
-5. **User Go**: after review or edits, the user sends the CoderPacket through a coder adapter.
-6. **CoderReport**: the coder returns structured results and proof, not a vague done message.
-7. **Comparison**: PlanFlow compares CoderReport against CoderPacket and exposes matches, misses,
-   changes, blockers, proof, and next step.
-8. **Memory**: ThinkGraph records the job and outcome; reusable learning updates skills; the next
-   job is prepared.
-9. **Bounded repeat**: Magentic-One/Sol may prepare exactly one next CoderPacket, but execution
-   stops for user review and Go. The coding loop is iterative, not uncontrolled recursion.
+1. **User chat**: user chats with Mag One.
+2. **Read PlanFlow**: Mag One reads current PlanFlow state.
+3. **Receive Options**: Mag One receives a compact list of available workflow options.
+4. **Context Gathering**: Mag One uses CBM and SkillGraph as code-planning tools.
+5. **Choose Option**: Mag One chooses one workflow option (e.g., plan_only, draft_spec_for_approval, run_read_only_coder_task).
+6. **Update Task Ledger**: Mag One updates the Task Ledger with the plan, selected agents, and context.
+7. **Create SPEC**: Mag One creates or updates the current SPEC.
+8. **Safe Execution**: Read-only audit/inspect may execute if safe and permitted by the selected option.
+9. **Approval Gate**: Edit/refactor/write work requires explicit approval.
+10. **Code Console**: Local Coder executes through Code Console visibility.
+11. **Update Progress Ledger**: Progress Ledger receives TaskResult, proof, and blockers.
+12. **Record Memory**: ThinkGraph records proof/memory.
+13. **Next SPEC**: PlanFlow proposes next SPEC candidate.
 
 ## Product Parts
 
 ### User Chat
 
-User chat is the front door. The user describes goals, changes, problems, and constraints in normal
-language. Chat starts planning; it is not a prompt-template editor.
+User chat is the steering layer and state mirror. The user describes goals, changes, problems, and constraints in normal language. Chat starts planning; it is not a prompt-template editor, and it does not own durable state.
+
+
+User chat is the steering layer and state mirror. The user describes goals, changes, problems, and constraints in normal language. Chat starts planning; it is not a prompt-template editor, and it does not own durable state.
 
 ### Magentic-One / Sol
 
+Magentic-One/Sol is the planner and thinking agent. It starts from user chat, reads current PlanFlow state, uses CBM and SkillGraph as planning tools, and chooses from available workflow options instead of relying on brittle deterministic intent taxonomies. It updates the Task Ledger and creates the current SPEC. It must not fake repository understanding, planning, execution, or success.
+
+
 Magentic-One/Sol is the planner and thinking agent. It starts from user chat, initiates the Context
 Packet pull, and uses current plan state, reasoning memory, relevant skills, fresh code evidence,
-and user input to choose the next bounded job. It must not fake repository understanding,
-planning, execution, or success.
+and user input to choose the next bounded job. It uses Codebase Memory and SkillGraph as planning tools to form the task. It must not fake repository understanding, planning, execution, or success.
 
 ### PlanFlow
 
-PlanFlow is Magentic-One/Sol's visible thinking and control surface.
+PlanFlow is the durable work surface, not decorative ontology chips. It uses a Task Ledger and Progress Ledger to model work.
 
-PlanFlow shows the living plan, current active job prompt when one exists,
-run/report status, blockers, proof summary, and next step. It may expose selected supporting
-evidence on demand.
+Task Ledger owns plan, known facts, current SPEC, selected agents, planning context, and approval state.
+Progress Ledger owns run status, TaskResult, proof, blocker, next_needed, and next SPEC candidate.
 
-PlanFlow is not a document map, spec library, skill library, markdown graph, set of road signs,
-fake planner summary, or fake execution preview. It does not show every spec, skill, or document.
+PlanFlow is not a document map, spec library, skill library, markdown graph, set of road signs, fake planner summary, or fake execution preview.
+
+
+PlanFlow is the durable work surface and Magentic-One/Sol's control plane.
+
+PlanFlow uses a Task Ledger and Progress Ledger to model work, rather than decorative taxonomy chips. It shows the Current Mission, Task Ledger (known facts, durable plan, current SPEC), and Progress Ledger (run status, TaskResult, proof, next step).
+
+PlanFlow is not a document map, spec library, skill library, markdown graph, set of road signs, fake planner summary, or fake execution preview. It does not show every spec, skill, or document.
 
 ### PLAN.md
 
@@ -94,11 +100,17 @@ stale code evidence is a blocker, not permission to guess.
 
 ### Codebase Memory / CodeGraph
 
+CBM is a planning tool for Mag One to form tasks. It is not the top-level product surface. Magentic-One/Sol uses fresh CBM/CodeGraph to create code anchors and bound the active job. The coder also uses Codebase Memory directly while working. CBM is a structural map; direct reads, tests, compile output, and real smoke results win when they disagree.
+
+
 Fresh code evidence is core. Magentic-One/Sol uses CBM/CodeGraph to create code anchors and bound
 the active job. The coder also uses Codebase Memory directly while working. CBM is a structural map;
 direct reads, tests, compile output, and real smoke results win when they disagree.
 
 ### SkillGraph / Neo4j / skills/*.md
+
+SkillGraph is a planning tool for Mag One to retrieve relevant skills. It is not the top-level product surface. skills/*.md are durable reusable learning indexed and retrieved through SkillGraph / Neo4j. Skills teach future agents how work is broken down, proof rules, failed attempts, guardrails, no-stub/no-fallback laws, CoderReport expectations, adapter lessons, and reusable procedures.
+
 
 `skills/*.md` are durable reusable learning indexed and retrieved through SkillGraph / Neo4j.
 Skills teach future agents how work is broken down, proof rules, failed attempts, guardrails,
@@ -217,7 +229,10 @@ root, environment, explicit provider/model, permission mode, normalized MCP conf
 timeout, and strict CoderReport validation. LocalCoder's gRPC surface remains a possible future
 interface but is not part of the current route.
 
-### OpenClaude Console Bridge
+### Code Console (OpenClaude Console Bridge)
+
+Code Console is execution visibility only. OpenClaude/LocalCoder remains a black-box coder engine for now; we are not graphing or editing the full OpenClaude stack now. The Console Bridge shows the live CLI in an in-app terminal panel.
+
 
 OpenClaude/LocalCoder is a real CLI coder engine, not a log source. LiquidAIty runs it as the actual
 coder with its normal tool/runtime abilities; it does not neuter it into a read-only viewer. Mag
@@ -276,6 +291,34 @@ Raw terminal output may still print the underlying CLI banner (Claude/OpenClaude
 developer mode, and proof/debug transcripts are never silently mutated. For public terminals an
 optional display-only redaction layer (`redactCoderBranding`) maps those terms to clean names and the
 UI marks the view as redacted — redaction must never become fake proof.
+
+### Plan Surface Loop & Intent Policy
+
+LiquidAIty is a Plan Surface centered agent workbench, not a generic chat-to-code app. The Plan
+Surface is the durable source of truth; chat is a control/mirror layer; Code Console is execution
+visibility only.
+
+Core loop:
+
+1. User chats with Mag One.
+2. Mag One reads Plan Surface state, CBM, SkillGraph/skills, and connected-canvas capability metadata.
+3. Mag One proposes or updates a plan and creates a SPEC packet.
+4. Edit/refactor/destructive work requires explicit user approval before dispatch.
+5. Explicit read-only audit/inspect tasks may dispatch read-only Local Coder after the Plan Surface
+   task/SPEC is created (it cannot edit, commit, or push).
+6. Local Coder runs through Code Console; TaskResult updates the Plan Surface; ThinkGraph records the
+   outcome; Mag One proposes the next SPEC from incomplete/blocked/subpar TaskResults.
+
+Intent/approval policy (enforced in the `/console/task` route): "Mag One chooses. Code does not interpret the user's wording." Mag One explicitly selects one of the `AvailableWorkflowOptions` (e.g. `draft_spec_for_approval`, `run_read_only_coder_task`, `plan_only`). Read-only tasks auto-dispatch (still gated by Local Coder + CodeGraph connectivity and the scoped CBM gate); edit/refactor/destructive work defaults to `draft_spec_for_approval` and holds for explicit user approval.
+
+Current objective: one reliable self-coding loop, not more scattered experiments. Open work:
+PlanFlow must become a live mission/work surface (mission, planning insight, active SPEC, execution,
+TaskResult, next SPEC) rather than decorative ontology chips; a compact `MagOnePlanningContext`
+packet should feed Mag One before planning. `SkillGraph: unavailable` today — `skills/*.md` exist
+(14 files) but there is no SkillGraph query service yet; do not fake skill insight.
+
+OpenClaude/LocalCoder remains a black-box coder engine; we are not graphing the full OpenClaude
+stack. CBM and SkillGraph are planner insight sources, not the coder runtime.
 
 ## Current Route
 

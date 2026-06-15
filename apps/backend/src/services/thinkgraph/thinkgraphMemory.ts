@@ -82,6 +82,8 @@ export type ThinkGraphEvent = {
   plannerProvider?: string;
   plannerModel?: string;
   plannerConfigSource?: string;
+  taskLedger?: any;
+  progressLedger?: any;
 };
 
 export type ThinkGraphRunEvent = {
@@ -214,7 +216,9 @@ export async function recordThinkGraphEvent(record: ThinkGraphEvent): Promise<{ 
       source_diagnostics_summary: $sourceDiagnosticsSummary,
       planner_provider: $plannerProvider,
       planner_model: $plannerModel,
-      planner_config_source: $plannerConfigSource
+      planner_config_source: $plannerConfigSource,
+      task_ledger: $taskLedger,
+      progress_ledger: $progressLedger
     })
     RETURN r.id
   `;
@@ -254,6 +258,8 @@ export async function recordThinkGraphEvent(record: ThinkGraphEvent): Promise<{ 
     plannerProvider: clampText(record.plannerProvider),
     plannerModel: clampText(record.plannerModel),
     plannerConfigSource: clampText(record.plannerConfigSource),
+    taskLedger: record.taskLedger ? JSON.stringify(record.taskLedger) : null,
+    progressLedger: record.progressLedger ? JSON.stringify(record.progressLedger) : null,
   });
   if (planFlowNodeIds.length > 0) {
     await runCypherOnGraph(

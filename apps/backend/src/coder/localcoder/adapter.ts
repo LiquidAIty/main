@@ -464,29 +464,15 @@ function normalizeMcpServer(
 
 export type LocalCoderPermissionMode = 'plan' | 'acceptEdits';
 
-const NO_EDIT_PATTERNS: RegExp[] = [
-  /no file edits/i,
-  /no edits/i,
-  /do not edit files?/i,
-  /don'?t edit files?/i,
-  /read[\s-]?only/i,
-  /inspect only/i,
-  /return report only/i,
-  /report only/i,
-];
-
 /**
  * Derive the OpenClaude permission mode from the CoderPacket. Conservative by
  * default: a packet only edits files when it explicitly declares
- * `writeMode: 'edit'`. Read-only is selected for `writeMode: 'read-only'`, for
- * any no-edit language in forbiddenWork/stopConditions, and for ambiguous
- * packets — so a no-edit job can never silently gain edit permission.
+ * `writeMode: 'edit'`. Read-only is selected for `writeMode: 'read-only'`
+ * or by default.
  */
 export function deriveLocalCoderPermissionMode(packet: CoderPacket): LocalCoderPermissionMode {
   if (packet.writeMode === 'read-only') return 'plan';
   if (packet.writeMode === 'edit') return 'acceptEdits';
-  const haystack = [...packet.forbiddenWork, ...packet.stopConditions].join('\n');
-  if (NO_EDIT_PATTERNS.some((pattern) => pattern.test(haystack))) return 'plan';
   return 'plan';
 }
 

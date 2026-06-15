@@ -736,6 +736,12 @@ export type MissionRun = {
 };
 
 export type PlanFlowNodeType =
+  | 'CurrentMission'
+  | 'TaskLedger'
+  | 'CurrentSpec'
+  | 'ProgressLedger'
+  | 'TaskResult'
+  | 'NextSpecCandidate'
   | 'PlanRoute'
   | 'Task'
   | 'Decision'

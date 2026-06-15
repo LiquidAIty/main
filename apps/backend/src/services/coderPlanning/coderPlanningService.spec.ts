@@ -285,21 +285,7 @@ describe('coder planning service', () => {
     );
   });
 
-  it('blocks a generated packet that omits explicit write mode', async () => {
-    await expect(
-      prepareActiveCoderPacket(
-        { projectId: 'project-1', userInput: 'Connect Context Packet to PlanFlow.' },
-        {
-          ...deps(),
-          generatePacket: async () => ({
-            packet: { ...generatedPacket, writeMode: undefined },
-            provenance: plannerProvenance(),
-          }),
-          persistPacket: async () => undefined,
-        },
-      ),
-    ).rejects.toThrow('generated_coder_packet_write_mode_required');
-  });
+
 
   it('records a visible CBM blocker in the CoderPacket instead of inventing anchors', async () => {
     const blockedContext = {

@@ -8,6 +8,16 @@ const planText = readFileSync(
   'utf8',
 );
 
+describe('PLAN.md Plan Surface loop & intent policy', () => {
+  it('documents the Plan Surface centered loop and the read-only audit policy', () => {
+    expect(planText).toContain('### Plan Surface Loop & Intent Policy');
+    expect(planText).toMatch(/durable source of truth/i);
+    expect(planText).toMatch(/auto-dispatch/i);
+    expect(planText).toMatch(/SkillGraph: unavailable/);
+    expect(planText).toMatch(/PlanFlow must become a live mission\/work surface/i);
+  });
+});
+
 describe('PLAN.md OpenClaude Console Bridge documentation', () => {
   it('documents the OpenClaude Console Bridge as a real visible CLI', () => {
     expect(planText).toContain('### OpenClaude Console Bridge');

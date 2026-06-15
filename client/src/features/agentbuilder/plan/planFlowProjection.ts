@@ -19,14 +19,16 @@ function toMissionStatus(status: PlanFlowNode['status']): PlanMissionNodeStatus 
 }
 
 function planNodePosition(node: PlanFlowNode, index: number): { x: number; y: number } {
-  if (node.type === 'PlanRoute') return { x: 40, y: 48 };
-  if (node.type === 'Task') {
+  if (node.type === 'CurrentMission') return { x: 40, y: 48 };
+  if (node.type === 'TaskLedger') return { x: 40, y: 226 };
+  if (node.type === 'ProgressLedger') return { x: 40, y: 404 };
+  if (node.type === 'TaskResult') {
     return {
       x: 360 + (index % 4) * 300,
       y: 320 + Math.floor(index / 4) * 178,
     };
   }
-  if (node.type === 'MagenticOnePlan') {
+  if (node.type === 'CurrentSpec') {
     return { x: 40 + (index % 3) * 300, y: 1120 + Math.floor(index / 3) * 178 };
   }
   if (node.type === 'RuntimeRun' || node.type === 'Proof') {
@@ -95,7 +97,7 @@ export function projectRealMagenticPlans(run: DeckRun | null | undefined): PlanF
       `Magentic-One proposal from ${step.title}`;
     nodes.push({
       id: planId,
-      type: 'MagenticOnePlan',
+      type: 'CurrentSpec',
       title,
       source: 'magentic_one',
       sourcePath: `deck-run:${run?.id || 'unknown'}/step:${step.id}`,
@@ -107,7 +109,7 @@ export function projectRealMagenticPlans(run: DeckRun | null | undefined): PlanF
       const taskId = `${planId}:task:${taskIndex + 1}`;
       nodes.push({
         id: taskId,
-        type: 'Task',
+        type: 'TaskResult',
         title: taskTitle,
         source: 'magentic_one',
         sourcePath: `deck-run:${run?.id || 'unknown'}/step:${step.id}`,
@@ -122,6 +124,25 @@ export function projectRealMagenticPlans(run: DeckRun | null | undefined): PlanF
         type: 'defines_task',
       });
     });
+    if (record?.progress_ledger?.next_instruction) {
+      const nextId = `${planId}:next_instruction`;
+      nodes.push({
+        id: nextId,
+        type: 'NextSpecCandidate',
+        title: String(record.progress_ledger.next_instruction).trim().slice(0, 100),
+        source: 'magentic_one',
+        sourcePath: `deck-run:${run?.id || 'unknown'}/step:${step.id}`,
+        provenance: `Real runtime magenticTrace.plan next instruction`,
+        status: 'draft',
+        links: [planId],
+      });
+      edges.push({
+        id: `${planId}:edge:next_instruction`,
+        source: planId,
+        target: nextId,
+        type: 'defines_task',
+      });
+    }
   });
   return {
     packet_version: 1,

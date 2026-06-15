@@ -8,6 +8,12 @@ import type {
 import { GRAPH_THEME } from '../graph/graphVisualTokens';
 
 export type PlanMissionNodeKind =
+  | 'CurrentMission'
+  | 'TaskLedger'
+  | 'CurrentSpec'
+  | 'ProgressLedger'
+  | 'TaskResult'
+  | 'NextSpecCandidate'
   | 'PlanRoute'
   | 'Goal'
   | 'Step'

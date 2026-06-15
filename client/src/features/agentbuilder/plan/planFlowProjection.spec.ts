@@ -11,7 +11,7 @@ describe('PlanFlow projection adapter', () => {
       nodes: [
         {
           id: 'route',
-          type: 'PlanRoute',
+          type: 'CurrentMission',
           title: 'Route',
           source: 'plan_md',
           sourcePath: 'PLAN.md',
@@ -27,7 +27,7 @@ describe('PlanFlow projection adapter', () => {
     const graph = buildPlanFlowMissionGraph(markdown, null);
 
     expect(graph.nodes[0]?.data).toMatchObject({
-      kind: 'PlanRoute',
+      kind: 'CurrentMission',
       source: 'plan_md',
       sourcePath: 'PLAN.md',
       provenance: 'PLAN.md heading',
@@ -55,11 +55,11 @@ describe('PlanFlow projection adapter', () => {
     const projection = projectRealMagenticPlans(run);
 
     expect(projection.nodes[0]).toMatchObject({
-      type: 'MagenticOnePlan',
+      type: 'CurrentSpec',
       source: 'magentic_one',
       title: 'Real proposal',
     });
-    expect(projection.nodes.filter((node) => node.type === 'Task')).toHaveLength(2);
+    expect(projection.nodes.filter((node) => node.type === 'TaskResult')).toHaveLength(2);
   });
 
   it('lays out the living route above real planner tasks', () => {
@@ -69,7 +69,7 @@ describe('PlanFlow projection adapter', () => {
       nodes: [
         {
           id: 'route',
-          type: 'PlanRoute',
+          type: 'CurrentMission',
           title: 'Route',
           source: 'plan_md',
           sourcePath: 'PLAN.md',
@@ -79,7 +79,7 @@ describe('PlanFlow projection adapter', () => {
         },
         {
           id: 'task',
-          type: 'Task',
+          type: 'TaskResult',
           title: 'Task',
           source: 'magentic_one',
           sourcePath: 'deck-run:run-1/step:step-1',

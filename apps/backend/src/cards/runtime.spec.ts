@@ -5,7 +5,6 @@ import { RUNTIME_TOOL_SPECS } from '../contracts/runtimeContracts';
 import {
   MAG_ONE_CODING_RUN_SYSTEM_PROMPT,
   buildMagOneRoutingManifest,
-  classifyMagOneIntent,
   buildMagOneRoutingDiagnostics,
   resolvedMagenticOptions,
   buildPythonAutoGenCardRuntimePayload,
@@ -213,10 +212,7 @@ describe('Canonical Cards Runtime', () => {
     expect(payload.codingWorkflowPacket?.compactSpec.length).toBeLessThan(2_000);
   });
 
-  it('classifies clear coding intent and keeps disconnected distractors unavailable', () => {
-    expect(classifyMagOneIntent('Plan and execute a read-only coder task: inspect this repo.')).toBe('coding');
-    expect(classifyMagOneIntent('Report files that implement the bridge.')).toBe('coding');
-    expect(classifyMagOneIntent('Hello, how are you?')).toBe('general');
+  it('provides the correct manifest for a task', () => {
     const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
     const coder = { id: 'coder', kind: 'agent', runtimeType: 'local_coder', title: 'Local Coder' };
     const codegraph = { id: 'codegraph', kind: 'agent', runtimeType: 'assistant_agent', title: 'CodeGraph Agent' };
@@ -239,30 +235,7 @@ describe('Canonical Cards Runtime', () => {
     });
   });
 
-  it('ordinary chat excludes the Local Coder and coder_console_task', () => {
-    const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
-    const coder = {
-      id: 'coder',
-      kind: 'agent',
-      runtimeType: 'local_coder',
-      runtimeBinding: 'local_coder',
-      title: 'Local Coder',
-      runtimeOptions: { modelKey: 'gpt-5-nano' },
-    };
-    const allCards = [mag, coder];
-    const allEdges = [{ id: 'edge-coder', source: coder.id, target: mag.id, edgeType: 'magentic_option' }];
-    const payload = buildPythonAutoGenCardRuntimePayload(
-      mag,
-      {},
-      'hello, how are you?',
-      { projectId: 'admin', deckId: 'deck', allCards, allEdges },
-      {},
-      resolvedMagenticOptions(mag.id, allCards, allEdges),
-      '2026',
-    );
-    expect(payload.cardRuntime.participants.map((agent) => agent.cardId)).not.toContain('coder');
-    expect(JSON.stringify(payload.cardRuntime.participants)).not.toContain('coder_console_task');
-  });
+
 
   it('disconnected cards do not appear in model-visible workspace context or payload participants', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };

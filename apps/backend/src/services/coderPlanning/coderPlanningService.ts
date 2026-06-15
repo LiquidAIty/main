@@ -9,6 +9,8 @@ import {
   type CoderPacket,
   type CoderReport,
   type ContextSourceDiagnostic,
+  type MagOnePlanningContext,
+  type AvailableWorkflowOptions,
 } from '../../contracts/coderContracts';
 import { resolveLocalCoderWorkspaceRoot } from '../../coder/localcoder/adapter';
 import { runLLM } from '../../llm/client';
@@ -43,6 +45,7 @@ export type PrepareActiveCoderPacketInput = {
   repoPath?: string | null;
   planFlowState?: JsonRecord | null;
   selectedContext?: JsonRecord | null;
+  workflowOption?: string;
 };
 
 export type SkillContext = {
@@ -442,9 +445,8 @@ function enforceTrustedPacketFields(
   now: string,
 ): CoderPacket {
   const generated = parseCoderPacket(generatedValue);
-  if (!generated.writeMode) {
-    throw new Error('generated_coder_packet_write_mode_required');
-  }
+  const derivedWriteMode = input.workflowOption === 'run_read_only_coder_task' ? 'read-only' : 'edit';
+  const isReadOnly = derivedWriteMode === 'read-only';
   const cbmBlocker = cbmBlockerFromContext(contextPacket);
   const sourceBlockers = contextDiagnosticBlockers(contextPacket);
   if (contextPacket.codeAnchors.length === 0 && !cbmBlocker) {
@@ -458,6 +460,7 @@ function enforceTrustedPacketFields(
     planExcerpt: contextPacket.planExcerpt,
     codeAnchors: contextPacket.codeAnchors,
     cbmQueries: contextPacket.cbmQueries,
+    writeMode: derivedWriteMode === 'edit' ? 'edit' : 'read-only',
     contextSummary: cleanList([
       generated.contextSummary,
       ...(cbmBlocker ? [`CBM blocker: ${cbmBlocker}`] : []),
@@ -467,6 +470,7 @@ function enforceTrustedPacketFields(
       ...generated.guardrails,
       'Use fresh Codebase Memory before editing and verify anchors by direct read.',
       'No fake success, silent fallback, spec/task files, commit, or push.',
+      ...(isReadOnly ? ['Do not edit files.', 'Do not commit.', 'Do not push.', 'This is a read-only audit.'] : []),
       ...(cbmBlocker ? [`CBM blocker: ${cbmBlocker}`] : []),
       ...sourceBlockers.map((blocker) => `Context source blocker: ${blocker}`),
     ]),
@@ -474,6 +478,7 @@ function enforceTrustedPacketFields(
       ...generated.forbiddenWork,
       'Do not create specs/, tasks/, spec.md, or task.md.',
       'Do not start or execute a next CoderPacket.',
+      ...(isReadOnly ? ['Editing any file.', 'Committing.', 'Pushing.'] : []),
     ]),
     stopConditions: cleanList([
       ...generated.stopConditions,
@@ -498,6 +503,10 @@ async function persistCreatedPacket(
   plannerProvenance: PlannerProvenance,
 ): Promise<void> {
   const cbmEvidence = cbmEvidenceSummary(contextPacket);
+  const planFlowState = contextPacket.planFlowState as any;
+  const realPlans = Array.isArray(planFlowState?.realMagenticPlans) ? planFlowState.realMagenticPlans : [];
+  const latestPlan = realPlans[realPlans.length - 1];
+  
   await recordThinkGraphEvent({
     projectId: packet.projectId,
     eventType: 'coder_packet_created',
@@ -521,13 +530,15 @@ async function persistCreatedPacket(
     plannerProvider: plannerProvenance.provider,
     plannerModel: plannerProvenance.model,
     plannerConfigSource: plannerProvenance.configSource,
+    taskLedger: latestPlan?.task_ledger,
+    progressLedger: latestPlan?.progress_ledger,
   });
 }
 
 export async function assembleCoderContextPacket(
   input: PrepareActiveCoderPacketInput,
   deps: CoderPlanningDeps = {},
-): Promise<{ contextPacket: CoderContextPacket; repoRoot: string }> {
+): Promise<{ contextPacket: CoderContextPacket; magOnePlanningContext: MagOnePlanningContext; repoRoot: string }> {
   const projectId = String(input.projectId || '').trim();
   const userInput = String(input.userInput || '').trim();
   if (!projectId) throw new Error('coder_context_project_id_required');
@@ -681,7 +692,21 @@ export async function assembleCoderContextPacket(
       warnings,
     },
   });
-  return { contextPacket, repoRoot };
+  const magOnePlanningContext = {
+    planFlowState,
+    cbmInsight: codeGraphContext,
+    skillGraphStatus: skillSource.diagnostic.status,
+    approvalDecision: 'pending' as const,
+    contextPacket,
+    workflowOptions: [
+      'plan_only',
+      'draft_spec_for_approval',
+      'run_read_only_coder_task',
+      'report_blocker',
+      'answer_general',
+    ] as AvailableWorkflowOptions[],
+  };
+  return { contextPacket, magOnePlanningContext, repoRoot };
 }
 
 export async function prepareActiveCoderPacket(
@@ -689,11 +714,12 @@ export async function prepareActiveCoderPacket(
   deps: CoderPlanningDeps = {},
 ): Promise<{
   contextPacket: CoderContextPacket;
+  magOnePlanningContext: MagOnePlanningContext;
   packet: CoderPacket;
   plannerProvenance: PlannerProvenance;
 }> {
   const now = (deps.now ?? (() => new Date().toISOString()))();
-  const { contextPacket, repoRoot } = await assembleCoderContextPacket(input, {
+  const { contextPacket, magOnePlanningContext, repoRoot } = await assembleCoderContextPacket(input, {
     ...deps,
     now: () => now,
   });
@@ -704,7 +730,7 @@ export async function prepareActiveCoderPacket(
     contextPacket,
     generated.provenance,
   );
-  return { contextPacket, packet, plannerProvenance: generated.provenance };
+  return { contextPacket, magOnePlanningContext, packet, plannerProvenance: generated.provenance };
 }
 
 export async function persistCoderRunOutcome(args: {

@@ -291,6 +291,30 @@ class SearchSwarmPlan(BaseModel):
     approved: bool = False
 
 
+class TaskLedger(BaseModel):
+    user_goal: str = ""
+    facts: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    plan: str = ""
+    current_spec: str = ""
+    required_agents_tools: list[str] = Field(default_factory=list)
+    approval_state: str = ""
+    target_root: str = ""
+    cbm_context_summary: str = ""
+    skillgraph_context_summary: str = ""
+
+class ProgressLedger(BaseModel):
+    is_complete: bool = False
+    is_stuck: bool = False
+    progress_summary: str = ""
+    next_actor: str = ""
+    next_action: str = ""
+    next_instruction: str = ""
+    blocker: str = ""
+    task_result: str = ""
+    next_needed: str = ""
+    next_spec_candidate: str = ""
+
 class PlanContext(BaseModel):
     anchor: str = ""
     whatChanged: list[str] = Field(default_factory=list)
@@ -299,6 +323,8 @@ class PlanContext(BaseModel):
     deltaSummary: str = ""
     status: Literal["draft", "grounded", "revised"] = "draft"
     searchSwarmPlan: SearchSwarmPlan | None = None
+    task_ledger: TaskLedger | None = None
+    progress_ledger: ProgressLedger | None = None
 
 
 class ResearchPack(BaseModel):

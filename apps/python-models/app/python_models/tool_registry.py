@@ -85,16 +85,6 @@ _CURRENT_CODER_DISPATCH: ContextVar[asyncio.Future[dict[str, Any]] | None] = Con
     "current_coder_console_dispatch",
     default=None,
 )
-_CODING_WORKFLOW_PATTERN = re.compile(
-    r"\b(code|coding|coder|repo|repository|bug|fix|patch|edit|compile|test|runtime|"
-    r"localcoder|openclaude|typescript|javascript|python|cbm|codegraph)\b",
-    re.IGNORECASE,
-)
-_EXPLICIT_CODER_EXECUTION_PATTERN = re.compile(
-    r"\b(execute|implement|apply|fix|patch|edit|change|run\s+(?:the\s+)?coder|"
-    r"plan\s+and\s+execute|do\s+it|proceed|approved?|go\s+ahead)\b",
-    re.IGNORECASE,
-)
 _DEFAULT_CODER_CONSOLE_BACKEND_URL = "http://127.0.0.1:4000"
 
 
@@ -241,6 +231,7 @@ async def coder_console_task(
     prompt: str = "",
     edit_mode: str = "read_only",
     session_id: str | None = None,
+    workflow_option: str | None = None,
 ) -> dict[str, Any]:
     """Send one canvas-gated, compact coding task to the owned Code Console route."""
     normalized_root = str(Path(str(target_root or "")).resolve()) if target_root else ""
@@ -252,13 +243,6 @@ async def coder_console_task(
         )
     if str(project_id or "").strip() != context.session.projectId:
         return _blocked_coder_result(normalized_root, "coder_console_project_id_mismatch")
-    if not _CODING_WORKFLOW_PATTERN.search(context.userText or ""):
-        return _blocked_coder_result(normalized_root, "coder_console_not_allowed_for_ordinary_chat")
-    if not _EXPLICIT_CODER_EXECUTION_PATTERN.search(context.userText or ""):
-        return _blocked_coder_result(
-            normalized_root,
-            "coder_console_explicit_user_approval_required",
-        )
     if str(edit_mode or "read_only").strip().lower() != "read_only":
         return _blocked_coder_result(
             normalized_root,
@@ -318,6 +302,7 @@ async def coder_console_task(
         "edges": [edge.model_dump() for edge in graph.edges],
         "editMode": "read_only",
         "sessionId": session_id,
+        "workflowOption": workflow_option,
     }
     try:
         _, response = await asyncio.to_thread(_post_console_task, payload)
@@ -455,6 +440,10 @@ def build_default_tool_registry() -> ToolRegistry:
                     "prompt": {"type": "string"},
                     "edit_mode": {"type": "string", "default": "read_only"},
                     "session_id": {"type": ["string", "null"]},
+                    "workflow_option": {
+                        "type": ["string", "null"],
+                        "enum": ["run_read_only_coder_task", "draft_spec_for_approval", "plan_only", None]
+                    },
                 },
                 "required": ["project_id", "target_root", "goal"],
             },

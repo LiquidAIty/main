@@ -327,7 +327,7 @@ describe('OpenClaude console bridge routes', () => {
     }
   });
 
-  it('creates a plan/SPEC but does not dispatch without explicit approval', async () => {
+  it('blocks request with magone_workflow_option_missing if workflowOption is absent', async () => {
     const { server, baseUrl } = await createApiServer();
     try {
       routerMocks.routeCodingTaskToConsole.mockClear();
@@ -337,19 +337,78 @@ describe('OpenClaude console bridge routes', () => {
         body: JSON.stringify({
           projectId: 'project-1',
           repoPath: 'C:/Projects/main',
-          task: 'inspect code',
-          userGoal: 'inspect code',
-          generatedSpec: 'Read-only inspection SPEC.',
+          task: 'refactor the auth module',
+          userGoal: 'refactor the auth module',
+          generatedSpec: 'Refactor SPEC.',
           explicitApproval: false,
           cards: [],
           edges: [],
         }),
       });
       const payload = await response.json();
-      expect(response.status).toBe(409);
-      expect(payload.codingRun.status).toBe('awaiting_approval');
-      expect(payload.codingRun.generatedSpec).toBe('Read-only inspection SPEC.');
+      expect(response.status).toBe(400);
+      expect(payload.error).toBe('magone_workflow_option_missing');
       expect(routerMocks.routeCodingTaskToConsole).not.toHaveBeenCalled();
+    } finally {
+      await close(server);
+    }
+  });
+
+  it('does not dispatch coder for non-dispatch options like plan_only', async () => {
+    const { server, baseUrl } = await createApiServer();
+    try {
+      routerMocks.routeCodingTaskToConsole.mockClear();
+      const response = await fetch(`${baseUrl}/openclaude/console/task`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          repoPath: 'C:/Projects/main',
+          task: 'just plan something',
+          workflowOption: 'plan_only',
+        }),
+      });
+      const payload = await response.json();
+      expect(response.status).toBe(200);
+      expect(payload.ok).toBe(true);
+      expect(payload.dispatched).toBe(false);
+      expect(payload.workflowOption).toBe('plan_only');
+      expect(routerMocks.routeCodingTaskToConsole).not.toHaveBeenCalled();
+    } finally {
+      await close(server);
+    }
+  });
+
+  it('dispatches run_read_only_coder_task when structural gates pass', async () => {
+    const { server, baseUrl } = await createApiServer();
+    try {
+      routerMocks.routeCodingTaskToConsole.mockClear();
+      const response = await fetch(`${baseUrl}/openclaude/console/task`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          repoPath: 'C:/Projects/main',
+          task: 'can you do a quick audit of code',
+          workflowOption: 'run_read_only_coder_task',
+          editMode: 'read_only',
+          explicitApproval: false,
+          cards: [
+            { id: 'mag', kind: 'agent', runtimeType: 'magentic_one' },
+            { id: 'lc', kind: 'agent', runtimeType: 'local_coder', title: 'Local Coder' },
+            { id: 'cg', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'codegraph_agent', title: 'CodeGraph Agent' },
+          ],
+          edges: [
+            { id: 'e1', source: 'mag', target: 'lc', edgeType: 'magentic_option' },
+            { id: 'e2', source: 'mag', target: 'cg', edgeType: 'magentic_option' },
+          ],
+        }),
+      });
+      const payload = await response.json();
+      expect(response.status).toBe(200);
+      expect(payload.ok).toBe(true);
+      expect(payload.autoDispatchedReadOnly).toBe(true);
+      expect(routerMocks.routeCodingTaskToConsole).toHaveBeenCalled();
     } finally {
       await close(server);
     }

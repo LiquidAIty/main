@@ -47,6 +47,7 @@ export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
         session_id: { type: ['string', 'null'] },
         coding_run_id: { type: ['string', 'null'] },
         result_status_url: { type: ['string', 'null'] },
+        workflow_option: { type: 'string', enum: ['run_read_only_coder_task', 'draft_spec_for_approval', 'plan_only'] },
       },
       required: ['project_id', 'target_root', 'goal'],
     },
@@ -191,6 +192,7 @@ export type MagOneCodingWorkflowPacket = {
     provideCodingRunId: true;
     provideResultStatusUrl: true;
   };
+  workflowOptions?: string[];
 };
 
 export type RuntimeGraphNode = {
