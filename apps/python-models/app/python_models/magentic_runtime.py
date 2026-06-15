@@ -507,23 +507,16 @@ async def wait_for_runtime_or_coder_dispatch(
     runtime: SingleThreadedAgentRuntime,
     dispatch_future: asyncio.Future[dict[str, Any]],
     created_agents: list[Any],
-    *,
-    dispatch_timeout_seconds: float | None = None,
-    timeout_result: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Stop Mag One rails once Code Console accepts or blocks a real dispatch."""
+    """Wait for the real Magentic-One run to finish, or stop the rails early if a
+    genuine coder_console_task dispatch resolves (only possible when a Local
+    Coder participant exists, i.e. never on a normal planning turn). There is no
+    TypeScript-driven timeout: planning runs to its own completion."""
     idle_task = asyncio.create_task(runtime.stop_when_idle())
     done, _ = await asyncio.wait(
         {idle_task, dispatch_future},
-        timeout=dispatch_timeout_seconds,
         return_when=asyncio.FIRST_COMPLETED,
     )
-    if not done and timeout_result is not None:
-        idle_task.cancel()
-        await asyncio.gather(idle_task, return_exceptions=True)
-        _cancel_agent_processing(created_agents)
-        await runtime.stop()
-        return timeout_result
     if dispatch_future in done:
         if not idle_task.done():
             idle_task.cancel()
@@ -547,11 +540,9 @@ def _sanitize_agent_name(title: str, used: set[str]) -> str:
 
 
 def _compose_task_text(context: ContextPack) -> str:
-    coding_packet = context.codingWorkflowPacket or {}
-    if str(coding_packet.get("intent") or "").strip().lower() == "coding":
-        compact_spec = str(coding_packet.get("compactSpec") or "").strip()
-        if compact_spec:
-            return compact_spec
+    # The real Magentic-One LedgerOrchestrator owns the task. TypeScript no
+    # longer ships a coding "compactSpec" that overrides it, so the task text is
+    # always composed from the genuine user request and canvas context below.
     parts: list[str] = []
     system_prompt = str(context.systemPrompt or "").strip()
     if system_prompt:
@@ -829,25 +820,15 @@ async def run_magentic_mission(context: ContextPack) -> MagenticRunResult:
             BroadcastMessage(content=UserMessage(content=task_text, source="User")),
             topic_id=DefaultTopicId(),
         )
+        # Run the real Magentic-One orchestrator to its own completion. There is
+        # no TypeScript-driven coder-dispatch timeout: planning is planning. The
+        # dispatch future stays wired only so a genuine coder_console_task call
+        # (when a Local Coder participant exists) can stop the rails early; on a
+        # normal planning turn no coder participant exists and it never resolves.
         dispatch_result = await wait_for_runtime_or_coder_dispatch(
             runtime,
             dispatch_future,
             created_agents,
-            dispatch_timeout_seconds=45.0 if context.codingWorkflowPacket else None,
-            timeout_result=(
-                {
-                    "status": "blocked",
-                    "message": (
-                        "MAGONE_CODING_DISPATCH_TIMEOUT_BEFORE_TOOL_CALL: "
-                        f"intent=coding selected_agent={str((context.codingWorkflowPacket or {}).get('selectedPrimaryAgent') or 'unavailable')} "
-                        f"tool=coder_console_task available={bool(coder_dispatch_priority)} elapsed_seconds=45 "
-                        "next=inspect Mag One Local Coder tool selection"
-                    ),
-                    "blocker": "MAGONE_CODING_DISPATCH_TIMEOUT_BEFORE_TOOL_CALL",
-                }
-                if context.codingWorkflowPacket
-                else None
-            ),
         )
     finally:
         reset_current_coder_dispatch_future(dispatch_token)

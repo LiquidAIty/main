@@ -134,7 +134,11 @@ export type RuntimeScope = {
   routingDiagnostics?: MagOneRoutingDiagnostics;
 };
 
-export type MagOneWorkflowType = 'coding' | 'general';
+// NOTE: there is intentionally no MagOneWorkflowType / intent / workflowType
+// "coding | general" selector here. TypeScript does not classify the user's
+// request — the real Python Magentic-One orchestrator owns that. The routing
+// diagnostics/manifest below only *describe* which bus-connected agents exist
+// and what they can do; they make no planning decision.
 
 export type MagOneRoutingAgent = {
   id: string;
@@ -146,7 +150,6 @@ export type MagOneRoutingAgent = {
 export type MagOneRoutingDiagnostics = {
   projectId: string;
   deckId: string;
-  workflowType: MagOneWorkflowType;
   eligibleBusConnectedAgents: MagOneRoutingAgent[];
   selectedExecutionPath: MagOneRoutingAgent[];
   ignoredEligibleAgents: MagOneRoutingAgent[];
@@ -156,7 +159,6 @@ export type MagOneRoutingDiagnostics = {
 };
 
 export type MagOneRoutingManifest = {
-  intent: MagOneWorkflowType;
   agents: Array<{
     cardId: string;
     kind: string;

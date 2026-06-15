@@ -60,7 +60,10 @@ def test_scheduler_prioritizes_coder_dispatch_without_inventing_graph_nodes() ->
     assert scheduler.next_obligations() == ["coder", "plan", "codegraph"]
 
 
-def test_coding_workflow_packet_replaces_noisy_generic_task_text() -> None:
+def test_compose_task_text_never_overridden_by_typescript_coding_packet() -> None:
+    """The bypass is gone: even if a legacy codingWorkflowPacket is present, the
+    real user request + canvas context drive the task. TypeScript no longer
+    hands Magentic-One a precomposed coder compactSpec to execute."""
     context = ContextPack.model_validate(
         {
             "session": {
@@ -74,8 +77,8 @@ def test_coding_workflow_packet_replaces_noisy_generic_task_text() -> None:
                 "providerModelId": "gpt-5-mini",
                 "startedAt": "2026-01-01T00:00:00Z",
             },
-            "userText": "Plan and execute a read-only coder task.",
-            "systemPrompt": "very noisy generic canvas prompt",
+            "userText": "can you do a code audit",
+            "systemPrompt": "real canvas system prompt",
             "codingWorkflowPacket": {
                 "intent": "coding",
                 "projectId": "p1",
@@ -85,26 +88,19 @@ def test_coding_workflow_packet_replaces_noisy_generic_task_text() -> None:
         }
     )
     task = _compose_task_text(context)
-    assert task == "COMPACT MAG ONE CODING WORKFLOW\nTool: coder_console_task"
-    assert "very noisy" not in task
+    # The genuine request and canvas prompt are used; the TS compactSpec is not.
+    assert "can you do a code audit" in task
+    assert "real canvas system prompt" in task
+    assert "COMPACT MAG ONE CODING WORKFLOW" not in task
+    assert "MAGONE_CODING_DISPATCH_TIMEOUT_BEFORE_TOOL_CALL" not in task
 
 
-def test_coding_dispatch_timeout_returns_truthful_blocker_before_outer_timeout() -> None:
-    async def run() -> None:
-        runtime = _LongRunningRuntime()
-        dispatch = asyncio.get_running_loop().create_future()
-        blocker = {
-            "status": "blocked",
-            "message": "MAGONE_CODING_DISPATCH_TIMEOUT_BEFORE_TOOL_CALL",
-        }
-        result = await wait_for_runtime_or_coder_dispatch(
-            runtime,
-            dispatch,
-            [],
-            dispatch_timeout_seconds=0.01,
-            timeout_result=blocker,
-        )
-        assert result == blocker
-        assert runtime.stopped is True
+def test_wait_for_runtime_has_no_typescript_timeout_path() -> None:
+    """wait_for_runtime_or_coder_dispatch no longer accepts a TS-driven timeout
+    or a fake blocker result. It only waits for the real run or a genuine
+    dispatch."""
+    import inspect
 
-    asyncio.run(run())
+    params = inspect.signature(wait_for_runtime_or_coder_dispatch).parameters
+    assert "dispatch_timeout_seconds" not in params
+    assert "timeout_result" not in params

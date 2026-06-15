@@ -19,10 +19,47 @@ describe('Canonical Cards Runtime', () => {
     expect(plan).toContain('vendored\n`localcoder/` runtime stays excluded from CBM');
   });
 
-  it('a coding workflow with no Magentic options reports the required-agent blocker', async () => {
+  it('normal chat submit is planning only: no coding-intent participant gate, no coder dispatch', async () => {
+    // Chat submit must not classify intent or impose a coding participant gate.
+    // With no bus-connected agents it fails with the honest "no participants"
+    // error — never the coder-console gate, and never a coder dispatch/timeout.
     const card = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
-    await expect(runCardWithContract(card, {}, 'test', { allCards: [card], allEdges: [] }))
-      .rejects.toThrow(/MAGONE_CODER_CONSOLE_BLOCKED_PARTICIPANT_GATE/);
+    await expect(
+      runCardWithContract(card, {}, 'can you do a code audit', { allCards: [card], allEdges: [] }),
+    ).rejects.toThrow('magentic_runtime_no_current_bus_connected_participants');
+    await expect(
+      runCardWithContract(card, {}, 'can you do a code audit', { allCards: [card], allEdges: [] }),
+    ).rejects.not.toThrow(/MAGONE_CODER_CONSOLE_BLOCKED_PARTICIPANT_GATE/);
+  });
+
+  it('chat submit builds no codingWorkflowPacket and does not classify intent as coding', () => {
+    const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
+    const coder = {
+      id: 'coder', kind: 'agent', runtimeType: 'local_coder', runtimeBinding: 'local_coder',
+      title: 'Local Coder', runtimeOptions: { modelKey: 'gpt-5-nano' },
+    };
+    const codegraph = {
+      id: 'codegraph', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'codegraph_agent',
+      title: 'CodeGraph Agent', runtimeOptions: { modelKey: 'gpt-5-nano' },
+    };
+    const allCards = [mag, coder, codegraph];
+    const allEdges = [coder, codegraph].map((agent) => ({
+      id: `edge-${agent.id}`, source: agent.id, target: mag.id, edgeType: 'magentic_option',
+    }));
+    const callable = resolvedMagenticOptions(mag.id, allCards, allEdges);
+    const payload = buildPythonAutoGenCardRuntimePayload(
+      mag, {}, 'fix the code', { projectId: 'admin', deckId: 'deck', allCards, allEdges }, {}, callable, '2026',
+    );
+
+    // No TypeScript coder packet is ever attached to a planning turn.
+    expect(payload.codingWorkflowPacket).toBeUndefined();
+    // The capability manifest carries no intent/workflow classifier at all.
+    expect((payload.routingManifest as any)?.intent).toBeUndefined();
+    expect((payload.cardRuntime.runtimeScope?.routingDiagnostics as any)?.workflowType).toBeUndefined();
+    // Local Coder is excluded from the planning run (execution is Run-only),
+    // but CodeGraph (and other non-coder agents) still participate in planning.
+    expect(payload.cardRuntime.participants.map((p) => p.cardId)).not.toContain('coder');
+    expect(payload.cardRuntime.participants.map((p) => p.cardId)).toContain('codegraph');
   });
 
   it('magentic_option direction-agnostic', () => {
@@ -142,17 +179,22 @@ describe('Canonical Cards Runtime', () => {
     );
 
     expect(diagnostics.projectId).toBe('admin');
-    expect(diagnostics.workflowType).toBe('coding');
+    // TypeScript does not classify the request: there is no workflowType field
+    // and no coding participant gate. The diagnostics only describe availability.
+    expect((diagnostics as any).workflowType).toBeUndefined();
     expect(diagnostics.eligibleBusConnectedAgents.map((agent) => agent.id)).toEqual(['plan', 'think']);
     expect(diagnostics.selectedExecutionPath.map((agent) => agent.id)).toEqual(['plan', 'think']);
     expect(diagnostics.disconnectedAgentsIgnored.map((agent) => agent.id)).toEqual(
       expect.arrayContaining(['codegraph', 'coder', 'know', 'research']),
     );
-    expect(diagnostics.missingRequiredAgents).toEqual(['CodeGraph Agent', 'Local Coder']);
-    expect(diagnostics.blockedReason).toContain('MAGONE_CODER_CONSOLE_BLOCKED_PARTICIPANT_GATE');
+    expect(diagnostics.missingRequiredAgents).toEqual([]);
+    expect(diagnostics.blockedReason).toBeNull();
   });
 
-  it('coding routing exposes coder_console_task only through the bus-connected Local Coder', () => {
+  it('planning manifest still describes the Local Coder as an available agent, but never runs or dispatches it', () => {
+    // The capability manifest may *describe* the Local Coder (so Python can
+    // propose it in its Progress Ledger), but the planning run must not include
+    // it as a participant and must not ship a coder-dispatch packet.
     const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
     const plan = { id: 'plan', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'plan_agent', title: 'Plan Agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
     const codegraph = { id: 'codegraph', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'codegraph_agent', title: 'CodeGraph Agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
@@ -183,33 +225,22 @@ describe('Canonical Cards Runtime', () => {
       '2026',
     );
 
-    expect(payload.cardRuntime.runtimeScope?.routingDiagnostics?.selectedExecutionPath.map((agent) => agent.id))
-      .toEqual(['plan', 'codegraph', 'coder', 'think']);
     expect(payload.cardRuntime.runtimeScope?.routingDiagnostics?.blockedReason).toBeNull();
-    const coderParticipant = payload.cardRuntime.participants.find((agent) => agent.cardId === 'coder');
-    expect(coderParticipant?.runtimeType).toBe('assistant_agent');
-    expect(coderParticipant?.role).toBe('local_coder');
-    expect(coderParticipant?.tools).toEqual(['coder_console_task']);
-    expect(payload.cardRuntime.runtimeScope?.pythonWorkerIds).toContain('coder');
-    expect(payload.routingManifest?.intent).toBe('coding');
+    // Local Coder is excluded from the planning participants and python workers.
+    expect(payload.cardRuntime.participants.map((agent) => agent.cardId)).not.toContain('coder');
+    expect(payload.cardRuntime.runtimeScope?.pythonWorkerIds).not.toContain('coder');
+    // Other agents still plan.
+    expect(payload.cardRuntime.participants.map((agent) => agent.cardId)).toEqual(
+      expect.arrayContaining(['plan', 'codegraph', 'think']),
+    );
+    // No intent/workflow classifier, no coder-dispatch packet on a planning turn.
+    expect((payload.routingManifest as any)?.intent).toBeUndefined();
+    expect(payload.codingWorkflowPacket).toBeUndefined();
+    // The manifest still lists the coder as a bus-connected, describable agent.
     expect(payload.routingManifest?.agents.find((agent) => agent.cardId === 'coder')).toMatchObject({
       busConnected: true,
-      capabilities: ['coding.execute', 'coding.inspect'],
-      tools: ['coder_console_task'],
-      requiredGates: ['CodeGraph.connected', 'CBM.scope.ok'],
-      defaultEditMode: 'read_only',
-      watchSurface: 'Code Console',
-      async: true,
+      role: 'local_coder',
     });
-    expect(payload.codingWorkflowPacket).toMatchObject({
-      intent: 'coding',
-      projectId: 'admin',
-      selectedPrimaryAgent: 'coder',
-      selectedSupportAgents: ['codegraph', 'think'],
-      tool: 'coder_console_task',
-    });
-    expect(payload.codingWorkflowPacket?.compactSpec).toContain('Project ID: admin');
-    expect(payload.codingWorkflowPacket?.compactSpec.length).toBeLessThan(2_000);
   });
 
   it('provides the correct manifest for a task', () => {

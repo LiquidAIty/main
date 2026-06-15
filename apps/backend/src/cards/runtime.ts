@@ -3,7 +3,6 @@ import {
   MagOneRoutingAgent,
   MagOneRoutingDiagnostics,
   MagOneRoutingManifest,
-  MagOneCodingWorkflowPacket,
   PythonAutoGenPayloadShape,
   RUNTIME_TOOL_SPECS,
   RuntimeGraph,
@@ -161,48 +160,27 @@ export function buildMagOneRoutingDiagnostics(
 ): MagOneRoutingDiagnostics {
   const eligible = resolvedMagenticOptions(magenticCard.id, allCards, allEdges);
   const eligibleIds = new Set(eligible.map((card) => String(card.id)));
-  const workflowType = 'coding';
+  // Normal chat submit is a planning turn. TypeScript does not classify the
+  // user's request or declare a workflow type — the real Python Magentic-One
+  // orchestrator owns that. These diagnostics only describe which bus-connected
+  // agents are available; every eligible participant is carried to the
+  // orchestrator with no coding gate and no coder-dispatch packet. Execution is
+  // a separate, explicit Run action (see coder.routes.ts), not a chat side effect.
   const canvasRuntimeCards = allCards.filter(
     (card) =>
       card.id !== magenticCard.id &&
       (card.kind === 'agent' || Boolean(String(card.runtimeType || '').trim())),
   );
-  const roleOrder = ['plan', 'codegraph', 'local_coder', 'thinkgraph'];
-  const selectedCards =
-    workflowType === 'coding'
-      ? roleOrder
-          .map((role) => eligible.find((card) => resolveMagOneAgentRole(card) === role))
-          .filter(Boolean)
-      : eligible;
+  const selectedCards = eligible;
   const selectedIds = new Set(selectedCards.map((card) => String(card.id)));
   const selectedExecutionPath = selectedCards.map((card) =>
-    routingAgent(
-      card,
-      workflowType === 'coding'
-        ? {
-            plan: 'create or validate the bounded coding plan and approval state',
-            codegraph: 'provide structural code context and enforce the scoped CBM gate',
-            local_coder: 'execute the approved bounded CoderPacket through the owned adapter',
-            thinkgraph: 'record CoderReport proof, blockers, and decisions',
-          }[resolveMagOneAgentRole(card)] || 'selected for the coding workflow'
-        : 'eligible current bus participant selected for the general workflow',
-    ),
+    routingAgent(card, 'eligible current bus participant available to the planning orchestrator'),
   );
-  const missingRequiredAgents =
-    workflowType === 'coding'
-      ? [
-          ['plan', 'Plan Agent'],
-          ['codegraph', 'CodeGraph Agent'],
-          ['local_coder', 'Local Coder'],
-        ]
-          .filter(([role]) => !eligible.some((card) => resolveMagOneAgentRole(card) === role))
-          .map(([, label]) => label)
-      : [];
+  const missingRequiredAgents: string[] = [];
 
   return {
     projectId: String(context.projectId || ''),
     deckId: String(context.deckId || ''),
-    workflowType,
     eligibleBusConnectedAgents: eligible.map((card) =>
       routingAgent(card, 'directly connected to the current Magentic bus'),
     ),
@@ -210,7 +188,7 @@ export function buildMagOneRoutingDiagnostics(
     ignoredEligibleAgents: eligible
       .filter((card) => !selectedIds.has(String(card.id)))
       .map((card) =>
-        routingAgent(card, `eligible but not required for the selected ${workflowType} workflow`),
+        routingAgent(card, 'eligible current bus participant not required for this turn'),
       ),
     disconnectedAgentsIgnored: canvasRuntimeCards
       .filter((card) => !eligibleIds.has(String(card.id)))
@@ -237,7 +215,10 @@ export function buildMagOneRoutingManifest(
   allEdges: any[],
   userText: string,
 ): MagOneRoutingManifest {
-  const intent = 'coding';
+  // Capability manifest only — it describes which bus-connected agents exist and
+  // what they can do, so Python Magentic-One can *propose* an action. It carries
+  // no intent/workflow classification; chat submit is always a neutral planning
+  // turn and the orchestrator decides what the task is.
   const connected = new Set(
     resolvedMagenticOptions(magenticCard.id, allCards, allEdges).map((card) => String(card.id)),
   );
@@ -248,7 +229,6 @@ export function buildMagOneRoutingManifest(
     thinkgraph: 70,
   };
   return {
-    intent,
     agents: allCards
       .filter((card) => card.id !== magenticCard.id && card.kind === 'agent')
       .map((card) => {
@@ -276,60 +256,11 @@ export function buildMagOneRoutingManifest(
   };
 }
 
-export function buildMagOneCodingWorkflowPacket(
-  userGoal: string,
-  diagnostics: MagOneRoutingDiagnostics,
-  manifest: MagOneRoutingManifest,
-  executionContext: { projectId?: string; targetRoot?: string } = {},
-): MagOneCodingWorkflowPacket | undefined {
-  if (manifest.intent !== 'coding') return undefined;
-  const coder = manifest.agents.find((agent) => agent.role === 'local_coder' && agent.busConnected);
-  const support = manifest.agents.filter(
-    (agent) => agent.busConnected && ['codegraph', 'thinkgraph'].includes(agent.role),
-  );
-  return {
-    projectId: String(executionContext.projectId || ''),
-    targetRoot: String(executionContext.targetRoot || ''),
-    userGoal: summarizeText(userGoal, 1_200),
-    intent: 'coding',
-    selectedPrimaryAgent: coder?.cardId || '',
-    selectedSupportAgents: support.map((agent) => agent.cardId),
-    tool: 'coder_console_task',
-    requiredGates: [
-      { name: 'LocalCoder.connected', status: coder ? 'available' : 'blocked' },
-      {
-        name: 'CodeGraph.connected',
-        status: support.some((agent) => agent.role === 'codegraph') ? 'available' : 'blocked',
-      },
-      { name: 'participant.routing', status: diagnostics.blockedReason ? 'blocked' : 'available' },
-    ],
-    compactSpec: [
-      'COMPACT MAG ONE CODING WORKFLOW',
-      `Project ID: ${String(executionContext.projectId || '')}`,
-      `Target root: ${String(executionContext.targetRoot || '')}`,
-      `User goal: ${summarizeText(userGoal, 1_200)}`,
-      `Primary agent: ${coder?.label || 'unavailable'}`,
-      `Support agents: ${support.map((agent) => agent.label).join(', ') || 'none'}`,
-      'Tool: coder_console_task',
-      'Edit mode: read_only',
-      'Available Workflow Options: plan_only, draft_spec_for_approval, run_read_only_coder_task, report_blocker, answer_general',
-      'Action: You must choose exactly one workflow option and state it clearly. If you choose run_read_only_coder_task, dispatch coder_console_task exactly once, then return started/blocked status. If you choose draft_spec_for_approval, you can optionally dispatch coder_console_task with workflow_option="draft_spec_for_approval" or just provide the draft in your final response.',
-    ].join('\n'),
-    asyncLifecycle: {
-      dispatch: true,
-      returnStartedStatus: true,
-      provideCodingRunId: true,
-      provideResultStatusUrl: true,
-    },
-    workflowOptions: [
-      'plan_only',
-      'draft_spec_for_approval',
-      'run_read_only_coder_task',
-      'report_blocker',
-      'answer_general',
-    ],
-  };
-}
+// buildMagOneCodingWorkflowPacket was removed: TypeScript no longer manufactures
+// a coder-dispatch packet (intent, selected primary agent, compactSpec) from
+// chat. That was the bypass that overrode the real Magentic-One Task Ledger and
+// forced a coder_console_task dispatch + 45s timeout. Coding execution is the
+// explicit Run route only (/api/coder/localcoder/run).
 
 export function resolvedMagenticOptions(
   magenticCardId: string,
@@ -557,29 +488,20 @@ export function buildPythonAutoGenCardRuntimePayload(
     context.allEdges || [],
     runtimeInput,
   );
-  const codingWorkflowPacket = buildMagOneCodingWorkflowPacket(
-    runtimeInput,
-    routingDiagnostics,
-    routingManifest,
-    {
-      projectId: context.projectId,
-      targetRoot:
-        context.workspaceObjectContext?.repoPath ||
-        context.workspaceObjectContext?.workspaceRoot,
-    },
-  );
-  const selectedWorkflowIds = new Set(
-    routingDiagnostics.selectedExecutionPath.map((agent) => agent.id),
-  );
+  // Normal chat submit is planning only. TypeScript builds no coder-dispatch
+  // packet and ships none to Python: the real Magentic-One LedgerOrchestrator
+  // owns the Task Ledger / Progress Ledger and may *propose* the Local Coder in
+  // its ledger, but execution happens only through the explicit Run route
+  // (/api/coder/localcoder/run), never as a side effect of chat.
+  // Planning participants = every eligible bus-connected callable agent EXCEPT
+  // the Local Coder. Dropping the coder from the planning run makes it
+  // structurally impossible to auto-dispatch a coding task from chat: the real
+  // Magentic-One orchestrator can still name 'local_coder' as a proposed next
+  // actor in its Progress Ledger, but it cannot execute one. Execution is the
+  // explicit Run route only.
   const supportedHeads = callableHeads
     .filter((head) => isPythonAutoGenCallableRuntimeType(resolveCardRuntimeType(head)))
-    .filter((head) =>
-      routingDiagnostics.workflowType === 'coding' && !routingDiagnostics.blockedReason
-        ? selectedWorkflowIds.has(String(head.id))
-        : routingDiagnostics.workflowType === 'general'
-          ? resolveMagOneAgentRole(head) !== 'local_coder'
-          : true,
-    );
+    .filter((head) => resolveMagOneAgentRole(head) !== 'local_coder');
   const systemPrompt = [MAG_ONE_CODING_RUN_SYSTEM_PROMPT, String(card.prompt || '').trim()]
     .filter(Boolean)
     .join('\n\n');
@@ -695,7 +617,6 @@ export function buildPythonAutoGenCardRuntimePayload(
     },
     workspaceObjectContext: context.workspaceObjectContext ?? undefined,
     routingManifest,
-    codingWorkflowPacket,
     cardRuntime: {
       cardId: String(card.id || ''),
       title: String(card.title || 'Magentic Agent'),
@@ -767,6 +688,7 @@ export async function runCardWithContract(
 
     // Normally we would call orchestrateWithAutoGen, but here we'll mock success or rely on the real service
     let finalText = '';
+    let magenticPlan: Record<string, unknown> | null = null;
     try {
         const payloadStr = JSON.stringify(payload);
         console.log('[DEBUG-TRACE] runCardWithContract exact payload snapshot:');
@@ -794,6 +716,13 @@ export async function runCardWithContract(
         console.log('[runCardWithContract] sidecar response keys:', Object.keys(sidecarResponse));
         
         finalText = String(sidecarResponse.finalResponseText || '').trim();
+        // The real Magentic-One Task Ledger / Progress Ledger comes back as
+        // `plan`. Carry it through unchanged so PlanFlow can project real nodes.
+        // TypeScript never fabricates these ledgers.
+        magenticPlan =
+          sidecarResponse.plan && typeof sidecarResponse.plan === 'object'
+            ? (sidecarResponse.plan as Record<string, unknown>)
+            : null;
         console.log('[runCardWithContract] parsed finalResponseText exists:', !!finalText);
     } catch (e: any) {
         console.error('[runCardWithContract] Exact caught error message:', e?.message || e);
@@ -812,6 +741,8 @@ export async function runCardWithContract(
       runtimeType: 'magentic_one',
       inputSummary: summarizeText(input),
       outputSummary: summarizeText(finalText),
+      // Real Magentic-One ledgers for the PlanFlow canvas projection.
+      magenticTrace: magenticPlan ? { plan: magenticPlan } : null,
     };
   }
   
