@@ -54,7 +54,6 @@ import {
   type StructuredAssistPlanSurface,
 } from '../components/builder/assistPlanSurface';
 import { buildPlanFlowMissionGraph } from '../features/agentbuilder/plan/planFlowProjection';
-import ActiveCoderJobPanel from '../features/agentbuilder/plan/ActiveCoderJobPanel';
 import {
   prepareActiveCoderPacket,
   runLocalCoderPacket,
@@ -5061,12 +5060,7 @@ export default function AgentBuilder(): React.ReactElement {
   // It is never projected onto the ReactFlow canvas (canvas = real Mag One only).
   const [planFlowProjection, setPlanFlowProjection] =
     useState<PlanFlowProjection | null>(null);
-  const [activeCoderPacket, setActiveCoderPacket] = useState<CoderPacket | null>(null);
   const [planExecutionState, setPlanExecutionState] = useState<PlanExecutionState | null>(null);
-  const [coderPacketPreparationStatus, setCoderPacketPreparationStatus] = useState<
-    'idle' | 'preparing' | 'ready' | 'blocked'
-  >('idle');
-  const [coderPacketPreparationMessage, setCoderPacketPreparationMessage] = useState('');
   const planFlowMissionGraph = useMemo(
     () => buildPlanFlowMissionGraph(latestDeckRun),
     [latestDeckRun],
@@ -5096,10 +5090,7 @@ export default function AgentBuilder(): React.ReactElement {
     return () => controller.abort();
   }, [activeProject]);
   useEffect(() => {
-    setActiveCoderPacket(null);
     setPlanExecutionState(activeProject ? readCachedPlanExecutionState(activeProject) : null);
-    setCoderPacketPreparationStatus('idle');
-    setCoderPacketPreparationMessage('');
   }, [activeProject]);
   const lastLargeSurfaceTelemetryRef = useRef<WorkspaceTestingSurface | null>(
     null,
@@ -8235,15 +8226,6 @@ export default function AgentBuilder(): React.ReactElement {
     });
 
     setMessages((m) => [...m, { role: 'user', text: trimmed }]);
-    setActiveCoderPacket(null);
-    setCoderPacketPreparationStatus('preparing');
-    setCoderPacketPreparationMessage(
-      'Waiting for the real Magentic-One run, then assembling PLAN.md, ThinkGraph, SkillGraph, and CodeGraph context.',
-    );
-
-    // PlanFlow is projected from authoritative markdown. The selected deck runs
-    // through the real runtime; a genuine orchestrator proposal may join the
-    // canvas only when it appears in the runtime trace.
     setDeckRunInput(trimmed);
 
     setTimeout(async () => {
@@ -8264,10 +8246,6 @@ export default function AgentBuilder(): React.ReactElement {
       const outcome = await handleRunDeck(trimmed, { missionSpec: approvedMissionSpec });
 
       if (!outcome || !outcome.ok) {
-        setCoderPacketPreparationStatus('blocked');
-        setCoderPacketPreparationMessage(
-          `Magentic-One generation path blocked: ${outcome?.error || 'Unknown error'}`,
-        );
         setMessages((m) => [
           ...m,
           {
@@ -8282,99 +8260,22 @@ export default function AgentBuilder(): React.ReactElement {
             .filter((candidate) => candidate && typeof candidate === 'object');
             
           const finalPlan: any = realMagenticPlans[realMagenticPlans.length - 1];
+
           if (finalPlan) {
-            let chatSummary = 'Magentic-One responded with an active ledger.';
-            if (finalPlan.task_ledger) {
-              const ledgerPlan = String(
-                finalPlan.task_ledger.plan ?? finalPlan.task_ledger.task_plan ?? '',
-              ).trim();
-              chatSummary += `\nTask Ledger: ${ledgerPlan ? ledgerPlan.split('\n').length : 0} items.`;
-            }
-            if (finalPlan.progress_ledger) {
-              if (finalPlan.progress_ledger.next_action) {
-                chatSummary += `\nNext Action: ${finalPlan.progress_ledger.next_action}`;
-              } else {
-                chatSummary += `\nmagone_next_action_missing`;
-              }
-              if (finalPlan.progress_ledger.blocker) {
-                chatSummary += `\nBlocker: ${finalPlan.progress_ledger.blocker}`;
-              }
-            } else {
-              chatSummary += `\nmagone_next_action_missing`;
-            }
+            let chatSummary = 'I prepared this task in the Magentic-One planning path. The TaskLedger is on the canvas.\n\nClick Run to start it, or tell me what you want changed.';
             setMessages((m) => [...m, { role: 'assistant', text: chatSummary }]);
           } else {
-            setMessages((m) => [...m, { role: 'assistant', text: 'magone_next_action_missing' }]);
+            setMessages((m) => [...m, { role: 'assistant', text: 'Magentic-One did not return a valid TaskLedger. Please try again.' }]);
           }
 
-          const prepared = await prepareActiveCoderPacket({
-            projectId: canvasProjectId,
-            userInput: trimmed,
-            repoPath:
-              activeDeckWorkspaceContext.repoPath ||
-              activeDeckWorkspaceContext.workspaceRoot ||
-              null,
-            planFlowState: {
-              projection: planFlowProjection || {},
-              magenticRunId: outcome.run?.id || '',
-              magenticRunStatus: outcome.run?.status || '',
-              realMagenticPlans,
-            },
-            selectedContext: {
-              ...activeDeckWorkspaceContext,
-              ...activeWorkspaceObjectContext,
-            },
-          });
-          if (prepared.packet.writeMode === 'read-only' || finalPlan?.progress_ledger?.next_action?.includes('Local Coder') || finalPlan?.progress_ledger?.next_action?.includes('run_read_only_coder_task')) {
-            setCoderPacketPreparationStatus('ready');
-            setCoderPacketPreparationMessage(
-              `${prepared.plannerProvenance.source} prepared a read-only audit. Auto-dispatching...`,
-            );
-            try {
-              const runOutcome = await fetch('/api/coder/openclaude/console/task', {
-                 method: 'POST',
-                 headers: { 'Content-Type': 'application/json' },
-                 body: JSON.stringify({
-                   task: trimmed,
-                   repoPath: activeDeckWorkspaceContext.repoPath || activeDeckWorkspaceContext.workspaceRoot || null,
-                   projectId: canvasProjectId,
-                   workflowOption: 'run_read_only_coder_task',
-                   editMode: 'read_only',
-                   generatedSpec: prepared.packet.objective,
-                   cards: deck.nodes.map(n => n.data),
-                   edges: deck.edges,
-                 })
-              }).then(res => res.json());
-
-              if (runOutcome.ok && runOutcome.codingRun) {
-                setCoderPacketPreparationMessage(
-                  `Read-only audit auto-dispatched. Status: ${runOutcome.codingRun.status}. Console Session: ${runOutcome.codingRun.sessionId}`,
-                );
-                setMessages((m) => [...m, { role: 'assistant', text: `Dispatched Code Console.\nRun ID: ${runOutcome.codingRun.id}\nSession ID: ${runOutcome.codingRun.sessionId}\nResult Status URL: /api/coder/openclaude/console/runs/${runOutcome.codingRun.id}` }]);
-              } else {
-                setCoderPacketPreparationMessage(
-                  `Auto-dispatch failed: ${runOutcome.error || 'Unknown'}`,
-                );
-                setMessages((m) => [...m, { role: 'assistant', text: `Auto-dispatch failed: ${runOutcome.error || 'Unknown'}` }]);
-              }
-            } catch (err) {
-              setCoderPacketPreparationMessage(
-                `Auto-dispatch error: ${err instanceof Error ? err.message : String(err)}`,
-              );
-            }
-          } else {
-            setActiveCoderPacket(prepared.packet);
-            setCoderPacketPreparationStatus('ready');
-            setCoderPacketPreparationMessage(
-              `${prepared.plannerProvenance.source} created one validated packet with ${prepared.plannerProvenance.contextSources.length} real context sources.`,
-            );
+          if (tab !== 'Plan') {
+            setTab('Plan');
           }
         } catch (error) {
-          setActiveCoderPacket(null);
-          setCoderPacketPreparationStatus('blocked');
-          setCoderPacketPreparationMessage(
-            error instanceof Error ? error.message : 'Active CoderPacket preparation failed.',
-          );
+          setMessages((m) => [
+            ...m,
+            { role: 'assistant', text: `Plan processing failed: ${error instanceof Error ? error.message : String(error)}` }
+          ]);
         }
         const textStr = outcome.finalText ? `\n\nResult:\n${outcome.finalText}` : '';
         setMessages((m) => [
@@ -8463,6 +8364,127 @@ export default function AgentBuilder(): React.ReactElement {
       });
     }, 100);
   };
+
+  const handleRunTask = useCallback(async () => {
+    if (deckRunBusy) return;
+
+    let approvedMissionSpec: any = undefined;
+    if (latestDeckRun) {
+      for (const step of latestDeckRun.steps) {
+        if (magenticPlanApproval[step.id] === 'approved' && step.magenticTrace?.plan) {
+          approvedMissionSpec = {
+            runState: 'approved',
+            task_ledger: (step.magenticTrace.plan as any).task_ledger,
+            proposed_action: (step.magenticTrace.plan as any).proposed_action,
+            progress_ledger: (step.magenticTrace.plan as any).progress_ledger,
+            context_packet: (step.magenticTrace.plan as any).context_packet,
+          };
+          break;
+        }
+      }
+      if (!approvedMissionSpec) {
+        const realMagenticPlans = latestDeckRun.steps
+          .map((step) => step.magenticTrace?.plan)
+          .filter((candidate) => candidate && typeof candidate === 'object');
+        if (realMagenticPlans.length > 0) {
+          const finalPlan: any = realMagenticPlans[realMagenticPlans.length - 1];
+          approvedMissionSpec = {
+            task_ledger: finalPlan.task_ledger,
+            proposed_action: finalPlan.proposed_action,
+            progress_ledger: finalPlan.progress_ledger,
+            context_packet: finalPlan.context_packet,
+          };
+        }
+      }
+    }
+
+    if (!approvedMissionSpec || (!approvedMissionSpec.task_ledger && !approvedMissionSpec.proposed_action)) {
+      setMessages((m) => [...m, { role: 'assistant', text: 'Run Task dispatch failed: no approved task ledger' }]);
+      return;
+    }
+
+    try {
+      const runOutcome = await fetch('/api/coder/openclaude/console/run_ledger', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({
+           taskLedger: approvedMissionSpec.task_ledger,
+           proposedAction: approvedMissionSpec.proposed_action,
+           progressLedger: approvedMissionSpec.progress_ledger,
+           contextPacket: approvedMissionSpec.context_packet,
+           targetRoot: activeDeckWorkspaceContext.repoPath || activeDeckWorkspaceContext.workspaceRoot || null,
+           projectId: canvasProjectId,
+           cards: deck.nodes.map(n => n.data),
+           edges: deck.edges,
+         })
+      }).then(res => res.json());
+
+      if (runOutcome.ok && runOutcome.codingRun) {
+        setMessages((m) => [...m, { role: 'assistant', text: `Dispatched Code Console.\nRun ID: ${runOutcome.codingRun.id}\nSession ID: ${runOutcome.codingRun.sessionId}\nResult Status URL: /api/coder/openclaude/console/runs/${runOutcome.codingRun.id}` }]);
+        
+        const codingRunReference = {
+          codingRunId: runOutcome.codingRun.id,
+          consoleSessionId: runOutcome.codingRun.sessionId,
+          resultStatusUrl: `/api/coder/openclaude/console/runs/${runOutcome.codingRun.id}`,
+        };
+        
+        if (!surfacedCodingRunIdsRef.current.has(codingRunReference.codingRunId)) {
+          surfacedCodingRunIdsRef.current.add(codingRunReference.codingRunId);
+          const startedPlanExecution = createPlanExecutionState({
+            projectId: canvasProjectId || '',
+            userGoal: 'Executing Task Ledger',
+            specPrompt: 'Executing Task Ledger',
+            targetRoot: activeDeckWorkspaceContext.repoPath || activeDeckWorkspaceContext.workspaceRoot || '',
+            codingRunId: codingRunReference.codingRunId,
+            consoleSessionId: codingRunReference.consoleSessionId,
+            resultStatusUrl: codingRunReference.resultStatusUrl,
+          });
+          setPlanExecutionState(startedPlanExecution);
+          cachePlanExecutionState(startedPlanExecution);
+          
+          if (tab !== 'Progress') {
+            setTab('Progress');
+          }
+          
+          void pollCodingRunUntilTerminal(codingRunReference, {
+            getCodingRun: openClaudeConsoleClient.getCodingRun,
+            getSession: openClaudeConsoleClient.getSession,
+          })
+            .then((result) => {
+              const completedPlanExecution = completePlanExecutionState(startedPlanExecution, result);
+              setPlanExecutionState(completedPlanExecution);
+              cachePlanExecutionState(completedPlanExecution);
+              setMessages((m) => [...m, { role: 'assistant', text: formatPlanExecutionChatMirror(completedPlanExecution) }]);
+            })
+            .catch((error) => {
+              const blocker = error instanceof Error ? error.message : String(error);
+              const blockedPlanExecution = blockPlanExecutionState(startedPlanExecution, blocker);
+              setPlanExecutionState(blockedPlanExecution);
+              cachePlanExecutionState(blockedPlanExecution);
+              setMessages((m) => [...m, { role: 'assistant', text: formatPlanExecutionChatMirror(blockedPlanExecution) }]);
+            });
+        }
+      } else {
+        setMessages((m) => [...m, { role: 'assistant', text: `Run Task dispatch failed: ${runOutcome.error || 'Unknown'}` }]);
+      }
+    } catch (err) {
+      setMessages((m) => [...m, { role: 'assistant', text: `Run Task execution error: ${err instanceof Error ? err.message : String(err)}` }]);
+    }
+  }, [deckRunBusy, latestDeckRun, magenticPlanApproval, canvasProjectId, activeDeckWorkspaceContext, deck.nodes, deck.edges, tab]);
+
+  const effectiveNodeOverrides = useMemo(() => {
+    const overrides = { ...planNodeDrafts };
+    if (planFlowProjection?.nodes?.length > 0) {
+      const targetNode = planFlowProjection.nodes.find(n => n.type === 'TaskLedger' || n.type === 'MagenticOnePlan');
+      if (targetNode) {
+        overrides[targetNode.id] = {
+          ...overrides[targetNode.id],
+          onRunTask: handleRunTask,
+        };
+      }
+    }
+    return overrides;
+  }, [planNodeDrafts, planFlowProjection, handleRunTask]);
 
   const thinkGraphViz = useMemo(() => {
     return prefixThinkGraphIds(ageRowsToGraph(graphResult));
@@ -9254,23 +9276,14 @@ export default function AgentBuilder(): React.ReactElement {
                   projectId={activeProject}
                   compact={surfaceRole === 'companion'}
                   fullHeight
-                  nodeOverrides={planNodeDrafts}
+                  nodeOverrides={effectiveNodeOverrides}
                   selectedNodeId={planMissionFocus?.nodeId || null}
                   drawerLinked
                   onFocusChange={setPlanMissionFocus}
                 />
               </Suspense>
             </div>
-            {activeCoderPacket ? (
-              <ActiveCoderJobPanel
-                projectId={activeProject}
-                preparedPacket={activeCoderPacket}
-                executionState={planExecutionState}
-                preparationStatus={coderPacketPreparationStatus}
-                preparationMessage={coderPacketPreparationMessage}
-                planSummary={planFlowProjection?.nodes?.[0]?.title || ''}
-              />
-            ) : null}
+
             {latestMissionRun ? (
               <div
                 style={graphDrawerSectionStyle({

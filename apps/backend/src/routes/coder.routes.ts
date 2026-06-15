@@ -240,6 +240,93 @@ router.post('/openclaude/console/task', async (req, res) => {
   });
 });
 
+router.post('/openclaude/console/run_ledger', async (req, res) => {
+  const payload = req.body as {
+    projectId: string;
+    targetRoot?: string;
+    taskLedger?: any;
+    proposedAction?: any;
+    progressLedger?: any;
+    contextPacket?: any;
+    cards?: any[];
+    edges?: any[];
+  };
+
+  const projectId = String(payload.projectId || '');
+  const repoPath = String(payload.targetRoot || '');
+  if (!repoPath) {
+    return res.status(400).json({ ok: false, error: 'console_task_repo_path_required' });
+  }
+
+  if (!payload.taskLedger && !payload.proposedAction) {
+    return res.status(400).json({ ok: false, error: 'no approved task ledger' });
+  }
+
+  const taskParts = [];
+  if (payload.taskLedger) {
+    taskParts.push(`Task Ledger:\n${JSON.stringify(payload.taskLedger, null, 2)}`);
+  }
+  if (payload.proposedAction) {
+    taskParts.push(`Proposed Action:\n${JSON.stringify(payload.proposedAction, null, 2)}`);
+  }
+  if (payload.progressLedger) {
+    taskParts.push(`Progress Ledger:\n${JSON.stringify(payload.progressLedger, null, 2)}`);
+  }
+  if (payload.contextPacket) {
+    taskParts.push(`Context Packet Summary:\n${JSON.stringify(payload.contextPacket, null, 2)}`);
+  }
+  taskParts.push('Execute this approved task ledger.');
+  
+  const formattedTask = taskParts.join('\n\n');
+
+  const codingRun = codingRunLifecycleService.request({
+    projectId,
+    targetRoot: repoPath,
+    userGoal: formattedTask,
+    generatedSpec: formattedTask,
+    editMode: 'read_only',
+  });
+  
+  codingRunLifecycleService.approve(codingRun.id);
+
+  const cards = Array.isArray(payload.cards) ? payload.cards : [];
+  const edges = Array.isArray(payload.edges) ? payload.edges : [];
+
+  const magenticCard = cards.find(
+    (card: any) => String(card?.runtimeType || '').trim().toLowerCase() === 'magentic_one',
+  );
+  if (!magenticCard) {
+    return res.status(400).json({ ok: false, error: 'console_task_magentic_card_missing' });
+  }
+
+  const routing = buildMagOneRoutingDiagnostics(magenticCard, cards, edges, formattedTask, { projectId });
+  const localCoderBusConnected = routing.eligibleBusConnectedAgents.some(
+    (agent) => agent.role === 'local_coder',
+  );
+  const codeGraphBusConnected = routing.eligibleBusConnectedAgents.some(
+    (agent) => agent.role === 'codegraph',
+  );
+
+  const result = await routeCodingTaskToConsole({
+    repoPath,
+    task: formattedTask,
+    localCoderBusConnected,
+    codeGraphBusConnected,
+    editMode: 'read_only',
+  });
+
+  const updatedRun = result.routed && result.session
+    ? codingRunLifecycleService.dispatched(codingRun.id, result.session.id, result.session.provider, result.session.model)
+    : codingRunLifecycleService.blocked(codingRun.id, result.blocked || 'coder_console_dispatch_blocked');
+
+  return res.status(result.routed ? 200 : 424).json({
+    ok: result.routed,
+    routing,
+    ...result,
+    codingRun: updatedRun,
+  });
+});
+
 router.get('/openclaude/console/runs/:id', async (req, res) => {
   const run = await codingRunLifecycleService.refresh(req.params.id);
   if (!run) return res.status(404).json({ ok: false, error: 'coding_run_not_found' });

@@ -16,7 +16,7 @@ describe('Canonical Cards Runtime', () => {
     const plan = readFileSync(path.join(process.cwd(), 'PLAN.md'), 'utf8');
     expect(plan).toContain('`C:\\Projects\\main`');
     expect(plan).toContain('The same CoderPacket-in/CoderReport-out lifecycle will later target explicit external repo roots');
-    expect(plan).toContain('vendored\n`localcoder/` runtime stays excluded from CBM');
+    expect(plan).toMatch(/vendored\r?\n`localcoder\/` runtime stays excluded from CBM/);
   });
 
   it('normal chat submit is planning only: no coding-intent participant gate, no coder dispatch', async () => {

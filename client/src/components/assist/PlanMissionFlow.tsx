@@ -344,6 +344,26 @@ function MissionNode({ data, selected }: NodeProps<any>) {
         >
           Source: {source}
         </div>
+        {typeof nodeData.onRunTask === 'function' && (
+          <div style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              onClick={nodeData.onRunTask}
+              style={{
+                width: '100%',
+                padding: '6px 12px',
+                borderRadius: 4,
+                border: '1px solid rgba(55,173,170,0.6)',
+                background: 'rgba(55,173,170,0.15)',
+                color: '#fff',
+                fontWeight: 'bold',
+                cursor: 'pointer'
+              }}
+            >
+              Run Task
+            </button>
+          </div>
+        )}
       </div>
       <Handle
         type="source"
