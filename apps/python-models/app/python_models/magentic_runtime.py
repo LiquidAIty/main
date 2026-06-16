@@ -441,12 +441,65 @@ class LiquidAItyGraphOrchestrator(LedgerOrchestrator):
         self._node_id_by_name = node_id_by_name
         self.final_answer_text: str | None = None
         self.graph_dispatches: list[str] = []
+        self._agents_list = kwargs.get("agents", [])
+
+    def _build_team_description(self) -> str:
+        description = ""
+        for agent in self._agents_list:
+            desc = getattr(agent, "description", "")
+            name = agent.id.key if hasattr(agent, "id") and hasattr(agent.id, "key") else str(agent)
+            description += f"{name}: {desc}\n"
+        return description.strip()
 
     async def _handle_broadcast(self, message: BroadcastMessage, ctx: MessageContext) -> None:
+        from autogen_core.models import SystemMessage, UserMessage, AssistantMessage
+        from autogen_magentic_one.messages import BroadcastMessage
+        
         source = getattr(message.content, "source", None)
         node_id = self._node_id_by_name.get(str(source or ""))
         if node_id is not None:
             self._scheduler.on_agent_spoken(node_id, message_content_to_str(message.content.content))
+
+        if source == "User":
+            # Real AutoGen 0.7.5 Magentic-One Ledger startup pattern + LiquidAIty JSON projection
+            task_text = message_content_to_str(message.content.content)
+            chat_history: list[LLMMessage] = []
+
+            # 1. Gather Facts
+            facts_prompt = ORCHESTRATOR_TASK_LEDGER_FACTS_PROMPT.format(task=task_text)
+            chat_history.append(UserMessage(content=facts_prompt, source="User"))
+            
+            self.logger.info(OrchestrationEvent(f"{self.metadata['type']} (prompt)", "Gathering facts..."))
+            response = await self._model_client.create(chat_history, cancellation_token=ctx.cancellation_token)
+            facts_text = str(response.content)
+            chat_history.append(AssistantMessage(content=facts_text, source=self.id.key))
+            self.logger.info(OrchestrationEvent(f"{self.metadata['type']} (facts)", facts_text))
+
+            # 2. Plan Generation
+            team_desc = self._build_team_description()
+            plan_prompt = ORCHESTRATOR_TASK_LEDGER_PLAN_PROMPT.format(team=team_desc)
+            chat_history.append(UserMessage(content=plan_prompt, source="User"))
+
+            self.logger.info(OrchestrationEvent(f"{self.metadata['type']} (prompt)", "Creating plan..."))
+            response = await self._model_client.create(chat_history, cancellation_token=ctx.cancellation_token)
+            plan_text = str(response.content)
+            chat_history.append(AssistantMessage(content=plan_text, source=self.id.key))
+            self.logger.info(OrchestrationEvent(f"{self.metadata['type']} (plan)", plan_text))
+
+            # 3. JSON Projection Adapter
+            chat_history.append(UserMessage(content=LIQUIDAITY_TASK_LEDGER_JSON_PROMPT, source="User"))
+            
+            self.logger.info(OrchestrationEvent(f"{self.metadata['type']} (prompt)", "Projecting JSON TaskLedger..."))
+            response = await self._model_client.create(chat_history, cancellation_token=ctx.cancellation_token)
+            json_text = str(response.content)
+            chat_history.append(AssistantMessage(content=json_text, source=self.id.key))
+            self.logger.info(OrchestrationEvent(f"{self.metadata['type']} (json)", json_text))
+
+            # Stop the flow at the Run Task gate: startup planning is done.
+            self.final_answer_text = json_text
+            await self.publish_message(BroadcastMessage(content=UserMessage(content="startup_planning_complete", source=self.id.key), request_halt=True), DefaultTopicId())
+            return
+            
         await super()._handle_broadcast(message, ctx)
 
     async def _select_next_agent(
@@ -539,6 +592,57 @@ def _sanitize_agent_name(title: str, used: set[str]) -> str:
     return name
 
 
+ORCHESTRATOR_TASK_LEDGER_FACTS_PROMPT = """Below I will present you a request. Before we begin addressing the request, please answer the following pre-survey to the best of your ability. Keep in mind that you are Ken Jennings-level with trivia, and Mensa-level with puzzles, so there should be a deep well to draw from.
+
+Here is the request:
+
+{task}
+
+Here is the pre-survey:
+
+    1. Please list any specific facts or figures that are GIVEN in the request itself. It is possible that there are none.
+    2. Please list any facts that may need to be looked up, and WHERE SPECIFICALLY they might be found. In some cases, authoritative sources are mentioned in the request itself.
+    3. Please list any facts that may need to be derived (e.g., via logical deduction, simulation, or computation)
+    4. Please list any facts that are recalled from memory, hunches, well-reasoned guesses, etc.
+
+When answering this survey, keep in mind that "facts" will typically be specific names, dates, statistics, etc. Your answer should use headings:
+
+    1. GIVEN OR VERIFIED FACTS
+    2. FACTS TO LOOK UP
+    3. FACTS TO DERIVE
+    4. EDUCATED GUESSES
+
+DO NOT include any other headings or sections in your response. DO NOT list next steps or plans until asked to do so.
+"""
+
+ORCHESTRATOR_TASK_LEDGER_PLAN_PROMPT = """Fantastic. To address this request we have assembled the following team:
+
+{team}
+
+Based on the team composition, and known and unknown facts, please devise a short bullet-point plan for addressing the original request. Remember, there is no requirement to involve all team members -- a team member's particular expertise may not be needed for this task."""
+
+LIQUIDAITY_TASK_LEDGER_JSON_PROMPT = """Great. Now please output a formal Task Ledger summarizing our facts and plan, along with the current state.
+You must output a single markdown JSON block exactly matching this schema:
+```json
+{
+  "task_ledger": {
+    "user_goal": "",
+    "facts": [],
+    "assumptions": [],
+    "plan": "",
+    "current_spec": "",
+    "required_agents_tools": [],
+    "approval_state": "",
+    "target_root": "",
+    "cbm_context_summary": "",
+    "skillgraph_context_summary": ""
+  }
+}
+```
+If you selected the Local Coder read-only action or if this is a planning step, ensure your current_spec says: no edits, no commit, no push.
+"""
+
+
 def _compose_task_text(context: ContextPack) -> str:
     # The real Magentic-One LedgerOrchestrator owns the task. TypeScript no
     # longer ships a coding "compactSpec" that overrides it, so the task text is
@@ -560,42 +664,6 @@ def _compose_task_text(context: ContextPack) -> str:
             parts.append(
                 f"Execution context:\nProject ID: {context.session.projectId}\nTarget root: {target_root}"
             )
-
-    parts.append(
-        "REQUIRED OUTPUT FORMAT:\n"
-        "You must update your Task Ledger and Progress Ledger. At the very end of your final answer, "
-        "output a single markdown JSON block exactly matching this schema:\n"
-        "```json\n"
-        "{\n"
-        "  \"task_ledger\": {\n"
-        "    \"user_goal\": \"\",\n"
-        "    \"facts\": [],\n"
-        "    \"assumptions\": [],\n"
-        "    \"plan\": \"\",\n"
-        "    \"current_spec\": \"\",\n"
-        "    \"required_agents_tools\": [],\n"
-        "    \"approval_state\": \"\",\n"
-        "    \"target_root\": \"\",\n"
-        "    \"cbm_context_summary\": \"\",\n"
-        "    \"skillgraph_context_summary\": \"\"\n"
-        "  },\n"
-        "  \"progress_ledger\": {\n"
-        "    \"is_complete\": false,\n"
-        "    \"is_stuck\": false,\n"
-        "    \"progress_summary\": \"\",\n"
-        "    \"next_actor\": \"\",\n"
-        "    \"next_action\": \"\",\n"
-        "    \"next_instruction\": \"\",\n"
-        "    \"blocker\": \"\",\n"
-        "    \"task_result\": \"\",\n"
-        "    \"next_needed\": \"\",\n"
-        "    \"next_spec_candidate\": \"\"\n"
-        "  }\n"
-        "}\n"
-        "```\n"
-        "If you select the Local Coder read-only action, ensure your current_spec says: "
-        "no edits, no commit, no push. You must select the next action from your available tools/agents."
-    )
 
     task = "\n\n".join(parts)
     if not task.strip():
