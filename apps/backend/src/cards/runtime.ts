@@ -689,6 +689,8 @@ export async function runCardWithContract(
     // Normally we would call orchestrateWithAutoGen, but here we'll mock success or rely on the real service
     let finalText = '';
     let magenticPlan: Record<string, unknown> | null = null;
+    // Honest TaskLedger trace from the real Python Magentic-One path.
+    let taskLedgerTrace: Record<string, unknown> | undefined;
     try {
         const payloadStr = JSON.stringify(payload);
         console.log('[DEBUG-TRACE] runCardWithContract exact payload snapshot:');
@@ -723,6 +725,11 @@ export async function runCardWithContract(
           sidecarResponse.plan && typeof sidecarResponse.plan === 'object'
             ? (sidecarResponse.plan as Record<string, unknown>)
             : null;
+        taskLedgerTrace =
+          sidecarResponse.taskLedgerTrace && typeof sidecarResponse.taskLedgerTrace === 'object'
+            ? (sidecarResponse.taskLedgerTrace as Record<string, unknown>)
+            : undefined;
+        console.log('[runCardWithContract] taskLedgerTrace:', JSON.stringify(taskLedgerTrace));
         console.log('[runCardWithContract] parsed finalResponseText exists:', !!finalText);
     } catch (e: any) {
         console.error('[runCardWithContract] Exact caught error message:', e?.message || e);
@@ -741,8 +748,15 @@ export async function runCardWithContract(
       runtimeType: 'magentic_one',
       inputSummary: summarizeText(input),
       outputSummary: summarizeText(finalText),
-      // Real Magentic-One ledgers for the PlanFlow canvas projection.
-      magenticTrace: magenticPlan ? { plan: magenticPlan } : null,
+      // Real Magentic-One ledgers for the PlanFlow canvas projection, plus the
+      // honest TaskLedger parse trace from the Python sidecar.
+      magenticTrace:
+        magenticPlan || taskLedgerTrace
+          ? {
+              ...(magenticPlan ? { plan: magenticPlan } : {}),
+              ...(taskLedgerTrace ? { taskLedgerTrace } : {}),
+            }
+          : null,
     };
   }
   

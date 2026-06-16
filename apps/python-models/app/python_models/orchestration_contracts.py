@@ -449,9 +449,25 @@ class OrchestratorMetrics(BaseModel):
     refinementApplied: bool = False
 
 
+class TaskLedgerTrace(BaseModel):
+    """Honest, per-stage trace proving the TaskLedger came from the real Python
+    Magentic-One path (not fabricated). Every field is derived from an actual
+    parse stage; nothing here is invented."""
+
+    source: Literal["python_magone"] = "python_magone"
+    pythonSidecarCalled: bool = False
+    modelReturnedText: bool = False
+    jsonBlockFound: bool = False
+    taskLedgerFound: bool = False
+    taskLedgerParseStatus: Literal["parsed", "missing", "invalid_json", "schema_invalid"] = "missing"
+    backendPreserved: bool = False
+    blocker: str | None = None
+
+
 class OrchestratorRunResponse(BaseModel):
     ok: bool
     session: ProjectSession
+    taskLedgerTrace: TaskLedgerTrace = Field(default_factory=TaskLedgerTrace)
     stopReason: str | None = None
     finalResponseText: str
     blackboardEntries: list[BlackboardEntry] = Field(default_factory=list)

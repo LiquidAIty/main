@@ -1,11 +1,66 @@
+import json
+
 import pytest
 from pydantic import ValidationError
 
+from app.python_models.autogen_orchestrator import _extract_ledger_block
 from app.python_models.orchestration_contracts import (
     CardRuntimeParticipant,
     CardRuntimePrivateParticipant,
     ContextPack,
+    TaskLedger,
+    TaskLedgerTrace,
 )
+
+
+def test_extract_ledger_block_captures_fenced_nested_json():
+    text = (
+        "Here is the plan.\n\n```json\n"
+        '{"task_ledger": {"user_goal": "audit", "plan": "1. read\\n2. report", "facts": ["a", "b"]}}\n'
+        "```\n"
+    )
+    block = _extract_ledger_block(text)
+    assert block is not None
+    data = json.loads(block)
+    ledger = TaskLedger(**data["task_ledger"])
+    assert ledger.user_goal == "audit"
+    assert "1. read" in ledger.plan
+    assert ledger.facts == ["a", "b"]
+
+
+def test_extract_ledger_block_returns_none_for_prose_only():
+    # Prose with no JSON object must NOT be coerced into a fake TaskLedger.
+    assert _extract_ledger_block("I cannot do that, here is a conversational answer.") is None
+    assert _extract_ledger_block("") is None
+
+
+def test_extract_ledger_block_bare_object_fallback():
+    block = _extract_ledger_block('prefix {"task_ledger": {"user_goal": "g"}} suffix')
+    assert block is not None
+    assert json.loads(block)["task_ledger"]["user_goal"] == "g"
+
+
+def test_task_ledger_trace_defaults_are_honest_missing():
+    trace = TaskLedgerTrace()
+    assert trace.source == "python_magone"
+    assert trace.pythonSidecarCalled is False
+    assert trace.taskLedgerFound is False
+    assert trace.taskLedgerParseStatus == "missing"
+    assert trace.backendPreserved is False
+
+
+def test_task_ledger_trace_parsed_shape():
+    trace = TaskLedgerTrace(
+        pythonSidecarCalled=True,
+        modelReturnedText=True,
+        jsonBlockFound=True,
+        taskLedgerFound=True,
+        taskLedgerParseStatus="parsed",
+        backendPreserved=True,
+    )
+    assert trace.taskLedgerParseStatus == "parsed"
+    assert trace.backendPreserved is True
+    assert trace.blocker is None
 
 
 SELECTED_PROVIDER = "openai"

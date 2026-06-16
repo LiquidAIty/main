@@ -27,8 +27,21 @@ export type AutoGenOrchestratorRequest = {
   cardRuntime?: Record<string, unknown>;
 };
 
+export type TaskLedgerTrace = {
+  source: 'python_magone';
+  pythonSidecarCalled: boolean;
+  modelReturnedText: boolean;
+  jsonBlockFound: boolean;
+  taskLedgerFound: boolean;
+  taskLedgerParseStatus: 'parsed' | 'missing' | 'invalid_json' | 'schema_invalid';
+  backendPreserved: boolean;
+  blocker?: string | null;
+};
+
 export type AutoGenOrchestratorResponse = {
   ok: boolean;
+  // Honest per-stage TaskLedger trace from the real Python Magentic-One path.
+  taskLedgerTrace?: TaskLedgerTrace;
   finalResponseText: string;
   stopReason?: string | null;
   transcript?: string[];
