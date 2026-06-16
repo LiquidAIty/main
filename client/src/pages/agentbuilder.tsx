@@ -32,7 +32,6 @@ import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWor
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import OpenClaudeConsolePanel from '../features/agentbuilder/console/OpenClaudeConsolePanel';
 import {
-  extractCodingRunReference,
   pollCodingRunUntilTerminal,
 } from '../features/agentbuilder/console/codingRunResultSurface';
 import { openClaudeConsoleClient } from '../features/agentbuilder/console/openClaudeConsoleClient';
@@ -57,6 +56,11 @@ import {
   buildPlanFlowMissionGraph,
   PLAN_CANVAS_RUN_TASK_NODE_ID,
 } from '../features/agentbuilder/plan/planFlowProjection';
+import {
+  buildResultFeedbackRequest,
+  interpretResultFeedbackResponse,
+  RESULT_FEEDBACK_ENDPOINT,
+} from '../features/agentbuilder/plan/planResultFeedback';
 import {
   blockPlanExecutionState,
   cachePlanExecutionState,
@@ -5053,12 +5057,37 @@ export default function AgentBuilder(): React.ReactElement {
   );
   const [stateLoaded, setStateLoaded] = useState(false);
   const [planExecutionState, setPlanExecutionState] = useState<PlanExecutionState | null>(null);
+  // Revised / next Task Ledger returned by Magentic-One on a result-feedback turn
+  // (skill step 12). Real Mag One output only — never a TS-fabricated plan. It is
+  // cleared whenever a fresh planning deck run arrives so it can never go stale.
+  const [resultFeedbackPlan, setResultFeedbackPlan] = useState<Record<string, unknown> | null>(null);
+  useEffect(() => {
+    setResultFeedbackPlan(null);
+  }, [latestDeckRun]);
+  // Single source of truth for the displayed Task Ledger: a Mag One revised/next
+  // plan from result feedback when present, otherwise the latest real deck run.
+  // Both the Plan canvas and the Run Task approval payload derive from this.
+  const planFlowSourceRun = useMemo<DeckRun | null | undefined>(() => {
+    if (resultFeedbackPlan) {
+      return {
+        id: 'result-feedback',
+        steps: [
+          {
+            id: 'result-feedback-step',
+            title: 'Magentic-One (result interpretation)',
+            magenticTrace: { plan: resultFeedbackPlan },
+          },
+        ],
+      } as unknown as DeckRun;
+    }
+    return latestDeckRun;
+  }, [resultFeedbackPlan, latestDeckRun]);
   // The Plan canvas is the deterministic two-stage [Task Ledger Planning] -> [Run Task]
-  // graph derived only from the real Magentic-One Task Ledger in the latest deck run.
+  // graph derived only from the real Magentic-One Task Ledger in the source run.
   // PLAN.md / backend planflow projections never drive the Plan canvas.
   const planFlowMissionGraph = useMemo(
-    () => buildPlanFlowMissionGraph(latestDeckRun),
-    [latestDeckRun],
+    () => buildPlanFlowMissionGraph(planFlowSourceRun),
+    [planFlowSourceRun],
   );
   useEffect(() => {
     setPlanExecutionState(activeProject ? readCachedPlanExecutionState(activeProject) : null);
@@ -8200,107 +8229,31 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckRunInput(trimmed);
 
     setTimeout(async () => {
-      // Chat submit is a neutral Magentic-One planning turn only. It never
-      // dispatches execution, never calls Code Console / Local Coder, and never
-      // carries an approval/missionSpec — execution is the explicit Run Task path.
+      // Chat is an AI wrapper. The ONLY thing it does is make the real
+      // Magentic-One model/orchestrator call and render whatever the model
+      // returns. No TypeScript classification, no TaskLedger precondition, no
+      // canned answers/completion text, no chat-side execution. The Plan canvas
+      // updates reactively from latestDeckRun if (and only if) the model itself
+      // returns a Task Ledger.
       const outcome = await handleRunDeck(trimmed);
 
-      if (!outcome || !outcome.ok) {
+      if (outcome && outcome.ok) {
+        const answer = String(outcome.finalText || '').trim();
         setMessages((m) => [
           ...m,
           {
             role: 'assistant',
-            text: `Magentic-One run failed: ${outcome?.error || 'Unknown error'}`,
+            text: answer || 'Magentic-One returned an empty response.',
           },
         ]);
       } else {
-        try {
-          const realMagenticPlans = (outcome.run?.steps || [])
-            .map((step) => step.magenticTrace?.plan)
-            .filter((candidate) => candidate && typeof candidate === 'object');
-            
-          const finalPlan: any = realMagenticPlans[realMagenticPlans.length - 1];
-
-          if (finalPlan) {
-            let chatSummary = 'I prepared this task in the Magentic-One planning path. The TaskLedger is on the canvas.\n\nClick Run to start it, or tell me what you want changed.';
-            setMessages((m) => [...m, { role: 'assistant', text: chatSummary }]);
-          } else {
-            setMessages((m) => [...m, { role: 'assistant', text: 'Magentic-One did not return a valid TaskLedger. Please try again.' }]);
-          }
-
-          if (tab !== 'Plan') {
-            setTab('Plan');
-          }
-        } catch (error) {
-          setMessages((m) => [
-            ...m,
-            { role: 'assistant', text: `Plan processing failed: ${error instanceof Error ? error.message : String(error)}` }
-          ]);
-        }
-        const textStr = outcome.finalText ? `\n\nResult:\n${outcome.finalText}` : '';
         setMessages((m) => [
           ...m,
           {
             role: 'assistant',
-            text: `Magentic-One run completed.${textStr}`,
+            text: `Magentic-One call failed: ${outcome?.error || 'Unknown error'}`,
           },
         ]);
-        const codingRunReference = extractCodingRunReference(outcome.finalText || '');
-        if (
-          codingRunReference &&
-          !surfacedCodingRunIdsRef.current.has(codingRunReference.codingRunId)
-        ) {
-          surfacedCodingRunIdsRef.current.add(codingRunReference.codingRunId);
-          const startedPlanExecution = createPlanExecutionState({
-            projectId: canvasProjectId,
-            userGoal: trimmed,
-            specPrompt: trimmed,
-            targetRoot:
-              activeDeckWorkspaceContext.repoPath ||
-              activeDeckWorkspaceContext.workspaceRoot ||
-              '',
-            codingRunId: codingRunReference.codingRunId,
-            consoleSessionId: codingRunReference.consoleSessionId,
-            resultStatusUrl: codingRunReference.resultStatusUrl,
-          });
-          setPlanExecutionState(startedPlanExecution);
-          cachePlanExecutionState(startedPlanExecution);
-          void pollCodingRunUntilTerminal(codingRunReference, {
-            getCodingRun: openClaudeConsoleClient.getCodingRun,
-            getSession: openClaudeConsoleClient.getSession,
-          })
-            .then((result) => {
-              const completedPlanExecution = completePlanExecutionState(
-                startedPlanExecution,
-                result,
-              );
-              setPlanExecutionState(completedPlanExecution);
-              cachePlanExecutionState(completedPlanExecution);
-              setMessages((m) => [
-                ...m,
-                {
-                  role: 'assistant',
-                  text: formatPlanExecutionChatMirror(completedPlanExecution),
-                },
-              ]);
-            })
-            .catch((error) => {
-              const blocker = error instanceof Error ? error.message : String(error);
-              const blockedPlanExecution = blockPlanExecutionState(
-                startedPlanExecution,
-                blocker,
-              );
-              setPlanExecutionState(blockedPlanExecution);
-              cachePlanExecutionState(blockedPlanExecution);
-              setMessages((m) => [
-                ...m,
-                {
-                  role: 'assistant',
-                  text: formatPlanExecutionChatMirror(blockedPlanExecution),
-                },
-              ]);
-            });
-        }
       }
 
       const responseReceivedAt = Date.now();
@@ -8330,10 +8283,11 @@ export default function AgentBuilder(): React.ReactElement {
 
     // Source of truth for execution approval is the Task Ledger currently
     // displayed on the Plan canvas — i.e. the latest real Magentic-One plan in
-    // the deck run. There is no raw-chat-input fallback and no coder packet.
+    // the source run (a result-feedback revision if present, else the latest
+    // deck run). There is no raw-chat-input fallback and no coder packet.
     let approvedMissionSpec: any = undefined;
-    if (latestDeckRun) {
-      const realMagenticPlans = latestDeckRun.steps
+    if (planFlowSourceRun) {
+      const realMagenticPlans = planFlowSourceRun.steps
         .map((step) => step.magenticTrace?.plan)
         .filter((candidate) => candidate && typeof candidate === 'object');
       if (realMagenticPlans.length > 0) {
@@ -8399,11 +8353,51 @@ export default function AgentBuilder(): React.ReactElement {
             getCodingRun: openClaudeConsoleClient.getCodingRun,
             getSession: openClaudeConsoleClient.getSession,
           })
-            .then((result) => {
+            .then(async (result) => {
               const completedPlanExecution = completePlanExecutionState(startedPlanExecution, result);
               setPlanExecutionState(completedPlanExecution);
               cachePlanExecutionState(completedPlanExecution);
               setMessages((m) => [...m, { role: 'assistant', text: formatPlanExecutionChatMirror(completedPlanExecution) }]);
+
+              // Skill step 12: automatically feed the real TaskResult back into a
+              // Magentic-One reasoning turn together with the previous Task Ledger
+              // and Progress Ledger. Magentic-One — not TypeScript — decides
+              // complete / blocked / revised / next, and may return a new ledger.
+              const taskResult = completedPlanExecution.task_result;
+              if (taskResult) {
+                try {
+                  const feedbackRequest = buildResultFeedbackRequest({
+                    projectId: canvasProjectId,
+                    targetRoot:
+                      activeDeckWorkspaceContext.repoPath ||
+                      activeDeckWorkspaceContext.workspaceRoot ||
+                      null,
+                    approvedMissionSpec,
+                    taskResult,
+                    cards: deck.nodes.map((n) => n.data),
+                    edges: deck.edges,
+                  });
+                  const feedback = await fetch(RESULT_FEEDBACK_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(feedbackRequest),
+                  }).then((res) => res.json());
+
+                  const { interpretation, nextPlan, error } = interpretResultFeedbackResponse(feedback);
+                  if (interpretation) {
+                    setMessages((m) => [...m, { role: 'assistant', text: interpretation }]);
+                    // Update the Plan canvas only when Magentic-One returns a real
+                    // revised / next Task Ledger. Complete (no new ledger) => no fake work.
+                    if (nextPlan) {
+                      setResultFeedbackPlan(nextPlan);
+                    }
+                  } else if (error) {
+                    setMessages((m) => [...m, { role: 'assistant', text: `Magentic-One result interpretation unavailable: ${error}` }]);
+                  }
+                } catch (feedbackError) {
+                  setMessages((m) => [...m, { role: 'assistant', text: `Magentic-One result feedback error: ${feedbackError instanceof Error ? feedbackError.message : String(feedbackError)}` }]);
+                }
+              }
             })
             .catch((error) => {
               const blocker = error instanceof Error ? error.message : String(error);
@@ -8419,7 +8413,7 @@ export default function AgentBuilder(): React.ReactElement {
     } catch (err) {
       setMessages((m) => [...m, { role: 'assistant', text: `Run Task execution error: ${err instanceof Error ? err.message : String(err)}` }]);
     }
-  }, [deckRunBusy, latestDeckRun, canvasProjectId, activeDeckWorkspaceContext, deck.nodes, deck.edges, tab]);
+  }, [deckRunBusy, planFlowSourceRun, canvasProjectId, activeDeckWorkspaceContext, deck.nodes, deck.edges, tab]);
 
   const effectiveNodeOverrides = useMemo(() => {
     const overrides = { ...planNodeDrafts };

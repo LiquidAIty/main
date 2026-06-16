@@ -13,7 +13,7 @@ import {
 } from '../coder/openclaude/console/consoleSession';
 import { routeCodingTaskToConsole } from '../coder/openclaude/console/consoleTaskRouter';
 import { codingRunLifecycleService } from '../coder/openclaude/console/codingRunLifecycle';
-import { buildMagOneRoutingDiagnostics } from '../cards/runtime';
+import { buildMagOneRoutingDiagnostics, runCardWithContract } from '../cards/runtime';
 
 const router = Router();
 export const OPENCLAUDE_HARNESS_ROUTE_PREFIX = '/coder/openclaude';
@@ -325,6 +325,78 @@ router.post('/openclaude/console/run_ledger', async (req, res) => {
     ...result,
     codingRun: updatedRun,
   });
+});
+
+// Skill step 12: after execution completes, feed the real TaskResult back into
+// a Magentic-One reasoning turn together with the previous Task Ledger and
+// Progress Ledger. Magentic-One — not TypeScript — decides whether the task is
+// complete, blocked, or needs a revised/next Task Ledger and returns its own
+// interpretation + (optionally) a revised plan. This is a planning/reasoning
+// turn: it routes to no coder and starts no execution.
+router.post('/openclaude/console/result_feedback', async (req, res) => {
+  const payload = req.body as {
+    projectId?: string;
+    targetRoot?: string;
+    taskLedger?: any;
+    progressLedger?: any;
+    runTaskPayload?: any;
+    taskResult?: any;
+    cards?: any[];
+    edges?: any[];
+  };
+
+  const projectId = String(payload.projectId || '');
+  const taskLedger = payload.taskLedger ?? payload.runTaskPayload?.task_ledger ?? null;
+  const progressLedger = payload.progressLedger ?? payload.runTaskPayload?.progress_ledger ?? null;
+
+  // Source of truth must be the real previous Task Ledger and the real
+  // TaskResult — never raw user input or a frontend-only summary.
+  if (!taskLedger && !payload.runTaskPayload?.proposed_action) {
+    return res.status(400).json({ ok: false, error: 'result_feedback_missing_task_ledger' });
+  }
+  if (!payload.taskResult) {
+    return res.status(400).json({ ok: false, error: 'result_feedback_missing_task_result' });
+  }
+
+  const cards = Array.isArray(payload.cards) ? payload.cards : [];
+  const edges = Array.isArray(payload.edges) ? payload.edges : [];
+  const magenticCard = cards.find(
+    (card: any) => String(card?.runtimeType || '').trim().toLowerCase() === 'magentic_one',
+  );
+  if (!magenticCard) {
+    return res.status(400).json({ ok: false, error: 'console_task_magentic_card_missing' });
+  }
+
+  const feedbackInstruction = [
+    'This is a result-interpretation turn. Execution of the previously approved Task Ledger has completed.',
+    'The real execution TaskResult / CoderReport is provided in the blackboard findings, and the previous',
+    'Task Ledger and Progress Ledger are provided in the plan context.',
+    'Interpret the actual result against the previous Task Ledger and Progress Ledger and decide whether the',
+    'task is complete, blocked, needs a revised Task Ledger, or needs the next Task Ledger.',
+    'Do not invent success. If the task is complete, do not fabricate next work.',
+  ].join(' ');
+
+  try {
+    const result = await runCardWithContract(magenticCard, {}, feedbackInstruction, {
+      deckId: '',
+      projectId,
+      allCards: cards,
+      allEdges: edges,
+      allTemplates: [],
+      previousOutput: '',
+      priorPlanContext: { task_ledger: taskLedger, progress_ledger: progressLedger },
+      resultFeedback: payload.taskResult,
+    });
+    return res.status(result.status === 'error' ? 502 : 200).json({
+      ok: result.status !== 'error',
+      interpretation: result.output,
+      // The revised / next Task Ledger (if any) comes back only from real
+      // Magentic-One output. TypeScript never fabricates completion or a plan.
+      plan: result.magenticTrace?.plan ?? null,
+    });
+  } catch (err: any) {
+    return res.status(502).json({ ok: false, error: String(err?.message || err) });
+  }
 });
 
 router.get('/openclaude/console/runs/:id', async (req, res) => {
