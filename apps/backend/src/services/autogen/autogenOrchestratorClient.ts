@@ -17,6 +17,8 @@ export type AutoGenOrchestratorRequest = {
   userText: string;
   priorAssistantText?: string;
   systemPrompt?: string;
+  // Structured Run Task approval gate; chat submit is planning only (false).
+  runApproved?: boolean;
   blackboard?: Record<string, unknown>;
   plan?: Record<string, unknown>;
   thinkGraph?: Record<string, unknown>;
@@ -27,22 +29,34 @@ export type AutoGenOrchestratorRequest = {
   cardRuntime?: Record<string, unknown>;
 };
 
-export type TaskLedgerTrace = {
+export type LedgerTrace = {
   source: 'python_magone';
-  pythonSidecarCalled: boolean;
-  modelReturnedText: boolean;
-  jsonBlockFound: boolean;
-  taskLedgerFound: boolean;
-  taskLedgerParseStatus: 'parsed' | 'missing' | 'invalid_json' | 'schema_invalid';
-  backendPreserved: boolean;
+  referenceFiles?: string[];
+  referenceClasses?: string[];
+  referenceMethods?: string[];
+  promptConstants?: string[];
+  canvasTeamCompiled?: boolean;
+  taskLedgerFactsPromptUsed?: boolean;
+  taskLedgerPlanPromptUsed?: boolean;
+  taskLedgerFullPromptUsed?: boolean;
+  taskLedgerProduced?: boolean;
+  planCanvasProjected?: boolean;
+  runTaskClicked?: boolean;
+  progressLedgerStarted?: boolean;
+  progressLedgerPromptUsed?: boolean;
+  agentCanvasProjected?: boolean;
+  noExecutionBeforeRunTask?: boolean;
   blocker?: string | null;
 };
 
 export type AutoGenOrchestratorResponse = {
   ok: boolean;
   // Honest per-stage TaskLedger trace from the real Python Magentic-One path.
-  taskLedgerTrace?: TaskLedgerTrace;
-  finalResponseText: string;
+  ledgerTrace?: LedgerTrace;
+  finalResponseText?: string;
+  statusText?: string;
+  taskLedger?: any;
+  progressLedger?: any;
   stopReason?: string | null;
   transcript?: string[];
   metrics?: Record<string, unknown>;

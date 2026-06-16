@@ -139,7 +139,7 @@ export function blockPlanExecutionState(
   };
 }
 
-export function formatPlanExecutionChatMirror(state: PlanExecutionState): string {
+export function formatPlanExecutionStatusMessage(state: PlanExecutionState): string {
   const taskResult = state.task_result;
   if (!taskResult) {
     return `Plan Surface started coding run ${state.coding_run_id}. Result status: ${state.result_status_url}`;

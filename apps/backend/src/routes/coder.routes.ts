@@ -240,7 +240,7 @@ router.post('/openclaude/console/task', async (req, res) => {
   });
 });
 
-router.post('/openclaude/console/run_ledger', async (req, res) => {
+router.post('/openclaude/console/run_approved_task', async (req, res) => {
   const payload = req.body as {
     projectId: string;
     targetRoot?: string;

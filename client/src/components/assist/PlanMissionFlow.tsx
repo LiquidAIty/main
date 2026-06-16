@@ -346,6 +346,24 @@ function MissionNode({ data, selected }: NodeProps<any>) {
         >
           Source: {source}
         </div>
+        {nodeData.summary && (
+          <div
+            style={{
+              color: GRAPH_THEME.surface.text,
+              fontSize: 11.5,
+              lineHeight: 1.3,
+              whiteSpace: 'pre-wrap',
+              overflowWrap: 'break-word',
+              position: 'relative',
+              zIndex: 1,
+              marginTop: 4,
+              paddingTop: 4,
+              borderTop: '1px solid rgba(255,255,255,0.05)',
+            }}
+          >
+            {nodeData.summary}
+          </div>
+        )}
         {nodeData.isRunTaskNode && (
           <div style={{ marginTop: 8 }}>
             <button

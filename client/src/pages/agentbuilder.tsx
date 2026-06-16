@@ -66,7 +66,7 @@ import {
   cachePlanExecutionState,
   completePlanExecutionState,
   createPlanExecutionState,
-  formatPlanExecutionChatMirror,
+  formatPlanExecutionStatusMessage,
   readCachedPlanExecutionState,
   type PlanExecutionState,
 } from '../features/agentbuilder/plan/planExecutionState';
@@ -8238,15 +8238,55 @@ export default function AgentBuilder(): React.ReactElement {
       const outcome = await handleRunDeck(trimmed);
 
       if (outcome && outcome.ok) {
-        const answer = String(outcome.finalText || '').trim();
-        setMessages((m) => [
-          ...m,
-          {
-            role: 'assistant',
-            text: answer || 'Magentic-One returned an empty response.',
-          },
-        ]);
+        // Find if any step produced a task ledger
+        let hasTaskLedger = false;
+        let requiredAgents: string[] = [];
+        let stepsPlanned = 0;
+        if (outcome.run?.steps) {
+          for (const step of outcome.run.steps) {
+            const rawOutput = typeof step.output === 'string' ? step.output : '';
+            try {
+              const parsed = JSON.parse(rawOutput);
+              if (parsed?.task_ledger) {
+                hasTaskLedger = true;
+                if (Array.isArray(parsed.task_ledger.required_agents_tools)) {
+                  requiredAgents = parsed.task_ledger.required_agents_tools;
+                }
+                const planText = parsed.task_ledger.plan || parsed.task_ledger.task_plan || '';
+                if (typeof planText === 'string') {
+                  stepsPlanned = Math.max(stepsPlanned, planText.split(/\r?\n/).filter(line => line.trim().length > 0).length);
+                } else if (Array.isArray(planText)) {
+                  stepsPlanned = Math.max(stepsPlanned, planText.length);
+                }
+              }
+            } catch (e) {
+              // ignore parse errors
+            }
+          }
+        }
+        
+        if (hasTaskLedger) {
+          const agentsStr = requiredAgents.length > 0 ? requiredAgents.join(', ') : 'None';
+          setMessages((m) => [
+            ...m,
+            {
+              role: 'assistant',
+              text: `Task Ledger created.\nPlanFlow is waiting for Run Task approval.\nAgents included: ${agentsStr}.\nSteps planned: ${stepsPlanned}.\nNo execution started.`,
+            },
+          ]);
+        } else {
+          const answer = String(outcome.finalText || '').trim();
+          setMessages((m) => [
+            ...m,
+            {
+              role: 'assistant',
+              text: answer || 'Magentic-One returned an empty response.',
+            },
+          ]);
+        }
       } else {
+        // Do not project stale provisional fake ledger on abort
+        setLatestDeckRun(null);
         setMessages((m) => [
           ...m,
           {
@@ -8307,108 +8347,41 @@ export default function AgentBuilder(): React.ReactElement {
     }
 
     try {
-      const runOutcome = await fetch('/api/coder/openclaude/console/run_ledger', {
-         method: 'POST',
-         headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify({
-           taskLedger: approvedMissionSpec.task_ledger,
-           proposedAction: approvedMissionSpec.proposed_action,
-           progressLedger: approvedMissionSpec.progress_ledger,
-           contextPacket: approvedMissionSpec.context_packet,
-           targetRoot: activeDeckWorkspaceContext.repoPath || activeDeckWorkspaceContext.workspaceRoot || null,
-           projectId: canvasProjectId,
-           cards: deck.nodes.map(n => n.data),
-           edges: deck.edges,
-         })
-      }).then(res => res.json());
+      // Run Task approval is a structured signal (runApproved), not a magic
+      // userText command. The approved Task Ledger goal is the real run input.
+      const approvedGoal =
+        (approvedMissionSpec?.task_ledger?.user_goal as string | undefined) || '';
+      const outcome = await handleRunDeck(approvedGoal, {
+        runApproved: true,
+        missionSpec: approvedMissionSpec,
+      });
 
-      if (runOutcome.ok && runOutcome.codingRun) {
-        setMessages((m) => [...m, { role: 'assistant', text: `Dispatched Code Console.\nRun ID: ${runOutcome.codingRun.id}\nSession ID: ${runOutcome.codingRun.sessionId}\nResult Status URL: /api/coder/openclaude/console/runs/${runOutcome.codingRun.id}` }]);
-        
-        const codingRunReference = {
-          codingRunId: runOutcome.codingRun.id,
-          consoleSessionId: runOutcome.codingRun.sessionId,
-          resultStatusUrl: `/api/coder/openclaude/console/runs/${runOutcome.codingRun.id}`,
-        };
-        
-        if (!surfacedCodingRunIdsRef.current.has(codingRunReference.codingRunId)) {
-          surfacedCodingRunIdsRef.current.add(codingRunReference.codingRunId);
-          const startedPlanExecution = createPlanExecutionState({
-            projectId: canvasProjectId || '',
-            userGoal: 'Executing Task Ledger',
-            specPrompt: 'Executing Task Ledger',
-            targetRoot: activeDeckWorkspaceContext.repoPath || activeDeckWorkspaceContext.workspaceRoot || '',
-            codingRunId: codingRunReference.codingRunId,
-            consoleSessionId: codingRunReference.consoleSessionId,
-            resultStatusUrl: codingRunReference.resultStatusUrl,
-          });
-          setPlanExecutionState(startedPlanExecution);
-          cachePlanExecutionState(startedPlanExecution);
-          
+      if (outcome && outcome.ok && outcome.run?.steps) {
+        // Read the structured Progress Ledger the Python sidecar returned. Never
+        // JSON-parse raw step output as runtime state.
+        let progressLedger: any = null;
+        for (const step of outcome.run.steps) {
+          const candidate = (step as any).magenticTrace?.plan?.progress_ledger;
+          if (candidate && typeof candidate === 'object') {
+            progressLedger = candidate;
+          }
+        }
+
+        if (progressLedger) {
+          const state = String(progressLedger.progress_state || 'running');
+          const selected = String(progressLedger.selected_agent || '');
+          setMessages((m) => [...m, {
+            role: 'assistant',
+            text: `Run Task dispatched. Progress Ledger started (state: ${state}${selected ? `, agent: ${selected}` : ''}). See AgentCanvas.`,
+          }]);
           if (tab !== 'Progress') {
             setTab('Progress');
           }
-          
-          void pollCodingRunUntilTerminal(codingRunReference, {
-            getCodingRun: openClaudeConsoleClient.getCodingRun,
-            getSession: openClaudeConsoleClient.getSession,
-          })
-            .then(async (result) => {
-              const completedPlanExecution = completePlanExecutionState(startedPlanExecution, result);
-              setPlanExecutionState(completedPlanExecution);
-              cachePlanExecutionState(completedPlanExecution);
-              setMessages((m) => [...m, { role: 'assistant', text: formatPlanExecutionChatMirror(completedPlanExecution) }]);
-
-              // Skill step 12: automatically feed the real TaskResult back into a
-              // Magentic-One reasoning turn together with the previous Task Ledger
-              // and Progress Ledger. Magentic-One — not TypeScript — decides
-              // complete / blocked / revised / next, and may return a new ledger.
-              const taskResult = completedPlanExecution.task_result;
-              if (taskResult) {
-                try {
-                  const feedbackRequest = buildResultFeedbackRequest({
-                    projectId: canvasProjectId,
-                    targetRoot:
-                      activeDeckWorkspaceContext.repoPath ||
-                      activeDeckWorkspaceContext.workspaceRoot ||
-                      null,
-                    approvedMissionSpec,
-                    taskResult,
-                    cards: deck.nodes.map((n) => n.data),
-                    edges: deck.edges,
-                  });
-                  const feedback = await fetch(RESULT_FEEDBACK_ENDPOINT, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(feedbackRequest),
-                  }).then((res) => res.json());
-
-                  const { interpretation, nextPlan, error } = interpretResultFeedbackResponse(feedback);
-                  if (interpretation) {
-                    setMessages((m) => [...m, { role: 'assistant', text: interpretation }]);
-                    // Update the Plan canvas only when Magentic-One returns a real
-                    // revised / next Task Ledger. Complete (no new ledger) => no fake work.
-                    if (nextPlan) {
-                      setResultFeedbackPlan(nextPlan);
-                    }
-                  } else if (error) {
-                    setMessages((m) => [...m, { role: 'assistant', text: `Magentic-One result interpretation unavailable: ${error}` }]);
-                  }
-                } catch (feedbackError) {
-                  setMessages((m) => [...m, { role: 'assistant', text: `Magentic-One result feedback error: ${feedbackError instanceof Error ? feedbackError.message : String(feedbackError)}` }]);
-                }
-              }
-            })
-            .catch((error) => {
-              const blocker = error instanceof Error ? error.message : String(error);
-              const blockedPlanExecution = blockPlanExecutionState(startedPlanExecution, blocker);
-              setPlanExecutionState(blockedPlanExecution);
-              cachePlanExecutionState(blockedPlanExecution);
-              setMessages((m) => [...m, { role: 'assistant', text: formatPlanExecutionChatMirror(blockedPlanExecution) }]);
-            });
+        } else {
+          setMessages((m) => [...m, { role: 'assistant', text: `Run Task dispatched, but no Progress Ledger returned.` }]);
         }
       } else {
-        setMessages((m) => [...m, { role: 'assistant', text: `Run Task dispatch failed: ${runOutcome.error || 'Unknown'}` }]);
+        setMessages((m) => [...m, { role: 'assistant', text: `Run Task dispatch failed: ${outcome?.error || 'Unknown'}` }]);
       }
     } catch (err) {
       setMessages((m) => [...m, { role: 'assistant', text: `Run Task execution error: ${err instanceof Error ? err.message : String(err)}` }]);

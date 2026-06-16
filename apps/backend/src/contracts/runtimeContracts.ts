@@ -233,6 +233,11 @@ export type PythonAutoGenPayloadShape = {
   userText: string;
   priorAssistantText: string;
   systemPrompt: string;
+  // Structured Run Task approval. Chat submit is planning only (false) and the
+  // Python sidecar halts after the Task Ledger; the explicit Run Task action
+  // sets this true to resume into the Progress Ledger phase. No magic userText
+  // command is ever used as runtime state.
+  runApproved?: boolean;
   plan?: Record<string, any>;
   thinkGraph?: Record<string, any>;
   knowGraph?: Record<string, any>;

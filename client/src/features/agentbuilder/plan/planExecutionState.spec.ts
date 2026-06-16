@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   completePlanExecutionState,
   createPlanExecutionState,
-  formatPlanExecutionChatMirror,
+  formatPlanExecutionStatusMessage,
 } from './planExecutionState';
 import type { CodingRunLifecycle, ConsoleSessionInfo } from '../console/openClaudeConsoleClient';
 
@@ -44,7 +44,7 @@ describe('Plan execution state', () => {
     expect(state.target_root).toBe('C:\\Projects\\main');
   });
 
-  it('converts completion into a transcript-derived TaskResult and chat mirror', () => {
+  it('converts completion into a transcript-derived TaskResult and status message', () => {
     const started = createPlanExecutionState({
       projectId: 'project-1',
       userGoal: 'Inspect the repo.',
@@ -65,8 +65,8 @@ describe('Plan execution state', () => {
       transcript_derived: true,
     });
     expect(completed.task_result?.proof).toContain('file: apps/backend/src/routes/coder.routes.ts');
-    expect(formatPlanExecutionChatMirror(completed)).toContain('Plan Surface task result: completed');
-    expect(formatPlanExecutionChatMirror(completed)).toContain('ThinkGraph: recorded');
+    expect(formatPlanExecutionStatusMessage(completed)).toContain('Plan Surface task result: completed');
+    expect(formatPlanExecutionStatusMessage(completed)).toContain('ThinkGraph: recorded');
   });
 
   it('keeps failed memory and run blockers visible in TaskResult', () => {
@@ -89,6 +89,6 @@ describe('Plan execution state', () => {
     });
     expect(blocked.task_result?.blocker_or_issue).toBe('Target root missing.');
     expect(blocked.task_result?.next_needed).toBe('Target root missing.');
-    expect(formatPlanExecutionChatMirror(blocked)).toContain('ThinkGraph: failed - ThinkGraph unavailable.');
+    expect(formatPlanExecutionStatusMessage(blocked)).toContain('ThinkGraph: failed - ThinkGraph unavailable.');
   });
 });

@@ -15,29 +15,104 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function list(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => text(item)).filter(Boolean);
+  }
+  return text(value) ? [text(value)] : [];
+}
+
 /**
- * Canonical Task Ledger plan text is `task_ledger.plan`. Some legacy persisted
- * state / fixtures used `task_plan`; normalize that alias once here at the
- * projection boundary so the rest of the UI only reads `plan`. No fabrication:
- * if neither is present the result is empty and no plan content is invented.
+ * Legacy plan-text alias reader. The canonical structured field is
+ * `task_ledger.plan_steps`; some legacy persisted state used a flat `plan`
+ * string (or the older `task_plan` alias). This reads only those flat aliases —
+ * structured plan steps are formatted by {@link formatPlanSteps}. No fabrication.
  */
 function readTaskLedgerPlan(taskLedger: Record<string, any>): string {
   return text(taskLedger.plan) || text(taskLedger.task_plan);
 }
 
-function cleanPlanLines(value: string): string[] {
-  return value
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, '').trim())
+/**
+ * Renders the real structured `plan_steps` (task + assigned agent + status).
+ * Falls back to the legacy flat plan string only when no structured steps exist.
+ */
+function formatPlanSteps(taskLedger: Record<string, any>): string {
+  const steps = Array.isArray(taskLedger.plan_steps) ? taskLedger.plan_steps : [];
+  if (steps.length > 0) {
+    return steps
+      .map((step: any, index: number) => {
+        const task = text(step?.task);
+        if (!task) return '';
+        const agent = text(step?.assigned_agent);
+        const status = text(step?.status);
+        return `${index + 1}. ${task}${agent ? ` — ${agent}` : ''}${status ? ` [${status}]` : ''}`;
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+  return readTaskLedgerPlan(taskLedger);
+}
+
+function formatConnectedAgents(taskLedger: Record<string, any>): string {
+  const agents = Array.isArray(taskLedger.connected_agents) ? taskLedger.connected_agents : [];
+  return agents
+    .map((agent: any) => {
+      const name = text(agent?.name) || text(agent?.id);
+      if (!name) return '';
+      const role = text(agent?.role);
+      const tools = list(agent?.tools);
+      const status = text(agent?.status);
+      return `- ${name}${role ? ` (${role})` : ''} tools: ${tools.length ? tools.join(', ') : 'none'}${status ? ` [${status}]` : ''}`;
+    })
     .filter(Boolean)
-    .slice(0, 12);
+    .join('\n');
+}
+
+function bulletList(values: string[]): string {
+  return values.map((value) => `- ${value}`).join('\n');
+}
+
+/**
+ * Builds the human-readable Task Ledger summary from the real contract fields:
+ * goal, the four fact buckets, connected agents (with tools), and plan steps
+ * (with assigned agent + status). Only fields the real payload contains appear.
+ */
+function buildTaskLedgerSummary(taskLedger: Record<string, any>): string {
+  const goal = text(taskLedger.user_goal);
+  const knownFacts = list(taskLedger.known_facts);
+  const unknowns = list(taskLedger.unknowns_to_lookup);
+  const factsToDerive = list(taskLedger.facts_to_derive);
+  const assumptions = list(taskLedger.assumptions_or_guesses);
+  const connectedAgents = formatConnectedAgents(taskLedger);
+  const planSteps = formatPlanSteps(taskLedger);
+
+  const parts = [
+    goal ? `Goal: ${goal}` : '',
+    knownFacts.length ? `Facts:\n${bulletList(knownFacts)}` : '',
+    unknowns.length ? `Unknowns:\n${bulletList(unknowns)}` : '',
+    factsToDerive.length ? `Facts to derive:\n${bulletList(factsToDerive)}` : '',
+    assumptions.length ? `Assumptions / guesses:\n${bulletList(assumptions)}` : '',
+    connectedAgents ? `Connected agents:\n${connectedAgents}` : '',
+    planSteps ? `Plan steps:\n${planSteps}` : 'Plan steps: (none returned)',
+  ].filter(Boolean);
+  return parts.join('\n');
+}
+
+/**
+ * Maps the structured ProgressLedger `progress_state` to a PlanFlow node status.
+ */
+function progressNodeStatus(progressLedger: Record<string, any>): string {
+  const state = text(progressLedger.progress_state);
+  if (state === 'completed') return 'complete';
+  if (state === 'blocked' || state === 'stalled') return 'blocked';
+  return 'running';
 }
 
 /**
  * Projects ReactFlow nodes from real Magentic-One sidecar payloads only.
- * Every node is derived from an actual returned field; nothing is invented and
- * PLAN.md is never a node source. Optional fields produce nodes only when the
- * real payload contains them.
+ * Reads the structured TaskLedger / ProgressLedger contracts; nothing is
+ * invented and PLAN.md is never a node source. This is the rich Progress-canvas
+ * projection — the deterministic Plan canvas is {@link buildPlanFlowMissionGraph}.
  */
 export function projectRealMagenticPlans(run: DeckRun | null | undefined): PlanFlowProjection {
   const nodes: PlanFlowNode[] = [];
@@ -56,12 +131,6 @@ export function projectRealMagenticPlans(run: DeckRun | null | undefined): PlanF
     let taskLedgerId: string | null = null;
     if (taskLedger) {
       taskLedgerId = `${base}:task_ledger`;
-      const goal = text(taskLedger.user_goal);
-      const planText = readTaskLedgerPlan(taskLedger);
-      const summaryParts = [
-        goal ? `Goal: ${goal}` : '',
-        planText ? `Plan:\n${planText}` : 'Plan: (none returned)',
-      ].filter(Boolean);
       nodes.push({
         id: taskLedgerId,
         type: 'TaskLedger',
@@ -71,35 +140,19 @@ export function projectRealMagenticPlans(run: DeckRun | null | undefined): PlanF
         provenance,
         status: 'running',
         links: [],
-        summary: summaryParts.join('\n'),
+        summary: buildTaskLedgerSummary(taskLedger),
         payload: taskLedger,
       });
-
-      const currentSpec = text(taskLedger.current_spec);
-      if (currentSpec) {
-        const specId = `${base}:current_spec`;
-        nodes.push({
-          id: specId,
-          type: 'CurrentSpec',
-          title: 'Current SPEC',
-          source: 'magentic_one',
-          sourcePath,
-          provenance,
-          status: 'running',
-          links: [taskLedgerId],
-          summary: currentSpec,
-          payload: { current_spec: currentSpec },
-        });
-        edges.push({ id: `${specId}:edge`, source: taskLedgerId, target: specId, type: 'contains' });
-      }
     }
 
     let progressLedgerId: string | null = null;
     if (progressLedger) {
       progressLedgerId = `${base}:progress_ledger`;
       const summaryParts = [
-        text(progressLedger.progress_summary) ? `Progress: ${text(progressLedger.progress_summary)}` : '',
-        text(progressLedger.next_action) ? `Next action: ${text(progressLedger.next_action)}` : '',
+        text(progressLedger.current_step) ? `Step: ${text(progressLedger.current_step)}` : '',
+        text(progressLedger.progress_state) ? `State: ${text(progressLedger.progress_state)}` : '',
+        text(progressLedger.selected_agent) ? `Selected agent: ${text(progressLedger.selected_agent)}` : '',
+        text(progressLedger.instruction) ? `Instruction: ${text(progressLedger.instruction)}` : '',
         text(progressLedger.blocker) ? `Blocker: ${text(progressLedger.blocker)}` : '',
       ].filter(Boolean);
       nodes.push({
@@ -109,7 +162,7 @@ export function projectRealMagenticPlans(run: DeckRun | null | undefined): PlanF
         source: 'magentic_one',
         sourcePath,
         provenance,
-        status: progressLedger.is_stuck ? 'blocked' : progressLedger.is_complete ? 'complete' : 'running',
+        status: progressNodeStatus(progressLedger),
         links: taskLedgerId ? [taskLedgerId] : [],
         summary: summaryParts.join('\n') || 'Progress ledger returned with no progress fields.',
         payload: progressLedger,
@@ -123,77 +176,53 @@ export function projectRealMagenticPlans(run: DeckRun | null | undefined): PlanF
         });
       }
 
-      // Selected action/tool node — only when Mag One actually selected one.
-      const nextAction = text(progressLedger.next_action);
-      const nextActor = text(progressLedger.next_actor);
-      if (nextAction || nextActor) {
+      // Selected next agent + instruction — only when Mag One actually chose one.
+      const selectedAgent = text(progressLedger.selected_agent);
+      const instruction = text(progressLedger.instruction);
+      if (selectedAgent || instruction) {
         const actionId = `${base}:selected_action`;
         nodes.push({
           id: actionId,
           type: 'SelectedAction',
-          title: nextAction || nextActor,
+          title: selectedAgent || instruction.slice(0, 80),
           source: 'magentic_one',
           sourcePath,
-          provenance: 'Mag One selected next action/actor',
+          provenance: 'Mag One selected next agent / instruction',
           status: 'ready',
           links: [progressLedgerId],
-          summary: [nextActor ? `Actor: ${nextActor}` : '', nextAction ? `Action: ${nextAction}` : '']
+          summary: [
+            selectedAgent ? `Agent: ${selectedAgent}` : '',
+            instruction ? `Instruction: ${instruction}` : '',
+          ]
             .filter(Boolean)
             .join('\n'),
-          payload: { next_actor: nextActor, next_action: nextAction, next_instruction: text(progressLedger.next_instruction) },
+          payload: { selected_agent: selectedAgent, instruction },
         });
         edges.push({ id: `${actionId}:edge`, source: progressLedgerId, target: actionId, type: 'defines_task' });
       }
 
-      // TaskResult node — only when a real result exists.
-      const taskResult = text(progressLedger.task_result);
-      if (taskResult) {
-        const resultId = `${base}:task_result`;
+      // Agent result — only when a real result exists.
+      const agentResult = text(progressLedger.agent_result);
+      if (agentResult) {
+        const resultId = `${base}:agent_result`;
         nodes.push({
           id: resultId,
           type: 'TaskResult',
           title: 'TaskResult',
           source: 'magentic_one',
           sourcePath,
-          provenance: 'Mag One TaskResult payload',
-          status: progressLedger.is_complete ? 'complete' : 'running',
+          provenance: 'Mag One agent result payload',
+          status: progressNodeStatus(progressLedger) === 'complete' ? 'complete' : 'running',
           links: [progressLedgerId],
           summary: [
-            `Result: ${taskResult}`,
+            `Result: ${agentResult}`,
             text(progressLedger.blocker) ? `Blocker: ${text(progressLedger.blocker)}` : '',
-            text(progressLedger.next_needed) ? `Next needed: ${text(progressLedger.next_needed)}` : '',
           ]
             .filter(Boolean)
             .join('\n'),
-          payload: {
-            task_result: taskResult,
-            blocker: text(progressLedger.blocker),
-            next_needed: text(progressLedger.next_needed),
-          },
+          payload: { agent_result: agentResult, blocker: text(progressLedger.blocker) },
         });
         edges.push({ id: `${resultId}:edge`, source: progressLedgerId, target: resultId, type: 'defines_task' });
-      }
-
-      // Next SPEC candidate — only when real progress payload includes one.
-      const nextSpec = text(progressLedger.next_spec_candidate) || text(progressLedger.next_needed);
-      if (nextSpec) {
-        const nextId = `${base}:next_spec`;
-        nodes.push({
-          id: nextId,
-          type: 'NextSpecCandidate',
-          title: nextSpec.slice(0, 120),
-          source: 'magentic_one',
-          sourcePath,
-          provenance: 'Mag One next SPEC candidate / next_needed',
-          status: 'draft',
-          links: progressLedgerId ? [progressLedgerId] : [],
-          summary: nextSpec,
-          payload: {
-            next_spec_candidate: text(progressLedger.next_spec_candidate),
-            next_needed: text(progressLedger.next_needed),
-          },
-        });
-        edges.push({ id: `${nextId}:edge`, source: progressLedgerId, target: nextId, type: 'defines_task' });
       }
     }
   });
@@ -255,15 +284,8 @@ export function buildPlanFlowMissionGraph(
   const taskLedger = latest ? asRecord(latest.plan.task_ledger) : null;
   const runnable = Boolean(latest && (taskLedger || latest.plan.proposed_action));
 
-  const goal = taskLedger ? text(taskLedger.user_goal) : '';
-  const planText = taskLedger ? readTaskLedgerPlan(taskLedger) : '';
-  const taskLedgerSummary = runnable
-    ? [
-        goal ? `Goal: ${goal}` : '',
-        planText ? `Plan:\n${planText}` : 'Plan: (none returned)',
-      ]
-        .filter(Boolean)
-        .join('\n')
+  const taskLedgerSummary = taskLedger
+    ? buildTaskLedgerSummary(taskLedger)
     : 'Preparing the Task Ledger from Magentic-One…';
 
   const taskLedgerPayloadJson = taskLedger
@@ -326,5 +348,5 @@ export function buildPlanFlowMissionGraph(
   return { nodes: [taskLedgerNode, runTaskNode], edges: [edge] };
 }
 
-// Exported for focused unit coverage of legacy alias normalization.
-export const __test = { readTaskLedgerPlan, cleanPlanLines, readLatestRunnablePlan };
+// Exported for focused unit coverage.
+export const __test = { readTaskLedgerPlan, formatPlanSteps, buildTaskLedgerSummary, readLatestRunnablePlan };

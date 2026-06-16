@@ -291,29 +291,51 @@ class SearchSwarmPlan(BaseModel):
     approved: bool = False
 
 
+class ConnectedAgent(BaseModel):
+    id: str
+    name: str
+    role: str
+    tools: list[str] = Field(default_factory=list)
+    execution_allowed_now: bool = False
+    approval_required: bool = True
+    status: Literal["planned", "waiting_for_user", "blocked"] = "planned"
+
+
+class PlanStep(BaseModel):
+    id: str
+    task: str
+    assigned_agent: str
+    required_tools: list[str] = Field(default_factory=list)
+    execution_allowed_now: bool = False
+    approval_required: bool = True
+    status: Literal["planned", "waiting_for_user", "blocked"] = "planned"
+
+
 class TaskLedger(BaseModel):
-    user_goal: str = ""
-    facts: list[str] = Field(default_factory=list)
-    assumptions: list[str] = Field(default_factory=list)
-    plan: str = ""
-    current_spec: str = ""
-    required_agents_tools: list[str] = Field(default_factory=list)
-    approval_state: str = ""
-    target_root: str = ""
-    cbm_context_summary: str = ""
-    skillgraph_context_summary: str = ""
+    user_goal: str
+    known_facts: list[str] = Field(default_factory=list)
+    unknowns_to_lookup: list[str] = Field(default_factory=list)
+    facts_to_derive: list[str] = Field(default_factory=list)
+    assumptions_or_guesses: list[str] = Field(default_factory=list)
+    connected_agents: list[ConnectedAgent] = Field(default_factory=list)
+    plan_steps: list[PlanStep] = Field(default_factory=list)
+
+
+class ProgressEvent(BaseModel):
+    source: str
+    type: str
+    content: str
+
 
 class ProgressLedger(BaseModel):
-    is_complete: bool = False
-    is_stuck: bool = False
-    progress_summary: str = ""
-    next_actor: str = ""
-    next_action: str = ""
-    next_instruction: str = ""
-    blocker: str = ""
-    task_result: str = ""
-    next_needed: str = ""
-    next_spec_candidate: str = ""
+    current_step: str | None = None
+    selected_agent: str | None = None
+    instruction: str | None = None
+    agent_result: str | None = None
+    progress_state: Literal["running", "blocked", "completed", "stalled"] = "running"
+    blocker: str | None = None
+    events: list[ProgressEvent] = Field(default_factory=list)
+
 
 class PlanContext(BaseModel):
     anchor: str = ""
@@ -396,6 +418,11 @@ class ContextPack(BaseModel):
     routingManifest: dict | None = None
     codingWorkflowPacket: dict | None = None
     cardRuntime: CardRuntimeConfig | None = None
+    # Structured Run Task approval gate. Chat submit is planning only
+    # (runApproved=False) and halts after the Task Ledger; the explicit Run Task
+    # action sets this True to resume into the Progress Ledger phase. This is the
+    # only execution signal — no magic userText command is used as runtime state.
+    runApproved: bool = False
 
 
 class AssistantResponseReport(BaseModel):
@@ -449,27 +476,39 @@ class OrchestratorMetrics(BaseModel):
     refinementApplied: bool = False
 
 
-class TaskLedgerTrace(BaseModel):
-    """Honest, per-stage trace proving the TaskLedger came from the real Python
-    Magentic-One path (not fabricated). Every field is derived from an actual
-    parse stage; nothing here is invented."""
-
+class LedgerTrace(BaseModel):
+    """Honest trace of the Mag One pipeline mapping."""
     source: Literal["python_magone"] = "python_magone"
-    pythonSidecarCalled: bool = False
-    modelReturnedText: bool = False
-    jsonBlockFound: bool = False
-    taskLedgerFound: bool = False
-    taskLedgerParseStatus: Literal["parsed", "missing", "invalid_json", "schema_invalid"] = "missing"
-    backendPreserved: bool = False
+    referenceFiles: list[str] = Field(default_factory=list)
+    referenceClasses: list[str] = Field(default_factory=list)
+    referenceMethods: list[str] = Field(default_factory=list)
+    promptConstants: list[str] = Field(default_factory=list)
+
+    canvasTeamCompiled: bool = False
+    taskLedgerFactsPromptUsed: bool = False
+    taskLedgerPlanPromptUsed: bool = False
+    taskLedgerFullPromptUsed: bool = False
+    taskLedgerProduced: bool = False
+    planCanvasProjected: bool = False
+
+    runTaskClicked: bool = False
+    progressLedgerStarted: bool = False
+    progressLedgerPromptUsed: bool = False
+    agentCanvasProjected: bool = False
+
+    noExecutionBeforeRunTask: bool = False
     blocker: str | None = None
 
 
 class OrchestratorRunResponse(BaseModel):
     ok: bool
     session: ProjectSession
-    taskLedgerTrace: TaskLedgerTrace = Field(default_factory=TaskLedgerTrace)
+    ledgerTrace: LedgerTrace = Field(default_factory=LedgerTrace)
     stopReason: str | None = None
     finalResponseText: str
+    statusText: str | None = None
+    taskLedger: TaskLedger | None = None
+    progressLedger: ProgressLedger | None = None
     blackboardEntries: list[BlackboardEntry] = Field(default_factory=list)
     plan: PlanContext
     thinkGraph: ThinkGraphContext
