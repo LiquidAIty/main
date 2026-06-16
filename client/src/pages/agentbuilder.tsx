@@ -53,12 +53,10 @@ import {
   type PlanItem,
   type StructuredAssistPlanSurface,
 } from '../components/builder/assistPlanSurface';
-import { buildPlanFlowMissionGraph } from '../features/agentbuilder/plan/planFlowProjection';
 import {
-  prepareActiveCoderPacket,
-  runLocalCoderPacket,
-  type CoderPacket,
-} from '../features/agentbuilder/plan/coderLoop';
+  buildPlanFlowMissionGraph,
+  PLAN_CANVAS_RUN_TASK_NODE_ID,
+} from '../features/agentbuilder/plan/planFlowProjection';
 import {
   blockPlanExecutionState,
   cachePlanExecutionState,
@@ -139,7 +137,6 @@ import type {
   MissionRun,
   MissionSpec,
   OpenMissionMessage,
-  PlanFlowProjection,
   WorkspaceHarnessOperation,
   WorkspaceHarnessPermission,
   WorkspaceHarnessRequest,
@@ -5023,7 +5020,6 @@ export default function AgentBuilder(): React.ReactElement {
   );
   // TODO: replace manual deck input with plan-driven execution input.
   const [deckRunInput, setDeckRunInput] = useState('');
-  const [magenticPlanApproval, setMagenticPlanApproval] = useState<Record<string, 'approved' | 'rejected'>>({});
   const [showCreateProjectForm, setShowCreateProjectForm] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [sending, setSending] = useState(false);
@@ -5056,39 +5052,14 @@ export default function AgentBuilder(): React.ReactElement {
     () => loadProjectState(activeProject).links,
   );
   const [stateLoaded, setStateLoaded] = useState(false);
-  // PLAN.md projection is retained only as optional Mag One planning context.
-  // It is never projected onto the ReactFlow canvas (canvas = real Mag One only).
-  const [planFlowProjection, setPlanFlowProjection] =
-    useState<PlanFlowProjection | null>(null);
   const [planExecutionState, setPlanExecutionState] = useState<PlanExecutionState | null>(null);
+  // The Plan canvas is the deterministic two-stage [Task Ledger Planning] -> [Run Task]
+  // graph derived only from the real Magentic-One Task Ledger in the latest deck run.
+  // PLAN.md / backend planflow projections never drive the Plan canvas.
   const planFlowMissionGraph = useMemo(
     () => buildPlanFlowMissionGraph(latestDeckRun),
     [latestDeckRun],
   );
-  useEffect(() => {
-    const projectId = activeProject;
-    if (!projectId) {
-      setPlanFlowProjection(null);
-      return;
-    }
-    const controller = new AbortController();
-    void fetch(`${PROJECTS_API}/${projectId}/kg/planflow/projection`, {
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const data = await safeJson(response);
-        if (!response.ok || !data?.ok || !data?.projection) {
-          throw new Error(safeText(data?.error || 'planflow_projection_failed'));
-        }
-        if (controller.signal.aborted) return;
-        setPlanFlowProjection(data.projection as PlanFlowProjection);
-      })
-      .catch(() => {
-        if (controller.signal.aborted) return;
-        setPlanFlowProjection(null);
-      });
-    return () => controller.abort();
-  }, [activeProject]);
   useEffect(() => {
     setPlanExecutionState(activeProject ? readCachedPlanExecutionState(activeProject) : null);
   }, [activeProject]);
@@ -8229,21 +8200,10 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckRunInput(trimmed);
 
     setTimeout(async () => {
-      let approvedMissionSpec: any = undefined;
-      if (latestDeckRun) {
-        for (const step of latestDeckRun.steps) {
-          if (magenticPlanApproval[step.id] === 'approved' && step.magenticTrace?.plan) {
-            approvedMissionSpec = {
-              runState: 'approved',
-              task_ledger: (step.magenticTrace.plan as any).task_ledger,
-              progress_ledger: (step.magenticTrace.plan as any).progress_ledger,
-            };
-            break;
-          }
-        }
-      }
-
-      const outcome = await handleRunDeck(trimmed, { missionSpec: approvedMissionSpec });
+      // Chat submit is a neutral Magentic-One planning turn only. It never
+      // dispatches execution, never calls Code Console / Local Coder, and never
+      // carries an approval/missionSpec — execution is the explicit Run Task path.
+      const outcome = await handleRunDeck(trimmed);
 
       if (!outcome || !outcome.ok) {
         setMessages((m) => [
@@ -8368,38 +8328,27 @@ export default function AgentBuilder(): React.ReactElement {
   const handleRunTask = useCallback(async () => {
     if (deckRunBusy) return;
 
+    // Source of truth for execution approval is the Task Ledger currently
+    // displayed on the Plan canvas — i.e. the latest real Magentic-One plan in
+    // the deck run. There is no raw-chat-input fallback and no coder packet.
     let approvedMissionSpec: any = undefined;
     if (latestDeckRun) {
-      for (const step of latestDeckRun.steps) {
-        if (magenticPlanApproval[step.id] === 'approved' && step.magenticTrace?.plan) {
-          approvedMissionSpec = {
-            runState: 'approved',
-            task_ledger: (step.magenticTrace.plan as any).task_ledger,
-            proposed_action: (step.magenticTrace.plan as any).proposed_action,
-            progress_ledger: (step.magenticTrace.plan as any).progress_ledger,
-            context_packet: (step.magenticTrace.plan as any).context_packet,
-          };
-          break;
-        }
-      }
-      if (!approvedMissionSpec) {
-        const realMagenticPlans = latestDeckRun.steps
-          .map((step) => step.magenticTrace?.plan)
-          .filter((candidate) => candidate && typeof candidate === 'object');
-        if (realMagenticPlans.length > 0) {
-          const finalPlan: any = realMagenticPlans[realMagenticPlans.length - 1];
-          approvedMissionSpec = {
-            task_ledger: finalPlan.task_ledger,
-            proposed_action: finalPlan.proposed_action,
-            progress_ledger: finalPlan.progress_ledger,
-            context_packet: finalPlan.context_packet,
-          };
-        }
+      const realMagenticPlans = latestDeckRun.steps
+        .map((step) => step.magenticTrace?.plan)
+        .filter((candidate) => candidate && typeof candidate === 'object');
+      if (realMagenticPlans.length > 0) {
+        const finalPlan: any = realMagenticPlans[realMagenticPlans.length - 1];
+        approvedMissionSpec = {
+          task_ledger: finalPlan.task_ledger,
+          proposed_action: finalPlan.proposed_action,
+          progress_ledger: finalPlan.progress_ledger,
+          context_packet: finalPlan.context_packet,
+        };
       }
     }
 
     if (!approvedMissionSpec || (!approvedMissionSpec.task_ledger && !approvedMissionSpec.proposed_action)) {
-      setMessages((m) => [...m, { role: 'assistant', text: 'Run Task dispatch failed: no approved task ledger' }]);
+      setMessages((m) => [...m, { role: 'assistant', text: 'Run Task dispatch failed: no runnable Task Ledger yet.' }]);
       return;
     }
 
@@ -8470,21 +8419,18 @@ export default function AgentBuilder(): React.ReactElement {
     } catch (err) {
       setMessages((m) => [...m, { role: 'assistant', text: `Run Task execution error: ${err instanceof Error ? err.message : String(err)}` }]);
     }
-  }, [deckRunBusy, latestDeckRun, magenticPlanApproval, canvasProjectId, activeDeckWorkspaceContext, deck.nodes, deck.edges, tab]);
+  }, [deckRunBusy, latestDeckRun, canvasProjectId, activeDeckWorkspaceContext, deck.nodes, deck.edges, tab]);
 
   const effectiveNodeOverrides = useMemo(() => {
     const overrides = { ...planNodeDrafts };
-    if (planFlowProjection?.nodes?.length > 0) {
-      const targetNode = planFlowProjection.nodes.find(n => n.type === 'TaskLedger' || n.type === 'MagenticOnePlan');
-      if (targetNode) {
-        overrides[targetNode.id] = {
-          ...overrides[targetNode.id],
-          onRunTask: handleRunTask,
-        };
-      }
-    }
+    // Run Task is its own deterministic Plan canvas node. The human approval
+    // action lives there and dispatches the displayed Task Ledger on click.
+    overrides[PLAN_CANVAS_RUN_TASK_NODE_ID] = {
+      ...overrides[PLAN_CANVAS_RUN_TASK_NODE_ID],
+      onRunTask: handleRunTask,
+    };
     return overrides;
-  }, [planNodeDrafts, planFlowProjection, handleRunTask]);
+  }, [planNodeDrafts, handleRunTask]);
 
   const thinkGraphViz = useMemo(() => {
     return prefixThinkGraphIds(ageRowsToGraph(graphResult));
@@ -9258,8 +9204,9 @@ export default function AgentBuilder(): React.ReactElement {
             >
             {/*
               ReactFlow is the PlanFlow canvas and stays mounted at all times.
-              Empty graph still shows the graph-paper viewport (nodes/edges = []).
-              No text billboard, Active CoderPacket card, or PLAN.md card sits on
+              It always renders the deterministic two-stage Plan canvas:
+              [Task Ledger Planning] -> [Run Task]. No side-panel approval, no
+              coder-packet card, no PLAN.md card, and no raw JSON editor sit on
               or above the canvas; status/controls live below or in the inspector.
             */}
             <div style={{ flex: '1 1 auto', minHeight: 480, position: 'relative' }}>
@@ -9303,112 +9250,12 @@ export default function AgentBuilder(): React.ReactElement {
                 </div>
               </div>
             ) : null}
-            {latestDeckRun?.steps?.map((step) => {
-              if (!step.magenticTrace) return null;
-              const { plan, blackboardEntries, reportBacks, transcript } = step.magenticTrace;
-
-              if (plan) {
-                return (
-                  <div
-                    key={`magentic-plan-${step.id}`}
-                    style={graphDrawerSectionStyle({
-                      margin: '0 12px 10px',
-                      padding: '12px 14px',
-                      borderColor: 'rgba(79,162,173,0.3)',
-                      background: 'rgba(79,162,173,0.05)',
-                    })}
-                  >
-                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
-                      Proposed Magentic-One Plan
-                    </div>
-                    {typeof plan === 'object' && (((plan as any)?.task_ledger?.plan ?? (plan as any)?.task_ledger?.task_plan) || (plan as any)?.progress_ledger?.next_instruction) ? (
-                      <div style={{ marginTop: 8, fontSize: 12, color: GRAPH_THEME.drawer.inputMuted }}>
-                        The task ledger and proposed progress have been mapped to the Plan Surface.
-                      </div>
-                    ) : (
-                      <pre style={{ marginTop: 8, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted, whiteSpace: 'pre-wrap', fontFamily: 'monospace', maxHeight: 300, overflow: 'auto' }}>
-                        {typeof plan === 'object' ? JSON.stringify(plan, null, 2) : String(plan)}
-                      </pre>
-                    )}
-                    <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
-                      {!magenticPlanApproval[step.id] && (
-                        <>
-                          <button
-                            onClick={async () => {
-                              setMagenticPlanApproval(prev => ({ ...prev, [step.id]: 'approved' }));
-
-                              const approvedMissionSpec = {
-                                runState: 'approved',
-                                task_ledger: (plan as any).task_ledger,
-                                progress_ledger: (plan as any).progress_ledger,
-                              };
-
-                              setMessages((m) => [...m, { role: 'user', text: '(Approved plan)' }]);
-                              setMessages((m) => [...m, { role: 'assistant', text: 'Executing approved plan...' }]);
-
-                              const outcome = await handleRunDeck(deckRunInput || 'Proceed with approved plan', { missionSpec: approvedMissionSpec });
-                              if (!outcome || !outcome.ok) {
-                                setMessages((m) => [
-                                  ...m,
-                                  {
-                                    role: 'assistant',
-                                    text: `Magentic-One run failed: ${outcome?.error || 'Unknown error'}`,
-                                  },
-                                ]);
-                              }
-                            }}
-                            style={{
-                              padding: '4px 12px',
-                              background: GRAPH_THEME.accent.primary,
-                              color: C.bg,
-                              border: 'none',
-                              borderRadius: 4,
-                              cursor: 'pointer',
-                              fontSize: 11,
-                              fontWeight: 600,
-                            }}
-                          >
-                            Approve & Execute
-                          </button>
-                          <button
-                            onClick={() => {
-                              setMagenticPlanApproval(prev => ({ ...prev, [step.id]: 'rejected' }));
-                              setTimeout(() => {
-                                document.getElementById('canvas_chat_input')?.focus();
-                              }, 100);
-                            }}
-                            style={{
-                              padding: '4px 12px',
-                              background: 'rgba(255,100,100,0.1)',
-                              color: 'rgb(255,150,150)',
-                              border: '1px solid rgba(255,100,100,0.2)',
-                              borderRadius: 4,
-                              cursor: 'pointer',
-                              fontSize: 11,
-                              fontWeight: 600,
-                            }}
-                          >
-                            Revise Plan
-                          </button>
-                        </>
-                      )}
-                      {magenticPlanApproval[step.id] === 'approved' && (
-                        <div style={{ fontSize: 11, color: C.warn, fontStyle: 'italic' }}>
-                          Plan approved and executing.
-                        </div>
-                      )}
-                      {magenticPlanApproval[step.id] === 'rejected' && (
-                        <div style={{ fontSize: 11, color: 'rgb(255,150,150)', fontStyle: 'italic' }}>
-                          Plan rejected. Provide revision instructions below.
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              }
-
-              return null;
-            })}
+            {/*
+              No side-panel / inspector approval card on the Plan canvas. The
+              Task Ledger renders as the [Task Ledger Planning] node and approval
+              is the [Run Task] node action — no Approve & Execute button, no raw
+              plan JSON dump, no Revise/Apply/Clear controls.
+            */}
             {openMissionMessage ? (
               <div
                 style={graphDrawerSectionStyle({

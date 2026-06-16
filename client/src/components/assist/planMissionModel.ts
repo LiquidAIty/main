@@ -21,6 +21,7 @@ export type PlanMissionNodeKind =
   | 'Decision'
   | 'Assumption'
   | 'MagenticOnePlan'
+  | 'RunTask'
   | 'SelectedAction'
   | 'CodeConsoleRun'
   | 'MagOneTraceEvent'
@@ -78,6 +79,12 @@ export type PlanMissionNodeData = {
   summary?: string;
   /** Pretty-printed full real payload for the read-only inspector view. */
   payloadJson?: string;
+  /** True only for the deterministic Plan canvas "Run Task" approval node. */
+  isRunTaskNode?: boolean;
+  /** Whether the displayed Task Ledger is runnable (gates Run Task). */
+  runnable?: boolean;
+  /** Human approval action — dispatches the displayed Task Ledger. */
+  onRunTask?: () => void;
 };
 
 export type PlanArtifactNodeData = {

@@ -251,8 +251,10 @@ function MissionNode({ data, selected }: NodeProps<any>) {
           ? 'CURRENT SPEC'
           : kind === 'ProgressLedger'
             ? 'PROGRESS LEDGER'
-            : kind === 'TaskResult'
-              ? 'TASK RESULT'
+            : kind === 'RunTask'
+              ? 'RUN TASK'
+              : kind === 'TaskResult'
+                ? 'TASK RESULT'
               : kind === 'NextSpecCandidate'
                 ? 'NEXT SPEC'
                 : kind === 'PlanRoute'
@@ -344,11 +346,18 @@ function MissionNode({ data, selected }: NodeProps<any>) {
         >
           Source: {source}
         </div>
-        {typeof nodeData.onRunTask === 'function' && (
+        {nodeData.isRunTaskNode && (
           <div style={{ marginTop: 8 }}>
             <button
               type="button"
-              onClick={nodeData.onRunTask}
+              data-testid="plan-run-task-button"
+              disabled={!nodeData.runnable || typeof nodeData.onRunTask !== 'function'}
+              aria-disabled={!nodeData.runnable || typeof nodeData.onRunTask !== 'function'}
+              onClick={
+                nodeData.runnable && typeof nodeData.onRunTask === 'function'
+                  ? nodeData.onRunTask
+                  : undefined
+              }
               style={{
                 width: '100%',
                 padding: '6px 12px',
@@ -357,7 +366,12 @@ function MissionNode({ data, selected }: NodeProps<any>) {
                 background: 'rgba(55,173,170,0.15)',
                 color: '#fff',
                 fontWeight: 'bold',
-                cursor: 'pointer'
+                cursor:
+                  nodeData.runnable && typeof nodeData.onRunTask === 'function'
+                    ? 'pointer'
+                    : 'not-allowed',
+                opacity:
+                  nodeData.runnable && typeof nodeData.onRunTask === 'function' ? 1 : 0.5,
               }}
             >
               Run Task

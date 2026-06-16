@@ -3,79 +3,7 @@ import type {
   PlanMissionFlowEdge,
   PlanMissionFlowNode,
   PlanMissionGraph,
-  PlanMissionNodeKind,
-  PlanMissionNodeStatus,
 } from '../../../components/assist/planMissionModel';
-
-function toMissionKind(type: PlanFlowNode['type']): PlanMissionNodeKind {
-  return type;
-}
-
-function toMissionStatus(status: PlanFlowNode['status']): PlanMissionNodeStatus {
-  if (status === 'draft') return 'proposed';
-  if (status === 'pending') return 'ready';
-  if (status === 'failed') return 'error';
-  return status;
-}
-
-function planNodePosition(node: PlanFlowNode, index: number): { x: number; y: number } {
-  if (node.type === 'TaskLedger') return { x: 40, y: 48 };
-  if (node.type === 'CurrentSpec') return { x: 40, y: 226 };
-  if (node.type === 'ProgressLedger') return { x: 40, y: 404 };
-  if (node.type === 'SelectedAction') return { x: 360, y: 404 };
-  if (node.type === 'CodeConsoleRun') return { x: 680, y: 404 };
-  if (node.type === 'TaskResult') {
-    return { x: 360 + (index % 3) * 300, y: 600 + Math.floor(index / 3) * 178 };
-  }
-  if (node.type === 'NextSpecCandidate') return { x: 40, y: 600 };
-  if (node.type === 'MagOneTraceEvent') {
-    return { x: 40 + (index % 4) * 300, y: 800 + Math.floor(index / 4) * 160 };
-  }
-  return { x: 360 + (index % 4) * 300, y: 800 + Math.floor(index / 4) * 178 };
-}
-
-function toMissionNode(node: PlanFlowNode, index: number): PlanMissionFlowNode {
-  const payloadJson =
-    node.payload === undefined || node.payload === null
-      ? undefined
-      : JSON.stringify(node.payload, null, 2);
-  const summary = node.summary?.trim() || '';
-  return {
-    id: node.id,
-    type: 'mission',
-    position: planNodePosition(node, index),
-    data: {
-      label: node.title,
-      kind: toMissionKind(node.type),
-      status: toMissionStatus(node.status),
-      description: summary || node.provenance,
-      relatedFiles: node.sourcePath ? [node.sourcePath] : [],
-      relatedObjects: node.links,
-      source: node.source,
-      sourcePath: node.sourcePath,
-      provenance: node.provenance,
-      links: node.links,
-      // Raw Mag One ledger/run/event payloads are not user-editable source of truth.
-      editable: false,
-      ...(summary ? { summary } : {}),
-      ...(payloadJson ? { payloadJson } : {}),
-    },
-  };
-}
-
-function toMissionEdge(
-  edge: PlanFlowProjection['edges'][number],
-): PlanMissionFlowEdge {
-  return {
-    id: edge.id,
-    source: edge.source,
-    target: edge.target,
-    type: 'turboFlow',
-    data: { motion: 'idle' },
-    animated: false,
-    className: 'edge-secondary',
-  };
-}
 
 function asRecord(value: unknown): Record<string, any> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -279,26 +207,124 @@ export function projectRealMagenticPlans(run: DeckRun | null | undefined): PlanF
   };
 }
 
+/** Stable node ids for the deterministic two-stage Plan canvas. */
+export const PLAN_CANVAS_TASK_LEDGER_NODE_ID = 'plan-canvas:task_ledger_planning';
+export const PLAN_CANVAS_RUN_TASK_NODE_ID = 'plan-canvas:run_task';
+
 /**
- * Builds the ReactFlow mission graph for the PlanFlow canvas. Nodes are derived
- * exclusively from real Magentic-One orchestration output. Before Mag One
- * returns anything the canvas is empty (`nodes = []`, `edges = []`). PLAN.md is
- * never projected onto the canvas.
+ * Finds the latest real Magentic-One Task Ledger / proposed task in the run.
+ * Only a returned `task_ledger` (or `proposed_action`) counts as runnable —
+ * progress ledgers and results never make the Plan canvas runnable.
+ */
+function readLatestRunnablePlan(
+  run: DeckRun | null | undefined,
+): { plan: Record<string, any>; sourcePath: string; provenance: string } | null {
+  const steps = run?.steps || [];
+  for (let i = steps.length - 1; i >= 0; i -= 1) {
+    const step = steps[i];
+    const plan = asRecord(step.magenticTrace?.plan);
+    if (!plan) continue;
+    if (asRecord(plan.task_ledger) || plan.proposed_action) {
+      return {
+        plan,
+        sourcePath: `deck-run:${run?.id || 'unknown'}/step:${step.id}`,
+        provenance: `Real Magentic-One Task Ledger from ${step.title}`,
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Builds the deterministic two-stage Plan canvas mission graph:
+ *
+ *   [Task Ledger Planning]
+ *            ↓
+ *        [Run Task]
+ *
+ * The structure is always present — the canvas never starts blank. The Task
+ * Ledger Planning node fills with the real Magentic-One Task Ledger only when
+ * Python returns one; until then it shows an honest waiting state and Run Task
+ * stays disabled. No plan content is ever invented in TypeScript and no
+ * progress/result/agent-runtime lanes are projected onto the Plan canvas.
  */
 export function buildPlanFlowMissionGraph(
   run: DeckRun | null | undefined,
 ): PlanMissionGraph {
-  const magenticProjection = projectRealMagenticPlans(run);
-  const indexByType = new Map<PlanFlowNode['type'], number>();
-  return {
-    nodes: magenticProjection.nodes.map((node) => {
-      const index = indexByType.get(node.type) || 0;
-      indexByType.set(node.type, index + 1);
-      return toMissionNode(node, index);
-    }),
-    edges: magenticProjection.edges.map(toMissionEdge),
+  const latest = readLatestRunnablePlan(run);
+  const taskLedger = latest ? asRecord(latest.plan.task_ledger) : null;
+  const runnable = Boolean(latest && (taskLedger || latest.plan.proposed_action));
+
+  const goal = taskLedger ? text(taskLedger.user_goal) : '';
+  const planText = taskLedger ? readTaskLedgerPlan(taskLedger) : '';
+  const taskLedgerSummary = runnable
+    ? [
+        goal ? `Goal: ${goal}` : '',
+        planText ? `Plan:\n${planText}` : 'Plan: (none returned)',
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : 'Preparing the Task Ledger from Magentic-One…';
+
+  const taskLedgerPayloadJson = taskLedger
+    ? JSON.stringify(taskLedger, null, 2)
+    : undefined;
+
+  const taskLedgerNode: PlanMissionFlowNode = {
+    id: PLAN_CANVAS_TASK_LEDGER_NODE_ID,
+    type: 'mission',
+    position: { x: 120, y: 80 },
+    data: {
+      label: 'Task Ledger Planning',
+      kind: 'TaskLedger',
+      status: runnable ? 'running' : 'proposed',
+      source: 'magentic_one',
+      sourcePath: latest?.sourcePath,
+      provenance: latest?.provenance || 'Awaiting Magentic-One Task Ledger',
+      editable: false,
+      summary: taskLedgerSummary,
+      description: taskLedgerSummary,
+      ...(taskLedgerPayloadJson ? { payloadJson: taskLedgerPayloadJson } : {}),
+    },
+    draggable: true,
+    selectable: true,
   };
+
+  const runTaskDescription = runnable
+    ? 'Approved Task Ledger is runnable. Click Run Task to dispatch execution.'
+    : 'Run Task is disabled until Magentic-One returns a runnable Task Ledger.';
+  const runTaskNode: PlanMissionFlowNode = {
+    id: PLAN_CANVAS_RUN_TASK_NODE_ID,
+    type: 'mission',
+    position: { x: 120, y: 320 },
+    data: {
+      label: 'Run Task',
+      kind: 'RunTask',
+      status: runnable ? 'ready' : 'proposed',
+      source: 'magentic_one',
+      provenance: 'Human approval action — dispatches the displayed Task Ledger',
+      editable: false,
+      isRunTaskNode: true,
+      runnable,
+      summary: runTaskDescription,
+      description: runTaskDescription,
+    },
+    draggable: true,
+    selectable: true,
+  };
+
+  const edge: PlanMissionFlowEdge = {
+    id: `${PLAN_CANVAS_TASK_LEDGER_NODE_ID}->${PLAN_CANVAS_RUN_TASK_NODE_ID}`,
+    source: PLAN_CANVAS_TASK_LEDGER_NODE_ID,
+    target: PLAN_CANVAS_RUN_TASK_NODE_ID,
+    type: 'turboFlow',
+    data: { motion: 'idle' },
+    animated: false,
+    className: 'edge-secondary',
+  };
+
+  return { nodes: [taskLedgerNode, runTaskNode], edges: [edge] };
 }
 
 // Exported for focused unit coverage of legacy alias normalization.
-export const __test = { readTaskLedgerPlan, cleanPlanLines };
+export const __test = { readTaskLedgerPlan, cleanPlanLines, readLatestRunnablePlan };
