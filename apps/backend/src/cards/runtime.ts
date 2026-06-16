@@ -720,19 +720,33 @@ export async function runCardWithContract(
         
         const sidecarResponse = await orchestrateWithAutoGen(payload as any);
         console.log('[runCardWithContract] sidecar response keys:', Object.keys(sidecarResponse));
-        
-        // Stop parsing `finalText` entirely. Python returns structured TaskLedger and ProgressLedger directly.
-        finalText = String(sidecarResponse.statusText || sidecarResponse.finalResponseText || '').trim();
+
+        // Transport only. The real AutoGen output is the messages/events the
+        // sidecar captured verbatim from run_stream, plus the orchestrator's own
+        // Progress Ledger JSON when the inner loop ran. The backend authors no
+        // ledger, no summary, and does not parse message text into runtime state.
+        // finalResponseText is carried solely to satisfy the non-empty transport
+        // invariant; the conversation panel never renders it.
+        finalText = String(sidecarResponse.finalResponseText || '').trim();
+        const autogenMessages = Array.isArray((sidecarResponse as any).autogenMessages)
+          ? (sidecarResponse as any).autogenMessages
+          : [];
+        const autogenEvents = Array.isArray((sidecarResponse as any).autogenEvents)
+          ? (sidecarResponse as any).autogenEvents
+          : [];
+        const taskLedgerArtifact = (sidecarResponse as any).taskLedgerArtifact ?? null;
+        const progressLedgerReference = (sidecarResponse as any).progressLedgerReference ?? null;
         magenticPlan = {
-          ...(sidecarResponse.taskLedger ? { task_ledger: sidecarResponse.taskLedger } : {}),
-          ...(sidecarResponse.progressLedger ? { progress_ledger: sidecarResponse.progressLedger } : {}),
+          autogenMessages,
+          autogenEvents,
+          ...(taskLedgerArtifact ? { taskLedgerArtifact } : {}),
+          ...(progressLedgerReference ? { progressLedgerReference } : {}),
         };
         ledgerTrace =
           sidecarResponse.ledgerTrace && typeof sidecarResponse.ledgerTrace === 'object'
             ? (sidecarResponse.ledgerTrace as Record<string, unknown>)
             : undefined;
-        console.log('[runCardWithContract] ledgerTrace:', JSON.stringify(ledgerTrace));
-        console.log('[runCardWithContract] parsed structured ledgers returned natively.');
+        console.log('[runCardWithContract] autogen messages:', autogenMessages.length);
     } catch (e: any) {
         console.error('[runCardWithContract] Exact caught error message:', e?.message || e);
         throw e;

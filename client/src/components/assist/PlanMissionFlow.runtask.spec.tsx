@@ -1,14 +1,13 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 
 import PlanMissionFlow from './PlanMissionFlow';
 import type { StructuredAssistPlanSurface } from '../builder/assistPlanSurface';
 import type { DeckRun } from '../../types/agentgraph';
 import {
   buildPlanFlowMissionGraph,
-  PLAN_CANVAS_RUN_TASK_NODE_ID,
 } from '../../features/agentbuilder/plan/planFlowProjection';
 
 const EMPTY_PLANFLOW_STRUCTURED_PLAN: StructuredAssistPlanSurface = {
@@ -50,64 +49,66 @@ if (!(window as unknown as { matchMedia?: unknown }).matchMedia) {
 
 afterEach(() => cleanup());
 
-function runWithTaskLedger(): DeckRun {
+function runWithArtifact(): DeckRun {
   return {
     id: 'run-1',
     steps: [
       {
         id: 'step-1',
         title: 'Magentic-One',
-        magenticTrace: { plan: { task_ledger: { user_goal: 'Audit code', plan: '1. read' } } },
+        magenticTrace: {
+          plan: {
+            taskLedgerArtifact: {
+              source: 'autogen_0_7_5_magentic_one',
+              phase: 'task_ledger',
+              factsResponse: '1. GIVEN FACTS\n- repo exists',
+              planResponse: '- inspect read-only',
+              taskLedgerResponse: 'Full Task Ledger text',
+              teamDescription: 'Research_Agent: research',
+              modelCallProof: [],
+            },
+          },
+        },
       },
     ],
   } as DeckRun;
 }
 
-describe('PlanMissionFlow — deterministic Run Task node', () => {
-  it('renders Task Ledger Planning and a disabled Run Task before a real Task Ledger exists', () => {
-    const onRunTask = vi.fn();
+// Task-Ledger-only scope: the Plan canvas renders ONE real artifact viewer and
+// NO Run Task gate node (Run Task / Progress Ledger are out of scope).
+describe('PlanMissionFlow — real Task Ledger artifact viewer only', () => {
+  it('renders nothing fabricated and no Run Task button before AutoGen returns anything', () => {
     render(
       <PlanMissionFlow
         structuredPlan={EMPTY_PLANFLOW_STRUCTURED_PLAN}
         missionGraph={buildPlanFlowMissionGraph(null)}
         projectId="p1"
         fullHeight
-        nodeOverrides={{ [PLAN_CANVAS_RUN_TASK_NODE_ID]: { onRunTask } }}
       />,
     );
-    expect(screen.getByText('Task Ledger Planning')).toBeTruthy();
-    // "Run Task" appears as both the node title and the button label.
-    expect(screen.getAllByText('Run Task').length).toBeGreaterThanOrEqual(1);
-    const runTaskButton = screen.getByTestId('plan-run-task-button') as HTMLButtonElement;
-    expect(runTaskButton.disabled).toBe(true);
-    fireEvent.click(runTaskButton);
-    expect(onRunTask).not.toHaveBeenCalled();
+    expect(screen.queryByText('Task Ledger Planning')).toBeNull();
+    expect(screen.queryByText(/Preparing the Task Ledger/i)).toBeNull();
+    expect(screen.queryByTestId('plan-run-task-button')).toBeNull();
   });
 
-  it('enables Run Task once a real Task Ledger exists and dispatches only on click', () => {
-    const onRunTask = vi.fn();
+  it('renders the real Task Ledger artifact viewer and still no Run Task button', () => {
     render(
       <PlanMissionFlow
         structuredPlan={EMPTY_PLANFLOW_STRUCTURED_PLAN}
-        missionGraph={buildPlanFlowMissionGraph(runWithTaskLedger())}
+        missionGraph={buildPlanFlowMissionGraph(runWithArtifact())}
         projectId="p1"
         fullHeight
-        nodeOverrides={{ [PLAN_CANVAS_RUN_TASK_NODE_ID]: { onRunTask } }}
       />,
     );
-    const runTaskButton = screen.getByTestId('plan-run-task-button') as HTMLButtonElement;
-    expect(runTaskButton.disabled).toBe(false);
-    // Execution starts only on the explicit Run Task click.
-    expect(onRunTask).not.toHaveBeenCalled();
-    fireEvent.click(runTaskButton);
-    expect(onRunTask).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Task Ledger (AutoGen 0.7.5)')).toBeTruthy();
+    expect(screen.queryByTestId('plan-run-task-button')).toBeNull();
   });
 
   it('keeps the ReactFlow controls visible on the Plan canvas', () => {
     render(
       <PlanMissionFlow
         structuredPlan={EMPTY_PLANFLOW_STRUCTURED_PLAN}
-        missionGraph={buildPlanFlowMissionGraph(runWithTaskLedger())}
+        missionGraph={buildPlanFlowMissionGraph(runWithArtifact())}
         projectId="p1"
         fullHeight
       />,

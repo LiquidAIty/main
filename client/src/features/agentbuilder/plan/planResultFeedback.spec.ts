@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import type { DeckRun } from '../../../types/agentgraph';
 import {
   buildPlanFlowMissionGraph,
-  PLAN_CANVAS_RUN_TASK_NODE_ID,
   PLAN_CANVAS_TASK_LEDGER_NODE_ID,
 } from './planFlowProjection';
 import {
@@ -137,25 +136,34 @@ describe('result feedback interpretation — Mag One decides, TS does not invent
   });
 });
 
-describe('Plan canvas stays two-stage when a revised Task Ledger arrives', () => {
-  it('renders only Task Ledger Planning -> Run Task from a result-feedback plan', () => {
-    const revised = interpretResultFeedbackResponse({
-      ok: true,
-      interpretation: 'Next ledger.',
-      plan: { task_ledger: { user_goal: 'Fix flagged items', plan: '1. patch' } },
-    }).nextPlan;
+describe('Plan canvas renders only the real Task Ledger artifact', () => {
+  it('renders one artifact viewer (no Run Task gate) from a real Task Ledger artifact', () => {
     const sourceRun = {
       id: 'result-feedback',
-      steps: [{ id: 's', title: 'Magentic-One', magenticTrace: { plan: revised } }],
+      steps: [
+        {
+          id: 's',
+          title: 'Magentic-One',
+          magenticTrace: {
+            plan: {
+              taskLedgerArtifact: {
+                source: 'autogen_0_7_5_magentic_one',
+                phase: 'task_ledger',
+                factsResponse: '1. GIVEN FACTS\n- flagged items exist',
+                planResponse: '- address flagged items',
+                taskLedgerResponse: 'Full ledger: Fix flagged items',
+                teamDescription: 'Research_Agent: research',
+                modelCallProof: [],
+              },
+            },
+          },
+        },
+      ],
     } as unknown as DeckRun;
     const graph = buildPlanFlowMissionGraph(sourceRun);
-    expect(graph.nodes.map((n) => n.id).sort()).toEqual(
-      [PLAN_CANVAS_RUN_TASK_NODE_ID, PLAN_CANVAS_TASK_LEDGER_NODE_ID].sort(),
-    );
-    expect(graph.nodes.map((n) => n.data.kind)).toEqual(['TaskLedger', 'RunTask']);
-    const taskLedger = graph.nodes.find((n) => n.id === PLAN_CANVAS_TASK_LEDGER_NODE_ID);
-    expect(taskLedger?.data.summary).toContain('Fix flagged items');
-    const runTask = graph.nodes.find((n) => n.id === PLAN_CANVAS_RUN_TASK_NODE_ID);
-    expect(runTask?.data.runnable).toBe(true);
+    expect(graph.nodes.map((n) => n.id)).toEqual([PLAN_CANVAS_TASK_LEDGER_NODE_ID]);
+    expect(graph.nodes.map((n) => n.data.kind)).toEqual(['TaskLedger']);
+    expect(graph.nodes[0].data.summary).toContain('Fix flagged items');
+    expect(graph.nodes.some((n) => n.data.kind === 'RunTask')).toBe(false);
   });
 });

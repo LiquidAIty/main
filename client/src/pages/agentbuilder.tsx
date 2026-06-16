@@ -5082,9 +5082,10 @@ export default function AgentBuilder(): React.ReactElement {
     }
     return latestDeckRun;
   }, [resultFeedbackPlan, latestDeckRun]);
-  // The Plan canvas is the deterministic two-stage [Task Ledger Planning] -> [Run Task]
-  // graph derived only from the real Magentic-One Task Ledger in the source run.
-  // PLAN.md / backend planflow projections never drive the Plan canvas.
+  // The Plan canvas renders only the real AutoGen Task Ledger artifact returned
+  // for the source run (one viewer node), and nothing when none was returned.
+  // No app-authored placeholder/Run Task nodes; PLAN.md / backend planflow
+  // projections never drive the Plan canvas.
   const planFlowMissionGraph = useMemo(
     () => buildPlanFlowMissionGraph(planFlowSourceRun),
     [planFlowSourceRun],
@@ -8237,63 +8238,16 @@ export default function AgentBuilder(): React.ReactElement {
       // returns a Task Ledger.
       const outcome = await handleRunDeck(trimmed);
 
-      if (outcome && outcome.ok) {
-        // Find if any step produced a task ledger
-        let hasTaskLedger = false;
-        let requiredAgents: string[] = [];
-        let stepsPlanned = 0;
-        if (outcome.run?.steps) {
-          for (const step of outcome.run.steps) {
-            const rawOutput = typeof step.output === 'string' ? step.output : '';
-            try {
-              const parsed = JSON.parse(rawOutput);
-              if (parsed?.task_ledger) {
-                hasTaskLedger = true;
-                if (Array.isArray(parsed.task_ledger.required_agents_tools)) {
-                  requiredAgents = parsed.task_ledger.required_agents_tools;
-                }
-                const planText = parsed.task_ledger.plan || parsed.task_ledger.task_plan || '';
-                if (typeof planText === 'string') {
-                  stepsPlanned = Math.max(stepsPlanned, planText.split(/\r?\n/).filter(line => line.trim().length > 0).length);
-                } else if (Array.isArray(planText)) {
-                  stepsPlanned = Math.max(stepsPlanned, planText.length);
-                }
-              }
-            } catch (e) {
-              // ignore parse errors
-            }
-          }
-        }
-        
-        if (hasTaskLedger) {
-          const agentsStr = requiredAgents.length > 0 ? requiredAgents.join(', ') : 'None';
-          setMessages((m) => [
-            ...m,
-            {
-              role: 'assistant',
-              text: `Task Ledger created.\nPlanFlow is waiting for Run Task approval.\nAgents included: ${agentsStr}.\nSteps planned: ${stepsPlanned}.\nNo execution started.`,
-            },
-          ]);
-        } else {
-          const answer = String(outcome.finalText || '').trim();
-          setMessages((m) => [
-            ...m,
-            {
-              role: 'assistant',
-              text: answer || 'Magentic-One returned an empty response.',
-            },
-          ]);
-        }
-      } else {
-        // Do not project stale provisional fake ledger on abort
+      // Mag One is a real-AutoGen wrapper. The conversation panel must not receive
+      // any app-authored status, summary, ledger text, or raw output. The Plan
+      // canvas updates reactively from latestDeckRun using only the real AutoGen
+      // messages/events the run returned. On failure we surface an honest
+      // non-chat error status — never a fake assistant bubble.
+      if (!outcome || !outcome.ok) {
         setLatestDeckRun(null);
-        setMessages((m) => [
-          ...m,
-          {
-            role: 'assistant',
-            text: `Magentic-One call failed: ${outcome?.error || 'Unknown error'}`,
-          },
-        ]);
+        setDeckStatusMessage(
+          `Magentic-One call failed: ${outcome?.error || 'no AutoGen output returned'}`,
+        );
       }
 
       const responseReceivedAt = Date.now();
@@ -8325,68 +8279,46 @@ export default function AgentBuilder(): React.ReactElement {
     // displayed on the Plan canvas — i.e. the latest real Magentic-One plan in
     // the source run (a result-feedback revision if present, else the latest
     // deck run). There is no raw-chat-input fallback and no coder packet.
-    let approvedMissionSpec: any = undefined;
-    if (planFlowSourceRun) {
-      const realMagenticPlans = planFlowSourceRun.steps
-        .map((step) => step.magenticTrace?.plan)
-        .filter((candidate) => candidate && typeof candidate === 'object');
-      if (realMagenticPlans.length > 0) {
-        const finalPlan: any = realMagenticPlans[realMagenticPlans.length - 1];
-        approvedMissionSpec = {
-          task_ledger: finalPlan.task_ledger,
-          proposed_action: finalPlan.proposed_action,
-          progress_ledger: finalPlan.progress_ledger,
-          context_packet: finalPlan.context_packet,
-        };
+    // Run Task may proceed only if the planning run returned real AutoGen output
+    // to resume from. The real state is the AutoGen messages/events the run
+    // produced — never an app-authored task ledger object.
+    const realPlanningMessages: any[] = (() => {
+      if (!planFlowSourceRun) return [];
+      for (let i = planFlowSourceRun.steps.length - 1; i >= 0; i -= 1) {
+        const plan = (planFlowSourceRun.steps[i] as any).magenticTrace?.plan;
+        const msgs = plan && Array.isArray(plan.autogenMessages) ? plan.autogenMessages : [];
+        if (msgs.length > 0) return msgs;
       }
-    }
+      return [];
+    })();
 
-    if (!approvedMissionSpec || (!approvedMissionSpec.task_ledger && !approvedMissionSpec.proposed_action)) {
-      setMessages((m) => [...m, { role: 'assistant', text: 'Run Task dispatch failed: no runnable Task Ledger yet.' }]);
+    if (realPlanningMessages.length === 0) {
+      setDeckStatusMessage('Run Task unavailable: Magentic-One returned no Task Ledger to approve.');
       return;
     }
 
+    const approvedGoal = String(
+      (planFlowSourceRun as any)?.input || (latestDeckRun as any)?.input || '',
+    ).trim();
+
     try {
-      // Run Task approval is a structured signal (runApproved), not a magic
-      // userText command. The approved Task Ledger goal is the real run input.
-      const approvedGoal =
-        (approvedMissionSpec?.task_ledger?.user_goal as string | undefined) || '';
+      // Structured approval (runApproved) carrying the real AutoGen planning
+      // messages back to Python; Python resumes the real Progress Ledger loop.
+      // The conversation panel receives nothing — AgentCanvas / Progress updates
+      // reactively from the real returned run; failures show a non-chat status.
       const outcome = await handleRunDeck(approvedGoal, {
         runApproved: true,
-        missionSpec: approvedMissionSpec,
+        missionSpec: { autogenMessages: realPlanningMessages },
       });
-
-      if (outcome && outcome.ok && outcome.run?.steps) {
-        // Read the structured Progress Ledger the Python sidecar returned. Never
-        // JSON-parse raw step output as runtime state.
-        let progressLedger: any = null;
-        for (const step of outcome.run.steps) {
-          const candidate = (step as any).magenticTrace?.plan?.progress_ledger;
-          if (candidate && typeof candidate === 'object') {
-            progressLedger = candidate;
-          }
-        }
-
-        if (progressLedger) {
-          const state = String(progressLedger.progress_state || 'running');
-          const selected = String(progressLedger.selected_agent || '');
-          setMessages((m) => [...m, {
-            role: 'assistant',
-            text: `Run Task dispatched. Progress Ledger started (state: ${state}${selected ? `, agent: ${selected}` : ''}). See AgentCanvas.`,
-          }]);
-          if (tab !== 'Progress') {
-            setTab('Progress');
-          }
-        } else {
-          setMessages((m) => [...m, { role: 'assistant', text: `Run Task dispatched, but no Progress Ledger returned.` }]);
-        }
+      if (outcome && outcome.ok) {
+        if (tab !== 'Progress') setTab('Progress');
       } else {
-        setMessages((m) => [...m, { role: 'assistant', text: `Run Task dispatch failed: ${outcome?.error || 'Unknown'}` }]);
+        setDeckStatusMessage(`Run Task failed: ${outcome?.error || 'no AutoGen output returned'}`);
       }
     } catch (err) {
-      setMessages((m) => [...m, { role: 'assistant', text: `Run Task execution error: ${err instanceof Error ? err.message : String(err)}` }]);
+      setDeckStatusMessage(`Run Task error: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }, [deckRunBusy, planFlowSourceRun, canvasProjectId, activeDeckWorkspaceContext, deck.nodes, deck.edges, tab]);
+  }, [deckRunBusy, planFlowSourceRun, latestDeckRun, canvasProjectId, activeDeckWorkspaceContext, deck.nodes, deck.edges, tab]);
 
   const effectiveNodeOverrides = useMemo(() => {
     const overrides = { ...planNodeDrafts };
@@ -9171,10 +9103,11 @@ export default function AgentBuilder(): React.ReactElement {
             >
             {/*
               ReactFlow is the PlanFlow canvas and stays mounted at all times.
-              It always renders the deterministic two-stage Plan canvas:
-              [Task Ledger Planning] -> [Run Task]. No side-panel approval, no
-              coder-packet card, no PLAN.md card, and no raw JSON editor sit on
-              or above the canvas; status/controls live below or in the inspector.
+              It renders ONLY the real AutoGen Task Ledger artifact viewer when
+              AutoGen returns one, and nothing otherwise. No app-authored
+              placeholder nodes, no Run Task gate node (Run Task / Progress Ledger
+              are out of scope), no coder-packet card, no PLAN.md card, and no raw
+              JSON editor sit on or above the canvas.
             */}
             <div style={{ flex: '1 1 auto', minHeight: 480, position: 'relative' }}>
               <Suspense
@@ -9219,9 +9152,9 @@ export default function AgentBuilder(): React.ReactElement {
             ) : null}
             {/*
               No side-panel / inspector approval card on the Plan canvas. The
-              Task Ledger renders as the [Task Ledger Planning] node and approval
-              is the [Run Task] node action — no Approve & Execute button, no raw
-              plan JSON dump, no Revise/Apply/Clear controls.
+              real AutoGen Task Ledger renders as a single artifact viewer node —
+              no Approve & Execute button, no raw plan JSON dump, no
+              Revise/Apply/Clear controls.
             */}
             {openMissionMessage ? (
               <div

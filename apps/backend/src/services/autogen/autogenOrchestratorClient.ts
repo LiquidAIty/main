@@ -49,14 +49,26 @@ export type LedgerTrace = {
   blocker?: string | null;
 };
 
+export type AutoGenMessage = {
+  source: string;
+  type: string;
+  content: string;
+};
+
 export type AutoGenOrchestratorResponse = {
   ok: boolean;
-  // Honest per-stage TaskLedger trace from the real Python Magentic-One path.
+  // Honest per-stage trace from the real Python Magentic-One path.
   ledgerTrace?: LedgerTrace;
+  // Real last AutoGen message text (transport invariant only; not rendered in chat).
   finalResponseText?: string;
-  statusText?: string;
-  taskLedger?: any;
-  progressLedger?: any;
+  // The real AutoGen run output captured verbatim from run_stream.
+  autogenMessages?: AutoGenMessage[];
+  autogenEvents?: AutoGenMessage[];
+  // The real Task Ledger artifact (facts/plan/full text + model-call proof).
+  taskLedgerArtifact?: unknown;
+  // Progress Ledger is identify-only in this scope: referenced, never started.
+  progressLedgerReference?: unknown;
+  error?: string;
   stopReason?: string | null;
   transcript?: string[];
   metrics?: Record<string, unknown>;

@@ -291,50 +291,65 @@ class SearchSwarmPlan(BaseModel):
     approved: bool = False
 
 
-class ConnectedAgent(BaseModel):
-    id: str
-    name: str
-    role: str
-    tools: list[str] = Field(default_factory=list)
-    execution_allowed_now: bool = False
-    approval_required: bool = True
-    status: Literal["planned", "waiting_for_user", "blocked"] = "planned"
+class AutoGenMessage(BaseModel):
+    """A real AutoGen message/event captured verbatim from ``run_stream``.
 
+    ``source`` and ``type`` are the message's own fields (the agent/orchestrator
+    name and the message class name); ``content`` is the message's own text. The
+    app never invents, classifies, or reshapes this — it is what AutoGen emitted.
+    """
 
-class PlanStep(BaseModel):
-    id: str
-    task: str
-    assigned_agent: str
-    required_tools: list[str] = Field(default_factory=list)
-    execution_allowed_now: bool = False
-    approval_required: bool = True
-    status: Literal["planned", "waiting_for_user", "blocked"] = "planned"
-
-
-class TaskLedger(BaseModel):
-    user_goal: str
-    known_facts: list[str] = Field(default_factory=list)
-    unknowns_to_lookup: list[str] = Field(default_factory=list)
-    facts_to_derive: list[str] = Field(default_factory=list)
-    assumptions_or_guesses: list[str] = Field(default_factory=list)
-    connected_agents: list[ConnectedAgent] = Field(default_factory=list)
-    plan_steps: list[PlanStep] = Field(default_factory=list)
-
-
-class ProgressEvent(BaseModel):
     source: str
     type: str
     content: str
 
 
-class ProgressLedger(BaseModel):
-    current_step: str | None = None
-    selected_agent: str | None = None
-    instruction: str | None = None
-    agent_result: str | None = None
-    progress_state: Literal["running", "blocked", "completed", "stalled"] = "running"
-    blocker: str | None = None
-    events: list[ProgressEvent] = Field(default_factory=list)
+class ModelCallProof(BaseModel):
+    """Evidence that a real ``model_client.create`` call happened. No fake IDs."""
+
+    label: str
+    provider: str
+    model: str
+    clientClass: str
+    startedAt: float
+    finishedAt: float
+    latencyMs: int
+    responseType: str
+    excerpt: str
+    responseId: str | None = None
+    usage: dict[str, Any] | None = None
+
+
+class TaskLedgerArtifact(BaseModel):
+    """The real AutoGen 0.7.5 Magentic-One Task Ledger output, preserved verbatim.
+
+    ``factsResponse`` / ``planResponse`` are the exact model outputs from the
+    facts and plan prompt calls. ``taskLedgerResponse`` is the full Task Ledger
+    text AutoGen assembles via ``ORCHESTRATOR_TASK_LEDGER_FULL_PROMPT``. Nothing
+    is split into invented fields or steps.
+    """
+
+    source: Literal["autogen_0_7_5_magentic_one"] = "autogen_0_7_5_magentic_one"
+    phase: Literal["task_ledger"] = "task_ledger"
+    factsResponse: str
+    planResponse: str
+    taskLedgerResponse: str
+    teamDescription: str
+    modelCallProof: list[ModelCallProof] = Field(default_factory=list)
+
+
+class ProgressLedgerReference(BaseModel):
+    """Identify-only reference to the Progress Ledger. It is never started here."""
+
+    identified: bool = True
+    promptConstant: str = "ORCHESTRATOR_PROGRESS_LEDGER_PROMPT"
+    methods: list[str] = Field(default_factory=lambda: ["_orchestrate_step", "_reenter_outer_loop"])
+    sourceFile: str = (
+        "autogen-agentchat/.../teams/_group_chat/_magentic_one/_magentic_one_orchestrator.py"
+    )
+    started: bool = False
+    implemented: bool = False
+    rendered: bool = False
 
 
 class PlanContext(BaseModel):
@@ -345,8 +360,12 @@ class PlanContext(BaseModel):
     deltaSummary: str = ""
     status: Literal["draft", "grounded", "revised"] = "draft"
     searchSwarmPlan: SearchSwarmPlan | None = None
-    task_ledger: TaskLedger | None = None
-    progress_ledger: ProgressLedger | None = None
+    # Raw AutoGen-derived state only. The app never constructs these from parsed
+    # text; they are populated only when AutoGen itself returns structured output
+    # (e.g. the orchestrator's Progress Ledger JSON). Otherwise they stay None and
+    # the real AutoGen messages/events carry the Task Ledger text.
+    task_ledger: dict[str, Any] | None = None
+    progress_ledger: dict[str, Any] | None = None
 
 
 class ResearchPack(BaseModel):
@@ -505,10 +524,19 @@ class OrchestratorRunResponse(BaseModel):
     session: ProjectSession
     ledgerTrace: LedgerTrace = Field(default_factory=LedgerTrace)
     stopReason: str | None = None
+    # finalResponseText is the real last AutoGen message text (never an app-authored
+    # summary). It is data only; the conversation panel does not auto-render it.
     finalResponseText: str
-    statusText: str | None = None
-    taskLedger: TaskLedger | None = None
-    progressLedger: ProgressLedger | None = None
+    # The real AutoGen run output: every message/event captured verbatim from
+    # run_stream.
+    autogenMessages: list[AutoGenMessage] = Field(default_factory=list)
+    autogenEvents: list[AutoGenMessage] = Field(default_factory=list)
+    # The real Task Ledger artifact (facts/plan/full text + model-call proof).
+    # None only if AutoGen produced no Task Ledger output.
+    taskLedgerArtifact: TaskLedgerArtifact | None = None
+    # Progress Ledger is identify-only in this scope: referenced, never started.
+    progressLedgerReference: ProgressLedgerReference | None = None
+    error: str | None = None
     blackboardEntries: list[BlackboardEntry] = Field(default_factory=list)
     plan: PlanContext
     thinkGraph: ThinkGraphContext
