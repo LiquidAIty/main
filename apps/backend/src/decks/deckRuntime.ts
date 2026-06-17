@@ -123,8 +123,14 @@ export async function executeDeck(document: any, templates: any[], options: any 
       };
     }
 
+    // An artifact-bearing Magentic-One run may have empty chat output: the run is
+    // still a success when it carries the real Task Ledger artifact in
+    // magenticTrace. Only a fully empty result (no output AND no artifact) fails.
     const finalOutput = mainResult.output;
-    if (!finalOutput) {
+    const hasTaskLedgerArtifact = Boolean(
+      (mainResult as any)?.magenticTrace?.plan?.taskLedgerArtifact,
+    );
+    if (!finalOutput && !hasTaskLedgerArtifact) {
       throw new Error('deck_run_missing_final_output');
     }
 
@@ -142,7 +148,7 @@ export async function executeDeck(document: any, templates: any[], options: any 
       startedAt,
       endedAt: new Date().toISOString(),
       cardResults,
-      finalOutput,
+      finalOutput: finalOutput || '',
       steps,
       events,
       mission: {

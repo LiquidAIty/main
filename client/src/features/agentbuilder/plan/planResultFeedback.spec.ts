@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { DeckRun } from '../../../types/agentgraph';
-import {
-  buildPlanFlowMissionGraph,
-  PLAN_CANVAS_TASK_LEDGER_NODE_ID,
-} from './planFlowProjection';
+import { buildPlanFlowMissionGraph } from './planFlowProjection';
 import {
   buildResultFeedbackRequest,
   interpretResultFeedbackResponse,
@@ -136,8 +133,8 @@ describe('result feedback interpretation — Mag One decides, TS does not invent
   });
 });
 
-describe('Plan canvas renders only the real Task Ledger artifact', () => {
-  it('renders one artifact viewer (no Run Task gate) from a real Task Ledger artifact', () => {
+describe('Plan canvas renders editable Step nodes from the real Task Ledger', () => {
+  it('creates one editable Step node per plan step (no metadata card, no Run Task gate)', () => {
     const sourceRun = {
       id: 'result-feedback',
       steps: [
@@ -150,7 +147,10 @@ describe('Plan canvas renders only the real Task Ledger artifact', () => {
                 source: 'autogen_0_7_5_magentic_one',
                 phase: 'task_ledger',
                 factsResponse: '1. GIVEN FACTS\n- flagged items exist',
-                planResponse: '- address flagged items',
+                planResponse: [
+                  '1. Address flagged items',
+                  '2. Re-run the proof commands',
+                ].join('\n'),
                 taskLedgerResponse: 'Full ledger: Fix flagged items',
                 teamDescription: 'Research_Agent: research',
                 modelCallProof: [],
@@ -161,9 +161,16 @@ describe('Plan canvas renders only the real Task Ledger artifact', () => {
       ],
     } as unknown as DeckRun;
     const graph = buildPlanFlowMissionGraph(sourceRun);
-    expect(graph.nodes.map((n) => n.id)).toEqual([PLAN_CANVAS_TASK_LEDGER_NODE_ID]);
-    expect(graph.nodes.map((n) => n.data.kind)).toEqual(['TaskLedger']);
-    expect(graph.nodes[0].data.summary).toContain('Fix flagged items');
+    expect(graph.nodes).toHaveLength(2);
+    expect(graph.nodes.map((n) => n.data.kind)).toEqual(['Step', 'Step']);
+    expect(graph.nodes.every((n) => n.data.editable === true)).toBe(true);
+    expect(graph.nodes[0].data.label).toContain('Step 1');
+    // No raw facts/ledger text and no metadata-card / Run Task road-sign labels.
+    const serialized = JSON.stringify(graph);
+    expect(serialized).not.toContain('flagged items exist');
+    expect(serialized).not.toContain('facts response');
+    expect(serialized).not.toContain('full ledger');
+    expect(serialized).not.toContain('TaskLedger');
     expect(graph.nodes.some((n) => n.data.kind === 'RunTask')).toBe(false);
   });
 });

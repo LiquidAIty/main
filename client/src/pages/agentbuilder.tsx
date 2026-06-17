@@ -3,7 +3,7 @@ import React, {
   lazy,
   useCallback,
   useEffect,
-  useMemo,
+  useMemo, 
   useRef,
   useState,
 } from 'react';
@@ -54,7 +54,8 @@ import {
 } from '../components/builder/assistPlanSurface';
 import {
   buildPlanFlowMissionGraph,
-  PLAN_CANVAS_RUN_TASK_NODE_ID,
+  buildPlanFlowGoGateState,
+  type PlanFlowGoGateState,
 } from '../features/agentbuilder/plan/planFlowProjection';
 import {
   buildResultFeedbackRequest,
@@ -4615,7 +4616,7 @@ function buildGraphVizForNVL(graph: { nodes: KNode[]; edges: KEdge[] }) {
       sourceRefs: n.sourceRefs,
       properties: n.properties,
       provenance: n.provenance ?? undefined,
-      vectorText: n.vectorText,
+      vectorText: n.vectorText ?? undefined,
       graph: n.graph,
       kind: n.kind,
       owlClass: n.owlClass,
@@ -5024,6 +5025,10 @@ export default function AgentBuilder(): React.ReactElement {
   );
   // TODO: replace manual deck input with plan-driven execution input.
   const [deckRunInput, setDeckRunInput] = useState('');
+  // PlanFlow Go gate (approval gate only). Clicking Go stages the selected Step
+  // at the approval gate and stops; it never executes anything (no coder, no
+  // tools, no terminal, no Progress Ledger). State lives in the inspector only.
+  const [goGateState, setGoGateState] = useState<PlanFlowGoGateState | null>(null);
   const [showCreateProjectForm, setShowCreateProjectForm] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [sending, setSending] = useState(false);
@@ -6270,6 +6275,19 @@ export default function AgentBuilder(): React.ReactElement {
     [setPlanSource],
   );
 
+  const handlePlanGoGate = useCallback(() => {
+    // Approval gate ONLY. Stage the selected Step at the gate and stop. No coder,
+    // no tools, no terminal, no Progress Ledger, and no autogenMessages /
+    // finalResponseText / chat text used as an execution source.
+    setGoGateState(
+      buildPlanFlowGoGateState(
+        planMissionFocus?.nodeId
+          ? { id: planMissionFocus.nodeId, label: selectedPlanNodeDraft?.label }
+          : null,
+      ),
+    );
+  }, [planMissionFocus, selectedPlanNodeDraft]);
+
   const renderPlanMissionEditorPanel = useCallback(() => {
     if (!planMissionFocus || !selectedPlanNodeDraft) {
       return (
@@ -6330,6 +6348,63 @@ export default function AgentBuilder(): React.ReactElement {
               }),
             }}
           />
+          {/*
+            Go gate — approval gate ONLY. Same teal arrow visual language as the
+            chat send button. Clicking it stages the selected Step at the gate
+            and stops; it never executes (no coder/tools/terminal/Progress
+            Ledger, no autogenMessages/finalResponseText/chat as task source).
+          */}
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}
+          >
+            <button
+              type="button"
+              onClick={handlePlanGoGate}
+              aria-label="Go — approve selected step"
+              title="Go — stage the selected step at the approval gate"
+              data-testid="plan-go-gate-button"
+              className="rounded-full flex items-center justify-center"
+              style={{
+                width: 36,
+                height: 36,
+                flex: '0 0 auto',
+                cursor: 'pointer',
+                background: '#4FA2AD',
+                border: '1px solid rgba(79,162,173,0.36)',
+                boxShadow:
+                  '0 8px 18px rgba(79,162,173,0.10), inset 0 1px 0 rgba(255,255,255,0.14)',
+              }}
+            >
+              <svg
+                width="17"
+                height="17"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#FFFFFF"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 19V5" />
+                <path d="M5 12l7-7 7 7" />
+              </svg>
+            </button>
+            <span
+              className="text-[11px]"
+              style={{ color: GRAPH_THEME.drawer.inputMuted }}
+            >
+              Go — approve selected step
+            </span>
+          </div>
+          {goGateState && goGateState.selectedNodeId === planMissionFocus.nodeId && (
+            <div
+              className="text-[11px]"
+              data-testid="plan-go-gate-status"
+              style={{ marginTop: 8, color: GRAPH_THEME.drawer.inputMuted }}
+            >
+              {goGateState.message}
+            </div>
+          )}
         </div>
         <div
           style={graphDrawerSectionStyle({
@@ -6543,7 +6618,7 @@ export default function AgentBuilder(): React.ReactElement {
         </div>
       </div>
     );
-  }, [planMissionFocus, selectedPlanNodeDraft, updatePlanNodeDraft]);
+  }, [planMissionFocus, selectedPlanNodeDraft, updatePlanNodeDraft, handlePlanGoGate, goGateState]);
 
   const renderAgentBuilderPanel = () => {
     if (!showDeckBuilder) {
@@ -8230,23 +8305,35 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckRunInput(trimmed);
 
     setTimeout(async () => {
-      // Chat is an AI wrapper. The ONLY thing it does is make the real
-      // Magentic-One model/orchestrator call and render whatever the model
-      // returns. No TypeScript classification, no TaskLedger precondition, no
-      // canned answers/completion text, no chat-side execution. The Plan canvas
-      // updates reactively from latestDeckRun if (and only if) the model itself
-      // returns a Task Ledger.
+      // Real AutoGen run on the backend/Python path. After it returns, choose the
+      // VISIBLE SURFACE only (no model/agent routing, no AutoGen change, no
+      // fabrication): a planning/PlanFlow request that produced a real
+      // taskLedgerArtifact shows on the PlanFlow canvas with a short chat status;
+      // any other request shows the real answer in chat. The Plan canvas reads
+      // the real taskLedgerArtifact from latestDeckRun reactively.
       const outcome = await handleRunDeck(trimmed);
 
-      // Mag One is a real-AutoGen wrapper. The conversation panel must not receive
-      // any app-authored status, summary, ledger text, or raw output. The Plan
-      // canvas updates reactively from latestDeckRun using only the real AutoGen
-      // messages/events the run returned. On failure we surface an honest
-      // non-chat error status — never a fake assistant bubble.
-      if (!outcome || !outcome.ok) {
+      if (outcome && outcome.ok) {
+        // Surface-only signal (NOT an AI router): does the user want a plan on the
+        // canvas? Keyword match on the raw request only.
+        const wantsPlanSurface = /\b(plan|coding task|audit and improve|planflow|task ledger)\b/i.test(trimmed);
+        const hasTaskLedgerArtifact = (outcome.run?.steps || []).some(
+          (step: any) => step?.magenticTrace?.plan?.taskLedgerArtifact,
+        );
+        if (wantsPlanSurface && hasTaskLedgerArtifact) {
+          // Plan goes to PlanFlow; chat stays short. The long plan / Task Ledger
+          // text is never dumped into chat.
+          setMessages((m) => [...m, { role: 'assistant', text: 'Plan created on canvas.' }]);
+        } else {
+          const answer = String(outcome.finalText || '').trim();
+          if (answer) {
+            setMessages((m) => [...m, { role: 'assistant', text: answer }]);
+          }
+        }
+      } else {
         setLatestDeckRun(null);
         setDeckStatusMessage(
-          `Magentic-One call failed: ${outcome?.error || 'no AutoGen output returned'}`,
+          `AI call failed: ${outcome?.error || 'no answer returned'}`,
         );
       }
 
@@ -8275,61 +8362,19 @@ export default function AgentBuilder(): React.ReactElement {
   const handleRunTask = useCallback(async () => {
     if (deckRunBusy) return;
 
-    // Source of truth for execution approval is the Task Ledger currently
-    // displayed on the Plan canvas — i.e. the latest real Magentic-One plan in
-    // the source run (a result-feedback revision if present, else the latest
-    // deck run). There is no raw-chat-input fallback and no coder packet.
-    // Run Task may proceed only if the planning run returned real AutoGen output
-    // to resume from. The real state is the AutoGen messages/events the run
-    // produced — never an app-authored task ledger object.
-    const realPlanningMessages: any[] = (() => {
-      if (!planFlowSourceRun) return [];
-      for (let i = planFlowSourceRun.steps.length - 1; i >= 0; i -= 1) {
-        const plan = (planFlowSourceRun.steps[i] as any).magenticTrace?.plan;
-        const msgs = plan && Array.isArray(plan.autogenMessages) ? plan.autogenMessages : [];
-        if (msgs.length > 0) return msgs;
-      }
-      return [];
-    })();
-
-    if (realPlanningMessages.length === 0) {
-      setDeckStatusMessage('Run Task unavailable: Magentic-One returned no Task Ledger to approve.');
-      return;
-    }
-
-    const approvedGoal = String(
-      (planFlowSourceRun as any)?.input || (latestDeckRun as any)?.input || '',
-    ).trim();
-
-    try {
-      // Structured approval (runApproved) carrying the real AutoGen planning
-      // messages back to Python; Python resumes the real Progress Ledger loop.
-      // The conversation panel receives nothing — AgentCanvas / Progress updates
-      // reactively from the real returned run; failures show a non-chat status.
-      const outcome = await handleRunDeck(approvedGoal, {
-        runApproved: true,
-        missionSpec: { autogenMessages: realPlanningMessages },
-      });
-      if (outcome && outcome.ok) {
-        if (tab !== 'Progress') setTab('Progress');
-      } else {
-        setDeckStatusMessage(`Run Task failed: ${outcome?.error || 'no AutoGen output returned'}`);
-      }
-    } catch (err) {
-      setDeckStatusMessage(`Run Task error: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }, [deckRunBusy, planFlowSourceRun, latestDeckRun, canvasProjectId, activeDeckWorkspaceContext, deck.nodes, deck.edges, tab]);
+    // Run Task must resume from approved task nodes / Progress Ledger state, not
+    // raw autogenMessages or chat text. That execution contract is not wired yet,
+    // so fail closed instead of sending the wrong hidden payload.
+    setDeckStatusMessage('Run Task unavailable: approved task-node execution is not wired yet.');
+    return;
+  }, [deckRunBusy, setDeckStatusMessage]);
 
   const effectiveNodeOverrides = useMemo(() => {
-    const overrides = { ...planNodeDrafts };
-    // Run Task is its own deterministic Plan canvas node. The human approval
-    // action lives there and dispatches the displayed Task Ledger on click.
-    overrides[PLAN_CANVAS_RUN_TASK_NODE_ID] = {
-      ...overrides[PLAN_CANVAS_RUN_TASK_NODE_ID],
-      onRunTask: handleRunTask,
-    };
-    return overrides;
-  }, [planNodeDrafts, handleRunTask]);
+    // PlanFlow node overrides are driven by user edits only. No deterministic
+    // Run Task monument is injected; Run Task remains fail-closed until approved
+    // task-node execution is wired.
+    return { ...planNodeDrafts };
+  }, [planNodeDrafts]);
 
   const thinkGraphViz = useMemo(() => {
     return prefixThinkGraphIds(ageRowsToGraph(graphResult));
@@ -9103,10 +9148,11 @@ export default function AgentBuilder(): React.ReactElement {
             >
             {/*
               ReactFlow is the PlanFlow canvas and stays mounted at all times.
-              It renders ONLY the real AutoGen Task Ledger artifact viewer when
-              AutoGen returns one, and nothing otherwise. No app-authored
-              placeholder nodes, no Run Task gate node (Run Task / Progress Ledger
-              are out of scope), no coder-packet card, no PLAN.md card, and no raw
+              It renders editable Step nodes projected from the real AutoGen Task
+              Ledger artifact (one node per plan step), and nothing otherwise. No
+              app-authored placeholder nodes, no Task Ledger metadata card, no Run
+              Task gate node (Run Task / Progress Ledger are out of scope), no
+              coder-packet card, no PLAN.md card, no bottom banner, and no raw
               JSON editor sit on or above the canvas.
             */}
             <div style={{ flex: '1 1 auto', minHeight: 480, position: 'relative' }}>
@@ -9127,106 +9173,17 @@ export default function AgentBuilder(): React.ReactElement {
                   selectedNodeId={planMissionFocus?.nodeId || null}
                   drawerLinked
                   onFocusChange={setPlanMissionFocus}
+                  onGoGate={handlePlanGoGate}
+                  goGateStatus={
+                    goGateState &&
+                    planMissionFocus &&
+                    goGateState.selectedNodeId === planMissionFocus.nodeId
+                      ? goGateState.message
+                      : null
+                  }
                 />
               </Suspense>
             </div>
-
-            {latestMissionRun ? (
-              <div
-                style={graphDrawerSectionStyle({
-                  margin: '0 12px 10px',
-                  padding: '10px 12px',
-                  borderColor: 'rgba(79,162,173,0.25)',
-                  background: 'rgba(79,162,173,0.08)',
-                })}
-              >
-                <div style={{ fontSize: 12, color: C.text }}>
-                  Mission run: {latestMissionRun.status}
-                </div>
-                <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
-                  {latestMissionRun.agentRuns
-                    .map((run) => `${run.agentId}:${run.status}`)
-                    .join(' | ')}
-                </div>
-              </div>
-            ) : null}
-            {/*
-              No side-panel / inspector approval card on the Plan canvas. The
-              real AutoGen Task Ledger renders as a single artifact viewer node —
-              no Approve & Execute button, no raw plan JSON dump, no
-              Revise/Apply/Clear controls.
-            */}
-            {openMissionMessage ? (
-              <div
-                style={graphDrawerSectionStyle({
-                  margin: '0 12px 10px',
-                  padding: '10px 12px',
-                  borderColor: 'rgba(226,186,84,0.28)',
-                  background: 'rgba(226,186,84,0.10)',
-                })}
-              >
-                <div style={{ fontSize: 12, color: C.text }}>
-                  Open mission: {openMissionMessage.title} ({openMissionMessage.status})
-                </div>
-                <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
-                  {openMissionMessage.activeAgents
-                    .map((agent) => `${agent.label}:${agent.status}`)
-                    .join(' | ')}
-                </div>
-                {openMissionRuntimeSummary ? (
-                  <div style={{ marginTop: 6, fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
-                    {openMissionRuntimeSummary}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-            {planMissionFocus ? (
-              <div
-                className="text-xs"
-                style={{
-                  color: GRAPH_THEME.drawer.inputMuted,
-                  marginTop: 8,
-                }}
-              >
-                <div>
-                  Focus: {safeText(planMissionFocus.nodeKind)} -{' '}
-                  {safeText(planMissionFocus.nodeLabel)}
-                </div>
-                {planMissionFocus.nodeData?.source ? (
-                  <div style={{ marginTop: 4 }}>
-                    Source: {safeText(planMissionFocus.nodeData.source)}
-                    {planMissionFocus.nodeData.provenance
-                      ? ` - ${safeText(planMissionFocus.nodeData.provenance)}`
-                      : ''}
-                  </div>
-                ) : null}
-                {(planMissionFocus.nodeData as { summary?: string })?.summary ? (
-                  <div style={{ marginTop: 6, whiteSpace: 'pre-wrap', color: C.text }}>
-                    {safeText((planMissionFocus.nodeData as { summary?: string }).summary)}
-                  </div>
-                ) : null}
-                {(planMissionFocus.nodeData as { payloadJson?: string })?.payloadJson ? (
-                  <pre
-                    aria-label="Mag One node payload"
-                    style={{
-                      marginTop: 6,
-                      fontSize: 11,
-                      fontFamily: 'monospace',
-                      whiteSpace: 'pre-wrap',
-                      maxHeight: 280,
-                      overflow: 'auto',
-                      color: GRAPH_THEME.drawer.inputMuted,
-                    }}
-                  >
-                    {(planMissionFocus.nodeData as { payloadJson?: string }).payloadJson}
-                  </pre>
-                ) : (
-                  <div style={{ marginTop: 6 }}>
-                    No raw payload on this node (honest missing state).
-                  </div>
-                )}
-              </div>
-            ) : null}
             </div>
           )}
         </div>

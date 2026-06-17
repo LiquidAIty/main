@@ -62,7 +62,7 @@ function runWithArtifact(): DeckRun {
               source: 'autogen_0_7_5_magentic_one',
               phase: 'task_ledger',
               factsResponse: '1. GIVEN FACTS\n- repo exists',
-              planResponse: '- inspect read-only',
+              planResponse: ['1. Audit signal sources', '2. Check data path'].join('\n'),
               taskLedgerResponse: 'Full Task Ledger text',
               teamDescription: 'Research_Agent: research',
               modelCallProof: [],
@@ -74,9 +74,10 @@ function runWithArtifact(): DeckRun {
   } as DeckRun;
 }
 
-// Task-Ledger-only scope: the Plan canvas renders ONE real artifact viewer and
-// NO Run Task gate node (Run Task / Progress Ledger are out of scope).
-describe('PlanMissionFlow — real Task Ledger artifact viewer only', () => {
+// Plan canvas scope: editable Step nodes from the real Task Ledger artifact, no
+// Run Task gate node, no Task Ledger metadata monument, and no Source: line on
+// the small cards (provenance lives in the inspector only).
+describe('PlanMissionFlow — editable Step nodes from the real Task Ledger', () => {
   it('renders nothing fabricated and no Run Task button before AutoGen returns anything', () => {
     render(
       <PlanMissionFlow
@@ -89,9 +90,11 @@ describe('PlanMissionFlow — real Task Ledger artifact viewer only', () => {
     expect(screen.queryByText('Task Ledger Planning')).toBeNull();
     expect(screen.queryByText(/Preparing the Task Ledger/i)).toBeNull();
     expect(screen.queryByTestId('plan-run-task-button')).toBeNull();
+    // No Step nodes yet -> no SWAT tray.
+    expect(screen.queryByTestId('planflow-swat-tray')).toBeNull();
   });
 
-  it('renders the real Task Ledger artifact viewer and still no Run Task button', () => {
+  it('renders readable Step nodes (no Source: line, no metadata card, no Run Task button)', () => {
     render(
       <PlanMissionFlow
         structuredPlan={EMPTY_PLANFLOW_STRUCTURED_PLAN}
@@ -100,8 +103,55 @@ describe('PlanMissionFlow — real Task Ledger artifact viewer only', () => {
         fullHeight
       />,
     );
-    expect(screen.getByText('Task Ledger (AutoGen 0.7.5)')).toBeTruthy();
+    expect(screen.getByText(/Step 1/)).toBeTruthy();
+    expect(screen.getByText(/Step 2/)).toBeTruthy();
+    // Old metadata monument and provenance clutter are gone from the cards.
+    expect(screen.queryByText('Task Ledger (AutoGen 0.7.5)')).toBeNull();
+    expect(screen.queryByText(/Source:/)).toBeNull();
     expect(screen.queryByTestId('plan-run-task-button')).toBeNull();
+  });
+
+  it('shows NO SWAT tray when no Step is selected (only a subtle hint)', () => {
+    render(
+      <PlanMissionFlow
+        structuredPlan={EMPTY_PLANFLOW_STRUCTURED_PLAN}
+        missionGraph={buildPlanFlowMissionGraph(runWithArtifact())}
+        projectId="p1"
+        fullHeight
+      />,
+    );
+    expect(screen.queryByTestId('planflow-swat-tray')).toBeNull();
+    expect(screen.queryByTestId('planflow-swat-go')).toBeNull();
+    // The old subtle bottom-left canvas arrow is gone.
+    expect(screen.queryByTestId('planflow-canvas-go-gate')).toBeNull();
+    // A non-intrusive hint is allowed.
+    expect(screen.getByText('Select a step to approve')).toBeTruthy();
+  });
+
+  it('attaches a labeled SWAT GO tray to the selected Step and stages it (no execution)', () => {
+    const onGoGate = vi.fn();
+    render(
+      <PlanMissionFlow
+        structuredPlan={EMPTY_PLANFLOW_STRUCTURED_PLAN}
+        missionGraph={buildPlanFlowMissionGraph(runWithArtifact())}
+        projectId="p1"
+        fullHeight
+        selectedNodeId="plan-canvas:step:1"
+        onGoGate={onGoGate}
+        goGateStatus="Run Task unavailable: approved task-node execution is not wired yet."
+      />,
+    );
+    const tray = screen.getByTestId('planflow-swat-tray');
+    expect(tray).toBeTruthy();
+    const goButton = screen.getByTestId('planflow-swat-go');
+    expect(goButton.textContent || '').toContain('GO');
+    // Clicking GO only stages via the injected gate handler — never executes.
+    goButton.click();
+    expect(onGoGate).toHaveBeenCalledTimes(1);
+    // The not-wired approval status is shown in the tray.
+    expect(screen.getByTestId('planflow-swat-status').textContent || '').toMatch(
+      /not wired yet/i,
+    );
   });
 
   it('keeps the ReactFlow controls visible on the Plan canvas', () => {

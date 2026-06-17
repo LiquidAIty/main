@@ -24,6 +24,7 @@ import {
 import '@xyflow/react/dist/style.css';
 
 import type { StructuredAssistPlanSurface } from '../builder/assistPlanSurface';
+import { buildPlanStepCardView } from '../../features/agentbuilder/plan/planFlowProjection';
 import {
   GRAPH_THEME,
   graphControlButtonStyle,
@@ -62,6 +63,11 @@ type PlanMissionFlowProps = {
   editMode?: boolean;
   drawerLinked?: boolean;
   onFocusChange?: (focus: PlanMissionFocus) => void;
+  /** Approval gate only. Called when the canvas Go arrow is clicked with a Step
+   *  selected. Must stage the selected step and stop — it never executes. */
+  onGoGate?: () => void;
+  /** Inspector-style gate status to show near the canvas Go arrow. */
+  goGateStatus?: string | null;
 };
 
 function toPlanMissionFocus(node: PlanMissionFlowNode): Exclude<PlanMissionFocus, null> {
@@ -239,9 +245,11 @@ function MissionNode({ data, selected }: NodeProps<any>) {
   const nodeData = data as PlanMissionNodeData;
   const status = String(nodeData?.status || 'proposed');
   const shellActive = Boolean(selected || status.toLowerCase() === 'running');
-  const title = String(nodeData?.label || '').trim() || 'Plan Node';
+  // Readable card view only: short title + one short detail line. Source /
+  // provenance / raw artifact text stay in the inspector, never on the card.
+  const cardView = buildPlanStepCardView(nodeData);
+  const title = cardView.title;
   const kind = String(nodeData?.kind || '').trim() || 'Task';
-  const source = String(nodeData?.source || 'unknown').trim();
   const badge =
     kind === 'CurrentMission'
       ? 'CURRENT MISSION'
@@ -290,14 +298,18 @@ function MissionNode({ data, selected }: NodeProps<any>) {
           alignContent: 'start',
           gap: 4,
           borderRadius: 14,
-          border: `1px solid ${shellActive ? 'rgba(55,173,170,0.44)' : 'rgba(55,173,170,0.24)'}`,
-          boxShadow: shellActive
-            ? 'inset 0 1px 0 rgba(255,255,255,0.05), 0 0 0 1px rgba(55,173,170,0.12)'
-            : 'inset 0 1px 0 rgba(255,255,255,0.03)',
+          border: `1px solid ${
+            selected ? 'rgba(55,173,170,0.75)' : shellActive ? 'rgba(55,173,170,0.44)' : 'rgba(55,173,170,0.24)'
+          }`,
+          boxShadow: selected
+            ? 'inset 0 1px 0 rgba(255,255,255,0.06), 0 0 0 1px rgba(55,173,170,0.4), 0 0 22px rgba(55,173,170,0.32)'
+            : shellActive
+              ? 'inset 0 1px 0 rgba(255,255,255,0.05), 0 0 0 1px rgba(55,173,170,0.12)'
+              : 'inset 0 1px 0 rgba(255,255,255,0.03)',
           padding: '8px 9px',
           background: GRAPH_THEME.card.glassBackground,
           width: 260,
-          minHeight: 142,
+          minHeight: 104,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -329,73 +341,116 @@ function MissionNode({ data, selected }: NodeProps<any>) {
             position: 'relative',
             zIndex: 1,
             overflowWrap: 'break-word',
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
           }}
         >
           {title}
         </div>
-        <div
-          style={{
-            color: 'rgba(167, 176, 186, 0.84)',
-            fontSize: 11.5,
-            lineHeight: 1.3,
-            whiteSpace: 'normal',
-            overflowWrap: 'break-word',
-            position: 'relative',
-            zIndex: 1,
-          }}
-        >
-          Source: {source}
-        </div>
-        {nodeData.summary && (
+        {cardView.detail && (
           <div
             style={{
-              color: GRAPH_THEME.surface.text,
+              color: 'rgba(167, 176, 186, 0.84)',
               fontSize: 11.5,
               lineHeight: 1.3,
-              whiteSpace: 'pre-wrap',
               overflowWrap: 'break-word',
               position: 'relative',
               zIndex: 1,
-              marginTop: 4,
-              paddingTop: 4,
-              borderTop: '1px solid rgba(255,255,255,0.05)',
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
             }}
           >
-            {nodeData.summary}
+            {cardView.detail}
           </div>
         )}
-        {nodeData.isRunTaskNode && (
-          <div style={{ marginTop: 8 }}>
+        {/*
+          SWAT (Selected Work Action Tray) — the approval gate, attached to the
+          selected Step node and anchored just below the card so it does not
+          overlap card text. Clicking GO stages the selected step at the gate via
+          the injected handler ONLY; it never executes (no coder/tools/terminal/
+          Progress Ledger, no autogenMessages/finalResponseText).
+        */}
+        {selected && typeof nodeData.onGoGate === 'function' ? (
+          <div
+            data-testid="planflow-swat-tray"
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              marginTop: 10,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+              zIndex: 30,
+            }}
+          >
             <button
               type="button"
-              data-testid="plan-run-task-button"
-              disabled={!nodeData.runnable || typeof nodeData.onRunTask !== 'function'}
-              aria-disabled={!nodeData.runnable || typeof nodeData.onRunTask !== 'function'}
-              onClick={
-                nodeData.runnable && typeof nodeData.onRunTask === 'function'
-                  ? nodeData.onRunTask
-                  : undefined
-              }
+              data-testid="planflow-swat-go"
+              aria-label="Go — approve selected step"
+              title="Go — stage the selected step at the approval gate"
+              onClick={(event) => {
+                event.stopPropagation();
+                nodeData.onGoGate?.();
+              }}
+              className="flex items-center justify-center"
               style={{
-                width: '100%',
-                padding: '6px 12px',
-                borderRadius: 4,
-                border: '1px solid rgba(55,173,170,0.6)',
-                background: 'rgba(55,173,170,0.15)',
-                color: '#fff',
-                fontWeight: 'bold',
-                cursor:
-                  nodeData.runnable && typeof nodeData.onRunTask === 'function'
-                    ? 'pointer'
-                    : 'not-allowed',
-                opacity:
-                  nodeData.runnable && typeof nodeData.onRunTask === 'function' ? 1 : 0.5,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 7,
+                padding: '7px 16px',
+                borderRadius: 999,
+                background: GRAPH_THEME.accent.primary,
+                border: '1px solid rgba(79,162,173,0.7)',
+                boxShadow:
+                  '0 0 0 1px rgba(55,173,170,0.4), 0 10px 22px rgba(55,173,170,0.32), inset 0 1px 0 rgba(255,255,255,0.18)',
+                color: '#FFFFFF',
+                fontWeight: 800,
+                fontSize: 12.5,
+                letterSpacing: '0.06em',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
               }}
             >
-              Run Task
+              GO
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#FFFFFF"
+                strokeWidth="2.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 19V5" />
+                <path d="M5 12l7-7 7 7" />
+              </svg>
             </button>
+            {nodeData.goGateStatus ? (
+              <div
+                data-testid="planflow-swat-status"
+                style={{
+                  maxWidth: 260,
+                  padding: '6px 10px',
+                  borderRadius: 10,
+                  border: `1px solid ${GRAPH_THEME.accent.primaryBorder}`,
+                  background: 'rgba(11,14,18,0.96)',
+                  color: GRAPH_THEME.surface.text,
+                  fontSize: 11,
+                  lineHeight: 1.3,
+                  boxShadow: '0 12px 28px rgba(0,0,0,0.28)',
+                }}
+              >
+                {nodeData.goGateStatus}
+              </div>
+            ) : null}
           </div>
-        )}
+        ) : null}
       </div>
       <Handle
         type="source"
@@ -638,7 +693,7 @@ function resolveNodeStyle(node: PlanMissionFlowNode) {
     fontSize: 12.5,
     lineHeight: 1.35,
     width: 260,
-    minHeight: 142,
+    minHeight: 104,
     padding: 0,
     boxShadow: 'none',
     backdropFilter: 'none',
@@ -657,6 +712,8 @@ export default function PlanMissionFlow({
   editMode = false,
   drawerLinked = false,
   onFocusChange,
+  onGoGate,
+  goGateStatus = null,
 }: PlanMissionFlowProps) {
   const WALL_ORCH_ID = 'card_magentic';
   const flowHostRef = useRef<HTMLDivElement | null>(null);
@@ -726,6 +783,9 @@ export default function PlanMissionFlow({
     const missionNodes = missionGraph.nodes.map((node) => ({
       ...node,
       style: resolveNodeStyle(node),
+      // Inject the SWAT approval-gate handler/status so the selected node's tray
+      // can stage the step at the gate. Never an execution path.
+      data: { ...node.data, onGoGate, goGateStatus },
     }));
     const wallNode = {
       id: WALL_ORCH_ID,
@@ -737,7 +797,7 @@ export default function PlanMissionFlow({
       focusable: false,
     } as unknown as PlanMissionFlowNode;
     return [wallNode, ...missionNodes];
-  }, [missionGraph.nodes]);
+  }, [missionGraph.nodes, onGoGate, goGateStatus]);
   const [planSurfaceNodes, setPlanSurfaceNodes] = useState<PlanSurfaceNode[]>(
     [],
   );
@@ -1579,6 +1639,27 @@ export default function PlanMissionFlow({
           </svg>
         </button>
       </div>
+      {missionGraph.nodes.length > 0 && !selectedMissionNode ? (
+        <div
+          aria-hidden
+          style={{
+            position: 'absolute',
+            left: 16,
+            top: 14,
+            zIndex: 22,
+            padding: '4px 10px',
+            borderRadius: 999,
+            border: `1px solid ${GRAPH_THEME.controls.border}`,
+            background: 'rgba(11,14,18,0.82)',
+            color: GRAPH_THEME.surface.mutedText,
+            fontSize: 11,
+            lineHeight: 1.2,
+            pointerEvents: 'none',
+          }}
+        >
+          Select a step to approve
+        </div>
+      ) : null}
       <ReactFlow
         nodes={nodes}
         edges={visibleEdges}

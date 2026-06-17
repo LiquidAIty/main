@@ -85,6 +85,11 @@ export type PlanMissionNodeData = {
   runnable?: boolean;
   /** Human approval action — dispatches the displayed Task Ledger. */
   onRunTask?: () => void;
+  /** SWAT (Selected Work Action Tray) approval gate, attached to the selected
+   *  Step node. Stages the selected step at the gate only — never executes. */
+  onGoGate?: () => void;
+  /** Gate status text shown in the selected node's SWAT tray (e.g. not wired). */
+  goGateStatus?: string | null;
 };
 
 export type PlanArtifactNodeData = {

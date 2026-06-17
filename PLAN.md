@@ -1,516 +1,1275 @@
-# LiquidAIty Living Plan
+# LiquidAIty PLAN.md
 
-## What LiquidAIty Is
+## Product Identity
 
-LiquidAIty is an agentic engineering workbench. It automates the manual vibe-coding loop:
+LiquidAIty is an agent workbench for serious projects.
 
-user chats with planning AI -> planning AI understands the repo/project -> planning AI creates one
-bounded coding job -> user sends the job to a coder -> coder returns a structured report ->
-planning AI compares the report against the job -> the system remembers proof, blockers, and
-lessons -> the next job is prepared.
+It is not a chat app.
+It is not a dashboard generator.
+It is not a fake workflow/status-card system.
+It is not a pile of markdown specs and task files.
 
-The user describes what they want done. The user is not asked to prompt a prompt.
+LiquidAIty turns user intent into durable, editable task objects on a canvas, then uses agents, graph memory, skills, tools, reports, and proof to move those tasks forward.
+
+The core loop is:
+
+```txt
+user chat
+→ Magentic-One / AutoGen
+→ Task Ledger
+→ persistent editable PlanFlow task nodes
+→ Go / Run review
+→ execution packet
+→ Progress Ledger results
+→ SkillsGraph update
+→ memory, next tasks, subtasks
+```
+
+The product object is the task node.
+
+The proof belongs on the task node.
+
+The details belong in the inspector.
+
+The context is controlled by node connection state.
+
+The chat steers.
+
+The ledger records.
+
+The graph remembers.
+
+The skills snowball.
+
+## Launch Magic: Skill Snowball
+
+The small smart thing to launch with is the Skill Snowball.
+
+LiquidAIty does not need every future agent on day one.
+
+It needs one loop that makes each agent run smarter than the last.
+
+The launch loop is:
+
+```txt
+task nodes
+→ SkillsGraph lookup
+→ missing-skill search or skill proposal
+→ agent/coder tests skill in real work
+→ CoderReport / agent report records proof
+→ Progress Ledger attaches result to task
+→ working skill is saved to skills/*.md
+→ skill is indexed into SkillsGraph
+→ next run starts smarter
+```
+
+This is the magic.
+
+The system does not just chat.
+The system does not just remember.
+The system learns usable procedures.
+
+For the code MVP:
+
+```txt
+before coding:
+  find relevant skills and code files
+
+during coding:
+  use matched skills, task context, and proof rules
+
+after coding:
+  report proof, blockers, and reusable lessons
+
+after report:
+  create or update skills
+```
+
+The repo learns how to work on itself.
+
+That same loop later supports trading agents, research agents, buyer agents, video agents, and other serious agents.
+
+The first product is not “all agents.”
+
+The first product is the control loop that makes agents accurate, continuous, and improvable.
 
 ## First Launch Wedge
 
-LiquidAIty first launches as an agentic engineering / vibe-coding workbench.
+The first wedge is the agentic engineering / coding workbench.
 
-The first user value is:
+The first useful loop is:
 
-plan the job -> gather project context -> create a bounded spec-as-prompt -> send it to a coder ->
-read a structured report -> compare report versus job -> remember proof and lessons -> prepare the
-next job.
+```txt
+user describes work
+→ Magentic-One reads active project context
+→ SkillsGraph retrieves relevant skills
+→ CodeGraph / CBM retrieves relevant files
+→ Task Ledger condenses the work into task objects
+→ PlanFlow shows editable step/task nodes
+→ user reviews/edits/selects/connects/approves
+→ Go / Run review builds bounded execution packet
+→ coder receives one bounded CoderPacket
+→ coder returns CoderReport
+→ Progress Ledger attaches proof/results/blockers to task nodes
+→ skill candidate/update is proposed
+→ approved skill updates skills/*.md and SkillsGraph
+→ ThinkGraph records what happened
+→ next task/subtask is proposed
+```
 
-Research remains part of the product, but recursive research, research swarms, broader KnowGraph
-ingestion, and the research-to-chat loop are deferred until the coding loop is useful.
+Research, trading, video, buyer agents, and other verticals come later.
 
-## Product Loop
+The coding loop comes first because it has the clearest proof loop:
 
-1. **User chat**: user chats with Mag One.
-2. **Read PlanFlow**: Mag One reads current PlanFlow state.
-3. **Receive Options**: Mag One receives a compact list of available workflow options.
-4. **Context Gathering**: Mag One uses CBM and SkillGraph as code-planning tools.
-5. **Choose Option**: Mag One chooses one workflow option (e.g., plan_only, draft_spec_for_approval, run_read_only_coder_task).
-6. **Update Task Ledger**: Mag One updates the Task Ledger with the plan, selected agents, and context.
-7. **Create SPEC**: Mag One creates or updates the current SPEC.
-8. **Safe Execution**: Read-only audit/inspect may execute if safe and permitted by the selected option.
-9. **Approval Gate**: Edit/refactor/write work requires explicit approval.
-10. **Code Console**: Local Coder executes through Code Console visibility.
-11. **Update Progress Ledger**: Progress Ledger receives TaskResult, proof, and blockers.
-12. **Record Memory**: ThinkGraph records proof/memory.
-13. **Next SPEC**: PlanFlow proposes next SPEC candidate.
+```txt
+task
+→ code/file scope
+→ skill lookup
+→ coder execution
+→ tests/proof
+→ CoderReport
+→ Progress Ledger
+→ skill update
+→ next task
+```
 
-## Product Parts
+Once this works, the same control architecture can support agents that require accuracy, continuity, approval, and repeatable improvement.
 
-### User Chat
+## Hard Product Law
 
-User chat is the steering layer and state mirror. The user describes goals, changes, problems, and constraints in normal language. Chat starts planning; it is not a prompt-template editor, and it does not own durable state.
+Do not fake AI work.
 
+Forbidden:
 
-User chat is the steering layer and state mirror. The user describes goals, changes, problems, and constraints in normal language. Chat starts planning; it is not a prompt-template editor, and it does not own durable state.
+```txt
+fake planner output
+fake Task Ledger cards
+fake Progress Ledger results
+fake completed statuses
+fake fallback answers
+deterministic road-sign UI
+bottom metadata banners
+chat replies converted into plans
+autogenMessages converted into plans
+finalResponseText converted into plans
+backend-authored AI answers
+frontend-authored AI answers
+mocked success on live routes
+hidden prompt spaghetti buried in runtime files
+```
 
-### Magentic-One / Sol
+Allowed:
 
-Magentic-One/Sol is the planner and thinking agent. It starts from user chat, reads current PlanFlow state, uses CBM and SkillGraph as planning tools, and chooses from available workflow options instead of relying on brittle deterministic intent taxonomies. It updates the Task Ledger and creates the current SPEC. It must not fake repository understanding, planning, execution, or success.
+```txt
+real AutoGen / Magentic-One execution
+real Task Ledger artifacts
+real Progress Ledger artifacts
+real task objects
+real user-editable canvas nodes
+real proof/results attached to tasks
+real missing-state reporting
+real skill lookup
+real skill creation/update after proof
+```
 
+When uncertain, do not fake it.
 
-Magentic-One/Sol is the planner and thinking agent. It starts from user chat, initiates the Context
-Packet pull, and uses current plan state, reasoning memory, relevant skills, fresh code evidence,
-and user input to choose the next bounded job. It uses Codebase Memory and SkillGraph as planning tools to form the task. It must not fake repository understanding, planning, execution, or success.
+If an artifact is missing, report missing.
+If proof is missing, report missing.
+If a route is not wired, fail closed.
+If a task is disconnected, it is inactive metadata.
+If a task is deleted, it is gone unless it is explicitly a reusable template/preset.
 
-### PlanFlow
+## PlanFlow
 
-PlanFlow is the durable work surface, not decorative ontology chips. It uses a Task Ledger and Progress Ledger to model work.
+PlanFlow is the durable task-object canvas.
 
-Task Ledger owns plan, known facts, current SPEC, selected agents, planning context, and approval state.
-Progress Ledger owns run status, TaskResult, proof, blocker, next_needed, and next SPEC candidate.
+PlanFlow is not a Task Ledger metadata display.
+PlanFlow is not a document map.
+PlanFlow is not a spec library.
+PlanFlow is not a skill library.
+PlanFlow is not a road-sign/status-card dashboard.
 
-PlanFlow is not a document map, spec library, skill library, markdown graph, set of road signs, fake planner summary, or fake execution preview.
+The Task Ledger is the source artifact.
 
+PlanFlow is the editable object surface created from that artifact.
 
-PlanFlow is the durable work surface and Magentic-One/Sol's control plane.
+A workbench chat turn should produce at least one durable task/event object.
 
-PlanFlow uses a Task Ledger and Progress Ledger to model work, rather than decorative taxonomy chips. It shows the Current Mission, Task Ledger (known facts, durable plan, current SPEC), and Progress Ledger (run status, TaskResult, proof, next step).
+In planning mode, each meaningful plan step becomes a persistent PlanFlow node.
 
-PlanFlow is not a document map, spec library, skill library, markdown graph, set of road signs, fake planner summary, or fake execution preview. It does not show every spec, skill, or document.
+Example:
 
-### PLAN.md
+```txt
+Step 1 — Audit signal sources
+Step 2 — Check data path
+Step 3 — Review UI wiring
+Step 4 — Write repair SPEC
+Step 5 — Verify proof
+```
 
-This file is the durable repo-backed living plan. It is always present and can change often through
-PlanFlow. It holds product identity, launch wedge, current route, active work, code/context anchors,
-blockers, next step, durable decisions, and concise status/proof notes.
+A PlanFlow node should be small on the canvas.
 
-`PLAN.md` is not decoration, old prompt storage, a spec library, or a completed-task archive.
+Canvas node shows:
 
-### Context Packet
+```txt
+step number
+short title
+optional one short detail line
+```
 
-The Context Packet is graph and code context initiated by Magentic-One/Sol before it creates the
-next active job. It is assembled from:
+The right inspector owns details.
 
-* user input
-* current PlanFlow state
-* `PLAN.md`
-* ThinkGraph reasoning, events, proof, and blockers
-* fresh Codebase Memory / CodeGraph evidence
-* relevant skills indexed through SkillGraph / Neo4j
-* KnowGraph research when relevant
+Inspector may show:
 
-Its purpose is to help the planner understand the project before creating a CoderPacket. Missing or
-stale code evidence is a blocker, not permission to guess.
+```txt
+editable title
+editable body/detail
+step number
+source artifact reference
+status
+result
+proof
+blocker
+next_needed
+subtasks
+prompt-chain reference
+skills used
+compact debug/provenance if needed
+```
 
-### Codebase Memory / CodeGraph
+Bottom banners are forbidden.
 
-CBM is a planning tool for Mag One to form tasks. It is not the top-level product surface. Magentic-One/Sol uses fresh CBM/CodeGraph to create code anchors and bound the active job. The coder also uses Codebase Memory directly while working. CBM is a structural map; direct reads, tests, compile output, and real smoke results win when they disagree.
+There should be no bottom focus strip, no bottom source strip, no bottom raw payload strip, and no repeated Task Ledger metadata banner.
 
+## PlanFlow Context Control
 
-Fresh code evidence is core. Magentic-One/Sol uses CBM/CodeGraph to create code anchors and bound
-the active job. The coder also uses Codebase Memory directly while working. CBM is a structural map;
-direct reads, tests, compile output, and real smoke results win when they disagree.
+PlanFlow is also context control.
 
-### SkillGraph / Neo4j / skills/*.md
+Node states:
 
-SkillGraph is a planning tool for Mag One to retrieve relevant skills. It is not the top-level product surface. skills/*.md are durable reusable learning indexed and retrieved through SkillGraph / Neo4j. Skills teach future agents how work is broken down, proof rules, failed attempts, guardrails, no-stub/no-fallback laws, CoderReport expectations, adapter lessons, and reusable procedures.
+```txt
+connected = active context
+selected = active inspection/edit target
+disconnected = inactive metadata
+deleted = removed
+template/preset deleted = may remain as reusable library metadata
+```
 
+Connected nodes are active project context.
 
-`skills/*.md` are durable reusable learning indexed and retrieved through SkillGraph / Neo4j.
-Skills teach future agents how work is broken down, proof rules, failed attempts, guardrails,
-no-stub/no-fallback laws, CoderReport expectations, adapter lessons, and reusable procedures.
+Selected nodes are active inspection/edit targets.
 
-Skills are not PlanFlow canvas nodes and are updated only when learning is reusable.
+Disconnected nodes are inactive metadata. They may remain visible or recoverable, but they must not silently enter the next prompt.
 
-### Active Prompt / CoderPacket
+Deleted nodes are removed unless explicitly stored as reusable templates/presets.
 
-The active CoderPacket prompt is both the spec and the task. There is no separate spec file, task
-file, spec folder, or task ledger.
+The user controls context by connecting, disconnecting, selecting, editing, deleting, or reviving task nodes.
 
-Use the terms **spec-as-prompt**, **task-as-prompt**, **active CoderPacket**, and **active job
-contract**.
+## Task Ledger
+
+The Task Ledger condenses active user intent and active context into task objects.
+
+The Task Ledger should answer:
+
+```txt
+what is the task?
+what context matters?
+what steps exist?
+what depends on what?
+what tools are needed?
+what skills are relevant?
+what should be done next?
+what needs approval?
+```
+
+The Task Ledger should create or update task objects.
+
+It should not become a giant visible metadata card.
+
+Forbidden PlanFlow display:
+
+```txt
+Task Ledger captured
+source: magentic_one
+facts response: present
+plan response: present
+full ledger: hidden
+model-call proof: missing
+raw internal text: hidden
+```
+
+That kind of information is not the product UI.
+
+## Task Ledger Includes Tool Planning
+
+There is not a separate Tool Planning Ledger.
+
+Tool planning is part of the Task Ledger.
+
+A Task Ledger may contain:
+
+```txt
+task objects
+step objects
+tool-use plan
+context requirements
+approval requirements
+SkillsGraph pointers
+CodeGraph / CBM file pointers
+expected outputs
+```
+
+If a request needs tools, Magentic-One should plan tool use inside the Task Ledger.
+
+The Task Ledger should answer:
+
+```txt
+which tools are needed?
+why are those tools needed?
+what should each tool do?
+what context should each tool receive?
+what output should each tool return?
+what needs user approval before running?
+```
+
+Tool planning must not become a fake deterministic router.
+
+It is a planning object inside the Task Ledger, created from active context and model reasoning.
+
+A tool is selected because the task needs it, not because a keyword matched.
+
+## Progress Ledger
+
+The Progress Ledger comes after task execution.
+
+It attaches execution results to task nodes.
+
+Progress Ledger fields may include:
+
+```txt
+task result
+proof
+files changed
+tests run
+blocker
+next_needed
+CoderReport
+agent report
+new subtasks
+skill candidate
+skill update
+```
+
+Progress Ledger results should update existing task nodes or create child task nodes.
+
+Progress Ledger must not create fake success.
+
+If a task has no proof, show proof missing.
+If a task is blocked, show the blocker.
+If more work is needed, show next_needed.
+
+## Coder In The Progress Ledger Loop
+
+The coder belongs inside the Progress Ledger part of the loop.
+
+The intended coding loop is:
+
+```txt
+PlanFlow task node
+→ Go / Run review
+→ connected-node context packet
+→ CodeGraph / CBM file pointers
+→ SkillsGraph skill pointers
+→ CoderPacket
+→ coder execution
+→ CoderReport
+→ Progress Ledger update
+→ task node result/proof/blocker/next_needed
+→ skill candidate or skill update
+```
+
+The coder should not receive a vague chat message.
+
+The coder should receive a bounded CoderPacket that tells it:
+
+```txt
+active task node
+connected task context
+selected files from CodeGraph / CBM
+relevant skills from SkillsGraph
+skills/*.md files to read
+files in scope
+files out of scope
+proof commands
+stop conditions
+what not to do
+```
+
+The CoderReport is not just a chat reply. It is evidence.
+
+Progress Ledger attaches that evidence to the task node.
+
+## Chat
+
+Chat is the command and reasoning surface.
+
+Chat is not durable project memory by itself.
+
+Chat can request plans, audits, edits, runs, explanations, decisions, research, skill search, and skill creation.
+
+For plan-producing work, chat should not dump the full plan if the plan exists on PlanFlow.
+
+Acceptable chat response after plan creation:
+
+```txt
+Plan created on canvas.
+```
+
+The durable state belongs in task objects, graph memory, ledgers, reports, and skills, not in chat transcript text.
+
+## Chat As Task Maker And Skill Maker
+
+Chat has two MVP jobs in the code workbench.
+
+First, chat is the task maker.
+
+A chat turn can produce task objects through Magentic-One / AutoGen and the Task Ledger.
+
+Those task objects become PlanFlow nodes.
+
+Second, chat is the skill maker or skill pointer.
+
+When a chat turn, CoderPacket, CoderReport, failure, fix, or repeated repo trap reveals reusable knowledge, the system should either:
+
+```txt
+point to an existing skill
+propose a new skill
+propose an update to an existing skill
+ask Research Bot / Skill Hunter for candidate skills
+```
+
+The goal is to stop the stack from rethinking the same problem every time.
+
+This is a key part of the MVP code stack.
+
+For now, the first target is this repo and this coding workflow.
+
+Later, the same pattern generalizes to other project types.
+
+## Agents Need Skills
+
+Agents should not work from raw prompts alone.
+
+Every serious agent should have access to relevant skills.
+
+A skill is a reusable working pattern, guardrail, proof method, tool-use method, or known trap that helps an agent perform a task without reinventing the process.
+
+For the MVP, the main target is coding.
+
+Later, the same pattern applies to trading agents, research agents, buyer agents, video agents, and other project agents.
+
+## Skill Lookup Before Work
+
+Before an agent or coder acts, the system should look at the active task context.
+
+Active task context may include:
+
+```txt
+connected PlanFlow task nodes
+selected task node
+Task Ledger steps
+planned tools
+CodeGraph / CBM file pointers
+ThinkGraph memory
+KnowGraph context
+user constraints
+```
+
+Then it should ask SkillsGraph:
+
+```txt
+what skills apply to this task?
+what skills apply to these files?
+what skills apply to this agent role?
+what skills apply to these tools?
+what known traps should be avoided?
+what proof commands should be used?
+what failed approaches should not be repeated?
+```
+
+The result is a small set of relevant skill pointers, not a dump of the whole skills database.
+
+## Skill Proposal Before Writing
+
+If no strong internal skill exists, the system may propose skills before the coder writes code.
+
+The proposed skills may come from:
+
+```txt
+existing SkillsGraph
+general skills database
+Research Bot / Skill Hunter
+public repo patterns
+AutoGen / Magentic-One examples
+past CoderReports
+past failures
+known proof patterns
+```
+
+A proposed skill is not automatically repo law.
+
+It is a candidate working pattern for the agent or coder to test on the current task.
+
+The CoderPacket or agent execution packet should say:
+
+```txt
+matched internal skills
+candidate skills to consider
+why each skill may apply
+which skills are proven
+which skills are only inspiration
+what proof is required
+what traps to avoid
+```
+
+## Skill Testing And Promotion
+
+A candidate skill becomes useful only through use and proof.
+
+The loop is:
+
+```txt
+task nodes selected
+→ SkillsGraph lookup
+→ candidate skill proposed if needed
+→ coder/agent tests it during bounded work
+→ CoderReport or agent report records result
+→ Progress Ledger attaches result/proof/blocker
+→ successful reusable learning becomes a skill update
+→ approved skill is saved to skills/*.md
+→ skill is indexed into SkillsGraph
+```
+
+If the candidate fails, that failure is useful too.
+
+Failed skills or failed approaches can remain in SkillsGraph as rejection/supersession memory so the system does not repeat them.
+
+## Existing SkillsGraph System
+
+LiquidAIty already has an internal SkillsGraph system.
+
+It is not just an idea and not just markdown.
+
+The current repo contains:
+
+```txt
+skills/*.md
+services/knowgraph/skill_ingest.py
+services/knowgraph/test_skill_ingest.py
+services/knowgraph/test_skill_retrieve.py
+skills/skillgraph-neo4j-indexing-skill.md
+skills/knowgraph-skill-ingestion-skill.md
+skills/knowgraph-skill-retrieval-skill.md
+```
+
+The current design is:
+
+```txt
+skills/*.md
+→ deterministic skill importer
+→ Neo4j / SkillsGraph
+→ skill retrieval packet
+→ CoderPacket / handoff prompt
+→ CoderReport
+→ reusable skill update
+→ re-ingest into SkillsGraph
+```
+
+`skills/*.md` are the human-readable durable skill files.
+
+SkillsGraph / Neo4j is the machine-readable retrieval layer.
+
+The graph exists so the stack stops rethinking the same repo traps, proof commands, failed attempts, and guardrails every time.
+
+## SkillsGraph
+
+SkillsGraph is LiquidAIty’s internal reusable-skill memory.
+
+It exists to stop the system from rethinking the same repo traps, workflow rules, proof patterns, failed attempts, and implementation boundaries every time.
+
+The two forms have different jobs:
+
+```txt
+skills/*.md = human-readable reusable procedure / guardrail
+SkillsGraph = machine-readable retrieval graph for matching tasks to skills
+```
+
+A skill file is the durable readable source.
+
+A SkillsGraph node stores and relates:
+
+```txt
+skill name
+skill file path
+when to use it
+when not to use it
+related files
+related systems
+known traps
+proof commands
+past successful uses
+past failures
+required gates
+```
+
+SkillsGraph edges may include:
+
+```txt
+APPLIES_TO_FILE
+APPLIES_TO_SYSTEM
+AVOIDS_TRAP
+REQUIRES_PROOF
+SUPERSEDES
+RELATED_TO
+CREATED_FROM_REPORT
+VALIDATED_BY
+```
+
+SkillsGraph should help answer:
+
+```txt
+have we solved this before?
+what skill applies to this file/system/task?
+what trap should the coder avoid?
+what proof command proved this before?
+what old approach was rejected?
+what rule keeps getting broken?
+what candidate skill should be tested?
+what skill should be updated from this report?
+```
+
+SkillsGraph is not PlanFlow.
+
+PlanFlow nodes are project task objects.
+
+SkillsGraph nodes are reusable work knowledge.
+
+SkillsGraph can be used to build the active Context Packet, but it should only contribute relevant skills.
+
+It must not dump every skill into every prompt.
+
+## SkillGraph Snowball Rule
+
+Before code writing, the system should query SkillsGraph.
+
+The Go / Run review should retrieve:
+
+```txt
+relevant skills/*.md
+SkillsGraph matches
+known guardrails
+known failed attempts
+known proof commands
+related CodeGraph / CBM file evidence
+```
+
+If no matching skill exists, the run should not silently proceed as if nothing was learned.
+
+The current skill handoff logic already encodes the rule:
+
+```txt
+No matching skill found; successful completion must create a new skill.
+```
+
+Each useful run should either:
+
+```txt
+use an existing skill
+update an existing skill
+create a new skill candidate
+record why no reusable skill was produced
+```
+
+## Snowball Skills
+
+A major MVP advantage is that every coding run can improve the stack.
+
+The system should not only use existing skills.
+
+It should also discover, create, test, promote, reject, supersede, and index skills.
+
+The code MVP should support this loop:
+
+```txt
+new task
+→ SkillsGraph lookup
+→ if skill exists, attach relevant skill pointer to Context Packet
+→ if no skill exists, ask Research Bot / Skill Hunter to find candidate skills
+→ candidate skill is summarized and mapped to repo/task area
+→ CoderPacket tells coder which skills and candidate skills to read
+→ coder uses bounded task + CodeGraph files + SkillsGraph skills
+→ CoderReport proves success/failure
+→ successful reusable learning becomes skill candidate
+→ user approves or edits
+→ skill saved to skills/*.md
+→ skill indexed into SkillsGraph
+→ next run has better skill memory
+```
+
+This is the snowball effect.
+
+The goal is not to have a few hand-written skills.
+
+The goal is to grow a working internal skill library that can be searched, related, tested, promoted, rejected, superseded, and reused.
+
+There may eventually be thousands or hundreds of thousands of possible skills.
+
+The system should not stuff them all into context.
+
+SkillsGraph should retrieve only relevant skills for the current task.
+
+## Research Bot / Skill Hunter
+
+LiquidAIty should have a dedicated Research Bot / Skill Hunter agent.
+
+Its job is to look outside the current repo for reusable skill patterns and useful agent-workflow ideas.
+
+It may search for:
+
+```txt
+public coding-agent patterns
+prompt-chain patterns
+AutoGen / Magentic-One examples
+repo-analysis workflows
+testing/proof patterns
+UI/workbench patterns
+skills files from other systems
+engineering playbooks
+trading-agent patterns
+research-agent patterns
+buyer-agent patterns
+video-agent patterns
+```
+
+The Research Bot feeds SkillsGraph.
+
+The chat agent can then use SkillsGraph as inspiration and retrieval memory.
+
+The Research Bot does not blindly modify active project behavior.
+
+It proposes skill candidates.
+
+SkillsGraph qualifies them.
+
+The user or proof loop promotes them.
+
+## SkillsGraph Prequalification And Promotion
+
+Research Bot / Skill Hunter is allowed to discover outside skills and patterns.
+
+The solution is graph-mediated qualification.
+
+SkillsGraph tracks where a skill came from, what it applies to, how it was tested, whether it is proven, and whether it has been superseded or rejected.
+
+Candidate skills can come from:
+
+```txt
+Research Bot / Skill Hunter
+public repos
+coding-agent examples
+AutoGen / Magentic-One examples
+GitHub patterns
+repo workflow research
+successful internal CoderReports
+repeated internal failure patterns
+```
+
+SkillsGraph can classify skill state:
+
+```txt
+UNTRUSTED_CANDIDATE_SKILL
+PREQUALIFIED_CANDIDATE_SKILL
+PROVEN_INTERNAL_SKILL
+PROMOTED_SKILL
+SUPERSEDED_SKILL
+REJECTED_SKILL
+```
+
+Prequalification can use:
+
+```txt
+source quality
+GitHub stars/forks/activity if relevant
+tests/proof commands
+similarity to current repo area
+past successful uses
+past failure evidence
+manual approval
+```
+
+A candidate skill should not become active repo law merely because it was scraped.
+
+It becomes active when it is adapted to the repo, tested, and promoted.
+
+## Skills
+
+Skills are durable reusable procedures and guardrails.
+
+Skills live as readable files in:
+
+```txt
+skills/*.md
+```
+
+The SkillsGraph indexes and relates those files so future agents can retrieve the right skill instead of reinventing the same solution.
+
+A skill should contain:
+
+```txt
+name
+when to use it
+when not to use it
+steps
+proof commands
+known traps
+related files/systems
+success evidence
+failure evidence if relevant
+```
+
+Skills are not raw task history.
+Skills are not PlanFlow task nodes.
+Skills are not spec sprawl.
+Skills are not one-off CoderReports.
+
+A new skill should usually come from:
+
+```txt
+successful CoderReport
+repeated failure pattern
+confirmed repo trap
+validated proof command
+stable workflow rule
+candidate skill tested successfully
+```
+
+A skill should update only when the learning is reusable.
+
+## Active Context Packet
+
+Before creating a CoderPacket or task plan, Magentic-One should work from an active Context Packet.
+
+The Context Packet may include:
+
+```txt
+user input
+connected PlanFlow task nodes
+selected task node details
+PLAN.md
+relevant ThinkGraph memory
+fresh Codebase Memory / CodeGraph evidence
+relevant SkillsGraph matches
+specific skills/*.md files selected by SkillsGraph
+KnowGraph research when relevant
+recent Progress Ledger results
+```
+
+Disconnected PlanFlow nodes are inactive metadata and should not enter the active Context Packet unless the user reconnects/selects/revives them.
+
+SkillsGraph is different.
+
+SkillsGraph is reusable system memory.
+
+It may retrieve relevant skills by task/file/system match, but it must not blindly stuff unrelated skills into context.
+
+Missing or stale code evidence is a blocker, not permission to guess.
+
+## Go / Run Review
+
+Before Go / Run / Coder execution, chat should review the active task context.
+
+The review should include:
+
+```txt
+connected PlanFlow nodes
+selected task node
+Task Ledger tool-use plan
+recent relevant Progress Ledger results
+CodeGraph / CBM found files
+SkillsGraph found skills
+relevant skills/*.md
+ThinkGraph task memory
+KnowGraph context if relevant
+user approval state
+```
+
+Disconnected PlanFlow nodes are inactive metadata and should not enter the active run context unless the user reconnects/selects/revives them.
+
+The Go / Run review produces a bounded execution packet.
+
+For coding, that packet is the CoderPacket.
+
+The CoderPacket should explicitly tell the coder:
+
+```txt
+which task node is active
+which connected nodes matter
+which tools were planned
+which CodeGraph / CBM files were found
+which SkillsGraph skills apply
+which skills/*.md files to read
+which files are in scope
+which files are out of scope
+which proof commands are required
+what not to do
+```
+
+## Magentic-One / AutoGen Runtime
+
+The main AI route is real AutoGen / Magentic-One.
+
+Allowed live route:
+
+```txt
+deck_builder/run
+→ card_magentic
+→ Python AutoGen sidecar
+→ MagenticOneGroupChat.run_stream
+→ real Task Ledger artifact
+→ PlanFlow task nodes
+```
+
+The frontend and backend do not create AI answers.
+
+Backend responsibility:
+
+```txt
+transport
+route orchestration
+state persistence
+safe API contracts
+```
+
+Python sidecar responsibility:
+
+```txt
+AutoGen / Magentic-One runtime
+real team execution
+real Task Ledger artifact extraction
+real Progress Ledger execution when wired
+```
+
+Do not replace this with a basic chat call.
+Do not add a deterministic planner.
+Do not add fallback success answers.
+Do not mock success on the live route.
+
+## Agent Cards And Prompt Chains
+
+Prompts should not be buried randomly in runtime files.
+
+If an agent/card uses a multi-step prompt, that prompt belongs on the agent/card as an inspectable prompt chain.
+
+Prompt chain shape:
+
+```txt
+Agent Card
+  Prompt Chain
+    1. role / identity
+    2. context policy
+    3. Task Ledger extraction rule
+    4. output contract
+    5. tool-use conditions
+    6. approval / stop conditions
+```
+
+Prompt chains should later be visible and editable in the card inspector.
+
+Runtime code should execute configured prompt-chain steps.
+
+Runtime code should not smuggle hidden prompt strings into adapters.
+
+## Codebase Memory / CodeGraph
+
+Codebase Memory / CodeGraph is a planning and code-discovery tool.
+
+It is not the top-level product surface.
+
+CBM helps bound code work, find anchors, and avoid blind edits.
+
+Direct reads, compile output, tests, and real smoke proof win if they disagree with graph memory.
+
+Before code edits, CBM must be fresh enough for the target scope or the work is blocked.
+
+## ThinkGraph
+
+ThinkGraph stores structured reasoning and project memory.
+
+ThinkGraph may store:
+
+```txt
+why the plan changed
+what context was used
+what task was created
+what report came back
+what proof passed
+what failed
+what blocker exists
+what next step was recommended
+```
+
+ThinkGraph is not markdown sprawl.
+
+ThinkGraph must not invent planning or success.
+
+## KnowGraph
+
+KnowGraph stores external/project knowledge when relevant.
+
+KnowGraph is separate from PlanFlow.
+
+KnowGraph can support task planning, research, market data, documents, and domain knowledge, but it should not pollute active context unless selected/relevant.
+
+## CoderPacket
+
+The active CoderPacket prompt is both the spec and the task for one bounded job.
+
+It is also called:
+
+```txt
+spec-as-prompt
+task-as-prompt
+active job contract
+```
 
 A CoderPacket:
 
-* is the complete bounded spec and task for one part of `PLAN.md`
-* is created from Context Packet, `PLAN.md`, relevant skills, and fresh CBM/code anchors
-* is shown in PlanFlow only while active
-* can be reviewed and edited by the user
-* is sent to a coder when the user clicks Go
-* is never converted into a spec file or task file
-
-The repository does not keep a `specs/` folder or task files. Durable product direction belongs in
-`PLAN.md`; reusable learning belongs in `skills/*.md`; current execution requirements belong only
-in the active CoderPacket prompt.
-
-### CoderReport
-
-CoderReport is the structured response to a CoderPacket. It includes:
-
-* verdict
-* comparison against CoderPacket
-* completed, incomplete, and changed requirements
-* files changed
-* proof commands and proof results
-* blockers and assumptions
-* chosen approach and rejected alternatives
-* reusable skill updates
-* next recommended task
-
-PlanFlow compares CoderReport against the active CoderPacket. Hidden success and vague done claims
-are forbidden.
-
-### ThinkGraph
-
-ThinkGraph stores structured reasoning and event memory: why the plan changed, context used, job
-created, coder response, matches and misses, proof, failures, blockers, and recommended next step.
-ThinkGraph is not markdown sprawl and does not invent planning or success.
-
-### Coder Adapters
-
-Coder adapters follow one rule: **CoderPacket in, CoderReport out**.
-
-Planned adapters:
-
-* LocalCoder / RepoCoder adapter wrapping the vendored `localcoder/` runtime through its real
-  machine-facing execution boundary
-* manual adapter for copying CoderPacket out and pasting CoderReport back
-* CLI/headless adapter for external coding tools
-* MCP adapter for agent tools where available
-
-There is no vendor lock-in. Adapters are product direction only in the current documentation pass.
-
-### Coding-Run Architecture
-
-LiquidAIty currently dogfoods its own coding loop against the explicit target root
-`C:\Projects\main`. Approved coder runs may edit LiquidAIty-owned source in this repo. The vendored
-`localcoder/` runtime stays excluded from CBM and is not edited unless a future active CoderPacket
-explicitly targets vendored runtime work.
-
-The user chats with Magentic-One/Sol first. Sol classifies the workflow and reads the current
-AgentBuilder canvas: cards directly connected to the Magentic bus are eligible participants;
-disconnected cards are not callable, and bus position does not prescribe execution order. A coding
-workflow uses eligible Plan Agent, CodeGraph/CBM, Local Coder, and ThinkGraph roles in that logical
-order. Missing required Plan, CodeGraph, or Local Coder connectivity blocks the coding workflow
-clearly.
-
-Before code action, Plan Agent creates or validates the plan and the user approves edit work.
-CodeGraph/CBM must pass a root-bound scoped gate before coding context or edits. Local Coder receives
-one bounded CoderPacket and runs in read-only/plan mode unless the approved packet explicitly sets
-`writeMode: edit`. It must return a strict CoderReport. ThinkGraph records decisions, proof,
-blockers, and the report; CBM refreshes after successful changes; skills update only for reusable
-learning.
-
-The same CoderPacket-in/CoderReport-out lifecycle will later target explicit external repo roots,
-user projects, UI apps, dashboards, and client workspaces. Codex, Claude, LocalCoder/OpenClaude, or
-other coder workers may execute bounded jobs, but Magentic-One/Sol remains the planner/router and
-workers may not invent scope, silently fall back, or bypass the target-root CBM gate.
-
-### LocalCoder / OpenClaude Audit
-
-`localcoder/` is a vendored OpenClaude-derived runtime, not a nested Git subrepository. It contains
-real repository tools, permissions, MCP support, and a bidirectional gRPC agent service. The
-backend-owned terminal launcher reads `apps/backend/.env` and passes
-`apps/backend/mcp.config.json` when present.
-
-The current backend OpenClaude harness is scaffolding, not a real LocalCoder adapter:
-
-* `POST /api/coder/openclaude/run` accepts a plain `task` string and returns plain `output`, not a
-  CoderPacket and CoderReport.
-* Both current headless and terminal run modes call the host `runLLM` client. They do not invoke
-  LocalCoder's coding-agent/tool runtime.
-* Terminal mode can report `used: true` from launcher availability without launching or proving a
-  terminal run.
-* The current provider resolver contains a model fallback, which violates the no-fallback law.
-* User chat currently starts a Magentic-One deck run directly. It does not assemble the complete
-  Context Packet, create an active CoderPacket, wait for Go, invoke LocalCoder, compare a
-  CoderReport, or persist the completed loop.
-* A `local_coder` participant in the Magentic-One payload is currently mapped to a generic
-  `assistant_agent`; it is not routed to the dedicated LocalCoder harness.
-
-The active machine-facing adapter is the backend-owned CLI/process boundary. It owns the target
-root, environment, explicit provider/model, permission mode, normalized MCP configuration, bounded
-timeout, and strict CoderReport validation. LocalCoder's gRPC surface remains a possible future
-interface but is not part of the current route.
-
-### Code Console (OpenClaude Console Bridge)
-
-Code Console is execution visibility only. OpenClaude/LocalCoder remains a black-box coder engine for now; we are not graphing or editing the full OpenClaude stack now. The Console Bridge shows the live CLI in an in-app terminal panel.
-
-
-OpenClaude/LocalCoder is a real CLI coder engine, not a log source. LiquidAIty runs it as the actual
-coder with its normal tool/runtime abilities; it does not neuter it into a read-only viewer. Mag
-One/Sol is the planner/controller on top: it owns the task, checks the canvas bus participants and
-the root-bound CBM/CodeGraph scoped gate, and sends the bounded task into the session. The Console
-Bridge shows the live OpenClaude CLI in an in-app terminal panel.
-
-* The bridge is the smallest owned backend that spawns the real OpenClaude CLI as a long-lived,
-  streamed process (`apps/backend/src/coder/openclaude/console/`). It reuses the LocalCoder adapter's
-  runtime discovery, so the terminal and the headless job invoke the exact same vendored CLI.
-* Process backend: interactive sessions run on a real PTY via `node-pty` (a true TTY, so the
-  OpenClaude REPL behaves like a normal terminal); `print`/`task` one-shots use `child_process`
-  stdio pipes. The active backend is reported per session as `transportMode: pty | pipe` and a pipe
-  fallback is never silently presented as a PTY.
-* Frontend: the terminal panel renders with `@xterm/xterm` (+ fit addon); a plain-text transcript
-  mirror is kept for reliability and accessibility.
-* Transport: stdout/stderr/PTY output stream to the client over SSE
-  (`GET /api/coder/openclaude/console/sessions/:id/stream`) — the existing-equivalent-stream option;
-  input is forwarded to stdin/PTY (`POST .../input`), resize via `POST .../resize`; start/stop/status
-  are plain JSON routes. No gRPC, and no WebSocket server was added to the boot path.
-* Modes are explicit. `interactive` is the default (the CLI itself "starts an interactive session by
-  default") and gets the PTY. `print` is one-shot non-interactive. `task` is a Mag One prompt/SPEC/
-  CoderPacket delivered into a session. OpenClaude keeps its normal CLI abilities — the bridge adds no
-  artificial command/tool restrictions and does not force read-only.
-* Mag One has two paths and they do not compete: a quick diagnostics terminal/tool (when one exists)
-  for CLI help, bounded checks, and path/runtime inspection; and the OpenClaude Console Bridge for
-  real coder work — implementation, debugging, edits, test/fix loops, and active SPEC/CoderPacket
-  execution. There is no current Mag One terminal tool in the runtime tool set, so the bridge is the
-  active coder path; no second competing coder path is created.
-* CBM/CodeGraph informs Mag One planning and gates routing; it does not remove OpenClaude's normal
-  capabilities. A disconnected Local Coder or a non-`ok` scoped gate blocks task routing loudly.
-* Dogfood target root is `C:\Projects\main`. The same flow will later point at other repos, UI apps,
-  dashboards, and client projects via an explicit target root. Vendored `localcoder/` stays excluded
-  from CBM unless a SPEC targets vendored runtime work.
-* This is not a sandbox: the session runs with the local environment's permissions, and the panel
-  says so. Secrets (API keys, bearer tokens) are redacted from streamed output and diagnostics, and
-  the full environment is never printed. Success is reported honestly: a started/streaming session is
-  real terminal usability, but terminal output is not a CoderReport unless the strict CoderReport
-  path validates one.
-
-### Coder Console Naming Firewall
-
-User-facing UI must not expose `Claude`, `OpenClaude`, or `LocalCoder`. The public product names are:
-
-* `Coder` — the user-facing agent role / canvas card.
-* `Code Console` — the user-facing terminal feature (left rail item and panel title).
-* `Coder Engine` — the user-facing runtime label.
-* `Coder Session` — the user-facing task/session label.
-
-Internal implementation names may remain for now: the vendored folder `localcoder/`, the binary path
-`localcoder/bin/openclaude`, the backend namespace `apps/backend/src/coder/openclaude/console/*`, and
-existing route paths, filenames, imports, and test ids. A broad internal rename is a later SPEC. The
-clean display names live in one place: `client/src/features/agentbuilder/console/coderConsoleNames.ts`.
-
-Raw terminal output may still print the underlying CLI banner (Claude/OpenClaude/LocalCoder) in
-developer mode, and proof/debug transcripts are never silently mutated. For public terminals an
-optional display-only redaction layer (`redactCoderBranding`) maps those terms to clean names and the
-UI marks the view as redacted — redaction must never become fake proof.
-
-### Plan Surface Loop & Intent Policy
-
-LiquidAIty is a Plan Surface centered agent workbench, not a generic chat-to-code app. The Plan
-Surface is the durable source of truth; chat is a control/mirror layer; Code Console is execution
-visibility only.
-
-Core loop:
-
-1. User chats with Mag One.
-2. Mag One reads Plan Surface state, CBM, SkillGraph/skills, and connected-canvas capability metadata.
-3. Mag One proposes or updates a plan and creates a SPEC packet.
-4. Edit/refactor/destructive work requires explicit user approval before dispatch.
-5. Explicit read-only audit/inspect tasks may dispatch read-only Local Coder after the Plan Surface
-   task/SPEC is created (it cannot edit, commit, or push).
-6. Local Coder runs through Code Console; TaskResult updates the Plan Surface; ThinkGraph records the
-   outcome; Mag One proposes the next SPEC from incomplete/blocked/subpar TaskResults.
-
-Intent/approval policy (enforced in the `/console/task` route): "Mag One chooses. Code does not interpret the user's wording." Mag One explicitly selects one of the `AvailableWorkflowOptions` (e.g. `draft_spec_for_approval`, `run_read_only_coder_task`, `plan_only`). Read-only tasks auto-dispatch (still gated by Local Coder + CodeGraph connectivity and the scoped CBM gate); edit/refactor/destructive work defaults to `draft_spec_for_approval` and holds for explicit user approval.
-
-Current objective: one reliable self-coding loop, not more scattered experiments. Open work:
-PlanFlow must become a live mission/work surface (mission, planning insight, active SPEC, execution,
-TaskResult, next SPEC) rather than decorative ontology chips; a compact `MagOnePlanningContext`
-packet should feed Mag One before planning. `SkillGraph: unavailable` today — `skills/*.md` exist
-(14 files) but there is no SkillGraph query service yet; do not fake skill insight.
-
-OpenClaude/LocalCoder remains a black-box coder engine; we are not graphing the full OpenClaude
-stack. CBM and SkillGraph are planner insight sources, not the coder runtime.
-
-## Current Route
-
-1. Make this living plan and `AGENTS.md` the clear product and execution law.
-2. Use one active CoderPacket prompt as both the current spec and task; keep no spec or task files.
-3. Wire PlanFlow around the living plan, one active CoderPacket, CoderReport comparison, blockers,
-   proof, and next step.
-4. Have Magentic-One/Sol initiate Context Packet assembly from ThinkGraph, SkillGraph/Neo4j,
-   CodeGraph/CBM, and relevant KnowGraph context.
-5. Define backend-owned CoderPacket, CoderRunEvent, permission-decision, and CoderReport transport
-   contracts.
-6. Harden the real LocalCoder CLI/process adapter with stage diagnostics, explicit target root,
-   MCP diagnostics, explicit model, bounded timeout, and explicit permission policy.
-7. Connect PlanFlow Go to that adapter, stream real run events, compare the returned CoderReport
-   against the active CoderPacket, persist the outcome, and prepare exactly one next job.
-8. Remove or quarantine misleading harness behavior only after the real route replaces it.
-9. After the coding loop is useful, build the deferred research loop.
-
-## Active Work
-
-The spec/task-file model has been removed. The root planning spec/task trees and Spec-Kit scaffold
-are gone, SkillGraph handoff treats the active CoderPacket prompt as both spec and task, and
-PlanFlow's repository projection now reads only the living `PLAN.md`.
-
-The first real backend CoderPacket-to-LocalCoder boundary is wired. Shared validated CoderPacket and
-CoderReport contracts exist, `POST /api/coder/localcoder/run` accepts one packet and returns its
-report plus comparison, and the process adapter invokes the vendored LocalCoder noninteractive
-entrypoint with backend env, MCP config, explicit model, and structured report schema.
-
-The old plain-task OpenClaude run route is retired, terminal mode cannot claim it was used without
-launching, and OpenClaude provider/model resolution no longer silently falls back. The LocalCoder
-service now runs a real same-run CBM index and bounded scope gate before invoking the CLI/process
-adapter. The gate requires the repo-owned LocalCoder boundary/control-plane files and rejects
-vendored or generated runtime files in the index.
-
-The root `localcoder/` runtime remains excluded from CBM while
-`apps/backend/src/coder/localcoder/**` and `repo-intake/localcoder-boundary.md` are indexed. Live
-read-only adapter diagnostics found the vendored-built CLI ready and reached it without gRPC.
-`gpt-5.1-chat-latest` timed out with identical stage evidence with production MCP and explicitly
-disabled diagnostic MCP, and still returned no stdout or CoderReport during the one allowed
-120-second smoke. LocalCoder-known `gpt-5.3-codex` failed immediately because the configured
-account cannot access it; `gpt-5.4` also timed out without returning output. The timeout path killed
-the child, left no LocalCoder process, and changed no tracked repo or vendored file.
-
-PlanFlow now accepts one validated active CoderPacket for the selected project, exposes an explicit
-Go gate, sends only that accepted packet to the LocalCoder route, and renders the returned
-CoderReport comparison, blockers, proof, and next recommended task. A blocked report remains visible
-even when the route correctly returns HTTP 424, and no next job starts automatically.
-
-Normal Agent Builder chat now runs the real Magentic-One deck path and then asks the backend
-planning service to assemble a Context Packet from user input, PlanFlow state, this living plan,
-dedicated ThinkGraph memory, SkillGraph/Neo4j, graph context, selected workspace context, and
-KnowGraph only when relevant. The configured planner model must return one schema-validated
-CoderPacket; missing planner configuration or invalid output blocks loudly. PlanFlow receives that
-packet automatically, keeps it editable, and preserves the existing user-gated Go route.
-
-CoderPacket creation and LocalCoder CoderReport reconciliation are summarized into ThinkGraph,
-including completed, incomplete, blocked, changed, and out-of-scope requirements, proof summary,
-blockers, and the next narrower focus. Raw large prompts and outputs are not copied into ThinkGraph.
-
-The backend graph-context builder now queries the configured Codebase Memory MCP directly. Context
-Packets carry the actual query, matching files and symbols, graph node/edge counts, freshness
-status, and a visible blocker when CBM is stale, unavailable, or returns no matching evidence.
-CoderPackets trust only CBM-derived anchors or record the exact CBM blocker, and packet-created
-ThinkGraph events persist a bounded summary of that evidence.
-
-The Sol coder-planner now resolves only explicit configuration:
-`SOL_CODER_PLANNER_MODEL_KEY`, an explicit provider/model pair, or an explicitly set
-`SOL_PRIMARY=openai|openrouter` with its matching provider key. Context Packet assembly records
-bounded per-source diagnostics for PLAN.md, ThinkGraph, SkillGraph, graph context, CBM/CodeGraph,
-KnowGraph, PlanFlow state, and selected context. Critical source timeout/failure blocks; a
-non-critical failure continues only with visible Context Packet warnings and CoderPacket
-guardrails.
-
-One live no-execution `POST /api/coder/planflow/prepare` created and persisted active CoderPacket
-`coderpacket:project_admin:2026-06-13T13:01:58.416Z`. The ThinkGraph event records explicit
-`SOL_PRIMARY` / OpenAI / `gpt-5.1-chat-latest` provenance, real CBM anchors, stale-CBM blocker, and
-all source diagnostics. No LocalCoder job ran.
-
-The bounded KnowGraph Context Packet node and relationship queries now carry their graph variables
-and timestamp `sortKey` through scoped `WITH DISTINCT` clauses before ordering and limiting. A
-source-only live diagnostic reached real Neo4j without the former out-of-scope-variable error and
-returned an honest `empty` KnowGraph diagnostic in 998 ms. The diagnostic smoke did not call
-prepare, write a ThinkGraph event, or run LocalCoder.
-
-CBM freshness now has an additive honest diagnostic at the existing CodeGraph Context Packet
-boundary. It ties `list_projects` source root to the requested repo, reads CBM's real indexed
-`File` inventory through `query_graph`, and compares it with a bounded direct filesystem source
-inventory without using git status/diff. `ok` requires matching complete inventories plus a real
-indexed revision or timestamp. CBM 0.6.1 exposes neither revision nor timestamp in this workspace.
-A source-only live diagnostic returned `stale`: 408 indexed files, 16,850 bounded on-disk source
-files, and bounded examples absent from the CBM inventory. It wrote no ThinkGraph event and ran no
-LocalCoder job.
-
-The Python / AutoGen rails now register `coder_console_task` in `DEFAULT_TOOL_REGISTRY`. A
-bus-connected Local Coder becomes a real AutoGen participant with that selected tool, using the
-smallest safe default for persisted Local Coder cards that predate tool metadata. Ordinary chat
-excludes the coder participant; coding runs require current Local Coder and CodeGraph bus
-participants, build a compact read-only SPEC-style prompt, and call the existing TypeScript Console
-Bridge route without spawning OpenClaude from Python.
-
-A live persisted-canvas smoke reached the full chat/deck -> Magentic-One -> Python rails ->
-`coder_console_task` -> TypeScript Console Bridge -> OpenClaude/OpenRouter chain. Magentic-One now
-prioritizes the bus-connected Local Coder tool owner for coding dispatch, returns the real started
-session/status before waiting for console completion, and stops only its own queued rails work.
-Persisted run `deck_run_9u3wi67q` returned in about 26 seconds with Code Console session
-`occ_1781418561747_1`, target root, OpenRouter/Kimi provider/model, and watch-surface message. The
-Code Console task remained visible and running after chat returned, then exited code 0. Repeated
-delivery to a running noninteractive task session still blocks loudly instead of reporting routed
-success when `submitLine()` cannot deliver input.
-
-The owned Coder Console route now wraps that existing dispatch path in a small coding-run lifecycle.
-Each tool dispatch carries the user goal and compact generated SPEC, records explicit user approval,
-returns a retrievable coding-run id with the asynchronous session status, and exposes
-`GET /api/coder/openclaude/console/runs/:id` for final collection. The collector polls the existing
-session manager after exit, returns a bounded transcript-based result honestly, validates a strict
-CoderReport only when one is actually present, extracts bounded proof commands/files, and records
-the terminal outcome to ThinkGraph when that existing write path succeeds. Vague coding requests
-are blocked before `coder_console_task` dispatch; explicit execute/implement/apply/fix/proceed
-language is required for the temporary approval path.
-
-Persisted-canvas coding runs now carry a compact Mag One routing manifest and coding workflow
-packet before Python planning. The manifest identifies the bus-connected Local Coder as the primary
-`coding.execute` / `coding.inspect` owner, CodeGraph as required `code.context` support, ThinkGraph
-as optional result memory, and `coder_console_task` as the single execution tool. Python rails use
-the compact workflow packet instead of the large generic canvas prompt for clear coding intent and
-return `MAGONE_CODING_DISPATCH_TIMEOUT_BEFORE_TOOL_CALL` after a bounded 45-second pre-tool budget
-rather than waiting for the opaque outer backend abort.
-
-Normal persisted canvases now carry an owned workspace root in the deck document so Mag One receives
-the target root even when a specialized workbench is not active. Coding-run references and terminal
-results update a cached Plan Surface execution state and TaskResult first; chat displays only a
-compact mirror derived from that state. The Plan state retains the generated SPEC, coding run,
-console session, target root, proof, blocker, ThinkGraph status, next needed action, and next SPEC
-candidate.
-
-## Code And Context Anchors
-
-* `AGENTS.md`: execution law
-* `PLAN.md`: living product route
-* `skills/*.md`: reusable learning
-* Codebase Memory MCP / CodeGraph: fresh code structure and anchors
-* SkillGraph / Neo4j: reusable skill retrieval
-* ThinkGraph: structured plan/job/report/proof memory
-* PlanFlow: visible active planning and control surface
-* `apps/backend/src/coder/openclaude/*`: current harness scaffolding to replace behind structured
-  adapter contracts
-* `apps/backend/src/contracts/coderContracts.ts`: validated CoderPacket/CoderReport and comparison
-* `apps/backend/src/coder/localcoder/*`: real process-backed LocalCoder adapter and service
-* `apps/backend/src/coder/openclaude/console/*`: OpenClaude Console Bridge session manager and Mag
-  One task router
-* `client/src/features/agentbuilder/console/*`: console panel, API client, and rail visibility rule
-* `client/src/pages/agentbuilder.tsx`: current chat path that starts a Magentic-One deck run
-
-## Durable Decisions
-
-* The active CoderPacket prompt is both spec and task; spec and task files do not exist.
-* PlanFlow shows active planning state, not document or skill libraries.
-* CoderPacket in, CoderReport out is the adapter boundary.
-* Chat-to-coder repeats only as bounded user-gated jobs; preparing a next job does not execute it.
-* Real coder execution requires LocalCoder tool/runtime events and proof. A plain LLM response is
-  not a coder run.
-* The backend-owned LocalCoder CLI/process adapter is the active machine-facing boundary; gRPC is
-  not wired.
-* Fresh CBM is required before code edits.
-* No stubs, fake fallbacks, silent fallbacks, hidden success, fake planning, or fake execution.
-* Research is deferred, not deleted.
-
-## Blockers
-
-* CBM 0.6.1 exposes source root and indexed File inventory but no indexed revision/time or chunk
-  count. The new inventory diagnostic detects missing/new-file risk and blocks freshness claims,
-  but it cannot prove an index is current after files change unless CBM exposes a real revision or
-  timestamp.
-* The current persisted admin canvas connects ThinkGraph, KnowGraph, CodeGraph, Plan Agent, and
-  Local Coder to five distinct Magentic bus handles. Research, WorldSignals, and Trading remain
-  disconnected. The current canvas therefore satisfies the coding-workflow participant gate.
-* The vendored-built LocalCoder CLI is ready and starts through the backend process adapter, but
-  current and alternate-model read-only smokes return no valid CoderReport. Production MCP and
-  explicitly disabled diagnostic MCP both time out for `gpt-5.1-chat-latest`, so MCP is not the
-  differentiating blocker. The repeated missing-context-window warning remains correlated, not
-  proven causal.
-* Client TypeScript compile currently has unrelated existing `agentbuilder.tsx` type errors.
-* The full AgentBuilder UI test suite is currently blocked before collection by an unresolved `d3`
-  import in `client/src/components/worldsignal/crucixNativeRenderer.ts`.
-* Refreshed CBM still omits `coder_console_task` and several Console Bridge boundary files. The
-  lifecycle SPEC used the already-ready owned graph plus direct reads and did not run the older
-  moderate-index scope helper because this job explicitly forbade indexing all or broadening CBM.
-* Permission brokering for a long-running coder task remains deferred; permission requests stay
-  visible in Code Console and are not auto-approved.
-
-## Next Step
-
-Run the complete persisted-canvas Mag One smoke and verify target-root propagation, TaskResult
-creation in Plan Surface, and the compact chat mirror.
+```txt
+is temporary
+is reviewable by the user
+is created from active context
+contains all requirements, scope, proof, and stop conditions
+is sent to a coder only after approval
+is not saved as a spec file unless explicitly exported
+```
+
+The repo should not accumulate spec files or task files.
+
+Durable direction belongs in PLAN.md.
+Reusable learning belongs in skills/*.md and SkillsGraph.
+Current execution requirements belong in the active CoderPacket prompt.
+
+## CoderReport
+
+Every coding job returns a structured CoderReport.
+
+A CoderReport should include:
+
+```txt
+verdict
+task-by-task result
+completed requirements
+incomplete requirements
+changed requirements
+files changed
+proof commands
+proof results
+blockers
+assumptions
+chosen approach
+rejected alternatives
+next_needed
+skill candidates
+skill updates
+```
+
+PlanFlow and Progress Ledger compare the CoderReport against the CoderPacket.
+
+Hidden success and vague done claims are forbidden.
+
+## Run Task
+
+Run Task must execute approved task nodes.
+
+Run Task should not use:
+
+```txt
+autogenMessages as hidden task source
+chat text as task source
+finalResponseText as task source
+fake task objects
+```
+
+Until approved task-node execution is wired, Run Task should fail closed.
+
+Acceptable failure:
+
+```txt
+Run Task unavailable: approved task-node execution is not wired yet.
+```
+
+Not acceptable:
+
+```txt
+silently run from autogenMessages
+silently run from chat answer
+pretend a task was approved
+```
+
+## General Agent Skill Loop
+
+The code MVP proves the loop first.
+
+The general agent loop is:
+
+```txt
+agent receives task
+→ active task/context is assembled
+→ SkillsGraph retrieves relevant skills
+→ missing skill candidates are proposed if needed
+→ agent acts with skills and tools
+→ report/proof/result is produced
+→ Progress Ledger records outcome
+→ useful learning becomes skill update
+→ SkillsGraph improves
+```
+
+This is how LiquidAIty gets control over agents.
+
+Agents become more accurate and continuous because they stop relying only on raw model behavior.
+
+They work through task objects, graph context, tools, ledgers, reports, and skills.
+
+## Trading And Other Agents Later
+
+After the code MVP works, the same control architecture can support useful trade agents and other serious agents.
+
+A trading agent needs the same control loop:
+
+```txt
+task/context object
+→ connected active context
+→ relevant skills
+→ relevant data/tools
+→ plan
+→ proof/checks
+→ execution approval
+→ result ledger
+→ memory update
+```
+
+The code MVP proves the agent-control pattern first.
+
+Later verticals can reuse:
+
+```txt
+Task Ledger
+PlanFlow task nodes
+Progress Ledger
+SkillsGraph
+ThinkGraph
+KnowGraph
+CodeGraph / other domain graphs
+CoderPacket-like execution packets
+report/proof loops
+```
+
+This is how LiquidAIty becomes a continuous agent workbench instead of a one-off chat wrapper.
+
+## Documentation Law
+
+Allowed durable docs:
+
+```txt
+AGENTS.md
+PLAN.md
+skills/*.md
+repo-intake/*.md when needed
+```
+
+Allowed durable graph memory:
+
+```txt
+ThinkGraph = project reasoning/task memory
+KnowGraph = external/project knowledge
+SkillsGraph = reusable skill/procedure memory backed by Neo4j + skills/*.md
+CodeGraph / CBM = codebase structure and edit-boundary memory
+```
+
+Forbidden doc sprawl:
+
+```txt
+specs/
+tasks/
+random one-off plan files
+persistent CoderPacket files
+persistent task prompt files
+raw diff dump files
+completed-task archive piles
+```
+
+PLAN.md is product law and current route.
+AGENTS.md is execution law.
+skills/*.md are reusable procedures and guardrails.
+SkillsGraph is the retrieval and relationship layer for those skills.
+
+## Current Implementation Target
+
+Near-term target:
+
+```txt
+real Magentic-One route remains working
+real Task Ledger artifact is captured
+PlanFlow converts Task Ledger plan steps into editable task nodes
+bottom banner is removed
+right inspector owns details
+disconnected nodes become inactive metadata
+deleted nodes are removed unless reusable templates/presets
+Run Task fails closed until approved task-node execution is wired
+Go / Run review includes CodeGraph files and SkillsGraph skills
+CoderPacket points coder to matched skills/*.md and code files
+Progress Ledger attaches results/proof/blockers to task nodes
+CoderReport can produce skill candidates/updates
+approved skills update skills/*.md and SkillsGraph
+prompt chains later live on agent cards
+Research Bot / Skill Hunter later feeds candidate skills into SkillsGraph
+```
+
+## Next Narrow Work
+
+1. Finish PlanFlow step-node rendering.
+2. Remove any remaining Task Ledger metadata-card UI.
+3. Remove bottom banner/focus/payload display.
+4. Ensure each step node is clickable and editable in the inspector.
+5. Stop Run Task from using autogenMessages.
+6. Wire Go / Run review over connected task nodes.
+7. Wire CoderPacket to include CodeGraph / CBM files and SkillsGraph skills.
+8. Wire Run Task to approved connected/selected task nodes.
+9. Attach Progress Ledger results to task nodes.
+10. Add skill candidate/update flow from CoderReport.
+11. Re-ingest approved skills/*.md into SkillsGraph.
+12. Add prompt-chain storage/display inside agent cards.
+13. Add Research Bot / Skill Hunter for external candidate skills.
+
+## Final Rule
+
+LiquidAIty should show real work objects, not fake status theater.
+
+When a model or coder is tempted to create a dashboard, status card, fallback, mock answer, deterministic plan, or repeated metadata banner, stop.
+
+The product object is the task node.
+
+The proof belongs on the task node.
+
+The details belong in the inspector.
+
+The context is controlled by node connection state.
+
+The chat steers.
+
+The ledger records.
+
+The graph remembers.
+
+The skills snowball.

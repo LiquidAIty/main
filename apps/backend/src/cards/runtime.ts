@@ -520,7 +520,10 @@ export function buildPythonAutoGenCardRuntimePayload(
       inputContract: 'text',
       outputContract: 'text',
       callable: true,
-      prompt: String(head.prompt || '').trim(),
+      // NOTE: the full role prompt is intentionally NOT in the public participant
+      // manifest (it would bloat the payload and leak internal prompt text). The
+      // prompt lives only in `privateParticipants` below, used solely by Python to
+      // set AssistantAgent.system_message — never as visible/team-description text.
       tools: resolveCardTools(head),
       fanOut: resolveCardFanOut(head),
       isSocietyOfMind:
@@ -690,43 +693,22 @@ export async function runCardWithContract(
       startedAt
     );
 
-    // Normally we would call orchestrateWithAutoGen, but here we'll mock success or rely on the real service
+    // Call the Python AutoGen sidecar. Mock success is not allowed on this route.
     let finalText = '';
     let magenticPlan: Record<string, unknown> | null = null;
     // Honest TaskLedger trace from the real Python Magentic-One path.
     let ledgerTrace: Record<string, unknown> | undefined;
     try {
-        const payloadStr = JSON.stringify(payload);
-        console.log('[DEBUG-TRACE] runCardWithContract exact payload snapshot:');
-        console.log('[DEBUG-TRACE] task/user input:', payload.userText);
-        console.log('[DEBUG-TRACE] participants public manifest:', JSON.stringify(payload.cardRuntime?.participants || []));
-        console.log('[DEBUG-TRACE] privateParticipants keys only:', (payload.cardRuntime?.privateParticipants || []).map((p:any) => p.cardId));
-        console.log('[DEBUG-TRACE] visibleNodeIds:', payload.cardRuntime?.runtimeScope?.visibleNodeIds);
-        console.log('[DEBUG-TRACE] visibleEdgeIds:', payload.cardRuntime?.runtimeScope?.visibleEdgeIds);
-        console.log('[DEBUG-TRACE] workspaceObjectContext present:', !!payload.workspaceObjectContext);
-        console.log('[DEBUG-TRACE] availableCanvasAgents present:', !!(payload.cardRuntime as any)?.availableCanvasAgents);
-        console.log('[DEBUG-TRACE] excludedAgentIds present:', !!payload.cardRuntime?.runtimeScope?.excludedAgentIds);
-        
-        console.log('[DEBUG-TRACE] Payload string contains forbidden "sample_excerpt_1":', payloadStr.includes('sample_excerpt_1'));
-        console.log('[DEBUG-TRACE] Payload string contains forbidden "DrugX":', payloadStr.includes('DrugX'));
-        console.log('[DEBUG-TRACE] Payload string contains forbidden "HbA1c":', payloadStr.includes('HbA1c'));
-        console.log('[DEBUG-TRACE] Payload string contains forbidden "Provisional ThinkGraph extraction":', payloadStr.includes('Provisional ThinkGraph extraction'));
-        console.log('[DEBUG-TRACE] Payload string contains forbidden "Neo4j:":', payloadStr.includes('Neo4j:'));
-        console.log('[DEBUG-TRACE] Payload string contains forbidden "Research Agent:":', payloadStr.includes('Research Agent:'));
-        
-        console.log('[runCardWithContract] canonical executeDeck entered.');
-        console.log('[runCardWithContract] Sending payload to AutoGen sidecar. Keys:', Object.keys(payload));
-        console.log('[runCardWithContract] Payload session:', payload.session);
-        
+        console.log('[runCardWithContract] executing Python AutoGen sidecar route.');
         const sidecarResponse = await orchestrateWithAutoGen(payload as any);
-        console.log('[runCardWithContract] sidecar response keys:', Object.keys(sidecarResponse));
 
         // Transport only. The real AutoGen output is the messages/events the
         // sidecar captured verbatim from run_stream, plus the orchestrator's own
         // Progress Ledger JSON when the inner loop ran. The backend authors no
         // ledger, no summary, and does not parse message text into runtime state.
-        // finalResponseText is carried solely to satisfy the non-empty transport
-        // invariant; the conversation panel never renders it.
+        // finalResponseText is the real chat answer: the workbench renders it in
+        // chat for non-plan turns, and PlanFlow ignores it entirely (PlanFlow is
+        // built only from the taskLedgerArtifact, never from finalResponseText).
         finalText = String(sidecarResponse.finalResponseText || '').trim();
         const autogenMessages = Array.isArray((sidecarResponse as any).autogenMessages)
           ? (sidecarResponse as any).autogenMessages
@@ -746,13 +728,14 @@ export async function runCardWithContract(
           sidecarResponse.ledgerTrace && typeof sidecarResponse.ledgerTrace === 'object'
             ? (sidecarResponse.ledgerTrace as Record<string, unknown>)
             : undefined;
-        console.log('[runCardWithContract] autogen messages:', autogenMessages.length);
     } catch (e: any) {
         console.error('[runCardWithContract] Exact caught error message:', e?.message || e);
         throw e;
     }
 
-    if (!finalText) {
+    // Success requires a real chat answer or a real task artifact. Empty transport is a failure.
+    const hasArtifact = Boolean((magenticPlan as any)?.taskLedgerArtifact);
+    if (!finalText && !hasArtifact) {
       throw new Error('autogen_orchestrator_missing_final_response');
     }
 
@@ -764,8 +747,7 @@ export async function runCardWithContract(
       runtimeType: 'magentic_one',
       inputSummary: summarizeText(input),
       outputSummary: summarizeText(finalText),
-      // Real Magentic-One ledgers for the PlanFlow/AgentCanvas projection, plus the
-      // honest LedgerTrace from the Python sidecar.
+      // Transported sidecar artifacts for PlanFlow / AgentCanvas projection.
       magenticTrace:
         Object.keys(magenticPlan || {}).length > 0 || ledgerTrace
           ? {

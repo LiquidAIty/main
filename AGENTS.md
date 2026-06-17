@@ -96,7 +96,10 @@ Markdown is an execution layer, but avoid documentation sprawl:
 * No spec files or task files.
 * No destructive git operations without explicit instruction.
 * Preserve the real ReactFlow/TypeScript control plane, Node backend, Python sidecar, and
-  Microsoft AutoGen v0.4.4 / Magentic-One runtime unless explicitly changed by the user.
+  Microsoft AutoGen v0.4+ (source-editable autogen-agentchat) / Magentic-One runtime unless
+  explicitly changed by the user. MagenticOneGroupChat, AssistantAgent-with-tools, Swarm,
+  SocietyOfMindAgent, and UserProxyAgent are required runtime primitives and must remain
+  available for Fable wiring.
 
 ## Editing And Proof
 

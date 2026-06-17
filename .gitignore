@@ -56,3 +56,5 @@ apps/backend/env
 .agents/**/token*
 .agents/**/credentials*
 
+
+autogen-main/

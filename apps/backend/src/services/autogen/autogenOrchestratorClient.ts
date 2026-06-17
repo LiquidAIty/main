@@ -103,9 +103,13 @@ function isRetryableSidecarError(error: any): boolean {
 }
 
 function readTimeoutMs(): number {
-  const raw = Number(process.env.AUTOGEN_ORCHESTRATOR_TIMEOUT_MS ?? 20_000);
-  if (!Number.isFinite(raw)) return 20_000;
-  return Math.max(2_000, Math.min(90_000, Math.floor(raw)));
+  // A real multi-agent Magentic-One planning run (orchestrator + several agents
+  // collaborating to completion) can take well over 90s. Cap raised to 300s so
+  // planning requests finish instead of aborting at the old 90s ceiling. Simple
+  // requests still return in seconds; this only bounds the worst case.
+  const raw = Number(process.env.AUTOGEN_ORCHESTRATOR_TIMEOUT_MS ?? 120_000);
+  if (!Number.isFinite(raw)) return 120_000;
+  return Math.max(2_000, Math.min(300_000, Math.floor(raw)));
 }
 
 export async function orchestrateWithAutoGen(
@@ -135,8 +139,13 @@ export async function orchestrateWithAutoGen(
         if (!data || typeof data !== 'object') {
           throw new Error('autogen_orchestrator_invalid_response');
         }
+        // A Task-Ledger-only run legitimately has no chat answer
+        // (finalResponseText === ''); it is still a successful run because it
+        // carries the real Task Ledger artifact. Only an entirely empty result
+        // (no answer AND no artifact) is invalid.
         const finalResponseText = String((data as any).finalResponseText || '').trim();
-        if (!finalResponseText) {
+        const hasArtifact = Boolean((data as any).taskLedgerArtifact);
+        if (!finalResponseText && !hasArtifact) {
           throw new Error('autogen_orchestrator_missing_final_response');
         }
         return data as AutoGenOrchestratorResponse;

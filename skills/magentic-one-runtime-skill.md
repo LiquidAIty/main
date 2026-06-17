@@ -10,8 +10,10 @@
 
 ## Vector Summary
 
-Edit the Sol/Magentic-One runtime safely: preserve the real Microsoft AutoGen v0.4.4 runtime,
-selected tools only, loud failures, and no fake outputs.
+Edit the Sol/Magentic-One runtime safely: preserve the real Microsoft AutoGen v0.4+ runtime
+(source-editable autogen-agentchat), selected tools only, loud failures, and no fake outputs.
+Required primitives must remain available for Fable wiring: MagenticOneGroupChat,
+AssistantAgent-with-tools, Swarm, SocietyOfMindAgent, and UserProxyAgent.
 
 ## Procedure
 

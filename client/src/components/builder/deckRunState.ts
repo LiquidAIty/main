@@ -463,8 +463,7 @@ export function resolveDeckRunChatReply(run: DeckRun | null | undefined): string
   const finalText = resolveDeckRunFinalText(run);
   if (finalText) return finalText;
   const structuredPlan = extractStructuredPlanFromRun(run);
-  const summary = buildStructuredPlanSummary(structuredPlan);
-  return summary;
+  return buildStructuredPlanSummary(structuredPlan);
 }
 
 export function buildReloadStateFromDeckRuns(
@@ -500,13 +499,14 @@ export function buildReloadStateFromDeckRuns(
     if (userText) {
       entries.push({ role: "user", text: userText });
     }
-    const assistantText = cleanOptionalText(resolveDeckRunChatReply(run));
-    const fallbackText =
-      assistantText ||
-      cleanOptionalText(run.error) ||
-      (run.status === "error" ? "Deck run failed." : null);
-    if (fallbackText) {
-      entries.push({ role: "assistant", text: fallbackText });
+    // Only a real, clean assistant answer from a successful run may appear in
+    // chat. Errors and failures are NOT mirrored into the conversation as
+    // assistant bubbles — they surface as non-chat status elsewhere. No
+    // fallback/placeholder/"Deck run failed." assistant text.
+    const assistantText =
+      run.status === "error" ? "" : cleanOptionalText(resolveDeckRunChatReply(run));
+    if (assistantText) {
+      entries.push({ role: "assistant", text: assistantText });
     }
     return entries;
   });

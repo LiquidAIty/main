@@ -101,28 +101,11 @@ describe('PlanMissionFlow — empty canvas stays mounted', () => {
     expect(screen.queryByText(/PlanFlow shows the living PLAN\.md/i)).toBeNull();
   });
 
-  it('renders real Mag One nodes when provided as real ReactFlow nodes', () => {
-    const graph: PlanMissionGraph = {
-      nodes: [
-        {
-          id: 'n1',
-          type: 'mission',
-          position: { x: 0, y: 0 },
-          data: { label: 'TaskLedger', kind: 'TaskLedger', status: 'running' },
-        },
-      ],
-      edges: [],
-    };
-    render(
-      <PlanMissionFlow
-        structuredPlan={EMPTY_PLANFLOW_STRUCTURED_PLAN}
-        missionGraph={graph}
-        projectId="p1"
-        fullHeight
-      />,
-    );
-    expect(screen.getByText('TaskLedger')).toBeTruthy();
-  });
+  // NOTE: "real nodes render as ReactFlow nodes" is proven from the REAL Task
+  // Ledger path in PlanMissionFlow.runtask.spec.tsx (buildPlanFlowMissionGraph
+  // over a real autogen_0_7_5 taskLedgerArtifact). We do not hand-build a fake
+  // 'TaskLedger' mission node here — that would fake the real Python/AutoGen
+  // Task Ledger instead of connecting to it.
 });
 
 // Silence act() noise from ReactFlow's async measurement in jsdom.

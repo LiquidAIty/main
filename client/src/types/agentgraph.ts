@@ -792,7 +792,7 @@ export type PlanFlowNode = {
 
 export type PlanFlowProjection = {
   packet_version: 1;
-  source: 'planflow_markdown_projection';
+  source: 'planflow_task_ledger_steps';
   nodes: PlanFlowNode[];
   edges: Array<{
     id: string;
