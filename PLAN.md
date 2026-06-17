@@ -8,22 +8,9 @@ It is not a chat app.
 It is not a dashboard generator.
 It is not a fake workflow/status-card system.
 It is not a pile of markdown specs and task files.
+It is not a deterministic sanitizer/router/filter system.
 
 LiquidAIty turns user intent into durable, editable task objects on a canvas, then uses agents, graph memory, skills, tools, reports, and proof to move those tasks forward.
-
-The core loop is:
-
-```txt
-user chat
-→ Magentic-One / AutoGen
-→ Task Ledger
-→ persistent editable PlanFlow task nodes
-→ Go / Run review
-→ execution packet
-→ Progress Ledger results
-→ SkillsGraph update
-→ memory, next tasks, subtasks
-```
 
 The product object is the task node.
 
@@ -41,73 +28,39 @@ The graph remembers.
 
 The skills snowball.
 
-## Launch Magic: Skill Snowball
+## Core Loop
 
-The small smart thing to launch with is the Skill Snowball.
-
-LiquidAIty does not need every future agent on day one.
-
-It needs one loop that makes each agent run smarter than the last.
-
-The launch loop is:
+The target loop is:
 
 ```txt
-task nodes
-→ SkillsGraph lookup
-→ missing-skill search or skill proposal
-→ agent/coder tests skill in real work
-→ CoderReport / agent report records proof
-→ Progress Ledger attaches result to task
-→ working skill is saved to skills/*.md
-→ skill is indexed into SkillsGraph
-→ next run starts smarter
+user chat
+→ Magentic-One / AutoGen through Python rails
+→ real Task Ledger artifact
+→ persistent editable PlanFlow task nodes
+→ Go / Run review
+→ bounded execution packet
+→ agent / coder execution
+→ Progress Ledger results
+→ skill candidate or skill update
+→ graph memory update
+→ next tasks, subtasks, or blockers
 ```
 
-This is the magic.
-
-The system does not just chat.
-The system does not just remember.
-The system learns usable procedures.
-
-For the code MVP:
-
-```txt
-before coding:
-  find relevant skills and code files
-
-during coding:
-  use matched skills, task context, and proof rules
-
-after coding:
-  report proof, blockers, and reusable lessons
-
-after report:
-  create or update skills
-```
-
-The repo learns how to work on itself.
-
-That same loop later supports trading agents, research agents, buyer agents, video agents, and other serious agents.
-
-The first product is not “all agents.”
-
-The first product is the control loop that makes agents accurate, continuous, and improvable.
+The current repo should not fake later stages before the real planning loop is honest.
 
 ## First Launch Wedge
 
-The first wedge is the agentic engineering / coding workbench.
+The first launch wedge is the agentic engineering / coding workbench.
 
 The first useful loop is:
 
 ```txt
 user describes work
 → Magentic-One reads active project context
-→ SkillsGraph retrieves relevant skills
-→ CodeGraph / CBM retrieves relevant files
-→ Task Ledger condenses the work into task objects
-→ PlanFlow shows editable step/task nodes
-→ user reviews/edits/selects/connects/approves
-→ Go / Run review builds bounded execution packet
+→ Task Ledger captures the real team plan and work plan
+→ PlanFlow shows editable task nodes
+→ user reviews / edits / selects / connects / approves
+→ Go / Run review builds a bounded execution packet
 → coder receives one bounded CoderPacket
 → coder returns CoderReport
 → Progress Ledger attaches proof/results/blockers to task nodes
@@ -135,6 +88,34 @@ task
 
 Once this works, the same control architecture can support agents that require accuracy, continuity, approval, and repeatable improvement.
 
+## Current Immediate State
+
+The current repo is mid-repair.
+
+Useful corrections to preserve:
+
+```txt
+bad AutoGen prompt override removed
+vendored AutoGen untouched
+Python rails capture-only Task Ledger extraction preserved
+factsResponse / planResponse / taskLedgerResponse / teamDescription / modelCallProof preserved
+Run Task should fail closed instead of executing from autogenMessages
+fake hand-built TaskLedger tests/nodes should be deleted if they do not connect to the real taskLedgerArtifact path
+```
+
+Current cleanup priority:
+
+```txt
+delete deterministic PlanFlow sanitizer/rewrite code
+delete tests that require sanitizer behavior
+delete one-off doc sprawl
+keep real Task Ledger capture
+keep PlanFlow rendering from real artifacts
+keep approval gate fail-closed
+```
+
+The repo should expose the real current state before trying to make it pretty.
+
 ## Hard Product Law
 
 Do not fake AI work.
@@ -156,6 +137,9 @@ backend-authored AI answers
 frontend-authored AI answers
 mocked success on live routes
 hidden prompt spaghetti buried in runtime files
+deterministic sanitizer code pretending to be AI planning
+deterministic regex cleanup pretending to be product logic
+deterministic guardrail/filter/poison logic in the planning path
 ```
 
 Allowed:
@@ -163,7 +147,7 @@ Allowed:
 ```txt
 real AutoGen / Magentic-One execution
 real Task Ledger artifacts
-real Progress Ledger artifacts
+real Progress Ledger artifacts when execution is wired
 real task objects
 real user-editable canvas nodes
 real proof/results attached to tasks
@@ -175,38 +159,271 @@ real skill creation/update after proof
 When uncertain, do not fake it.
 
 If an artifact is missing, report missing.
+
 If proof is missing, report missing.
+
 If a route is not wired, fail closed.
+
 If a task is disconnected, it is inactive metadata.
+
 If a task is deleted, it is gone unless it is explicitly a reusable template/preset.
+
+## Deterministic Content Logic Ban
+
+At this stage, deterministic content manipulation is not wanted in the planning/task path.
+
+Forbidden:
+
+```txt
+sanitizers
+regex cleanup
+keyword classifiers
+deterministic routing
+prompt-injection filters
+poison filters
+guardrail filters
+string rewrite helpers
+agent-name stripping
+Source stripping
+AutoGen / Magentic-One stripping
+PlanAgent / ThinkGraphAgent / KnowGraphAgent stripping
+rewriting "Have PlanAgent..." into nicer wording
+turning raw plan text into fake user-facing task text
+```
+
+These must not be kept as:
+
+```txt
+temporary
+defensive
+fallback
+guardrail
+poison protection
+projection sanitizer
+display cleanup
+```
+
+If the real Task Ledger output is noisy, show the noisy real state for now.
+
+The fix is proper Mag One agent-card / prompt-chain design, not deterministic code.
+
+## Python Rails
+
+The Python runtime is called Python rails.
+
+Do not call it sidecar in user-facing reports, docs, prompts, comments, or CoderReports.
+
+If Python rails code changes, report once:
+
+```txt
+Python rails restart/reload required: yes
+```
+
+Do not repeat restart instructions.
+
+## Magentic-One / AutoGen Runtime
+
+The main AI route is real AutoGen / Magentic-One.
+
+Allowed live route:
+
+```txt
+deck_builder/run
+→ card_magentic
+→ Python rails
+→ MagenticOneGroupChat.run_stream
+→ real Task Ledger artifact
+→ PlanFlow task nodes
+```
+
+The frontend and backend do not create AI answers.
+
+Backend responsibility:
+
+```txt
+transport
+route orchestration
+state persistence
+safe API contracts
+```
+
+Python rails responsibility:
+
+```txt
+AutoGen / Magentic-One runtime
+real team execution
+real Task Ledger artifact extraction
+real Progress Ledger execution when wired
+```
+
+Do not replace this with a basic chat call.
+
+Do not add a deterministic planner.
+
+Do not add fallback success answers.
+
+Do not mock success on the live route.
+
+## Task Ledger
+
+The Task Ledger is real.
+
+It comes from:
+
+```txt
+Python rails
+→ AutoGen / Magentic-One
+→ taskLedgerArtifact
+```
+
+The real Task Ledger may include:
+
+```txt
+team composition
+agent assignments
+which agents are planned to be used
+what the agent team plans to do
+facts gathered
+internal plan
+full task ledger
+runtime/provenance
+model-call proof
+```
+
+This is correct.
+
+Do not remove team composition.
+
+Do not remove agent assignment planning.
+
+Do not dumb the Task Ledger down.
+
+Do not override AutoGen defaults.
+
+Do not edit vendored AutoGen.
+
+Do not override `_get_task_ledger_plan_prompt`.
+
+Do not hide the team plan.
+
+Do not replace the real Task Ledger with frontend/backend fake data.
+
+The Task Ledger should eventually produce or carry both:
+
+```txt
+real team plan
+PlanFlow-ready task objects
+```
+
+But that should come from Mag One agent-card / prompt-chain design, not deterministic string cleanup.
+
+## Task Ledger Includes Tool Planning
+
+There is not a separate Tool Planning Ledger.
+
+Tool planning is part of the Task Ledger.
+
+A Task Ledger may contain:
+
+```txt
+task objects
+step objects
+team plan
+agent-use plan
+tool-use plan
+context requirements
+approval requirements
+SkillsGraph pointers
+CodeGraph / CBM file pointers
+expected outputs
+```
+
+If a request needs tools, Magentic-One should plan tool use inside the Task Ledger.
+
+The Task Ledger should answer:
+
+```txt
+which agents are needed?
+why are those agents needed?
+which tools are needed?
+why are those tools needed?
+what should each agent/tool do?
+what context should each agent/tool receive?
+what output should each agent/tool return?
+what needs user approval before running?
+```
+
+Tool planning must not become a fake deterministic router.
+
+A tool is selected because the task needs it, not because a keyword matched.
 
 ## PlanFlow
 
 PlanFlow is the durable task-object canvas.
 
 PlanFlow is not a Task Ledger metadata display.
+
 PlanFlow is not a document map.
+
 PlanFlow is not a spec library.
+
 PlanFlow is not a skill library.
+
 PlanFlow is not a road-sign/status-card dashboard.
 
 The Task Ledger is the source artifact.
 
 PlanFlow is the editable object surface created from that artifact.
 
-A workbench chat turn should produce at least one durable task/event object.
+PlanFlow should be fed by real artifacts, not chat text.
 
-In planning mode, each meaningful plan step becomes a persistent PlanFlow node.
-
-Example:
+Allowed source:
 
 ```txt
-Step 1 — Audit signal sources
-Step 2 — Check data path
-Step 3 — Review UI wiring
-Step 4 — Write repair SPEC
-Step 5 — Verify proof
+taskLedgerArtifact.planResponse
 ```
+
+Forbidden sources:
+
+```txt
+finalResponseText
+autogenMessages
+chat text
+fallback assistant text
+fake task objects
+```
+
+PlanFlow may render task nodes from the real Task Ledger artifact.
+
+PlanFlow must not deterministically rewrite task text.
+
+Allowed UI behavior:
+
+```txt
+CSS text clamp
+card sizing
+card spacing
+selected node styling
+inspector details
+normal typed fields
+choosing not to render optional metadata on a tiny card
+```
+
+Forbidden UI behavior:
+
+```txt
+content sanitizing
+content rewriting
+agent-name stripping
+source-name stripping
+fake user-facing conversion
+```
+
+Rendering fewer metadata fields is okay.
+
+Changing the content of plan/task text is not okay.
+
+## PlanFlow Node Shape
 
 A PlanFlow node should be small on the canvas.
 
@@ -214,8 +431,9 @@ Canvas node shows:
 
 ```txt
 step number
-short title
+short title or real step line
 optional one short detail line
+status
 ```
 
 The right inspector owns details.
@@ -235,6 +453,8 @@ next_needed
 subtasks
 prompt-chain reference
 skills used
+team plan
+tool plan
 compact debug/provenance if needed
 ```
 
@@ -266,78 +486,53 @@ Deleted nodes are removed unless explicitly stored as reusable templates/presets
 
 The user controls context by connecting, disconnecting, selecting, editing, deleting, or reviving task nodes.
 
-## Task Ledger
+## Approval / SWAT Gate
 
-The Task Ledger condenses active user intent and active context into task objects.
+The selected-node approval gate may remain.
 
-The Task Ledger should answer:
+It must be fail-closed.
 
-```txt
-what is the task?
-what context matters?
-what steps exist?
-what depends on what?
-what tools are needed?
-what skills are relevant?
-what should be done next?
-what needs approval?
-```
-
-The Task Ledger should create or update task objects.
-
-It should not become a giant visible metadata card.
-
-Forbidden PlanFlow display:
+It may do:
 
 ```txt
-Task Ledger captured
-source: magentic_one
-facts response: present
-plan response: present
-full ledger: hidden
-model-call proof: missing
-raw internal text: hidden
+select a Step node
+show a small attached approval tray
+stage/approve the selected node
+report execution is not wired
+stop
 ```
 
-That kind of information is not the product UI.
-
-## Task Ledger Includes Tool Planning
-
-There is not a separate Tool Planning Ledger.
-
-Tool planning is part of the Task Ledger.
-
-A Task Ledger may contain:
+It must not:
 
 ```txt
-task objects
-step objects
-tool-use plan
-context requirements
-approval requirements
-SkillsGraph pointers
-CodeGraph / CBM file pointers
-expected outputs
+call coder
+call LocalCoder
+call terminal
+call tools
+call Progress Ledger
+call backend execution endpoint
+use autogenMessages as task source
+use chat text as task source
+use finalResponseText as task source
+mark task complete
+fake execution success
 ```
 
-If a request needs tools, Magentic-One should plan tool use inside the Task Ledger.
+Until approved task-node execution is wired, Run Task should fail closed.
 
-The Task Ledger should answer:
+Acceptable failure:
 
 ```txt
-which tools are needed?
-why are those tools needed?
-what should each tool do?
-what context should each tool receive?
-what output should each tool return?
-what needs user approval before running?
+Run Task unavailable: approved task-node execution is not wired yet.
 ```
 
-Tool planning must not become a fake deterministic router.
+Not acceptable:
 
-It is a planning object inside the Task Ledger, created from active context and model reasoning.
-
-A tool is selected because the task needs it, not because a keyword matched.
+```txt
+silently run from autogenMessages
+silently run from chat answer
+pretend a task was approved
+```
 
 ## Progress Ledger
 
@@ -366,7 +561,9 @@ Progress Ledger results should update existing task nodes or create child task n
 Progress Ledger must not create fake success.
 
 If a task has no proof, show proof missing.
+
 If a task is blocked, show the blocker.
+
 If more work is needed, show next_needed.
 
 ## Coder In The Progress Ledger Loop
@@ -451,109 +648,55 @@ ask Research Bot / Skill Hunter for candidate skills
 
 The goal is to stop the stack from rethinking the same problem every time.
 
-This is a key part of the MVP code stack.
+## Launch Magic: Skill Snowball
 
-For now, the first target is this repo and this coding workflow.
+The small smart thing to launch with is the Skill Snowball.
 
-Later, the same pattern generalizes to other project types.
+LiquidAIty does not need every future agent on day one.
 
-## Agents Need Skills
+It needs one loop that makes each agent run smarter than the last.
 
-Agents should not work from raw prompts alone.
-
-Every serious agent should have access to relevant skills.
-
-A skill is a reusable working pattern, guardrail, proof method, tool-use method, or known trap that helps an agent perform a task without reinventing the process.
-
-For the MVP, the main target is coding.
-
-Later, the same pattern applies to trading agents, research agents, buyer agents, video agents, and other project agents.
-
-## Skill Lookup Before Work
-
-Before an agent or coder acts, the system should look at the active task context.
-
-Active task context may include:
+The launch loop is:
 
 ```txt
-connected PlanFlow task nodes
-selected task node
-Task Ledger steps
-planned tools
-CodeGraph / CBM file pointers
-ThinkGraph memory
-KnowGraph context
-user constraints
-```
-
-Then it should ask SkillsGraph:
-
-```txt
-what skills apply to this task?
-what skills apply to these files?
-what skills apply to this agent role?
-what skills apply to these tools?
-what known traps should be avoided?
-what proof commands should be used?
-what failed approaches should not be repeated?
-```
-
-The result is a small set of relevant skill pointers, not a dump of the whole skills database.
-
-## Skill Proposal Before Writing
-
-If no strong internal skill exists, the system may propose skills before the coder writes code.
-
-The proposed skills may come from:
-
-```txt
-existing SkillsGraph
-general skills database
-Research Bot / Skill Hunter
-public repo patterns
-AutoGen / Magentic-One examples
-past CoderReports
-past failures
-known proof patterns
-```
-
-A proposed skill is not automatically repo law.
-
-It is a candidate working pattern for the agent or coder to test on the current task.
-
-The CoderPacket or agent execution packet should say:
-
-```txt
-matched internal skills
-candidate skills to consider
-why each skill may apply
-which skills are proven
-which skills are only inspiration
-what proof is required
-what traps to avoid
-```
-
-## Skill Testing And Promotion
-
-A candidate skill becomes useful only through use and proof.
-
-The loop is:
-
-```txt
-task nodes selected
+task nodes
 → SkillsGraph lookup
-→ candidate skill proposed if needed
-→ coder/agent tests it during bounded work
-→ CoderReport or agent report records result
-→ Progress Ledger attaches result/proof/blocker
-→ successful reusable learning becomes a skill update
-→ approved skill is saved to skills/*.md
+→ missing-skill search or skill proposal
+→ agent/coder tests skill in real work
+→ CoderReport / agent report records proof
+→ Progress Ledger attaches result to task
+→ working skill is saved to skills/*.md
 → skill is indexed into SkillsGraph
+→ next run starts smarter
 ```
 
-If the candidate fails, that failure is useful too.
+This is the magic.
 
-Failed skills or failed approaches can remain in SkillsGraph as rejection/supersession memory so the system does not repeat them.
+The system does not just chat.
+
+The system does not just remember.
+
+The system learns usable procedures.
+
+For the code MVP:
+
+```txt
+before coding:
+  find relevant skills and code files
+
+during coding:
+  use matched skills, task context, and proof rules
+
+after coding:
+  report proof, blockers, and reusable lessons
+
+after report:
+  create or update skills
+```
+
+The repo learns how to work on itself.
+
+That same loop later supports trading agents, research agents, buyer agents, video agents, and other serious agents.
 
 ## Existing SkillsGraph System
 
@@ -623,238 +766,9 @@ past failures
 required gates
 ```
 
-SkillsGraph edges may include:
-
-```txt
-APPLIES_TO_FILE
-APPLIES_TO_SYSTEM
-AVOIDS_TRAP
-REQUIRES_PROOF
-SUPERSEDES
-RELATED_TO
-CREATED_FROM_REPORT
-VALIDATED_BY
-```
-
-SkillsGraph should help answer:
-
-```txt
-have we solved this before?
-what skill applies to this file/system/task?
-what trap should the coder avoid?
-what proof command proved this before?
-what old approach was rejected?
-what rule keeps getting broken?
-what candidate skill should be tested?
-what skill should be updated from this report?
-```
-
-SkillsGraph is not PlanFlow.
-
-PlanFlow nodes are project task objects.
-
-SkillsGraph nodes are reusable work knowledge.
-
-SkillsGraph can be used to build the active Context Packet, but it should only contribute relevant skills.
-
-It must not dump every skill into every prompt.
-
-## SkillGraph Snowball Rule
-
-Before code writing, the system should query SkillsGraph.
-
-The Go / Run review should retrieve:
-
-```txt
-relevant skills/*.md
-SkillsGraph matches
-known guardrails
-known failed attempts
-known proof commands
-related CodeGraph / CBM file evidence
-```
-
-If no matching skill exists, the run should not silently proceed as if nothing was learned.
-
-The current skill handoff logic already encodes the rule:
-
-```txt
-No matching skill found; successful completion must create a new skill.
-```
-
-Each useful run should either:
-
-```txt
-use an existing skill
-update an existing skill
-create a new skill candidate
-record why no reusable skill was produced
-```
-
-## Snowball Skills
-
-A major MVP advantage is that every coding run can improve the stack.
-
-The system should not only use existing skills.
-
-It should also discover, create, test, promote, reject, supersede, and index skills.
-
-The code MVP should support this loop:
-
-```txt
-new task
-→ SkillsGraph lookup
-→ if skill exists, attach relevant skill pointer to Context Packet
-→ if no skill exists, ask Research Bot / Skill Hunter to find candidate skills
-→ candidate skill is summarized and mapped to repo/task area
-→ CoderPacket tells coder which skills and candidate skills to read
-→ coder uses bounded task + CodeGraph files + SkillsGraph skills
-→ CoderReport proves success/failure
-→ successful reusable learning becomes skill candidate
-→ user approves or edits
-→ skill saved to skills/*.md
-→ skill indexed into SkillsGraph
-→ next run has better skill memory
-```
-
-This is the snowball effect.
-
-The goal is not to have a few hand-written skills.
-
-The goal is to grow a working internal skill library that can be searched, related, tested, promoted, rejected, superseded, and reused.
-
-There may eventually be thousands or hundreds of thousands of possible skills.
-
-The system should not stuff them all into context.
-
 SkillsGraph should retrieve only relevant skills for the current task.
 
-## Research Bot / Skill Hunter
-
-LiquidAIty should have a dedicated Research Bot / Skill Hunter agent.
-
-Its job is to look outside the current repo for reusable skill patterns and useful agent-workflow ideas.
-
-It may search for:
-
-```txt
-public coding-agent patterns
-prompt-chain patterns
-AutoGen / Magentic-One examples
-repo-analysis workflows
-testing/proof patterns
-UI/workbench patterns
-skills files from other systems
-engineering playbooks
-trading-agent patterns
-research-agent patterns
-buyer-agent patterns
-video-agent patterns
-```
-
-The Research Bot feeds SkillsGraph.
-
-The chat agent can then use SkillsGraph as inspiration and retrieval memory.
-
-The Research Bot does not blindly modify active project behavior.
-
-It proposes skill candidates.
-
-SkillsGraph qualifies them.
-
-The user or proof loop promotes them.
-
-## SkillsGraph Prequalification And Promotion
-
-Research Bot / Skill Hunter is allowed to discover outside skills and patterns.
-
-The solution is graph-mediated qualification.
-
-SkillsGraph tracks where a skill came from, what it applies to, how it was tested, whether it is proven, and whether it has been superseded or rejected.
-
-Candidate skills can come from:
-
-```txt
-Research Bot / Skill Hunter
-public repos
-coding-agent examples
-AutoGen / Magentic-One examples
-GitHub patterns
-repo workflow research
-successful internal CoderReports
-repeated internal failure patterns
-```
-
-SkillsGraph can classify skill state:
-
-```txt
-UNTRUSTED_CANDIDATE_SKILL
-PREQUALIFIED_CANDIDATE_SKILL
-PROVEN_INTERNAL_SKILL
-PROMOTED_SKILL
-SUPERSEDED_SKILL
-REJECTED_SKILL
-```
-
-Prequalification can use:
-
-```txt
-source quality
-GitHub stars/forks/activity if relevant
-tests/proof commands
-similarity to current repo area
-past successful uses
-past failure evidence
-manual approval
-```
-
-A candidate skill should not become active repo law merely because it was scraped.
-
-It becomes active when it is adapted to the repo, tested, and promoted.
-
-## Skills
-
-Skills are durable reusable procedures and guardrails.
-
-Skills live as readable files in:
-
-```txt
-skills/*.md
-```
-
-The SkillsGraph indexes and relates those files so future agents can retrieve the right skill instead of reinventing the same solution.
-
-A skill should contain:
-
-```txt
-name
-when to use it
-when not to use it
-steps
-proof commands
-known traps
-related files/systems
-success evidence
-failure evidence if relevant
-```
-
-Skills are not raw task history.
-Skills are not PlanFlow task nodes.
-Skills are not spec sprawl.
-Skills are not one-off CoderReports.
-
-A new skill should usually come from:
-
-```txt
-successful CoderReport
-repeated failure pattern
-confirmed repo trap
-validated proof command
-stable workflow rule
-candidate skill tested successfully
-```
-
-A skill should update only when the learning is reusable.
+It must not dump every skill into every prompt.
 
 ## Active Context Packet
 
@@ -877,8 +791,6 @@ recent Progress Ledger results
 
 Disconnected PlanFlow nodes are inactive metadata and should not enter the active Context Packet unless the user reconnects/selects/revives them.
 
-SkillsGraph is different.
-
 SkillsGraph is reusable system memory.
 
 It may retrieve relevant skills by task/file/system match, but it must not blindly stuff unrelated skills into context.
@@ -894,7 +806,7 @@ The review should include:
 ```txt
 connected PlanFlow nodes
 selected task node
-Task Ledger tool-use plan
+Task Ledger team/tool-use plan
 recent relevant Progress Ledger results
 CodeGraph / CBM found files
 SkillsGraph found skills
@@ -909,61 +821,6 @@ Disconnected PlanFlow nodes are inactive metadata and should not enter the activ
 The Go / Run review produces a bounded execution packet.
 
 For coding, that packet is the CoderPacket.
-
-The CoderPacket should explicitly tell the coder:
-
-```txt
-which task node is active
-which connected nodes matter
-which tools were planned
-which CodeGraph / CBM files were found
-which SkillsGraph skills apply
-which skills/*.md files to read
-which files are in scope
-which files are out of scope
-which proof commands are required
-what not to do
-```
-
-## Magentic-One / AutoGen Runtime
-
-The main AI route is real AutoGen / Magentic-One.
-
-Allowed live route:
-
-```txt
-deck_builder/run
-→ card_magentic
-→ Python AutoGen sidecar
-→ MagenticOneGroupChat.run_stream
-→ real Task Ledger artifact
-→ PlanFlow task nodes
-```
-
-The frontend and backend do not create AI answers.
-
-Backend responsibility:
-
-```txt
-transport
-route orchestration
-state persistence
-safe API contracts
-```
-
-Python sidecar responsibility:
-
-```txt
-AutoGen / Magentic-One runtime
-real team execution
-real Task Ledger artifact extraction
-real Progress Ledger execution when wired
-```
-
-Do not replace this with a basic chat call.
-Do not add a deterministic planner.
-Do not add fallback success answers.
-Do not mock success on the live route.
 
 ## Agent Cards And Prompt Chains
 
@@ -989,6 +846,25 @@ Prompt chains should later be visible and editable in the card inspector.
 Runtime code should execute configured prompt-chain steps.
 
 Runtime code should not smuggle hidden prompt strings into adapters.
+
+## Next Real Step After Cleanup
+
+After deterministic code is removed and the repo is honest again, the next single step is:
+
+```txt
+put the Task Ledger output-shape instruction into the Mag One agent card / prompt chain
+```
+
+That later step should let Mag One produce both:
+
+```txt
+real team plan
+real PlanFlow-ready task objects
+```
+
+without deterministic sanitizer code.
+
+The prompt-chain work must live on or through the Mag One agent card / prompt-chain path, not hidden randomly in runtime code.
 
 ## Codebase Memory / CodeGraph
 
@@ -1057,7 +933,9 @@ is not saved as a spec file unless explicitly exported
 The repo should not accumulate spec files or task files.
 
 Durable direction belongs in PLAN.md.
+
 Reusable learning belongs in skills/*.md and SkillsGraph.
+
 Current execution requirements belong in the active CoderPacket prompt.
 
 ## CoderReport
@@ -1087,35 +965,6 @@ skill updates
 PlanFlow and Progress Ledger compare the CoderReport against the CoderPacket.
 
 Hidden success and vague done claims are forbidden.
-
-## Run Task
-
-Run Task must execute approved task nodes.
-
-Run Task should not use:
-
-```txt
-autogenMessages as hidden task source
-chat text as task source
-finalResponseText as task source
-fake task objects
-```
-
-Until approved task-node execution is wired, Run Task should fail closed.
-
-Acceptable failure:
-
-```txt
-Run Task unavailable: approved task-node execution is not wired yet.
-```
-
-Not acceptable:
-
-```txt
-silently run from autogenMessages
-silently run from chat answer
-pretend a task was approved
-```
 
 ## General Agent Skill Loop
 
@@ -1161,22 +1010,6 @@ task/context object
 
 The code MVP proves the agent-control pattern first.
 
-Later verticals can reuse:
-
-```txt
-Task Ledger
-PlanFlow task nodes
-Progress Ledger
-SkillsGraph
-ThinkGraph
-KnowGraph
-CodeGraph / other domain graphs
-CoderPacket-like execution packets
-report/proof loops
-```
-
-This is how LiquidAIty becomes a continuous agent workbench instead of a one-off chat wrapper.
-
 ## Documentation Law
 
 Allowed durable docs:
@@ -1185,7 +1018,7 @@ Allowed durable docs:
 AGENTS.md
 PLAN.md
 skills/*.md
-repo-intake/*.md when needed
+repo-intake/*.md when explicitly needed
 ```
 
 Allowed durable graph memory:
@@ -1200,9 +1033,10 @@ CodeGraph / CBM = codebase structure and edit-boundary memory
 Forbidden doc sprawl:
 
 ```txt
+CLAUDE.md
+random architecture runbooks from one bad pass
 specs/
 tasks/
-random one-off plan files
 persistent CoderPacket files
 persistent task prompt files
 raw diff dump files
@@ -1210,8 +1044,11 @@ completed-task archive piles
 ```
 
 PLAN.md is product law and current route.
+
 AGENTS.md is execution law.
+
 skills/*.md are reusable procedures and guardrails.
+
 SkillsGraph is the retrieval and relationship layer for those skills.
 
 ## Current Implementation Target
@@ -1221,7 +1058,8 @@ Near-term target:
 ```txt
 real Magentic-One route remains working
 real Task Ledger artifact is captured
-PlanFlow converts Task Ledger plan steps into editable task nodes
+deterministic text sanitizers/rewrite logic are removed
+PlanFlow renders from the real Task Ledger artifact
 bottom banner is removed
 right inspector owns details
 disconnected nodes become inactive metadata
@@ -1238,25 +1076,29 @@ Research Bot / Skill Hunter later feeds candidate skills into SkillsGraph
 
 ## Next Narrow Work
 
-1. Finish PlanFlow step-node rendering.
-2. Remove any remaining Task Ledger metadata-card UI.
-3. Remove bottom banner/focus/payload display.
-4. Ensure each step node is clickable and editable in the inspector.
-5. Stop Run Task from using autogenMessages.
-6. Wire Go / Run review over connected task nodes.
-7. Wire CoderPacket to include CodeGraph / CBM files and SkillsGraph skills.
-8. Wire Run Task to approved connected/selected task nodes.
-9. Attach Progress Ledger results to task nodes.
-10. Add skill candidate/update flow from CoderReport.
-11. Re-ingest approved skills/*.md into SkillsGraph.
-12. Add prompt-chain storage/display inside agent cards.
-13. Add Research Bot / Skill Hunter for external candidate skills.
+1. Delete deterministic PlanFlow sanitizer/rewrite logic.
+2. Delete tests that require sanitizer/agent-name stripping behavior.
+3. Delete one-off doc sprawl.
+4. Keep real Python rails + AutoGen Task Ledger capture intact.
+5. Keep PlanFlow rendering from real taskLedgerArtifact.
+6. Keep Run Task / approval gate fail-closed.
+7. Confirm PlanFlow does not use finalResponseText.
+8. Confirm PlanFlow does not use autogenMessages.
+9. Confirm PlanFlow does not use chat text.
+10. After cleanup, add Task Ledger output-shape instruction to the Mag One agent card / prompt-chain path.
+11. Finish PlanFlow step-node rendering.
+12. Ensure each step node is clickable and editable in the inspector.
+13. Wire Go / Run review over connected task nodes.
+14. Wire CoderPacket to include CodeGraph / CBM files and SkillsGraph skills.
+15. Attach Progress Ledger results to task nodes.
+16. Add skill candidate/update flow from CoderReport.
+17. Re-ingest approved skills/*.md into SkillsGraph.
 
 ## Final Rule
 
 LiquidAIty should show real work objects, not fake status theater.
 
-When a model or coder is tempted to create a dashboard, status card, fallback, mock answer, deterministic plan, or repeated metadata banner, stop.
+When a model or coder is tempted to create a dashboard, status card, fallback, mock answer, deterministic plan, sanitizer, regex cleanup layer, or repeated metadata banner, stop.
 
 The product object is the task node.
 
