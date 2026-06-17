@@ -8273,30 +8273,15 @@ export default function AgentBuilder(): React.ReactElement {
       const outcome = await handleRunDeck(trimmed);
 
       if (outcome && outcome.ok) {
-        // The chat may only claim a plan exists when a real PlanFlow node was
-        // actually rendered from a real Task Ledger artifact. No keyword routing
-        // and no claiming "plan created" against an empty canvas.
-        const renderedTaskLedgerNode = (outcome.run?.steps || []).some(
-          (step: any) => {
-            const plan = step?.magenticTrace?.plan;
-            return (
-              plan &&
-              typeof plan === 'object' &&
-              !Array.isArray(plan) &&
-              plan.taskLedgerArtifact &&
-              typeof plan.taskLedgerArtifact === 'object'
-            );
-          },
-        );
-        if (renderedTaskLedgerNode) {
-          // Plan goes to PlanFlow; chat stays short. The long plan / Task Ledger
-          // text is never dumped into chat.
-          setMessages((m) => [...m, { role: 'assistant', text: 'Task Ledger artifact captured on canvas.' }]);
-        } else {
-          const answer = String(outcome.finalText || '').trim();
-          if (answer) {
-            setMessages((m) => [...m, { role: 'assistant', text: answer }]);
-          }
+        // Chat always shows the real Magentic-One answer (outcome.finalText) when
+        // the run returned one. Magentic-One emits a Task Ledger artifact on every
+        // turn, so gating chat on "artifact present" would suppress every real
+        // answer (a joke, an explanation, a plan) and leave the chat looking dead.
+        // The real taskLedgerArtifact still feeds the PlanFlow canvas separately
+        // via planFlowMissionGraph; it is never required to silence the answer.
+        const answer = String(outcome.finalText || '').trim();
+        if (answer) {
+          setMessages((m) => [...m, { role: 'assistant', text: answer }]);
         }
       } else {
         setLatestDeckRun(null);
