@@ -79,6 +79,13 @@ export type PlanMissionNodeData = {
   summary?: string;
   /** Pretty-printed full real payload for the read-only inspector view. */
   payloadJson?: string;
+  /** Verbatim real Task Ledger artifact fields, shown only in the inspector
+   *  (never on the node face). Copied as-is from the AutoGen artifact — never
+   *  summarized, rewritten, sanitized, or split into steps. */
+  factsResponse?: string;
+  planResponse?: string;
+  taskLedgerResponse?: string;
+  teamDescription?: string;
   /** True only for the deterministic Plan canvas "Run Task" approval node. */
   isRunTaskNode?: boolean;
   /** Whether the displayed Task Ledger is runnable (gates Run Task). */
@@ -382,6 +389,10 @@ export function buildTaskLedgerArtifactGraph(
   const artifact = taskLedgerArtifact as Record<string, unknown>;
   const source = String(artifact.source || '').trim();
   const phase = String(artifact.phase || '').trim();
+  // Verbatim artifact text fields for the inspector. Copied as-is (a missing field
+  // stays an empty string -> the inspector renders "missing"); never rewritten.
+  const verbatim = (key: string): string =>
+    typeof artifact[key] === 'string' ? (artifact[key] as string) : '';
   let payloadJson = '';
   try {
     payloadJson = JSON.stringify(artifact, null, 2);
@@ -393,13 +404,18 @@ export function buildTaskLedgerArtifactGraph(
     type: 'mission',
     position: { x: 296, y: 136 },
     data: {
+      // Canvas node face shows only this label. kind/status/source/provenance and
+      // the raw artifact payload stay in data for the inspector — no app-authored
+      // "captured" sentence or status badge is rendered on the node face.
       label: 'Task Ledger Artifact',
       kind: 'TaskLedger',
-      description: 'Real Magentic-One Task Ledger artifact captured.',
-      summary: 'Real Magentic-One Task Ledger artifact captured.',
       status: 'seeded',
       source: source || undefined,
       provenance: phase || undefined,
+      factsResponse: verbatim('factsResponse'),
+      planResponse: verbatim('planResponse'),
+      taskLedgerResponse: verbatim('taskLedgerResponse'),
+      teamDescription: verbatim('teamDescription'),
       payloadJson: payloadJson || undefined,
       editable: false,
     },

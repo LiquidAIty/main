@@ -245,39 +245,10 @@ function MissionNode({ data, selected }: NodeProps<any>) {
   const nodeData = data as PlanMissionNodeData;
   const status = String(nodeData?.status || 'proposed');
   const shellActive = Boolean(selected || status.toLowerCase() === 'running');
-  // Readable card view only: short title + one short detail line. Source /
-  // provenance / raw artifact text stay in the inspector, never on the card.
+  // Canvas node face shows ONLY the object/task title. All metadata (kind, status,
+  // source, provenance, raw artifact) stays in node data and the inspector details
+  // panel — never rendered as badges, status words, or road-sign text on the face.
   const title = String(nodeData?.title || nodeData?.label || 'Step');
-  const detail = String(nodeData?.detail || nodeData?.description || '');
-  const kind = String(nodeData?.kind || '').trim() || 'Task';
-  const badge =
-    kind === 'CurrentMission'
-      ? 'CURRENT MISSION'
-      : kind === 'TaskLedger'
-        ? 'TASK LEDGER'
-        : kind === 'CurrentSpec'
-          ? 'CURRENT SPEC'
-          : kind === 'ProgressLedger'
-            ? 'PROGRESS LEDGER'
-            : kind === 'RunTask'
-              ? 'RUN TASK'
-              : kind === 'TaskResult'
-                ? 'TASK RESULT'
-              : kind === 'NextSpecCandidate'
-                ? 'NEXT SPEC'
-                : kind === 'PlanRoute'
-                  ? 'PLAN'
-                  : kind === 'MagenticOnePlan'
-                    ? 'PLAN PROPOSAL'
-                    : kind === 'RuntimeRun'
-                      ? 'RUN'
-                      : kind === 'ThinkGraphEvent'
-                        ? 'THINK'
-                        : kind === 'SkillReference'
-                          ? 'SKILL'
-                          : kind === 'CodeEvidenceReference'
-                            ? 'CODE'
-                            : kind.toUpperCase();
   return (
     <>
       <Handle
@@ -312,25 +283,6 @@ function MissionNode({ data, selected }: NodeProps<any>) {
           minHeight: 104,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <span
-            style={{
-              padding: '3px 7px',
-              borderRadius: 999,
-              border: `1px solid ${GRAPH_THEME.accent.primaryBorder}`,
-              background: GRAPH_THEME.accent.primarySoft,
-              color: GRAPH_THEME.surface.text,
-              fontSize: 10,
-              fontWeight: 800,
-              letterSpacing: '0.06em',
-            }}
-          >
-            {badge}
-          </span>
-          <span style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 10.5 }}>
-            {status}
-          </span>
-        </div>
         <div
           style={{
             fontSize: 15,
@@ -349,24 +301,6 @@ function MissionNode({ data, selected }: NodeProps<any>) {
         >
           {title}
         </div>
-        {detail && (
-          <div
-            style={{
-              color: 'rgba(167, 176, 186, 0.84)',
-              fontSize: 11.5,
-              lineHeight: 1.3,
-              overflowWrap: 'break-word',
-              position: 'relative',
-              zIndex: 1,
-              display: '-webkit-box',
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: 'vertical',
-              overflow: 'hidden',
-            }}
-          >
-            {detail}
-          </div>
-        )}
         {/*
           SWAT (Selected Work Action Tray) — the approval gate, attached to the
           selected Step node and anchored just below the card so it does not
@@ -1471,6 +1405,40 @@ export default function PlanMissionFlow({
                 </div>
               </div>
             ) : null}
+            {selectedMissionData.kind === 'TaskLedger' ? (
+              <>
+                {(
+                  [
+                    ['factsResponse', selectedMissionData.factsResponse],
+                    ['planResponse', selectedMissionData.planResponse],
+                    ['taskLedgerResponse', selectedMissionData.taskLedgerResponse],
+                    ['teamDescription', selectedMissionData.teamDescription],
+                  ] as const
+                ).map(([label, value]) => (
+                  <div key={label}>
+                    <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 10 }}>{label}</div>
+                    <div style={{ marginTop: 2, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                      {String(value || '').trim() || 'missing'}
+                    </div>
+                  </div>
+                ))}
+                <div>
+                  <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 10 }}>raw artifact JSON</div>
+                  <pre
+                    style={{
+                      marginTop: 2,
+                      whiteSpace: 'pre-wrap',
+                      overflowWrap: 'anywhere',
+                      fontSize: 10.5,
+                      lineHeight: 1.4,
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                    }}
+                  >
+                    {String(selectedMissionData.payloadJson || '').trim() || 'missing'}
+                  </pre>
+                </div>
+              </>
+            ) : null}
             <div>
               <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 10 }}>Linked nodes</div>
               <div style={{ marginTop: 2, overflowWrap: 'anywhere' }}>
@@ -1639,27 +1607,6 @@ export default function PlanMissionFlow({
           </svg>
         </button>
       </div>
-      {missionGraph.nodes.length > 0 && !selectedMissionNode ? (
-        <div
-          aria-hidden
-          style={{
-            position: 'absolute',
-            left: 16,
-            top: 14,
-            zIndex: 22,
-            padding: '4px 10px',
-            borderRadius: 999,
-            border: `1px solid ${GRAPH_THEME.controls.border}`,
-            background: 'rgba(11,14,18,0.82)',
-            color: GRAPH_THEME.surface.mutedText,
-            fontSize: 11,
-            lineHeight: 1.2,
-            pointerEvents: 'none',
-          }}
-        >
-          Select a step to approve
-        </div>
-      ) : null}
       <ReactFlow
         nodes={nodes}
         edges={visibleEdges}
