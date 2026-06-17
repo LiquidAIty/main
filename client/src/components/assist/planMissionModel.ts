@@ -166,12 +166,6 @@ export type PlanMissionGraph = {
   edges: PlanMissionFlowEdge[];
 };
 
-function cleanList(input: string[] | null | undefined): string[] {
-  return (Array.isArray(input) ? input : [])
-    .map((entry) => String(entry || '').trim())
-    .filter(Boolean);
-}
-
 function makeNode(
   id: string,
   label: string,
@@ -278,27 +272,11 @@ export function buildPlanMissionGraph(
 ): PlanMissionGraph {
   const PLAN_X_TIGHTEN_ORIGIN = 56;
   const PLAN_X_TIGHTEN_RATIO = 0.9;
-  const baseSteps: StructuredAssistPlanStep[] =
-    Array.isArray(structuredPlan.steps) && structuredPlan.steps.length > 0
-      ? structuredPlan.steps
-      : cleanList(structuredPlan.nextMove).map((title, index) => ({
-          id: `fallback_step_${index + 1}`,
-          title,
-          status: 'proposed' as const,
-          assignedAgentId: null,
-          skillId: null,
-          toolIds: [],
-          generatedPrompt: '',
-          expectedOutput: '',
-          relatedFiles: [],
-          relatedObjects: [],
-          relatedSurface: null,
-          validationCommand: null,
-          approvalRequired: true,
-          resultSummary: '',
-          blocker: '',
-        }));
-  const planSteps = baseSteps;
+  // Only explicit, real structured steps render. No fallback/inferred nodes are
+  // built from nextMove or any other free-text source; an empty plan stays empty.
+  const planSteps: StructuredAssistPlanStep[] = Array.isArray(structuredPlan.steps)
+    ? structuredPlan.steps
+    : [];
 
   if (planSteps.length === 0) {
     return { nodes: [], edges: [] };
@@ -382,4 +360,51 @@ export function buildPlanMissionGraph(
   }));
 
   return { nodes: tightenedNodes, edges };
+}
+
+/**
+ * Build one honest viewer node from a real AutoGen / Magentic-One Task Ledger
+ * artifact. This does NOT parse the Task Ledger prose into steps, does not strip
+ * agent names, and does not rewrite team composition — it preserves the raw
+ * artifact verbatim in the node payload. If no artifact is provided, the graph
+ * is empty (no placeholder/fallback node is ever invented).
+ */
+export function buildTaskLedgerArtifactGraph(
+  taskLedgerArtifact: Record<string, unknown> | null | undefined,
+): PlanMissionGraph {
+  if (
+    !taskLedgerArtifact ||
+    typeof taskLedgerArtifact !== 'object' ||
+    Array.isArray(taskLedgerArtifact)
+  ) {
+    return { nodes: [], edges: [] };
+  }
+  const artifact = taskLedgerArtifact as Record<string, unknown>;
+  const source = String(artifact.source || '').trim();
+  const phase = String(artifact.phase || '').trim();
+  let payloadJson = '';
+  try {
+    payloadJson = JSON.stringify(artifact, null, 2);
+  } catch {
+    payloadJson = '';
+  }
+  const node: PlanMissionFlowNode = {
+    id: 'task_ledger_artifact',
+    type: 'mission',
+    position: { x: 296, y: 136 },
+    data: {
+      label: 'Task Ledger Artifact',
+      kind: 'TaskLedger',
+      description: 'Real Magentic-One Task Ledger artifact captured.',
+      summary: 'Real Magentic-One Task Ledger artifact captured.',
+      status: 'seeded',
+      source: source || undefined,
+      provenance: phase || undefined,
+      payloadJson: payloadJson || undefined,
+      editable: false,
+    },
+    draggable: true,
+    selectable: true,
+  };
+  return { nodes: [node], edges: [] };
 }

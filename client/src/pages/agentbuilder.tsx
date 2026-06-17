@@ -43,9 +43,11 @@ import useAgentBuilderProject from '../features/agentbuilder/state/useAgentBuild
 import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgentBuilderProjectReset';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import TradingCanvasSurface from '../features/trading/TradingCanvasSurface';
-import type {
-  PlanMissionNodeData,
-  PlanMissionNodeOverrideMap,
+import {
+  buildTaskLedgerArtifactGraph,
+  type PlanMissionGraph,
+  type PlanMissionNodeData,
+  type PlanMissionNodeOverrideMap,
 } from '../components/assist/planMissionModel';
 import {
   type LinkRef,
@@ -5037,39 +5039,25 @@ export default function AgentBuilder(): React.ReactElement {
   );
   const [stateLoaded, setStateLoaded] = useState(false);
   const [planExecutionState, setPlanExecutionState] = useState<PlanExecutionState | null>(null);
-  // Revised / next Task Ledger returned by Magentic-One on a result-feedback turn
-  // (skill step 12). Real Mag One output only — never a TS-fabricated plan. It is
-  // cleared whenever a fresh planning deck run arrives so it can never go stale.
-  const [resultFeedbackPlan, setResultFeedbackPlan] = useState<Record<string, unknown> | null>(null);
-  useEffect(() => {
-    setResultFeedbackPlan(null);
-  }, [latestDeckRun]);
-  // Single source of truth for the displayed Task Ledger: a Mag One revised/next
-  // plan from result feedback when present, otherwise the latest real deck run.
-  // Both the Plan canvas and the Run Task approval payload derive from this.
-  const planFlowSourceRun = useMemo<DeckRun | null | undefined>(() => {
-    if (resultFeedbackPlan) {
-      return {
-        id: 'result-feedback',
-        steps: [
-          {
-            id: 'result-feedback-step',
-            title: 'Magentic-One (result interpretation)',
-            magenticTrace: { plan: resultFeedbackPlan },
-          },
-        ],
-      } as unknown as DeckRun;
+  // The Plan canvas renders only the real AutoGen / Magentic-One Task Ledger
+  // artifact captured for the latest real deck run: one honest viewer node, and
+  // nothing when no artifact was returned. The only source is the real artifact
+  // at latestDeckRun.steps[*].magenticTrace.plan.taskLedgerArtifact. No synthetic
+  // DeckRun, no app-authored placeholder/Run Task nodes, no PLAN.md / backend
+  // projection, and no plan-text parsing into step nodes.
+  const planFlowMissionGraph = useMemo<PlanMissionGraph>(() => {
+    const steps = latestDeckRun?.steps || [];
+    let latestArtifact: Record<string, unknown> | null = null;
+    for (const step of steps) {
+      const plan = step?.magenticTrace?.plan;
+      if (!plan || typeof plan !== 'object' || Array.isArray(plan)) continue;
+      const artifact = (plan as Record<string, unknown>).taskLedgerArtifact;
+      if (artifact && typeof artifact === 'object' && !Array.isArray(artifact)) {
+        latestArtifact = artifact as Record<string, unknown>;
+      }
     }
-    return latestDeckRun;
-  }, [resultFeedbackPlan, latestDeckRun]);
-  // The Plan canvas renders only the real AutoGen Task Ledger artifact returned
-  // for the source run (one viewer node), and nothing when none was returned.
-  // No app-authored placeholder/Run Task nodes; PLAN.md / backend planflow
-  // projections never drive the Plan canvas.
-  const planFlowMissionGraph = useMemo(
-    () => ({ nodes: [], edges: [] }),
-    [planFlowSourceRun],
-  );
+    return buildTaskLedgerArtifactGraph(latestArtifact);
+  }, [latestDeckRun]);
   useEffect(() => {
     setPlanExecutionState(activeProject ? readCachedPlanExecutionState(activeProject) : null);
   }, [activeProject]);
@@ -8285,16 +8273,25 @@ export default function AgentBuilder(): React.ReactElement {
       const outcome = await handleRunDeck(trimmed);
 
       if (outcome && outcome.ok) {
-        // Surface-only signal (NOT an AI router): does the user want a plan on the
-        // canvas? Keyword match on the raw request only.
-        const wantsPlanSurface = /\b(plan|coding task|audit and improve|planflow|task ledger)\b/i.test(trimmed);
-        const hasTaskLedgerArtifact = (outcome.run?.steps || []).some(
-          (step: any) => step?.magenticTrace?.plan?.taskLedgerArtifact,
+        // The chat may only claim a plan exists when a real PlanFlow node was
+        // actually rendered from a real Task Ledger artifact. No keyword routing
+        // and no claiming "plan created" against an empty canvas.
+        const renderedTaskLedgerNode = (outcome.run?.steps || []).some(
+          (step: any) => {
+            const plan = step?.magenticTrace?.plan;
+            return (
+              plan &&
+              typeof plan === 'object' &&
+              !Array.isArray(plan) &&
+              plan.taskLedgerArtifact &&
+              typeof plan.taskLedgerArtifact === 'object'
+            );
+          },
         );
-        if (wantsPlanSurface && hasTaskLedgerArtifact) {
+        if (renderedTaskLedgerNode) {
           // Plan goes to PlanFlow; chat stays short. The long plan / Task Ledger
           // text is never dumped into chat.
-          setMessages((m) => [...m, { role: 'assistant', text: 'Plan created on canvas.' }]);
+          setMessages((m) => [...m, { role: 'assistant', text: 'Task Ledger artifact captured on canvas.' }]);
         } else {
           const answer = String(outcome.finalText || '').trim();
           if (answer) {

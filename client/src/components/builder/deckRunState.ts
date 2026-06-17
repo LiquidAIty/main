@@ -5,10 +5,7 @@
 // @graph feeds_to: DeckRunRoute
 import type {
   LinkRef,
-  PlanContractMode,
   PlanItem,
-  PlanStepStatus,
-  StructuredAssistPlanStep,
 } from "./assistPlanSurface";
 import { safeJson } from "./requestGuards";
 import type { DeckDocument, DeckRun, DeckRunResponse, DeckRuntimeEvent } from "../../types/agentgraph";
@@ -49,124 +46,6 @@ function safeText(value: unknown): string {
 function cleanOptionalText(value: unknown): string | null {
   const text = safeText(value).trim();
   return text || null;
-}
-
-function extractJsonObject(text: string): Record<string, unknown> | null {
-  const source = String(text || "").trim();
-  if (!source) return null;
-  const firstBrace = source.indexOf("{");
-  const lastBrace = source.lastIndexOf("}");
-  if (firstBrace < 0 || lastBrace <= firstBrace) return null;
-  try {
-    const parsed = JSON.parse(source.slice(firstBrace, lastBrace + 1));
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function normalizeTextList(input: unknown): string[] {
-  if (!Array.isArray(input)) return [];
-  return input.map((entry) => safeText(entry).trim()).filter(Boolean);
-}
-
-function normalizeBoolean(value: unknown): boolean {
-  if (typeof value === "boolean") return value;
-  const normalized = safeText(value).trim().toLowerCase();
-  return normalized === "true" || normalized === "1" || normalized === "yes";
-}
-
-function normalizePlanMode(value: unknown): PlanContractMode {
-  const mode = safeText(value).trim().toLowerCase();
-  if (
-    mode === "active_run" ||
-    mode === "draft" ||
-    mode === "meta" ||
-    mode === "template" ||
-    mode === "archived"
-  ) {
-    return mode;
-  }
-  return "draft";
-}
-
-function normalizePlanStepStatus(value: unknown): PlanStepStatus {
-  const status = safeText(value).trim().toLowerCase();
-  if (
-    status === "proposed" ||
-    status === "approved" ||
-    status === "running" ||
-    status === "blocked" ||
-    status === "done"
-  ) {
-    return status;
-  }
-  if (status === "complete") return "done";
-  if (status === "awaiting_review" || status === "review") return "approved";
-  if (status === "ready" || status === "seeded") return "proposed";
-  return "proposed";
-}
-
-function normalizeStructuredPlanCandidate(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const raw = value as Record<string, unknown>;
-  const goal = safeText(raw.goal).trim();
-  const steps: StructuredAssistPlanStep[] = (Array.isArray(raw.steps) ? raw.steps : [])
-    .map((entry, index) => {
-      const step = entry as Record<string, unknown>;
-      const title = safeText(step.title).trim();
-      if (!title) return null;
-      const relatedObjects = normalizeTextList(
-        step.relatedObjects ?? step.relatedObjectIds ?? step.relatedObjectId,
-      );
-      return {
-        id: safeText(step.id).trim() || `plan_step_${index + 1}`,
-        title,
-        status: normalizePlanStepStatus(step.status),
-        assignedAgentId: safeText(step.assignedAgentId).trim() || null,
-        skillId: safeText(step.skillId).trim() || null,
-        toolIds: normalizeTextList(step.toolIds ?? step.tools),
-        generatedPrompt: safeText(step.generatedPrompt ?? step.starterPrompt).trim(),
-        expectedOutput: safeText(step.expectedOutput).trim(),
-        relatedObjects,
-        relatedSurface: safeText(step.relatedSurface).trim() || null,
-        relatedFiles: normalizeTextList(step.relatedFiles),
-        validationCommand: safeText(step.validationCommand).trim() || null,
-        approvalRequired: normalizeBoolean(step.approvalRequired),
-        resultSummary: safeText(step.resultSummary).trim(),
-        blocker: safeText(step.blocker).trim(),
-      };
-    })
-    .filter((step): step is NonNullable<typeof step> => Boolean(step));
-  if (!goal && steps.length === 0) return null;
-  const nextSafeStep =
-    safeText(raw.nextSafeStep ?? raw.next_safe_step).trim() ||
-    String((steps[0] as { title?: unknown } | undefined)?.title || "").trim() ||
-    "Await human approval before execution.";
-  return {
-    planMode: normalizePlanMode(raw.planMode ?? raw.mode),
-    goal,
-    availableAgentsConsidered: Array.isArray(raw.availableAgentsConsidered) ? raw.availableAgentsConsidered : [],
-    missingAgentsProposed: Array.isArray(raw.missingAgentsProposed) ? raw.missingAgentsProposed : [],
-    steps,
-    approvalGates: Array.isArray(raw.approvalGates) ? raw.approvalGates : [],
-    nextSafeStep,
-  };
-}
-
-function extractStructuredPlanFromRun(run: DeckRun | null | undefined): Record<string, unknown> | null {
-  const steps = [...(run?.steps || [])].reverse();
-  for (const step of steps) {
-    const fromField = normalizeStructuredPlanCandidate(
-      (step as { structuredPlan?: unknown }).structuredPlan,
-    );
-    if (fromField) return fromField;
-    const fromOutput = normalizeStructuredPlanCandidate(extractJsonObject(String(step.output || "")));
-    if (fromOutput) return fromOutput;
-  }
-  return null;
 }
 
 function prefixRuntimeLine(label: string, value: string): string {
@@ -446,24 +325,24 @@ export function resolveDeckRunFinalText(run: DeckRun | null | undefined): string
   );
 }
 
-function buildStructuredPlanSummary(structuredPlan: Record<string, unknown> | null): string {
-  if (!structuredPlan) return "";
-  const rawSteps = Array.isArray((structuredPlan as { steps?: unknown }).steps)
-    ? ((structuredPlan as { steps?: Array<Record<string, unknown>> }).steps || [])
-    : [];
-  const steps = rawSteps
-    .map((step) => safeText(step.title).trim())
-    .filter(Boolean)
-    .slice(0, 5);
-  if (steps.length === 0) return "";
-  return steps.map((title, index) => `${index + 1}. ${title}`).join("\n");
-}
-
 export function resolveDeckRunChatReply(run: DeckRun | null | undefined): string {
-  const finalText = resolveDeckRunFinalText(run);
-  if (finalText) return finalText;
-  const structuredPlan = extractStructuredPlanFromRun(run);
-  return buildStructuredPlanSummary(structuredPlan);
+  // Only a real final output from a successful run may become assistant chat.
+  // No structured-plan JSON, no Task Ledger artifact, and no error text is ever
+  // turned into a chat reply; absent a real final output this returns "".
+  if (!run) return "";
+  const successfulStep = [...(run.steps || [])]
+    .reverse()
+    .find((step) => step.status === "success" && cleanOptionalText(step.output));
+  if (successfulStep?.output) {
+    return String(successfulStep.output).trim();
+  }
+  const summarizedStep = [...(run.steps || [])]
+    .reverse()
+    .find((step) => step.status === "success" && cleanOptionalText(step.outputSummary));
+  if (summarizedStep?.outputSummary) {
+    return String(summarizedStep.outputSummary).trim();
+  }
+  return "";
 }
 
 export function buildReloadStateFromDeckRuns(
