@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 
 def _load_repo_env() -> None:
-    # The sidecar starts with CWD apps/python-models (npm run dev:autogen),
+    # The Python rails starts with CWD apps/python-models (npm run dev:autogen),
     # so resolve apps/backend/.env from both CWD and the repo root above this file.
     candidates = [Path.cwd(), *Path(__file__).resolve().parents]
     for base in candidates:

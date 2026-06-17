@@ -52,16 +52,7 @@ import {
   type PlanItem,
   type StructuredAssistPlanSurface,
 } from '../components/builder/assistPlanSurface';
-import {
-  buildPlanFlowMissionGraph,
-  buildPlanFlowGoGateState,
-  type PlanFlowGoGateState,
-} from '../features/agentbuilder/plan/planFlowProjection';
-import {
-  buildResultFeedbackRequest,
-  interpretResultFeedbackResponse,
-  RESULT_FEEDBACK_ENDPOINT,
-} from '../features/agentbuilder/plan/planResultFeedback';
+
 import {
   blockPlanExecutionState,
   cachePlanExecutionState,
@@ -602,29 +593,13 @@ function cleanOptionalText(value: unknown): string | null {
   return text || null;
 }
 
-const PLAN_RUNTIME_STATUS_PATTERNS = [
-  /\bautogen(?:[_:\-\s]|$)/i,
-  /\bhttp[_:\-\s]?500\b/i,
-  /\bparticipants_required\b/i,
-  /\bassistant_tool_not_supported\b/i,
-  /\bmagentic_callable_heads_required\b/i,
-  /\binternal server error\b/i,
-  /\bhealth check failed\b/i,
-] as const;
-
-function isPlanRuntimeNoiseText(value: unknown): boolean {
-  const normalized = safeText(value).trim();
-  if (!normalized) return false;
-  return PLAN_RUNTIME_STATUS_PATTERNS.some((pattern) => pattern.test(normalized));
-}
-
 function summarizePlanRuntimeMessage(
   value: unknown,
   fallback: string,
 ): string | null {
   const normalized = safeText(value).trim();
   if (!normalized) return null;
-  return isPlanRuntimeNoiseText(normalized) ? fallback : normalized;
+  return normalized;
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
@@ -5092,7 +5067,7 @@ export default function AgentBuilder(): React.ReactElement {
   // No app-authored placeholder/Run Task nodes; PLAN.md / backend planflow
   // projections never drive the Plan canvas.
   const planFlowMissionGraph = useMemo(
-    () => buildPlanFlowMissionGraph(planFlowSourceRun),
+    () => ({ nodes: [], edges: [] }),
     [planFlowSourceRun],
   );
   useEffect(() => {
@@ -6280,11 +6255,7 @@ export default function AgentBuilder(): React.ReactElement {
     // no tools, no terminal, no Progress Ledger, and no autogenMessages /
     // finalResponseText / chat text used as an execution source.
     setGoGateState(
-      buildPlanFlowGoGateState(
-        planMissionFocus?.nodeId
-          ? { id: planMissionFocus.nodeId, label: selectedPlanNodeDraft?.label }
-          : null,
-      ),
+      ({ executed: false, taskComplete: false, message: 'PlanFlow execution is not wired.' }),
     );
   }, [planMissionFocus, selectedPlanNodeDraft]);
 
@@ -9861,3 +9832,4 @@ export default function AgentBuilder(): React.ReactElement {
     </FrontendCrashBoundary>
   );
 }
+

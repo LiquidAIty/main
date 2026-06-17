@@ -24,7 +24,7 @@ import {
 import '@xyflow/react/dist/style.css';
 
 import type { StructuredAssistPlanSurface } from '../builder/assistPlanSurface';
-import { buildPlanStepCardView } from '../../features/agentbuilder/plan/planFlowProjection';
+
 import {
   GRAPH_THEME,
   graphControlButtonStyle,
@@ -247,8 +247,8 @@ function MissionNode({ data, selected }: NodeProps<any>) {
   const shellActive = Boolean(selected || status.toLowerCase() === 'running');
   // Readable card view only: short title + one short detail line. Source /
   // provenance / raw artifact text stay in the inspector, never on the card.
-  const cardView = buildPlanStepCardView(nodeData);
-  const title = cardView.title;
+  const title = String(nodeData?.title || nodeData?.label || 'Step');
+  const detail = String(nodeData?.detail || nodeData?.description || '');
   const kind = String(nodeData?.kind || '').trim() || 'Task';
   const badge =
     kind === 'CurrentMission'
@@ -349,7 +349,7 @@ function MissionNode({ data, selected }: NodeProps<any>) {
         >
           {title}
         </div>
-        {cardView.detail && (
+        {detail && (
           <div
             style={{
               color: 'rgba(167, 176, 186, 0.84)',
@@ -364,7 +364,7 @@ function MissionNode({ data, selected }: NodeProps<any>) {
               overflow: 'hidden',
             }}
           >
-            {cardView.detail}
+            {detail}
           </div>
         )}
         {/*

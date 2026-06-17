@@ -611,7 +611,7 @@ export function buildPythonAutoGenCardRuntimePayload(
     systemPrompt,
     // Structured Run Task gate (no magic userText command). True only when the
     // explicit Run Task action ran the deck; chat submit leaves it false and the
-    // Python sidecar halts after the Task Ledger.
+    // Python rails halts after the Task Ledger.
     runApproved: Boolean((context as any)?.runApproved),
     plan: undefined,
     thinkGraph: undefined,
@@ -693,17 +693,17 @@ export async function runCardWithContract(
       startedAt
     );
 
-    // Call the Python AutoGen sidecar. Mock success is not allowed on this route.
+    // Call the Python AutoGen rails. Mock success is not allowed on this route.
     let finalText = '';
     let magenticPlan: Record<string, unknown> | null = null;
     // Honest TaskLedger trace from the real Python Magentic-One path.
     let ledgerTrace: Record<string, unknown> | undefined;
     try {
-        console.log('[runCardWithContract] executing Python AutoGen sidecar route.');
+        console.log('[runCardWithContract] executing Python AutoGen rails route.');
         const sidecarResponse = await orchestrateWithAutoGen(payload as any);
 
         // Transport only. The real AutoGen output is the messages/events the
-        // sidecar captured verbatim from run_stream, plus the orchestrator's own
+        // Python rails output captured verbatim from run_stream, plus the orchestrator's own
         // Progress Ledger JSON when the inner loop ran. The backend authors no
         // ledger, no summary, and does not parse message text into runtime state.
         // finalResponseText is the real chat answer: the workbench renders it in
@@ -747,7 +747,7 @@ export async function runCardWithContract(
       runtimeType: 'magentic_one',
       inputSummary: summarizeText(input),
       outputSummary: summarizeText(finalText),
-      // Transported sidecar artifacts for PlanFlow / AgentCanvas projection.
+      // Transported Python rails artifacts for PlanFlow / AgentCanvas projection.
       magenticTrace:
         Object.keys(magenticPlan || {}).length > 0 || ledgerTrace
           ? {

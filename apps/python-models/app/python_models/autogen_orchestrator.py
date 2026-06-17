@@ -17,7 +17,7 @@ async def orchestrate_context_pack(context: ContextPack) -> OrchestratorRunRespo
             f"orchestrator_card_required: runtimeType={context.cardRuntime.runtimeType}"
         )
 
-    # The Python sidecar runs the real AutoGen Task Ledger startup and returns the
+    # The Python rails runs the real AutoGen Task Ledger startup and returns the
     # real Task Ledger artifact (facts/plan/full text + model-call proof) plus the
     # real captured messages. The Progress Ledger is identify-only. The app never
     # invents Task Ledger fields, steps, or status.

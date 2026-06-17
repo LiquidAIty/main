@@ -75,7 +75,7 @@ export async function executeDeck(document: any, templates: any[], options: any 
         startedAt: result.startedAt,
         endedAt: result.endedAt,
         // Carry the real Magentic-One Task Ledger / Progress Ledger to the
-        // client so PlanFlow projects real ledger nodes (planFlowProjection.ts
+
         // reads step.magenticTrace.plan). Never fabricated here.
         magenticTrace: result.magenticTrace ?? null,
       });

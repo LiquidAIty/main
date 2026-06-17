@@ -392,7 +392,7 @@ describe('Canonical Cards Runtime', () => {
     ).toThrow('card_model_config_mismatch');
   });
 
-  // T005 — graph nodes, graph edges, and card settings must survive into the sidecar payload.
+  // T005 — graph nodes, graph edges, and card settings must survive into the Python rails payload.
 
   it('graph nodes and edges survive into the payload with edge relationships intact', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one', runtimeOptions: { modelKey: 'gpt-5.1-chat-latest' } };

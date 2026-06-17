@@ -20,7 +20,7 @@ describe('autogenOrchestratorClient', () => {
   it('posts to autogen orchestrate endpoint and returns payload', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      text: async () => JSON.stringify({ ok: true, finalResponseText: 'from sidecar' }),
+      text: async () => JSON.stringify({ ok: true, finalResponseText: 'from Python rails' }),
     });
     vi.stubGlobal('fetch', fetchMock as any);
 
@@ -39,7 +39,7 @@ describe('autogenOrchestratorClient', () => {
       userText: 'run this',
     });
 
-    expect(result.finalResponseText).toBe('from sidecar');
+    expect(result.finalResponseText).toBe('from Python rails');
     expect(fetchMock).toHaveBeenCalledWith(
       'http://autogen-sidecar:8001/autogen/orchestrate',
       expect.objectContaining({
