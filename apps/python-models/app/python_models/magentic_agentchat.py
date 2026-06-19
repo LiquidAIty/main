@@ -83,6 +83,68 @@ def _real_task_ledger_artifact(orchestrator: Any) -> TaskLedgerArtifact | None:
     )
 
 
+def _available_agents_block(context: ContextPack) -> str:
+    """Real available agents + capabilities, from the active card's participants.
+
+    This is the team the model may route tasks to (suggestedAgents/suggestedTools).
+    Honest 'none listed' when the card carries no participants — never invented.
+    """
+    card = context.cardRuntime
+    parts = list(getattr(card, "participants", []) or []) if card else []
+    if not parts:
+        return "Available agents and capabilities: none listed."
+    lines: list[str] = []
+    for p in parts:
+        title = _as_text(getattr(p, "title", "")) or _as_text(getattr(p, "cardId", ""))
+        if not title:
+            continue
+        role = _as_text(getattr(p, "role", ""))
+        tools = [_as_text(t) for t in (getattr(p, "tools", []) or []) if _as_text(t)]
+        desc = title
+        if role:
+            desc += f" (role: {role})"
+        if tools:
+            desc += f" — tools: {', '.join(tools)}"
+        lines.append(f"- {desc}")
+    if not lines:
+        return "Available agents and capabilities: none listed."
+    return "Available agents and capabilities:\n" + "\n".join(lines)
+
+
+def _think_graph_summary(context: ContextPack) -> str:
+    tg = context.thinkGraph
+    ents = [_as_text(e) for e in (getattr(tg, "priorityEntities", []) or []) if _as_text(e)]
+    rels = [_as_text(r) for r in (getattr(tg, "priorityRelationships", []) or []) if _as_text(r)]
+    if not ents and not rels:
+        return "not available"
+    out: list[str] = []
+    if ents:
+        out.append(f"priority entities: {', '.join(ents[:12])}")
+    if rels:
+        out.append(f"priority relationships: {', '.join(rels[:12])}")
+    return "; ".join(out)
+
+
+def _know_graph_summary(context: ContextPack) -> str:
+    kg = context.knowGraph
+    gaps = getattr(kg, "gaps", []) or []
+    facts = getattr(kg, "graphFacts", []) or []
+    docs = int(getattr(kg, "researchDocumentCount", 0) or 0)
+    if not gaps and not facts and not docs:
+        return "not available"
+    return f"gaps: {len(gaps)}, facts: {len(facts)}, research docs: {docs}"
+
+
+def _code_graph_summary(context: ContextPack) -> str:
+    wctx = context.workspaceObjectContext
+    if not wctx:
+        return "not available"
+    repo = _as_text(getattr(wctx, "repoPath", ""))
+    src = _as_text(getattr(wctx, "graphSource", ""))
+    bits = [b for b in (f"repo: {repo}" if repo else "", f"graph source: {src}" if src else "") if b]
+    return "; ".join(bits) if bits else "not available"
+
+
 async def _planflow_task_objects(
     client: Any, context: ContextPack, artifact: TaskLedgerArtifact
 ) -> list[PlanFlowTaskObject]:
@@ -98,9 +160,15 @@ async def _planflow_task_objects(
     contract = _as_text(getattr(card, "taskLedgerOutputContract", "")) if card else ""
     if not contract:
         return []
+    card_prompt_chain = _as_text(getattr(card, "prompt", "")) or _as_text(context.systemPrompt)
     ledger_context = (
         f"User task:\n{_as_text(context.userText)}\n\n"
+        f"Active card prompt-chain:\n{card_prompt_chain or 'not available'}\n\n"
+        f"{_available_agents_block(context)}\n\n"
         f"Team:\n{artifact.teamDescription}\n\n"
+        f"ThinkGraph context: {_think_graph_summary(context)}\n"
+        f"KnowGraph context: {_know_graph_summary(context)}\n"
+        f"CodeGraph context: {_code_graph_summary(context)}\n\n"
         f"Facts:\n{artifact.factsResponse}\n\n"
         f"Plan:\n{artifact.planResponse}\n\n"
         f"Task Ledger:\n{artifact.taskLedgerResponse}"

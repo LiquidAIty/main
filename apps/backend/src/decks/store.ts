@@ -156,11 +156,15 @@ function cleanToolNames(value: unknown): string[] | null {
   return tools.length > 0 ? tools : null;
 }
 
-function normalizeRuntimeOptions(value: unknown): AgentCardRuntimeOptions | null {
+export function normalizeRuntimeOptions(value: unknown): AgentCardRuntimeOptions | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Record<string, unknown>;
   const provider =
-    raw.provider === 'openai' || raw.provider === 'openrouter' ? raw.provider : null;
+    raw.provider === 'openai' ||
+    raw.provider === 'openrouter' ||
+    raw.provider === 'local_openai_compatible'
+      ? raw.provider
+      : null;
   const allowRepeatedSpeaker =
     typeof raw.allowRepeatedSpeaker === 'boolean'
       ? raw.allowRepeatedSpeaker

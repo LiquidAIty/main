@@ -66,7 +66,8 @@ export type DeckEdgeMetadata = {
 export type AssistExecutionMode = 'single' | 'swarm';
 
 export type AgentCardRuntimeOptions = {
-  provider?: 'openai' | 'openrouter' | null;
+  // 'local_openai_compatible' = a local SLM served over an OpenAI-compatible endpoint.
+  provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | null;
   executionBackend?: 'python_autogen' | null;
   modelKey?: string | null;
   temperature?: number | null;

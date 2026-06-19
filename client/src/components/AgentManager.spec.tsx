@@ -220,6 +220,28 @@ describe('AgentManager runtime editor', () => {
     });
   });
 
+  it('persists the local SLM provider selection in save payloads', () => {
+    const payload = buildActiveAgentManagerLocalConfig({
+      runtimeBinding: '',
+      runtimeType: 'assistant_agent',
+      runtimeOptions: {},
+      parentGraphId: '',
+      provider: 'local_openai_compatible',
+      modelKey: 'local-gemma-slm',
+      temperature: '',
+      maxTokens: '',
+      promptTemplate: '',
+      toolsText: '',
+      knowledgeText: '',
+      responseFormatText: '',
+    });
+    // Survives into top-level fields AND runtime_options -> persists to the deck JSON.
+    expect(payload.provider).toBe('local_openai_compatible');
+    expect(payload.model_key).toBe('local-gemma-slm');
+    expect(payload.runtime_options?.provider).toBe('local_openai_compatible');
+    expect(payload.runtime_options?.modelKey).toBe('local-gemma-slm');
+  });
+
   it('preserves advanced legacy runtime options in save payloads', () => {
     const payload = buildActiveAgentManagerLocalConfig({
       runtimeBinding: '',

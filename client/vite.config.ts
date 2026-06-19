@@ -15,6 +15,13 @@ export default defineConfig(() => {
         'react',
         'react-dom',
         'scheduler',
+        // @react-three/* is a raw-ESM exclude (below); its CJS leaf deps must still be
+        // pre-bundled, or the raw drei/fiber default imports fail in dev and the
+        // ThinkGraph/KnowGraph/CodeGraph scene blanks. Each is a standalone CJS leaf
+        // (no three-stdlib in its graph), so this does NOT re-trigger the sourcemap crash.
+        'react-reconciler',
+        'react-reconciler/constants',
+        'stats.js',
       ],
       // Work around corrupted nested sourcemaps in three-stdlib pulled by
       // @react-three/* during esbuild pre-bundling on dev startup.

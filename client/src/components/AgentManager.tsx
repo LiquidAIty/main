@@ -79,7 +79,7 @@ export type AgentManagerLocalConfig = {
   runtime_type?: AgentCardRuntimeType | null;
   runtime_options?: AgentCardRuntimeOptions | null;
   parent_graph_id?: string | null;
-  provider?: 'openai' | 'openrouter' | '' | null;
+  provider?: ModelProviderChoice | null;
   model_key?: string | null;
   temperature?: number | null;
   max_tokens?: number | null;
@@ -226,6 +226,23 @@ function cleanNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+// Local SLM graph worker, selectable as a card provider. The actual model id comes
+// from the card's Model field (default below); provider routes to the local endpoint.
+export const LOCAL_MODEL_PROVIDER = 'local_openai_compatible';
+export const LOCAL_MODEL_LABEL = 'Local Gemma / SLM Graph Worker';
+export const LOCAL_MODEL_DEFAULT_KEY = 'local-gemma-slm';
+
+export type ModelProviderChoice = 'openai' | 'openrouter' | 'local_openai_compatible' | '';
+
+/** Keep a recognized model provider (incl. the local SLM), else null. */
+function normalizeModelProvider(
+  value: unknown,
+): 'openai' | 'openrouter' | 'local_openai_compatible' | null {
+  return value === 'openai' || value === 'openrouter' || value === LOCAL_MODEL_PROVIDER
+    ? value
+    : null;
+}
+
 function compactDefinedRuntimeOptions(input: AgentCardRuntimeOptions): AgentCardRuntimeOptions | null {
   const keptEntries = Object.entries(input).filter(([, value]) => value !== null && value !== undefined);
   return keptEntries.length > 0 ? (Object.fromEntries(keptEntries) as AgentCardRuntimeOptions) : null;
@@ -282,7 +299,7 @@ function compactRuntimeOptions(
     ),
   ) as AgentCardRuntimeOptions;
   const commonBase = {
-    provider: input.provider === 'openai' || input.provider === 'openrouter' ? input.provider : null,
+    provider: normalizeModelProvider(input.provider),
     modelKey: cleanString(input.modelKey),
     temperature: cleanNumber(input.temperature),
     maxTokens: cleanNumber(input.maxTokens),
@@ -440,10 +457,7 @@ function deriveRuntimeOptions(localConfig: AgentManagerLocalConfig | null | unde
   const source = localConfig?.runtime_options || {};
   return {
     ...source,
-    provider:
-      localConfig?.provider === 'openai' || localConfig?.provider === 'openrouter'
-        ? localConfig.provider
-        : source.provider || null,
+    provider: normalizeModelProvider(localConfig?.provider) ?? source.provider ?? null,
     modelKey: localConfig?.model_key || source.modelKey || null,
     temperature:
       typeof localConfig?.temperature === 'number' ? localConfig.temperature : source.temperature ?? null,
@@ -551,7 +565,7 @@ export function buildActiveAgentManagerLocalConfig(input: {
   runtimeType: AgentCardRuntimeType | '';
   runtimeOptions: AgentCardRuntimeOptions;
   parentGraphId: string;
-  provider: 'openai' | 'openrouter' | '';
+  provider: ModelProviderChoice;
   modelKey: string;
   temperature: number | '';
   maxTokens: number | '';
@@ -565,9 +579,7 @@ export function buildActiveAgentManagerLocalConfig(input: {
   const runtimeOptions = compactRuntimeOptions(runtimeType, {
     ...input.runtimeOptions,
     provider:
-      input.provider === 'openai' || input.provider === 'openrouter'
-        ? input.provider
-        : input.runtimeOptions.provider || null,
+      normalizeModelProvider(input.provider) ?? input.runtimeOptions.provider ?? null,
     modelKey: input.modelKey || input.runtimeOptions.modelKey || null,
     temperature:
       typeof input.temperature === 'number' ? input.temperature : input.runtimeOptions.temperature ?? null,
@@ -623,10 +635,8 @@ export function AgentManager({
   const [ioSchema, setIoSchema] = useState(promptFields.ioSchema);
   const [memoryPolicy, setMemoryPolicy] = useState(promptFields.memoryPolicy);
   const [selectedRuntimeType, setSelectedRuntimeType] = useState<AgentCardRuntimeType>(runtimeType);
-  const [provider, setProvider] = useState<'openai' | 'openrouter' | ''>(
-    localConfig?.provider === 'openai' || localConfig?.provider === 'openrouter'
-      ? localConfig.provider
-      : '',
+  const [provider, setProvider] = useState<ModelProviderChoice>(
+    normalizeModelProvider(localConfig?.provider) ?? '',
   );
   const [modelKey, setModelKey] = useState(String(localConfig?.model_key || ''));
   const [temperature, setTemperature] = useState<number | ''>(
@@ -694,11 +704,7 @@ export function AgentManager({
 
   useEffect(() => {
     setSelectedRuntimeType(runtimeType);
-    setProvider(
-      localConfig?.provider === 'openai' || localConfig?.provider === 'openrouter'
-        ? localConfig.provider
-        : '',
-    );
+    setProvider(normalizeModelProvider(localConfig?.provider) ?? '');
     setModelKey(String(localConfig?.model_key || ''));
     setTemperature(typeof localConfig?.temperature === 'number' ? localConfig.temperature : '');
     setMaxTokens(typeof localConfig?.max_tokens === 'number' ? localConfig.max_tokens : '');
@@ -1376,12 +1382,27 @@ export function AgentManager({
           <select
             aria-label="Provider"
             value={provider}
-            onChange={(event) => setProvider(event.target.value as 'openai' | 'openrouter' | '')}
+            onChange={(event) => {
+              const next = event.target.value as ModelProviderChoice;
+              setProvider(next);
+              // Selecting the local SLM fills its default model id so the card saves a
+              // resolvable model; switching away clears that default again.
+              if (next === LOCAL_MODEL_PROVIDER && !modelKey.trim()) {
+                setModelKey(LOCAL_MODEL_DEFAULT_KEY);
+              } else if (next !== LOCAL_MODEL_PROVIDER && modelKey.trim() === LOCAL_MODEL_DEFAULT_KEY) {
+                setModelKey('');
+              }
+            }}
             style={inputStyle}
           >
             <option value="">Default</option>
-            <option value="openai">OpenAI</option>
-            <option value="openrouter">OpenRouter</option>
+            <optgroup label="Cloud models">
+              <option value="openai">OpenAI</option>
+              <option value="openrouter">OpenRouter</option>
+            </optgroup>
+            <optgroup label="Local models">
+              <option value={LOCAL_MODEL_PROVIDER}>{LOCAL_MODEL_LABEL}</option>
+            </optgroup>
           </select>
         </Field>
       ) : null}

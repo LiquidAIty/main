@@ -464,6 +464,37 @@ export default function KnowledgeGraphFramework({
     loadingCodeGraph,
   ]);
 
+  // Always-visible honesty readout so no tab can silently blank: which graph, where
+  // its data came from, how many nodes/edges reached the renderer, and the status.
+  const diagnostics = useMemo(() => {
+    const nodeCount = displayData.nodes.length;
+    const edgeCount = displayData.edges.length;
+    const label =
+      kind === 'codegraph' ? 'CodeGraph' : kind === 'knowgraph' ? 'KnowGraph' : 'ThinkGraph';
+    let source: string;
+    let status: 'loading' | 'error' | 'empty' | 'ready';
+    let error: string | null = null;
+    if (kind === 'codegraph') {
+      source = `layout:${codeGraphProjectName || '(no project)'}`;
+      if (loadingCodeGraph) status = 'loading';
+      else if (codeGraphError) {
+        status = 'error';
+        error = compactStatusText(codeGraphError, 120);
+      } else status = nodeCount === 0 ? 'empty' : 'ready';
+    } else {
+      source = 'host-provided';
+      status = nodeCount === 0 ? 'empty' : 'ready';
+    }
+    return { label, source, nodeCount, edgeCount, status, error };
+  }, [
+    codeGraphError,
+    codeGraphProjectName,
+    displayData.edges.length,
+    displayData.nodes.length,
+    kind,
+    loadingCodeGraph,
+  ]);
+
   const highlightedIds = useMemo(() => {
     if (!contract.focusNodeIds?.length) return null;
     const ids = new Set<number>();
@@ -598,6 +629,35 @@ export default function KnowledgeGraphFramework({
             CodeGraph
           </button>
         ) : null}
+      </div>
+
+      <div
+        data-testid="knowledge-graph-diagnostics"
+        data-no-surface-promote="true"
+        style={graphGlassPillStyle({
+          position: 'absolute',
+          top: 12,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 5,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 8,
+          fontSize: 11,
+          lineHeight: 1.3,
+          padding: '6px 10px',
+          maxWidth: 'min(72%, 560px)',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        })}
+      >
+        <strong style={{ color: GRAPH_THEME.drawer.inputText }}>{diagnostics.label}</strong>
+        <span style={{ color: GRAPH_THEME.surface.mutedText }}>
+          src={diagnostics.source} · nodes={diagnostics.nodeCount} · edges=
+          {diagnostics.edgeCount} · {diagnostics.status}
+          {diagnostics.error ? ` · err=${diagnostics.error}` : ''}
+        </span>
       </div>
 
       <button

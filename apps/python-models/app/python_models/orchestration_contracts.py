@@ -339,6 +339,14 @@ class PlanFlowTaskObject(BaseModel):
     approvalRequired: bool = False
     nextNeeded: str = ""
     proofNeeded: str = ""
+    # Real-context routing fields. The model fills these ONLY from the available team
+    # agents / tools fed in the ledger context; defaults keep older contracts valid.
+    suggestedAgents: list[str] = Field(default_factory=list)
+    suggestedTools: list[str] = Field(default_factory=list)
+    routesThrough: str = ""
+    semanticType: str = ""
+    owlType: str = ""
+    relations: list[str] = Field(default_factory=list)
 
 
 class TaskLedgerArtifact(BaseModel):

@@ -5548,7 +5548,8 @@ export default function AgentBuilder(): React.ReactElement {
       parent_graph_id: selectedCard.parentGraphId ?? null,
       provider:
         effectiveAgent.provider === 'openai' ||
-        effectiveAgent.provider === 'openrouter'
+        effectiveAgent.provider === 'openrouter' ||
+        effectiveAgent.provider === 'local_openai_compatible'
           ? effectiveAgent.provider
           : '',
       model_key: effectiveAgent.model || null,
@@ -6135,7 +6136,8 @@ export default function AgentBuilder(): React.ReactElement {
         const nextParentGraphId = cleanOptionalText(nextConfig.parent_graph_id);
         const nextProvider =
           nextConfig.provider === 'openai' ||
-          nextConfig.provider === 'openrouter'
+          nextConfig.provider === 'openrouter' ||
+          nextConfig.provider === 'local_openai_compatible'
             ? nextConfig.provider
             : null;
         const nextModel = String(nextConfig.model_key || '').trim() || null;
