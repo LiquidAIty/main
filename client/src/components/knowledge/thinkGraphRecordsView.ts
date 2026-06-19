@@ -54,13 +54,13 @@ export function resolveThinkGraphSourceLabel(
   view: ThinkGraphRecordsView,
   hostHasNodes: boolean,
 ): string {
+  // Returns a SHORT token only ('thinkgraph-db' | 'host-provided' | 'unavailable'); the
+  // detailed reason/blocker stays in `view` (network/console), never on the graph canvas.
   if (view) {
-    if (!view.ok) {
-      return `unavailable:${view.blocker || view.reason || 'thinkgraph_unavailable'}`;
-    }
+    if (!view.ok) return 'unavailable';
     if (view.nodes.length > 0) return 'thinkgraph-db';
     if (hostHasNodes) return 'host-provided';
-    return `thinkgraph-db:${view.reason || 'no_thinkgraph_records_for_project'}`;
+    return 'thinkgraph-db';
   }
   return hostHasNodes ? 'host-provided' : 'thinkgraph-db';
 }

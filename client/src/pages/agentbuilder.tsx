@@ -193,6 +193,12 @@ import {
   mapAcceptedThinkGraphRecordsToViewData,
   resolveThinkGraphSourceLabel,
 } from '../components/knowledge/thinkGraphRecordsView';
+import {
+  classifyKnowGraphRouteError,
+  classifyKnowGraphSemanticResult,
+  resolveKnowGraphSourceLabel,
+  type KnowGraphSourceState,
+} from '../components/knowledge/knowGraphView';
 const PlanMissionFlow = lazy(
   () => import('../components/assist/PlanMissionFlow'),
 );
@@ -7129,6 +7135,11 @@ export default function AgentBuilder(): React.ReactElement {
     nodes: [],
     relationships: [],
   });
+  // Honest KnowGraph source/reason for the diagnostics pill (knowgraph-neo4j / unavailable /
+  // no-records), and whether the INGEST-service health (:8001) is up. The Neo4j READ is
+  // independent of ingest health — an ingest outage must not be reported as host-provided.
+  const [knowGraphSourceState, setKnowGraphSourceState] = useState<KnowGraphSourceState | null>(null);
+  const [knowGraphIngestHealthOk, setKnowGraphIngestHealthOk] = useState<boolean | null>(null);
   const graphResultRef = useRef<any[]>([]);
   const [, setLastIngestTrace] = useState<any>(null);
   const scopeKey = activeProject || '';
@@ -7585,6 +7596,14 @@ export default function AgentBuilder(): React.ReactElement {
           } else if (adapted.warnings.length > 0) {
             setKnowledgeGraphStatus(`KnowGraph semantic warnings: ${adapted.warnings[0]}`);
           }
+          setKnowGraphSourceState(
+            classifyKnowGraphSemanticResult({
+              status: semanticStatus,
+              warnings: adapted.warnings,
+              nodeCount: rawNodes.length,
+              relCount: rawRels.length,
+            }),
+          );
         } else {
           const legacyEndpoint = `/api/knowgraph/graph?projectId=${encodeURIComponent(projectId)}`;
           const legacyRes = await fetch(legacyEndpoint, { credentials: 'include', signal: opts?.signal });
@@ -7592,6 +7611,9 @@ export default function AgentBuilder(): React.ReactElement {
           rawNodes = Array.isArray(legacyPayload?.nodes) ? legacyPayload.nodes : [];
           rawRels = Array.isArray(legacyPayload?.relationships) ? legacyPayload.relationships : [];
           setKnowledgeGraphStatus('Using legacy KnowGraph DTO path.');
+          setKnowGraphSourceState(
+            classifyKnowGraphSemanticResult({ status: 'ok', nodeCount: rawNodes.length, relCount: rawRels.length, legacy: true }),
+          );
         }
         setKnowGraphData({ nodes: rawNodes, relationships: rawRels });
         setGraphError((prev) =>
@@ -7604,6 +7626,7 @@ export default function AgentBuilder(): React.ReactElement {
         if (!isLatestRequestSequence(requestType, requestSeq)) return false;
         console.warn('[KnowGraph] graph fetch failed:', err?.message || err);
         setKnowGraphData({ nodes: [], relationships: [] });
+        setKnowGraphSourceState(classifyKnowGraphRouteError(err?.message || 'KnowGraph graph fetch failed'));
         setGraphError(err?.message || 'KnowGraph graph fetch failed');
         return false;
       }
@@ -7886,10 +7909,13 @@ export default function AgentBuilder(): React.ReactElement {
         ) {
           return;
         }
+        // Ingest-service health (:8001) is INDEPENDENT of the Neo4j read path. A failed ingest
+        // health must not hide a working KnowGraph read or be reported as host-provided —
+        // record it, then attempt the read and let it report honestly (data / no-records /
+        // neo4j unavailable).
+        setKnowGraphIngestHealthOk(knowHealthOk);
         if (!knowHealthOk) {
-          setKnowGraphData({ nodes: [], relationships: [] });
-          setKnowledgeGraphStatus('KnowGraph health check failed.');
-          return;
+          setKnowledgeGraphStatus('KnowGraph ingest health check failed; reading persisted graph directly.');
         }
         const loaded = await loadKnowGraphData({
           bypassCache: opts?.force,
@@ -8625,6 +8651,13 @@ export default function AgentBuilder(): React.ReactElement {
     () => resolveThinkGraphSourceLabel(thinkGraphRecordsView, thinkGraphViz.nodes.length > 0),
     [thinkGraphRecordsView, thinkGraphViz.nodes.length],
   );
+
+  // Honest source label for the EXISTING KnowGraph tab diagnostics — reflects the real Neo4j
+  // read (data / no-records / unavailable / auth), never a blanket "host-provided".
+  const knowGraphSourceLabel = useMemo(
+    () => resolveKnowGraphSourceLabel(knowGraphSourceState, knowGraphIngestHealthOk, knowGraphViz.nodes.length > 0),
+    [knowGraphSourceState, knowGraphIngestHealthOk, knowGraphViz.nodes.length],
+  );
   const knowGraphViewData = useMemo<GraphViewData>(
     () => ({
       kind: 'knowgraph',
@@ -9236,6 +9269,7 @@ export default function AgentBuilder(): React.ReactElement {
                 thinkGraphData={thinkGraphViewData}
                 knowGraphData={knowGraphViewData}
                 thinkGraphSource={thinkGraphSourceLabel}
+                knowGraphSource={knowGraphSourceLabel}
                 codeGraphProjectName={CODEBASE_MEMORY_PROJECT_NAME}
                 onRefreshRequest={loadGraphData}
                 minHeight={minHeight}

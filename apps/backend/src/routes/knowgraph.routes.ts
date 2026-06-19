@@ -168,7 +168,7 @@ function normalizeRelType(value: string): string {
   return normalized || 'RELATED_TO';
 }
 
-function buildSemanticSeedRecords(projectId: string): SemanticGraphRecord[] {
+export function buildSemanticSeedRecords(projectId: string): SemanticGraphRecord[] {
   const now = new Date().toISOString();
   const sourceRef: SemanticGraphSourceRef = {
     id: `seed-source:${projectId}`,
@@ -368,8 +368,31 @@ function toNeoJsonValue(value: any): any {
   return out;
 }
 
+// Neo4j node/edge properties must be primitives or arrays of primitives — never maps or
+// arrays-of-maps. Keep primitives and string/number/boolean arrays as-is; JSON-stringify any
+// nested object / array-of-object (e.g. OWL objectProperties, sourceRefs, provenance) so the
+// seed persists instead of throwing "Property values can only be of primitive types".
+function toNeoSafeProperties(props: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(props || {})) {
+    if (value === null || value === undefined) {
+      out[key] = null;
+    } else if (Array.isArray(value)) {
+      const allPrimitive = value.every(
+        (item) => item === null || ['string', 'number', 'boolean'].includes(typeof item),
+      );
+      out[key] = allPrimitive ? value : JSON.stringify(value);
+    } else if (typeof value === 'object') {
+      out[key] = JSON.stringify(value);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 function neoNodeLabel(id: string, props: Record<string, unknown>): string {
-  const candidates = [props.name, props.title, props.id, props.document_id, props.chunk_id];
+  const candidates = [props.name, props.title, props.label, props.id, props.document_id, props.chunk_id];
   for (const candidate of candidates) {
     const text = String(candidate ?? '').trim();
     if (text) return text;
@@ -864,27 +887,15 @@ router.get('/semantic-graph', async (req, res) => {
   }
 });
 
-router.post('/semantic-seed', async (req, res) => {
-  if (!isDevTestModeEnabled()) {
-    return res.status(403).json({
-      ok: false,
-      error: { message: 'semantic seed route is dev/test only' },
-    });
-  }
-  const projectId =
-    (typeof req.query?.projectId === 'string' && req.query.projectId.trim()) ||
-    (typeof req.query?.project_id === 'string' && req.query.project_id.trim()) ||
-    '';
-  if (!projectId) {
-    return res.status(400).json({
-      ok: false,
-      error: { message: 'projectId is required' },
-      inserted: 0,
-      skipped: 0,
-      validation: { ok: false, errors: ['projectId is required'], warnings: [] },
-    });
-  }
-
+/**
+ * Persist the established KnowGraph example dataset (semantic seed) into project-scoped Neo4j
+ * `:SemanticRecord` nodes/relationships. Shared by the dev-only /semantic-seed route AND the
+ * seedKnowGraphExampleData script (which bypasses CORS/auth for local restoration). Returns an
+ * HTTP-status + body so the route can relay it directly.
+ */
+export async function runKnowGraphSemanticSeed(
+  projectId: string,
+): Promise<{ httpStatus: number; body: any }> {
   const seedRecords = buildSemanticSeedRecords(projectId);
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -901,26 +912,32 @@ router.post('/semantic-seed', async (req, res) => {
   });
 
   if (errors.length > 0) {
-    return res.status(400).json({
-      ok: false,
-      inserted: 0,
-      skipped: seedRecords.length,
-      validation: { ok: false, errors, warnings },
-      message: 'seed blocked by validation errors',
-    });
+    return {
+      httpStatus: 400,
+      body: {
+        ok: false,
+        inserted: 0,
+        skipped: seedRecords.length,
+        validation: { ok: false, errors, warnings },
+        message: 'seed blocked by validation errors',
+      },
+    };
   }
 
   const uri = String(process.env.NEO4J_URI || '').trim();
   const user = String(process.env.NEO4J_USER || '').trim();
   const password = String(process.env.NEO4J_PASSWORD || '').trim();
   if (!uri || !user || !password) {
-    return res.status(503).json({
-      ok: false,
-      inserted: 0,
-      skipped: seedRecords.length,
-      validation: { ok: false, errors: ['neo4j env missing'], warnings },
-      message: 'NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD are required',
-    });
+    return {
+      httpStatus: 503,
+      body: {
+        ok: false,
+        inserted: 0,
+        skipped: seedRecords.length,
+        validation: { ok: false, errors: ['neo4j env missing'], warnings },
+        message: 'NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD are required',
+      },
+    };
   }
 
   const neo4jModule: any = await import('neo4j-driver');
@@ -973,7 +990,7 @@ router.post('/semantic-seed', async (req, res) => {
           semanticId: record.id,
           label: record.label,
           type: String(record.kind || 'entity'),
-          props: toNeoJsonValue(properties),
+          props: toNeoSafeProperties(properties),
         },
       );
       inserted += 1;
@@ -1019,36 +1036,66 @@ router.post('/semantic-seed', async (req, res) => {
             relId: String(rel.id || `${fromId}->${toId}:${relType}`),
             confidence: typeof rel.confidence === 'number' ? rel.confidence : null,
             summary: String(rel.label || rel.type || ''),
-            sourceRefs: toNeoJsonValue(record.sourceRefs || []),
+            sourceRefs: JSON.stringify(record.sourceRefs || []),
           },
         );
         relInserted += 1;
       }
     }
 
-    return res.json({
-      ok: true,
-      projectId,
-      inserted,
-      relationshipsInserted: relInserted,
-      skipped: seedRecords.length - validRecords.length,
-      validation: { ok: true, errors, warnings },
-      note: 'semantic seed persisted to project-scoped Neo4j records',
-    });
+    return {
+      httpStatus: 200,
+      body: {
+        ok: true,
+        projectId,
+        inserted,
+        relationshipsInserted: relInserted,
+        skipped: seedRecords.length - validRecords.length,
+        validation: { ok: true, errors, warnings },
+        note: 'semantic seed persisted to project-scoped Neo4j records',
+      },
+    };
   } catch (error: any) {
-    return res.status(500).json({
-      ok: false,
-      projectId,
-      inserted,
-      relationshipsInserted: relInserted,
-      skipped: seedRecords.length - inserted,
-      validation: { ok: false, errors: [String(error?.message || error)], warnings },
-      message: 'semantic seed persistence failed',
-    });
+    return {
+      httpStatus: 500,
+      body: {
+        ok: false,
+        projectId,
+        inserted,
+        relationshipsInserted: relInserted,
+        skipped: seedRecords.length - inserted,
+        validation: { ok: false, errors: [String(error?.message || error)], warnings },
+        message: 'semantic seed persistence failed',
+      },
+    };
   } finally {
     await session.close();
     await driver.close();
   }
+}
+
+router.post('/semantic-seed', async (req, res) => {
+  if (!isDevTestModeEnabled()) {
+    return res.status(403).json({
+      ok: false,
+      error: { message: 'semantic seed route is dev/test only' },
+    });
+  }
+  const projectId =
+    (typeof req.query?.projectId === 'string' && req.query.projectId.trim()) ||
+    (typeof req.query?.project_id === 'string' && req.query.project_id.trim()) ||
+    '';
+  if (!projectId) {
+    return res.status(400).json({
+      ok: false,
+      error: { message: 'projectId is required' },
+      inserted: 0,
+      skipped: 0,
+      validation: { ok: false, errors: ['projectId is required'], warnings: [] },
+    });
+  }
+  const result = await runKnowGraphSemanticSeed(projectId);
+  return res.status(result.httpStatus).json(result.body);
 });
 
 function buildMultipartForm(

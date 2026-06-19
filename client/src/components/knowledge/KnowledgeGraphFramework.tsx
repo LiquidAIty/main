@@ -478,7 +478,7 @@ export default function KnowledgeGraphFramework({
     const label =
       kind === 'codegraph' ? 'CodeGraph' : kind === 'knowgraph' ? 'KnowGraph' : 'ThinkGraph';
     let source: string;
-    let status: 'loading' | 'error' | 'empty' | 'ready';
+    let status: 'loading' | 'error' | 'empty' | 'ready' | 'unavailable';
     let error: string | null = null;
     if (kind === 'codegraph') {
       source = `layout:${codeGraphProjectName || '(no project)'}`;
@@ -488,19 +488,13 @@ export default function KnowledgeGraphFramework({
         error = compactStatusText(codeGraphError, 120);
       } else status = nodeCount === 0 ? 'empty' : 'ready';
     } else {
-      // Honest source per tab — no longer a blanket "host-provided" lie. A DB failure shows
-      // as an error with its blocker, never collapsed into a silent empty graph.
+      // Honest SHORT source per tab (thinkgraph-db / knowgraph-neo4j / host-provided /
+      // unavailable). No long backend reasons are painted on the canvas — the detailed reason
+      // lives in the network response / console / CoderReport, not the graph overlay.
       const provided =
         kind === 'thinkgraph' ? thinkGraphSource : kind === 'knowgraph' ? knowGraphSource : undefined;
       source = provided || 'host-provided';
-      if (provided && provided.startsWith('unavailable')) {
-        status = 'error';
-        error =
-          compactStatusText(provided.replace(/^unavailable:?/, ''), 120) ||
-          'graph source unavailable';
-      } else {
-        status = nodeCount === 0 ? 'empty' : 'ready';
-      }
+      status = source === 'unavailable' ? 'unavailable' : nodeCount === 0 ? 'empty' : 'ready';
     }
     return { label, source, nodeCount, edgeCount, status, error };
   }, [
