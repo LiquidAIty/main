@@ -2,8 +2,22 @@ import { Router } from 'express';
 import { createProject } from '../services/agentBuilderStore';
 import { requireDevTestMode } from '../services/devTest';
 import { ensureSystemAgentConfigs } from '../services/agentConfigStore';
+import { getRecentModelCallPackets } from '../debug/modelCallPackets';
 
 const router = Router();
+
+// Debug-only: return the recent Mag One model-call packets (what was actually sent to
+// the model rails + a response summary). No secrets are captured. Disabled in prod.
+router.get('/model-call-packets', (req, res) => {
+  if ((process.env.NODE_ENV || 'development') === 'production') {
+    return res.status(404).json({ ok: false, error: 'not_found' });
+  }
+  const projectId = req.query.projectId ? String(req.query.projectId) : null;
+  const rawLimit = Number(req.query.limit);
+  const limit = Number.isFinite(rawLimit) ? rawLimit : 10;
+  const packets = getRecentModelCallPackets({ projectId, limit });
+  return res.json({ ok: true, count: packets.length, packets });
+});
 
 router.post('/create_clean_test_project', async (req, res) => {
   try {

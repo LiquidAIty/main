@@ -11,6 +11,7 @@ import {
 } from '../contracts/runtimeContracts';
 import { orchestrateWithAutoGen } from '../services/autogen/autogenOrchestratorClient';
 import { resolveModel } from '../llm/models.config';
+import { recordModelCallPacket, buildModelCallPacket } from '../debug/modelCallPackets';
 
 export const MAG_ONE_CODING_RUN_SYSTEM_PROMPT = `
 You are Mag One, the orchestration router for LiquidAIty. The user chats with you first.
@@ -505,7 +506,13 @@ export function buildPythonAutoGenCardRuntimePayload(
   const systemPrompt = [MAG_ONE_CODING_RUN_SYSTEM_PROMPT, String(card.prompt || '').trim()]
     .filter(Boolean)
     .join('\n\n');
-  
+  // PlanFlow task-output contract: read from the Magentic-One card config only.
+  // The backend never authors this — it transports whatever the editable card
+  // field (runtimeOptions.taskLedgerOutputContract) carries; empty -> no task pass.
+  const taskLedgerOutputContract = String(
+    card.runtimeOptions?.taskLedgerOutputContract || '',
+  ).trim();
+
   const participants = supportedHeads.map((head) => {
     const model = resolveCardModelStrict(head);
 
@@ -629,6 +636,9 @@ export function buildPythonAutoGenCardRuntimePayload(
       title: String(card.title || 'Magentic Agent'),
       runtimeType: 'magentic_one',
       prompt: systemPrompt,
+      // Card prompt-chain step 4: PlanFlow output contract, read from the editable
+      // Magentic-One card config above (transport only — never backend-authored).
+      taskLedgerOutputContract,
       runtimeOptions: safeRuntimeOptions,
       graph: runtimeGraph,
       participants,
@@ -698,9 +708,22 @@ export async function runCardWithContract(
     let magenticPlan: Record<string, unknown> | null = null;
     // Honest TaskLedger trace from the real Python Magentic-One path.
     let ledgerTrace: Record<string, unknown> | undefined;
+    const callStartMs = Date.now();
     try {
         console.log('[runCardWithContract] executing Python AutoGen rails route.');
         const sidecarResponse = await orchestrateWithAutoGen(payload as any);
+        // Debug-only: record exactly what was sent + a summary of what came back.
+        recordModelCallPacket(
+          buildModelCallPacket({
+            route: 'deck_runtime',
+            projectId: context.projectId ? String(context.projectId) : null,
+            payload,
+            modelConfig,
+            response: sidecarResponse,
+            error: null,
+            durationMs: Date.now() - callStartMs,
+          }),
+        );
 
         // Transport only. The real AutoGen output is the messages/events the
         // Python rails output captured verbatim from run_stream, plus the orchestrator's own
@@ -729,6 +752,17 @@ export async function runCardWithContract(
             ? (sidecarResponse.ledgerTrace as Record<string, unknown>)
             : undefined;
     } catch (e: any) {
+        recordModelCallPacket(
+          buildModelCallPacket({
+            route: 'deck_runtime',
+            projectId: context.projectId ? String(context.projectId) : null,
+            payload,
+            modelConfig,
+            response: null,
+            error: String(e?.message || e),
+            durationMs: Date.now() - callStartMs,
+          }),
+        );
         console.error('[runCardWithContract] Exact caught error message:', e?.message || e);
         throw e;
     }

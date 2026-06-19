@@ -66,6 +66,25 @@ export default function MagenticBusNode() {
           pointerEvents: 'none',
         }}
       />
+      {/* Top target handle: the selected task's task_to_bus edge enters the bus here
+          (the task graph sits above the bus). */}
+      <Handle
+        id="task-bus-top"
+        type="target"
+        position={Position.Top}
+        aria-label="task-bus-top"
+        style={{
+          ...handleBaseStyle,
+          width: 16,
+          height: 6,
+          top: -3,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          opacity: 0.65,
+          background: 'rgba(84, 221, 214, 0.8)',
+          border: '1px solid rgba(191, 255, 250, 0.5)',
+        }}
+      />
       {leftHandles.map((handle) => (
         <Handle
           key={handle.id}

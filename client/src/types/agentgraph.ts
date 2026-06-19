@@ -83,6 +83,10 @@ export type AgentCardRuntimeOptions = {
   localCoderMode?: 'headless' | 'terminal' | null;
   localCoderAccess?: 'read' | 'patch' | 'test' | null;
   tools?: string[] | null;
+  /** Magentic-One card prompt-chain step 4: the editable PlanFlow task-object
+   *  output contract. Source of truth for the structured task artifact — the
+   *  backend/Python only transport/consume it, never author it. */
+  taskLedgerOutputContract?: string | null;
 };
 
 export type DeckNodeKind = 'agent';

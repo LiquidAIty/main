@@ -45,7 +45,9 @@ import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBui
 import TradingCanvasSurface from '../features/trading/TradingCanvasSurface';
 import {
   buildTaskLedgerArtifactGraph,
+  shouldRenderCanvasEdge,
   type PlanMissionGraph,
+  type PlanMissionFlowEdge,
   type PlanMissionNodeData,
   type PlanMissionNodeOverrideMap,
 } from '../components/assist/planMissionModel';
@@ -507,7 +509,7 @@ const HOME_PLAN_TABS = ['Chat', 'Canvas', 'Knowledge'] as const;
 const KNOWLEDGE_VIEW_TABS = ['Chat', 'Canvas', 'Plan'] as const;
 const CODEGRAPH_VIEW_TABS = ['Chat', 'Canvas', 'Knowledge', 'Plan'] as const;
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
-const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime'] as const;
+const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime', 'Task'] as const;
 const AGENTS_CHAT_MIN_WIDTH = 280;
 const AGENTS_CANVAS_MIN_WIDTH = 520;
 const WORKSPACE_COMPANION_MIN_WIDTH = 360;
@@ -4809,6 +4811,20 @@ export default function AgentBuilder(): React.ReactElement {
       ? 'canvas'
       : 'chat',
   );
+  // Left rail is a CAMERA rail, not a view switch: the Agents and Plan/check icons
+  // both keep the single unified canvas and only pan/zoom to a zone (agents vs
+  // tasks). This carries the requested focus zone to BuilderCanvas; bumping nonce
+  // re-triggers the pan without ever swapping node sets.
+  const [canvasFocusZone, setCanvasFocusZone] = useState<
+    { zone: 'agents' | 'tasks'; nonce: number } | null
+  >(null);
+  // In-session dragged positions for task (mission) overlay nodes, keyed by node id.
+  // Lets the user move the task cluster while the overlay keeps recomputing; NEVER
+  // written into deck.nodes (task nodes are not agent cards). Persistence across
+  // reloads is pending.
+  const [taskNodeLayout, setTaskNodeLayout] = useState<
+    Record<string, { x: number; y: number }>
+  >({});
   const {
     activeProject,
     canvasProjectId,
@@ -5045,6 +5061,11 @@ export default function AgentBuilder(): React.ReactElement {
   // at latestDeckRun.steps[*].magenticTrace.plan.taskLedgerArtifact. No synthetic
   // DeckRun, no app-authored placeholder/Run Task nodes, no PLAN.md / backend
   // projection, and no plan-text parsing into step nodes.
+  // Remembers the last real Task Ledger artifact that actually produced task objects
+  // so a plain chat turn (an artifact with an empty planFlowTaskObjects list) does
+  // NOT wipe the existing task graph. Only a newer run with a non-empty task set
+  // replaces it. (Still real AutoGen artifacts only — never fabricated.)
+  const lastTaskArtifactRef = useRef<Record<string, unknown> | null>(null);
   const planFlowMissionGraph = useMemo<PlanMissionGraph>(() => {
     const steps = latestDeckRun?.steps || [];
     let latestArtifact: Record<string, unknown> | null = null;
@@ -5056,10 +5077,99 @@ export default function AgentBuilder(): React.ReactElement {
         latestArtifact = artifact as Record<string, unknown>;
       }
     }
-    return buildTaskLedgerArtifactGraph(latestArtifact);
+    const latestTaskObjects =
+      latestArtifact && Array.isArray(latestArtifact.planFlowTaskObjects)
+        ? (latestArtifact.planFlowTaskObjects as unknown[])
+        : [];
+    if (latestArtifact && latestTaskObjects.length > 0) {
+      lastTaskArtifactRef.current = latestArtifact;
+    }
+    const effectiveArtifact =
+      latestTaskObjects.length > 0
+        ? latestArtifact
+        : lastTaskArtifactRef.current ?? latestArtifact;
+    return buildTaskLedgerArtifactGraph(effectiveArtifact);
   }, [latestDeckRun]);
+  // Unified project canvas (V0) — BUS TOPOLOGY: the task graph (Task Ledger Artifact
+  // + task objects) sits ABOVE the Mag One bus (upstream). Agent cards stay plugged
+  // into the bus sides; the result/proof zone is reserved BELOW the bus/agents. The
+  // only task->bus wire is a contextual plan_spine from the SELECTED task into the
+  // top of the bus. Agent cards stay canonical (referenced by id via routeThrough);
+  // no agent is duplicated. The overlay is non-persisted (tagged __overlay; dropped
+  // by the BuilderCanvas merge guards).
+  const taskCanvasOverlay = useMemo<PlanMissionGraph>(() => {
+    const base = planFlowMissionGraph;
+    if (!base.nodes.length) return { nodes: [], edges: [] };
+    const magenticCard = (deck.nodes || []).find(
+      (node) => normalizeRuntimeType(node.runtimeType) === 'magentic_one',
+    );
+    // Place the task cluster ABOVE the bus: map the internal task row (y=340) to a
+    // band above the Magentic-One card; the artifact (y=136) floats higher still.
+    const TASK_ZONE_GAP_ABOVE_BUS = 220;
+    const TASK_ROW_INTERNAL_Y = 340;
+    const anchorX = magenticCard?.position?.x ?? 0;
+    const offsetX = anchorX - 296;
+    const offsetY =
+      (magenticCard?.position?.y ?? 0) - TASK_ZONE_GAP_ABOVE_BUS - TASK_ROW_INTERNAL_Y;
+    const routeThrough = magenticCard?.id || 'mag_one_bus';
+    const nodes = base.nodes.map((node) => {
+      // A dragged position (in-session) wins over the computed default layout so the
+      // task node stays where the user dropped it instead of snapping back.
+      const dragged = taskNodeLayout[node.id];
+      return {
+        ...node,
+        position: dragged
+          ? { x: dragged.x, y: dragged.y }
+          : { x: node.position.x + offsetX, y: node.position.y + offsetY },
+        data: { ...node.data, routeThrough },
+      };
+    });
+    // Typed task work-graph edges (ledger_to_task / task_sequence / task_dependency)
+    // come from base.edges; tag them non-persisted. There are NO permanent task->bus
+    // wires — the task graph sits upstream of the Mag One bus.
+    const edges: PlanMissionFlowEdge[] = base.edges.map((edge) => ({
+      ...edge,
+      data: { ...(edge.data || { motion: 'idle' }), __overlay: true },
+    }));
+    // NOTE: the contextual task_to_bus edge (selected task -> top of the Mag One bus)
+    // is created on the canvas from the REAL ReactFlow selection (see BuilderCanvas),
+    // not here — so it can never desync from the node's selected state. This overlay
+    // only carries the artifact/sequence/dependency edges.
+    // Wiring discipline: drop untyped/unknown edges so the canvas never hairballs.
+    const nodeIds = new Set<string>([
+      ...(deck.nodes || []).map((node) => node.id),
+      ...nodes.map((node) => node.id),
+    ]);
+    const visibleEdges = edges.filter((edge) =>
+      shouldRenderCanvasEdge(edge, { nodeIds, activeTaskId: null }),
+    );
+    return { nodes, edges: visibleEdges };
+  }, [planFlowMissionGraph, deck.nodes, taskNodeLayout]);
   useEffect(() => {
     setPlanExecutionState(activeProject ? readCachedPlanExecutionState(activeProject) : null);
+  }, [activeProject]);
+  // Dev-only: copy/inspect the latest Mag One model-call packet(s) for this project.
+  // Run `await __getModelCallPackets()` in the browser console — it fetches the debug
+  // route, copies the JSON to the clipboard, and logs it. No secrets are captured.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    (window as unknown as Record<string, unknown>).__getModelCallPackets = async (
+      projectIdArg?: string,
+    ) => {
+      const pid = projectIdArg || activeProject || '';
+      const res = await fetch(
+        `/api/dev/model-call-packets?projectId=${encodeURIComponent(pid)}&limit=5`,
+      );
+      const json = await res.json();
+      try {
+        await navigator.clipboard.writeText(JSON.stringify(json, null, 2));
+        console.log('[model-call-packets] copied to clipboard.');
+      } catch {
+        console.log('[model-call-packets] (clipboard unavailable)');
+      }
+      console.log('[model-call-packets]', json);
+      return json;
+    };
   }, [activeProject]);
   const lastLargeSurfaceTelemetryRef = useRef<WorkspaceTestingSurface | null>(
     null,
@@ -5788,11 +5898,14 @@ export default function AgentBuilder(): React.ReactElement {
           interactionId,
         );
       }
-      setObjectDrawerOpen(Boolean(cardId));
       setSelectedCardId(cardId);
       const selectedNode = cardId
         ? deck.nodes.find((node) => node.id === cardId) || null
         : null;
+      // Open the agent-card drawer ONLY for real deck cards. A task (mission) node
+      // has no deck card — keep the agent drawer closed so it does not fight the
+      // task's own TaskNodeInspector on the canvas (the dual/empty-drawer flicker).
+      setObjectDrawerOpen(Boolean(selectedNode));
       const isMagenticSelection = Boolean(
         selectedNode &&
           normalizeRuntimeType(selectedNode.runtimeType) === 'magentic_one',
@@ -6243,9 +6356,17 @@ export default function AgentBuilder(): React.ReactElement {
     // no tools, no terminal, no Progress Ledger, and no autogenMessages /
     // finalResponseText / chat text used as an execution source.
     setGoGateState(
-      ({ executed: false, taskComplete: false, message: 'PlanFlow execution is not wired.' }),
+      ({
+        // Tag the active selection so the fail-closed message renders both in the
+        // focused PlanFlow view (planMissionFocus) and on the unified agent canvas
+        // (selectedCardId = the selected task node id).
+        selectedNodeId: planMissionFocus?.nodeId ?? selectedCardId ?? null,
+        executed: false,
+        taskComplete: false,
+        message: 'Run Agents unavailable: approved task-node execution is not wired yet.',
+      }),
     );
-  }, [planMissionFocus, selectedPlanNodeDraft]);
+  }, [planMissionFocus, selectedPlanNodeDraft, selectedCardId]);
 
   const renderPlanMissionEditorPanel = useCallback(() => {
     if (!planMissionFocus || !selectedPlanNodeDraft) {
@@ -6601,7 +6722,8 @@ export default function AgentBuilder(): React.ReactElement {
           tab === 'Prompt' ||
           tab === 'Knowledge' ||
           tab === 'Tools' ||
-          tab === 'Runtime'
+          tab === 'Runtime' ||
+          tab === 'Task'
         ) {
           const showCardIdentityFields = tab === BUILDER_NODE_TABS[0];
           return (
@@ -8762,6 +8884,20 @@ export default function AgentBuilder(): React.ReactElement {
         onSelectEdge={handleSelectEdge}
         onDeleteSelectedEdge={handleDeleteSelectedEdge}
         inspectMode={false}
+        taskOverlayNodes={taskCanvasOverlay.nodes}
+        taskOverlayEdges={taskCanvasOverlay.edges}
+        focusZone={canvasFocusZone}
+        onTaskNodePositionChange={(id, x, y) =>
+          setTaskNodeLayout((prev) => ({ ...prev, [id]: { x, y } }))
+        }
+        onTaskGoGate={handlePlanGoGate}
+        taskGoGateStatus={
+          goGateState &&
+          selectedCardId &&
+          goGateState.selectedNodeId === selectedCardId
+            ? goGateState.message
+            : null
+        }
       />
     );
   };
@@ -9147,6 +9283,8 @@ export default function AgentBuilder(): React.ReactElement {
   const showCanvasWorkspace = useCallback(() => {
     closeObjectDrawer();
     setWorkspaceView('canvas');
+    // Camera focus only — pan to the agent/bus zone on the same scene.
+    setCanvasFocusZone({ zone: 'agents', nonce: Date.now() });
   }, [closeObjectDrawer]);
 
   const showKnowledgeWorkspace = useCallback(() => {
@@ -9159,7 +9297,10 @@ export default function AgentBuilder(): React.ReactElement {
 
   const showPlanWorkspace = useCallback(() => {
     closeObjectDrawer();
-    setWorkspaceView('plan');
+    // Camera focus only — keep the single unified canvas (agents + tasks stay on
+    // the SAME scene) and pan to the task/plan zone. Never swap to a task-only view.
+    setWorkspaceView('canvas');
+    setCanvasFocusZone({ zone: 'tasks', nonce: Date.now() });
   }, [closeObjectDrawer]);
 
   const showWorkbenchWorkspace = useCallback((surface: WorkbenchSurfaceId) => {

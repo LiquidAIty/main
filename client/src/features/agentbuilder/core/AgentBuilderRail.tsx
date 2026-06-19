@@ -145,13 +145,9 @@ export default function AgentBuilderRail({
         title="Agents"
         aria-label="Agents"
         data-testid="rail-plus-button"
-        onClick={() => {
-          if (workspaceView === 'canvas') {
-            onQuickAddAssistNode();
-          } else {
-            onShowCanvasWorkspace();
-          }
-        }}
+        // Camera rail: focus the agent/bus zone on the single unified canvas. Never
+        // swaps node sets and never quick-adds (quick-add cleared the task overlay).
+        onClick={onShowCanvasWorkspace}
         className="p-2 rounded"
         style={{ color: workspaceView === 'canvas' ? colors.primary : colors.text }}
       >

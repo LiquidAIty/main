@@ -241,7 +241,7 @@ function WallAnchorNode() {
   );
 }
 
-function MissionNode({ data, selected }: NodeProps<any>) {
+export function MissionNode({ data, selected }: NodeProps<any>) {
   const nodeData = data as PlanMissionNodeData;
   const status = String(nodeData?.status || 'proposed');
   const shellActive = Boolean(selected || status.toLowerCase() === 'running');
@@ -325,8 +325,8 @@ function MissionNode({ data, selected }: NodeProps<any>) {
             <button
               type="button"
               data-testid="planflow-swat-go"
-              aria-label="Go — approve selected step"
-              title="Go — stage the selected step at the approval gate"
+              aria-label="Run Agents — stage the selected task at the approval gate"
+              title="Run Agents — stage the selected task at the approval gate (execution not wired)"
               onClick={(event) => {
                 event.stopPropagation();
                 nodeData.onGoGate?.();
@@ -335,35 +335,32 @@ function MissionNode({ data, selected }: NodeProps<any>) {
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: 7,
-                padding: '7px 16px',
-                borderRadius: 999,
-                background: GRAPH_THEME.accent.primary,
-                border: '1px solid rgba(79,162,173,0.7)',
+                gap: 6,
+                padding: '5px 12px',
+                borderRadius: 8,
+                background: 'rgba(13,17,23,0.92)',
+                border: '1px solid rgba(55,173,170,0.38)',
                 boxShadow:
-                  '0 0 0 1px rgba(55,173,170,0.4), 0 10px 22px rgba(55,173,170,0.32), inset 0 1px 0 rgba(255,255,255,0.18)',
-                color: '#FFFFFF',
-                fontWeight: 800,
-                fontSize: 12.5,
-                letterSpacing: '0.06em',
+                  'inset 0 1px 0 rgba(255,255,255,0.04), 0 0 12px rgba(55,173,170,0.14)',
+                color: 'rgba(220,247,245,0.95)',
+                fontWeight: 650,
+                fontSize: 11,
+                letterSpacing: '0.03em',
                 cursor: 'pointer',
                 whiteSpace: 'nowrap',
               }}
             >
-              GO
               <svg
-                width="14"
-                height="14"
+                width="9"
+                height="9"
                 viewBox="0 0 24 24"
-                fill="none"
-                stroke="#FFFFFF"
-                strokeWidth="2.6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+                fill="rgba(55,173,170,0.95)"
+                stroke="none"
+                aria-hidden="true"
               >
-                <path d="M12 19V5" />
-                <path d="M5 12l7-7 7 7" />
+                <path d="M8 5v14l11-7z" />
               </svg>
+              Run Agents
             </button>
             {nodeData.goGateStatus ? (
               <div
@@ -389,6 +386,21 @@ function MissionNode({ data, selected }: NodeProps<any>) {
       <Handle
         type="source"
         position={Position.Right}
+        style={{
+          width: 10,
+          height: 10,
+          borderRadius: '50%',
+          border: `1px solid ${GRAPH_THEME.accent.primaryBorder}`,
+          background: GRAPH_THEME.accent.primary,
+        }}
+      />
+      {/* Bottom source handle used by the task_to_bus edge so the selected task
+          connects cleanly DOWN into the top of the Mag One bus (task sits above the
+          bus). Existing edges keep using the default (null-id) right handle. */}
+      <Handle
+        id="task-out-bottom"
+        type="source"
+        position={Position.Bottom}
         style={{
           width: 10,
           height: 10,
@@ -565,6 +577,9 @@ function PlanFrameNode({ data, selected }: NodeProps<any>) {
 
 const missionNodeTypes: any = {
   mission: MissionNode,
+  // Distinct task object node types (shared title-only renderer).
+  taskLedgerArtifact: MissionNode,
+  taskNode: MissionNode,
   wallAnchor: WallAnchorNode,
   planImage: PlanImageNode,
   planPdf: PlanPdfNode,
@@ -1353,7 +1368,9 @@ export default function PlanMissionFlow({
         .plan-flow .react-flow__attribution {
           display: none;
         }
-        .plan-flow .react-flow__node-mission {
+        .plan-flow .react-flow__node-mission,
+        .plan-flow .react-flow__node-taskLedgerArtifact,
+        .plan-flow .react-flow__node-taskNode {
           cursor: pointer;
         }
       `}</style>
@@ -1383,6 +1400,59 @@ export default function PlanMissionFlow({
           <div style={{ marginTop: 5, fontSize: 15, fontWeight: 750, lineHeight: 1.3 }}>
             {selectedMissionData.label}
           </div>
+          {selectedMissionData.kind === 'Task' && typeof onGoGate === 'function' ? (
+            <div style={{ marginTop: 10 }}>
+              <button
+                type="button"
+                data-testid="planflow-inspector-run-agents"
+                aria-label="Run Agents — stage the selected task at the approval gate"
+                title="Run Agents — stage the selected task at the approval gate (execution not wired)"
+                onClick={() => onGoGate?.()}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '5px 12px',
+                  borderRadius: 8,
+                  background: 'rgba(13,17,23,0.92)',
+                  border: '1px solid rgba(55,173,170,0.38)',
+                  boxShadow:
+                    'inset 0 1px 0 rgba(255,255,255,0.04), 0 0 12px rgba(55,173,170,0.14)',
+                  color: 'rgba(220,247,245,0.95)',
+                  fontWeight: 650,
+                  fontSize: 11,
+                  letterSpacing: '0.03em',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <svg
+                  width="9"
+                  height="9"
+                  viewBox="0 0 24 24"
+                  fill="rgba(55,173,170,0.95)"
+                  stroke="none"
+                  aria-hidden="true"
+                >
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+                Run Agents
+              </button>
+              {goGateStatus ? (
+                <div
+                  data-testid="planflow-inspector-run-agents-status"
+                  style={{
+                    marginTop: 6,
+                    fontSize: 11,
+                    lineHeight: 1.3,
+                    color: GRAPH_THEME.surface.mutedText,
+                  }}
+                >
+                  {goGateStatus}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <div style={{ marginTop: 12, display: 'grid', gap: 8, fontSize: 11.5 }}>
             {[
               ['Status', selectedMissionData.status],
@@ -1437,6 +1507,109 @@ export default function PlanMissionFlow({
                     {String(selectedMissionData.payloadJson || '').trim() || 'missing'}
                   </pre>
                 </div>
+              </>
+            ) : null}
+            {selectedMissionData.kind === 'Task' ? (
+              <>
+                {selectedMissionData.detail ? (
+                  <div>
+                    <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 10 }}>Detail</div>
+                    <div style={{ marginTop: 2, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                      {selectedMissionData.detail}
+                    </div>
+                  </div>
+                ) : null}
+                {typeof selectedMissionData.stepNumber === 'number' ? (
+                  <div>
+                    <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 10 }}>Step number</div>
+                    <div style={{ marginTop: 2 }}>{selectedMissionData.stepNumber}</div>
+                  </div>
+                ) : null}
+                {selectedMissionData.dependsOn && selectedMissionData.dependsOn.length > 0 ? (
+                  <div>
+                    <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 10 }}>Depends on</div>
+                    <div style={{ marginTop: 2, overflowWrap: 'anywhere' }}>
+                      {selectedMissionData.dependsOn.join(', ')}
+                    </div>
+                  </div>
+                ) : null}
+                {/* Proposed agents are shown as inspector chips/text — never as
+                    permanent task_assigned_agent canvas wires (V0 wiring discipline). */}
+                <div>
+                  <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 10 }}>Proposed agents</div>
+                  <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {selectedMissionData.assignedAgentIds && selectedMissionData.assignedAgentIds.length > 0 ? (
+                      selectedMissionData.assignedAgentIds.map((agentId) => (
+                        <span
+                          key={agentId}
+                          style={{
+                            padding: '2px 8px',
+                            borderRadius: 999,
+                            border: '1px solid rgba(55,173,170,0.38)',
+                            background: 'rgba(13,17,23,0.92)',
+                            fontSize: 10.5,
+                          }}
+                        >
+                          {agentId}
+                        </span>
+                      ))
+                    ) : (
+                      <span style={{ color: GRAPH_THEME.surface.mutedText }}>none proposed yet</span>
+                    )}
+                  </div>
+                  {selectedMissionData.routeThrough ? (
+                    <div style={{ marginTop: 4, fontSize: 10.5, color: GRAPH_THEME.surface.mutedText }}>
+                      Routes through: {selectedMissionData.routeThrough}
+                    </div>
+                  ) : null}
+                </div>
+                <div>
+                  <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 10 }}>Approval required</div>
+                  <div style={{ marginTop: 2 }}>
+                    {selectedMissionData.approvalRequired ? 'yes' : 'no'}
+                  </div>
+                </div>
+                {selectedMissionData.nextNeeded ? (
+                  <div>
+                    <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 10 }}>Next needed</div>
+                    <div style={{ marginTop: 2, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                      {selectedMissionData.nextNeeded}
+                    </div>
+                  </div>
+                ) : null}
+                {selectedMissionData.proofNeeded ? (
+                  <div>
+                    <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 10 }}>Proof needed</div>
+                    <div style={{ marginTop: 2, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                      {selectedMissionData.proofNeeded}
+                    </div>
+                  </div>
+                ) : null}
+                {selectedMissionData.sourceArtifactRef ? (
+                  <div>
+                    <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 10 }}>Source artifact</div>
+                    <div style={{ marginTop: 2, overflowWrap: 'anywhere' }}>
+                      {selectedMissionData.sourceArtifactRef}
+                    </div>
+                  </div>
+                ) : null}
+                {selectedMissionData.rawTaskObject ? (
+                  <div>
+                    <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 10 }}>raw object</div>
+                    <pre
+                      style={{
+                        marginTop: 2,
+                        whiteSpace: 'pre-wrap',
+                        overflowWrap: 'anywhere',
+                        fontSize: 10.5,
+                        lineHeight: 1.4,
+                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                      }}
+                    >
+                      {selectedMissionData.rawTaskObject}
+                    </pre>
+                  </div>
+                ) : null}
               </>
             ) : null}
             <div>

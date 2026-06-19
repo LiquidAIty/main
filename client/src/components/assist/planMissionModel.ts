@@ -86,6 +86,26 @@ export type PlanMissionNodeData = {
   planResponse?: string;
   taskLedgerResponse?: string;
   teamDescription?: string;
+  /** Model-produced PlanFlow task-object fields (inspector only; node face shows
+   *  the title only). Copied verbatim from the structured artifact objects — never
+   *  parsed from prose. */
+  detail?: string;
+  stepNumber?: number;
+  dependsOn?: string[];
+  nextNeeded?: string;
+  proofNeeded?: string;
+  /** Pretty-printed single task object for the inspector "raw object" view. */
+  rawTaskObject?: string;
+  /** Reference to the source Task Ledger artifact node id. */
+  sourceArtifactRef?: string;
+  /** Unified-canvas routing (Phase 7): the Mag One bus / Magentic-One card id this
+   *  task routes through, the agent cards it references as tools, and the source
+   *  artifact id. Agent cards stay canonical — these are references by id only. */
+  routeThrough?: string;
+  assignedAgentIds?: string[];
+  sourceArtifactId?: string;
+  /** Number of task objects this plan/source node produced (inspector only). */
+  taskCount?: number;
   /** True only for the deterministic Plan canvas "Run Task" approval node. */
   isRunTaskNode?: boolean;
   /** Whether the displayed Task Ledger is runnable (gates Run Task). */
@@ -156,15 +176,101 @@ export type PlanScenePath = {
 };
 
 export type PlanMissionFlowNode = Node<PlanMissionNodeData>;
+
+/** Distinct ReactFlow node types for the unified-canvas task object model. The Task
+ *  Ledger Artifact and task nodes are SEPARATE types from `agentCard`/`magenticBus`
+ *  — tasks are never agent cards. (progressNode/proofNode/documentNode are reserved
+ *  for real Progress Ledger results below the bus; not created until real data.) */
+export const TASK_LEDGER_ARTIFACT_NODE_TYPE = 'taskLedgerArtifact';
+export const TASK_NODE_TYPE = 'taskNode';
+export function isTaskOverlayNodeType(type: string | undefined | null): boolean {
+  return type === TASK_LEDGER_ARTIFACT_NODE_TYPE || type === TASK_NODE_TYPE;
+}
 export type PlanMissionEdgeMotion = 'idle' | 'active' | 'running';
 export type PlanMissionNodeOverrideMap = Record<
   string,
   Partial<PlanMissionNodeData>
 >;
 
+/** Typed canvas edge families (unified project canvas wiring discipline). Only the
+ *  V0-visible kinds are rendered; everything else is hidden by shouldRenderCanvasEdge. */
+export type CanvasEdgeKind =
+  | 'ledger_to_task'
+  | 'task_sequence'
+  | 'task_parallel_group'
+  | 'task_dependency'
+  // task_to_bus: the directional route from the selected/approved/running task into
+  // the TOP of the Mag One bus ("this task will run through Mag One"). Contextual —
+  // never shown for every task. (plan_spine/task_spine are legacy aliases.)
+  | 'task_to_bus'
+  | 'plan_spine'
+  | 'task_spine'
+  | 'task_routes_to_bus'
+  | 'task_assigned_agent'
+  | 'agent_bus_connection'
+  | 'agent_tool_route'
+  // Downstream result/proof flow (below the bus/agents) — only created when a real
+  // run/result/proof artifact exists. No creation path yet (zone reserved).
+  | 'run_trace'
+  | 'task_result'
+  | 'proof_result'
+  | 'document_evidence';
+
+/** Edge kinds rendered on the canvas in V0. The spine kinds (plan_spine/task_spine)
+ *  and task_routes_to_bus are additionally gated on the source task being
+ *  selected/active/running; task_assigned_agent is intentionally NOT here (proposed
+ *  agents are inspector chips, not wires). run_trace/task_result/proof_result render
+ *  only once a real artifact creates them (none yet — the zone is reserved). */
+export const V0_VISIBLE_CANVAS_EDGE_KINDS: ReadonlySet<CanvasEdgeKind> = new Set([
+  'ledger_to_task',
+  'task_sequence',
+  'task_parallel_group',
+  'task_dependency',
+  'task_to_bus',
+  'plan_spine',
+  'task_spine',
+  'task_routes_to_bus',
+  'agent_bus_connection',
+]);
+
+/** Route edge kinds that may only render when their source task is the active
+ *  (selected/approved/running) task. */
+const CONTEXTUAL_BUS_ROUTE_EDGE_KINDS: ReadonlySet<CanvasEdgeKind> = new Set([
+  'task_to_bus',
+  'plan_spine',
+  'task_spine',
+  'task_routes_to_bus',
+]);
+
 export type PlanMissionFlowEdgeData = {
   motion: PlanMissionEdgeMotion;
+  /** Typed canvas edge family (wiring discipline). Untyped edges never render. */
+  edgeKind?: CanvasEdgeKind;
+  /** Marks a non-persisted task-overlay edge on the unified project canvas so the
+   *  BuilderCanvas deck-persistence path drops it (never writes it to the deck). */
+  __overlay?: boolean;
 };
+
+/**
+ * Wiring discipline gate for task-overlay canvas edges. An edge renders only when
+ * it carries a known V0-visible edge kind AND both endpoints exist. task_routes_to_bus
+ * additionally requires the source task to be the selected/active task. Untyped or
+ * unknown edges never render (no silent hairball).
+ */
+export function shouldRenderCanvasEdge(
+  edge: PlanMissionFlowEdge,
+  context: { nodeIds: ReadonlySet<string>; activeTaskId?: string | null },
+): boolean {
+  const kind = edge.data?.edgeKind;
+  if (!kind) return false;
+  if (!V0_VISIBLE_CANVAS_EDGE_KINDS.has(kind)) return false;
+  if (!edge.source || !edge.target) return false;
+  if (!context.nodeIds.has(edge.source) || !context.nodeIds.has(edge.target)) return false;
+  if (CONTEXTUAL_BUS_ROUTE_EDGE_KINDS.has(kind)) {
+    return Boolean(context.activeTaskId && edge.source === context.activeTaskId);
+  }
+  return true;
+}
 
 export type PlanMissionFlowEdge = Edge<PlanMissionFlowEdgeData>;
 
@@ -212,6 +318,7 @@ function makeEdge(
   source: string,
   target: string,
   motion: PlanMissionEdgeMotion = 'idle',
+  edgeKind?: CanvasEdgeKind,
 ): PlanMissionFlowEdge {
   return {
     id,
@@ -220,6 +327,7 @@ function makeEdge(
     type: 'turboFlow',
     data: {
       motion,
+      ...(edgeKind ? { edgeKind } : {}),
     },
     className: 'edge-secondary',
     animated: false,
@@ -401,13 +509,13 @@ export function buildTaskLedgerArtifactGraph(
   }
   const node: PlanMissionFlowNode = {
     id: 'task_ledger_artifact',
-    type: 'mission',
+    type: TASK_LEDGER_ARTIFACT_NODE_TYPE,
     position: { x: 296, y: 136 },
     data: {
-      // Canvas node face shows only this label. kind/status/source/provenance and
-      // the raw artifact payload stay in data for the inspector — no app-authored
-      // "captured" sentence or status badge is rendered on the node face.
-      label: 'Task Ledger Artifact',
+      // User-facing plan/source node — NOT the internal "Task Ledger Artifact"
+      // wording. The face shows only this short label; the real artifact fields
+      // (facts/plan/full ledger, raw payload) stay in data for the inspector.
+      label: 'Plan',
       kind: 'TaskLedger',
       status: 'seeded',
       source: source || undefined,
@@ -422,5 +530,166 @@ export function buildTaskLedgerArtifactGraph(
     draggable: true,
     selectable: true,
   };
-  return { nodes: [node], edges: [] };
+
+  const nodes: PlanMissionFlowNode[] = [node];
+  const edges: PlanMissionFlowEdge[] = [];
+
+  // Task nodes render ONLY from the explicit model-produced structured artifact
+  // (taskLedgerArtifact.planFlowTaskObjects). Never from planResponse /
+  // taskLedgerResponse / factsResponse prose, finalResponseText, autogenMessages,
+  // or any parsed/bullet text. Missing/empty/invalid -> only the Task Ledger
+  // Artifact node renders. No fallback nodes are ever invented.
+  const rawTaskObjects = Array.isArray(artifact.planFlowTaskObjects)
+    ? (artifact.planFlowTaskObjects as unknown[])
+    : [];
+
+  const KNOWN_STATUSES: PlanMissionNodeStatus[] = [
+    'proposed',
+    'approved',
+    'seeded',
+    'ready',
+    'running',
+    'blocked',
+    'awaiting_review',
+    'complete',
+    'error',
+    'review',
+    'done',
+  ];
+  const asString = (value: unknown): string => (typeof value === 'string' ? value : '');
+  const asStringList = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  const coerceStatus = (value: unknown): PlanMissionNodeStatus => {
+    const candidate = asString(value).trim();
+    return (KNOWN_STATUSES as string[]).includes(candidate)
+      ? (candidate as PlanMissionNodeStatus)
+      : 'proposed';
+  };
+
+  const TASK_BASE_X = 296;
+  const TASK_DELTA_X = 260;
+  const TASK_Y = 340;
+  const taskEntries: Array<{
+    nodeId: string;
+    slug: string;
+    dependsOn: string[];
+    stepNumber: number;
+  }> = [];
+  rawTaskObjects.forEach((raw, index) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return;
+    const obj = raw as Record<string, unknown>;
+    const title = asString(obj.title).trim();
+    // A structured object with no title has nothing to render on the face — skip
+    // it rather than invent a placeholder.
+    if (!title) return;
+    const stableId = asString(obj.id).trim() || `task_${index + 1}`;
+    const slug =
+      stableId.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') ||
+      `task_${index + 1}`;
+    const nodeId = `planflow_task_${slug}`;
+    const stepNumber =
+      typeof obj.stepNumber === 'number' && Number.isFinite(obj.stepNumber)
+        ? obj.stepNumber
+        : undefined;
+    let rawTaskObject = '';
+    try {
+      rawTaskObject = JSON.stringify(obj, null, 2);
+    } catch {
+      rawTaskObject = '';
+    }
+    const taskNode: PlanMissionFlowNode = {
+      id: nodeId,
+      type: TASK_NODE_TYPE,
+      position: { x: TASK_BASE_X + index * TASK_DELTA_X, y: TASK_Y },
+      data: {
+        // Node face shows the title only. Everything else is inspector-only data.
+        label: title,
+        kind: 'Task',
+        status: coerceStatus(obj.status),
+        detail: asString(obj.detail).trim() || undefined,
+        stepNumber,
+        dependsOn: asStringList(obj.dependsOn),
+        approvalRequired: obj.approvalRequired === true,
+        nextNeeded: asString(obj.nextNeeded).trim() || undefined,
+        proofNeeded: asString(obj.proofNeeded).trim() || undefined,
+        rawTaskObject: rawTaskObject || undefined,
+        sourceArtifactRef: 'task_ledger_artifact',
+        sourceArtifactId: 'task_ledger_artifact',
+        assignedAgentIds: [],
+        links: ['task_ledger_artifact'],
+        editable: false,
+      },
+      draggable: true,
+      selectable: true,
+    };
+    nodes.push(taskNode);
+    taskEntries.push({
+      nodeId,
+      slug,
+      dependsOn: asStringList(obj.dependsOn),
+      stepNumber: typeof stepNumber === 'number' ? stepNumber : index + 1,
+    });
+  });
+
+  // Wiring discipline: build a readable task work-graph using ONLY typed edges.
+  // task_dependency comes from explicit dependsOn (never inferred from prose/title);
+  // otherwise task_sequence comes from the explicit stepNumber order. The Task
+  // Ledger Artifact connects (ledger_to_task) only to root tasks so its wires stay
+  // local instead of fanning across the whole cluster. No task->bus wires here —
+  // routing to the Mag One bus is contextual and added at the canvas layer.
+  const taskNodeIdBySlug = new Map(taskEntries.map((entry) => [entry.slug, entry.nodeId] as const));
+  const hasIncoming = new Set<string>();
+  const anyDependsOn = taskEntries.some((entry) => entry.dependsOn.length > 0);
+  if (anyDependsOn) {
+    taskEntries.forEach((entry) => {
+      entry.dependsOn.forEach((depRaw) => {
+        const depSlug = depRaw.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+        const depNodeId = taskNodeIdBySlug.get(depSlug);
+        if (depNodeId && depNodeId !== entry.nodeId) {
+          edges.push(
+            makeEdge(
+              `task_dep_${depNodeId}__${entry.nodeId}`,
+              depNodeId,
+              entry.nodeId,
+              'idle',
+              'task_dependency',
+            ),
+          );
+          hasIncoming.add(entry.nodeId);
+        }
+      });
+    });
+  } else if (taskEntries.length > 1) {
+    const ordered = [...taskEntries].sort((a, b) => a.stepNumber - b.stepNumber);
+    for (let i = 1; i < ordered.length; i += 1) {
+      edges.push(
+        makeEdge(
+          `task_seq_${ordered[i - 1].nodeId}__${ordered[i].nodeId}`,
+          ordered[i - 1].nodeId,
+          ordered[i].nodeId,
+          'idle',
+          'task_sequence',
+        ),
+      );
+      hasIncoming.add(ordered[i].nodeId);
+    }
+  }
+  taskEntries.forEach((entry) => {
+    if (!hasIncoming.has(entry.nodeId)) {
+      edges.push(
+        makeEdge(
+          `edge_ledger_to_${entry.nodeId}`,
+          'task_ledger_artifact',
+          entry.nodeId,
+          'idle',
+          'ledger_to_task',
+        ),
+      );
+    }
+  });
+
+  // Record the produced task count on the plan/source node for its inspector.
+  node.data.taskCount = nodes.length - 1;
+
+  return { nodes, edges };
 }
