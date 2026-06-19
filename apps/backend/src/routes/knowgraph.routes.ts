@@ -15,6 +15,7 @@ import {
   validateSemanticGraphRecord,
 } from '../graph/semanticLanguage';
 import type { GraphReadResult, SemanticGraphRecord, SemanticGraphRelationship, SemanticGraphSourceRef } from '../types';
+import { toNeoSafeProperties } from '../graph/neoSafeProperties';
 
 const router = Router();
 // DEV TEST LIMIT RAISED: allow large real-document uploads during development and loop testing.
@@ -364,29 +365,6 @@ function toNeoJsonValue(value: any): any {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value)) {
     out[k] = toNeoJsonValue(v);
-  }
-  return out;
-}
-
-// Neo4j node/edge properties must be primitives or arrays of primitives — never maps or
-// arrays-of-maps. Keep primitives and string/number/boolean arrays as-is; JSON-stringify any
-// nested object / array-of-object (e.g. OWL objectProperties, sourceRefs, provenance) so the
-// seed persists instead of throwing "Property values can only be of primitive types".
-function toNeoSafeProperties(props: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(props || {})) {
-    if (value === null || value === undefined) {
-      out[key] = null;
-    } else if (Array.isArray(value)) {
-      const allPrimitive = value.every(
-        (item) => item === null || ['string', 'number', 'boolean'].includes(typeof item),
-      );
-      out[key] = allPrimitive ? value : JSON.stringify(value);
-    } else if (typeof value === 'object') {
-      out[key] = JSON.stringify(value);
-    } else {
-      out[key] = value;
-    }
   }
   return out;
 }
