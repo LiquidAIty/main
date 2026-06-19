@@ -241,6 +241,9 @@ export type PythonAutoGenPayloadShape = {
   plan?: Record<string, any>;
   thinkGraph?: Record<string, any>;
   knowGraph?: Record<string, any>;
+  // Read-only graph grounding for Task Ledger generation: accepted ThinkGraph facts (+
+  // optional skills/files) the model should ground tasks in. Additive to graphPayload.
+  taskLedgerGroundingContext?: Record<string, any>;
   blackboard?: Record<string, any>;
   workspaceObjectContext?: Record<string, any>;
   routingManifest?: MagOneRoutingManifest;

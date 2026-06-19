@@ -1,6 +1,6 @@
 // Deterministic compiler: SLM graph result -> KnowGraph search params. No LLM, no
 // planner. Same input always yields the same output (pure + testable).
-import type { SlmGraphResult } from './slmGraphWorker';
+import type { SlmGraphExtraction } from './slmGraphWorker';
 
 export type SearchSourceType = 'web' | 'local' | 'thinkgraph' | 'knowgraph';
 
@@ -40,7 +40,7 @@ function dedupe(values: string[]): string[] {
  * graph size within fixed caps; the query joins seeds + any next-seed candidates.
  */
 export function compileSearchParams(
-  graph: Pick<SlmGraphResult, 'entities' | 'relations' | 'nextSearchSeedCandidates'>,
+  graph: Pick<SlmGraphExtraction, 'entities' | 'relations' | 'nextSearchSeedCandidates'>,
   opts: CompileOptions = {},
 ): KnowGraphSearchParams {
   const maxDepth = Math.max(1, Math.trunc(opts.maxDepth ?? 3));

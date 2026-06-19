@@ -289,6 +289,217 @@ export async function recordThinkGraphRunEvent(record: ThinkGraphRunEvent): Prom
   });
 }
 
+export type ThinkGraphSemanticRecord = {
+  projectId: string;
+  /** Unique lookup key (stored as a queryable `source_ref` property for read-back). */
+  sourceRef: string;
+  createdBy: string;
+  entities: { id: string; label: string; type: string }[];
+  relations: { from: string; to: string; type: string }[];
+  categories: string[];
+  sourceRefs: { ref: string; type?: string }[];
+  confidence: number | null;
+  uncertainty: string[];
+  /** Forward search seeds carried from the extraction (optional, preserved on read-back). */
+  nextSearchSeedCandidates?: string[];
+};
+
+/**
+ * Write a semantic graph record (e.g. an SLM graph extraction) into the ThinkGraph AGE graph
+ * as a real `:SlmGraphRecord` node — same mechanism as event memory. Entity/relation/
+ * sourceRef payloads are stored as JSON text (the established ThinkGraph pattern).
+ * Throws on a failed write so callers can fail closed rather than report fake success.
+ */
+export async function recordThinkGraphSemanticRecord(
+  record: ThinkGraphSemanticRecord,
+): Promise<{ id: string; ts: string }> {
+  const projectId = String(record.projectId || '').trim();
+  if (!projectId) {
+    throw new Error('thinkgraph_project_id_required');
+  }
+  const ts = new Date().toISOString();
+  const id = `tgsem:${projectId}:${Date.now().toString(36)}`;
+  const cypher = `
+    CREATE (r:SlmGraphRecord {
+      id: $id,
+      project_id: $projectId,
+      source_ref: $sourceRef,
+      ts: $ts,
+      target_graph: 'thinkgraph',
+      created_by: $createdBy,
+      entities_json: $entitiesJson,
+      relations_json: $relationsJson,
+      categories: $categories,
+      source_refs_json: $sourceRefsJson,
+      confidence: $confidence,
+      uncertainty: $uncertainty,
+      next_search_seed_candidates: $nextSearchSeedCandidates
+    })
+    RETURN r.id
+  `;
+  await runCypherOnGraph(THINKGRAPH_GRAPH_NAME, cypher, {
+    id,
+    projectId,
+    sourceRef: clampText(record.sourceRef),
+    ts,
+    createdBy: clampText(record.createdBy) || 'slmGraphWorker',
+    entitiesJson: JSON.stringify(Array.isArray(record.entities) ? record.entities : []),
+    relationsJson: JSON.stringify(Array.isArray(record.relations) ? record.relations : []),
+    categories: cleanList(record.categories),
+    sourceRefsJson: JSON.stringify(Array.isArray(record.sourceRefs) ? record.sourceRefs : []),
+    confidence: typeof record.confidence === 'number' ? record.confidence : null,
+    uncertainty: cleanList(record.uncertainty),
+    nextSearchSeedCandidates: cleanList(record.nextSearchSeedCandidates),
+  });
+  return { id, ts };
+}
+
+export type StoredThinkGraphSemanticRecord = {
+  id: string;
+  projectId: string;
+  sourceRef: string;
+  createdBy: string;
+  entities: { id: string; label: string; type: string }[];
+  relations: { from: string; to: string; type: string }[];
+  categories: string[];
+  sourceRefs: { ref: string; type?: string }[];
+  confidence: number | null;
+  uncertainty: string[];
+  nextSearchSeedCandidates: string[];
+  createdAt: string;
+};
+
+export type ThinkGraphSemanticReadResult =
+  | { ok: true; record: StoredThinkGraphSemanticRecord }
+  | { ok: false; reason: 'not_found' | 'age_query_failed'; error?: string };
+
+function safeJsonArray(value: unknown): any[] {
+  try {
+    const parsed = JSON.parse(String(value ?? '[]'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Read back one `:SlmGraphRecord` from the SAME ThinkGraph AGE graph the write path
+ * uses (`thinkgraph_liq`), keyed by `project_id` + unique `source_ref`. Honest results:
+ * found → ok:true; no row → ok:false/not_found; AGE query throws → ok:false/age_query_failed.
+ */
+export async function readThinkGraphSemanticRecord(query: {
+  projectId: string;
+  sourceRef: string;
+}): Promise<ThinkGraphSemanticReadResult> {
+  const projectId = String(query.projectId || '').trim();
+  const sourceRef = String(query.sourceRef || '').trim();
+  if (!projectId || !sourceRef) {
+    return { ok: false, reason: 'not_found' };
+  }
+  const cypher = `
+    MATCH (r:SlmGraphRecord {project_id: $projectId, source_ref: $sourceRef})
+    RETURN {
+      id: r.id, project_id: r.project_id, source_ref: r.source_ref,
+      created_by: r.created_by, target_graph: r.target_graph,
+      entities_json: r.entities_json, relations_json: r.relations_json,
+      categories: r.categories, source_refs_json: r.source_refs_json,
+      confidence: r.confidence, uncertainty: r.uncertainty,
+      next_search_seed_candidates: r.next_search_seed_candidates, ts: r.ts
+    }
+    ORDER BY r.ts DESC
+    LIMIT 1
+  `;
+  let rows: unknown[];
+  try {
+    rows = await runCypherOnGraph(THINKGRAPH_GRAPH_NAME, cypher, { projectId, sourceRef });
+  } catch (err: any) {
+    return { ok: false, reason: 'age_query_failed', error: err?.message || String(err) };
+  }
+  const row = parseEventRow(rows[0]);
+  if (!row) {
+    return { ok: false, reason: 'not_found' };
+  }
+  const confidenceNum = Number(row.confidence);
+  return {
+    ok: true,
+    record: {
+      id: String(row.id ?? ''),
+      projectId: String(row.project_id ?? ''),
+      sourceRef: String(row.source_ref ?? ''),
+      createdBy: String(row.created_by ?? ''),
+      entities: safeJsonArray(row.entities_json),
+      relations: safeJsonArray(row.relations_json),
+      categories: cleanList(row.categories),
+      sourceRefs: safeJsonArray(row.source_refs_json),
+      confidence: Number.isFinite(confidenceNum) ? confidenceNum : null,
+      uncertainty: cleanList(row.uncertainty),
+      nextSearchSeedCandidates: cleanList(row.next_search_seed_candidates),
+      createdAt: String(row.ts ?? ''),
+    },
+  };
+}
+
+export type ThinkGraphSemanticListResult =
+  | { ok: true; records: StoredThinkGraphSemanticRecord[] }
+  | { ok: false; reason: 'age_query_failed'; error: string };
+
+/**
+ * Read back the most recent `:SlmGraphRecord` semantic records for a project from the same
+ * ThinkGraph AGE graph the write path uses (`thinkgraph_liq`). Read-only — surfaces accepted
+ * Mag One graphPayload records (entities/relations/sourceRefs/uncertainty/seeds) so a
+ * read-only preflight can ground task creation. Honest: AGE query throws → ok:false.
+ */
+export async function readRecentThinkGraphSemanticRecords(query: {
+  projectId: string;
+  limit?: number;
+}): Promise<ThinkGraphSemanticListResult> {
+  const projectId = String(query.projectId || '').trim();
+  if (!projectId) {
+    return { ok: true, records: [] };
+  }
+  const safeLimit = Math.min(Math.max(Math.trunc(query.limit ?? 10) || 10, 1), 50);
+  const cypher = `
+    MATCH (r:SlmGraphRecord {project_id: $projectId})
+    RETURN {
+      id: r.id, project_id: r.project_id, source_ref: r.source_ref,
+      created_by: r.created_by, target_graph: r.target_graph,
+      entities_json: r.entities_json, relations_json: r.relations_json,
+      categories: r.categories, source_refs_json: r.source_refs_json,
+      confidence: r.confidence, uncertainty: r.uncertainty,
+      next_search_seed_candidates: r.next_search_seed_candidates, ts: r.ts
+    }
+    ORDER BY r.ts DESC
+    LIMIT ${safeLimit}
+  `;
+  let rows: unknown[];
+  try {
+    rows = await runCypherOnGraph(THINKGRAPH_GRAPH_NAME, cypher, { projectId });
+  } catch (err: any) {
+    return { ok: false, reason: 'age_query_failed', error: err?.message || String(err) };
+  }
+  const records: StoredThinkGraphSemanticRecord[] = rows
+    .map(parseEventRow)
+    .filter((row): row is Record<string, any> => Boolean(row))
+    .map((row) => {
+      const confidenceNum = Number(row.confidence);
+      return {
+        id: String(row.id ?? ''),
+        projectId: String(row.project_id ?? ''),
+        sourceRef: String(row.source_ref ?? ''),
+        createdBy: String(row.created_by ?? ''),
+        entities: safeJsonArray(row.entities_json),
+        relations: safeJsonArray(row.relations_json),
+        categories: cleanList(row.categories),
+        sourceRefs: safeJsonArray(row.source_refs_json),
+        confidence: Number.isFinite(confidenceNum) ? confidenceNum : null,
+        uncertainty: cleanList(row.uncertainty),
+        nextSearchSeedCandidates: cleanList(row.next_search_seed_candidates),
+        createdAt: String(row.ts ?? ''),
+      };
+    });
+  return { ok: true, records };
+}
+
 function parseEventRow(raw: unknown): Record<string, any> | null {
   const parsed =
     typeof raw === 'string'

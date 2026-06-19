@@ -128,6 +128,52 @@ describe('Canonical Cards Runtime', () => {
     expect((payload as any).progress_ledger).toBeUndefined();
   });
 
+  it('grounds the Task Ledger payload with graph context, keeping the graphPayload contract intact', () => {
+    const grounding = {
+      projectId: 'p',
+      userText: 'Continue RDW / SpaceX research',
+      thinkGraph: {
+        ok: true,
+        facts: [{ label: 'Redwire Corporation', type: 'company', sourceRef: 'user_request_stream', confidence: 0.99 }],
+        relations: [{ from: 'e_rdw_ticker', to: 'e_rdw', type: 'identifies', sourceRef: 'user_request_stream' }],
+        uncertainty: ['Live RDW price unknown until lookup'],
+        nextSearchSeedCandidates: ['live_market_data_for_RDW'],
+      },
+      warnings: ['codegraph_not_run_on_task_ledger_hot_path'],
+    };
+    const cardM = {
+      id: 'mag1',
+      runtimeType: 'magentic_one',
+      prompt: 'sys',
+      runtimeOptions: { taskLedgerOutputContract: 'PlanFlow contract: produce planFlowTaskObjects AND an OWL-shaped graphPayload.' },
+    };
+    const cardA = { id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
+    const payload = buildPythonAutoGenCardRuntimePayload(
+      cardM, {}, 'Continue RDW / SpaceX research', { allCards: [cardM, cardA], allEdges: [] }, {}, [cardA], '2026', undefined, grounding as any,
+    );
+
+    // Grounding reaches the model-call payload.
+    expect(payload.taskLedgerGroundingContext).toBeDefined();
+    expect((payload.taskLedgerGroundingContext as any).thinkGraph.facts[0].label).toBe('Redwire Corporation');
+    // Directive + the accepted facts are injected into the system prompt.
+    expect(payload.systemPrompt).toContain('graphGroundingContext');
+    expect(payload.systemPrompt).toMatch(/READ it before creating tasks/i);
+    expect(payload.systemPrompt).toContain('Redwire Corporation');
+    // The OWL graphPayload output contract is preserved, not replaced.
+    expect(payload.cardRuntime.taskLedgerOutputContract).toContain('graphPayload');
+    expect(payload.systemPrompt).toMatch(/graphPayload output contract intact/i);
+  });
+
+  it('omits grounding cleanly when none is provided (backward compatible)', () => {
+    const cardM = { id: 'mag1', runtimeType: 'magentic_one', prompt: 'sys' };
+    const cardA = { id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
+    const payload = buildPythonAutoGenCardRuntimePayload(
+      cardM, {}, 'hello', { allCards: [cardM, cardA], allEdges: [] }, {}, [cardA], '2026',
+    );
+    expect(payload.taskLedgerGroundingContext).toBeUndefined();
+    expect(payload.systemPrompt).not.toContain('graphGroundingContext');
+  });
+
   it('Mag One coding-run prompt states bus eligibility, coding path, and graph-memory tool limits', () => {
     expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain(
       'direct connection to the vertical\nMagentic bus means an agent is eligible',

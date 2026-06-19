@@ -189,6 +189,10 @@ const KnowledgeEvidencePanel = lazy(
 const KnowledgeGraphFramework = lazy(
   () => import('../components/knowledge/KnowledgeGraphFramework'),
 );
+import {
+  mapAcceptedThinkGraphRecordsToViewData,
+  resolveThinkGraphSourceLabel,
+} from '../components/knowledge/thinkGraphRecordsView';
 const PlanMissionFlow = lazy(
   () => import('../components/assist/PlanMissionFlow'),
 );
@@ -7091,6 +7095,17 @@ export default function AgentBuilder(): React.ReactElement {
   // knowledge graph
   const [cypher, setCypher] = useState('');
   const [graphResult, setGraphResult] = useState<any[]>([]);
+  // Accepted Mag One graphPayloads live in thinkgraph_liq as :SlmGraphRecord; the old graph
+  // tab only queried :Entity, so they were islanded. This reads the real ThinkGraph records
+  // for the SELECTED project from /api/thinkgraph/graph-view, with honest source/reason.
+  const [thinkGraphRecordsView, setThinkGraphRecordsView] = useState<{
+    ok: boolean;
+    source: string;
+    nodes: Array<{ id: string; label: string; type?: string; sourceRef?: string; confidence?: number }>;
+    edges: Array<{ id: string; source: string; target: string; label?: string; type?: string; sourceRef?: string; confidence?: number }>;
+    reason?: string;
+    blocker?: string;
+  } | null>(null);
   const [graphError, setGraphError] = useState<string | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
   const [knowledgeGraphStatus, setKnowledgeGraphStatus] =
@@ -8041,6 +8056,44 @@ export default function AgentBuilder(): React.ReactElement {
     return () => window.removeEventListener('knowledge:refresh', refresh);
   }, [loadGraphData]);
 
+  // Load the SELECTED project's accepted ThinkGraph records (the un-islanded read path).
+  // Uses the same projectId the Agent Builder route resolved from the URL — never 'default'.
+  useEffect(() => {
+    const projectId = activeProject;
+    if (!projectId) {
+      setThinkGraphRecordsView(null);
+      return;
+    }
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/thinkgraph/graph-view?projectId=${encodeURIComponent(projectId)}`,
+          { signal: controller.signal },
+        );
+        const data = await res.json().catch(() => null);
+        if (controller.signal.aborted || activeProjectLatestRef.current !== projectId) return;
+        if (!data || typeof data !== 'object') {
+          setThinkGraphRecordsView({ ok: false, source: 'unavailable', nodes: [], edges: [], reason: 'thinkgraph_unavailable', blocker: `HTTP ${res.status}` });
+          return;
+        }
+        setThinkGraphRecordsView({
+          ok: Boolean(data.ok),
+          source: String(data.source || (data.ok ? 'thinkgraph-db' : 'unavailable')),
+          nodes: Array.isArray(data.nodes) ? data.nodes : [],
+          edges: Array.isArray(data.edges) ? data.edges : [],
+          reason: data.reason,
+          blocker: data.blocker,
+        });
+      } catch (err: any) {
+        if (controller.signal.aborted) return;
+        if (activeProjectLatestRef.current !== projectId) return;
+        setThinkGraphRecordsView({ ok: false, source: 'unavailable', nodes: [], edges: [], reason: 'thinkgraph_unavailable', blocker: String(err?.message || err) });
+      }
+    })();
+    return () => controller.abort();
+  }, [activeProject, graphResetToken]);
+
   useEffect(() => {
     clearKnowledgeWorkspaceSelection();
   }, [activeProject, clearKnowledgeWorkspaceSelection, tab]);
@@ -8541,8 +8594,12 @@ export default function AgentBuilder(): React.ReactElement {
     const result = buildGraphVizForNVL(graphVizFiltered);
     return result;
   }, [graphVizFiltered]);
-  const thinkGraphViewData = useMemo<GraphViewData>(
-    () => ({
+  const thinkGraphViewData = useMemo<GraphViewData>(() => {
+    // Prefer real accepted :SlmGraphRecord records for the selected project; fall back to the
+    // legacy :Entity-seeded view only when no accepted records are present.
+    const accepted = mapAcceptedThinkGraphRecordsToViewData(thinkGraphRecordsView);
+    if (accepted) return accepted;
+    return {
       kind: 'thinkgraph',
       nodes: thinkGraphViz.nodes.map((node) => ({
         id: String(node.id),
@@ -8560,8 +8617,13 @@ export default function AgentBuilder(): React.ReactElement {
         type: safeText(edge.type || 'related_to'),
         weight: typeof edge.weight === 'number' ? edge.weight : undefined,
       })),
-    }),
-    [thinkGraphViz.edges, thinkGraphViz.nodes],
+    };
+  }, [thinkGraphRecordsView, thinkGraphViz.edges, thinkGraphViz.nodes]);
+
+  // Honest source label for the ThinkGraph tab diagnostics (no more blanket "host-provided").
+  const thinkGraphSourceLabel = useMemo(
+    () => resolveThinkGraphSourceLabel(thinkGraphRecordsView, thinkGraphViz.nodes.length > 0),
+    [thinkGraphRecordsView, thinkGraphViz.nodes.length],
   );
   const knowGraphViewData = useMemo<GraphViewData>(
     () => ({
@@ -9173,6 +9235,7 @@ export default function AgentBuilder(): React.ReactElement {
                 }
                 thinkGraphData={thinkGraphViewData}
                 knowGraphData={knowGraphViewData}
+                thinkGraphSource={thinkGraphSourceLabel}
                 codeGraphProjectName={CODEBASE_MEMORY_PROJECT_NAME}
                 onRefreshRequest={loadGraphData}
                 minHeight={minHeight}

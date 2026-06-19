@@ -12,6 +12,11 @@ import {
 import { orchestrateWithAutoGen } from '../services/autogen/autogenOrchestratorClient';
 import { resolveModel } from '../llm/models.config';
 import { recordModelCallPacket, buildModelCallPacket } from '../debug/modelCallPackets';
+import {
+  buildGroundedTaskLedgerContext,
+  renderTaskLedgerGroundingDirective,
+  type TaskLedgerGraphGroundingContext,
+} from '../services/graphContext/groundedTaskLedgerContext';
 
 export const MAG_ONE_CODING_RUN_SYSTEM_PROMPT = `
 You are Mag One, the orchestration router for LiquidAIty. The user chats with you first.
@@ -472,7 +477,8 @@ export function buildPythonAutoGenCardRuntimePayload(
   modelConfig: any,
   callableHeads: any[],
   startedAt: string,
-  graphContextPacket?: any
+  graphContextPacket?: any,
+  taskLedgerGroundingContext?: TaskLedgerGraphGroundingContext,
 ): PythonAutoGenPayloadShape {
   const sessionId = `${context.deckId || 'deck'}:${card.id}:${Date.now()}`;
   const turnId = `${card.id}:${Date.now()}`;
@@ -503,7 +509,12 @@ export function buildPythonAutoGenCardRuntimePayload(
   const supportedHeads = callableHeads
     .filter((head) => isPythonAutoGenCallableRuntimeType(resolveCardRuntimeType(head)))
     .filter((head) => resolveMagOneAgentRole(head) !== 'local_coder');
-  const systemPrompt = [MAG_ONE_CODING_RUN_SYSTEM_PROMPT, String(card.prompt || '').trim()]
+  // Task Ledger graph grounding directive (additive — never replaces the OWL graphPayload
+  // contract). Appended only when grounding context is present for this turn.
+  const groundingDirective = taskLedgerGroundingContext
+    ? renderTaskLedgerGroundingDirective(taskLedgerGroundingContext)
+    : '';
+  const systemPrompt = [MAG_ONE_CODING_RUN_SYSTEM_PROMPT, String(card.prompt || '').trim(), groundingDirective]
     .filter(Boolean)
     .join('\n\n');
   // PlanFlow task-output contract: read from the Magentic-One card config only.
@@ -623,6 +634,9 @@ export function buildPythonAutoGenCardRuntimePayload(
     plan: undefined,
     thinkGraph: undefined,
     knowGraph: undefined,
+    // Read-only graph grounding for Task Ledger generation (accepted ThinkGraph facts +
+    // optional skills/files). Additive to the OWL graphPayload contract.
+    ...(taskLedgerGroundingContext ? { taskLedgerGroundingContext } : {}),
     blackboard: {
       current_goal: '',
       what_matters_now: [],
@@ -693,6 +707,20 @@ export async function runCardWithContract(
     
     const modelConfig = resolveOrchestratorCardModel(card);
 
+    // Read-only graph grounding before Task Ledger generation. Cheap: accepted ThinkGraph
+    // records only — CodeGraph/CBM is NOT forced on the chat hot path. Non-fatal: a failure
+    // degrades to honest warnings and the run continues ungrounded rather than blocking.
+    let taskLedgerGroundingContext: TaskLedgerGraphGroundingContext | undefined;
+    try {
+      taskLedgerGroundingContext = await buildGroundedTaskLedgerContext({
+        userText: input,
+        projectId: context.projectId ? String(context.projectId) : undefined,
+        includeCodeGraph: false,
+      });
+    } catch {
+      taskLedgerGroundingContext = undefined;
+    }
+
     const payload = buildPythonAutoGenCardRuntimePayload(
       card,
       effectiveAgent,
@@ -700,7 +728,9 @@ export async function runCardWithContract(
       context,
       modelConfig,
       callableHeads,
-      startedAt
+      startedAt,
+      undefined,
+      taskLedgerGroundingContext,
     );
 
     // Call the Python AutoGen rails. Mock success is not allowed on this route.

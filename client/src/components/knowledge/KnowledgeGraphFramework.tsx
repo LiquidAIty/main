@@ -40,6 +40,10 @@ type KnowledgeGraphFrameworkProps = {
   onContractChange: (contract: GraphViewContract) => void;
   thinkGraphData: GraphViewData;
   knowGraphData: GraphViewData;
+  /** Honest data-source label for the ThinkGraph tab (e.g. 'thinkgraph-db', 'host-provided',
+   * 'thinkgraph-db:no_thinkgraph_records_for_project', 'unavailable:<blocker>'). */
+  thinkGraphSource?: string;
+  knowGraphSource?: string;
   codeGraphProjectName: string;
   minHeight?: number;
   onRefreshRequest?: () => Promise<void> | void;
@@ -248,6 +252,8 @@ export default function KnowledgeGraphFramework({
   onContractChange,
   thinkGraphData,
   knowGraphData,
+  thinkGraphSource,
+  knowGraphSource,
   codeGraphProjectName,
   minHeight = 360,
   onRefreshRequest,
@@ -482,8 +488,19 @@ export default function KnowledgeGraphFramework({
         error = compactStatusText(codeGraphError, 120);
       } else status = nodeCount === 0 ? 'empty' : 'ready';
     } else {
-      source = 'host-provided';
-      status = nodeCount === 0 ? 'empty' : 'ready';
+      // Honest source per tab — no longer a blanket "host-provided" lie. A DB failure shows
+      // as an error with its blocker, never collapsed into a silent empty graph.
+      const provided =
+        kind === 'thinkgraph' ? thinkGraphSource : kind === 'knowgraph' ? knowGraphSource : undefined;
+      source = provided || 'host-provided';
+      if (provided && provided.startsWith('unavailable')) {
+        status = 'error';
+        error =
+          compactStatusText(provided.replace(/^unavailable:?/, ''), 120) ||
+          'graph source unavailable';
+      } else {
+        status = nodeCount === 0 ? 'empty' : 'ready';
+      }
     }
     return { label, source, nodeCount, edgeCount, status, error };
   }, [
@@ -492,7 +509,9 @@ export default function KnowledgeGraphFramework({
     displayData.edges.length,
     displayData.nodes.length,
     kind,
+    knowGraphSource,
     loadingCodeGraph,
+    thinkGraphSource,
   ]);
 
   const highlightedIds = useMemo(() => {
