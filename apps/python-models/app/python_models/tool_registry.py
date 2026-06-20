@@ -19,6 +19,7 @@ import json
 import operator
 import os
 import re
+import sys
 from contextvars import ContextVar, Token
 from datetime import datetime, timezone
 from pathlib import Path
@@ -349,6 +350,68 @@ async def coder_console_task(
 
 
 # ---------------------------------------------------------------------------
+# KnowGraph hybrid retrieval tool (explicit, deliberate, read-only).
+# ---------------------------------------------------------------------------
+
+
+def _load_knowgraph_hybrid_retrieval():
+    """Import the KnowGraph Python rails hybrid retrieval capability.
+
+    The Mag One rails (this package) and the KnowGraph rails
+    (``services/knowgraph``) are separate. The KnowGraph rails use bare-module
+    imports, so its directory is placed on ``sys.path`` (idempotent) and the
+    module is imported by name — no TypeScript and no second service involved.
+    """
+    repo_root = Path(__file__).resolve().parents[4]
+    kg_dir = repo_root / "services" / "knowgraph"
+    kg_path = str(kg_dir)
+    if kg_path not in sys.path:
+        sys.path.insert(0, kg_path)
+    import hybrid_retrieval  # noqa: E402  (bare-module rails convention)
+
+    return hybrid_retrieval
+
+
+async def retrieve_knowgraph_context_tool(
+    project_id: str,
+    query: str,
+    anchors: list[str] | None = None,
+    task_id: str | None = None,
+    max_results: int = 12,
+    max_hops: int = 1,
+    include_outcomes: list[str] | None = None,
+    prior_assertion_ids: list[str] | None = None,
+    prior_source_refs: list[str] | None = None,
+) -> dict[str, Any]:
+    """Mag One tool: retrieve a compact, project-scoped KnowGraph evidence slice.
+
+    Combines exact anchored traversal + Neo4j full-text + local-embedding vector
+    retrieval over the single KnowGraph (Neo4j). Read-only. Mag One decides when
+    to call this and supplies the bounded request; registering the tool never
+    runs it. Returns structured data (dict) preserving each assertion's outcome
+    and source identity (sourceRef/title/url).
+    """
+    module = _load_knowgraph_hybrid_retrieval()
+    request = module.KnowGraphRetrievalRequest(
+        project_id=str(project_id or "").strip(),
+        query=str(query or "").strip(),
+        anchors=[str(a).strip() for a in (anchors or []) if str(a).strip()],
+        task_id=(str(task_id).strip() or None) if task_id else None,
+        max_results=max_results if isinstance(max_results, int) else 12,
+        max_hops=max_hops if isinstance(max_hops, int) else 1,
+        include_outcomes=(
+            [str(o).strip() for o in include_outcomes if str(o).strip()]
+            if include_outcomes else list(module.DEFAULT_OUTCOMES)
+        ),
+        prior_assertion_ids=list(prior_assertion_ids) if prior_assertion_ids else None,
+        prior_source_refs=list(prior_source_refs) if prior_source_refs else None,
+    )
+    # Blocking Neo4j + local embedding call runs off the event loop.
+    result = await asyncio.to_thread(module.retrieve_knowgraph_context, request)
+    return result.to_dict()
+
+
+# ---------------------------------------------------------------------------
 # ToolRegistry.
 # ---------------------------------------------------------------------------
 
@@ -472,6 +535,52 @@ def build_default_tool_registry() -> ToolRegistry:
             },
         ),
         coder_console_task,
+    )
+    registry.register(
+        ToolSpec(
+            name="retrieve_knowgraph_context",
+            description=(
+                "Retrieve a compact, project-scoped KnowGraph evidence slice by combining exact "
+                "anchored graph traversal, Neo4j full-text retrieval, and local-embedding vector "
+                "retrieval over the one knowledge graph. Read-only; returns source-backed "
+                "assertions with outcomes (supported/contradicted/uncertain), contradictions, "
+                "one-hop relations, and per-result retrieval reasons. Mag One calls this "
+                "deliberately when it needs grounded KnowGraph evidence."
+            ),
+            enabled=True,
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "query": {"type": "string"},
+                    "anchors": {"type": "array", "items": {"type": "string"}},
+                    "task_id": {"type": ["string", "null"]},
+                    "max_results": {"type": "integer", "default": 12},
+                    "max_hops": {"type": "integer", "default": 1},
+                    "include_outcomes": {"type": "array", "items": {"type": "string"}},
+                    "prior_assertion_ids": {"type": "array", "items": {"type": "string"}},
+                    "prior_source_refs": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["project_id", "query"],
+            },
+            outputSchema={
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "anchors": {"type": "array", "items": {"type": "string"}},
+                    "retrieval_modes": {"type": "object"},
+                    "assertions": {"type": "array"},
+                    "evidence": {"type": "array"},
+                    "relations": {"type": "array"},
+                    "contradictions": {"type": "array"},
+                    "uncertainties": {"type": "array"},
+                    "next_anchor_suggestions": {"type": "array"},
+                    "excluded_as_seen": {"type": "array"},
+                    "retrieval_notes": {"type": "array"},
+                },
+            },
+        ),
+        retrieve_knowgraph_context_tool,
     )
     return registry
 
