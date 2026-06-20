@@ -174,6 +174,30 @@ describe('Canonical Cards Runtime', () => {
     expect(payload.systemPrompt).not.toContain('graphGroundingContext');
   });
 
+  it('feeds a compact ActiveGraphContext into the payload without replacing the graphPayload contract', () => {
+    const activeGraphContext = {
+      projectId: 'p', taskId: 't1',
+      anchors: [{ id: 'e1', label: 'Redwire Corporation', reason: 'selected_task_anchor' }],
+      facts: [{ subject: 'Redwire Corporation', predicate: 'has_ticker_symbol', object: 'RDW', outcome: 'supported', sourceRef: 's1' }],
+      relations: [], evidence: [{ sourceRef: 's1', title: 'RDW', url: 'https://x', reason: 'source-backed' }],
+      unresolvedQuestions: [], contradictions: ['Redwire Corporation has_ticker_symbol -> RWE (contradicted; source s2)'],
+      codeContext: [], stableSummary: 'Task t1 context: 1 anchor', delta: { addedAnchors: ['Redwire Corporation'], addedFacts: ['k'], addedEvidenceRefs: ['s1'], addedQuestions: [], removedAsCold: [] },
+      sourceStats: { thinkGraph: 0, knowGraph: 1, codeGraph: 0 },
+    };
+    const cardM = { id: 'mag1', runtimeType: 'magentic_one', prompt: 'sys', runtimeOptions: { taskLedgerOutputContract: 'produce planFlowTaskObjects AND an OWL-shaped graphPayload.' } };
+    const cardA = { id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
+    const payload = buildPythonAutoGenCardRuntimePayload(
+      cardM, {}, 'Continue RDW research', { allCards: [cardM, cardA], allEdges: [] }, {}, [cardA], '2026', undefined, undefined, activeGraphContext as any,
+    );
+    expect(payload.activeGraphContext).toBeDefined();
+    expect((payload.activeGraphContext as any).facts[0].object).toBe('RDW');
+    expect(payload.systemPrompt).toContain('activeGraphContext');
+    expect(payload.systemPrompt).toContain('RDW');
+    // contract preserved + render is additive
+    expect(payload.cardRuntime.taskLedgerOutputContract).toContain('graphPayload');
+    expect(payload.systemPrompt).toMatch(/OWL graphPayload output contract intact/i);
+  });
+
   it('Mag One coding-run prompt states bus eligibility, coding path, and graph-memory tool limits', () => {
     expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain(
       'direct connection to the vertical\nMagentic bus means an agent is eligible',

@@ -17,6 +17,10 @@ import {
   renderTaskLedgerGroundingDirective,
   type TaskLedgerGraphGroundingContext,
 } from '../services/graphContext/groundedTaskLedgerContext';
+import {
+  renderActiveGraphContextForPrompt,
+  type ActiveGraphContext,
+} from '../services/graphContext/activeGraphContext';
 
 export const MAG_ONE_CODING_RUN_SYSTEM_PROMPT = `
 You are Mag One, the orchestration router for LiquidAIty. The user chats with you first.
@@ -479,6 +483,7 @@ export function buildPythonAutoGenCardRuntimePayload(
   startedAt: string,
   graphContextPacket?: any,
   taskLedgerGroundingContext?: TaskLedgerGraphGroundingContext,
+  activeGraphContext?: ActiveGraphContext,
 ): PythonAutoGenPayloadShape {
   const sessionId = `${context.deckId || 'deck'}:${card.id}:${Date.now()}`;
   const turnId = `${card.id}:${Date.now()}`;
@@ -514,7 +519,12 @@ export function buildPythonAutoGenCardRuntimePayload(
   const groundingDirective = taskLedgerGroundingContext
     ? renderTaskLedgerGroundingDirective(taskLedgerGroundingContext)
     : '';
-  const systemPrompt = [MAG_ONE_CODING_RUN_SYSTEM_PROMPT, String(card.prompt || '').trim(), groundingDirective]
+  // Compact task-scoped ActiveGraphContext (stable + delta). Additive — never replaces the OWL
+  // graphPayload / Task Ledger contract; only appended when present for the selected task.
+  const activeGraphContextBlock = activeGraphContext
+    ? renderActiveGraphContextForPrompt(activeGraphContext)
+    : '';
+  const systemPrompt = [MAG_ONE_CODING_RUN_SYSTEM_PROMPT, String(card.prompt || '').trim(), groundingDirective, activeGraphContextBlock]
     .filter(Boolean)
     .join('\n\n');
   // PlanFlow task-output contract: read from the Magentic-One card config only.
@@ -637,6 +647,8 @@ export function buildPythonAutoGenCardRuntimePayload(
     // Read-only graph grounding for Task Ledger generation (accepted ThinkGraph facts +
     // optional skills/files). Additive to the OWL graphPayload contract.
     ...(taskLedgerGroundingContext ? { taskLedgerGroundingContext } : {}),
+    // Compact task-scoped ActiveGraphContext (stable + delta). Additive, never replaces graphPayload.
+    ...(activeGraphContext ? { activeGraphContext: activeGraphContext as any } : {}),
     blackboard: {
       current_goal: '',
       what_matters_now: [],
