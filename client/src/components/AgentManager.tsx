@@ -94,6 +94,17 @@ export type AgentManagerMemoryGraphData = {
   relationships: KnowledgeGraphRelationship[];
 };
 
+// Read-only capability metadata from the Python Mag One tool registry, served by
+// GET /api/tools/manifest. The registry is the source of truth; this is never a
+// hardcoded frontend tool list.
+type ToolCapabilityManifestEntry = {
+  id: string;
+  displayName: string;
+  description: string;
+  agentCompatibility: string[];
+  inputSchemaSummary?: string;
+};
+
 type SaveCardStatus = 'idle' | 'saving' | 'saved' | 'failed';
 
 function parsePromptTemplate(template: string): {
@@ -675,6 +686,8 @@ export function AgentManager({
   const [toolsText, setToolsText] = useState(
     Array.isArray(localConfig?.tools) ? localConfig.tools.join('\n') : '',
   );
+  // Real Mag One tool capability manifest (registry-backed; best-effort fetch).
+  const [toolManifest, setToolManifest] = useState<ToolCapabilityManifestEntry[]>([]);
   const [knowledgeText, setKnowledgeText] = useState(
     Array.isArray(localConfig?.knowledge_sources) ? localConfig.knowledge_sources.join('\n') : '',
   );
@@ -732,6 +745,26 @@ export function AgentManager({
       localConfig?.runtime_options ? JSON.stringify(localConfig.runtime_options, null, 2) : '',
     );
   }, [localConfig, runtimeOptions, runtimeType]);
+
+  // Fetch the real Mag One tool capability manifest once. Best-effort: the
+  // freeform Tools field still works if the Python rails manifest is unavailable.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch('/api/tools/manifest', { credentials: 'include' });
+        if (!response.ok) return;
+        const data = await response.json();
+        const tools = Array.isArray(data?.tools) ? data.tools : [];
+        if (!cancelled) setToolManifest(tools as ToolCapabilityManifestEntry[]);
+      } catch {
+        // ignore — capability list is additive metadata only
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     setCardNameDraft(String(cardName || ''));
@@ -1296,9 +1329,97 @@ export function AgentManager({
   }
 
   if (activeTab === 'Tools') {
+    const attachedToolIds = toolsText
+      .split(/[\n,]+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    // Only capabilities the registry marks compatible with this card's runtime.
+    const compatibleCapabilities = toolManifest.filter(
+      (entry) =>
+        Array.isArray(entry.agentCompatibility) &&
+        entry.agentCompatibility.includes(selectedRuntimeType),
+    );
+    const toggleTool = (id: string) => {
+      const current = toolsText
+        .split(/[\n,]+/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      const next = current.includes(id)
+        ? current.filter((entry) => entry !== id)
+        : [...current, id];
+      setToolsText(next.join('\n'));
+    };
     return (
       <div className={formScopeClassName} style={{ display: 'grid', gap: 8 }}>
         <style>{scopedFocusStyles}</style>
+        {compatibleCapabilities.length > 0 ? (
+          <div style={{ display: 'grid', gap: 6 }}>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 700,
+                color: GRAPH_THEME.drawer.inputText,
+              }}
+            >
+              Available capabilities
+            </div>
+            {compatibleCapabilities.map((entry) => {
+              const attached = attachedToolIds.includes(entry.id);
+              return (
+                <div
+                  key={entry.id}
+                  style={{
+                    display: 'flex',
+                    gap: 10,
+                    alignItems: 'flex-start',
+                    justifyContent: 'space-between',
+                    padding: '8px 10px',
+                    border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
+                    borderRadius: 8,
+                  }}
+                >
+                  <div style={{ display: 'grid', gap: 2, minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: GRAPH_THEME.drawer.inputText,
+                      }}
+                    >
+                      {entry.displayName}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: GRAPH_THEME.drawer.inputMuted,
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      {entry.description}
+                    </div>
+                    <div style={{ fontSize: 10, color: GRAPH_THEME.drawer.inputMuted }}>
+                      Does not run automatically · {attached ? 'Attached' : 'Available'}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleTool(entry.id)}
+                    style={{
+                      ...inputStyle,
+                      width: 'auto',
+                      flex: '0 0 auto',
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      padding: '4px 10px',
+                    }}
+                  >
+                    {attached ? 'Detach' : 'Attach'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
         <Field label="Tools">
           <textarea
             value={toolsText}

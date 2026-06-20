@@ -1,8 +1,23 @@
 import { Router } from 'express';
 import type { Request as ExpressRequest, Response as ExpressResponse } from 'express';
 import { getTool } from '../agents/registry';
+import { fetchToolManifest } from '../services/autogen/autogenOrchestratorClient';
 
 const router = Router();
+
+// GET /manifest - Read-only Mag One tool capability manifest (Python registry is
+// the source of truth; this only transports it to the card Tools surface).
+router.get('/manifest', async (_req: ExpressRequest, res: ExpressResponse) => {
+  try {
+    const tools = await fetchToolManifest();
+    return res.json({ ok: true, tools });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return res
+      .status(503)
+      .json({ ok: false, error: 'tool_manifest_unavailable', message, tools: [] });
+  }
+});
 
 // POST /:name - Execute tool by name
 router.post('/:name', async (req: ExpressRequest, res: ExpressResponse) => {

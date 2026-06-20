@@ -70,6 +70,51 @@ export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
       },
     },
   },
+  {
+    // Transport-validation mirror only. The real tool (callable + retrieval
+    // logic) lives solely in the Python Mag One registry
+    // (apps/python-models tool_registry.py -> services/knowgraph hybrid_retrieval);
+    // GET /tools/manifest is the source of truth. This entry lets the existing
+    // card Tools selection validate and transport the selected ID to Python,
+    // where the real AutoGen FunctionTool is resolved and attached.
+    name: 'retrieve_knowgraph_context',
+    description:
+      'Retrieve a compact, project-scoped KnowGraph evidence slice (exact graph + full-text + ' +
+      'vector). Read-only; returns source-backed assertions with outcomes, contradictions, and ' +
+      'retrieval reasons. Does not run automatically; Mag One decides whether to call it.',
+    enabled: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' },
+        query: { type: 'string' },
+        anchors: { type: 'array', items: { type: 'string' } },
+        task_id: { type: ['string', 'null'] },
+        max_results: { type: 'integer', default: 12 },
+        max_hops: { type: 'integer', default: 1 },
+        include_outcomes: { type: 'array', items: { type: 'string' } },
+        prior_assertion_ids: { type: 'array', items: { type: 'string' } },
+        prior_source_refs: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['project_id', 'query'],
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' },
+        anchors: { type: 'array' },
+        retrieval_modes: { type: 'object' },
+        assertions: { type: 'array' },
+        evidence: { type: 'array' },
+        relations: { type: 'array' },
+        contradictions: { type: 'array' },
+        uncertainties: { type: 'array' },
+        next_anchor_suggestions: { type: 'array' },
+        excluded_as_seen: { type: 'array' },
+        retrieval_notes: { type: 'array' },
+      },
+    },
+  },
 ];
 
 export type CardRunResult = {

@@ -11,6 +11,17 @@ type AutoGenOrchestratorSession = {
 };
 
 const AUTOGEN_ORCHESTRATE_ENDPOINT = '/autogen/orchestrate';
+const AUTOGEN_TOOL_MANIFEST_ENDPOINT = '/tools/manifest';
+
+// Read-only capability manifest entry from the Python Mag One tool registry.
+// The Python registry is the source of truth; this is transport only.
+export type ToolCapabilityManifestEntry = {
+  id: string;
+  displayName: string;
+  description: string;
+  agentCompatibility: string[];
+  inputSchemaSummary?: string;
+};
 
 export type AutoGenOrchestratorRequest = {
   session: AutoGenOrchestratorSession;
@@ -170,6 +181,37 @@ export async function orchestrateWithAutoGen(
     throw new Error(
       `PYTHON_AUTOGEN_RAILS_UNAVAILABLE: checkedEndpoints=${formatCheckedEndpoints(baseUrls)}`,
     );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Transport-only: fetch the read-only Mag One tool capability manifest from the
+// Python rails. No tool definitions are authored here; the Python registry owns
+// them. Used to render real capability metadata on the existing card Tools surface.
+export async function fetchToolManifest(): Promise<ToolCapabilityManifestEntry[]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const baseUrls = buildSidecarBaseUrls();
+    let lastError: any = null;
+    for (const baseUrl of baseUrls) {
+      const endpoint = `${baseUrl}${AUTOGEN_TOOL_MANIFEST_ENDPOINT}`;
+      try {
+        const response = await fetch(endpoint, { method: 'GET', signal: controller.signal });
+        const text = await response.text();
+        const data = text ? JSON.parse(text) : null;
+        if (!response.ok) {
+          throw new Error(`autogen_tool_manifest_http_${response.status}`);
+        }
+        const tools = Array.isArray((data as any)?.tools) ? (data as any).tools : [];
+        return tools as ToolCapabilityManifestEntry[];
+      } catch (error: any) {
+        lastError = error;
+        if (!isRetryableSidecarError(error)) break;
+      }
+    }
+    throw lastError || new Error('PYTHON_AUTOGEN_RAILS_UNAVAILABLE');
   } finally {
     clearTimeout(timeout);
   }

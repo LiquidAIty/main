@@ -16,6 +16,7 @@ from autogen_agentchat.teams import MagenticOneGroupChat
 from autogen_core.models import SystemMessage, UserMessage
 
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
+from app.python_models.tool_registry import DEFAULT_TOOL_REGISTRY
 from app.python_models.orchestration_contracts import (
     ContextPack,
     KnowGraphUpdateReport,
@@ -295,6 +296,16 @@ def _build_participants(context: ContextPack, model_client: Any) -> list[Assista
         }
         if system_prompt:
             kwargs["system_message"] = system_prompt
+
+        # Attach exactly the card-selected tools as real AutoGen FunctionTools via
+        # the existing ToolRegistry. Resolving does NOT call the tool — Mag One
+        # decides whether to invoke it. Empty selection -> no tools (unchanged
+        # behavior). Unknown/disabled IDs fail loudly through resolve_selected
+        # rather than being silently dropped.
+        selected_tools = [_as_text(tool) for tool in (getattr(participant, "tools", []) or []) if _as_text(tool)]
+        if selected_tools:
+            kwargs["tools"] = DEFAULT_TOOL_REGISTRY.resolve_selected(selected_tools)
+
         participants.append(AssistantAgent(**kwargs))
 
     if participants:

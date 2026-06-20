@@ -1,5 +1,6 @@
 """Focused coverage for the deterministic tool registry primitives."""
 import asyncio
+import json
 import sys
 
 from autogen_core.tools import FunctionTool
@@ -9,6 +10,7 @@ from app.python_models.tool_registry import (
     retrieve_knowgraph_context_tool,
     tool_calculator,
     tool_current_datetime,
+    tool_manifest,
 )
 
 
@@ -51,3 +53,26 @@ def test_knowgraph_retrieval_tool_only_present_when_selected():
     registry = build_default_tool_registry()
     selected = registry.resolve_selected(["calculator"])
     assert "retrieve_knowgraph_context" not in [tool.name for tool in selected]
+
+
+def test_manifest_includes_knowgraph_retrieval_with_display_name():
+    manifest = tool_manifest()
+    entry = next((m for m in manifest if m["id"] == "retrieve_knowgraph_context"), None)
+    assert entry is not None
+    assert entry["displayName"] == "KnowGraph Hybrid Retrieval"
+    assert "magentic_one" in entry["agentCompatibility"]
+    assert entry["description"]
+    assert "project_id" in entry["inputSchemaSummary"]
+
+
+def test_manifest_is_registry_backed_no_duplicate_entries():
+    manifest = tool_manifest()
+    ids = [m["id"] for m in manifest]
+    assert ids == sorted(set(ids))  # one entry per registered tool, deduped
+    assert "retrieve_knowgraph_context" in ids
+
+
+def test_manifest_exposes_no_secrets_endpoints_or_db_config():
+    blob = json.dumps(tool_manifest()).lower()
+    for forbidden in ["password", "bolt://", "neo4j_uri", "12434", "services/knowgraph", "api_key", "secret"]:
+        assert forbidden not in blob

@@ -504,4 +504,55 @@ describe('AgentManager runtime editor', () => {
       }),
     );
   });
+
+  it('renders the registry-backed KnowGraph capability once and attaches/detaches it', async () => {
+    const manifest = {
+      tools: [
+        {
+          id: 'retrieve_knowgraph_context',
+          displayName: 'KnowGraph Hybrid Retrieval',
+          description:
+            'bounded source-backed KnowGraph retrieval; exact graph + full-text + vector; does not run automatically',
+          agentCompatibility: ['magentic_one', 'assistant_agent'],
+          inputSchemaSummary: 'project_id, query (required)',
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => manifest }) as any);
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const { container } = renderManager({
+        activeTab: 'Tools',
+        localConfig: createLocalConfig('assistant_agent', { tools: [] }),
+      });
+      // flush the best-effort manifest fetch effect
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith('/api/tools/manifest', expect.anything());
+      expect(container.textContent).toContain('KnowGraph Hybrid Retrieval');
+      // Exactly one available-capability entry (no duplicate UI).
+      const attachButtons = Array.from(container.querySelectorAll('button')).filter(
+        (button) => button.textContent?.trim() === 'Attach',
+      );
+      expect(attachButtons.length).toBe(1);
+
+      act(() => attachButtons[0].click());
+      const textArea = container.querySelector('textarea') as HTMLTextAreaElement;
+      expect(textArea.value).toContain('retrieve_knowgraph_context');
+
+      const detach = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent?.trim() === 'Detach',
+      );
+      expect(detach).toBeTruthy();
+      act(() => detach!.click());
+      expect((container.querySelector('textarea') as HTMLTextAreaElement).value).not.toContain(
+        'retrieve_knowgraph_context',
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

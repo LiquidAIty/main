@@ -112,6 +112,46 @@ describe('Canonical Cards Runtime', () => {
     expect(payload.cardRuntime.runtimeOptions.maxTokens).toBeUndefined();
   });
 
+  it('RUNTIME_TOOL_SPECS exposes retrieve_knowgraph_context for transport validation', () => {
+    const spec = RUNTIME_TOOL_SPECS.find((entry) => entry.name === 'retrieve_knowgraph_context');
+    expect(spec).toBeTruthy();
+    expect(spec?.enabled).toBe(true);
+    expect(spec?.inputSchema?.type).toBe('object');
+    expect((spec?.inputSchema as any)?.required).toEqual(['project_id', 'query']);
+  });
+
+  it('transports a card-selected KnowGraph retrieval tool to the Python participant set', () => {
+    const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
+    const research = {
+      id: 'research', kind: 'agent', runtimeType: 'assistant_agent', title: 'Research Agent',
+      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['retrieve_knowgraph_context'] },
+    };
+    const allCards = [cardM, research];
+    const allEdges = [{ id: 'e', source: research.id, target: cardM.id, edgeType: 'magentic_option' }];
+    const callable = resolvedMagenticOptions(cardM.id, allCards, allEdges);
+    const payload = buildPythonAutoGenCardRuntimePayload(
+      cardM, {}, 'do research', { projectId: 'p', deckId: 'd', allCards, allEdges }, {}, callable, '2026',
+    );
+    const participant = payload.cardRuntime.participants.find((p) => p.cardId === 'research');
+    expect(participant?.tools).toContain('retrieve_knowgraph_context');
+  });
+
+  it('rejects an unknown card tool id honestly (not silently dropped)', () => {
+    const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
+    const research = {
+      id: 'research', kind: 'agent', runtimeType: 'assistant_agent',
+      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['does_not_exist_tool'] },
+    };
+    const allCards = [cardM, research];
+    const allEdges = [{ id: 'e', source: research.id, target: cardM.id, edgeType: 'magentic_option' }];
+    const callable = resolvedMagenticOptions(cardM.id, allCards, allEdges);
+    expect(() =>
+      buildPythonAutoGenCardRuntimePayload(
+        cardM, {}, 'x', { projectId: 'p', deckId: 'd', allCards, allEdges }, {}, callable, '2026',
+      ),
+    ).toThrow(/card_tool_unknown/);
+  });
+
   it('Python payload compatibility matches expected shape', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one', prompt: 'test system prompt' };
     const cardA = { id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
