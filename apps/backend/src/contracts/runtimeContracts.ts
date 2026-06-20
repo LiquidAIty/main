@@ -244,9 +244,6 @@ export type PythonAutoGenPayloadShape = {
   // Read-only graph grounding for Task Ledger generation: accepted ThinkGraph facts (+
   // optional skills/files) the model should ground tasks in. Additive to graphPayload.
   taskLedgerGroundingContext?: Record<string, any>;
-  // Compact, task-scoped, relevance-ranked ActiveGraphContext (stable summary + delta). NOT
-  // the whole graph. Additive to the OWL graphPayload / Task Ledger contract.
-  activeGraphContext?: Record<string, any>;
   blackboard?: Record<string, any>;
   workspaceObjectContext?: Record<string, any>;
   routingManifest?: MagOneRoutingManifest;
