@@ -47,6 +47,15 @@ type KnowledgeGraphFrameworkProps = {
   codeGraphProjectName: string;
   minHeight?: number;
   onRefreshRequest?: () => Promise<void> | void;
+  /** KnowGraph neighborhood navigation (knowgraph kind only). A node click reports the real node
+   *  id so the parent can expand/collapse the bounded neighborhood through stored edges; the back
+   *  callback fires on a blank-canvas click or Escape (collapse one level). Think/code unaffected. */
+  onKnowGraphSelectNode?: (nodeId: string) => void;
+  onKnowGraphBack?: () => void;
+  /** Seed-issuer picker for the KnowGraph neighborhood, surfaced in the existing Controls drawer. */
+  knowGraphIssuerOptions?: Array<{ id: string; ticker: string }>;
+  knowGraphSeedIssuerId?: string | null;
+  onKnowGraphSeedChange?: (issuerId: string) => void;
 };
 
 const DEFAULT_FILTERS: Record<
@@ -257,6 +266,11 @@ export default function KnowledgeGraphFramework({
   codeGraphProjectName,
   minHeight = 360,
   onRefreshRequest,
+  onKnowGraphSelectNode,
+  onKnowGraphBack,
+  knowGraphIssuerOptions,
+  knowGraphSeedIssuerId,
+  onKnowGraphSeedChange,
 }: KnowledgeGraphFrameworkProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [interactionLocked, setInteractionLocked] = useState(false);
@@ -444,69 +458,19 @@ export default function KnowledgeGraphFramework({
     lastGoodCodeGraphData,
     loadingCodeGraph,
   ]);
-  const surfaceStatusMessage = useMemo(() => {
-    if (kind === 'codegraph') {
-      if (loadingCodeGraph) return 'CodeGraph loading...';
-      if (codeGraphError) {
-        return `CodeGraph unavailable: ${compactStatusText(codeGraphError, 180)}`;
-      }
-      if (displayData.nodes.length === 0) {
-        return 'CodeGraph returned zero nodes for the current project.';
-      }
-      return null;
+  // Runtime/diagnostic state (source/counts/errors) is intentionally NOT painted on
+  // the canvas anymore — it lives in the network response and developer console. A
+  // genuine renderer crash still surfaces through CodeGraphSceneErrorBoundary; an
+  // honest non-canvas dev log keeps a graph/error trail without a UI overlay.
+  useEffect(() => {
+    if (kind === 'codegraph' && codeGraphError) {
+      console.warn(`[graph] CodeGraph (${codeGraphProjectName || 'no-project'}): ${codeGraphError}`);
+    } else if (kind === 'thinkgraph') {
+      console.debug(`[graph] ThinkGraph source=${thinkGraphSource || 'host-provided'}`);
+    } else if (kind === 'knowgraph') {
+      console.debug(`[graph] KnowGraph source=${knowGraphSource || 'host-provided'}`);
     }
-    if (kind === 'knowgraph' && filteredData.nodes.length === 0) {
-      return 'KnowGraph returned zero nodes for the selected project.';
-    }
-    if (kind === 'thinkgraph' && filteredData.nodes.length === 0) {
-      return 'ThinkGraph returned zero nodes for the selected project.';
-    }
-    return null;
-  }, [
-    codeGraphError,
-    displayData.nodes.length,
-    filteredData.nodes.length,
-    kind,
-    loadingCodeGraph,
-  ]);
-
-  // Always-visible honesty readout so no tab can silently blank: which graph, where
-  // its data came from, how many nodes/edges reached the renderer, and the status.
-  const diagnostics = useMemo(() => {
-    const nodeCount = displayData.nodes.length;
-    const edgeCount = displayData.edges.length;
-    const label =
-      kind === 'codegraph' ? 'CodeGraph' : kind === 'knowgraph' ? 'KnowGraph' : 'ThinkGraph';
-    let source: string;
-    let status: 'loading' | 'error' | 'empty' | 'ready' | 'unavailable';
-    let error: string | null = null;
-    if (kind === 'codegraph') {
-      source = `layout:${codeGraphProjectName || '(no project)'}`;
-      if (loadingCodeGraph) status = 'loading';
-      else if (codeGraphError) {
-        status = 'error';
-        error = compactStatusText(codeGraphError, 120);
-      } else status = nodeCount === 0 ? 'empty' : 'ready';
-    } else {
-      // Honest SHORT source per tab (thinkgraph-db / knowgraph-neo4j / host-provided /
-      // unavailable). No long backend reasons are painted on the canvas — the detailed reason
-      // lives in the network response / console / CoderReport, not the graph overlay.
-      const provided =
-        kind === 'thinkgraph' ? thinkGraphSource : kind === 'knowgraph' ? knowGraphSource : undefined;
-      source = provided || 'host-provided';
-      status = source === 'unavailable' ? 'unavailable' : nodeCount === 0 ? 'empty' : 'ready';
-    }
-    return { label, source, nodeCount, edgeCount, status, error };
-  }, [
-    codeGraphError,
-    codeGraphProjectName,
-    displayData.edges.length,
-    displayData.nodes.length,
-    kind,
-    knowGraphSource,
-    loadingCodeGraph,
-    thinkGraphSource,
-  ]);
+  }, [kind, codeGraphError, codeGraphProjectName, thinkGraphSource, knowGraphSource]);
 
   const highlightedIds = useMemo(() => {
     if (!contract.focusNodeIds?.length) return null;
@@ -520,6 +484,24 @@ export default function KnowledgeGraphFramework({
     });
     return ids.size > 0 ? ids : null;
   }, [contract.focusNodeIds, normalized.idMap]);
+
+  // Escape returns the KnowGraph canvas to the research-map overview (existing keyboard convention).
+  useEffect(() => {
+    if (kind !== 'knowgraph' || !onKnowGraphBack) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onKnowGraphBack();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [kind, onKnowGraphBack]);
+
+  // Reverse of normalized.idMap (numeric scene id → real string node id) so a KnowGraph node
+  // click can be reported back to the parent by its real id for neighborhood expansion.
+  const numericToStringId = useMemo(() => {
+    const reverse = new Map<number, string>();
+    normalized.idMap.forEach((numeric, id) => reverse.set(numeric, id));
+    return reverse;
+  }, [normalized.idMap]);
 
   const applyContractPatch = (patch: Partial<GraphViewContract>) => {
     onContractChange({
@@ -644,35 +626,6 @@ export default function KnowledgeGraphFramework({
         ) : null}
       </div>
 
-      <div
-        data-testid="knowledge-graph-diagnostics"
-        data-no-surface-promote="true"
-        style={graphGlassPillStyle({
-          position: 'absolute',
-          top: 12,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 5,
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 8,
-          fontSize: 11,
-          lineHeight: 1.3,
-          padding: '6px 10px',
-          maxWidth: 'min(72%, 560px)',
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-        })}
-      >
-        <strong style={{ color: GRAPH_THEME.drawer.inputText }}>{diagnostics.label}</strong>
-        <span style={{ color: GRAPH_THEME.surface.mutedText }}>
-          src={diagnostics.source} · nodes={diagnostics.nodeCount} · edges=
-          {diagnostics.edgeCount} · {diagnostics.status}
-          {diagnostics.error ? ` · err=${diagnostics.error}` : ''}
-        </span>
-      </div>
-
       <button
         type="button"
         onClick={() => setDrawerOpen(true)}
@@ -725,6 +678,27 @@ export default function KnowledgeGraphFramework({
             gap: 12,
           }}
         >
+          {kind === 'knowgraph' && (knowGraphIssuerOptions?.length ?? 0) > 0 ? (
+            <div data-testid="knowgraph-seed-picker" style={{ display: 'grid', gap: 6 }}>
+              <span style={{ fontSize: 11, color: GRAPH_THEME.surface.mutedText }}>Issuer neighborhood</span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {knowGraphIssuerOptions!.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    data-issuer-id={option.id}
+                    onClick={() => onKnowGraphSeedChange?.(option.id)}
+                    style={graphCompanionTabButtonStyle(option.id === knowGraphSeedIssuerId, {
+                      fontSize: 11,
+                      padding: '4px 8px',
+                    })}
+                  >
+                    {option.ticker}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <CodeGraphFilterPanel
             data={normalized.graph}
             enabledLabels={labelAllow}
@@ -813,13 +787,24 @@ export default function KnowledgeGraphFramework({
                 showLabels={showLabels}
                 highlightedIds={highlightedIds}
                 interactionLocked={interactionLocked}
+                // KnowGraph is a stable, readable bounded neighborhood (Bloom-style) — no spin.
+                autoRotate={kind === 'knowgraph' ? false : undefined}
                 cameraAction={cameraCommand?.action || null}
                 cameraActionToken={cameraCommand?.token || 0}
+                onBackgroundClick={kind === 'knowgraph' ? onKnowGraphBack : undefined}
                 onNodeClick={(node) => {
+                  const nodeKey = String(node.id);
+                  if (kind === 'knowgraph' && onKnowGraphSelectNode) {
+                    // Report the REAL node id so the parent can expand/collapse the neighborhood
+                    // through stored edges; also brighten the selected node's path via highlight.
+                    const stringId = numericToStringId.get(Number(node.id)) ?? nodeKey;
+                    applyContractPatch({ focusNodeIds: [nodeKey] });
+                    onKnowGraphSelectNode(stringId);
+                    return;
+                  }
                   const focused = new Set(
                     (contract.focusNodeIds || []).map((value) => String(value)),
                   );
-                  const nodeKey = String(node.id);
                   if (focused.has(nodeKey)) {
                     applyContractPatch({ focusNodeIds: [] });
                     return;
@@ -920,23 +905,6 @@ export default function KnowledgeGraphFramework({
         </button>
       </div>
 
-      {surfaceStatusMessage ? (
-        <div
-          data-no-surface-promote="true"
-          style={graphGlassPillStyle({
-            position: 'absolute',
-            left: 12,
-            bottom: 12,
-            zIndex: 4,
-            fontSize: 11,
-            padding: '6px 8px',
-            maxWidth: 520,
-            lineHeight: 1.35,
-          })}
-        >
-          {surfaceStatusMessage}
-        </div>
-      ) : null}
     </div>
   );
 }

@@ -6,7 +6,7 @@
     "dev": "npm run dev:all",
     "dev:frontend": "npm --workspace client run dev",
     "dev:backend": "npm --workspace apps/backend run serve",
-    "dev:autogen": "cd apps/python-models && .venv\\Scripts\\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8003",
+    "dev:autogen": "cd apps/python-models && .venv\\Scripts\\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8003 --reload",
     "dev:all": "concurrently --names autogen,backend,frontend --prefix-colors cyan,magenta,green \"npm run dev:autogen\" \"npm run dev:backend\" \"npm run dev:frontend\"",
     "mcp:check": "powershell -ExecutionPolicy Bypass -File scripts/check-codebase-memory-mcp.ps1",
     "prisma:generate": "prisma generate --schema=libs/prisma/schema.prisma",
@@ -47,6 +47,8 @@
     "react-dom": "^19.0.0",
     "redis": "^5.8.1",
     "remotion": "^4.0.462",
+    "three": "^0.183.2",
+    "troika-three-text": "^0.52.4",
     "zod": "^3.25.76"
   },
   "devDependencies": {

@@ -445,7 +445,10 @@ async function queryKnowGraphProject(projectId: string): Promise<{
         nodeMap.set(rawId, {
           id: rawId,
           label: neoNodeLabel(rawId, props),
-          type: String(labels[0] || 'NeoEntity'),
+          // Prefer the persisted owlClass property (records written via the
+          // :SemanticRecord MERGE share that label); fall back to the node label
+          // for legacy records whose label already encodes the owlClass.
+          type: String((props as any).owlClass || labels[0] || 'NeoEntity'),
           source: 'know',
           properties: props,
         });
@@ -560,7 +563,10 @@ async function queryKnowGraphExpand(
         nodeMap.set(rawId, {
           id: rawId,
           label: neoNodeLabel(rawId, props),
-          type: String(labels[0] || 'NeoEntity'),
+          // Prefer the persisted owlClass property (records written via the
+          // :SemanticRecord MERGE share that label); fall back to the node label
+          // for legacy records whose label already encodes the owlClass.
+          type: String((props as any).owlClass || labels[0] || 'NeoEntity'),
           source: 'know',
           properties: props,
         });
@@ -873,8 +879,10 @@ router.get('/semantic-graph', async (req, res) => {
  */
 export async function runKnowGraphSemanticSeed(
   projectId: string,
+  records?: SemanticGraphRecord[],
+  seedGroup: string = 'semantic_seed_launch',
 ): Promise<{ httpStatus: number; body: any }> {
-  const seedRecords = buildSemanticSeedRecords(projectId);
+  const seedRecords = records ?? buildSemanticSeedRecords(projectId);
   const errors: string[] = [];
   const warnings: string[] = [];
   const validRecords: SemanticGraphRecord[] = [];
@@ -944,7 +952,7 @@ export async function runKnowGraphSemanticSeed(
         datatypeProperties: record.datatypeProperties || [],
         annotationProperties: record.annotationProperties || [],
         atType: record['@type'] || null,
-        seedTag: 'semantic_seed_launch',
+        seedTag: seedGroup,
         seededAt: new Date().toISOString(),
       };
       const firstUrl = (record.sourceRefs || []).find((ref) => ref.type === 'url' && /^https?:\/\//i.test(String(ref.ref || '')));
@@ -959,7 +967,7 @@ export async function runKnowGraphSemanticSeed(
           SET n.project_id = $projectId,
               n.label = $label,
               n.type = $type,
-              n.seed_group = 'semantic_seed_launch',
+              n.seed_group = $seedGroup,
               n.updated_at = datetime(),
               n += $props
         `,
@@ -967,7 +975,10 @@ export async function runKnowGraphSemanticSeed(
           projectId,
           semanticId: record.id,
           label: record.label,
-          type: String(record.kind || 'entity'),
+          // node.type is what the read path surfaces as owlClass
+          // (legacyGraphToSemanticReadResult), so persist owlClass here when present.
+          type: String(record.owlClass || record.kind || 'entity'),
+          seedGroup,
           props: toNeoSafeProperties(properties),
         },
       );
@@ -1004,7 +1015,7 @@ export async function runKnowGraphSemanticSeed(
                 r.confidence = $confidence,
                 r.summary = $summary,
                 r.sourceRefs = $sourceRefs,
-                r.seed_group = 'semantic_seed_launch',
+                r.seed_group = $seedGroup,
                 r.updated_at = datetime()
           `,
           {
@@ -1012,6 +1023,7 @@ export async function runKnowGraphSemanticSeed(
             fromId,
             toId,
             relId: String(rel.id || `${fromId}->${toId}:${relType}`),
+            seedGroup,
             confidence: typeof rel.confidence === 'number' ? rel.confidence : null,
             summary: String(rel.label || rel.type || ''),
             sourceRefs: JSON.stringify(record.sourceRefs || []),
@@ -1074,6 +1086,156 @@ router.post('/semantic-seed', async (req, res) => {
   }
   const result = await runKnowGraphSemanticSeed(projectId);
   return res.status(result.httpStatus).json(result.body);
+});
+
+// --------------------------------------------------------------------------- //
+// EDGAR cache -> project-scoped SemanticRecord bridge.
+// Reads the existing evidence_sections.jsonl (read-only) and emits records in the
+// exact buildSemanticSeedRecords shape, persisted through runKnowGraphSemanticSeed.
+// Structural filing-item mapping only — no text scanning, no interpretation.
+// --------------------------------------------------------------------------- //
+
+const EDGAR_ITEM_CONTEXT: Record<string, { owlClass: string; itemLabel: string }> = {
+  '1': { owlClass: 'BusinessContext', itemLabel: 'Item 1 - Business' },
+  '1A': { owlClass: 'RiskContext', itemLabel: 'Item 1A - Risk Factors' },
+  part1item2: { owlClass: 'ManagementDiscussionContext', itemLabel: 'Part I Item 2 - MD&A' },
+};
+
+async function readEdgarEvidenceSections(): Promise<any[]> {
+  const fs: any = await import('node:fs');
+  const path: any = await import('node:path');
+  const rel = 'services/knowgraph/edgar_seed_data/evidence_sections.jsonl';
+  const candidates = [
+    path.resolve(process.cwd(), rel),
+    path.resolve(process.cwd(), '..', rel),
+    path.resolve(process.cwd(), '..', '..', rel),
+  ];
+  const file = candidates.find((p: string) => fs.existsSync(p));
+  if (!file) throw new Error(`edgar_evidence_sections_not_found: ${rel}`);
+  return fs.readFileSync(file, 'utf8').split('\n').map((l: string) => l.trim())
+    .filter(Boolean).map((l: string) => JSON.parse(l));
+}
+
+function edgarBaseRecord(args: {
+  id: string; owlClass: string; kind: string; label: string; summary: string;
+  now: string; sourceRefs: SemanticGraphSourceRef[];
+  entities?: Array<{ id: string; label: string; type: string }>;
+  relationships?: SemanticGraphRelationship[];
+  objectProperties?: any[];
+  datatypeProperties?: Array<{ key: string; value: unknown; valueType: string }>;
+  properties?: Record<string, unknown>;
+}): SemanticGraphRecord {
+  return {
+    id: args.id, graph: 'know', kind: args.kind, label: args.label, summary: args.summary,
+    entities: args.entities || [], relationships: args.relationships || [],
+    properties: { confidence: 1, ...(args.properties || {}) },
+    owlClass: args.owlClass, owlIndividual: args.id,
+    objectProperties: args.objectProperties || [],
+    datatypeProperties: args.datatypeProperties || [],
+    annotationProperties: [{ key: 'seedTag', value: 'edgar_core_seed' }],
+    sourceRefs: args.sourceRefs, confidence: 1,
+    provenance: { createdByAgent: 'knowgraph-agent', reasoningSummary: 'structural EDGAR filing-item mapping; no interpretation', createdAt: args.now },
+    vectorText: `${args.owlClass} ${args.label}`,
+    writer: 'knowgraph-agent', writeMode: 'agent-owned',
+    createdAt: args.now, updatedAt: args.now,
+    '@context': 'https://schema.org', '@id': `urn:liquidaity:${args.id}`, '@type': [args.owlClass],
+  } as SemanticGraphRecord;
+}
+
+export function buildEdgarContextRecords(sections: any[]): SemanticGraphRecord[] {
+  const now = new Date().toISOString();
+  const records: SemanticGraphRecord[] = [];
+  const issuers = new Map<string, string>(); // cik -> ticker
+  const contextByIssuer = new Map<string, string[]>();
+
+  for (const s of sections) {
+    const map = EDGAR_ITEM_CONTEXT[String(s.sectionItemId)];
+    if (!map) continue; // unsupported section type skipped explicitly
+    const cik = String(s.cik || '').trim();
+    const acc = String(s.accessionNumber || '').trim();
+    const item = String(s.sectionItemId || '').trim();
+    const url = String(s.originalSecFilingUrl || '').trim();
+    if (!cik || !acc || !item || !url) continue;
+    const issuerId = `edgar:issuer:${cik}`;
+    const contextId = `edgar:${map.owlClass}:${cik}:${acc}:${item}`;
+    const evidenceId = `edgar:evidence:${cik}:${acc}:${item}`;
+    const cacheRef = `services/knowgraph/edgar_seed_data/cache/${acc.replace(/\//g, '_')}__${item}.json`;
+    const sourceRef: SemanticGraphSourceRef = {
+      id: `edgar-src:${acc}:${item}`, type: 'url', ref: url,
+      title: `${s.formType} ${item} (${acc})`,
+      summary: `${s.issuer} ${s.formType} ${item} filing section`,
+      retrievedAt: String(s.extractionTimestamp || now), confidence: 1,
+    };
+    issuers.set(cik, String(s.issuer || cik));
+    if (!contextByIssuer.has(issuerId)) contextByIssuer.set(issuerId, []);
+    contextByIssuer.get(issuerId)!.push(contextId);
+
+    records.push(edgarBaseRecord({
+      id: contextId, owlClass: map.owlClass, kind: 'concept',
+      label: `${s.issuer} ${s.formType} ${map.itemLabel}`,
+      summary: `${map.owlClass} for ${s.issuer} from ${s.formType} ${item} (${acc}); source-bound, no interpretation.`,
+      now, sourceRefs: [sourceRef],
+      entities: [{ id: issuerId, label: String(s.issuer || cik), type: 'Issuer' }],
+      relationships: [{ id: `rel:${contextId}->supported_by`, from: contextId, to: evidenceId, type: 'SUPPORTED_BY', confidence: 1 }],
+      datatypeProperties: [
+        { key: 'cik', value: cik, valueType: 'string' },
+        { key: 'accessionNumber', value: acc, valueType: 'string' },
+        { key: 'formType', value: String(s.formType), valueType: 'string' },
+        { key: 'sectionItemId', value: item, valueType: 'string' },
+      ],
+      properties: { cik, accessionNumber: acc, formType: s.formType, sectionItemId: item, filingDate: s.filingDate || null, filingUrl: url, cacheRef, sourceAsserted: true },
+    }));
+
+    records.push(edgarBaseRecord({
+      id: evidenceId, owlClass: 'EvidenceSection', kind: 'evidence',
+      label: `EvidenceSection ${item} (${acc})`,
+      summary: `Extracted ${s.formType} ${item} section; full text in cache (${s.normalizedTextLength || 0} chars).`,
+      now, sourceRefs: [sourceRef],
+      datatypeProperties: [{ key: 'accessionNumber', value: acc, valueType: 'string' }, { key: 'sectionItemId', value: item, valueType: 'string' }],
+      properties: { cik, accessionNumber: acc, sectionItemId: item, cacheRef, filingUrl: url },
+    }));
+  }
+
+  for (const [cik, ticker] of issuers) {
+    const issuerId = `edgar:issuer:${cik}`;
+    const ctxIds = contextByIssuer.get(issuerId) || [];
+    records.push(edgarBaseRecord({
+      id: issuerId, owlClass: 'Issuer', kind: 'entity', label: ticker,
+      summary: `Issuer ${ticker} (CIK ${cik}).`, now,
+      sourceRefs: [{ id: `edgar-issuer-src:${cik}`, type: 'graph_record', ref: `edgar://issuer/${cik}`, title: ticker, summary: `EDGAR issuer ${ticker}`, retrievedAt: now, confidence: 1 }],
+      objectProperties: ctxIds.map((c) => ({ id: `op:${issuerId}->${c}`, from: issuerId, to: c, type: 'HAS_CONTEXT', confidence: 1 })),
+      datatypeProperties: [{ key: 'cik', value: cik, valueType: 'string' }],
+      properties: { cik, ticker },
+    }));
+  }
+  return records;
+}
+
+export async function runEdgarSemanticBridge(projectId: string): Promise<{ httpStatus: number; body: any }> {
+  const sections = await readEdgarEvidenceSections();
+  const records = buildEdgarContextRecords(sections);
+  if (!records.length) {
+    return { httpStatus: 422, body: { ok: false, projectId, inserted: 0, message: 'no eligible EDGAR sections mapped to context records' } };
+  }
+  return runKnowGraphSemanticSeed(projectId, records, 'edgar_core_seed');
+}
+
+router.post('/edgar-bridge', async (req, res) => {
+  if (!isDevTestModeEnabled()) {
+    return res.status(403).json({ ok: false, error: { message: 'edgar-bridge route is dev/test only' } });
+  }
+  const projectId =
+    (typeof req.query?.projectId === 'string' && req.query.projectId.trim()) ||
+    (typeof req.query?.project_id === 'string' && req.query.project_id.trim()) || '';
+  if (!projectId) {
+    return res.status(400).json({ ok: false, error: { message: 'projectId is required' } });
+  }
+  try {
+    const result = await runEdgarSemanticBridge(projectId);
+    return res.status(result.httpStatus).json(result.body);
+  } catch (error: any) {
+    return res.status(500).json({ ok: false, projectId, message: String(error?.message || error) });
+  }
 });
 
 function buildMultipartForm(

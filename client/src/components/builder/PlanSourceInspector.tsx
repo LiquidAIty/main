@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 
 import type { PlanMissionNodeData } from '../assist/planMissionModel';
-import { GRAPH_THEME } from '../graph/graphVisualTokens';
+import { GRAPH_THEME, graphInspectorPanelStyle } from '../graph/graphVisualTokens';
 
 /**
  * Inspector for the selected user-facing Plan/source node (the real AutoGen Task
@@ -34,11 +34,9 @@ export default function PlanSourceInspector({
         maxHeight: 'calc(100% - 28px)',
         overflow: 'auto',
         padding: 14,
-        borderRadius: 12,
-        border: `1px solid ${GRAPH_THEME.accent.primaryBorder}`,
-        background: 'rgba(11,14,18,0.96)',
         color: GRAPH_THEME.surface.text,
-        boxShadow: '0 18px 44px rgba(0,0,0,0.34)',
+        // Deep-glass inspector material (shell visual only; content unchanged).
+        ...graphInspectorPanelStyle(),
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

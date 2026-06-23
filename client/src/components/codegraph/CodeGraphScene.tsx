@@ -12,7 +12,13 @@ type CodeGraphSceneProps = {
   showLabels: boolean;
   highlightedIds: Set<number> | null;
   onNodeClick: (node: CodeGraphNode) => void;
+  /** Fires when a click lands on empty canvas (no node hit). Optional; used by KnowGraph to
+   *  step back up the explored neighborhood. Omitted callers keep prior behavior. */
+  onBackgroundClick?: () => void;
   interactionLocked?: boolean;
+  /** Explicit auto-rotate override. Defaults to !interactionLocked (prior behavior); KnowGraph
+   *  passes false so its Bloom-style neighborhood stays a stable, readable 2D layout. */
+  autoRotate?: boolean;
   cameraAction?: "zoom_in" | "zoom_out" | "fit_view" | null;
   cameraActionToken?: number;
 };
@@ -20,12 +26,14 @@ type CodeGraphSceneProps = {
 function CameraCommandBridge({
   controlsRef,
   interactionLocked,
+  autoRotate,
   cameraAction,
   cameraActionToken,
   nodes,
 }: {
   controlsRef: MutableRefObject<any>;
   interactionLocked: boolean;
+  autoRotate: boolean;
   cameraAction: "zoom_in" | "zoom_out" | "fit_view" | null;
   cameraActionToken: number;
   nodes: CodeGraphNode[];
@@ -80,9 +88,9 @@ function CameraCommandBridge({
     controls.enableRotate = !interactionLocked;
     controls.enablePan = !interactionLocked;
     controls.enableZoom = !interactionLocked;
-    controls.autoRotate = !interactionLocked;
+    controls.autoRotate = autoRotate;
     controls.update();
-  }, [interactionLocked, controlsRef]);
+  }, [interactionLocked, autoRotate, controlsRef]);
 
   useEffect(() => {
     if (!cameraAction || !cameraActionToken) return;
@@ -410,12 +418,15 @@ export function CodeGraphScene({
   showLabels,
   highlightedIds,
   onNodeClick,
+  onBackgroundClick,
   interactionLocked = false,
+  autoRotate,
   cameraAction = null,
   cameraActionToken = 0,
 }: CodeGraphSceneProps): React.ReactElement {
   const [hoveredNode, setHoveredNode] = useState<CodeGraphNode | null>(null);
   const controlsRef = useRef<any>(null);
+  const effectiveAutoRotate = autoRotate ?? !interactionLocked;
 
   return (
     <Canvas
@@ -423,6 +434,7 @@ export function CodeGraphScene({
       style={{ background: "transparent" }}
       dpr={[1, 2]}
       gl={{ antialias: true, alpha: true }}
+      onPointerMissed={onBackgroundClick ? () => onBackgroundClick() : undefined}
     >
       <ambientLight intensity={0.5} />
       <pointLight position={[500, 500, 500]} intensity={0.6} />
@@ -441,6 +453,7 @@ export function CodeGraphScene({
       <CameraCommandBridge
         controlsRef={controlsRef}
         interactionLocked={interactionLocked}
+        autoRotate={effectiveAutoRotate}
         cameraAction={cameraAction}
         cameraActionToken={cameraActionToken}
         nodes={data.nodes}
@@ -479,7 +492,7 @@ export function CodeGraphScene({
         zoomSpeed={1.5}
         minDistance={10}
         maxDistance={50000}
-        autoRotate={!interactionLocked}
+        autoRotate={effectiveAutoRotate}
         enableRotate={!interactionLocked}
         enablePan={!interactionLocked}
         enableZoom={!interactionLocked}

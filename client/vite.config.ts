@@ -22,6 +22,18 @@ export default defineConfig(() => {
         'react-reconciler',
         'react-reconciler/constants',
         'stats.js',
+        // @react-three/drei -> react-composer (raw ESM) does `import PropTypes from
+        // 'prop-types'`. prop-types is CJS with no named `default`, so without
+        // pre-bundling Vite serves it raw and the scene's dynamic import dies with
+        // "prop-types/index.js does not provide an export named 'default'", blanking
+        // every graph tab. Pre-bundling it adds the esbuild CJS->ESM default interop.
+        'prop-types',
+        // @react-three/postprocessing (raw ESM) pulls `buffer` and does a NAMED
+        // `import { Buffer } from 'buffer'`. The CJS `buffer` polyfill exposes no ESM
+        // named `Buffer` unless pre-bundled, so the scene died with
+        // "buffer/index.js does not provide an export named 'Buffer'" right after the
+        // prop-types leaf. Same CJS-leaf fix.
+        'buffer',
       ],
       // Work around corrupted nested sourcemaps in three-stdlib pulled by
       // @react-three/* during esbuild pre-bundling on dev startup.
@@ -41,6 +53,19 @@ export default defineConfig(() => {
         '@react-three/postprocessing',
       ],
       alias: [
+        // drei@9.110 pins troika-three-text@^0.49.0, whose <Text> defines
+        // customDepthMaterial/customDistanceMaterial as getter-ONLY. three@0.183's
+        // Object3D constructor assigns `this.customDepthMaterial = undefined`, so
+        // `new Text()` throws "Cannot set property customDepthMaterial of #<Text>
+        // which has only a getter" and every graph tab shows "Graph scene
+        // unavailable". troika 0.52.4 makes those settable. npm keeps re-nesting
+        // 0.49.1 under drei (its range can't take 0.52.x and overrides are ignored),
+        // so we pin resolution here to the hoisted 0.52.4 (root direct dep). This is
+        // install-proof: Vite uses this regardless of node_modules nesting.
+        {
+          find: 'troika-three-text',
+          replacement: path.resolve(__dirname, '../node_modules/troika-three-text'),
+        },
         {
           find: '@data-formulator',
           replacement: path.resolve(__dirname, '../data-formulator-main/src'),
@@ -72,6 +97,13 @@ export default defineConfig(() => {
         },
         '/api/layout': {
           target: 'http://127.0.0.1:9749',
+          changeOrigin: true,
+          secure: false,
+        },
+        // Read-only Alpaca paper market data from the Python rails (port 8003),
+        // consumed by the /tradingui surface. Same direct-to-service pattern as /rpc.
+        '/market': {
+          target: 'http://127.0.0.1:8003',
           changeOrigin: true,
           secure: false,
         },

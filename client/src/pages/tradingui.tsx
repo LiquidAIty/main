@@ -1,4 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+
+import { resolveInstrument } from '../features/trading/instrument';
 
 // Theme palettes
 const DARK = { bg: '#0a0f1a', panel: '#111827', edge: '#1f2937', ink: '#e5e7eb' };
@@ -6,7 +9,7 @@ const DIM = { bg: '#0d1422', panel: '#0f1a2b', edge: '#223048', ink: '#e6edf6' }
 
 type Msg = { who: 'User' | 'AI'; text: string };
 
-function TVChart() {
+function TVChart({ symbol = 'NYSE:RDW' }: { symbol?: string }) {
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     let script = document.querySelector<HTMLScriptElement>('#tv-script');
@@ -37,7 +40,7 @@ function TVChart() {
       try {
         new (window as any).TradingView.widget({
           autosize: true,
-          symbol: 'FX:USDJPY',
+          symbol,
           interval: '5',
           timezone: 'Etc/UTC',
           theme: 'dark',
@@ -53,8 +56,78 @@ function TVChart() {
       cancelled = true;
       if (added && script && script.parentNode) script.parentNode.removeChild(script);
     };
-  }, []);
+  }, [symbol]);
   return <div ref={ref} style={{ width: '100%', height: '100%' }} />;
+}
+
+type AlpacaSnapshot = {
+  provider?: string;
+  feed?: string | null;
+  symbol?: string;
+  status?: string;
+  observedAt?: string | null;
+  latestTradePrice?: number | null;
+  latestQuoteBid?: number | null;
+  latestQuoteAsk?: number | null;
+  freshness?: string | null;
+  diagnostics?: string | null;
+};
+
+// Live read-only Alpaca paper snapshot panel. Consumes the Python rails /market proxy.
+// No orders, no balances — market data only. Refreshes every 30s.
+function AlpacaSnapshotPanel({ symbol, edge, panel }: { symbol: string; edge: string; panel: string }) {
+  const [snap, setSnap] = useState<AlpacaSnapshot | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch(`/market/snapshot?symbol=${encodeURIComponent(symbol)}`);
+        const json = (await res.json()) as AlpacaSnapshot;
+        if (!cancelled) {
+          setSnap(json);
+          setErr(null);
+        }
+      } catch (e: any) {
+        if (!cancelled) setErr(e?.message || 'fetch failed');
+      }
+    };
+    // Fetch once on explicit symbol selection / page load. No timed polling — continuous
+    // WorldSignals come later as an explicit signal policy, not a hidden demo timer.
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol]);
+
+  const ok = snap?.status === 'available';
+  const statusLabel = snap?.status || (err ? 'error' : 'loading…');
+  return (
+    <div className="rounded-xl border p-3" style={{ borderColor: edge, background: panel }}>
+      <div className="mb-2 flex items-center justify-between">
+        <div className="font-bold" style={{ color: '#34d399' }}>📈 Market data · Alpaca paper · {symbol}</div>
+        <span className="text-[11px]" style={{ color: ok ? '#34d399' : '#fb923c' }}>{statusLabel}</span>
+      </div>
+      {ok ? (
+        <div className="grid grid-cols-2 gap-1 text-sm" style={{ color: '#cbd5e1' }}>
+          <div>Last</div>
+          <div style={{ textAlign: 'right', color: '#e6edf6', fontWeight: 700 }}>{snap?.latestTradePrice ?? '—'}</div>
+          <div>Bid / Ask</div>
+          <div style={{ textAlign: 'right' }}>{snap?.latestQuoteBid ?? '—'} / {snap?.latestQuoteAsk ?? '—'}</div>
+          <div>Feed</div>
+          <div style={{ textAlign: 'right' }}>{snap?.feed ?? '—'}</div>
+          <div>As of</div>
+          <div style={{ textAlign: 'right', fontSize: 11 }}>{snap?.observedAt ?? '—'}</div>
+        </div>
+      ) : (
+        <div className="text-[12px]" style={{ color: '#94a3b8' }}>
+          {snap?.status === 'provider_unconfigured'
+            ? 'Alpaca paper credentials not configured.'
+            : snap?.diagnostics || err || 'Loading live snapshot…'}
+        </div>
+      )}
+    </div>
+  );
 }
 
 const Pill: React.FC<{ color: string; children: React.ReactNode }> = ({ color, children }) => (
@@ -84,6 +157,10 @@ export default function TradingUI() {
   const [fullscreen, setFullscreen] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'dim'>('dark');
   const colors = theme === 'dark' ? DARK : DIM;
+  const [searchParams] = useSearchParams();
+  // Explicit selected instrument from the URL (e.g. /tradingui?symbol=RDW). No default,
+  // no inference — an unknown/missing symbol shows an honest "select instrument" state.
+  const instrument = resolveInstrument(searchParams.get('symbol'));
 
   const [messages, setMessages] = useState<Msg[]>([
     { who: 'User', text: 'Should I take this trade?' },
@@ -109,6 +186,20 @@ export default function TradingUI() {
     if (!text.trim()) return;
     setMessages((m) => [...m, { who: 'User', text }]);
     setTimeout(() => setMessages((m) => [...m, { who: 'AI', text: 'Noted. Confidence checking…' }]), 400);
+  }
+
+  if (!instrument) {
+    return (
+      <div className="flex h-screen items-center justify-center" style={{ background: colors.bg, color: colors.ink }}>
+        <div className="rounded-xl border p-6 text-center" style={{ borderColor: colors.edge, background: colors.panel, maxWidth: 440 }}>
+          <div className="mb-2 text-lg font-bold">Select an instrument</div>
+          <div className="text-sm" style={{ color: '#94a3b8' }}>
+            This market view requires an explicit symbol — there is no default. Open{' '}
+            <code style={{ color: '#7dd3fc' }}>/tradingui?symbol=RDW</code>.
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -145,8 +236,15 @@ export default function TradingUI() {
                   onClick={() => setFullscreen((v) => !v)}>
             {fullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
           </button>
+          {/* Honest source ownership: the chart is TradingView's own data; Alpaca is the
+              independent market-data source for LiquidAIty (panel below). */}
+          <div className="absolute left-2 top-8 z-10 rounded-md px-2 py-0.5 text-[11px]"
+               style={{ background: '#0b1220cc', color: '#94a3b8', border: `1px solid ${colors.edge}` }}>
+            Chart · TradingView · {instrument.tradingViewSymbol}
+            <span style={{ color: '#64748b' }}> (independent of Alpaca quotes)</span>
+          </div>
           <div className="h-full w-full" style={{ minHeight: 0 }}>
-            <TVChart />
+            <TVChart symbol={instrument.tradingViewSymbol} />
           </div>
         </section>
 
@@ -161,6 +259,8 @@ export default function TradingUI() {
                     onClick={() => setFullscreen(true)}>Fullscreen</button>
 
             <GradientBtn variant="enter" onClick={onEnterTrade}>🚀 ENTER TRADE</GradientBtn>
+
+            <AlpacaSnapshotPanel symbol={instrument.symbol} edge={colors.edge} panel={colors.panel} />
 
             <div className="rounded-xl border p-3" style={{ borderColor: colors.edge, background: colors.panel }}>
               <div className="mb-2 flex items-center justify-between">

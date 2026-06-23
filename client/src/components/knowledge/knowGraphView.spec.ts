@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyKnowGraphRouteError,
   classifyKnowGraphSemanticResult,
+  resolveKnowGraphLivePrecedence,
   resolveKnowGraphSourceLabel,
+  semanticReadResultToLegacyKnowGraph,
 } from './knowGraphView';
 
 describe('KnowGraph read classification (honest, distinct failure modes)', () => {
@@ -76,5 +78,80 @@ describe('KnowGraph honest SHORT source label (no long reasons on canvas)', () =
       expect(ok).not.toContain(reason);
       expect(bad).not.toContain(reason);
     }
+  });
+});
+
+describe('semanticReadResultToLegacyKnowGraph (live EDGAR context records reach normalization)', () => {
+  it('ingests BusinessContext / RiskContext / ManagementDiscussionContext, preserving type + owlClass', () => {
+    const live = {
+      status: 'ok',
+      records: [
+        { id: 'biz-1', label: 'Item 1 - Business', owlClass: 'BusinessContext', properties: { scope: 'grounded_research' } },
+        { id: 'risk-1', label: 'Item 1A - Risk Factors', owlClass: 'RiskContext', properties: {} },
+        { id: 'mdna-1', label: 'Part I Item 2 - MD&A', owlClass: 'ManagementDiscussionContext', properties: {} },
+      ],
+      relationships: [{ id: 'r1', from: 'biz-1', to: 'risk-1', type: 'related_to' }],
+      sourceRefs: [],
+      warnings: [],
+    } as any;
+
+    const adapted = semanticReadResultToLegacyKnowGraph(live);
+    const byId = new Map(adapted.nodes.map((n: any) => [n.id, n]));
+
+    // The exact EDGAR context owlClasses the SPEC requires must survive into the legacy
+    // graph nodes the existing KnowGraph tab normalizes/renders.
+    expect(byId.get('biz-1')?.type).toBe('BusinessContext');
+    expect(byId.get('risk-1')?.type).toBe('RiskContext');
+    expect(byId.get('mdna-1')?.type).toBe('ManagementDiscussionContext');
+    expect(byId.get('biz-1')?.properties.owlClass).toBe('BusinessContext');
+    expect(byId.get('risk-1')?.properties.owlClass).toBe('RiskContext');
+    expect(byId.get('mdna-1')?.properties.owlClass).toBe('ManagementDiscussionContext');
+    expect(adapted.relationships).toHaveLength(1);
+    expect(adapted.status).toBe('ok');
+  });
+
+  it('honest no-records / empty live read yields an empty graph (no fabricated nodes)', () => {
+    const empty = { status: 'unavailable', records: [], relationships: [], sourceRefs: [], warnings: ['no semantic records found for project in persisted graph yet'] } as any;
+    const adapted = semanticReadResultToLegacyKnowGraph(empty);
+    expect(adapted.nodes).toHaveLength(0);
+    expect(adapted.relationships).toHaveLength(0);
+  });
+});
+
+describe('resolveKnowGraphLivePrecedence (live is authoritative; cache only on live failure)', () => {
+  it('a successful live response with data WINS over cached KnowGraph data', () => {
+    expect(
+      resolveKnowGraphLivePrecedence({ liveAuthoritative: true, liveNodeCount: 29, liveRelCount: 12, cacheHasData: true }),
+    ).toEqual({ display: 'live', status: 'Knowledge graph refresh succeeded.' });
+  });
+
+  it('cached KnowGraph data is used ONLY after a live request failure, preserving the honest reason', () => {
+    const out = resolveKnowGraphLivePrecedence({
+      liveAuthoritative: false,
+      liveNodeCount: 0,
+      liveRelCount: 0,
+      liveReason: 'neo4j_unavailable',
+      cacheHasData: true,
+    });
+    expect(out.display).toBe('cache');
+    expect(out.reason).toBe('neo4j_unavailable');
+    expect(out.status.toLowerCase()).toContain('cached');
+  });
+
+  it('live failure with NO cache does not invent a cache (display live, status failed)', () => {
+    const out = resolveKnowGraphLivePrecedence({ liveAuthoritative: false, liveNodeCount: 0, liveRelCount: 0, liveReason: 'route_error', cacheHasData: false });
+    expect(out.display).toBe('live');
+    expect(out.status).toContain('failed');
+  });
+
+  it('an authoritative EMPTY (honest no-records) stays LIVE — never falls back to a stale cache', () => {
+    const out = resolveKnowGraphLivePrecedence({ liveAuthoritative: true, liveNodeCount: 0, liveRelCount: 0, cacheHasData: true });
+    expect(out.display).toBe('live');
+    expect(out.reason).toBe('no_knowgraph_records_for_project');
+  });
+
+  it('never reports "Using cached knowledge graph." after a successful live read', () => {
+    const out = resolveKnowGraphLivePrecedence({ liveAuthoritative: true, liveNodeCount: 10, liveRelCount: 9, cacheHasData: true });
+    expect(out.status).not.toContain('Using cached knowledge graph.');
   });
 });

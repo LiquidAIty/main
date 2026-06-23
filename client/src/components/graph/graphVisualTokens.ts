@@ -126,6 +126,31 @@ export const GRAPH_THEME = {
     pillBackground: 'rgba(17, 22, 29, 0.82)',
     pillBorder: 'rgba(167, 176, 186, 0.24)',
   },
+  // Deep-glass "an object is being inspected" material. A layered shell — NOT a
+  // transparent black box — so dense inspector text stays readable while the panel
+  // reads as thick glass floating over the canvas. Used by the PlanFlow inspector
+  // shells; intentionally distinct from `card.glass*` (agent cards / world / energy
+  // / media keep the lighter card glass).
+  inspector: {
+    // Dark-but-not-dead fill (~0.84) with a top-right teal lift (light source).
+    fill:
+      'radial-gradient(circle at 80% 8%, rgba(55,173,170,0.10), transparent 46%), ' +
+      'linear-gradient(180deg, rgba(18,24,31,0.84), rgba(11,14,18,0.86))',
+    // Directional edge: bright at top-right, dark at bottom-left.
+    edge:
+      'linear-gradient(215deg, rgba(255,255,255,0.30), rgba(55,173,170,0.16) 34%, ' +
+      'rgba(167,176,186,0.08) 66%, rgba(0,0,0,0.20))',
+    // Layered inner shadows give glass thickness (dialed DOWN for a dark UI so it
+    // never blows out to milky white).
+    inset:
+      'inset 0 1px 0 rgba(255,255,255,0.14), ' +
+      'inset 0 16px 28px rgba(255,255,255,0.05), ' +
+      'inset 0 -18px 26px rgba(0,0,0,0.24), ' +
+      'inset 0 0 0 1px rgba(55,173,170,0.05)',
+    // Tinted floating drop shadow (carries the bg hue, not pure black).
+    drop: '0 22px 50px rgba(4,8,12,0.48)',
+    blur: 'blur(18px) saturate(150%)',
+  },
   drawer: {
     panelBackground: 'rgba(11,14,18,0.92)',
     panelBorder: 'rgba(167,176,186,0.2)',
@@ -213,6 +238,24 @@ export function graphGlassCardStyle(overrides?: CSSProperties): CSSProperties {
     boxShadow: `${GRAPH_THEME.card.glassInset}, ${GRAPH_THEME.card.glassShadow}`,
     backdropFilter: 'blur(14px) saturate(120%)',
     WebkitBackdropFilter: 'blur(14px) saturate(120%)',
+    ...overrides,
+  };
+}
+
+// Deep-glass material for focused inspector shells (the "object is being inspected"
+// surface). Returns only the visual material props (radius / border / background /
+// shadow / blur) so callers keep their own layout props. The gradient border is
+// drawn via padding-box fill + border-box edge over a transparent 1px border.
+export function graphInspectorPanelStyle(
+  overrides?: CSSProperties,
+): CSSProperties {
+  return {
+    borderRadius: 14,
+    border: '1px solid transparent',
+    background: `${GRAPH_THEME.inspector.fill} padding-box, ${GRAPH_THEME.inspector.edge} border-box`,
+    boxShadow: `${GRAPH_THEME.inspector.inset}, ${GRAPH_THEME.inspector.drop}`,
+    backdropFilter: GRAPH_THEME.inspector.blur,
+    WebkitBackdropFilter: GRAPH_THEME.inspector.blur,
     ...overrides,
   };
 }

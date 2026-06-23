@@ -30,6 +30,17 @@ from urllib.request import Request, urlopen
 from autogen_core.tools import FunctionTool
 
 from app.python_models.orchestration_contracts import ContextPack, ToolSpec
+from app.python_models.sec_filing_signals import (
+    IssuerRef,
+    SecFilingQuery,
+    find_recent_sec_filing_signals,
+)
+from app.python_models.alpaca_market_data import (
+    AlpacaInstrumentRef,
+    get_historical_bars,
+    get_market_snapshot,
+    get_paper_account_readiness,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +423,97 @@ async def retrieve_knowgraph_context_tool(
 
 
 # ---------------------------------------------------------------------------
+# SEC filing WorldSignals tool (explicit issuer, read-only, no graph write).
+# ---------------------------------------------------------------------------
+
+
+async def find_recent_sec_filing_signals_tool(
+    form_types: list[str],
+    from_date: str,
+    to_date: str,
+    issuer_ticker: str | None = None,
+    issuer_cik: str | None = None,
+    issuer_company_name: str | None = None,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """Mag One tool: find recent SEC filings for an EXPLICIT issuer/form/window.
+
+    Read-only WorldSignals lane. Returns typed filing-signal envelopes (provider
+    status, issuer identity, form type, filing timestamp, the canonical SEC.gov filing
+    URL, and a replay identity). Registering the tool never runs it; it performs no
+    graph write, no research execution, and no trade. An explicit issuer is required —
+    it never auto-runs from ticker wording. Returns provider_unconfigured when the SEC
+    provider is not configured.
+    """
+    query = SecFilingQuery(
+        issuer=IssuerRef(
+            ticker=(str(issuer_ticker).strip() or None) if issuer_ticker else None,
+            cik=(str(issuer_cik).strip() or None) if issuer_cik else None,
+            companyName=(
+                (str(issuer_company_name).strip() or None) if issuer_company_name else None
+            ),
+        ),
+        formTypes=[str(f).strip() for f in (form_types or []) if str(f).strip()],
+        fromDate=str(from_date or "").strip(),
+        toDate=str(to_date or "").strip(),
+        limit=limit if isinstance(limit, int) else 10,
+    )
+    # Blocking urllib call (only when configured) runs off the event loop.
+    result = await asyncio.to_thread(find_recent_sec_filing_signals, query)
+    return result.to_dict()
+
+
+# ---------------------------------------------------------------------------
+# Alpaca read-only market-data + paper-account-readiness tools (no execution).
+# ---------------------------------------------------------------------------
+
+
+async def get_market_snapshot_tool(symbol: str, feed: str = "iex") -> dict[str, Any]:
+    """Mag One tool: latest Alpaca snapshot for an EXPLICIT symbol (read-only, paper feed).
+
+    Returns provider/feed identity, observed timestamp, freshness, and status. No order,
+    no position/account mutation, no live endpoint. Honest provider_unconfigured without
+    paper credentials.
+    """
+    instrument = AlpacaInstrumentRef(symbol=str(symbol or "").strip())
+    result = await asyncio.to_thread(lambda: get_market_snapshot(instrument, feed=feed))
+    return result.to_dict()
+
+
+async def get_historical_bars_tool(
+    symbol: str,
+    timeframe: str,
+    start: str | None = None,
+    end: str | None = None,
+    limit: int = 100,
+    feed: str = "iex",
+) -> dict[str, Any]:
+    """Mag One tool: bounded Alpaca historical bars for an EXPLICIT symbol + timeframe.
+
+    Read-only. No order/position/account mutation, no live endpoint, no streaming. Honest
+    provider_unconfigured without paper credentials.
+    """
+    instrument = AlpacaInstrumentRef(symbol=str(symbol or "").strip())
+    result = await asyncio.to_thread(
+        lambda: get_historical_bars(
+            instrument, str(timeframe or "").strip(), start=start, end=end,
+            limit=limit if isinstance(limit, int) else 100, feed=feed,
+        )
+    )
+    return result.to_dict()
+
+
+async def get_paper_account_readiness_tool() -> dict[str, Any]:
+    """Mag One tool: confirm Alpaca PAPER account availability/status only.
+
+    No positions, no orders, no balances, no mutation. Honest provider_unconfigured
+    without paper credentials.
+    """
+    result = await asyncio.to_thread(get_paper_account_readiness)
+    return result.to_dict()
+
+
+# ---------------------------------------------------------------------------
 # ToolRegistry.
 # ---------------------------------------------------------------------------
 
@@ -589,6 +691,150 @@ def build_default_tool_registry() -> ToolRegistry:
         ),
         retrieve_knowgraph_context_tool,
     )
+    registry.register(
+        ToolSpec(
+            name="find_recent_sec_filing_signals",
+            description=(
+                "Find recent SEC filings for an EXPLICITLY supplied issuer, form types, and "
+                "bounded time window via the SEC filing provider. Read-only WorldSignals lane: "
+                "returns typed filing-signal envelopes with provider status, issuer identity, "
+                "form type, filing timestamp, the canonical SEC.gov filing URL, and a replay "
+                "identity. Use it only when the selected task explicitly asks for an issuer's "
+                "recent filings. Do not call it merely because a ticker is mentioned. It performs "
+                "no graph write, no research execution, and no trade. Returns provider_unconfigured "
+                "when the SEC provider is not configured; never fabricates filings."
+            ),
+            enabled=True,
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "form_types": {"type": "array", "items": {"type": "string"}},
+                    "from_date": {"type": "string"},
+                    "to_date": {"type": "string"},
+                    "issuer_ticker": {"type": ["string", "null"]},
+                    "issuer_cik": {"type": ["string", "null"]},
+                    "issuer_company_name": {"type": ["string", "null"]},
+                    "limit": {"type": "integer", "default": 10},
+                },
+                "required": ["form_types", "from_date", "to_date"],
+            },
+            outputSchema={
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "available",
+                            "provider_unconfigured",
+                            "provider_error",
+                            "invalid_response",
+                        ],
+                    },
+                    "provider": {"type": "string"},
+                    "fetchedAt": {"type": "string"},
+                    "replay": {"type": "object"},
+                    "envelopes": {"type": "array"},
+                    "error": {"type": ["string", "null"]},
+                },
+            },
+        ),
+        find_recent_sec_filing_signals_tool,
+    )
+    registry.register(
+        ToolSpec(
+            name="get_market_snapshot",
+            description=(
+                "Read-only Alpaca latest market snapshot for an EXPLICITLY supplied symbol "
+                "(paper data feed). Returns provider/feed identity, latest trade/quote, observed "
+                "timestamp, freshness, and status. Use only when the selected task explicitly "
+                "needs a symbol's latest market data. It places no order, mutates no position or "
+                "account, and never calls a live trading endpoint. Returns provider_unconfigured "
+                "when paper credentials are not configured; never fabricates a snapshot."
+            ),
+            enabled=True,
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "feed": {"type": "string", "default": "iex"},
+                },
+                "required": ["symbol"],
+            },
+            outputSchema={
+                "type": "object",
+                "properties": {
+                    "provider": {"type": "string"},
+                    "feed": {"type": ["string", "null"]},
+                    "symbol": {"type": "string"},
+                    "status": {"type": "string"},
+                    "observedAt": {"type": ["string", "null"]},
+                    "latestTradePrice": {"type": ["number", "null"]},
+                    "freshness": {"type": ["string", "null"]},
+                },
+            },
+        ),
+        get_market_snapshot_tool,
+    )
+    registry.register(
+        ToolSpec(
+            name="get_historical_bars",
+            description=(
+                "Read-only Alpaca bounded historical bars for an EXPLICITLY supplied symbol and "
+                "timeframe (paper data feed). Returns provider/feed identity, the bars, and "
+                "status. Use only when the selected task explicitly needs historical bars. It "
+                "places no order, mutates nothing, does no streaming, and never calls a live "
+                "endpoint. Returns provider_unconfigured when paper credentials are not configured."
+            ),
+            enabled=True,
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "timeframe": {"type": "string"},
+                    "start": {"type": ["string", "null"]},
+                    "end": {"type": ["string", "null"]},
+                    "limit": {"type": "integer", "default": 100},
+                    "feed": {"type": "string", "default": "iex"},
+                },
+                "required": ["symbol", "timeframe"],
+            },
+            outputSchema={
+                "type": "object",
+                "properties": {
+                    "provider": {"type": "string"},
+                    "feed": {"type": ["string", "null"]},
+                    "symbol": {"type": "string"},
+                    "timeframe": {"type": "string"},
+                    "status": {"type": "string"},
+                    "bars": {"type": "array"},
+                },
+            },
+        ),
+        get_historical_bars_tool,
+    )
+    registry.register(
+        ToolSpec(
+            name="get_paper_account_readiness",
+            description=(
+                "Confirm Alpaca PAPER account availability and status only. Read-only: it returns "
+                "no positions, no orders, no balances, and mutates nothing. Use only to verify the "
+                "paper account is reachable. Returns provider_unconfigured when paper credentials "
+                "are not configured; never fabricates account state."
+            ),
+            enabled=True,
+            inputSchema={"type": "object", "properties": {}, "required": []},
+            outputSchema={
+                "type": "object",
+                "properties": {
+                    "provider": {"type": "string"},
+                    "status": {"type": "string"},
+                    "mode": {"type": "string"},
+                    "accountStatus": {"type": ["string", "null"]},
+                },
+            },
+        ),
+        get_paper_account_readiness_tool,
+    )
     return registry
 
 
@@ -616,6 +862,22 @@ _TOOL_DISPLAY_METADATA: dict[str, dict[str, Any]] = {
     "coder_console_task": {
         "displayName": "Coder Console Task",
         "agentCompatibility": ["magentic_one"],
+    },
+    "find_recent_sec_filing_signals": {
+        "displayName": "SEC Filing Signals",
+        "agentCompatibility": ["magentic_one", "assistant_agent"],
+    },
+    "get_market_snapshot": {
+        "displayName": "Alpaca Market Snapshot",
+        "agentCompatibility": ["magentic_one", "assistant_agent"],
+    },
+    "get_historical_bars": {
+        "displayName": "Alpaca Historical Bars",
+        "agentCompatibility": ["magentic_one", "assistant_agent"],
+    },
+    "get_paper_account_readiness": {
+        "displayName": "Alpaca Paper Account Readiness",
+        "agentCompatibility": ["magentic_one", "assistant_agent"],
     },
     "calculator": {
         "displayName": "Calculator",
