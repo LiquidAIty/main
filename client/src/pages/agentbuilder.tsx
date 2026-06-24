@@ -31,7 +31,6 @@ import AgentBuilderSplitter from '../features/agentbuilder/core/AgentBuilderSpli
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import OpenClaudeConsolePanel from '../features/agentbuilder/console/OpenClaudeConsolePanel';
-import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
 import HarnessWork from '../features/agentbuilder/console/HarnessWork';
 import {
   streamSession,
@@ -9056,10 +9055,10 @@ export default function AgentBuilder(): React.ReactElement {
     compact = false,
     surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => {
-    // The persistent split (chat upper + collapsible PTY terminal lower) lives
-    // only on the primary (non-compact) chat panel so a single project shell
-    // session is started — never duplicated per surface. The companion surface
-    // renders chat alone.
+    // Normal chat is the entire interaction surface: BuilderChat speaking to the
+    // persistent Harness session, with compact real per-turn work shown inline
+    // beneath the active assistant message (HarnessWork). No embedded terminal —
+    // the separate Code Console owns all shell/PTY work.
     const chat = (
       <BuilderChat
         messages={messages}
@@ -9082,11 +9081,7 @@ export default function AgentBuilder(): React.ReactElement {
         data-testid={`${surfaceRole}-surface-chat`}
         style={getSurfaceShellStyle(compact)}
       >
-        {compact ? (
-          <div style={{ height: '100%' }}>{chat}</div>
-        ) : (
-          <HarnessChatPanel chat={chat} targetRoot={UA_DEFAULT_REPO_PATH} projectId={projectId} />
-        )}
+        <div style={{ height: '100%' }}>{chat}</div>
       </div>
     );
   };
