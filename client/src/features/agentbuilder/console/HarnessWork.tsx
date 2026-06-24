@@ -73,7 +73,13 @@ function toRows(events: NativeSessionEvent[]): Row[] {
       const out = asStr((e as { output?: unknown }).output);
       if (!out.trim()) continue;
       const isError = Boolean((e as { isError?: unknown }).isError);
-      rows.push({ tone: isError ? 'error' : 'result', label: preview(out), detail: out });
+      const toolName = asStr((e as { toolName?: unknown }).toolName);
+      const t = out.trim();
+      // A JSON/array result reads as a bare "{" in a one-line preview — label it
+      // by the tool instead and keep the real payload in the expandable detail.
+      const structured = t.startsWith('{') || t.startsWith('[');
+      const label = structured ? `${toolName ? `${toolName} ` : ''}result` : preview(out);
+      rows.push({ tone: isError ? 'error' : 'result', label, detail: out });
     } else if (e.kind === 'error') {
       rows.push({ tone: 'error', label: asStr((e as { message?: unknown }).message) });
     }

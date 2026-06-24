@@ -43,9 +43,13 @@ export default function BuilderChat({
   const [v, setV] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
 
+  // Keep the latest message (and the active turn's inline work) in view — scroll
+  // on new messages and as the active assistant reply streams in.
+  const lastTextLen = messages.length ? messages[messages.length - 1]?.text?.length ?? 0 : 0;
   useEffect(() => {
-    listRef.current?.scrollTo({ top: 999999, behavior: "smooth" });
-  }, [messages.length]);
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages.length, lastTextLen]);
 
   const send = () => {
     if (disabled) return;
@@ -108,8 +112,14 @@ export default function BuilderChat({
             </div>
           );
         })}
+        {/* Inline per-turn work flows with the conversation, beneath the active
+            assistant reply — not a pinned panel that squeezes the message list. */}
+        {activeWork ? (
+          <div style={{ justifySelf: "start", maxWidth: "min(92%, 640px)", width: "100%" }}>
+            {activeWork}
+          </div>
+        ) : null}
       </div>
-      {activeWork ? <div className="px-4" style={{ paddingBottom: 4 }}>{activeWork}</div> : null}
       <div className="px-4 pb-4">
         <div
           className="flex items-center gap-2"
