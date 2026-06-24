@@ -153,6 +153,12 @@ export class GrpcServer {
                 type: 'stdio',
                 command: process.env.LIQUIDAITY_MCP_NODE || 'node',
                 args: [mcpHostPath],
+                // Bind THIS session's MCP host to its session id. connectToServer is
+                // memoized by name + JSON(config), so each distinct session id gets
+                // its OWN cached host process; the host forwards LIQUIDAITY_SESSION_ID
+                // on write_plan_draft so the plan resolves to this session's
+                // project/deck only — never a shared/global context.
+                ...(sessionId ? { env: { LIQUIDAITY_SESSION_ID: sessionId } } : {}),
               } as any)
               if (conn && conn.type === 'connected') {
                 liquidAItyMcpClients = [conn]

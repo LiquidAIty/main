@@ -123,12 +123,11 @@ server.registerTool(
   {
     title: 'Write plan draft',
     description:
-      'When you finish a project plan, write the human-readable plan normally in chat AND call write_plan_draft with the same deliberate plan structure. This persists ONE structured Plan Specification onto the visible canvas Plan object. ' +
-      'Do not use TodoWrite as the project plan (TodoWrite is your private working checklist only). Do not parse your own markdown into this; author the structured steps deliberately. Do not invent downstream capabilities or start any execution — this only records the plan. ' +
-      'Use describe_agent_fabric first when a step has a relevant target flow or capability. Each step needs a concise shortTitle (card label), a one-line shortSummary, and a full detail. Optional fields (expectedOutcome, dependencies, constraints, acceptanceCriteria, targetFlow, targetAgent) only when you actually have them. Dependencies must reference other step ids. step.state is draft or planned only.',
+      'Persist the current project plan onto the visible canvas Plan object. The plan is ALWAYS saved to the user’s current project and deck automatically — you do NOT know and do NOT need any LiquidAIty storage identifiers. NEVER ask the user which project or deck the plan should live in, and never ask for UUIDs, deck names, or internal IDs; those are injected from session context. Just provide the plan contents. ' +
+      'When the user asks for a plan, either create it immediately using sensible, explicitly-stated assumptions, or ask only genuinely useful clarifying questions through AskUserQuestion (e.g. research target, time horizon, primary signals) — do not lecture, stall, or refuse before producing a plan. ' +
+      'Do not use TodoWrite as the project plan (TodoWrite is your private working checklist only). Do not parse your own markdown into this; author the structured steps deliberately. This only records the plan — it never starts execution. ' +
+      'Each step needs a concise shortTitle (card label), a one-line shortSummary, and a full detail. Optional fields (expectedOutcome, dependencies, constraints, acceptanceCriteria, targetFlow, targetAgent) only when you actually have them. Dependencies must reference other step ids. step.state is draft or planned only.',
     inputSchema: {
-      projectId: z.string().min(1),
-      deckId: z.string().min(1),
       objective: z.string().min(1),
       summary: z.string().optional(),
       assumptions: z.array(z.string()).default([]),
@@ -155,7 +154,14 @@ server.registerTool(
     },
   },
   async (args) => {
-    const { json } = await bridge('write_plan_draft', args);
+    // This host process is spawned per Harness session (the gRPC server passes a
+    // per-session LIQUIDAITY_SESSION_ID, which keys the MCP connection cache). Thread
+    // that session id to the bridge so the write binds to THIS session's project/deck
+    // — the model never supplies storage identifiers.
+    const { json } = await bridge('write_plan_draft', {
+      ...args,
+      sessionId: process.env.LIQUIDAITY_SESSION_ID || '',
+    });
     return {
       content: [{ type: 'text', text: JSON.stringify(json, null, 2) }],
       isError: json?.ok === false,

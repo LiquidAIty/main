@@ -3,6 +3,8 @@ import {
   buildAgentFabricProfile,
   buildProjectContext,
   executeVisibleFlow,
+  setSessionBuilderContext,
+  writePlanDraft,
   type AgentFlowDeps,
   type ExecuteVisibleFlowInput,
 } from './liquidAItyAgentFlow';
@@ -185,5 +187,99 @@ describe('executeVisibleFlow', () => {
         deps({ loadDeck: vi.fn(async () => ({ deck: { id: 'd', name: 'x', nodes: [], edges: [] }, latestRun: null, runs: [], meta: {} })) as any }),
       ),
     ).rejects.toThrow(/no_orchestrator_card/);
+  });
+});
+
+describe('writePlanDraft — session-bound context (concurrency safety)', () => {
+  // A loader/saver pair that records every save keyed by `${projectId}/${deckId}`,
+  // so we can prove a write lands ONLY in its own session's deck.
+  function makeStore() {
+    const saved: Record<string, any> = {};
+    const loadDeck = vi.fn(async (projectId: string, deckId: string) => ({
+      deck: {
+        id: deckId,
+        name: deckId,
+        nodes: [{ id: 'card_magentic' }],
+        edges: [],
+        promptTemplates: [],
+        version: 1,
+      },
+      latestRun: null,
+      runs: [],
+      meta: { deckRevision: `rev-${projectId}-${deckId}`, deckSavedAt: null },
+    }));
+    const saveDeck = vi.fn(async (projectId: string, deckId: string, document: any) => {
+      saved[`${projectId}/${deckId}`] = document.planDraft;
+      return { deck: document, meta: { deckRevision: 'rev2', deckSavedAt: null } };
+    });
+    return { saved, loadDeck, saveDeck };
+  }
+  const oneStep = (label: string) => [
+    { shortTitle: `Step ${label}`, shortSummary: `s ${label}`, detail: `detail ${label}` },
+  ];
+
+  it('writes each session only into its own bound deck and never cross-writes', async () => {
+    setSessionBuilderContext('mag1:projA:main', 'projA', 'deckA');
+    setSessionBuilderContext('mag1:projB:main', 'projB', 'deckB');
+    const store = makeStore();
+
+    const resA = await writePlanDraft(
+      { sessionId: 'mag1:projA:main', objective: 'Plan A', steps: oneStep('A') } as any,
+      { loadDeck: store.loadDeck as any, saveDeck: store.saveDeck as any },
+    );
+    const resB = await writePlanDraft(
+      { sessionId: 'mag1:projB:main', objective: 'Plan B', steps: oneStep('B') } as any,
+      { loadDeck: store.loadDeck as any, saveDeck: store.saveDeck as any },
+    );
+
+    expect(store.saveDeck).toHaveBeenCalledWith('projA', 'deckA', expect.anything(), expect.anything());
+    expect(store.saveDeck).toHaveBeenCalledWith('projB', 'deckB', expect.anything(), expect.anything());
+    expect(resA.planDraft.projectId).toBe('projA');
+    expect(resA.planDraft.deckId).toBe('deckA');
+    expect(resB.planDraft.projectId).toBe('projB');
+    expect(resB.planDraft.deckId).toBe('deckB');
+    // A persisted only into A; B only into B; never the other way.
+    expect(store.saved['projA/deckA'].objective).toBe('Plan A');
+    expect(store.saved['projB/deckB'].objective).toBe('Plan B');
+    expect(store.saved['projA/deckB']).toBeUndefined();
+    expect(store.saved['projB/deckA']).toBeUndefined();
+  });
+
+  it('A still writes into A even after B’s session started (no shared global to clobber)', async () => {
+    // Reproduces the old race: B's turn begins (sets B's context) BEFORE A writes.
+    setSessionBuilderContext('mag1:projA:main', 'projA', 'deckA');
+    const store = makeStore();
+    setSessionBuilderContext('mag1:projB:main', 'projB', 'deckB'); // "B starts" — would clobber a global
+
+    const resA = await writePlanDraft(
+      { sessionId: 'mag1:projA:main', objective: 'A after B started', steps: oneStep('A') } as any,
+      { loadDeck: store.loadDeck as any, saveDeck: store.saveDeck as any },
+    );
+    expect(resA.planDraft.projectId).toBe('projA');
+    expect(resA.planDraft.deckId).toBe('deckA');
+    expect(store.saveDeck).toHaveBeenCalledWith('projA', 'deckA', expect.anything(), expect.anything());
+    expect(store.saveDeck).not.toHaveBeenCalledWith('projB', 'deckB', expect.anything(), expect.anything());
+  });
+
+  it('honors explicit ids for the direct bridge route (no session context required)', async () => {
+    const store = makeStore();
+    const res = await writePlanDraft(
+      { projectId: 'directProj', deckId: 'directDeck', objective: 'Direct', steps: oneStep('D') } as any,
+      { loadDeck: store.loadDeck as any, saveDeck: store.saveDeck as any },
+    );
+    expect(res.planDraft.projectId).toBe('directProj');
+    expect(res.planDraft.deckId).toBe('directDeck');
+    expect(store.saved['directProj/directDeck'].objective).toBe('Direct');
+  });
+
+  it('fails closed when neither a known session context nor explicit ids are present', async () => {
+    const store = makeStore();
+    await expect(
+      writePlanDraft(
+        { sessionId: 'mag1:never-bound:main', objective: 'X', steps: oneStep('X') } as any,
+        { loadDeck: store.loadDeck as any, saveDeck: store.saveDeck as any },
+      ),
+    ).rejects.toThrow(/session_context/);
+    expect(store.saveDeck).not.toHaveBeenCalled();
   });
 });

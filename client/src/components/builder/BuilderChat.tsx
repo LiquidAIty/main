@@ -24,6 +24,14 @@ function safeText(value: unknown): string {
   return String(value);
 }
 
+type BuilderChatMessage = {
+  role: "assistant" | "user";
+  text: string;
+  messageId?: string;
+  parentMessageId?: string | null;
+  linkedPlanDraftId?: string | null;
+};
+
 export default function BuilderChat({
   messages,
   onSend,
@@ -31,14 +39,26 @@ export default function BuilderChat({
   disabled = false,
   colors,
   activeWork,
+  forks,
+  replyAnchor,
+  onReplyFromHere,
+  onClearReplyAnchor,
+  onSwitchBranch,
 }: {
-  messages: { role: "assistant" | "user"; text: string }[];
+  messages: BuilderChatMessage[];
   onSend: (t: string) => void;
   knowledgeProjectId: string;
   disabled?: boolean;
   colors: BuilderChatColors;
   /** Compact inline work for the active turn, shown beneath the latest message. */
   activeWork?: ReactNode;
+  /** Fork points: parent messageId → sibling branches diverging after it. */
+  forks?: Record<string, { messageId: string; excerpt: string }[]>;
+  /** The currently selected "reply from here" anchor (composer indicator). */
+  replyAnchor?: { messageId: string; excerpt: string } | null;
+  onReplyFromHere?: (messageId: string, excerpt: string) => void;
+  onClearReplyAnchor?: () => void;
+  onSwitchBranch?: (childMessageId: string) => void;
 }) {
   const [v, setV] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
@@ -109,6 +129,60 @@ export default function BuilderChat({
               >
                 {safeText(m.text)}
               </div>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  marginTop: 3,
+                  justifyContent: isUser ? "flex-end" : "flex-start",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                }}
+              >
+                {m.messageId && onReplyFromHere ? (
+                  <button
+                    type="button"
+                    data-testid="reply-from-here"
+                    data-message-id={m.messageId}
+                    onClick={() => onReplyFromHere(m.messageId as string, m.text.slice(0, 80))}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: "rgba(159,179,200,0.55)",
+                      fontSize: 11,
+                      cursor: "pointer",
+                      padding: 0,
+                    }}
+                    onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "rgba(143,184,255,0.9)")}
+                    onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "rgba(159,179,200,0.55)")}
+                  >
+                    ↩ Reply from here
+                  </button>
+                ) : null}
+                {m.messageId && forks && forks[m.messageId] && forks[m.messageId].length > 1
+                  ? forks[m.messageId].map((sib) => (
+                      <button
+                        key={sib.messageId}
+                        type="button"
+                        data-testid="branch-switch"
+                        data-branch-id={sib.messageId}
+                        title={sib.excerpt}
+                        onClick={() => onSwitchBranch?.(sib.messageId)}
+                        style={{
+                          background: "rgba(143,184,255,0.08)",
+                          border: "1px solid rgba(143,184,255,0.22)",
+                          borderRadius: 999,
+                          color: "rgba(159,179,200,0.8)",
+                          fontSize: 10.5,
+                          cursor: "pointer",
+                          padding: "1px 8px",
+                        }}
+                      >
+                        ⎇ {sib.excerpt || "branch"}
+                      </button>
+                    ))
+                  : null}
+              </div>
             </div>
           );
         })}
@@ -121,6 +195,36 @@ export default function BuilderChat({
         ) : null}
       </div>
       <div className="px-4 pb-4">
+        {replyAnchor ? (
+          <div
+            data-testid="reply-anchor-banner"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginBottom: 6,
+              padding: "5px 10px",
+              borderRadius: 10,
+              background: "rgba(143,184,255,0.08)",
+              border: "1px solid rgba(143,184,255,0.22)",
+              fontSize: 11.5,
+              color: "rgba(200,214,230,0.9)",
+            }}
+          >
+            <span style={{ opacity: 0.7 }}>↩ Replying from:</span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+              {replyAnchor.excerpt}
+            </span>
+            <button
+              type="button"
+              data-testid="reply-anchor-clear"
+              onClick={() => onClearReplyAnchor?.()}
+              style={{ background: "transparent", border: "none", color: "rgba(159,179,200,0.7)", cursor: "pointer", fontSize: 13 }}
+            >
+              ×
+            </button>
+          </div>
+        ) : null}
         <div
           className="flex items-center gap-2"
           style={{

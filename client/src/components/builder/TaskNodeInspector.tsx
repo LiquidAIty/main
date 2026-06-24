@@ -156,6 +156,13 @@ export default function TaskNodeInspector({
         />
         <Row label="Target flow" value={data.targetFlow} />
         <Row label="Target agent" value={data.targetAgent} />
+        {/* Outcome review foundation: the REQUESTED side (expected outcome +
+            acceptance criteria above) is the durable contract; the review slot
+            starts unreviewed and is NEVER auto-marked matched/complete — a real
+            agent result is compared later. */}
+        {data.expectedOutcome || (data.acceptanceCriteria && data.acceptanceCriteria.length) ? (
+          <Row label="Review status" value="unreviewed — no actual result yet" />
+        ) : null}
         <Row label="Approval required" value={data.approvalRequired ? 'yes' : 'no'} />
         <Row label="Next needed" value={data.nextNeeded} pre />
         <Row label="Proof needed" value={data.proofNeeded} pre />

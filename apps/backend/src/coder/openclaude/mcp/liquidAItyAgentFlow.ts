@@ -74,8 +74,13 @@ export type AgentFlowDeps = {
 // The deck's own normalizePlanDraft is the single validation authority; persistence
 // goes through getDeckDocument + saveDeckDocument (revision CAS), never React state.
 export type WritePlanDraftInput = {
-  projectId: string;
-  deckId: string;
+  // The invoking Harness session id (threaded from the MCP host env); resolves the
+  // storage identifiers to THIS session's bound context. The model never supplies
+  // any of these — they are injected server-side / from session context.
+  sessionId?: string;
+  // Explicit identifiers only for the direct bridge route / tests.
+  projectId?: string;
+  deckId?: string;
   objective: string;
   summary?: string;
   assumptions?: string[];
@@ -104,16 +109,49 @@ export type WritePlanDraftResult = {
   stepCount: number;
 };
 
+// Per-session Builder context, keyed by the STABLE Harness session id. Each chat
+// turn records only ITS own session's project/deck (coder.routes /session/chat),
+// and write_plan_draft resolves the storage identifiers ONLY from the calling
+// session's bound context — never a shared mutable global, never "the most recent
+// request". Two concurrent sessions / tabs / projects / users therefore can never
+// write into each other's deck. The session id is threaded chat → gRPC → MCP host
+// → bridge so the resolving call is bound to the exact invoking session.
+const sessionBuilderContexts = new Map<string, { projectId: string; deckId: string }>();
+
+export function setSessionBuilderContext(sessionId: string, projectId: string, deckId: string): void {
+  const s = asString(sessionId).trim();
+  const p = asString(projectId).trim();
+  const d = asString(deckId).trim();
+  if (s && p && d) sessionBuilderContexts.set(s, { projectId: p, deckId: d });
+}
+
+export function getSessionBuilderContext(
+  sessionId: string,
+): { projectId: string; deckId: string } | undefined {
+  return sessionBuilderContexts.get(asString(sessionId).trim());
+}
+
+export function clearSessionBuilderContext(sessionId: string): void {
+  sessionBuilderContexts.delete(asString(sessionId).trim());
+}
+
 export async function writePlanDraft(
   input: WritePlanDraftInput,
   deps: AgentFlowDeps = {},
 ): Promise<WritePlanDraftResult> {
   const loadDeck = deps.loadDeck ?? getDeckDocument;
   const saveDeck = deps.saveDeck ?? saveDeckDocument;
-  const projectId = asString(input?.projectId).trim();
-  const deckId = asString(input?.deckId).trim();
+  // Storage identifiers are NEVER required from the model/user. Resolve them ONLY
+  // from THIS invoking session's bound context (keyed by the threaded session id);
+  // explicit input is honored only for the direct bridge route / tests. There is no
+  // shared mutable "active" context, so a concurrent session cannot redirect this
+  // write into another deck.
+  const sessionId = asString(input?.sessionId).trim();
+  const sessionCtx = sessionId ? sessionBuilderContexts.get(sessionId) : undefined;
+  const projectId = asString(input?.projectId).trim() || asString(sessionCtx?.projectId).trim();
+  const deckId = asString(input?.deckId).trim() || asString(sessionCtx?.deckId).trim();
   if (!projectId || !deckId) {
-    throw new Error('write_plan_draft_missing_project_or_deck');
+    throw new Error('write_plan_draft_missing_session_context');
   }
   const objective = asString(input?.objective).trim();
   const steps = Array.isArray(input?.steps) ? input.steps : [];

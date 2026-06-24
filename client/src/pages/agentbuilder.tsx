@@ -36,6 +36,8 @@ import HarnessWork from '../features/agentbuilder/console/HarnessWork';
 import {
   streamSession,
   answerSession,
+  getTabRuntimeId,
+  loadProjectConversation,
   type NativeSessionEvent,
 } from '../features/agentbuilder/console/openClaudeSessionClient';
 import {
@@ -1992,7 +1994,13 @@ export function buildSingleCardRunDocument(
 const uid = () => Math.random().toString(36).slice(2, 8);
 const PROJECTS_API = '/api/projects';
 const EMPTY_PROJECT_STATE = {
-  messages: [] as { role: 'assistant' | 'user'; text: string }[],
+  messages: [] as {
+    role: 'assistant' | 'user';
+    text: string;
+    messageId?: string;
+    parentMessageId?: string | null;
+    linkedPlanDraftId?: string | null;
+  }[],
   plan: [] as PlanItem[],
   links: [] as LinkRef[],
 };
@@ -5017,8 +5025,34 @@ export default function AgentBuilder(): React.ReactElement {
   }, []);
   // chat + plan intent-contract state must be declared before callbacks/effects that write to them.
   const [messages, setMessages] = useState<
-    { role: 'assistant' | 'user'; text: string }[]
+    {
+      role: 'assistant' | 'user';
+      text: string;
+      messageId?: string;
+      parentMessageId?: string | null;
+      linkedPlanDraftId?: string | null;
+    }[]
   >(() => loadProjectState(activeProject).messages);
+  // Durable conversation identity + per-tab runtime identity. conversationId keys
+  // saved history (reused across reloads in any tab); tabRuntimeId keeps the live
+  // Harness/MCP runtime session isolated per browser tab. The runtime session key
+  // = projectId + conversationId + tabRuntimeId (threaded to the backend/gRPC/MCP).
+  const tabRuntimeId = useMemo(() => getTabRuntimeId(), []);
+  const [conversationId, setConversationId] = useState<string>(
+    () => `conv_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`,
+  );
+  // First live turn of THIS tab rebuilds context from saved history (runtimeFresh).
+  const runtimeFreshRef = useRef(true);
+  // "Reply from here": the selected anchor message for the next user message.
+  const [replyAnchor, setReplyAnchor] = useState<{ messageId: string; excerpt: string } | null>(null);
+  // The active branch leaf (null = latest). Switching this navigates branches
+  // without deleting any path.
+  const [activeLeafId, setActiveLeafId] = useState<string | null>(null);
+  const conversationLoadedForRef = useRef<string | null>(null);
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
   const [planSource, setPlanSource] = useState<unknown>(
     () => loadProjectState(activeProject).plan,
   );
@@ -5030,6 +5064,45 @@ export default function AgentBuilder(): React.ReactElement {
   );
   const [stateLoaded, setStateLoaded] = useState(false);
   const [planExecutionState, setPlanExecutionState] = useState<PlanExecutionState | null>(null);
+  // On project load (after the deck settles), load the most-recent SAVED Harness
+  // conversation so a reload/new tab shows prior messages — authoritative durable
+  // history, not React/localStorage-only state. Runs once per project.
+  useEffect(() => {
+    // Gate on stateLoaded (the deck-load's FINAL completion signal) so this runs
+    // AFTER any deck-load message restore — the saved conversation is authoritative.
+    if (!canvasProjectId || !stateLoaded) return;
+    if (conversationLoadedForRef.current === canvasProjectId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { conversationId: loadedId, messages: stored } = await loadProjectConversation(canvasProjectId);
+        if (cancelled) return;
+        conversationLoadedForRef.current = canvasProjectId;
+        runtimeFreshRef.current = true;
+        if (loadedId) {
+          setConversationId(loadedId);
+          const visible = stored.filter((m) => m.role === 'user' || m.role === 'assistant');
+          if (visible.length > 0) {
+            setMessages(
+              visible.map((m) => ({
+                role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+                text: m.content,
+                messageId: m.messageId,
+                parentMessageId: m.parentMessageId ?? null,
+                linkedPlanDraftId: m.linkedPlanDraftId ?? null,
+              })),
+            );
+          }
+        }
+      } catch {
+        /* keep whatever the deck-load restored */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasProjectId, stateLoaded]);
   // The Plan canvas renders only the real AutoGen / Magentic-One Task Ledger
   // artifact captured for the latest real deck run: one honest viewer node, and
   // nothing when no artifact was returned. The only source is the real artifact
@@ -9020,9 +9093,20 @@ export default function AgentBuilder(): React.ReactElement {
         return;
       }
       if (nativeSessionBusy) return;
-      const conversationId = 'main';
+      // Branch parent: the explicit "Reply from here" anchor, else the current
+      // active leaf (linear continuation). Persisted as parentMessageId so old
+      // branches are never rewritten.
+      const current = messagesRef.current;
+      const parentMessageId =
+        replyAnchor?.messageId ?? (current.length ? current[current.length - 1].messageId ?? null : null);
+      const runtimeFresh = runtimeFreshRef.current;
       // user message + an empty assistant message that fills as text_chunks stream in.
-      setMessages((m) => [...m, { role: 'user', text: trimmed }, { role: 'assistant', text: '' }]);
+      setMessages((m) => [
+        ...m,
+        { role: 'user', text: trimmed, parentMessageId },
+        { role: 'assistant', text: '' },
+      ]);
+      setReplyAnchor(null);
       // Inline work is transient per turn — clear the prior turn's actions.
       setNativeStreamEvents([]);
       setNativeSessionBusy(true);
@@ -9036,7 +9120,7 @@ export default function AgentBuilder(): React.ReactElement {
           const copy = [...m];
           for (let i = copy.length - 1; i >= 0; i--) {
             if (copy[i].role === 'assistant') {
-              copy[i] = { role: 'assistant', text: fn(copy[i].text) };
+              copy[i] = { ...copy[i], role: 'assistant', text: fn(copy[i].text) };
               break;
             }
           }
@@ -9046,7 +9130,37 @@ export default function AgentBuilder(): React.ReactElement {
         projectId: canvasProjectId,
         conversationId,
         message: trimmed,
+        deckId: BUILDER_DECK_ID,
+        tabRuntimeId,
+        parentMessageId,
+        runtimeFresh,
         onEvent: (event) => {
+          if (event.kind === 'saved') {
+            // Adopt the authoritative message ids (so a reload matches, no dupes)
+            // and the durable conversation id (a fresh project may create one).
+            const uid = String((event as { userMessageId?: unknown }).userMessageId || '');
+            const aid = String((event as { assistantMessageId?: unknown }).assistantMessageId || '');
+            const cid = String((event as { conversationId?: unknown }).conversationId || '');
+            if (cid && cid !== conversationId) setConversationId(cid);
+            setMessages((m) => {
+              const copy = [...m];
+              for (let i = copy.length - 1; i >= 0; i--) {
+                if (copy[i].role === 'assistant' && !copy[i].messageId) {
+                  // assistant: id + parent = the user message (keeps the branch lineage intact)
+                  copy[i] = { ...copy[i], messageId: aid || undefined, parentMessageId: uid || copy[i].parentMessageId || null };
+                  for (let j = i - 1; j >= 0; j--) {
+                    if (copy[j].role === 'user' && !copy[j].messageId) {
+                      copy[j] = { ...copy[j], messageId: uid || undefined };
+                      break;
+                    }
+                  }
+                  break;
+                }
+              }
+              return copy;
+            });
+            return;
+          }
           if (event.kind === 'text') {
             // Human-readable model text streams into chat — but once this is a plan
             // turn, suppress further plan narrative from chat entirely.
@@ -9067,6 +9181,25 @@ export default function AgentBuilder(): React.ReactElement {
             if (event.kind === 'tool_result') {
               // Pull the persisted Plan Draft back from authoritative deck state.
               void refreshPlanDraftFromDeck();
+              // Link the Plan-created pointer message to the resulting Plan Draft id.
+              try {
+                const out = JSON.parse(String((event as { output?: unknown }).output || '{}'));
+                const pid = out?.planDraft?.id ? String(out.planDraft.id) : '';
+                if (pid) {
+                  setMessages((m) => {
+                    const copy = [...m];
+                    for (let i = copy.length - 1; i >= 0; i--) {
+                      if (copy[i].role === 'assistant') {
+                        copy[i] = { ...copy[i], linkedPlanDraftId: pid };
+                        break;
+                      }
+                    }
+                    return copy;
+                  });
+                }
+              } catch {
+                /* result not JSON; backend still links it authoritatively */
+              }
             }
           }
           if (event.kind === 'permission') {
@@ -9094,19 +9227,83 @@ export default function AgentBuilder(): React.ReactElement {
           setNativeSessionBusy(false);
           updateLastAssistant((prev) => prev || `Session error: ${err instanceof Error ? err.message : String(err)}`);
         });
+      // After the first live turn of this tab, the runtime session carries context;
+      // later turns no longer rebuild the active tail into the Context Pack.
+      runtimeFreshRef.current = false;
     },
-    [canvasProjectId, nativeSessionBusy, refreshPlanDraftFromDeck],
+    [canvasProjectId, nativeSessionBusy, refreshPlanDraftFromDeck, conversationId, tabRuntimeId, replyAnchor],
   );
 
   const handleNativeAnswer = useCallback(
     (promptId: string, reply: string) => {
       if (!canvasProjectId) return;
-      void answerSession({ projectId: canvasProjectId, conversationId: 'main', promptId, reply });
+      void answerSession({ projectId: canvasProjectId, conversationId, promptId, reply, tabRuntimeId });
       setNativePendingQuestion(null);
       setChatPendingInteraction(false);
     },
-    [canvasProjectId],
+    [canvasProjectId, conversationId, tabRuntimeId],
   );
+
+  // Active branch path + fork points. The active path = lineage of the active leaf
+  // (latest by default); old branches stay in `messages` and are never deleted —
+  // they surface as compact "other replies" at fork points.
+  const chatView = useMemo(() => {
+    const all = messages;
+    const byId: Record<string, (typeof all)[number]> = {};
+    for (const m of all) if (m.messageId) byId[m.messageId] = m;
+    const children: Record<string, typeof all> = {};
+    for (const m of all) {
+      const p = m.parentMessageId;
+      if (p) (children[p] = children[p] || []).push(m);
+    }
+    let leafId: string | null = activeLeafId && byId[activeLeafId] ? activeLeafId : null;
+    if (!leafId) {
+      for (let i = all.length - 1; i >= 0; i -= 1) {
+        if (all[i].messageId) {
+          leafId = all[i].messageId as string;
+          break;
+        }
+      }
+    }
+    const path: typeof all = [];
+    const seen = new Set<string>();
+    let cur: string | null | undefined = leafId;
+    while (cur && byId[cur] && !seen.has(cur)) {
+      seen.add(cur);
+      path.unshift(byId[cur]);
+      cur = byId[cur].parentMessageId;
+    }
+    for (const m of all) {
+      if (!m.messageId && !path.includes(m)) path.push(m);
+    }
+    const forks: Record<string, { messageId: string; excerpt: string }[]> = {};
+    for (const [pid, kids] of Object.entries(children)) {
+      if (kids.length > 1) {
+        forks[pid] = kids
+          .filter((k) => k.messageId)
+          .map((k) => ({ messageId: k.messageId as string, excerpt: (k.text || '').replace(/\s+/g, ' ').trim().slice(0, 60) }));
+      }
+    }
+    return { path, forks };
+  }, [messages, activeLeafId]);
+
+  const switchToBranch = useCallback((childMessageId: string) => {
+    const all = messagesRef.current;
+    let leaf = childMessageId;
+    for (let guard = 0; guard < 1000; guard += 1) {
+      const kids = all.filter((m) => m.parentMessageId === leaf && m.messageId);
+      if (kids.length === 0) break;
+      const last = kids[kids.length - 1];
+      if (!last.messageId) break;
+      leaf = last.messageId;
+    }
+    setActiveLeafId(leaf);
+  }, []);
+
+  const handleReplyFromHere = useCallback((messageId: string, excerpt: string) => {
+    setReplyAnchor({ messageId, excerpt });
+    setActiveLeafId(messageId);
+  }, []);
 
   const renderChatSurface = (
     projectId: string,
@@ -9120,11 +9317,16 @@ export default function AgentBuilder(): React.ReactElement {
     // chat; the separate Code Console remains its own developer tool.
     const chat = (
       <BuilderChat
-        messages={messages}
+        messages={chatView.path}
         onSend={handleNativeSend}
         knowledgeProjectId={projectId}
         disabled={nativeSessionBusy}
         colors={C}
+        forks={chatView.forks}
+        replyAnchor={replyAnchor}
+        onReplyFromHere={handleReplyFromHere}
+        onClearReplyAnchor={() => setReplyAnchor(null)}
+        onSwitchBranch={switchToBranch}
         activeWork={
           <HarnessWork
             events={nativeStreamEvents}
