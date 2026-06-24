@@ -1,0 +1,81 @@
+/**
+ * Frontend client for the persistent OpenClaude QueryEngine session bridge
+ * (`/api/coder/openclaude/session/*`). The browser never speaks gRPC — it talks
+ * to the backend SSE endpoint, which bridges to the gRPC QueryEngine.
+ *
+ * `streamSession` forwards the RAW native event stream (verbatim) to `onEvent`
+ * and resolves with `done.full_text`. No transformation, no curation.
+ */
+
+export type NativeSessionEvent = {
+  kind: 'session' | 'text' | 'tool_start' | 'tool_result' | 'permission' | 'done' | 'error' | 'end' | string;
+  [key: string]: unknown;
+};
+
+const BASE = '/api/coder/openclaude/session';
+
+export async function streamSession(args: {
+  projectId: string;
+  conversationId: string;
+  message: string;
+  onEvent: (event: NativeSessionEvent) => void;
+  signal?: AbortSignal;
+}): Promise<{ finalText: string }> {
+  const res = await fetch(`${BASE}/chat`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      projectId: args.projectId,
+      conversationId: args.conversationId,
+      message: args.message,
+    }),
+    signal: args.signal,
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(`session_chat_failed_${res.status}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalText = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buffer.indexOf('\n\n')) >= 0) {
+      const frame = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      const evMatch = /^event: (.*)$/m.exec(frame);
+      const dataMatch = /^data: ([\s\S]*)$/m.exec(frame);
+      const kind = evMatch?.[1];
+      if (!kind) continue;
+      let data: Record<string, unknown> = {};
+      try {
+        data = JSON.parse(dataMatch?.[1] || '{}');
+      } catch {
+        /* keep empty */
+      }
+      if (kind === 'done') finalText = String((data as { fullText?: string }).fullText ?? finalText);
+      args.onEvent({ ...data, kind });
+    }
+  }
+  return { finalText };
+}
+
+export async function answerSession(args: {
+  projectId: string;
+  conversationId: string;
+  promptId: string;
+  reply: string;
+}): Promise<boolean> {
+  const res = await fetch(`${BASE}/answer`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(args),
+  });
+  const payload = await res.json().catch(() => ({}));
+  return Boolean((payload as { ok?: boolean }).ok);
+}

@@ -31,6 +31,13 @@ import AgentBuilderSplitter from '../features/agentbuilder/core/AgentBuilderSpli
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import OpenClaudeConsolePanel from '../features/agentbuilder/console/OpenClaudeConsolePanel';
+import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
+import HarnessWork from '../features/agentbuilder/console/HarnessWork';
+import {
+  streamSession,
+  answerSession,
+  type NativeSessionEvent,
+} from '../features/agentbuilder/console/openClaudeSessionClient';
 import {
   pollCodingRunUntilTerminal,
 } from '../features/agentbuilder/console/codingRunResultSurface';
@@ -4733,6 +4740,16 @@ function BuilderRailMoonOrb({
 export default function AgentBuilder(): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
   const largeSurface = 'chat' as const;
+  // Left panel = persistent vertical split: chat upper (always visible) + a
+  // collapsible lower reveal hosting the raw native OpenClaude session stream and
+  // the PowerShell PTY. `chatPendingInteraction` auto-expands the lower reveal
+  // when a native question/permission awaits the user.
+  const [chatPendingInteraction, setChatPendingInteraction] = useState(false);
+  const [nativeStreamEvents, setNativeStreamEvents] = useState<NativeSessionEvent[]>([]);
+  const [nativeSessionBusy, setNativeSessionBusy] = useState(false);
+  const [nativePendingQuestion, setNativePendingQuestion] = useState<
+    { promptId: string; question: string; promptType?: string } | null
+  >(null);
   const [workspaceView, setWorkspaceView] = useState<
     | 'chat'
     | 'plan'
@@ -8958,35 +8975,121 @@ export default function AgentBuilder(): React.ReactElement {
     return () => window.removeEventListener('resize', syncAgentsWidths);
   }, [clampAgentsChatWidth, workspaceView]);
 
+  // Native persistent OpenClaude chat: send goes to the gRPC QueryEngine SSE
+  // bridge (NOT the Python deck-run). Upper chat stays compact (user message +
+  // final done.full_text); raw events go to the lower OpenClaude session stream.
+  const handleNativeSend = useCallback(
+    (t: string) => {
+      const trimmed = t.trim();
+      if (!trimmed) return;
+      if (!canvasProjectId) {
+        setMessages((m) => [...m, { role: 'assistant', text: 'Select or create a project before chatting.' }]);
+        return;
+      }
+      if (nativeSessionBusy) return;
+      const conversationId = 'main';
+      // user message + an empty assistant message that fills as text_chunks stream in.
+      setMessages((m) => [...m, { role: 'user', text: trimmed }, { role: 'assistant', text: '' }]);
+      // Inline work is transient per turn — clear the prior turn's actions.
+      setNativeStreamEvents([]);
+      setNativeSessionBusy(true);
+      const updateLastAssistant = (fn: (prev: string) => string) =>
+        setMessages((m) => {
+          const copy = [...m];
+          for (let i = copy.length - 1; i >= 0; i--) {
+            if (copy[i].role === 'assistant') {
+              copy[i] = { role: 'assistant', text: fn(copy[i].text) };
+              break;
+            }
+          }
+          return copy;
+        });
+      void streamSession({
+        projectId: canvasProjectId,
+        conversationId,
+        message: trimmed,
+        onEvent: (event) => {
+          if (event.kind === 'text') {
+            // Human-readable model text streams into the upper chat as it arrives.
+            updateLastAssistant((prev) => prev + String((event as { text?: unknown }).text || ''));
+            return;
+          }
+          // Actual agent actions go to the lower OpenClaude Work reveal (not upper chat).
+          setNativeStreamEvents((ev) => [...ev, event]);
+          if (event.kind === 'permission') {
+            setNativePendingQuestion({
+              promptId: String((event as { promptId?: unknown }).promptId || ''),
+              question: String((event as { question?: unknown }).question || ''),
+              promptType: String((event as { promptType?: unknown }).promptType || ''),
+            });
+            setChatPendingInteraction(true);
+          }
+        },
+      })
+        .then(({ finalText }) => {
+          setNativeSessionBusy(false);
+          setChatPendingInteraction(false);
+          setNativePendingQuestion(null);
+          // Finalize from done.full_text (authoritative); fall back to the streamed text.
+          updateLastAssistant((prev) => finalText || prev || '(no response text)');
+        })
+        .catch((err) => {
+          setNativeSessionBusy(false);
+          updateLastAssistant((prev) => prev || `Session error: ${err instanceof Error ? err.message : String(err)}`);
+        });
+    },
+    [canvasProjectId, nativeSessionBusy],
+  );
+
+  const handleNativeAnswer = useCallback(
+    (promptId: string, reply: string) => {
+      if (!canvasProjectId) return;
+      void answerSession({ projectId: canvasProjectId, conversationId: 'main', promptId, reply });
+      setNativePendingQuestion(null);
+      setChatPendingInteraction(false);
+    },
+    [canvasProjectId],
+  );
+
   const renderChatSurface = (
     projectId: string,
     compact = false,
     surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
-  ) => (
-    <div
-      data-testid={`${surfaceRole}-surface-chat`}
-      style={getSurfaceShellStyle(compact)}
-    >
+  ) => {
+    // The persistent split (chat upper + collapsible PTY terminal lower) lives
+    // only on the primary (non-compact) chat panel so a single project shell
+    // session is started — never duplicated per surface. The companion surface
+    // renders chat alone.
+    const chat = (
+      <BuilderChat
+        messages={messages}
+        onSend={handleNativeSend}
+        knowledgeProjectId={projectId}
+        disabled={nativeSessionBusy}
+        colors={C}
+        activeWork={
+          <HarnessWork
+            events={nativeStreamEvents}
+            busy={nativeSessionBusy}
+            pendingQuestion={nativePendingQuestion}
+            onAnswer={handleNativeAnswer}
+          />
+        }
+      />
+    );
+    return (
       <div
-        style={{
-          height: '100%',
-        }}
+        data-testid={`${surfaceRole}-surface-chat`}
+        style={getSurfaceShellStyle(compact)}
       >
-        <BuilderChat
-          messages={messages}
-          onSend={handleSend}
-          knowledgeProjectId={projectId}
-          disabled={
-            sending ||
-            deckRunBusy ||
-            cardRunBusy ||
-            deckLoadBusy
-          }
-          colors={C}
-        />
+        {compact ? (
+          <div style={{ height: '100%' }}>{chat}</div>
+        ) : (
+          <HarnessChatPanel chat={chat} targetRoot={UA_DEFAULT_REPO_PATH} projectId={projectId} />
+        )}
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderCanvasSurface = (
     compact = false,

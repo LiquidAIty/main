@@ -26,7 +26,7 @@ import {
  *  - No gRPC: the bridge spawns the CLI via node:child_process only.
  */
 
-export type ConsoleMode = 'interactive' | 'print' | 'task';
+export type ConsoleMode = 'interactive' | 'print' | 'task' | 'shell';
 
 export type ConsoleSessionState =
   | 'starting'
@@ -520,6 +520,14 @@ export class OpenClaudeConsoleSessionManager {
       return { ok: false, error: `console_prompt_required_for_${mode}`, missing: [] };
     }
 
+    // Project shell session: a real platform shell (PowerShell on Windows)
+    // rooted at the project. Reuses the SAME PTY/stream/transcript machinery as
+    // the OpenClaude CLI sessions, but does NOT resolve or require the OpenClaude
+    // runtime, any provider, or a model — it is a plain shell, not an agent.
+    if (mode === 'shell') {
+      return this.startShellSession(request, targetRoot);
+    }
+
     const runtime = this.resolveRuntime(this.workspaceRoot, this.env);
     if (!runtime.ready) {
       return { ok: false, error: 'console_runtime_unavailable', missing: runtime.missing };
@@ -574,6 +582,73 @@ export class OpenClaudeConsoleSessionManager {
         },
         shell: runtime.shell,
         interactive,
+      });
+    } catch (error) {
+      session.markFailed(
+        `console_spawn_failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return { ok: true, session };
+    }
+    session.attachChild(child);
+    session.markRunning();
+    return { ok: true, session };
+  }
+
+  /** The real platform shell command for a project terminal (PowerShell on win32). */
+  private resolveShellCommand(): { command: string; args: string[]; describe: string } {
+    if (process.platform === 'win32') {
+      const command = 'powershell.exe';
+      return { command, args: ['-NoLogo'], describe: 'powershell.exe -NoLogo (project shell)' };
+    }
+    const command = String(this.env.SHELL || '/bin/bash');
+    return { command, args: ['-i'], describe: `${command} -i (project shell)` };
+  }
+
+  /**
+   * Start a real project shell session. Spawns the platform shell via the same
+   * PTY (or pipe fallback) path used by CLI sessions, rooted at targetRoot, with
+   * NO OpenClaude runtime and NO provider/model. Output streams through the same
+   * bounded transcript; input is forwarded to the shell. Not faked.
+   */
+  private startShellSession(
+    request: StartConsoleSessionRequest,
+    targetRoot: string,
+  ): StartConsoleSessionResult {
+    const shell = this.resolveShellCommand();
+    const args = request.args && request.args.length > 0 ? [...request.args] : shell.args;
+    const usePty = this.ptySpawn != null;
+    const transportMode: ConsoleTransportMode = usePty ? 'pty' : 'pipe';
+    const info: ConsoleSessionInfo = {
+      id: this.idFactory(),
+      targetRoot,
+      mode: 'shell',
+      state: 'starting',
+      commandPath: redactConsoleSecrets(shell.describe),
+      runtimeSource: 'shell',
+      transportMode,
+      provider: null,
+      model: null,
+      interactiveSupported: true,
+      pid: null,
+      startedAt: this.now(),
+      exitedAt: null,
+      exitCode: null,
+      exitSignal: null,
+      warnings: [],
+      error: null,
+    };
+
+    const session = new OpenClaudeConsoleSession(info, this.maxBufferChars, this.now);
+    this.sessions.set(info.id, session);
+
+    const spawnFn = usePty ? this.ptySpawn! : this.spawnProcess;
+    let child: ConsoleChild;
+    try {
+      child = spawnFn(shell.command, args, {
+        cwd: targetRoot,
+        env: { ...this.env },
+        shell: false,
+        interactive: true,
       });
     } catch (error) {
       session.markFailed(

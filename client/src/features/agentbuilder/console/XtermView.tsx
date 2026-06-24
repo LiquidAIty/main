@@ -13,9 +13,11 @@ export type XtermViewProps = {
   interactive: boolean;
   onInput?: (data: string) => void;
   onResize?: (cols: number, rows: number) => void;
+  /** Render with a transparent background so text sits on the host panel. */
+  transparent?: boolean;
 };
 
-export default function XtermView({ chunks, interactive, onInput, onResize }: XtermViewProps) {
+export default function XtermView({ chunks, interactive, onInput, onResize, transparent = false }: XtermViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<{ term: { write(d: string): void; dispose(): void }; written: number } | null>(
     null,
@@ -40,7 +42,8 @@ export default function XtermView({ chunks, interactive, onInput, onResize }: Xt
           convertEol: true,
           fontSize: 12,
           fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-          theme: { background: '#0b0f14', foreground: '#d7e0ea' },
+          allowTransparency: transparent,
+          theme: { background: transparent ? 'rgba(0,0,0,0)' : '#0b0f14', foreground: '#d7e0ea' },
           cursorBlink: interactive,
           disableStdin: !interactive,
         });

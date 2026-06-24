@@ -14,11 +14,119 @@ import {
 import { routeCodingTaskToConsole } from '../coder/openclaude/console/consoleTaskRouter';
 import { codingRunLifecycleService } from '../coder/openclaude/console/codingRunLifecycle';
 import { buildMagOneRoutingDiagnostics, runCardWithContract } from '../cards/runtime';
+import {
+  buildAgentFabricProfile,
+  buildProjectContext,
+  executeVisibleFlow,
+} from '../coder/openclaude/mcp/liquidAItyAgentFlow';
+import {
+  deriveSessionId,
+  startGrpcTurn,
+  type GrpcTurnHandle,
+} from '../coder/openclaude/session/grpcChatClient';
 
 const router = Router();
 export const OPENCLAUDE_HARNESS_ROUTE_PREFIX = '/coder/openclaude';
 
-const CONSOLE_MODES: ConsoleMode[] = ['interactive', 'print', 'task'];
+// ── LiquidAIty MCP bridge (SDK-free) ───────────────────────────────────────
+// Internal JSON endpoints that run the proven MCP handlers server-side, where
+// the backend already owns deck state + the Python transport. These import NO
+// MCP SDK (liquidAItyAgentFlow.ts is SDK-free), so they are safe in the Nx serve
+// graph. The separate MCP host process (which DOES use the SDK) bridges MCP tool
+// / resource calls to these endpoints — single authority, no duplicated state.
+router.post('/mcp-bridge/project_context', async (req, res) => {
+  try {
+    const ctx = await buildProjectContext({
+      projectId: String(req.body?.projectId || ''),
+      deckId: String(req.body?.deckId || ''),
+      selectedCardId: typeof req.body?.selectedCardId === 'string' ? req.body.selectedCardId : undefined,
+    });
+    return res.json({ ok: true, projectContext: ctx });
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'project_context_failed' });
+  }
+});
+
+router.post('/mcp-bridge/describe_agent_fabric', async (req, res) => {
+  try {
+    const profile = await buildAgentFabricProfile({
+      projectId: String(req.body?.projectId || ''),
+      deckId: String(req.body?.deckId || ''),
+      selectedCardId: typeof req.body?.selectedCardId === 'string' ? req.body.selectedCardId : undefined,
+    });
+    return res.json({ ok: true, agentFabricProfile: profile });
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'describe_agent_fabric_failed' });
+  }
+});
+
+router.post('/mcp-bridge/execute_visible_flow', async (req, res) => {
+  try {
+    const result = await executeVisibleFlow(req.body);
+    return res.json({ ok: result.status !== 'failed', result });
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'execute_visible_flow_failed' });
+  }
+});
+
+// ── Persistent native OpenClaude session bridge (BuilderChat -> gRPC) ───────
+// SSE stream of the REAL QueryEngine event stream, verbatim. One stable session
+// id per (projectId, conversationId). The browser never touches gRPC.
+const activeGrpcTurns = new Map<string, GrpcTurnHandle>();
+
+router.post('/openclaude/session/chat', async (req, res) => {
+  const projectId = String(req.body?.projectId || '');
+  const conversationId = String(req.body?.conversationId || 'default');
+  const message = String(req.body?.message || '');
+  const model = typeof req.body?.model === 'string' ? req.body.model : undefined;
+  const workingDirectory = String(
+    req.body?.workingDirectory || process.env.LIQUIDAITY_GRPC_CWD || 'C:/Projects/main',
+  );
+  if (!projectId || !message) {
+    return res.status(400).json({ ok: false, error: 'projectId_and_message_required' });
+  }
+  const sessionId = deriveSessionId(projectId, conversationId);
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write(`event: session\ndata: ${JSON.stringify({ sessionId })}\n\n`);
+  try {
+    const handle = await startGrpcTurn({ sessionId, message, workingDirectory, model }, (event) => {
+      res.write(`event: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`);
+    });
+    activeGrpcTurns.set(sessionId, handle);
+    req.on('close', () => {
+      handle.cancel();
+      activeGrpcTurns.delete(sessionId);
+    });
+    await handle.done;
+  } catch (error) {
+    res.write(
+      `event: error\ndata: ${JSON.stringify({ message: error instanceof Error ? error.message : 'grpc_turn_failed' })}\n\n`,
+    );
+  } finally {
+    activeGrpcTurns.delete(sessionId);
+    res.write('event: end\ndata: {}\n\n');
+    res.end();
+  }
+  return undefined;
+});
+
+router.post('/openclaude/session/answer', (req, res) => {
+  const sessionId = deriveSessionId(
+    String(req.body?.projectId || ''),
+    String(req.body?.conversationId || 'default'),
+  );
+  const handle = activeGrpcTurns.get(sessionId);
+  if (!handle) return res.status(404).json({ ok: false, error: 'no_active_turn' });
+  handle.answer(String(req.body?.promptId || ''), String(req.body?.reply || ''));
+  return res.json({ ok: true });
+});
+
+const CONSOLE_MODES: ConsoleMode[] = ['interactive', 'print', 'task', 'shell'];
 
 function parseConsoleMode(value: unknown): ConsoleMode {
   return CONSOLE_MODES.includes(value as ConsoleMode) ? (value as ConsoleMode) : 'interactive';

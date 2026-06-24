@@ -282,8 +282,8 @@ export default function AgentBuilderRail({
       {visibleRailItems.showOpenClaudeConsole ? (
         <button
           type="button"
-          title="Code Console"
-          aria-label="Code Console"
+          title="Terminal"
+          aria-label="Terminal"
           data-testid="rail-openclaude-console-button"
           onClick={onOpenOpenClaudeConsole}
           className="p-2 rounded"

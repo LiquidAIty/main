@@ -13,8 +13,8 @@ export const CODER_DISPLAY_NAMES = {
   card: 'Coder',
   /** Left rail item + terminal panel title + feature name. */
   console: 'Code Console',
-  /** Runtime/engine label. */
-  runtime: 'Coder Engine',
+  /** Runtime/engine label (the OpenClaude/Local Coder runtime is now "Harness"). */
+  runtime: 'Harness',
   /** Task/session label. */
   session: 'Coder Session',
 } as const;

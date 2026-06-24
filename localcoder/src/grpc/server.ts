@@ -4,6 +4,9 @@ import path from 'path'
 import { randomUUID } from 'crypto'
 import { QueryEngine } from '../QueryEngine.js'
 import { getTools } from '../tools.js'
+import { connectToServer, fetchToolsForClient } from '../services/mcp/client.js'
+import type { MCPServerConnection } from '../services/mcp/types.js'
+import type { Tool } from '../Tool.js'
 import { getDefaultAppState } from '../state/AppStateStore.js'
 import { AppState } from '../state/AppState.js'
 import { FileStateCache, READ_FILE_STATE_CACHE_SIZE } from '../utils/fileStateCache.js'
@@ -85,11 +88,44 @@ export class GrpcServer {
 
           const toolNameById = new Map<string, string>()
 
+          // Load exactly ONE LiquidAIty MCP client (the separate host process that
+          // bridges to backend authority) using the runtime's existing MCP
+          // mechanism. Guarded: a failed/absent host degrades to no MCP, never a
+          // crash. No parallel tool framework; no vendored-internal redesign.
+          let liquidAItyMcpClients: MCPServerConnection[] = []
+          let liquidAItyMcpTools: Tool[] = []
+          const mcpHostPath = process.env.LIQUIDAITY_MCP_HOST
+          if (mcpHostPath) {
+            try {
+              const conn = await connectToServer('liquidaity', {
+                type: 'stdio',
+                command: process.env.LIQUIDAITY_MCP_NODE || 'node',
+                args: [mcpHostPath],
+              } as any)
+              if (conn && conn.type === 'connected') {
+                liquidAItyMcpClients = [conn]
+                // Merge the MCP client's tools into the model's tool list so the
+                // session can actually call them (connecting the client alone does
+                // not surface its tools to the model).
+                try {
+                  liquidAItyMcpTools = await fetchToolsForClient(conn)
+                } catch (toolErr) {
+                  console.error('[grpc] liquidaity MCP tool fetch failed:', toolErr instanceof Error ? toolErr.message : toolErr)
+                }
+                console.log(`[grpc] liquidaity MCP client connected; mcpTools=${liquidAItyMcpTools.length}`)
+              } else {
+                console.error('[grpc] liquidaity MCP client not connected:', conn?.type)
+              }
+            } catch (err) {
+              console.error('[grpc] liquidaity MCP client load failed:', err instanceof Error ? err.message : err)
+            }
+          }
+
           engine = new QueryEngine({
             cwd: req.working_directory || process.cwd(),
-            tools: getTools(appState.toolPermissionContext), // Gets all available tools
+            tools: [...getTools(appState.toolPermissionContext), ...liquidAItyMcpTools], // base tools + LiquidAIty MCP tools
             commands: [], // Slash commands
-            mcpClients: [],
+            mcpClients: liquidAItyMcpClients,
             agents: [],
             ...(previousMessages.length > 0 ? { initialMessages: previousMessages } : {}),
             includePartialMessages: true,

@@ -6,7 +6,7 @@
  * this to start/stop sessions, send input, and read the live transcript.
  */
 
-export type ConsoleMode = 'interactive' | 'print' | 'task';
+export type ConsoleMode = 'interactive' | 'print' | 'task' | 'shell';
 
 export type ConsoleSessionState = 'starting' | 'running' | 'exited' | 'failed';
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import UploadAttachment from "../knowledge/UploadAttachment";
 
@@ -30,12 +30,15 @@ export default function BuilderChat({
   knowledgeProjectId,
   disabled = false,
   colors,
+  activeWork,
 }: {
   messages: { role: "assistant" | "user"; text: string }[];
   onSend: (t: string) => void;
   knowledgeProjectId: string;
   disabled?: boolean;
   colors: BuilderChatColors;
+  /** Compact inline work for the active turn, shown beneath the latest message. */
+  activeWork?: ReactNode;
 }) {
   const [v, setV] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
@@ -106,6 +109,7 @@ export default function BuilderChat({
           );
         })}
       </div>
+      {activeWork ? <div className="px-4" style={{ paddingBottom: 4 }}>{activeWork}</div> : null}
       <div className="px-4 pb-4">
         <div
           className="flex items-center gap-2"

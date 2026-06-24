@@ -481,7 +481,7 @@ function deriveRuntimeOptions(localConfig: AgentManagerLocalConfig | null | unde
 
 function getRuntimeTypeLabel(runtimeType: AgentCardRuntimeType): string {
   if (runtimeType === 'assistant_agent') return 'Assist';
-  if (runtimeType === 'local_coder') return 'Local Coder';
+  if (runtimeType === 'local_coder') return 'Harness';
   if (runtimeType === 'magentic_one') return 'Magentic';
   if (runtimeType === 'graph_flow') return 'Legacy Workflow (compat)';
   return `Legacy: ${runtimeType}`;
