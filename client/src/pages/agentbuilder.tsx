@@ -52,6 +52,7 @@ import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBui
 import TradingCanvasSurface from '../features/trading/TradingCanvasSurface';
 import {
   buildTaskLedgerArtifactGraph,
+  buildPlanDraftGraph,
   shouldRenderCanvasEdge,
   type PlanMissionGraph,
   type PlanMissionFlowEdge,
@@ -5041,6 +5042,18 @@ export default function AgentBuilder(): React.ReactElement {
   // replaces it. (Still real AutoGen artifacts only — never fabricated.)
   const lastTaskArtifactRef = useRef<Record<string, unknown> | null>(null);
   const planFlowMissionGraph = useMemo<PlanMissionGraph>(() => {
+    // The Harness native Plan Draft (write_plan_draft) is the canonical structured
+    // source for the visible Plan canvas. When the deck carries one, it owns the
+    // Plan root + step nodes; otherwise fall back to the existing real Task Ledger
+    // artifact projection. No markdown/prose parsing, no TodoWrite source.
+    const planDraft = deck?.planDraft ?? null;
+    if (
+      planDraft &&
+      (String(planDraft.objective || '').trim() ||
+        (Array.isArray(planDraft.steps) && planDraft.steps.length > 0))
+    ) {
+      return buildPlanDraftGraph(planDraft);
+    }
     const steps = latestDeckRun?.steps || [];
     let latestArtifact: Record<string, unknown> | null = null;
     for (const step of steps) {
@@ -5063,7 +5076,7 @@ export default function AgentBuilder(): React.ReactElement {
         ? latestArtifact
         : lastTaskArtifactRef.current ?? latestArtifact;
     return buildTaskLedgerArtifactGraph(effectiveArtifact);
-  }, [latestDeckRun]);
+  }, [latestDeckRun, deck?.planDraft]);
   // Unified project canvas (V0) — BUS TOPOLOGY: the task graph (Task Ledger Artifact
   // + task objects) sits ABOVE the Mag One bus (upstream). Agent cards stay plugged
   // into the bus sides; the result/proof zone is reserved BELOW the bus/agents. The
@@ -8978,6 +8991,26 @@ export default function AgentBuilder(): React.ReactElement {
   // Native persistent OpenClaude chat: send goes to the gRPC QueryEngine SSE
   // bridge (NOT the Python deck-run). Upper chat stays compact (user message +
   // final done.full_text); raw events go to the lower OpenClaude session stream.
+  // After the Harness writes a Plan Draft via write_plan_draft (authoritative deck
+  // persistence), reload just the persisted planDraft so the Plan canvas projects
+  // exactly what was written — never a React-only echo of the tool result.
+  const refreshPlanDraftFromDeck = useCallback(async () => {
+    if (!canvasProjectId) return;
+    try {
+      const res = await fetch(`${PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}`, {
+        credentials: 'include',
+      });
+      if (!res.ok) return;
+      const data = await res.json().catch(() => null);
+      const nextPlanDraft = (data as { deck?: { planDraft?: unknown } })?.deck?.planDraft ?? null;
+      setDeck((currentDeck) =>
+        currentDeck ? { ...currentDeck, planDraft: nextPlanDraft as DeckDocument['planDraft'] } : currentDeck,
+      );
+    } catch {
+      /* best-effort refresh; the next deck load picks it up */
+    }
+  }, [canvasProjectId, setDeck]);
+
   const handleNativeSend = useCallback(
     (t: string) => {
       const trimmed = t.trim();
@@ -8993,6 +9026,11 @@ export default function AgentBuilder(): React.ReactElement {
       // Inline work is transient per turn — clear the prior turn's actions.
       setNativeStreamEvents([]);
       setNativeSessionBusy(true);
+      // A plan turn: once the Harness commits a Plan Draft, ALL finalized plan
+      // content is suppressed from chat (the structured plan lives only on the
+      // canvas/Inspector). Chat keeps a brief pointer; the readable markdown plan,
+      // step lists, dependencies, and payloads never appear in chat.
+      let planTurn = false;
       const updateLastAssistant = (fn: (prev: string) => string) =>
         setMessages((m) => {
           const copy = [...m];
@@ -9010,12 +9048,27 @@ export default function AgentBuilder(): React.ReactElement {
         message: trimmed,
         onEvent: (event) => {
           if (event.kind === 'text') {
-            // Human-readable model text streams into the upper chat as it arrives.
-            updateLastAssistant((prev) => prev + String((event as { text?: unknown }).text || ''));
+            // Human-readable model text streams into chat — but once this is a plan
+            // turn, suppress further plan narrative from chat entirely.
+            if (!planTurn) {
+              updateLastAssistant((prev) => prev + String((event as { text?: unknown }).text || ''));
+            }
             return;
           }
           // Actual agent actions go to the lower OpenClaude Work reveal (not upper chat).
           setNativeStreamEvents((ev) => [...ev, event]);
+          if (
+            (event.kind === 'tool_start' || event.kind === 'tool_result') &&
+            /write_plan_draft/i.test(String((event as { toolName?: unknown }).toolName || ''))
+          ) {
+            // Suppress all plan content from chat; leave only a brief pointer.
+            planTurn = true;
+            updateLastAssistant(() => 'Plan created on canvas.');
+            if (event.kind === 'tool_result') {
+              // Pull the persisted Plan Draft back from authoritative deck state.
+              void refreshPlanDraftFromDeck();
+            }
+          }
           if (event.kind === 'permission') {
             setNativePendingQuestion({
               promptId: String((event as { promptId?: unknown }).promptId || ''),
@@ -9030,15 +9083,19 @@ export default function AgentBuilder(): React.ReactElement {
           setNativeSessionBusy(false);
           setChatPendingInteraction(false);
           setNativePendingQuestion(null);
-          // Finalize from done.full_text (authoritative); fall back to the streamed text.
-          updateLastAssistant((prev) => finalText || prev || '(no response text)');
+          // Plan turns keep only the brief pointer — the finalized plan (markdown,
+          // steps, deps, payload) is never echoed into chat. Otherwise finalize
+          // from done.full_text (authoritative), falling back to streamed text.
+          updateLastAssistant((prev) =>
+            planTurn ? 'Plan created on canvas.' : finalText || prev || '(no response text)',
+          );
         })
         .catch((err) => {
           setNativeSessionBusy(false);
           updateLastAssistant((prev) => prev || `Session error: ${err instanceof Error ? err.message : String(err)}`);
         });
     },
-    [canvasProjectId, nativeSessionBusy],
+    [canvasProjectId, nativeSessionBusy, refreshPlanDraftFromDeck],
   );
 
   const handleNativeAnswer = useCallback(

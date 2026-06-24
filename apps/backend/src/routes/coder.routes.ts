@@ -18,6 +18,7 @@ import {
   buildAgentFabricProfile,
   buildProjectContext,
   executeVisibleFlow,
+  writePlanDraft,
 } from '../coder/openclaude/mcp/liquidAItyAgentFlow';
 import {
   deriveSessionId,
@@ -66,6 +67,17 @@ router.post('/mcp-bridge/execute_visible_flow', async (req, res) => {
     return res.json({ ok: result.status !== 'failed', result });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'execute_visible_flow_failed' });
+  }
+});
+
+// Persist ONE structured Plan Draft onto the authoritative deck (revision CAS).
+// Sole structured source for the visible canvas Plan object — no execution starts.
+router.post('/mcp-bridge/write_plan_draft', async (req, res) => {
+  try {
+    const result = await writePlanDraft(req.body);
+    return res.json(result);
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'write_plan_draft_failed' });
   }
 });
 

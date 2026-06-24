@@ -156,6 +156,40 @@ export type DeckViewport = {
   zoom: number;
 };
 
+// A deliberate, structured Plan Specification the Harness writes via the
+// write_plan_draft MCP capability — the single structured source for the visible
+// canvas Plan object. Not an execution task ledger, not a TodoWrite checklist.
+export type PlanDraftStepState = 'draft' | 'planned';
+
+export type PlanDraftStep = {
+  id: string;
+  shortTitle: string;
+  shortSummary: string;
+  detail: string;
+  expectedOutcome?: string;
+  dependencies?: string[];
+  constraints?: string[];
+  acceptanceCriteria?: string[];
+  targetFlow?: string;
+  targetAgent?: string;
+  state: PlanDraftStepState;
+};
+
+export type PlanDraft = {
+  id: string;
+  projectId: string;
+  deckId: string;
+  objective: string;
+  summary: string;
+  assumptions?: string[];
+  openQuestions?: string[];
+  constraints?: string[];
+  acceptanceCriteria?: string[];
+  steps: PlanDraftStep[];
+  source?: string;
+  createdAt?: string;
+};
+
 export type DeckDocument = {
   id: string;
   name: string;
@@ -166,6 +200,9 @@ export type DeckDocument = {
   edges: DeckEdge[];
   // Deprecated: Agent Canvas intentionally ignores persisted viewport.
   viewport?: DeckViewport | null;
+
+  // The current structured Plan Draft (Harness native plan → write_plan_draft).
+  planDraft?: PlanDraft | null;
 
   version: number;
 };

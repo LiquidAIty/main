@@ -18,6 +18,9 @@ import type {
   DeckEdgeRole,
   DeckEdgeType,
   DeckRun,
+  PlanDraft,
+  PlanDraftStep,
+  PlanDraftStepState,
   PromptTemplate,
   V3ProjectBlob,
   V3RevisionMeta,
@@ -283,6 +286,78 @@ function normalizeDeckEdge(value: unknown): DeckEdge | null {
   };
 }
 
+function normalizePlanStringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean)
+    : [];
+}
+
+function normalizePlanDraftStep(value: unknown, index: number): PlanDraftStep | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const shortTitle = typeof raw.shortTitle === 'string' ? raw.shortTitle.trim() : '';
+  const detail = typeof raw.detail === 'string' ? raw.detail.trim() : '';
+  // A step with no title and no detail has nothing real to render — drop it
+  // rather than invent a placeholder step.
+  if (!shortTitle && !detail) return null;
+  // Plan creation NEVER produces running/completed/failed state — only draft/planned.
+  const state: PlanDraftStepState = raw.state === 'planned' ? 'planned' : 'draft';
+  const step: PlanDraftStep = {
+    id: (typeof raw.id === 'string' && raw.id.trim()) || `step_${index + 1}`,
+    shortTitle: shortTitle || `Step ${index + 1}`,
+    shortSummary: typeof raw.shortSummary === 'string' ? raw.shortSummary.trim() : '',
+    detail,
+    state,
+  };
+  const expectedOutcome = typeof raw.expectedOutcome === 'string' ? raw.expectedOutcome.trim() : '';
+  if (expectedOutcome) step.expectedOutcome = expectedOutcome;
+  const dependencies = normalizePlanStringList(raw.dependencies);
+  if (dependencies.length) step.dependencies = dependencies;
+  const constraints = normalizePlanStringList(raw.constraints);
+  if (constraints.length) step.constraints = constraints;
+  const acceptanceCriteria = normalizePlanStringList(raw.acceptanceCriteria);
+  if (acceptanceCriteria.length) step.acceptanceCriteria = acceptanceCriteria;
+  const targetFlow = typeof raw.targetFlow === 'string' ? raw.targetFlow.trim() : '';
+  if (targetFlow) step.targetFlow = targetFlow;
+  const targetAgent = typeof raw.targetAgent === 'string' ? raw.targetAgent.trim() : '';
+  if (targetAgent) step.targetAgent = targetAgent;
+  return step;
+}
+
+function normalizePlanDraft(value: unknown): PlanDraft | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const objective = typeof raw.objective === 'string' ? raw.objective.trim() : '';
+  const steps = Array.isArray(raw.steps)
+    ? raw.steps
+        .map((s, i) => normalizePlanDraftStep(s, i))
+        .filter((s: PlanDraftStep | null): s is PlanDraftStep => Boolean(s))
+    : [];
+  // No objective and no steps is not a real plan — drop rather than persist empty.
+  if (!objective && steps.length === 0) return null;
+  const draft: PlanDraft = {
+    id: (typeof raw.id === 'string' && raw.id.trim()) || `plandraft_${hashRevision(raw).slice(0, 12)}`,
+    projectId: typeof raw.projectId === 'string' ? raw.projectId.trim() : '',
+    deckId: typeof raw.deckId === 'string' ? raw.deckId.trim() : '',
+    objective,
+    summary: typeof raw.summary === 'string' ? raw.summary.trim() : '',
+    steps,
+  };
+  const assumptions = normalizePlanStringList(raw.assumptions);
+  if (assumptions.length) draft.assumptions = assumptions;
+  const openQuestions = normalizePlanStringList(raw.openQuestions);
+  if (openQuestions.length) draft.openQuestions = openQuestions;
+  const constraints = normalizePlanStringList(raw.constraints);
+  if (constraints.length) draft.constraints = constraints;
+  const acceptanceCriteria = normalizePlanStringList(raw.acceptanceCriteria);
+  if (acceptanceCriteria.length) draft.acceptanceCriteria = acceptanceCriteria;
+  const source = typeof raw.source === 'string' ? raw.source.trim() : '';
+  if (source) draft.source = source;
+  const createdAt = typeof raw.createdAt === 'string' ? raw.createdAt.trim() : '';
+  if (createdAt) draft.createdAt = createdAt;
+  return draft;
+}
+
 function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as any;
@@ -310,6 +385,7 @@ function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument
           .map((edge: unknown) => normalizeDeckEdge(edge))
           .filter((edge: DeckEdge | null): edge is DeckEdge => Boolean(edge))
       : [],
+    planDraft: normalizePlanDraft(raw.planDraft),
   };
 }
 

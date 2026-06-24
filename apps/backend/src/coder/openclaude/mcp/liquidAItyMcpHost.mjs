@@ -118,6 +118,51 @@ server.registerTool(
   },
 );
 
+server.registerTool(
+  'write_plan_draft',
+  {
+    title: 'Write plan draft',
+    description:
+      'When you finish a project plan, write the human-readable plan normally in chat AND call write_plan_draft with the same deliberate plan structure. This persists ONE structured Plan Specification onto the visible canvas Plan object. ' +
+      'Do not use TodoWrite as the project plan (TodoWrite is your private working checklist only). Do not parse your own markdown into this; author the structured steps deliberately. Do not invent downstream capabilities or start any execution — this only records the plan. ' +
+      'Use describe_agent_fabric first when a step has a relevant target flow or capability. Each step needs a concise shortTitle (card label), a one-line shortSummary, and a full detail. Optional fields (expectedOutcome, dependencies, constraints, acceptanceCriteria, targetFlow, targetAgent) only when you actually have them. Dependencies must reference other step ids. step.state is draft or planned only.',
+    inputSchema: {
+      projectId: z.string().min(1),
+      deckId: z.string().min(1),
+      objective: z.string().min(1),
+      summary: z.string().optional(),
+      assumptions: z.array(z.string()).default([]),
+      openQuestions: z.array(z.string()).default([]),
+      constraints: z.array(z.string()).default([]),
+      acceptanceCriteria: z.array(z.string()).default([]),
+      steps: z
+        .array(
+          z.object({
+            id: z.string().optional(),
+            shortTitle: z.string().min(1),
+            shortSummary: z.string().optional(),
+            detail: z.string().optional(),
+            expectedOutcome: z.string().optional(),
+            dependencies: z.array(z.string()).default([]),
+            constraints: z.array(z.string()).default([]),
+            acceptanceCriteria: z.array(z.string()).default([]),
+            targetFlow: z.string().optional(),
+            targetAgent: z.string().optional(),
+            state: z.enum(['draft', 'planned']).default('draft'),
+          }),
+        )
+        .min(1),
+    },
+  },
+  async (args) => {
+    const { json } = await bridge('write_plan_draft', args);
+    return {
+      content: [{ type: 'text', text: JSON.stringify(json, null, 2) }],
+      isError: json?.ok === false,
+    };
+  },
+);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
 // eslint-disable-next-line no-console

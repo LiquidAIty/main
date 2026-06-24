@@ -21,8 +21,9 @@
 // All handlers read authoritative current state, never mutate the deck, never
 // write graph memory, and never fabricate agents/tools/outputs.
 
-import { getDeckDocument } from '../../../decks/store';
+import { getDeckDocument, saveDeckDocument } from '../../../decks/store';
 import { buildMagOneRoutingDiagnostics, runCardWithContract } from '../../../cards/runtime';
+import type { PlanDraft } from '../../../types';
 
 const MAX_TASKS = 24;
 const PROMPT_SUMMARY_CHARS = 200;
@@ -61,7 +62,100 @@ export type AgentFlowDeps = {
   loadDeck?: typeof getDeckDocument;
   runCard?: typeof runCardWithContract;
   buildRouting?: typeof buildMagOneRoutingDiagnostics;
+  saveDeck?: typeof saveDeckDocument;
 };
+
+// ── write_plan_draft ──────────────────────────────────────────────────────────
+// The Harness deliberately calls this at the end of a real planning turn to persist
+// ONE structured Plan Specification (PlanDraft) onto the authoritative deck object,
+// alongside the human-readable markdown plan it writes in chat. This is the SOLE
+// structured source for the visible canvas Plan object. It is NOT TodoWrite, NOT an
+// execution Task Ledger, and never starts a run or marks any step running/complete.
+// The deck's own normalizePlanDraft is the single validation authority; persistence
+// goes through getDeckDocument + saveDeckDocument (revision CAS), never React state.
+export type WritePlanDraftInput = {
+  projectId: string;
+  deckId: string;
+  objective: string;
+  summary?: string;
+  assumptions?: string[];
+  openQuestions?: string[];
+  constraints?: string[];
+  acceptanceCriteria?: string[];
+  steps: Array<{
+    id?: string;
+    shortTitle: string;
+    shortSummary?: string;
+    detail?: string;
+    expectedOutcome?: string;
+    dependencies?: string[];
+    constraints?: string[];
+    acceptanceCriteria?: string[];
+    targetFlow?: string;
+    targetAgent?: string;
+    state?: 'draft' | 'planned';
+  }>;
+};
+
+export type WritePlanDraftResult = {
+  ok: true;
+  planDraft: PlanDraft;
+  deckRevision: string | null;
+  stepCount: number;
+};
+
+export async function writePlanDraft(
+  input: WritePlanDraftInput,
+  deps: AgentFlowDeps = {},
+): Promise<WritePlanDraftResult> {
+  const loadDeck = deps.loadDeck ?? getDeckDocument;
+  const saveDeck = deps.saveDeck ?? saveDeckDocument;
+  const projectId = asString(input?.projectId).trim();
+  const deckId = asString(input?.deckId).trim();
+  if (!projectId || !deckId) {
+    throw new Error('write_plan_draft_missing_project_or_deck');
+  }
+  const objective = asString(input?.objective).trim();
+  const steps = Array.isArray(input?.steps) ? input.steps : [];
+  if (!objective && steps.length === 0) {
+    throw new Error('write_plan_draft_empty_plan');
+  }
+
+  const { deck, meta } = await loadDeck(projectId, deckId);
+  if (!deck) {
+    throw new Error(`write_plan_draft_deck_not_found: projectId=${projectId} deckId=${deckId}`);
+  }
+
+  // Stamp identity/provenance; the deck normalizer (normalizePlanDraft) is the
+  // single authority that validates/cleans steps and coerces step state to
+  // draft|planned only — never running/complete/failed.
+  const planDraftInput = {
+    ...input,
+    id: asString((input as { id?: unknown })?.id).trim() ||
+      `plandraft_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    projectId,
+    deckId,
+    source: asString((input as { source?: unknown })?.source).trim() || 'harness_native_plan',
+    createdAt: new Date().toISOString(),
+  };
+
+  const saved = await saveDeck(
+    projectId,
+    deckId,
+    { ...deck, planDraft: planDraftInput as unknown as PlanDraft },
+    { expectedRevision: meta?.deckRevision ?? null, reason: 'write_plan_draft' },
+  );
+  const persisted = saved.deck.planDraft ?? null;
+  if (!persisted) {
+    throw new Error('write_plan_draft_persist_failed_after_normalize');
+  }
+  return {
+    ok: true,
+    planDraft: persisted,
+    deckRevision: saved.meta.deckRevision,
+    stepCount: persisted.steps.length,
+  };
+}
 
 // ── project_context resource ────────────────────────────────────────────────
 export type ProjectContext = {

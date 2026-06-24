@@ -33,6 +33,11 @@ function isBashTool(name: string): boolean {
 function isMcpTool(name: string): boolean {
   return /^mcp__|liquidaity|describe_agent_fabric|execute_visible_flow|project_context/i.test(name);
 }
+// The structured Plan Draft belongs on the Plan canvas, never echoed into chat —
+// show only a concise action row, never the PlanDraft JSON args/result.
+function isPlanDraftTool(name: string): boolean {
+  return /write_plan_draft/i.test(name);
+}
 
 /** First meaningful line of real output, capped — full text stays in `detail`. */
 function preview(text: string, cap = 96): string {
@@ -64,7 +69,10 @@ function toRows(events: NativeSessionEvent[]): Row[] {
       } catch {
         /* keep raw */
       }
-      if (isBashTool(name) && args.command) {
+      if (isPlanDraftTool(name)) {
+        // Structured plan goes to the Plan canvas — acknowledge the action only.
+        rows.push({ tone: 'mcp', label: 'Saving plan to canvas…' });
+      } else if (isBashTool(name) && args.command) {
         rows.push({ tone: 'cmd', label: `$ ${asStr(args.command)}` });
       } else {
         rows.push({ tone: isMcpTool(name) ? 'mcp' : 'tool', label: name, detail: prettyArgs(argsRaw) });
@@ -74,6 +82,11 @@ function toRows(events: NativeSessionEvent[]): Row[] {
       if (!out.trim()) continue;
       const isError = Boolean((e as { isError?: unknown }).isError);
       const toolName = asStr((e as { toolName?: unknown }).toolName);
+      if (isPlanDraftTool(toolName)) {
+        // Never dump the persisted PlanDraft JSON into chat — it lives on the canvas.
+        rows.push({ tone: 'result', label: isError ? 'Plan write failed' : 'Plan saved to canvas.' });
+        continue;
+      }
       const t = out.trim();
       // A JSON/array result reads as a bare "{" in a one-line preview — label it
       // by the tool instead and keep the real payload in the expandable detail.

@@ -5,6 +5,7 @@ import type {
   StructuredAssistPlanStep,
   StructuredAssistPlanSurface,
 } from '../builder/assistPlanSurface';
+import type { PlanDraft } from '../../types/agentgraph';
 import { GRAPH_THEME } from '../graph/graphVisualTokens';
 
 export type PlanMissionNodeKind =
@@ -117,6 +118,22 @@ export type PlanMissionNodeData = {
   onGoGate?: () => void;
   /** Gate status text shown in the selected node's SWAT tray (e.g. not wired). */
   goGateStatus?: string | null;
+  /** Harness native Plan Draft (write_plan_draft) inspector/face fields. Copied
+   *  verbatim from the structured PlanDraft — never parsed from markdown/prose.
+   *  Plan steps stay draft|planned; no execution status is ever set here. */
+  shortSummary?: string;
+  expectedOutcome?: string;
+  constraints?: string[];
+  acceptanceCriteria?: string[];
+  assumptions?: string[];
+  openQuestions?: string[];
+  targetFlow?: string;
+  targetAgent?: string;
+  planState?: 'draft' | 'planned';
+  /** Marks nodes projected from a PlanDraft (root vs step) so the canvas/inspector
+   *  render the plan shape and suppress execution affordances for them. */
+  isPlanDraftRoot?: boolean;
+  isPlanDraftStep?: boolean;
 };
 
 export type PlanArtifactNodeData = {
@@ -690,6 +707,153 @@ export function buildTaskLedgerArtifactGraph(
 
   // Record the produced task count on the plan/source node for its inspector.
   node.data.taskCount = nodes.length - 1;
+
+  return { nodes, edges };
+}
+
+/**
+ * Project a deliberate Harness Plan Draft (write_plan_draft) into the existing
+ * PlanFlow-compatible node model: one Plan root node + compact draft/planned step
+ * nodes, reusing the same node types and rendering as the Task Ledger projection.
+ *
+ * The PlanDraft is the SOLE structured source — fields are copied verbatim from the
+ * structured artifact, never parsed from the markdown plan narrative, never from
+ * TodoWrite, and never inferred. Dependency edges appear ONLY from explicit
+ * step.dependencies; otherwise the root frames each step (ledger_to_task). No
+ * sequence inference, no execution state, no run wires.
+ */
+export function buildPlanDraftGraph(
+  planDraft: PlanDraft | null | undefined,
+): PlanMissionGraph {
+  if (!planDraft || typeof planDraft !== 'object' || Array.isArray(planDraft)) {
+    return { nodes: [], edges: [] };
+  }
+  const steps = Array.isArray(planDraft.steps) ? planDraft.steps : [];
+  const objective = String(planDraft.objective || '').trim();
+  const summary = String(planDraft.summary || '').trim();
+  if (!objective && steps.length === 0) return { nodes: [], edges: [] };
+
+  const asList = (value: unknown): string[] | undefined => {
+    const list = Array.isArray(value)
+      ? value.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+      : [];
+    return list.length ? list : undefined;
+  };
+  let payloadJson = '';
+  try {
+    payloadJson = JSON.stringify(planDraft, null, 2);
+  } catch {
+    payloadJson = '';
+  }
+
+  const ROOT_ID = 'plan_draft_root';
+  const rootNode: PlanMissionFlowNode = {
+    id: ROOT_ID,
+    type: TASK_LEDGER_ARTIFACT_NODE_TYPE,
+    position: { x: 296, y: 136 },
+    data: {
+      label: objective || 'Plan',
+      kind: 'TaskLedger',
+      status: 'seeded',
+      summary: summary || undefined,
+      description: summary || undefined,
+      detail: objective || undefined,
+      planResponse: summary || undefined,
+      taskCount: steps.length,
+      assumptions: asList(planDraft.assumptions),
+      openQuestions: asList(planDraft.openQuestions),
+      constraints: asList(planDraft.constraints),
+      acceptanceCriteria: asList(planDraft.acceptanceCriteria),
+      source: planDraft.source || 'harness_native_plan',
+      payloadJson: payloadJson || undefined,
+      isPlanDraftRoot: true,
+      editable: false,
+    },
+    draggable: true,
+    selectable: true,
+  };
+
+  const nodes: PlanMissionFlowNode[] = [rootNode];
+  const edges: PlanMissionFlowEdge[] = [];
+
+  const STEP_BASE_X = 296;
+  const STEP_DELTA_X = 260;
+  const STEP_Y = 340;
+  const idToNodeId = new Map<string, string>();
+  const stepEntries: Array<{ nodeId: string; dependencies: string[] }> = [];
+
+  steps.forEach((step, index) => {
+    const stableId = String(step.id || '').trim() || `step_${index + 1}`;
+    const slug =
+      stableId.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') ||
+      `step_${index + 1}`;
+    const nodeId = `plan_step_${slug}`;
+    idToNodeId.set(stableId.toLowerCase(), nodeId);
+    const planState: 'draft' | 'planned' = step.state === 'planned' ? 'planned' : 'draft';
+    const shortTitle = String(step.shortTitle || '').trim() || `Step ${index + 1}`;
+    const shortSummary = String(step.shortSummary || '').trim();
+    const stepNode: PlanMissionFlowNode = {
+      id: nodeId,
+      type: TASK_NODE_TYPE,
+      position: { x: STEP_BASE_X + index * STEP_DELTA_X, y: STEP_Y },
+      data: {
+        // Face = shortTitle (+ a real shortSummary subtitle, plan-draft only).
+        label: shortTitle,
+        kind: 'Step',
+        // Plan steps never carry execution status — a neutral non-running status
+        // for shell styling; the real lifecycle is planState (draft|planned).
+        status: 'proposed',
+        planState,
+        isPlanDraftStep: true,
+        shortSummary: shortSummary || undefined,
+        description: shortSummary || undefined,
+        detail: String(step.detail || '').trim() || undefined,
+        expectedOutcome: String(step.expectedOutcome || '').trim() || undefined,
+        dependsOn: asList(step.dependencies),
+        constraints: asList(step.constraints),
+        acceptanceCriteria: asList(step.acceptanceCriteria),
+        targetFlow: String(step.targetFlow || '').trim() || undefined,
+        targetAgent: String(step.targetAgent || '').trim() || undefined,
+        stepNumber: index + 1,
+        sourceArtifactRef: ROOT_ID,
+        sourceArtifactId: ROOT_ID,
+        links: [ROOT_ID],
+        editable: false,
+      },
+      draggable: true,
+      selectable: true,
+    };
+    nodes.push(stepNode);
+    stepEntries.push({
+      nodeId,
+      dependencies: Array.isArray(step.dependencies)
+        ? step.dependencies.map((d) => String(d).toLowerCase().trim()).filter(Boolean)
+        : [],
+    });
+  });
+
+  // Dependency edges ONLY from explicit dependencies (never inferred/sequenced).
+  const hasIncoming = new Set<string>();
+  stepEntries.forEach((entry) => {
+    entry.dependencies.forEach((dep) => {
+      const depSlug = dep.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+      const depNodeId = idToNodeId.get(dep) || idToNodeId.get(depSlug);
+      if (depNodeId && depNodeId !== entry.nodeId) {
+        edges.push(
+          makeEdge(`plan_dep_${depNodeId}__${entry.nodeId}`, depNodeId, entry.nodeId, 'idle', 'task_dependency'),
+        );
+        hasIncoming.add(entry.nodeId);
+      }
+    });
+  });
+  // The Plan root frames steps that have no explicit dependency (ledger_to_task).
+  stepEntries.forEach((entry) => {
+    if (!hasIncoming.has(entry.nodeId)) {
+      edges.push(
+        makeEdge(`plan_root_to_${entry.nodeId}`, ROOT_ID, entry.nodeId, 'idle', 'ledger_to_task'),
+      );
+    }
+  });
 
   return { nodes, edges };
 }

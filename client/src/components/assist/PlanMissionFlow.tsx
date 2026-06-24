@@ -249,6 +249,17 @@ export function MissionNode({ data, selected }: NodeProps<any>) {
   // source, provenance, raw artifact) stays in node data and the inspector details
   // panel — never rendered as badges, status words, or road-sign text on the face.
   const title = String(nodeData?.title || nodeData?.label || 'Step');
+  // Plan-draft nodes (Harness write_plan_draft) carry a real one-line subtitle and a
+  // draft|planned lifecycle tag — genuine structured content authored by the Harness,
+  // not projected road-sign/status text. Existing task-ledger nodes stay title-only.
+  const planSubtitle = nodeData?.isPlanDraftRoot
+    ? String(nodeData?.summary || '').trim()
+    : nodeData?.isPlanDraftStep
+      ? String(nodeData?.shortSummary || '').trim()
+      : '';
+  const planStepCount =
+    nodeData?.isPlanDraftRoot && typeof nodeData?.taskCount === 'number' ? nodeData.taskCount : null;
+  const planState = nodeData?.isPlanDraftStep ? nodeData?.planState : undefined;
   return (
     <>
       <Handle
@@ -301,6 +312,54 @@ export function MissionNode({ data, selected }: NodeProps<any>) {
         >
           {title}
         </div>
+        {planSubtitle ? (
+          <div
+            style={{
+              fontSize: 11,
+              lineHeight: 1.32,
+              color: GRAPH_THEME.surface.mutedText,
+              overflowWrap: 'break-word',
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+              zIndex: 1,
+            }}
+          >
+            {planSubtitle}
+          </div>
+        ) : null}
+        {planStepCount !== null || planState ? (
+          <div
+            style={{
+              display: 'flex',
+              gap: 8,
+              alignItems: 'center',
+              fontSize: 9.5,
+              fontWeight: 700,
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+              color: GRAPH_THEME.surface.mutedText,
+              zIndex: 1,
+            }}
+          >
+            {planStepCount !== null ? (
+              <span>{`${planStepCount} step${planStepCount === 1 ? '' : 's'}`}</span>
+            ) : null}
+            {planState ? (
+              <span
+                style={{
+                  color:
+                    planState === 'planned'
+                      ? GRAPH_THEME.accent.primary
+                      : GRAPH_THEME.surface.mutedText,
+                }}
+              >
+                {planState}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         {/*
           SWAT (Selected Work Action Tray) — the approval gate, attached to the
           selected Step node and anchored just below the card so it does not
