@@ -118,57 +118,6 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  'write_plan_draft',
-  {
-    title: 'Write plan draft',
-    description:
-      'Persist the current project plan onto the visible canvas Plan object. The plan is ALWAYS saved to the user’s current project and deck automatically — you do NOT know and do NOT need any LiquidAIty storage identifiers. NEVER ask the user which project or deck the plan should live in, and never ask for UUIDs, deck names, or internal IDs; those are injected from session context. Just provide the plan contents. ' +
-      'When the user asks for a plan, either create it immediately using sensible, explicitly-stated assumptions, or ask only genuinely useful clarifying questions through AskUserQuestion (e.g. research target, time horizon, primary signals) — do not lecture, stall, or refuse before producing a plan. ' +
-      'Do not use TodoWrite as the project plan (TodoWrite is your private working checklist only). Do not parse your own markdown into this; author the structured steps deliberately. This only records the plan — it never starts execution. ' +
-      'Each step needs a concise shortTitle (card label), a one-line shortSummary, and a full detail. Optional fields (expectedOutcome, dependencies, constraints, acceptanceCriteria, targetFlow, targetAgent) only when you actually have them. Dependencies must reference other step ids. step.state is draft or planned only.',
-    inputSchema: {
-      objective: z.string().min(1),
-      summary: z.string().optional(),
-      assumptions: z.array(z.string()).default([]),
-      openQuestions: z.array(z.string()).default([]),
-      constraints: z.array(z.string()).default([]),
-      acceptanceCriteria: z.array(z.string()).default([]),
-      steps: z
-        .array(
-          z.object({
-            id: z.string().optional(),
-            shortTitle: z.string().min(1),
-            shortSummary: z.string().optional(),
-            detail: z.string().optional(),
-            expectedOutcome: z.string().optional(),
-            dependencies: z.array(z.string()).default([]),
-            constraints: z.array(z.string()).default([]),
-            acceptanceCriteria: z.array(z.string()).default([]),
-            targetFlow: z.string().optional(),
-            targetAgent: z.string().optional(),
-            state: z.enum(['draft', 'planned']).default('draft'),
-          }),
-        )
-        .min(1),
-    },
-  },
-  async (args) => {
-    // This host process is spawned per Harness session (the gRPC server passes a
-    // per-session LIQUIDAITY_SESSION_ID, which keys the MCP connection cache). Thread
-    // that session id to the bridge so the write binds to THIS session's project/deck
-    // — the model never supplies storage identifiers.
-    const { json } = await bridge('write_plan_draft', {
-      ...args,
-      sessionId: process.env.LIQUIDAITY_SESSION_ID || '',
-    });
-    return {
-      content: [{ type: 'text', text: JSON.stringify(json, null, 2) }],
-      isError: json?.ok === false,
-    };
-  },
-);
-
 const transport = new StdioServerTransport();
 await server.connect(transport);
 // eslint-disable-next-line no-console

@@ -185,7 +185,10 @@ export default function useAgentBuilderDeckLoad({
         setLatestDeckRun(persistedLatestRun);
         setLatestCardRun(null);
         setLiveDeckEvents([]);
-        setMessages(continuity.messages);
+        // The normal chat transcript is the live conversation only — it is NOT
+        // re-painted from saved deck runs. Re-injecting deck-run output here
+        // clobbered the live user message and rendered old run text as fake chat
+        // bubbles. Deck runs still drive the plan/links below; not the chat.
         setPendingActivationProposal(null);
         setPlanSource(continuity.planSource);
         setPlan(continuity.plan);

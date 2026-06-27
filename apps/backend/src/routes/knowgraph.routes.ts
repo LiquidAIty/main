@@ -16,6 +16,8 @@ import {
 } from '../graph/semanticLanguage';
 import type { GraphReadResult, SemanticGraphRecord, SemanticGraphRelationship, SemanticGraphSourceRef } from '../types';
 import { toNeoSafeProperties } from '../graph/neoSafeProperties';
+import { projectEvidenceGraph, type AssertionRow } from '../services/knowGraphEvidenceProjection';
+import { projectExplorationLens, focusKindNeedsEvidence } from '../services/knowGraphExploration';
 
 const router = Router();
 // DEV TEST LIMIT RAISED: allow large real-document uploads during development and loop testing.
@@ -460,7 +462,7 @@ async function queryKnowGraphProject(projectId: string): Promise<{
         MATCH (a)-[r]->(b)
         WHERE toString(a.project_id) IN $projectScopeIds
           AND toString(b.project_id) IN $projectScopeIds
-          AND toString(r.project_id) IN $projectScopeIds
+          AND (r.project_id IS NULL OR toString(r.project_id) IN $projectScopeIds)
         RETURN DISTINCT
           elementId(r) AS rel_id,
           type(r) AS rel_type,
@@ -859,7 +861,13 @@ router.get('/semantic-graph', async (req, res) => {
         warnings: ['no semantic records found for project in persisted graph yet'],
       } satisfies GraphReadResult);
     }
-    return res.json(legacyGraphToSemanticReadResult(graph));
+    const out = legacyGraphToSemanticReadResult(graph);
+    // Preserve the real node role (Issuer/BusinessContext/RiskContext/EvidenceSection/
+    // SourceBackedAssertion/Source/ObservedEntity/...) as `kind` so the explorer types + colors
+    // by role. legacyGraphToSemanticReadResult hardcodes kind:'entity' but keeps the real type on
+    // `owlClass`, so surface it back onto kind — one compatible KnowGraph, every role distinct.
+    const typedRecords = out.records.map((r) => ({ ...r, kind: r.owlClass || r.kind }));
+    return res.json({ ...out, records: typedRecords });
   } catch (error: any) {
     return res.json({
       status: 'unavailable',
@@ -867,6 +875,166 @@ router.get('/semantic-graph', async (req, res) => {
       relationships: [],
       sourceRefs: [],
       warnings: [String(error?.message || 'graph backend unavailable')],
+    } satisfies GraphReadResult);
+  }
+});
+
+/**
+ * GET /api/knowgraph/explore — the SEMANTIC EXPLORATION LENS (additive, read-only).
+ * Projects the raw project-scoped graph into a bounded semantic neighborhood around a focus:
+ * entities/tickers/EDGAR sections/topics as nodes, source-backed assertions folded into EDGES
+ * (with assertion + source raw IDs preserved for expand/inspect), storage/process/provenance roots
+ * classified and EXCLUDED from topology. Returns a UI-compatible GraphReadResult + the rich `lens`.
+ * Project scope is enforced by queryKnowGraphProject, so cross-project items cannot enter the lens.
+ */
+router.get('/explore', async (req, res) => {
+  const projectId =
+    (typeof req.query?.projectId === 'string' && req.query.projectId.trim()) ||
+    (typeof req.query?.project_id === 'string' && req.query.project_id.trim()) || '';
+  if (!projectId) {
+    return res.status(400).json({ status: 'error', records: [], relationships: [], sourceRefs: [], warnings: ['projectId is required'] } satisfies GraphReadResult);
+  }
+  try {
+    const raw = await queryKnowGraphProject(projectId);
+    // Exact focus reference (raw graph id / assertion id / source ref / canonical lens id) + kind.
+    // The label `focus` is only a search fallback. Evidence is materialized for an explicit focus or
+    // a claim/source focus so those become first-class centers; the unfocused default stays clean.
+    const focusId = typeof req.query?.focusId === 'string' ? req.query.focusId : null;
+    const focusKind = typeof req.query?.focusKind === 'string' ? req.query.focusKind : null;
+    const includeEvidence =
+      req.query?.includeEvidence === 'true' || focusKindNeedsEvidence(focusKind) || Boolean(focusId);
+    const lens = projectExplorationLens(
+      raw.nodes.map((n) => ({ id: n.id, label: n.label, type: n.type, properties: n.properties })),
+      raw.relationships.map((r) => ({ id: r.id, from: r.from, to: r.to, type: r.type, properties: r.properties })),
+      {
+        focus: typeof req.query?.focus === 'string' ? req.query.focus : null,
+        focusId,
+        focusKind,
+        lens: typeof req.query?.lens === 'string' ? req.query.lens : 'entity',
+        depth: Number(req.query?.depth) || 1,
+        includeEvidence,
+      },
+    );
+    const records = lens.nodes.map((n) => ({
+      id: n.id, graph: 'know', kind: n.semanticKind, label: n.displayLabel, summary: n.canonicalName,
+      entities: [], relationships: [], properties: {
+        explorationRole: n.explorationRole, canonicalName: n.canonicalName, displayLabel: n.displayLabel,
+        evidenceCount: n.evidenceCount, statusSummary: n.statusSummary, sourceCount: n.sourceCount,
+        sourceDates: n.sourceDates, rawIds: n.rawIds, degree: n.degree,
+      },
+      owlClass: n.semanticKind, owlIndividual: n.id, objectProperties: [], datatypeProperties: [],
+      annotationProperties: [], sourceRefs: [], confidence: null,
+      provenance: { createdByAgent: 'knowgraph-explore', reasoningSummary: 'semantic exploration lens' },
+      vectorText: n.displayLabel, writer: 'knowgraph-explore', writeMode: 'read-only',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      '@id': n.id, '@type': [n.semanticKind],
+    })) as unknown as SemanticGraphRecord[];
+    const relationships = lens.edges.map((e) => ({
+      id: e.id, from: e.source, to: e.target, type: e.predicate, label: e.predicate,
+      properties: { statusCounts: e.statusCounts, evidenceIds: e.evidenceIds, sourceIds: e.sourceIds, rawIds: e.rawIds, directness: e.directness, weight: e.weight },
+      confidence: null,
+    })) as unknown as SemanticGraphRelationship[];
+    return res.json({
+      records, relationships, sourceRefs: [], status: 'ok',
+      warnings: [`exploration lens: focus=${lens.focus.canonicalName ?? 'none'} • ${records.length} nodes / ${relationships.length} edges • excluded ${JSON.stringify(lens.excludedFromTopology.byRole)}`],
+      lens,
+    } as GraphReadResult & { lens: typeof lens });
+  } catch (error: any) {
+    return res.json({ status: 'unavailable', records: [], relationships: [], sourceRefs: [], warnings: [String(error?.message || 'exploration unavailable')] } satisfies GraphReadResult);
+  }
+});
+
+/**
+ * Read project-scoped :SourceBackedAssertion rows from Neo4j (READ-only).
+ * The literal source of the exploration evidence graph — full provenance per row.
+ */
+async function readProjectAssertions(projectId: string): Promise<AssertionRow[]> {
+  const uri = String(process.env.NEO4J_URI || '').trim();
+  const user = String(process.env.NEO4J_USER || '').trim();
+  const password = String(process.env.NEO4J_PASSWORD || '').trim();
+  if (!uri || !user || !password) {
+    throw new Error('NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD are required');
+  }
+  const neo4jModule: any = await import('neo4j-driver');
+  const neo4j: any = neo4jModule?.default ?? neo4jModule;
+  const driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
+  const database = String(process.env.NEO4J_DATABASE || '').trim();
+  const session = driver.session(database ? { database, defaultAccessMode: neo4j.session.READ } : { defaultAccessMode: neo4j.session.READ });
+  try {
+    const result = await session.run(
+      `
+        MATCH (a:SourceBackedAssertion {project_id: $projectId})
+        RETURN a.id AS id, a.subject AS subject, a.predicate AS predicate, a.object AS object,
+               a.outcome AS outcome, a.confidence AS confidence, a.source_ref AS source_ref,
+               a.source_title AS source_title, a.source_url AS source_url,
+               a.evidence_text AS evidence_text, a.created_at AS created_at
+        ORDER BY a.created_at DESC
+      `,
+      { projectId },
+    );
+    const num = (v: unknown): number | null => {
+      if (v == null) return null;
+      if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+      if (typeof (v as any).toNumber === 'function') return (v as any).toNumber();
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    return result.records.map((r: any) => ({
+      id: String(r.get('id') ?? ''),
+      subject: String(r.get('subject') ?? ''),
+      predicate: String(r.get('predicate') ?? ''),
+      object: String(r.get('object') ?? ''),
+      outcome: String(r.get('outcome') ?? ''),
+      confidence: num(r.get('confidence')),
+      source_ref: String(r.get('source_ref') ?? ''),
+      source_title: String(r.get('source_title') ?? ''),
+      source_url: String(r.get('source_url') ?? ''),
+      evidence_text: String(r.get('evidence_text') ?? ''),
+      created_at: String(r.get('created_at') ?? ''),
+    }));
+  } finally {
+    await session.close();
+    await driver.close();
+  }
+}
+
+/**
+ * GET /api/knowgraph/evidence-graph — additive, read-time exploration projection.
+ * Projects REAL :SourceBackedAssertion rows into a typed evidence graph
+ * (Company/Ticker/Topic/Claim/Source/Question/Assessment + typed edges incl. an
+ * explicit CONTRADICTS edge for competing claims). No writes, no fabricated facts.
+ * Returns the SAME GraphReadResult shape the KnowGraph tab already renders.
+ */
+router.get('/evidence-graph', async (req, res) => {
+  const projectId =
+    (typeof req.query?.projectId === 'string' && req.query.projectId.trim()) ||
+    (typeof req.query?.project_id === 'string' && req.query.project_id.trim()) ||
+    '';
+  if (!projectId) {
+    return res.status(400).json({
+      status: 'error', records: [], relationships: [], sourceRefs: [],
+      warnings: ['projectId is required'],
+    } satisfies GraphReadResult);
+  }
+  try {
+    const assertions = await readProjectAssertions(projectId);
+    if (assertions.length === 0) {
+      return res.json({
+        status: 'unavailable', records: [], relationships: [], sourceRefs: [],
+        warnings: ['no source-backed assertions for project yet'],
+      } satisfies GraphReadResult);
+    }
+    const graph = projectEvidenceGraph(assertions);
+    const out = legacyGraphToSemanticReadResult(graph);
+    // Preserve the real semantic node type (Company/Ticker/Claim/Source/Question/Assessment/Topic)
+    // as `kind` so the frontend types + colors nodes by role. legacyGraphToSemanticReadResult
+    // hardcodes kind:'entity' but keeps the real type on `owlClass`, so surface it back onto kind.
+    const typedRecords = out.records.map((r) => ({ ...r, kind: r.owlClass || r.kind }));
+    return res.json({ ...out, records: typedRecords, warnings: [`evidence projection: ${graph.nodes.length} nodes / ${graph.relationships.length} edges from ${assertions.length} source-backed assertions`] });
+  } catch (error: any) {
+    return res.json({
+      status: 'unavailable', records: [], relationships: [], sourceRefs: [],
+      warnings: [String(error?.message || 'evidence graph backend unavailable')],
     } satisfies GraphReadResult);
   }
 });

@@ -26,58 +26,6 @@ const openclaudeProto = protoDescriptor.openclaude.v1
 
 const MAX_SESSIONS = 1000
 
-/**
- * Translate a UserInput.reply (from the BuilderChat answer endpoint) into the
- * PermissionResult the runtime's canUseTool contract expects. Structured native
- * answers — an AskUserQuestion selection or an ExitPlanMode plan edit — travel as
- * a JSON object in the EXISTING `reply` string (no proto change) and are merged
- * into the model's original tool input as `updatedInput`, so the answer/edit
- * reaches the same running session. Plain yes/no approve/deny is preserved: only
- * an explicit "yes" or a structured approve allows; everything else denies.
- */
-function interpretGrpcReply(
-  reply: string,
-  input: Record<string, unknown> | undefined,
-):
-  | { behavior: 'allow'; updatedInput?: any; userModified?: boolean }
-  | { behavior: 'deny'; reason: string } {
-  const trimmed = String(reply ?? '').trim()
-  const lower = trimmed.toLowerCase()
-  if (lower === 'yes' || lower === 'y') {
-    return { behavior: 'allow', updatedInput: input }
-  }
-  if (trimmed.startsWith('{')) {
-    try {
-      const parsed = JSON.parse(trimmed)
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        if (parsed.behavior === 'deny' || parsed.approve === false) {
-          return {
-            behavior: 'deny',
-            reason: typeof parsed.reason === 'string' ? parsed.reason : 'User denied via gRPC',
-          }
-        }
-        // Merge patch: an explicit updatedInput, an AskUserQuestion `answers` map,
-        // or a generic `patch` — merged over the model's original tool input.
-        const patch =
-          parsed.updatedInput && typeof parsed.updatedInput === 'object'
-            ? parsed.updatedInput
-            : parsed.answers && typeof parsed.answers === 'object'
-              ? { answers: parsed.answers }
-              : parsed.patch && typeof parsed.patch === 'object'
-                ? parsed.patch
-                : null
-        const base = input && typeof input === 'object' ? input : {}
-        return patch
-          ? { behavior: 'allow', updatedInput: { ...base, ...patch }, userModified: true }
-          : { behavior: 'allow', updatedInput: input, userModified: parsed.userModified === true }
-      }
-    } catch {
-      /* not valid JSON — fall through to deny (preserves "deny unless yes") */
-    }
-  }
-  return { behavior: 'deny', reason: 'User denied via gRPC' }
-}
-
 export class GrpcServer {
   private server: grpc.Server
   private sessions: Map<string, any[]> = new Map()
@@ -153,12 +101,6 @@ export class GrpcServer {
                 type: 'stdio',
                 command: process.env.LIQUIDAITY_MCP_NODE || 'node',
                 args: [mcpHostPath],
-                // Bind THIS session's MCP host to its session id. connectToServer is
-                // memoized by name + JSON(config), so each distinct session id gets
-                // its OWN cached host process; the host forwards LIQUIDAITY_SESSION_ID
-                // on write_plan_draft so the plan resolves to this session's
-                // project/deck only — never a shared/global context.
-                ...(sessionId ? { env: { LIQUIDAITY_SESSION_ID: sessionId } } : {}),
               } as any)
               if (conn && conn.type === 'connected') {
                 liquidAItyMcpClients = [conn]
@@ -213,9 +155,11 @@ export class GrpcServer {
 
               return new Promise((resolve) => {
                 pendingRequests.set(promptId, (reply) => {
-                  // Structured native answers / plan edits return via updatedInput
-                  // to the same running session; plain yes/no still approve/deny.
-                  resolve(interpretGrpcReply(reply, input as Record<string, unknown>))
+                  if (reply.toLowerCase() === 'yes' || reply.toLowerCase() === 'y') {
+                    resolve({ behavior: 'allow' })
+                  } else {
+                    resolve({ behavior: 'deny', reason: 'User denied via gRPC' })
+                  }
                 })
               })
             },

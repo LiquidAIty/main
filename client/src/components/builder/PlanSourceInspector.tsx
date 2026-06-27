@@ -19,20 +19,7 @@ export default function PlanSourceInspector({
   onClose?: () => void;
 }) {
   const labelStyle: CSSProperties = { color: GRAPH_THEME.surface.mutedText, fontSize: 10 };
-  const summary = String(data.planResponse || data.summary || '').trim();
-  const List = ({ label, items }: { label: string; items?: string[] }) =>
-    items && items.length ? (
-      <div>
-        <div style={labelStyle}>{label}</div>
-        <ul style={{ margin: '2px 0 0', paddingLeft: 16, display: 'grid', gap: 2 }}>
-          {items.map((item, index) => (
-            <li key={index} style={{ overflowWrap: 'anywhere' }}>
-              {item}
-            </li>
-          ))}
-        </ul>
-      </div>
-    ) : null;
+  const summary = String(data.planResponse || '').trim();
 
   return (
     <aside
@@ -89,22 +76,12 @@ export default function PlanSourceInspector({
             <div style={{ marginTop: 2, overflowWrap: 'anywhere' }}>{sourceRunId}</div>
           </div>
         ) : null}
-        {data.detail ? (
-          <div>
-            <div style={labelStyle}>Objective</div>
-            <div style={{ marginTop: 2, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{data.detail}</div>
-          </div>
-        ) : null}
         <div>
           <div style={labelStyle}>Summary</div>
           <div style={{ marginTop: 2, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
             {summary || 'No plan summary available.'}
           </div>
         </div>
-        <List label="Assumptions" items={data.assumptions} />
-        <List label="Open questions" items={data.openQuestions} />
-        <List label="Constraints" items={data.constraints} />
-        <List label="Acceptance criteria" items={data.acceptanceCriteria} />
         {data.payloadJson ? (
           <div>
             <div style={labelStyle}>raw artifact (debug)</div>

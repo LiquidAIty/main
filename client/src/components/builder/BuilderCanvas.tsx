@@ -851,10 +851,7 @@ export default function BuilderCanvas({
         (node) =>
           isTaskOverlayNodeType(node.type) &&
           node.selected &&
-          // Real Task Ledger task nodes (kind 'Task') OR Harness Plan Draft step
-          // nodes — both open the existing task inspector for full detail.
-          ((node.data as { kind?: string } | undefined)?.kind === 'Task' ||
-            (node.data as { isPlanDraftStep?: boolean } | undefined)?.isPlanDraftStep === true),
+          (node.data as { kind?: string } | undefined)?.kind === 'Task',
       ) || null,
     [nodes],
   );
@@ -1523,9 +1520,7 @@ export default function BuilderCanvas({
       {selectedTaskNode ? (
         <TaskNodeInspector
           data={selectedTaskNode.data as PlanMissionNodeData}
-          onRunAgents={
-            (selectedTaskNode.data as PlanMissionNodeData)?.isPlanDraftStep ? undefined : onTaskGoGate
-          }
+          onRunAgents={onTaskGoGate}
           goGateStatus={taskGoGateStatus}
           onClose={() => {
             // Deselect the node in ReactFlow (closes this selection-driven inspector)

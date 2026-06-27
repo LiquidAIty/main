@@ -12,6 +12,13 @@ import {
   getGraphMajorGridGap,
   resolveKnowledgeSubstrateRhythm,
 } from "../graph/graphWorkspaceContract";
+import {
+  conciseNodeLabel,
+  edgeColorByType,
+  nodeColorByRole,
+  nodeRadiusFor,
+  outcomeRingColor,
+} from "./knowledgeGraphGrammar";
 
 export type KnowledgeGraphSource = "think" | "know" | "mixed";
 export type KnowledgeGraphScope = "agent" | "project" | "system" | "grounded_research";
@@ -124,10 +131,8 @@ function relationColor(source: KnowledgeGraphSource): string {
   return source === "know" ? GRAPH_THEME.edge.know : GRAPH_THEME.edge.think;
 }
 
-function nodeColor(source: KnowledgeGraphSource): string {
-  if (source === "mixed") return GRAPH_THEME.accent.mixed;
-  return source === "know" ? GRAPH_THEME.accent.know : GRAPH_THEME.accent.think;
-}
+// Visual grammar (role color, size, concise labels, edge/outcome encoding) lives in the pure,
+// d3-free, unit-tested module ./knowledgeGraphGrammar — imported at the top of this file.
 
 function resolveKnowledgeZoomTier(zoom: number): KnowledgeZoomTier {
   if (zoom < 0.48) return "overview";
@@ -897,8 +902,8 @@ export default function KnowledgeGraphNVL({
 
     const nodeCircleSelection = nodeSelection
       .append("circle")
-      .attr("r", (node) => clamp(9 + Math.sqrt(Math.max(1, node.degree || 1)) * 2.3, 9, 24))
-      .attr("fill", (node) => nodeColor(sourceForNode(node)))
+      .attr("r", (node) => nodeRadiusFor(node))
+      .attr("fill", (node) => nodeColorByRole(node))
       .on("click", (event, node) => {
         if (!selectionEnabled) return;
         event.stopPropagation();
@@ -942,7 +947,7 @@ export default function KnowledgeGraphNVL({
 
     const nodeLabelSelection = nodeSelection
       .append("text")
-      .attr("y", (node) => clamp(9 + Math.sqrt(Math.max(1, node.degree || 1)) * 2.3, 9, 24) + 14)
+      .attr("y", (node) => nodeRadiusFor(node) + 14)
       .attr("text-anchor", "middle")
       .attr("fill", GRAPH_THEME.tooltip.text)
       .attr("font-size", 10)
@@ -952,7 +957,7 @@ export default function KnowledgeGraphNVL({
       .attr("stroke-width", 3)
       .attr("stroke-linejoin", "round")
       .style("pointer-events", "none")
-      .text((node) => truncateGraphLabel(node.label || node.id));
+      .text((node) => conciseNodeLabel(node));
 
     function applyPresentationState(tier: KnowledgeZoomTier = zoomTierRef.current) {
       const focusEntityId = activeEntityId || hoveredEntityIdRef.current;
@@ -1022,7 +1027,7 @@ export default function KnowledgeGraphNVL({
           if (hoveredRelationshipIdRef.current === link.id) {
             return GRAPH_THEME.edge.hover;
           }
-          return relationColor(link.sourceType);
+          return edgeColorByType(link.type, relationColor(link.sourceType));
         })
         .attr("stroke-width", (link) => {
           const baseWidth =
@@ -1064,12 +1069,12 @@ export default function KnowledgeGraphNVL({
           if (node.id === activeEntityId) return GRAPH_THEME.accent.primary;
           if (node.id === hoveredEntityIdRef.current) return GRAPH_THEME.accent.hover;
           if (focusedRelationshipNodeIds.has(node.id)) return GRAPH_THEME.accent.primary;
-          return GRAPH_THEME.surface.border;
+          return outcomeRingColor(node) ?? GRAPH_THEME.surface.border;
         })
         .attr("stroke-width", (node) => {
           if (node.id === activeEntityId) return 2.1;
           if (node.id === hoveredEntityIdRef.current || focusedRelationshipNodeIds.has(node.id)) return 1.6;
-          return 1.2;
+          return outcomeRingColor(node) ? 2 : 1.2;
         })
         .style("filter", (node) =>
           node.id === activeEntityId ? `drop-shadow(0 0 10px ${GRAPH_THEME.accent.primaryGlow})` : "none",

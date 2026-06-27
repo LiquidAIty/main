@@ -137,32 +137,6 @@ export default function TaskNodeInspector({
           label="Depends on"
           value={data.dependsOn && data.dependsOn.length > 0 ? data.dependsOn.join(', ') : undefined}
         />
-        {/* Harness Plan Draft step fields (rendered only when actually present). */}
-        <Row label="Plan state" value={data.planState} />
-        <Row label="Expected outcome" value={data.expectedOutcome} pre />
-        <Row
-          label="Constraints"
-          value={data.constraints && data.constraints.length ? data.constraints.join('\n') : undefined}
-          pre
-        />
-        <Row
-          label="Acceptance criteria"
-          value={
-            data.acceptanceCriteria && data.acceptanceCriteria.length
-              ? data.acceptanceCriteria.join('\n')
-              : undefined
-          }
-          pre
-        />
-        <Row label="Target flow" value={data.targetFlow} />
-        <Row label="Target agent" value={data.targetAgent} />
-        {/* Outcome review foundation: the REQUESTED side (expected outcome +
-            acceptance criteria above) is the durable contract; the review slot
-            starts unreviewed and is NEVER auto-marked matched/complete — a real
-            agent result is compared later. */}
-        {data.expectedOutcome || (data.acceptanceCriteria && data.acceptanceCriteria.length) ? (
-          <Row label="Review status" value="unreviewed — no actual result yet" />
-        ) : null}
         <Row label="Approval required" value={data.approvalRequired ? 'yes' : 'no'} />
         <Row label="Next needed" value={data.nextNeeded} pre />
         <Row label="Proof needed" value={data.proofNeeded} pre />

@@ -18,26 +18,12 @@ import {
   buildAgentFabricProfile,
   buildProjectContext,
   executeVisibleFlow,
-  setSessionBuilderContext,
-  writePlanDraft,
 } from '../coder/openclaude/mcp/liquidAItyAgentFlow';
 import {
   deriveSessionId,
   startGrpcTurn,
   type GrpcTurnHandle,
 } from '../coder/openclaude/session/grpcChatClient';
-import { getDeckDocument } from '../decks/store';
-import {
-  appendMessage,
-  finalizeMessage,
-  getConversationMessages,
-  getMostRecentConversation,
-  listConversations,
-  getOutcomeReviews,
-  upsertOutcomeReview,
-  type VisibleActivity,
-} from '../conversations/store';
-import { buildContextPack } from '../conversations/contextPack';
 
 const router = Router();
 export const OPENCLAUDE_HARNESS_ROUTE_PREFIX = '/coder/openclaude';
@@ -83,17 +69,6 @@ router.post('/mcp-bridge/execute_visible_flow', async (req, res) => {
   }
 });
 
-// Persist ONE structured Plan Draft onto the authoritative deck (revision CAS).
-// Sole structured source for the visible canvas Plan object — no execution starts.
-router.post('/mcp-bridge/write_plan_draft', async (req, res) => {
-  try {
-    const result = await writePlanDraft(req.body);
-    return res.json(result);
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'write_plan_draft_failed' });
-  }
-});
-
 // ── Persistent native OpenClaude session bridge (BuilderChat -> gRPC) ───────
 // SSE stream of the REAL QueryEngine event stream, verbatim. One stable session
 // id per (projectId, conversationId). The browser never touches gRPC.
@@ -102,12 +77,6 @@ const activeGrpcTurns = new Map<string, GrpcTurnHandle>();
 router.post('/openclaude/session/chat', async (req, res) => {
   const projectId = String(req.body?.projectId || '');
   const conversationId = String(req.body?.conversationId || 'default');
-  const tabRuntimeId = String(req.body?.tabRuntimeId || '').trim();
-  const parentMessageId =
-    typeof req.body?.parentMessageId === 'string' && req.body.parentMessageId.trim()
-      ? req.body.parentMessageId.trim()
-      : null;
-  const runtimeFresh = req.body?.runtimeFresh === true;
   const message = String(req.body?.message || '');
   const model = typeof req.body?.model === 'string' ? req.body.model : undefined;
   const workingDirectory = String(
@@ -116,114 +85,25 @@ router.post('/openclaude/session/chat', async (req, res) => {
   if (!projectId || !message) {
     return res.status(400).json({ ok: false, error: 'projectId_and_message_required' });
   }
-  // RUNTIME session key = projectId + durable conversationId + tab runtime id, so
-  // write_plan_draft binds to THIS tab's session only (never a shared global, never
-  // another tab). The BuilderChat deck is the builder deck unless stated otherwise.
-  const deckId = String(req.body?.deckId || '').trim() || 'deck_builder';
-  const sessionId = deriveSessionId(projectId, conversationId, tabRuntimeId);
-  setSessionBuilderContext(sessionId, projectId, deckId);
+  const sessionId = deriveSessionId(projectId, conversationId);
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
-
-  // 1) Persist the user message (before the turn) + an assistant message in
-  // streaming state. The frontend uses these ids so a reload shows no duplicates.
-  let userMsgId = '';
-  let assistantMsgId = '';
-  try {
-    const userMsg = await appendMessage({
-      projectId, conversationId, role: 'user', content: message, status: 'complete', parentMessageId,
-    });
-    userMsgId = userMsg.messageId;
-    const assistantMsg = await appendMessage({
-      projectId, conversationId, role: 'assistant', content: '', status: 'streaming', parentMessageId: userMsgId,
-    });
-    assistantMsgId = assistantMsg.messageId;
-    res.write(`event: saved\ndata: ${JSON.stringify({ userMessageId: userMsgId, assistantMessageId: assistantMsgId, conversationId })}\n\n`);
-  } catch (persistErr) {
-    res.write(`event: persist_error\ndata: ${JSON.stringify({ message: persistErr instanceof Error ? persistErr.message : 'persist_failed' })}\n\n`);
-  }
   res.write(`event: session\ndata: ${JSON.stringify({ sessionId })}\n\n`);
-
-  // 2) Build the bounded Context Pack — active branch tail (only when fresh/branch),
-  // reply-anchor lineage, and active Plan context. Never the whole transcript; no
-  // automatic graph dump. Provenance is surfaced for debugging, not chain-of-thought.
-  let modelMessage = message;
   try {
-    const [deckRes, messages] = await Promise.all([
-      getDeckDocument(projectId, deckId).catch(() => ({ deck: null }) as any),
-      getConversationMessages(projectId, conversationId).catch(() => []),
-    ]);
-    const pack = await buildContextPack({
-      projectId,
-      conversationId,
-      messages,
-      activeLeafMessageId: assistantMsgId || userMsgId || null,
-      anchorMessageId: parentMessageId && parentMessageId !== userMsgId ? parentMessageId : null,
-      runtimeFresh,
-      planDraft: (deckRes?.deck?.planDraft ?? null) as any,
-    });
-    if (pack.preamble) modelMessage = `${pack.preamble}\n\n${message}`;
-    res.write(
-      `event: context_pack\ndata: ${JSON.stringify({ items: pack.items.map((i) => ({ source: i.source, ref: i.ref, reason: i.reason })), excluded: pack.excluded })}\n\n`,
-    );
-  } catch {
-    /* context pack best-effort; fall back to the raw user message */
-  }
-
-  // 3) Run the gRPC turn; collect only SAFE visible activity summaries + plan link.
-  let accumulated = '';
-  let linkedPlanDraftId: string | null = null;
-  const visibleActivities: VisibleActivity[] = [];
-  try {
-    const handle = await startGrpcTurn({ sessionId, message: modelMessage, workingDirectory, model }, (event) => {
+    const handle = await startGrpcTurn({ sessionId, message, workingDirectory, model }, (event) => {
       res.write(`event: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`);
-      if (event.kind === 'text') {
-        accumulated += String((event as { text?: unknown }).text || '');
-      } else if (event.kind === 'tool_start') {
-        const tn = String((event as { toolName?: unknown }).toolName || '');
-        const isPlan = /write_plan_draft/i.test(tn);
-        visibleActivities.push({ kind: isPlan ? 'plan_write' : 'tool', label: isPlan ? 'Saving plan to canvas…' : tn, status: 'started' });
-      } else if (event.kind === 'tool_result') {
-        const tn = String((event as { toolName?: unknown }).toolName || '');
-        if (/write_plan_draft/i.test(tn)) {
-          visibleActivities.push({ kind: 'plan_write', label: 'Plan saved to canvas.', status: 'complete' });
-          try {
-            const out = JSON.parse(String((event as { output?: unknown }).output || '{}'));
-            if (out?.planDraft?.id) linkedPlanDraftId = String(out.planDraft.id);
-          } catch {
-            /* result not JSON; no plan id to link */
-          }
-        } else {
-          visibleActivities.push({ kind: 'tool', label: `${tn} result`, status: (event as { isError?: unknown }).isError ? 'error' : 'complete' });
-        }
-      } else if (event.kind === 'permission') {
-        visibleActivities.push({ kind: 'question', label: String((event as { question?: unknown }).question || 'Question'), status: 'asked' });
-      } else if (event.kind === 'error') {
-        visibleActivities.push({ kind: 'error', label: String((event as { message?: unknown }).message || 'error'), status: 'error' });
-      }
     });
     activeGrpcTurns.set(sessionId, handle);
     req.on('close', () => {
       handle.cancel();
       activeGrpcTurns.delete(sessionId);
     });
-    const { finalText } = await handle.done;
-    // 4) Finalize: a plan turn persists ONLY the brief pointer (never plan markdown/
-    // JSON) and links the Plan Draft; otherwise the real final text.
-    if (assistantMsgId) {
-      const finalContent = linkedPlanDraftId ? 'Plan created on canvas.' : finalText || accumulated || '';
-      await finalizeMessage({
-        projectId, messageId: assistantMsgId, content: finalContent, status: 'complete', linkedPlanDraftId, visibleActivities,
-      }).catch(() => undefined);
-    }
+    await handle.done;
   } catch (error) {
-    if (assistantMsgId) {
-      await finalizeMessage({ projectId, messageId: assistantMsgId, content: accumulated, status: 'error', visibleActivities }).catch(() => undefined);
-    }
     res.write(
       `event: error\ndata: ${JSON.stringify({ message: error instanceof Error ? error.message : 'grpc_turn_failed' })}\n\n`,
     );
@@ -239,71 +119,11 @@ router.post('/openclaude/session/answer', (req, res) => {
   const sessionId = deriveSessionId(
     String(req.body?.projectId || ''),
     String(req.body?.conversationId || 'default'),
-    String(req.body?.tabRuntimeId || '').trim(),
   );
   const handle = activeGrpcTurns.get(sessionId);
   if (!handle) return res.status(404).json({ ok: false, error: 'no_active_turn' });
   handle.answer(String(req.body?.promptId || ''), String(req.body?.reply || ''));
   return res.json({ ok: true });
-});
-
-// ── Durable conversation history (read) + outcome reviews ───────────────────
-router.get('/openclaude/conversation/list', async (req, res) => {
-  try {
-    const projectId = String(req.query?.projectId || '');
-    if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
-    const conversations = await listConversations(projectId);
-    const mostRecent = await getMostRecentConversation(projectId);
-    return res.json({ ok: true, conversations, mostRecentConversationId: mostRecent?.conversationId ?? null });
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'conversation_list_failed' });
-  }
-});
-
-router.get('/openclaude/conversation/messages', async (req, res) => {
-  try {
-    const projectId = String(req.query?.projectId || '');
-    const conversationId = String(req.query?.conversationId || '');
-    if (!projectId || !conversationId) return res.status(400).json({ ok: false, error: 'projectId_and_conversationId_required' });
-    const messages = await getConversationMessages(projectId, conversationId);
-    return res.json({ ok: true, messages });
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'conversation_messages_failed' });
-  }
-});
-
-router.get('/openclaude/outcome-reviews', async (req, res) => {
-  try {
-    const projectId = String(req.query?.projectId || '');
-    if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
-    const reviews = await getOutcomeReviews(projectId, {
-      planDraftId: typeof req.query?.planDraftId === 'string' ? req.query.planDraftId : undefined,
-      planStepId: typeof req.query?.planStepId === 'string' ? req.query.planStepId : undefined,
-    });
-    return res.json({ ok: true, reviews });
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'outcome_reviews_failed' });
-  }
-});
-
-router.post('/openclaude/outcome-review', async (req, res) => {
-  try {
-    const projectId = String(req.body?.projectId || '');
-    const requestedOutcome = String(req.body?.requestedOutcome || '');
-    if (!projectId || !requestedOutcome) return res.status(400).json({ ok: false, error: 'projectId_and_requestedOutcome_required' });
-    const review = await upsertOutcomeReview({
-      projectId,
-      requestedOutcome,
-      reviewId: typeof req.body?.reviewId === 'string' ? req.body.reviewId : undefined,
-      requestMessageId: typeof req.body?.requestMessageId === 'string' ? req.body.requestMessageId : undefined,
-      planDraftId: typeof req.body?.planDraftId === 'string' ? req.body.planDraftId : undefined,
-      planStepId: typeof req.body?.planStepId === 'string' ? req.body.planStepId : undefined,
-      acceptanceCriteria: Array.isArray(req.body?.acceptanceCriteria) ? req.body.acceptanceCriteria.map((x: unknown) => String(x)) : undefined,
-    });
-    return res.json({ ok: true, review });
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'outcome_review_failed' });
-  }
 });
 
 const CONSOLE_MODES: ConsoleMode[] = ['interactive', 'print', 'task', 'shell'];

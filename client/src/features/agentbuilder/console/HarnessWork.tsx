@@ -33,11 +33,6 @@ function isBashTool(name: string): boolean {
 function isMcpTool(name: string): boolean {
   return /^mcp__|liquidaity|describe_agent_fabric|execute_visible_flow|project_context/i.test(name);
 }
-// The structured Plan Draft belongs on the Plan canvas, never echoed into chat —
-// show only a concise action row, never the PlanDraft JSON args/result.
-function isPlanDraftTool(name: string): boolean {
-  return /write_plan_draft/i.test(name);
-}
 
 /** First meaningful line of real output, capped — full text stays in `detail`. */
 function preview(text: string, cap = 96): string {
@@ -69,10 +64,7 @@ function toRows(events: NativeSessionEvent[]): Row[] {
       } catch {
         /* keep raw */
       }
-      if (isPlanDraftTool(name)) {
-        // Structured plan goes to the Plan canvas — acknowledge the action only.
-        rows.push({ tone: 'mcp', label: 'Saving plan to canvas…' });
-      } else if (isBashTool(name) && args.command) {
+      if (isBashTool(name) && args.command) {
         rows.push({ tone: 'cmd', label: `$ ${asStr(args.command)}` });
       } else {
         rows.push({ tone: isMcpTool(name) ? 'mcp' : 'tool', label: name, detail: prettyArgs(argsRaw) });
@@ -82,11 +74,6 @@ function toRows(events: NativeSessionEvent[]): Row[] {
       if (!out.trim()) continue;
       const isError = Boolean((e as { isError?: unknown }).isError);
       const toolName = asStr((e as { toolName?: unknown }).toolName);
-      if (isPlanDraftTool(toolName)) {
-        // Never dump the persisted PlanDraft JSON into chat — it lives on the canvas.
-        rows.push({ tone: 'result', label: isError ? 'Plan write failed' : 'Plan saved to canvas.' });
-        continue;
-      }
       const t = out.trim();
       // A JSON/array result reads as a bare "{" in a one-line preview — label it
       // by the tool instead and keep the real payload in the expandable detail.
@@ -157,14 +144,16 @@ export default function HarnessWork({ events, busy, pendingQuestion, onAnswer }:
   // Completed work collapses by default; the real detail stays one click away.
   const [openLog, setOpenLog] = useState(false);
   const rows = toRows(events);
-  if (!busy && rows.length === 0 && !pendingQuestion) return null;
+  // Render ONLY real work: actual tool rows or a live permission question. No
+  // "working…" status, no busy placeholder — a turn with no real actions shows
+  // nothing here (the assistant reply, if any, is a normal chat bubble).
+  if (rows.length === 0 && !pendingQuestion) return null;
 
   const rowList = (
     <div data-testid="harness-work-rows">
       {rows.map((r, i) => (
         <RowView key={i} row={r} />
       ))}
-      {busy ? <div style={{ color: 'rgba(159,179,200,0.6)' }}>working…</div> : null}
     </div>
   );
 

@@ -36,8 +36,6 @@ import HarnessWork from '../features/agentbuilder/console/HarnessWork';
 import {
   streamSession,
   answerSession,
-  getTabRuntimeId,
-  loadProjectConversation,
   type NativeSessionEvent,
 } from '../features/agentbuilder/console/openClaudeSessionClient';
 import {
@@ -54,7 +52,6 @@ import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBui
 import TradingCanvasSurface from '../features/trading/TradingCanvasSurface';
 import {
   buildTaskLedgerArtifactGraph,
-  buildPlanDraftGraph,
   shouldRenderCanvasEdge,
   type PlanMissionGraph,
   type PlanMissionFlowEdge,
@@ -1994,13 +1991,7 @@ export function buildSingleCardRunDocument(
 const uid = () => Math.random().toString(36).slice(2, 8);
 const PROJECTS_API = '/api/projects';
 const EMPTY_PROJECT_STATE = {
-  messages: [] as {
-    role: 'assistant' | 'user';
-    text: string;
-    messageId?: string;
-    parentMessageId?: string | null;
-    linkedPlanDraftId?: string | null;
-  }[],
+  messages: [] as { role: 'assistant' | 'user'; text: string }[],
   plan: [] as PlanItem[],
   links: [] as LinkRef[],
 };
@@ -5025,34 +5016,8 @@ export default function AgentBuilder(): React.ReactElement {
   }, []);
   // chat + plan intent-contract state must be declared before callbacks/effects that write to them.
   const [messages, setMessages] = useState<
-    {
-      role: 'assistant' | 'user';
-      text: string;
-      messageId?: string;
-      parentMessageId?: string | null;
-      linkedPlanDraftId?: string | null;
-    }[]
+    { role: 'assistant' | 'user'; text: string }[]
   >(() => loadProjectState(activeProject).messages);
-  // Durable conversation identity + per-tab runtime identity. conversationId keys
-  // saved history (reused across reloads in any tab); tabRuntimeId keeps the live
-  // Harness/MCP runtime session isolated per browser tab. The runtime session key
-  // = projectId + conversationId + tabRuntimeId (threaded to the backend/gRPC/MCP).
-  const tabRuntimeId = useMemo(() => getTabRuntimeId(), []);
-  const [conversationId, setConversationId] = useState<string>(
-    () => `conv_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`,
-  );
-  // First live turn of THIS tab rebuilds context from saved history (runtimeFresh).
-  const runtimeFreshRef = useRef(true);
-  // "Reply from here": the selected anchor message for the next user message.
-  const [replyAnchor, setReplyAnchor] = useState<{ messageId: string; excerpt: string } | null>(null);
-  // The active branch leaf (null = latest). Switching this navigates branches
-  // without deleting any path.
-  const [activeLeafId, setActiveLeafId] = useState<string | null>(null);
-  const conversationLoadedForRef = useRef<string | null>(null);
-  const messagesRef = useRef(messages);
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
   const [planSource, setPlanSource] = useState<unknown>(
     () => loadProjectState(activeProject).plan,
   );
@@ -5064,45 +5029,6 @@ export default function AgentBuilder(): React.ReactElement {
   );
   const [stateLoaded, setStateLoaded] = useState(false);
   const [planExecutionState, setPlanExecutionState] = useState<PlanExecutionState | null>(null);
-  // On project load (after the deck settles), load the most-recent SAVED Harness
-  // conversation so a reload/new tab shows prior messages — authoritative durable
-  // history, not React/localStorage-only state. Runs once per project.
-  useEffect(() => {
-    // Gate on stateLoaded (the deck-load's FINAL completion signal) so this runs
-    // AFTER any deck-load message restore — the saved conversation is authoritative.
-    if (!canvasProjectId || !stateLoaded) return;
-    if (conversationLoadedForRef.current === canvasProjectId) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const { conversationId: loadedId, messages: stored } = await loadProjectConversation(canvasProjectId);
-        if (cancelled) return;
-        conversationLoadedForRef.current = canvasProjectId;
-        runtimeFreshRef.current = true;
-        if (loadedId) {
-          setConversationId(loadedId);
-          const visible = stored.filter((m) => m.role === 'user' || m.role === 'assistant');
-          if (visible.length > 0) {
-            setMessages(
-              visible.map((m) => ({
-                role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const),
-                text: m.content,
-                messageId: m.messageId,
-                parentMessageId: m.parentMessageId ?? null,
-                linkedPlanDraftId: m.linkedPlanDraftId ?? null,
-              })),
-            );
-          }
-        }
-      } catch {
-        /* keep whatever the deck-load restored */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canvasProjectId, stateLoaded]);
   // The Plan canvas renders only the real AutoGen / Magentic-One Task Ledger
   // artifact captured for the latest real deck run: one honest viewer node, and
   // nothing when no artifact was returned. The only source is the real artifact
@@ -5115,18 +5041,6 @@ export default function AgentBuilder(): React.ReactElement {
   // replaces it. (Still real AutoGen artifacts only — never fabricated.)
   const lastTaskArtifactRef = useRef<Record<string, unknown> | null>(null);
   const planFlowMissionGraph = useMemo<PlanMissionGraph>(() => {
-    // The Harness native Plan Draft (write_plan_draft) is the canonical structured
-    // source for the visible Plan canvas. When the deck carries one, it owns the
-    // Plan root + step nodes; otherwise fall back to the existing real Task Ledger
-    // artifact projection. No markdown/prose parsing, no TodoWrite source.
-    const planDraft = deck?.planDraft ?? null;
-    if (
-      planDraft &&
-      (String(planDraft.objective || '').trim() ||
-        (Array.isArray(planDraft.steps) && planDraft.steps.length > 0))
-    ) {
-      return buildPlanDraftGraph(planDraft);
-    }
     const steps = latestDeckRun?.steps || [];
     let latestArtifact: Record<string, unknown> | null = null;
     for (const step of steps) {
@@ -5149,7 +5063,7 @@ export default function AgentBuilder(): React.ReactElement {
         ? latestArtifact
         : lastTaskArtifactRef.current ?? latestArtifact;
     return buildTaskLedgerArtifactGraph(effectiveArtifact);
-  }, [latestDeckRun, deck?.planDraft]);
+  }, [latestDeckRun]);
   // Unified project canvas (V0) — BUS TOPOLOGY: the task graph (Task Ledger Artifact
   // + task objects) sits ABOVE the Mag One bus (upstream). Agent cards stay plugged
   // into the bus sides; the result/proof zone is reserved BELOW the bus/agents. The
@@ -9064,26 +8978,6 @@ export default function AgentBuilder(): React.ReactElement {
   // Native persistent OpenClaude chat: send goes to the gRPC QueryEngine SSE
   // bridge (NOT the Python deck-run). Upper chat stays compact (user message +
   // final done.full_text); raw events go to the lower OpenClaude session stream.
-  // After the Harness writes a Plan Draft via write_plan_draft (authoritative deck
-  // persistence), reload just the persisted planDraft so the Plan canvas projects
-  // exactly what was written — never a React-only echo of the tool result.
-  const refreshPlanDraftFromDeck = useCallback(async () => {
-    if (!canvasProjectId) return;
-    try {
-      const res = await fetch(`${PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}`, {
-        credentials: 'include',
-      });
-      if (!res.ok) return;
-      const data = await res.json().catch(() => null);
-      const nextPlanDraft = (data as { deck?: { planDraft?: unknown } })?.deck?.planDraft ?? null;
-      setDeck((currentDeck) =>
-        currentDeck ? { ...currentDeck, planDraft: nextPlanDraft as DeckDocument['planDraft'] } : currentDeck,
-      );
-    } catch {
-      /* best-effort refresh; the next deck load picks it up */
-    }
-  }, [canvasProjectId, setDeck]);
-
   const handleNativeSend = useCallback(
     (t: string) => {
       const trimmed = t.trim();
@@ -9093,115 +8987,44 @@ export default function AgentBuilder(): React.ReactElement {
         return;
       }
       if (nativeSessionBusy) return;
-      // Branch parent: the explicit "Reply from here" anchor, else the current
-      // active leaf (linear continuation). Persisted as parentMessageId so old
-      // branches are never rewritten.
-      const current = messagesRef.current;
-      const parentMessageId =
-        replyAnchor?.messageId ?? (current.length ? current[current.length - 1].messageId ?? null : null);
-      const runtimeFresh = runtimeFreshRef.current;
-      // user message + an empty assistant message that fills as text_chunks stream in.
-      setMessages((m) => [
-        ...m,
-        { role: 'user', text: trimmed, parentMessageId },
-        { role: 'assistant', text: '' },
-      ]);
-      setReplyAnchor(null);
+      const conversationId = 'main';
+      // Only the REAL user message is added on send. No empty assistant placeholder —
+      // the assistant bubble is created lazily on the FIRST real text token (below),
+      // never before. If the model emits no text, no assistant bubble is created.
+      setMessages((m) => [...m, { role: 'user', text: trimmed }]);
       // Inline work is transient per turn — clear the prior turn's actions.
       setNativeStreamEvents([]);
       setNativeSessionBusy(true);
-      // A plan turn: once the Harness commits a Plan Draft, ALL finalized plan
-      // content is suppressed from chat (the structured plan lives only on the
-      // canvas/Inspector). Chat keeps a brief pointer; the readable markdown plan,
-      // step lists, dependencies, and payloads never appear in chat.
-      let planTurn = false;
-      const updateLastAssistant = (fn: (prev: string) => string) =>
+      // Append real model text into the single assistant bubble for this turn,
+      // creating that bubble on the first non-empty chunk (never an empty bubble).
+      let assistantStarted = false;
+      const appendAssistantText = (chunk: string) => {
+        if (!chunk) return;
+        assistantStarted = true;
         setMessages((m) => {
           const copy = [...m];
-          for (let i = copy.length - 1; i >= 0; i--) {
-            if (copy[i].role === 'assistant') {
-              copy[i] = { ...copy[i], role: 'assistant', text: fn(copy[i].text) };
-              break;
-            }
+          const last = copy[copy.length - 1];
+          if (last && last.role === 'assistant') {
+            copy[copy.length - 1] = { role: 'assistant', text: last.text + chunk };
+          } else {
+            copy.push({ role: 'assistant', text: chunk });
           }
           return copy;
         });
+      };
       void streamSession({
         projectId: canvasProjectId,
         conversationId,
         message: trimmed,
-        deckId: BUILDER_DECK_ID,
-        tabRuntimeId,
-        parentMessageId,
-        runtimeFresh,
         onEvent: (event) => {
-          if (event.kind === 'saved') {
-            // Adopt the authoritative message ids (so a reload matches, no dupes)
-            // and the durable conversation id (a fresh project may create one).
-            const uid = String((event as { userMessageId?: unknown }).userMessageId || '');
-            const aid = String((event as { assistantMessageId?: unknown }).assistantMessageId || '');
-            const cid = String((event as { conversationId?: unknown }).conversationId || '');
-            if (cid && cid !== conversationId) setConversationId(cid);
-            setMessages((m) => {
-              const copy = [...m];
-              for (let i = copy.length - 1; i >= 0; i--) {
-                if (copy[i].role === 'assistant' && !copy[i].messageId) {
-                  // assistant: id + parent = the user message (keeps the branch lineage intact)
-                  copy[i] = { ...copy[i], messageId: aid || undefined, parentMessageId: uid || copy[i].parentMessageId || null };
-                  for (let j = i - 1; j >= 0; j--) {
-                    if (copy[j].role === 'user' && !copy[j].messageId) {
-                      copy[j] = { ...copy[j], messageId: uid || undefined };
-                      break;
-                    }
-                  }
-                  break;
-                }
-              }
-              return copy;
-            });
-            return;
-          }
           if (event.kind === 'text') {
-            // Human-readable model text streams into chat — but once this is a plan
-            // turn, suppress further plan narrative from chat entirely.
-            if (!planTurn) {
-              updateLastAssistant((prev) => prev + String((event as { text?: unknown }).text || ''));
-            }
+            // Real model text streams into the chat — creates the assistant bubble on
+            // the first token, appends to it afterward. Nothing renders before this.
+            appendAssistantText(String((event as { text?: unknown }).text || ''));
             return;
           }
           // Actual agent actions go to the lower OpenClaude Work reveal (not upper chat).
           setNativeStreamEvents((ev) => [...ev, event]);
-          if (
-            (event.kind === 'tool_start' || event.kind === 'tool_result') &&
-            /write_plan_draft/i.test(String((event as { toolName?: unknown }).toolName || ''))
-          ) {
-            // Suppress all plan content from chat; leave only a brief pointer.
-            planTurn = true;
-            updateLastAssistant(() => 'Plan created on canvas.');
-            if (event.kind === 'tool_result') {
-              // Pull the persisted Plan Draft back from authoritative deck state.
-              void refreshPlanDraftFromDeck();
-              // Link the Plan-created pointer message to the resulting Plan Draft id.
-              try {
-                const out = JSON.parse(String((event as { output?: unknown }).output || '{}'));
-                const pid = out?.planDraft?.id ? String(out.planDraft.id) : '';
-                if (pid) {
-                  setMessages((m) => {
-                    const copy = [...m];
-                    for (let i = copy.length - 1; i >= 0; i--) {
-                      if (copy[i].role === 'assistant') {
-                        copy[i] = { ...copy[i], linkedPlanDraftId: pid };
-                        break;
-                      }
-                    }
-                    return copy;
-                  });
-                }
-              } catch {
-                /* result not JSON; backend still links it authoritatively */
-              }
-            }
-          }
           if (event.kind === 'permission') {
             setNativePendingQuestion({
               promptId: String((event as { promptId?: unknown }).promptId || ''),
@@ -9216,94 +9039,31 @@ export default function AgentBuilder(): React.ReactElement {
           setNativeSessionBusy(false);
           setChatPendingInteraction(false);
           setNativePendingQuestion(null);
-          // Plan turns keep only the brief pointer — the finalized plan (markdown,
-          // steps, deps, payload) is never echoed into chat. Otherwise finalize
-          // from done.full_text (authoritative), falling back to streamed text.
-          updateLastAssistant((prev) =>
-            planTurn ? 'Plan created on canvas.' : finalText || prev || '(no response text)',
-          );
+          // If authoritative final text arrived but nothing streamed, create the one
+          // assistant bubble now. If NO text arrived, render NOTHING — no empty bubble,
+          // no "(no response text)", no status line.
+          if (!assistantStarted && finalText) appendAssistantText(finalText);
         })
-        .catch((err) => {
+        .catch(() => {
+          // No response / error / disconnect: clear busy, KEEP the user message, and
+          // render NO assistant bubble and NO fake error text.
           setNativeSessionBusy(false);
-          updateLastAssistant((prev) => prev || `Session error: ${err instanceof Error ? err.message : String(err)}`);
+          setChatPendingInteraction(false);
+          setNativePendingQuestion(null);
         });
-      // After the first live turn of this tab, the runtime session carries context;
-      // later turns no longer rebuild the active tail into the Context Pack.
-      runtimeFreshRef.current = false;
     },
-    [canvasProjectId, nativeSessionBusy, refreshPlanDraftFromDeck, conversationId, tabRuntimeId, replyAnchor],
+    [canvasProjectId, nativeSessionBusy],
   );
 
   const handleNativeAnswer = useCallback(
     (promptId: string, reply: string) => {
       if (!canvasProjectId) return;
-      void answerSession({ projectId: canvasProjectId, conversationId, promptId, reply, tabRuntimeId });
+      void answerSession({ projectId: canvasProjectId, conversationId: 'main', promptId, reply });
       setNativePendingQuestion(null);
       setChatPendingInteraction(false);
     },
-    [canvasProjectId, conversationId, tabRuntimeId],
+    [canvasProjectId],
   );
-
-  // Active branch path + fork points. The active path = lineage of the active leaf
-  // (latest by default); old branches stay in `messages` and are never deleted —
-  // they surface as compact "other replies" at fork points.
-  const chatView = useMemo(() => {
-    const all = messages;
-    const byId: Record<string, (typeof all)[number]> = {};
-    for (const m of all) if (m.messageId) byId[m.messageId] = m;
-    const children: Record<string, typeof all> = {};
-    for (const m of all) {
-      const p = m.parentMessageId;
-      if (p) (children[p] = children[p] || []).push(m);
-    }
-    let leafId: string | null = activeLeafId && byId[activeLeafId] ? activeLeafId : null;
-    if (!leafId) {
-      for (let i = all.length - 1; i >= 0; i -= 1) {
-        if (all[i].messageId) {
-          leafId = all[i].messageId as string;
-          break;
-        }
-      }
-    }
-    const path: typeof all = [];
-    const seen = new Set<string>();
-    let cur: string | null | undefined = leafId;
-    while (cur && byId[cur] && !seen.has(cur)) {
-      seen.add(cur);
-      path.unshift(byId[cur]);
-      cur = byId[cur].parentMessageId;
-    }
-    for (const m of all) {
-      if (!m.messageId && !path.includes(m)) path.push(m);
-    }
-    const forks: Record<string, { messageId: string; excerpt: string }[]> = {};
-    for (const [pid, kids] of Object.entries(children)) {
-      if (kids.length > 1) {
-        forks[pid] = kids
-          .filter((k) => k.messageId)
-          .map((k) => ({ messageId: k.messageId as string, excerpt: (k.text || '').replace(/\s+/g, ' ').trim().slice(0, 60) }));
-      }
-    }
-    return { path, forks };
-  }, [messages, activeLeafId]);
-
-  const switchToBranch = useCallback((childMessageId: string) => {
-    const all = messagesRef.current;
-    let leaf = childMessageId;
-    for (let guard = 0; guard < 1000; guard += 1) {
-      const kids = all.filter((m) => m.parentMessageId === leaf && m.messageId);
-      if (kids.length === 0) break;
-      const last = kids[kids.length - 1];
-      if (!last.messageId) break;
-      leaf = last.messageId;
-    }
-    setActiveLeafId(leaf);
-  }, []);
-
-  const handleReplyFromHere = useCallback((messageId: string, excerpt: string) => {
-    setReplyAnchor({ messageId, excerpt });
-    setActiveLeafId(messageId);
-  }, []);
 
   const renderChatSurface = (
     projectId: string,
@@ -9317,16 +9077,11 @@ export default function AgentBuilder(): React.ReactElement {
     // chat; the separate Code Console remains its own developer tool.
     const chat = (
       <BuilderChat
-        messages={chatView.path}
+        messages={messages}
         onSend={handleNativeSend}
         knowledgeProjectId={projectId}
         disabled={nativeSessionBusy}
         colors={C}
-        forks={chatView.forks}
-        replyAnchor={replyAnchor}
-        onReplyFromHere={handleReplyFromHere}
-        onClearReplyAnchor={() => setReplyAnchor(null)}
-        onSwitchBranch={switchToBranch}
         activeWork={
           <HarnessWork
             events={nativeStreamEvents}

@@ -178,102 +178,12 @@ export async function recordThinkGraphEvent(record: ThinkGraphEvent): Promise<{ 
   }
   const ts = new Date().toISOString();
   const id = `tgevent:${projectId}:${record.eventType}:${Date.now().toString(36)}`;
-  const planFlowNodeIds = cleanList(record.planFlowNodeIds);
-
-  const cypher = `
-    CREATE (r:ThinkGraphEvent {
-      id: $id,
-      project_id: $projectId,
-      ts: $ts,
-      event_type: $eventType,
-      title: $title,
-      summary: $summary,
-      planflow_node_ids: $planFlowNodeIds,
-      deck_id: $deckId,
-      deck_title: $deckTitle,
-      task: $task,
-      cards: $cards,
-      tools: $tools,
-      runtime_route: $runtimeRoute,
-      status: $status,
-      final_output: $finalOutput,
-      error: $error,
-      assumptions: $assumptions,
-      next_task: $nextTask,
-      coder_packet_id: $coderPacketId,
-      coder_packet_objective: $coderPacketObjective,
-      coder_report_status: $coderReportStatus,
-      completed_requirements: $completedRequirements,
-      incomplete_requirements: $incompleteRequirements,
-      blocked_requirements: $blockedRequirements,
-      changed_requirements: $changedRequirements,
-      out_of_scope_findings: $outOfScopeFindings,
-      proof_summary: $proofSummary,
-      context_evidence_summary: $contextEvidenceSummary,
-      cbm_status: $cbmStatus,
-      code_anchors: $codeAnchors,
-      cbm_blocker: $cbmBlocker,
-      source_diagnostics_summary: $sourceDiagnosticsSummary,
-      planner_provider: $plannerProvider,
-      planner_model: $plannerModel,
-      planner_config_source: $plannerConfigSource,
-      task_ledger: $taskLedger,
-      progress_ledger: $progressLedger
-    })
-    RETURN r.id
-  `;
-  await runCypherOnGraph(THINKGRAPH_GRAPH_NAME, cypher, {
-    id,
-    projectId,
-    ts,
-    eventType: record.eventType,
-    title: clampText(record.title),
-    summary: clampText(record.summary),
-    planFlowNodeIds,
-    deckId: clampText(record.deckId),
-    deckTitle: clampText(record.deckTitle) || clampText(record.deckId),
-    task: clampText(record.task),
-    cards: cleanList(record.cards),
-    tools: cleanList(record.tools),
-    runtimeRoute: clampText(record.runtimeRoute),
-    status: record.status,
-    finalOutput: clampText(record.finalOutput),
-    error: clampText(record.error),
-    assumptions: cleanList(record.assumptions),
-    nextTask: clampText(record.nextTask),
-    coderPacketId: clampText(record.coderPacketId),
-    coderPacketObjective: clampText(record.coderPacketObjective),
-    coderReportStatus: clampText(record.coderReportStatus),
-    completedRequirements: cleanList(record.completedRequirements),
-    incompleteRequirements: cleanList(record.incompleteRequirements),
-    blockedRequirements: cleanList(record.blockedRequirements),
-    changedRequirements: cleanList(record.changedRequirements),
-    outOfScopeFindings: cleanList(record.outOfScopeFindings),
-    proofSummary: cleanList(record.proofSummary),
-    contextEvidenceSummary: cleanList(record.contextEvidenceSummary),
-    cbmStatus: clampText(record.cbmStatus),
-    codeAnchors: cleanList(record.codeAnchors),
-    cbmBlocker: clampText(record.cbmBlocker),
-    sourceDiagnosticsSummary: cleanList(record.sourceDiagnosticsSummary),
-    plannerProvider: clampText(record.plannerProvider),
-    plannerModel: clampText(record.plannerModel),
-    plannerConfigSource: clampText(record.plannerConfigSource),
-    taskLedger: record.taskLedger ? JSON.stringify(record.taskLedger) : null,
-    progressLedger: record.progressLedger ? JSON.stringify(record.progressLedger) : null,
-  });
-  if (planFlowNodeIds.length > 0) {
-    await runCypherOnGraph(
-      THINKGRAPH_GRAPH_NAME,
-      `
-        UNWIND $planFlowNodeIds AS nodeId
-        MATCH (e:ThinkGraphEvent {id: $id})
-        MERGE (p:PlanFlowNodeRef {id: nodeId, project_id: $projectId})
-        MERGE (e)-[:LINKS_PLANFLOW_NODE]->(p)
-        RETURN count(p)
-      `,
-      { id, projectId, planFlowNodeIds },
-    );
-  }
+  // ThinkGraph no longer MIRRORS runtime/event/PlanFlow telemetry into the AGE graph `thinkgraph_liq`.
+  // The deck-run lifecycle and PLAN.md/spec ingestion still run normally and keep their own runtime/log
+  // behavior; they simply stop writing :ThinkGraphEvent / :PlanFlowNodeRef / :LINKS_PLANFLOW_NODE into
+  // ThinkGraph (rejected as ThinkGraph data — it is runtime/spec-ingestion telemetry, not project state).
+  // Signature + id/ts are preserved so every caller (deck execution, PlanFlow loading, …) is unchanged.
+  // No AGE write happens here.
   return { id, ts };
 }
 

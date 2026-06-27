@@ -10,8 +10,8 @@
     {
       "name": "preview",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--workspace", "client", "exec", "--", "vite", "--port", "5199", "--strictPort"],
-      "port": 5199
+      "runtimeArgs": ["--workspace", "client", "exec", "--", "vite", "--port", "5174", "--strictPort"],
+      "port": 5174
     }
   ]
 }

@@ -38,18 +38,8 @@ export type GrpcTurnHandle = {
   done: Promise<{ finalText: string }>;
 };
 
-/**
- * The live RUNTIME Harness session id = projectId + durable conversationId +
- * browser tabRuntimeId. The tab runtime id keeps two tabs on the SAME saved
- * conversation isolated at the live provider/MCP/session-context layer (distinct
- * session ids → distinct gRPC sessions, MCP host cache identities, and
- * sessionBuilderContexts keys). tabRuntimeId is optional for back-compat /
- * direct-route callers.
- */
-export function deriveSessionId(projectId: string, conversationId: string, tabRuntimeId?: string): string {
-  const base = `mag1:${projectId}:${conversationId}`;
-  const tab = String(tabRuntimeId ?? '').trim();
-  return tab ? `${base}:${tab}` : base;
+export function deriveSessionId(projectId: string, conversationId: string): string {
+  return `mag1:${projectId}:${conversationId}`;
 }
 
 function resolveProtoPath(): string {
