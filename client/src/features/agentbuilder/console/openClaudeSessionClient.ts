@@ -64,6 +64,43 @@ export async function streamSession(args: {
   return { finalText };
 }
 
+/**
+ * Load the durable project-scoped transcript for a conversation (persisted by
+ * the backend `conversations/store.ts`). Returns turns in append order. A
+ * fresh project or any read failure resolves to an empty array — never throws —
+ * so chat always opens, with or without history.
+ */
+export async function loadSessionHistory(args: {
+  projectId: string;
+  conversationId: string;
+  signal?: AbortSignal;
+}): Promise<{ role: 'assistant' | 'user'; text: string }[]> {
+  try {
+    const params = new URLSearchParams({
+      projectId: args.projectId,
+      conversationId: args.conversationId,
+    });
+    const res = await fetch(`${BASE}/history?${params.toString()}`, {
+      method: 'GET',
+      credentials: 'include',
+      signal: args.signal,
+    });
+    if (!res.ok) return [];
+    const payload = (await res.json().catch(() => ({}))) as {
+      messages?: { role?: unknown; text?: unknown }[];
+    };
+    if (!Array.isArray(payload.messages)) return [];
+    return payload.messages
+      .map((m) => ({
+        role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+        text: typeof m.text === 'string' ? m.text : '',
+      }))
+      .filter((m) => m.text.length > 0);
+  } catch {
+    return [];
+  }
+}
+
 export async function answerSession(args: {
   projectId: string;
   conversationId: string;

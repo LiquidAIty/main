@@ -142,16 +142,21 @@ export async function runLLM(userContent: string, opts: InvokeOpts = {}): Promis
             { role: "system", content: opts.system ?? "You are a LiquidAIty agent." },
             { role: "user", content: userContent },
           ],
-          temperature, max_tokens,
-          ...(opts.jsonSchema ? { 
-            response_format: { 
+          // GPT-5 family compatibility (local to this branch): these models reject
+          // `max_tokens` (require `max_completion_tokens`) and reject a custom temperature
+          // (only the default is allowed) on chat/completions.
+          ...(/^gpt-5/.test(modelId)
+            ? { max_completion_tokens: max_tokens }
+            : { temperature, max_tokens }),
+          ...(opts.jsonSchema ? {
+            response_format: {
               type: "json_schema",
               json_schema: {
                 name: opts.jsonSchema.name,
                 schema: opts.jsonSchema.schema,
                 strict: opts.jsonSchema.strict ?? true
               }
-            } 
+            }
           } : opts.jsonMode ? { response_format: { type: "json_object" } } : {}),
         };
     const r = await fetchWithTimeout(url, {

@@ -24,6 +24,10 @@ import {
   startGrpcTurn,
   type GrpcTurnHandle,
 } from '../coder/openclaude/session/grpcChatClient';
+import {
+  appendMessage,
+  getConversationMessages,
+} from '../conversations/store';
 
 const router = Router();
 export const OPENCLAUDE_HARNESS_ROUTE_PREFIX = '/coder/openclaude';
@@ -93,6 +97,11 @@ router.post('/openclaude/session/chat', async (req, res) => {
     'X-Accel-Buffering': 'no',
   });
   res.write(`event: session\ndata: ${JSON.stringify({ sessionId })}\n\n`);
+  // Durable project-scoped transcript persistence (conversations/store.ts). Best-effort:
+  // a DB failure must never block or break the live SSE stream.
+  void appendMessage({ projectId, conversationId, role: 'user', content: message }).catch(() => {
+    /* persistence is best-effort; the live turn is authoritative */
+  });
   try {
     const handle = await startGrpcTurn({ sessionId, message, workingDirectory, model }, (event) => {
       res.write(`event: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`);
@@ -102,7 +111,20 @@ router.post('/openclaude/session/chat', async (req, res) => {
       handle.cancel();
       activeGrpcTurns.delete(sessionId);
     });
-    await handle.done;
+    const { finalText } = await handle.done;
+    // Save the assistant reply only when real text was produced — never an empty
+    // bubble (mirrors the frontend's "no text → no bubble" contract).
+    const assistantText = String(finalText || '').trim();
+    if (assistantText) {
+      void appendMessage({
+        projectId,
+        conversationId,
+        role: 'assistant',
+        content: assistantText,
+      }).catch(() => {
+        /* best-effort */
+      });
+    }
   } catch (error) {
     res.write(
       `event: error\ndata: ${JSON.stringify({ message: error instanceof Error ? error.message : 'grpc_turn_failed' })}\n\n`,
@@ -124,6 +146,27 @@ router.post('/openclaude/session/answer', (req, res) => {
   if (!handle) return res.status(404).json({ ok: false, error: 'no_active_turn' });
   handle.answer(String(req.body?.promptId || ''), String(req.body?.reply || ''));
   return res.json({ ok: true });
+});
+
+// Load the durable project-scoped transcript for a conversation so a reload
+// restores the same chat. Returns user/assistant turns in append order. A read
+// failure (e.g. project not yet persisted) returns an empty transcript, never
+// a 500 — a fresh project simply has no history yet.
+router.get('/openclaude/session/history', async (req, res) => {
+  const projectId = String(req.query?.projectId || '');
+  const conversationId = String(req.query?.conversationId || 'default');
+  if (!projectId) {
+    return res.status(400).json({ ok: false, error: 'projectId_required', messages: [] });
+  }
+  try {
+    const stored = await getConversationMessages(projectId, conversationId);
+    const messages = stored
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
+      .map((m) => ({ role: m.role as 'user' | 'assistant', text: m.content }));
+    return res.json({ ok: true, messages });
+  } catch {
+    return res.json({ ok: true, messages: [] });
+  }
 });
 
 const CONSOLE_MODES: ConsoleMode[] = ['interactive', 'print', 'task', 'shell'];

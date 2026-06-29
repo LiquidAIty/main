@@ -36,6 +36,7 @@ import HarnessWork from '../features/agentbuilder/console/HarnessWork';
 import {
   streamSession,
   answerSession,
+  loadSessionHistory,
   type NativeSessionEvent,
 } from '../features/agentbuilder/console/openClaudeSessionClient';
 import {
@@ -4734,6 +4735,36 @@ export default function AgentBuilder(): React.ReactElement {
     () => loadProjectState(activeProject).links,
   );
   const [stateLoaded, setStateLoaded] = useState(false);
+
+  // Restore the durable project-scoped Harness transcript on open / project
+  // switch, so a reload shows the same conversation (persisted server-side in
+  // conversations/store.ts, conversationId 'main'). This load is read-only and
+  // best-effort: a fresh project or a read failure leaves chat empty, never
+  // errors. A late response for a project the user already switched away from is
+  // discarded (guarded by the captured projectId).
+  useEffect(() => {
+    const pid = canvasProjectId;
+    if (!pid) {
+      setMessages([]);
+      return;
+    }
+    const ctrl = new AbortController();
+    let cancelled = false;
+    void loadSessionHistory({ projectId: pid, conversationId: 'main', signal: ctrl.signal })
+      .then((history) => {
+        if (cancelled) return;
+        setMessages(history);
+      })
+      .catch(() => {
+        /* best-effort; chat opens regardless */
+      });
+    return () => {
+      cancelled = true;
+      ctrl.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasProjectId]);
+
   // Dev-only: copy/inspect the latest Mag One model-call packet(s) for this project.
   // Run `await __getModelCallPackets()` in the browser console — it fetches the debug
   // route, copies the JSON to the clipboard, and logs it. No secrets are captured.
@@ -7606,35 +7637,20 @@ export default function AgentBuilder(): React.ReactElement {
     return result;
   }, [graphVizFiltered]);
   const thinkGraphViewData = useMemo<GraphViewData>(() => {
-    // Prefer real accepted :SlmGraphRecord records for the selected project; fall back to the
-    // legacy :Entity-seeded view only when no accepted records are present.
+    // ThinkGraph reads ONLY its own store: accepted :SlmGraphRecord records for the
+    // selected project (thinkgraph_liq, via /api/thinkgraph/graph-view). There is NO
+    // fallback to graph_liq :Entity data — that is KnowGraph data and must never appear
+    // in the ThinkGraph tab. When there are no records the tab is honestly empty.
     const accepted = mapAcceptedThinkGraphRecordsToViewData(thinkGraphRecordsView);
     if (accepted) return accepted;
-    return {
-      kind: 'thinkgraph',
-      nodes: thinkGraphViz.nodes.map((node) => ({
-        id: String(node.id),
-        label: safeText(node.label || node.id),
-        type: safeText(node.type || 'entity'),
-        confidence:
-          typeof node.confidence === 'number' ? node.confidence : undefined,
-      })),
-      edges: thinkGraphViz.edges.map((edge, index) => ({
-        id:
-          safeText(edge.id) ||
-          `think:${index}:${safeText(edge.a)}:${safeText(edge.b)}`,
-        source: String(edge.source || edge.a),
-        target: String(edge.target || edge.b),
-        type: safeText(edge.type || 'related_to'),
-        weight: typeof edge.weight === 'number' ? edge.weight : undefined,
-      })),
-    };
-  }, [thinkGraphRecordsView, thinkGraphViz.edges, thinkGraphViz.nodes]);
+    return { kind: 'thinkgraph', nodes: [], edges: [] };
+  }, [thinkGraphRecordsView]);
 
-  // Honest source label for the ThinkGraph tab diagnostics (no more blanket "host-provided").
+  // Honest source label for the ThinkGraph tab diagnostics: only the real ThinkGraph DB
+  // or unavailable — never the legacy "host-provided" graph_liq fallback (removed).
   const thinkGraphSourceLabel = useMemo(
-    () => resolveThinkGraphSourceLabel(thinkGraphRecordsView, thinkGraphViz.nodes.length > 0),
-    [thinkGraphRecordsView, thinkGraphViz.nodes.length],
+    () => resolveThinkGraphSourceLabel(thinkGraphRecordsView, false),
+    [thinkGraphRecordsView],
   );
 
   // Honest source label for the EXISTING KnowGraph tab diagnostics — reflects the real Neo4j
