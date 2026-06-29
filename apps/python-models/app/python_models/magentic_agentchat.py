@@ -7,13 +7,11 @@ or task-ledger internals in app code.
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.teams import MagenticOneGroupChat
-from autogen_core.models import SystemMessage, UserMessage
 
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
 from app.python_models.tool_registry import DEFAULT_TOOL_REGISTRY
@@ -23,7 +21,6 @@ from app.python_models.orchestration_contracts import (
     LedgerTrace,
     OrchestratorMetrics,
     OrchestratorRunResponse,
-    PlanFlowTaskObject,
     TaskLedgerArtifact,
 )
 
@@ -82,133 +79,6 @@ def _real_task_ledger_artifact(orchestrator: Any) -> TaskLedgerArtifact | None:
         teamDescription=team_description,
         modelCallProof=[],
     )
-
-
-def _available_agents_block(context: ContextPack) -> str:
-    """Real available agents + capabilities, from the active card's participants.
-
-    This is the team the model may route tasks to (suggestedAgents/suggestedTools).
-    Honest 'none listed' when the card carries no participants — never invented.
-    """
-    card = context.cardRuntime
-    parts = list(getattr(card, "participants", []) or []) if card else []
-    if not parts:
-        return "Available agents and capabilities: none listed."
-    lines: list[str] = []
-    for p in parts:
-        title = _as_text(getattr(p, "title", "")) or _as_text(getattr(p, "cardId", ""))
-        if not title:
-            continue
-        role = _as_text(getattr(p, "role", ""))
-        tools = [_as_text(t) for t in (getattr(p, "tools", []) or []) if _as_text(t)]
-        desc = title
-        if role:
-            desc += f" (role: {role})"
-        if tools:
-            desc += f" — tools: {', '.join(tools)}"
-        lines.append(f"- {desc}")
-    if not lines:
-        return "Available agents and capabilities: none listed."
-    return "Available agents and capabilities:\n" + "\n".join(lines)
-
-
-def _think_graph_summary(context: ContextPack) -> str:
-    tg = context.thinkGraph
-    ents = [_as_text(e) for e in (getattr(tg, "priorityEntities", []) or []) if _as_text(e)]
-    rels = [_as_text(r) for r in (getattr(tg, "priorityRelationships", []) or []) if _as_text(r)]
-    if not ents and not rels:
-        return "not available"
-    out: list[str] = []
-    if ents:
-        out.append(f"priority entities: {', '.join(ents[:12])}")
-    if rels:
-        out.append(f"priority relationships: {', '.join(rels[:12])}")
-    return "; ".join(out)
-
-
-def _know_graph_summary(context: ContextPack) -> str:
-    kg = context.knowGraph
-    gaps = getattr(kg, "gaps", []) or []
-    facts = getattr(kg, "graphFacts", []) or []
-    docs = int(getattr(kg, "researchDocumentCount", 0) or 0)
-    if not gaps and not facts and not docs:
-        return "not available"
-    return f"gaps: {len(gaps)}, facts: {len(facts)}, research docs: {docs}"
-
-
-def _code_graph_summary(context: ContextPack) -> str:
-    wctx = context.workspaceObjectContext
-    if not wctx:
-        return "not available"
-    repo = _as_text(getattr(wctx, "repoPath", ""))
-    src = _as_text(getattr(wctx, "graphSource", ""))
-    bits = [b for b in (f"repo: {repo}" if repo else "", f"graph source: {src}" if src else "") if b]
-    return "; ".join(bits) if bits else "not available"
-
-
-async def _planflow_task_objects(
-    client: Any, context: ContextPack, artifact: TaskLedgerArtifact
-) -> list[PlanFlowTaskObject]:
-    """Model-produced PlanFlow task objects via the Mag One card output contract.
-
-    Makes ONE explicit real model call AFTER the Magentic-One run, grounded in the
-    REAL Task Ledger (task + team + facts + plan). The MODEL emits the structured
-    JSON task objects; this code never parses the plan prose, finalResponseText, or
-    autogenMessages into tasks. Fails closed to [] when there is no card contract or
-    the model returned no valid JSON (no fabrication — no task nodes then render).
-    """
-    card = context.cardRuntime
-    contract = _as_text(getattr(card, "taskLedgerOutputContract", "")) if card else ""
-    if not contract:
-        return []
-    card_prompt_chain = _as_text(getattr(card, "prompt", "")) or _as_text(context.systemPrompt)
-    ledger_context = (
-        f"User task:\n{_as_text(context.userText)}\n\n"
-        f"Active card prompt-chain:\n{card_prompt_chain or 'not available'}\n\n"
-        f"{_available_agents_block(context)}\n\n"
-        f"Team:\n{artifact.teamDescription}\n\n"
-        f"ThinkGraph context: {_think_graph_summary(context)}\n"
-        f"KnowGraph context: {_know_graph_summary(context)}\n"
-        f"CodeGraph context: {_code_graph_summary(context)}\n\n"
-        f"Facts:\n{artifact.factsResponse}\n\n"
-        f"Plan:\n{artifact.planResponse}\n\n"
-        f"Task Ledger:\n{artifact.taskLedgerResponse}"
-    ).strip()
-    try:
-        result = await client.create(
-            [
-                SystemMessage(content=contract),
-                UserMessage(content=ledger_context, source="user"),
-            ],
-            json_output=True,
-        )
-    except Exception as err:
-        print("[magentic] planflow task contract call failed:", repr(err))
-        return []
-
-    raw_content = getattr(result, "content", None)
-    text = _as_text(raw_content) if isinstance(raw_content, str) else ""
-    if not text:
-        return []
-    try:
-        data = json.loads(text)
-    except Exception:
-        # The model did not return a parseable JSON object. Fail closed — never
-        # regex-extract or salvage prose into tasks.
-        return []
-    raw_list = data.get("planFlowTaskObjects") if isinstance(data, dict) else None
-    if not isinstance(raw_list, list):
-        return []
-    tasks: list[PlanFlowTaskObject] = []
-    for item in raw_list:
-        if not isinstance(item, dict):
-            continue
-        try:
-            tasks.append(PlanFlowTaskObject(**item))
-        except Exception:
-            # Drop a single malformed object rather than fabricate fields.
-            continue
-    return tasks
 
 
 def _as_text(value: Any) -> str:
@@ -398,17 +268,9 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
         # produced no Task Ledger (no fabrication for PlanFlow).
         task_ledger_artifact = _real_task_ledger_artifact(getattr(team, "orchestrator_instance", None))
 
-        # Mag One card prompt-chain step 4: ask the model (one explicit real call)
-        # for PlanFlow-ready structured task objects, grounded in the real Task
-        # Ledger above. Model-produced — never parsed from prose. Empty if the card
-        # carries no output contract or the model returned no valid JSON.
-        if task_ledger_artifact is not None:
-            task_ledger_artifact.planFlowTaskObjects = await _planflow_task_objects(
-                client, context, task_ledger_artifact
-            )
-
         # Safe metadata only (no full prompt / no raw ledger text) — proves the run
-        # is real AutoGen and whether a Task Ledger artifact was captured.
+        # is real AutoGen and whether a Task Ledger artifact was captured. No post-run
+        # PlanFlow projection: Mag One's native Task Ledger is the task breakdown.
         print(
             "[magentic] run_stream meta:",
             {
@@ -418,11 +280,6 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
                 "sources": sorted({m["source"] for m in autogen_messages}),
                 "stop_reason": stop_reason,
                 "has_task_ledger_artifact": task_ledger_artifact is not None,
-                "planflow_task_objects": (
-                    len(task_ledger_artifact.planFlowTaskObjects)
-                    if task_ledger_artifact is not None
-                    else 0
-                ),
             },
         )
 

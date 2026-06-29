@@ -156,40 +156,6 @@ export type DeckViewport = {
   zoom: number;
 };
 
-// A deliberate, structured Plan Specification the Harness writes via the
-// write_plan_draft MCP capability — the single structured source for the visible
-// canvas Plan object. Not an execution task ledger, not a TodoWrite checklist.
-export type PlanDraftStepState = 'draft' | 'planned';
-
-export type PlanDraftStep = {
-  id: string;
-  shortTitle: string;
-  shortSummary: string;
-  detail: string;
-  expectedOutcome?: string;
-  dependencies?: string[];
-  constraints?: string[];
-  acceptanceCriteria?: string[];
-  targetFlow?: string;
-  targetAgent?: string;
-  state: PlanDraftStepState;
-};
-
-export type PlanDraft = {
-  id: string;
-  projectId: string;
-  deckId: string;
-  objective: string;
-  summary: string;
-  assumptions?: string[];
-  openQuestions?: string[];
-  constraints?: string[];
-  acceptanceCriteria?: string[];
-  steps: PlanDraftStep[];
-  source?: string;
-  createdAt?: string;
-};
-
 export type DeckDocument = {
   id: string;
   name: string;
@@ -200,9 +166,6 @@ export type DeckDocument = {
   edges: DeckEdge[];
   // Deprecated: Agent Canvas intentionally ignores persisted viewport.
   viewport?: DeckViewport | null;
-
-  // The current structured Plan Draft (Harness native plan → write_plan_draft).
-  planDraft?: PlanDraft | null;
 
   version: number;
 };
@@ -710,259 +673,6 @@ export type WorkspaceObjectContext = {
   excludedAgents?: string[];
 };
 
-export type MissionSpecRunState =
-  | 'draft'
-  | 'approved'
-  | 'wiring'
-  | 'running'
-  | 'complete'
-  | 'failed'
-  | 'cancelled'
-  | 'needs_user_input';
-
-export type MissionAgentRunStatus =
-  | 'queued'
-  | 'running'
-  | 'complete'
-  | 'failed'
-  | 'skipped'
-  | 'needs_user_input';
-
-export type MissionRunStatus =
-  | 'approved'
-  | 'wiring'
-  | 'running'
-  | 'complete'
-  | 'failed'
-  | 'cancelled'
-  | 'needs_user_input';
-
-export type MissionSpec = {
-  id: string;
-  title: string;
-  userGoal: string;
-  target: string;
-  readContext: string[];
-  agentRuns: Array<{
-    id?: string;
-    agentId: string;
-    promptSeed: string;
-    required?: boolean;
-  }>;
-  runState: MissionSpecRunState;
-};
-
-export type MissionRun = {
-  id: string;
-  missionSpecId: string;
-  status: MissionRunStatus;
-  activeAgentRunId: string | null;
-  agentRuns: Array<{
-    id: string;
-    agentId: string;
-    status: MissionAgentRunStatus;
-    required: boolean;
-    promptSeed: string;
-    resultSummary?: string | null;
-    error?: string | null;
-  }>;
-  results: Array<{
-    agentRunId: string;
-    agentId: string;
-    status: MissionAgentRunStatus;
-    output?: string | null;
-    reason?: string | null;
-  }>;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type PlanFlowNodeType =
-  | 'CurrentMission'
-  | 'TaskLedger'
-  | 'CurrentSpec'
-  | 'ProgressLedger'
-  | 'TaskResult'
-  | 'NextSpecCandidate'
-  | 'SelectedAction'
-  | 'CodeConsoleRun'
-  | 'MagOneTraceEvent'
-  | 'PlanRoute'
-  | 'Task'
-  | 'Decision'
-  | 'Assumption'
-  | 'MagenticOnePlan'
-  | 'RuntimeRun'
-  | 'Proof'
-  | 'SkillReference'
-  | 'CodeEvidenceReference'
-  | 'ThinkGraphEvent';
-
-export type PlanFlowSource =
-  | 'plan_md'
-  | 'user'
-  | 'magentic_one'
-  | 'sol'
-  | 'model'
-  | 'thinkgraph'
-  | 'skillgraph'
-  | 'codegraph';
-
-export type PlanFlowStatus =
-  | 'draft'
-  | 'approved'
-  | 'running'
-  | 'complete'
-  | 'failed'
-  | 'blocked'
-  | 'pending';
-
-export type PlanFlowNode = {
-  id: string;
-  type: PlanFlowNodeType;
-  title: string;
-  source: PlanFlowSource;
-  sourcePath: string;
-  provenance: string;
-  status: PlanFlowStatus;
-  links: string[];
-  /** Concise human summary derived only from the real Mag One payload. */
-  summary?: string;
-  /** Full real payload (TaskLedger/ProgressLedger/run/event) for the inspector. */
-  payload?: unknown;
-};
-
-export type PlanFlowProjection = {
-  packet_version: 1;
-  source: 'planflow_task_ledger_steps';
-  nodes: PlanFlowNode[];
-  edges: Array<{
-    id: string;
-    source: string;
-    target: string;
-    type: 'contains' | 'defines_task';
-  }>;
-  warnings: string[];
-};
-
-export type MissionDeckPatch = {
-  missionSpecId: string;
-  nodesToCreate: AgentCardInstance[];
-  nodesToUpdate: Array<Pick<AgentCardInstance, 'id'> & Partial<AgentCardInstance>>;
-  edgesToCreate: DeckEdge[];
-  edgesToUpdate: Array<Pick<DeckEdge, 'id'> & Partial<DeckEdge>>;
-  promptFieldsToUpdate: Array<{
-    nodeId: string;
-    prompt: string;
-  }>;
-  runState: MissionSpecRunState;
-};
-
-export type WorkspaceHarnessProvider =
-  | "internal-workspace"
-  | "openclaude"
-  | "claude-code"
-  | "codex"
-  | "local";
-
-export type WorkspaceHarnessOperation =
-  | "inspect_context"
-  | "draft_mission"
-  | "refine_mission"
-  | "generate_deck_patch"
-  | "apply_deck_patch"
-  | "connect_agents"
-  | "seed_prompts"
-  | "run_approved_mission"
-  | "query_graph"
-  | "traverse_graph"
-  | "ask_clarifying_questions"
-  | "request_graph_update";
-
-export type WorkspaceHarnessPermission =
-  | "deck.read"
-  | "deck.write"
-  | "canvas.read"
-  | "canvas.write"
-  | "plan.read"
-  | "plan.write"
-  | "mission.read"
-  | "mission.write"
-  | "agent.read"
-  | "agent.connect"
-  | "agent.prompt.read"
-  | "agent.prompt.write"
-  | "reactflow.nodes.create"
-  | "reactflow.nodes.update"
-  | "reactflow.edges.create"
-  | "reactflow.edges.update"
-  | "graph.query"
-  | "graph.traverse"
-  | "graph.write.request";
-
-export type OpenMissionMessage = {
-  missionRunId: string;
-  title: string;
-  status: MissionRunStatus;
-  activeAgents: Array<{
-    agentRunId: string;
-    label: string;
-    status: MissionAgentRunStatus;
-    summary?: string;
-  }>;
-  latestSummary?: string;
-  suggestedUserActions?: string[];
-};
-
-export type WorkspaceHarnessRequest = {
-  provider: WorkspaceHarnessProvider;
-  operation: WorkspaceHarnessOperation;
-  userGoal: string;
-  activeCanvasId?: string | null;
-  selectedObject?: CanvasObjectContext | WorkspaceObjectContext | null;
-  missionSpec?: MissionSpec | null;
-  missionRun?: MissionRun | null;
-  currentDeckSummary?: {
-    id: string;
-    name: string;
-    nodeCount: number;
-    edgeCount: number;
-  } | null;
-  availableAgents?: Array<{ id: string; label: string }>;
-  graphContextRefs?: string[];
-  priorResults?: Array<{ agentId: string; summary?: string | null }>;
-  permissions: WorkspaceHarnessPermission[];
-};
-
-export type WorkspaceHarnessResult = {
-  status: "complete" | "needs_user_input" | "failed";
-  summary: string;
-  questions?: string[];
-  missionSpecPatch?: Partial<MissionSpec> | null;
-  missionDeckPatch?: MissionDeckPatch | null;
-  missionRunUpdate?: Partial<MissionRun> | null;
-  agentRunUpdates?: Array<{
-    id: string;
-    status: MissionAgentRunStatus;
-    resultSummary?: string | null;
-    error?: string | null;
-  }>;
-  openMissionMessage?: OpenMissionMessage | null;
-  graphUpdateRequests?: GraphUpdateRequest[];
-  suggestedNextAction?: WorkspaceHarnessOperation | null;
-  errorReason?: string | null;
-};
-
-export type DeckRunMissionMetadata = {
-  missionRunId?: string | null;
-  missionAgentRunId?: string | null;
-  missionStatus?: MissionRunStatus | null;
-  agentRunStatus?: MissionAgentRunStatus | null;
-  resultSummary?: string | null;
-  needsUserInputReason?: string | null;
-  errorReason?: string | null;
-};
-
 export type CanvasObjectContext = {
   id: string;
   canvasId: string;
@@ -996,7 +706,6 @@ export type DeckRun = {
     simpleOrderCardIds: string[];
     expandedStepIds: string[];
   };
-  mission?: DeckRunMissionMetadata | null;
 };
 
 export type DeckRunResponse = {
@@ -1005,10 +714,6 @@ export type DeckRunResponse = {
   run?: DeckRun;
   meta?: Record<string, unknown> | null;
   error?: string;
-  missionRunId?: string | null;
-  missionAgentRunId?: string | null;
-  missionStatus?: MissionRunStatus | null;
-  agentRunStatus?: MissionAgentRunStatus | null;
   resultSummary?: string | null;
   needsUserInputReason?: string | null;
   errorReason?: string | null;

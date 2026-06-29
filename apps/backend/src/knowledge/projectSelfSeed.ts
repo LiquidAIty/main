@@ -43,14 +43,6 @@ export function buildProjectSelfSeed(projectId: string, now = new Date()): Proje
       confidence: 0.98,
     },
     {
-      id: 'surface:plan',
-      kind: 'Surface',
-      name: 'Plan',
-      summary: 'Mission/task surface backed by PlanMissionFlow React Flow canvas.',
-      status: 'current',
-      confidence: 0.95,
-    },
-    {
       id: 'surface:agents',
       kind: 'Surface',
       name: 'Agents',
@@ -126,22 +118,6 @@ export function buildProjectSelfSeed(projectId: string, now = new Date()): Proje
       confidence: 0.97,
     },
     {
-      id: 'file:client_plan_flow',
-      kind: 'File',
-      name: 'client/src/components/assist/PlanMissionFlow.tsx',
-      summary: 'React Flow mission canvas renderer for Plan surface.',
-      status: 'current',
-      confidence: 0.96,
-    },
-    {
-      id: 'file:client_plan_model',
-      kind: 'File',
-      name: 'client/src/components/assist/planMissionModel.ts',
-      summary: 'Plan mission node taxonomy and graph derivation from structured plan data.',
-      status: 'current',
-      confidence: 0.96,
-    },
-    {
       id: 'file:backend_deck_runtime',
       kind: 'File',
       name: 'apps/backend/src/v3/runtime/deckRuntime.ts',
@@ -190,14 +166,6 @@ export function buildProjectSelfSeed(projectId: string, now = new Date()): Proje
       confidence: 0.93,
     },
     {
-      id: 'truth:plan_react_flow_foundation',
-      kind: 'CurrentTruth',
-      name: 'Plan uses React Flow mission canvas',
-      summary: 'Plan surface now renders mission canvas via PlanMissionFlow.',
-      status: 'current',
-      confidence: 0.94,
-    },
-    {
       id: 'future:focus_depth_routing',
       kind: 'FutureDirection',
       name: 'Chat focus-depth routing',
@@ -236,15 +204,6 @@ export function buildProjectSelfSeed(projectId: string, now = new Date()): Proje
       confidence: 0.99,
       sourceKind: 'design_chat',
       sourceRef: 'Project architecture direction',
-    },
-    {
-      id: 'truth.platform.plan_react_flow_surface',
-      statement: 'Plan is a React Flow mission canvas foundation, not only flat text.',
-      scope: 'surface',
-      status: 'current',
-      confidence: 0.94,
-      sourceKind: 'code',
-      sourceRef: 'client/src/components/assist/PlanMissionFlow.tsx',
     },
     {
       id: 'truth.runtime.workspace_context_consumed',

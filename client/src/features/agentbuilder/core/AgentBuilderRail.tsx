@@ -12,7 +12,6 @@ type RailColors = {
 
 type RailVisibility = {
   showKnowledge: boolean;
-  showPlan: boolean;
   showWorldsignal: boolean;
   showEnergy: boolean;
   showTrading: boolean;
@@ -43,7 +42,6 @@ type AgentBuilderRailProps = {
   onShowVideoWorkspace: () => void;
   onShowDataFormulatorWorkspace: () => void;
   onShowWorkbenchWorkspace: (surfaceId: UaUiAgentDefinition['surfaceId']) => void;
-  onShowPlanWorkspace: () => void;
   onOpenNavigationDrawer: () => void;
   openClaudeConsoleActive?: boolean;
   onOpenOpenClaudeConsole?: () => void;
@@ -101,7 +99,6 @@ export default function AgentBuilderRail({
   onShowVideoWorkspace,
   onShowDataFormulatorWorkspace,
   onShowWorkbenchWorkspace,
-  onShowPlanWorkspace,
   onOpenNavigationDrawer,
   openClaudeConsoleActive,
   onOpenOpenClaudeConsole,
@@ -294,22 +291,6 @@ export default function AgentBuilderRail({
       ) : null}
 
       <div className="flex-1" />
-
-      {visibleRailItems.showPlan ? (
-        <button
-          title="Plan"
-          aria-label="Plan"
-          data-testid="rail-orange-button"
-          onClick={onShowPlanWorkspace}
-          className="p-2 rounded mb-1"
-          style={{
-            color:
-              workspaceView === 'plan' ? GRAPH_THEME.accent.solar : colors.text,
-          }}
-        >
-          <Icon d="M3 12l2-2 4 4L21 4" />
-        </button>
-      ) : null}
 
       <button
         title="Menu"

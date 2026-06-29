@@ -1,10 +1,6 @@
 import { useEffect, useState } from 'react';
 
 import type { BuilderCanvasFocusRequest } from '../../../components/builder/BuilderCanvas';
-import type {
-  PlanMissionNodeData,
-  PlanMissionNodeOverrideMap,
-} from '../../../components/assist/planMissionModel';
 import type { DeckDocument } from '../../../types/agentgraph';
 
 type UseAgentBuilderSelectionArgs = {
@@ -22,14 +18,6 @@ export default function useAgentBuilderSelection({
   >(null);
   const [selectedKnowledgeRelationshipId, setSelectedKnowledgeRelationshipId] =
     useState<string | null>(null);
-  const [planMissionFocus, setPlanMissionFocus] = useState<{
-    nodeId: string;
-    nodeLabel: string;
-    nodeKind: string;
-    nodeData: PlanMissionNodeData;
-  } | null>(null);
-  const [planNodeDrafts, setPlanNodeDrafts] =
-    useState<PlanMissionNodeOverrideMap>({});
   const [builderCanvasFocusRequest, setBuilderCanvasFocusRequest] =
     useState<BuilderCanvasFocusRequest | null>(null);
   const [tab, setTab] = useState<string>('Canvas');
@@ -58,10 +46,6 @@ export default function useAgentBuilderSelection({
     setSelectedKnowledgeEntityId,
     selectedKnowledgeRelationshipId,
     setSelectedKnowledgeRelationshipId,
-    planMissionFocus,
-    setPlanMissionFocus,
-    planNodeDrafts,
-    setPlanNodeDrafts,
     builderCanvasFocusRequest,
     setBuilderCanvasFocusRequest,
     tab,

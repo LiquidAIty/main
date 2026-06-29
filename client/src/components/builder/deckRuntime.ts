@@ -1,7 +1,6 @@
 import type {
   AgentCardInstance,
   AgentTemplate,
-  DeckDocument,
 } from '../../types/agentgraph';
 
 /**
@@ -196,34 +195,6 @@ Rules:
   when there is genuinely no graph-worthy content.
 - Do not omit agent/team context; do not hide connected agents.
 - If there is no actionable work, return {"planFlowTaskObjects": [], "graphPayload": { ... empty ... }}.`;
-
-/**
- * Ensure every Magentic-One card carries an explicit PlanFlow task-output
- * contract in its runtimeOptions before a run. The card's own value is the
- * editable source of truth (inspector); this only fills the visible default
- * when a card has none, so an un-edited deck still emits structured tasks.
- * Returns the same document untouched when nothing needs filling.
- */
-export function withMagenticTaskLedgerContractDefault(
-  document: DeckDocument,
-): DeckDocument {
-  const nodes = Array.isArray(document.nodes) ? document.nodes : [];
-  let changed = false;
-  const nextNodes = nodes.map((node) => {
-    if (node.runtimeType !== 'magentic_one') return node;
-    const existing = String(node.runtimeOptions?.taskLedgerOutputContract || '').trim();
-    if (existing) return node;
-    changed = true;
-    return {
-      ...node,
-      runtimeOptions: {
-        ...(node.runtimeOptions || {}),
-        taskLedgerOutputContract: DEFAULT_PLANFLOW_TASK_OUTPUT_CONTRACT,
-      },
-    };
-  });
-  return changed ? { ...document, nodes: nextNodes } : document;
-}
 
 export function resolveEffectiveAgent(
   card: AgentCardInstance,

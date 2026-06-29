@@ -46,3 +46,23 @@ sanitizePlanText, isPlanRuntimeNoiseText, fallback_step, wantsPlanSurface,
 ## Query Patterns
 
 @query id=planflow-no-deterministic-projection.audit "search changed PlanFlow/Task Ledger/Agent Builder paths for projection, sanitizer, fallback_step, keyword router, and finalResponseText/autogenMessages/chat used as a task-node source"
+
+## Removal Log
+
+@removal id=planflow-no-deterministic-projection.2026-06-28 the outer deterministic plan layer was deleted in full (not patched).
+
+Deleted files:
+* `client/src/components/builder/assistPlanSurface.ts` (whole deterministic projection: `buildStructuredAssistPlanSurface`, `StructuredAssistPlanSurface`, `StructuredAssistPlanStep`, `PlanContractMode`, `PlanStepStatus`, anchor-text derivation, executor classification, the broken no-arg `safeText()`).
+* `client/src/components/assist/PlanWikiSurface.tsx` (+ spec) — was never rendered.
+
+Removed symbols (zero active references after removal): `buildStructuredAssistPlanSurface`, `buildPlanMissionGraph` (+ helpers `makeNode`/`normalizeStatusForNode`/`inferNodeKind`/`buildStepDescription`/`toNodeId`), `StructuredAssistPlanSurface`, `EMPTY_PLANFLOW_STRUCTURED_PLAN`, the deterministic `structuredPlan` fallback in `PlanMissionFlow`, the Go-gate (`PlanFlowGoGateState`, `goGateState`, `handlePlanGoGate`, `onGoGate`/`onTaskGoGate`/`goGateStatus`, SWAT tray, inspector/editor "Run Agents" buttons, `PlanMissionNodeData.onGoGate/goGateStatus/onRunTask/isRunTaskNode/runnable`).
+
+Kept (native Mag One Task Ledger display — do NOT rebuild a projection over it): `buildTaskLedgerArtifactGraph`, `makeEdge`, `PlanMissionFlow` (now renders only the real `missionGraph` from the artifact, honest empty `{nodes:[],edges:[]}` otherwise), `TaskNodeInspector` real `planFlowTaskObjects` fields.
+
+Neutral home for the only escaping data shapes: `client/src/components/builder/deckContinuityTypes.ts` holds `PlanItem` + `LinkRef` (no planning semantics, no Mag One).
+
+Must never be reintroduced: any `structuredPlan` → task-card projection, any Go/Run gate threaded into the canvas/inspector, any backend/client deterministic conversion of plan prose into nodes.
+
+@proof id=planflow-no-deterministic-projection.removed-audit rg -c "buildStructuredAssistPlanSurface|buildPlanMissionGraph|StructuredAssistPlanSurface|PlanFlowGoGateState|onTaskGoGate|EMPTY_PLANFLOW" client/src apps/backend/src  → zero
+@proof id=planflow-no-deterministic-projection.compile backend `tsc -p apps/backend/tsconfig.app.json --noEmit` = 0; client `tsc -p client/tsconfig.app.json --noEmit` = 4 pre-existing unrelated errors (xyflow typing ×2, tsconfig-include, pre-existing `PlanMissionNodeData.title`)
+@proof id=planflow-no-deterministic-projection.tests client `deckRuntime.spec.ts` 20/20, backend `src/decks/` 4/4

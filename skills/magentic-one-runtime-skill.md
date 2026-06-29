@@ -193,6 +193,40 @@ restored.
 @touches_code apps/backend/src/coder/openclaude/runtime/terminal.ts
 @touches_code apps/backend/scripts/openclaude-terminal-launch.ps1
 
+## Clean Native Boundary — Outer Runtime Wrappers Removed (2026-06-28)
+
+@guardrail id=magentic-one-runtime.no-outer-wrappers
+A direct Mag One run is `incoming mission text + explicit card/deck config only → native
+MagenticOneGroupChat → native Task Ledger → native team → result`. The backend runtime must
+NOT layer any of the following onto native reasoning (all removed; do not reintroduce):
+
+* Global backend persona — `MAG_ONE_CODING_RUN_SYSTEM_PROMPT` (and any universal coding/CBM/
+  Plan-Agent system prompt prepended to every run). The system prompt is now EXACTLY the card's
+  own `prompt`. A card may carry its own explicit prompt; the backend imposes none.
+* Deterministic keyword routing — the `isGenericPrompt`/`isContinuation` classifier (`test`,
+  `hello`, `hi`, `run`, `go`, `continue`, `approve`, `yes`) and any mutation of
+  `priorAssistantText`/mission input. Mission input passes through unchanged.
+* Native team mutation — the `resolveMagOneAgentRole(head) !== 'local_coder'` participant filter.
+  The team is exactly the bus-connected, Python-callable cards (no role exclusion).
+* Hidden graph injection — `buildGroundedTaskLedgerContext`/`renderTaskLedgerGroundingDirective`
+  prose spliced into the system prompt and the `taskLedgerGroundingContext` payload field. (The
+  future user-authored Plan attaches selected graph context explicitly; runtime never auto-injects.)
+* Post-run PlanFlow projection — Python `_planflow_task_objects` and the
+  `TaskLedgerArtifact.planFlowTaskObjects` / `PlanFlowTaskObject` contract branch. The native
+  `taskLedgerArtifact` (facts/plan/team/taskLedger) is the task breakdown; no extra model call.
+* Auto output-contract injection — `withMagenticTaskLedgerContractDefault` in the deck-run path.
+  Only a card's own explicitly-set `taskLedgerOutputContract` (edited in the AgentManager "Objects"
+  field) is transported; no hidden default is stamped at run time.
+
+Keep intact: `MagenticOneGroupChat`, vendored AutoGen task-ledger prompt / `_get_task_ledger_plan_prompt`,
+native `taskLedgerArtifact`, native execution, native team coordination, `buildTaskLedgerArtifactGraph`
+(native display — degrades to an honest empty task graph when no artifact).
+
+@proof id=magentic-one-runtime.wrappers-removed-audit `rg -c 'MAG_ONE_CODING_RUN_SYSTEM_PROMPT|withMagenticTaskLedgerContractDefault|_planflow_task_objects|PlanFlowTaskObject|isGenericPrompt|isContinuation' client/src apps/backend/src apps/python-models/app` → zero.
+@proof id=magentic-one-runtime.wrappers-removed-compile backend `tsc -p apps/backend/tsconfig.app.json --noEmit`=0; client tsc = 4 pre-existing unrelated; `py_compile` ok.
+@proof id=magentic-one-runtime.wrappers-removed-tests cards/runtime.spec.ts payload asserts (systemPrompt == card prompt, priorAssistantText preserved, coder participates, no grounding); deckRuntime.spec.ts 19/19; Python contracts/adapter/orchestrator 18/18.
+@limitation id=magentic-one-runtime.full-live-run a full live MagenticOneGroupChat mission needs the Python rails service + a provider key + network (real billed calls); no offline full-run fixture exists. Highest-fidelity offline proof run instead: real adapter `_build_participants` + `taskLedgerArtifact` contract tests with a fake client.
+
 ## Backend Workspace Root Guardrail
 
 @proof id=magentic-one-runtime.localcoder-root-resolution

@@ -1,5 +1,4 @@
 import type { CSSProperties, Dispatch, SetStateAction } from 'react';
-import type { Edge, Node } from '@xyflow/react';
 
 import AgentBoard from './AgentBoard';
 import type { DeckExecutionPlan } from '../../../components/builder/deckExecution';
@@ -25,12 +24,7 @@ type AgentCanvasPaneProps = {
   onSelectEdge: (edgeId: string | null) => void;
   onDeleteSelectedEdge: () => void;
   inspectMode?: boolean;
-  taskOverlayNodes?: Node[];
-  taskOverlayEdges?: Edge[];
-  focusZone?: { zone: 'agents' | 'tasks'; nonce: number } | null;
-  onTaskGoGate?: () => void;
-  taskGoGateStatus?: string | null;
-  onTaskNodePositionChange?: (id: string, x: number, y: number) => void;
+  focusZone?: { zone: 'agents'; nonce: number } | null;
 };
 
 export default function AgentCanvasPane({
@@ -50,12 +44,7 @@ export default function AgentCanvasPane({
   onSelectEdge,
   onDeleteSelectedEdge,
   inspectMode = false,
-  taskOverlayNodes,
-  taskOverlayEdges,
   focusZone,
-  onTaskGoGate,
-  taskGoGateStatus = null,
-  onTaskNodePositionChange,
 }: AgentCanvasPaneProps) {
   return (
     <div
@@ -77,12 +66,7 @@ export default function AgentCanvasPane({
         onSelectEdge={onSelectEdge}
         onDeleteSelectedEdge={onDeleteSelectedEdge}
         inspectMode={inspectMode}
-        taskOverlayNodes={taskOverlayNodes}
-        taskOverlayEdges={taskOverlayEdges}
         focusZone={focusZone}
-        onTaskGoGate={onTaskGoGate}
-        taskGoGateStatus={taskGoGateStatus}
-        onTaskNodePositionChange={onTaskNodePositionChange}
       />
     </div>
   );

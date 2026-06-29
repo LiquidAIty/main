@@ -3,10 +3,7 @@
 // @graph relates_to: AgentBuilderWorkspace, BuilderDeckRuntimeActions, DeckRuntime
 // @graph depends_on: DeckRunRoute
 // @graph feeds_to: DeckRunRoute
-import type {
-  LinkRef,
-  PlanItem,
-} from "./assistPlanSurface";
+import type { LinkRef } from "./deckContinuityTypes";
 import { safeJson } from "./requestGuards";
 import type { DeckDocument, DeckRun, DeckRunResponse, DeckRuntimeEvent } from "../../types/agentgraph";
 
@@ -26,7 +23,6 @@ type DeckRuntimeVisualState = {
 
 const EMPTY_PROJECT_STATE = {
   messages: [] as { role: "assistant" | "user"; text: string }[],
-  plan: [] as PlanItem[],
   links: [] as LinkRef[],
 };
 
@@ -145,15 +141,6 @@ export function buildDeckRuntimeVisualState(
     }
 
     if (event.kind === "magentic_trace") {
-      if (event.plan && typeof event.plan === "object" && !Array.isArray(event.plan)) {
-        const p = event.plan as any;
-        if (p.summary) reasoningLines.push(prefixRuntimeLine("Plan Summary", p.summary));
-        if (p.deltaSummary) reasoningLines.push(prefixRuntimeLine("Plan Delta", p.deltaSummary));
-        if (Array.isArray(p.openQuestions)) {
-          p.openQuestions.forEach((q: string) => reasoningLines.push(prefixRuntimeLine("Question", q)));
-        }
-      }
-
       if (Array.isArray(event.blackboardEntries)) {
         event.blackboardEntries.forEach((entry: any) => {
           if (entry && entry.content) {
@@ -350,8 +337,6 @@ export function buildReloadStateFromDeckRuns(
   latestRunInput: DeckRun | null | undefined,
 ): {
   messages: { role: "assistant" | "user"; text: string }[];
-  planSource: unknown;
-  plan: PlanItem[];
   links: LinkRef[];
 } {
   const orderedRuns = [...(Array.isArray(runsInput) ? runsInput : [])];
@@ -365,8 +350,6 @@ export function buildReloadStateFromDeckRuns(
   if (orderedRuns.length === 0) {
     return {
       messages: [...EMPTY_PROJECT_STATE.messages],
-      planSource: [...EMPTY_PROJECT_STATE.plan],
-      plan: [...EMPTY_PROJECT_STATE.plan],
       links: [...EMPTY_PROJECT_STATE.links],
     };
   }
@@ -392,8 +375,6 @@ export function buildReloadStateFromDeckRuns(
 
   return {
     messages,
-    planSource: [...EMPTY_PROJECT_STATE.plan],
-    plan: [...EMPTY_PROJECT_STATE.plan],
     links: [...EMPTY_PROJECT_STATE.links],
   };
 }

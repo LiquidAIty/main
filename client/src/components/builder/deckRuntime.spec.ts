@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DeckDocument } from '../../types/agentgraph';
 import {
   DEFAULT_PLANFLOW_TASK_OUTPUT_CONTRACT,
   MAG_ONE_OWL_TASK_LEDGER_CONTRACT,
   OWL_SHAPED_OUTPUT_CONTRACT,
-  withMagenticTaskLedgerContractDefault,
 } from './deckRuntime';
 
 describe('reusable OWL-shaped output contract', () => {
@@ -123,29 +121,3 @@ describe('OWL contract distinguishes explicit-assert from never-invent (no graph
   });
 });
 
-describe('OWL-shaped contract is wired into the real Mag One card path', () => {
-  it('withMagenticTaskLedgerContractDefault fills the OWL-shaped contract on an un-edited Mag One card', () => {
-    const doc: DeckDocument = {
-      id: 'deck-1',
-      name: 'Deck',
-      promptTemplates: [],
-      nodes: [
-        {
-          id: 'card_mag',
-          templateId: 'tpl_mag',
-          runtimeType: 'magentic_one',
-          title: 'Mag One',
-          position: { x: 0, y: 0 },
-        },
-      ],
-      edges: [],
-      version: 1,
-    };
-
-    const next = withMagenticTaskLedgerContractDefault(doc);
-    const contract = next.nodes[0].runtimeOptions?.taskLedgerOutputContract || '';
-    expect(contract).toContain('OWL-shaped graph-ready output contract');
-    expect(contract).toContain('graphPayload');
-    expect(contract).toMatch(/property graph/i);
-  });
-});

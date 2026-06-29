@@ -52,7 +52,6 @@ export default function BuilderChat({
   }, [messages.length, lastTextLen]);
 
   const send = () => {
-    if (disabled) return;
     const trimmed = v.trim();
     if (!trimmed) return;
     onSend(trimmed);
@@ -63,15 +62,23 @@ export default function BuilderChat({
     <div className="h-full flex flex-col" style={{ gap: 12 }}>
       <div
         ref={listRef}
-        className="flex-1 overflow-auto"
+        className="flex-1"
         style={{
-          padding: "16px 20px 18px",
-          display: "grid",
-          gap: 14,
-          alignContent: "end",
+          flex: "1 1 0",
+          minHeight: 0,
+          overflowY: "auto",
           overflowX: "hidden",
+          padding: "16px 20px 18px",
         }}
       >
+        <div
+          style={{
+            minHeight: "100%",
+            display: "grid",
+            alignContent: "end",
+            gap: 14,
+          }}
+        >
         {messages.map((m, i) => {
           const isUser = m.role !== "assistant";
           // Never render an empty/whitespace assistant bubble — only real assistant
@@ -122,6 +129,7 @@ export default function BuilderChat({
             {activeWork}
           </div>
         ) : null}
+        </div>
       </div>
       <div className="px-4 pb-4">
         <div
@@ -136,7 +144,7 @@ export default function BuilderChat({
         >
           <UploadAttachment
             knowledgeProjectId={knowledgeProjectId}
-            disabled={disabled || !knowledgeProjectId}
+            disabled={!knowledgeProjectId}
             appearance="chat-inline"
           />
           <input
@@ -156,7 +164,6 @@ export default function BuilderChat({
               fontSize: 14,
               lineHeight: 1.25,
             }}
-            disabled={disabled}
           />
           <button
             onClick={send}
@@ -169,7 +176,6 @@ export default function BuilderChat({
               border: "1px solid rgba(79,162,173,0.36)",
               boxShadow: "0 8px 18px rgba(79,162,173,0.10), inset 0 1px 0 rgba(255,255,255,0.14)",
             }}
-            disabled={disabled}
           >
             <svg
               width="19"

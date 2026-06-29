@@ -324,41 +324,14 @@ class ModelCallProof(BaseModel):
     usage: dict[str, Any] | None = None
 
 
-class PlanFlowTaskObject(BaseModel):
-    """A single PlanFlow-ready task object, produced by the Mag One card output
-    contract (an explicit model call). This is structured model output — never
-    parsed from the Task Ledger prose, finalResponseText, or autogenMessages.
-    """
-
-    id: str
-    title: str
-    detail: str = ""
-    status: str = "proposed"
-    stepNumber: int = 0
-    dependsOn: list[str] = Field(default_factory=list)
-    approvalRequired: bool = False
-    nextNeeded: str = ""
-    proofNeeded: str = ""
-    # Real-context routing fields. The model fills these ONLY from the available team
-    # agents / tools fed in the ledger context; defaults keep older contracts valid.
-    suggestedAgents: list[str] = Field(default_factory=list)
-    suggestedTools: list[str] = Field(default_factory=list)
-    routesThrough: str = ""
-    semanticType: str = ""
-    owlType: str = ""
-    relations: list[str] = Field(default_factory=list)
-
-
 class TaskLedgerArtifact(BaseModel):
     """The real AutoGen 0.7.5 Magentic-One Task Ledger output, preserved verbatim.
 
     ``factsResponse`` / ``planResponse`` are the exact model outputs from the
     facts and plan prompt calls. ``taskLedgerResponse`` is the full Task Ledger
     text AutoGen assembles via ``ORCHESTRATOR_TASK_LEDGER_FULL_PROMPT``. Nothing
-    is split into invented fields or steps.
-
-    ``planFlowTaskObjects`` is the only structured-task surface: model-produced via
-    the card output contract, empty when the model returned no valid JSON.
+    is split into invented fields or steps. Mag One's native Task Ledger is the
+    task breakdown — there is no post-run PlanFlow projection.
     """
 
     source: Literal["autogen_0_7_5_magentic_one"] = "autogen_0_7_5_magentic_one"
@@ -368,7 +341,6 @@ class TaskLedgerArtifact(BaseModel):
     taskLedgerResponse: str
     teamDescription: str
     modelCallProof: list[ModelCallProof] = Field(default_factory=list)
-    planFlowTaskObjects: list[PlanFlowTaskObject] = Field(default_factory=list)
 
 
 class ProgressLedgerReference(BaseModel):

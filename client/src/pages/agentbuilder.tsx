@@ -50,29 +50,7 @@ import useAgentBuilderProject from '../features/agentbuilder/state/useAgentBuild
 import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgentBuilderProjectReset';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import TradingCanvasSurface from '../features/trading/TradingCanvasSurface';
-import {
-  buildTaskLedgerArtifactGraph,
-  shouldRenderCanvasEdge,
-  type PlanMissionGraph,
-  type PlanMissionFlowEdge,
-  type PlanMissionNodeData,
-  type PlanMissionNodeOverrideMap,
-} from '../components/assist/planMissionModel';
-import {
-  type LinkRef,
-  type PlanItem,
-  type StructuredAssistPlanSurface,
-} from '../components/builder/assistPlanSurface';
-
-import {
-  blockPlanExecutionState,
-  cachePlanExecutionState,
-  completePlanExecutionState,
-  createPlanExecutionState,
-  formatPlanExecutionStatusMessage,
-  readCachedPlanExecutionState,
-  type PlanExecutionState,
-} from '../features/agentbuilder/plan/planExecutionState';
+import type { LinkRef } from '../components/builder/deckContinuityTypes';
 import { resolveDeckWorkspaceRoot } from '../features/agentbuilder/state/deckWorkspaceRoot';
 import { buildExecutionPlan } from '../components/builder/deckExecution';
 import DeckExecutionPathSummary from '../components/builder/DeckExecutionPathSummary';
@@ -98,11 +76,6 @@ import {
   resolveDeckRunChatReply,
   streamDeckRunRequest,
 } from '../components/builder/deckRunState';
-import {
-  applyMissionDeckPatch,
-  buildMissionDeckPatch,
-} from '../components/builder/missionExecution';
-import { runInternalWorkspaceHarness } from '../components/builder/workspaceHarness';
 import {
   buildDefaultDeckEdgeMetadata,
   sanitizeDeckEdges,
@@ -140,12 +113,6 @@ import type {
   WorkspaceObjectContext,
   PromptTemplate,
   RuntimeBinding,
-  MissionRun,
-  MissionSpec,
-  OpenMissionMessage,
-  WorkspaceHarnessOperation,
-  WorkspaceHarnessPermission,
-  WorkspaceHarnessRequest,
 } from '../types/agentgraph';
 import {
   ENERGY_DEFAULT_PARAMETERS,
@@ -214,9 +181,6 @@ import {
   toggleExpandedContext,
 } from '../components/knowledge/knowGraphNeighborhood';
 import { resolveCbmProjectName } from '../components/codegraph/resolveCodeGraphProjectIdentity';
-const PlanMissionFlow = lazy(
-  () => import('../components/assist/PlanMissionFlow'),
-);
 const EnergyFacadeSurface = lazy(
   () => import('../components/energy/EnergyFacadeSurface'),
 );
@@ -552,7 +516,6 @@ function normalizeWorkspaceSurface(
   const normalized = safeText(value).trim().toLowerCase();
   if (
     normalized === 'chat' ||
-    normalized === 'plan' ||
     normalized === 'canvas' ||
     normalized === 'knowledge' ||
     normalized === 'codegraph' ||
@@ -619,15 +582,6 @@ function safeText(value: unknown): string {
 function cleanOptionalText(value: unknown): string | null {
   const text = safeText(value).trim();
   return text || null;
-}
-
-function summarizePlanRuntimeMessage(
-  value: unknown,
-  fallback: string,
-): string | null {
-  const normalized = safeText(value).trim();
-  if (!normalized) return null;
-  return normalized;
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
@@ -1002,18 +956,6 @@ function resolveWorkbenchDescriptor(
   );
 }
 
-function isPlanAgentCard(card: AgentCardInstance | null | undefined): boolean {
-  if (!card) return false;
-  const id = safeText(card.id).trim().toLowerCase();
-  const templateId = safeText(card.templateId).trim().toLowerCase();
-  const title = safeText(card.title).trim().toLowerCase();
-  return (
-    id === 'card_plan_agent' ||
-    templateId === 'template_plan_agent' ||
-    title === 'plan agent'
-  );
-}
-
 function isWorldSignalsAgentCard(
   card: AgentCardInstance | null | undefined,
 ): boolean {
@@ -1062,7 +1004,6 @@ function isCodeGraphSystemCard(
 
 export type ActivationProposalState = {
   capability:
-    | 'plan'
     | 'knowledge'
     | 'energy'
     | 'worldsignal'
@@ -1077,7 +1018,6 @@ export type ActivationProposalState = {
 
 export type ProgressiveRailVisibility = {
   showKnowledge: boolean;
-  showPlan: boolean;
   showWorldsignal: boolean;
   showEnergy: boolean;
   showTrading: boolean;
@@ -1322,14 +1262,6 @@ export function isLegacyKnowledgeChainFullyConnected(
   ]);
 }
 
-export function isPlanAgentActive(
-  nodes: readonly AgentCardInstance[],
-  edges: readonly DeckEdge[],
-): boolean {
-  const busConnected = buildBusConnectedCardIds(nodes, edges);
-  return nodes.some((node) => busConnected.has(node.id) && isPlanAgentCard(node));
-}
-
 export function isWorldSignalsAgentActive(
   nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
@@ -1430,10 +1362,6 @@ export function deriveVisibleRailItems({
   const connectedGraphStreams = deriveConnectedGraphStreams(deck);
   return {
     showKnowledge: connectedGraphStreams.anyGraph,
-    showPlan:
-      workspaceView === 'plan' ||
-      pendingActivationProposal !== null ||
-      isPlanAgentActive(deck.nodes, deck.edges),
     showWorldsignal:
       workspaceView === 'worldsignal' ||
       isWorldSignalsAgentActive(deck.nodes, deck.edges),
@@ -1472,9 +1400,7 @@ function detectActivationProposal(
   }
 
   const capability =
-    /\b(plan|planning)\b/.test(normalized)
-      ? 'plan'
-      : /\b(knowledge|research|knowgraph|codegraph|thinkgraph)\b/.test(
+    /\b(knowledge|research|knowgraph|codegraph|thinkgraph)\b/.test(
             normalized,
           )
         ? 'knowledge'
@@ -1496,7 +1422,6 @@ function detectActivationProposal(
   if (!capability) return null;
 
   const titleByCapability = {
-    plan: 'Enable Plan',
     knowledge: 'Enable Research + Knowledge',
     energy: 'Enable Energy',
     worldsignal: 'Enable WorldSignals',
@@ -1513,60 +1438,6 @@ function detectActivationProposal(
     status: 'pending',
   };
 }
-
-function detectWorkspaceHarnessOperation(
-  text: string,
-): WorkspaceHarnessOperation | null {
-  const normalized = safeText(text).trim().toLowerCase();
-  if (!normalized) return null;
-  if (/\b(what context|inspect|show context|current deck)\b/.test(normalized)) {
-    return 'inspect_context';
-  }
-  if (/\b(draft mission|create mission|plan mission)\b/.test(normalized)) {
-    return 'draft_mission';
-  }
-  if (/\b(refine mission|update mission)\b/.test(normalized)) {
-    return 'refine_mission';
-  }
-  if (/\b(generate patch|wire deck|connect agents|seed prompts)\b/.test(normalized)) {
-    return 'generate_deck_patch';
-  }
-  if (/\b(apply patch|apply deck patch)\b/.test(normalized)) {
-    return 'apply_deck_patch';
-  }
-  if (/\b(run approved mission|run mission|execute mission)\b/.test(normalized)) {
-    return 'run_approved_mission';
-  }
-  if (/\b(question|clarify|ambiguous)\b/.test(normalized)) {
-    return 'ask_clarifying_questions';
-  }
-  if (/\b(query graph|traverse graph)\b/.test(normalized)) {
-    return 'query_graph';
-  }
-  return null;
-}
-
-const WORKSPACE_HARNESS_DEFAULT_PERMISSIONS: WorkspaceHarnessPermission[] = [
-  'deck.read',
-  'deck.write',
-  'canvas.read',
-  'canvas.write',
-  'plan.read',
-  'plan.write',
-  'mission.read',
-  'mission.write',
-  'agent.read',
-  'agent.connect',
-  'agent.prompt.read',
-  'agent.prompt.write',
-  'reactflow.nodes.create',
-  'reactflow.nodes.update',
-  'reactflow.edges.create',
-  'reactflow.edges.update',
-  'graph.query',
-  'graph.traverse',
-  'graph.write.request',
-];
 
 function isAssistLikeRuntimeType(runtimeType: AgentCardRuntimeType | null): boolean {
   return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
@@ -1992,25 +1863,7 @@ const uid = () => Math.random().toString(36).slice(2, 8);
 const PROJECTS_API = '/api/projects';
 const EMPTY_PROJECT_STATE = {
   messages: [] as { role: 'assistant' | 'user'; text: string }[],
-  plan: [] as PlanItem[],
   links: [] as LinkRef[],
-};
-const EMPTY_PLANFLOW_STRUCTURED_PLAN: StructuredAssistPlanSurface = {
-  planMode: 'draft',
-  goal: '',
-  steps: [],
-  whatMattersNow: [],
-  nextMove: [],
-  assumptions: [],
-  research: [],
-  openQuestions: [],
-  humanTasks: [],
-  agentTasks: [],
-  pathOptions: [],
-  explicitPlanText: '',
-  hasExplicitPlanDocument: false,
-  whatChanged: [],
-  sources: [],
 };
 
 const KG_CACHE_PREFIX = 'agentbuilder:kg-cache:v1';
@@ -3852,128 +3705,10 @@ function compactAgentOverrides(
   return Object.keys(filtered).length > 0 ? filtered : undefined;
 }
 
-function normalizeStepStatusForPlanSource(
-  value: unknown,
-): 'proposed' | 'approved' | 'running' | 'blocked' | 'done' {
-  const status = safeText(value).trim().toLowerCase();
-  if (
-    status === 'proposed' ||
-    status === 'approved' ||
-    status === 'running' ||
-    status === 'blocked' ||
-    status === 'done'
-  ) {
-    return status;
-  }
-  if (status === 'complete') return 'done';
-  if (status === 'awaiting_review' || status === 'review') return 'approved';
-  if (status === 'ready' || status === 'seeded') return 'proposed';
-  return 'proposed';
-}
-
-function normalizeStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((entry) => safeText(entry).trim()).filter(Boolean);
-}
-
-function buildStructuredPlanStepPatch(
-  patch: Partial<PlanMissionNodeData>,
-): Record<string, unknown> {
-  const next: Record<string, unknown> = {};
-  if ('label' in patch) next.title = safeText(patch.label).trim();
-  if ('status' in patch) {
-    next.status = normalizeStepStatusForPlanSource(patch.status);
-  }
-  if ('assignedAgentId' in patch) {
-    const value = safeText(patch.assignedAgentId).trim();
-    next.assignedAgentId = value || null;
-  }
-  if ('skillId' in patch) {
-    const value = safeText(patch.skillId).trim();
-    next.skillId = value || null;
-  }
-  if ('toolIds' in patch) {
-    next.toolIds = normalizeStringList(patch.toolIds);
-  }
-  if ('starterPrompt' in patch) {
-    next.generatedPrompt = safeText(patch.starterPrompt).trim();
-  }
-  if ('expectedOutput' in patch) {
-    next.expectedOutput = safeText(patch.expectedOutput).trim();
-  }
-  if ('relatedFiles' in patch) {
-    next.relatedFiles = normalizeStringList(patch.relatedFiles);
-  }
-  if ('relatedObjects' in patch) {
-    next.relatedObjects = normalizeStringList(patch.relatedObjects);
-  }
-  if ('relatedSurface' in patch) {
-    const value = safeText(patch.relatedSurface).trim();
-    next.relatedSurface = value || null;
-  }
-  if ('validationCommand' in patch) {
-    const value = safeText(patch.validationCommand).trim();
-    next.validationCommand = value || null;
-  }
-  if ('approvalRequired' in patch) {
-    next.approvalRequired = Boolean(patch.approvalRequired);
-  }
-  if ('resultSummary' in patch) {
-    next.resultSummary = safeText(patch.resultSummary).trim();
-  }
-  if ('blocker' in patch) {
-    next.blocker = safeText(patch.blocker).trim();
-  }
-  return next;
-}
-
-function applyPlanStepPatchToSource(
-  current: unknown,
-  stepId: string,
-  patch: Partial<PlanMissionNodeData>,
-): unknown {
-  if (!current || typeof current !== 'object' || Array.isArray(current)) {
-    return current;
-  }
-  const normalizedStepId = safeText(stepId).trim();
-  if (!normalizedStepId) return current;
-  const record = current as Record<string, unknown>;
-  const rawMode = safeText(record.planMode ?? record.mode).trim().toLowerCase();
-  // Keep explicit template/archive plans immutable in this edit path.
-  if (rawMode === 'template' || rawMode === 'archived') return current;
-  if (!Array.isArray(record.steps)) return current;
-
-  const stepPatch = buildStructuredPlanStepPatch(patch);
-  if (Object.keys(stepPatch).length === 0) return current;
-
-  let changed = false;
-  const nextSteps = record.steps.map((step) => {
-    if (!step || typeof step !== 'object' || Array.isArray(step)) return step;
-    const stepRecord = step as Record<string, unknown>;
-    if (safeText(stepRecord.id).trim() !== normalizedStepId) return step;
-    changed = true;
-    return {
-      ...stepRecord,
-      ...stepPatch,
-    };
-  });
-  if (!changed) return current;
-
-  const nextRecord: Record<string, unknown> = {
-    ...record,
-    steps: nextSteps,
-  };
-  if (!rawMode) {
-    nextRecord.planMode = 'active_run';
-  }
-  return nextRecord;
-}
-
 // helper: load all project-local state (defaults only; real data is fetched from backend)
 function loadProjectState(_projectId: string) {
   return {
     messages: [...EMPTY_PROJECT_STATE.messages],
-    plan: [...EMPTY_PROJECT_STATE.plan],
     links: [...EMPTY_PROJECT_STATE.links],
   };
 }
@@ -4752,7 +4487,6 @@ export default function AgentBuilder(): React.ReactElement {
   >(null);
   const [workspaceView, setWorkspaceView] = useState<
     | 'chat'
-    | 'plan'
     | 'canvas'
     | 'knowledge'
     | 'codegraph'
@@ -4769,20 +4503,11 @@ export default function AgentBuilder(): React.ReactElement {
       ? 'canvas'
       : 'chat',
   );
-  // Left rail is a CAMERA rail, not a view switch: the Agents and Plan/check icons
-  // both keep the single unified canvas and only pan/zoom to a zone (agents vs
-  // tasks). This carries the requested focus zone to BuilderCanvas; bumping nonce
-  // re-triggers the pan without ever swapping node sets.
+  // Left-rail camera focus: carries a requested pan/zoom-to-fit to BuilderCanvas;
+  // bumping nonce re-triggers the camera fit without swapping node sets.
   const [canvasFocusZone, setCanvasFocusZone] = useState<
-    { zone: 'agents' | 'tasks'; nonce: number } | null
+    { zone: 'agents'; nonce: number } | null
   >(null);
-  // In-session dragged positions for task (mission) overlay nodes, keyed by node id.
-  // Lets the user move the task cluster while the overlay keeps recomputing; NEVER
-  // written into deck.nodes (task nodes are not agent cards). Persistence across
-  // reloads is pending.
-  const [taskNodeLayout, setTaskNodeLayout] = useState<
-    Record<string, { x: number; y: number }>
-  >({});
   const {
     activeProject,
     canvasProjectId,
@@ -4815,10 +4540,6 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckState,
     pendingActivationProposal,
     setPendingActivationProposal,
-    latestMissionRun,
-    setLatestMissionRun,
-    openMissionMessage,
-    setOpenMissionMessage,
     deckRevision,
     setDeckRevision,
     latestDeckRun,
@@ -4956,10 +4677,6 @@ export default function AgentBuilder(): React.ReactElement {
     setSelectedKnowledgeEntityId,
     selectedKnowledgeRelationshipId,
     setSelectedKnowledgeRelationshipId,
-    planMissionFocus,
-    setPlanMissionFocus,
-    planNodeDrafts,
-    setPlanNodeDrafts,
     builderCanvasFocusRequest,
     setBuilderCanvasFocusRequest,
     tab,
@@ -4970,16 +4687,11 @@ export default function AgentBuilder(): React.ReactElement {
     deck,
   });
   const workspacePanelAlreadyOpen = Boolean(
-    (objectDrawerOpen && (selectedCardId || planMissionFocus?.nodeId)) ||
+    (objectDrawerOpen && selectedCardId) ||
     selectedKnowledgeEntityId ||
     selectedKnowledgeRelationshipId,
   );
-  // TODO: replace manual deck input with plan-driven execution input.
   const [deckRunInput, setDeckRunInput] = useState('');
-  // PlanFlow Go gate (approval gate only). Clicking Go stages the selected Step
-  // at the approval gate and stops; it never executes anything (no coder, no
-  // tools, no terminal, no Progress Ledger). State lives in the inspector only.
-  const [goGateState, setGoGateState] = useState<PlanFlowGoGateState | null>(null);
   const [showCreateProjectForm, setShowCreateProjectForm] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [sending, setSending] = useState(false);
@@ -5014,114 +4726,14 @@ export default function AgentBuilder(): React.ReactElement {
       cancelled = true;
     };
   }, []);
-  // chat + plan intent-contract state must be declared before callbacks/effects that write to them.
+  // chat state must be declared before callbacks/effects that write to it.
   const [messages, setMessages] = useState<
     { role: 'assistant' | 'user'; text: string }[]
   >(() => loadProjectState(activeProject).messages);
-  const [planSource, setPlanSource] = useState<unknown>(
-    () => loadProjectState(activeProject).plan,
-  );
-  const [plan, setPlan] = useState<PlanItem[]>(
-    () => loadProjectState(activeProject).plan,
-  );
   const [links, setLinks] = useState<LinkRef[]>(
     () => loadProjectState(activeProject).links,
   );
   const [stateLoaded, setStateLoaded] = useState(false);
-  const [planExecutionState, setPlanExecutionState] = useState<PlanExecutionState | null>(null);
-  // The Plan canvas renders only the real AutoGen / Magentic-One Task Ledger
-  // artifact captured for the latest real deck run: one honest viewer node, and
-  // nothing when no artifact was returned. The only source is the real artifact
-  // at latestDeckRun.steps[*].magenticTrace.plan.taskLedgerArtifact. No synthetic
-  // DeckRun, no app-authored placeholder/Run Task nodes, no PLAN.md / backend
-  // projection, and no plan-text parsing into step nodes.
-  // Remembers the last real Task Ledger artifact that actually produced task objects
-  // so a plain chat turn (an artifact with an empty planFlowTaskObjects list) does
-  // NOT wipe the existing task graph. Only a newer run with a non-empty task set
-  // replaces it. (Still real AutoGen artifacts only — never fabricated.)
-  const lastTaskArtifactRef = useRef<Record<string, unknown> | null>(null);
-  const planFlowMissionGraph = useMemo<PlanMissionGraph>(() => {
-    const steps = latestDeckRun?.steps || [];
-    let latestArtifact: Record<string, unknown> | null = null;
-    for (const step of steps) {
-      const plan = step?.magenticTrace?.plan;
-      if (!plan || typeof plan !== 'object' || Array.isArray(plan)) continue;
-      const artifact = (plan as Record<string, unknown>).taskLedgerArtifact;
-      if (artifact && typeof artifact === 'object' && !Array.isArray(artifact)) {
-        latestArtifact = artifact as Record<string, unknown>;
-      }
-    }
-    const latestTaskObjects =
-      latestArtifact && Array.isArray(latestArtifact.planFlowTaskObjects)
-        ? (latestArtifact.planFlowTaskObjects as unknown[])
-        : [];
-    if (latestArtifact && latestTaskObjects.length > 0) {
-      lastTaskArtifactRef.current = latestArtifact;
-    }
-    const effectiveArtifact =
-      latestTaskObjects.length > 0
-        ? latestArtifact
-        : lastTaskArtifactRef.current ?? latestArtifact;
-    return buildTaskLedgerArtifactGraph(effectiveArtifact);
-  }, [latestDeckRun]);
-  // Unified project canvas (V0) — BUS TOPOLOGY: the task graph (Task Ledger Artifact
-  // + task objects) sits ABOVE the Mag One bus (upstream). Agent cards stay plugged
-  // into the bus sides; the result/proof zone is reserved BELOW the bus/agents. The
-  // only task->bus wire is a contextual plan_spine from the SELECTED task into the
-  // top of the bus. Agent cards stay canonical (referenced by id via routeThrough);
-  // no agent is duplicated. The overlay is non-persisted (tagged __overlay; dropped
-  // by the BuilderCanvas merge guards).
-  const taskCanvasOverlay = useMemo<PlanMissionGraph>(() => {
-    const base = planFlowMissionGraph;
-    if (!base.nodes.length) return { nodes: [], edges: [] };
-    const magenticCard = (deck.nodes || []).find(
-      (node) => normalizeRuntimeType(node.runtimeType) === 'magentic_one',
-    );
-    // Place the task cluster ABOVE the bus: map the internal task row (y=340) to a
-    // band above the Magentic-One card; the artifact (y=136) floats higher still.
-    const TASK_ZONE_GAP_ABOVE_BUS = 220;
-    const TASK_ROW_INTERNAL_Y = 340;
-    const anchorX = magenticCard?.position?.x ?? 0;
-    const offsetX = anchorX - 296;
-    const offsetY =
-      (magenticCard?.position?.y ?? 0) - TASK_ZONE_GAP_ABOVE_BUS - TASK_ROW_INTERNAL_Y;
-    const routeThrough = magenticCard?.id || 'mag_one_bus';
-    const nodes = base.nodes.map((node) => {
-      // A dragged position (in-session) wins over the computed default layout so the
-      // task node stays where the user dropped it instead of snapping back.
-      const dragged = taskNodeLayout[node.id];
-      return {
-        ...node,
-        position: dragged
-          ? { x: dragged.x, y: dragged.y }
-          : { x: node.position.x + offsetX, y: node.position.y + offsetY },
-        data: { ...node.data, routeThrough },
-      };
-    });
-    // Typed task work-graph edges (ledger_to_task / task_sequence / task_dependency)
-    // come from base.edges; tag them non-persisted. There are NO permanent task->bus
-    // wires — the task graph sits upstream of the Mag One bus.
-    const edges: PlanMissionFlowEdge[] = base.edges.map((edge) => ({
-      ...edge,
-      data: { ...(edge.data || { motion: 'idle' }), __overlay: true },
-    }));
-    // NOTE: the contextual task_to_bus edge (selected task -> top of the Mag One bus)
-    // is created on the canvas from the REAL ReactFlow selection (see BuilderCanvas),
-    // not here — so it can never desync from the node's selected state. This overlay
-    // only carries the artifact/sequence/dependency edges.
-    // Wiring discipline: drop untyped/unknown edges so the canvas never hairballs.
-    const nodeIds = new Set<string>([
-      ...(deck.nodes || []).map((node) => node.id),
-      ...nodes.map((node) => node.id),
-    ]);
-    const visibleEdges = edges.filter((edge) =>
-      shouldRenderCanvasEdge(edge, { nodeIds, activeTaskId: null }),
-    );
-    return { nodes, edges: visibleEdges };
-  }, [planFlowMissionGraph, deck.nodes, taskNodeLayout]);
-  useEffect(() => {
-    setPlanExecutionState(activeProject ? readCachedPlanExecutionState(activeProject) : null);
-  }, [activeProject]);
   // Dev-only: copy/inspect the latest Mag One model-call packet(s) for this project.
   // Run `await __getModelCallPackets()` in the browser console — it fetches the debug
   // route, copies the JSON to the clipboard, and logs it. No secrets are captured.
@@ -5433,8 +5045,6 @@ export default function AgentBuilder(): React.ReactElement {
     setLiveDeckEvents,
     setMessages,
     setPendingActivationProposal: setPendingActivationProposal as any,
-    setPlanSource,
-    setPlan,
     setLinks,
     setStateLoaded,
     setDeckStatusMessage,
@@ -5756,32 +5366,6 @@ export default function AgentBuilder(): React.ReactElement {
           .join('; '),
         WORKSPACE_OBJECT_SUMMARY_LIMIT,
       );
-    } else if (workspaceView === 'plan' && planMissionFocus) {
-      const nodeData = planMissionFocus.nodeData || {};
-      context.selectedObjectId = compactAwarenessText(planMissionFocus.nodeId, 96);
-      context.selectedObjectType = compactAwarenessText(
-        `plan:${nodeData.kind || planMissionFocus.nodeKind || 'Task'}`,
-        64,
-      );
-      context.selectedObjectTitle = compactAwarenessText(
-        nodeData.label || planMissionFocus.nodeLabel,
-        120,
-      );
-      context.selectedText = compactAwarenessText(
-        nodeData.description || nodeData.starterPrompt,
-        WORKSPACE_OBJECT_SELECTED_TEXT_LIMIT,
-      );
-      context.openObjectSummary = compactAwarenessText(
-        [
-          `Selected Plan Canvas node: ${nodeData.label || planMissionFocus.nodeLabel}`,
-          `kind=${nodeData.kind || planMissionFocus.nodeKind || 'Task'}`,
-          nodeData.status ? `status=${nodeData.status}` : null,
-          nodeData.assignedAgentId ? `assignedAgent=${nodeData.assignedAgentId}` : null,
-        ]
-          .filter(Boolean)
-          .join('; '),
-        WORKSPACE_OBJECT_SUMMARY_LIMIT,
-      );
     }
 
     return context;
@@ -5789,7 +5373,6 @@ export default function AgentBuilder(): React.ReactElement {
     activeUaAgentDefinition,
     deck,
     largeSurface,
-    planMissionFocus,
     selectedCard,
     tab,
     uaWorkbenchContext,
@@ -5877,9 +5460,7 @@ export default function AgentBuilder(): React.ReactElement {
       const selectedNode = cardId
         ? deck.nodes.find((node) => node.id === cardId) || null
         : null;
-      // Open the agent-card drawer ONLY for real deck cards. A task (mission) node
-      // has no deck card — keep the agent drawer closed so it does not fight the
-      // task's own TaskNodeInspector on the canvas (the dual/empty-drawer flicker).
+      // Open the agent-card drawer only for real deck cards.
       setObjectDrawerOpen(Boolean(selectedNode));
       const isMagenticSelection = Boolean(
         selectedNode &&
@@ -5892,7 +5473,6 @@ export default function AgentBuilder(): React.ReactElement {
           nonce: (current?.nonce || 0) + 1,
         }));
         setSelectedEdgeId(null);
-        setPlanMissionFocus(null);
         if (!BUILDER_NODE_TABS.some((entry) => entry === tab)) {
           setTab('Prompt');
         }
@@ -6245,436 +5825,7 @@ export default function AgentBuilder(): React.ReactElement {
     [recordDeckWriteReason, selectedCard],
   );
 
-  const selectedPlanNodeDraft = useMemo<PlanMissionNodeData | null>(() => {
-    if (!planMissionFocus?.nodeId) return null;
-    const override = planNodeDrafts[planMissionFocus.nodeId] || {};
-    const baseline = planMissionFocus.nodeData;
-    return {
-      label: String(
-        override.label ?? baseline.label ?? planMissionFocus.nodeLabel,
-      ),
-      kind: (String(
-        override.kind ?? baseline.kind ?? planMissionFocus.nodeKind,
-      ) || 'Task') as PlanMissionNodeData['kind'],
-      status: (String(override.status ?? baseline.status ?? 'proposed') ||
-        'proposed') as PlanMissionNodeData['status'],
-      description: String(override.description ?? baseline.description ?? ''),
-      assignedAgentId: String(
-        override.assignedAgentId ?? baseline.assignedAgentId ?? '',
-      ),
-      skillId: String(override.skillId ?? baseline.skillId ?? ''),
-      toolIds: Array.isArray(override.toolIds ?? baseline.toolIds)
-        ? ((override.toolIds ?? baseline.toolIds) as unknown[]).map((entry) =>
-            String(entry ?? ''),
-          )
-        : [],
-      starterPrompt: String(
-        override.starterPrompt ?? baseline.starterPrompt ?? '',
-      ),
-      expectedOutput: String(
-        override.expectedOutput ?? baseline.expectedOutput ?? '',
-      ),
-      relatedFiles: Array.isArray(override.relatedFiles ?? baseline.relatedFiles)
-        ? ((override.relatedFiles ?? baseline.relatedFiles) as unknown[]).map(
-            (entry) => String(entry ?? ''),
-          )
-        : [],
-      relatedObjects: Array.isArray(
-        override.relatedObjects ?? baseline.relatedObjects,
-      )
-        ? (
-            (override.relatedObjects ?? baseline.relatedObjects) as unknown[]
-          ).map((entry) => String(entry ?? ''))
-        : [],
-      relatedSurface: String(
-        override.relatedSurface ?? baseline.relatedSurface ?? '',
-      ),
-      validationCommand: String(
-        override.validationCommand ?? baseline.validationCommand ?? '',
-      ),
-      approvalRequired: Boolean(
-        override.approvalRequired ?? baseline.approvalRequired ?? false,
-      ),
-      resultSummary: String(
-        override.resultSummary ?? baseline.resultSummary ?? '',
-      ),
-      blocker: String(override.blocker ?? baseline.blocker ?? ''),
-      updateKey: String(override.updateKey ?? baseline.updateKey ?? ''),
-      outputKey: String(override.outputKey ?? baseline.outputKey ?? ''),
-      editable: Boolean(override.editable ?? true),
-    };
-  }, [planMissionFocus, planNodeDrafts]);
 
-  const updatePlanNodeDraft = useCallback(
-    (
-      nodeId: string,
-      patch: Partial<PlanMissionNodeData>,
-      stepId?: string,
-    ) => {
-      setPlanNodeDrafts((current) => ({
-        ...current,
-        [nodeId]: {
-          ...(current[nodeId] || {}),
-          ...patch,
-        },
-      }));
-      if (stepId) {
-        // Local intent-contract persistence: write step edits into in-memory planSource.
-        // This survives surface switches in-session; backend persistence remains run/deck scoped.
-        setPlanSource((current) => applyPlanStepPatchToSource(current, stepId, patch));
-      }
-    },
-    [setPlanSource],
-  );
-
-  const handlePlanGoGate = useCallback(() => {
-    // Approval gate ONLY. Stage the selected Step at the gate and stop. No coder,
-    // no tools, no terminal, no Progress Ledger, and no autogenMessages /
-    // finalResponseText / chat text used as an execution source.
-    setGoGateState(
-      ({
-        // Tag the active selection so the fail-closed message renders both in the
-        // focused PlanFlow view (planMissionFocus) and on the unified agent canvas
-        // (selectedCardId = the selected task node id).
-        selectedNodeId: planMissionFocus?.nodeId ?? selectedCardId ?? null,
-        executed: false,
-        taskComplete: false,
-        message: 'Run Agents unavailable: approved task-node execution is not wired yet.',
-      }),
-    );
-  }, [planMissionFocus, selectedPlanNodeDraft, selectedCardId]);
-
-  const renderPlanMissionEditorPanel = useCallback(() => {
-    if (!planMissionFocus || !selectedPlanNodeDraft) {
-      return (
-        <div
-          style={graphDrawerSectionStyle({
-            padding: '16px',
-            borderStyle: 'dashed',
-            color: GRAPH_THEME.drawer.inputMuted,
-          })}
-        >
-          Select a plan node to edit details.
-        </div>
-      );
-    }
-    const focusId = planMissionFocus.nodeId;
-    const setField = (
-      field: keyof PlanMissionNodeData,
-      value: PlanMissionNodeData[keyof PlanMissionNodeData],
-    ) => {
-      const stepId = safeText(selectedPlanNodeDraft.updateKey).trim();
-      updatePlanNodeDraft(focusId, {
-        [field]: value,
-      } as Partial<PlanMissionNodeData>, stepId);
-    };
-    return (
-      <div style={{ display: 'grid', gap: 10 }}>
-        <div
-          style={graphDrawerSectionStyle({
-            padding: '12px 14px',
-            borderRadius: 8,
-          })}
-        >
-          <div
-            className="text-xs"
-            style={{
-              color: GRAPH_THEME.drawer.inputText,
-              fontWeight: 700,
-              marginBottom: 8,
-            }}
-          >
-            Plan Node
-          </div>
-          <input
-            value={selectedPlanNodeDraft.label || ''}
-            onChange={(event) => setField('label', event.target.value)}
-            style={graphDrawerInputStyle()}
-          />
-          <textarea
-            value={selectedPlanNodeDraft.description || ''}
-            onChange={(event) => setField('description', event.target.value)}
-            rows={4}
-            style={{
-              ...graphDrawerInputStyle({
-                marginTop: 8,
-                resize: 'vertical',
-                fontFamily: 'inherit',
-                fontSize: 12,
-              }),
-            }}
-          />
-          {/*
-            Go gate — approval gate ONLY. Same teal arrow visual language as the
-            chat send button. Clicking it stages the selected Step at the gate
-            and stops; it never executes (no coder/tools/terminal/Progress
-            Ledger, no autogenMessages/finalResponseText/chat as task source).
-          */}
-          <div
-            style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}
-          >
-            <button
-              type="button"
-              onClick={handlePlanGoGate}
-              aria-label="Go — approve selected step"
-              title="Go — stage the selected step at the approval gate"
-              data-testid="plan-go-gate-button"
-              className="rounded-full flex items-center justify-center"
-              style={{
-                width: 36,
-                height: 36,
-                flex: '0 0 auto',
-                cursor: 'pointer',
-                background: '#4FA2AD',
-                border: '1px solid rgba(79,162,173,0.36)',
-                boxShadow:
-                  '0 8px 18px rgba(79,162,173,0.10), inset 0 1px 0 rgba(255,255,255,0.14)',
-              }}
-            >
-              <svg
-                width="17"
-                height="17"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="#FFFFFF"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M12 19V5" />
-                <path d="M5 12l7-7 7 7" />
-              </svg>
-            </button>
-            <span
-              className="text-[11px]"
-              style={{ color: GRAPH_THEME.drawer.inputMuted }}
-            >
-              Go — approve selected step
-            </span>
-          </div>
-          {goGateState && goGateState.selectedNodeId === planMissionFocus.nodeId && (
-            <div
-              className="text-[11px]"
-              data-testid="plan-go-gate-status"
-              style={{ marginTop: 8, color: GRAPH_THEME.drawer.inputMuted }}
-            >
-              {goGateState.message}
-            </div>
-          )}
-        </div>
-        <div
-          style={graphDrawerSectionStyle({
-            padding: '12px 14px',
-            borderRadius: 8,
-          })}
-        >
-          <div
-            className="text-xs"
-            style={{
-              color: GRAPH_THEME.drawer.inputText,
-              fontWeight: 700,
-              marginBottom: 8,
-            }}
-          >
-            Runtime Fields
-          </div>
-          <div style={{ display: 'grid', gap: 8 }}>
-            <select
-              value={selectedPlanNodeDraft.status || 'proposed'}
-              onChange={(event) =>
-                setField(
-                  'status',
-                  event.target.value as PlanMissionNodeData['status'],
-                )
-              }
-              style={graphDrawerInputStyle()}
-            >
-              {[
-                'proposed',
-                'approved',
-                'running',
-                'blocked',
-                'done',
-              ].map((status) => (
-                <option key={status} value={status}>
-                  {status}
-                </option>
-              ))}
-            </select>
-            <input
-              placeholder="Assigned agent id"
-              value={selectedPlanNodeDraft.assignedAgentId || ''}
-              onChange={(event) =>
-                setField('assignedAgentId', event.target.value)
-              }
-              style={graphDrawerInputStyle()}
-            />
-            <input
-              placeholder="Skill id"
-              value={selectedPlanNodeDraft.skillId || ''}
-              onChange={(event) => setField('skillId', event.target.value)}
-              style={graphDrawerInputStyle()}
-            />
-            <input
-              placeholder="Tool ids (comma separated)"
-              value={(selectedPlanNodeDraft.toolIds || []).join(', ')}
-              onChange={(event) =>
-                setField(
-                  'toolIds',
-                  event.target.value
-                    .split(',')
-                    .map((entry) => entry.trim())
-                    .filter(Boolean),
-                )
-              }
-              style={graphDrawerInputStyle()}
-            />
-            <textarea
-              placeholder="Generated prompt"
-              value={selectedPlanNodeDraft.starterPrompt || ''}
-              onChange={(event) =>
-                setField('starterPrompt', event.target.value)
-              }
-              rows={5}
-              style={{
-                ...graphDrawerInputStyle({
-                  resize: 'vertical',
-                  fontFamily: 'inherit',
-                  fontSize: 12,
-                }),
-              }}
-            />
-            <textarea
-              placeholder="Expected output"
-              value={selectedPlanNodeDraft.expectedOutput || ''}
-              onChange={(event) =>
-                setField('expectedOutput', event.target.value)
-              }
-              rows={3}
-              style={{
-                ...graphDrawerInputStyle({
-                  resize: 'vertical',
-                  fontFamily: 'inherit',
-                  fontSize: 12,
-                }),
-              }}
-            />
-            <textarea
-              placeholder="Related files (one per line)"
-              value={(selectedPlanNodeDraft.relatedFiles || []).join('\n')}
-              onChange={(event) =>
-                setField(
-                  'relatedFiles',
-                  event.target.value
-                    .split(/\r?\n+/)
-                    .map((entry) => entry.trim())
-                    .filter(Boolean),
-                )
-              }
-              rows={3}
-              style={{
-                ...graphDrawerInputStyle({
-                  resize: 'vertical',
-                  fontFamily: 'inherit',
-                  fontSize: 12,
-                }),
-              }}
-            />
-            <textarea
-              placeholder="Related objects (one per line)"
-              value={(selectedPlanNodeDraft.relatedObjects || []).join('\n')}
-              onChange={(event) =>
-                setField(
-                  'relatedObjects',
-                  event.target.value
-                    .split(/\r?\n+/)
-                    .map((entry) => entry.trim())
-                    .filter(Boolean),
-                )
-              }
-              rows={3}
-              style={{
-                ...graphDrawerInputStyle({
-                  resize: 'vertical',
-                  fontFamily: 'inherit',
-                  fontSize: 12,
-                }),
-              }}
-            />
-            <input
-              placeholder="Related surface"
-              value={selectedPlanNodeDraft.relatedSurface || ''}
-              onChange={(event) =>
-                setField('relatedSurface', event.target.value)
-              }
-              style={graphDrawerInputStyle()}
-            />
-            <input
-              placeholder="Validation command"
-              value={selectedPlanNodeDraft.validationCommand || ''}
-              onChange={(event) =>
-                setField('validationCommand', event.target.value)
-              }
-              style={graphDrawerInputStyle()}
-            />
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                color: GRAPH_THEME.drawer.inputText,
-                fontSize: 12,
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={Boolean(selectedPlanNodeDraft.approvalRequired)}
-                onChange={(event) =>
-                  setField('approvalRequired', event.target.checked)
-                }
-              />
-              Approval required
-            </label>
-            <textarea
-              placeholder="Result summary"
-              value={selectedPlanNodeDraft.resultSummary || ''}
-              onChange={(event) =>
-                setField('resultSummary', event.target.value)
-              }
-              rows={2}
-              style={{
-                ...graphDrawerInputStyle({
-                  resize: 'vertical',
-                  fontFamily: 'inherit',
-                  fontSize: 12,
-                }),
-              }}
-            />
-            <textarea
-              placeholder="Blocker"
-              value={selectedPlanNodeDraft.blocker || ''}
-              onChange={(event) => setField('blocker', event.target.value)}
-              rows={2}
-              style={{
-                ...graphDrawerInputStyle({
-                  resize: 'vertical',
-                  fontFamily: 'inherit',
-                  fontSize: 12,
-                }),
-              }}
-            />
-          </div>
-          <div
-            className="text-[11px]"
-            style={{ marginTop: 10, color: GRAPH_THEME.drawer.inputMuted }}
-          >
-            Keys: {safeText(selectedPlanNodeDraft.updateKey)} /{' '}
-            {safeText(selectedPlanNodeDraft.outputKey)}
-          </div>
-        </div>
-      </div>
-    );
-  }, [planMissionFocus, selectedPlanNodeDraft, updatePlanNodeDraft, handlePlanGoGate, goGateState]);
 
   const renderAgentBuilderPanel = () => {
     if (!showDeckBuilder) {
@@ -7058,10 +6209,6 @@ export default function AgentBuilder(): React.ReactElement {
     };
   }, [applyWorkspaceAction]);
 
-  useEffect(() => {
-    setPlanMissionFocus(null);
-    setPlanNodeDrafts({});
-  }, [activeProject]);
   // knowledge graph
   const [cypher, setCypher] = useState('');
   const [graphResult, setGraphResult] = useState<any[]>([]);
@@ -8276,167 +7423,6 @@ export default function AgentBuilder(): React.ReactElement {
     };
   }, [tab, activeProject]);
 
-  const runApprovedMissionSequential = useCallback(async (
-    missionSpec: MissionSpec,
-    seedMissionRun: MissionRun,
-  ) => {
-    let missionRun = { ...seedMissionRun };
-    missionSpec.runState = 'running';
-    missionRun = { ...missionRun, status: 'running', updatedAt: new Date().toISOString() };
-    setLatestMissionRun(missionRun);
-    let previousOutput = missionSpec.userGoal;
-    const cardByAgentId: Record<string, string> = {
-      research_agent: 'card_research_agent',
-      knowgraph_agent: 'card_knowgraph_agent',
-      thinkgraph_agent: 'card_thinkgraph_agent',
-    };
-    for (const step of missionRun.agentRuns) {
-      const cardId = cardByAgentId[String(step.agentId || '').toLowerCase()];
-      const card = deck.nodes.find((node) => node.id === cardId);
-      if (!card) {
-        const status = step.required ? 'failed' : 'skipped';
-        step.status = status;
-        step.error = `Unsupported or missing agent card for ${step.agentId}.`;
-        missionRun.results.push({
-          agentRunId: step.id,
-          agentId: step.agentId,
-          status,
-          reason: step.error,
-        });
-        if (step.required) {
-          missionRun.status = 'failed';
-          break;
-        }
-        continue;
-      }
-      step.status = 'running';
-      missionRun.activeAgentRunId = step.id;
-      missionRun.updatedAt = new Date().toISOString();
-      setLatestMissionRun({ ...missionRun, agentRuns: [...missionRun.agentRuns], results: [...missionRun.results] });
-      setOpenMissionMessage({
-        missionRunId: missionRun.id,
-        title: missionSpec.title,
-        status: missionRun.status,
-        activeAgents: missionRun.agentRuns.map((entry) => ({
-          agentRunId: entry.id,
-          label: entry.agentId,
-          status: entry.status,
-          summary: entry.resultSummary ?? undefined,
-        })),
-        latestSummary: step.promptSeed,
-      });
-      const singleCardDeck = buildSingleCardRunDocument(deck, card.id);
-      if (!singleCardDeck) {
-        step.status = step.required ? 'failed' : 'skipped';
-        step.error = `Could not build run scope for ${card.id}.`;
-        if (step.required) missionRun.status = 'failed';
-        continue;
-      }
-      try {
-        const data = await streamDeckRunRequest({
-          endpoint: `${PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}/run`,
-          body: {
-            deckId: BUILDER_DECK_ID,
-            document: { ...singleCardDeck, id: BUILDER_DECK_ID },
-            templates: INITIAL_AGENT_TEMPLATES,
-            input: `${step.promptSeed}\n\nMission Goal:\n${missionSpec.userGoal}\n\nPrior Result:\n${previousOutput}`,
-            workspaceContext: activeDeckWorkspaceContext,
-            workspaceObjectContext: activeWorkspaceObjectContext,
-            missionSpec,
-            missionRunId: missionRun.id,
-            missionAgentRunId: step.id,
-          },
-          onEvent: () => {},
-        });
-        const run = data?.run as DeckRun | undefined;
-        if (!run) throw new Error('missing_run_payload');
-        const runStep = run.steps.find((entry) => entry.cardId === card.id);
-        const output = safeText(runStep?.output || '');
-        const backendAgentRunStatus = safeText(data?.agentRunStatus || run.mission?.agentRunStatus)
-          .trim()
-          .toLowerCase();
-        const backendResultSummary = compactAwarenessText(
-          data?.resultSummary ?? run.mission?.resultSummary ?? output,
-          220,
-        );
-        previousOutput = output || previousOutput;
-        step.status =
-          backendAgentRunStatus === 'complete'
-            ? 'complete'
-            : backendAgentRunStatus === 'needs_user_input'
-              ? 'needs_user_input'
-              : runStep?.status === 'success'
-                ? 'complete'
-                : 'failed';
-        step.resultSummary = backendResultSummary;
-        if (step.status === 'failed') step.error = safeText(runStep?.error || 'agent_step_failed');
-        missionRun.results.push({
-          agentRunId: step.id,
-          agentId: step.agentId,
-          status: step.status,
-          output: output || null,
-          reason:
-            safeText(data?.needsUserInputReason || data?.errorReason || step.error || '').trim() ||
-            null,
-        });
-        const backendMissionStatus = safeText(data?.missionStatus || run.mission?.missionStatus)
-          .trim()
-          .toLowerCase();
-        if (backendMissionStatus === 'needs_user_input') {
-          missionRun.status = 'needs_user_input';
-          break;
-        }
-        if (step.status === 'failed' && step.required) {
-          missionRun.status = 'failed';
-          break;
-        }
-      } catch (error: any) {
-        step.status = step.required ? 'failed' : 'skipped';
-        step.error = safeText(error?.message || 'agent_step_error');
-        missionRun.results.push({
-          agentRunId: step.id,
-          agentId: step.agentId,
-          status: step.status,
-          reason: step.error,
-        });
-        if (step.required) {
-          missionRun.status = 'failed';
-          break;
-        }
-      }
-    }
-    if (missionRun.status !== 'failed' && missionRun.status !== 'needs_user_input') {
-      missionRun.status = 'complete';
-    }
-    missionRun.activeAgentRunId = null;
-    missionRun.updatedAt = new Date().toISOString();
-    setLatestMissionRun({ ...missionRun, agentRuns: [...missionRun.agentRuns], results: [...missionRun.results] });
-    setOpenMissionMessage({
-      missionRunId: missionRun.id,
-      title: missionSpec.title,
-      status: missionRun.status,
-      activeAgents: missionRun.agentRuns.map((entry) => ({
-        agentRunId: entry.id,
-        label: entry.agentId,
-        status: entry.status,
-        summary: entry.resultSummary ?? undefined,
-      })),
-      latestSummary: missionRun.results[missionRun.results.length - 1]?.reason || missionRun.results[missionRun.results.length - 1]?.output || undefined,
-      suggestedUserActions:
-        missionRun.status === 'needs_user_input'
-          ? ['Answer mission clarification in chat.']
-          : missionRun.status === 'failed'
-            ? ['Review failed required agent step before rerun.']
-            : ['Mission complete.'],
-    });
-    return { missionRun, openMissionMessage };
-  }, [
-    activeDeckWorkspaceContext,
-    activeWorkspaceObjectContext,
-    canvasProjectId,
-    deck,
-  ]);
-
   const handleSend = (t: string) => {
     const trimmed = t.trim();
     if (!trimmed) return;
@@ -8483,21 +7469,11 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckRunInput(trimmed);
 
     setTimeout(async () => {
-      // Real AutoGen run on the backend/Python path. After it returns, choose the
-      // VISIBLE SURFACE only (no model/agent routing, no AutoGen change, no
-      // fabrication): a planning/PlanFlow request that produced a real
-      // taskLedgerArtifact shows on the PlanFlow canvas with a short chat status;
-      // any other request shows the real answer in chat. The Plan canvas reads
-      // the real taskLedgerArtifact from latestDeckRun reactively.
+      // Real AutoGen run on the backend/Python path.
       const outcome = await handleRunDeck(trimmed);
 
       if (outcome && outcome.ok) {
-        // Chat always shows the real Magentic-One answer (outcome.finalText) when
-        // the run returned one. Magentic-One emits a Task Ledger artifact on every
-        // turn, so gating chat on "artifact present" would suppress every real
-        // answer (a joke, an explanation, a plan) and leave the chat looking dead.
-        // The real taskLedgerArtifact still feeds the PlanFlow canvas separately
-        // via planFlowMissionGraph; it is never required to silence the answer.
+        // Chat shows the real Magentic-One answer (outcome.finalText) when present.
         const answer = String(outcome.finalText || '').trim();
         if (answer) {
           setMessages((m) => [...m, { role: 'assistant', text: answer }]);
@@ -8540,13 +7516,6 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckStatusMessage('Run Task unavailable: approved task-node execution is not wired yet.');
     return;
   }, [deckRunBusy, setDeckStatusMessage]);
-
-  const effectiveNodeOverrides = useMemo(() => {
-    // PlanFlow node overrides are driven by user edits only. No deterministic
-    // Run Task monument is injected; Run Task remains fail-closed until approved
-    // task-node execution is wired.
-    return { ...planNodeDrafts };
-  }, [planNodeDrafts]);
 
   const thinkGraphViz = useMemo(() => {
     return prefixThinkGraphIds(ageRowsToGraph(graphResult));
@@ -8763,25 +7732,19 @@ export default function AgentBuilder(): React.ReactElement {
   const hasKnowledgeWorkspaceSelection = Boolean(
     selectedKnowledgeEntity || selectedKnowledgeRelationship,
   );
-  const objectDrawerRole = useMemo<'agent' | 'plan' | null>(() => {
+  const objectDrawerRole = useMemo<'agent' | null>(() => {
     if (workspaceView === 'canvas' && selectedCard) return 'agent';
-    if (workspaceView === 'plan' && planMissionFocus) return 'plan';
     return null;
-  }, [planMissionFocus, selectedCard, workspaceView]);
+  }, [selectedCard, workspaceView]);
   const isObjectDrawerVisible = objectDrawerOpen && objectDrawerRole !== null;
-  const objectDrawerDefaultWidth =
-    objectDrawerRole === 'plan' ? 460 : AGENT_EDITOR_DEFAULT_WIDTH;
-  const objectDrawerStorageKey =
-    objectDrawerRole === 'plan'
-      ? 'liquidaity.drawer.object.plan.width'
-      : 'liquidaity.drawer.object.agent.width';
+  const objectDrawerDefaultWidth = AGENT_EDITOR_DEFAULT_WIDTH;
+  const objectDrawerStorageKey = 'liquidaity.drawer.object.agent.width';
 
   const closeObjectDrawer = useCallback(() => {
     setObjectDrawerOpen(false);
     pendingPanelOpenTelemetryRef.current = null;
     setSelectedCardId(null);
     setSelectedEdgeId(null);
-    setPlanMissionFocus(null);
     setBuilderCanvasFocusRequest((current) => ({
       kind: 'deck',
       cardId: null,
@@ -8802,6 +7765,7 @@ export default function AgentBuilder(): React.ReactElement {
   }, [knowledgeRelationshipById, selectedKnowledgeRelationshipId]);
   void handleSelectKnowledgeEntity;
   void handleSelectKnowledgeRelationship;
+
   void graphError;
   void graphLoading;
   void knowledgeGraphStatus;
@@ -9132,20 +8096,7 @@ export default function AgentBuilder(): React.ReactElement {
         onSelectEdge={handleSelectEdge}
         onDeleteSelectedEdge={handleDeleteSelectedEdge}
         inspectMode={false}
-        taskOverlayNodes={taskCanvasOverlay.nodes}
-        taskOverlayEdges={taskCanvasOverlay.edges}
         focusZone={canvasFocusZone}
-        onTaskNodePositionChange={(id, x, y) =>
-          setTaskNodeLayout((prev) => ({ ...prev, [id]: { x, y } }))
-        }
-        onTaskGoGate={handlePlanGoGate}
-        taskGoGateStatus={
-          goGateState &&
-          selectedCardId &&
-          goGateState.selectedNodeId === selectedCardId
-            ? goGateState.message
-            : null
-        }
       />
     );
   };
@@ -9437,104 +8388,6 @@ export default function AgentBuilder(): React.ReactElement {
     </div>
   );
 
-  const renderPlanSurface = (surfaceRole: 'large' | 'companion' = 'large') => {
-    const openMissionRuntimeSummary = summarizePlanRuntimeMessage(
-      openMissionMessage?.latestSummary,
-      'Runtime issue surfaced during mission execution.',
-    );
-
-    return (
-      <div
-        data-testid={`${surfaceRole}-surface-plan`}
-        style={getSurfaceShellStyle(surfaceRole === 'companion', {
-          overflow: surfaceRole === 'companion' ? 'hidden' : 'auto',
-        })}
-      >
-        <div
-          className="h-full min-h-0"
-          style={{
-            overflow: surfaceRole === 'companion' ? 'hidden' : 'auto',
-            paddingRight: surfaceRole === 'companion' ? 0 : 4,
-          }}
-        >
-          {!activeProject ? (
-            <div
-              style={graphDrawerSectionStyle({
-                padding: '16px',
-                borderStyle: 'dashed',
-                color: GRAPH_THEME.drawer.inputMuted,
-              })}
-            >
-              Select a project to view its plan.
-            </div>
-          ) : !stateLoaded ? (
-            <div
-              style={graphDrawerSectionStyle({
-                padding: '16px',
-                color: GRAPH_THEME.drawer.inputMuted,
-              })}
-            >
-              Loading plan...
-            </div>
-          ) : (
-            <div
-              className="h-full min-h-0"
-              style={{
-                height: '100%',
-                padding: 0,
-                borderRadius: 0,
-                border: 'none',
-                background: 'transparent',
-                boxShadow: 'none',
-                display: 'flex',
-                flexDirection: 'column',
-              }}
-            >
-            {/*
-              ReactFlow is the PlanFlow canvas and stays mounted at all times.
-              It renders editable Step nodes projected from the real AutoGen Task
-              Ledger artifact (one node per plan step), and nothing otherwise. No
-              app-authored placeholder nodes, no Task Ledger metadata card, no Run
-              Task gate node (Run Task / Progress Ledger are out of scope), no
-              coder-packet card, no PLAN.md card, no bottom banner, and no raw
-              JSON editor sit on or above the canvas.
-            */}
-            <div style={{ flex: '1 1 auto', minHeight: 480, position: 'relative' }}>
-              <Suspense
-                fallback={
-                  <div style={{ padding: 16, color: GRAPH_THEME.drawer.inputMuted }}>
-                    Loading PlanFlow canvas...
-                  </div>
-                }
-              >
-                <PlanMissionFlow
-                  structuredPlan={EMPTY_PLANFLOW_STRUCTURED_PLAN}
-                  missionGraph={planFlowMissionGraph}
-                  projectId={activeProject}
-                  compact={surfaceRole === 'companion'}
-                  fullHeight
-                  nodeOverrides={effectiveNodeOverrides}
-                  selectedNodeId={planMissionFocus?.nodeId || null}
-                  drawerLinked
-                  onFocusChange={setPlanMissionFocus}
-                  onGoGate={handlePlanGoGate}
-                  goGateStatus={
-                    goGateState &&
-                    planMissionFocus &&
-                    goGateState.selectedNodeId === planMissionFocus.nodeId
-                      ? goGateState.message
-                      : null
-                  }
-                />
-              </Suspense>
-            </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
-
   const showCanvasWorkspace = useCallback(() => {
     closeObjectDrawer();
     setWorkspaceView('canvas');
@@ -9549,14 +8402,6 @@ export default function AgentBuilder(): React.ReactElement {
       getDefaultConnectedKnowledgeGraphKind(connectedGraphStreams),
     );
   }, [closeObjectDrawer, connectedGraphStreams]);
-
-  const showPlanWorkspace = useCallback(() => {
-    closeObjectDrawer();
-    // Camera focus only — keep the single unified canvas (agents + tasks stay on
-    // the SAME scene) and pan to the task/plan zone. Never swap to a task-only view.
-    setWorkspaceView('canvas');
-    setCanvasFocusZone({ zone: 'tasks', nonce: Date.now() });
-  }, [closeObjectDrawer]);
 
   const showWorkbenchWorkspace = useCallback((surface: WorkbenchSurfaceId) => {
     closeObjectDrawer();
@@ -9739,7 +8584,6 @@ export default function AgentBuilder(): React.ReactElement {
       onShowVideoWorkspace={showVideoWorkspace}
       onShowDataFormulatorWorkspace={showDataFormulatorWorkspace}
       onShowWorkbenchWorkspace={showWorkbenchWorkspace}
-      onShowPlanWorkspace={showPlanWorkspace}
       onOpenNavigationDrawer={() => setOpenDrawer('navigation')}
       openClaudeConsoleActive={openClaudeConsoleOpen}
       onOpenOpenClaudeConsole={() => setOpenClaudeConsoleOpen((prev) => !prev)}
@@ -9923,19 +8767,14 @@ export default function AgentBuilder(): React.ReactElement {
         ) : null
       }
       worldsignalSurface={<WorldSignalSurface />}
-      planSurface={renderPlanSurface('companion')}
     />
   );
 
   const workspaceDrawer =
-    workspaceView === 'canvas' || workspaceView === 'plan' ? (
+    workspaceView === 'canvas' ? (
       <RightGlassDrawer
         isOpen={isObjectDrawerVisible}
-        title={
-          objectDrawerRole === 'plan'
-            ? `Plan Node: ${safeText(selectedPlanNodeDraft?.label || planMissionFocus?.nodeLabel || 'Edit')}`
-            : safeText(selectedCard?.title || 'Agent')
-        }
+        title={safeText(selectedCard?.title || 'Agent')}
         onClose={closeObjectDrawer}
         defaultWidth={objectDrawerDefaultWidth}
         minWidth={360}
@@ -9980,9 +8819,7 @@ export default function AgentBuilder(): React.ReactElement {
             gap: 8,
           }}
         >
-          {objectDrawerRole === 'plan'
-            ? renderPlanMissionEditorPanel()
-            : renderAgentBuilderPanel()}
+          {renderAgentBuilderPanel()}
         </div>
       </RightGlassDrawer>
     ) : null;

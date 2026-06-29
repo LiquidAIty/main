@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { RUNTIME_TOOL_SPECS } from '../contracts/runtimeContracts';
 import {
-  MAG_ONE_CODING_RUN_SYSTEM_PROMPT,
   buildMagOneRoutingManifest,
   buildMagOneRoutingDiagnostics,
   resolvedMagenticOptions,
@@ -56,9 +55,9 @@ describe('Canonical Cards Runtime', () => {
     // The capability manifest carries no intent/workflow classifier at all.
     expect((payload.routingManifest as any)?.intent).toBeUndefined();
     expect((payload.cardRuntime.runtimeScope?.routingDiagnostics as any)?.workflowType).toBeUndefined();
-    // Local Coder is excluded from the planning run (execution is Run-only),
-    // but CodeGraph (and other non-coder agents) still participate in planning.
-    expect(payload.cardRuntime.participants.map((p) => p.cardId)).not.toContain('coder');
+    // Native team: every bus-connected agent participates, including the Local Coder
+    // (no project-specific participant filtering). Execution is the Run route only.
+    expect(payload.cardRuntime.participants.map((p) => p.cardId)).toContain('coder');
     expect(payload.cardRuntime.participants.map((p) => p.cardId)).toContain('codegraph');
   });
 
@@ -86,7 +85,7 @@ describe('Canonical Cards Runtime', () => {
     expect(resolved.length).toBe(0);
   });
 
-  it('generic prompt strips prior assistant text', () => {
+  it('passes mission input through normally and preserves prior assistant text (no keyword classifier)', () => {
     const payload = buildPythonAutoGenCardRuntimePayload(
       { id: 'mag1' },
       {},
@@ -96,7 +95,10 @@ describe('Canonical Cards Runtime', () => {
       [{ id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } }],
       '2026'
     );
-    expect(payload.priorAssistantText).toBe('');
+    // No deterministic keyword classifier: 'test'/'go'/'hello' no longer strip the
+    // prior assistant text — the mission passes through unchanged.
+    expect(payload.priorAssistantText).toBe('Some Apollo 11 text');
+    expect(payload.userText).toBe('test');
   });
 
   it('maxTokens 0 or invalid is omitted/normalized', () => {
@@ -160,104 +162,37 @@ describe('Canonical Cards Runtime', () => {
     const payload = buildPythonAutoGenCardRuntimePayload(cardM, {}, 'hello', context, {}, [cardA], '2026');
 
     expect(payload.session.orchestrator).toBe('magentic_one');
-    expect(payload.systemPrompt).toContain('test system prompt');
-    expect(payload.systemPrompt).toContain('disconnected cards are ineligible');
+    // System prompt is EXACTLY the card's own prompt — no backend-authored global
+    // coding persona is prepended.
+    expect(payload.systemPrompt).toBe('test system prompt');
+    expect(payload.systemPrompt).not.toContain('disconnected cards are ineligible');
     expect(payload.cardRuntime.runtimeScope?.pythonWorkerIds).toContain('agentA');
     // Ensure task_ledger, progress_ledger are completely absent
     expect((payload as any).task_ledger).toBeUndefined();
     expect((payload as any).progress_ledger).toBeUndefined();
   });
 
-  it('grounds the Task Ledger payload with graph context, keeping the graphPayload contract intact', () => {
-    const grounding = {
-      projectId: 'p',
-      userText: 'Continue RDW / SpaceX research',
-      thinkGraph: {
-        ok: true,
-        facts: [{ label: 'Redwire Corporation', type: 'company', sourceRef: 'user_request_stream', confidence: 0.99 }],
-        relations: [{ from: 'e_rdw_ticker', to: 'e_rdw', type: 'identifies', sourceRef: 'user_request_stream' }],
-        uncertainty: ['Live RDW price unknown until lookup'],
-        nextSearchSeedCandidates: ['live_market_data_for_RDW'],
-      },
-      warnings: ['codegraph_not_run_on_task_ledger_hot_path'],
-    };
+  it('injects no graph grounding into native reasoning (no directive, no payload field)', () => {
     const cardM = {
       id: 'mag1',
       runtimeType: 'magentic_one',
       prompt: 'sys',
-      runtimeOptions: { taskLedgerOutputContract: 'PlanFlow contract: produce planFlowTaskObjects AND an OWL-shaped graphPayload.' },
+      runtimeOptions: { taskLedgerOutputContract: 'produce planFlowTaskObjects AND an OWL-shaped graphPayload.' },
     };
     const cardA = { id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
     const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, {}, 'Continue RDW / SpaceX research', { allCards: [cardM, cardA], allEdges: [] }, {}, [cardA], '2026', undefined, grounding as any,
+      cardM, {}, 'Continue RDW research', { allCards: [cardM, cardA], allEdges: [] }, {}, [cardA], '2026',
     );
-
-    // Grounding reaches the model-call payload.
-    expect(payload.taskLedgerGroundingContext).toBeDefined();
-    expect((payload.taskLedgerGroundingContext as any).thinkGraph.facts[0].label).toBe('Redwire Corporation');
-    // Directive + the accepted facts are injected into the system prompt.
-    expect(payload.systemPrompt).toContain('graphGroundingContext');
-    expect(payload.systemPrompt).toMatch(/READ it before creating tasks/i);
-    expect(payload.systemPrompt).toContain('Redwire Corporation');
-    // The OWL graphPayload output contract is preserved, not replaced.
-    expect(payload.cardRuntime.taskLedgerOutputContract).toContain('graphPayload');
-    expect(payload.systemPrompt).toMatch(/graphPayload output contract intact/i);
-  });
-
-  it('omits grounding cleanly when none is provided (backward compatible)', () => {
-    const cardM = { id: 'mag1', runtimeType: 'magentic_one', prompt: 'sys' };
-    const cardA = { id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
-    const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, {}, 'hello', { allCards: [cardM, cardA], allEdges: [] }, {}, [cardA], '2026',
-    );
-    expect(payload.taskLedgerGroundingContext).toBeUndefined();
-    expect(payload.systemPrompt).not.toContain('graphGroundingContext');
-  });
-
-  it('does NOT accept, transport, or render ActiveGraphContext (runtime injection removed)', () => {
-    const cardM = { id: 'mag1', runtimeType: 'magentic_one', prompt: 'sys', runtimeOptions: { taskLedgerOutputContract: 'produce planFlowTaskObjects AND an OWL-shaped graphPayload.' } };
-    const cardA = { id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
-    // Even if a caller passes an extra arg, the builder ignores it: no param, no field, no render.
-    const payload = buildPythonAutoGenCardRuntimePayload(
-      cardM, {}, 'Continue RDW research', { allCards: [cardM, cardA], allEdges: [] }, {}, [cardA], '2026', undefined, undefined,
-      { facts: [{ subject: 'X', object: 'Y' }] } as any,
-    );
-    // no ActiveGraphContext is transported or rendered
+    // No grounding field on the payload and no grounding/ActiveGraphContext prose in
+    // the system prompt — the system prompt is exactly the card prompt.
+    expect((payload as any).taskLedgerGroundingContext).toBeUndefined();
     expect((payload as any).activeGraphContext).toBeUndefined();
-    expect(payload.systemPrompt).not.toContain('activeGraphContext');
-    expect(payload.systemPrompt).not.toMatch(/active graph context/i);
-    expect(payload.systemPrompt).not.toContain('graphRetrievalMode');
-    // the pre-existing Task Ledger / OWL graphPayload contract is untouched
+    expect(payload.systemPrompt).toBe('sys');
+    expect(payload.systemPrompt).not.toContain('graphGroundingContext');
+    expect(payload.systemPrompt).not.toMatch(/READ it before creating tasks/i);
+    // A user-authored card output contract is still transported verbatim (only the
+    // automatic default injection was removed elsewhere).
     expect(payload.cardRuntime.taskLedgerOutputContract).toContain('graphPayload');
-  });
-
-  it('Mag One coding-run prompt states bus eligibility, coding path, and graph-memory tool limits', () => {
-    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain(
-      'direct connection to the vertical\nMagentic bus means an agent is eligible',
-    );
-    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain('disconnected cards are ineligible');
-    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain(
-      'Plan Agent is the approval/planning surface',
-    );
-    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain(
-      'CodeGraph Agent owns structural code memory',
-    );
-    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain(
-      'Local Coder is the controlled patch/test/runtime worker',
-    );
-    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain(
-      'ThinkGraph Agent',
-    );
-    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain('stores project decisions');
-    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain(
-      'do not ask graph-memory',
-    );
-    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain('agents to run tools they do not own');
-    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain('coder_console_task');
-    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain('watch in Code Console');
-    expect(MAG_ONE_CODING_RUN_SYSTEM_PROMPT).toContain(
-      'Ordinary chat must not invoke coder_console_task',
-    );
   });
 
   it('routing diagnostics use current bus edges and ignore stale research-shaped flow topology', () => {
@@ -294,10 +229,10 @@ describe('Canonical Cards Runtime', () => {
     expect(diagnostics.blockedReason).toBeNull();
   });
 
-  it('planning manifest still describes the Local Coder as an available agent, but never runs or dispatches it', () => {
-    // The capability manifest may *describe* the Local Coder (so Python can
-    // propose it in its Progress Ledger), but the planning run must not include
-    // it as a participant and must not ship a coder-dispatch packet.
+  it('includes the Local Coder as a native participant but never ships a coder-dispatch packet', () => {
+    // Native team: the Local Coder participates like any bus-connected agent (no
+    // participant filtering). The planning turn still ships NO coder-dispatch
+    // packet — execution remains the explicit Run route only.
     const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
     const plan = { id: 'plan', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'plan_agent', title: 'Plan Agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
     const codegraph = { id: 'codegraph', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'codegraph_agent', title: 'CodeGraph Agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
@@ -329,10 +264,10 @@ describe('Canonical Cards Runtime', () => {
     );
 
     expect(payload.cardRuntime.runtimeScope?.routingDiagnostics?.blockedReason).toBeNull();
-    // Local Coder is excluded from the planning participants and python workers.
-    expect(payload.cardRuntime.participants.map((agent) => agent.cardId)).not.toContain('coder');
-    expect(payload.cardRuntime.runtimeScope?.pythonWorkerIds).not.toContain('coder');
-    // Other agents still plan.
+    // Native team: the Local Coder is a participant and a python worker like any
+    // other bus-connected agent (no filtering).
+    expect(payload.cardRuntime.participants.map((agent) => agent.cardId)).toContain('coder');
+    expect(payload.cardRuntime.runtimeScope?.pythonWorkerIds).toContain('coder');
     expect(payload.cardRuntime.participants.map((agent) => agent.cardId)).toEqual(
       expect.arrayContaining(['plan', 'codegraph', 'think']),
     );

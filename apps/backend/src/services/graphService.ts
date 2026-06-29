@@ -1,8 +1,7 @@
 // @graph entity: ThinkGraph
 // @graph role: provisional-graph-state
-// @graph relates_to: PlanWiki, Magentic-One Runtime
+// @graph relates_to: Magentic-One Runtime
 // @graph depends_on: Apache AGE, Postgres
-// @graph feeds_to: PlanWiki
 import { pool } from '../db/pool';
 
 // ============================================================================

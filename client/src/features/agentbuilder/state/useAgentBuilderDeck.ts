@@ -7,13 +7,10 @@ import type {
   DeckDocument,
   DeckRun,
   DeckRuntimeEvent,
-  MissionRun,
-  OpenMissionMessage,
 } from '../../../types/agentgraph';
 
 type ActivationProposalState = {
   capability:
-    | 'plan'
     | 'knowledge'
     | 'energy'
     | 'worldsignal'
@@ -36,11 +33,6 @@ export default function useAgentBuilderDeck({
   const [deck, setDeckState] = useState<DeckDocument>(() => createInitialDeck());
   const [pendingActivationProposal, setPendingActivationProposal] =
     useState<ActivationProposalState | null>(null);
-  const [latestMissionRun, setLatestMissionRun] = useState<MissionRun | null>(
-    null,
-  );
-  const [openMissionMessage, setOpenMissionMessage] =
-    useState<OpenMissionMessage | null>(null);
   const [deckRevision, setDeckRevision] = useState<string | null>(null);
   const [latestDeckRun, setLatestDeckRun] = useState<DeckRun | null>(null);
   const [latestCardRun, setLatestCardRun] = useState<LatestCardRunRecord | null>(null);
@@ -57,10 +49,6 @@ export default function useAgentBuilderDeck({
     setDeckState,
     pendingActivationProposal,
     setPendingActivationProposal,
-    latestMissionRun,
-    setLatestMissionRun,
-    openMissionMessage,
-    setOpenMissionMessage,
     deckRevision,
     setDeckRevision,
     latestDeckRun,

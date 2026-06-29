@@ -6,7 +6,7 @@
 import { useCallback } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 
-import { resolveEffectiveAgent, withMagenticTaskLedgerContractDefault } from "./deckRuntime";
+import { resolveEffectiveAgent } from "./deckRuntime";
 import { resolveDeckRunFinalText, streamDeckRunRequest } from "./deckRunState";
 import { isAbortLikeError, safeJson } from "./requestGuards";
 import type {
@@ -297,7 +297,7 @@ export function useBuilderDeckRuntimeActions({
         body: {
           deckId,
           document: {
-            ...withMagenticTaskLedgerContractDefault(singleCardDeck),
+            ...singleCardDeck,
             id: deckId,
           },
           templates,
@@ -467,7 +467,7 @@ export function useBuilderDeckRuntimeActions({
         body: {
           deckId,
           document: {
-            ...withMagenticTaskLedgerContractDefault(deck),
+            ...deck,
             id: deckId,
           },
           templates,

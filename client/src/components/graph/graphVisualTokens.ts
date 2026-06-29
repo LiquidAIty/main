@@ -128,7 +128,7 @@ export const GRAPH_THEME = {
   },
   // Deep-glass "an object is being inspected" material. A layered shell — NOT a
   // transparent black box — so dense inspector text stays readable while the panel
-  // reads as thick glass floating over the canvas. Used by the PlanFlow inspector
+  // reads as thick glass floating over the canvas. Used by the object/agent inspector
   // shells; intentionally distinct from `card.glass*` (agent cards / world / energy
   // / media keep the lighter card glass).
   inspector: {

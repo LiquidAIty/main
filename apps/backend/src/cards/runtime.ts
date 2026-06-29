@@ -12,49 +12,6 @@ import {
 import { orchestrateWithAutoGen } from '../services/autogen/autogenOrchestratorClient';
 import { resolveModel } from '../llm/models.config';
 import { recordModelCallPacket, buildModelCallPacket } from '../debug/modelCallPackets';
-import {
-  buildGroundedTaskLedgerContext,
-  renderTaskLedgerGroundingDirective,
-  type TaskLedgerGraphGroundingContext,
-} from '../services/graphContext/groundedTaskLedgerContext';
-
-export const MAG_ONE_CODING_RUN_SYSTEM_PROMPT = `
-You are Mag One, the orchestration router for LiquidAIty. The user chats with you first.
-
-Inspect the current AgentBuilder canvas state before routing. A direct connection to the vertical
-Magentic bus means an agent is eligible; disconnected cards are ineligible. The bus does not define
-execution order. Choose an execution path from currently eligible agents based on workflow type,
-never from stale or assumed topology.
-
-For coding workflows, distinguish explanation, planning, diagnosis, repo edits, tests, and runtime
-smoke. If no code action is needed, answer normally. Otherwise use Plan Agent to create or validate
-the plan, require the root-bound CodeGraph/CBM scoped gate, send Local Coder one bounded CoderPacket
-only after the gate passes, and record the strict CoderReport, proof, blockers, and decisions with
-ThinkGraph. Local Coder must invoke its selected coder_console_task tool; do not bypass it or ask the
-user to type the task into the terminal. Default Local Coder to read-only/plan mode. Edit mode
-requires explicit user approval and CoderPacket writeMode: edit. After tool invocation, report task
-started or blocked, session id, target root, provider/model when known, exact blocker, and
-"watch in Code Console". Refresh CodeGraph/CBM after successful code changes and update skills only
-for reusable learning. Ordinary chat must not invoke coder_console_task.
-
-Agent roles: Plan Agent is the approval/planning surface; CodeGraph Agent owns structural code memory
-and the CBM scoped gate; Local Coder is the controlled patch/test/runtime worker; ThinkGraph Agent
-stores project decisions, reports, proof, and blockers; KnowGraph Agent provides grounded external
-or ingested knowledge and is not the code-memory gate. Use Research, WorldSignals, or Trading for
-coding only when required by the workflow and currently connected.
-
-Hard rules: do not call disconnected cards; do not use stale canvas topology; do not ask graph-memory
-agents to run tools they do not own; do not treat ThinkGraph as a calculator/date/runtime utility;
-do not treat KnowGraph as CodeGraph; do not bypass the CBM scoped gate; do not silently fall back to
-grep, cached packets, old CBM results, or direct search as if CBM were fresh; do not fake CoderReport
-success. If Plan Agent, CodeGraph Agent, or Local Coder is missing or disconnected for a coding run,
-return a clear blocker. If Local Coder times out, report the timeout honestly with stage evidence.
-
-Dogfood target note: C:\\Projects\\main may be the active target root and may receive approved edits
-to LiquidAIty-owned source. Vendored localcoder/ remains excluded unless an active CoderPacket
-explicitly targets it. Future external project roots must be explicit and use the same root-bound
-CBM gate and CoderPacket/CoderReport lifecycle.
-`.trim();
 
 function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
   const provider = String(value ?? '').trim().toLowerCase();
@@ -478,7 +435,6 @@ export function buildPythonAutoGenCardRuntimePayload(
   callableHeads: any[],
   startedAt: string,
   graphContextPacket?: any,
-  taskLedgerGroundingContext?: TaskLedgerGraphGroundingContext,
 ): PythonAutoGenPayloadShape {
   const sessionId = `${context.deckId || 'deck'}:${card.id}:${Date.now()}`;
   const turnId = `${card.id}:${Date.now()}`;
@@ -495,28 +451,14 @@ export function buildPythonAutoGenCardRuntimePayload(
     context.allEdges || [],
     runtimeInput,
   );
-  // Normal chat submit is planning only. TypeScript builds no coder-dispatch
-  // packet and ships none to Python: the real Magentic-One LedgerOrchestrator
-  // owns the Task Ledger / Progress Ledger and may *propose* the Local Coder in
-  // its ledger, but execution happens only through the explicit Run route
-  // (/api/coder/localcoder/run), never as a side effect of chat.
-  // Planning participants = every eligible bus-connected callable agent EXCEPT
-  // the Local Coder. Dropping the coder from the planning run makes it
-  // structurally impossible to auto-dispatch a coding task from chat: the real
-  // Magentic-One orchestrator can still name 'local_coder' as a proposed next
-  // actor in its Progress Ledger, but it cannot execute one. Execution is the
-  // explicit Run route only.
+  // Native team selection from the deck/card config: every eligible bus-connected
+  // agent that the Python rails can run. No project-specific participant filtering —
+  // Mag One sees the team exactly as configured on the Magentic bus.
   const supportedHeads = callableHeads
-    .filter((head) => isPythonAutoGenCallableRuntimeType(resolveCardRuntimeType(head)))
-    .filter((head) => resolveMagOneAgentRole(head) !== 'local_coder');
-  // Task Ledger graph grounding directive (additive — never replaces the OWL graphPayload
-  // contract). Appended only when grounding context is present for this turn.
-  const groundingDirective = taskLedgerGroundingContext
-    ? renderTaskLedgerGroundingDirective(taskLedgerGroundingContext)
-    : '';
-  const systemPrompt = [MAG_ONE_CODING_RUN_SYSTEM_PROMPT, String(card.prompt || '').trim(), groundingDirective]
-    .filter(Boolean)
-    .join('\n\n');
+    .filter((head) => isPythonAutoGenCallableRuntimeType(resolveCardRuntimeType(head)));
+  // System prompt = the card's own explicit prompt only. No backend-authored global
+  // persona and no runtime graph-grounding prose is injected into native reasoning.
+  const systemPrompt = String(card.prompt || '').trim();
   // PlanFlow task-output contract: read from the Magentic-One card config only.
   // The backend never authors this — it transports whatever the editable card
   // field (runtimeOptions.taskLedgerOutputContract) carries; empty -> no task pass.
@@ -595,22 +537,9 @@ export function buildPythonAutoGenCardRuntimePayload(
     }
   }
 
-  const lowerInput = runtimeInput.trim().toLowerCase();
-  const isGenericPrompt = [
-    'test', 'testing', 'hello', 'hi', 'hey', 'run', 'start', 'go', 'do it', 'execute', 'ping'
-  ].includes(lowerInput);
-
-  const isContinuation =
-    lowerInput.includes('continue') ||
-    lowerInput.includes('use previous') ||
-    lowerInput.includes('finish that') ||
-    lowerInput.includes('approve') ||
-    lowerInput.includes('yes');
-
-  let priorAssistantText = String(context.previousOutput || '').trim();
-  if (isGenericPrompt && !isContinuation) {
-    priorAssistantText = '';
-  }
+  // The mission input passes through normally. No deterministic keyword classifier
+  // and no mutation of the prior assistant text — native Mag One owns interpretation.
+  const priorAssistantText = String(context.previousOutput || '').trim();
 
   const payload: PythonAutoGenPayloadShape = {
     session: {
@@ -634,9 +563,6 @@ export function buildPythonAutoGenCardRuntimePayload(
     plan: undefined,
     thinkGraph: undefined,
     knowGraph: undefined,
-    // Read-only graph grounding for Task Ledger generation (accepted ThinkGraph facts +
-    // optional skills/files). Additive to the OWL graphPayload contract.
-    ...(taskLedgerGroundingContext ? { taskLedgerGroundingContext } : {}),
     blackboard: {
       current_goal: '',
       what_matters_now: [],
@@ -707,20 +633,6 @@ export async function runCardWithContract(
     
     const modelConfig = resolveOrchestratorCardModel(card);
 
-    // Read-only graph grounding before Task Ledger generation. Cheap: accepted ThinkGraph
-    // records only — CodeGraph/CBM is NOT forced on the chat hot path. Non-fatal: a failure
-    // degrades to honest warnings and the run continues ungrounded rather than blocking.
-    let taskLedgerGroundingContext: TaskLedgerGraphGroundingContext | undefined;
-    try {
-      taskLedgerGroundingContext = await buildGroundedTaskLedgerContext({
-        userText: input,
-        projectId: context.projectId ? String(context.projectId) : undefined,
-        includeCodeGraph: false,
-      });
-    } catch {
-      taskLedgerGroundingContext = undefined;
-    }
-
     const payload = buildPythonAutoGenCardRuntimePayload(
       card,
       effectiveAgent,
@@ -729,8 +641,6 @@ export async function runCardWithContract(
       modelConfig,
       callableHeads,
       startedAt,
-      undefined,
-      taskLedgerGroundingContext,
     );
 
     // Call the Python AutoGen rails. Mock success is not allowed on this route.

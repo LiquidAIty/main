@@ -56,12 +56,6 @@ import {
 import TurboFlowEdge from './edges/TurboFlowEdge';
 import AgentCardNode from './nodes/AgentCardNode';
 import MagenticBusNode from './nodes/MagenticBusNode';
-// Unified project canvas (V0): the real PlanFlow task node renderer is reused so
-// Task Ledger Artifact + task objects live on the SAME scene as the agent cards.
-import { MissionNode } from '../assist/PlanMissionFlow';
-import { isTaskOverlayNodeType, type PlanMissionNodeData } from '../assist/planMissionModel';
-import TaskNodeInspector from './TaskNodeInspector';
-import PlanSourceInspector from './PlanSourceInspector';
 
 const DEV_MODE = import.meta.env.DEV;
 const PERSISTED_NODE_CHANGE_TYPES = new Set<NodeChange['type']>(['add', 'remove', 'replace', 'position']);
@@ -72,10 +66,6 @@ const FALLBACK_NODE_HEIGHT = 88;
 const nodeTypes = {
   agentCard: AgentCardNode,
   magenticBus: MagenticBusNode,
-  // Distinct task object node types (tasks are NOT agent cards). They share the
-  // title-only MissionNode renderer but are separate ReactFlow types.
-  taskLedgerArtifact: MissionNode,
-  taskNode: MissionNode,
 };
 const edgeTypes = {
   turboFlow: TurboFlowEdge,
@@ -134,19 +124,13 @@ export function syncFlowNodesForRender(currentNodes: Node[], nextNodes: Node[]):
   return nextNodes.map((nextNode) => {
     const currentNode = currentNodeById.get(nextNode.id);
     if (!currentNode) return nextNode;
-    // Task overlay nodes (taskLedgerArtifact/taskNode) are non-deck nodes that
-    // ReactFlow OWNS for position + selection during interaction. Preserve the live
-    // values so a re-sync (on selection, drag-end, or any overlay recompute) never
-    // fights the drag, snaps the node back, or drops the selection. Agent/bus nodes
-    // stay fully controlled by the deck.
-    const isTask = isTaskOverlayNodeType(nextNode.type);
     return {
       ...currentNode,
       ...nextNode,
-      position: isTask ? currentNode.position : nextNode.position,
+      position: nextNode.position,
       data: nextNode.data,
       style: nextNode.style,
-      selected: isTask ? currentNode.selected : nextNode.selected,
+      selected: nextNode.selected,
     };
   });
 }
@@ -725,12 +709,7 @@ export default function BuilderCanvas({
   swarmProgressByCardId = {},
   inspectMode = false,
   presentationViewportKey = null,
-  taskOverlayNodes = [],
-  taskOverlayEdges = [],
-  onTaskGoGate,
-  taskGoGateStatus = null,
   focusZone = null,
-  onTaskNodePositionChange,
 }: {
   document: DeckDocument;
   setDocument: Dispatch<SetStateAction<DeckDocument>>;
@@ -746,18 +725,9 @@ export default function BuilderCanvas({
   swarmProgressByCardId?: Record<string, { completed: number; total: number }>;
   inspectMode?: boolean;
   presentationViewportKey?: string | number | null;
-  // Unified canvas task overlay: real Task Ledger Artifact + planFlowTaskObjects
-  // nodes/edges, rendered on this scene but NEVER persisted into the deck.
-  taskOverlayNodes?: Node[];
-  taskOverlayEdges?: Edge[];
-  onTaskGoGate?: () => void;
-  taskGoGateStatus?: string | null;
-  // Camera focus zone from the left rail (camera-only): pan/zoom to the agent/bus
-  // nodes or the task/mission nodes on the SAME scene. Never hides any node.
-  focusZone?: { zone: 'agents' | 'tasks'; nonce: number } | null;
-  // Reports a dragged task (mission) node's new position so the overlay layout
-  // persists in-session (without ever writing the task node into the deck).
-  onTaskNodePositionChange?: (id: string, x: number, y: number) => void;
+  // Camera focus zone from the left rail (camera-only): pan/zoom to fit the
+  // agent/bus nodes. Never hides any node.
+  focusZone?: { zone: 'agents'; nonce: number } | null;
 }) {
   const activeCardIdSet = useMemo(() => new Set(activeCardIds), [activeCardIds]);
   const activeEdgeIdSet = useMemo(() => new Set(activeEdgeIds), [activeEdgeIds]);
@@ -790,102 +760,8 @@ export default function BuilderCanvas({
       ),
     [activeEdgeIdSet, document, hoveredCardId, selectedEdgeId],
   );
-  // Overlay task nodes get the Run Agents handler (Task nodes only) and selection
-  // from selectedCardId. They are non-persisted: draggable/deletable/connectable
-  // off so they never emit persisted canvas changes, and the merge guards below
-  // drop any `mission`/overlay item so the deck can never gain a phantom card.
-  const overlayFlowNodes = useMemo<Node[]>(
-    () =>
-      (taskOverlayNodes || []).map((node) => {
-        const isTask = (node.data as { kind?: string } | undefined)?.kind === 'Task';
-        return {
-          ...node,
-          // Match agent-card interaction flags so clicks select the node (which
-          // surfaces the Run Agents button). Deletable/connectable stay off, and
-          // the deck-merge guards drop these `mission` nodes so a drag can never
-          // persist a phantom card.
-          draggable: true,
-          deletable: false,
-          connectable: false,
-          selectable: true,
-          focusable: true,
-          selected: node.id === selectedCardId,
-          data: {
-            ...(node.data as Record<string, unknown>),
-            ...(isTask ? { onGoGate: onTaskGoGate, goGateStatus: taskGoGateStatus } : {}),
-          },
-        } as Node;
-      }),
-    [taskOverlayNodes, selectedCardId, onTaskGoGate, taskGoGateStatus],
-  );
-  const combinedFlowNodes = useMemo<Node[]>(
-    () => (overlayFlowNodes.length ? [...flowNodes, ...overlayFlowNodes] : flowNodes),
-    [flowNodes, overlayFlowNodes],
-  );
-  const combinedFlowEdges = useMemo<Edge[]>(
-    () =>
-      (taskOverlayEdges || []).length
-        ? [...flowEdges, ...(taskOverlayEdges as Edge[])]
-        : flowEdges,
-    [flowEdges, taskOverlayEdges],
-  );
-  const overlayNodeIdSet = useMemo(
-    () => new Set((taskOverlayNodes || []).map((node) => node.id)),
-    [taskOverlayNodes],
-  );
-  const busNodeId = useMemo(
-    () => flowNodes.find((node) => node.type === 'magenticBus')?.id ?? null,
-    [flowNodes],
-  );
-  const [nodes, setNodes] = useNodesState(combinedFlowNodes);
-  const [edges, setEdges] = useEdgesState(combinedFlowEdges);
-  // SINGLE SOURCE OF TRUTH = ReactFlow's own selection. The selected task node drives
-  // BOTH the task inspector and the task_to_bus edge, so they can never desync from
-  // the node's selected state (the same flag the on-node Run Agents pill uses). This
-  // is read from the live `nodes` state, not selectedCardId (which onNodeClick can
-  // drop when a click is read as a micro-drag — the real cause of the missing
-  // inspector + edge).
-  const selectedTaskNode = useMemo(
-    () =>
-      nodes.find(
-        (node) =>
-          isTaskOverlayNodeType(node.type) &&
-          node.selected &&
-          (node.data as { kind?: string } | undefined)?.kind === 'Task',
-      ) || null,
-    [nodes],
-  );
-  // The selected Plan/source node (the user-facing Task Ledger artifact), if any.
-  const selectedPlanNode = useMemo(
-    () =>
-      nodes.find(
-        (node) =>
-          node.selected && (node.data as { kind?: string } | undefined)?.kind === 'TaskLedger',
-      ) || null,
-    [nodes],
-  );
-  // Exactly one task_to_bus edge for the selected task, into the TOP of the Mag One
-  // bus. Created here (not in the overlay) so it tracks the real ReactFlow selection.
-  const taskToBusEdge = useMemo<Edge | null>(() => {
-    if (!selectedTaskNode || !busNodeId) return null;
-    return {
-      id: `task_to_bus_${selectedTaskNode.id}`,
-      source: selectedTaskNode.id,
-      sourceHandle: 'task-out-bottom',
-      target: busNodeId,
-      targetHandle: 'task-bus-top',
-      type: 'turboFlow',
-      selectable: false,
-      deletable: false,
-      data: { motion: 'running', edgeKind: 'task_to_bus', __overlay: true },
-      className: 'edge-secondary',
-      animated: false,
-    } as Edge;
-  }, [selectedTaskNode, busNodeId]);
-  const renderedEdges = useMemo(
-    () => (taskToBusEdge ? [...edges, taskToBusEdge] : edges),
-    [edges, taskToBusEdge],
-  );
+  const [nodes, setNodes] = useNodesState(flowNodes);
+  const [edges, setEdges] = useEdgesState(flowEdges);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const latestDocumentRef = useRef(document);
   const pendingDocumentMutationRef = useRef<((prev: DeckDocument) => DeckDocument) | null>(null);
@@ -901,31 +777,18 @@ export default function BuilderCanvas({
   }, [document]);
 
   useEffect(() => {
-    setNodes((current) => syncFlowNodesForRender(current, combinedFlowNodes));
-  }, [combinedFlowNodes, setNodes]);
+    setNodes((current) => syncFlowNodesForRender(current, flowNodes));
+  }, [flowNodes, setNodes]);
 
   useEffect(() => {
-    setEdges((current) => syncFlowEdgesForRender(current, combinedFlowEdges));
-  }, [combinedFlowEdges, setEdges]);
+    setEdges((current) => syncFlowEdgesForRender(current, flowEdges));
+  }, [flowEdges, setEdges]);
 
-  // Left-rail camera: pan/zoom to the requested zone on the SAME scene. Task/mission
-  // nodes vs agent/bus nodes — no node set is ever hidden or swapped. Falls back to a
-  // full fit if the zone is empty.
+  // Left-rail camera: pan/zoom to fit the agent/bus nodes on the scene.
   useEffect(() => {
     if (!reactFlowInstance || !focusZone) return;
     const frame = window.requestAnimationFrame(() => {
-      const wantTasks = focusZone.zone === 'tasks';
-      const zoneNodes = reactFlowInstance
-        .getNodes()
-        .filter((node) =>
-          wantTasks ? isTaskOverlayNodeType(node.type) : !isTaskOverlayNodeType(node.type),
-        )
-        .map((node) => ({ id: node.id }));
-      if (zoneNodes.length === 0) {
-        reactFlowInstance.fitView({ duration: 500, padding: 0.2 });
-        return;
-      }
-      reactFlowInstance.fitView({ nodes: zoneNodes, duration: 500, padding: 0.25 });
+      reactFlowInstance.fitView({ duration: 500, padding: 0.2 });
     });
     return () => window.cancelAnimationFrame(frame);
   }, [focusZone, reactFlowInstance]);
@@ -989,12 +852,7 @@ export default function BuilderCanvas({
   ): boolean => isPlainConnectionAllowedForDocument(document, connection, currentEdges, ignoreEdgeId);
 
   const onNodesChange = (changes: NodeChange[]) => {
-    // Task overlay nodes (taskLedgerArtifact/taskNode) are NEVER persisted to the
-    // deck. Decide deck persistence from DECK node changes only: dragging a task must
-    // not mutate the deck — that would churn deck.nodes, recompute the task overlay
-    // mid-drag, and fight the drag (the real cause of the drag glitch).
-    const deckChanges = changes.filter((change) => !overlayNodeIdSet.has(change.id));
-    const hasPersistedNodeChange = shouldPersistNodeChanges(deckChanges);
+    const hasPersistedNodeChange = shouldPersistNodeChanges(changes);
     let nextNodesForMerge: Node[] | null = null;
     setNodes((current) => {
       const next = applyNodeChanges(changes, current);
@@ -1007,21 +865,6 @@ export default function BuilderCanvas({
       }
       return next;
     });
-    // Task (mission) nodes are non-persistent overlay nodes — never written to the
-    // deck. Report their dropped position up so the in-session layout persists and
-    // the node does not snap back when the overlay recomputes.
-    if (onTaskNodePositionChange) {
-      changes.forEach((change) => {
-        if (
-          change.type === 'position' &&
-          change.position &&
-          change.dragging === false &&
-          overlayNodeIdSet.has(change.id)
-        ) {
-          onTaskNodePositionChange(change.id, change.position.x, change.position.y);
-        }
-      });
-    }
     if (!hasPersistedNodeChange || !nextNodesForMerge) return;
     pendingPersistMetaRef.current = {
       reason: 'canvas:nodes',
@@ -1030,12 +873,7 @@ export default function BuilderCanvas({
     pendingDocumentMutationRef.current = (prev) => ({
       ...prev,
       version: prev.version + 1,
-      // Guard: never let non-deck task overlay nodes (taskLedgerArtifact/taskNode)
-      // enter the deck — that would create phantom agent cards. Agents stay canonical.
-      nodes: mergeFlowNodesIntoDeck(
-        (nextNodesForMerge as Node[]).filter((node) => !isTaskOverlayNodeType(node.type)),
-        prev.nodes,
-      ),
+      nodes: mergeFlowNodesIntoDeck(nextNodesForMerge as Node[], prev.nodes),
     });
     setPendingDocumentFlushNonce((current) => current + 1);
   };
@@ -1444,7 +1282,7 @@ export default function BuilderCanvas({
       </div>
       <ReactFlow
         nodes={nodes}
-        edges={renderedEdges}
+        edges={edges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         connectionMode={ConnectionMode.Strict}
@@ -1517,35 +1355,6 @@ export default function BuilderCanvas({
           color={GRAPH_THEME.background.gridMajor}
         />
       </ReactFlow>
-      {selectedTaskNode ? (
-        <TaskNodeInspector
-          data={selectedTaskNode.data as PlanMissionNodeData}
-          onRunAgents={onTaskGoGate}
-          goGateStatus={taskGoGateStatus}
-          onClose={() => {
-            // Deselect the node in ReactFlow (closes this selection-driven inspector)
-            // and clear any card selection.
-            setNodes((current) =>
-              current.map((node) =>
-                node.id === selectedTaskNode.id ? { ...node, selected: false } : node,
-              ),
-            );
-            onSelectCard(null);
-          }}
-        />
-      ) : selectedPlanNode ? (
-        <PlanSourceInspector
-          data={selectedPlanNode.data as PlanMissionNodeData}
-          onClose={() => {
-            setNodes((current) =>
-              current.map((node) =>
-                node.id === selectedPlanNode.id ? { ...node, selected: false } : node,
-              ),
-            );
-            onSelectCard(null);
-          }}
-        />
-      ) : null}
     </div>
   );
 }

@@ -4,7 +4,7 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { buildReloadStateFromDeckRuns } from '../../../components/builder/deckRunState';
 import { guardedRequest, safeJson } from '../../../components/builder/requestGuards';
 import type { LatestCardRunRecord } from '../../../components/builder/useBuilderDeckRuntimeActions';
-import type { LinkRef, PlanItem } from '../../../components/builder/assistPlanSurface';
+import type { LinkRef } from '../../../components/builder/deckContinuityTypes';
 import type {
   DeckDocument,
   DeckRun,
@@ -15,7 +15,6 @@ type BuilderChatMessage = { role: 'assistant' | 'user'; text: string };
 
 type EmptyProjectState = {
   messages: BuilderChatMessage[];
-  plan: PlanItem[];
   links: LinkRef[];
 };
 
@@ -37,7 +36,6 @@ type UseAgentBuilderDeckLoadArgs = {
   ) => LoadResult;
   loadProjectState: (projectId: string) => {
     messages: BuilderChatMessage[];
-    plan: PlanItem[];
     links: LinkRef[];
   };
   formatBuilderStatusMessage: (
@@ -66,8 +64,6 @@ type UseAgentBuilderDeckLoadArgs = {
   setLiveDeckEvents: Dispatch<SetStateAction<DeckRuntimeEvent[]>>;
   setMessages: Dispatch<SetStateAction<BuilderChatMessage[]>>;
   setPendingActivationProposal: Dispatch<SetStateAction<unknown>>;
-  setPlanSource: Dispatch<SetStateAction<unknown>>;
-  setPlan: Dispatch<SetStateAction<PlanItem[]>>;
   setLinks: Dispatch<SetStateAction<LinkRef[]>>;
   setStateLoaded: Dispatch<SetStateAction<boolean>>;
   setDeckStatusMessage: Dispatch<SetStateAction<string | null>>;
@@ -98,8 +94,6 @@ export default function useAgentBuilderDeckLoad({
   setLiveDeckEvents,
   setMessages,
   setPendingActivationProposal,
-  setPlanSource,
-  setPlan,
   setLinks,
   setStateLoaded,
   setDeckStatusMessage,
@@ -114,8 +108,6 @@ export default function useAgentBuilderDeckLoad({
       setLatestCardRun(null);
       setLiveDeckEvents([]);
       setMessages([...emptyProjectState.messages]);
-      setPlanSource([...emptyProjectState.plan]);
-      setPlan([...emptyProjectState.plan]);
       setLinks([...emptyProjectState.links]);
       setStateLoaded(false);
       setDeckStatusMessage(null);
@@ -190,8 +182,6 @@ export default function useAgentBuilderDeckLoad({
         // clobbered the live user message and rendered old run text as fake chat
         // bubbles. Deck runs still drive the plan/links below; not the chat.
         setPendingActivationProposal(null);
-        setPlanSource(continuity.planSource);
-        setPlan(continuity.plan);
         setLinks(continuity.links);
         setStateLoaded(true);
         setDeckLoadError(null);
@@ -220,8 +210,6 @@ export default function useAgentBuilderDeckLoad({
         setDeckRevision(null);
         setMessages([...next.messages]);
         setPendingActivationProposal(null);
-        setPlanSource([...next.plan]);
-        setPlan([...next.plan]);
         setLinks([...next.links]);
         setStateLoaded(true);
         const errorMessage =
@@ -262,7 +250,6 @@ export default function useAgentBuilderDeckLoad({
     emitWorkspaceTestingEvent,
     emptyProjectState.links,
     emptyProjectState.messages,
-    emptyProjectState.plan,
     formatBuilderStatusMessage,
     lastPersistedBoardFingerprintRef,
     lastPersistedBoardSnapshotRef,
@@ -282,8 +269,6 @@ export default function useAgentBuilderDeckLoad({
     setLiveDeckEvents,
     setMessages,
     setPendingActivationProposal,
-    setPlan,
-    setPlanSource,
     setStateLoaded,
     snapshotDeckBoard,
   ]);

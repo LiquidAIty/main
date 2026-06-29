@@ -18,7 +18,6 @@ type CompanionSurfaceHostProps = {
   dataFormulatorSurface: ReactNode;
   uaSurface: ReactNode;
   worldsignalSurface: ReactNode;
-  planSurface: ReactNode;
 };
 
 export default function CompanionSurfaceHost({
@@ -37,7 +36,6 @@ export default function CompanionSurfaceHost({
   dataFormulatorSurface,
   uaSurface,
   worldsignalSurface,
-  planSurface,
 }: CompanionSurfaceHostProps) {
   if (workspaceView === 'canvas' || workspaceView === 'chat') {
     return null;
@@ -78,7 +76,6 @@ export default function CompanionSurfaceHost({
           {workspaceView === 'data-formulator' && dataFormulatorSurface}
           {hasActiveUaSurface && uaSurface}
           {workspaceView === 'worldsignal' && worldsignalSurface}
-          {workspaceView === 'plan' && planSurface}
         </div>
       </div>
     </aside>
