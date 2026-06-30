@@ -414,6 +414,16 @@ async function resolveKnowGraphProjectScopeIds(projectId: string): Promise<strin
   return Array.from(scopeIds);
 }
 
+// SkillGraph (services/knowgraph/skill_ingest.py) shares this Neo4j database but uses its OWN node
+// labels. The KnowGraph reads below scope by project_id but are otherwise label-blind, so :Skill*
+// nodes would leak into the KnowGraph canvas. Exclude the skill-graph labels from every KnowGraph
+// read. KnowGraph itself never writes these labels (it writes :SemanticRecord / :SourceBackedAssertion
+// / :Entity / :Source / :Observation / ...), so this can only remove skill nodes, never hide evidence.
+const SKILL_GRAPH_LABELS = ['Skill', 'SkillAttempt', 'FailedAttempt', 'Decision', 'Guardrail', 'QueryPattern', 'SkillSection'] as const;
+function notSkillNode(varName: string): string {
+  return `NOT (${SKILL_GRAPH_LABELS.map((label) => `${varName}:${label}`).join(' OR ')})`;
+}
+
 export async function queryKnowGraphProject(projectId: string): Promise<{
   nodes: KnowGraphNodeDto[];
   relationships: KnowGraphRelationshipDto[];
@@ -463,6 +473,7 @@ export async function queryKnowGraphProject(projectId: string): Promise<{
         WHERE toString(a.project_id) IN $projectScopeIds
           AND toString(b.project_id) IN $projectScopeIds
           AND (r.project_id IS NULL OR toString(r.project_id) IN $projectScopeIds)
+          AND ${notSkillNode('a')} AND ${notSkillNode('b')}
         RETURN DISTINCT
           elementId(r) AS rel_id,
           type(r) AS rel_type,
@@ -502,6 +513,7 @@ export async function queryKnowGraphProject(projectId: string): Promise<{
       `
         MATCH (n)
         WHERE toString(n.project_id) IN $projectScopeIds
+          AND ${notSkillNode('n')}
         RETURN DISTINCT elementId(n) AS node_id, labels(n) AS node_labels, properties(n) AS node_props
       `,
       { projectScopeIds },
@@ -604,6 +616,7 @@ async function queryKnowGraphExpand(
           AND toString(a.project_id) IN $projectScopeIds
           AND toString(b.project_id) IN $projectScopeIds
           AND toString(r.project_id) IN $projectScopeIds
+          AND ${notSkillNode('a')} AND ${notSkillNode('b')}
         RETURN DISTINCT
           elementId(r) AS rel_id,
           type(r) AS rel_type,

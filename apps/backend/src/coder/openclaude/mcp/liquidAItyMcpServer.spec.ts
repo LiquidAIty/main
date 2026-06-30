@@ -30,11 +30,11 @@ const ROUTING = {
   blockedReason: null,
 };
 
-const MISSION = {
+const RUN_INPUT = {
   projectId: 'project-1',
   deckId: 'deck_builder',
   taskIds: ['t1', 't2'],
-  missionPacket: { objective: 'Research RDW catalysts', selectedTaskSteps: [{ id: 't1' }] },
+  plan: { objective: 'Research RDW catalysts', graphReadScope: ['know:rdw'] },
 };
 
 async function connectedClient(deps: AgentFlowDeps) {
@@ -113,12 +113,12 @@ describe('LiquidAIty MCP server', () => {
       output: 'Mission complete.',
       status: 'success',
       magenticTrace: {
-        plan: { taskLedgerArtifact: { source: 'autogen_0_7_5_magentic_one', planFlowTaskObjects: [{ id: 't1' }] } },
+        plan: { taskLedgerArtifact: { source: 'autogen_0_7_5_magentic_one' } },
         ledgerTrace: { source: 'python_magone' },
       },
     }));
     const client = await connectedClient(baseDeps({ runCard: runCard as any }));
-    const res: any = await client.callTool({ name: 'execute_visible_flow', arguments: MISSION });
+    const res: any = await client.callTool({ name: 'execute_visible_flow', arguments: RUN_INPUT });
 
     const ctxArg = runCard.mock.calls[0][3] as Record<string, unknown>;
     expect('runApproved' in ctxArg).toBe(false);
@@ -127,7 +127,6 @@ describe('LiquidAIty MCP server', () => {
     const parsed = JSON.parse(res.content[0].text);
     expect(parsed.status).toBe('completed');
     expect(parsed.taskUpdates.map((u: any) => u.taskId)).toEqual(['t1', 't2']);
-    expect(parsed.planFlowUpdates).toEqual([{ id: 't1' }]);
   });
 
   it('execute_visible_flow returns needs_input when the flow is not runnable', async () => {
@@ -138,7 +137,7 @@ describe('LiquidAIty MCP server', () => {
         runCard: runCard as any,
       }),
     );
-    const res: any = await client.callTool({ name: 'execute_visible_flow', arguments: MISSION });
+    const res: any = await client.callTool({ name: 'execute_visible_flow', arguments: RUN_INPUT });
     expect(runCard).not.toHaveBeenCalled();
     const parsed = JSON.parse(res.content[0].text);
     expect(parsed.status).toBe('needs_input');

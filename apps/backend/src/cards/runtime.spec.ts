@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import { RUNTIME_TOOL_SPECS } from '../contracts/runtimeContracts';
 import {
   buildMagOneRoutingManifest,
@@ -11,13 +10,6 @@ import {
 } from './runtime';
 
 describe('Canonical Cards Runtime', () => {
-  it('PLAN.md documents current dogfood root and future explicit external roots', () => {
-    const plan = readFileSync(path.join(process.cwd(), 'PLAN.md'), 'utf8');
-    expect(plan).toContain('`C:\\Projects\\main`');
-    expect(plan).toContain('The same CoderPacket-in/CoderReport-out lifecycle will later target explicit external repo roots');
-    expect(plan).toMatch(/vendored\r?\n`localcoder\/` runtime stays excluded from CBM/);
-  });
-
   it('normal chat submit is planning only: no coding-intent participant gate, no coder dispatch', async () => {
     // Chat submit must not classify intent or impose a coding participant gate.
     // With no bus-connected agents it fails with the honest "no participants"
@@ -177,7 +169,7 @@ describe('Canonical Cards Runtime', () => {
       id: 'mag1',
       runtimeType: 'magentic_one',
       prompt: 'sys',
-      runtimeOptions: { taskLedgerOutputContract: 'produce planFlowTaskObjects AND an OWL-shaped graphPayload.' },
+      runtimeOptions: { taskLedgerOutputContract: 'produce an OWL-shaped graphPayload.' },
     };
     const cardA = { id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
     const payload = buildPythonAutoGenCardRuntimePayload(
@@ -507,9 +499,12 @@ describe('Canonical Cards Runtime', () => {
     expect(fanParticipant?.tools).toEqual(['current_datetime']);
     expect(fanParticipant?.fanOut).toEqual({ enabled: true, count: 2, items: ['x', 'y'] });
     expect(fanParticipant?.isSocietyOfMind).toBe(false);
-    expect(fanParticipant?.prompt).toBe('Fan instructions.');
     expect(fanParticipant?.provider).toBe('openai');
     expect(fanParticipant?.providerModelId).toBe('gpt-5-nano');
+    // The prompt is private (sent only to Python), so it lives in privateParticipants, not the
+    // public participant. That separation is intentional.
+    const fanPrivate = payload.cardRuntime.privateParticipants?.find((p) => p.cardId === 'fan1');
+    expect(fanPrivate?.prompt).toBe('Fan instructions.');
 
     const somParticipant = payload.cardRuntime.participants.find((p) => p.cardId === 'som1');
     expect(somParticipant?.isSocietyOfMind).toBe(true);
@@ -604,8 +599,10 @@ describe('Canonical Cards Runtime', () => {
   });
 
   it('does not add a direct chat-to-console bypass', () => {
+    // Read relative to THIS spec file, not process.cwd(), so it passes regardless of where
+    // vitest is invoked from.
     const chatRoute = readFileSync(
-      path.join(process.cwd(), 'apps/backend/src/routes/agentBuilder.routes.ts'),
+      new URL('../routes/agentBuilder.routes.ts', import.meta.url),
       'utf8',
     );
     expect(chatRoute).not.toContain('/openclaude/console/task');

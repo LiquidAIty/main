@@ -47,6 +47,8 @@ type KnowledgeGraphFrameworkProps = {
   contract: GraphViewContract;
   onContractChange: (contract: GraphViewContract) => void;
   thinkGraphData: GraphViewData;
+  /** CBM call-graph slice from /api/codegraph/graph-view (codebase-memory MCP). */
+  codeGraphViewData?: GraphViewData;
   knowGraphData: GraphViewData;
   /** Raw `/api/knowgraph/explore` response (carries `.lens`). When present the KnowGraph tab renders
    * through the purpose-built semantic-lens adapter (full edge provenance), not the flattened DTO. */
@@ -276,6 +278,7 @@ export default function KnowledgeGraphFramework({
   contract,
   onContractChange,
   thinkGraphData,
+  codeGraphViewData,
   knowGraphData,
   knowGraphExplore,
   onKnowGraphFocus,
@@ -706,6 +709,37 @@ export default function KnowledgeGraphFramework({
     };
   }, [thinkGraphData]);
 
+  // CodeGraph view = the CBM call-graph slice from /api/codegraph/graph-view (read through the
+  // codebase-memory MCP). Same source-neutral GraphView; node ids are CBM qualified_names, so the
+  // Harness can graph_focus/graph_highlight the exact symbols it says it will work on.
+  const codeGraphView = useMemo<GraphView>(() => {
+    const rawNodes = Array.isArray(codeGraphViewData?.nodes) ? codeGraphViewData.nodes : [];
+    const rawEdges = Array.isArray(codeGraphViewData?.edges) ? codeGraphViewData.edges : [];
+    const nodes = rawNodes.map((n) => ({
+      id: String(n.id),
+      ownerGraph: 'code' as const,
+      semanticKind: String(n.type || 'Function'),
+      displayLabel: String(n.label || n.id),
+    }));
+    const ids = new Set(nodes.map((n) => n.id));
+    const edges = rawEdges
+      .map((e, i) => ({
+        id: String(e.id ?? `${e.source}->${e.target}->${i}`),
+        source: String(e.source),
+        target: String(e.target),
+        ownerGraph: 'code' as const,
+        predicate: String(e.type || 'CALLS'),
+      }))
+      .filter((e) => ids.has(e.source) && ids.has(e.target));
+    return {
+      focus: null,
+      activeLayers: ['code'],
+      nodes,
+      edges,
+      availability: [{ layer: 'code', state: nodes.length > 0 ? 'available' : 'unavailable', reason: nodes.length > 0 ? 'CBM CodeGraph (codebase-memory MCP)' : 'no CodeGraph slice yet' }],
+    };
+  }, [codeGraphViewData]);
+
   // Shared-canvas source toggles — your real graphs by their real names. KnowGraph on by default.
   const [enabledSources, setEnabledSources] = useState<Record<'knowgraph' | 'thinkgraph' | 'codegraph' | 'skillgraph', boolean>>({ knowgraph: true, thinkgraph: false, codegraph: false, skillgraph: false });
   const toggleSource = useCallback((id: 'knowgraph' | 'thinkgraph' | 'codegraph' | 'skillgraph') => setEnabledSources((p) => ({ ...p, [id]: !p[id] })), []);
@@ -713,9 +747,9 @@ export default function KnowledgeGraphFramework({
   const sources = useMemo<GraphSource[]>(() => [
     { id: 'knowgraph', name: 'KnowGraph', enabled: enabledSources.knowgraph, available: knowGraphExplorerView.nodes.length > 0, nodeCount: knowGraphExplorerView.nodes.length },
     { id: 'thinkgraph', name: 'ThinkGraph', enabled: enabledSources.thinkgraph, available: thinkGraphView.nodes.length > 0, nodeCount: thinkGraphView.nodes.length, reason: 'Apache AGE thinkgraph_liq' },
-    { id: 'codegraph', name: 'CodeGraph', enabled: false, available: false, nodeCount: 0, reason: 'CBM CodeGraph not connected yet' },
+    { id: 'codegraph', name: 'CodeGraph', enabled: enabledSources.codegraph, available: codeGraphView.nodes.length > 0, nodeCount: codeGraphView.nodes.length, reason: 'CBM codebase-memory MCP' },
     { id: 'skillgraph', name: 'SkillGraph', enabled: false, available: false, nodeCount: 0, reason: 'SkillGraph not connected yet' },
-  ], [enabledSources, knowGraphExplorerView, thinkGraphView]);
+  ], [enabledSources, knowGraphExplorerView, thinkGraphView, codeGraphView]);
 
   // One canvas: union of the ENABLED real sources. Each node/edge keeps its source identity; no
   // cross-graph edge is invented. KnowGraph alone by default.
@@ -723,8 +757,9 @@ export default function KnowledgeGraphFramework({
     const views: GraphView[] = [];
     if (enabledSources.knowgraph) views.push(knowGraphExplorerView);
     if (enabledSources.thinkgraph) views.push(thinkGraphView);
+    if (enabledSources.codegraph) views.push(codeGraphView);
     return views.length ? composeSources(views) : knowGraphExplorerView;
-  }, [enabledSources, knowGraphExplorerView, thinkGraphView]);
+  }, [enabledSources, knowGraphExplorerView, thinkGraphView, codeGraphView]);
 
   return (
     <div

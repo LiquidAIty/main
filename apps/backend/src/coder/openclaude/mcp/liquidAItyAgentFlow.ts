@@ -28,7 +28,6 @@ import { buildMagOneRoutingDiagnostics, runCardWithContract } from '../../../car
 import { resolveRuntimeBinding } from '../../../contracts/runtimeBinding';
 import { HARNESS_GRAPH_TOOLS } from './harnessGraphTools';
 
-const MAX_TASKS = 24;
 const PROMPT_SUMMARY_CHARS = 200;
 const THINKGRAPH_SKILL_PATH = 'skills/thinkgraph.md';
 
@@ -120,7 +119,7 @@ export type ProjectContext = {
     cardCount: number;
     edgeCount: number;
   };
-  activePlanSummary: { hasArtifact: boolean; source: string | null; taskCount: number } | null;
+  activePlanSummary: { hasArtifact: boolean; source: string | null } | null;
   thinkGraphCapability: ThinkGraphCapability;
   contextReferences: string[];
   warnings: string[];
@@ -176,7 +175,6 @@ export async function buildProjectContext(
     ? {
         hasArtifact: true,
         source: asString(artifact.source) || null,
-        taskCount: Array.isArray(artifact.planFlowTaskObjects) ? artifact.planFlowTaskObjects.length : 0,
       }
     : null;
   if (!activePlanSummary) warnings.push('no_task_ledger_artifact_on_latest_run');
@@ -233,7 +231,7 @@ export async function buildAgentFabricProfile(
   const deckId = asString(args.deckId).trim();
   const warnings: string[] = [];
 
-  const { deck, latestRun } = await loadDeck(projectId, deckId);
+  const { deck } = await loadDeck(projectId, deckId);
   if (!deck) {
     throw new Error(`describe_agent_fabric_deck_not_found: projectId=${projectId} deckId=${deckId}`);
   }
@@ -272,13 +270,6 @@ export async function buildAgentFabricProfile(
       modelKey: asString(c?.runtimeOptions?.modelKey).trim() || null,
       provider: asString(c?.runtimeOptions?.provider).trim() || null,
     }));
-    const artifact = extractLatestArtifact(latestRun);
-    const expectedArtifacts = artifact && Array.isArray(artifact.planFlowTaskObjects)
-      ? artifact.planFlowTaskObjects
-          .map((t: any) => asString(t?.expectedArtifact || t?.proofNeeded).trim())
-          .filter(Boolean)
-          .slice(0, MAX_TASKS)
-      : [];
     const needsInputConditions = connectedAgents.length === 0
       ? ['flow_not_runnable_no_connected_agents']
       : [];
@@ -293,7 +284,7 @@ export async function buildAgentFabricProfile(
       graphReadScopes: [],
       requiredInputs: [],
       constraints: [],
-      expectedArtifacts,
+      expectedArtifacts: [],
       needsInputConditions,
       graphWritePolicy: 'no_direct_graph_write',
     };
@@ -303,21 +294,14 @@ export async function buildAgentFabricProfile(
 }
 
 // ── execute_visible_flow ──────────────────────────────────────────────────────
-export type MissionPacket = {
+// A Plan is a prompt + pointers — nothing more. Made by the Harness, passed to Mag One.
+// `objective` is the Harness's prompt; `graphReadScope` is the set of stable graph refs
+// (think:/know:/code:) it selected. The graph stays the single source of truth: Mag One reads the
+// pointed-at context through its OWN tools, and its native MagenticOne Task Ledger does the
+// planning. We do NOT pre-build task steps/artifacts/criteria here.
+export type Plan = {
   objective: string;
-  selectedTaskSteps: Array<{
-    id: string;
-    shortTitle?: string;
-    detail?: string;
-    expectedArtifact?: string;
-  }>;
-  connectedAgentCapabilitySummary?: string;
-  neededInputs?: string[];
-  constraints?: string[];
-  expectedArtifacts?: string[];
-  acceptanceCriteria?: string[];
   graphReadScope?: string[];
-  noDirectGraphWrite?: boolean;
 };
 
 export type ExecuteVisibleFlowInput = {
@@ -325,7 +309,7 @@ export type ExecuteVisibleFlowInput = {
   deckId: string;
   taskIds: string[];
   selectedCardId?: string;
-  missionPacket: MissionPacket;
+  plan: Plan;
 };
 
 export type ExecuteVisibleFlowResult = {
@@ -338,26 +322,14 @@ export type ExecuteVisibleFlowResult = {
   needsInput: Array<{ reason: string; field?: string }>;
   failure: string | null;
   provenance: { source: string | null; route: string; ledgerTrace: unknown | null };
-  planFlowUpdates: unknown[];
 };
 
-function renderMissionTask(packet: MissionPacket): string {
-  const lines: string[] = [`Objective: ${asString(packet.objective)}`];
-  if (packet.selectedTaskSteps?.length) {
-    lines.push('', 'Selected task steps:');
-    for (const step of packet.selectedTaskSteps) {
-      lines.push(
-        `- [${asString(step.id)}] ${asString(step.shortTitle)}: ${asString(step.detail)}` +
-          (step.expectedArtifact ? ` (expected: ${asString(step.expectedArtifact)})` : ''),
-      );
-    }
-  }
-  if (packet.connectedAgentCapabilitySummary) {
-    lines.push('', `Connected-agent capabilities: ${asString(packet.connectedAgentCapabilitySummary)}`);
-  }
-  if (packet.constraints?.length) lines.push('', 'Constraints:', ...packet.constraints.map((c) => `- ${asString(c)}`));
-  if (packet.acceptanceCriteria?.length) {
-    lines.push('', 'Acceptance criteria:', ...packet.acceptanceCriteria.map((c) => `- ${asString(c)}`));
+// The whole handoff: the Harness's objective + the graph pointers to read. Mag One plans natively
+// from this; we add no task structure of our own.
+function renderPlan(plan: Plan): string {
+  const lines: string[] = [`Objective: ${asString(plan.objective)}`];
+  if (plan.graphReadScope?.length) {
+    lines.push('', 'Graph pointers to read for context (the graph is the source of truth):', ...plan.graphReadScope.map((r) => `- ${asString(r)}`));
   }
   lines.push('', 'Graph-write policy: no direct graph write — return evidence/artifacts only.');
   return lines.join('\n').trim();
@@ -386,7 +358,7 @@ export async function executeVisibleFlow(
   if (!projectId || !deckId) {
     throw new Error('execute_visible_flow_missing_selected_flow: projectId and deckId are required');
   }
-  if (!asString(input?.missionPacket?.objective).trim()) {
+  if (!asString(input?.plan?.objective).trim()) {
     throw new Error('execute_visible_flow_missing_objective');
   }
 
@@ -416,11 +388,10 @@ export async function executeVisibleFlow(
       ],
       failure: null,
       provenance: { source: null, route, ledgerTrace: null },
-      planFlowUpdates: [],
     };
   }
 
-  const task = renderMissionTask(input.missionPacket);
+  const task = renderPlan(input.plan);
   // NO runApproved: the mission runs directly (Python runApproved is bookkeeping
   // only — magentic_agentchat.py:442 — never a gate).
   const result = await runCard(orchestrator, {}, task, {
@@ -435,7 +406,6 @@ export async function executeVisibleFlow(
   const plan = (result as any)?.magenticTrace?.plan ?? null;
   const ledgerTrace = (result as any)?.magenticTrace?.ledgerTrace ?? null;
   const taskLedger = plan?.taskLedgerArtifact ?? null;
-  const planFlowUpdates = Array.isArray(taskLedger?.planFlowTaskObjects) ? taskLedger.planFlowTaskObjects : [];
   const evidence = Array.isArray(taskLedger?.modelCallProof) ? taskLedger.modelCallProof : [];
   const finalText = asString(result?.output);
   const failed = result?.status === 'error';
@@ -453,6 +423,5 @@ export async function executeVisibleFlow(
     needsInput: [],
     failure: failed ? asString(result?.error) || 'execute_visible_flow_failed' : null,
     provenance: { source: taskLedger?.source ?? null, route, ledgerTrace },
-    planFlowUpdates,
   };
 }

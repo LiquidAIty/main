@@ -2030,7 +2030,7 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'route downstream agents/workflows when useful',
         'explain current state and next step',
         'preserve human-in-loop control',
-        'use Plan Agent for real runtime proposals; PlanFlow projects authoritative sources and provenance-backed proposals',
+        'use Plan Agent for real runtime proposals; the Plan projects authoritative sources and provenance-backed proposals',
       ].join('\n'),
       constraints: [
         'Do not dump raw JSON in normal chat unless in debug mode.',
@@ -2051,7 +2051,7 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         '5. If ThinkGraph is sparse, ask the user to clarify.',
         '6. If ThinkGraph is rich enough, offer Plan Research.',
         '7. If user asks to Plan Research, route to Plan Agent.',
-        '8. A real Plan Agent proposal may join PlanFlow only with runtime provenance.',
+        '8. A real Plan Agent proposal may join the Plan only with runtime provenance.',
         '9. Wait for human approval.',
         '10. Only after approval may Research Agent run.',
         '11. Only after source-backed evidence exists may KnowGraph Agent write evidence/gaps.',
@@ -2176,7 +2176,7 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Return evidence objects with source, snippet, claim, date if available, provenance.',
       ].join('\n'),
       memoryPolicy: [
-        'Use researchable questions and evidence targets from provenance-backed PlanFlow nodes and real ThinkGraph events.',
+        'Use researchable questions and evidence targets from provenance-backed Plan nodes and real ThinkGraph events.',
         'Active Skills: search_confirming_evidence, search_disconfirming_evidence, extract_source_claims, preserve_provenance, avoid_unsourced_claims',
       ].join('\n'),
     }),
@@ -2266,7 +2266,7 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       goal: [
         'Read ThinkGraph readiness.',
-        'Expose real ThinkGraph events beside provenance-backed PlanFlow nodes.',
+        'Expose real ThinkGraph events beside provenance-backed Plan nodes.',
         'Expose graph richness / missing pieces when idea is not ready.',
         'Offer Plan Research when ThinkGraph is ready.',
         'Create research plan after user asks to plan research.',
@@ -4767,29 +4767,6 @@ export default function AgentBuilder(): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasProjectId]);
 
-  // Dev-only: copy/inspect the latest Mag One model-call packet(s) for this project.
-  // Run `await __getModelCallPackets()` in the browser console — it fetches the debug
-  // route, copies the JSON to the clipboard, and logs it. No secrets are captured.
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    (window as unknown as Record<string, unknown>).__getModelCallPackets = async (
-      projectIdArg?: string,
-    ) => {
-      const pid = projectIdArg || activeProject || '';
-      const res = await fetch(
-        `/api/dev/model-call-packets?projectId=${encodeURIComponent(pid)}&limit=5`,
-      );
-      const json = await res.json();
-      try {
-        await navigator.clipboard.writeText(JSON.stringify(json, null, 2));
-        console.log('[model-call-packets] copied to clipboard.');
-      } catch {
-        console.log('[model-call-packets] (clipboard unavailable)');
-      }
-      console.log('[model-call-packets]', json);
-      return json;
-    };
-  }, [activeProject]);
   const lastLargeSurfaceTelemetryRef = useRef<WorkspaceTestingSurface | null>(
     null,
   );
@@ -7320,6 +7297,35 @@ export default function AgentBuilder(): React.ReactElement {
     return () => controller.abort();
   }, [activeProject, graphResetToken]);
 
+  // Load the SELECTED project's CodeGraph slice through the codebase-memory MCP
+  // (/api/codegraph/graph-view). Node ids are CBM qualified_names, so the Harness can
+  // graph_focus/graph_highlight the exact symbols it will work on. Heavy (spawns the CBM MCP), so
+  // it loads once per project; failure leaves CodeGraph empty and never breaks the canvas.
+  const [codeGraphViewData, setCodeGraphViewData] = useState<GraphViewData | undefined>(undefined);
+  useEffect(() => {
+    const projectId = activeProject;
+    if (!projectId) {
+      setCodeGraphViewData(undefined);
+      return;
+    }
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch(`/api/codegraph/graph-view?projectId=${encodeURIComponent(projectId)}`, { signal: controller.signal });
+        const data = await res.json().catch(() => null);
+        if (controller.signal.aborted || activeProjectLatestRef.current !== projectId) return;
+        if (data && typeof data === 'object' && Array.isArray(data.nodes)) {
+          setCodeGraphViewData({ nodes: data.nodes, edges: Array.isArray(data.edges) ? data.edges : [] } as GraphViewData);
+        } else {
+          setCodeGraphViewData(undefined);
+        }
+      } catch {
+        if (!controller.signal.aborted) setCodeGraphViewData(undefined);
+      }
+    })();
+    return () => controller.abort();
+  }, [activeProject, graphResetToken]);
+
   // Load the real source-backed KnowGraph semantic lens (/api/knowgraph/explore). No focus = the
   // server's default research lens; focusId/focus = an explicit issuer/entity lens; merge = expand
   // one hop via the existing mergeExploreLensPayloads. Read-only; failure leaves prior lens intact.
@@ -8478,6 +8484,7 @@ export default function AgentBuilder(): React.ReactElement {
                   setGraphViewContract(nextContract)
                 }
                 thinkGraphData={thinkGraphViewData}
+                codeGraphViewData={codeGraphViewData}
                 knowGraphData={knowGraphViewData}
                 knowGraphExplore={knowGraphExplore}
                 thinkGraphSource={thinkGraphSourceLabel}

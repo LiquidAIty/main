@@ -40,25 +40,12 @@ const describeFabricShape = {
   selectedCardId: z.string().optional(),
 };
 
-const missionPacketShape = z.object({
+// A Plan is just a prompt + pointers: the Harness's objective, and the stable graph refs
+// (think:/know:/code:) it selected for Mag One to read. Nothing else — Mag One plans natively
+// from this; the app does not pre-build task steps/artifacts.
+const planShape = z.object({
   objective: z.string().min(1),
-  selectedTaskSteps: z
-    .array(
-      z.object({
-        id: z.string(),
-        shortTitle: z.string().optional(),
-        detail: z.string().optional(),
-        expectedArtifact: z.string().optional(),
-      }),
-    )
-    .default([]),
-  connectedAgentCapabilitySummary: z.string().optional(),
-  neededInputs: z.array(z.string()).default([]),
-  constraints: z.array(z.string()).default([]),
-  expectedArtifacts: z.array(z.string()).default([]),
-  acceptanceCriteria: z.array(z.string()).default([]),
   graphReadScope: z.array(z.string()).default([]),
-  noDirectGraphWrite: z.boolean().default(true),
 });
 
 const executeVisibleFlowShape = {
@@ -66,7 +53,7 @@ const executeVisibleFlowShape = {
   deckId: z.string().min(1),
   taskIds: z.array(z.string()).default([]),
   selectedCardId: z.string().optional(),
-  missionPacket: missionPacketShape,
+  plan: planShape,
 };
 
 /**
@@ -145,7 +132,7 @@ export function createLiquidAItyMcpServer(deps: AgentFlowDeps = {}): McpServer {
     {
       title: 'Execute visible flow',
       description:
-        'Run the selected visible Agent Builder flow as a mission via the LiquidAIty Python AutoGen / Mag One runner. There is NO approval boolean — calling this is the execution command. Returns runId, task updates keyed to the provided plan task IDs, artifacts, evidence, progress, needs_input (when the flow is not runnable / lacks required context), failure, provenance, and PlanFlow-compatible updates. Mag One does not write the graph directly.',
+        'Hand the approved Plan (objective + graph pointers) to Mag One: runs the selected visible flow via the LiquidAIty Python AutoGen / Mag One runner. There is NO approval boolean — calling this is the execution command. Returns runId, task updates keyed to the provided task IDs, artifacts, evidence, progress, needs_input (when the flow is not runnable / lacks required context), failure, and provenance. Mag One plans natively and does not write the graph directly.',
       inputSchema: executeVisibleFlowShape,
     },
     async (input) => {

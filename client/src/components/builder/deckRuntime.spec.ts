@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  DEFAULT_PLANFLOW_TASK_OUTPUT_CONTRACT,
+  DEFAULT_MAG_ONE_OUTPUT_CONTRACT,
   MAG_ONE_OWL_TASK_LEDGER_CONTRACT,
   OWL_SHAPED_OUTPUT_CONTRACT,
 } from './deckRuntime';
@@ -39,13 +39,13 @@ describe('reusable OWL-shaped output contract', () => {
 
 describe('Mag One OWL-shaped Task Ledger contract', () => {
   it('the default PlanFlow contract embeds the OWL-shaped output + Mag One instructions', () => {
-    expect(DEFAULT_PLANFLOW_TASK_OUTPUT_CONTRACT).toContain(OWL_SHAPED_OUTPUT_CONTRACT);
-    expect(DEFAULT_PLANFLOW_TASK_OUTPUT_CONTRACT).toContain(MAG_ONE_OWL_TASK_LEDGER_CONTRACT);
+    expect(DEFAULT_MAG_ONE_OUTPUT_CONTRACT).toContain(OWL_SHAPED_OUTPUT_CONTRACT);
+    expect(DEFAULT_MAG_ONE_OUTPUT_CONTRACT).toContain(MAG_ONE_OWL_TASK_LEDGER_CONTRACT);
   });
 
-  it('keeps task objects AND adds an OWL-shaped graph payload', () => {
-    expect(DEFAULT_PLANFLOW_TASK_OUTPUT_CONTRACT).toContain('planFlowTaskObjects');
-    expect(DEFAULT_PLANFLOW_TASK_OUTPUT_CONTRACT).toContain('graphPayload');
+  it('asks ONLY for an OWL-shaped graph payload — no task-object structure', () => {
+    expect(DEFAULT_MAG_ONE_OUTPUT_CONTRACT).not.toContain('planFlowTaskObjects');
+    expect(DEFAULT_MAG_ONE_OUTPUT_CONTRACT).toContain('graphPayload');
   });
 
   it('includes task-ledger graph vocabulary (entity + relation classes)', () => {
@@ -68,7 +68,7 @@ describe('Mag One OWL-shaped Task Ledger contract', () => {
   });
 
   it('reintroduces no draft-generator naming', () => {
-    expect(DEFAULT_PLANFLOW_TASK_OUTPUT_CONTRACT.toLowerCase()).not.toContain('draft');
+    expect(DEFAULT_MAG_ONE_OUTPUT_CONTRACT.toLowerCase()).not.toContain('draft');
     expect(OWL_SHAPED_OUTPUT_CONTRACT.toLowerCase()).not.toContain('draft');
   });
 });
@@ -103,15 +103,14 @@ describe('OWL contract distinguishes explicit-assert from never-invent (no graph
     expect(OWL_SHAPED_OUTPUT_CONTRACT).toMatch(/do not leave them empty when you assert facts/i);
   });
 
-  it('Task Ledger contract requires a nonempty graphPayload when subjects are named', () => {
+  it('contract requires a nonempty graphPayload when subjects are named', () => {
     expect(MAG_ONE_OWL_TASK_LEDGER_CONTRACT).toMatch(/graphPayload MUST represent them as entities and\s+relations/i);
-    expect(MAG_ONE_OWL_TASK_LEDGER_CONTRACT).toMatch(/Do not leave entities\/relations empty while planFlowTaskObjects is\s+full/i);
-    expect(MAG_ONE_OWL_TASK_LEDGER_CONTRACT).toMatch(/keep a task that fetches the unknown value/i);
+    expect(MAG_ONE_OWL_TASK_LEDGER_CONTRACT).toMatch(/uncertainty for values you\s+cannot source/i);
   });
 
   it('default contract no longer tells the model to return empty graph arrays by default', () => {
-    expect(DEFAULT_PLANFLOW_TASK_OUTPUT_CONTRACT).toMatch(/DO assert into graphPayload the\s+entities and relations explicitly present/i);
-    expect(DEFAULT_PLANFLOW_TASK_OUTPUT_CONTRACT).toMatch(/return empty graph arrays only\s+when there is genuinely no graph-worthy content/i);
+    expect(DEFAULT_MAG_ONE_OUTPUT_CONTRACT).toMatch(/DO assert into graphPayload the\s+entities and relations explicitly present/i);
+    expect(DEFAULT_MAG_ONE_OUTPUT_CONTRACT).toMatch(/return empty graph arrays only\s+when there is genuinely no graph-worthy content/i);
   });
 
   it('keeps forbidding deterministic intent classification / regex routing (unchanged guard)', () => {

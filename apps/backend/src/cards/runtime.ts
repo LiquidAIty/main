@@ -11,7 +11,6 @@ import {
 } from '../contracts/runtimeContracts';
 import { orchestrateWithAutoGen } from '../services/autogen/autogenOrchestratorClient';
 import { resolveModel } from '../llm/models.config';
-import { recordModelCallPacket, buildModelCallPacket } from '../debug/modelCallPackets';
 
 function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
   const provider = String(value ?? '').trim().toLowerCase();
@@ -459,7 +458,7 @@ export function buildPythonAutoGenCardRuntimePayload(
   // System prompt = the card's own explicit prompt only. No backend-authored global
   // persona and no runtime graph-grounding prose is injected into native reasoning.
   const systemPrompt = String(card.prompt || '').trim();
-  // PlanFlow task-output contract: read from the Magentic-One card config only.
+  // Mag One OWL output contract: read from the Magentic-One card config only.
   // The backend never authors this — it transports whatever the editable card
   // field (runtimeOptions.taskLedgerOutputContract) carries; empty -> no task pass.
   const taskLedgerOutputContract = String(
@@ -576,7 +575,7 @@ export function buildPythonAutoGenCardRuntimePayload(
       title: String(card.title || 'Magentic Agent'),
       runtimeType: 'magentic_one',
       prompt: systemPrompt,
-      // Card prompt-chain step 4: PlanFlow output contract, read from the editable
+      // Card prompt-chain step 4: Mag One OWL output contract, read from the editable
       // Magentic-One card config above (transport only — never backend-authored).
       taskLedgerOutputContract,
       runtimeOptions: safeRuntimeOptions,
@@ -648,30 +647,17 @@ export async function runCardWithContract(
     let magenticPlan: Record<string, unknown> | null = null;
     // Honest TaskLedger trace from the real Python Magentic-One path.
     let ledgerTrace: Record<string, unknown> | undefined;
-    const callStartMs = Date.now();
     try {
         console.log('[runCardWithContract] executing Python AutoGen rails route.');
         const sidecarResponse = await orchestrateWithAutoGen(payload as any);
-        // Debug-only: record exactly what was sent + a summary of what came back.
-        recordModelCallPacket(
-          buildModelCallPacket({
-            route: 'deck_runtime',
-            projectId: context.projectId ? String(context.projectId) : null,
-            payload,
-            modelConfig,
-            response: sidecarResponse,
-            error: null,
-            durationMs: Date.now() - callStartMs,
-          }),
-        );
 
         // Transport only. The real AutoGen output is the messages/events the
         // Python rails output captured verbatim from run_stream, plus the orchestrator's own
         // Progress Ledger JSON when the inner loop ran. The backend authors no
         // ledger, no summary, and does not parse message text into runtime state.
         // finalResponseText is the real chat answer: the workbench renders it in
-        // chat for non-plan turns, and PlanFlow ignores it entirely (PlanFlow is
-        // built only from the taskLedgerArtifact, never from finalResponseText).
+        // chat for non-plan turns, and the AgentCanvas projection ignores it (it is
+        // built only from the taskLedgerArtifact, never finalResponseText).
         finalText = String(sidecarResponse.finalResponseText || '').trim();
         const autogenMessages = Array.isArray((sidecarResponse as any).autogenMessages)
           ? (sidecarResponse as any).autogenMessages
@@ -692,17 +678,6 @@ export async function runCardWithContract(
             ? (sidecarResponse.ledgerTrace as Record<string, unknown>)
             : undefined;
     } catch (e: any) {
-        recordModelCallPacket(
-          buildModelCallPacket({
-            route: 'deck_runtime',
-            projectId: context.projectId ? String(context.projectId) : null,
-            payload,
-            modelConfig,
-            response: null,
-            error: String(e?.message || e),
-            durationMs: Date.now() - callStartMs,
-          }),
-        );
         console.error('[runCardWithContract] Exact caught error message:', e?.message || e);
         throw e;
     }
@@ -721,7 +696,7 @@ export async function runCardWithContract(
       runtimeType: 'magentic_one',
       inputSummary: summarizeText(input),
       outputSummary: summarizeText(finalText),
-      // Transported Python rails artifacts for PlanFlow / AgentCanvas projection.
+      // Transported Python rails artifacts for AgentCanvas projection.
       magenticTrace:
         Object.keys(magenticPlan || {}).length > 0 || ledgerTrace
           ? {

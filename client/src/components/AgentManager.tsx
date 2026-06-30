@@ -16,7 +16,7 @@ import {
   graphDrawerInputStyle,
   graphDrawerSectionStyle,
 } from './graph/graphVisualTokens';
-import { DEFAULT_PLANFLOW_TASK_OUTPUT_CONTRACT } from './builder/deckRuntime';
+import { DEFAULT_MAG_ONE_OUTPUT_CONTRACT } from './builder/deckRuntime';
 
 type AgentType =
   | 'agent_builder'
@@ -674,10 +674,10 @@ export function AgentManager({
   const [finalAnswerPrompt, setFinalAnswerPrompt] = useState(
     String(runtimeOptions.finalAnswerPrompt || ''),
   );
-  // Editable PlanFlow task-object output contract. Defaults to the visible card
+  // Editable Mag One OWL output contract. Defaults to the visible card
   // default when the card has none, so the field is always populated/editable.
   const [taskLedgerOutputContract, setTaskLedgerOutputContract] = useState(
-    String(runtimeOptions.taskLedgerOutputContract || DEFAULT_PLANFLOW_TASK_OUTPUT_CONTRACT),
+    String(runtimeOptions.taskLedgerOutputContract || DEFAULT_MAG_ONE_OUTPUT_CONTRACT),
   );
   const [useSocietyOfMindConsolidation, setUseSocietyOfMindConsolidation] = useState(
     runtimeOptions.useSocietyOfMindConsolidation !== false,
@@ -730,7 +730,7 @@ export function AgentManager({
     setMaxStalls(typeof runtimeOptions.maxStalls === 'number' ? runtimeOptions.maxStalls : '');
     setFinalAnswerPrompt(String(runtimeOptions.finalAnswerPrompt || ''));
     setTaskLedgerOutputContract(
-      String(runtimeOptions.taskLedgerOutputContract || DEFAULT_PLANFLOW_TASK_OUTPUT_CONTRACT),
+      String(runtimeOptions.taskLedgerOutputContract || DEFAULT_MAG_ONE_OUTPUT_CONTRACT),
     );
     setUseSocietyOfMindConsolidation(runtimeOptions.useSocietyOfMindConsolidation !== false);
     setParentGraphId(String(localConfig?.parent_graph_id || ''));
@@ -1451,7 +1451,7 @@ export function AgentManager({
       <div className={formScopeClassName} style={{ display: 'grid', gap: 8 }}>
         <style>{scopedFocusStyles}</style>
         {/* Ledger = normal Magentic-One Task Ledger behavior (orchestrator default,
-            not edited here). Objects = editable PlanFlow task-object output contract
+            not edited here). Objects = editable Mag One OWL output contract
             (runtimeOptions.taskLedgerOutputContract) — the card-owned source of truth. */}
         <Field label="Ledger">
           <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12, lineHeight: 1.5 }}>

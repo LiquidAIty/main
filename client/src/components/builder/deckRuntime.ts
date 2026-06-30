@@ -108,10 +108,11 @@ confidence, uncertainty, and nextSearchSeedCandidates so a downstream local SLM 
 extraction worker can normalize the output without guessing.`;
 
 /**
- * Magentic-One / planner-specific OWL-shaped instruction block. Builds on the reusable
- * contract above with task-ledger-specific graph vocabulary and grounding rules.
+ * Magentic-One OWL-shaped grounding block. Builds on the reusable OWL contract above with the
+ * planning graph vocabulary and grounding rules. Mag One's native Task Ledger does the planning;
+ * this only shapes the OWL graphPayload it returns (no task-object structure).
  */
-export const MAG_ONE_OWL_TASK_LEDGER_CONTRACT = `Magentic-One Task Ledger + OWL-shaped planning payload.
+export const MAG_ONE_OWL_TASK_LEDGER_CONTRACT = `Magentic-One OWL-shaped graph payload.
 
 When graph context (CodeGraph, ThinkGraph, SkillGraph, KnowGraph) is provided, READ it
 before tasking. Prefer tasks grounded in real files/symbols, project memory, and proven
@@ -119,39 +120,36 @@ skills. Do not invent repo files or claim proof that does not exist. Do not crea
 without grounding when graph context is available. Do not classify user intent with
 deterministic rules or regex routing — reason from the real provided context.
 
-Produce Task Ledger output as explicit task objects (never fake chat status), AND an
-OWL-shaped graph payload capturing the reusable planning knowledge.
+Mag One plans natively — its own MagenticOne Task Ledger handles team, facts, and plan. Do
+NOT duplicate that as structured task objects. Produce an OWL-shaped graph payload capturing
+the reusable planning knowledge.
 
 Planning graph vocabulary (use these OWL classes/relations):
 - entity types: project, task, file, skill, blocker, model, graph, source, decision
 - relation types: depends_on, modifies, blocked_by, uses_skill, proves, writes_to,
   reads_from, supersedes
 
-Task Ledger graphPayload minimum: when the request names concrete subjects and relationships
-— companies, tickers, research topics, the tasks themselves, the data sources a task
-requires, the agents/tools/workflow — the graphPayload MUST represent them as entities and
-relations. Do not leave entities/relations empty while planFlowTaskObjects is full; the
-planning subjects and their typed relationships are graph-worthy facts that belong in the
-graph. Use uncertainty for values you cannot source (an unknown current price or valuation),
-and keep a task that fetches the unknown value rather than asserting a guessed value.
+graphPayload minimum: when the request names concrete subjects and relationships — companies,
+tickers, research topics, the data sources required, the agents/tools/workflow — the
+graphPayload MUST represent them as entities and relations. Use uncertainty for values you
+cannot source (an unknown current price or valuation) rather than asserting a guessed value.
 
 Preserve sourceRefs from CodeGraph, ThinkGraph, SkillGraph, KnowGraph, user text, and
 tool results. Mark uncertainty instead of guessing. Keep private reasoning separate from
 user-facing task text.`;
 
 /**
- * Magentic-One card prompt-chain step 4: the default, editable PlanFlow task-object
- * output contract — now OWL-shaped so Mag One output is graph-ready before the local SLM
- * receives it. This is the CARD-CONFIG default (surfaced and editable in the Magentic-One
- * card inspector). It is NOT owned by the backend or Python — those only transport/consume
- * whatever the card carries. The post-Mag-One structured pass uses this as the JSON-only
- * output contract.
+ * Magentic-One card prompt-chain step 4: the default, editable Mag One OUTPUT contract — an
+ * OWL-shaped graph payload (KnowGraph evidence) only. This is the CARD-CONFIG default (surfaced
+ * and editable in the Magentic-One card inspector). It is NOT owned by the backend or Python —
+ * those only transport/consume whatever the card carries. Mag One's native Task Ledger is the
+ * plan; we do not ask it for a separate task-object structure.
  */
-export const DEFAULT_PLANFLOW_TASK_OUTPUT_CONTRACT = `PlanFlow task-object output contract.
+export const DEFAULT_MAG_ONE_OUTPUT_CONTRACT = `Mag One OWL graph-payload output contract.
 
-Alongside the standard Magentic-One Task Ledger (team composition, facts, plan, and
-agent responsibilities — never omit or hide connected agents), produce a separate
-PlanFlow task-object artifact for the workbench canvas, plus an OWL-shaped graph payload.
+Mag One runs its native Magentic-One Task Ledger (team composition, facts, plan, and agent
+responsibilities — never omit or hide connected agents). Do not emit a separate task-object
+structure for it. Produce an OWL-shaped graph payload capturing the reusable knowledge.
 
 ${OWL_SHAPED_OUTPUT_CONTRACT}
 
@@ -159,19 +157,6 @@ ${MAG_ONE_OWL_TASK_LEDGER_CONTRACT}
 
 Return ONLY a JSON object of this exact shape and nothing else:
 {
-  "planFlowTaskObjects": [
-    {
-      "id": "stable short id",
-      "title": "short task title",
-      "detail": "one concise task detail",
-      "status": "proposed",
-      "stepNumber": 1,
-      "dependsOn": ["other task ids"],
-      "approvalRequired": false,
-      "nextNeeded": "next action",
-      "proofNeeded": "what proof would show completion"
-    }
-  ],
   "graphPayload": {
     "targetGraph": "thinkgraph",
     "inputKind": "task_ledger_planning",
@@ -187,14 +172,12 @@ Return ONLY a JSON object of this exact shape and nothing else:
 }
 
 Rules:
-- Task objects and graphPayload must be explicit structured output, not parsed or
-  rewritten chat text.
-- Do not create completed statuses unless real proof exists.
+- graphPayload must be explicit structured output, not parsed or rewritten chat text.
 - Do not invent repo files, sources, skills, or proof. But DO assert into graphPayload the
   entities and relations explicitly present in the request; return empty graph arrays only
   when there is genuinely no graph-worthy content.
 - Do not omit agent/team context; do not hide connected agents.
-- If there is no actionable work, return {"planFlowTaskObjects": [], "graphPayload": { ... empty ... }}.`;
+- If there is no graph-worthy content, return {"graphPayload": { ... empty ... }}.`;
 
 export function resolveEffectiveAgent(
   card: AgentCardInstance,

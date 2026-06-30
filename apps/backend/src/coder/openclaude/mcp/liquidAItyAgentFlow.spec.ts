@@ -31,7 +31,6 @@ const LATEST_RUN = {
         plan: {
           taskLedgerArtifact: {
             source: 'autogen_0_7_5_magentic_one',
-            planFlowTaskObjects: [{ id: 't1', title: 'Do step', expectedArtifact: 'a report' }],
             modelCallProof: [{ label: 'plan_call' }],
           },
         },
@@ -66,11 +65,9 @@ const PACKET: ExecuteVisibleFlowInput = {
   deckId: 'deck_builder',
   taskIds: ['t1', 't2'],
   selectedCardId: 'card_research',
-  missionPacket: {
+  plan: {
     objective: 'Research RDW catalysts',
-    selectedTaskSteps: [{ id: 't1', shortTitle: 'Gather filings', detail: 'Pull 8-Ks' }],
-    constraints: ['read-only'],
-    acceptanceCriteria: ['cite every claim'],
+    graphReadScope: ['think:q1', 'know:rdw'],
   },
 };
 
@@ -87,7 +84,7 @@ describe('buildProjectContext', () => {
       edgeCount: 1,
     });
     expect(ctx.selectedCard).toMatchObject({ id: 'card_research', busConnected: true });
-    expect(ctx.activePlanSummary).toEqual({ hasArtifact: true, source: 'autogen_0_7_5_magentic_one', taskCount: 1 });
+    expect(ctx.activePlanSummary).toEqual({ hasArtifact: true, source: 'autogen_0_7_5_magentic_one' });
   });
 
   it('contributes the ThinkGraph capability: skill link, permitted tools, and read/write boundary', async () => {
@@ -148,7 +145,6 @@ describe('executeVisibleFlow', () => {
         plan: {
           taskLedgerArtifact: {
             source: 'autogen_0_7_5_magentic_one',
-            planFlowTaskObjects: [{ id: 't1' }],
             modelCallProof: [{ label: 'plan_call' }],
           },
         },
@@ -166,7 +162,6 @@ describe('executeVisibleFlow', () => {
     // Task-ID preservation: updates keyed to the incoming plan task IDs.
     expect(result.taskUpdates.map((u) => u.taskId)).toEqual(['t1', 't2']);
     expect(result.taskUpdates.every((u) => u.status === 'completed')).toBe(true);
-    expect(result.planFlowUpdates).toEqual([{ id: 't1' }]);
     expect(result.evidence).toEqual([{ label: 'plan_call' }]);
     expect(result.provenance.route).toContain('magentic-one');
     expect(result.needsInput).toEqual([]);
@@ -195,7 +190,7 @@ describe('executeVisibleFlow', () => {
 
   it('rejects a missing objective and a missing orchestrator card', async () => {
     await expect(
-      executeVisibleFlow({ ...PACKET, missionPacket: { ...PACKET.missionPacket, objective: '' } }, deps()),
+      executeVisibleFlow({ ...PACKET, plan: { ...PACKET.plan, objective: '' } }, deps()),
     ).rejects.toThrow(/missing_objective/);
     await expect(
       executeVisibleFlow(

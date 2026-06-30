@@ -298,7 +298,7 @@ export type PythonAutoGenPayloadShape = {
     title: string;
     runtimeType: string;
     prompt: string;
-    // Card prompt-chain step 4: PlanFlow output contract (model-produced task objects).
+    // Card prompt-chain step 4: Mag One OWL output contract (model-produced task objects).
     taskLedgerOutputContract?: string;
     runtimeOptions: Record<string, any>;
     graph: RuntimeGraph;

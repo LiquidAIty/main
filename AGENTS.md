@@ -1,5 +1,14 @@
 # AGENTS.md
 
+## STOP — read [DONT.md](./DONT.md) first
+
+Before anything else, read **[DONT.md](./DONT.md)**. This repo has been cleaned of ~16,000 lines
+of layered spaghetti more than once; it came back because agents added new approaches without
+deleting the old ones, and mimicked the mess. DONT.md is the rule set that prevents you from doing
+that. The one that matters most: **when you change approach, DELETE the abandoned path in the same
+change — never layer new over old.** TypeScript is rails, not a brain; the UI is a UI, not a
+calculator; all logic is Python + models.
+
 ## Code-Based Memory First
 
 Code-Based Memory / CodeGraph is the first code-discovery system for this repo.

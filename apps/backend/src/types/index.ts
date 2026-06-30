@@ -841,7 +841,6 @@ export type DeckRunRequest = {
   missionSpec?: MissionSpec;
   missionRunId?: string;
   missionAgentRunId?: string;
-  planFlowNodeIds?: string[];
 };
 
 export type DeckRunResponse = {

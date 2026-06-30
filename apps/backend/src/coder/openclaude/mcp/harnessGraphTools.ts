@@ -252,7 +252,9 @@ export function registerHarnessGraphTools(server: McpServer): void {
   );
 
   // ── Graph UI navigation (ephemeral — returns a directive, mutates NO data) ────────────
-  const graphTarget = z.enum(['know', 'think']);
+  // 'code' = the CBM CodeGraph: the Harness points at the exact files/symbols it says it will
+  // work on, so the user sees the selection on the canvas before any change happens.
+  const graphTarget = z.enum(['know', 'think', 'code']);
   server.registerTool(
     'graph_focus',
     {
