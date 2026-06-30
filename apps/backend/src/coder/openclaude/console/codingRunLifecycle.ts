@@ -5,7 +5,6 @@ import {
   type CoderReport,
   type CodingRunLifecycle,
 } from '../../../contracts/coderContracts';
-import { recordThinkGraphEvent } from '../../../services/thinkgraph/thinkgraphMemory';
 import {
   openClaudeConsoleSessionManager,
   type OpenClaudeConsoleSessionManager,
@@ -25,7 +24,6 @@ type LifecycleDeps = {
   sessionManager?: OpenClaudeConsoleSessionManager;
   now?: () => string;
   idFactory?: () => string;
-  recordMemory?: typeof recordThinkGraphEvent;
 };
 
 function compact(value: string, limit = MAX_RESULT_CHARS): string {
@@ -94,14 +92,12 @@ export class CodingRunLifecycleService {
   private readonly sessionManager: OpenClaudeConsoleSessionManager;
   private readonly now: () => string;
   private readonly idFactory: () => string;
-  private readonly recordMemory: typeof recordThinkGraphEvent;
   private counter = 0;
 
   constructor(deps: LifecycleDeps = {}) {
     this.sessionManager = deps.sessionManager || openClaudeConsoleSessionManager;
     this.now = deps.now || (() => new Date().toISOString());
     this.idFactory = deps.idFactory || (() => `coding_run_${Date.now().toString(36)}_${++this.counter}`);
-    this.recordMemory = deps.recordMemory || recordThinkGraphEvent;
   }
 
   request(input: RequestCodingRunInput): CodingRunLifecycle {
@@ -126,8 +122,6 @@ export class CodingRunLifecycleService {
       createdAt: now,
       updatedAt: now,
       completedAt: null,
-      memoryRecordStatus: 'pending',
-      memoryRecordDetail: '',
     });
     this.runs.set(run.id, run);
     return run;
@@ -189,7 +183,6 @@ export class CodingRunLifecycleService {
         : null,
       completedAt: this.now(),
     });
-    await this.recordOutcome(updated);
     return updated;
   }
 
@@ -199,35 +192,6 @@ export class CodingRunLifecycleService {
     const updated = parseCodingRunLifecycle({ ...current, ...patch, updatedAt: this.now() });
     this.runs.set(id, updated);
     return updated;
-  }
-
-  private async recordOutcome(run: CodingRunLifecycle): Promise<void> {
-    if (run.memoryRecordStatus !== 'pending') return;
-    try {
-      await this.recordMemory({
-        projectId: run.projectId,
-        eventType: run.status === 'completed' ? 'run_completed' : 'run_failed',
-        title: `Coding run ${run.status}: ${run.userGoal}`,
-        summary: run.resultSummary,
-        status: run.status === 'completed' ? 'complete' : 'failed',
-        task: run.generatedSpec,
-        runtimeRoute: 'chat -> Mag One -> coder_console_task -> Code Console -> lifecycle collector',
-        finalOutput: run.resultSummary,
-        error: run.blocker,
-        proofSummary: [
-          ...run.proofCommands.map((command) => `command: ${command}`),
-          ...run.proofFiles.map((file) => `file: ${file}`),
-          `validatedCoderReport: ${String(run.validatedCoderReport)}`,
-          `sessionId: ${run.sessionId || ''}`,
-        ],
-      });
-      this.patch(run.id, { memoryRecordStatus: 'recorded', memoryRecordDetail: 'ThinkGraph run outcome recorded.' });
-    } catch (error) {
-      this.patch(run.id, {
-        memoryRecordStatus: 'failed',
-        memoryRecordDetail: error instanceof Error ? error.message : String(error),
-      });
-    }
   }
 }
 

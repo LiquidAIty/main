@@ -414,7 +414,7 @@ async function resolveKnowGraphProjectScopeIds(projectId: string): Promise<strin
   return Array.from(scopeIds);
 }
 
-async function queryKnowGraphProject(projectId: string): Promise<{
+export async function queryKnowGraphProject(projectId: string): Promise<{
   nodes: KnowGraphNodeDto[];
   relationships: KnowGraphRelationshipDto[];
 }> {
@@ -948,7 +948,7 @@ router.get('/explore', async (req, res) => {
  * Read project-scoped :SourceBackedAssertion rows from Neo4j (READ-only).
  * The literal source of the exploration evidence graph — full provenance per row.
  */
-async function readProjectAssertions(projectId: string): Promise<AssertionRow[]> {
+export async function readProjectAssertions(projectId: string): Promise<AssertionRow[]> {
   const uri = String(process.env.NEO4J_URI || '').trim();
   const user = String(process.env.NEO4J_USER || '').trim();
   const password = String(process.env.NEO4J_PASSWORD || '').trim();

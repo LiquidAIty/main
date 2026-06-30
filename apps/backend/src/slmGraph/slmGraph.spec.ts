@@ -3,10 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSlmGraphPrompt,
   parseSlmGraphExtraction,
-  runSlmGraphTask,
 } from './slmGraphWorker';
 import { compileSearchParams } from './graphToSearchParams';
-import { storedThinkGraphRecordToSearchParams } from './thinkGraphRecordToSearch';
 
 function slmJson(
   entities: { id: string; label: string; type: string }[],
@@ -81,24 +79,6 @@ describe('SLM graph extraction (JSON only, fail closed)', () => {
     expect(parseSlmGraphExtraction('{"entities":{}}').ok).toBe(false); // entities not an array
   });
 
-  it('runSlmGraphTask fails closed when the model returns garbage', async () => {
-    const run = await runSlmGraphTask(
-      {
-        targetGraph: 'knowgraph',
-        inputKind: 'search_result_chunk',
-        sourceRef: '',
-        text: 'x',
-        ontologySlice: {},
-        allowedClasses: [],
-        allowedRelations: [],
-        nearbyEntities: [],
-        nearbyRelations: [],
-      },
-      { call: async () => 'definitely not json' },
-    );
-    expect(run.ok).toBe(false);
-  });
-
   it('prompt is JSON-only and scoped to the ontology slice', () => {
     const { system, user } = buildSlmGraphPrompt({
       targetGraph: 'knowgraph',
@@ -140,54 +120,3 @@ describe('deterministic graph -> search params', () => {
   });
 });
 
-describe('stored ThinkGraph record -> deterministic search params', () => {
-  // Shape as read back from thinkgraph_liq via readThinkGraphSemanticRecord.
-  const stored = {
-    projectId: 'slm-roundtrip-test',
-    sourceRef: 'thinkgraph-live-roundtrip-test',
-    entities: [
-      { id: 'e1', label: 'Local Gemma', type: 'Model', confidence: 0.95 },
-      { id: 'e2', label: 'OWL extraction', type: 'Task', confidence: 0.9 },
-    ],
-    relations: [{ from: 'e1', to: 'e2', type: 'performs', confidence: 0.9 }],
-    categories: ['local_model_worker'],
-    confidence: 0.85,
-    uncertainty: ['0.15'],
-  };
-
-  it('produces deterministic search params with the expected seeds and query', () => {
-    const a = storedThinkGraphRecordToSearchParams(stored);
-    const b = storedThinkGraphRecordToSearchParams(stored);
-    expect(a).toEqual(b); // pure / deterministic
-
-    expect(a.ok).toBe(true);
-    // entity labels -> seed entities
-    expect(a.searchParams.seedEntities).toEqual(['Local Gemma', 'OWL extraction']);
-    // relation types -> seed relations
-    expect(a.searchParams.seedRelations).toEqual(['performs']);
-    // search intent around "Local Gemma OWL extraction" + relation seed "performs"
-    expect(a.searchParams.query).toContain('Local Gemma');
-    expect(a.searchParams.query).toContain('OWL extraction');
-    expect(a.searchParams.query).toContain('performs');
-    // categories influence the query deterministically
-    expect(a.searchParams.query).toContain('local_model_worker');
-    expect(a.categories).toContain('local_model_worker');
-    // sourceRef preserved
-    expect(a.sourceRef).toBe('thinkgraph-live-roundtrip-test');
-    expect(a.projectId).toBe('slm-roundtrip-test');
-  });
-
-  it('honors compile options (sourceType targetGraph)', () => {
-    const a = storedThinkGraphRecordToSearchParams(stored, { sourceType: 'knowgraph', freshness: 'P7D' });
-    expect(a.searchParams.sourceType).toBe('knowgraph');
-    expect(a.searchParams.freshness).toBe('P7D');
-  });
-
-  it('returns honest empty (ok:false) for a record with no entities/relations', () => {
-    const empty = { projectId: 'p', sourceRef: 's', entities: [], relations: [], categories: [], confidence: null, uncertainty: [] };
-    const a = storedThinkGraphRecordToSearchParams(empty);
-    expect(a.ok).toBe(false);
-    expect(a.searchParams.seedEntities).toEqual([]);
-    expect(a.searchParams.query).toBe('');
-  });
-});

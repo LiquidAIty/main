@@ -1,7 +1,7 @@
-// Minimal local-SLM graph task: one small text chunk -> one atomic OWL graph result.
-// JSON only; invalid JSON fails closed. The model call is injectable so the parser is
-// unit-testable without a live model. No subsystem, no gates, no decoration.
-import { safeFetch } from '../security/safeFetch';
+// SLM graph prompt + parse primitives: one small text chunk -> one atomic OWL graph result.
+// JSON only; invalid JSON fails closed. Pure prompt-build + parse — no model call, no DB, no
+// writes. The live consumers are the graph-seeded search fragments (graphToSearchParams,
+// graphSeededSearchConvergence) that reuse the extraction shape.
 
 export type SlmTargetGraph = 'thinkgraph' | 'knowgraph';
 
@@ -207,57 +207,3 @@ export function parseSlmGraphExtraction(text: string): SlmGraphParse {
   return { ok: true, result };
 }
 
-export type SlmCallFn = (args: { system: string; prompt: string }) => Promise<string>;
-
-/** Minimal default model call to a local OpenAI-compatible endpoint (env-driven). */
-const defaultCall: SlmCallFn = async ({ system, prompt }) => {
-  const base = (process.env.LOCAL_LLM_BASE_URL || 'http://localhost:12434/engines/v1').replace(
-    /\/+$/,
-    '',
-  );
-  // Default to the canonical Docker Model Runner id (what GET /engines/v1/models lists
-  // and what Docker Desktop Requests tracks). Env-overridable.
-  const model = process.env.LOCAL_GEMMA_MODEL || 'docker.io/ai/gemma3-qat:latest';
-  const res = await safeFetch(`${base}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.LOCAL_LLM_API_KEY || 'local'}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: prompt },
-      ],
-      temperature: 0,
-      // NOTE: no `response_format: json_object` — Docker Model Runner (llama.cpp)
-      // returns {"error":"unknown error"} on that param. The JSON-only prompt is the
-      // contract; parsing fails closed if the model still returns non-JSON.
-    }),
-    timeoutMs: 60000,
-    // Operator-configured local endpoint (loopback). Scoped to this call only.
-    policy: 'OPEN',
-  });
-  const json = (await res.json().catch(() => ({}))) as any;
-  return String(json?.choices?.[0]?.message?.content ?? '');
-};
-
-export type SlmGraphRun = SlmGraphParse & { rawPreview: string };
-
-/** Run one atomic SLM graph task. Fails closed (ok:false) on any model/parse failure. */
-export async function runSlmGraphTask(
-  input: SlmGraphInput,
-  deps: { call?: SlmCallFn } = {},
-): Promise<SlmGraphRun> {
-  const call = deps.call ?? defaultCall;
-  const { system, user } = buildSlmGraphPrompt(input);
-  let text: string;
-  try {
-    text = await call({ system, prompt: user });
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'model_unreachable', rawPreview: '' };
-  }
-  const parsed = parseSlmGraphExtraction(text);
-  return { ...parsed, rawPreview: String(text || '').slice(0, 600) };
-}

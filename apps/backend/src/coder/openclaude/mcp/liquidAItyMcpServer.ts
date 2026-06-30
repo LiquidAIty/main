@@ -30,6 +30,7 @@ import {
   type AgentFlowDeps,
   type ExecuteVisibleFlowInput,
 } from './liquidAItyAgentFlow';
+import { registerHarnessGraphTools } from './harnessGraphTools';
 
 export const LIQUIDAITY_MCP_SERVER_NAME = 'liquidaity';
 
@@ -77,7 +78,21 @@ const executeVisibleFlowShape = {
 export function createLiquidAItyMcpServer(deps: AgentFlowDeps = {}): McpServer {
   const server = new McpServer(
     { name: LIQUIDAITY_MCP_SERVER_NAME, version: '0.1.0' },
-    { capabilities: { resources: {}, tools: {} } },
+    {
+      capabilities: { resources: {}, tools: {} },
+      // MCP server instructions (protocol-standard capability channel, surfaced to the model
+      // by compliant clients). The authoritative, fuller capability is the project_context
+      // resource (active ThinkGraph card + skills/thinkgraph.md) — kept thin here, not a prompt.
+      instructions:
+        'LiquidAIty project graphs. ThinkGraph (Apache AGE) = the user-visible directional ' +
+        'reasoning map: read with thinkgraph_* tools; write ONLY via thinkgraph_apply_delta (the ' +
+        'one durable writer) when a useful question/hypothesis/decision/constraint/query-seed/' +
+        'rejected-path/unresolved-entity/relationship emerges — not every turn, concise visible ' +
+        'notes only, never a transcript dump. KnowGraph (Neo4j, source-backed evidence) is ' +
+        'READ-ONLY here (knowgraph_* tools) — never write it. Use graph_focus/graph_highlight/' +
+        'graph_clear_highlight to navigate the existing canvas. Read the project_context resource ' +
+        'and skills/thinkgraph.md + skills/knowgraph.md for the full operating rules.',
+    },
   );
 
   server.registerResource(
@@ -141,6 +156,10 @@ export function createLiquidAItyMcpServer(deps: AgentFlowDeps = {}): McpServer {
       };
     },
   );
+
+  // Harness-only graph surface: read/write ThinkGraph, read-only KnowGraph, ephemeral
+  // canvas navigation. There is deliberately NO KnowGraph write tool here.
+  registerHarnessGraphTools(server);
 
   return server;
 }

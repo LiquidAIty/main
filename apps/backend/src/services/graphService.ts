@@ -44,6 +44,26 @@ export async function ensureGraph(graphName: string): Promise<void> {
   }
 }
 
+/**
+ * Ensure a vertex label exists so a first-use MATCH on it does not throw
+ * `label "X" does not exist`. Same AGE init shape as ensureGraph (idempotent,
+ * tolerates already-exists). Lets callers distinguish setup from real failure.
+ */
+export async function ensureVertexLabel(graphName: string, label: string): Promise<void> {
+  if (!/^[A-Za-z0-9_]+$/.test(label)) {
+    throw new Error('invalid label');
+  }
+  await ensureGraph(graphName);
+  try {
+    await pool.query(`SELECT ag_catalog.create_vlabel('${graphName}', '${label}')`);
+  } catch (err: any) {
+    if ((err?.message || '').toLowerCase().includes('already exists')) {
+      return;
+    }
+    throw err;
+  }
+}
+
 export async function runCypherOnGraph(
   graphName: string,
   cypher: string,

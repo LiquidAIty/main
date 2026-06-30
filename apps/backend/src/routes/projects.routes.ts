@@ -15,7 +15,6 @@ import {
 } from '../services/agentBuilderStore';
 import { getLastTrace } from '../services/ingestTrace';
 import { ensureSystemAgentConfigs } from '../services/agentConfigStore';
-import { buildGraphContextPacket } from '../services/graphContext/graphContextBuilder';
 
 const router = Router();
 const PROJECTS_TABLE = 'ag_catalog.projects';
@@ -238,33 +237,6 @@ router.get('/:projectId/kg/last-trace', async (req, res) => {
     return res.json({ ok: true, trace });
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || 'failed to get last trace' });
-  }
-});
-
-router.post('/:projectId/context/graph', async (req, res) => {
-  logProjectRoute(req);
-  try {
-    const projectId = String(req.params.projectId || '').trim();
-    if (!projectId) {
-      return res.status(400).json({ ok: false, error: 'project_id_required' });
-    }
-    const body = req.body || {};
-    const userMessage = typeof body.userMessage === 'string' ? body.userMessage : null;
-    const selectedBoardNodeIds = Array.isArray(body.selectedBoardNodeIds) ? body.selectedBoardNodeIds.map(String) : [];
-    const selectedGraphNodeIds = Array.isArray(body.selectedGraphNodeIds) ? body.selectedGraphNodeIds.map(String) : [];
-    const maxItems = typeof body.maxItems === 'number' ? body.maxItems : undefined;
-
-    const packet = await buildGraphContextPacket({
-      projectId,
-      userMessage,
-      selectedBoardNodeIds,
-      selectedGraphNodeIds,
-      maxItems,
-    });
-
-    return res.json({ ok: true, data: packet });
-  } catch (err: any) {
-    return res.status(500).json({ ok: false, error: err?.message || 'failed to build graph context packet' });
   }
 });
 

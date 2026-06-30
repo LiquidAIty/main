@@ -2,65 +2,8 @@ import { z } from 'zod';
 
 const nonEmptyText = z.string().trim().min(1);
 const textList = z.array(nonEmptyText);
-const contextRecord = z.record(z.unknown());
-export const contextSourceStatusSchema = z.enum([
-  'ok',
-  'empty',
-  'blocked',
-  'timed_out',
-  'failed',
-  'skipped',
-]);
-export const contextSourceDiagnosticSchema = z.object({
-  source: nonEmptyText,
-  critical: z.boolean(),
-  status: contextSourceStatusSchema,
-  elapsedMs: z.number().int().nonnegative(),
-  evidenceCount: z.number().int().nonnegative(),
-  summary: z.string(),
-  blocker: z.string(),
-}).strict();
-
-export const coderContextPacketSchema = z.object({
-  userInput: nonEmptyText,
-  planFlowState: contextRecord,
-  planExcerpt: nonEmptyText,
-  thinkGraphContext: contextRecord,
-  skillContext: contextRecord,
-  codeGraphContext: contextRecord,
-  cbmQueries: textList,
-  codeAnchors: textList,
-  sourceDiagnostics: z.array(contextSourceDiagnosticSchema).min(1),
-  knowGraphContext: contextRecord.optional(),
-  selectedContext: contextRecord.optional(),
-  provenance: z.object({
-    assembledAt: nonEmptyText,
-    sources: textList,
-    warnings: z.array(z.string()),
-  }).strict(),
-}).strict();
 
 export const coderWriteModeSchema = z.enum(['read-only', 'edit']);
-
-export const availableWorkflowOptionsSchema = z.enum([
-  'plan_only',
-  'draft_spec_for_approval',
-  'run_read_only_coder_task',
-  'report_blocker',
-  'answer_general',
-]);
-export type AvailableWorkflowOptions = z.infer<typeof availableWorkflowOptionsSchema>;
-
-export const magOnePlanningContextSchema = z.object({
-  planFlowState: contextRecord,
-  cbmInsight: contextRecord,
-  skillGraphStatus: contextSourceStatusSchema,
-  approvalDecision: z.enum(['approved', 'rejected', 'pending']),
-  contextPacket: coderContextPacketSchema,
-  workflowOptions: z.array(availableWorkflowOptionsSchema),
-}).strict();
-
-export type MagOnePlanningContext = z.infer<typeof magOnePlanningContextSchema>;
 
 export const coderPacketSchema = z.object({
   id: nonEmptyText,
@@ -117,8 +60,6 @@ export const coderReportSchema = z.object({
   rawOutput: z.string(),
 }).strict();
 
-export type CoderContextPacket = z.infer<typeof coderContextPacketSchema>;
-export type ContextSourceDiagnostic = z.infer<typeof contextSourceDiagnosticSchema>;
 export type CoderPacket = z.infer<typeof coderPacketSchema>;
 export type CoderReport = z.infer<typeof coderReportSchema>;
 
@@ -154,51 +95,10 @@ export const codingRunLifecycleSchema = z.object({
   createdAt: nonEmptyText,
   updatedAt: nonEmptyText,
   completedAt: z.string().nullable(),
-  memoryRecordStatus: z.enum(['pending', 'recorded', 'skipped', 'failed']),
-  memoryRecordDetail: z.string(),
 }).strict();
 
 export type CodingRunStatus = z.infer<typeof codingRunStatusSchema>;
 export type CodingRunLifecycle = z.infer<typeof codingRunLifecycleSchema>;
-
-export const coderPacketJsonSchema = {
-  type: 'object',
-  additionalProperties: false,
-  required: [
-    'id',
-    'projectId',
-    'repoPath',
-    'objective',
-    'planExcerpt',
-    'contextSummary',
-    'codeAnchors',
-    'cbmQueries',
-    'guardrails',
-    'allowedFiles',
-    'forbiddenWork',
-    'proofRequired',
-    'reportFormat',
-    'stopConditions',
-    'writeMode',
-  ],
-  properties: {
-    id: { type: 'string', minLength: 1 },
-    projectId: { type: 'string', minLength: 1 },
-    repoPath: { type: 'string', minLength: 1 },
-    objective: { type: 'string', minLength: 1 },
-    planExcerpt: { type: 'string', minLength: 1 },
-    contextSummary: { type: 'string', minLength: 1 },
-    codeAnchors: { type: 'array', items: { type: 'string', minLength: 1 } },
-    cbmQueries: { type: 'array', items: { type: 'string', minLength: 1 } },
-    guardrails: { type: 'array', items: { type: 'string', minLength: 1 } },
-    allowedFiles: { type: 'array', items: { type: 'string', minLength: 1 } },
-    forbiddenWork: { type: 'array', items: { type: 'string', minLength: 1 } },
-    proofRequired: { type: 'array', items: { type: 'string', minLength: 1 } },
-    reportFormat: { type: 'string', minLength: 1 },
-    stopConditions: { type: 'array', items: { type: 'string', minLength: 1 } },
-    writeMode: { type: 'string', enum: coderWriteModeSchema.options },
-  },
-} as const;
 
 export const coderReportJsonSchema = {
   type: 'object',
@@ -261,10 +161,6 @@ export const coderReportJsonSchema = {
     rawOutput: { type: 'string' },
   },
 } as const;
-
-export function parseCoderContextPacket(value: unknown): CoderContextPacket {
-  return coderContextPacketSchema.parse(value);
-}
 
 export function parseCoderPacket(value: unknown): CoderPacket {
   return coderPacketSchema.parse(value);

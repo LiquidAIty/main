@@ -1,9 +1,9 @@
 // Smallest source-backed KnowGraph record write + read-back. KnowGraph store is Neo4j
 // (same backend as kgNeo4jSink). This stores ONE `:KnowGraphSourceRecord` per static
 // source chunk, keyed by project_id + source_ref (queryable), with the normalized
-// extraction (entities/relations/categories/assertions) as JSON properties — symmetric
-// to the ThinkGraph :SlmGraphRecord pattern but in Neo4j. The Neo4j runner is injectable
-// so the write/read contract is unit-testable without a live DB. No fake success.
+// extraction (entities/relations/categories/assertions) as JSON properties. The Neo4j
+// runner is injectable so the write/read contract is unit-testable without a live DB.
+// No fake success.
 import neo4j from 'neo4j-driver';
 import type { Driver } from 'neo4j-driver';
 

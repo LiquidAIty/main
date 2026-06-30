@@ -130,6 +130,8 @@ import type {
   KnowledgeGraphRelationship,
   KnowledgeGraphNode,
 } from '../components/knowledge/KnowledgeGraphNVL';
+import { mergeExploreLensPayloads } from '../components/graph/graphViewAdapter';
+import { applyGraphNavToolResult } from '../components/graph/graphNavToolResult';
 import {
   createWorkspaceTestingInteractionId,
   recordWorkspaceTestingEvent,
@@ -6254,6 +6256,10 @@ export default function AgentBuilder(): React.ReactElement {
     reason?: string;
     blocker?: string;
   } | null>(null);
+  // Raw /api/knowgraph/explore response (carries `.lens`). When present, KnowledgeGraphFramework
+  // renders the real source-backed semantic lens (junk-excluded, full default, focus on selection)
+  // instead of falling back to the legacy four-node issuer DTO.
+  const [knowGraphExplore, setKnowGraphExplore] = useState<any>(null);
   const [graphError, setGraphError] = useState<string | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
   const [knowledgeGraphStatus, setKnowledgeGraphStatus] =
@@ -7314,6 +7320,65 @@ export default function AgentBuilder(): React.ReactElement {
     return () => controller.abort();
   }, [activeProject, graphResetToken]);
 
+  // Load the real source-backed KnowGraph semantic lens (/api/knowgraph/explore). No focus = the
+  // server's default research lens; focusId/focus = an explicit issuer/entity lens; merge = expand
+  // one hop via the existing mergeExploreLensPayloads. Read-only; failure leaves prior lens intact.
+  const loadKnowGraphExplore = useCallback(
+    async (opts?: { focusId?: string; focus?: string; merge?: boolean; signal?: AbortSignal }) => {
+      const projectId = activeProject;
+      if (!projectId) {
+        setKnowGraphExplore(null);
+        return;
+      }
+      const params = new URLSearchParams({ projectId });
+      if (opts?.focusId) params.set('focusId', opts.focusId);
+      if (opts?.focus) params.set('focus', opts.focus);
+      try {
+        const res = await fetch(`/api/knowgraph/explore?${params.toString()}`, {
+          credentials: 'include',
+          signal: opts?.signal,
+        });
+        const data = await res.json().catch(() => null);
+        if (opts?.signal?.aborted || activeProjectLatestRef.current !== projectId) return;
+        if (!data || !data.lens) return; // keep the current lens; never blank to a fallback
+        if (opts?.merge) setKnowGraphExplore((prev: any) => mergeExploreLensPayloads(prev, data));
+        else setKnowGraphExplore(data);
+      } catch {
+        /* leave the existing lens as-is */
+      }
+    },
+    [activeProject],
+  );
+
+  useEffect(() => {
+    if (!activeProject) {
+      setKnowGraphExplore(null);
+      return;
+    }
+    const controller = new AbortController();
+    void loadKnowGraphExplore({ signal: controller.signal });
+    return () => controller.abort();
+  }, [activeProject, graphResetToken, loadKnowGraphExplore]);
+
+  // Existing semantic-explorer navigation: focus/search re-fetches the lens around the real focus;
+  // expand merges one hop. ASTS, RDW and every issuer become reachable through the lens — no cloud.
+  const handleKnowGraphFocus = useCallback(
+    (ref: { focusId?: string; focusKind?: string; focusLabel?: string }) => {
+      void loadKnowGraphExplore({ focusId: ref.focusId, focus: ref.focusLabel });
+    },
+    [loadKnowGraphExplore],
+  );
+  const handleKnowGraphExpand = useCallback(
+    (ref: { focusId: string; focusKind?: string }) => {
+      void loadKnowGraphExplore({ focusId: ref.focusId, merge: true });
+    },
+    [loadKnowGraphExplore],
+  );
+  // Clear the lens → back to the server's default research lens.
+  const handleKnowGraphClearLens = useCallback(() => {
+    void loadKnowGraphExplore();
+  }, [loadKnowGraphExplore]);
+
   useEffect(() => {
     clearKnowledgeWorkspaceSelection();
   }, [activeProject, clearKnowledgeWorkspaceSelection, tab]);
@@ -8005,6 +8070,14 @@ export default function AgentBuilder(): React.ReactElement {
           }
           // Actual agent actions go to the lower OpenClaude Work reveal (not upper chat).
           setNativeStreamEvents((ev) => [...ev, event]);
+          // Harness graph navigation: apply focus/highlight/clear directives from the graph_* tools
+          // to the shared GraphExplorerCore selection store (ephemeral; no graph data is written).
+          if (event.kind === 'tool_result') {
+            applyGraphNavToolResult(
+              String((event as { toolName?: unknown }).toolName || ''),
+              String((event as { output?: unknown }).output || ''),
+            );
+          }
           if (event.kind === 'permission') {
             setNativePendingQuestion({
               promptId: String((event as { promptId?: unknown }).promptId || ''),
@@ -8304,19 +8377,39 @@ export default function AgentBuilder(): React.ReactElement {
       style={getSurfaceShellStyle(minHeight <= 320)}
     >
       <div className="h-full flex flex-col" style={{ position: 'relative' }}>
-        {knowledgeGraphKind === 'knowgraph' && safeText(knowledgeGraphStatus).trim() ? (
+        {knowledgeGraphKind === 'knowgraph' && knowGraphExplore?.lens?.focus?.canonicalName ? (
           <div
-            className="text-xs"
             style={{
-              marginBottom: 8,
-              padding: '7px 10px',
-              borderRadius: 8,
-              border: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`,
-              background: GRAPH_THEME.drawer.panelBackground,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              marginBottom: 6,
+              fontSize: 11.5,
               color: GRAPH_THEME.drawer.inputMuted,
             }}
           >
-            {safeText(knowledgeGraphStatus)}
+            <span>
+              Viewing research lens:{' '}
+              <b>{safeText(knowGraphExplore.lens.focus.canonicalName)}</b>
+            </span>
+            <button
+              type="button"
+              onClick={handleKnowGraphClearLens}
+              style={{
+                fontSize: 11,
+                padding: '2px 8px',
+                borderRadius: 6,
+                cursor: 'pointer',
+                border: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`,
+                background: GRAPH_THEME.drawer.panelBackground,
+                color: GRAPH_THEME.drawer.inputMuted,
+              }}
+            >
+              Clear lens
+            </button>
+            <span style={{ opacity: 0.7 }}>
+              focused research lens — search or click to explore other issuers
+            </span>
           </div>
         ) : null}
         <div
@@ -8386,11 +8479,14 @@ export default function AgentBuilder(): React.ReactElement {
                 }
                 thinkGraphData={thinkGraphViewData}
                 knowGraphData={knowGraphViewData}
+                knowGraphExplore={knowGraphExplore}
                 thinkGraphSource={thinkGraphSourceLabel}
                 knowGraphSource={knowGraphSourceLabel}
                 codeGraphProjectName={codeGraphProjectName}
                 onRefreshRequest={loadGraphData}
                 onKnowGraphSelectNode={handleKnowGraphSelectNode}
+                onKnowGraphFocus={handleKnowGraphFocus}
+                onKnowGraphExpand={handleKnowGraphExpand}
                 onKnowGraphBack={handleKnowGraphBack}
                 knowGraphIssuerOptions={knowGraphNeighborhood.issuerOptions}
                 knowGraphSeedIssuerId={knowGraphNeighborhood.seedIssuerId}

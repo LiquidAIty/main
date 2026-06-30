@@ -4,10 +4,6 @@ import type { OpenClaudeRunRequest } from '../coder/openclaude/contracts';
 import { openClaudeRuntimeService } from '../coder/openclaude/runtime/service';
 import { localCoderService } from '../coder/localcoder/service';
 import {
-  persistCoderRunOutcome,
-  prepareActiveCoderPacket,
-} from '../services/coderPlanning/coderPlanningService';
-import {
   openClaudeConsoleSessionManager,
   type ConsoleMode,
 } from '../coder/openclaude/console/consoleSession';
@@ -571,65 +567,19 @@ router.get('/localcoder/status', async (req, res) => {
   });
 });
 
-router.post('/planflow/prepare', async (req, res) => {
-  try {
-    const result = await prepareActiveCoderPacket({
-      projectId: String(req.body?.projectId || ''),
-      userInput: String(req.body?.userInput || ''),
-      repoPath: typeof req.body?.repoPath === 'string' ? req.body.repoPath : null,
-      planFlowState:
-        req.body?.planFlowState && typeof req.body.planFlowState === 'object'
-          ? req.body.planFlowState
-          : {},
-      selectedContext:
-        req.body?.selectedContext && typeof req.body.selectedContext === 'object'
-          ? req.body.selectedContext
-          : {},
-      workflowOption: typeof req.body?.workflowOption === 'string' ? req.body.workflowOption : undefined,
-    });
-    return res.json({ ok: true, ...result });
-  } catch (error) {
-    if (error instanceof ZodError) {
-      return res.status(400).json({
-        ok: false,
-        error: 'invalid_context_or_coder_packet',
-        issues: error.issues,
-      });
-    }
-    const message = error instanceof Error ? error.message : 'active_coder_packet_prepare_failed';
-    const blocked =
-      message.startsWith('coder_planner_') ||
-      message.startsWith('context_packet_') ||
-      message.startsWith('thinkgraph_');
-    return res.status(blocked ? 424 : 500).json({ ok: false, error: message });
-  }
-});
-
 router.post('/localcoder/run', async (req, res) => {
   try {
     const result = await localCoderService.run(req.body?.coderPacket ?? req.body);
-    let thinkGraphPersistence: { ok: boolean; error?: string } = { ok: true };
-    try {
-      await persistCoderRunOutcome(result);
-    } catch (error) {
-      thinkGraphPersistence = {
-        ok: false,
-        error: error instanceof Error ? error.message : 'thinkgraph_coder_report_write_failed',
-      };
-    }
     const reportOk = result.report.status === 'succeeded' || result.report.status === 'partial';
-    const statusCode = !thinkGraphPersistence.ok
-      ? 500
-      :
+    const statusCode =
       result.report.status === 'blocked'
         ? 424
         : result.report.status === 'failed'
           ? 502
           : 200;
     return res.status(statusCode).json({
-      ok: reportOk && thinkGraphPersistence.ok,
+      ok: reportOk,
       ...result,
-      thinkGraphPersistence,
     });
   } catch (error) {
     if (error instanceof ZodError) {

@@ -11,6 +11,8 @@ export type GraphSelection = {
   hoverNodeId: string | null;
   pinnedNodeIds: string[];
   activeLayers: OwnerGraph[];
+  /** Ephemeral "center camera on this node" request; nonce makes repeats observable. */
+  focusRequest: { id: string; nonce: number } | null;
 };
 
 const initial: GraphSelection = {
@@ -19,6 +21,7 @@ const initial: GraphSelection = {
   hoverNodeId: null,
   pinnedNodeIds: [],
   activeLayers: ['know', 'think'],
+  focusRequest: null,
 };
 
 let state: GraphSelection = initial;
@@ -42,6 +45,22 @@ export const graphSelection = {
     emit();
   },
   setLayers(layers: OwnerGraph[]) { state = { ...state, activeLayers: layers }; emit(); },
+  // ── Harness graph-nav directives (graph_focus / graph_highlight / graph_clear_highlight).
+  // Ephemeral view state only — these never touch graph data. ──────────────────────────────
+  requestFocus(id: string) {
+    state = {
+      ...state,
+      selectedNodeId: id,
+      selectedEdgeId: null,
+      focusRequest: { id, nonce: (state.focusRequest?.nonce ?? 0) + 1 },
+    };
+    emit();
+  },
+  setPinned(ids: string[]) { state = { ...state, pinnedNodeIds: Array.from(new Set(ids)) }; emit(); },
+  clearHighlight() {
+    state = { ...state, selectedNodeId: null, selectedEdgeId: null, pinnedNodeIds: [], focusRequest: null };
+    emit();
+  },
   reset() { state = { ...initial }; emit(); },
 };
 

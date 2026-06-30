@@ -11,12 +11,12 @@ import React, {
 import { colorForCodeGraphLabel } from '../codegraph/colors';
 import { CodeGraphFilterPanel } from '../codegraph/CodeGraphFilterPanel';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
-import KnowledgeGraphNVL, {
+import {
   type KnowledgeGraphNode,
   type KnowledgeGraphRelationship,
 } from './KnowledgeGraphNVL';
 import GraphExplorerCore from '../graph/GraphExplorerCore';
-import { knowGraphAdapter, thinkGraphAdapter, composeSources, type GraphView } from '../graph/graphViewAdapter';
+import { knowGraphAdapter, composeSources, type GraphView } from '../graph/graphViewAdapter';
 import type { GraphSource } from '../graph/GraphExplorerCore';
 import { getGraphMajorGridGap, GRAPH_WORKSPACE } from '../graph/graphWorkspaceContract';
 import {
@@ -51,8 +51,6 @@ type KnowledgeGraphFrameworkProps = {
   /** Raw `/api/knowgraph/explore` response (carries `.lens`). When present the KnowGraph tab renders
    * through the purpose-built semantic-lens adapter (full edge provenance), not the flattened DTO. */
   knowGraphExplore?: any;
-  /** Raw `/api/thinkgraph/graph` response — a faithful read of the Apache AGE graph thinkgraph_liq. */
-  thinkGraphRaw?: any;
   /** Re-center the bounded KnowGraph neighborhood on an EXACT object (raw id + kind), or a label for
    * the search fallback. Replaces the current focus. */
   onKnowGraphFocus?: (ref: { focusId?: string; focusKind?: string; focusLabel?: string }) => void;
@@ -280,7 +278,6 @@ export default function KnowledgeGraphFramework({
   thinkGraphData,
   knowGraphData,
   knowGraphExplore,
-  thinkGraphRaw,
   onKnowGraphFocus,
   onKnowGraphExpand,
   thinkGraphSource,
@@ -678,8 +675,36 @@ export default function KnowledgeGraphFramework({
     return knowGraphSigmaView;
   }, [knowGraphExplore, knowGraphSigmaView]);
 
-  // ThinkGraph view = a faithful render of the actual Apache AGE graph thinkgraph_liq (real labels).
-  const thinkGraphView = useMemo<GraphView>(() => thinkGraphAdapter(thinkGraphRaw), [thinkGraphRaw]);
+  // ThinkGraph view = the canonical word-first :ThinkNode / :THINK_EDGE projection from
+  // /api/thinkgraph/graph-view (node.type = reasoning class, edge.type = typed predicate),
+  // converted to the same source-neutral GraphView the shared Sigma explorer consumes.
+  const thinkGraphView = useMemo<GraphView>(() => {
+    const rawNodes = Array.isArray(thinkGraphData?.nodes) ? thinkGraphData.nodes : [];
+    const rawEdges = Array.isArray(thinkGraphData?.edges) ? thinkGraphData.edges : [];
+    const nodes = rawNodes.map((n) => ({
+      id: String(n.id),
+      ownerGraph: 'think' as const,
+      semanticKind: String(n.type || 'entity'),
+      displayLabel: String(n.label || n.id),
+    }));
+    const ids = new Set(nodes.map((n) => n.id));
+    const edges = rawEdges
+      .map((e, i) => ({
+        id: String(e.id ?? `${e.source}->${e.target}->${i}`),
+        source: String(e.source),
+        target: String(e.target),
+        ownerGraph: 'think' as const,
+        predicate: String(e.type || 'leads_to'),
+      }))
+      .filter((e) => ids.has(e.source) && ids.has(e.target));
+    return {
+      focus: null,
+      activeLayers: ['think'],
+      nodes,
+      edges,
+      availability: [{ layer: 'think', state: nodes.length > 0 ? 'available' : 'unavailable', reason: nodes.length > 0 ? 'ThinkGraph reasoning map' : 'no ThinkGraph reasoning yet' }],
+    };
+  }, [thinkGraphData]);
 
   // Shared-canvas source toggles — your real graphs by their real names. KnowGraph on by default.
   const [enabledSources, setEnabledSources] = useState<Record<'knowgraph' | 'thinkgraph' | 'codegraph' | 'skillgraph', boolean>>({ knowgraph: true, thinkgraph: false, codegraph: false, skillgraph: false });

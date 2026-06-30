@@ -53,8 +53,6 @@ describe('coder contracts', () => {
       createdAt: '2026-06-14T00:00:00.000Z',
       updatedAt: '2026-06-14T00:00:00.000Z',
       completedAt: null,
-      memoryRecordStatus: 'pending',
-      memoryRecordDetail: '',
     }).status).toBe('awaiting_approval');
   });
 

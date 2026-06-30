@@ -146,61 +146,6 @@ export function mergeExploreLensPayloads(base: any, addition: any): any {
 }
 
 /**
- * Adapt a /api/thinkgraph/graph response (a FAITHFUL read of the actual Apache AGE graph
- * `thinkgraph_liq`) into a GraphView. The node's semanticKind IS its real stored AGE label and the
- * edge predicate IS the real stored edge type; the real stored node/edge properties are carried for
- * the raw Inspector. Nothing is inferred from ids/slugs/titles and nothing is renamed.
- */
-export function thinkGraphAdapter(graph: any): GraphView {
-  const rawNodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
-  const rawEdges = Array.isArray(graph?.edges) ? graph.edges : [];
-  if (rawNodes.length === 0) {
-    return {
-      focus: null, activeLayers: ['think'], nodes: [], edges: [],
-      availability: [{ layer: 'think', state: 'unavailable', reason: String(graph?.error || 'no thinkgraph_liq records for this project yet') }],
-    };
-  }
-  const nodes: GraphViewNode[] = rawNodes.map((n: any) => {
-    const props = (n.properties && typeof n.properties === 'object') ? n.properties : {};
-    return {
-      id: String(n.id),
-      ownerGraph: 'think',
-      semanticKind: String(n.label || 'node'),                 // REAL stored AGE vertex label
-      displayLabel: String(props.title || props.id || n.id),   // a REAL stored property, else the id
-      rawIds: [String(n.id)],
-      evidenceIds: [], sourceIds: [],
-      statusSummary: {},
-      degree: 0,
-      provenance: props,                                       // REAL stored properties for the Inspector
-    } as GraphViewNode;
-  });
-  const ids = new Set(nodes.map((n) => n.id));
-  const edges: GraphViewEdge[] = rawEdges
-    .filter((e: any) => ids.has(String(e.from)) && ids.has(String(e.to)))
-    .map((e: any) => ({
-      id: String(e.id),
-      source: String(e.from),
-      target: String(e.to),
-      ownerGraph: 'think',
-      predicate: String(e.type || 'RELATED_TO'),              // REAL stored edge type
-      rawIds: [String(e.id)],
-      evidenceIds: [], sourceIds: [], statusCounts: {}, weight: 1,
-      properties: (e.properties && typeof e.properties === 'object') ? e.properties : {},
-    }));
-  const deg = new Map<string, number>();
-  for (const e of edges) { deg.set(e.source, (deg.get(e.source) || 0) + 1); deg.set(e.target, (deg.get(e.target) || 0) + 1); }
-  for (const n of nodes) n.degree = deg.get(n.id) || 0;
-  const focusNode = nodes.reduce<GraphViewNode | null>((a, b) => ((b.degree || 0) > (a?.degree || 0) ? b : a), null);
-  return {
-    focus: focusNode ? { id: focusNode.id, label: focusNode.displayLabel } : null,
-    activeLayers: ['think'],
-    nodes,
-    edges,
-    availability: [{ layer: 'think', state: 'available', reason: 'thinkgraph_liq (Apache AGE)' }],
-  };
-}
-
-/**
  * Union the enabled real source graphs into one view for the shared canvas. Each node/edge keeps its
  * ownerGraph (source identity). NO cross-graph edge is ever invented — only the real edges each source
  * already carries are present. (This is a plain union, not a generic "layer framework".)

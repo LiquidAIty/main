@@ -18,9 +18,9 @@ function safeText(value: unknown): string {
 }
 
 /**
- * Map accepted :SlmGraphRecord graph-view nodes/edges into GraphViewData. Returns null when
- * there are no accepted records, so the caller can fall back to the legacy view instead of
- * showing an empty graph.
+ * Map the /graph-view :ThinkNode/:THINK_EDGE projection (node.type = reasoning class,
+ * edge.type = typed predicate) into GraphViewData. Returns null when there are no records,
+ * so the caller can render honest-empty instead of a blank graph.
  */
 export function mapAcceptedThinkGraphRecordsToViewData(
   view: ThinkGraphRecordsView,

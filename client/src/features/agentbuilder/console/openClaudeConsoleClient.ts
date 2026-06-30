@@ -71,8 +71,6 @@ export type CodingRunLifecycle = {
     nextRecommendedTask: string;
   } | null;
   blocker: string | null;
-  memoryRecordStatus: 'pending' | 'recorded' | 'skipped' | 'failed';
-  memoryRecordDetail: string;
 };
 
 export type CodingRunResult = {

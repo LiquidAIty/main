@@ -56,12 +56,44 @@ function baseDeps(over: Partial<AgentFlowDeps> = {}): AgentFlowDeps {
 }
 
 describe('LiquidAIty MCP server', () => {
-  it('exposes describe_agent_fabric + execute_visible_flow and the project_context template (no execute_agent_flow)', async () => {
+  it('exposes the agent-flow tools, the Harness graph tools, and the project_context template (no execute_agent_flow)', async () => {
     const client = await connectedClient(baseDeps());
     const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(tools).toEqual(['describe_agent_fabric', 'execute_visible_flow']);
+    expect(tools).toEqual([
+      'describe_agent_fabric',
+      'execute_visible_flow',
+      'graph_clear_highlight',
+      'graph_focus',
+      'graph_highlight',
+      'knowgraph_get_slice',
+      'knowgraph_get_source_context',
+      'knowgraph_inspect_evidence',
+      'knowgraph_search',
+      'thinkgraph_apply_delta',
+      'thinkgraph_get_decisions',
+      'thinkgraph_get_open_questions',
+      'thinkgraph_get_query_seeds',
+      'thinkgraph_get_rejected_paths',
+      'thinkgraph_get_slice',
+      'thinkgraph_search',
+    ]);
     const templates = await client.listResourceTemplates();
     expect(templates.resourceTemplates.map((t) => t.name)).toContain('project_context');
+  });
+
+  it('enforces the graph boundary: ThinkGraph is writable, KnowGraph is read-only', async () => {
+    const client = await connectedClient(baseDeps());
+    const tools = (await client.listTools()).tools.map((t) => t.name);
+    // ThinkGraph has exactly one writer.
+    expect(tools).toContain('thinkgraph_apply_delta');
+    // KnowGraph has NO write/apply tool of any kind on the Harness surface.
+    expect(tools.filter((n) => n.startsWith('knowgraph_'))).toEqual([
+      'knowgraph_get_slice',
+      'knowgraph_search',
+      'knowgraph_inspect_evidence',
+      'knowgraph_get_source_context',
+    ]);
+    expect(tools.some((n) => /^knowgraph_(apply|write|delta|upsert|merge)/.test(n))).toBe(false);
   });
 
   it('describe_agent_fabric returns the real capability profile over MCP', async () => {

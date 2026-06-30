@@ -195,6 +195,13 @@ export default function GraphExplorerCore({ view, height = 560, sources, onToggl
 
   useEffect(() => { sigmaRef.current?.refresh(); }, [selection]);
 
+  // Apply a Harness graph_focus directive: center the camera on the requested ref if it is loaded
+  // in the current view. Selection is already set by the store; this only moves the camera.
+  useEffect(() => {
+    const id = selection.focusRequest?.id;
+    if (id && sigmaRef.current?.getGraph().hasNode(id)) centerOnNode(id, 0.45);
+  }, [selection.focusRequest?.nonce]);
+
   const hovered = selection.hoverNodeId ? nodeIndex.current.get(selection.hoverNodeId) : null;
   const selectedNode = selection.selectedNodeId ? nodeIndex.current.get(selection.selectedNodeId) ?? null : null;
   const selectedEdge = selection.selectedEdgeId ? edgeIndex.current.get(selection.selectedEdgeId) ?? null : null;

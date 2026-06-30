@@ -2,16 +2,16 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { describe, expect, it, vi } from 'vitest';
 
-const planningMocks = vi.hoisted(() => {
-  const packet = {
+const planningMocks = vi.hoisted(() => ({
+  packet: {
     id: 'packet-prepared',
     projectId: 'project-1',
     repoPath: 'C:\\Projects\\main',
-    objective: 'Wire PlanFlow.',
+    objective: 'Run the localcoder.',
     planExcerpt: 'Living plan.',
     contextSummary: 'Real context assembled.',
     codeAnchors: ['apps/backend/src/routes/coder.routes.ts'],
-    cbmQueries: ['search_graph PlanFlow'],
+    cbmQueries: ['search_graph coder'],
     guardrails: ['No fake success.'],
     allowedFiles: ['apps/backend/src/routes/coder.routes.ts'],
     forbiddenWork: ['No specs/.'],
@@ -19,23 +19,8 @@ const planningMocks = vi.hoisted(() => {
     reportFormat: 'Make a bounded task list and return a task-by-task CoderReport.',
     stopConditions: ['Stop after one report.'],
     writeMode: 'edit',
-  };
-  return {
-    packet,
-    persistCoderRunOutcome: vi.fn(async () => undefined),
-    prepareActiveCoderPacket: vi.fn(async () => ({
-      contextPacket: { userInput: 'Wire PlanFlow.' },
-      packet,
-      plannerProvenance: {
-        source: 'backend_planning_service',
-        provider: 'openai',
-        model: 'gpt-5',
-        configSource: 'SOL_CODER_PLANNER_MODEL_KEY',
-        contextSources: ['PLAN.md', 'ThinkGraph'],
-      },
-    })),
-  };
-});
+  },
+}));
 
 const runtimeMocks = vi.hoisted(() => ({
   runCardWithContract: vi.fn(async () => ({
@@ -70,11 +55,6 @@ const cbmScopeMocks = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock('../services/coderPlanning/coderPlanningService', () => ({
-  persistCoderRunOutcome: planningMocks.persistCoderRunOutcome,
-  prepareActiveCoderPacket: planningMocks.prepareActiveCoderPacket,
-}));
-
 vi.mock('../services/graphContext/cbmScopeGate', () => ({
   runLocalCoderCbmScopeGate: cbmScopeMocks.runLocalCoderCbmScopeGate,
 }));
@@ -104,25 +84,6 @@ async function closeServer(server: Server): Promise<void> {
 }
 
 describe('coder routes', () => {
-  it('prepares one validated active CoderPacket through the backend planning path', async () => {
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/planflow/prepare`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId: 'project-1', userInput: 'Wire PlanFlow.' }),
-      });
-      expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject({
-        ok: true,
-        packet: planningMocks.packet,
-        plannerProvenance: { source: 'backend_planning_service' },
-      });
-    } finally {
-      await closeServer(server);
-    }
-  });
-
   it('feeds the previous Task Ledger, Progress Ledger and real TaskResult into a Magentic-One reasoning turn', async () => {
     runtimeMocks.runCardWithContract.mockClear();
     const { server, baseUrl } = await createApiServer();
@@ -222,29 +183,6 @@ describe('coder routes', () => {
         ok: false,
         error: 'openclaude_plain_task_run_removed_use_localcoder_run',
       });
-    } finally {
-      await closeServer(server);
-    }
-  });
-
-  it('returns a loud blocked response without a fake packet when planner config is missing', async () => {
-    planningMocks.prepareActiveCoderPacket.mockRejectedValueOnce(
-      new Error(
-        'coder_planner_model_missing: accepted options: SOL_CODER_PLANNER_MODEL_KEY; SOL_CODER_PLANNER_PROVIDER plus SOL_CODER_PLANNER_MODEL_ID; or explicit SOL_PRIMARY=openai|openrouter with its matching provider API key',
-      ),
-    );
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/planflow/prepare`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId: 'project-1', userInput: 'Wire PlanFlow.' }),
-      });
-      const payload = await response.json();
-      expect(response.status).toBe(424);
-      expect(payload.ok).toBe(false);
-      expect(payload.error).toContain('coder_planner_model_missing');
-      expect(payload).not.toHaveProperty('packet');
     } finally {
       await closeServer(server);
     }

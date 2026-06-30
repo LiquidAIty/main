@@ -65,11 +65,6 @@ vi.mock('../coder/openclaude/console/consoleTaskRouter', () => ({
   routeCodingTaskToConsole: routerMocks.routeCodingTaskToConsole,
 }));
 
-vi.mock('../services/coderPlanning/coderPlanningService', () => ({
-  persistCoderRunOutcome: vi.fn(),
-  prepareActiveCoderPacket: vi.fn(),
-}));
-
 async function createApiServer(): Promise<{ server: Server; baseUrl: string }> {
   const express = (await import('express')).default;
   const router = (await import('./coder.routes')).default;

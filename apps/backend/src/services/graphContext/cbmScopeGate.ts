@@ -2,7 +2,7 @@ import path from 'node:path';
 import {
   createCodebaseMemoryMcpCaller,
   type CbmToolCaller,
-} from './graphContextBuilder';
+} from './cbmMcpCaller';
 
 export const LOCALCODER_CBM_REQUIRED_FILES = [
   '.mcp.json',
