@@ -219,32 +219,13 @@ export default function GraphExplorerCore({ view, height = 560, sources, onToggl
 
   return (
     <div style={{ position: 'relative', width: '100%', height }}>
-      {/* Source controls — your real graphs by their real names. */}
-      <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 5, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', maxWidth: 'calc(100% - 220px)' }}>
-        {(sources && sources.length ? sources : [{ id: 'knowgraph', name: 'KnowGraph', enabled: true, available: true, nodeCount: view.nodes.length } as GraphSource]).map((src) => {
-          const clickable = src.available;
-          return (
-            <button key={src.id} type="button" title={src.reason || ''}
-              onClick={() => clickable && onToggleSource?.(src.id)}
-              style={{ fontSize: 12, padding: '5px 10px', borderRadius: 7, cursor: clickable ? 'pointer' : 'not-allowed',
-                border: `1px solid ${src.enabled && clickable ? SOURCE_ACCENT[src.id] : '#33414f'}`,
-                background: src.enabled && clickable ? `${SOURCE_ACCENT[src.id]}22` : 'rgba(13,18,32,0.7)',
-                color: clickable ? '#cfe8f5' : '#7d8fa0', opacity: clickable ? 1 : 0.7, display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-              <span>{src.name}</span>
-              {clickable && src.nodeCount ? <span style={{ color: '#8fb3c8', fontSize: 11 }}>· {src.nodeCount}</span> : null}
-              {!src.available ? <span style={{ color: '#8a9bb0', fontSize: 10.5, fontStyle: 'italic' }}>not connected</span> : null}
-            </button>
-          );
-        })}
-        <button type="button" title="Fit the graph" onClick={fitNeighborhood}
-          style={{ fontSize: 12, padding: '5px 10px', borderRadius: 7, cursor: 'pointer', border: '1px solid #33414f', background: 'rgba(13,18,32,0.7)', color: '#cfe8f5' }}>Reset view</button>
-      </div>
-
-      {/* Search + raw visibility filters */}
+      {/* Search + fit + raw visibility filters. Sits below the surface kind-selector (top-left);
+          the composite source rail + on-canvas counts are removed (one graph per surface). */}
       <div style={{ position: 'absolute', top: 48, left: 10, zIndex: 5, display: 'flex', gap: 6 }}>
         <input value={searchText} onChange={(e) => setSearchText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') runSearch(); }}
           placeholder="Find by id / label" style={{ fontSize: 12, padding: '5px 9px', borderRadius: 7, width: 200, border: '1px solid #33414f', background: 'rgba(13,18,32,0.85)', color: '#e3f1fb', outline: 'none' }} />
         <button type="button" onClick={runSearch} style={{ fontSize: 12, padding: '5px 10px', borderRadius: 7, cursor: 'pointer', border: '1px solid #33414f', background: 'rgba(13,18,32,0.7)', color: '#cfe8f5' }}>Find</button>
+        <button type="button" title="Fit the graph" onClick={fitNeighborhood} style={{ fontSize: 12, padding: '5px 10px', borderRadius: 7, cursor: 'pointer', border: '1px solid #33414f', background: 'rgba(13,18,32,0.7)', color: '#cfe8f5' }}>Fit</button>
         <button type="button" onClick={() => setShowFilters((v) => !v)} style={{ fontSize: 12, padding: '5px 10px', borderRadius: 7, cursor: 'pointer', border: `1px solid ${filtersActive ? '#2dd4bf' : '#33414f'}`, background: showFilters ? 'rgba(45,212,191,0.14)' : 'rgba(13,18,32,0.7)', color: '#cfe8f5' }}>Filters{filtersActive ? ' •' : ''}</button>
       </div>
 
@@ -282,12 +263,6 @@ export default function GraphExplorerCore({ view, height = 560, sources, onToggl
           </div>
         </div>
       ) : null}
-
-      {/* Focus + count strip */}
-      <div style={{ position: 'absolute', top: 10, right: 12, zIndex: 5, textAlign: 'right', fontSize: 12, color: '#8fb3c8', pointerEvents: 'none' }}>
-        {view.focus ? <div>focus: <b style={{ color: '#cfe8f5' }}>{view.focus.label}</b></div> : null}
-        <div>{gview.nodes.length} nodes · {gview.edges.length} edges{filtersActive ? ` (of ${view.nodes.length}/${view.edges.length})` : ''}</div>
-      </div>
 
       {/* Inspector — KnowGraph provenance OR ThinkGraph raw stored properties. Never invented. */}
       {selectedNode || selectedEdge ? (
