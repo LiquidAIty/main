@@ -1,12 +1,7 @@
 import { Router } from 'express';
 import health from './health.routes';
 import mcp from './mcp.routes';
-import mcpCatalog from './mcp.catalog.routes';
-import mcpTools from './mcp-tools.routes';
-import dispatch from './dispatch.routes';
-import tools from './tools.routes';
 import artifacts from './artifacts.routes';
-import { webhookRouter as webhook } from './webhook.routes';
 import auth from './auth.routes';
 import ragSearch from './ragsearch.routes';
 import kg from '../api/kg/agent-kg';
@@ -37,15 +32,7 @@ router.use('/health', health);
 router.use('/diagnostic', diagnosticRoutes);
 
 router.use('/mcp', authMiddleware, mcp);
-// mcpCatalog defines routes starting with '/catalog', so mount at '/mcp'
-router.use('/mcp', authMiddleware, mcpCatalog);
-router.use('/mcp', authMiddleware, mcpTools);
-// dispatch routes define '/dispatch' endpoints
-router.use('/dispatch', authMiddleware, dispatch);
-// tools routes define '/:name' and '/try/:name'; mount at '/tools' to avoid duplication
-router.use('/tools', authMiddleware, tools);
 router.use('/artifacts', authMiddleware, artifacts);
-router.use('/webhook', authMiddleware, webhook);
 router.use('/graph', authMiddleware, graph);
 router.use('/rag', authMiddleware, ragSearch);
 router.use('/kg', authMiddleware, kg);

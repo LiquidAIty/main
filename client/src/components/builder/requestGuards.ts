@@ -12,7 +12,6 @@ export type CachedGraphPayload = {
   updatedAt: number;
   cypher: string;
   graphResult: any[];
-  knowGraphData: { nodes: any[]; relationships: any[] };
 };
 
 const requestGuardInFlight = new Map<string, Promise<any>>();
@@ -160,10 +159,6 @@ export function readCachedGraphPayload(cacheKey: string): CachedGraphPayload | n
       updatedAt: Number(parsed.updatedAt) || 0,
       cypher: typeof parsed.cypher === "string" ? parsed.cypher : "",
       graphResult: Array.isArray(parsed.graphResult) ? parsed.graphResult : [],
-      knowGraphData: {
-        nodes: Array.isArray(parsed?.knowGraphData?.nodes) ? parsed.knowGraphData.nodes : [],
-        relationships: Array.isArray(parsed?.knowGraphData?.relationships) ? parsed.knowGraphData.relationships : [],
-      },
     };
   } catch {
     return null;

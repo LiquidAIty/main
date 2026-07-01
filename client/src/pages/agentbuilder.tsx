@@ -32,12 +32,9 @@ import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWor
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import OpenClaudeConsolePanel from '../features/agentbuilder/console/OpenClaudeConsolePanel';
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
-import HarnessWork from '../features/agentbuilder/console/HarnessWork';
 import {
   streamSession,
-  answerSession,
   loadSessionHistory,
-  type NativeSessionEvent,
 } from '../features/agentbuilder/console/openClaudeSessionClient';
 import {
   pollCodingRunUntilTerminal,
@@ -165,24 +162,15 @@ const KnowledgeEvidencePanel = lazy(
 const KnowledgeGraphFramework = lazy(
   () => import('../components/knowledge/KnowledgeGraphFramework'),
 );
+// CodeGraph renders through its OWN CBM-backed surface (CodeGraphSurface → /api/layout → CBM →
+// CodeGraphScene), never the generic shared graph shell. Restored to its pre-b32e5cdd direct mount.
+const CodeGraphSurface = lazy(() =>
+  import('../components/codegraph/CodeGraphSurface').then((mod) => ({ default: mod.CodeGraphSurface })),
+);
 import {
   mapAcceptedThinkGraphRecordsToViewData,
   resolveThinkGraphSourceLabel,
 } from '../components/knowledge/thinkGraphRecordsView';
-import {
-  classifyKnowGraphRouteError,
-  classifyKnowGraphSemanticResult,
-  resolveKnowGraphLivePrecedence,
-  resolveKnowGraphSourceLabel,
-  semanticReadResultToLegacyKnowGraph,
-  type KnowGraphSourceState,
-} from '../components/knowledge/knowGraphView';
-import {
-  buildKnowGraphNeighborhood,
-  EVIDENCE_OWLCLASS,
-  ISSUER_OWLCLASS,
-  toggleExpandedContext,
-} from '../components/knowledge/knowGraphNeighborhood';
 import { resolveCbmProjectName } from '../components/codegraph/resolveCodeGraphProjectIdentity';
 const EnergyFacadeSurface = lazy(
   () => import('../components/energy/EnergyFacadeSurface'),
@@ -585,221 +573,6 @@ function safeText(value: unknown): string {
 function cleanOptionalText(value: unknown): string | null {
   const text = safeText(value).trim();
   return text || null;
-}
-
-function parseJsonObject(text: string): Record<string, unknown> | null {
-  const trimmed = safeText(text).trim();
-  if (!trimmed) return null;
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    // ignore parse errors
-  }
-  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (!fencedMatch?.[1]) return null;
-  try {
-    const parsed = JSON.parse(fencedMatch[1].trim());
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    // ignore parse errors
-  }
-  return null;
-}
-
-function normalizeCodeGraphViewContractCandidate(
-  candidate: unknown,
-  projectId?: string | null,
-): GraphViewContract | null {
-  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate))
-    return null;
-  const record = candidate as Record<string, unknown>;
-  const nodeLabelAllowlistRaw =
-    record.nodeLabelAllowlist ??
-    record.node_labels ??
-    record.nodeLabels ??
-    null;
-  const edgeTypeAllowlistRaw =
-    record.edgeTypeAllowlist ?? record.edge_types ?? record.edgeTypes ?? null;
-  const showLabelsRaw = record.showLabels ?? record.show_labels;
-  const focusPathsRaw = record.focusPaths ?? record.focus_paths;
-  const focusSymbolsRaw = record.focusSymbols ?? record.focus_symbols;
-  const maxNodesRaw = record.maxNodes ?? record.max_nodes;
-  const graphKindRaw = record.graphKind ?? record.graph_kind ?? 'codegraph';
-  const focusNodeIdsRaw = record.focusNodeIds ?? record.focus_node_ids;
-  const cameraModeRaw = record.cameraMode ?? record.camera_mode;
-  const animationModeRaw = record.animationMode ?? record.animation_mode;
-  const narrativeIntentRaw = record.narrativeIntent ?? record.narrative_intent;
-
-  const toStringArray = (value: unknown): string[] | undefined => {
-    if (!Array.isArray(value)) return undefined;
-    const normalized = value
-      .map((entry) => safeText(entry).trim())
-      .filter(Boolean);
-    return normalized.length > 0 ? normalized : undefined;
-  };
-
-  const nodeLabelAllowlist = toStringArray(nodeLabelAllowlistRaw);
-  const edgeTypeAllowlist = toStringArray(edgeTypeAllowlistRaw);
-  const focusPaths = toStringArray(focusPathsRaw);
-  const focusSymbols = toStringArray(focusSymbolsRaw);
-  const focusNodeIds = toStringArray(focusNodeIdsRaw);
-  const showLabels =
-    typeof showLabelsRaw === 'boolean' ? showLabelsRaw : undefined;
-  const maxNodes = Number.isFinite(Number(maxNodesRaw))
-    ? Number(maxNodesRaw)
-    : undefined;
-  const graphKindNormalized = safeText(graphKindRaw).trim().toLowerCase();
-  const graphKind: KnowledgeGraphKind =
-    graphKindNormalized === 'thinkgraph' ||
-    graphKindNormalized === 'knowgraph' ||
-    graphKindNormalized === 'codegraph'
-      ? (graphKindNormalized as KnowledgeGraphKind)
-      : 'codegraph';
-  const cameraMode =
-    cameraModeRaw === 'overview' ||
-    cameraModeRaw === 'focus' ||
-    cameraModeRaw === 'trace' ||
-    cameraModeRaw === 'cluster'
-      ? cameraModeRaw
-      : undefined;
-  const animationMode =
-    animationModeRaw === 'calm' ||
-    animationModeRaw === 'guided' ||
-    animationModeRaw === 'active'
-      ? animationModeRaw
-      : undefined;
-  const narrativeIntent = cleanOptionalText(narrativeIntentRaw);
-
-  if (
-    !nodeLabelAllowlist &&
-    !edgeTypeAllowlist &&
-    showLabels == null &&
-    !focusPaths &&
-    !focusSymbols &&
-    !focusNodeIds &&
-    maxNodes == null &&
-    !cameraMode &&
-    !animationMode &&
-    !narrativeIntent
-  ) {
-    return null;
-  }
-
-  return {
-    graphKind,
-    projectId: cleanOptionalText(projectId) ?? undefined,
-    focusNodeIds,
-    nodeLabelAllowlist,
-    edgeTypeAllowlist,
-    showLabels,
-    focusPaths,
-    focusSymbols,
-    maxNodes,
-    cameraMode,
-    animationMode,
-    narrativeIntent,
-  };
-}
-
-function extractCodeGraphViewContractFromUnknown(
-  payload: unknown,
-  projectId?: string | null,
-): GraphViewContract | null {
-  const direct = normalizeCodeGraphViewContractCandidate(payload, projectId);
-  if (direct) return direct;
-
-  if (typeof payload === 'string') {
-    const parsed = parseJsonObject(payload);
-    if (!parsed) return null;
-    return extractCodeGraphViewContractFromUnknown(parsed, projectId);
-  }
-
-  if (!payload || typeof payload !== 'object') return null;
-  const record = payload as Record<string, unknown>;
-  const nestedKeys = [
-    'codeGraphViewContract',
-    'codegraphViewContract',
-    'graphViewContract',
-    'codegraph_view_contract',
-    'codegraph',
-    'graph_view',
-    'view',
-    'contract',
-  ] as const;
-  for (const key of nestedKeys) {
-    if (record[key] == null) continue;
-    const nested = extractCodeGraphViewContractFromUnknown(
-      record[key],
-      projectId,
-    );
-    if (nested) return nested;
-  }
-  return null;
-}
-
-function extractCodeGraphViewContractFromEvent(
-  event: DeckRuntimeEvent,
-  projectId?: string | null,
-): GraphViewContract | null {
-  const typedContract = normalizeCodeGraphViewContractCandidate(
-    event.codegraphViewContract,
-    projectId,
-  );
-  if (typedContract) return typedContract;
-  const candidates: unknown[] = [
-    event.content,
-    event.text,
-    event.progressText,
-    ...(Array.isArray(event.notes) ? event.notes : []),
-  ];
-  for (const candidate of candidates) {
-    const contract = extractCodeGraphViewContractFromUnknown(
-      candidate,
-      projectId,
-    );
-    if (contract) return contract;
-  }
-  return null;
-}
-
-function extractCodeGraphViewContractFromRun(
-  run: DeckRun | null | undefined,
-  projectId?: string | null,
-): GraphViewContract | null {
-  const typedRunContract = normalizeCodeGraphViewContractCandidate(
-    run?.codegraphViewContract,
-    projectId,
-  );
-  if (typedRunContract) return typedRunContract;
-  const steps = Array.isArray(run?.steps) ? [...run.steps].reverse() : [];
-  for (const step of steps) {
-    const typedStepContract = normalizeCodeGraphViewContractCandidate(
-      step.codegraphViewContract,
-      projectId,
-    );
-    if (typedStepContract) return typedStepContract;
-    const contractFromOutput = extractCodeGraphViewContractFromUnknown(
-      step.output,
-      projectId,
-    );
-    if (contractFromOutput) return contractFromOutput;
-    const contractFromSummary = extractCodeGraphViewContractFromUnknown(
-      step.outputSummary,
-      projectId,
-    );
-    if (contractFromSummary) return contractFromSummary;
-    const contractFromTaskContract = extractCodeGraphViewContractFromUnknown(
-      step.contract,
-      projectId,
-    );
-    if (contractFromTaskContract) return contractFromTaskContract;
-  }
-  return null;
 }
 
 function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
@@ -1225,7 +998,6 @@ export function deriveConnectedGraphStreams(deck: Pick<DeckDocument, 'nodes' | '
 export function getDefaultConnectedKnowledgeGraphKind(
   streams: ConnectedGraphStreams,
 ): KnowledgeGraphKind {
-  if (streams.knowGraph) return 'knowgraph';
   if (streams.thinkGraph) return 'thinkgraph';
   return 'codegraph';
 }
@@ -1235,7 +1007,6 @@ export function getConnectedKnowledgeGraphKinds(
 ): KnowledgeGraphKind[] {
   const kinds: KnowledgeGraphKind[] = [];
   if (streams.thinkGraph) kinds.push('thinkgraph');
-  if (streams.knowGraph) kinds.push('knowgraph');
   if (streams.codeGraph) kinds.push('codegraph');
   return kinds;
 }
@@ -4478,16 +4249,7 @@ function BuilderRailMoonOrb({
 export default function AgentBuilder(): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
   const largeSurface = 'chat' as const;
-  // Left panel = persistent vertical split: chat upper (always visible) + a
-  // collapsible lower reveal hosting the raw native OpenClaude session stream and
-  // the PowerShell PTY. `chatPendingInteraction` auto-expands the lower reveal
-  // when a native question/permission awaits the user.
-  const [chatPendingInteraction, setChatPendingInteraction] = useState(false);
-  const [nativeStreamEvents, setNativeStreamEvents] = useState<NativeSessionEvent[]>([]);
   const [nativeSessionBusy, setNativeSessionBusy] = useState(false);
-  const [nativePendingQuestion, setNativePendingQuestion] = useState<
-    { promptId: string; question: string; promptType?: string } | null
-  >(null);
   const [workspaceView, setWorkspaceView] = useState<
     | 'chat'
     | 'canvas'
@@ -4699,7 +4461,7 @@ export default function AgentBuilder(): React.ReactElement {
   const [newProjectName, setNewProjectName] = useState('');
   const [sending, setSending] = useState(false);
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
-    useState<KnowledgeGraphKind>('knowgraph');
+    useState<KnowledgeGraphKind>('thinkgraph');
   useEffect(() => {
     if (connectedKnowledgeGraphKinds.length === 0) return;
     if (connectedKnowledgeGraphKinds.includes(knowledgeGraphKind)) return;
@@ -6233,10 +5995,6 @@ export default function AgentBuilder(): React.ReactElement {
     reason?: string;
     blocker?: string;
   } | null>(null);
-  // Raw /api/knowgraph/explore response (carries `.lens`). When present, KnowledgeGraphFramework
-  // renders the real source-backed semantic lens (junk-excluded, full default, focus on selection)
-  // instead of falling back to the legacy four-node issuer DTO.
-  const [knowGraphExplore, setKnowGraphExplore] = useState<any>(null);
   const [graphError, setGraphError] = useState<string | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
   const [knowledgeGraphStatus, setKnowledgeGraphStatus] =
@@ -6253,22 +6011,6 @@ export default function AgentBuilder(): React.ReactElement {
     setSelectedKnowledgeRelationshipId(null);
     setSelectedEdgeEvidence(null);
   }, []);
-  const [knowGraphData, setKnowGraphData] = useState<{
-    nodes: any[];
-    relationships: any[];
-  }>({
-    nodes: [],
-    relationships: [],
-  });
-  // Honest KnowGraph source/reason for the diagnostics pill (knowgraph-neo4j / unavailable /
-  // no-records), and whether the INGEST-service health (:8001) is up. The Neo4j READ is
-  // independent of ingest health — an ingest outage must not be reported as host-provided.
-  const [knowGraphSourceState, setKnowGraphSourceState] = useState<KnowGraphSourceState | null>(null);
-  const [knowGraphIngestHealthOk, setKnowGraphIngestHealthOk] = useState<boolean | null>(null);
-  // KnowGraph bounded-neighborhood exploration state: which issuer is seeded and which of its
-  // contexts have their stored SUPPORTED_BY evidence revealed. Drives the real-graph slice below.
-  const [kgSeedIssuerId, setKgSeedIssuerId] = useState<string | null>(null);
-  const [kgExpandedContextIds, setKgExpandedContextIds] = useState<string[]>([]);
   const graphResultRef = useRef<any[]>([]);
   const [, setLastIngestTrace] = useState<any>(null);
   const scopeKey = activeProject || '';
@@ -6286,9 +6028,6 @@ export default function AgentBuilder(): React.ReactElement {
     kgAutoLoadKeyRef.current = '';
     setCypher('');
     setGraphResult([]);
-    setKgSeedIssuerId(null);
-    setKgExpandedContextIds([]);
-    setKnowGraphData({ nodes: [], relationships: [] });
     setGraphError(null);
     setGraphLoading(false);
     setKnowledgeGraphStatus('Idle');
@@ -6664,325 +6403,6 @@ export default function AgentBuilder(): React.ReactElement {
     ],
   );
 
-  type KnowGraphLiveReadResult = {
-    /** The live read produced an authoritative answer (real data OR honest no-records);
-     *  FALSE only on a genuine backend read failure (so the caller may fall back to cache). */
-    authoritative: boolean;
-    nodeCount: number;
-    relCount: number;
-    reason?: string;
-  };
-
-  const loadKnowGraphData = useCallback(
-    async (opts?: {
-      signal?: AbortSignal;
-      requestType?: string;
-      requestSeq?: number;
-      bypassCache?: boolean;
-    }): Promise<KnowGraphLiveReadResult> => {
-      const projectId = activeProject;
-      if (!projectId) {
-        setKnowGraphData({ nodes: [], relationships: [] });
-        return { authoritative: false, nodeCount: 0, relCount: 0, reason: 'no_project' };
-      }
-      const requestType = opts?.requestType || 'knowgraph-data';
-      const requestSeq = opts?.requestSeq ?? nextRequestSequence(requestType);
-
-      try {
-        const endpoint = `/api/knowgraph/semantic-graph?projectId=${encodeURIComponent(projectId)}`;
-        const payload = await guardedRequest({
-          key: `knowgraph:data:${projectId}`,
-          method: 'GET',
-          ttlMs: KG_CACHE_TTL_MS,
-          bypassCache: opts?.bypassCache,
-          signal: opts?.signal,
-          fetcher: async (signal) => {
-            const res = await fetch(endpoint, {
-              credentials: 'include',
-              signal,
-            });
-            const { data, text } = await readJsonAndText(res);
-            return { res, data, text, endpoint };
-          },
-        });
-        if (!payload.res.ok) {
-          throw new Error(
-            formatRequestErrorLine(
-              payload.endpoint,
-              payload.res.status,
-              (payload.data &&
-                safeText(
-                  payload.data?.error?.message || payload.data?.error,
-                )) ||
-                payload.text,
-            ),
-          );
-        }
-        if (activeProjectLatestRef.current !== projectId)
-          return { authoritative: false, nodeCount: 0, relCount: 0, reason: 'superseded' };
-        if (!isLatestRequestSequence(requestType, requestSeq))
-          return { authoritative: false, nodeCount: 0, relCount: 0, reason: 'superseded' };
-        const semanticStatus = safeText(payload.data?.status || '').toLowerCase();
-        const hasSemanticShape =
-          Array.isArray(payload.data?.records) &&
-          Array.isArray(payload.data?.relationships) &&
-          Array.isArray(payload.data?.sourceRefs);
-        let rawNodes: any[] = [];
-        let rawRels: any[] = [];
-        let sourceState: KnowGraphSourceState;
-        if (hasSemanticShape) {
-          const adapted = semanticReadResultToLegacyKnowGraph(payload.data as GraphReadResult);
-          rawNodes = adapted.nodes;
-          rawRels = adapted.relationships;
-          if (semanticStatus === 'unavailable' && rawNodes.length === 0 && rawRels.length === 0) {
-            setKnowledgeGraphStatus('Graph backend unavailable.');
-          } else if (adapted.warnings.length > 0) {
-            setKnowledgeGraphStatus(`KnowGraph semantic warnings: ${adapted.warnings[0]}`);
-          }
-          sourceState = classifyKnowGraphSemanticResult({
-            status: semanticStatus,
-            warnings: adapted.warnings,
-            nodeCount: rawNodes.length,
-            relCount: rawRels.length,
-          });
-          setKnowGraphSourceState(sourceState);
-        } else {
-          const legacyEndpoint = `/api/knowgraph/graph?projectId=${encodeURIComponent(projectId)}`;
-          const legacyRes = await fetch(legacyEndpoint, { credentials: 'include', signal: opts?.signal });
-          const legacyPayload = await safeJson(legacyRes);
-          rawNodes = Array.isArray(legacyPayload?.nodes) ? legacyPayload.nodes : [];
-          rawRels = Array.isArray(legacyPayload?.relationships) ? legacyPayload.relationships : [];
-          setKnowledgeGraphStatus('Using legacy KnowGraph DTO path.');
-          sourceState = classifyKnowGraphSemanticResult({ status: 'ok', nodeCount: rawNodes.length, relCount: rawRels.length, legacy: true });
-          setKnowGraphSourceState(sourceState);
-        }
-        setKnowGraphData({ nodes: rawNodes, relationships: rawRels });
-        setGraphError((prev) =>
-          prev && (prev.includes('/api/knowgraph/graph') || prev.includes('/api/knowgraph/semantic-graph')) ? null : prev,
-        );
-        // The live read produced a DEFINITIVE answer for this project (real records or an
-        // honest no-records). `authoritative` is the classifier's `ok` flag — FALSE only on
-        // a genuine read failure (neo4j unavailable / auth) so the caller can fall back to
-        // cache; an authoritative empty must NOT trigger a stale-cache fallback.
-        return {
-          authoritative: sourceState.ok,
-          nodeCount: rawNodes.length,
-          relCount: rawRels.length,
-          reason: sourceState.reason,
-        };
-      } catch (err: any) {
-        if (isAbortLikeError(err))
-          return { authoritative: false, nodeCount: 0, relCount: 0, reason: 'aborted' };
-        if (activeProjectLatestRef.current !== projectId)
-          return { authoritative: false, nodeCount: 0, relCount: 0, reason: 'superseded' };
-        if (!isLatestRequestSequence(requestType, requestSeq))
-          return { authoritative: false, nodeCount: 0, relCount: 0, reason: 'superseded' };
-        console.warn('[KnowGraph] graph fetch failed:', err?.message || err);
-        setKnowGraphData({ nodes: [], relationships: [] });
-        const routeState = classifyKnowGraphRouteError(err?.message || 'KnowGraph graph fetch failed');
-        setKnowGraphSourceState(routeState);
-        setGraphError(err?.message || 'KnowGraph graph fetch failed');
-        return { authoritative: false, nodeCount: 0, relCount: 0, reason: routeState.reason };
-      }
-    },
-    [activeProject],
-  );
-
-  const loadKnowGraphHealth = useCallback(
-    async (opts?: {
-      signal?: AbortSignal;
-      requestType?: string;
-      requestSeq?: number;
-    }): Promise<boolean> => {
-      const endpoint = '/api/knowgraph/health';
-      const requestType = opts?.requestType || 'knowgraph-health';
-      const requestSeq = opts?.requestSeq ?? nextRequestSequence(requestType);
-      try {
-        const payload = await guardedRequest({
-          key: endpoint,
-          method: 'GET',
-          ttlMs: 20_000,
-          signal: opts?.signal,
-          fetcher: async (signal) => {
-            const res = await fetch(endpoint, {
-              credentials: 'include',
-              signal,
-            });
-            const { data, text } = await readJsonAndText(res);
-            return { res, data, text, endpoint };
-          },
-        });
-        if (!payload.res.ok) {
-          throw new Error(
-            formatRequestErrorLine(
-              payload.endpoint,
-              payload.res.status,
-              (payload.data &&
-                safeText(
-                  payload.data?.error?.message || payload.data?.error,
-                )) ||
-                payload.text,
-            ),
-          );
-        }
-        if (!isLatestRequestSequence(requestType, requestSeq)) return false;
-        setGraphError((prev) =>
-          prev && prev.includes(endpoint) ? null : prev,
-        );
-        return true;
-      } catch (err: any) {
-        if (isAbortLikeError(err)) return false;
-        if (!isLatestRequestSequence(requestType, requestSeq)) return false;
-        setGraphError(err?.message || `${endpoint} | 0 | request failed`);
-        return false;
-      }
-    },
-    [],
-  );
-
-  const expandKnowGraphFromEntity = useCallback(
-    async (entity: KnowledgeGraphNode) => {
-      const projectId = activeProject;
-      if (!projectId) return;
-      const requestType = 'kg-expand';
-      const requestSeq = nextRequestSequence(requestType);
-      const rawId = String(entity.rawId || entity.id || '').trim();
-      if (!rawId) return;
-
-      const endpoint = `/api/knowgraph/expand?projectId=${encodeURIComponent(projectId)}&nodeId=${encodeURIComponent(rawId)}&depth=1&limit=50`;
-      kgExpandAbortRef.current?.abort();
-      const controller = new AbortController();
-      kgExpandAbortRef.current = controller;
-      kgExpandProjectRef.current = projectId;
-      setExpandingNodeId(entity.label || entity.id);
-      try {
-        const payload = await guardedRequest({
-          key: `knowgraph:expand:${projectId}:${rawId}`,
-          method: 'GET',
-          ttlMs: 12_000,
-          signal: controller.signal,
-          fetcher: async (signal) => {
-            const res = await fetch(endpoint, {
-              credentials: 'include',
-              signal,
-            });
-            const { data, text } = await readJsonAndText(res);
-            return { res, data, text, endpoint };
-          },
-        });
-        if (!payload.res.ok) {
-          throw new Error(
-            formatRequestErrorLine(
-              payload.endpoint,
-              payload.res.status,
-              (payload.data &&
-                safeText(
-                  payload.data?.error?.message || payload.data?.error,
-                )) ||
-                payload.text,
-            ),
-          );
-        }
-        if (
-          !isLatestRequestSequence(requestType, requestSeq) ||
-          controller.signal.aborted ||
-          activeProjectLatestRef.current !== projectId
-        ) {
-          return;
-        }
-
-        const nextNodes = Array.isArray(payload.data?.nodes)
-          ? payload.data.nodes
-          : [];
-        const nextRelationships = Array.isArray(payload.data?.relationships)
-          ? payload.data.relationships
-          : [];
-        const currentNodeIds = new Set(
-          (Array.isArray(knowGraphData.nodes) ? knowGraphData.nodes : [])
-            .map((entry: any) => String(entry?.id ?? '').trim())
-            .filter(Boolean),
-        );
-        const currentRelationshipIds = new Set(
-          (Array.isArray(knowGraphData.relationships)
-            ? knowGraphData.relationships
-            : []
-          )
-            .map((entry: any) => String(entry?.id ?? '').trim())
-            .filter(Boolean),
-        );
-        const addedNodeCount = nextNodes.reduce((count: number, entry: any) => {
-          const id = String(entry?.id ?? '').trim();
-          return id && !currentNodeIds.has(id) ? count + 1 : count;
-        }, 0);
-        const addedRelationshipCount = nextRelationships.reduce(
-          (count: number, entry: any) => {
-            const id = String(entry?.id ?? '').trim();
-            return id && !currentRelationshipIds.has(id) ? count + 1 : count;
-          },
-          0,
-        );
-        setKnowGraphData((prev) => {
-          const nodeMap = new Map<string, any>();
-          const relationshipMap = new Map<string, any>();
-          [
-            ...(Array.isArray(prev.nodes) ? prev.nodes : []),
-            ...nextNodes,
-          ].forEach((n: any) => {
-            const id = String(n?.id ?? '').trim();
-            if (id && !nodeMap.has(id)) nodeMap.set(id, n);
-          });
-          [
-            ...(Array.isArray(prev.relationships) ? prev.relationships : []),
-            ...nextRelationships,
-          ].forEach((r: any) => {
-            const id = String(r?.id ?? '').trim();
-            if (id && !relationshipMap.has(id)) relationshipMap.set(id, r);
-          });
-          return {
-            nodes: Array.from(nodeMap.values()),
-            relationships: Array.from(relationshipMap.values()),
-          };
-        });
-        if (addedNodeCount === 0 && addedRelationshipCount === 0) {
-          setKnowledgeGraphStatus(
-            `No additional graph neighbors found for "${safeText(entity.label || entity.id)}".`,
-          );
-        } else {
-          setKnowledgeGraphStatus(
-            `Expanded "${safeText(entity.label || entity.id)}": +${addedNodeCount} node${
-              addedNodeCount === 1 ? '' : 's'
-            }, +${addedRelationshipCount} edge${addedRelationshipCount === 1 ? '' : 's'}.`,
-          );
-        }
-        setGraphError((prev) =>
-          prev && prev.includes('/api/knowgraph/expand') ? null : prev,
-        );
-      } catch (err: any) {
-        if (
-          isAbortLikeError(err) ||
-          !isLatestRequestSequence(requestType, requestSeq) ||
-          activeProjectLatestRef.current !== projectId
-        ) {
-          return;
-        }
-        setGraphError(err?.message || 'KnowGraph expand failed');
-      } finally {
-        if (
-          activeProjectLatestRef.current === projectId &&
-          isLatestRequestSequence(requestType, requestSeq)
-        ) {
-          setExpandingNodeId(null);
-        }
-        if (kgExpandAbortRef.current === controller) {
-          kgExpandAbortRef.current = null;
-        }
-        if (kgExpandProjectRef.current === projectId) {
-          kgExpandProjectRef.current = '';
-        }
-      }
-    },
-    [activeProject, knowGraphData.nodes, knowGraphData.relationships],
-  );
 
   useEffect(() => {
     return () => {
@@ -7013,31 +6433,13 @@ export default function AgentBuilder(): React.ReactElement {
       clearKnowledgeWorkspaceSelection();
       const cached = readCachedGraphPayload(cacheKey);
       if (cached) {
-        // Show cached graph immediately as a PROVISIONAL placeholder while the live read
-        // runs. This is NOT the authoritative source — the live semantic-graph response
-        // overrides it on success (see resolveKnowGraphLivePrecedence below).
+        // Show the cached AGE/cypher graph immediately while the live SEED query runs.
         setCypher(cached.cypher || '');
         setGraphResult(
           Array.isArray(cached.graphResult) ? cached.graphResult : [],
         );
-        setKnowGraphData({
-          nodes: Array.isArray(cached.knowGraphData?.nodes)
-            ? cached.knowGraphData.nodes
-            : [],
-          relationships: Array.isArray(cached.knowGraphData?.relationships)
-            ? cached.knowGraphData.relationships
-            : [],
-        });
         graphHydrateKeyRef.current = cacheKey;
       }
-      // The LIVE semantic-graph read is ALWAYS attempted for the active project — a "fresh"
-      // cache must NEVER suppress it. Cached graph data may only stand in when the live read
-      // actually fails (resolveKnowGraphLivePrecedence). `cacheHasData` is read from the
-      // PROJECT-SCOPED cache key, so a cache fallback can never substitute another project.
-      const cacheHasData =
-        (Array.isArray(cached?.knowGraphData?.nodes) && cached.knowGraphData.nodes.length > 0) ||
-        (Array.isArray(cached?.knowGraphData?.relationships) &&
-          cached.knowGraphData.relationships.length > 0);
       kgLoadAbortRef.current?.abort();
       const controller = new AbortController();
       const graphRefreshStartedAt = Date.now();
@@ -7045,11 +6447,6 @@ export default function AgentBuilder(): React.ReactElement {
       kgLoadProjectRef.current = projectId;
       setGraphError(null);
       void (async () => {
-        const knowHealthOk = await loadKnowGraphHealth({
-          signal: controller.signal,
-          requestType,
-          requestSeq,
-        });
         await runGraphPresetQuery('SEED', {
           limit: 220,
           bypassCache: opts?.force,
@@ -7058,59 +6455,6 @@ export default function AgentBuilder(): React.ReactElement {
           requestSeq,
           allowPostFallback: false,
         });
-        if (
-          controller.signal.aborted ||
-          !isLatestRequestSequence(requestType, requestSeq) ||
-          activeProjectLatestRef.current !== projectId
-        ) {
-          return;
-        }
-        // Ingest-service health (:8001) is INDEPENDENT of the Neo4j read path. A failed ingest
-        // health must not hide a working KnowGraph read or be reported as host-provided —
-        // record it, then attempt the read and let it report honestly (data / no-records /
-        // neo4j unavailable).
-        setKnowGraphIngestHealthOk(knowHealthOk);
-        if (!knowHealthOk) {
-          setKnowledgeGraphStatus('KnowGraph ingest health check failed; reading persisted graph directly.');
-        }
-        // Always bypass the in-memory request memo so the live semantic-graph route is
-        // genuinely read each refresh (authoritative + observable), not served from a stale
-        // memoized response.
-        const loaded = await loadKnowGraphData({
-          bypassCache: true,
-          signal: controller.signal,
-          requestType,
-          requestSeq,
-        });
-        if (
-          !controller.signal.aborted &&
-          isLatestRequestSequence(requestType, requestSeq) &&
-          activeProjectLatestRef.current === projectId
-        ) {
-          const outcome = resolveKnowGraphLivePrecedence({
-            liveAuthoritative: loaded.authoritative,
-            liveNodeCount: loaded.nodeCount,
-            liveRelCount: loaded.relCount,
-            liveReason: loaded.reason,
-            cacheHasData,
-          });
-          if (outcome.display === 'cache' && cached) {
-            // Live read FAILED — fall back to the project-scoped cached graph. projectId is
-            // never swapped: we restore the same payload read with this project's cache key.
-            setKnowGraphData({
-              nodes: Array.isArray(cached.knowGraphData?.nodes)
-                ? cached.knowGraphData.nodes
-                : [],
-              relationships: Array.isArray(cached.knowGraphData?.relationships)
-                ? cached.knowGraphData.relationships
-                : [],
-            });
-            if (outcome.reason) {
-              console.warn('[KnowGraph] live read failed; showing cached graph:', outcome.reason);
-            }
-          }
-          setKnowledgeGraphStatus(outcome.status);
-        }
       })().finally(() => {
         if (
           !controller.signal.aborted &&
@@ -7141,8 +6485,6 @@ export default function AgentBuilder(): React.ReactElement {
       clearKnowledgeWorkspaceSelection,
       emitWorkspaceTestingEvent,
       graphCacheKey,
-      loadKnowGraphData,
-      loadKnowGraphHealth,
       recordPostResponseRefreshIfPending,
       resetKnowledgePanelState,
       runGraphPresetQuery,
@@ -7159,31 +6501,19 @@ export default function AgentBuilder(): React.ReactElement {
     if (!cached) return;
     setCypher(cached.cypher || '');
     setGraphResult(Array.isArray(cached.graphResult) ? cached.graphResult : []);
-    setKnowGraphData({
-      nodes: Array.isArray(cached.knowGraphData?.nodes)
-        ? cached.knowGraphData.nodes
-        : [],
-      relationships: Array.isArray(cached.knowGraphData?.relationships)
-        ? cached.knowGraphData.relationships
-        : [],
-    });
     graphHydrateKeyRef.current = graphCacheKey;
   }, [activeProject, graphCacheKey]);
 
   useEffect(() => {
     if (!activeProject) return;
-    const hasGraphData =
-      graphResult.length > 0 ||
-      knowGraphData.nodes.length > 0 ||
-      knowGraphData.relationships.length > 0;
+    const hasGraphData = graphResult.length > 0;
     if (!hasGraphData) return;
     writeCachedGraphPayload(graphCacheKey, {
       updatedAt: Date.now(),
       cypher,
       graphResult,
-      knowGraphData,
     });
-  }, [activeProject, graphCacheKey, cypher, graphResult, knowGraphData]);
+  }, [activeProject, graphCacheKey, cypher, graphResult]);
 
   const loadGraphData = useCallback(() => {
     if (!activeProject) return;
@@ -7326,64 +6656,6 @@ export default function AgentBuilder(): React.ReactElement {
     return () => controller.abort();
   }, [activeProject, graphResetToken]);
 
-  // Load the real source-backed KnowGraph semantic lens (/api/knowgraph/explore). No focus = the
-  // server's default research lens; focusId/focus = an explicit issuer/entity lens; merge = expand
-  // one hop via the existing mergeExploreLensPayloads. Read-only; failure leaves prior lens intact.
-  const loadKnowGraphExplore = useCallback(
-    async (opts?: { focusId?: string; focus?: string; merge?: boolean; signal?: AbortSignal }) => {
-      const projectId = activeProject;
-      if (!projectId) {
-        setKnowGraphExplore(null);
-        return;
-      }
-      const params = new URLSearchParams({ projectId });
-      if (opts?.focusId) params.set('focusId', opts.focusId);
-      if (opts?.focus) params.set('focus', opts.focus);
-      try {
-        const res = await fetch(`/api/knowgraph/explore?${params.toString()}`, {
-          credentials: 'include',
-          signal: opts?.signal,
-        });
-        const data = await res.json().catch(() => null);
-        if (opts?.signal?.aborted || activeProjectLatestRef.current !== projectId) return;
-        if (!data || !data.lens) return; // keep the current lens; never blank to a fallback
-        if (opts?.merge) setKnowGraphExplore((prev: any) => mergeExploreLensPayloads(prev, data));
-        else setKnowGraphExplore(data);
-      } catch {
-        /* leave the existing lens as-is */
-      }
-    },
-    [activeProject],
-  );
-
-  useEffect(() => {
-    if (!activeProject) {
-      setKnowGraphExplore(null);
-      return;
-    }
-    const controller = new AbortController();
-    void loadKnowGraphExplore({ signal: controller.signal });
-    return () => controller.abort();
-  }, [activeProject, graphResetToken, loadKnowGraphExplore]);
-
-  // Existing semantic-explorer navigation: focus/search re-fetches the lens around the real focus;
-  // expand merges one hop. ASTS, RDW and every issuer become reachable through the lens — no cloud.
-  const handleKnowGraphFocus = useCallback(
-    (ref: { focusId?: string; focusKind?: string; focusLabel?: string }) => {
-      void loadKnowGraphExplore({ focusId: ref.focusId, focus: ref.focusLabel });
-    },
-    [loadKnowGraphExplore],
-  );
-  const handleKnowGraphExpand = useCallback(
-    (ref: { focusId: string; focusKind?: string }) => {
-      void loadKnowGraphExplore({ focusId: ref.focusId, merge: true });
-    },
-    [loadKnowGraphExplore],
-  );
-  // Clear the lens → back to the server's default research lens.
-  const handleKnowGraphClearLens = useCallback(() => {
-    void loadKnowGraphExplore();
-  }, [loadKnowGraphExplore]);
 
   useEffect(() => {
     clearKnowledgeWorkspaceSelection();
@@ -7623,14 +6895,7 @@ export default function AgentBuilder(): React.ReactElement {
     return prefixThinkGraphIds(ageRowsToGraph(graphResult));
   }, [graphResult]);
 
-  const knowGraphViz = useMemo(() => {
-    const result = normalizeKnowGraphResponseToGraph(knowGraphData);
-    return result;
-  }, [knowGraphData]);
-
-  const graphViz = useMemo(() => {
-    return knowledgeGraphKind === 'thinkgraph' ? thinkGraphViz : knowGraphViz;
-  }, [knowledgeGraphKind, knowGraphViz, thinkGraphViz]);
+  const graphViz = thinkGraphViz;
 
   const graphVizFiltered = useMemo(() => {
     const sinceTs = buildRecencySinceTs();
@@ -7724,68 +6989,6 @@ export default function AgentBuilder(): React.ReactElement {
     [thinkGraphRecordsView],
   );
 
-  // Honest source label for the EXISTING KnowGraph tab diagnostics — reflects the real Neo4j
-  // read (data / no-records / unavailable / auth), never a blanket "host-provided".
-  const knowGraphSourceLabel = useMemo(
-    () => resolveKnowGraphSourceLabel(knowGraphSourceState, knowGraphIngestHealthOk, knowGraphViz.nodes.length > 0),
-    [knowGraphSourceState, knowGraphIngestHealthOk, knowGraphViz.nodes.length],
-  );
-  // Bounded REAL graph neighborhood for the Three engine: seed Issuer → its stored HAS_CONTEXT
-  // contexts → (per expanded context) its stored SUPPORTED_BY EvidenceSection nodes. Only stored
-  // nodes/edges; deterministic radial layout. No fabricated Universe/Theme/Filing/Source/topology.
-  const knowGraphNeighborhood = useMemo(
-    () =>
-      buildKnowGraphNeighborhood({
-        nodes: knowGraphViz.nodes,
-        edges: knowGraphViz.edges,
-        exploration: { seedIssuerId: kgSeedIssuerId, expandedContextIds: kgExpandedContextIds },
-      }),
-    [knowGraphViz.nodes, knowGraphViz.edges, kgSeedIssuerId, kgExpandedContextIds],
-  );
-  const knowGraphViewData = knowGraphNeighborhood.data;
-  // Real-node lookup (owlClass) so a click can be routed to the right neighborhood action.
-  const knowGraphVizNodeById = useMemo(
-    () => new Map(knowGraphViz.nodes.map((node) => [node.id, node] as const)),
-    [knowGraphViz.nodes],
-  );
-  const firstOwlOf = useCallback((value: unknown): string => {
-    if (Array.isArray(value)) return String(value[0] ?? '').trim();
-    return String(value ?? '').trim();
-  }, []);
-  // Click an Issuer → collapse its expanded contexts; click a Context → toggle its real
-  // SUPPORTED_BY evidence; click an EvidenceSection → existing inspector (provenance).
-  const handleKnowGraphSelectNode = useCallback(
-    (nodeId: string) => {
-      const node = knowGraphVizNodeById.get(nodeId);
-      const owl = firstOwlOf(node?.owlClass);
-      if (owl === ISSUER_OWLCLASS) {
-        setSelectedKnowledgeEntityId(null);
-        setSelectedKnowledgeRelationshipId(null);
-        setKgExpandedContextIds([]);
-        return;
-      }
-      if (owl === EVIDENCE_OWLCLASS) {
-        setSelectedKnowledgeRelationshipId(null);
-        setSelectedKnowledgeEntityId(nodeId);
-        return;
-      }
-      // Otherwise it is a context node → reveal/hide its stored evidence neighbors.
-      setSelectedKnowledgeEntityId(null);
-      setSelectedKnowledgeRelationshipId(null);
-      setKgExpandedContextIds((current) => toggleExpandedContext(current, nodeId));
-    },
-    [knowGraphVizNodeById, firstOwlOf, setSelectedKnowledgeEntityId, setSelectedKnowledgeRelationshipId],
-  );
-  // Blank canvas / Escape → collapse one level (hide all revealed evidence).
-  const handleKnowGraphBack = useCallback(() => {
-    setSelectedKnowledgeEntityId(null);
-    setSelectedKnowledgeRelationshipId(null);
-    setKgExpandedContextIds([]);
-  }, [setSelectedKnowledgeEntityId, setSelectedKnowledgeRelationshipId]);
-  const handleKnowGraphSeedChange = useCallback((issuerId: string) => {
-    setKgSeedIssuerId(issuerId);
-    setKgExpandedContextIds([]);
-  }, []);
   const knowledgeEntityById = useMemo(
     () =>
       new Map(
@@ -7858,7 +7061,6 @@ export default function AgentBuilder(): React.ReactElement {
   void knowledgeGraphStatus;
   void graphResetToken;
   void expandingNodeId;
-  void expandKnowGraphFromEntity;
   void expandGraphFromNode;
 
   const handleCreateProject = async (e?: React.FormEvent) => {
@@ -8043,8 +7245,6 @@ export default function AgentBuilder(): React.ReactElement {
       // the assistant bubble is created lazily on the FIRST real text token (below),
       // never before. If the model emits no text, no assistant bubble is created.
       setMessages((m) => [...m, { role: 'user', text: trimmed }]);
-      // Inline work is transient per turn — clear the prior turn's actions.
-      setNativeStreamEvents([]);
       setNativeSessionBusy(true);
       // Append real model text into the single assistant bubble for this turn,
       // creating that bubble on the first non-empty chunk (never an empty bubble).
@@ -8074,8 +7274,6 @@ export default function AgentBuilder(): React.ReactElement {
             appendAssistantText(String((event as { text?: unknown }).text || ''));
             return;
           }
-          // Actual agent actions go to the lower OpenClaude Work reveal (not upper chat).
-          setNativeStreamEvents((ev) => [...ev, event]);
           // Harness graph navigation: apply focus/highlight/clear directives from the graph_* tools
           // to the shared GraphExplorerCore selection store (ephemeral; no graph data is written).
           if (event.kind === 'tool_result') {
@@ -8084,20 +7282,10 @@ export default function AgentBuilder(): React.ReactElement {
               String((event as { output?: unknown }).output || ''),
             );
           }
-          if (event.kind === 'permission') {
-            setNativePendingQuestion({
-              promptId: String((event as { promptId?: unknown }).promptId || ''),
-              question: String((event as { question?: unknown }).question || ''),
-              promptType: String((event as { promptType?: unknown }).promptType || ''),
-            });
-            setChatPendingInteraction(true);
-          }
         },
       })
         .then(({ finalText }) => {
           setNativeSessionBusy(false);
-          setChatPendingInteraction(false);
-          setNativePendingQuestion(null);
           // If authoritative final text arrived but nothing streamed, create the one
           // assistant bubble now. If NO text arrived, render NOTHING — no empty bubble,
           // no "(no response text)", no status line.
@@ -8107,21 +7295,9 @@ export default function AgentBuilder(): React.ReactElement {
           // No response / error / disconnect: clear busy, KEEP the user message, and
           // render NO assistant bubble and NO fake error text.
           setNativeSessionBusy(false);
-          setChatPendingInteraction(false);
-          setNativePendingQuestion(null);
         });
     },
     [canvasProjectId, nativeSessionBusy],
-  );
-
-  const handleNativeAnswer = useCallback(
-    (promptId: string, reply: string) => {
-      if (!canvasProjectId) return;
-      void answerSession({ projectId: canvasProjectId, conversationId: 'main', promptId, reply });
-      setNativePendingQuestion(null);
-      setChatPendingInteraction(false);
-    },
-    [canvasProjectId],
   );
 
   const renderChatSurface = (
@@ -8141,14 +7317,6 @@ export default function AgentBuilder(): React.ReactElement {
         knowledgeProjectId={projectId}
         disabled={nativeSessionBusy}
         colors={C}
-        activeWork={
-          <HarnessWork
-            events={nativeStreamEvents}
-            busy={nativeSessionBusy}
-            pendingQuestion={nativePendingQuestion}
-            onAnswer={handleNativeAnswer}
-          />
-        }
       />
     );
     return (
@@ -8383,39 +7551,31 @@ export default function AgentBuilder(): React.ReactElement {
       style={getSurfaceShellStyle(minHeight <= 320)}
     >
       <div className="h-full flex flex-col" style={{ position: 'relative' }}>
-        {knowledgeGraphKind === 'knowgraph' && knowGraphExplore?.lens?.focus?.canonicalName ? (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              marginBottom: 6,
-              fontSize: 11.5,
-              color: GRAPH_THEME.drawer.inputMuted,
-            }}
-          >
-            <span>
-              Viewing research lens:{' '}
-              <b>{safeText(knowGraphExplore.lens.focus.canonicalName)}</b>
-            </span>
-            <button
-              type="button"
-              onClick={handleKnowGraphClearLens}
-              style={{
-                fontSize: 11,
-                padding: '2px 8px',
-                borderRadius: 6,
-                cursor: 'pointer',
-                border: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`,
-                background: GRAPH_THEME.drawer.panelBackground,
-                color: GRAPH_THEME.drawer.inputMuted,
-              }}
-            >
-              Clear lens
-            </button>
-            <span style={{ opacity: 0.7 }}>
-              focused research lens — search or click to explore other issuers
-            </span>
+        {connectedKnowledgeGraphKinds.length > 0 ? (
+          <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 6, display: 'flex', gap: 6 }}>
+            {connectedKnowledgeGraphKinds.map((k) => {
+              const active = k === knowledgeGraphKind;
+              const label = k === 'codegraph' ? 'CodeGraph' : k === 'thinkgraph' ? 'ThinkGraph' : k;
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  data-testid={`graph-kind-${k}`}
+                  onClick={() => setKnowledgeGraphKind(k)}
+                  style={{
+                    fontSize: 12,
+                    padding: '4px 12px',
+                    borderRadius: 7,
+                    cursor: 'pointer',
+                    border: `1px solid ${active ? '#2dd4bf' : '#26313f'}`,
+                    background: active ? 'rgba(45,212,191,0.12)' : 'rgba(13,18,32,0.7)',
+                    color: active ? '#a9ecdf' : '#8fb3c8',
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
           </div>
         ) : null}
         <div
@@ -8444,6 +7604,39 @@ export default function AgentBuilder(): React.ReactElement {
                 </div>
               }
             >
+              {knowledgeGraphKind === 'codegraph' ? (
+                <CodeGraphSurface
+                  projectId={codeGraphProjectName}
+                  viewContract={{
+                    projectId: codeGraphProjectName,
+                    nodeLabelAllowlist: graphViewContract?.nodeLabelAllowlist,
+                    edgeTypeAllowlist: graphViewContract?.edgeTypeAllowlist,
+                    showLabels: graphViewContract?.showLabels,
+                    maxNodes: graphViewContract?.maxNodes,
+                    focusPaths: graphViewContract?.focusPaths,
+                    focusSymbols: graphViewContract?.focusSymbols,
+                  }}
+                  onViewContractChange={(nextContract) =>
+                    setGraphViewContract((prev) => ({
+                      graphKind: 'codegraph',
+                      projectId: codeGraphProjectName,
+                      nodeLabelAllowlist: nextContract.nodeLabelAllowlist,
+                      edgeTypeAllowlist: nextContract.edgeTypeAllowlist,
+                      showLabels:
+                        typeof nextContract.showLabels === 'boolean'
+                          ? nextContract.showLabels
+                          : (prev?.showLabels ?? true),
+                      maxNodes: nextContract.maxNodes ?? prev?.maxNodes,
+                      focusNodeIds: prev?.focusNodeIds,
+                      focusPaths: nextContract.focusPaths ?? prev?.focusPaths,
+                      focusSymbols: nextContract.focusSymbols ?? prev?.focusSymbols,
+                      cameraMode: prev?.cameraMode ?? 'overview',
+                      animationMode: prev?.animationMode ?? 'calm',
+                      narrativeIntent: prev?.narrativeIntent ?? null,
+                    }))
+                  }
+                />
+              ) : (
               <KnowledgeGraphFramework
                 kind={knowledgeGraphKind}
                 availableKinds={connectedKnowledgeGraphKinds}
@@ -8470,10 +7663,7 @@ export default function AgentBuilder(): React.ReactElement {
                 contract={
                   graphViewContract ?? {
                     graphKind: knowledgeGraphKind,
-                    projectId:
-                      knowledgeGraphKind === 'codegraph'
-                        ? codeGraphProjectName
-                        : (activeProject ?? null),
+                    projectId: activeProject ?? null,
                     showLabels: true,
                     cameraMode: 'overview',
                     animationMode: 'calm',
@@ -8485,21 +7675,12 @@ export default function AgentBuilder(): React.ReactElement {
                 }
                 thinkGraphData={thinkGraphViewData}
                 codeGraphViewData={codeGraphViewData}
-                knowGraphData={knowGraphViewData}
-                knowGraphExplore={knowGraphExplore}
                 thinkGraphSource={thinkGraphSourceLabel}
-                knowGraphSource={knowGraphSourceLabel}
                 codeGraphProjectName={codeGraphProjectName}
                 onRefreshRequest={loadGraphData}
-                onKnowGraphSelectNode={handleKnowGraphSelectNode}
-                onKnowGraphFocus={handleKnowGraphFocus}
-                onKnowGraphExpand={handleKnowGraphExpand}
-                onKnowGraphBack={handleKnowGraphBack}
-                knowGraphIssuerOptions={knowGraphNeighborhood.issuerOptions}
-                knowGraphSeedIssuerId={knowGraphNeighborhood.seedIssuerId}
-                onKnowGraphSeedChange={handleKnowGraphSeedChange}
                 minHeight={minHeight}
               />
+              )}
             </Suspense>
           </KnowledgeSurfaceErrorBoundary>
         </div>
@@ -8654,33 +7835,6 @@ export default function AgentBuilder(): React.ReactElement {
     ),
     [],
   );
-
-  const applyCodeGraphViewContract = useCallback(
-    (contract: GraphViewContract | null) => {
-      if (!contract) return;
-      const setter = (window as any).__LIQUIDAITY_SET_CODEGRAPH_VIEW_CONTRACT__;
-      if (typeof setter === 'function') {
-        setter(contract);
-        return;
-      }
-      setKnowledgeGraphKind(contract.graphKind || 'codegraph');
-      setGraphViewContract(contract);
-    },
-    [],
-  );
-
-  useEffect(() => {
-    (window as any).__LIQUIDAITY_SET_CODEGRAPH_VIEW_CONTRACT__ = (
-      contract: GraphViewContract | null,
-    ) => {
-      if (!contract) return;
-      setKnowledgeGraphKind(contract.graphKind || 'codegraph');
-      setGraphViewContract(contract);
-    };
-    return () => {
-      delete (window as any).__LIQUIDAITY_SET_CODEGRAPH_VIEW_CONTRACT__;
-    };
-  }, [applyCodeGraphViewContract]);
 
   const handleCompanionTabClick = useCallback((nextTab: string) => {
     setTab(nextTab);

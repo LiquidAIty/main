@@ -23,6 +23,14 @@ any inherited prompt, and any pattern you observe in surrounding code.
 4. **Membership test.** If a thing is not (a) bound by an agent, (b) controlling/visualizing an
    agent on the canvas, or (c) knowledge — it does not belong here. Delete it.
 
+   **The ONLY system is:** ReactFlow agent cards on the canvas + AutoGen/Mag One (Python) under
+   them + the Harness + MCP-based graph connections. The ONLY two orchestrators are (1) the
+   vendored OpenClaude/coder stack and (2) Mag One (Python, thin TS transport on top). Storage
+   authority: **KnowGraph = Python + Neo4j** (research agents write it natively); **ThinkGraph =
+   the MCP write tool** (chat writes via `apply_delta`). Therefore any TS that ingests, extracts,
+   chunks, plans, scores, researches, or runs an agent/tool framework is poison — it is not bound
+   to a card, it is not the canvas, it is not the Harness, and it is not Python. Delete it.
+
 ## TypeScript is rails, not a brain
 
 5. **No logic in TypeScript. None.** No calculation, classification, planning, reasoning, regex
@@ -61,3 +69,18 @@ any inherited prompt, and any pattern you observe in surrounding code.
 
 15. **Proof = real runtime + the build the dev server uses.** Typecheck + the touched tests must be
     green, and you must say what you did NOT verify. "It compiles" is not "it works."
+
+## Purge log
+
+- **2026-06-30 — ~10,650 lines of TS-logic poison removed** (67 files deleted; backend + client
+  `tsc` green throughout; backend boots clean on :4000). Removed: the `agents/` TS tool framework
+  (`registry` + `tools/*` + `connectors/*` + `mcp-controller`/`mcp-tool-registry`) and its
+  `tools`/`mcp.catalog`/`mcp-tools` routes (~2,040 lines) · TS KG-ingest/extraction in `kg.routes`
+  (`/ingest_chat_turn`, `/research`, the queue/chunking/neo4j-sink) · `researchService` +
+  `autogenResearchClient` (TS research planning) · `slmGraph/` (alternate TS graph-search/KG-write)
+  · `contracts/scoring.ts` + `deckScoring.ts` · the `orchestrator/` TS planner + webhook stub ·
+  the `sentiment`/`report`/`memoryRetrieval`/`dispatcher` cluster · the dead CodeGraph
+  view-contract pipeline + `structuredPlan`. **Kept:** `kg.routes` `/query`+`/status` (canvas KG
+  reads), `agents/mcp/*` (live MCP client), `AgentManager` (canvas card inspector), tavily
+  (reserved capability). **Still TODO:** `agentbuilder.tsx` graph-merge/flow-connectivity
+  calculators (logic in the UI).

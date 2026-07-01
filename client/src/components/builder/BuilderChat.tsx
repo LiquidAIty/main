@@ -30,15 +30,12 @@ export default function BuilderChat({
   knowledgeProjectId,
   disabled = false,
   colors,
-  activeWork,
 }: {
   messages: { role: "assistant" | "user"; text: string }[];
   onSend: (t: string) => void;
   knowledgeProjectId: string;
   disabled?: boolean;
   colors: BuilderChatColors;
-  /** Compact inline work for the active turn, shown beneath the latest message. */
-  activeWork?: ReactNode;
 }) {
   const [v, setV] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
@@ -122,13 +119,6 @@ export default function BuilderChat({
             </div>
           );
         })}
-        {/* Inline per-turn work flows with the conversation, beneath the active
-            assistant reply — not a pinned panel that squeezes the message list. */}
-        {activeWork ? (
-          <div style={{ justifySelf: "start", maxWidth: "min(92%, 640px)", width: "100%" }}>
-            {activeWork}
-          </div>
-        ) : null}
         </div>
       </div>
       <div className="px-4 pb-4">

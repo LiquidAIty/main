@@ -216,16 +216,9 @@ export type CardRunScoreDetail = {
   maxScore: number;
 };
 
-export type CodeGraphViewContract = {
-  projectId?: string | null;
-  focusPaths?: string[];
-  focusSymbols?: string[];
-  nodeLabelAllowlist?: string[];
-  edgeTypeAllowlist?: string[];
-  showLabels?: boolean;
-  maxNodes?: number;
-};
-
+// Graph STORE identities (all three have real data + refs used by the ContextSlice handoff and CBM
+// scope). Which of these gets a VISUAL surface is a separate, viz-level concern — the KnowGraph viz
+// is intentionally not mounted right now, but 'knowgraph' remains a valid data/ref identity.
 export type KnowledgeGraphKind = 'thinkgraph' | 'knowgraph' | 'codegraph';
 
 export type GraphNode = {
@@ -503,8 +496,6 @@ export type CardRunResult = {
   improvementPromptBit?: string;
   inputSummary?: string;
   outputSummary?: string;
-  codegraphViewContract?: CodeGraphViewContract | null;
-  structuredPlan?: Record<string, unknown> | null;
   magenticTrace?: {
     plan?: Record<string, unknown> | unknown[] | null;
     blackboardEntries?: Record<string, unknown> | unknown[] | null;
@@ -554,8 +545,6 @@ export type DeckRuntimeEvent = {
   outputSummary?: string | null;
   completedWorkers?: number | null;
   totalWorkers?: number | null;
-  codegraphViewContract?: CodeGraphViewContract | null;
-  plan?: Record<string, unknown> | unknown[] | null;
   blackboardEntries?: Record<string, unknown> | unknown[] | null;
   reportBacks?: Record<string, unknown> | unknown[] | null;
   transcript?: unknown[] | null;
@@ -594,8 +583,6 @@ export type DeckRunStep = {
   improvementPromptBit?: string;
   inputSummary?: string;
   outputSummary?: string;
-  codegraphViewContract?: CodeGraphViewContract | null;
-  structuredPlan?: Record<string, unknown> | null;
   magenticTrace?: {
     plan?: Record<string, unknown> | unknown[] | null;
     blackboardEntries?: Record<string, unknown> | unknown[] | null;
@@ -694,7 +681,6 @@ export type DeckRun = {
   workspaceContext?: DeckWorkspaceContext | null;
   workspaceObjectContext?: WorkspaceObjectContext | null;
   steps: DeckRunStep[];
-  codegraphViewContract?: CodeGraphViewContract | null;
   validationSummary: {
     ok: boolean;
     errors: string[];

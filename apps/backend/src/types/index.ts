@@ -203,32 +203,7 @@ export type CardRunScoreDetail = {
   maxScore: number;
 };
 
-export type CodeGraphViewContract = {
-  projectId?: string | null;
-  focusPaths?: string[];
-  focusSymbols?: string[];
-  nodeLabelAllowlist?: string[];
-  edgeTypeAllowlist?: string[];
-  showLabels?: boolean;
-  maxNodes?: number;
-};
-
 export type KnowledgeGraphKind = 'thinkgraph' | 'knowgraph' | 'codegraph';
-
-export type GraphViewContract = {
-  graphKind: KnowledgeGraphKind;
-  projectId?: string | null;
-  focusNodeIds?: string[];
-  focusPaths?: string[];
-  focusSymbols?: string[];
-  nodeLabelAllowlist?: string[];
-  edgeTypeAllowlist?: string[];
-  showLabels?: boolean;
-  maxNodes?: number;
-  cameraMode?: 'overview' | 'focus' | 'trace' | 'cluster';
-  animationMode?: 'calm' | 'guided' | 'active';
-  narrativeIntent?: string | null;
-};
 
 export type SemanticGraphName = 'think' | 'know' | 'code';
 
@@ -462,10 +437,6 @@ export type CardRunResult = {
   improvementPromptBit?: string;
   inputSummary?: string;
   outputSummary?: string;
-  graphViewContract?: GraphViewContract | null;
-  // Temporary legacy alias while clients migrate to graphViewContract.
-  codegraphViewContract?: CodeGraphViewContract | null;
-  structuredPlan?: Record<string, unknown> | null;
   magenticTrace?: {
     plan?: Record<string, unknown> | unknown[] | null;
     blackboardEntries?: Record<string, unknown> | unknown[] | null;
@@ -515,10 +486,6 @@ export type DeckRuntimeEvent = {
   outputSummary?: string | null;
   completedWorkers?: number | null;
   totalWorkers?: number | null;
-  graphViewContract?: GraphViewContract | null;
-  // Temporary legacy alias while clients migrate to graphViewContract.
-  codegraphViewContract?: CodeGraphViewContract | null;
-  plan?: Record<string, unknown> | unknown[] | null;
   blackboardEntries?: Record<string, unknown> | unknown[] | null;
   reportBacks?: Record<string, unknown> | unknown[] | null;
   transcript?: unknown[] | null;
@@ -558,10 +525,6 @@ export type DeckRunStep = {
   improvementPromptBit?: string;
   inputSummary?: string;
   outputSummary?: string;
-  graphViewContract?: GraphViewContract | null;
-  // Temporary legacy alias while clients migrate to graphViewContract.
-  codegraphViewContract?: CodeGraphViewContract | null;
-  structuredPlan?: Record<string, unknown> | null;
   routeInfo?: {
     mergeIntent?: DeckEdgeMergeIntent | 'legacy_default' | null;
     inputMode?: 'legacy_text' | 'single_upstream' | 'structured_merge' | null;
@@ -812,9 +775,6 @@ export type DeckRun = {
   workspaceContext?: DeckWorkspaceContext | null;
   workspaceObjectContext?: WorkspaceObjectContext | null;
   steps: DeckRunStep[];
-  graphViewContract?: GraphViewContract | null;
-  // Temporary legacy alias while clients migrate to graphViewContract.
-  codegraphViewContract?: CodeGraphViewContract | null;
   validationSummary: {
     ok: boolean;
     errors: string[];

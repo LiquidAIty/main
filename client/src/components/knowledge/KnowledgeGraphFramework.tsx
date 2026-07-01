@@ -49,31 +49,12 @@ type KnowledgeGraphFrameworkProps = {
   thinkGraphData: GraphViewData;
   /** CBM call-graph slice from /api/codegraph/graph-view (codebase-memory MCP). */
   codeGraphViewData?: GraphViewData;
-  knowGraphData: GraphViewData;
-  /** Raw `/api/knowgraph/explore` response (carries `.lens`). When present the KnowGraph tab renders
-   * through the purpose-built semantic-lens adapter (full edge provenance), not the flattened DTO. */
-  knowGraphExplore?: any;
-  /** Re-center the bounded KnowGraph neighborhood on an EXACT object (raw id + kind), or a label for
-   * the search fallback. Replaces the current focus. */
-  onKnowGraphFocus?: (ref: { focusId?: string; focusKind?: string; focusLabel?: string }) => void;
-  /** Expand-one-hop: fetch the exact node's neighborhood and MERGE it in, keeping the current focus. */
-  onKnowGraphExpand?: (ref: { focusId: string; focusKind?: string }) => void;
   /** Honest data-source label for the ThinkGraph tab (e.g. 'thinkgraph-db', 'host-provided',
    * 'thinkgraph-db:no_thinkgraph_records_for_project', 'unavailable:<blocker>'). */
   thinkGraphSource?: string;
-  knowGraphSource?: string;
   codeGraphProjectName: string;
   minHeight?: number;
   onRefreshRequest?: () => Promise<void> | void;
-  /** KnowGraph neighborhood navigation (knowgraph kind only). A node click reports the real node
-   *  id so the parent can expand/collapse the bounded neighborhood through stored edges; the back
-   *  callback fires on a blank-canvas click or Escape (collapse one level). Think/code unaffected. */
-  onKnowGraphSelectNode?: (nodeId: string) => void;
-  onKnowGraphBack?: () => void;
-  /** Seed-issuer picker for the KnowGraph neighborhood, surfaced in the existing Controls drawer. */
-  knowGraphIssuerOptions?: Array<{ id: string; ticker: string }>;
-  knowGraphSeedIssuerId?: string | null;
-  onKnowGraphSeedChange?: (issuerId: string) => void;
 };
 
 const DEFAULT_FILTERS: Record<
@@ -89,15 +70,11 @@ const DEFAULT_FILTERS: Record<
     edgeTypeAllowlist: ['related_to', 'supports', 'contradicts', 'depends_on'],
     maxNodes: 6000,
   },
+  // 'knowgraph' has no viz surface mounted right now; kept only so DEFAULT_FILTERS stays a total
+  // Record<KnowledgeGraphKind>. Not selectable (availableKinds excludes it).
   knowgraph: {
-    nodeLabelAllowlist: [
-      'entity',
-      'document',
-      'topic',
-      'person',
-      'organization',
-    ],
-    edgeTypeAllowlist: ['related_to', 'references', 'cites', 'evidence_for'],
+    nodeLabelAllowlist: [],
+    edgeTypeAllowlist: [],
     maxNodes: 8000,
   },
   codegraph: {
@@ -273,26 +250,16 @@ function edgeSetFromGraph(data: CodeGraphData): string[] {
 
 export default function KnowledgeGraphFramework({
   kind,
-  availableKinds = ['thinkgraph', 'knowgraph', 'codegraph'],
+  availableKinds = ['thinkgraph', 'codegraph'],
   onKindChange,
   contract,
   onContractChange,
   thinkGraphData,
   codeGraphViewData,
-  knowGraphData,
-  knowGraphExplore,
-  onKnowGraphFocus,
-  onKnowGraphExpand,
   thinkGraphSource,
-  knowGraphSource,
   codeGraphProjectName,
   minHeight = 360,
   onRefreshRequest,
-  onKnowGraphSelectNode,
-  onKnowGraphBack,
-  knowGraphIssuerOptions,
-  knowGraphSeedIssuerId,
-  onKnowGraphSeedChange,
 }: KnowledgeGraphFrameworkProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [interactionLocked, setInteractionLocked] = useState(false);
@@ -389,10 +356,8 @@ export default function KnowledgeGraphFramework({
         idMap: new Map<string, number>(),
       };
     }
-    return toNumericGraphData(
-      kind === 'thinkgraph' ? thinkGraphData : knowGraphData,
-    );
-  }, [kind, codeGraphData, thinkGraphData, knowGraphData]);
+    return toNumericGraphData(thinkGraphData);
+  }, [kind, codeGraphData, thinkGraphData]);
 
   const allLabels = useMemo(
     () => labelSetFromGraph(normalized.graph),
@@ -489,10 +454,8 @@ export default function KnowledgeGraphFramework({
       console.warn(`[graph] CodeGraph (${codeGraphProjectName || 'no-project'}): ${codeGraphError}`);
     } else if (kind === 'thinkgraph') {
       console.debug(`[graph] ThinkGraph source=${thinkGraphSource || 'host-provided'}`);
-    } else if (kind === 'knowgraph') {
-      console.debug(`[graph] KnowGraph source=${knowGraphSource || 'host-provided'}`);
     }
-  }, [kind, codeGraphError, codeGraphProjectName, thinkGraphSource, knowGraphSource]);
+  }, [kind, codeGraphError, codeGraphProjectName, thinkGraphSource]);
 
   const highlightedIds = useMemo(() => {
     if (!contract.focusNodeIds?.length) return null;
@@ -506,16 +469,6 @@ export default function KnowledgeGraphFramework({
     });
     return ids.size > 0 ? ids : null;
   }, [contract.focusNodeIds, normalized.idMap]);
-
-  // Escape returns the KnowGraph canvas to the research-map overview (existing keyboard convention).
-  useEffect(() => {
-    if (kind !== 'knowgraph' || !onKnowGraphBack) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onKnowGraphBack();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [kind, onKnowGraphBack]);
 
   // Reverse of normalized.idMap (numeric scene id → real string node id) so a KnowGraph node
   // click can be reported back to the parent by its real id for neighborhood expansion.
@@ -587,96 +540,10 @@ export default function KnowledgeGraphFramework({
       availableKinds.filter(
         (value, index, values) =>
           values.indexOf(value) === index &&
-          (value === 'thinkgraph' ||
-            value === 'knowgraph' ||
-            value === 'codegraph'),
+          (value === 'thinkgraph' || value === 'codegraph'),
       ),
     [availableKinds],
   );
-
-  // KnowGraph renders through the real 2D D3 force explorer (readable labels, drag/pan/zoom,
-  // node focus, one-hop expansion) — NOT the shared 3D sphere scene. Map the project-scoped
-  // KnowGraph view data (already bound to the typed evidence projection) into the explorer's
-  // entity/relationship shape. ThinkGraph + CodeGraph are untouched (still the 3D scene).
-  const knowGraphNvlData = useMemo(() => {
-    const nodes = Array.isArray(knowGraphData?.nodes) ? knowGraphData.nodes : [];
-    const edges = Array.isArray(knowGraphData?.edges) ? knowGraphData.edges : [];
-    const entities: KnowledgeGraphNode[] = nodes.map((n) => ({
-      id: String(n.id),
-      label: String(n.label || n.id),
-      type: String(n.type || 'entity'),
-      source: 'know',
-      scope: 'project',
-      summary: n.summary,
-      confidence: n.confidence,
-      // Raw props (subject/predicate/object/outcome/source_*) drive concise claim labels +
-      // outcome encoding in the explorer and keep raw provenance reachable on inspect.
-      properties: (n as { properties?: Record<string, unknown> }).properties,
-    }));
-    const ids = new Set(entities.map((e) => e.id));
-    const relationships: KnowledgeGraphRelationship[] = edges
-      .filter((e) => ids.has(String(e.source)) && ids.has(String(e.target)))
-      .map((e) => ({
-        id: String(e.id),
-        from: String(e.source),
-        to: String(e.target),
-        type: String(e.type || 'related_to'),
-        source: 'know',
-        scope: 'project',
-        weight: e.weight,
-      }));
-    return { entities, relationships };
-  }, [knowGraphData]);
-
-  // Source-neutral GraphView for the shared Sigma explorer (KnowGraph layer). Built from the same
-  // /explore lens data; node properties carry explorationRole/status/rawIds for inspect.
-  const knowGraphSigmaView = useMemo<GraphView>(() => {
-    const rawNodes = Array.isArray(knowGraphData?.nodes) ? knowGraphData.nodes : [];
-    const rawEdges = Array.isArray(knowGraphData?.edges) ? knowGraphData.edges : [];
-    const nodes = rawNodes.map((n) => {
-      const props = ((n as { properties?: Record<string, unknown> }).properties || {}) as Record<string, unknown>;
-      return {
-        id: String(n.id),
-        ownerGraph: 'know' as const,
-        semanticKind: String(n.type || 'entity'),
-        displayLabel: String(n.label || n.id),
-        explorationRole: typeof props.explorationRole === 'string' ? props.explorationRole : undefined,
-        rawIds: Array.isArray(props.rawIds) ? (props.rawIds as string[]) : [],
-        evidenceCount: Number(props.evidenceCount) || 0,
-        sourceCount: Number(props.sourceCount) || 0,
-        statusSummary: (props.statusSummary as Record<string, number>) || {},
-        degree: Number(props.degree) || 0,
-      };
-    });
-    const ids = new Set(nodes.map((n) => n.id));
-    const edges = rawEdges
-      .map((e, i) => ({
-        id: String(e.id ?? `${e.source}->${e.target}->${i}`),
-        source: String(e.source),
-        target: String(e.target),
-        ownerGraph: 'know' as const,
-        predicate: String(e.type || 'related_to'),
-      }))
-      .filter((e) => ids.has(e.source) && ids.has(e.target));
-    const focusNode = nodes.reduce<typeof nodes[number] | null>((a, b) => ((b.degree || 0) > (a?.degree || 0) ? b : a), null);
-    return {
-      focus: focusNode ? { id: focusNode.id, label: focusNode.displayLabel } : null,
-      activeLayers: ['know'],
-      nodes,
-      edges,
-      availability: [{ layer: 'know', state: nodes.length > 0 ? 'available' : 'unavailable', reason: nodes.length > 0 ? 'source-backed evidence and filings available' : 'no source-backed evidence for this focus yet' }],
-    };
-  }, [knowGraphData]);
-
-  // Prefer the real semantic-lens adapter when the raw /explore payload is available: it preserves
-  // the focus, every edge's assertion/source ids, status counts, and per-node provenance that the
-  // flattened DTO drops. Fall back to the DTO-derived view only when no lens has loaded yet.
-  const knowGraphExplorerView = useMemo<GraphView>(() => {
-    if (knowGraphExplore?.lens && Array.isArray(knowGraphExplore.lens.nodes)) {
-      return knowGraphAdapter(knowGraphExplore);
-    }
-    return knowGraphSigmaView;
-  }, [knowGraphExplore, knowGraphSigmaView]);
 
   // ThinkGraph view = the canonical word-first :ThinkNode / :THINK_EDGE projection from
   // /api/thinkgraph/graph-view (node.type = reasoning class, edge.type = typed predicate),
@@ -689,6 +556,7 @@ export default function KnowledgeGraphFramework({
       ownerGraph: 'think' as const,
       semanticKind: String(n.type || 'entity'),
       displayLabel: String(n.label || n.id),
+      rawIds: [String(n.id)],
     }));
     const ids = new Set(nodes.map((n) => n.id));
     const edges = rawEdges
@@ -720,6 +588,7 @@ export default function KnowledgeGraphFramework({
       ownerGraph: 'code' as const,
       semanticKind: String(n.type || 'Function'),
       displayLabel: String(n.label || n.id),
+      rawIds: [String(n.id)],
     }));
     const ids = new Set(nodes.map((n) => n.id));
     const edges = rawEdges
@@ -740,26 +609,27 @@ export default function KnowledgeGraphFramework({
     };
   }, [codeGraphViewData]);
 
-  // Shared-canvas source toggles — your real graphs by their real names. KnowGraph on by default.
-  const [enabledSources, setEnabledSources] = useState<Record<'knowgraph' | 'thinkgraph' | 'codegraph' | 'skillgraph', boolean>>({ knowgraph: true, thinkgraph: false, codegraph: false, skillgraph: false });
-  const toggleSource = useCallback((id: 'knowgraph' | 'thinkgraph' | 'codegraph' | 'skillgraph') => setEnabledSources((p) => ({ ...p, [id]: !p[id] })), []);
+  // Shared-canvas source toggles — your real graphs by their real names.
+  const [enabledSources, setEnabledSources] = useState<Record<'thinkgraph' | 'codegraph' | 'skillgraph', boolean>>({ thinkgraph: true, codegraph: false, skillgraph: false });
+  const toggleSource = useCallback((id: 'thinkgraph' | 'codegraph' | 'skillgraph' | 'knowgraph') => {
+    if (id === 'knowgraph') return;
+    setEnabledSources((p) => ({ ...p, [id]: !p[id] }));
+  }, []);
 
   const sources = useMemo<GraphSource[]>(() => [
-    { id: 'knowgraph', name: 'KnowGraph', enabled: enabledSources.knowgraph, available: knowGraphExplorerView.nodes.length > 0, nodeCount: knowGraphExplorerView.nodes.length },
     { id: 'thinkgraph', name: 'ThinkGraph', enabled: enabledSources.thinkgraph, available: thinkGraphView.nodes.length > 0, nodeCount: thinkGraphView.nodes.length, reason: 'Apache AGE thinkgraph_liq' },
     { id: 'codegraph', name: 'CodeGraph', enabled: enabledSources.codegraph, available: codeGraphView.nodes.length > 0, nodeCount: codeGraphView.nodes.length, reason: 'CBM codebase-memory MCP' },
     { id: 'skillgraph', name: 'SkillGraph', enabled: false, available: false, nodeCount: 0, reason: 'SkillGraph not connected yet' },
-  ], [enabledSources, knowGraphExplorerView, thinkGraphView, codeGraphView]);
+  ], [enabledSources, thinkGraphView, codeGraphView]);
 
   // One canvas: union of the ENABLED real sources. Each node/edge keeps its source identity; no
-  // cross-graph edge is invented. KnowGraph alone by default.
+  // cross-graph edge is invented.
   const composedGraphView = useMemo<GraphView>(() => {
     const views: GraphView[] = [];
-    if (enabledSources.knowgraph) views.push(knowGraphExplorerView);
     if (enabledSources.thinkgraph) views.push(thinkGraphView);
     if (enabledSources.codegraph) views.push(codeGraphView);
-    return views.length ? composeSources(views) : knowGraphExplorerView;
-  }, [enabledSources, knowGraphExplorerView, thinkGraphView, codeGraphView]);
+    return views.length ? composeSources(views) : thinkGraphView;
+  }, [enabledSources, thinkGraphView, codeGraphView]);
 
   return (
     <div
@@ -822,27 +692,6 @@ export default function KnowledgeGraphFramework({
             gap: 12,
           }}
         >
-          {kind === 'knowgraph' && (knowGraphIssuerOptions?.length ?? 0) > 0 ? (
-            <div data-testid="knowgraph-seed-picker" style={{ display: 'grid', gap: 6 }}>
-              <span style={{ fontSize: 11, color: GRAPH_THEME.surface.mutedText }}>Issuer neighborhood</span>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {knowGraphIssuerOptions!.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    data-issuer-id={option.id}
-                    onClick={() => onKnowGraphSeedChange?.(option.id)}
-                    style={graphCompanionTabButtonStyle(option.id === knowGraphSeedIssuerId, {
-                      fontSize: 11,
-                      padding: '4px 8px',
-                    })}
-                  >
-                    {option.ticker}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
           <CodeGraphFilterPanel
             data={normalized.graph}
             enabledLabels={labelAllow}
@@ -910,13 +759,7 @@ export default function KnowledgeGraphFramework({
             height={Math.max(minHeight || 0, 560)}
             onSelectNode={(node) => {
               applyContractPatch({ focusNodeIds: node ? [node.id] : [] });
-              if (node && onKnowGraphSelectNode) onKnowGraphSelectNode(node.id);
             }}
-            // KnowGraph exact focus/expand/search go to the Neo4j lens (only fire for KnowGraph nodes;
-            // ThinkGraph is the full faithful AGE read, navigated locally on the same canvas).
-            onRefocusNode={(ref) => onKnowGraphFocus?.({ focusId: ref.focusId, focusKind: ref.focusKind, focusLabel: ref.focusLabel })}
-            onExpandNode={(ref) => onKnowGraphExpand?.({ focusId: ref.focusId, focusKind: ref.focusKind })}
-            onFocusSearch={(query) => onKnowGraphFocus?.({ focusLabel: query })}
           />
         </div>
       </div>

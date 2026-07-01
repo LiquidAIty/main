@@ -128,9 +128,7 @@ export type CardRunResult = {
   seed?: string;
   inputSummary?: string;
   outputSummary?: string;
-  structuredPlan?: Record<string, unknown> | null;
   magenticTrace?: Record<string, unknown> | null;
-  graphViewContract?: Record<string, unknown> | null;
 };
 
 export type DeckExecutionInput = {
@@ -161,8 +159,6 @@ export type DeckExecutionOutput = {
   workspaceObjectContext?: any;
   validationSummary?: any;
   executionPlanSummary?: any;
-  graphViewContract?: any;
-  codegraphViewContract?: any;
 };
 
 export type RuntimeScope = {
