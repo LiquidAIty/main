@@ -186,6 +186,55 @@ export async function orchestrateWithAutoGen(
   }
 }
 
+const AUTOGEN_RUN_CARD_ENDPOINT = '/autogen/run_card';
+
+/**
+ * Transport-only: run ONE configured canvas card via the Python single-card
+ * runtime (`/autogen/run_card`). Same base-URL/timeout/retry conventions as
+ * orchestrateWithAutoGen. An ok:false response is returned as-is (it carries an
+ * honest error) — this layer never retries into a fallback or fabricates output.
+ */
+export async function runSingleCardWithAutoGen(
+  payload: AutoGenOrchestratorRequest,
+): Promise<AutoGenOrchestratorResponse> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), readTimeoutMs());
+  try {
+    let lastError: any = null;
+    const baseUrls = buildSidecarBaseUrls();
+    for (const baseUrl of baseUrls) {
+      const endpoint = `${baseUrl}${AUTOGEN_RUN_CARD_ENDPOINT}`;
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        const text = await response.text();
+        const data = text ? JSON.parse(text) : null;
+        if (!response.ok) {
+          const message = String(data?.detail || data?.error || response.statusText || 'autogen_run_card_http_error').trim();
+          throw new Error(`autogen_run_card_http_${response.status}:${message}`);
+        }
+        if (!data || typeof data !== 'object' || typeof (data as any).ok !== 'boolean') {
+          throw new Error('autogen_run_card_invalid_response');
+        }
+        return data as AutoGenOrchestratorResponse;
+      } catch (error: any) {
+        lastError = error;
+        if (!isRetryableSidecarError(error)) break;
+      }
+    }
+    if (lastError) throw lastError;
+    throw new Error(
+      `PYTHON_AUTOGEN_RAILS_UNAVAILABLE: checkedEndpoints=${baseUrls.map((b) => `${b}${AUTOGEN_RUN_CARD_ENDPOINT}`).join(',')}`,
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // Transport-only: fetch the read-only Mag One tool capability manifest from the
 // Python rails. No tool definitions are authored here; the Python registry owns
 // them. Used to render real capability metadata on the existing card Tools surface.

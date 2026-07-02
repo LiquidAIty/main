@@ -6,7 +6,7 @@ describe('applyGraphNavToolResult → GraphExplorerCore selection store', () => 
   beforeEach(() => graphSelection.reset());
 
   it('ignores non-navigation tools', () => {
-    expect(applyGraphNavToolResult('thinkgraph_apply_delta', '{"ok":true}')).toBe(false);
+    expect(applyGraphNavToolResult('some_non_nav_tool', '{"ok":true}')).toBe(false);
     expect(graphSelection.get().focusRequest).toBeNull();
   });
 

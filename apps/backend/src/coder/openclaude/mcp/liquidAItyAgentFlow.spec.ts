@@ -87,22 +87,18 @@ describe('buildProjectContext', () => {
     expect(ctx.activePlanSummary).toEqual({ hasArtifact: true, source: 'autogen_0_7_5_magentic_one' });
   });
 
-  it('contributes the ThinkGraph capability: skill link, permitted tools, and read/write boundary', async () => {
+  it('contributes the ThinkGraph capability: card identity + honest paused producer', async () => {
     const ctx = await buildProjectContext(
       { projectId: 'project-1', deckId: 'deck_builder' },
       deps(),
     );
     const cap = ctx.thinkGraphCapability;
-    expect(cap.skill).toBe('skills/thinkgraph.md');
-    // The skill file is the source of truth and is actually loaded (not a dangling link).
-    expect(cap.skillInstructions).toContain('directional');
-    // ThinkGraph has exactly one durable writer; KnowGraph is read-only (no write group exists).
-    expect(cap.permittedTools.thinkgraphWrite).toEqual(['thinkgraph_apply_delta']);
-    expect(cap.permittedTools.knowgraphRead).toEqual([
-      'knowgraph_get_slice', 'knowgraph_search', 'knowgraph_inspect_evidence', 'knowgraph_get_source_context',
-    ]);
-    expect(Object.keys(cap.permittedTools)).not.toContain('knowgraphWrite');
-    expect(cap.permittedTools.graphNav).toEqual(['graph_focus', 'graph_highlight', 'graph_clear_highlight']);
+    // No MCP graph tool surface exists: ThinkGraph is written only by the Harness calling
+    // the ThinkGraph agent card (writer not yet wired). The capability says so honestly.
+    expect(cap.producer).toContain('PAUSED');
+    expect(cap.producer).toContain('ThinkGraph agent card');
+    expect(Object.keys(cap)).not.toContain('permittedTools');
+    expect(Object.keys(cap)).not.toContain('skillInstructions');
   });
 });
 

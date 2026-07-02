@@ -21,15 +21,11 @@
 // All handlers read authoritative current state, never mutate the deck, never
 // write graph memory, and never fabricate agents/tools/outputs.
 
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { getDeckDocument } from '../../../decks/store';
 import { buildMagOneRoutingDiagnostics, runCardWithContract } from '../../../cards/runtime';
 import { resolveRuntimeBinding } from '../../../contracts/runtimeBinding';
-import { HARNESS_GRAPH_TOOLS } from './harnessGraphTools';
 
 const PROMPT_SUMMARY_CHARS = 200;
-const THINKGRAPH_SKILL_PATH = 'skills/thinkgraph.md';
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value);
@@ -51,31 +47,19 @@ function resolveCardTools(card: any): string[] {
   return raw.map((tool: unknown) => asString(tool).trim()).filter(Boolean);
 }
 
-/** Thin bounded read of a repo skill file (the source of truth for capability instructions). */
-function loadSkillFile(rel: string): string | null {
-  try {
-    const file = [resolve(process.cwd(), rel), resolve(process.cwd(), '..', rel), resolve(process.cwd(), '..', '..', rel)]
-      .find((p) => existsSync(p));
-    return file ? readFileSync(file, 'utf8').slice(0, 6000) : null;
-  } catch {
-    return null;
-  }
-}
-
 export type ThinkGraphCapability = {
   cardId: string | null;
   cardTitle: string;
   available: boolean;
-  skill: string;
-  skillInstructions: string | null;
-  permittedTools: typeof HARNESS_GRAPH_TOOLS;
+  /** The ONE ThinkGraph producer path — informational; the graph is written only there. */
+  producer: string;
 };
 
 /**
- * The single ThinkGraph capability contribution surfaced to the normal Harness through the
- * project_context resource: reuses the existing ThinkGraph card for identity, links the skill
- * file (its instructions are the source of truth), and declares the permitted MCP graph tools.
- * Thin carrier only — no logic, no prompt baked into route code.
+ * The single ThinkGraph capability contribution surfaced through the project_context
+ * resource: the existing ThinkGraph card identity plus an honest description of the one
+ * canonical producer path. Thin carrier only — no tools declared here (there is no MCP
+ * graph write surface), no prompt baked into route code.
  */
 function buildThinkGraphCapability(nodes: any[]): ThinkGraphCapability {
   const card = nodes.find(
@@ -85,9 +69,8 @@ function buildThinkGraphCapability(nodes: any[]): ThinkGraphCapability {
     cardId: card ? asString(card.id) : null,
     cardTitle: card ? asString(card.title) || 'ThinkGraph' : 'ThinkGraph',
     available: Boolean(card),
-    skill: THINKGRAPH_SKILL_PATH,
-    skillInstructions: loadSkillFile(THINKGRAPH_SKILL_PATH),
-    permittedTools: HARNESS_GRAPH_TOOLS,
+    producer:
+      'PAUSED — ThinkGraph is written only by the Harness calling the ThinkGraph agent card (server-side, after a completed pair); that writer is not yet wired, so the graph is honestly empty.',
   };
 }
 

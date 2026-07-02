@@ -1840,66 +1840,33 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     id: 'prompt_thinkgraph_agent',
     content: buildSeedPromptTemplate({
       role: [
-        'You are the downstream ThinkGraph Agent.',
+        'You are ThinkGraph for this project.',
       ].join('\n'),
       goal: [
-        'read completed user/assistant chat pairs.',
-        'extract provisional subjective reasoning into graph-shaped chunks.',
-        'create/update the visible ThinkGraph Reveal.',
-        'determine whether the graph is rich enough to offer research.',
+        'Inspect the exact completed user and assistant conversation pair and bounded current ThinkGraph scope.',
+        'Preserve durable project reasoning, concepts, hypotheses, open questions, decisions, and meaningful relationships.',
+        'First read relevant graph scope with read_thinkgraph_scope.',
+        'Choose no_patch when there is no meaningful durable update.',
+        'When an update is justified, use apply_thinkgraph_patch with a compact patch.',
       ].join('\n'),
       constraints: [
-        'Do not do external research.',
-        'Do not write KnowGraph.',
-        'Mark all items provisional.',
-        'Do not use score soup or fake precision numeric scores.',
-        'Use graph richness and required slots.',
+        'Do not graph transient wording or every sentence.',
+        'Use existing schema terms only (resources, relations, statements).',
+        'Every changed record must carry exact source-pair provenance (attached automatically by your tools).',
+        'Do not invent facts, sources, user intent, or entities.',
+        'Do not write outside the active project.',
+        'Do not do external research. Do not write KnowGraph or CodeGraph.',
+        'Mark assistant-originated external-world claims review:"unverified"; your interpretations review:"provisional".',
       ].join('\n'),
       ioSchema: [
-        'Return the readiness object:',
-        '{',
-        '  "status": "shaping | ready_to_plan_research | plan_ready | approved_for_research | research_running | knowgraph_ready | dual_graph_answer_ready",',
-        '  "token_count": 0,',
-        '  "entity_count": 0,',
-        '  "relationship_count": 0,',
-        '  "claim_count": 0,',
-        '  "assumption_count": 0,',
-        '  "risk_or_counterargument_count": 0,',
-        '  "evidence_needed_count": 0,',
-        '  "researchable_question_count": 0,',
-        '  "required_slots": {',
-        '    "central_thesis": false,',
-        '    "key_entities": false,',
-        '    "relationships": false,',
-        '    "assumptions": false,',
-        '    "risks_or_counterarguments": false,',
-        '    "evidence_needed": false,',
-        '    "disconfirming_questions": false',
-        '  },',
-        '  "missing": [],',
-        '  "researchable_questions": [],',
-        '  "research_offer": {',
-        '    "question": "",',
-        '    "why_now": "",',
-        '    "evidence_to_find": [],',
-        '    "disconfirming_evidence_to_find": []',
-        '  },',
-        '  "offer_research": false',
-        '}',
+        'Either reply in one or two sentences that no patch is needed and why,',
+        'or make ONE apply_thinkgraph_patch call, then return a concise honest',
+        'summary of what changed (resources added/reused, relations, statements).',
       ].join('\n'),
       memoryPolicy: [
-        'Baseline readiness heuristic:',
-        'Set status = ready_to_plan_research only when ThinkGraph has enough graph substance:',
-        '- meaningful entities >= 1',
-        '- meaningful relationships >= 1',
-        '- at least one claim/thesis/intent',
-        '- at least one assumption',
-        '- at least one risk or counterargument',
-        '- at least one evidence-needed question',
-        '- at least one disconfirming question',
-        '- at least two researchable questions',
-        'token_count is a weak signal only and must not trigger research.',
-        'Active Skills: extract_subjective_graph, steelman_user_idea, form_researchable_questions, detect_missing_slots, compute_graph_richness, mark_provisional',
+        'Reuse an existing resource id from read_thinkgraph_scope when it is genuinely the same resource; avoid duplicates and near-duplicates.',
+        'Preserve the user’s own language in labels where appropriate.',
+        'Few and real beats many and noisy: a handful of meaningful resources, relations between things actually related in this pair, and statements only for interpretations worth reviewing later.',
       ].join('\n'),
     }),
   },
@@ -2460,6 +2427,14 @@ export const INITIAL_DECK: DeckDocument = {
         )?.content || '',
       runtimeBinding: 'thinkgraph_agent',
       runtimeType: 'assistant_agent',
+      // Exactly the two scoped ThinkGraph tools — the card's ONLY write authority.
+      // Default model follows the existing default-card convention and stays fully
+      // editable on the card (canvas remains the source of truth).
+      runtimeOptions: {
+        tools: ['read_thinkgraph_scope', 'apply_thinkgraph_patch'],
+        modelKey: 'openai/gpt-5.1-chat',
+        provider: 'openrouter',
+      },
       parentGraphId: null,
       title: 'ThinkGraph Agent',
       subtitle: 'Provisional / planning memory (AGE)',
@@ -5984,9 +5959,9 @@ export default function AgentBuilder(): React.ReactElement {
   // knowledge graph
   const [cypher, setCypher] = useState('');
   const [graphResult, setGraphResult] = useState<any[]>([]);
-  // Accepted Mag One graphPayloads live in thinkgraph_liq as :SlmGraphRecord; the old graph
-  // tab only queried :Entity, so they were islanded. This reads the real ThinkGraph records
-  // for the SELECTED project from /api/thinkgraph/graph-view, with honest source/reason.
+  // ThinkGraph records (Resources + derived co-occurrence + Statements) are written ONLY
+  // by the Harness calling the ThinkGraph agent card (server-side; writer not yet wired).
+  // This reads them for the SELECTED project from /api/thinkgraph/graph-view, honestly.
   const [thinkGraphRecordsView, setThinkGraphRecordsView] = useState<{
     ok: boolean;
     source: string;
@@ -6973,10 +6948,10 @@ export default function AgentBuilder(): React.ReactElement {
     return result;
   }, [graphVizFiltered]);
   const thinkGraphViewData = useMemo<GraphViewData>(() => {
-    // ThinkGraph reads ONLY its own store: accepted :SlmGraphRecord records for the
-    // selected project (thinkgraph_liq, via /api/thinkgraph/graph-view). There is NO
-    // fallback to graph_liq :Entity data — that is KnowGraph data and must never appear
-    // in the ThinkGraph tab. When there are no records the tab is honestly empty.
+    // ThinkGraph reads ONLY its own store: canonical discourse records for the selected
+    // project (thinkgraph_liq, via /api/thinkgraph/graph-view). There is NO fallback to
+    // graph_liq :Entity data — that is KnowGraph data and must never appear in the
+    // ThinkGraph tab. When there are no records the tab is honestly empty.
     const accepted = mapAcceptedThinkGraphRecordsToViewData(thinkGraphRecordsView);
     if (accepted) return accepted;
     return { kind: 'thinkgraph', nodes: [], edges: [] };

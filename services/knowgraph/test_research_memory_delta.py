@@ -16,7 +16,6 @@ from types import SimpleNamespace
 
 import gemma_chunker
 import research_memory_delta as rmd
-import thinkgraph_writer as tgw
 from research_memory_delta import (
     DeltaAssertion,
     Observation,
@@ -224,69 +223,6 @@ class GemmaChunkerTests(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 # ThinkGraph note write: project meaning only, prior-reasoning link
 # --------------------------------------------------------------------------- #
-class FakePgCursor:
-    def __init__(self, owner):
-        self.owner = owner
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-    def execute(self, sql, args=None):
-        self.owner.executed.append((sql, args))
-        self._last = sql
-
-    def fetchall(self):
-        if "REVISITS" in self._last or "p.run_id" in self._last:
-            return [('"prior-run"',)]
-        if "count(" in self._last:
-            return [("0",)]
-        return [('"rmnote:p:r2"',)]
-
-
-class FakePgConn:
-    def __init__(self):
-        self.executed = []
-
-    def cursor(self):
-        return FakePgCursor(self)
-
-    def close(self):
-        pass
-
-
-class ThinkGraphWriteTests(unittest.TestCase):
-    def test_note_write_carries_project_meaning_not_raw_traces(self):
-        conn = FakePgConn()
-        note = tgw.ResearchNote(project_id="p", run_id="r2", summary="sum", conclusion="concl",
-                                project_consequence="cons", uncertainty=["open q"],
-                                linked_assertion_ids=["a0"], linked_source_refs=["s1"])
-        tgw.write_research_note(note, conn=conn)
-        blob = "\n".join(sql for sql, _ in conn.executed)
-        self.assertIn("ResearchNote", blob)
-        self.assertIn("project_consequence", blob)
-        self.assertNotIn("SourceBackedAssertion", blob)  # KnowGraph evidence is not written here
-        self.assertNotIn("autogenMessages", blob)
-        self.assertNotIn("chat_history", blob)
-
-    def test_prior_reasoning_link_is_written_when_present(self):
-        conn = FakePgConn()
-        note = tgw.ResearchNote(project_id="p", run_id="r2", summary="s", conclusion="c",
-                                project_consequence="c", prior_reasoning_ref="r1")
-        res = tgw.write_research_note(note, conn=conn)
-        blob = "\n".join(sql for sql, _ in conn.executed)
-        self.assertIn("REVISITS", blob)
-        self.assertEqual(res["revisited_prior_run_id"], "prior-run")
-
-    def test_no_prior_link_when_absent(self):
-        conn = FakePgConn()
-        note = tgw.ResearchNote(project_id="p", run_id="r1", summary="s", conclusion="c",
-                                project_consequence="c")
-        tgw.write_research_note(note, conn=conn)
-        self.assertNotIn("REVISITS", "\n".join(sql for sql, _ in conn.executed))
-
 
 if __name__ == "__main__":
     unittest.main()

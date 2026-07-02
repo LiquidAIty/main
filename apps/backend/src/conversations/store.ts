@@ -380,6 +380,41 @@ export async function getConversationMessages(
     .sort((a, b) => a.seq - b.seq);
 }
 
+export type ConversationPairResult =
+  | { ok: true; user: ConversationMessage; assistant: ConversationMessage }
+  | { ok: false; error: string };
+
+/**
+ * Exact completed-pair lookup for the ThinkGraph front door. Never guesses the
+ * "latest pair" — both message IDs must be explicit, exist, belong to the given
+ * project + conversation, be correctly ordered (user before assistant), and be
+ * complete. Structural checks only; no content interpretation.
+ */
+export async function getConversationPair(args: {
+  projectId: string;
+  conversationId: string;
+  userMessageId: string;
+  assistantMessageId: string;
+}): Promise<ConversationPairResult> {
+  const blob = await getConversationBlob(args.projectId);
+  const user = blob.messages[String(args.userMessageId || '')];
+  const assistant = blob.messages[String(args.assistantMessageId || '')];
+  if (!user) return { ok: false, error: `pair_user_message_not_found: ${args.userMessageId}` };
+  if (!assistant) return { ok: false, error: `pair_assistant_message_not_found: ${args.assistantMessageId}` };
+  for (const [label, m] of [['user', user], ['assistant', assistant]] as const) {
+    if (m.projectId !== args.projectId) return { ok: false, error: `pair_${label}_wrong_project` };
+    if (m.conversationId !== args.conversationId) return { ok: false, error: `pair_${label}_wrong_conversation` };
+  }
+  if (user.role !== 'user') return { ok: false, error: 'pair_user_role_invalid' };
+  if (assistant.role !== 'assistant') return { ok: false, error: 'pair_assistant_role_invalid' };
+  if (!(user.seq < assistant.seq)) return { ok: false, error: 'pair_order_invalid' };
+  if (assistant.status !== 'complete') return { ok: false, error: 'pair_assistant_incomplete' };
+  if (!String(user.content || '').trim() || !String(assistant.content || '').trim()) {
+    return { ok: false, error: 'pair_content_empty' };
+  }
+  return { ok: true, user, assistant };
+}
+
 // ── Branch traversal ────────────────────────────────────────────────────────
 /** Walk parentMessageId from a leaf up to the root, returning root→leaf order. */
 export function lineageOf(

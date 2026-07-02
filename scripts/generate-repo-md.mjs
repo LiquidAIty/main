@@ -219,12 +219,9 @@ ${(buckets.backend_route || []).filter(f => !f.path.includes('/v2/') && !f.path.
 ## 7. Knowledge Graph / Research Chain
 
 ### KG Ingestion Flow
-1. **Chat Turn:** User sends message in Assist mode
-2. **Ingest Trigger:** \`POST /api/v2/projects/:id/kg/ingest_chat_turn\`
-3. **Route:** \`apps/backend/src/routes/v2/kg.routes.ts\` (1,800+ lines)
-4. **Chunking:** \`apps/backend/src/routes/v2/chunking.ts\`
-5. **Agent Resolution:** \`apps/backend/src/services/resolveAgents.ts\`
-6. **Neo4j Sync:** \`apps/backend/src/services/v2/kgNeo4jSink.ts\`
+(HISTORICAL - the old chat auto-ingest was removed 2026-06-30. ThinkGraph is written only
+by the Harness calling the ThinkGraph agent card; KnowGraph is written only by Mag One
+research. See graph-write-authority.)
 
 ### KG Query Flow
 1. **Client Query:** \`POST /api/v2/projects/:id/kg/query\`

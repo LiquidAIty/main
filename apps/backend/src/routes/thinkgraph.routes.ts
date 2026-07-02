@@ -1,25 +1,18 @@
-// Read-only ThinkGraph route for the Agent Builder.
-//  - /graph-view : the canonical word-first projection of the entity-first :ThinkNode / :THINK_EDGE
-//                  model (the ONE store Harness writes via thinkgraph.apply_delta). class -> node type,
-//                  typed directional predicate -> edge type. No SLM, no SlmGraphRecord blob, no raw
-//                  container view. No writes happen here.
+// Read-only ThinkGraph route for the Agent Builder card.
+//  - /graph-view : direct bounded projection of stored ThinkGraph records (Resources +
+//                  derived CO_OCCURRED_WITH with weight = observation_count + reified
+//                  Statements). ThinkGraph is written ONLY by the Harness calling the
+//                  ThinkGraph agent card (writer not yet wired — card is honestly empty
+//                  until then). No writes here; read failures reported honestly.
 import { Router } from 'express';
-import { getThinkGraphSlice } from '../services/thinkgraph/thinkGraphDelta';
+import { getThinkGraphView } from '../services/thinkgraph/thinkGraphStore';
 
 const router = Router();
 
-/**
- * GET /api/thinkgraph/graph-view — canonical word-first ThinkGraph projection.
- * Reads the entity-first :ThinkNode / :THINK_EDGE model (written ONLY through
- * thinkgraph.apply_delta) and projects it to the source-neutral graph-view contract the
- * canvas consumes: node.type = the reasoning class, edge.type/label = the typed directional
- * predicate. A read failure is reported honestly as unavailable + blocker — never collapsed
- * into an empty graph (NO fallback).
- */
 router.get('/graph-view', async (req, res) => {
   const projectId = String(req.query.projectId || '').trim();
   const limitRaw = Number(req.query.limit);
-  const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 300, 1), 1000);
+  const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 500, 1), 2000);
 
   if (!projectId) {
     res.json({ ok: true, source: 'thinkgraph-db', projectId: '', nodes: [], edges: [], counts: { nodes: 0, edges: 0, records: 0 }, reason: 'no_project_id' });
@@ -27,13 +20,14 @@ router.get('/graph-view', async (req, res) => {
   }
 
   try {
-    const slice = await getThinkGraphSlice({ projectId, limit });
+    const slice = await getThinkGraphView({ projectId, limit });
     const nodes = slice.nodes.map((n) => ({
       id: n.id,
       label: n.label,
-      type: n.class,
+      type: n.kind, // 'resource' | 'statement' — storage mechanics, not a taxonomy
       sourceRef: n.turnId || undefined,
-      confidence: n.confidence ?? undefined,
+      review: n.review || undefined,
+      degree: n.degree ?? 0,
     }));
     const edges = slice.edges.map((e) => ({
       id: e.id,
@@ -41,6 +35,7 @@ router.get('/graph-view', async (req, res) => {
       target: e.target,
       label: e.predicate,
       type: e.predicate,
+      weight: e.weight ?? undefined,
     }));
     const isEmpty = nodes.length === 0 && edges.length === 0;
     res.json({

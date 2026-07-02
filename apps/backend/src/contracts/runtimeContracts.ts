@@ -15,6 +15,34 @@ export type ToolSpec = {
 
 export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
   {
+    name: 'read_thinkgraph_scope',
+    description:
+      'ThinkGraph card only: read the bounded active-project ThinkGraph scope (record ids, labels, kinds, provenance) so patches avoid duplicates. Read-only; project scope comes from the trusted card-run authority, never from the model.',
+    enabled: true,
+    inputSchema: {
+      type: 'object',
+      properties: { limit: { type: 'number', description: 'optional bounded record cap' } },
+      required: [],
+    },
+    outputSchema: { type: 'string', description: 'JSON: bounded { nodes, edges } scope with provenance' },
+  },
+  {
+    name: 'apply_thinkgraph_patch',
+    description:
+      'ThinkGraph card only: apply ONE compact graph patch (resources / relations / statements). Authority (project, card, run, source pair) comes from the trusted run context — model-supplied authority is rejected. One transaction, idempotent per run, complete source-pair provenance required.',
+    enabled: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        resources: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, label: { type: 'string' } }, required: ['id', 'label'] } },
+        relations: { type: 'array', items: { type: 'object', properties: { a: { type: 'string' }, b: { type: 'string' } }, required: ['a', 'b'] } },
+        statements: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, subject: { type: 'string' }, predicateTerm: { type: 'string' }, object: { type: 'string' }, rationale: { type: 'string' }, review: { type: 'string' } }, required: ['id', 'subject', 'predicateTerm', 'object'] } },
+      },
+      required: [],
+    },
+    outputSchema: { type: 'string', description: 'JSON: honest applied/duplicate/empty result with stored record refs' },
+  },
+  {
     name: 'current_datetime',
     description: 'Return the current UTC date and time in ISO-8601 format.',
     enabled: true,

@@ -514,6 +514,98 @@ async def get_paper_account_readiness_tool() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# ThinkGraph card tools (scoped internal tools, not public Harness tools).
+#
+# Authority NEVER comes from the model: it is injected by the single-card
+# runtime (run_configured_card) from the server-authored runtimeScope via this
+# ContextVar. A call outside an authorized ThinkGraph card run fails honestly.
+# Persistence itself lives in the backend (thinkGraphStore) — these adapters
+# are transport to the mcp-bridge endpoints on loopback.
+# ---------------------------------------------------------------------------
+
+THINKGRAPH_RUN_AUTHORITY: ContextVar[dict[str, str] | None] = ContextVar(
+    "thinkgraph_run_authority", default=None
+)
+
+
+def _backend_base_url() -> str:
+    return os.environ.get("LIQUIDAITY_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
+
+
+def _post_backend_json_sync(path: str, payload: dict[str, Any]) -> str:
+    request = Request(
+        f"{_backend_base_url()}{path}",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=60) as response:  # noqa: S310 — loopback backend only
+            return response.read().decode("utf-8")
+    except HTTPError as err:
+        body = ""
+        try:
+            body = err.read().decode("utf-8")
+        except Exception:
+            body = ""
+        # Honest error pass-through: the bridge returns structured JSON errors.
+        return body or json.dumps({"ok": False, "error": f"backend_http_{err.code}"})
+    except URLError as err:
+        return json.dumps({"ok": False, "error": f"backend_unreachable: {err.reason}"})
+
+
+def _require_thinkgraph_authority() -> dict[str, str] | None:
+    authority = THINKGRAPH_RUN_AUTHORITY.get()
+    if not authority or authority.get("kind") != "thinkgraph_pair":
+        return None
+    return authority
+
+
+async def read_thinkgraph_scope_tool(limit: int | None = None) -> str:
+    """ThinkGraph card tool: read the bounded active-project graph scope.
+
+    Read-only. Project scope comes from the trusted card-run authority — a call
+    outside an authorized ThinkGraph card run fails honestly.
+    """
+    authority = _require_thinkgraph_authority()
+    if authority is None:
+        return json.dumps({"ok": False, "error": "thinkgraph_authority_missing: tool is only available inside an authorized ThinkGraph card run"})
+    return await asyncio.to_thread(
+        _post_backend_json_sync,
+        "/api/coder/mcp-bridge/thinkgraph_read_scope",
+        {"authority": authority, "limit": limit if isinstance(limit, int) else None},
+    )
+
+
+async def apply_thinkgraph_patch_tool(
+    resources: list[dict[str, Any]] | None = None,
+    relations: list[dict[str, Any]] | None = None,
+    statements: list[dict[str, Any]] | None = None,
+) -> str:
+    """ThinkGraph card tool: apply ONE compact graph patch.
+
+    The model supplies only the patch body (resources / relations / statements).
+    Authority (project, card, run, source pair) is injected from the trusted run
+    context — any model-supplied authority is ignored by construction. One AGE
+    transaction, idempotent per run, complete source-pair provenance enforced by
+    the backend writer.
+    """
+    authority = _require_thinkgraph_authority()
+    if authority is None:
+        return json.dumps({"ok": False, "error": "thinkgraph_authority_missing: tool is only available inside an authorized ThinkGraph card run"})
+    patch = {
+        "resources": resources or [],
+        "relations": relations or [],
+        "statements": statements or [],
+    }
+    return await asyncio.to_thread(
+        _post_backend_json_sync,
+        "/api/coder/mcp-bridge/thinkgraph_apply_patch",
+        {"authority": authority, "patch": patch},
+    )
+
+
+# ---------------------------------------------------------------------------
 # ToolRegistry.
 # ---------------------------------------------------------------------------
 
@@ -570,6 +662,46 @@ class ToolRegistry:
 def build_default_tool_registry() -> ToolRegistry:
     """The canonical runtime registry."""
     registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="read_thinkgraph_scope",
+            description=(
+                "ThinkGraph card only: read the bounded active-project ThinkGraph scope "
+                "(record ids, labels, kinds, provenance) so patches avoid duplicates. "
+                "Read-only; scope comes from the trusted card-run authority."
+            ),
+            enabled=True,
+            inputSchema={
+                "type": "object",
+                "properties": {"limit": {"type": "number"}},
+                "required": [],
+            },
+            outputSchema={"type": "string", "description": "JSON bounded scope with provenance"},
+        ),
+        read_thinkgraph_scope_tool,
+    )
+    registry.register(
+        ToolSpec(
+            name="apply_thinkgraph_patch",
+            description=(
+                "ThinkGraph card only: apply ONE compact graph patch (resources / relations / "
+                "statements). Authority comes from the trusted run context; one transaction, "
+                "idempotent per run, complete source-pair provenance required."
+            ),
+            enabled=True,
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "resources": {"type": "array", "items": {"type": "object"}},
+                    "relations": {"type": "array", "items": {"type": "object"}},
+                    "statements": {"type": "array", "items": {"type": "object"}},
+                },
+                "required": [],
+            },
+            outputSchema={"type": "string", "description": "JSON honest applied/duplicate/empty result"},
+        ),
+        apply_thinkgraph_patch_tool,
+    )
     registry.register(
         ToolSpec(
             name="current_datetime",

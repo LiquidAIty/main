@@ -17,7 +17,7 @@ const ACCEPTED: ThinkGraphRecordsView = {
 };
 
 describe('thinkGraph accepted-records -> view data', () => {
-  it('projects accepted :SlmGraphRecord nodes/edges into GraphViewData', () => {
+  it('projects canonical discourse nodes/edges into GraphViewData', () => {
     const view = mapAcceptedThinkGraphRecordsToViewData(ACCEPTED);
     expect(view).not.toBeNull();
     expect(view!.kind).toBe('thinkgraph');

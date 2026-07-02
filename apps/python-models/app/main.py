@@ -7,6 +7,7 @@ from app.python_models.alpaca_market_data import (
     get_paper_account_readiness,
 )
 from app.python_models.autogen_orchestrator import orchestrate_context_pack
+from app.python_models.magentic_agentchat import run_configured_card
 from app.python_models.orchestration_contracts import ContextPack
 from app.python_models.tool_registry import tool_manifest
 
@@ -69,5 +70,18 @@ def tools_manifest():
 async def autogen_orchestrate(req: ContextPack):
     try:
         return await orchestrate_context_pack(req)
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.post("/autogen/run_card")
+async def autogen_run_card(req: ContextPack):
+    """Run ONE configured canvas card as a single AssistantAgent.
+
+    Not an orchestrator: exactly one participant, no team, no Task Ledger.
+    Reuses the same participant construction as the Mag One path.
+    """
+    try:
+        return await run_configured_card(req)
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err

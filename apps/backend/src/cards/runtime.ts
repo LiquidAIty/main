@@ -9,7 +9,8 @@ import {
   RuntimeGraphEdge,
   RuntimeGraphNode,
 } from '../contracts/runtimeContracts';
-import { orchestrateWithAutoGen } from '../services/autogen/autogenOrchestratorClient';
+import { orchestrateWithAutoGen, runSingleCardWithAutoGen } from '../services/autogen/autogenOrchestratorClient';
+import { getDeckDocument } from '../decks/store';
 import { resolveModel } from '../llm/models.config';
 
 function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
@@ -425,6 +426,60 @@ export function buildRuntimeGraph(
   return { nodes, edges };
 }
 
+/**
+ * THE one card→participant serialization, shared by the Mag One team payload and the
+ * single-card runtime. Same prompt/model/tool resolution, same no-fallback throws
+ * (resolveCardModelStrict / resolveCardTools). Extracted so there is exactly one
+ * source of truth for how a canvas card becomes a Python AutoGen participant.
+ */
+export function serializeCardParticipant(head: any, allCards: any[]): Record<string, unknown> {
+  const model = resolveCardModelStrict(head);
+  return {
+    cardId: String(head.id || ''),
+    title: String(head.title || 'Agent'),
+    runtimeType: 'assistant_agent',
+    runtimeBinding: head.runtimeBinding || null,
+    role: resolveMagOneAgentRole(head),
+    summary: `Participant ${head.title || 'Agent'}`,
+    allowedActions: [],
+    inputContract: 'text',
+    outputContract: 'text',
+    callable: true,
+    // NOTE: the full role prompt is intentionally NOT in the public participant
+    // manifest (it would bloat the payload and leak internal prompt text). The
+    // prompt lives only in the private participant, used solely by Python to
+    // set AssistantAgent.system_message — never as visible/team-description text.
+    tools: resolveCardTools(head),
+    fanOut: resolveCardFanOut(head),
+    isSocietyOfMind:
+      Boolean(head.runtimeOptions?.isSocietyOfMind) ||
+      cardHasChildSubgraph(head.id, allCards),
+    provider: model.provider,
+    providerModelId: model.providerModelId,
+    temperature: head.runtimeOptions?.temperature ?? null,
+    maxTokens: head.runtimeOptions?.maxTokens ?? null,
+  };
+}
+
+export function serializeCardPrivateParticipant(head: any): Record<string, unknown> {
+  let mappedRuntimeType = 'assistant_agent';
+  if (head.runtimeType === 'research_agent' || head.templateId?.includes('research')) mappedRuntimeType = 'research_agent';
+  if (head.runtimeType === 'planner_agent' || head.templateId?.includes('plan')) mappedRuntimeType = 'planner_agent';
+
+  const model = resolveCardModelStrict(head);
+
+  return {
+    cardId: String(head.id || ''),
+    runtimeType: mappedRuntimeType,
+    runtimeBinding: head.runtimeBinding || null,
+    prompt: String(head.prompt || '').trim(),
+    provider: model.provider,
+    providerModelId: model.providerModelId,
+    temperature: head.runtimeOptions?.temperature ?? null,
+    maxTokens: head.runtimeOptions?.maxTokens ?? null,
+  };
+}
+
 export function buildPythonAutoGenCardRuntimePayload(
   card: any,
   effectiveAgent: any,
@@ -465,54 +520,13 @@ export function buildPythonAutoGenCardRuntimePayload(
     card.runtimeOptions?.taskLedgerOutputContract || '',
   ).trim();
 
-  const participants = supportedHeads.map((head) => {
-    const model = resolveCardModelStrict(head);
+  const participants = supportedHeads.map((head) =>
+    serializeCardParticipant(head, context.allCards || []),
+  );
 
-    return {
-      cardId: String(head.id || ''),
-      title: String(head.title || 'Agent'),
-      runtimeType: 'assistant_agent',
-      runtimeBinding: head.runtimeBinding || null,
-      role: resolveMagOneAgentRole(head),
-      summary: `Participant ${head.title || 'Agent'}`,
-      allowedActions: [],
-      inputContract: 'text',
-      outputContract: 'text',
-      callable: true,
-      // NOTE: the full role prompt is intentionally NOT in the public participant
-      // manifest (it would bloat the payload and leak internal prompt text). The
-      // prompt lives only in `privateParticipants` below, used solely by Python to
-      // set AssistantAgent.system_message — never as visible/team-description text.
-      tools: resolveCardTools(head),
-      fanOut: resolveCardFanOut(head),
-      isSocietyOfMind:
-        Boolean(head.runtimeOptions?.isSocietyOfMind) ||
-        cardHasChildSubgraph(head.id, context.allCards || []),
-      provider: model.provider,
-      providerModelId: model.providerModelId,
-      temperature: head.runtimeOptions?.temperature ?? null,
-      maxTokens: head.runtimeOptions?.maxTokens ?? null,
-    };
-  });
-
-  const privateParticipants = supportedHeads.map((head) => {
-    let mappedRuntimeType = 'assistant_agent';
-    if (head.runtimeType === 'research_agent' || head.templateId?.includes('research')) mappedRuntimeType = 'research_agent';
-    if (head.runtimeType === 'planner_agent' || head.templateId?.includes('plan')) mappedRuntimeType = 'planner_agent';
-
-    const model = resolveCardModelStrict(head);
-
-    return {
-      cardId: String(head.id || ''),
-      runtimeType: mappedRuntimeType,
-      runtimeBinding: head.runtimeBinding || null,
-      prompt: String(head.prompt || '').trim(),
-      provider: model.provider,
-      providerModelId: model.providerModelId,
-      temperature: head.runtimeOptions?.temperature ?? null,
-      maxTokens: head.runtimeOptions?.maxTokens ?? null,
-    };
-  });
+  const privateParticipants = supportedHeads.map((head) =>
+    serializeCardPrivateParticipant(head),
+  );
 
   const runtimeGraph = buildRuntimeGraph(
     card,
@@ -601,6 +615,151 @@ export function buildPythonAutoGenCardRuntimePayload(
   };
 
   return payload;
+}
+
+// ── Single-card runtime (run one configured canvas card, outside a Mag One team run) ──────
+// Server-trusted: the ONLY inputs are ids + bounded text. Card identity, prompt, model,
+// runtime, and tools are resolved from the same canonical deck source and the same strict
+// resolvers the Mag One path uses (resolveCardModelStrict / resolveCardTools /
+// serializeCardParticipant). No fallback model, no substitute card, no plain completion.
+
+const SINGLE_CARD_RUN_ARG_KEYS = ['projectId', 'deckId', 'cardId', 'correlationId', 'input', 'runAuthority'] as const;
+
+export type ConfiguredCardRunArgs = {
+  projectId: string;
+  deckId: string;
+  cardId: string;
+  correlationId: string;
+  input: string;
+  /** Server-authored trusted run context (e.g. ThinkGraph source-pair authority),
+   * transported to the Python runtime via cardRuntime.runtimeScope. Never
+   * browser-supplied — callers of this function are backend control-plane code. */
+  runAuthority?: Record<string, string>;
+};
+
+export type ConfiguredCardRunResult = {
+  status: 'completed' | 'failed' | 'disabled' | 'not_found' | 'not_runnable';
+  correlationId: string;
+  cardId: string;
+  runtimeType: string | null;
+  tools: string[];
+  output: string;
+  error: string | null;
+  startedAt: string;
+  endedAt: string;
+};
+
+export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<ConfiguredCardRunResult> {
+  const startedAt = new Date().toISOString();
+  const done = (partial: Partial<ConfiguredCardRunResult> & Pick<ConfiguredCardRunResult, 'status'>): ConfiguredCardRunResult => ({
+    correlationId: String(args?.correlationId || ''),
+    cardId: String(args?.cardId || ''),
+    runtimeType: null,
+    tools: [],
+    output: '',
+    error: null,
+    startedAt,
+    endedAt: new Date().toISOString(),
+    ...partial,
+  });
+
+  // Reject caller-supplied runtime overrides structurally: any extra key (model,
+  // provider, prompt, tools, card definition, scope…) is an honest failure, never
+  // silently ignored and never applied.
+  const extraKeys = Object.keys(args || {}).filter(
+    (key) => !(SINGLE_CARD_RUN_ARG_KEYS as readonly string[]).includes(key),
+  );
+  if (extraKeys.length > 0) {
+    return done({ status: 'failed', error: `card_run_overrides_rejected: ${extraKeys.join(',')}` });
+  }
+  const projectId = String(args?.projectId || '').trim();
+  const deckId = String(args?.deckId || '').trim();
+  const cardId = String(args?.cardId || '').trim();
+  const correlationId = String(args?.correlationId || '').trim();
+  const input = String(args?.input || '').trim();
+  if (!projectId || !deckId || !cardId || !correlationId || !input) {
+    return done({ status: 'failed', error: 'card_run_args_incomplete' });
+  }
+
+  const doc = await getDeckDocument(projectId, deckId);
+  const nodes: any[] = Array.isArray((doc?.deck as any)?.nodes) ? (doc!.deck as any).nodes : [];
+  const card = nodes.find((node) => String(node?.id || '') === cardId);
+  if (!card) {
+    return done({ status: 'not_found', error: `card_not_found: ${cardId}` });
+  }
+  if (card.enabled === false || card.runtimeOptions?.enabled === false) {
+    return done({ status: 'disabled', error: `card_disabled: ${cardId}` });
+  }
+  const runtimeType = resolveCardRuntimeType(card);
+  if (String(card.kind || 'agent') !== 'agent' || runtimeType !== 'assistant_agent') {
+    return done({
+      status: 'not_runnable',
+      runtimeType,
+      error: `single_card_runtime_not_supported: kind=${card.kind || 'agent'} runtimeType=${runtimeType}`,
+    });
+  }
+
+  let participant: Record<string, unknown>;
+  let privateParticipant: Record<string, unknown>;
+  let model: { provider: string; providerModelId: string };
+  try {
+    // Same strict resolution the Mag One path uses — throws honest
+    // card_model_config_missing / card_tool_unknown / card_tool_disabled errors.
+    model = resolveCardModelStrict(card);
+    participant = serializeCardParticipant(card, nodes);
+    privateParticipant = serializeCardPrivateParticipant(card);
+  } catch (error: any) {
+    return done({ status: 'failed', runtimeType, error: String(error?.message || 'card_resolution_failed') });
+  }
+
+  const payload = {
+    session: {
+      sessionId: `${deckId}:${cardId}:${correlationId}`,
+      projectId,
+      turnId: correlationId,
+      route: 'single_card',
+      orchestrator: 'assistant_agent' as const,
+      modelProvider: model.provider,
+      modelKey: String(card.runtimeOptions?.modelKey || ''),
+      providerModelId: model.providerModelId,
+      startedAt,
+    },
+    userText: input,
+    cardRuntime: {
+      cardId,
+      title: String(card.title || 'Agent'),
+      runtimeType: 'assistant_agent' as const,
+      prompt: '',
+      runtimeOptions: {},
+      participants: [participant],
+      privateParticipants: [privateParticipant],
+      ...(args.runAuthority && Object.keys(args.runAuthority).length > 0
+        ? { runtimeScope: args.runAuthority }
+        : {}),
+    },
+  };
+
+  try {
+    const response = await runSingleCardWithAutoGen(payload as any);
+    const tools = Array.isArray((participant as any).tools) ? ((participant as any).tools as string[]) : [];
+    if (!response.ok) {
+      return done({
+        status: 'failed',
+        runtimeType,
+        tools,
+        error: String(response.error || 'single_card_run_failed'),
+      });
+    }
+    return done({
+      status: 'completed',
+      runtimeType,
+      tools,
+      output: String(response.finalResponseText || ''),
+    });
+  } catch (error: any) {
+    // Transport/rails failure is honest — no retry into a fallback path.
+    return done({ status: 'failed', runtimeType, error: String(error?.message || 'single_card_transport_failed') });
+  }
 }
 
 export async function runCardWithContract(

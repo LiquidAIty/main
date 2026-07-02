@@ -3,18 +3,25 @@
 This module is a thin bridge from the app ContextPack into real
 ``MagenticOneGroupChat`` execution. It does not recreate Magentic-One prompts
 or task-ledger internals in app code.
+
+It also hosts ``run_configured_card``: the smallest single-card runtime
+primitive. It reuses the exact same participant construction
+(``_build_participants``: same prompt/model/tool resolution, same no-fallback
+tool registry) to run ONE configured canvas card as a lone AssistantAgent —
+no team, no orchestrator, no Task Ledger, no fallback.
 """
 
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.teams import MagenticOneGroupChat
 
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
-from app.python_models.tool_registry import DEFAULT_TOOL_REGISTRY
+from app.python_models.tool_registry import DEFAULT_TOOL_REGISTRY, THINKGRAPH_RUN_AUTHORITY
 from app.python_models.orchestration_contracts import (
     ContextPack,
     KnowGraphUpdateReport,
@@ -182,6 +189,126 @@ def _build_participants(context: ContextPack, model_client: Any) -> list[Assista
         return participants
 
     return [AssistantAgent(name="Assist", model_client=model_client)]
+
+
+def _validate_single_card_context(context: ContextPack) -> str | None:
+    """Structural guard for the single-card runtime. Returns an honest error code or None.
+
+    Pure (no model/client construction) so it is directly unit-testable. It never
+    decides meaning — only shape: exactly one configured participant, the
+    single-card runtime type, and a non-empty task.
+    """
+    card = context.cardRuntime
+    if card is None:
+        return "card_runtime_missing"
+    if card.runtimeType != "assistant_agent":
+        return f"single_card_runtime_invalid: runtimeType={card.runtimeType}"
+    if context.session.orchestrator != "assistant_agent":
+        return f"single_card_orchestrator_invalid: orchestrator={context.session.orchestrator}"
+    count = len(card.participants or [])
+    if count != 1:
+        return f"single_card_participant_count_invalid: {count}"
+    if not _as_text(context.userText):
+        return "empty_user_message"
+    return None
+
+
+async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
+    """Run ONE configured canvas card as a single AssistantAgent.
+
+    Reuses ``_build_participants`` unchanged (same prompt resolution, same model
+    client, same tool registry with loud unknown/disabled failures). Guard or
+    runtime failures return an honest error — never a fallback model, another
+    card, or a plain completion. No Task Ledger is read or produced.
+    """
+    guard = _validate_single_card_context(context)
+    if guard:
+        return OrchestratorRunResponse(
+            ok=False,
+            session=context.session,
+            finalResponseText="",
+            error=guard,
+            plan=context.plan,
+            thinkGraph=context.thinkGraph,
+            knowGraph=KnowGraphUpdateReport(sourceAgent="single_card", summary="no_run"),
+        )
+
+    client = _build_model_client(
+        AutoGenAgentConfig(
+            provider=context.session.modelProvider,
+            provider_model_id=context.session.providerModelId,
+        )
+    )
+
+    # Trusted run authority for scoped card tools (e.g. ThinkGraph): server-authored
+    # runtimeScope only — the model never supplies authority. Set for the duration of
+    # this run and always reset, so no authority leaks across runs.
+    runtime_scope = getattr(context.cardRuntime, "runtimeScope", None)
+    authority_token = None
+    if isinstance(runtime_scope, dict) and runtime_scope.get("kind") == "thinkgraph_pair":
+        authority_token = THINKGRAPH_RUN_AUTHORITY.set(
+            {str(k): str(v) for k, v in runtime_scope.items()}
+        )
+
+    started = time.monotonic()
+    try:
+        participants = _build_participants(context, client)
+        # The guard guarantees exactly one real configured participant, so the
+        # default-"Assist" branch of _build_participants is unreachable here.
+        agent = participants[0]
+        result = await agent.run(task=_as_text(context.userText))
+
+        final_text = ""
+        for msg in reversed(getattr(result, "messages", []) or []):
+            content = _as_text(getattr(msg, "content", ""))
+            if not content and hasattr(msg, "to_text"):
+                content = _as_text(msg.to_text())
+            if content:
+                final_text = content
+                break
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        single = context.cardRuntime.participants[0]
+        tools_attached = [_as_text(t) for t in (single.tools or []) if _as_text(t)]
+        run_info = (
+            f"single_card cardId={single.cardId} runtime=assistant_agent "
+            f"tools={','.join(tools_attached) or 'none'} elapsedMs={elapsed_ms} "
+            f"turnId={context.session.turnId}"
+        )
+
+        if not final_text:
+            return OrchestratorRunResponse(
+                ok=False,
+                session=context.session,
+                finalResponseText="",
+                error="single_card_empty_response",
+                plan=context.plan,
+                thinkGraph=context.thinkGraph,
+                knowGraph=KnowGraphUpdateReport(sourceAgent="single_card", summary="empty_response"),
+                transcript=[run_info],
+            )
+
+        return OrchestratorRunResponse(
+            ok=True,
+            session=context.session,
+            finalResponseText=final_text,
+            plan=context.plan,
+            thinkGraph=context.thinkGraph,
+            knowGraph=KnowGraphUpdateReport(sourceAgent="single_card", summary="single_card_run"),
+            transcript=[run_info],
+        )
+    except Exception as err:  # honest runtime failure — no retry, no fallback
+        return OrchestratorRunResponse(
+            ok=False,
+            session=context.session,
+            finalResponseText="",
+            error=f"single_card_run_failed: {err}",
+            plan=context.plan,
+            thinkGraph=context.thinkGraph,
+            knowGraph=KnowGraphUpdateReport(sourceAgent="single_card", summary="run_failed"),
+        )
+    finally:
+        if authority_token is not None:
+            THINKGRAPH_RUN_AUTHORITY.reset(authority_token)
 
 
 def _read_max_turns(context: ContextPack) -> int:

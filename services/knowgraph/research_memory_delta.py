@@ -1,8 +1,8 @@
 # @graph entity: Research Memory Delta
 # @graph role: research-result-delta-write-and-local-index
-# @graph relates_to: KnowGraph Source Judgment, KnowGraph Assertion Vectors, ThinkGraph Writer, Local Gemma Chunker
-# @graph depends_on: Neo4j, KnowGraph EmbeddingGemma Client, Local Gemma Chunker, ThinkGraph Writer
-# @graph feeds_to: KnowGraph, ThinkGraph
+# @graph relates_to: KnowGraph Source Judgment, KnowGraph Assertion Vectors, Local Gemma Chunker
+# @graph depends_on: Neo4j, KnowGraph EmbeddingGemma Client, Local Gemma Chunker
+# @graph feeds_to: KnowGraph
 """First compounding research-memory loop (Python rails).
 
 A completed frontier Research Agent result is turned into a validated
@@ -12,9 +12,6 @@ instead of re-reading chat history:
   * KnowGraph (Neo4j) receives ONLY the external reusable part — Source records,
     SourceBackedAssertions (ASSERTED_BY_SOURCE -> Source), evidence anchors,
     observed entities, relations, and a ResearchRun provenance anchor.
-  * ThinkGraph (AGE/Postgres) receives ONLY the project meaning — a ResearchNote
-    (summary/conclusion/consequence/uncertainty + linked KnowGraph IDs + optional
-    prior-reasoning link). Handled by ``thinkgraph_writer.py``.
   * Local Gemma (``gemma_chunker.py``) chunks ONLY the explicitly retained
     material; EmbeddingGemma embeds those chunks locally into a separate
     ``:RetainedChunk`` vector index with an honest indexing state.
@@ -90,7 +87,7 @@ class Observation:
 class RetainedChunkInput:
     text: str
     kind: str                        # source_evidence | research_note | project_consequence | document_excerpt
-    store: str = "knowgraph"         # knowgraph | thinkgraph
+    store: str = "knowgraph"
     source_ref: str = ""
     parent_id: str = ""
 
@@ -362,7 +359,7 @@ def index_retained_material(
     """Chunk ONLY the delta's retained material via local Gemma, embed each chunk
     locally, and write deduped ``:RetainedChunk`` vector nodes with an honest
     indexing state. A retained text unit is chunked once; the same content hash is
-    never written twice (so KnowGraph and ThinkGraph references share one chunk)."""
+    never written twice."""
     if embed_fn is None:
         def embed_fn(texts: Sequence[str]) -> list[list[float]]:
             return embeddinggemma.embed_texts(texts, expected_dim=expected_dim)
@@ -449,7 +446,7 @@ def read_retained_chunks(driver: Any, project_id: str, run_id: str,
 
 
 # --------------------------------------------------------------------------- #
-# orchestration: validate -> KnowGraph external + ThinkGraph meaning + local index
+# orchestration: validate -> KnowGraph external + local index
 # --------------------------------------------------------------------------- #
 def _connect_neo4j():
     import assertion_vectors as av
@@ -461,17 +458,16 @@ def write_research_memory_delta(
     *,
     neo4j_driver: Any = None,
     neo4j_database: str | None = None,
-    thinkgraph_conn: Any = None,
     chunk_fn: Callable[[str], list[str]] | None = None,
     embed_fn: Callable[[Sequence[str]], list[list[float]]] | None = None,
     expected_dim: int | None = None,
 ) -> dict[str, Any]:
-    """Persist one validated research result across both graphs + the local index.
+    """Persist one validated research result to KnowGraph + the local index.
 
-    KnowGraph gets the external reusable part; ThinkGraph gets the project meaning
-    (linked to the KnowGraph IDs and to prior reasoning when present); local Gemma
-    chunks the retained material and EmbeddingGemma indexes it. Fails closed on
-    validation errors before any write. Read-only paths are never invoked.
+    KnowGraph gets the external reusable part; local Gemma chunks the retained
+    material and EmbeddingGemma indexes it. Fails closed on validation errors
+    before any write. Read-only paths are never invoked. (ThinkGraph is written
+    ONLY by the canonical completed-pair chat ingestion path — never from here.)
     """
     validation = validate_delta(delta)
     if not validation.ok:
@@ -486,32 +482,15 @@ def write_research_memory_delta(
         neo4j_driver, config = _connect_neo4j()
         neo4j_database = config["database"]
 
-    owns_pg = thinkgraph_conn is None
     try:
         # 1. KnowGraph external reusable part.
         kg = write_knowgraph_external(neo4j_driver, delta, validation=validation, database=neo4j_database)
 
-        # 2. ThinkGraph project meaning (linked to KnowGraph IDs + prior reasoning).
-        import thinkgraph_writer as tgw
-        if owns_pg:
-            thinkgraph_conn = tgw._connect()
-        prior_ref = next((_clean(r) for r in delta.prior_reasoning_refs if _clean(r)), "")
-        note = tgw.ResearchNote(
-            project_id=delta.project_id, run_id=delta.run_id,
-            summary=_clean(delta.research_summary), conclusion=_clean(delta.project_consequence),
-            project_consequence=_clean(delta.project_consequence), uncertainty=list(delta.uncertainty),
-            linked_assertion_ids=kg["assertion_ids"], linked_source_refs=kg["source_refs"],
-            prior_reasoning_ref=prior_ref,
-        )
-        tg = tgw.write_research_note(note, conn=thinkgraph_conn)
-
-        # 3. Local Gemma chunk + EmbeddingGemma index of the retained material only.
+        # 2. Local Gemma chunk + EmbeddingGemma index of the retained material only.
         index = index_retained_material(
             neo4j_driver, delta, chunk_fn=chunk_fn, embed_fn=embed_fn,
             expected_dim=expected_dim, database=neo4j_database)
     finally:
-        if owns_pg and thinkgraph_conn is not None:
-            thinkgraph_conn.close()
         if owns_neo4j and neo4j_driver is not None:
             neo4j_driver.close()
 
@@ -520,6 +499,5 @@ def write_research_memory_delta(
         "validation": {"evidence": len(validation.evidence_assertions),
                        "interpretation": len(validation.interpretation_assertions)},
         "knowgraph": kg,
-        "thinkgraph": tg,
         "index": index,
     }

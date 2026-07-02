@@ -24,6 +24,16 @@ import {
   appendMessage,
   getConversationMessages,
 } from '../conversations/store';
+import { processThinkGraphPair } from '../services/thinkgraph/thinkGraphFrontDoor';
+import { callPythonAgentMcpTool } from '../services/mcp/pythonAgentMcpClient';
+import {
+  applyThinkGraphPatch,
+  readThinkGraphScope,
+  type ThinkGraphPatchAuthority,
+} from '../services/thinkgraph/thinkGraphStore';
+
+// The app's one canonical Agent Canvas deck (client BUILDER_DECK_ID).
+const BUILDER_DECK_ID = 'deck_builder';
 
 const router = Router();
 export const OPENCLAUDE_HARNESS_ROUTE_PREFIX = '/coder/openclaude';
@@ -69,6 +79,56 @@ router.post('/mcp-bridge/execute_visible_flow', async (req, res) => {
   }
 });
 
+// ── ThinkGraph front-door bridge (same mcp-bridge family) ───────────────────
+// thinkgraph_process_pair: the MCP-facing capability implementation — exact pair
+// references only, no raw prompts/models/cards/patches/task data accepted.
+router.post('/mcp-bridge/thinkgraph_process_pair', async (req, res) => {
+  try {
+    const body = req.body || {};
+    // Structural input contract: exactly these six references (extra keys rejected
+    // inside processThinkGraphPair as overrides).
+    const result = await processThinkGraphPair({
+      projectId: String(body.projectId || ''),
+      deckId: String(body.deckId || BUILDER_DECK_ID),
+      conversationId: String(body.conversationId || ''),
+      userMessageId: String(body.userMessageId || ''),
+      assistantMessageId: String(body.assistantMessageId || ''),
+      correlationId: String(body.correlationId || ''),
+    });
+    return res.json({ ok: result.status !== 'failed', result });
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'thinkgraph_process_pair_failed' });
+  }
+});
+
+// Card-scoped internal tools (called by the Python ThinkGraph card run; authority
+// comes from the trusted run context the backend itself authored — never the model).
+router.post('/mcp-bridge/thinkgraph_read_scope', async (req, res) => {
+  try {
+    const authority = (req.body?.authority || {}) as Record<string, unknown>;
+    const projectId = String(authority.projectId || '');
+    const correlationId = String(authority.correlationId || '');
+    if (!projectId || !correlationId) {
+      return res.status(400).json({ ok: false, error: 'thinkgraph_scope_authority_missing' });
+    }
+    const scope = await readThinkGraphScope({ projectId, limit: Number(req.body?.limit) || undefined });
+    return res.json({ ok: true, scope });
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'thinkgraph_read_scope_failed' });
+  }
+});
+
+router.post('/mcp-bridge/thinkgraph_apply_patch', async (req, res) => {
+  try {
+    const authority = (req.body?.authority || {}) as ThinkGraphPatchAuthority;
+    const patch = req.body?.patch || {};
+    const result = await applyThinkGraphPatch(authority, patch);
+    return res.status(result.ok ? 200 : 400).json(result);
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'thinkgraph_apply_patch_failed' });
+  }
+});
+
 // ── Persistent native OpenClaude session bridge (BuilderChat -> gRPC) ───────
 // SSE stream of the REAL QueryEngine event stream, verbatim. One stable session
 // id per (projectId, conversationId). The browser never touches gRPC.
@@ -94,10 +154,11 @@ router.post('/openclaude/session/chat', async (req, res) => {
   });
   res.write(`event: session\ndata: ${JSON.stringify({ sessionId })}\n\n`);
   // Durable project-scoped transcript persistence (conversations/store.ts). Best-effort:
-  // a DB failure must never block or break the live SSE stream.
-  void appendMessage({ projectId, conversationId, role: 'user', content: message }).catch(() => {
-    /* persistence is best-effort; the live turn is authoritative */
-  });
+  // a DB failure must never block or break the live SSE stream. The resolved message
+  // is kept so the ThinkGraph front door can reference the EXACT pair by id.
+  const userMessagePromise = appendMessage({ projectId, conversationId, role: 'user', content: message }).catch(
+    () => null,
+  );
   try {
     const handle = await startGrpcTurn({ sessionId, message, workingDirectory, model }, (event) => {
       res.write(`event: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`);
@@ -112,14 +173,46 @@ router.post('/openclaude/session/chat', async (req, res) => {
     // bubble (mirrors the frontend's "no text → no bubble" contract).
     const assistantText = String(finalText || '').trim();
     if (assistantText) {
-      void appendMessage({
-        projectId,
-        conversationId,
-        role: 'assistant',
-        content: assistantText,
-      }).catch(() => {
-        /* best-effort */
-      });
+      void (async () => {
+        try {
+          const assistantMessage = await appendMessage({
+            projectId,
+            conversationId,
+            role: 'assistant',
+            content: assistantText,
+          });
+          const userMessage = await userMessagePromise;
+          if (!userMessage) return;
+          // ThinkGraph front door: exactly one bounded, deterministic MCP call per
+          // completed pair (correlation = the assistant message id, so a re-fire is a
+          // duplicate no-op). The Harness crosses the MCP boundary — it never calls
+          // the Python runtime or the graph directly. Fire-and-forget: the delivered
+          // chat result is already final — a ThinkGraph failure/no_patch never
+          // modifies, delays, retries, or falls back to any other writer. All
+          // semantics live on the persisted ThinkGraph card.
+          const mcpResult = await callPythonAgentMcpTool('thinkgraph.process_conversation_pair', {
+            projectId,
+            deckId: BUILDER_DECK_ID,
+            conversationId,
+            userMessageId: userMessage.messageId,
+            assistantMessageId: assistantMessage.messageId,
+            correlationId: `tg:${assistantMessage.messageId}`,
+          });
+          const result = (mcpResult as any)?.result ?? mcpResult;
+          console.log(
+            '[THINKGRAPH][front-door] status=%s correlation=%s card=%s %s',
+            result?.status || 'unknown',
+            result?.correlationId || '',
+            result?.cardId || 'none',
+            result?.error || '',
+          );
+          if (result?.cardSummary) {
+            console.log('[THINKGRAPH][front-door] card said: %s', String(result.cardSummary).slice(0, 400));
+          }
+        } catch (err: any) {
+          console.warn('[THINKGRAPH][front-door] failed:', err?.message || err);
+        }
+      })();
     }
   } catch (error) {
     res.write(
