@@ -112,6 +112,7 @@ router.post('/mcp-bridge/thinkgraph_read_scope', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'thinkgraph_scope_authority_missing' });
     }
     const scope = await readThinkGraphScope({ projectId, limit: Number(req.body?.limit) || undefined });
+    console.log('[THINKGRAPH][tool] read_scope project=%s correlation=%s nodes=%d', projectId, correlationId, scope.nodes.length);
     return res.json({ ok: true, scope });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'thinkgraph_read_scope_failed' });
@@ -123,6 +124,12 @@ router.post('/mcp-bridge/thinkgraph_apply_patch', async (req, res) => {
     const authority = (req.body?.authority || {}) as ThinkGraphPatchAuthority;
     const patch = req.body?.patch || {};
     const result = await applyThinkGraphPatch(authority, patch);
+    console.log(
+      '[THINKGRAPH][tool] apply_patch project=%s correlation=%s -> %s',
+      String(authority?.projectId || ''),
+      String(authority?.correlationId || ''),
+      result.ok ? result.status : `error:${result.error}`,
+    );
     return res.status(result.ok ? 200 : 400).json(result);
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'thinkgraph_apply_patch_failed' });
