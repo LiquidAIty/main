@@ -169,6 +169,14 @@ const cytoscapeStyle: StylesheetJson = [
       'border-width': 2,
     },
   },
+  // Presentation-only dimming for unrelated rendered elements on selection.
+  {
+    selector: '.kgf-dim',
+    style: {
+      opacity: 0.14,
+      'text-opacity': 0.08,
+    },
+  },
 ];
 
 export default function KnowledgeGraphFramework({
@@ -190,7 +198,7 @@ export default function KnowledgeGraphFramework({
     const container = containerRef.current;
     if (!container) return;
     if (!cyRef.current) {
-      cyRef.current = cytoscape({
+      const cyInstance = cytoscape({
         container,
         elements: [],
         style: cytoscapeStyle,
@@ -200,6 +208,29 @@ export default function KnowledgeGraphFramework({
         boxSelectionEnabled: false,
         autoungrabify: false,
       });
+      // Selection display only, from the already-rendered real element set:
+      // node tap highlights its immediate Cytoscape neighborhood, edge tap
+      // highlights the edge + its endpoints, blank tap clears. No semantic
+      // computation, no data mutation, no panels.
+      cyInstance.on('tap', 'node', (event) => {
+        const neighborhood = event.target.closedNeighborhood();
+        cyInstance.batch(() => {
+          cyInstance.elements().removeClass('kgf-dim');
+          cyInstance.elements().difference(neighborhood).addClass('kgf-dim');
+        });
+      });
+      cyInstance.on('tap', 'edge', (event) => {
+        const scope = event.target.union(event.target.connectedNodes());
+        cyInstance.batch(() => {
+          cyInstance.elements().removeClass('kgf-dim');
+          cyInstance.elements().difference(scope).addClass('kgf-dim');
+        });
+      });
+      cyInstance.on('tap', (event) => {
+        if (event.target !== cyInstance) return;
+        cyInstance.batch(() => cyInstance.elements().removeClass('kgf-dim'));
+      });
+      cyRef.current = cyInstance;
     }
 
     const cy = cyRef.current;

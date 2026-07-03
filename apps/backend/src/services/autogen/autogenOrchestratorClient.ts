@@ -265,3 +265,43 @@ export async function fetchToolManifest(): Promise<ToolCapabilityManifestEntry[]
     clearTimeout(timeout);
   }
 }
+
+const THINKGRAPH_PROJECTION_ENDPOINT = '/thinkgraph/projection';
+
+/**
+ * Transport-only: fetch ThinkGraphProjectionV1 from the Python graph authority
+ * and return the body UNCHANGED. No AGE query, no shaping, no labels, no visual
+ * classes here — Python owns the projection; a failure throws honestly.
+ */
+export async function fetchThinkGraphProjection(
+  projectId: string,
+  limit?: number,
+): Promise<unknown> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const baseUrls = buildSidecarBaseUrls();
+    let lastError: any = null;
+    for (const baseUrl of baseUrls) {
+      const query = new URLSearchParams({ projectId });
+      if (Number.isFinite(limit)) query.set('limit', String(limit));
+      const endpoint = `${baseUrl}${THINKGRAPH_PROJECTION_ENDPOINT}?${query.toString()}`;
+      try {
+        const response = await fetch(endpoint, { method: 'GET', signal: controller.signal });
+        const text = await response.text();
+        const data = text ? JSON.parse(text) : null;
+        if (!response.ok) {
+          const message = String((data as any)?.detail || response.statusText || 'thinkgraph_projection_http_error').trim();
+          throw new Error(`thinkgraph_projection_http_${response.status}:${message}`);
+        }
+        return data;
+      } catch (error: any) {
+        lastError = error;
+        if (!isRetryableSidecarError(error)) break;
+      }
+    }
+    throw lastError || new Error('PYTHON_AUTOGEN_RAILS_UNAVAILABLE');
+  } finally {
+    clearTimeout(timeout);
+  }
+}

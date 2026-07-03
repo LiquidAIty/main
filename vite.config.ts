@@ -46,7 +46,9 @@ export default defineConfig({
       "dompurify": path.resolve(process.cwd(), "client/node_modules/dompurify"),
       "validator": path.resolve(process.cwd(), "client/node_modules/validator"),
       "lodash": path.resolve(process.cwd(), "client/node_modules/lodash"),
-      "d3": path.resolve(process.cwd(), "client/node_modules/d3"),
+      // npm hoists d3 to the root node_modules (client/node_modules/d3 no longer
+      // exists), so the vitest alias must point at the hoisted copy.
+      "d3": path.resolve(process.cwd(), "node_modules/d3"),
       "echarts": path.resolve(process.cwd(), "client/node_modules/echarts"),
       "react-vega": path.resolve(process.cwd(), "client/node_modules/react-vega"),
       "vega": path.resolve(process.cwd(), "client/node_modules/vega"),

@@ -3,7 +3,7 @@
 // classification — never display-name matching, never a browser-supplied id.
 import { describe, expect, it } from 'vitest';
 
-import { resolveThinkGraphCardFromDeck } from './thinkGraphFrontDoor';
+import { resolveThinkGraphCardFromDeck, validateThinkGraphCardTools } from './thinkGraphFrontDoor';
 
 const TG_CARD = {
   id: 'card_thinkgraph_agent',
@@ -60,5 +60,30 @@ describe('resolveThinkGraphCardFromDeck — structural, persisted, never by name
     const res = resolveThinkGraphCardFromDeck([viaOptions]);
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.card.id).toBe('card_tg_opt');
+  });
+});
+
+describe('validateThinkGraphCardTools — exactly the two scoped tools, never substituted', () => {
+  const withTools = (tools: unknown) => ({ runtimeOptions: { tools } });
+
+  it('accepts exactly the two ThinkGraph tools in either order', () => {
+    expect(validateThinkGraphCardTools(withTools(['read_thinkgraph_scope', 'apply_thinkgraph_patch']))).toBeNull();
+    expect(validateThinkGraphCardTools(withTools(['apply_thinkgraph_patch', 'read_thinkgraph_scope']))).toBeNull();
+  });
+
+  it('honestly rejects the legacy default AutoGen tool pair (the real observed blocker)', () => {
+    const error = validateThinkGraphCardTools(withTools(['current_datetime', 'calculator']));
+    expect(error).toContain('thinkgraph_card_tools_invalid');
+    expect(error).toContain('got [current_datetime,calculator]');
+  });
+
+  it('rejects subsets, supersets, and missing tools — no fallback fills the gap', () => {
+    expect(validateThinkGraphCardTools(withTools(['read_thinkgraph_scope']))).toContain('thinkgraph_card_tools_invalid');
+    expect(
+      validateThinkGraphCardTools(
+        withTools(['read_thinkgraph_scope', 'apply_thinkgraph_patch', 'calculator']),
+      ),
+    ).toContain('thinkgraph_card_tools_invalid');
+    expect(validateThinkGraphCardTools(withTools(undefined))).toContain('got []');
   });
 });

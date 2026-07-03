@@ -56,6 +56,7 @@ import {
   graphCompanionTabButtonStyle,
   graphCompanionTabGroupStyle,
   graphDrawerSectionStyle,
+  graphGlassPillStyle,
 } from '../components/graph/graphVisualTokens';
 import RightGlassDrawer from '../components/graph/RightGlassDrawer';
 import {
@@ -148,6 +149,8 @@ const KnowledgeEvidencePanel = lazy(
 const KnowledgeGraphFramework = lazy(
   () => import('../components/knowledge/KnowledgeGraphFramework'),
 );
+// Type-only (erased at compile time — the component itself stays lazy).
+import type { GraphProjectionV1 } from '../components/knowledge/KnowledgeGraphFramework';
 // CodeGraph renders through its OWN CBM-backed surface (CodeGraphSurface → /api/layout → CBM →
 // CodeGraphScene), never the generic shared graph shell. Restored to its pre-b32e5cdd direct mount.
 const CodeGraphSurface = lazy(() =>
@@ -3487,6 +3490,91 @@ export default function AgentBuilder(): React.ReactElement {
     connectedKnowledgeGraphKinds,
     knowledgeGraphKind,
   ]);
+  // ── ThinkGraphProjectionV1 (Python-owned) for the ThinkGraph graph tab ──────
+  // The browser only requests the projection through the narrow backend transport
+  // and passes the RAW response into the Cytoscape surface. No mapping, no
+  // classification, no fallback data — an error or empty projection is honest.
+  const [thinkGraphProjection, setThinkGraphProjection] = useState<{
+    status: 'idle' | 'loading' | 'ready' | 'error';
+    projection: GraphProjectionV1 | null;
+    error: string | null;
+  }>({ status: 'idle', projection: null, error: null });
+  // Refetch signal: bumped when a chat turn completes (knowledge:refresh), once
+  // immediately and once ~8s later — the ThinkGraph run persists server-side
+  // AFTER the reply, so the delayed pass catches the actual graph write. Two
+  // bounded refetches per turn; never a polling loop.
+  const [thinkGraphRefreshNonce, setThinkGraphRefreshNonce] = useState(0);
+  useEffect(() => {
+    let delayed: number | null = null;
+    const onKnowledgeRefresh = () => {
+      setThinkGraphRefreshNonce((n) => n + 1);
+      if (delayed != null) window.clearTimeout(delayed);
+      delayed = window.setTimeout(() => {
+        setThinkGraphRefreshNonce((n) => n + 1);
+        delayed = null;
+      }, 8_000);
+    };
+    window.addEventListener('knowledge:refresh', onKnowledgeRefresh);
+    return () => {
+      window.removeEventListener('knowledge:refresh', onKnowledgeRefresh);
+      if (delayed != null) window.clearTimeout(delayed);
+    };
+  }, []);
+  // Last applied projection payload — an unchanged refetch is a no-op so the
+  // rendered graph never re-lays-out ("dances") on identical data.
+  const thinkGraphProjectionJsonRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (workspaceView !== 'knowledge' || knowledgeGraphKind !== 'thinkgraph') return;
+    const projectId = activeProject;
+    if (!projectId) {
+      thinkGraphProjectionJsonRef.current = null;
+      setThinkGraphProjection({ status: 'idle', projection: null, error: null });
+      return;
+    }
+    const controller = new AbortController();
+    setThinkGraphProjection((prev) => ({
+      ...prev,
+      status: prev.projection ? prev.status : 'loading',
+      error: null,
+    }));
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/thinkgraph/projection?projectId=${encodeURIComponent(projectId)}`,
+          { signal: controller.signal },
+        );
+        const data = await res.json().catch(() => null);
+        if (controller.signal.aborted) return;
+        if (!res.ok || !data || typeof data !== 'object') {
+          thinkGraphProjectionJsonRef.current = null;
+          setThinkGraphProjection({
+            status: 'error',
+            projection: null,
+            error: String((data as any)?.error || `HTTP ${res.status}`),
+          });
+          return;
+        }
+        const json = JSON.stringify(data);
+        if (json === thinkGraphProjectionJsonRef.current) return; // unchanged — no re-render
+        thinkGraphProjectionJsonRef.current = json;
+        setThinkGraphProjection({
+          status: 'ready',
+          projection: data as GraphProjectionV1,
+          error: null,
+        });
+      } catch (err: any) {
+        if (controller.signal.aborted) return;
+        thinkGraphProjectionJsonRef.current = null;
+        setThinkGraphProjection({
+          status: 'error',
+          projection: null,
+          error: String(err?.message || err),
+        });
+      }
+    })();
+    return () => controller.abort();
+  }, [activeProject, knowledgeGraphKind, workspaceView, thinkGraphRefreshNonce]);
+
   const [graphViewContract, setGraphViewContract] =
     useState<CodeGraphViewContract | null>(null);
   // CodeGraph repository identity is resolved from the authoritative CBM index — the
@@ -5542,13 +5630,50 @@ export default function AgentBuilder(): React.ReactElement {
                 />
               ) : (
                 <KnowledgeGraphFramework
-                  projection={undefined}
+                  projection={
+                    knowledgeGraphKind === 'thinkgraph'
+                      ? (thinkGraphProjection.projection ?? undefined)
+                      : undefined
+                  }
                   minHeight={minHeight}
                 />
               )}
             </Suspense>
           </KnowledgeSurfaceErrorBoundary>
         </div>
+        {/* Honest ThinkGraph status OUTSIDE the graph canvas: real empty state or
+            the actual transport error. Never fake nodes, never fallback data. */}
+        {knowledgeGraphKind === 'thinkgraph' &&
+        thinkGraphProjection.status === 'ready' &&
+        (thinkGraphProjection.projection?.nodes?.length ?? 0) === 0 ? (
+          <div
+            data-testid="thinkgraph-empty-message"
+            style={{
+              position: 'absolute',
+              bottom: 12,
+              left: 12,
+              zIndex: 5,
+              ...graphGlassPillStyle({ fontSize: 11, padding: '5px 10px' }),
+            }}
+          >
+            No ThinkGraph records exist for this project yet.
+          </div>
+        ) : null}
+        {knowledgeGraphKind === 'thinkgraph' && thinkGraphProjection.status === 'error' ? (
+          <div
+            data-testid="thinkgraph-projection-error"
+            style={{
+              position: 'absolute',
+              bottom: 12,
+              left: 12,
+              zIndex: 5,
+              maxWidth: 520,
+              ...graphGlassPillStyle({ fontSize: 11, padding: '5px 10px' }),
+            }}
+          >
+            ThinkGraph projection unavailable: {thinkGraphProjection.error}
+          </div>
+        ) : null}
       </div>
     </div>
   );

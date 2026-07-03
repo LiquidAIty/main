@@ -65,6 +65,18 @@ def test_manifest_includes_knowgraph_retrieval_with_display_name():
     assert "project_id" in entry["inputSchemaSummary"]
 
 
+def test_manifest_exposes_thinkgraph_tools_for_assistant_agent_cards():
+    """The card Tools tab filters by agentCompatibility, so the two scoped
+    ThinkGraph tools must be attachable on assistant_agent cards (and never on
+    the Mag One orchestrator card)."""
+    manifest = tool_manifest()
+    for tool_id in ("read_thinkgraph_scope", "apply_thinkgraph_patch"):
+        entry = next((m for m in manifest if m["id"] == tool_id), None)
+        assert entry is not None, f"{tool_id} missing from manifest"
+        assert entry["agentCompatibility"] == ["assistant_agent"]
+        assert entry["description"]
+
+
 def test_manifest_is_registry_backed_no_duplicate_entries():
     manifest = tool_manifest()
     ids = [m["id"] for m in manifest]

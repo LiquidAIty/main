@@ -6,8 +6,32 @@
 //                  until then). No writes here; read failures reported honestly.
 import { Router } from 'express';
 import { getThinkGraphView } from '../services/thinkgraph/thinkGraphStore';
+import { fetchThinkGraphProjection } from '../services/autogen/autogenOrchestratorClient';
 
 const router = Router();
+
+// ── /projection : narrow transport for the Python-owned ThinkGraphProjectionV1 ──
+// Validates the project reference, calls the Python graph authority, and returns
+// its response UNCHANGED. No AGE query, no node/edge shaping, no kind/predicate
+// mapping, no labels, no provenance construction, no graph policy lives here.
+router.get('/projection', async (req, res) => {
+  const projectId = String(req.query.projectId || '').trim();
+  if (!projectId) {
+    return res.status(400).json({ error: 'projectId required' });
+  }
+  const limitRaw = Number(req.query.limit);
+  try {
+    const projection = await fetchThinkGraphProjection(
+      projectId,
+      Number.isFinite(limitRaw) ? limitRaw : undefined,
+    );
+    return res.json(projection);
+  } catch (error: any) {
+    return res
+      .status(502)
+      .json({ error: String(error?.message || 'thinkgraph_projection_unavailable') });
+  }
+});
 
 router.get('/graph-view', async (req, res) => {
   const projectId = String(req.query.projectId || '').trim();

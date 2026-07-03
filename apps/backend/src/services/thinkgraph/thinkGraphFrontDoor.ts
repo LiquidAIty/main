@@ -76,6 +76,22 @@ export function resolveThinkGraphCardFromDeck(nodes: any[]): ThinkGraphCardResol
   return { ok: true, card: matches[0] };
 }
 
+/**
+ * The persisted card must carry EXACTLY the two scoped ThinkGraph tools
+ * (order-insensitive). Anything else — legacy defaults, subsets, extras — is an
+ * honest configuration error; the runtime never substitutes or supplements the
+ * saved selection. Pure, so the gate is directly unit-testable.
+ */
+export function validateThinkGraphCardTools(card: any): string | null {
+  const cardTools = (Array.isArray(card?.runtimeOptions?.tools) ? card.runtimeOptions.tools : []).map(
+    (t: unknown) => s(t),
+  );
+  const toolsOk =
+    cardTools.length === REQUIRED_TOOLS.length && REQUIRED_TOOLS.every((t) => cardTools.includes(t));
+  if (toolsOk) return null;
+  return `thinkgraph_card_tools_invalid: expected exactly [${REQUIRED_TOOLS.join(',')}], got [${cardTools.join(',')}]`;
+}
+
 async function patchMarkerExists(projectId: string, correlationId: string): Promise<boolean> {
   await ensureVertexLabel(GRAPH, 'ThinkDeltaApplied');
   const rows = await runCypherOnGraph(
@@ -136,16 +152,9 @@ export async function processThinkGraphPair(args: ProcessPairArgs): Promise<Proc
   }
   const card = resolution.card;
   const binding = s(card.id);
-  // Exactly the allowed ThinkGraph tools — no more, no less (order-insensitive).
-  const cardTools = (Array.isArray(card.runtimeOptions?.tools) ? card.runtimeOptions.tools : []).map((t: unknown) => s(t));
-  const toolsOk =
-    cardTools.length === REQUIRED_TOOLS.length && REQUIRED_TOOLS.every((t) => cardTools.includes(t));
-  if (!toolsOk) {
-    return done({
-      status: 'not_configured',
-      cardId: binding,
-      error: `thinkgraph_card_tools_invalid: expected exactly [${REQUIRED_TOOLS.join(',')}], got [${cardTools.join(',')}]`,
-    });
+  const toolsError = validateThinkGraphCardTools(card);
+  if (toolsError) {
+    return done({ status: 'not_configured', cardId: binding, error: toolsError });
   }
 
   // Idempotency: a correlation that already produced a patch is never reprocessed.

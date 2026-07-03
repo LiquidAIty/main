@@ -61,6 +61,12 @@ export async function streamSession(args: {
       args.onEvent({ ...data, kind });
     }
   }
+  // Transport-level turn-complete signal (same event UploadAttachment already
+  // uses): durable knowledge may have changed server-side after this turn —
+  // listeners (e.g. the ThinkGraph projection view) refetch their real reads.
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('knowledge:refresh'));
+  }
   return { finalText };
 }
 

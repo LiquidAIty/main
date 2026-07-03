@@ -74,6 +74,23 @@ async def autogen_orchestrate(req: ContextPack):
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
+@app.get("/thinkgraph/projection")
+def thinkgraph_projection(projectId: str, limit: int | None = None):
+    """ThinkGraphProjectionV1: Python-owned read-only projection of the ACTUAL
+    persisted ThinkGraph records for one project (real IDs, labels, kinds,
+    predicates, provenance, and Python-assigned display classes). The backend
+    forwards this response unchanged; no other layer shapes graph data."""
+    from app.python_models.thinkgraph_projection import read_projection
+
+    cleaned = str(projectId or "").strip()
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="projectId required")
+    try:
+        return read_projection(cleaned, limit)
+    except Exception as err:  # honest read failure — no fallback projection
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
 @app.post("/autogen/run_card")
 async def autogen_run_card(req: ContextPack):
     """Run ONE configured canvas card as a single AssistantAgent.
