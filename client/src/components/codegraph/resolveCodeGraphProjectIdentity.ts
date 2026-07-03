@@ -13,14 +13,40 @@
  * project matching the active repo, this returns `null` and CodeGraph surfaces its
  * honest empty/error state instead of fabricating an identity.
  */
-import { callTool } from '../../vendor/codebase-memory-ui/src/api/rpc';
-
 type CbmProjectRow = {
   name?: string;
   root_path?: string;
   nodes?: number;
   edges?: number;
 };
+
+let nextRpcId = 1;
+
+async function callCbmTool<T = unknown>(
+  name: string,
+  args: Record<string, unknown> = {},
+): Promise<T> {
+  const res = await fetch('/rpc', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: nextRpcId++,
+      method: 'tools/call',
+      params: { name, arguments: args },
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`CBM RPC HTTP ${res.status}: ${res.statusText}`);
+  }
+  const json = await res.json();
+  if (json?.error) {
+    throw new Error(String(json.error.message || 'CBM RPC error'));
+  }
+  const text = json?.result?.content?.[0]?.text;
+  if (typeof text === 'string') return JSON.parse(text) as T;
+  return json?.result as T;
+}
 
 /** Normalize a filesystem path for identity comparison: backslashes → slashes,
  *  collapse duplicate slashes, drop a trailing slash, lowercase (Windows roots are
@@ -49,7 +75,7 @@ export async function resolveCbmProjectName(
   list: (() => Promise<{ projects?: CbmProjectRow[] }>) | null = null,
 ): Promise<string | null> {
   const fetchProjects =
-    list ?? (() => callTool<{ projects?: CbmProjectRow[] }>('list_projects'));
+    list ?? (() => callCbmTool<{ projects?: CbmProjectRow[] }>('list_projects'));
   const result = await fetchProjects();
   const projects = Array.isArray(result?.projects) ? result.projects : [];
   if (projects.length === 0) return null;

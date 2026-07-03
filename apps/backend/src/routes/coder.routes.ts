@@ -136,6 +136,61 @@ router.post('/mcp-bridge/thinkgraph_apply_patch', async (req, res) => {
   }
 });
 
+// ── Card runtime-assignment transport (thin MCP client shell) ────────────────
+// The card editor's visible "ThinkGraph runtime" controls read and write runtime
+// assignments ONLY through the Python Agent MCP tools (canvas.inspect /
+// card.assign_runtime_skill / card.assign_data_binding). No policy, no DB access,
+// no semantics here — Python owns validation (promoted status, compatibility,
+// bounded refs, injection rejection).
+router.get('/cards/runtime-assignments', async (req, res) => {
+  try {
+    const projectId = String(req.query?.projectId || '');
+    const deckId = String(req.query?.deckId || BUILDER_DECK_ID);
+    const cardId = String(req.query?.cardId || '');
+    const inspect = await callPythonAgentMcpTool('canvas.inspect', { projectId, deckId });
+    if (!inspect.ok) return res.status(502).json(inspect);
+    const cards = Array.isArray((inspect as any).cards) ? (inspect as any).cards : [];
+    const card = cards.find((c: any) => String(c?.id || '') === cardId) ?? null;
+    return res.json({ ok: true, card });
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'runtime_assignments_read_failed' });
+  }
+});
+
+router.post('/cards/assign-runtime-skill', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const result = await callPythonAgentMcpTool('card.assign_runtime_skill', {
+      projectId: String(body.projectId || ''),
+      deckId: String(body.deckId || BUILDER_DECK_ID),
+      cardId: String(body.cardId || ''),
+      skillId: String(body.skillId || ''),
+      ...(Number.isInteger(body.skillVersion) ? { skillVersion: body.skillVersion } : {}),
+      op: body.op === 'remove' ? 'remove' : 'assign',
+    });
+    return res.status(result.ok ? 200 : 400).json(result);
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'assign_runtime_skill_failed' });
+  }
+});
+
+router.post('/cards/assign-data-binding', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const result = await callPythonAgentMcpTool('card.assign_data_binding', {
+      projectId: String(body.projectId || ''),
+      deckId: String(body.deckId || BUILDER_DECK_ID),
+      cardId: String(body.cardId || ''),
+      bindingType: String(body.bindingType || ''),
+      ...(body.bindingRef && typeof body.bindingRef === 'object' ? { bindingRef: body.bindingRef } : {}),
+      op: body.op === 'remove' ? 'remove' : 'assign',
+    });
+    return res.status(result.ok ? 200 : 400).json(result);
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'assign_data_binding_failed' });
+  }
+});
+
 // run_configured_card: thin transport for the card.run_assistant_agent MCP tool.
 // Saved card identity/prompt/model/tools only — runConfiguredCard structurally
 // rejects every extra key, so no browser/MCP-supplied override can reach the run.

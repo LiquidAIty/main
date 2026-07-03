@@ -1016,6 +1016,17 @@ DEFAULT_TOOL_REGISTRY = build_default_tool_registry()
 # Per-tool display metadata. Anything not listed falls back to safe defaults
 # derived from the registered ToolSpec.
 _TOOL_DISPLAY_METADATA: dict[str, dict[str, Any]] = {
+    # ThinkGraph card-scoped tools: attachable ONLY on assistant_agent cards (the
+    # ThinkGraph card). They execute only inside an authorized ThinkGraph card run
+    # (trusted run authority) — attaching them elsewhere fails honestly at run time.
+    "read_thinkgraph_scope": {
+        "displayName": "ThinkGraph Scope (read)",
+        "agentCompatibility": ["assistant_agent"],
+    },
+    "apply_thinkgraph_patch": {
+        "displayName": "ThinkGraph Patch (authorized write)",
+        "agentCompatibility": ["assistant_agent"],
+    },
     "retrieve_knowgraph_context": {
         "displayName": "KnowGraph Hybrid Retrieval",
         # Mag One capability, held by the Mag One team's participant agents. The

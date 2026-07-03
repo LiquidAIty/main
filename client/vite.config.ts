@@ -34,6 +34,11 @@ export default defineConfig(() => {
         // "buffer/index.js does not provide an export named 'Buffer'" right after the
         // prop-types leaf. Same CJS-leaf fix.
         'buffer',
+        // Cytoscape + fCoSE are CJS graph-renderer deps. Without pre-inclusion,
+        // Vite can discover them mid-session, re-optimize, and kill lazy graph
+        // chunks with "Failed to fetch dynamically imported module".
+        'cytoscape',
+        'cytoscape-fcose',
       ],
       // Work around corrupted nested sourcemaps in three-stdlib pulled by
       // @react-three/* during esbuild pre-bundling on dev startup.

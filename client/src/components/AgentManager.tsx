@@ -28,6 +28,8 @@ type AgentType =
 
 interface AgentManagerProps {
   projectId: string;
+  /** Saved deck the selected card belongs to (runtime-assignment reads/writes). */
+  deckId?: string;
   agentType: AgentType;
   activeTab: string;
   selectedCardId?: string | null;
@@ -104,6 +106,26 @@ type ToolCapabilityManifestEntry = {
   agentCompatibility: string[];
   inputSchemaSummary?: string;
 };
+
+// Actual database-backed runtime assignments for the ThinkGraph card, as returned
+// by the backend's thin MCP-client read (canvas.inspect). Display-only shape.
+type ThinkGraphRuntimeAssignments = {
+  assignedProfile: { profileId: string; version: number } | null;
+  assignedSkills: Array<{ skillId: string; version: number; status: string }>;
+  assignedDataBindings: Array<{ bindingType: string; bindingRef: Record<string, unknown> }>;
+};
+
+const THINKGRAPH_REQUIRED_SKILL = {
+  skillId: 'thinkgraph.compact_patch_discipline',
+  version: 1,
+} as const;
+const THINKGRAPH_REQUIRED_DATA_BINDINGS: ReadonlyArray<{
+  bindingType: string;
+  bindingRef: Record<string, unknown>;
+}> = [
+  { bindingType: 'conversation_source', bindingRef: { scope: 'current_exchange' } },
+  { bindingType: 'thinkgraph_project_slice', bindingRef: { limit: 300 } },
+];
 
 type SaveCardStatus = 'idle' | 'saving' | 'saved' | 'failed';
 
@@ -617,6 +639,8 @@ export function buildActiveAgentManagerLocalConfig(input: {
 }
 
 export function AgentManager({
+  projectId,
+  deckId,
   activeTab,
   cardName,
   cardSubtext,
@@ -688,6 +712,110 @@ export function AgentManager({
   );
   // Real Mag One tool capability manifest (registry-backed; best-effort fetch).
   const [toolManifest, setToolManifest] = useState<ToolCapabilityManifestEntry[]>([]);
+
+  const isThinkGraphCard =
+    String(localConfig?.runtime_binding || '') === 'thinkgraph_agent';
+  const [runtimeAssignments, setRuntimeAssignments] =
+    useState<ThinkGraphRuntimeAssignments | null>(null);
+  const [runtimeAssignmentsError, setRuntimeAssignmentsError] = useState<string | null>(null);
+  const [runtimeAssignBusy, setRuntimeAssignBusy] = useState<string | null>(null);
+  const runtimeAssignmentsDeckId = deckId || 'deck_builder';
+
+  const loadRuntimeAssignments = useCallback(async () => {
+    if (!isThinkGraphCard || !selectedCardId || !projectId) return;
+    try {
+      setRuntimeAssignmentsError(null);
+      const response = await fetch(
+        `/api/coder/cards/runtime-assignments?projectId=${encodeURIComponent(projectId)}&deckId=${encodeURIComponent(runtimeAssignmentsDeckId)}&cardId=${encodeURIComponent(selectedCardId)}`,
+        { credentials: 'include' },
+      );
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.ok) {
+        setRuntimeAssignments(null);
+        setRuntimeAssignmentsError(String(data?.error || `HTTP ${response.status}`));
+        return;
+      }
+      setRuntimeAssignments({
+        assignedProfile: data.card?.assignedProfile ?? null,
+        assignedSkills: Array.isArray(data.card?.assignedSkills) ? data.card.assignedSkills : [],
+        assignedDataBindings: Array.isArray(data.card?.assignedDataBindings)
+          ? data.card.assignedDataBindings
+          : [],
+      });
+    } catch (err: any) {
+      setRuntimeAssignments(null);
+      setRuntimeAssignmentsError(String(err?.message || err));
+    }
+  }, [isThinkGraphCard, projectId, runtimeAssignmentsDeckId, selectedCardId]);
+
+  useEffect(() => {
+    void loadRuntimeAssignments();
+  }, [loadRuntimeAssignments]);
+
+  const assignThinkGraphSkill = useCallback(
+    async (op: 'assign' | 'remove') => {
+      if (!selectedCardId || !projectId) return;
+      setRuntimeAssignBusy('skill');
+      try {
+        const response = await fetch('/api/coder/cards/assign-runtime-skill', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId,
+            deckId: runtimeAssignmentsDeckId,
+            cardId: selectedCardId,
+            skillId: THINKGRAPH_REQUIRED_SKILL.skillId,
+            skillVersion: THINKGRAPH_REQUIRED_SKILL.version,
+            op,
+          }),
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data?.ok) {
+          setRuntimeAssignmentsError(String(data?.error || `HTTP ${response.status}`));
+        }
+      } catch (err: any) {
+        setRuntimeAssignmentsError(String(err?.message || err));
+      } finally {
+        setRuntimeAssignBusy(null);
+        void loadRuntimeAssignments();
+      }
+    },
+    [loadRuntimeAssignments, projectId, runtimeAssignmentsDeckId, selectedCardId],
+  );
+
+  const assignThinkGraphDataBinding = useCallback(
+    async (bindingType: string, bindingRef: Record<string, unknown>, op: 'assign' | 'remove') => {
+      if (!selectedCardId || !projectId) return;
+      setRuntimeAssignBusy(bindingType);
+      try {
+        const response = await fetch('/api/coder/cards/assign-data-binding', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId,
+            deckId: runtimeAssignmentsDeckId,
+            cardId: selectedCardId,
+            bindingType,
+            ...(op === 'assign' ? { bindingRef } : {}),
+            op,
+          }),
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data?.ok) {
+          setRuntimeAssignmentsError(String(data?.error || `HTTP ${response.status}`));
+        }
+      } catch (err: any) {
+        setRuntimeAssignmentsError(String(err?.message || err));
+      } finally {
+        setRuntimeAssignBusy(null);
+        void loadRuntimeAssignments();
+      }
+    },
+    [loadRuntimeAssignments, projectId, runtimeAssignmentsDeckId, selectedCardId],
+  );
+
   const [knowledgeText, setKnowledgeText] = useState(
     Array.isArray(localConfig?.knowledge_sources) ? localConfig.knowledge_sources.join('\n') : '',
   );
@@ -1349,9 +1477,92 @@ export function AgentManager({
         : [...current, id];
       setToolsText(next.join('\n'));
     };
+    const assignedSkillIds = (runtimeAssignments?.assignedSkills ?? []).map(
+      (s) => `${s.skillId}@v${s.version}`,
+    );
+    const assignedBindingTypes = (runtimeAssignments?.assignedDataBindings ?? []).map(
+      (b) => b.bindingType,
+    );
     return (
       <div className={formScopeClassName} style={{ display: 'grid', gap: 8 }}>
         <style>{scopedFocusStyles}</style>
+        {isThinkGraphCard ? (
+          <div
+            data-testid="thinkgraph-runtime-section"
+            style={{
+              display: 'grid',
+              gap: 6,
+              padding: '8px 10px',
+              border: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`,
+              borderRadius: 8,
+              background: GRAPH_THEME.drawer.sectionBackground,
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 700, color: GRAPH_THEME.drawer.inputText }}>
+              ThinkGraph runtime (database-backed)
+            </div>
+            <div style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputMuted }}>
+              Profile:{' '}
+              {runtimeAssignments?.assignedProfile
+                ? `${runtimeAssignments.assignedProfile.profileId} v${runtimeAssignments.assignedProfile.version}`
+                : 'not resolved yet'}
+            </div>
+            {runtimeAssignmentsError ? (
+              <div style={{ fontSize: 11, color: '#e07a7a', wordBreak: 'break-all' }}>
+                {runtimeAssignmentsError}
+              </div>
+            ) : null}
+            {(() => {
+              const skillKey = `${THINKGRAPH_REQUIRED_SKILL.skillId}@v${THINKGRAPH_REQUIRED_SKILL.version}`;
+              const skillAssigned = assignedSkillIds.includes(skillKey);
+              return (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputText }}>
+                    Skill {skillKey} · {skillAssigned ? 'assigned' : 'missing'}
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="thinkgraph-assign-skill"
+                    disabled={runtimeAssignBusy !== null}
+                    onClick={() => void assignThinkGraphSkill(skillAssigned ? 'remove' : 'assign')}
+                    style={graphDrawerButtonStyle({ padding: '3px 8px', fontSize: 10 })}
+                  >
+                    {runtimeAssignBusy === 'skill' ? '…' : skillAssigned ? 'Remove' : 'Assign'}
+                  </button>
+                </div>
+              );
+            })()}
+            {THINKGRAPH_REQUIRED_DATA_BINDINGS.map((binding) => {
+              const assigned = assignedBindingTypes.includes(binding.bindingType);
+              return (
+                <div
+                  key={binding.bindingType}
+                  style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}
+                >
+                  <span style={{ fontSize: 11, color: GRAPH_THEME.drawer.inputText, minWidth: 0 }}>
+                    Data {binding.bindingType} {JSON.stringify(binding.bindingRef)} ·{' '}
+                    {assigned ? 'assigned' : 'missing'}
+                  </span>
+                  <button
+                    type="button"
+                    data-testid={`thinkgraph-assign-${binding.bindingType}`}
+                    disabled={runtimeAssignBusy !== null}
+                    onClick={() =>
+                      void assignThinkGraphDataBinding(
+                        binding.bindingType,
+                        binding.bindingRef,
+                        assigned ? 'remove' : 'assign',
+                      )
+                    }
+                    style={graphDrawerButtonStyle({ padding: '3px 8px', fontSize: 10 })}
+                  >
+                    {runtimeAssignBusy === binding.bindingType ? '…' : assigned ? 'Remove' : 'Assign'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
         {compatibleCapabilities.length > 0 ? (
           <div style={{ display: 'grid', gap: 6 }}>
             <div

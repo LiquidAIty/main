@@ -127,8 +127,6 @@ import type {
   KnowledgeGraphRelationship,
   KnowledgeGraphNode,
 } from '../components/knowledge/KnowledgeGraphNVL';
-import { mergeExploreLensPayloads } from '../components/graph/graphViewAdapter';
-import { applyGraphNavToolResult } from '../components/graph/graphNavToolResult';
 import {
   createWorkspaceTestingInteractionId,
   recordWorkspaceTestingEvent,
@@ -1007,6 +1005,7 @@ export function getConnectedKnowledgeGraphKinds(
 ): KnowledgeGraphKind[] {
   const kinds: KnowledgeGraphKind[] = [];
   if (streams.thinkGraph) kinds.push('thinkgraph');
+  if (streams.knowGraph) kinds.push('knowgraph');
   if (streams.codeGraph) kinds.push('codegraph');
   return kinds;
 }
@@ -3719,138 +3718,6 @@ function ageRowsToGraph(rows: any[]): { nodes: KNode[]; edges: KEdge[] } {
   };
 }
 
-function safeRecord(input: unknown): Record<string, any> {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
-  return input as Record<string, any>;
-}
-
-function normalizeKnowGraphResponseToGraph(payload: any): {
-  nodes: KNode[];
-  edges: KEdge[];
-} {
-  const rawNodes = Array.isArray(payload?.nodes) ? payload.nodes : [];
-  const rawRels = Array.isArray(payload?.relationships)
-    ? payload.relationships
-    : [];
-
-  const nodes: KNode[] = [];
-  const edges: KEdge[] = [];
-  const seenNodeIds = new Set<string>();
-  const seenEdgeIds = new Set<string>();
-
-  rawNodes.forEach((raw: any) => {
-    const rawId = String(raw?.id ?? '').trim();
-    if (!rawId) return;
-    const id = `kg:${rawId}`;
-    if (seenNodeIds.has(id)) return;
-    seenNodeIds.add(id);
-
-    const props = safeRecord(raw?.properties);
-    const ts =
-      props.last_seen_ts ?? props.created_at ?? props.updated_at ?? undefined;
-    nodes.push({
-      id,
-      rawId,
-      graphSource: 'know',
-      scope: normalizeKnowledgeScope(
-        props.scope ?? raw?.scope,
-        'grounded_research',
-      ),
-      label: safeText(raw?.label || props.name || props.title || rawId),
-      type: safeText(
-        raw?.type ||
-          (Array.isArray(raw?.labels) ? raw.labels[0] : '') ||
-          'NeoEntity',
-      ).toLowerCase(),
-      last_seen_ts: typeof ts === 'string' ? ts : undefined,
-      createdAtMs: parseTimestampMs(ts),
-      degree: 0,
-      summary: safeText(props.summary || props.description || ''),
-      graph: safeText(props.graph || 'know'),
-      kind: safeText(props.kind || raw?.type || ''),
-      owlClass: props.owlClass as any,
-      atType: props.atType as any,
-      properties: props,
-      sourceRefs: Array.isArray(props.sourceRefs) ? props.sourceRefs : [],
-      provenance:
-        props.provenance && typeof props.provenance === 'object'
-          ? (props.provenance as Record<string, unknown>)
-          : null,
-      vectorText: typeof props.vectorText === 'string' ? props.vectorText : null,
-      datatypeProperties: Array.isArray(props.datatypeProperties)
-        ? (props.datatypeProperties as any[])
-        : [],
-      objectProperties: Array.isArray(props.objectProperties)
-        ? (props.objectProperties as any[])
-        : [],
-      confidence: Number.isFinite(Number(props.confidence))
-        ? Number(props.confidence)
-        : undefined,
-    });
-  });
-
-  rawRels.forEach((raw: any) => {
-    const rawId =
-      String(raw?.id ?? '').trim() ||
-      `${raw?.from ?? ''}->${raw?.to ?? ''}:${raw?.type ?? 'RELATED_TO'}`;
-    const fromRaw = String(raw?.from ?? '').trim();
-    const toRaw = String(raw?.to ?? '').trim();
-    if (!fromRaw || !toRaw) return;
-
-    const id = `kg:${rawId}`;
-    if (seenEdgeIds.has(id)) return;
-    seenEdgeIds.add(id);
-
-    const props = safeRecord(raw?.properties);
-    const source = `kg:${fromRaw}`;
-    const target = `kg:${toRaw}`;
-    const lastSeen =
-      props.last_seen_ts ?? props.created_at ?? props.updated_at ?? undefined;
-    const confidenceNum = Number(props.confidence ?? props.score ?? NaN);
-    const weightNum = Number(
-      props.weight ?? props.score ?? props.confidence ?? NaN,
-    );
-
-    edges.push({
-      id,
-      rawId,
-      graphSource: 'know',
-      scope: normalizeKnowledgeScope(
-        props.scope ?? raw?.scope,
-        'grounded_research',
-      ),
-      a: source,
-      b: target,
-      source,
-      target,
-      type: safeText(raw?.type || 'RELATED_TO').toLowerCase(),
-      weight: Number.isFinite(weightNum) ? weightNum : undefined,
-      confidence: Number.isFinite(confidenceNum) ? confidenceNum : undefined,
-      last_seen_ts: typeof lastSeen === 'string' ? lastSeen : undefined,
-      lastSeenMs: parseTimestampMs(lastSeen),
-      evidence_doc_id: safeText(props.document_id || props.doc_id || ''),
-      evidence_snippet: safeText(props.snippet || props.evidence_snippet || ''),
-      sourceRefs: Array.isArray(props.sourceRefs) ? props.sourceRefs : [],
-    });
-  });
-
-  const degreeByNode = new Map<string, number>();
-  edges.forEach((e) => {
-    const s = e.source || e.a;
-    const t = e.target || e.b;
-    if (s) degreeByNode.set(s, (degreeByNode.get(s) || 0) + 1);
-    if (t) degreeByNode.set(t, (degreeByNode.get(t) || 0) + 1);
-  });
-
-  return {
-    nodes: nodes.map((n) => ({
-      ...n,
-      degree: degreeByNode.get(n.id) || n.degree || 0,
-    })),
-    edges,
-  };
-}
-
 function buildThinkRowsFromMergedGraphPayload(payload: any): any[] {
   const rawEntities = Array.isArray(payload?.entities) ? payload.entities : [];
   const rawRelationships = Array.isArray(payload?.relationships)
@@ -3965,46 +3832,6 @@ function prefixThinkGraphIds(graph: { nodes: KNode[]; edges: KEdge[] }): {
 
   return { nodes, edges };
 }
-
-function mergeKnowledgeGraphs(
-  ...graphs: Array<{ nodes: KNode[]; edges: KEdge[] }>
-): { nodes: KNode[]; edges: KEdge[] } {
-  const nodeMap = new Map<string, KNode>();
-  const edgeMap = new Map<string, KEdge>();
-
-  graphs.forEach((graph) => {
-    graph.nodes.forEach((node) => {
-      if (!node?.id) return;
-      if (!nodeMap.has(node.id)) {
-        nodeMap.set(node.id, node);
-      }
-    });
-    graph.edges.forEach((edge) => {
-      const edgeId = String(edge?.id || '').trim();
-      if (!edgeId) return;
-      if (!edgeMap.has(edgeId)) {
-        edgeMap.set(edgeId, edge);
-      }
-    });
-  });
-
-  const degreeByNode = new Map<string, number>();
-  Array.from(edgeMap.values()).forEach((e) => {
-    const s = e.source || e.a;
-    const t = e.target || e.b;
-    if (s) degreeByNode.set(s, (degreeByNode.get(s) || 0) + 1);
-    if (t) degreeByNode.set(t, (degreeByNode.get(t) || 0) + 1);
-  });
-
-  return {
-    nodes: Array.from(nodeMap.values()).map((n) => ({
-      ...n,
-      degree: degreeByNode.get(n.id) || n.degree || 0,
-    })),
-    edges: Array.from(edgeMap.values()),
-  };
-}
-void mergeKnowledgeGraphs;
 
 function buildGraphVizForNVL(graph: { nodes: KNode[]; edges: KEdge[] }) {
   const entities: KnowledgeGraphNode[] = graph.nodes.map((n) => {
@@ -5640,6 +5467,7 @@ export default function AgentBuilder(): React.ReactElement {
                 <AgentManager
                   key={`deck-card:${selectedCard.id}:${tab}`}
                   projectId={canvasProjectId || 'deck-card'}
+                  deckId={BUILDER_DECK_ID}
                   agentType="agent_builder"
                   activeTab={tab}
                   selectedCardId={selectedCard.id}
@@ -7249,14 +7077,6 @@ export default function AgentBuilder(): React.ReactElement {
             appendAssistantText(String((event as { text?: unknown }).text || ''));
             return;
           }
-          // Harness graph navigation: apply focus/highlight/clear directives from the graph_* tools
-          // to the shared GraphExplorerCore selection store (ephemeral; no graph data is written).
-          if (event.kind === 'tool_result') {
-            applyGraphNavToolResult(
-              String((event as { toolName?: unknown }).toolName || ''),
-              String((event as { output?: unknown }).output || ''),
-            );
-          }
         },
       })
         .then(({ finalText }) => {
@@ -7530,7 +7350,14 @@ export default function AgentBuilder(): React.ReactElement {
           <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 6, display: 'flex', gap: 6 }}>
             {connectedKnowledgeGraphKinds.map((k) => {
               const active = k === knowledgeGraphKind;
-              const label = k === 'codegraph' ? 'CodeGraph' : k === 'thinkgraph' ? 'ThinkGraph' : k;
+              const label =
+                k === 'codegraph'
+                  ? 'CodeGraph'
+                  : k === 'thinkgraph'
+                    ? 'ThinkGraph'
+                    : k === 'knowgraph'
+                      ? 'KnowGraph'
+                      : k;
               return (
                 <button
                   key={k}
@@ -7612,49 +7439,10 @@ export default function AgentBuilder(): React.ReactElement {
                   }
                 />
               ) : (
-              <KnowledgeGraphFramework
-                kind={knowledgeGraphKind}
-                availableKinds={connectedKnowledgeGraphKinds}
-                onKindChange={(nextKind) => {
-                  setKnowledgeGraphKind(nextKind);
-                  setGraphViewContract((prev) => ({
-                    graphKind: nextKind,
-                    projectId:
-                      nextKind === 'codegraph'
-                        ? codeGraphProjectName
-                        : (activeProject ?? null),
-                    nodeLabelAllowlist: undefined,
-                    edgeTypeAllowlist: undefined,
-                    showLabels: prev?.showLabels ?? true,
-                    maxNodes: undefined,
-                    focusNodeIds: undefined,
-                    focusPaths: undefined,
-                    focusSymbols: undefined,
-                    cameraMode: prev?.cameraMode ?? 'overview',
-                    animationMode: prev?.animationMode ?? 'calm',
-                    narrativeIntent: prev?.narrativeIntent ?? null,
-                  }));
-                }}
-                contract={
-                  graphViewContract ?? {
-                    graphKind: knowledgeGraphKind,
-                    projectId: activeProject ?? null,
-                    showLabels: true,
-                    cameraMode: 'overview',
-                    animationMode: 'calm',
-                    narrativeIntent: null,
-                  }
-                }
-                onContractChange={(nextContract) =>
-                  setGraphViewContract(nextContract)
-                }
-                thinkGraphData={thinkGraphViewData}
-                codeGraphViewData={codeGraphViewData}
-                thinkGraphSource={thinkGraphSourceLabel}
-                codeGraphProjectName={codeGraphProjectName}
-                onRefreshRequest={loadGraphData}
-                minHeight={minHeight}
-              />
+                <KnowledgeGraphFramework
+                  projection={undefined}
+                  minHeight={minHeight}
+                />
               )}
             </Suspense>
           </KnowledgeSurfaceErrorBoundary>
@@ -8295,4 +8083,3 @@ export default function AgentBuilder(): React.ReactElement {
     </FrontendCrashBoundary>
   );
 }
-

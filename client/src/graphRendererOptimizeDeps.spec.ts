@@ -17,6 +17,11 @@ describe('graph renderer optimizeDeps leaves', () => {
     for (const leaf of ['react-reconciler', 'stats.js', 'prop-types', 'buffer']) {
       expect(include, `optimizeDeps.include must contain '${leaf}'`).toContain(leaf);
     }
+    // Cytoscape deps (CJS): mid-session discovery re-optimizes and can kill lazy graph chunks
+    // with "Failed to fetch dynamically imported module".
+    for (const leaf of ['cytoscape', 'cytoscape-fcose']) {
+      expect(include, `optimizeDeps.include must contain '${leaf}'`).toContain(leaf);
+    }
   });
 
   it('keeps @react-three/* excluded (raw ESM) to avoid the sourcemap crash', () => {
