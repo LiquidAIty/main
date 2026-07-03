@@ -13,6 +13,8 @@ no team, no orchestrator, no Task Ledger, no fallback.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import re
 import time
 from typing import Any
@@ -20,8 +22,14 @@ from typing import Any
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.teams import MagenticOneGroupChat
 
+from app.python_models import runtime_profile_executor as rpe
+from app.python_models import thinkgraph_profile  # noqa: F401 — registers the ThinkGraph profile's hooks/contract
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
-from app.python_models.tool_registry import DEFAULT_TOOL_REGISTRY, THINKGRAPH_RUN_AUTHORITY
+from app.python_models.tool_registry import (
+    DEFAULT_TOOL_REGISTRY,
+    THINKGRAPH_PATCH_EVENTS,
+    THINKGRAPH_RUN_AUTHORITY,
+)
 from app.python_models.orchestration_contracts import (
     ContextPack,
     KnowGraphUpdateReport,
@@ -182,6 +190,11 @@ def _build_participants(context: ContextPack, model_client: Any) -> list[Assista
         selected_tools = [_as_text(tool) for tool in (getattr(participant, "tools", []) or []) if _as_text(tool)]
         if selected_tools:
             kwargs["tools"] = DEFAULT_TOOL_REGISTRY.resolve_selected(selected_tools)
+            # Single-card runs need a real tool loop (e.g. read a scope, then write)
+            # inside one turn; default max_tool_iterations=1 would end the turn at
+            # the first tool summary. Mag One team behavior is unchanged.
+            if context.session.orchestrator == "assistant_agent":
+                kwargs["max_tool_iterations"] = 5
 
         participants.append(AssistantAgent(**kwargs))
 
@@ -213,6 +226,16 @@ def _validate_single_card_context(context: ContextPack) -> str | None:
     return None
 
 
+def _final_text_from_result(result: Any) -> str:
+    for msg in reversed(getattr(result, "messages", []) or []):
+        content = _as_text(getattr(msg, "content", ""))
+        if not content and hasattr(msg, "to_text"):
+            content = _as_text(msg.to_text())
+        if content:
+            return content
+    return ""
+
+
 async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     """Run ONE configured canvas card as a single AssistantAgent.
 
@@ -220,6 +243,13 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     client, same tool registry with loud unknown/disabled failures). Guard or
     runtime failures return an honest error — never a fallback model, another
     card, or a plain completion. No Task Ledger is read or produced.
+
+    A card whose persisted runtime binding has an assigned database profile
+    additionally executes that profile's declared pre-hooks, receives its compact
+    assigned skill/data packet, and must satisfy the profile's declared terminal
+    contract — with the profile's single bounded repair inside the same run. The
+    profile and hook chain come from saved assignment only; Python hosts the
+    execution and owns no card-specific policy here.
     """
     guard = _validate_single_card_context(context)
     if guard:
@@ -233,6 +263,45 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             knowGraph=KnowGraphUpdateReport(sourceAgent="single_card", summary="no_run"),
         )
 
+    def _fail(error: str, summary: str) -> OrchestratorRunResponse:
+        return OrchestratorRunResponse(
+            ok=False,
+            session=context.session,
+            finalResponseText="",
+            error=error,
+            plan=context.plan,
+            thinkGraph=context.thinkGraph,
+            knowGraph=KnowGraphUpdateReport(sourceAgent="single_card", summary=summary),
+        )
+
+    runtime_scope = getattr(context.cardRuntime, "runtimeScope", None)
+    runtime_options = getattr(context.cardRuntime, "runtimeOptions", None) or {}
+    single = context.cardRuntime.participants[0]
+    selected_tools = [_as_text(t) for t in (single.tools or []) if _as_text(t)]
+
+    # Deterministic assigned-profile resolution from the card's PERSISTED runtime
+    # binding (never model judgment, never runtime-scope sniffing). No assigned
+    # profile → plain single-card run (the card's declared state, not a fallback);
+    # ambiguity, unknown hooks/contracts, or hook failure → honest error, no run.
+    plan: rpe.ProfiledRunPlan | None = None
+    try:
+        plan = await asyncio.to_thread(
+            lambda: rpe.prepare(
+                runtime_binding=getattr(single, "runtimeBinding", None),
+                project_id=context.session.projectId,
+                deck_id=_as_text(
+                    (runtime_options.get("deckId") if isinstance(runtime_options, dict) else "")
+                    or (runtime_scope.get("deckId") if isinstance(runtime_scope, dict) else "")
+                ),
+                card_id=single.cardId,
+                correlation_id=context.session.turnId,
+                selected_tools=selected_tools,
+                runtime_scope=runtime_scope if isinstance(runtime_scope, dict) else None,
+            )
+        )
+    except Exception as err:
+        return _fail(f"runtime_profile_prehook_failed: {err}", "profile_prehook_failed")
+
     client = _build_model_client(
         AutoGenAgentConfig(
             provider=context.session.modelProvider,
@@ -242,13 +311,17 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
 
     # Trusted run authority for scoped card tools (e.g. ThinkGraph): server-authored
     # runtimeScope only — the model never supplies authority. Set for the duration of
-    # this run and always reset, so no authority leaks across runs.
-    runtime_scope = getattr(context.cardRuntime, "runtimeScope", None)
+    # this run and always reset, so no authority leaks across runs. The patch-event
+    # recorder is armed for profiled runs so an assigned terminal contract can read
+    # what the authorized tools actually did.
     authority_token = None
+    patch_events_token = None
     if isinstance(runtime_scope, dict) and runtime_scope.get("kind") == "thinkgraph_pair":
         authority_token = THINKGRAPH_RUN_AUTHORITY.set(
             {str(k): str(v) for k, v in runtime_scope.items()}
         )
+    if plan is not None:
+        patch_events_token = THINKGRAPH_PATCH_EVENTS.set([])
 
     started = time.monotonic()
     try:
@@ -256,16 +329,45 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
         # The guard guarantees exactly one real configured participant, so the
         # default-"Assist" branch of _build_participants is unreachable here.
         agent = participants[0]
-        result = await agent.run(task=_as_text(context.userText))
+        task = _as_text(context.userText)
+        if plan is not None:
+            task = f"{task}\n\n{plan.packet}"
+        result = await agent.run(task=task)
 
-        final_text = ""
-        for msg in reversed(getattr(result, "messages", []) or []):
-            content = _as_text(getattr(msg, "content", ""))
-            if not content and hasattr(msg, "to_text"):
-                content = _as_text(msg.to_text())
-            if content:
-                final_text = content
-                break
+        final_text = _final_text_from_result(result)
+
+        if plan is not None:
+            contract = rpe.terminal_contract_for(plan)
+            verdict = contract.evaluate(final_text)
+            repair_used = False
+            if verdict.outcome == "invalid" and contract.repair_instruction:
+                # Exactly ONE bounded repair inside the same authorized run (declared
+                # by the assigned contract): same agent, same model, same tools, same
+                # scope, same prompt policy.
+                repair_used = True
+                repair_result = await agent.run(task=contract.repair_instruction)
+                final_text = _final_text_from_result(repair_result)
+                verdict = contract.evaluate(final_text)
+
+            detail = json.dumps(
+                {
+                    "reason": verdict.reason,
+                    "repairUsed": repair_used,
+                    "storedRefs": verdict.stored_refs,
+                }
+            )
+            try:
+                await asyncio.to_thread(
+                    lambda: rpe.finalize(plan, outcome=verdict.record, detail=detail)
+                )
+            except Exception as err:
+                return _fail(f"runtime_post_hook_failed: {err}", "post_hook_failed")
+
+            if verdict.outcome == "invalid":
+                return _fail(contract.invalid_error, "invalid_terminal_result")
+            if verdict.record == "patched" and not final_text:
+                final_text = json.dumps({"outcome": "patch", "storedRefs": verdict.stored_refs})
+
         elapsed_ms = int((time.monotonic() - started) * 1000)
         single = context.cardRuntime.participants[0]
         tools_attached = [_as_text(t) for t in (single.tools or []) if _as_text(t)]
@@ -309,6 +411,8 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     finally:
         if authority_token is not None:
             THINKGRAPH_RUN_AUTHORITY.reset(authority_token)
+        if patch_events_token is not None:
+            THINKGRAPH_PATCH_EVENTS.reset(patch_events_token)
 
 
 def _read_max_turns(context: ContextPack) -> int:

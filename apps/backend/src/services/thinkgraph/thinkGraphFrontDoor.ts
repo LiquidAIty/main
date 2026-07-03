@@ -165,7 +165,8 @@ export async function processThinkGraphPair(args: ProcessPairArgs): Promise<Proc
     clipText(pair.assistant.content),
     '',
     'First call read_thinkgraph_scope to see the current bounded graph scope.',
-    'Then either reply that no patch is needed, or make ONE apply_thinkgraph_patch call.',
+    'Then either make ONE apply_thinkgraph_patch call, or return the structured',
+    'no-patch result required by your runtime terminal contract.',
   ].join('\n');
 
   const run = await runConfiguredCard({
@@ -177,6 +178,7 @@ export async function processThinkGraphPair(args: ProcessPairArgs): Promise<Proc
     runAuthority: {
       kind: 'thinkgraph_pair',
       projectId,
+      deckId,
       cardId: binding,
       correlationId,
       conversationId: s(args.conversationId).trim(),

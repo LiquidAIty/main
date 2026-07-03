@@ -527,6 +527,33 @@ THINKGRAPH_RUN_AUTHORITY: ContextVar[dict[str, str] | None] = ContextVar(
     "thinkgraph_run_authority", default=None
 )
 
+# Honest record of authorized patch results observed inside the CURRENT card run.
+# Set to a fresh list by the single-card runtime for profiled ThinkGraph runs; the
+# terminal-contract post-hook reads it. Never model-writable, never persisted here.
+THINKGRAPH_PATCH_EVENTS: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+    "thinkgraph_patch_events", default=None
+)
+
+
+def _record_patch_event(raw_result: str) -> None:
+    events = THINKGRAPH_PATCH_EVENTS.get()
+    if events is None:
+        return
+    try:
+        parsed = json.loads(raw_result)
+    except json.JSONDecodeError:
+        return
+    if isinstance(parsed, dict) and parsed.get("ok") is True:
+        events.append(
+            {
+                "status": str(parsed.get("status") or ""),
+                "correlationId": str(parsed.get("correlationId") or ""),
+                "storedResourceIds": parsed.get("storedResourceIds") or [],
+                "storedStatementIds": parsed.get("storedStatementIds") or [],
+                "relationCount": parsed.get("relationCount") or 0,
+            }
+        )
+
 
 def _backend_base_url() -> str:
     return os.environ.get("LIQUIDAITY_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
@@ -598,11 +625,13 @@ async def apply_thinkgraph_patch_tool(
         "relations": relations or [],
         "statements": statements or [],
     }
-    return await asyncio.to_thread(
+    result = await asyncio.to_thread(
         _post_backend_json_sync,
         "/api/coder/mcp-bridge/thinkgraph_apply_patch",
         {"authority": authority, "patch": patch},
     )
+    _record_patch_event(result)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -684,8 +713,12 @@ def build_default_tool_registry() -> ToolRegistry:
         ToolSpec(
             name="apply_thinkgraph_patch",
             description=(
-                "ThinkGraph card only: apply ONE compact graph patch (resources / relations / "
-                "statements). Authority comes from the trusted run context; one transaction, "
+                "ThinkGraph card only: apply ONE compact graph patch. EXACT stored shape — "
+                'resources: [{"id": string, "label": string}]; '
+                'relations: [{"a": resourceId, "b": resourceId}] (undirected co-occurrence); '
+                'statements: [{"id": string, "subject": resourceId, "predicateTerm": string, '
+                '"object": resourceId, "rationale"?: string, "review"?: string}]. '
+                "Authority comes from the trusted run context; one transaction, "
                 "idempotent per run, complete source-pair provenance required."
             ),
             enabled=True,

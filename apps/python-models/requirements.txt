@@ -3,6 +3,9 @@ uvicorn[standard]==0.24.0
 pydantic==2.12.5
 pytest==8.4.2
 python-dotenv==1.2.2
+# Python-owned runtime-assignment store (runtime profiles/skills/bindings/run
+# traces) on the same Postgres the deck store uses.
+psycopg[binary]==3.*
 # LiquidAIty AutoGen target: the 0.7.5 line, source-installed editable from the
 # in-repo root reference at autogen-main/. autogen-agentchat is REQUIRED (the real
 # MagenticOneGroupChat / MagenticOneOrchestrator live there). 0.7.5 is needed for

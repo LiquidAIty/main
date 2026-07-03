@@ -730,7 +730,9 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       title: String(card.title || 'Agent'),
       runtimeType: 'assistant_agent' as const,
       prompt: '',
-      runtimeOptions: {},
+      // deckId is a persisted structural reference only — the Python runtime uses it
+      // to resolve DB-backed card assignments (profile/skills/data bindings).
+      runtimeOptions: { deckId },
       participants: [participant],
       privateParticipants: [privateParticipant],
       ...(args.runAuthority && Object.keys(args.runAuthority).length > 0

@@ -8,11 +8,18 @@ import { describe, expect, it } from 'vitest';
 import { callPythonAgentMcpTool, listPythonAgentMcpTools } from './pythonAgentMcpClient';
 
 describe('Python Agent MCP host — real stdio discovery + calls', () => {
-  it('exposes exactly the two migrated tools plus the ThinkGraph front door', async () => {
+  it('exposes exactly the migrated tools, the ThinkGraph front door, and the Harness control surface', async () => {
     const names = await listPythonAgentMcpTools();
     expect(names).toEqual([
+      'canvas.inspect',
+      'canvas.upsert_wire',
+      'card.assign_data_binding',
+      'card.assign_runtime_skill',
+      'card.run_assistant_agent',
+      'card.update_configuration',
       'describe_agent_fabric',
       'execute_visible_flow',
+      'thinkgraph.get_graph_slice',
       'thinkgraph.process_conversation_pair',
     ]);
   }, 30_000);

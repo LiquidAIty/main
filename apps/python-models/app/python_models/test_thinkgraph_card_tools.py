@@ -83,7 +83,7 @@ class TestRuntimeScopeAuthorityInjection:
 # Python MCP host: exact tool surface + structural argument rejection
 # --------------------------------------------------------------------------- #
 class TestPythonMcpHost:
-    def test_host_exposes_exactly_three_tools(self):
+    def test_host_exposes_exact_tool_surface(self):
         from app import mcp_host
 
         tools = asyncio.run(mcp_host.list_tools())
@@ -92,7 +92,42 @@ class TestPythonMcpHost:
             "describe_agent_fabric",
             "execute_visible_flow",
             "thinkgraph.process_conversation_pair",
+            "canvas.inspect",
+            "card.update_configuration",
+            "canvas.upsert_wire",
+            "card.assign_runtime_skill",
+            "card.assign_data_binding",
+            "card.run_assistant_agent",
+            "thinkgraph.get_graph_slice",
         ])
+
+    def test_host_never_exposes_graph_write_or_task_ledger_authority(self):
+        from app import mcp_host
+
+        tools = asyncio.run(mcp_host.list_tools())
+        names = {t.name for t in tools}
+        assert "apply_thinkgraph_patch" not in names
+        assert "read_thinkgraph_scope" not in names
+        for tool in tools:
+            allowed = mcp_host._ALLOWED_KEYS[tool.name]
+            assert "taskLedger" not in allowed
+            assert "patch" not in allowed
+            assert "prompt" not in allowed  # raw prompt smuggling impossible
+            assert "model" not in allowed
+
+    def test_control_tool_smuggled_arguments_are_rejected(self):
+        from app import mcp_host
+
+        result = asyncio.run(
+            mcp_host.call_tool(
+                "card.run_assistant_agent",
+                {"projectId": "p", "deckId": "d", "cardId": "c", "correlationId": "x",
+                 "input": "hi", "prompt": "evil", "model": "evil", "tools": ["shell"]},
+            )
+        )
+        text = result[0].text
+        assert "tool_arguments_rejected" in text
+        assert "prompt" in text and "model" in text and "tools" in text
 
     def test_unknown_tool_and_smuggled_arguments_are_rejected(self):
         from app import mcp_host

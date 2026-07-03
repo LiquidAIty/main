@@ -9,7 +9,7 @@ import {
 } from '../coder/openclaude/console/consoleSession';
 import { routeCodingTaskToConsole } from '../coder/openclaude/console/consoleTaskRouter';
 import { codingRunLifecycleService } from '../coder/openclaude/console/codingRunLifecycle';
-import { buildMagOneRoutingDiagnostics, runCardWithContract } from '../cards/runtime';
+import { buildMagOneRoutingDiagnostics, runCardWithContract, runConfiguredCard } from '../cards/runtime';
 import {
   buildAgentFabricProfile,
   buildProjectContext,
@@ -133,6 +133,25 @@ router.post('/mcp-bridge/thinkgraph_apply_patch', async (req, res) => {
     return res.status(result.ok ? 200 : 400).json(result);
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'thinkgraph_apply_patch_failed' });
+  }
+});
+
+// run_configured_card: thin transport for the card.run_assistant_agent MCP tool.
+// Saved card identity/prompt/model/tools only — runConfiguredCard structurally
+// rejects every extra key, so no browser/MCP-supplied override can reach the run.
+router.post('/mcp-bridge/run_configured_card', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const result = await runConfiguredCard({
+      projectId: String(body.projectId || ''),
+      deckId: String(body.deckId || BUILDER_DECK_ID),
+      cardId: String(body.cardId || ''),
+      correlationId: String(body.correlationId || ''),
+      input: String(body.input || ''),
+    });
+    return res.json({ ok: result.status === 'completed', result });
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'run_configured_card_failed' });
   }
 });
 
