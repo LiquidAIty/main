@@ -12,42 +12,20 @@ import {
   type AgentManagerLocalConfig,
 } from './AgentManager';
 
-vi.mock('./knowledge/KnowledgeGraphNVL', () => ({
-  default: function KnowledgeGraphNVLMock(props: {
-    entities?: Array<{ id: string; label?: string; type?: string; source?: string; rawId?: string }>;
-    relationships?: Array<{ id: string; from: string; to: string; type: string; evidence_snippet?: string }>;
-    selectionEnabled?: boolean;
-    onSelectEntity?: (entity: any) => void;
-    onSelectRelationship?: (relationship: any) => void;
+vi.mock('./knowledge/KnowledgeGraphFramework', () => ({
+  default: function KnowledgeGraphFrameworkMock(props: {
+    projection?: unknown;
+    minHeight?: number;
   }) {
-    const firstEntity = props.entities?.[0] || null;
-    const firstRelationship = props.relationships?.[0] || null;
-    return (
-      React.createElement('div', { 'data-testid': 'knowledge-graph-nvl' },
-        props.selectionEnabled && firstEntity
-          ? React.createElement(
-              'button',
-              {
-                type: 'button',
-                'data-testid': 'knowledge-graph-select-entity',
-                onClick: () => props.onSelectEntity?.(firstEntity),
-              },
-              'Select Entity',
-            )
-          : null,
-        props.selectionEnabled && firstRelationship
-          ? React.createElement(
-              'button',
-              {
-                type: 'button',
-                'data-testid': 'knowledge-graph-select-relationship',
-                onClick: () => props.onSelectRelationship?.(firstRelationship),
-              },
-              'Select Relationship',
-            )
-          : null,
-      )
-    );
+    return React.createElement('div', {
+      'data-testid': 'cytoscape-graph',
+      'data-node-count': Array.isArray((props.projection as any)?.nodes)
+        ? (props.projection as any).nodes.length
+        : 0,
+      'data-edge-count': Array.isArray((props.projection as any)?.edges)
+        ? (props.projection as any).edges.length
+        : 0,
+    });
   },
 }));
 
@@ -379,7 +357,7 @@ describe('AgentManager runtime editor', () => {
     );
   });
 
-  it('renders a compact memory graph first in the Knowledge tab and keeps config secondary', () => {
+  it('renders a blank Cytoscape memory surface in the Knowledge tab and keeps config secondary', () => {
     const localConfig = createLocalConfig('assistant_agent', {
       knowledge_sources: ['docs://source-a', 'docs://source-b'],
       response_format: { type: 'json_schema', schema: { type: 'object', properties: { ok: { type: 'boolean' } } } },
@@ -391,19 +369,13 @@ describe('AgentManager runtime editor', () => {
 
     const memoryGraph = container.querySelector('[data-testid="agent-memory-graph"]');
     const advanced = container.querySelector('[data-testid="agent-knowledge-advanced"]') as HTMLDetailsElement | null;
-    const selectEntityButton = container.querySelector('[data-testid="knowledge-graph-select-entity"]') as HTMLButtonElement | null;
+    const cytoscapeGraph = container.querySelector('[data-testid="cytoscape-graph"]');
     expect(memoryGraph).toBeTruthy();
-    expect(container.querySelector('[data-testid="knowledge-graph-nvl"]')).toBeTruthy();
+    expect(cytoscapeGraph).toBeTruthy();
+    expect(cytoscapeGraph?.getAttribute('data-node-count')).toBe('0');
+    expect(cytoscapeGraph?.getAttribute('data-edge-count')).toBe('0');
     expect(advanced).toBeTruthy();
     expect(advanced?.open).toBe(false);
-    expect(selectEntityButton).toBeTruthy();
-
-    act(() => {
-      selectEntityButton?.click();
-    });
-
-    expect(container.querySelector('[data-testid="agent-memory-selection-entity"]')).toBeTruthy();
-    expect(container.textContent).toContain('agent');
 
     const saveButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Save Card');
     if (!saveButton) throw new Error('missing_save_button');

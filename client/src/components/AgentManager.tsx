@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import KnowledgeGraphNVL, {
-  type KnowledgeGraphNode,
-  type KnowledgeGraphRelationship,
-} from './knowledge/KnowledgeGraphNVL';
+import KnowledgeGraphFramework from './knowledge/KnowledgeGraphFramework';
 
 import type {
   AgentCardRuntimeOptions,
@@ -58,7 +55,6 @@ interface AgentManagerProps {
   promptTestBusy?: boolean;
   promptTestDisabled?: boolean;
   localConfig?: AgentManagerLocalConfig | null;
-  memoryGraphData?: AgentManagerMemoryGraphData | null;
   onSaveLocalConfig?: (config: AgentManagerLocalConfig) => void | Promise<void>;
 }
 
@@ -89,11 +85,6 @@ export type AgentManagerLocalConfig = {
   tools?: unknown[];
   knowledge_sources?: unknown[];
   response_format?: any | null;
-};
-
-export type AgentManagerMemoryGraphData = {
-  entities: KnowledgeGraphNode[];
-  relationships: KnowledgeGraphRelationship[];
 };
 
 // Read-only capability metadata from the Python Mag One tool registry, served by
@@ -388,104 +379,6 @@ function compactRuntimeOptions(
   return compactDefinedRuntimeOptions(normalized);
 }
 
-function buildKnowledgeSourceLabel(source: string): string {
-  const text = String(source || '').trim();
-  if (!text) return 'Knowledge Source';
-  const normalized = text.replace(/^https?:\/\//i, '').replace(/^[a-z]+:\/\//i, '');
-  if (normalized.length <= 30) return normalized;
-  const lastSegment = normalized.split(/[\\/]/).filter(Boolean).pop() || normalized;
-  if (lastSegment.length <= 30) return lastSegment;
-  return `${lastSegment.slice(0, 27)}…`;
-}
-
-function buildFallbackMemoryGraphData(input: {
-  selectedCardId?: string | null;
-  localConfig?: AgentManagerLocalConfig | null;
-  memoryPolicy?: string;
-  knowledgeText: string;
-}): AgentManagerMemoryGraphData {
-  const agentNodeId =
-    `agent:${String(input.selectedCardId || input.localConfig?.runtime_binding || 'selected').trim() || 'selected'}`;
-  const agentLabel =
-    String(input.selectedCardId || input.localConfig?.runtime_binding || 'Agent')
-      .trim()
-      .replace(/[_-]+/g, ' ') || 'Agent';
-  const entities: KnowledgeGraphNode[] = [
-    {
-      id: agentNodeId,
-      rawId: String(input.selectedCardId || input.localConfig?.runtime_binding || '').trim() || undefined,
-      label: agentLabel,
-      type: 'Agent',
-      source: 'mixed',
-      scope: 'agent',
-    },
-    {
-      id: `runtime_input:${agentNodeId}`,
-      rawId: 'Current user or upstream turn input.',
-      label: 'Current Input',
-      type: 'Runtime Input',
-      source: 'think',
-      scope: 'agent',
-    },
-  ];
-  const relationships: KnowledgeGraphRelationship[] = [
-    {
-      id: `rel:runtime_input:${agentNodeId}`,
-      from: `runtime_input:${agentNodeId}`,
-      to: agentNodeId,
-      type: 'feeds_input',
-      source: 'think',
-      scope: 'agent',
-      evidence_snippet: 'Current turn input is routed into this card at runtime.',
-    },
-  ];
-
-  const memoryPolicy = String(input.memoryPolicy || '').trim();
-  if (memoryPolicy) {
-    entities.push({
-      id: `memory_policy:${agentNodeId}`,
-      rawId: memoryPolicy,
-      label: 'Memory Policy',
-      type: 'Memory Policy',
-      source: 'think',
-      scope: 'agent',
-    });
-    relationships.push({
-      id: `rel:memory_policy:${agentNodeId}`,
-      from: `memory_policy:${agentNodeId}`,
-      to: agentNodeId,
-      type: 'shapes_memory',
-      source: 'think',
-      scope: 'agent',
-      evidence_snippet: 'This prompt section shapes how the card carries or constrains memory.',
-    });
-  }
-
-  parseListText(input.knowledgeText).forEach((source, index) => {
-    const sourceNodeId = `knowledge_source:${agentNodeId}:${index}`;
-    entities.push({
-      id: sourceNodeId,
-      rawId: source,
-      label: buildKnowledgeSourceLabel(source),
-      type: 'Knowledge Source',
-      source: 'know',
-      scope: 'agent',
-      originSource: 'know',
-    });
-    relationships.push({
-      id: `rel:knowledge_source:${agentNodeId}:${index}`,
-      from: sourceNodeId,
-      to: agentNodeId,
-      type: 'grounds_context',
-      source: 'know',
-      scope: 'agent',
-      evidence_snippet: 'Configured knowledge source available to this card.',
-    });
-  });
-
-  return { entities, relationships };
-}
-
 function deriveRuntimeOptions(localConfig: AgentManagerLocalConfig | null | undefined): AgentCardRuntimeOptions {
   const source = localConfig?.runtime_options || {};
   return {
@@ -648,7 +541,6 @@ export function AgentManager({
   onChangeCardSubtext,
   graphOwnerOptions = [],
   localConfig,
-  memoryGraphData,
   selectedCardId,
   onChangePromptTestInput,
   onRunPromptTest,
@@ -827,8 +719,6 @@ export function AgentManager({
   );
   const [cardNameDraft, setCardNameDraft] = useState(String(cardName || ''));
   const [cardSubtextDraft, setCardSubtextDraft] = useState(String(cardSubtext || ''));
-  const [selectedMemoryEntityId, setSelectedMemoryEntityId] = useState<string | null>(null);
-  const [selectedMemoryRelationshipId, setSelectedMemoryRelationshipId] = useState<string | null>(null);
   const [saveCardStatus, setSaveCardStatus] = useState<SaveCardStatus>('idle');
   const [saveCardPressed, setSaveCardPressed] = useState(false);
   const [saveCardErrorMessage, setSaveCardErrorMessage] = useState<string | null>(null);
@@ -916,52 +806,6 @@ export function AgentManager({
       }
     };
   }, []);
-
-  const compactMemoryGraph = useMemo(
-    () =>
-      memoryGraphData ||
-      buildFallbackMemoryGraphData({
-        selectedCardId,
-        localConfig,
-        memoryPolicy: promptFields.memoryPolicy,
-        knowledgeText,
-      }),
-    [knowledgeText, localConfig, memoryGraphData, promptFields.memoryPolicy, selectedCardId],
-  );
-  const memoryEntityById = useMemo(
-    () => new Map(compactMemoryGraph.entities.map((entity) => [entity.id, entity] as const)),
-    [compactMemoryGraph.entities],
-  );
-  const memoryRelationshipById = useMemo(
-    () =>
-      new Map(
-        compactMemoryGraph.relationships.map((relationship) => [relationship.id, relationship] as const),
-      ),
-    [compactMemoryGraph.relationships],
-  );
-  const selectedMemoryEntity = useMemo(
-    () => (selectedMemoryEntityId ? memoryEntityById.get(selectedMemoryEntityId) || null : null),
-    [memoryEntityById, selectedMemoryEntityId],
-  );
-  const selectedMemoryRelationship = useMemo(
-    () =>
-      selectedMemoryRelationshipId
-        ? memoryRelationshipById.get(selectedMemoryRelationshipId) || null
-        : null,
-    [memoryRelationshipById, selectedMemoryRelationshipId],
-  );
-
-  useEffect(() => {
-    if (!selectedMemoryEntityId) return;
-    if (memoryEntityById.has(selectedMemoryEntityId)) return;
-    setSelectedMemoryEntityId(null);
-  }, [memoryEntityById, selectedMemoryEntityId]);
-
-  useEffect(() => {
-    if (!selectedMemoryRelationshipId) return;
-    if (memoryRelationshipById.has(selectedMemoryRelationshipId)) return;
-    setSelectedMemoryRelationshipId(null);
-  }, [memoryRelationshipById, selectedMemoryRelationshipId]);
 
   const updatePromptFields = (
     field: 'role' | 'goal' | 'constraints' | 'ioSchema' | 'memoryPolicy',
@@ -1334,80 +1178,8 @@ export function AgentManager({
       <div className={formScopeClassName} style={{ display: 'grid', gap: 8 }}>
         <style>{scopedFocusStyles}</style>
         <div data-testid="agent-memory-graph" style={{ height: 260, minHeight: 260 }}>
-          <KnowledgeGraphNVL
-            entities={compactMemoryGraph.entities}
-            relationships={compactMemoryGraph.relationships}
-            minHeight={260}
-            selectionEnabled
-            selectedEntityId={selectedMemoryEntityId}
-            selectedRelationshipId={selectedMemoryRelationshipId}
-            onSelectEntity={(entity) => {
-              setSelectedMemoryRelationshipId(null);
-              setSelectedMemoryEntityId(entity?.id ?? null);
-            }}
-            onSelectRelationship={(relationship) => {
-              setSelectedMemoryEntityId(null);
-              setSelectedMemoryRelationshipId(relationship?.id ?? null);
-            }}
-          />
+          <KnowledgeGraphFramework projection={undefined} minHeight={260} />
         </div>
-
-        {selectedMemoryEntity ? (
-          <div
-            data-testid="agent-memory-selection-entity"
-            style={{
-              display: 'grid',
-              gap: 6,
-              padding: '10px 12px',
-              ...graphDrawerSectionStyle({
-                borderRadius: 8,
-              }),
-            }}
-          >
-            <div style={{ color: GRAPH_THEME.drawer.inputText, fontWeight: 600 }}>{selectedMemoryEntity.label}</div>
-            <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12, opacity: 0.85 }}>
-              {selectedMemoryEntity.type} • {selectedMemoryEntity.source} • {selectedMemoryEntity.scope.replace(/_/g, ' ')}
-            </div>
-            {selectedMemoryEntity.rawId &&
-            selectedMemoryEntity.rawId !== selectedMemoryEntity.label &&
-            selectedMemoryEntity.rawId !== selectedMemoryEntity.id ? (
-              <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
-                {selectedMemoryEntity.rawId}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        {selectedMemoryRelationship ? (
-          <div
-            data-testid="agent-memory-selection-relationship"
-            style={{
-              display: 'grid',
-              gap: 6,
-              padding: '10px 12px',
-              ...graphDrawerSectionStyle({
-                borderRadius: 8,
-              }),
-            }}
-          >
-            <div style={{ color: GRAPH_THEME.drawer.inputText, fontWeight: 600 }}>
-              {selectedMemoryRelationship.type}
-            </div>
-            <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12, opacity: 0.85 }}>
-              {(memoryEntityById.get(selectedMemoryRelationship.from)?.label || selectedMemoryRelationship.from)}
-              {' → '}
-              {(memoryEntityById.get(selectedMemoryRelationship.to)?.label || selectedMemoryRelationship.to)}
-            </div>
-            <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12, opacity: 0.85 }}>
-              {selectedMemoryRelationship.source} • {selectedMemoryRelationship.scope.replace(/_/g, ' ')}
-            </div>
-            {selectedMemoryRelationship.evidence_snippet ? (
-              <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
-                {selectedMemoryRelationship.evidence_snippet}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
 
         <details
           data-testid="agent-knowledge-advanced"

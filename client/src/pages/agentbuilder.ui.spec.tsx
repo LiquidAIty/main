@@ -100,65 +100,16 @@ vi.mock("../components/AgentManager", () => ({
   },
 }));
 
-vi.mock("../components/knowledge/KnowledgeGraphNVL", () => ({
-  default: function KnowledgeGraphMock(props: {
-    entities?: Array<{ id: string; label?: string; type?: string; source?: string; scope?: string; degree?: number }>;
-    relationships?: Array<{
-      id: string;
-      from: string;
-      to: string;
-      type: string;
-      source?: string;
-      scope?: string;
-      evidence_snippet?: string;
-    }>;
-    selectionEnabled?: boolean;
-    onSelectEntity?: (entity: any) => void;
-    onSelectRelationship?: (relationship: any) => void;
-    onRelationshipInspect?: (relationship: any) => void;
+vi.mock("../components/knowledge/KnowledgeGraphFramework", () => ({
+  default: function KnowledgeGraphFrameworkMock(props: {
+    projection?: { nodes?: unknown[]; edges?: unknown[] };
   }) {
-    const firstEntity = props.entities?.[0] || null;
-    const firstRelationship = props.relationships?.[0] || null;
     return (
-      <div data-testid="knowledge-graph">
-        Knowledge Graph
-        {Array.isArray(props.entities) && props.entities.length > 0 ? (
-          <div data-testid="knowledge-graph-ready">Ready</div>
-        ) : null}
-        {props.selectionEnabled ? (
-          <div>
-            <button
-              type="button"
-              data-testid="knowledge-select-node"
-              onClick={() => props.onSelectEntity?.(firstEntity)}
-            >
-              Select Node
-            </button>
-            <button
-              type="button"
-              data-testid="knowledge-select-edge"
-              onClick={() => {
-                const relationship = firstRelationship;
-                props.onSelectRelationship?.(relationship);
-                props.onRelationshipInspect?.(relationship);
-              }}
-            >
-              Select Edge
-            </button>
-            <button
-              type="button"
-              data-testid="knowledge-clear-selection"
-              onClick={() => {
-                props.onSelectEntity?.(null);
-                props.onSelectRelationship?.(null);
-                props.onRelationshipInspect?.(null);
-              }}
-            >
-              Clear Selection
-            </button>
-          </div>
-        ) : null}
-      </div>
+      <div
+        data-testid="cytoscape-graph"
+        data-node-count={props.projection?.nodes?.length ?? 0}
+        data-edge-count={props.projection?.edges?.length ?? 0}
+      />
     );
   },
 }));
@@ -1073,7 +1024,7 @@ describe("AgentBuilder locked 3-state flow", () => {
     expect(getByTestId(container, "companion-tab-plan")).toBeTruthy();
   });
 
-  it("routes large Knowledge Graph node and edge selection into the shared right-side workspace panel", async () => {
+  it("opens Knowledge on a blank Cytoscape surface without TypeScript graph selection controls", async () => {
     const container = mount(<AgentBuilder />);
 
     await waitFor(() => {
@@ -1088,36 +1039,14 @@ describe("AgentBuilder locked 3-state flow", () => {
     });
 
     await waitFor(() => {
-      expect(queryByTestId(container, "knowledge-graph-ready")).toBeTruthy();
+      const graph = getByTestId(container, "cytoscape-graph");
+      expect(graph.getAttribute("data-node-count")).toBe("0");
+      expect(graph.getAttribute("data-edge-count")).toBe("0");
     });
 
-    click(getByTestId(container, "knowledge-select-node"));
-
-    await waitFor(() => {
-      expect(queryByTestId(container, "companion-surface-knowledge-panel")).toBeTruthy();
-      expect(queryByTestId(container, "knowledge-panel-entity")).toBeTruthy();
-    });
-
-    expect(container.textContent).toContain("Research Node");
-    expect(container.textContent).toContain("grounded research");
-    expect(queryByTestId(container, "companion-surface-chat")).toBeNull();
-
-    click(getByTestId(container, "knowledge-clear-selection"));
-
-    await waitFor(() => {
-      expect(queryByTestId(container, "companion-surface-chat")).toBeTruthy();
-    });
-
-    click(getByTestId(container, "knowledge-select-edge"));
-
-    await waitFor(() => {
-      expect(queryByTestId(container, "companion-surface-knowledge-panel")).toBeTruthy();
-      expect(queryByTestId(container, "knowledge-panel-relationship")).toBeTruthy();
-    });
-
-    expect(container.textContent).toContain("serves_model_outputs");
-    expect(container.textContent).toContain("know");
-    expect(container.textContent).toContain("grounded research");
+    expect(queryByTestId(container, "knowledge-select-node")).toBeNull();
+    expect(queryByTestId(container, "knowledge-select-edge")).toBeNull();
+    expect(queryByTestId(container, "companion-surface-knowledge-panel")).toBeNull();
   });
 
   it("does not promote when clicking inner controls inside a companion preview", async () => {
@@ -1355,7 +1284,7 @@ describe("AgentBuilder locked 3-state flow", () => {
     });
   });
 
-  it("captures internal workspace testing events for surfaces, graph selection, and return to chat", async () => {
+  it("captures internal workspace testing events for surfaces, return to chat, and agent graph selection", async () => {
     const container = mount(<AgentBuilder />);
 
     await waitFor(() => {
@@ -1366,16 +1295,6 @@ describe("AgentBuilder locked 3-state flow", () => {
 
     await waitFor(() => {
       expect(queryByTestId(container, "large-surface-knowledge")).toBeTruthy();
-    });
-
-    await waitFor(() => {
-      expect(queryByTestId(container, "knowledge-graph-ready")).toBeTruthy();
-    });
-
-    click(getByTestId(container, "knowledge-select-node"));
-
-    await waitFor(() => {
-      expect(queryByTestId(container, "companion-surface-knowledge-panel")).toBeTruthy();
     });
 
     click(getByTestId(container, "companion-tab-chat"));
@@ -1408,22 +1327,7 @@ describe("AgentBuilder locked 3-state flow", () => {
           event.surfaceRole === "large",
       ),
     ).toBe(true);
-    expect(
-      events.some(
-        (event) =>
-          event.event === "knowledge_graph_node_selected" &&
-          event.objectType === "knowledge_node" &&
-          typeof event.objectId === "string" &&
-          event.objectId.includes("research_1"),
-      ),
-    ).toBe(true);
-    expect(
-      events.some(
-        (event) =>
-          event.event === "workspace_panel_opened_from_graph_selection" &&
-          event.objectType === "knowledge_node",
-      ),
-    ).toBe(true);
+    expect(events.some((event) => event.event === "knowledge_graph_node_selected")).toBe(false);
     expect(events.some((event) => event.event === "return_to_chat")).toBe(true);
     expect(
       events.some(

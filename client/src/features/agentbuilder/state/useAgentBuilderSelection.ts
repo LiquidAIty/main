@@ -13,11 +13,6 @@ export default function useAgentBuilderSelection({
   const [objectDrawerOpen, setObjectDrawerOpen] = useState(false);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
-  const [selectedKnowledgeEntityId, setSelectedKnowledgeEntityId] = useState<
-    string | null
-  >(null);
-  const [selectedKnowledgeRelationshipId, setSelectedKnowledgeRelationshipId] =
-    useState<string | null>(null);
   const [builderCanvasFocusRequest, setBuilderCanvasFocusRequest] =
     useState<BuilderCanvasFocusRequest | null>(null);
   const [tab, setTab] = useState<string>('Canvas');
@@ -42,10 +37,6 @@ export default function useAgentBuilderSelection({
     setSelectedCardId,
     selectedEdgeId,
     setSelectedEdgeId,
-    selectedKnowledgeEntityId,
-    setSelectedKnowledgeEntityId,
-    selectedKnowledgeRelationshipId,
-    setSelectedKnowledgeRelationshipId,
     builderCanvasFocusRequest,
     setBuilderCanvasFocusRequest,
     tab,

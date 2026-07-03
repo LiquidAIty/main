@@ -11,7 +11,7 @@ interface State {
 }
 
 /**
- * Error boundary for KnowledgeGraphNVL to prevent crashes from breaking the UI.
+ * Error boundary for knowledge graph surfaces to prevent crashes from breaking the UI.
  * This ensures the knowledge page doesn't disappear when graph rendering fails.
  */
 export class KnowledgeGraphErrorBoundary extends Component<Props, State> {
