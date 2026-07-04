@@ -300,10 +300,11 @@ export default function KnowledgeGraphFramework({
     if (cy.elements().length === 0) {
       return;
     }
-    // One bounded, non-animated fCoSE layout per actual content change; no
-    // manual/preset positions — the model never supplies coordinates. After
-    // settling, clamp the fit zoom so a small graph composes calmly.
+    // Stock fCoSE, no custom physics tuning — its own defaults decide
+    // placement. After settling, clamp the fit zoom so a small graph
+    // composes calmly.
     const settle = () => {
+      cy.fit(undefined, FIT_PADDING_PX);
       if (cy.zoom() > SETTLE_MAX_ZOOM) {
         cy.zoom(SETTLE_MAX_ZOOM);
         cy.center();
@@ -311,13 +312,9 @@ export default function KnowledgeGraphFramework({
     };
     const layout: LayoutOptions = {
       name: 'fcose',
-      animate: false,
+      animate: true,
       fit: true,
       padding: FIT_PADDING_PX,
-      nodeDimensionsIncludeLabels: true,
-      randomize: false,
-      idealEdgeLength: 110,
-      nodeRepulsion: 6000,
       stop: settle,
     } as LayoutOptions;
     cy.layout(layout).run();
