@@ -235,11 +235,8 @@ router.post('/openclaude/session/chat', async (req, res) => {
   });
   res.write(`event: session\ndata: ${JSON.stringify({ sessionId })}\n\n`);
   // Durable project-scoped transcript persistence (conversations/store.ts). Best-effort:
-  // a DB failure must never block or break the live SSE stream. The resolved message
-  // is kept so the ThinkGraph post-chat runner can reference the EXACT pair by id.
-  const userMessagePromise = appendMessage({ projectId, conversationId, role: 'user', content: message }).catch(
-    () => null,
-  );
+  // a DB failure must never block or break the live SSE stream.
+  void appendMessage({ projectId, conversationId, role: 'user', content: message }).catch(() => null);
   try {
     const handle = await startGrpcTurn({ sessionId, message, workingDirectory, model }, (event) => {
       res.write(`event: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`);
@@ -251,49 +248,17 @@ router.post('/openclaude/session/chat', async (req, res) => {
     });
     const { finalText } = await handle.done;
     // Save the assistant reply only when real text was produced — never an empty
-    // bubble (mirrors the frontend's "no text → no bubble" contract).
+    // bubble (mirrors the frontend's "no text → no bubble" contract). Best-effort,
+    // same as the user message: a DB failure must never block or break the live
+    // SSE stream, which has already delivered the final result.
     const assistantText = String(finalText || '').trim();
     if (assistantText) {
-      void (async () => {
-        try {
-          const assistantMessage = await appendMessage({
-            projectId,
-            conversationId,
-            role: 'assistant',
-            content: assistantText,
-          });
-          const userMessage = await userMessagePromise;
-          if (!userMessage) return;
-          // ThinkGraph post-chat runner: exactly one bounded, deterministic MCP call
-          // per completed pair (correlation = the assistant message id, so a re-fire
-          // is a duplicate no-op). The Harness crosses the MCP boundary — it never
-          // calls the Python runtime or the graph directly. Fire-and-forget: the
-          // delivered chat result is already final — a ThinkGraph failure never
-          // modifies, delays, retries, or falls back to any other writer. All
-          // semantics live on the persisted ThinkGraph card.
-          const mcpResult = await callPythonAgentMcpTool('thinkgraph.process_conversation_pair', {
-            projectId,
-            deckId: BUILDER_DECK_ID,
-            conversationId,
-            userMessageId: userMessage.messageId,
-            assistantMessageId: assistantMessage.messageId,
-            correlationId: `tg:${assistantMessage.messageId}`,
-          });
-          const result = (mcpResult as any)?.result ?? mcpResult;
-          console.log(
-            '[THINKGRAPH][post-chat] status=%s correlation=%s card=%s %s',
-            result?.status || 'unknown',
-            result?.correlationId || '',
-            result?.cardId || 'none',
-            result?.error || '',
-          );
-          if (result?.cardSummary) {
-            console.log('[THINKGRAPH][post-chat] card said: %s', String(result.cardSummary).slice(0, 400));
-          }
-        } catch (err: any) {
-          console.warn('[THINKGRAPH][post-chat] failed:', err?.message || err);
-        }
-      })();
+      void appendMessage({
+        projectId,
+        conversationId,
+        role: 'assistant',
+        content: assistantText,
+      }).catch(() => null);
     }
   } catch (error) {
     res.write(

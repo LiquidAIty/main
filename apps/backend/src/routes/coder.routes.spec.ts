@@ -55,6 +55,22 @@ const cbmScopeMocks = vi.hoisted(() => ({
   })),
 }));
 
+const chatSessionMocks = vi.hoisted(() => ({
+  appendMessage: vi.fn(async (msg: { role: string }) => ({
+    messageId: `${msg.role}-msg-1`,
+  })),
+  getConversationMessages: vi.fn(async () => []),
+  startGrpcTurn: vi.fn(async (_params: unknown, _onEvent: (event: any) => void) => ({
+    done: Promise.resolve({ finalText: 'Real assistant reply.' }),
+    cancel: vi.fn(),
+    answer: vi.fn(),
+  })),
+}));
+
+const mcpClientMocks = vi.hoisted(() => ({
+  callPythonAgentMcpTool: vi.fn(async () => ({ ok: true })),
+}));
+
 vi.mock('../services/graphContext/cbmScopeGate', () => ({
   runLocalCoderCbmScopeGate: cbmScopeMocks.runLocalCoderCbmScopeGate,
 }));
@@ -62,6 +78,20 @@ vi.mock('../services/graphContext/cbmScopeGate', () => ({
 vi.mock('../cards/runtime', () => ({
   runCardWithContract: runtimeMocks.runCardWithContract,
   buildMagOneRoutingDiagnostics: runtimeMocks.buildMagOneRoutingDiagnostics,
+}));
+
+vi.mock('../conversations/store', () => ({
+  appendMessage: chatSessionMocks.appendMessage,
+  getConversationMessages: chatSessionMocks.getConversationMessages,
+}));
+
+vi.mock('../coder/openclaude/session/grpcChatClient', () => ({
+  deriveSessionId: (projectId: string, conversationId: string) => `${projectId}:${conversationId}`,
+  startGrpcTurn: chatSessionMocks.startGrpcTurn,
+}));
+
+vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
+  callPythonAgentMcpTool: mcpClientMocks.callPythonAgentMcpTool,
 }));
 
 async function createApiServer(): Promise<{ server: Server; baseUrl: string }> {
@@ -298,5 +328,39 @@ describe('coder routes', () => {
     } finally {
       await closeServer(server);
     }
+  });
+
+  describe('/openclaude/session/chat', () => {
+    it('persists the user and assistant messages and never dispatches the old post-chat ThinkGraph pair handoff', async () => {
+      chatSessionMocks.appendMessage.mockClear();
+      chatSessionMocks.startGrpcTurn.mockClear();
+      mcpClientMocks.callPythonAgentMcpTool.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'main', message: 'hello' }),
+        });
+        expect(response.status).toBe(200);
+        // Drain the SSE stream to completion.
+        await response.text();
+
+        // Real chat turn still runs and both messages are still persisted.
+        expect(chatSessionMocks.startGrpcTurn).toHaveBeenCalledTimes(1);
+        const appendedRoles = chatSessionMocks.appendMessage.mock.calls.map((call) => (call[0] as any).role);
+        expect(appendedRoles).toContain('user');
+        expect(appendedRoles).toContain('assistant');
+        const appendedAssistantContent = chatSessionMocks.appendMessage.mock.calls.find(
+          (call) => (call[0] as any).role === 'assistant',
+        )?.[0] as any;
+        expect(appendedAssistantContent.content).toBe('Real assistant reply.');
+
+        // The obsolete post-chat pair handoff must never fire from this route.
+        expect(mcpClientMocks.callPythonAgentMcpTool).not.toHaveBeenCalled();
+      } finally {
+        await closeServer(server);
+      }
+    });
   });
 });
