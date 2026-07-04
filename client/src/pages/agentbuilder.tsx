@@ -1489,37 +1489,11 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   },
   {
     id: 'prompt_thinkgraph_agent',
-    content: buildSeedPromptTemplate({
-      role: [
-        'You are ThinkGraph for this project.',
-      ].join('\n'),
-      goal: [
-        'Inspect the exact completed user and assistant conversation pair and bounded current ThinkGraph scope.',
-        'Preserve durable project reasoning, concepts, hypotheses, open questions, decisions, and meaningful relationships.',
-        'First read relevant graph scope with read_thinkgraph_scope.',
-        'Choose no_patch when there is no meaningful durable update.',
-        'When an update is justified, use apply_thinkgraph_patch with a compact patch.',
-      ].join('\n'),
-      constraints: [
-        'Do not graph transient wording or every sentence.',
-        'Use existing schema terms only (resources, relations, statements).',
-        'Every changed record must carry exact source-pair provenance (attached automatically by your tools).',
-        'Do not invent facts, sources, user intent, or entities.',
-        'Do not write outside the active project.',
-        'Do not do external research. Do not write KnowGraph or CodeGraph.',
-        'Mark assistant-originated external-world claims review:"unverified"; your interpretations review:"provisional".',
-      ].join('\n'),
-      ioSchema: [
-        'Either reply in one or two sentences that no patch is needed and why,',
-        'or make ONE apply_thinkgraph_patch call, then return a concise honest',
-        'summary of what changed (resources added/reused, relations, statements).',
-      ].join('\n'),
-      memoryPolicy: [
-        'Reuse an existing resource id from read_thinkgraph_scope when it is genuinely the same resource; avoid duplicates and near-duplicates.',
-        'Preserve the user’s own language in labels where appropriate.',
-        'Few and real beats many and noisy: a handful of meaningful resources, relations between things actually related in this pair, and statements only for interpretations worth reviewing later.',
-      ].join('\n'),
-    }),
+    // No ThinkGraph semantic prompt is authored here. The persisted saved
+    // ThinkGraph card prompt (project database) is the ONE ThinkGraph
+    // semantic instruction source; a new/blank card starts with an empty
+    // prompt, never a TypeScript-injected default.
+    content: '',
   },
   {
     id: 'prompt_codegraph_agent',
@@ -3490,7 +3464,7 @@ export default function AgentBuilder(): React.ReactElement {
     connectedKnowledgeGraphKinds,
     knowledgeGraphKind,
   ]);
-  // ── ThinkGraphProjectionV1 (Python-owned) for the ThinkGraph graph tab ──────
+  // ── thinkgraph.projection.v1 (Python-owned) for the ThinkGraph graph tab ────
   // The browser only requests the projection through the narrow backend transport
   // and passes the RAW response into the Cytoscape surface. No mapping, no
   // classification, no fallback data — an error or empty projection is honest.
@@ -3500,24 +3474,25 @@ export default function AgentBuilder(): React.ReactElement {
     error: string | null;
   }>({ status: 'idle', projection: null, error: null });
   // Refetch signal: bumped when a chat turn completes (knowledge:refresh), once
-  // immediately and once ~8s later — the ThinkGraph run persists server-side
-  // AFTER the reply, so the delayed pass catches the actual graph write. Two
-  // bounded refetches per turn; never a polling loop.
+  // immediately and again at fixed delays after — the ThinkGraph run persists
+  // server-side AFTER the reply (fire-and-forget, its own model call), so a
+  // single fixed delay is a guess that can land before the write finishes.
+  // Three bounded checkpoints per turn (immediate, +8s, +20s); never an
+  // open-ended polling loop.
   const [thinkGraphRefreshNonce, setThinkGraphRefreshNonce] = useState(0);
   useEffect(() => {
-    let delayed: number | null = null;
+    let timers: number[] = [];
     const onKnowledgeRefresh = () => {
       setThinkGraphRefreshNonce((n) => n + 1);
-      if (delayed != null) window.clearTimeout(delayed);
-      delayed = window.setTimeout(() => {
-        setThinkGraphRefreshNonce((n) => n + 1);
-        delayed = null;
-      }, 8_000);
+      timers.forEach((t) => window.clearTimeout(t));
+      timers = [8_000, 20_000].map((delayMs) =>
+        window.setTimeout(() => setThinkGraphRefreshNonce((n) => n + 1), delayMs),
+      );
     };
     window.addEventListener('knowledge:refresh', onKnowledgeRefresh);
     return () => {
       window.removeEventListener('knowledge:refresh', onKnowledgeRefresh);
-      if (delayed != null) window.clearTimeout(delayed);
+      timers.forEach((t) => window.clearTimeout(t));
     };
   }, []);
   // Last applied projection payload — an unchanged refetch is a no-op so the

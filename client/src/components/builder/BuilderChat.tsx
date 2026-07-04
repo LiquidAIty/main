@@ -57,9 +57,27 @@ export default function BuilderChat({
 
   return (
     <div className="h-full flex flex-col" style={{ gap: 12 }}>
+      <style>
+        {`
+          .builder-chat-scroll {
+            scrollbar-width: thin;
+            scrollbar-color: #4E4E4E transparent;
+          }
+          .builder-chat-scroll::-webkit-scrollbar { width: 7px; }
+          .builder-chat-scroll::-webkit-scrollbar-track { background: transparent; }
+          .builder-chat-scroll::-webkit-scrollbar-thumb {
+            background: #4E4E4E;
+            border-radius: 999px;
+            border: 1px solid rgba(0, 0, 0, 0.25);
+          }
+          .builder-chat-scroll::-webkit-scrollbar-thumb:hover {
+            background: #616161;
+          }
+        `}
+      </style>
       <div
         ref={listRef}
-        className="flex-1"
+        className="flex-1 builder-chat-scroll"
         style={{
           flex: "1 1 0",
           minHeight: 0,

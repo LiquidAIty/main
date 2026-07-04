@@ -647,7 +647,20 @@ export type ConfiguredCardRunResult = {
   error: string | null;
   startedAt: string;
   endedAt: string;
+  /** Mechanical count of authorized tool calls actually recorded during the run
+   * (null when the run has no profile/terminal reporting for this). Parsed from
+   * the real transcript line, never inferred from the final response text. */
+  toolCallCount: number | null;
 };
+
+function parseToolCallCount(transcript: unknown): number | null {
+  const lines = Array.isArray(transcript) ? transcript.map((t) => String(t ?? '')) : [];
+  for (const line of lines) {
+    const match = /toolCallCount=(\d+)/.exec(line);
+    if (match) return Number(match[1]);
+  }
+  return null;
+}
 
 export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<ConfiguredCardRunResult> {
   const startedAt = new Date().toISOString();
@@ -660,6 +673,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     error: null,
     startedAt,
     endedAt: new Date().toISOString(),
+    toolCallCount: null,
     ...partial,
   });
 
@@ -757,6 +771,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       runtimeType,
       tools,
       output: String(response.finalResponseText || ''),
+      toolCallCount: parseToolCallCount((response as any).transcript),
     });
   } catch (error: any) {
     // Transport/rails failure is honest — no retry into a fallback path.

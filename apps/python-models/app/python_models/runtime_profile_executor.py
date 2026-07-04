@@ -193,7 +193,10 @@ def prepare(
     profile = ra.find_profile(binding)
     if profile is None:
         return None
-    if str(profile.terminal_contract) not in TERMINAL_CONTRACTS:
+    # A terminal contract is optional: a profile with none simply runs once and
+    # returns whatever the model said, with no forced output grammar and no
+    # repair loop. Only a NAMED-but-unregistered contract is an honest error.
+    if profile.terminal_contract and str(profile.terminal_contract) not in TERMINAL_CONTRACTS:
         raise ValueError(f"terminal_contract_unknown: {profile.terminal_contract}")
 
     state = HookState(

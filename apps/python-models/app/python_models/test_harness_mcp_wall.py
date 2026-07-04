@@ -61,7 +61,6 @@ class TestNoMarkdownRuntimeSkills:
         for relative in (
             "apps/python-models/app/python_models/runtime_assignments.py",
             "apps/python-models/app/python_models/runtime_profile_executor.py",
-            "apps/python-models/app/python_models/thinkgraph_profile.py",
         ):
             source = _read(relative)
             assert ".md" not in source, f"{relative} references Markdown"
@@ -74,7 +73,6 @@ class TestNoTaskLedgerOnNewPaths:
         for relative in (
             "apps/python-models/app/python_models/runtime_assignments.py",
             "apps/python-models/app/python_models/runtime_profile_executor.py",
-            "apps/python-models/app/python_models/thinkgraph_profile.py",
             "apps/python-models/app/control_plane.py",
         ):
             source = _read(relative)

@@ -385,7 +385,7 @@ export type ConversationPairResult =
   | { ok: false; error: string };
 
 /**
- * Exact completed-pair lookup for the ThinkGraph front door. Never guesses the
+ * Exact completed-pair lookup for the ThinkGraph post-chat runner. Never guesses the
  * "latest pair" — both message IDs must be explicit, exist, belong to the given
  * project + conversation, be correctly ordered (user before assistant), and be
  * complete. Structural checks only; no content interpretation.

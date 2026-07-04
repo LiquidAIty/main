@@ -3,7 +3,7 @@
 // classification — never display-name matching, never a browser-supplied id.
 import { describe, expect, it } from 'vitest';
 
-import { resolveThinkGraphCardFromDeck, validateThinkGraphCardTools } from './thinkGraphFrontDoor';
+import { resolveThinkGraphCardFromDeck, validateThinkGraphCardTools } from './processThinkGraphPair';
 
 const TG_CARD = {
   id: 'card_thinkgraph_agent',

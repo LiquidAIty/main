@@ -38,12 +38,23 @@ export class GrpcServer {
   }
 
   start(port: number = 50051, host: string = 'localhost') {
+    const bindTarget = `${host}:${port}`
+    console.log(`gRPC Server: requesting bind on ${bindTarget}`)
     this.server.bindAsync(
-      `${host}:${port}`,
+      bindTarget,
       grpc.ServerCredentials.createInsecure(),
       (error, boundPort) => {
         if (error) {
-          console.error('Failed to start gRPC server')
+          // bindAsync's error carries the real cause (e.g. address-in-use —
+          // grpc-js resolves `host` to every matching address, IPv4 and IPv6,
+          // and reports "No address added out of total N resolved" when none
+          // of them could bind). Never swallow it behind a generic message —
+          // a chat runtime that silently fails to bind is worse than a
+          // process that exits loudly with the exact reason.
+          console.error(
+            `gRPC Server: FAILED to bind ${bindTarget} — code=${(error as any).code ?? 'unknown'} message=${error.message}`,
+          )
+          process.exit(1)
           return
         }
         console.log(`gRPC Server running at ${host}:${boundPort}`)

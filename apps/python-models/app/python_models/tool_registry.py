@@ -713,13 +713,16 @@ def build_default_tool_registry() -> ToolRegistry:
         ToolSpec(
             name="apply_thinkgraph_patch",
             description=(
-                "ThinkGraph card only: apply ONE compact graph patch. EXACT stored shape — "
-                'resources: [{"id": string, "label": string}]; '
-                'relations: [{"a": resourceId, "b": resourceId}] (undirected co-occurrence); '
+                "Apply ONE graph patch. EXACT input shape — "
+                'resources: [{"id": string, "label": string, "properties"?: {key: string|number|bool}}]; '
+                'relations: [{"a": resourceId, "b": resourceId}]; '
                 'statements: [{"id": string, "subject": resourceId, "predicateTerm": string, '
-                '"object": resourceId, "rationale"?: string, "review"?: string}]. '
-                "Authority comes from the trusted run context; one transaction, "
-                "idempotent per run, complete source-pair provenance required."
+                '"object": resourceId, "rationale"?: string, "review"?: string, '
+                '"properties"?: {key: string|number|bool}}]. '
+                "A subject or object resourceId that does not resolve to an existing or "
+                "newly-declared resource in this same patch causes the whole patch to be rejected. "
+                "Authority (project, card, run, source pair) comes from the trusted run context; "
+                "one transaction, idempotent per run."
             ),
             enabled=True,
             inputSchema={

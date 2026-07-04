@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 // Thin-renderer mechanics only (NOT product proof; nothing persisted): the
-// Cytoscape surface must turn the RAW Python projection into one element per
-// returned node/edge, preserve every returned field, use Python-assigned visual
-// classes verbatim, stay blank without a projection, and never invent data.
+// Cytoscape surface must turn the RAW Python noun-and-verb projection into one
+// element per returned node/edge, preserve every returned field verbatim, use
+// NO visual-class vocabulary (every node is the same bubble, every edge the
+// same labeled directed line — the only signal is capped-log mentionCount
+// sizing), keep layout calm (no rerun on identical data, position-preserving
+// diff on real change), and never invent data. Fixtures exercise renderer
+// mechanics only.
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, waitFor } from '@testing-library/react';
@@ -16,26 +20,60 @@ const cyState = vi.hoisted(() => ({
 
 vi.mock('cytoscape', () => {
   const factory: any = (options: any) => {
+    const store: any[] = [];
+    const makeEl = (def: any) => {
+      const el: any = {
+        def,
+        id: () => String(def.data.id),
+        remove: () => {
+          const index = store.indexOf(el);
+          if (index >= 0) store.splice(index, 1);
+        },
+        data: (next?: any) => {
+          if (next !== undefined) {
+            el.def = { ...el.def, data: next };
+            return;
+          }
+          return el.def.data;
+        },
+      };
+      return el;
+    };
     const instance: any = {
       options,
-      added: [] as any[],
+      store,
       layouts: [] as any[],
       handlers: [] as any[],
       on: (event: string, selectorOrFn: any, maybeFn?: any) => {
-        instance.handlers.push({ event, selector: typeof selectorOrFn === 'string' ? selectorOrFn : undefined });
+        instance.handlers.push({
+          event,
+          selector: typeof selectorOrFn === 'string' ? selectorOrFn : undefined,
+          fn: typeof selectorOrFn === 'function' ? selectorOrFn : maybeFn,
+        });
       },
-      elements: () => ({
-        remove: vi.fn(),
-        removeClass: vi.fn(),
-        addClass: vi.fn(),
-        difference: () => ({ addClass: vi.fn() }),
-        length: instance.added.length,
-      }),
-      add: (elements: any[]) => {
-        instance.added.push(...elements);
+      elements: () => {
+        const snapshot = [...store];
+        return {
+          length: snapshot.length,
+          forEach: (fn: (el: any) => void) => snapshot.forEach(fn),
+          remove: vi.fn(),
+          removeClass: vi.fn(),
+          addClass: vi.fn(),
+          difference: () => ({ addClass: vi.fn() }),
+        };
       },
-      layout: (options: any) => {
-        instance.layouts.push(options);
+      add: (defs: any) => {
+        (Array.isArray(defs) ? defs : [defs]).forEach((def) => store.push(makeEl(def)));
+      },
+      getElementById: (id: string) => {
+        const found = store.filter((el) => el.id() === String(id));
+        return {
+          length: found.length,
+          data: (next: any) => found.forEach((el) => el.data(next)),
+        };
+      },
+      layout: (layoutOptions: any) => {
+        instance.layouts.push(layoutOptions);
         return { run: vi.fn() };
       },
       batch: (cb: () => void) => cb(),
@@ -53,37 +91,32 @@ vi.mock('cytoscape-fcose', () => ({ default: {} }));
 
 import KnowledgeGraphFramework, { type GraphProjectionV1 } from './KnowledgeGraphFramework';
 
+// Mirrors "ASTS may depend on SpaceX launch services" plus a repeated-mention
+// entity and an unreferenced noun with zero mentions.
 const PROJECTION: GraphProjectionV1 = {
   schemaVersion: 'thinkgraph.projection.v1',
   projectId: 'proj-1',
   nodes: [
-    {
-      id: 'hyp_a',
-      label: 'Hypothesis A',
-      kind: 'resource',
-      sourceRef: 'tg:msg_1',
-      provenance: { correlationId: 'tg:msg_1' },
-      visual: { nodeClass: 'resource' },
-    },
-    {
-      id: 'stmt_1',
-      label: 'A depends_on B',
-      kind: 'statement',
-      provenance: { review: 'provisional' },
-      visual: { nodeClass: 'statement' },
-    },
+    { id: 'asts', label: 'ASTS', mentionCount: 3, lastMentionedAt: '2026-07-04T00:00:00Z', properties: { ticker: 'ASTS' }, provenanceCount: 3 },
+    { id: 'spacex_launch_services', label: 'SpaceX launch services', mentionCount: 1, provenanceCount: 1 },
+    { id: 'unreferenced', label: 'Unrelated older noun', mentionCount: 0, provenanceCount: 0 },
   ],
   edges: [
     {
-      id: 'stmt_1|subj',
-      source: 'hyp_a',
-      target: 'stmt_1',
-      label: 'depends_on',
-      predicate: 'depends_on',
-      visual: { edgeClass: 'semantic_relation', directed: true },
+      id: 'st_asts_depends_on_spacex',
+      source: 'asts',
+      target: 'spacex_launch_services',
+      predicate: 'may depend on',
+      mentionCount: 2,
+      properties: { source: 'working project reasoning' },
+      provenanceCount: 2,
     },
   ],
 };
+
+function styleFor(cy: any, selector: string): Record<string, unknown> | undefined {
+  return cy.options.style.find((entry: any) => entry.selector === selector)?.style;
+}
 
 beforeEach(() => {
   cyState.reset();
@@ -102,64 +135,189 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('KnowledgeGraphFramework — thin mechanical renderer', () => {
+describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-verb graph', () => {
   it('stays blank graph paper with no projection: nothing added, no layout, no fake nodes', async () => {
     const { getByTestId } = render(<KnowledgeGraphFramework projection={undefined} />);
     await waitFor(() => expect(cyState.instances).toHaveLength(1));
     const cy = cyState.instances[0];
-    expect(cy.added).toHaveLength(0);
+    expect(cy.store).toHaveLength(0);
     expect(cy.layouts).toHaveLength(0);
     expect(getByTestId('cytoscape-graph').getAttribute('data-node-count')).toBe('0');
   });
 
-  it('creates exactly one element per returned node/edge, preserving raw fields and Python visual classes', async () => {
+  it('creates exactly one element per returned node/edge, preserving raw fields verbatim', async () => {
     render(<KnowledgeGraphFramework projection={PROJECTION} />);
-    await waitFor(() => expect(cyState.instances[0]?.added.length).toBe(3));
+    await waitFor(() => expect(cyState.instances[0]?.store.length).toBe(4));
     const cy = cyState.instances[0];
+    const defs = cy.store.map((el: any) => el.def);
 
-    const nodeA = cy.added.find((e: any) => e.data.id === 'hyp_a');
-    expect(nodeA.group).toBe('nodes');
-    expect(nodeA.classes).toBe('resource'); // Python-assigned, used verbatim
-    expect(nodeA.data.label).toBe('Hypothesis A');
-    expect(nodeA.data.kind).toBe('resource');
-    expect(nodeA.data.sourceRef).toBe('tg:msg_1');
-    expect(nodeA.data.provenance).toEqual({ correlationId: 'tg:msg_1' });
-    expect(nodeA.position).toBeUndefined(); // no invented coordinates
+    const asts = defs.find((d: any) => d.data.id === 'asts');
+    expect(asts.group).toBe('nodes');
+    expect(asts.data.label).toBe('ASTS');
+    expect(asts.data.mentionCount).toBe(3);
+    expect(asts.data.properties).toEqual({ ticker: 'ASTS' });
+    expect(asts.position).toBeUndefined(); // Python never supplies coordinates
 
-    const edge = cy.added.find((e: any) => e.data.id === 'stmt_1|subj');
+    const edge = defs.find((d: any) => d.data.id === 'st_asts_depends_on_spacex');
     expect(edge.group).toBe('edges');
-    expect(edge.classes).toBe('semantic_relation');
-    expect(edge.data.source).toBe('hyp_a');
-    expect(edge.data.target).toBe('stmt_1');
-    expect(edge.data.predicate).toBe('depends_on');
-    expect(edge.data.directed).toBe(true);
+    expect(edge.data.source).toBe('asts');
+    expect(edge.data.target).toBe('spacex_launch_services');
+    expect(edge.data.predicate).toBe('may depend on'); // full verb phrase, untouched
+    expect(edge.data.mentionCount).toBe(2);
+    expect(edge.data.properties).toEqual({ source: 'working project reasoning' });
 
-    // fCoSE only because Python supplied no complete positions.
+    // Exactly one non-animated fCoSE run — the only layout this renderer knows.
     expect(cy.layouts).toHaveLength(1);
     expect(cy.layouts[0].name).toBe('fcose');
+    expect(cy.layouts[0].animate).toBe(false);
   });
 
-  it('uses preset layout when Python supplies complete positions', async () => {
-    const positioned: GraphProjectionV1 = {
+  it('uses NO visual-class vocabulary at all: no classes on any element, one uniform stylesheet', async () => {
+    render(<KnowledgeGraphFramework projection={PROJECTION} />);
+    await waitFor(() => expect(cyState.instances[0]?.store.length).toBe(4));
+    const cy = cyState.instances[0];
+    for (const def of cy.store.map((el: any) => el.def)) {
+      expect(def.classes).toBeUndefined();
+    }
+    // The stylesheet itself has no per-entity/category/question/property
+    // selectors — only base node/edge rules, selection, and the dim utility.
+    const selectors = cy.options.style.map((entry: any) => entry.selector);
+    expect(selectors).toEqual(['node', 'edge', 'node:selected', 'edge:selected', '.kgf-dim']);
+  });
+
+  it('sizes nodes with a capped logarithmic mapping over real mentionCount only', async () => {
+    render(<KnowledgeGraphFramework projection={PROJECTION} />);
+    await waitFor(() => expect(cyState.instances[0]?.store.length).toBe(4));
+    const cy = cyState.instances[0];
+    const asts = cy.store.find((el: any) => el.id() === 'asts');
+    const unreferenced = cy.store.find((el: any) => el.id() === 'unreferenced');
+    // log2(3+1)=2, log2(0+1)=0 — mechanical, from the real integer field only.
+    expect(asts.def.data.logMentions).toBeCloseTo(2, 5);
+    expect(unreferenced.def.data.logMentions).toBe(0);
+    expect(String(styleFor(cy, 'node')?.width)).toContain('mapData(logMentions');
+    // Growth is capped — an absurd mention count never blows past the ceiling.
+    render(<KnowledgeGraphFramework projection={{
       ...PROJECTION,
-      nodes: PROJECTION.nodes.map((n, i) => ({
-        ...n,
-        visual: { ...n.visual, x: i * 10, y: i * 20 },
-      })),
-    };
-    render(<KnowledgeGraphFramework projection={positioned} />);
-    await waitFor(() => expect(cyState.instances[0]?.layouts.length).toBe(1));
-    expect(cyState.instances[0].layouts[0].name).toBe('preset');
-    const nodeA = cyState.instances[0].added.find((e: any) => e.data.id === 'hyp_a');
-    expect(nodeA.position).toEqual({ x: 0, y: 0 });
+      nodes: [{ id: 'huge', label: 'Huge', mentionCount: 100_000, provenanceCount: 100_000 }],
+      edges: [],
+    }} />);
+    await waitFor(() => expect(cyState.instances.length).toBeGreaterThanOrEqual(1));
+    const huge = cyState.instances[cyState.instances.length - 1].store.find((el: any) => el.id() === 'huge');
+    expect(huge.def.data.logMentions).toBeLessThanOrEqual(6);
   });
 
-  it('registers only display-selection handlers and destroys the instance on unmount', async () => {
-    const { unmount } = render(<KnowledgeGraphFramework projection={PROJECTION} />);
+  it('always shows a direction arrow (every verb phrase is directed subject->object) and keeps labels horizontal', async () => {
+    render(<KnowledgeGraphFramework projection={PROJECTION} />);
+    await waitFor(() => expect(cyState.instances).toHaveLength(1));
+    const cy = cyState.instances[0];
+    expect(styleFor(cy, 'edge')?.['target-arrow-shape']).toBe('triangle');
+    expect(styleFor(cy, 'edge')?.label).toBe('data(predicate)');
+    expect(styleFor(cy, 'edge')?.['text-rotation']).toBe('none');
+    expect(styleFor(cy, 'edge')?.['text-background-opacity']).toBeGreaterThan(0);
+    expect(JSON.stringify(cy.options.style)).not.toContain('autorotate');
+  });
+
+  it('does not rerun layout or churn elements when an identical projection arrives as a new object', async () => {
+    const { rerender } = render(<KnowledgeGraphFramework projection={PROJECTION} />);
+    await waitFor(() => expect(cyState.instances[0]?.layouts.length).toBe(1));
+    const cy = cyState.instances[0];
+    const elementRefsBefore = [...cy.store];
+
+    const identicalClone: GraphProjectionV1 = JSON.parse(JSON.stringify(PROJECTION));
+    rerender(<KnowledgeGraphFramework projection={identicalClone} />);
+    await waitFor(() => expect(cyState.instances).toHaveLength(1));
+
+    expect(cy.layouts).toHaveLength(1); // no second layout run
+    expect(cy.store).toEqual(elementRefsBefore); // same element instances, untouched
+  });
+
+  it('applies new real records as a diff: surviving elements keep identity, one bounded layout update', async () => {
+    const { rerender } = render(<KnowledgeGraphFramework projection={PROJECTION} />);
+    await waitFor(() => expect(cyState.instances[0]?.layouts.length).toBe(1));
+    const cy = cyState.instances[0];
+    const survivorBefore = cy.store.find((el: any) => el.id() === 'asts');
+
+    const grown: GraphProjectionV1 = {
+      ...PROJECTION,
+      nodes: [...PROJECTION.nodes, { id: 'rdw', label: 'RDW', mentionCount: 1, provenanceCount: 1 }],
+    };
+    rerender(<KnowledgeGraphFramework projection={grown} />);
+    await waitFor(() => expect(cy.store.length).toBe(5));
+
+    const survivorAfter = cy.store.find((el: any) => el.id() === 'asts');
+    expect(survivorAfter).toBe(survivorBefore); // not removed/re-added — position preserved
+    expect(cy.layouts).toHaveLength(2); // exactly one additional bounded layout
+  });
+
+  it('removes elements that left the projection without inventing replacements', async () => {
+    const { rerender } = render(<KnowledgeGraphFramework projection={PROJECTION} />);
+    await waitFor(() => expect(cyState.instances[0]?.store.length).toBe(4));
+    const cy = cyState.instances[0];
+
+    const shrunk: GraphProjectionV1 = {
+      ...PROJECTION,
+      nodes: PROJECTION.nodes.filter((n) => n.id !== 'unreferenced'),
+    };
+    rerender(<KnowledgeGraphFramework projection={shrunk} />);
+    await waitFor(() => expect(cy.store.length).toBe(3));
+    expect(cy.store.map((el: any) => el.id())).not.toContain('unreferenced');
+  });
+
+  it('skips an edge only when its endpoint is missing from the same projection, with an exact reason', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const withGhostEdge: GraphProjectionV1 = {
+      ...PROJECTION,
+      edges: [
+        ...PROJECTION.edges,
+        { id: 'ghost_edge', source: 'asts', target: 'not_in_projection', predicate: 'points nowhere', mentionCount: 0 },
+      ],
+    };
+    render(<KnowledgeGraphFramework projection={withGhostEdge} />);
+    await waitFor(() => expect(cyState.instances[0]?.store.length).toBe(4)); // ghost edge NOT added
+    expect(cyState.instances[0].store.map((el: any) => el.id())).not.toContain('ghost_edge');
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('skipped'),
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'ghost_edge', reason: expect.stringContaining('not_in_projection') }),
+      ]),
+    );
+    warn.mockRestore();
+  });
+
+  it('selection handlers only toggle display classes — tapping never runs layout', async () => {
+    render(<KnowledgeGraphFramework projection={PROJECTION} />);
     await waitFor(() => expect(cyState.instances).toHaveLength(1));
     const cy = cyState.instances[0];
     expect(cy.handlers.map((h: any) => h.event)).toEqual(['tap', 'tap', 'tap']);
+    const layoutRunsBefore = cy.layouts.length;
+
+    const nodeTap = cy.handlers.find((h: any) => h.selector === 'node');
+    nodeTap.fn({ target: { closedNeighborhood: () => ({ length: 2 }) } });
+    const edgeTap = cy.handlers.find((h: any) => h.selector === 'edge');
+    edgeTap.fn({ target: { union: () => ({ length: 3 }), connectedNodes: () => ({ length: 2 }) } });
+    const blankTap = cy.handlers.find((h: any) => h.selector === undefined);
+    blankTap.fn({ target: cy });
+
+    expect(cy.layouts.length).toBe(layoutRunsBefore); // selection is never a layout trigger
+    expect(cy.store.length).toBe(4); // and never a data change
+  });
+
+  it('reapplies elements after a StrictMode double-mount (destroyed instance must not keep the fingerprint)', async () => {
+    render(
+      <React.StrictMode>
+        <KnowledgeGraphFramework projection={PROJECTION} />
+      </React.StrictMode>,
+    );
+    await waitFor(() => expect(cyState.instances.length).toBeGreaterThanOrEqual(2));
+    const lastCy = cyState.instances[cyState.instances.length - 1];
+    await waitFor(() => expect(lastCy.store.length).toBe(4));
+    expect(cyState.instances[0].destroy).toHaveBeenCalled();
+  });
+
+  it('destroys the Cytoscape instance on unmount', async () => {
+    const { unmount } = render(<KnowledgeGraphFramework projection={PROJECTION} />);
+    await waitFor(() => expect(cyState.instances).toHaveLength(1));
     unmount();
-    expect(cy.destroy).toHaveBeenCalledTimes(1);
+    expect(cyState.instances[0].destroy).toHaveBeenCalledTimes(1);
   });
 });

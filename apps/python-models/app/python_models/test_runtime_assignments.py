@@ -7,7 +7,6 @@ record validation. DB round-trips are covered by the live seed CLI.
 """
 
 from app.python_models import runtime_assignments as ra
-from app.python_models import thinkgraph_profile as tg
 
 
 def _skill(**overrides) -> ra.RuntimeSkill:
@@ -96,13 +95,6 @@ class TestDataBindingValidation:
 
 
 class TestProfileValidation:
-    def test_canonical_thinkgraph_profile_record_is_valid(self):
-        assert ra.validate_profile(tg.PROFILE_V1) is None
-        assert tg.PROFILE_V1.runtime_binding == "thinkgraph_agent"
-        assert sorted(tg.PROFILE_V1.allowed_tools) == sorted(
-            ["read_thinkgraph_scope", "apply_thinkgraph_patch"]
-        )
-
     def test_incomplete_profile_rejected(self):
         broken = ra.RuntimeProfile(
             profile_id="", version=1, runtime_binding="x", execution_mode="assistant_agent",
@@ -115,7 +107,16 @@ class TestProfileValidation:
         )
         assert ra.validate_profile(broken2) == "profile_version_invalid"
         broken3 = ra.RuntimeProfile(
+            profile_id="p", version=1, runtime_binding="x", execution_mode="",
+            enabled=True, terminal_contract="t",
+        )
+        assert ra.validate_profile(broken3) == "profile_execution_mode_required"
+
+    def test_terminal_contract_is_optional_not_required(self):
+        # A profile assigning NO terminal contract is a valid, complete record —
+        # the executor runs it once with no output grammar and no repair loop.
+        no_contract = ra.RuntimeProfile(
             profile_id="p", version=1, runtime_binding="x", execution_mode="assistant_agent",
             enabled=True, terminal_contract="",
         )
-        assert ra.validate_profile(broken3) == "profile_terminal_contract_required"
+        assert ra.validate_profile(no_contract) is None

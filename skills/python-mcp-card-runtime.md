@@ -37,6 +37,8 @@ canvas card (deck_builder)            ← identity, prompt, model, enabled, tool
 - Write authority: ONLY `apply_thinkgraph_patch`, callable only inside the deck-bound
   ThinkGraph card run (`deck.thinkGraphCardId`, validated server-side: enabled +
   assistant_agent + real model + exactly the two tools).
-- The card's canvas prompt owns all semantics (`no_patch` judgment included).
+- The card's canvas prompt owns all semantics, including whether to call
+  `apply_thinkgraph_patch` at all — there is no separate structured output
+  contract or judgment grammar; not calling the tool is a valid, ordinary turn.
 - Every stored record carries: project, conversation, both source message ids, card id,
   correlation id, timestamps — exposed directly by `/graph-view`.

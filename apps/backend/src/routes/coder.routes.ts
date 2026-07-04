@@ -24,7 +24,7 @@ import {
   appendMessage,
   getConversationMessages,
 } from '../conversations/store';
-import { processThinkGraphPair } from '../services/thinkgraph/thinkGraphFrontDoor';
+import { processThinkGraphPair } from '../services/thinkgraph/processThinkGraphPair';
 import { callPythonAgentMcpTool } from '../services/mcp/pythonAgentMcpClient';
 import {
   applyThinkGraphPatch,
@@ -79,7 +79,7 @@ router.post('/mcp-bridge/execute_visible_flow', async (req, res) => {
   }
 });
 
-// ── ThinkGraph front-door bridge (same mcp-bridge family) ───────────────────
+// ── ThinkGraph post-chat runner bridge (same mcp-bridge family) ─────────────
 // thinkgraph_process_pair: the MCP-facing capability implementation — exact pair
 // references only, no raw prompts/models/cards/patches/task data accepted.
 router.post('/mcp-bridge/thinkgraph_process_pair', async (req, res) => {
@@ -236,7 +236,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
   res.write(`event: session\ndata: ${JSON.stringify({ sessionId })}\n\n`);
   // Durable project-scoped transcript persistence (conversations/store.ts). Best-effort:
   // a DB failure must never block or break the live SSE stream. The resolved message
-  // is kept so the ThinkGraph front door can reference the EXACT pair by id.
+  // is kept so the ThinkGraph post-chat runner can reference the EXACT pair by id.
   const userMessagePromise = appendMessage({ projectId, conversationId, role: 'user', content: message }).catch(
     () => null,
   );
@@ -264,11 +264,11 @@ router.post('/openclaude/session/chat', async (req, res) => {
           });
           const userMessage = await userMessagePromise;
           if (!userMessage) return;
-          // ThinkGraph front door: exactly one bounded, deterministic MCP call per
-          // completed pair (correlation = the assistant message id, so a re-fire is a
-          // duplicate no-op). The Harness crosses the MCP boundary — it never calls
-          // the Python runtime or the graph directly. Fire-and-forget: the delivered
-          // chat result is already final — a ThinkGraph failure/no_patch never
+          // ThinkGraph post-chat runner: exactly one bounded, deterministic MCP call
+          // per completed pair (correlation = the assistant message id, so a re-fire
+          // is a duplicate no-op). The Harness crosses the MCP boundary — it never
+          // calls the Python runtime or the graph directly. Fire-and-forget: the
+          // delivered chat result is already final — a ThinkGraph failure never
           // modifies, delays, retries, or falls back to any other writer. All
           // semantics live on the persisted ThinkGraph card.
           const mcpResult = await callPythonAgentMcpTool('thinkgraph.process_conversation_pair', {
@@ -281,17 +281,17 @@ router.post('/openclaude/session/chat', async (req, res) => {
           });
           const result = (mcpResult as any)?.result ?? mcpResult;
           console.log(
-            '[THINKGRAPH][front-door] status=%s correlation=%s card=%s %s',
+            '[THINKGRAPH][post-chat] status=%s correlation=%s card=%s %s',
             result?.status || 'unknown',
             result?.correlationId || '',
             result?.cardId || 'none',
             result?.error || '',
           );
           if (result?.cardSummary) {
-            console.log('[THINKGRAPH][front-door] card said: %s', String(result.cardSummary).slice(0, 400));
+            console.log('[THINKGRAPH][post-chat] card said: %s', String(result.cardSummary).slice(0, 400));
           }
         } catch (err: any) {
-          console.warn('[THINKGRAPH][front-door] failed:', err?.message || err);
+          console.warn('[THINKGRAPH][post-chat] failed:', err?.message || err);
         }
       })();
     }

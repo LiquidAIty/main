@@ -118,7 +118,8 @@ async def list_tools() -> list[Tool]:
                 "deck's configured ThinkGraph card. Accepts only server-trusted structural references "
                 "(project, deck, conversation, exact user/assistant message ids, correlation id) — "
                 "never raw prompts, models, cards, tools, patches, or task data. The configured card "
-                "decides no_patch vs a compact provenance-backed patch through its own scoped tools."
+                "maintains the noun-and-verb graph through its own scoped tools, updating it when the "
+                "exchange adds something durable and leaving it unchanged otherwise."
             ),
             inputSchema={
                 "type": "object",

@@ -76,9 +76,10 @@ async def autogen_orchestrate(req: ContextPack):
 
 @app.get("/thinkgraph/projection")
 def thinkgraph_projection(projectId: str, limit: int | None = None):
-    """ThinkGraphProjectionV1: Python-owned read-only projection of the ACTUAL
-    persisted ThinkGraph records for one project (real IDs, labels, kinds,
-    predicates, provenance, and Python-assigned display classes). The backend
+    """thinkgraph.projection.v1: Python-owned read-only projection of the
+    ACTUAL persisted ThinkGraph records for one project — ordinary items and
+    their direct relationships only, bounded by limit and recency (real IDs,
+    labels, optional model-authored kinds/tags, provenance). The backend
     forwards this response unchanged; no other layer shapes graph data."""
     from app.python_models.thinkgraph_projection import read_projection
 

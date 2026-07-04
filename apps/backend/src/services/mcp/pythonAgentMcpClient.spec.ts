@@ -1,14 +1,14 @@
 // REAL MCP-boundary integration (SPEC: do not mock MCP discovery/call).
 // Spawns the actual Python Agent MCP host over stdio via the official SDK client,
 // proves tool discovery, structural argument rejection, and the live bridge chain
-// (host → backend mcp-bridge → front door) returning honest structural failures.
+// (host → backend mcp-bridge → post-chat runner) returning honest structural failures.
 // Requires: the python venv + the backend dev server on :4000 (real dev topology).
 import { describe, expect, it } from 'vitest';
 
 import { callPythonAgentMcpTool, listPythonAgentMcpTools } from './pythonAgentMcpClient';
 
 describe('Python Agent MCP host — real stdio discovery + calls', () => {
-  it('exposes exactly the migrated tools, the ThinkGraph front door, and the Harness control surface', async () => {
+  it('exposes exactly the migrated tools, the ThinkGraph post-chat runner, and the Harness control surface', async () => {
     const names = await listPythonAgentMcpTools();
     expect(names).toEqual([
       'canvas.inspect',

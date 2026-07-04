@@ -1,16 +1,19 @@
-// @graph entity: ThinkGraphFrontDoor
-// @graph role: canonical-completed-pair-thinkgraph-invocation
+// @graph entity: ProcessThinkGraphPair
+// @graph role: post-chat-thinkgraph-card-invocation
 // @graph relates_to: ConversationStore, DeckStore, ConfiguredCardRuntime, ThinkGraphStore
 //
-// THE one ThinkGraph front door. After a normal project chat pair completes, this
-// processes the EXACT referenced pair by running the deck's configured ThinkGraph
-// card through the proven single-card runtime. The card (its canvas prompt + its
-// two scoped tools) decides no_patch vs a compact patch — this module decides
-// NOTHING semantic. It only: validates structural references, loads the exact pair
-// from the canonical conversation store, resolves the server-trusted deck binding,
-// enforces the card's allowed-tool contract, checks idempotency, invokes the card,
-// and reports honestly. Failure never touches the normal chat result (callers
-// fire-and-forget); there is no fallback extractor, model, card, or writer.
+// THE mechanical post-chat ThinkGraph runner. After a normal project chat pair
+// completes, this processes the EXACT referenced pair by running the deck's
+// configured ThinkGraph card through the proven single-card runtime. The card
+// (its persisted prompt + its persisted tools) decides what, if anything, to
+// add to the graph — this module decides NOTHING semantic. It only: validates
+// structural references, loads the exact pair from the canonical conversation
+// store, resolves the server-trusted deck binding, enforces the card's
+// allowed-tool contract, checks idempotency, invokes the card, and reports
+// honestly via neutral mechanical counts (never a semantic outcome inferred
+// from the model's final text). Failure never touches the normal chat result
+// (callers fire-and-forget); there is no fallback extractor, model, card, or
+// writer.
 
 import { getConversationPair } from '../../conversations/store';
 import { getDeckDocument } from '../../decks/store';
@@ -32,8 +35,18 @@ export type ProcessPairArgs = {
   correlationId: string;
 };
 
+// `status` distinguishes only OPERATIONAL states of the run itself (did it run,
+// was it already done, could it not be configured) — never a semantic decision
+// about what the model chose to write. Whatever it actually wrote is reported
+// through the neutral mechanical counts below, derived from real persisted
+// records, never inferred from the model's final text.
 export type ProcessPairResult = {
-  status: 'patched' | 'no_patch' | 'duplicate' | 'failed' | 'not_configured';
+  status: 'duplicate' | 'failed' | 'not_configured' | null;
+  completed: boolean;
+  toolCallCount: number | null;
+  tripleWriteCount: number;
+  resourceWriteCount: number;
+  statementWriteCount: number;
   correlationId: string;
   cardId: string | null;
   cardSummary: string;
@@ -44,6 +57,11 @@ export type ProcessPairResult = {
 
 function s(v: unknown): string {
   return typeof v === 'string' ? v : v == null ? '' : String(v);
+}
+
+function parseRow(raw: unknown): Record<string, any> | null {
+  const v = typeof raw === 'string' ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : raw;
+  return v && typeof v === 'object' ? (v as Record<string, any>) : null;
 }
 
 function clipText(v: unknown): string {
@@ -102,6 +120,32 @@ async function patchMarkerExists(projectId: string, correlationId: string): Prom
   return Array.isArray(rows) && rows.length > 0;
 }
 
+/** Neutral mechanical counts of what THIS correlationId actually left behind in
+ * storage — never inferred from the model's final text. Every record touched
+ * during a run (created or merely mention-bumped) carries this correlationId,
+ * so a direct count is the honest source of truth. */
+async function countWrittenByCorrelation(
+  projectId: string,
+  correlationId: string,
+): Promise<{ resourceWriteCount: number; statementWriteCount: number }> {
+  const resourceRows = await runCypherOnGraph(
+    GRAPH,
+    `MATCH (n:Resource {project_id: $projectId, correlation_id: $correlationId}) RETURN { c: count(n) } AS row`,
+    { projectId, correlationId },
+  );
+  const statementRows = await runCypherOnGraph(
+    GRAPH,
+    `MATCH (n:Statement {project_id: $projectId, correlation_id: $correlationId}) RETURN { c: count(n) } AS row`,
+    { projectId, correlationId },
+  );
+  const firstCount = (rows: unknown[]): number => {
+    const row = parseRow(rows[0]);
+    const c = Number(row?.c);
+    return Number.isFinite(c) && c > 0 ? c : 0;
+  };
+  return { resourceWriteCount: firstCount(resourceRows), statementWriteCount: firstCount(statementRows) };
+}
+
 /**
  * Process one exact completed conversation pair through the configured ThinkGraph card.
  * Deterministic per correlation key: an already-patched correlation returns `duplicate`
@@ -109,7 +153,13 @@ async function patchMarkerExists(projectId: string, correlationId: string): Prom
  */
 export async function processThinkGraphPair(args: ProcessPairArgs): Promise<ProcessPairResult> {
   const startedAt = new Date().toISOString();
-  const done = (partial: Partial<ProcessPairResult> & Pick<ProcessPairResult, 'status'>): ProcessPairResult => ({
+  const done = (partial: Partial<ProcessPairResult>): ProcessPairResult => ({
+    status: null,
+    completed: false,
+    toolCallCount: null,
+    tripleWriteCount: 0,
+    resourceWriteCount: 0,
+    statementWriteCount: 0,
     correlationId: s(args?.correlationId),
     cardId: null,
     cardSummary: '',
@@ -162,20 +212,18 @@ export async function processThinkGraphPair(args: ProcessPairArgs): Promise<Proc
     return done({ status: 'duplicate', cardId: binding });
   }
 
-  // Bounded pair input. No interpretation, no extraction — the card's canvas prompt
-  // owns all semantics; the tools carry authority via the trusted run context.
+  // Bounded pair input: neutral mechanical delimiters only, so the exact raw
+  // pair can pass through the string-only card runtime. No interpretation, no
+  // extraction, no instruction text — the card's own persisted prompt owns all
+  // semantics; the tools carry authority via the trusted run context.
   const input = [
-    'COMPLETED CONVERSATION PAIR (exact, verbatim):',
+    'COMPLETED CONVERSATION PAIR',
     '',
-    '=== USER MESSAGE ===',
+    'USER MESSAGE:',
     clipText(pair.user.content),
     '',
-    '=== ASSISTANT ANSWER ===',
+    'ASSISTANT MESSAGE:',
     clipText(pair.assistant.content),
-    '',
-    'First call read_thinkgraph_scope to see the current bounded graph scope.',
-    'Then either make ONE apply_thinkgraph_patch call, or return the structured',
-    'no-patch result required by your runtime terminal contract.',
   ].join('\n');
 
   const run = await runConfiguredCard({
@@ -200,10 +248,16 @@ export async function processThinkGraphPair(args: ProcessPairArgs): Promise<Proc
     return done({ status: 'failed', cardId: binding, error: run.error || `card_run_${run.status}` });
   }
 
-  // Honest outcome: the patch marker proves whether the card actually wrote.
-  const patched = await patchMarkerExists(projectId, correlationId);
+  // Neutral mechanical counts of what this correlationId actually left in
+  // storage — never a semantic decision inferred from the model's final text.
+  const { resourceWriteCount, statementWriteCount } = await countWrittenByCorrelation(projectId, correlationId);
   return done({
-    status: patched ? 'patched' : 'no_patch',
+    status: null,
+    completed: true,
+    toolCallCount: run.toolCallCount,
+    tripleWriteCount: statementWriteCount,
+    resourceWriteCount,
+    statementWriteCount,
     cardId: binding,
     cardSummary: run.output.slice(0, 2000),
   });

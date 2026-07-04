@@ -15,6 +15,17 @@ import {
 } from '../graph/graphWorkspaceContract';
 import { GRAPH_THEME } from '../graph/graphVisualTokens';
 
+// Cytoscape fit padding is PIXELS (the shared nav token is a fraction for
+// other renderers), and fit alone has no zoom ceiling — small graphs blow up.
+const FIT_PADDING_PX = 48;
+const SETTLE_MAX_ZOOM = 1;
+
+// Capped logarithmic node-size mapping: real mentionCount drives size, but
+// growth flattens out so no single noun's bubble can dominate the canvas.
+const MENTION_LOG_CAP = 6; // mentionCount ~63 already reaches full size
+const NODE_MIN_PX = 18;
+const NODE_MAX_PX = 40;
+
 let fcoseRegistered = false;
 
 function ensureFcoseRegistered() {
@@ -23,33 +34,30 @@ function ensureFcoseRegistered() {
   fcoseRegistered = true;
 }
 
+// One graph model: nouns (nodes) and verb-phrase relationships (edges). No
+// kind/tag/class vocabulary, no visual-class translation layer. The ONLY
+// signal beyond raw content is mention-count-driven size — mechanical, from
+// a real returned integer, never inferred from labels or predicate text.
 export type GraphProjectionV1 = {
   schemaVersion: string;
   projectId: string;
   nodes: Array<{
     id: string;
     label: string;
-    kind: string;
-    sourceRef?: string;
-    provenance?: Record<string, unknown>;
-    visual?: {
-      nodeClass?: string;
-      x?: number;
-      y?: number;
-    };
+    mentionCount: number;
+    lastMentionedAt?: string;
+    properties?: Record<string, unknown>;
+    provenanceCount?: number;
   }>;
   edges: Array<{
     id: string;
     source: string;
     target: string;
-    label: string;
-    predicate?: string;
-    sourceRef?: string;
-    provenance?: Record<string, unknown>;
-    visual?: {
-      edgeClass?: string;
-      directed?: boolean;
-    };
+    predicate: string;
+    mentionCount: number;
+    lastMentionedAt?: string;
+    properties?: Record<string, unknown>;
+    provenanceCount?: number;
   }>;
 };
 
@@ -58,115 +66,142 @@ type KnowledgeGraphFrameworkProps = {
   minHeight?: number;
 };
 
-function projectionToElements(projection: GraphProjectionV1 | null | undefined): {
-  elements: ElementDefinition[];
-  hasPresetPositions: boolean;
-} {
-  if (!projection) {
-    return { elements: [], hasPresetPositions: false };
-  }
+type SkippedEdge = { id: string; source: string; target: string; reason: string };
 
-  let positionedNodes = 0;
-
-  const nodes: ElementDefinition[] = projection.nodes.map((node) => {
-    const hasPosition =
-      typeof node.visual?.x === 'number' &&
-      Number.isFinite(node.visual.x) &&
-      typeof node.visual?.y === 'number' &&
-      Number.isFinite(node.visual.y);
-    if (hasPosition) positionedNodes += 1;
-
-    return {
-      group: 'nodes',
-      data: {
-        id: node.id,
-        label: node.label,
-        kind: node.kind,
-        sourceRef: node.sourceRef,
-        provenance: node.provenance,
-        visual: node.visual,
-      },
-      classes: node.visual?.nodeClass,
-      ...(hasPosition ? { position: { x: node.visual!.x as number, y: node.visual!.y as number } } : {}),
-    };
-  });
-
-  const edges: ElementDefinition[] = projection.edges.map((edge) => {
-    return {
-      group: 'edges',
-      data: {
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        label: edge.label,
-        predicate: edge.predicate,
-        sourceRef: edge.sourceRef,
-        provenance: edge.provenance,
-        visual: edge.visual,
-        directed: edge.visual?.directed,
-      },
-      classes: edge.visual?.edgeClass,
-    };
-  });
-
-  return {
-    elements: [...nodes, ...edges],
-    hasPresetPositions: nodes.length > 0 && positionedNodes === nodes.length,
-  };
+function cappedLogMentions(mentionCount: number): number {
+  const safe = Number.isFinite(mentionCount) && mentionCount > 0 ? mentionCount : 0;
+  return Math.min(Math.log2(safe + 1), MENTION_LOG_CAP);
 }
 
+function projectionToElements(projection: GraphProjectionV1 | null | undefined): {
+  elements: ElementDefinition[];
+  skippedEdges: SkippedEdge[];
+} {
+  if (!projection) {
+    return { elements: [], skippedEdges: [] };
+  }
+
+  const nodeIds = new Set(projection.nodes.map((node) => node.id));
+
+  // The ONLY allowed exclusion: an edge whose endpoint is absent from the same
+  // returned projection. It is skipped with an exact reported reason — never
+  // silently, never replaced with a fake edge.
+  const skippedEdges: SkippedEdge[] = [];
+  const survivingEdges: GraphProjectionV1['edges'] = [];
+  for (const edge of projection.edges) {
+    const missing = !nodeIds.has(edge.source)
+      ? `source "${edge.source}" not in returned node set`
+      : !nodeIds.has(edge.target)
+        ? `target "${edge.target}" not in returned node set`
+        : null;
+    if (missing) {
+      skippedEdges.push({ id: edge.id, source: edge.source, target: edge.target, reason: missing });
+      continue;
+    }
+    survivingEdges.push(edge);
+  }
+
+  const nodes: ElementDefinition[] = projection.nodes.map((node) => ({
+    group: 'nodes',
+    data: {
+      id: node.id,
+      label: node.label,
+      mentionCount: node.mentionCount,
+      logMentions: cappedLogMentions(node.mentionCount),
+      lastMentionedAt: node.lastMentionedAt,
+      properties: node.properties,
+      provenanceCount: node.provenanceCount,
+    },
+  }));
+
+  const edges: ElementDefinition[] = survivingEdges.map((edge) => ({
+    group: 'edges',
+    data: {
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      predicate: edge.predicate,
+      mentionCount: edge.mentionCount,
+      lastMentionedAt: edge.lastMentionedAt,
+      properties: edge.properties,
+      provenanceCount: edge.provenanceCount,
+    },
+  }));
+
+  return { elements: [...nodes, ...edges], skippedEdges };
+}
+
+// Presentation only. Every noun is the same round liquid-glass bubble, every
+// verb phrase is the same labeled line — no per-entity/category/question/
+// property visual distinction. The only visual signal is mechanical bubble
+// size from a capped-log mapping over the real returned mentionCount.
 const cytoscapeStyle: StylesheetJson = [
   {
     selector: 'node',
     style: {
-      'background-color': GRAPH_THEME.accent.primary,
-      width: 18,
-      height: 18,
-      'border-color': 'rgba(245, 247, 250, 0.55)',
-      'border-width': 1,
+      shape: 'ellipse',
+      'background-color': '#101820',
+      'background-opacity': 0.88,
+      width: `mapData(logMentions, 0, ${MENTION_LOG_CAP}, ${NODE_MIN_PX}, ${NODE_MAX_PX})`,
+      height: `mapData(logMentions, 0, ${MENTION_LOG_CAP}, ${NODE_MIN_PX}, ${NODE_MAX_PX})`,
+      'border-color': 'rgba(96, 214, 210, 0.75)',
+      'border-width': 1.4,
+      'underlay-color': GRAPH_THEME.accent.primary,
+      'underlay-opacity': 0.12,
+      'underlay-padding': 7,
       label: 'data(label)',
       color: GRAPH_THEME.surface.text,
-      'font-size': 10,
+      'font-size': 10.5,
       'text-outline-color': 'rgba(11, 14, 18, 0.95)',
       'text-outline-width': 2,
       'text-valign': 'bottom',
       'text-halign': 'center',
       'text-margin-y': 7,
+      'text-wrap': 'wrap',
+      'text-max-width': '180px',
       'min-zoomed-font-size': 8,
     },
   },
   {
     selector: 'edge',
     style: {
-      width: 1.5,
-      'line-color': GRAPH_THEME.edge.neutral,
-      'target-arrow-color': GRAPH_THEME.edge.neutral,
+      width: 1.8,
+      'line-color': GRAPH_THEME.accent.primary,
+      'target-arrow-color': GRAPH_THEME.accent.primary,
       'target-arrow-shape': 'triangle',
+      'arrow-scale': 0.8,
       'curve-style': 'bezier',
-      opacity: 0.76,
-      label: 'data(label)',
+      opacity: 0.75,
+      label: 'data(predicate)',
       color: GRAPH_THEME.surface.mutedText,
       'font-size': 8,
-      'text-rotation': 'autorotate',
-      'text-outline-color': 'rgba(11, 14, 18, 0.95)',
-      'text-outline-width': 2,
-      'min-zoomed-font-size': 6,
+      'text-rotation': 'none',
+      'text-wrap': 'wrap',
+      'text-max-width': '140px',
+      'text-background-color': '#0B0E12',
+      'text-background-opacity': 0.85,
+      'text-background-shape': 'roundrectangle',
+      'text-background-padding': '2px',
+      'min-zoomed-font-size': 7,
     },
   },
   {
-    selector: 'edge[directed = false]',
+    selector: 'node:selected',
     style: {
-      'target-arrow-shape': 'none',
+      'border-color': GRAPH_THEME.surface.text,
+      'border-width': 2.4,
+      // Selection reveals the full returned label (wrap, wider) — same string.
+      'text-wrap': 'wrap',
+      'text-max-width': '280px',
     },
   },
   {
-    selector: ':selected',
+    selector: 'edge:selected',
     style: {
-      'background-color': GRAPH_THEME.accent.solar,
-      'line-color': GRAPH_THEME.accent.solar,
-      'target-arrow-color': GRAPH_THEME.accent.solar,
-      'border-color': GRAPH_THEME.accent.solar,
-      'border-width': 2,
+      'line-color': GRAPH_THEME.edge.selected,
+      'target-arrow-color': GRAPH_THEME.edge.selected,
+      width: 2.6,
+      opacity: 1,
     },
   },
   // Presentation-only dimming for unrelated rendered elements on selection.
@@ -185,7 +220,10 @@ export default function KnowledgeGraphFramework({
 }: KnowledgeGraphFrameworkProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
-  const { elements, hasPresetPositions } = useMemo(
+  // Fingerprint of the last applied element content: an identical projection
+  // (even as a new object) must never rerun layout or churn elements.
+  const appliedFingerprintRef = useRef<string | null>(null);
+  const { elements, skippedEdges } = useMemo(
     () => projectionToElements(projection),
     [projection],
   );
@@ -234,23 +272,56 @@ export default function KnowledgeGraphFramework({
     }
 
     const cy = cyRef.current;
-    cy.elements().remove();
-    if (elements.length === 0) {
+    const fingerprint = JSON.stringify(elements);
+    if (fingerprint === appliedFingerprintRef.current) return;
+    appliedFingerprintRef.current = fingerprint;
+
+    if (skippedEdges.length > 0) {
+      // Exact honest report — never silent, never replaced with fake edges.
+      console.warn('[thinkgraph-graph] skipped edges (endpoint missing from projection):', skippedEdges);
+    }
+
+    // Diff instead of rebuild: elements that survive a refresh keep their
+    // current positions, so a real graph write moves only what changed.
+    cy.batch(() => {
+      const nextIds = new Set(elements.map((el) => String(el.data.id)));
+      cy.elements().forEach((el) => {
+        if (!nextIds.has(el.id())) el.remove();
+      });
+      elements.forEach((el) => {
+        const existing = cy.getElementById(String(el.data.id));
+        if (existing.length > 0) {
+          existing.data(el.data);
+        } else {
+          cy.add(el);
+        }
+      });
+    });
+    if (cy.elements().length === 0) {
       return;
     }
-    cy.add(elements);
-    const layout: LayoutOptions = hasPresetPositions
-      ? { name: 'preset', fit: true, padding: GRAPH_THEME.nav.fitPadding }
-      : {
-          name: 'fcose',
-          animate: false,
-          fit: true,
-          padding: GRAPH_THEME.nav.fitPadding,
-          nodeDimensionsIncludeLabels: true,
-          randomize: false,
-        } as LayoutOptions;
+    // One bounded, non-animated fCoSE layout per actual content change; no
+    // manual/preset positions — the model never supplies coordinates. After
+    // settling, clamp the fit zoom so a small graph composes calmly.
+    const settle = () => {
+      if (cy.zoom() > SETTLE_MAX_ZOOM) {
+        cy.zoom(SETTLE_MAX_ZOOM);
+        cy.center();
+      }
+    };
+    const layout: LayoutOptions = {
+      name: 'fcose',
+      animate: false,
+      fit: true,
+      padding: FIT_PADDING_PX,
+      nodeDimensionsIncludeLabels: true,
+      randomize: false,
+      idealEdgeLength: 110,
+      nodeRepulsion: 6000,
+      stop: settle,
+    } as LayoutOptions;
     cy.layout(layout).run();
-  }, [elements, hasPresetPositions]);
+  }, [elements, skippedEdges]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -259,7 +330,11 @@ export default function KnowledgeGraphFramework({
     const observer = new ResizeObserver(() => {
       cy.resize();
       if (cy.elements().length > 0) {
-        cy.fit(undefined, GRAPH_THEME.nav.fitPadding);
+        cy.fit(undefined, FIT_PADDING_PX);
+        if (cy.zoom() > SETTLE_MAX_ZOOM) {
+          cy.zoom(SETTLE_MAX_ZOOM);
+          cy.center();
+        }
       }
     });
     observer.observe(container);
@@ -270,6 +345,9 @@ export default function KnowledgeGraphFramework({
     return () => {
       cyRef.current?.destroy();
       cyRef.current = null;
+      // The fingerprint belongs to the destroyed instance — reset it so a
+      // remount (StrictMode double-mount, HMR) reapplies elements to the new one.
+      appliedFingerprintRef.current = null;
     };
   }, []);
 

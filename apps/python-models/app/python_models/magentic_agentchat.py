@@ -23,7 +23,6 @@ from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.teams import MagenticOneGroupChat
 
 from app.python_models import runtime_profile_executor as rpe
-from app.python_models import thinkgraph_profile  # noqa: F401 — registers the ThinkGraph profile's hooks/contract
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
 from app.python_models.tool_registry import (
     DEFAULT_TOOL_REGISTRY,
@@ -336,7 +335,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
 
         final_text = _final_text_from_result(result)
 
-        if plan is not None:
+        if plan is not None and plan.profile.terminal_contract:
             contract = rpe.terminal_contract_for(plan)
             verdict = contract.evaluate(final_text)
             repair_used = False
@@ -367,14 +366,33 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                 return _fail(contract.invalid_error, "invalid_terminal_result")
             if verdict.record == "patched" and not final_text:
                 final_text = json.dumps({"outcome": "patch", "storedRefs": verdict.stored_refs})
+        elif plan is not None:
+            # No terminal contract assigned: there is no output grammar to satisfy
+            # and no repair loop. The model ran once; whatever authorized tool
+            # calls it actually made during this run (if any) are the honest
+            # trace — not a pass/fail decision gate.
+            tool_events = THINKGRAPH_PATCH_EVENTS.get() or []
+            detail = json.dumps({"toolCalls": tool_events})
+            try:
+                await asyncio.to_thread(
+                    lambda: rpe.finalize(plan, outcome="completed", detail=detail)
+                )
+            except Exception as err:
+                return _fail(f"runtime_post_hook_failed: {err}", "post_hook_failed")
 
         elapsed_ms = int((time.monotonic() - started) * 1000)
         single = context.cardRuntime.participants[0]
         tools_attached = [_as_text(t) for t in (single.tools or []) if _as_text(t)]
+        # Mechanical, never inferred from model text: how many times the run's
+        # authorized tools actually recorded a call (0 when the model never
+        # called one). Only meaningful for profiled runs; omitted otherwise.
+        tool_call_suffix = (
+            f" toolCallCount={len(THINKGRAPH_PATCH_EVENTS.get() or [])}" if plan is not None else ""
+        )
         run_info = (
             f"single_card cardId={single.cardId} runtime=assistant_agent "
             f"tools={','.join(tools_attached) or 'none'} elapsedMs={elapsed_ms} "
-            f"turnId={context.session.turnId}"
+            f"turnId={context.session.turnId}{tool_call_suffix}"
         )
 
         if not final_text:

@@ -176,8 +176,10 @@ def validate_profile(profile: RuntimeProfile) -> str | None:
         return "profile_runtime_binding_required"
     if not str(profile.execution_mode or "").strip():
         return "profile_execution_mode_required"
-    if not str(profile.terminal_contract or "").strip():
-        return "profile_terminal_contract_required"
+    # terminal_contract is OPTIONAL: a profile may assign none, in which case
+    # the executor runs the agent once with no output grammar and no repair
+    # loop. Only a NAMED contract must actually resolve (checked at prepare()
+    # time against the registry, not here).
     return None
 
 
