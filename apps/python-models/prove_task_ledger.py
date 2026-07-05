@@ -16,13 +16,13 @@ async def test_run():
             title='Test Orchestrator',
             runtimeType='magentic_one',
             participants=[
-                CardRuntimeParticipant(cardId='local_coder', title='Local Coder', runtimeType='assistant_agent', provider='openai', providerModelId='gpt-5.1-chat', tools=['coder_console_task']),
+                CardRuntimeParticipant(cardId='local_coder', title='Local Coder', runtimeType='assistant_agent', provider='openai', providerModelId='gpt-5.1-chat', tools=[]),
                 CardRuntimeParticipant(cardId='plan_agent', title='Plan Agent', runtimeType='assistant_agent', provider='openai', providerModelId='gpt-5.1-chat', tools=[])
             ],
             graph=CardRuntimeGraph(
                 nodes=[
                     GraphNodeInput(cardId='test_card', title='Orchestrator', role='orchestrator', provider='openai', providerModelId='gpt-5.1-chat'),
-                    GraphNodeInput(cardId='local_coder', title='Local Coder', role='local_coder', tools=['coder_console_task'], provider='openai', providerModelId='gpt-5.1-chat'),
+                    GraphNodeInput(cardId='local_coder', title='Local Coder', role='local_coder', tools=[], provider='openai', providerModelId='gpt-5.1-chat'),
                     GraphNodeInput(cardId='plan_agent', title='Plan Agent', role='planner', tools=[], provider='openai', providerModelId='gpt-5.1-chat')
                 ],
                 edges=[

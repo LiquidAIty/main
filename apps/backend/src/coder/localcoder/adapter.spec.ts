@@ -680,24 +680,15 @@ describe('LocalCoderAdapter MCP config handling', () => {
   });
 });
 
-describe('LocalCoderService CBM scope gate', () => {
+describe('LocalCoderService structural edit-scope gate', () => {
   const okGate: LocalCoderCbmScopeGateResult = {
-    indexRan: true,
-    indexStatus: 'indexed',
-    project: 'C-Projects-main',
     sourceRoot: 'C:/Projects/main',
-    nodes: 10,
-    edges: 20,
-    indexedFiles: 11,
-    requiredFiles: [],
-    missingRequiredFiles: [],
-    excludedFilesFound: [],
     scopeStatus: 'ok',
     editAllowed: true,
     blockedReason: '',
   };
 
-  it('does not invoke the process adapter when the CBM scope gate blocks', async () => {
+  it('does not invoke the process adapter when the structural edit-scope is blocked', async () => {
     const run = vi.fn(async () => {
       throw new Error('adapter must not run');
     });
@@ -705,9 +696,9 @@ describe('LocalCoderService CBM scope gate', () => {
       { inspectRuntime: vi.fn(), run },
       async () => ({
         ...okGate,
-        scopeStatus: 'blocked',
+        scopeStatus: 'blocked' as const,
         editAllowed: false,
-        blockedReason: 'cbm_scope_required_files_missing: boundary',
+        blockedReason: 'edit_scope_root_not_found: /nonexistent',
       }),
     );
 
@@ -715,7 +706,7 @@ describe('LocalCoderService CBM scope gate', () => {
 
     expect(run).not.toHaveBeenCalled();
     expect(result.report.status).toBe('blocked');
-    expect(result.report.blockers).toContain('cbm_scope_required_files_missing: boundary');
+    expect(result.report.blockers).toContain('edit_scope_root_not_found: /nonexistent');
     expect(result.cbmScopeGate.editAllowed).toBe(false);
   });
 

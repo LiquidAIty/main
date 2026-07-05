@@ -30,11 +30,10 @@ function buildCbmScopeBlockedReport(
     failedCommands: [],
     blockers: [gate.blockedReason],
     assumptions: [
-      `cbm_scope_index_ran: ${String(gate.indexRan)}`,
-      `cbm_scope_source_root: ${gate.sourceRoot || 'unavailable'}`,
+      `edit_scope_source_root: ${gate.sourceRoot || 'unavailable'}`,
     ],
     outOfScopeFindings: [],
-    nextRecommendedTask: 'Repair the fresh CBM LocalCoder scope gate before retrying.',
+    nextRecommendedTask: 'Provide a valid project root inside the requested project before retrying.',
     rawOutput: '',
   };
 }

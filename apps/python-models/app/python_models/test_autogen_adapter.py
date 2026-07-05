@@ -56,9 +56,9 @@ def _context_pack(user_text: str) -> ContextPack:
         cardId="orch", title="Mag One", runtimeType="magentic_one",
         participants=[
             CardRuntimeParticipant(cardId="r", title="Research Agent", runtimeType="assistant_agent",
-                                   role="research", provider="openrouter", providerModelId=MODEL),
+                                   provider="openrouter", providerModelId=MODEL),
             CardRuntimeParticipant(cardId="t", title="Trading Agent", runtimeType="assistant_agent",
-                                   role="trading", provider="openrouter", providerModelId=MODEL),
+                                   provider="openrouter", providerModelId=MODEL),
         ],
     )
     return ContextPack(
