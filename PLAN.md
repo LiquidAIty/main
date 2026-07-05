@@ -441,6 +441,23 @@ Only after Batches A–C work:
 3. Define escalation rules.
 4. Keep Mag One for work where team structure demonstrably adds value.
 
+### Deferred — advanced features saved for later (base functions first)
+
+Base functions over advanced features. These are intentionally NOT built yet — get
+the working base first, then revisit:
+
+- **No graph access for Mag One (the Orchestrator).** Mag One runs a Harness-authored
+  `prompt.md` (the Run Packet) and has no direct graph tools. The Harness/chat owns
+  graph reads and distills what a run needs into that prompt.
+- **ThinkGraph slicing / filtering tool for chat.** For now the Harness reads the graph
+  plainly and writes what Mag One needs into the prompt; a bounded, filtered "slice"
+  tool (richer than `thinkgraph.get_graph_slice`'s current plain read) is a later feature.
+  Do not add slicing sophistication yet.
+- **Coder seam is wired** (`run_local_coder` → LocalCoder engine, server-injected root).
+  The durable run-folder / artifact / KnowGraph-ingest / ThinkGraph-continuation layer
+  around it (the diagram's Run Packet → agent folders → review → continuation) is the
+  later greenfield build, not required for the base coder loop to work.
+
 ## Hard Product Law
 
 Do not fake AI work, graph truth, evidence, execution, or success.
