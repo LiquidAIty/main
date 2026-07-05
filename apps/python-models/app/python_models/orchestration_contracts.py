@@ -226,7 +226,6 @@ class CardRuntimeParticipant(BaseModel):
     title: str
     runtimeType: Literal["assistant_agent", "graph_flow"]
     runtimeBinding: str | None = None
-    role: str | None = None
     tools: list[str] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
     personas: list[str] = Field(default_factory=list)
@@ -435,8 +434,6 @@ class ContextPack(BaseModel):
     attachments: list[AttachmentInput] = Field(default_factory=list)
     maxResearchTasks: int = 6
     workspaceObjectContext: WorkspaceObjectContext | None = None
-    routingManifest: dict | None = None
-    codingWorkflowPacket: dict | None = None
     cardRuntime: CardRuntimeConfig | None = None
 
 

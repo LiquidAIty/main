@@ -22,22 +22,9 @@ const DECK = {
   edges: [{ id: 'e1', source: 'card_magentic', target: 'card_research', edgeType: 'magentic_option' }],
 };
 
-const ROUTING_CONNECTED = {
-  projectId: 'project-1',
-  deckId: 'deck_builder',
-  eligibleBusConnectedAgents: [{ id: 'card_research', title: 'Research Agent', role: 'research', reason: '' }],
-  selectedExecutionPath: [],
-  ignoredEligibleAgents: [],
-  disconnectedAgentsIgnored: [{ id: 'card_lonely', title: 'Disconnected', role: 'other', reason: '' }],
-  missingRequiredAgents: [],
-  blockedReason: null,
-};
-const ROUTING_EMPTY = { ...ROUTING_CONNECTED, eligibleBusConnectedAgents: [], disconnectedAgentsIgnored: [] };
-
 function deps(over: Partial<AgentFlowDeps> = {}): AgentFlowDeps {
   return {
     loadDeck: vi.fn(async () => ({ deck: DECK, latestRun: null, runs: [], meta: {} })) as any,
-    buildRouting: vi.fn(() => ROUTING_CONNECTED) as any,
     runCard: vi.fn() as any,
     ...over,
   };
@@ -51,7 +38,6 @@ describe('describeConnectedAgents (mag_one.describe_connected_agents)', () => {
       {
         cardId: 'card_research',
         title: 'Research Agent',
-        role: 'research',
         model: { modelKey: 'gpt-5.1', provider: 'openai' },
         tools: ['current_datetime'],
         connected: true,
@@ -65,9 +51,11 @@ describe('describeConnectedAgents (mag_one.describe_connected_agents)', () => {
   });
 
   it('returns an empty connected-agent list when nothing is on the bus', async () => {
+    // Orchestrator present but no magentic_option edges -> nothing bus-eligible.
+    const busLessDeck = { id: 'deck_builder', name: 'Builder Deck', nodes: [DECK.nodes[0]], edges: [] };
     const result = await describeConnectedAgents(
       { projectId: 'project-1', deckId: 'deck_builder' },
-      deps({ buildRouting: vi.fn(() => ROUTING_EMPTY) as any }),
+      deps({ loadDeck: vi.fn(async () => ({ deck: busLessDeck, latestRun: null, runs: [], meta: {} })) as any }),
     );
     expect(result.connectedAgents).toEqual([]);
     expect(result.orchestratorCardId).toBe('card_magentic');

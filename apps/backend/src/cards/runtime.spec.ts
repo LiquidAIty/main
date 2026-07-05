@@ -2,8 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { RUNTIME_TOOL_SPECS } from '../contracts/runtimeContracts';
 import {
-  buildMagOneRoutingManifest,
-  buildMagOneRoutingDiagnostics,
   resolvedMagenticOptions,
   buildPythonAutoGenCardRuntimePayload,
   runCardWithContract,
@@ -190,44 +188,10 @@ describe('Canonical Cards Runtime', () => {
     expect((payload as any).runApproved).toBeUndefined();
   });
 
-  it('routing diagnostics use current bus edges and ignore stale research-shaped flow topology', () => {
-    const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
-    const plan = { id: 'plan', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'plan_agent', title: 'Plan Agent' };
-    const think = { id: 'think', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'thinkgraph_agent', title: 'ThinkGraph Agent' };
-    const codegraph = { id: 'codegraph', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'codegraph_agent', title: 'CodeGraph Agent' };
-    const coder = { id: 'coder', kind: 'agent', runtimeType: 'local_coder', runtimeBinding: 'local_coder', title: 'Local Coder' };
-    const know = { id: 'know', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'knowgraph_agent', title: 'KnowGraph Agent' };
-    const research = { id: 'research', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'research_agent', title: 'Research Agent' };
-    const diagnostics = buildMagOneRoutingDiagnostics(
-      mag,
-      [mag, plan, think, codegraph, coder, know, research],
-      [
-        { id: 'p', source: 'plan', target: 'mag', edgeType: 'magentic_option' },
-        { id: 't', source: 'think', target: 'mag', edgeType: 'magentic_option' },
-        { id: 'old1', source: 'know', target: 'research', edgeType: 'flow' },
-        { id: 'old2', source: 'research', target: 'think', edgeType: 'flow' },
-      ],
-      'fix the LocalCoder runtime',
-      { projectId: 'admin', deckId: 'deck_builder' },
-    );
-
-    expect(diagnostics.projectId).toBe('admin');
-    // TypeScript does not classify the request: there is no workflowType field
-    // and no coding participant gate. The diagnostics only describe availability.
-    expect((diagnostics as any).workflowType).toBeUndefined();
-    expect(diagnostics.eligibleBusConnectedAgents.map((agent) => agent.id)).toEqual(['plan', 'think']);
-    expect(diagnostics.selectedExecutionPath.map((agent) => agent.id)).toEqual(['plan', 'think']);
-    expect(diagnostics.disconnectedAgentsIgnored.map((agent) => agent.id)).toEqual(
-      expect.arrayContaining(['codegraph', 'coder', 'know', 'research']),
-    );
-    expect(diagnostics.missingRequiredAgents).toEqual([]);
-    expect(diagnostics.blockedReason).toBeNull();
-  });
-
-  it('includes the Local Coder as a native participant but never ships a coder-dispatch packet', () => {
-    // Native team: the Local Coder participates like any bus-connected agent (no
-    // participant filtering). The planning turn still ships NO coder-dispatch
-    // packet — execution remains the explicit Run route only.
+  it('includes the Local Coder as a native bus participant like any other agent', () => {
+    // Bus connectivity is the only activation. The Local Coder participates like
+    // any other bus-connected agent — no role classification, no priority, no
+    // coder special-casing, no dispatch packet.
     const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
     const plan = { id: 'plan', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'plan_agent', title: 'Plan Agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
     const codegraph = { id: 'codegraph', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'codegraph_agent', title: 'CodeGraph Agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
@@ -258,48 +222,15 @@ describe('Canonical Cards Runtime', () => {
       '2026',
     );
 
-    expect(payload.cardRuntime.runtimeScope?.routingDiagnostics?.blockedReason).toBeNull();
-    // Native team: the Local Coder is a participant and a python worker like any
-    // other bus-connected agent (no filtering).
+    // Bus connectivity is the only activation: the Local Coder is a participant
+    // and a python worker like any other bus-connected agent — no filtering, no
+    // role classification, no dispatch packet.
     expect(payload.cardRuntime.participants.map((agent) => agent.cardId)).toContain('coder');
     expect(payload.cardRuntime.runtimeScope?.pythonWorkerIds).toContain('coder');
     expect(payload.cardRuntime.participants.map((agent) => agent.cardId)).toEqual(
       expect.arrayContaining(['plan', 'codegraph', 'think']),
     );
-    // No intent/workflow classifier, no coder-dispatch packet on a planning turn.
-    expect((payload.routingManifest as any)?.intent).toBeUndefined();
-    expect(payload.codingWorkflowPacket).toBeUndefined();
-    // The manifest still lists the coder as a bus-connected, describable agent.
-    expect(payload.routingManifest?.agents.find((agent) => agent.cardId === 'coder')).toMatchObject({
-      busConnected: true,
-      role: 'local_coder',
-    });
   });
-
-  it('provides the correct manifest for a task', () => {
-    const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
-    const coder = { id: 'coder', kind: 'agent', runtimeType: 'local_coder', title: 'Local Coder' };
-    const codegraph = { id: 'codegraph', kind: 'agent', runtimeType: 'assistant_agent', title: 'CodeGraph Agent' };
-    const research = { id: 'research', kind: 'agent', runtimeType: 'assistant_agent', title: 'Research Agent' };
-    const manifest = buildMagOneRoutingManifest(
-      mag,
-      [mag, coder, codegraph, research],
-      [
-        { id: 'coder-edge', source: coder.id, target: mag.id, edgeType: 'magentic_option' },
-        { id: 'code-edge', source: codegraph.id, target: mag.id, edgeType: 'magentic_option' },
-      ],
-      'inspect this repo',
-    );
-    expect(manifest.agents.find((agent) => agent.cardId === 'coder')?.capabilities).toContain('coding.execute');
-    expect(manifest.agents.find((agent) => agent.cardId === 'codegraph')?.capabilities).toContain('code.context');
-    expect(manifest.agents.find((agent) => agent.cardId === 'research')).toMatchObject({
-      busConnected: false,
-      blockedReason: 'not_bus_connected',
-      priority: 0,
-    });
-  });
-
-
 
   it('disconnected cards do not appear in model-visible workspace context or payload participants', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
@@ -576,29 +507,6 @@ describe('Canonical Cards Runtime', () => {
     const payload = buildPythonAutoGenCardRuntimePayload(cardM, {}, 'test', {}, {}, [cardA], '2026');
     const participant = payload.cardRuntime.participants.find((p) => p.cardId === 'agentA');
     expect(participant?.tools).toEqual(['current_datetime', 'calculator']);
-  });
-
-  it('coder_console_task advertises explicit asynchronous status and delivery contracts', () => {
-    const spec = RUNTIME_TOOL_SPECS.find((tool) => tool.name === 'coder_console_task');
-    expect((spec?.outputSchema.properties as any).status.enum).toEqual([
-      'started', 'queued', 'running', 'completed', 'failed', 'blocked',
-    ]);
-    expect((spec?.outputSchema.properties as any).delivery_status.enum).toEqual([
-      'accepted', 'queued', 'blocked',
-    ]);
-  });
-
-  it('coder_console_task cannot be selected by a non-Local-Coder card', () => {
-    const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
-    const cardA = {
-      id: 'agentA',
-      kind: 'agent',
-      runtimeType: 'assistant_agent',
-      runtimeOptions: { modelKey: 'gpt-5-nano', tools: ['coder_console_task'] },
-    };
-    expect(() =>
-      buildPythonAutoGenCardRuntimePayload(cardM, {}, 'fix code', {}, {}, [cardA], '2026'),
-    ).toThrow('coder_console_tool_requires_local_coder_card');
   });
 
   it('does not add a direct chat-to-console bypass', () => {

@@ -15,7 +15,7 @@
 // write graph memory, and never fabricate agents/tools/outputs.
 
 import { getDeckDocument } from '../../../decks/store';
-import { buildMagOneRoutingDiagnostics, runCardWithContract } from '../../../cards/runtime';
+import { resolvedMagenticOptions, runCardWithContract } from '../../../cards/runtime';
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value);
@@ -34,7 +34,6 @@ function resolveCardTools(card: any): string[] {
 export type AgentFlowDeps = {
   loadDeck?: typeof getDeckDocument;
   runCard?: typeof runCardWithContract;
-  buildRouting?: typeof buildMagOneRoutingDiagnostics;
 };
 
 // ── mag_one.describe_connected_agents ─────────────────────────────────────────
@@ -45,7 +44,6 @@ export type AgentFlowDeps = {
 export type ConnectedAgent = {
   cardId: string;
   title: string;
-  role: string;
   model: { modelKey: string | null; provider: string | null };
   tools: string[];
   connected: boolean;
@@ -63,7 +61,6 @@ export async function describeConnectedAgents(
   deps: AgentFlowDeps = {},
 ): Promise<DescribeConnectedAgentsResult> {
   const loadDeck = deps.loadDeck ?? getDeckDocument;
-  const buildRouting = deps.buildRouting ?? buildMagOneRoutingDiagnostics;
   const projectId = asString(args.projectId).trim();
   const deckId = asString(args.deckId).trim();
 
@@ -77,13 +74,12 @@ export async function describeConnectedAgents(
 
   const connectedAgents: ConnectedAgent[] = [];
   if (orchestrator) {
-    const routing = buildRouting(orchestrator, nodes, edges, '', { projectId, deckId });
-    for (const agent of routing.eligibleBusConnectedAgents) {
-      const card = nodes.find((n) => asString(n?.id) === agent.id);
+    // Bus connectivity (magentic_option edges) is the only eligibility signal —
+    // connected = active, disconnected = inactive. No role/priority inference.
+    for (const card of resolvedMagenticOptions(asString(orchestrator.id), nodes, edges)) {
       connectedAgents.push({
-        cardId: agent.id,
-        title: agent.title,
-        role: agent.role,
+        cardId: asString(card?.id),
+        title: asString(card?.title) || asString(card?.id),
         model: {
           modelKey: asString(card?.runtimeOptions?.modelKey).trim() || null,
           provider: asString(card?.runtimeOptions?.provider).trim() || null,

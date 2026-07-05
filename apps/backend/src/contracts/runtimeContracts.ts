@@ -61,44 +61,6 @@ export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
     outputSchema: { type: 'string', description: 'numeric result as a string' },
   },
   {
-    name: 'coder_console_task',
-    description: 'Send one bounded coding task to the owned Code Console backend.',
-    enabled: true,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        project_id: { type: 'string' },
-        target_root: { type: 'string' },
-        goal: { type: 'string' },
-        prompt: { type: 'string' },
-        edit_mode: { type: 'string', default: 'read_only' },
-        session_id: { type: ['string', 'null'] },
-        coding_run_id: { type: ['string', 'null'] },
-        result_status_url: { type: ['string', 'null'] },
-        workflow_option: { type: 'string', enum: ['run_read_only_coder_task', 'draft_spec_for_approval', 'plan_only'] },
-      },
-      required: ['project_id', 'target_root', 'goal'],
-    },
-    outputSchema: {
-      type: 'object',
-      properties: {
-        status: {
-          type: 'string',
-          enum: ['started', 'queued', 'running', 'completed', 'failed', 'blocked'],
-        },
-        session_id: { type: ['string', 'null'] },
-        target_root: { type: 'string' },
-        provider: { type: ['string', 'null'] },
-        model: { type: ['string', 'null'] },
-        transport: { type: ['string', 'null'] },
-        watch_surface: { type: 'string' },
-        message: { type: 'string' },
-        delivery_status: { type: 'string', enum: ['accepted', 'queued', 'blocked'] },
-        blocker: { type: ['string', 'null'] },
-      },
-    },
-  },
-  {
     // Transport-validation mirror only. The real tool (callable + retrieval
     // logic) lives solely in the Python Mag One registry
     // (apps/python-models tool_registry.py -> services/knowgraph hybrid_retrieval);
@@ -224,75 +186,16 @@ export type RuntimeScope = {
   visibleNodeIds: string[];
   visibleEdgeIds: string[];
   resolvedMagenticOptionIds: string[];
-  selectedWorkflowNodeIds: string[];
   pythonWorkerIds: string[];
   calledAgentIds: string[];
   excludedAgentIds: Array<{ id: string; reason: string }>;
-  routingDiagnostics?: MagOneRoutingDiagnostics;
 };
 
-// NOTE: there is intentionally no MagOneWorkflowType / intent / workflowType
-// "coding | general" selector here. TypeScript does not classify the user's
-// request — the real Python Magentic-One orchestrator owns that. The routing
-// diagnostics/manifest below only *describe* which bus-connected agents exist
-// and what they can do; they make no planning decision.
-
-export type MagOneRoutingAgent = {
-  id: string;
-  title: string;
-  role: string;
-  reason: string;
-};
-
-export type MagOneRoutingDiagnostics = {
-  projectId: string;
-  deckId: string;
-  eligibleBusConnectedAgents: MagOneRoutingAgent[];
-  selectedExecutionPath: MagOneRoutingAgent[];
-  ignoredEligibleAgents: MagOneRoutingAgent[];
-  disconnectedAgentsIgnored: MagOneRoutingAgent[];
-  missingRequiredAgents: string[];
-  blockedReason: string | null;
-};
-
-export type MagOneRoutingManifest = {
-  agents: Array<{
-    cardId: string;
-    kind: string;
-    runtimeType: string;
-    label: string;
-    busConnected: boolean;
-    role: string;
-    capabilities: string[];
-    tools: string[];
-    requiredGates: string[];
-    preferredIntents: string[];
-    priority: number;
-    blockedReason: string | null;
-    defaultEditMode?: 'read_only';
-    watchSurface?: 'Code Console';
-    async?: boolean;
-  }>;
-};
-
-export type MagOneCodingWorkflowPacket = {
-  projectId: string;
-  targetRoot: string;
-  userGoal: string;
-  intent: 'coding';
-  selectedPrimaryAgent: string;
-  selectedSupportAgents: string[];
-  tool: 'coder_console_task';
-  requiredGates: Array<{ name: string; status: 'available' | 'blocked' }>;
-  compactSpec: string;
-  asyncLifecycle: {
-    dispatch: true;
-    returnStartedStatus: true;
-    provideCodingRunId: true;
-    provideResultStatusUrl: true;
-  };
-  workflowOptions?: string[];
-};
+// Removed: MagOneRoutingAgent / MagOneRoutingDiagnostics / MagOneRoutingManifest /
+// MagOneCodingWorkflowPacket. TypeScript does not classify the request, rank
+// agents, invent capabilities/gates, or manufacture a coder-dispatch packet.
+// Bus connectivity (magentic_option edges) is the only activation signal; the
+// Python orchestrator owns all planning.
 
 export type RuntimeGraphNode = {
   cardId: string;
@@ -335,7 +238,6 @@ export type PythonAutoGenPayloadShape = {
   knowGraph?: Record<string, any>;
   blackboard?: Record<string, any>;
   workspaceObjectContext?: Record<string, any>;
-  routingManifest?: MagOneRoutingManifest;
   cardRuntime: {
     cardId: string;
     title: string;

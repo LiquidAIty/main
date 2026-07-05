@@ -167,10 +167,11 @@ def _build_participants(context: ContextPack, model_client: Any) -> list[Assista
         card_id = _as_text(getattr(participant, "cardId", ""))
         title = _as_text(getattr(participant, "title", "")) or card_id
         name = _safe_agent_name(title or f"Agent {i + 1}", i, used_names)
-        role = _as_text(getattr(participant, "role", "")) or _as_text(
-            getattr(participant, "runtimeBinding", "")
+        description = (
+            _as_text(getattr(participant, "runtimeBinding", ""))
+            or _as_text(getattr(participant, "runtimeType", ""))
+            or "assistant"
         )
-        description = role or _as_text(getattr(participant, "runtimeType", "")) or "assistant"
         system_prompt = _as_text(getattr(participant, "prompt", "")) or private_prompts.get(card_id, "")
 
         kwargs: dict[str, Any] = {

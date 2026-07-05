@@ -23,17 +23,9 @@ const planningMocks = vi.hoisted(() => ({
 }));
 
 const runtimeMocks = vi.hoisted(() => ({
-  runCardWithContract: vi.fn(async () => ({
-    output: 'The audit is complete. No further work is needed.',
-    status: 'success' as const,
-    startedAt: '2026-06-16T00:00:00.000Z',
-    endedAt: '2026-06-16T00:00:01.000Z',
-    magenticTrace: { plan: { task_ledger: { user_goal: 'Fix flagged items', plan: '1. patch' } } },
-  })),
-  buildMagOneRoutingDiagnostics: vi.fn(() => ({
-    blockedReason: null,
-    eligibleBusConnectedAgents: [],
-    selectedExecutionPath: [],
+  runConfiguredCard: vi.fn(async () => ({
+    status: 'completed' as const,
+    output: 'ok',
   })),
 }));
 
@@ -76,8 +68,7 @@ vi.mock('../services/graphContext/cbmScopeGate', () => ({
 }));
 
 vi.mock('../cards/runtime', () => ({
-  runCardWithContract: runtimeMocks.runCardWithContract,
-  buildMagOneRoutingDiagnostics: runtimeMocks.buildMagOneRoutingDiagnostics,
+  runConfiguredCard: runtimeMocks.runConfiguredCard,
 }));
 
 vi.mock('../conversations/store', () => ({
@@ -114,92 +105,6 @@ async function closeServer(server: Server): Promise<void> {
 }
 
 describe('coder routes', () => {
-  it('feeds the previous Task Ledger, Progress Ledger and real TaskResult into a Magentic-One reasoning turn', async () => {
-    runtimeMocks.runCardWithContract.mockClear();
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const taskLedger = { user_goal: 'Audit code', plan: '1. read' };
-      const progressLedger = { progress_summary: 'dispatched', next_actor: 'LocalCoder' };
-      const taskResult = { status: 'completed', result: 'audit complete', files_changed: ['x.ts'] };
-      const response = await fetch(`${baseUrl}/openclaude/console/result_feedback`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: 'project-1',
-          targetRoot: 'C:/Projects/main',
-          taskLedger,
-          progressLedger,
-          runTaskPayload: { task_ledger: taskLedger, progress_ledger: progressLedger },
-          taskResult,
-          cards: [{ id: 'card_magentic', runtimeType: 'magentic_one' }],
-          edges: [],
-        }),
-      });
-      const payload = await response.json();
-      expect(response.status).toBe(200);
-      expect(payload.ok).toBe(true);
-      // Chat uses Magentic-One's own interpretation, not a TS-invented verdict.
-      expect(payload.interpretation).toContain('complete');
-      // A revised / next Task Ledger only comes from real Mag One output.
-      expect(payload.plan).toMatchObject({ task_ledger: { user_goal: 'Fix flagged items' } });
-
-      expect(runtimeMocks.runCardWithContract).toHaveBeenCalledTimes(1);
-      const callArgs = runtimeMocks.runCardWithContract.mock.calls[0] as unknown as any[];
-      const context = callArgs[3];
-      expect(context.priorPlanContext.task_ledger).toEqual(taskLedger);
-      expect(context.priorPlanContext.progress_ledger).toEqual(progressLedger);
-      expect(context.resultFeedback).toEqual(taskResult);
-      // No raw user input is used as the feedback source.
-      const feedbackInstruction = String(callArgs[2] || '');
-      expect(feedbackInstruction).toContain('result-interpretation turn');
-      expect(JSON.stringify(context)).not.toMatch(/userInput|userText/);
-    } finally {
-      await closeServer(server);
-    }
-  });
-
-  it('rejects a result-feedback turn with no TaskResult (no fabricated completion)', async () => {
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/openclaude/console/result_feedback`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: 'project-1',
-          taskLedger: { user_goal: 'Audit code' },
-          cards: [{ id: 'card_magentic', runtimeType: 'magentic_one' }],
-        }),
-      });
-      const payload = await response.json();
-      expect(response.status).toBe(400);
-      expect(payload.ok).toBe(false);
-      expect(payload.error).toBe('result_feedback_missing_task_result');
-    } finally {
-      await closeServer(server);
-    }
-  });
-
-  it('rejects a result-feedback turn with no Task Ledger', async () => {
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/openclaude/console/result_feedback`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: 'project-1',
-          taskResult: { status: 'completed' },
-          cards: [{ id: 'card_magentic', runtimeType: 'magentic_one' }],
-        }),
-      });
-      const payload = await response.json();
-      expect(response.status).toBe(400);
-      expect(payload.ok).toBe(false);
-      expect(payload.error).toBe('result_feedback_missing_task_ledger');
-    } finally {
-      await closeServer(server);
-    }
-  });
-
   it('rejects the removed plain task OpenClaude run', async () => {
     const { server, baseUrl } = await createApiServer();
     try {

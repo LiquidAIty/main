@@ -3,9 +3,6 @@ import {
   AgentRunResult,
   CardRunResult,
   DeckExecutionOutput,
-  MagOneRoutingAgent,
-  MagOneRoutingDiagnostics,
-  MagOneRoutingManifest,
   PythonAutoGenPayloadShape,
   RUNTIME_TOOL_SPECS,
   RuntimeGraph,
@@ -80,152 +77,11 @@ function isAssistLikeRuntimeType(runtimeType: string): boolean {
   return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
 }
 
-function normalizeRoleText(value: unknown): string {
-  return String(value ?? '').trim().toLowerCase();
-}
-
-function resolveMagOneAgentRole(card: any): string {
-  const identity = [
-    card.id,
-    card.title,
-    card.templateId,
-    card.runtimeType,
-    card.runtimeBinding,
-  ].map(normalizeRoleText).join(' ');
-  if (identity.includes('local_coder') || identity.includes('local coder')) return 'local_coder';
-  if (identity.includes('codegraph')) return 'codegraph';
-  if (identity.includes('thinkgraph')) return 'thinkgraph';
-  if (identity.includes('knowgraph')) return 'knowgraph';
-  if (identity.includes('worldsignals')) return 'worldsignals';
-  if (identity.includes('trading')) return 'trading';
-  if (identity.includes('research')) return 'research';
-  if (
-    identity.includes('plan_agent') ||
-    identity.includes('template_plan_agent') ||
-    identity.includes('plan agent')
-  ) return 'plan';
-  return 'other';
-}
-
-
-
-function routingAgent(card: any, reason: string): MagOneRoutingAgent {
-  return {
-    id: String(card.id || ''),
-    title: String(card.title || card.id || 'Agent'),
-    role: resolveMagOneAgentRole(card),
-    reason,
-  };
-}
-
-export function buildMagOneRoutingDiagnostics(
-  magenticCard: any,
-  allCards: any[],
-  allEdges: any[],
-  userText: string,
-  context: { projectId?: string; deckId?: string } = {},
-): MagOneRoutingDiagnostics {
-  const eligible = resolvedMagenticOptions(magenticCard.id, allCards, allEdges);
-  const eligibleIds = new Set(eligible.map((card) => String(card.id)));
-  // Normal chat submit is a planning turn. TypeScript does not classify the
-  // user's request or declare a workflow type — the real Python Magentic-One
-  // orchestrator owns that. These diagnostics only describe which bus-connected
-  // agents are available; every eligible participant is carried to the
-  // orchestrator with no coding gate and no coder-dispatch packet. Execution is
-  // a separate, explicit Run action (see coder.routes.ts), not a chat side effect.
-  const canvasRuntimeCards = allCards.filter(
-    (card) =>
-      card.id !== magenticCard.id &&
-      (card.kind === 'agent' || Boolean(String(card.runtimeType || '').trim())),
-  );
-  const selectedCards = eligible;
-  const selectedIds = new Set(selectedCards.map((card) => String(card.id)));
-  const selectedExecutionPath = selectedCards.map((card) =>
-    routingAgent(card, 'eligible current bus participant available to the planning orchestrator'),
-  );
-
-  // Pure description of bus eligibility — no gate. Every eligible bus-connected
-  // agent is carried to native Mag One, which selects among them itself.
-  return {
-    projectId: String(context.projectId || ''),
-    deckId: String(context.deckId || ''),
-    eligibleBusConnectedAgents: eligible.map((card) =>
-      routingAgent(card, 'directly connected to the current Magentic bus'),
-    ),
-    selectedExecutionPath,
-    ignoredEligibleAgents: eligible
-      .filter((card) => !selectedIds.has(String(card.id)))
-      .map((card) =>
-        routingAgent(card, 'eligible current bus participant not required for this turn'),
-      ),
-    disconnectedAgentsIgnored: canvasRuntimeCards
-      .filter((card) => !eligibleIds.has(String(card.id)))
-      .map((card) => routingAgent(card, 'ignored because the card is disconnected from the current Magentic bus')),
-    missingRequiredAgents: [],
-    blockedReason: null,
-  };
-}
-
-function roleCapabilities(role: string): string[] {
-  if (role === 'local_coder') return ['coding.execute', 'coding.inspect'];
-  if (role === 'codegraph') return ['code.context'];
-  if (role === 'thinkgraph') return ['project.memory.record'];
-  if (role === 'plan') return ['coding.plan'];
-  return [];
-}
-
-export function buildMagOneRoutingManifest(
-  magenticCard: any,
-  allCards: any[],
-  allEdges: any[],
-  userText: string,
-): MagOneRoutingManifest {
-  // Capability manifest only — it describes which bus-connected agents exist and
-  // what they can do, so Python Magentic-One can *propose* an action. It carries
-  // no intent/workflow classification; chat submit is always a neutral planning
-  // turn and the orchestrator decides what the task is.
-  const connected = new Set(
-    resolvedMagenticOptions(magenticCard.id, allCards, allEdges).map((card) => String(card.id)),
-  );
-  const priorityByRole: Record<string, number> = {
-    local_coder: 100,
-    codegraph: 90,
-    plan: 80,
-    thinkgraph: 70,
-  };
-  return {
-    agents: allCards
-      .filter((card) => card.id !== magenticCard.id && card.kind === 'agent')
-      .map((card) => {
-        const role = resolveMagOneAgentRole(card);
-        const busConnected = connected.has(String(card.id));
-        const localCoder = role === 'local_coder';
-        return {
-          cardId: String(card.id),
-          kind: String(card.kind || 'agent'),
-          runtimeType: resolveCardRuntimeType(card),
-          label: String(card.title || card.id),
-          busConnected,
-          role,
-          capabilities: roleCapabilities(role),
-          tools: busConnected ? resolveCardTools(card) : [],
-          requiredGates: localCoder ? ['CodeGraph.connected', 'CBM.scope.ok'] : [],
-          preferredIntents: roleCapabilities(role).length > 0 ? ['coding'] : [],
-          priority: priorityByRole[role] || 0,
-          blockedReason: busConnected ? null : 'not_bus_connected',
-          ...(localCoder
-            ? { defaultEditMode: 'read_only' as const, watchSurface: 'Code Console' as const, async: true }
-            : {}),
-        };
-      }),
-  };
-}
-
-// buildMagOneCodingWorkflowPacket was removed: TypeScript no longer manufactures
-// a coder-dispatch packet (intent, selected primary agent, compactSpec) from
-// chat. That was the bypass that overrode the real Magentic-One Task Ledger and
-// forced a coder_console_task dispatch + 45s timeout. Coding execution is the
-// explicit Run route only (/api/coder/localcoder/run).
+// Removed: resolveMagOneAgentRole (title/template substring classifier),
+// routingAgent, buildMagOneRoutingDiagnostics, roleCapabilities,
+// buildMagOneRoutingManifest. TypeScript does not infer agent identity, rank
+// workers, or invent capabilities/gates. Bus connectivity (resolvedMagenticOptions
+// = magentic_option edges) is the ONLY activation signal.
 
 export function resolvedMagenticOptions(
   magenticCardId: string,
@@ -281,14 +137,10 @@ function resolveCardModelStrict(card: any): {
 
 function resolveCardTools(card: any): string[] {
   const fromOptions = card.runtimeOptions?.tools;
-  let raw = Array.isArray(fromOptions) ? fromOptions : Array.isArray(card.tools) ? card.tools : [];
-  const role = resolveMagOneAgentRole(card);
-  if (raw.length === 0 && role === 'local_coder') {
-    raw = ['coder_console_task'];
-  }
-  // T001: the card Tools tab is the only allowed source, and only known
-  // enabled ToolSpecs pass through. The Local Coder default is the smallest
-  // safe mapping for persisted cards created before this tool existed.
+  const raw = Array.isArray(fromOptions) ? fromOptions : Array.isArray(card.tools) ? card.tools : [];
+  // The card Tools tab is the only allowed source, and only known enabled
+  // ToolSpecs pass through. No role inference and no auto-injected tools —
+  // a card runs exactly the tools its saved configuration selects.
   return raw.map((tool: any) => {
     const name = String(tool ?? '').trim();
     if (!name) {
@@ -302,9 +154,6 @@ function resolveCardTools(card: any): string[] {
     }
     if (!spec.enabled) {
       throw new Error(`card_tool_disabled: ${name} (cardId=${card.id})`);
-    }
-    if (name === 'coder_console_task' && role !== 'local_coder') {
-      throw new Error(`coder_console_tool_requires_local_coder_card: cardId=${card.id}`);
     }
     return name;
   });
@@ -351,9 +200,7 @@ export function buildRuntimeGraph(
     runtimeType: resolveCardRuntimeType(card),
     parentGraphId: String(card.parentGraphId || '').trim() || null,
     prompt: String(card.prompt || '').trim(),
-    role: card.runtimeOptions?.role
-      ? String(card.runtimeOptions.role)
-      : resolveMagOneAgentRole(card),
+    role: card.runtimeOptions?.role ? String(card.runtimeOptions.role) : null,
     tools: resolveCardTools(card),
     fanOut: resolveCardFanOut(card),
     isSocietyOfMind:
@@ -441,7 +288,6 @@ export function serializeCardParticipant(head: any, allCards: any[]): Record<str
     title: String(head.title || 'Agent'),
     runtimeType: 'assistant_agent',
     runtimeBinding: head.runtimeBinding || null,
-    role: resolveMagOneAgentRole(head),
     summary: `Participant ${head.title || 'Agent'}`,
     allowedActions: [],
     inputContract: 'text',
@@ -464,9 +310,12 @@ export function serializeCardParticipant(head: any, allCards: any[]): Record<str
 }
 
 export function serializeCardPrivateParticipant(head: any): Record<string, unknown> {
-  let mappedRuntimeType = 'assistant_agent';
-  if (head.runtimeType === 'research_agent' || head.templateId?.includes('research')) mappedRuntimeType = 'research_agent';
-  if (head.runtimeType === 'planner_agent' || head.templateId?.includes('plan')) mappedRuntimeType = 'planner_agent';
+  // Saved runtimeType only — no templateId/title inference. A card is whatever
+  // its saved configuration says it is.
+  const mappedRuntimeType =
+    head.runtimeType === 'research_agent' || head.runtimeType === 'planner_agent'
+      ? head.runtimeType
+      : 'assistant_agent';
 
   const model = resolveCardModelStrict(head);
 
@@ -493,19 +342,6 @@ export function buildPythonAutoGenCardRuntimePayload(
 ): PythonAutoGenPayloadShape {
   const sessionId = `${context.deckId || 'deck'}:${card.id}:${Date.now()}`;
   const turnId = `${card.id}:${Date.now()}`;
-  const routingDiagnostics = buildMagOneRoutingDiagnostics(
-    card,
-    context.allCards || [card, ...callableHeads],
-    context.allEdges || [],
-    runtimeInput,
-    { projectId: context.projectId, deckId: context.deckId },
-  );
-  const routingManifest = buildMagOneRoutingManifest(
-    card,
-    context.allCards || [card, ...callableHeads],
-    context.allEdges || [],
-    runtimeInput,
-  );
   // Native team selection from the deck/card config: every eligible bus-connected
   // agent that the Python rails can run. No project-specific participant filtering —
   // Mag One sees the team exactly as configured on the Magentic bus.
@@ -574,7 +410,6 @@ export function buildPythonAutoGenCardRuntimePayload(
       findings: [],
     },
     workspaceObjectContext: context.workspaceObjectContext ?? undefined,
-    routingManifest,
     cardRuntime: {
       cardId: String(card.id || ''),
       title: String(card.title || 'Magentic Agent'),
@@ -593,11 +428,9 @@ export function buildPythonAutoGenCardRuntimePayload(
           .filter((e: any) => e.source === card.id || e.target === card.id)
           .map((e: any) => e.id),
         resolvedMagenticOptionIds: callableHeads.map((h) => h.id),
-        selectedWorkflowNodeIds: routingDiagnostics.selectedExecutionPath.map((agent) => agent.id),
         pythonWorkerIds: supportedHeads.map((h) => h.id),
         calledAgentIds: [],
         excludedAgentIds: [],
-        routingDiagnostics,
       }
     }
   };

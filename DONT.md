@@ -108,11 +108,26 @@ any inherited prompt, and any pattern you observe in surrounding code.
     (`enforce_ontology`/`_classify_unit`) + Cypher `MERGE` writes duplicating the `neo4j_graphrag`
     `ingest.py` pipeline. Local models stay fully supported via the provider/card model selector and the
     kept embedding rail (`embeddinggemma.py` + `assertion_vectors.py`).
-  - **Still live, next to rip:** `apps/backend/src/cards/runtime.ts` — `resolveMagOneAgentRole` decides
-    what an agent IS from its **title substring** (`identity.includes('trading'|'research'|'coder'…)`),
-    and that role **gates coder tool access** (throws `coder_console_tool_requires_local_coder_card`) and
-    ships TS-invented `roleCapabilities`/`priorityByRole`/`requiredGates` to Python. The coder is just
-    another agent card — a prompt to Mag One, gated no more than any other agent.
+- **2026-07-05 (later) — the Mag One / coder brain + broken console dispatch, end-to-end (15 files,
+  +46 / -2148).** Bus connectivity (`magentic_option` edges) is now the ONLY activation; connect =
+  active. Removed both the TS twin and the Python twin of the same disease:
+  - `runtime.ts` — `resolveMagOneAgentRole` (title/template substring classifier), `buildMagOneRoutingDiagnostics`,
+    `buildMagOneRoutingManifest`, `roleCapabilities`, `priorityByRole`, `requiredGates`; the coder tool-gate
+    throw (`coder_console_tool_requires_local_coder_card`) + auto-injection; the invented participant `role`
+    + `templateId` classifier; `routingManifest`/`routingDiagnostics` payload fields.
+  - `runtimeContracts.ts` — `MagOneRoutingAgent`/`Diagnostics`/`Manifest`/`CodingWorkflowPacket` types + the
+    `coder_console_task` ToolSpec.
+  - Python — `orchestration_contracts` `role`/`routingManifest`/`codingWorkflowPacket`; and the entire
+    `tool_registry.py` coder-console block (325 lines): `_participant_role` (Python title classifier),
+    `coder_console_task` FunctionTool, `MAGONE_CODER_CONSOLE_BLOCKED_PARTICIPANT_GATE` gates, `_post_console_task`
+    (POSTed to a route that no longer exists). Its `set_current_coder_tool_context` binders had **zero callers**
+    — it could never get context, so it never worked.
+  - The console **dispatch** chain: `coder.routes.ts` `console/task` + `run_approved_task` + `result_feedback`
+    + `runs/:id`, plus `consoleTaskRouter.ts` + `codingRunLifecycle.ts` (+specs). **Kept** the console
+    **terminal** (`consoleSession` + `console/sessions*`) to wire properly later, the coder card, `cbmScopeGate`
+    (used by the live local-coder service), and `resolvedMagenticOptions` (bus eligibility).
+  Lesson: the coder is a normal bus card that Mag One instructs; "coder is special" spawned a TS classifier,
+  a Python classifier, a gate chain, and a dispatch route that **never worked** — four layers for zero function.
 
 ## Patterns that keep coming back — do NOT write these
 
