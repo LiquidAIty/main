@@ -129,6 +129,21 @@ any inherited prompt, and any pattern you observe in surrounding code.
   Lesson: the coder is a normal bus card that Mag One instructs; "coder is special" spawned a TS classifier,
   a Python classifier, a gate chain, and a dispatch route that **never worked** — four layers for zero function.
 
+- **2026-07-05 (later still) — one team-run entrypoint + CBM-is-not-a-gate (2 commits, ~-812 lines).**
+  - **Deleted `executeDeck` + the whole mission chain.** `executeDeck` was a SECOND Mag One team-run
+    path — it called the same `runCardWithContract(magentic_one card)` as `run_mag_one`, just wrapped in
+    `mission` metadata. There is ONE team-run entrypoint: `run_mag_one` (Harness-authored Markdown prompt).
+    The deck-run route is now Canvas Single Assist ONLY. Removed the entire dead mission + `WorkspaceHarness`
+    type cluster (`MissionSpec`/`MissionRun`/`MissionDeckPatch`/`MissionRunStatus`/`DeckRunMissionMetadata`/
+    `OpenMissionMessage`/`WorkspaceHarness{Provider,Operation,Permission,Request,Result}`/`run_approved_mission`)
+    + mission fields on DeckRun/Request/Response — used by only two files, no product sender ever populated them.
+  - **CBM is a capability, not a gate.** `cbmScopeGate` ran `index_repository` and blocked a coder run on
+    stale/missing index, missing required-files, or excluded-files — i.e. "you must have a fresh CBM index to
+    code." Gutted to a STRUCTURAL check only (valid project root, real directory). A stale/unavailable CBM
+    index NEVER blocks the coder; it inspects normally and reports honestly.
+  Lesson: two run paths that both call the same function is one path too many; and a "freshness gate" on a
+  local index is an invented guardrail that stops work for zero safety.
+
 ## Patterns that keep coming back — do NOT write these
 
 Every one of these was written, shipped, "worked," and got ripped out. If your diff resembles any of
