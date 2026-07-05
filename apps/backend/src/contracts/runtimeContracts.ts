@@ -105,6 +105,40 @@ export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
       },
     },
   },
+  {
+    // Transport-validation mirror only. The real tool lives in the Python Mag One
+    // registry (tool_registry.py run_local_coder -> POST /api/coder/localcoder/run).
+    // The model supplies ONLY the logical coding task; the backend injects the
+    // trusted repo root. This entry lets a card's Tools selection validate and
+    // transport the id to Python.
+    name: 'run_local_coder',
+    description:
+      'Run a real coding task through the LocalCoder engine and return its ' +
+      'authoritative CoderReport. The coder root is injected server-side (never ' +
+      'model-chosen); blocked/failed runs are reported honestly. Does not run ' +
+      'automatically — the orchestrator/coder agent decides when to call it.',
+    enabled: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        objective: { type: 'string' },
+        plan_excerpt: { type: 'string' },
+        context_summary: { type: 'string' },
+        guardrails: { type: 'array', items: { type: 'string' } },
+        allowed_files: { type: 'array', items: { type: 'string' } },
+        forbidden_work: { type: 'array', items: { type: 'string' } },
+        proof_required: { type: 'array', items: { type: 'string' } },
+        stop_conditions: { type: 'array', items: { type: 'string' } },
+        code_anchors: { type: 'array', items: { type: 'string' } },
+        cbm_queries: { type: 'array', items: { type: 'string' } },
+        report_format: { type: 'string' },
+        write_mode: { type: 'string', enum: ['read-only', 'edit'] },
+        project_id: { type: 'string' },
+      },
+      required: ['objective'],
+    },
+    outputSchema: { type: 'object', description: 'authoritative CoderReport JSON' },
+  },
 ];
 
 export type CardRunResult = {

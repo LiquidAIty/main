@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { randomUUID } from 'crypto';
 import { ZodError } from 'zod';
 import type { OpenClaudeRunRequest } from '../coder/openclaude/contracts';
 import { openClaudeRuntimeService } from '../coder/openclaude/runtime/service';
@@ -408,7 +409,20 @@ router.get('/localcoder/status', async (req, res) => {
 
 router.post('/localcoder/run', async (req, res) => {
   try {
-    const result = await localCoderService.run(req.body?.coderPacket ?? req.body);
+    // The coder's filesystem root is SERVER-OWNED and trusted — the model/caller
+    // can never choose it. Any supplied repoPath is overridden with the server's
+    // configured project root, and the run id is server-minted. The caller
+    // supplies only the logical coding task (objective, guardrails, proof, ...).
+    const incoming = (req.body?.coderPacket ?? req.body ?? {}) as Record<string, unknown>;
+    const coderPacket = {
+      ...incoming,
+      id:
+        typeof incoming.id === 'string' && incoming.id.trim()
+          ? incoming.id
+          : `coder_${randomUUID()}`,
+      repoPath: process.env.LIQUIDAITY_GRPC_CWD || 'C:/Projects/main',
+    };
+    const result = await localCoderService.run(coderPacket);
     const reportOk = result.report.status === 'succeeded' || result.report.status === 'partial';
     const statusCode =
       result.report.status === 'blocked'

@@ -33,9 +33,6 @@ import {
   streamSession,
   loadSessionHistory,
 } from '../features/agentbuilder/console/openClaudeSessionClient';
-import {
-  pollCodingRunUntilTerminal,
-} from '../features/agentbuilder/console/codingRunResultSurface';
 import { openClaudeConsoleClient } from '../features/agentbuilder/console/openClaudeConsoleClient';
 import { shouldShowOpenClaudeConsoleRail } from '../features/agentbuilder/console/consoleVisibility';
 import useAgentBuilderAutosave from '../features/agentbuilder/state/useAgentBuilderAutosave';
@@ -3616,7 +3613,6 @@ export default function AgentBuilder(): React.ReactElement {
     responseReceivedAt: number | null;
     refreshRecorded: boolean;
   } | null>(null);
-  const surfacedCodingRunIdsRef = useRef(new Set<string>());
   const pendingPanelOpenTelemetryRef = useRef<{
     objectType: WorkspaceTestingObjectType;
     objectId: string;

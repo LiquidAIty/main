@@ -361,6 +361,55 @@ async def apply_thinkgraph_patch_tool(
 
 
 # ---------------------------------------------------------------------------
+# Local Coder tool — run a real coding task through the LocalCoder engine.
+# ---------------------------------------------------------------------------
+
+
+async def run_local_coder(
+    objective: str,
+    plan_excerpt: str = "",
+    context_summary: str = "",
+    guardrails: list[str] | None = None,
+    allowed_files: list[str] | None = None,
+    forbidden_work: list[str] | None = None,
+    proof_required: list[str] | None = None,
+    stop_conditions: list[str] | None = None,
+    code_anchors: list[str] | None = None,
+    cbm_queries: list[str] | None = None,
+    report_format: str = "Return a CoderReport JSON: status, filesChanged, proofResults, blockers, nextRecommendedTask.",
+    write_mode: str = "read-only",
+    project_id: str = "default",
+) -> str:
+    """Run a real coding task through the LocalCoder engine; return its CoderReport.
+
+    The model supplies ONLY the logical coding task. The coder's filesystem root is
+    injected server-side by the backend (trusted, never model-chosen) and the run id
+    is server-minted. Returns the authoritative CoderReport JSON verbatim — no
+    fabricated success and no fallback: a blocked/failed run is reported honestly.
+    """
+    packet = {
+        "projectId": str(project_id or "default").strip() or "default",
+        "objective": str(objective or "").strip(),
+        "planExcerpt": str(plan_excerpt or "").strip() or str(objective or "").strip(),
+        "contextSummary": str(context_summary or "").strip() or "Provided by the orchestrator run.",
+        "codeAnchors": [str(x) for x in (code_anchors or []) if str(x).strip()],
+        "cbmQueries": [str(x) for x in (cbm_queries or []) if str(x).strip()],
+        "guardrails": [str(x) for x in (guardrails or []) if str(x).strip()],
+        "allowedFiles": [str(x) for x in (allowed_files or []) if str(x).strip()],
+        "forbiddenWork": [str(x) for x in (forbidden_work or []) if str(x).strip()],
+        "proofRequired": [str(x) for x in (proof_required or []) if str(x).strip()],
+        "reportFormat": str(report_format or "").strip() or "CoderReport JSON",
+        "stopConditions": [str(x) for x in (stop_conditions or []) if str(x).strip()],
+        "writeMode": "edit" if str(write_mode or "").strip().lower() == "edit" else "read-only",
+    }
+    return await asyncio.to_thread(
+        _post_backend_json_sync,
+        "/api/coder/localcoder/run",
+        {"coderPacket": packet},
+    )
+
+
+# ---------------------------------------------------------------------------
 # ToolRegistry.
 # ---------------------------------------------------------------------------
 
@@ -463,6 +512,41 @@ def build_default_tool_registry() -> ToolRegistry:
             outputSchema={"type": "string", "description": "JSON honest applied/duplicate/empty result"},
         ),
         apply_thinkgraph_patch_tool,
+    )
+    registry.register(
+        ToolSpec(
+            name="run_local_coder",
+            description=(
+                "Run a real coding task through the LocalCoder engine and return its "
+                "authoritative CoderReport. Supply ONLY the logical task (objective, "
+                "plan_excerpt, context_summary, guardrails, allowed_files, proof_required, "
+                "stop_conditions, forbidden_work, code_anchors, report_format, write_mode). "
+                "The coder's filesystem root is injected server-side (trusted, never chosen "
+                "by the model). Reports blocked/failed honestly; no fake success."
+            ),
+            enabled=True,
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "objective": {"type": "string"},
+                    "plan_excerpt": {"type": "string"},
+                    "context_summary": {"type": "string"},
+                    "guardrails": {"type": "array", "items": {"type": "string"}},
+                    "allowed_files": {"type": "array", "items": {"type": "string"}},
+                    "forbidden_work": {"type": "array", "items": {"type": "string"}},
+                    "proof_required": {"type": "array", "items": {"type": "string"}},
+                    "stop_conditions": {"type": "array", "items": {"type": "string"}},
+                    "code_anchors": {"type": "array", "items": {"type": "string"}},
+                    "cbm_queries": {"type": "array", "items": {"type": "string"}},
+                    "report_format": {"type": "string"},
+                    "write_mode": {"type": "string", "enum": ["read-only", "edit"]},
+                    "project_id": {"type": "string"},
+                },
+                "required": ["objective"],
+            },
+            outputSchema={"type": "object", "description": "authoritative CoderReport JSON"},
+        ),
+        run_local_coder,
     )
     registry.register(
         ToolSpec(
@@ -708,6 +792,10 @@ _TOOL_DISPLAY_METADATA: dict[str, dict[str, Any]] = {
     "apply_thinkgraph_patch": {
         "displayName": "ThinkGraph Patch (authorized write)",
         "agentCompatibility": ["assistant_agent"],
+    },
+    "run_local_coder": {
+        "displayName": "Local Coder",
+        "agentCompatibility": ["magentic_one", "assistant_agent"],
     },
     "retrieve_knowgraph_context": {
         "displayName": "KnowGraph Hybrid Retrieval",
