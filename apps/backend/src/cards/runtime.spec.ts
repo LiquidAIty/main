@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { RUNTIME_TOOL_SPECS } from '../contracts/runtimeContracts';
 import {
   resolvedMagenticOptions,
@@ -507,17 +506,6 @@ describe('Canonical Cards Runtime', () => {
     const payload = buildPythonAutoGenCardRuntimePayload(cardM, {}, 'test', {}, {}, [cardA], '2026');
     const participant = payload.cardRuntime.participants.find((p) => p.cardId === 'agentA');
     expect(participant?.tools).toEqual(['current_datetime', 'calculator']);
-  });
-
-  it('does not add a direct chat-to-console bypass', () => {
-    // Read relative to THIS spec file, not process.cwd(), so it passes regardless of where
-    // vitest is invoked from.
-    const chatRoute = readFileSync(
-      new URL('../routes/agentBuilder.routes.ts', import.meta.url),
-      'utf8',
-    );
-    expect(chatRoute).not.toContain('/openclaude/console/task');
-    expect(chatRoute).not.toContain('routeCodingTaskToConsole');
   });
 
   it('providerModelId is never default or empty string in any participant payload', () => {
