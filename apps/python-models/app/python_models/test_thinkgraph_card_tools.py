@@ -99,9 +99,10 @@ class TestPythonMcpHost:
             "card.assign_data_binding",
             "card.run_assistant_agent",
             "thinkgraph.get_graph_slice",
+            "thinkgraph.apply_live_patch",
         ])
 
-    def test_host_never_exposes_graph_write_or_task_ledger_authority(self):
+    def test_host_never_exposes_the_old_bare_write_names_or_task_ledger_authority(self):
         from app import mcp_host
 
         tools = asyncio.run(mcp_host.list_tools())
@@ -111,9 +112,122 @@ class TestPythonMcpHost:
         for tool in tools:
             allowed = mcp_host._ALLOWED_KEYS[tool.name]
             assert "taskLedger" not in allowed
-            assert "patch" not in allowed
             assert "prompt" not in allowed  # raw prompt smuggling impossible
             assert "model" not in allowed
+            if tool.name != "thinkgraph.apply_live_patch":
+                assert "patch" not in allowed
+
+
+# --------------------------------------------------------------------------- #
+# thinkgraph.apply_live_patch — the one scoped live-write tool. Gated by a
+# trusted thinkgraph_live_agent_turn authority the model never sees, chooses,
+# or reuses. No userMessageId/assistantMessageId — this is not the old
+# completed-pair shape.
+# --------------------------------------------------------------------------- #
+class TestThinkGraphApplyLivePatch:
+    def _authority(self, **overrides):
+        base = {
+            "kind": "thinkgraph_live_agent_turn",
+            "projectId": "20ac92da-01fd-4cf6-97cc-0672421e751a",
+            "conversationId": "main",
+            "liveTurnId": "turn-1",
+            "agentRunId": "run-1",
+            "writerCardId": "card_thinkgraph_agent",
+            "issuedAt": "1000",
+            "expiresAt": str(__import__("time").time() + 900),
+        }
+        base.update(overrides)
+        return base
+
+    def test_rejects_missing_authority(self):
+        from app import mcp_host
+
+        result = asyncio.run(mcp_host.call_tool("thinkgraph.apply_live_patch", {"resources": []}))
+        parsed = json.loads(result[0].text)
+        assert parsed["ok"] is False
+        assert "thinkgraph_live_authority_missing" in parsed["error"]
+
+    def test_rejects_model_supplied_wrong_kind_authority(self):
+        from app import mcp_host
+
+        forged = self._authority(kind="thinkgraph_pair")  # the OLD, obsolete kind
+        result = asyncio.run(
+            mcp_host.call_tool("thinkgraph.apply_live_patch", {"resources": [], "authority": forged})
+        )
+        parsed = json.loads(result[0].text)
+        assert parsed["ok"] is False
+        assert "thinkgraph_live_authority_missing" in parsed["error"]
+
+    def test_rejects_expired_authority(self):
+        from app import mcp_host
+
+        expired = self._authority(expiresAt="1")  # long past
+        result = asyncio.run(
+            mcp_host.call_tool("thinkgraph.apply_live_patch", {"resources": [], "authority": expired})
+        )
+        parsed = json.loads(result[0].text)
+        assert parsed["ok"] is False
+        assert "thinkgraph_live_authority_expired" in parsed["error"]
+
+    def test_rejects_incomplete_authority_missing_project(self):
+        from app import mcp_host
+
+        incomplete = self._authority(projectId="")
+        result = asyncio.run(
+            mcp_host.call_tool("thinkgraph.apply_live_patch", {"resources": [], "authority": incomplete})
+        )
+        parsed = json.loads(result[0].text)
+        assert parsed["ok"] is False
+        assert "thinkgraph_live_authority_incomplete" in parsed["error"]
+
+    def test_rejects_incomplete_authority_missing_conversation(self):
+        from app import mcp_host
+
+        incomplete = self._authority(conversationId="")
+        result = asyncio.run(
+            mcp_host.call_tool("thinkgraph.apply_live_patch", {"resources": [], "authority": incomplete})
+        )
+        parsed = json.loads(result[0].text)
+        assert parsed["ok"] is False
+        assert "thinkgraph_live_authority_incomplete" in parsed["error"]
+
+    def test_rejects_incomplete_authority_missing_writer_card(self):
+        from app import mcp_host
+
+        incomplete = self._authority(writerCardId="")
+        result = asyncio.run(
+            mcp_host.call_tool("thinkgraph.apply_live_patch", {"resources": [], "authority": incomplete})
+        )
+        parsed = json.loads(result[0].text)
+        assert parsed["ok"] is False
+        assert "thinkgraph_live_authority_incomplete" in parsed["error"]
+
+    def test_accepts_valid_live_authority_and_reaches_the_real_bridge(self):
+        # No backend running in this focused unit test — proves the authority
+        # gate passes and the call reaches the real thinkgraph_apply_patch
+        # bridge (honest backend_unreachable, not an authority rejection).
+        from app import mcp_host
+
+        valid = self._authority()
+        result = asyncio.run(
+            mcp_host.call_tool("thinkgraph.apply_live_patch", {"resources": [], "authority": valid})
+        )
+        parsed = json.loads(result[0].text)
+        assert "thinkgraph_live_authority" not in json.dumps(parsed)
+
+    def test_control_tool_smuggled_arguments_are_rejected_reprise(self):
+        # Sanity: the write tool's own structural allowlist still rejects a
+        # smuggled raw prompt/model attempt alongside a forged authority.
+        from app import mcp_host
+
+        result = asyncio.run(
+            mcp_host.call_tool(
+                "thinkgraph.apply_live_patch",
+                {"resources": [], "prompt": "evil", "model": "evil"},
+            )
+        )
+        text = result[0].text
+        assert "tool_arguments_rejected" in text
 
     def test_control_tool_smuggled_arguments_are_rejected(self):
         from app import mcp_host

@@ -14,6 +14,16 @@
 
 import path from 'node:path';
 import { existsSync } from 'node:fs';
+import { getDeckDocument } from '../../../decks/store';
+import {
+  resolveThinkGraphCardFromDeck,
+  validateThinkGraphCardTools,
+} from '../../../services/thinkgraph/processThinkGraphPair';
+import { resolveRuntimeBinding } from '../../../contracts/runtimeBinding';
+
+// The app's one canonical Agent Canvas deck (mirrors coder.routes.ts's own
+// BUILDER_DECK_ID — no cross-file re-export exists for this constant yet).
+const BUILDER_DECK_ID = 'deck_builder';
 
 export type GrpcSessionEvent =
   | { kind: 'text'; text: string }
@@ -40,6 +50,85 @@ export type GrpcTurnHandle = {
 
 export function deriveSessionId(projectId: string, conversationId: string): string {
   return `mag1:${projectId}:${conversationId}`;
+}
+
+/** Inverse of deriveSessionId, owned by this same module. Used only to recover
+ * the projectId needed for structural ThinkGraph card resolution below — never
+ * exposed outside this file, never used for anything else. */
+function parseSessionId(sessionId: string): { projectId: string; conversationId: string } | null {
+  const parts = sessionId.split(':');
+  if (parts.length < 3 || parts[0] !== 'mag1') return null;
+  const projectId = parts[1];
+  if (!projectId) return null;
+  return { projectId, conversationId: parts.slice(2).join(':') };
+}
+
+/** Structural saved-card configuration only (id, prompt, tool grants) — never
+ * graph data, conversation text, or backend-invented semantics. Resolved the
+ * same way processThinkGraphPair already resolves it: exactly one persisted
+ * card with runtimeBinding=thinkgraph_agent and exactly the two scoped graph
+ * tools. Best-effort: any resolution failure yields no agent definition for
+ * this turn — it must never block or alter the normal chat turn itself. */
+export async function resolveThinkGraphAgentDefinition(
+  sessionId: string,
+): Promise<Record<string, unknown> | null> {
+  const parsed = parseSessionId(sessionId);
+  if (!parsed) return null;
+  try {
+    const doc = await getDeckDocument(parsed.projectId, BUILDER_DECK_ID);
+    const nodes: any[] = Array.isArray((doc?.deck as any)?.nodes) ? (doc!.deck as any).nodes : [];
+    const resolution = resolveThinkGraphCardFromDeck(nodes);
+    if (!resolution.ok) return null;
+    const card = resolution.card;
+    if (validateThinkGraphCardTools(card)) return null;
+    const allowedTools = Array.isArray(card?.runtimeOptions?.tools) ? card.runtimeOptions.tools.map(String) : [];
+    const prompt = String(card?.prompt || '').trim();
+    if (!prompt) return null;
+    return {
+      agent_type: String(card.id || ''),
+      card_id: String(card.id || ''),
+      runtime_binding: 'thinkgraph_agent',
+      system_prompt: prompt,
+      allowed_tools: allowedTools,
+      context_mode_inherit_parent: true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Structural resolution from persisted deck nodes: exactly ONE card whose
+ * runtimeBinding classifies as 'main_chat' — the same structural pattern
+ * resolveThinkGraphCardFromDeck already uses, never display-name matching.
+ */
+function resolveMainChatCardFromDeck(nodes: any[]): { ok: true; card: any } | { ok: false } {
+  const matches = (nodes || []).filter(
+    (n) => resolveRuntimeBinding(n?.runtimeOptions?.binding ?? n?.runtimeBinding ?? n?.binding, n?.id) === 'main_chat',
+  );
+  if (matches.length !== 1) return { ok: false };
+  return { ok: true, card: matches[0] };
+}
+
+/** The saved OpenClaude Chat parent card's visible prompt content, verbatim —
+ * never graph data, conversation text, or backend-invented instructions. Sent
+ * as append_system_prompt so it layers on top of the locked vendored base
+ * prompt, never replacing it. Zero or multiple main_chat cards yields no
+ * prompt to append (honest degrade to the vendored default alone) rather
+ * than guessing which card is the parent. */
+export async function resolveMainChatSystemPrompt(sessionId: string): Promise<string | null> {
+  const parsed = parseSessionId(sessionId);
+  if (!parsed) return null;
+  try {
+    const doc = await getDeckDocument(parsed.projectId, BUILDER_DECK_ID);
+    const nodes: any[] = Array.isArray((doc?.deck as any)?.nodes) ? (doc!.deck as any).nodes : [];
+    const resolution = resolveMainChatCardFromDeck(nodes);
+    if (!resolution.ok) return null;
+    const prompt = String(resolution.card?.prompt || '').trim();
+    return prompt || null;
+  } catch {
+    return null;
+  }
 }
 
 function resolveProtoPath(): string {
@@ -133,12 +222,22 @@ export async function startGrpcTurn(
     });
   });
 
+  const [thinkGraphAgentDefinition, appendSystemPrompt] = await Promise.all([
+    resolveThinkGraphAgentDefinition(args.sessionId),
+    resolveMainChatSystemPrompt(args.sessionId),
+  ]);
+
   call.write({
     request: {
       message: args.message,
       working_directory: args.workingDirectory,
       session_id: args.sessionId,
       ...(args.model ? { model: args.model } : {}),
+      ...(thinkGraphAgentDefinition ? { agent_definitions: [thinkGraphAgentDefinition] } : {}),
+      // Appended AFTER the locked vendored base prompt (QueryEngine's
+      // appendSystemPrompt), never replacing it — the saved card is the only
+      // LiquidAIty-specific layer, added on top of the base, not instead of it.
+      ...(appendSystemPrompt ? { append_system_prompt: appendSystemPrompt } : {}),
     },
   });
 

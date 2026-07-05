@@ -130,6 +130,13 @@ export type BaseAgentDefinition = {
    * full CLAUDE.md and interprets their output. Saves ~5-15 Gtok/week across
    * 34M+ Explore spawns. Kill-switch: tengu_slim_subagent_claudemd. */
   omitClaudeMd?: boolean
+  /** When 'inherit_parent', a NAMED agent (selected via subagent_type, not the
+   * generic FORK_AGENT) also inherits the parent's live conversation context
+   * via the existing fork message-construction path. Its own system prompt
+   * and its own resolved tool pool are unaffected — only context inheritance
+   * is unlocked. Used for saved-card agents (e.g. ThinkGraph) that must see
+   * the live parent turn but keep their own restricted prompt/tools. */
+  contextMode?: 'inherit_parent'
 }
 
 // Built-in agents - dynamic prompts only, no static systemPrompt field

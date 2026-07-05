@@ -31,6 +31,26 @@ message ChatRequest {
   reserved 3;                   // Reserved to prevent accidental reuse
   optional string model = 4;
   string session_id = 5;        // Non-empty = cross-stream session persistence
+  // Structural saved-card configuration bridged into this turn's native
+  // agent pool (see AgentDefinitionConfig). Empty = no extra agents.
+  repeated AgentDefinitionConfig agent_definitions = 6;
+  // The saved OpenClaude Chat parent card's visible prompt content, verbatim.
+  // Composed with (never replacing) the locked vendored base system prompt by
+  // QueryEngine's own existing appendSystemPrompt mechanism. Empty = the
+  // vendored default system prompt is used alone, unappended.
+  optional string append_system_prompt = 7;
+}
+
+// Structural saved-card configuration only — never graph data, conversation
+// text, or backend-invented semantic instructions. The saved card's own
+// visible prompt and visible tool grants remain the sole semantic authority.
+message AgentDefinitionConfig {
+  string agent_type = 1;              // subagent_type value that selects this card
+  string card_id = 2;                 // saved card id, for diagnostics only
+  string runtime_binding = 3;         // e.g. "thinkgraph_agent"
+  string system_prompt = 4;           // saved card's visible prompt, verbatim
+  repeated string allowed_tools = 5;  // saved card's visible tool grants
+  bool context_mode_inherit_parent = 6; // true = live inherited-context fork
 }
 
 message UserInput {

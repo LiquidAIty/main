@@ -10,8 +10,54 @@ import type { Tool } from '../Tool.js'
 import { getDefaultAppState } from '../state/AppStateStore.js'
 import { AppState } from '../state/AppState.js'
 import { FileStateCache, READ_FILE_STATE_CACHE_SIZE } from '../utils/fileStateCache.js'
+import type { BuiltInAgentDefinition } from '../tools/AgentTool/loadAgentsDir.js'
 
 const PROTO_PATH = path.resolve(import.meta.dirname, '../proto/openclaude.proto')
+
+// The one tool the official Python MCP host exposes for live, in-turn ThinkGraph
+// writes (apps/python-models/app/mcp_host.py: thinkgraph.apply_live_patch).
+// Qualified per the runtime's own MCP naming (mcp__<clientName>__<normalizedToolName>,
+// see services/mcp/mcpStringUtils.ts) for the 'liquidaity' client this file connects —
+// a fixed identity constant, not a name-translation mapper: the saved card grants
+// this exact string directly, nothing here rewrites what the card says.
+const THINKGRAPH_LIVE_WRITE_TOOL_NAME = 'mcp__liquidaity__thinkgraph_apply_live_patch'
+const THINKGRAPH_LIVE_AUTHORITY_KIND = 'thinkgraph_live_agent_turn'
+const THINKGRAPH_LIVE_AUTHORITY_TTL_SECONDS = 900
+
+// Structural bridge only: turns the request's AgentDefinitionConfig entries
+// (saved card id/prompt/tool-grants, carried verbatim over the wire — see
+// openclaude.proto) into real native AgentDefinitions for this turn's
+// QueryEngine. No graph data, no conversation text, no invented semantics —
+// the saved card's own visible prompt and its own exact tool grants are the
+// only content used. No bare-to-qualified compatibility mapping: the saved
+// card must already grant the real, exact tool names the live MCP pool uses.
+export function buildAgentDefinitionsFromRequest(req: any): BuiltInAgentDefinition[] {
+  const configs = Array.isArray(req.agent_definitions) ? req.agent_definitions : []
+  return configs
+    .filter((c: any) => c && String(c.agent_type || '').trim() && String(c.system_prompt || '').trim())
+    .map((c: any): BuiltInAgentDefinition => {
+      const systemPrompt = String(c.system_prompt)
+      const allowedTools = Array.isArray(c.allowed_tools) ? c.allowed_tools.map(String) : []
+      return {
+        agentType: String(c.agent_type),
+        whenToUse: `Saved card agent (runtimeBinding=${String(c.runtime_binding || '')}).`,
+        ...(allowedTools.length > 0 ? { tools: allowedTools } : {}),
+        source: 'built-in',
+        baseDir: 'built-in',
+        ...(c.context_mode_inherit_parent ? { contextMode: 'inherit_parent' as const } : {}),
+        getSystemPrompt: () => systemPrompt,
+      }
+    })
+}
+
+// Inverse of grpcChatClient.ts's deriveSessionId ("mag1:{projectId}:{conversationId}"),
+// owned separately here since localcoder cannot import from apps/backend. Used only to
+// mint the live ThinkGraph write authority below — never exposed to the model.
+function parseSessionIdForLiveAuthority(sessionId: string): { projectId: string; conversationId: string } | null {
+  const parts = String(sessionId || '').split(':')
+  if (parts.length < 3 || parts[0] !== 'mag1' || !parts[1]) return null
+  return { projectId: parts[1], conversationId: parts.slice(2).join(':') }
+}
 
 const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
   keepCase: true,
@@ -106,11 +152,12 @@ export class GrpcServer {
           let liquidAItyMcpClients: MCPServerConnection[] = []
           let liquidAItyMcpTools: Tool[] = []
           const mcpHostPath = process.env.LIQUIDAITY_MCP_HOST
-          if (mcpHostPath) {
+          const mcpCommand = process.env.LIQUIDAITY_MCP_NODE
+          if (mcpHostPath && mcpCommand) {
             try {
               const conn = await connectToServer('liquidaity', {
                 type: 'stdio',
-                command: process.env.LIQUIDAITY_MCP_NODE || 'node',
+                command: mcpCommand,
                 args: [mcpHostPath],
               } as any)
               if (conn && conn.type === 'connected') {
@@ -132,12 +179,35 @@ export class GrpcServer {
             }
           }
 
+          // Mint the live ThinkGraph write authority once per turn, at this trusted
+          // server boundary — never chosen, forged, or reused by the model. Scoped to
+          // the resolved ThinkGraph card's agentType for THIS turn only; a stale or
+          // absent card resolution means no child exists to hold the write grant.
+          const rawThinkGraphAgent = Array.isArray(req.agent_definitions) ? req.agent_definitions[0] : undefined
+          const thinkGraphAgentType = rawThinkGraphAgent ? String(rawThinkGraphAgent.agent_type || '') : ''
+          const sessionParts = parseSessionIdForLiveAuthority(sessionId)
+          const liveAuthority = sessionParts && thinkGraphAgentType
+            ? {
+                kind: THINKGRAPH_LIVE_AUTHORITY_KIND,
+                projectId: sessionParts.projectId,
+                conversationId: sessionParts.conversationId,
+                liveTurnId: randomUUID(),
+                agentRunId: randomUUID(),
+                writerCardId: String(rawThinkGraphAgent.card_id || ''),
+                issuedAt: String(Date.now() / 1000),
+                expiresAt: String(Date.now() / 1000 + THINKGRAPH_LIVE_AUTHORITY_TTL_SECONDS),
+              }
+            : null
+
           engine = new QueryEngine({
             cwd: req.working_directory || process.cwd(),
             tools: [...getTools(appState.toolPermissionContext), ...liquidAItyMcpTools], // base tools + LiquidAIty MCP tools
             commands: [], // Slash commands
             mcpClients: liquidAItyMcpClients,
-            agents: [],
+            agents: buildAgentDefinitionsFromRequest(req),
+            ...(typeof req.append_system_prompt === 'string' && req.append_system_prompt.trim()
+              ? { appendSystemPrompt: req.append_system_prompt }
+              : {}),
             ...(previousMessages.length > 0 ? { initialMessages: previousMessages } : {}),
             includePartialMessages: true,
             canUseTool: async (tool, input, context, assistantMsg, toolUseID) => {
@@ -153,6 +223,19 @@ export class GrpcServer {
                 }
               })
 
+              // The live ThinkGraph write grant belongs only to the resolved
+              // ThinkGraph Agent child for this turn — never the main OpenClaude
+              // Chat thread, never a different agent. No authority, no grant.
+              if (tool.name === THINKGRAPH_LIVE_WRITE_TOOL_NAME) {
+                if (!liveAuthority || context.agentType !== thinkGraphAgentType) {
+                  return {
+                    behavior: 'deny',
+                    message: 'thinkgraph_live_write_requires_thinkgraph_agent_child',
+                    decisionReason: { type: 'other', reason: 'thinkgraph_live_write_requires_thinkgraph_agent_child' },
+                  }
+                }
+              }
+
               // Ask user for permission
               const promptId = randomUUID()
               const question = `Approve ${tool.name}?`
@@ -167,7 +250,16 @@ export class GrpcServer {
               return new Promise((resolve) => {
                 pendingRequests.set(promptId, (reply) => {
                   if (reply.toLowerCase() === 'yes' || reply.toLowerCase() === 'y') {
-                    resolve({ behavior: 'allow' })
+                    // Inject the trusted authority outside the model's visible
+                    // arguments — the model supplied only the patch content.
+                    if (tool.name === THINKGRAPH_LIVE_WRITE_TOOL_NAME && liveAuthority) {
+                      resolve({
+                        behavior: 'allow',
+                        updatedInput: { ...(input as Record<string, unknown>), authority: liveAuthority },
+                      })
+                    } else {
+                      resolve({ behavior: 'allow' })
+                    }
                   } else {
                     resolve({ behavior: 'deny', reason: 'User denied via gRPC' })
                   }

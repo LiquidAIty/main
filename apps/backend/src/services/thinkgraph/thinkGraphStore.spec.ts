@@ -54,8 +54,23 @@ afterAll(async () => {
 });
 
 describe('validateThinkGraphPatch — structural/ownership only', () => {
-  it('rejects incomplete authority (provenance is mandatory)', () => {
-    expect(validateThinkGraphPatch({ ...AUTHORITY, userMessageId: '' }, PATCH)).toContain('patch_authority_userMessageId_missing');
+  it('rejects incomplete authority (core provenance is mandatory)', () => {
+    expect(validateThinkGraphPatch({ ...AUTHORITY, projectId: '' }, PATCH)).toContain('patch_authority_projectId_missing');
+    expect(validateThinkGraphPatch({ ...AUTHORITY, cardId: '' }, PATCH)).toContain('patch_authority_cardId_missing');
+    expect(validateThinkGraphPatch({ ...AUTHORITY, correlationId: '' }, PATCH)).toContain('patch_authority_correlationId_missing');
+    expect(validateThinkGraphPatch({ ...AUTHORITY, conversationId: '' }, PATCH)).toContain('patch_authority_conversationId_missing');
+  });
+  it('accepts a truthful live-turn authority with no userMessageId/assistantMessageId (a live OpenClaude turn has no completed pair yet)', () => {
+    const liveAuthority: ThinkGraphPatchAuthority = {
+      projectId: AUTHORITY.projectId,
+      cardId: 'openclaude_parent_live',
+      correlationId: `tg:live-corr-${Date.now()}`,
+      conversationId: 'live-openclaude-parent',
+    };
+    expect(validateThinkGraphPatch(liveAuthority, PATCH)).toBeNull();
+  });
+  it('still accepts a completed-pair authority carrying real persisted userMessageId/assistantMessageId', () => {
+    expect(validateThinkGraphPatch(AUTHORITY, PATCH)).toBeNull();
   });
   it('rejects self-pair relations and unlabeled resources', () => {
     expect(validateThinkGraphPatch(AUTHORITY, { relations: [{ a: 'x', b: 'x' }] })).toContain('self_pair');

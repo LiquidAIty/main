@@ -231,13 +231,18 @@ const PROPERTY_VALUE_MAX_LEN = 200;
 // outright; any other free-text review value is accepted as-is.
 const REVIEW_REQUIRES_REAL_EVIDENCE = ['source_linked', 'supported', 'evidenced', 'verified'];
 
+// userMessageId/assistantMessageId are optional: present for a completed-pair
+// caller (real persisted message ids) and absent for a live in-progress
+// OpenClaude turn, which has no completed pair yet. correlationId is always
+// required and is real, trusted, per-call provenance either way — a live
+// caller must never fabricate message ids merely to satisfy this shape.
 export type ThinkGraphPatchAuthority = {
   projectId: string;
   cardId: string;
   correlationId: string;
   conversationId: string;
-  userMessageId: string;
-  assistantMessageId: string;
+  userMessageId?: string;
+  assistantMessageId?: string;
 };
 
 export type ThinkGraphProperties = Record<string, string | number | boolean>;
@@ -295,7 +300,7 @@ export function validateThinkGraphPatch(
   authority: ThinkGraphPatchAuthority,
   patch: ThinkGraphPatch,
 ): string | null {
-  for (const k of ['projectId', 'cardId', 'correlationId', 'conversationId', 'userMessageId', 'assistantMessageId'] as const) {
+  for (const k of ['projectId', 'cardId', 'correlationId', 'conversationId'] as const) {
     if (!s(authority?.[k]).trim()) return `patch_authority_${k}_missing`;
   }
   const resources = patch?.resources ?? [];

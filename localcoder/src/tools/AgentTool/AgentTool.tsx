@@ -355,6 +355,13 @@ export const AgentTool = buildTool({
       selectedAgent = found;
     }
 
+    // A saved-card agent may declare contextMode: 'inherit_parent' to opt into
+    // live parent-context inheritance while keeping its OWN resolved system
+    // prompt and OWN resolved tool pool (unlike the generic FORK_AGENT, which
+    // also inherits the parent's exact prompt/tools). Deliberately separate
+    // from isForkPath: only context-message construction is affected below.
+    const inheritsParentContext = isForkPath || selectedAgent.contextMode === 'inherit_parent';
+
     // Same lifecycle constraint as the run_in_background guard above, but for
     // agent definitions that force background via `background: true`. Checked
     // here because selectedAgent is only now resolved.
@@ -535,9 +542,17 @@ export const AgentTool = buildTool({
       } catch (error) {
         logForDebugging(`Failed to get system prompt for agent ${selectedAgent.agentType}: ${errorMessage(error)}`);
       }
-      promptMessages = [createUserMessage({
-        content: prompt
-      })];
+      // contextMode: 'inherit_parent' still needs buildForkedMessages()'s
+      // placeholder tool_result construction: the parent's pending tool_use
+      // for THIS Agent call has no result yet, and the API rejects a new
+      // user message following an unresolved tool_use. The agent's own
+      // system prompt above (not the parent's) remains the child directive
+      // source — only message construction changes here.
+      promptMessages = selectedAgent.contextMode === 'inherit_parent'
+        ? buildForkedMessages(prompt, assistantMessage)
+        : [createUserMessage({
+            content: prompt
+          })];
     }
     const metadata = {
       prompt,
@@ -637,9 +652,12 @@ export const AgentTool = buildTool({
         systemPrompt: asSystemPrompt(enhancedSystemPrompt)
       } : undefined,
       availableTools: isForkPath ? toolUseContext.options.tools : workerTools,
-      // Pass parent conversation when the fork-subagent path needs full
-      // context. useExactTools inherits thinkingConfig (runAgent.ts:624).
-      forkContextMessages: isForkPath ? toolUseContext.messages : undefined,
+      // Context inheritance is unlocked for isForkPath AND any named agent
+      // declaring contextMode: 'inherit_parent' (e.g. a saved ThinkGraph
+      // card). availableTools/override/useExactTools above stay isForkPath-
+      // only, so an inherit_parent named agent still gets its OWN resolved
+      // tool pool and OWN system prompt via runAgent's normal fallback path.
+      forkContextMessages: inheritsParentContext ? toolUseContext.messages : undefined,
       ...(isForkPath && {
         useExactTools: true
       }),

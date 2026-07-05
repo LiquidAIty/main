@@ -37,10 +37,16 @@ class TestBackendHarnessMcpClientWall:
         for forbidden in ("from '../../db", "thinkGraphStore", "runCypherOnGraph", "neo4j", "pg'"):
             assert forbidden not in source, f"mcp client gained direct capability: {forbidden}"
 
-    def test_chat_front_door_crosses_mcp_not_direct(self):
+    def test_chat_front_door_never_reintroduces_the_detached_post_chat_pair_processor(self):
+        # The automatic post-chat pair handoff was removed as obsolete (commit
+        # "remove automatic post-chat ThinkGraph pair handoff"). Live ThinkGraph
+        # writes now happen in-turn through the native Agent -> Python MCP
+        # thinkgraph.apply_live_patch path, not as a detached after-the-fact call
+        # from the chat route. Neither the old MCP-front-door call nor a direct
+        # bypass call may reappear here.
         source = _read("apps/backend/src/routes/coder.routes.ts")
         chat_route = source.split("'/openclaude/session/chat'", 1)[1].split("'/openclaude/session/answer'", 1)[0]
-        assert "callPythonAgentMcpTool('thinkgraph.process_conversation_pair'" in chat_route
+        assert "callPythonAgentMcpTool('thinkgraph.process_conversation_pair'" not in chat_route
         assert "processThinkGraphPair(" not in chat_route  # direct call would bypass MCP
 
 
@@ -50,10 +56,29 @@ class TestPythonMcpHostIsThin:
         for forbidden in ("import psycopg", "import neo4j", "from psycopg", "from neo4j", "ag_catalog"):
             assert forbidden not in source, f"mcp host gained direct dependency: {forbidden}"
 
-    def test_host_exposes_no_graph_write_or_task_ledger_tool(self):
+    def test_host_never_exposes_the_old_pair_only_write_names(self):
+        # The obsolete pair-only ("post-chat batch") write shape must never come
+        # back under its old bare names. No task ledger authority either.
         source = _read("apps/python-models/app/mcp_host.py")
         assert 'name="apply_thinkgraph_patch"' not in source
+        assert 'name="read_thinkgraph_scope"' not in source
         assert "taskLedgerArtifact" not in source
+
+    def test_host_exposes_exactly_one_scoped_live_write_tool(self):
+        # Replaces the old "no graph write tool at all" law: live, in-turn,
+        # model-directed ThinkGraph writes are now sanctioned through exactly
+        # ONE narrowly-scoped tool, gated by the thinkgraph_live_agent_turn
+        # authority (never a completed-pair identity, never model-suppliable).
+        source = _read("apps/python-models/app/mcp_host.py")
+        assert 'name="thinkgraph.apply_live_patch"' in source
+        assert "thinkgraph_live_agent_turn" in source
+        assert "_validate_live_authority" in source
+        # The model's own advertised schema for this tool must never invite it
+        # to supply its own identity/authority.
+        marker = source.index('name="thinkgraph.apply_live_patch"')
+        schema_block = source[marker:source.index("inputSchema", marker) + 400]
+        for forbidden in ("userMessageId", "assistantMessageId", "issuedAt", "expiresAt", "liveTurnId", "agentRunId"):
+            assert forbidden not in schema_block
 
 
 class TestNoMarkdownRuntimeSkills:
