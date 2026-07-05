@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import health from './health.routes';
-import mcp from './mcp.routes';
 import artifacts from './artifacts.routes';
 import auth from './auth.routes';
 import ragSearch from './ragsearch.routes';
@@ -31,7 +30,6 @@ router.use('/auth', auth);
 router.use('/health', health);
 router.use('/diagnostic', diagnosticRoutes);
 
-router.use('/mcp', authMiddleware, mcp);
 router.use('/artifacts', authMiddleware, artifacts);
 router.use('/graph', authMiddleware, graph);
 router.use('/rag', authMiddleware, ragSearch);
