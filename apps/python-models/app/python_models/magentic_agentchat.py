@@ -315,7 +315,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     # what the authorized tools actually did.
     authority_token = None
     patch_events_token = None
-    if isinstance(runtime_scope, dict) and runtime_scope.get("kind") == "thinkgraph_pair":
+    if isinstance(runtime_scope, dict) and runtime_scope.get("kind") == "thinkgraph_card_run":
         authority_token = THINKGRAPH_RUN_AUTHORITY.set(
             {str(k): str(v) for k, v in runtime_scope.items()}
         )
@@ -545,7 +545,6 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
                 referenceClasses=["MagenticOneGroupChat", "MagenticOneOrchestrator"],
                 referenceMethods=["handle_start", "_reenter_outer_loop", "_orchestrate_step", "run_stream"],
                 canvasTeamCompiled=len(participants) > 0,
-                runTaskClicked=bool(context.runApproved),
             ),
             stopReason=stop_reason,
             finalResponseText=final_response_text,

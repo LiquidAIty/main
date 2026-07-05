@@ -14,7 +14,6 @@ import {
   graphDrawerInputStyle,
   graphDrawerSectionStyle,
 } from './graph/graphVisualTokens';
-import { DEFAULT_MAG_ONE_OUTPUT_CONTRACT } from './builder/deckRuntime';
 
 type AgentType =
   | 'agent_builder'
@@ -294,7 +293,6 @@ function getManagedRuntimeOptionKeys(
     managed.add('maxTurns');
     managed.add('maxStalls');
     managed.add('finalAnswerPrompt');
-    managed.add('taskLedgerOutputContract');
     return managed;
   }
   if (runtimeType === 'graph_flow') {
@@ -356,7 +354,6 @@ function compactRuntimeOptions(
       maxTurns: cleanNumber(input.maxTurns),
       maxStalls: cleanNumber(input.maxStalls),
       finalAnswerPrompt: cleanString(input.finalAnswerPrompt),
-      taskLedgerOutputContract: cleanString(input.taskLedgerOutputContract),
     };
   } else if (runtimeType === 'graph_flow') {
     normalized = {
@@ -591,11 +588,6 @@ export function AgentManager({
   const [finalAnswerPrompt, setFinalAnswerPrompt] = useState(
     String(runtimeOptions.finalAnswerPrompt || ''),
   );
-  // Editable Mag One OWL output contract. Defaults to the visible card
-  // default when the card has none, so the field is always populated/editable.
-  const [taskLedgerOutputContract, setTaskLedgerOutputContract] = useState(
-    String(runtimeOptions.taskLedgerOutputContract || DEFAULT_MAG_ONE_OUTPUT_CONTRACT),
-  );
   const [useSocietyOfMindConsolidation, setUseSocietyOfMindConsolidation] = useState(
     runtimeOptions.useSocietyOfMindConsolidation !== false,
   );
@@ -748,9 +740,6 @@ export function AgentManager({
     setMaxTurns(typeof runtimeOptions.maxTurns === 'number' ? runtimeOptions.maxTurns : '');
     setMaxStalls(typeof runtimeOptions.maxStalls === 'number' ? runtimeOptions.maxStalls : '');
     setFinalAnswerPrompt(String(runtimeOptions.finalAnswerPrompt || ''));
-    setTaskLedgerOutputContract(
-      String(runtimeOptions.taskLedgerOutputContract || DEFAULT_MAG_ONE_OUTPUT_CONTRACT),
-    );
     setUseSocietyOfMindConsolidation(runtimeOptions.useSocietyOfMindConsolidation !== false);
     setParentGraphId(String(localConfig?.parent_graph_id || ''));
     setToolsText(Array.isArray(localConfig?.tools) ? localConfig.tools.join('\n') : '');
@@ -855,7 +844,6 @@ export function AgentManager({
       nextRuntimeOptions.maxTurns = typeof maxTurns === 'number' ? maxTurns : null;
       nextRuntimeOptions.maxStalls = typeof maxStalls === 'number' ? maxStalls : null;
       nextRuntimeOptions.finalAnswerPrompt = cleanString(finalAnswerPrompt);
-      nextRuntimeOptions.taskLedgerOutputContract = cleanString(taskLedgerOutputContract);
     } else if (selectedRuntimeType === 'graph_flow') {
       nextRuntimeOptions.useSocietyOfMindConsolidation = useSocietyOfMindConsolidation;
     }
@@ -901,7 +889,7 @@ export function AgentManager({
       setSaveCardStatus('failed');
       setSaveCardErrorMessage(nextMessage);
     }
-  }, [onSaveLocalConfig, saveCardStatus, localConfig?.runtime_options, runtimeOptionsText, provider, modelKey, temperature, maxTokens, selectedRuntimeType, executionMode, swarmMaxWorkers, swarmWorkerPromptTemplate, useSocietyOfMindConsolidation, maxTurns, maxStalls, finalAnswerPrompt, taskLedgerOutputContract, localConfig?.runtime_binding, parentGraphId, promptText, toolsText, knowledgeText, responseFormatText, localConfig?.response_format]);
+  }, [onSaveLocalConfig, saveCardStatus, localConfig?.runtime_options, runtimeOptionsText, provider, modelKey, temperature, maxTokens, selectedRuntimeType, executionMode, swarmMaxWorkers, swarmWorkerPromptTemplate, useSocietyOfMindConsolidation, maxTurns, maxStalls, finalAnswerPrompt, localConfig?.runtime_binding, parentGraphId, promptText, toolsText, knowledgeText, responseFormatText, localConfig?.response_format]);
 
   const saveButtonBusy = saveCardStatus === 'saving';
   const saveButtonDisabled = saveButtonBusy || !onSaveLocalConfig;
@@ -1453,28 +1441,18 @@ export function AgentManager({
     return (
       <div className={formScopeClassName} style={{ display: 'grid', gap: 8 }}>
         <style>{scopedFocusStyles}</style>
-        {/* Ledger = normal Magentic-One Task Ledger behavior (orchestrator default,
-            not edited here). Objects = editable Mag One OWL output contract
-            (runtimeOptions.taskLedgerOutputContract) — the card-owned source of truth. */}
-        <Field label="Ledger">
+        {/* Regular native Mag One keeps its OWN internal Task Ledger. It is never
+            forced into an output contract, exposed as a PlanFlow projection, or
+            gated behind approval — so there is nothing to edit here. */}
+        <Field label="Task Ledger">
           <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 12, lineHeight: 1.5 }}>
-            Standard Magentic-One Task Ledger: team composition, facts, plan, and agent
-            responsibilities. Produced by the orchestrator's default behavior — not edited here.
+            Mag One runs as regular native Magentic-One and keeps its own internal Task
+            Ledger (team composition, facts, plan, agent responsibilities) while it works.
+            It is not forced into an output shape or gated behind approval, so there is
+            nothing to configure here. Mag One receives a Markdown orchestration prompt and
+            returns its result.
           </div>
         </Field>
-        <Field label="Objects">
-          <textarea
-            aria-label="Objects"
-            value={taskLedgerOutputContract}
-            onChange={(event) => setTaskLedgerOutputContract(event.target.value)}
-            rows={12}
-            style={{ ...inputStyle, resize: 'vertical', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11.5 }}
-          />
-        </Field>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          {renderSaveCardButton()}
-        </div>
-        {renderSaveCardFeedback()}
       </div>
     );
   }

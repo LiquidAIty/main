@@ -11,9 +11,8 @@ import { routeCodingTaskToConsole } from '../coder/openclaude/console/consoleTas
 import { codingRunLifecycleService } from '../coder/openclaude/console/codingRunLifecycle';
 import { buildMagOneRoutingDiagnostics, runCardWithContract, runConfiguredCard } from '../cards/runtime';
 import {
-  buildAgentFabricProfile,
-  buildProjectContext,
-  executeVisibleFlow,
+  describeConnectedAgents,
+  runMagOne,
 } from '../coder/openclaude/mcp/liquidAItyAgentFlow';
 import {
   deriveSessionId,
@@ -24,7 +23,6 @@ import {
   appendMessage,
   getConversationMessages,
 } from '../conversations/store';
-import { processThinkGraphPair } from '../services/thinkgraph/processThinkGraphPair';
 import { callPythonAgentMcpTool } from '../services/mcp/pythonAgentMcpClient';
 import {
   applyThinkGraphPatch,
@@ -44,60 +42,24 @@ export const OPENCLAUDE_HARNESS_ROUTE_PREFIX = '/coder/openclaude';
 // MCP SDK (liquidAItyAgentFlow.ts is SDK-free), so they are safe in the Nx serve
 // graph. The separate MCP host process (which DOES use the SDK) bridges MCP tool
 // / resource calls to these endpoints — single authority, no duplicated state.
-router.post('/mcp-bridge/project_context', async (req, res) => {
+router.post('/mcp-bridge/describe_connected_agents', async (req, res) => {
   try {
-    const ctx = await buildProjectContext({
+    const result = await describeConnectedAgents({
       projectId: String(req.body?.projectId || ''),
       deckId: String(req.body?.deckId || ''),
-      selectedCardId: typeof req.body?.selectedCardId === 'string' ? req.body.selectedCardId : undefined,
     });
-    return res.json({ ok: true, projectContext: ctx });
+    return res.json({ ok: true, ...result });
   } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'project_context_failed' });
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'describe_connected_agents_failed' });
   }
 });
 
-router.post('/mcp-bridge/describe_agent_fabric', async (req, res) => {
+router.post('/mcp-bridge/run_mag_one', async (req, res) => {
   try {
-    const profile = await buildAgentFabricProfile({
-      projectId: String(req.body?.projectId || ''),
-      deckId: String(req.body?.deckId || ''),
-      selectedCardId: typeof req.body?.selectedCardId === 'string' ? req.body.selectedCardId : undefined,
-    });
-    return res.json({ ok: true, agentFabricProfile: profile });
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'describe_agent_fabric_failed' });
-  }
-});
-
-router.post('/mcp-bridge/execute_visible_flow', async (req, res) => {
-  try {
-    const result = await executeVisibleFlow(req.body);
+    const result = await runMagOne(req.body);
     return res.json({ ok: result.status !== 'failed', result });
   } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'execute_visible_flow_failed' });
-  }
-});
-
-// ── ThinkGraph post-chat runner bridge (same mcp-bridge family) ─────────────
-// thinkgraph_process_pair: the MCP-facing capability implementation — exact pair
-// references only, no raw prompts/models/cards/patches/task data accepted.
-router.post('/mcp-bridge/thinkgraph_process_pair', async (req, res) => {
-  try {
-    const body = req.body || {};
-    // Structural input contract: exactly these six references (extra keys rejected
-    // inside processThinkGraphPair as overrides).
-    const result = await processThinkGraphPair({
-      projectId: String(body.projectId || ''),
-      deckId: String(body.deckId || BUILDER_DECK_ID),
-      conversationId: String(body.conversationId || ''),
-      userMessageId: String(body.userMessageId || ''),
-      assistantMessageId: String(body.assistantMessageId || ''),
-      correlationId: String(body.correlationId || ''),
-    });
-    return res.json({ ok: result.status !== 'failed', result });
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'thinkgraph_process_pair_failed' });
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'run_mag_one_failed' });
   }
 });
 

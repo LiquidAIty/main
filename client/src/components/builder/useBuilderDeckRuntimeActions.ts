@@ -411,7 +411,7 @@ export function useBuilderDeckRuntimeActions({
 
   const handleRunDeck = useCallback(async (
     overrideInput?: string,
-    options?: { propagateError?: boolean; missionSpec?: any; runApproved?: boolean },
+    options?: { propagateError?: boolean },
   ): Promise<DeckRunExecutionOutcome> => {
     const activeInput = typeof overrideInput === "string" ? overrideInput : deckRunInput;
 
@@ -474,8 +474,6 @@ export function useBuilderDeckRuntimeActions({
           input: activeInput,
           workspaceContext,
           workspaceObjectContext,
-          missionSpec: options?.missionSpec,
-          runApproved: options?.runApproved === true,
         },
         signal: controller.signal,
         onEvent: (event) => {

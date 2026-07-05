@@ -147,8 +147,8 @@ export async function resolveCardDoorwayDefinitions(
 
 /**
  * Structural resolution from persisted deck nodes: exactly ONE card whose
- * runtimeBinding classifies as 'main_chat' — the same structural pattern
- * resolveThinkGraphCardFromDeck already uses, never display-name matching.
+ * runtimeBinding classifies as 'main_chat', by persisted binding — never
+ * display-name matching.
  */
 function resolveMainChatCardFromDeck(nodes: any[]): { ok: true; card: any } | { ok: false } {
   const matches = (nodes || []).filter(

@@ -330,28 +330,17 @@ export type PythonAutoGenPayloadShape = {
   userText: string;
   priorAssistantText: string;
   systemPrompt: string;
-  // Structured Run Task approval. Chat submit is planning only (false) and the
-  // Python rails halts after the Task Ledger; the explicit Run Task action
-  // sets this true to resume into the Progress Ledger phase. No magic userText
-  // command is ever used as runtime state.
-  runApproved?: boolean;
   plan?: Record<string, any>;
   thinkGraph?: Record<string, any>;
   knowGraph?: Record<string, any>;
-  // Read-only graph grounding for Task Ledger generation: accepted ThinkGraph facts (+
-  // optional skills/files) the model should ground tasks in. Additive to graphPayload.
-  taskLedgerGroundingContext?: Record<string, any>;
   blackboard?: Record<string, any>;
   workspaceObjectContext?: Record<string, any>;
   routingManifest?: MagOneRoutingManifest;
-  codingWorkflowPacket?: MagOneCodingWorkflowPacket;
   cardRuntime: {
     cardId: string;
     title: string;
     runtimeType: string;
     prompt: string;
-    // Card prompt-chain step 4: Mag One OWL output contract (model-produced task objects).
-    taskLedgerOutputContract?: string;
     runtimeOptions: Record<string, any>;
     graph: RuntimeGraph;
     participants: any[];

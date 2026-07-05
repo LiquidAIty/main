@@ -43,10 +43,8 @@ export type ThinkGraphViewNode = {
   mentionCount: number;
   lastMentionedAt?: string;
   provenanceCount: number;
-  // Direct stored provenance (SPEC: projection must prove pair/card/run identity).
+  // Direct stored provenance (card-run identity: conversation / card / run).
   conversationId?: string;
-  userMessageId?: string;
-  assistantMessageId?: string;
   cardId?: string;
   correlationId?: string;
   updatedAt?: string;
@@ -96,8 +94,7 @@ export async function getThinkGraphView(args: { projectId: string; limit?: numbe
      RETURN { id: n.id, label: n.label, kind: n.kind, turn_id: n.last_turn_id,
               properties: n.properties, mention_count: n.mention_count,
               last_mentioned_at: n.last_mentioned_at,
-              conversation_id: n.conversation_id, user_message_id: n.source_user_message_id,
-              assistant_message_id: n.source_assistant_message_id, card_id: n.card_id,
+              conversation_id: n.conversation_id, card_id: n.card_id,
               correlation_id: n.correlation_id, updated_at: n.updated_at } AS row
      ORDER BY n.updated_at DESC LIMIT ${limit}`,
     { projectId },
@@ -109,8 +106,7 @@ export async function getThinkGraphView(args: { projectId: string; limit?: numbe
               review: st.review, rationale: st.rationale, tag: st.tag, turn_id: st.turn_id,
               properties: st.properties, mention_count: st.mention_count,
               last_mentioned_at: st.last_mentioned_at,
-              conversation_id: st.conversation_id, user_message_id: st.source_user_message_id,
-              assistant_message_id: st.source_assistant_message_id, card_id: st.card_id,
+              conversation_id: st.conversation_id, card_id: st.card_id,
               correlation_id: st.correlation_id, updated_at: st.updated_at } AS row
      ORDER BY st.updated_at DESC LIMIT 500`,
     { projectId },
@@ -124,8 +120,6 @@ export async function getThinkGraphView(args: { projectId: string; limit?: numbe
 
   const provenanceOf = (r: Record<string, any>) => ({
     conversationId: s(r.conversation_id) || undefined,
-    userMessageId: s(r.user_message_id) || undefined,
-    assistantMessageId: s(r.assistant_message_id) || undefined,
     cardId: s(r.card_id) || undefined,
     correlationId: s(r.correlation_id) || undefined,
     updatedAt: s(r.updated_at) || undefined,
@@ -231,18 +225,15 @@ const PROPERTY_VALUE_MAX_LEN = 200;
 // outright; any other free-text review value is accepted as-is.
 const REVIEW_REQUIRES_REAL_EVIDENCE = ['source_linked', 'supported', 'evidenced', 'verified'];
 
-// userMessageId/assistantMessageId are optional: present for a completed-pair
-// caller (real persisted message ids) and absent for a live in-progress
-// OpenClaude turn, which has no completed pair yet. correlationId is always
-// required and is real, trusted, per-call provenance either way — a live
-// caller must never fabricate message ids merely to satisfy this shape.
+// Direct configured-card-run authority: the trusted identity of a live
+// ThinkGraph card run, authored server-side (never by the model) from the
+// run's projectId/cardId/correlationId/conversationId. There is no
+// user/assistant message-pair identity — that obsolete system was removed.
 export type ThinkGraphPatchAuthority = {
   projectId: string;
   cardId: string;
   correlationId: string;
   conversationId: string;
-  userMessageId?: string;
-  assistantMessageId?: string;
 };
 
 export type ThinkGraphProperties = Record<string, string | number | boolean>;
@@ -384,8 +375,6 @@ export async function applyThinkGraphPatch(
     cardId: s(authority.cardId).trim(),
     correlationId,
     conversationId: s(authority.conversationId).trim(),
-    userMessageId: s(authority.userMessageId).trim(),
-    assistantMessageId: s(authority.assistantMessageId).trim(),
     ts,
   };
 
@@ -474,8 +463,6 @@ export async function applyThinkGraphPatch(
              n.last_turn_id = $correlationId,
              n.card_id = $cardId, n.correlation_id = $correlationId,
              n.conversation_id = $conversationId,
-             n.source_user_message_id = $userMessageId,
-             n.source_assistant_message_id = $assistantMessageId,
              n.created_at = coalesce(n.created_at, $ts), n.updated_at = $ts
          RETURN n.id`,
         {
@@ -540,8 +527,6 @@ export async function applyThinkGraphPatch(
              n.mentioned_correlation_ids = $mentionedIds, n.last_mentioned_at = $lastMentionedAt,
              n.card_id = $cardId, n.correlation_id = $correlationId,
              n.conversation_id = $conversationId,
-             n.source_user_message_id = $userMessageId,
-             n.source_assistant_message_id = $assistantMessageId,
              n.updated_at = $ts
          RETURN n.id`,
         {
@@ -593,8 +578,6 @@ export async function applyThinkGraphPatch(
              s.turn_id = $correlationId,
              s.card_id = $cardId, s.correlation_id = $correlationId,
              s.conversation_id = $conversationId,
-             s.source_user_message_id = $userMessageId,
-             s.source_assistant_message_id = $assistantMessageId,
              s.created_at = coalesce(s.created_at, $ts), s.updated_at = $ts
          RETURN s.id`,
         {
@@ -611,9 +594,7 @@ export async function applyThinkGraphPatch(
     await cypherOnClient(
       client,
       `CREATE (m:ThinkDeltaApplied {project_id: $projectId, correlation_id: $correlationId,
-               card_id: $cardId, conversation_id: $conversationId,
-               source_user_message_id: $userMessageId, source_assistant_message_id: $assistantMessageId,
-               ts: $ts})
+               card_id: $cardId, conversation_id: $conversationId, ts: $ts})
        RETURN m.correlation_id`,
       prov,
     );

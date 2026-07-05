@@ -164,11 +164,13 @@ describe('Canonical Cards Runtime', () => {
     expect((payload as any).progress_ledger).toBeUndefined();
   });
 
-  it('injects no graph grounding into native reasoning (no directive, no payload field)', () => {
+  it('injects no graph grounding or task-ledger output contract into native reasoning', () => {
     const cardM = {
       id: 'mag1',
       runtimeType: 'magentic_one',
       prompt: 'sys',
+      // Even a stored taskLedgerOutputContract is now ignored — the forced
+      // task-ledger exposure / PlanFlow output contract was removed.
       runtimeOptions: { taskLedgerOutputContract: 'produce an OWL-shaped graphPayload.' },
     };
     const cardA = { id: 'agentA', runtimeType: 'assistant_agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
@@ -182,9 +184,10 @@ describe('Canonical Cards Runtime', () => {
     expect(payload.systemPrompt).toBe('sys');
     expect(payload.systemPrompt).not.toContain('graphGroundingContext');
     expect(payload.systemPrompt).not.toMatch(/READ it before creating tasks/i);
-    // A user-authored card output contract is still transported verbatim (only the
-    // automatic default injection was removed elsewhere).
-    expect(payload.cardRuntime.taskLedgerOutputContract).toContain('graphPayload');
+    // The forced task-ledger output contract is gone from the payload entirely.
+    expect((payload.cardRuntime as any).taskLedgerOutputContract).toBeUndefined();
+    // No approval gate rides the payload.
+    expect((payload as any).runApproved).toBeUndefined();
   });
 
   it('routing diagnostics use current bus edges and ignore stale research-shaped flow topology', () => {

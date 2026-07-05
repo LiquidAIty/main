@@ -56,8 +56,6 @@ export async function executeDeck(document: any, templates: any[], options: any 
         allTemplates: templates,
         previousOutput: options.input || '',
         workspaceObjectContext: options.workspaceObjectContext,
-        // Structured Run Task approval threaded from the deck-run request.
-        runApproved: Boolean(options.runApproved),
       });
 
       cardResults[mainMagenticCard.id] = result;

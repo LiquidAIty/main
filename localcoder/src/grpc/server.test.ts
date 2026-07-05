@@ -9,18 +9,15 @@ import {
 import { resolveAgentTools } from '../tools/AgentTool/agentToolUtils.js'
 
 // No Node .mjs host, no mcp__liquidaity__ bare-to-qualified mapping, no aliases.
-// The saved card must already grant the exact real tool names the live Python
-// MCP pool uses — this function is a straight pass-through, nothing more.
-test('buildAgentDefinitionsFromRequest passes the saved card tool grants through unchanged', () => {
+// A card doorway definition grants exactly the one card-run control tool — this
+// function is a straight pass-through of whatever grants it is handed, nothing more.
+test('buildAgentDefinitionsFromRequest passes the doorway tool grant through unchanged', () => {
   const req = {
     agent_definitions: [
       {
         agent_type: 'card_thinkgraph_agent',
-        system_prompt: 'Read and write the ThinkGraph.',
-        allowed_tools: [
-          'mcp__liquidaity__thinkgraph_get_graph_slice',
-          'mcp__liquidaity__thinkgraph_apply_live_patch',
-        ],
+        system_prompt: 'Run the bound ThinkGraph card.',
+        allowed_tools: ['mcp__liquidaity__card_run_assistant_agent'],
         context_mode_inherit_parent: true,
       },
     ],
@@ -28,10 +25,7 @@ test('buildAgentDefinitionsFromRequest passes the saved card tool grants through
 
   const [definition] = buildAgentDefinitionsFromRequest(req)
 
-  assert.deepEqual(definition.tools, [
-    'mcp__liquidaity__thinkgraph_get_graph_slice',
-    'mcp__liquidaity__thinkgraph_apply_live_patch',
-  ])
+  assert.deepEqual(definition.tools, ['mcp__liquidaity__card_run_assistant_agent'])
   assert.equal(definition.contextMode, 'inherit_parent')
 })
 
@@ -52,12 +46,13 @@ test('buildAgentDefinitionsFromRequest never invents or rewrites a tool name', (
 })
 
 // Fail-closed startup validation: the fetched Python MCP pool must actually
-// contain the control-surface tools the merged card architecture depends on —
-// a card grant in deck data is never treated as executable on its own.
+// contain the control-surface tools the card architecture depends on — the
+// card-run doorway tool and the bounded READ-ONLY ThinkGraph slice. There is
+// NO model-facing write tool to require. A card grant in deck data is never
+// treated as executable on its own.
 const REQUIRED_CONTROL_TOOLS = [
   'mcp__liquidaity__card_run_assistant_agent',
   'mcp__liquidaity__thinkgraph_get_graph_slice',
-  'mcp__liquidaity__thinkgraph_apply_live_patch',
 ]
 
 test('missingRequiredThinkGraphTools passes only when the real qualified control tools are fetched', () => {
@@ -67,21 +62,20 @@ test('missingRequiredThinkGraphTools passes only when the real qualified control
   )
 })
 
+test('missingRequiredThinkGraphTools never requires a model-facing graph-write tool', () => {
+  // A pool with only the read + doorway tools (no apply_live_patch anywhere) is
+  // complete — the write tool was removed from the model-facing surface.
+  assert.deepEqual(missingRequiredThinkGraphTools(REQUIRED_CONTROL_TOOLS), [])
+})
+
 test('missingRequiredThinkGraphTools reports each absent tool exactly', () => {
   assert.deepEqual(
     missingRequiredThinkGraphTools(['mcp__liquidaity__thinkgraph_get_graph_slice']),
-    [
-      'mcp__liquidaity__card_run_assistant_agent',
-      'mcp__liquidaity__thinkgraph_apply_live_patch',
-    ],
+    ['mcp__liquidaity__card_run_assistant_agent'],
   )
   // Old bare names are NOT the real pool names — no alias, no translation.
   assert.deepEqual(
-    missingRequiredThinkGraphTools([
-      'card.run_assistant_agent',
-      'thinkgraph.get_graph_slice',
-      'thinkgraph.apply_live_patch',
-    ]),
+    missingRequiredThinkGraphTools(['card.run_assistant_agent', 'thinkgraph.get_graph_slice']),
     REQUIRED_CONTROL_TOOLS,
   )
 })
@@ -149,37 +143,31 @@ function fakeMcpTool(name: string) {
   return { name, isMcp: true } as any
 }
 
-test('card grants resolve into usable child tools only from the real loaded pool', () => {
+test('the doorway grant resolves into a usable child tool only from the real loaded pool', () => {
   const [definition] = buildAgentDefinitionsFromRequest({
     agent_definitions: [
       {
         agent_type: 'card_thinkgraph_agent',
-        system_prompt: 'Read and write the ThinkGraph.',
-        allowed_tools: [
-          'mcp__liquidaity__thinkgraph_get_graph_slice',
-          'mcp__liquidaity__thinkgraph_apply_live_patch',
-        ],
+        system_prompt: 'Run the bound ThinkGraph card.',
+        allowed_tools: ['mcp__liquidaity__card_run_assistant_agent'],
       },
     ],
   })
 
   const loadedPool = [
+    fakeMcpTool('mcp__liquidaity__card_run_assistant_agent'),
     fakeMcpTool('mcp__liquidaity__thinkgraph_get_graph_slice'),
-    fakeMcpTool('mcp__liquidaity__thinkgraph_apply_live_patch'),
     fakeMcpTool('mcp__liquidaity__canvas_inspect'),
   ]
   const resolved = resolveAgentTools(definition, loadedPool)
   assert.deepEqual(
-    resolved.resolvedTools.map(t => t.name).sort(),
-    [
-      'mcp__liquidaity__thinkgraph_apply_live_patch',
-      'mcp__liquidaity__thinkgraph_get_graph_slice',
-    ],
+    resolved.resolvedTools.map(t => t.name),
+    ['mcp__liquidaity__card_run_assistant_agent'],
   )
   assert.deepEqual(resolved.invalidTools, [])
 
-  // Empty pool (AppState.mcp.tools not populated) → both grants unresolvable.
+  // Empty pool (AppState.mcp.tools not populated) → the grant is unresolvable.
   const unresolved = resolveAgentTools(definition, [])
   assert.deepEqual(unresolved.resolvedTools, [])
-  assert.equal(unresolved.invalidTools.length, 2)
+  assert.equal(unresolved.invalidTools.length, 1)
 })

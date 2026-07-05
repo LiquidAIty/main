@@ -215,8 +215,6 @@ router.post('/:projectId/decks/:deckId/run', async (req, res) => {
           projectId: req.params.projectId,
           workspaceContext: req.body?.workspaceContext,
           workspaceObjectContext: req.body?.workspaceObjectContext,
-          // Structured Run Task approval gate (no magic userText command).
-          runApproved: req.body?.runApproved === true,
           missionSpec,
           missionRunId,
           missionAgentRunId,

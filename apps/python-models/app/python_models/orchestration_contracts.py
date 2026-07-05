@@ -197,10 +197,6 @@ class CardRuntimeConfig(BaseModel):
         "assistant_agent",
     ]
     prompt: str = ""
-    # Card prompt-chain step 4: PlanFlow output contract. When present, the rails
-    # makes ONE explicit model call after the real Magentic-One run so the task
-    # objects are model-produced — never parsed from prose. Empty -> no task call.
-    taskLedgerOutputContract: str = ""
     runtimeOptions: dict = Field(default_factory=dict)
     assistant: dict | None = None
     magentic: dict | None = None
@@ -442,11 +438,6 @@ class ContextPack(BaseModel):
     routingManifest: dict | None = None
     codingWorkflowPacket: dict | None = None
     cardRuntime: CardRuntimeConfig | None = None
-    # Structured Run Task approval gate. Chat submit is planning only
-    # (runApproved=False) and halts after the Task Ledger; the explicit Run Task
-    # action sets this True to resume into the Progress Ledger phase. This is the
-    # only execution signal — no magic userText command is used as runtime state.
-    runApproved: bool = False
 
 
 class AssistantResponseReport(BaseModel):
@@ -509,18 +500,7 @@ class LedgerTrace(BaseModel):
     promptConstants: list[str] = Field(default_factory=list)
 
     canvasTeamCompiled: bool = False
-    taskLedgerFactsPromptUsed: bool = False
-    taskLedgerPlanPromptUsed: bool = False
-    taskLedgerFullPromptUsed: bool = False
     taskLedgerProduced: bool = False
-    planCanvasProjected: bool = False
-
-    runTaskClicked: bool = False
-    progressLedgerStarted: bool = False
-    progressLedgerPromptUsed: bool = False
-    agentCanvasProjected: bool = False
-
-    noExecutionBeforeRunTask: bool = False
     blocker: str | None = None
 
 

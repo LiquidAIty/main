@@ -20,8 +20,6 @@ const AUTHORITY: ThinkGraphPatchAuthority = {
   cardId: 'card_thinkgraph_agent',
   correlationId: `tg:test-corr-${Date.now()}`,
   conversationId: 'main',
-  userMessageId: 'msg_test_user',
-  assistantMessageId: 'msg_test_assistant',
 };
 
 const PATCH = {
@@ -60,17 +58,14 @@ describe('validateThinkGraphPatch — structural/ownership only', () => {
     expect(validateThinkGraphPatch({ ...AUTHORITY, correlationId: '' }, PATCH)).toContain('patch_authority_correlationId_missing');
     expect(validateThinkGraphPatch({ ...AUTHORITY, conversationId: '' }, PATCH)).toContain('patch_authority_conversationId_missing');
   });
-  it('accepts a truthful live-turn authority with no userMessageId/assistantMessageId (a live OpenClaude turn has no completed pair yet)', () => {
-    const liveAuthority: ThinkGraphPatchAuthority = {
+  it('accepts a truthful direct card-run authority (projectId/cardId/correlationId/conversationId only — no message-pair identity exists)', () => {
+    const cardRunAuthority: ThinkGraphPatchAuthority = {
       projectId: AUTHORITY.projectId,
-      cardId: 'openclaude_parent_live',
-      correlationId: `tg:live-corr-${Date.now()}`,
-      conversationId: 'live-openclaude-parent',
+      cardId: 'card_thinkgraph_agent',
+      correlationId: `tg:card-run-corr-${Date.now()}`,
+      conversationId: 'main',
     };
-    expect(validateThinkGraphPatch(liveAuthority, PATCH)).toBeNull();
-  });
-  it('still accepts a completed-pair authority carrying real persisted userMessageId/assistantMessageId', () => {
-    expect(validateThinkGraphPatch(AUTHORITY, PATCH)).toBeNull();
+    expect(validateThinkGraphPatch(cardRunAuthority, PATCH)).toBeNull();
   });
   it('rejects self-pair relations and unlabeled resources', () => {
     expect(validateThinkGraphPatch(AUTHORITY, { relations: [{ a: 'x', b: 'x' }] })).toContain('self_pair');
@@ -126,7 +121,7 @@ describe('applyThinkGraphPatch — one real AGE transaction + idempotency + proj
     expect(view.nodes).toHaveLength(0);
   });
 
-  it('valid patch persists exactly once with full pair/card/run provenance', async () => {
+  it('valid patch persists exactly once with card/run provenance', async () => {
     const applied = await applyThinkGraphPatch(AUTHORITY, PATCH);
     expect(applied.ok).toBe(true);
     if (applied.ok) {
@@ -136,12 +131,10 @@ describe('applyThinkGraphPatch — one real AGE transaction + idempotency + proj
       expect(applied.relationCount).toBe(1);
     }
 
-    // Projection exposes the REAL stored records + direct provenance.
+    // Projection exposes the REAL stored records + direct card-run provenance.
     const view = await getThinkGraphView({ projectId: PROJECT });
     const alpha = view.nodes.find((n) => n.id === 'think:test:alpha');
     expect(alpha).toBeDefined();
-    expect(alpha!.userMessageId).toBe('msg_test_user');
-    expect(alpha!.assistantMessageId).toBe('msg_test_assistant');
     expect(alpha!.cardId).toBe('card_thinkgraph_agent');
     expect(alpha!.correlationId).toBe(AUTHORITY.correlationId);
     expect(alpha!.conversationId).toBe('main');

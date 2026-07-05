@@ -583,7 +583,7 @@ def _post_backend_json_sync(path: str, payload: dict[str, Any]) -> str:
 
 def _require_thinkgraph_authority() -> dict[str, str] | None:
     authority = THINKGRAPH_RUN_AUTHORITY.get()
-    if not authority or authority.get("kind") != "thinkgraph_pair":
+    if not authority or authority.get("kind") != "thinkgraph_card_run":
         return None
     return authority
 

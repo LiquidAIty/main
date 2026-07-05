@@ -28,8 +28,6 @@ export type AutoGenOrchestratorRequest = {
   userText: string;
   priorAssistantText?: string;
   systemPrompt?: string;
-  // Structured Run Task approval gate; chat submit is planning only (false).
-  runApproved?: boolean;
   blackboard?: Record<string, unknown>;
   plan?: Record<string, unknown>;
   thinkGraph?: Record<string, unknown>;
@@ -47,16 +45,7 @@ export type LedgerTrace = {
   referenceMethods?: string[];
   promptConstants?: string[];
   canvasTeamCompiled?: boolean;
-  taskLedgerFactsPromptUsed?: boolean;
-  taskLedgerPlanPromptUsed?: boolean;
-  taskLedgerFullPromptUsed?: boolean;
   taskLedgerProduced?: boolean;
-  planCanvasProjected?: boolean;
-  runTaskClicked?: boolean;
-  progressLedgerStarted?: boolean;
-  progressLedgerPromptUsed?: boolean;
-  agentCanvasProjected?: boolean;
-  noExecutionBeforeRunTask?: boolean;
   blocker?: string | null;
 };
 

@@ -147,15 +147,15 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(result.error).toContain('PYTHON_AUTOGEN_RAILS_UNAVAILABLE');
   });
 
-  it('mints thinkgraph_pair authority in the ONE executor for a thinkgraph-bound card with a real conversation', async () => {
+  it('mints truthful thinkgraph_card_run authority in the ONE executor for a thinkgraph-bound card with a real conversation', async () => {
     mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
     mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'ok' });
     await runConfiguredCard({ ...ARGS, conversationId: 'conv-7' });
     const payload = mockRunCard.mock.calls[0][0];
+    // Exactly the four trusted runtime values — no deckId, no message-pair identity.
     expect(payload.cardRuntime.runtimeScope).toEqual({
-      kind: 'thinkgraph_pair',
+      kind: 'thinkgraph_card_run',
       projectId: 'proj-1',
-      deckId: 'deck_builder',
       cardId: 'card_thinkgraph_agent',
       correlationId: 'corr-123',
       conversationId: 'conv-7',
@@ -183,22 +183,19 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(payload.cardRuntime.runtimeScope).toBeUndefined();
   });
 
-  it('an explicit caller runAuthority (the completed-pair path) always wins untouched', async () => {
+  it('an explicit caller runAuthority always wins untouched (never overwritten by the minted default)', async () => {
     mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
     mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'ok' });
-    const pairAuthority = {
-      kind: 'thinkgraph_pair',
+    const explicitAuthority = {
+      kind: 'thinkgraph_card_run',
       projectId: 'proj-1',
-      deckId: 'deck_builder',
       cardId: 'card_thinkgraph_agent',
       correlationId: 'corr-123',
       conversationId: 'conv-7',
-      userMessageId: 'um-1',
-      assistantMessageId: 'am-1',
     };
-    await runConfiguredCard({ ...ARGS, conversationId: 'conv-OTHER', runAuthority: pairAuthority });
+    await runConfiguredCard({ ...ARGS, conversationId: 'conv-OTHER', runAuthority: explicitAuthority });
     const payload = mockRunCard.mock.calls[0][0];
-    expect(payload.cardRuntime.runtimeScope).toEqual(pairAuthority);
+    expect(payload.cardRuntime.runtimeScope).toEqual(explicitAuthority);
   });
 });
 

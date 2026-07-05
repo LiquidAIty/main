@@ -56,17 +56,27 @@ class TestBackendHarnessMcpClientWall:
         for forbidden in ("from '../../db", "thinkGraphStore", "runCypherOnGraph", "neo4j", "pg'"):
             assert forbidden not in source, f"mcp client gained direct capability: {forbidden}"
 
-    def test_chat_front_door_never_reintroduces_the_detached_post_chat_pair_processor(self):
-        # The automatic post-chat pair handoff was removed as obsolete (commit
-        # "remove automatic post-chat ThinkGraph pair handoff"). Live ThinkGraph
-        # writes now happen in-turn through the native Agent -> Python MCP
-        # thinkgraph.apply_live_patch path, not as a detached after-the-fact call
-        # from the chat route. Neither the old MCP-front-door call nor a direct
-        # bypass call may reappear here.
+    def test_chat_route_never_reintroduces_the_obsolete_pair_processor(self):
+        # The user/assistant pair architecture was DELETED. Live ThinkGraph writes
+        # happen only inside a real configured ThinkGraph card run reached through
+        # the native doorway (card.run_assistant_agent -> runConfiguredCard). No
+        # pair processor, no pair front door, no direct pair bypass may reappear
+        # anywhere in the chat route.
         source = _read("apps/backend/src/routes/coder.routes.ts")
-        chat_route = source.split("'/openclaude/session/chat'", 1)[1].split("'/openclaude/session/answer'", 1)[0]
-        assert "callPythonAgentMcpTool('thinkgraph.process_conversation_pair'" not in chat_route
-        assert "processThinkGraphPair(" not in chat_route  # direct call would bypass MCP
+        for forbidden in (
+            "processThinkGraphPair",
+            "process_conversation_pair",
+            "thinkgraph_process_pair",
+        ):
+            assert forbidden not in source, f"pair architecture reappeared in coder.routes.ts: {forbidden}"
+
+    def test_pair_processor_module_is_deleted(self):
+        # The obsolete module and its spec must not exist on disk.
+        for relative in (
+            "apps/backend/src/services/thinkgraph/processThinkGraphPair.ts",
+            "apps/backend/src/services/thinkgraph/processThinkGraphPair.spec.ts",
+        ):
+            assert not (REPO_ROOT / relative).exists(), f"pair module still present: {relative}"
 
 
 class TestPythonMcpHostIsThin:
@@ -75,29 +85,29 @@ class TestPythonMcpHostIsThin:
         for forbidden in ("import psycopg", "import neo4j", "from psycopg", "from neo4j", "ag_catalog"):
             assert forbidden not in source, f"mcp host gained direct dependency: {forbidden}"
 
-    def test_host_never_exposes_the_old_pair_only_write_names(self):
-        # The obsolete pair-only ("post-chat batch") write shape must never come
-        # back under its old bare names. No task ledger authority either.
+    def test_host_never_exposes_a_model_facing_graph_write_or_pair_tool(self):
+        # There is NO model-facing graph-write tool and NO pair front door on the
+        # host. Live writes happen only inside a configured ThinkGraph card run
+        # via the card's own scoped apply_thinkgraph_patch (not a host tool).
         source = _read("apps/python-models/app/mcp_host.py")
-        assert 'name="apply_thinkgraph_patch"' not in source
-        assert 'name="read_thinkgraph_scope"' not in source
-        assert "taskLedgerArtifact" not in source
+        for forbidden in (
+            'name="thinkgraph.apply_live_patch"',
+            'name="apply_thinkgraph_patch"',
+            'name="read_thinkgraph_scope"',
+            'name="thinkgraph.process_conversation_pair"',
+            "thinkgraph_live_agent_turn",
+            "_validate_live_authority",
+            "_apply_live_patch",
+            "taskLedgerArtifact",
+        ):
+            assert forbidden not in source, f"host regressed: {forbidden}"
 
-    def test_host_exposes_exactly_one_scoped_live_write_tool(self):
-        # Replaces the old "no graph write tool at all" law: live, in-turn,
-        # model-directed ThinkGraph writes are now sanctioned through exactly
-        # ONE narrowly-scoped tool, gated by the thinkgraph_live_agent_turn
-        # authority (never a completed-pair identity, never model-suppliable).
+    def test_host_exposes_the_control_and_read_surface_only(self):
+        # The model-facing surface is the card-run doorway + the bounded
+        # READ-ONLY graph slice. The write tool is gone.
         source = _read("apps/python-models/app/mcp_host.py")
-        assert 'name="thinkgraph.apply_live_patch"' in source
-        assert "thinkgraph_live_agent_turn" in source
-        assert "_validate_live_authority" in source
-        # The model's own advertised schema for this tool must never invite it
-        # to supply its own identity/authority.
-        marker = source.index('name="thinkgraph.apply_live_patch"')
-        schema_block = source[marker:source.index("inputSchema", marker) + 400]
-        for forbidden in ("userMessageId", "assistantMessageId", "issuedAt", "expiresAt", "liveTurnId", "agentRunId"):
-            assert forbidden not in schema_block
+        assert 'name="card.run_assistant_agent"' in source
+        assert 'name="thinkgraph.get_graph_slice"' in source
 
 
 class TestNoMarkdownRuntimeSkills:

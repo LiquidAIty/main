@@ -84,10 +84,6 @@ export type AgentCardRuntimeOptions = {
   localCoderMode?: 'headless' | 'terminal' | null;
   localCoderAccess?: 'read' | 'patch' | 'test' | null;
   tools?: string[] | null;
-  /** Magentic-One card prompt-chain step 4: the editable Mag One OWL output contract
-   *  (the graphPayload shape). Source of truth for the card's output contract — the
-   *  backend/Python only transport/consume it, never author it. */
-  taskLedgerOutputContract?: string | null;
 };
 
 export type DeckNodeKind = 'agent';

@@ -143,8 +143,9 @@ export function buildMagOneRoutingDiagnostics(
   const selectedExecutionPath = selectedCards.map((card) =>
     routingAgent(card, 'eligible current bus participant available to the planning orchestrator'),
   );
-  const missingRequiredAgents: string[] = [];
 
+  // Pure description of bus eligibility — no gate. Every eligible bus-connected
+  // agent is carried to native Mag One, which selects among them itself.
   return {
     projectId: String(context.projectId || ''),
     deckId: String(context.deckId || ''),
@@ -160,11 +161,8 @@ export function buildMagOneRoutingDiagnostics(
     disconnectedAgentsIgnored: canvasRuntimeCards
       .filter((card) => !eligibleIds.has(String(card.id)))
       .map((card) => routingAgent(card, 'ignored because the card is disconnected from the current Magentic bus')),
-    missingRequiredAgents,
-    blockedReason:
-      missingRequiredAgents.length > 0
-        ? `MAGONE_CODER_CONSOLE_BLOCKED_PARTICIPANT_GATE: missing=${missingRequiredAgents.join(', ')}`
-        : null,
+    missingRequiredAgents: [],
+    blockedReason: null,
   };
 }
 
@@ -492,7 +490,6 @@ export function buildPythonAutoGenCardRuntimePayload(
   modelConfig: any,
   callableHeads: any[],
   startedAt: string,
-  graphContextPacket?: any,
 ): PythonAutoGenPayloadShape {
   const sessionId = `${context.deckId || 'deck'}:${card.id}:${Date.now()}`;
   const turnId = `${card.id}:${Date.now()}`;
@@ -517,12 +514,6 @@ export function buildPythonAutoGenCardRuntimePayload(
   // System prompt = the card's own explicit prompt only. No backend-authored global
   // persona and no runtime graph-grounding prose is injected into native reasoning.
   const systemPrompt = String(card.prompt || '').trim();
-  // Mag One OWL output contract: read from the Magentic-One card config only.
-  // The backend never authors this — it transports whatever the editable card
-  // field (runtimeOptions.taskLedgerOutputContract) carries; empty -> no task pass.
-  const taskLedgerOutputContract = String(
-    card.runtimeOptions?.taskLedgerOutputContract || '',
-  ).trim();
 
   const participants = supportedHeads.map((head) =>
     serializeCardParticipant(head, context.allCards || []),
@@ -573,10 +564,6 @@ export function buildPythonAutoGenCardRuntimePayload(
     userText: runtimeInput,
     priorAssistantText,
     systemPrompt,
-    // Structured Run Task gate (no magic userText command). True only when the
-    // explicit Run Task action ran the deck; chat submit leaves it false and the
-    // Python rails halts after the Task Ledger.
-    runApproved: Boolean((context as any)?.runApproved),
     plan: undefined,
     thinkGraph: undefined,
     knowGraph: undefined,
@@ -593,9 +580,6 @@ export function buildPythonAutoGenCardRuntimePayload(
       title: String(card.title || 'Magentic Agent'),
       runtimeType: 'magentic_one',
       prompt: systemPrompt,
-      // Card prompt-chain step 4: Mag One OWL output contract, read from the editable
-      // Magentic-One card config above (transport only — never backend-authored).
-      taskLedgerOutputContract,
       runtimeOptions: safeRuntimeOptions,
       graph: runtimeGraph,
       participants,
@@ -747,9 +731,11 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       ? args.runAuthority
       : card.runtimeBinding === 'thinkgraph_agent' && conversationId
         ? {
-            kind: 'thinkgraph_pair',
+            // Direct configured-card-run authority — describes what it actually
+            // is (a live ThinkGraph card run), never a user/assistant pair. Only
+            // trusted runtime values; no message-pair identity exists.
+            kind: 'thinkgraph_card_run',
             projectId,
-            deckId,
             cardId,
             correlationId,
             conversationId,
@@ -925,19 +911,12 @@ export async function runCardWithContract(
   
   if (resolveCardRuntimeType(card) === 'magentic_one') {
     const callableHeads = resolvedMagenticOptions(card.id, context.allCards || [], context.allEdges || []);
-    const routingDiagnostics = buildMagOneRoutingDiagnostics(
-      card,
-      context.allCards || [],
-      context.allEdges || [],
-      input,
-      { projectId: context.projectId, deckId: context.deckId },
-    );
     const mode = String((card.runtimeOptions as any)?.mode || process.env.AGENT_DISCOVERY_MODE || 'locked_research_runtime').trim();
     const isDiscoveryMode = mode === 'discovery_proposal';
 
-    if (routingDiagnostics.blockedReason) {
-      throw new Error(routingDiagnostics.blockedReason);
-    }
+    // Bus eligibility is the only requirement: native Mag One needs at least one
+    // connected worker on the magentic_option bus. No approval gate, no
+    // participant-gate — that poison was removed.
     if (!isDiscoveryMode && callableHeads.length === 0) {
       throw new Error('magentic_runtime_no_current_bus_connected_participants');
     }

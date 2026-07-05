@@ -5181,16 +5181,6 @@ export default function AgentBuilder(): React.ReactElement {
     }, 100);
   };
 
-  const handleRunTask = useCallback(async () => {
-    if (deckRunBusy) return;
-
-    // Run Task must resume from approved task nodes / Progress Ledger state, not
-    // raw autogenMessages or chat text. That execution contract is not wired yet,
-    // so fail closed instead of sending the wrong hidden payload.
-    setDeckStatusMessage('Run Task unavailable: approved task-node execution is not wired yet.');
-    return;
-  }, [deckRunBusy, setDeckStatusMessage]);
-
   const objectDrawerRole = useMemo<'agent' | null>(() => {
     if (workspaceView === 'canvas' && selectedCard) return 'agent';
     return null;

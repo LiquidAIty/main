@@ -7,16 +7,13 @@ MCP client for the server's lifetime — before any chat work is accepted. No
 env vars, no .env, no per-turn spawn, no fallback host.
 
 Exposes exactly this tool surface:
-  * describe_agent_fabric            (compatibility migration — unchanged contract)
-  * execute_visible_flow             (compatibility migration — unchanged contract;
-                                      this IS the Mag One run capability — Mag One
-                                      resolves its own participants from saved
-                                      magentic_option wiring, never from callers)
-  * thinkgraph.process_conversation_pair   (legacy post-chat pair front door — no
-                                      longer used by ordinary live chat; kept only
-                                      for whatever still calls it directly)
+  * mag_one.describe_connected_agents (read the connected, bus-eligible Mag One
+                                      Agent Cards + their capabilities before
+                                      writing a run_mag_one prompt)
+  * run_mag_one                      (run regular native Mag One from a
+                                      Harness-authored Markdown orchestration
+                                      prompt — used verbatim, no plan/task/gate)
   * thinkgraph.get_graph_slice       (bounded READ-ONLY graph scope)
-  * thinkgraph.apply_live_patch      (the ONE live-write tool — see below)
   * canvas.inspect / card.update_configuration / canvas.upsert_wire /
     card.assign_runtime_skill / card.assign_data_binding /
     card.run_assistant_agent         (user-directed Harness control surface;
@@ -29,12 +26,13 @@ to Python handlers (app/control_plane.py) which own validation/policy and use th
 existing backend deck routes + the Python runtime-assignment store. No semantics,
 no fallback lives in this host.
 
-thinkgraph.apply_live_patch is the ONLY graph-write tool on this host, and it is
-scoped narrowly: it requires a trusted "thinkgraph_live_agent_turn" authority object
-that only the gRPC Harness mints per-turn and injects into the call outside the
-model's visible tool schema (the model supplies only the patch content). The old
-generic "apply_thinkgraph_patch"/"read_thinkgraph_scope" bare names, and any
-unauthenticated raw graph write, are NEVER exposed here.
+There is NO model-facing graph-write tool on this host. Live ThinkGraph writes
+happen ONLY inside a real configured ThinkGraph card run: the thin native
+doorway calls card.run_assistant_agent, Python runConfiguredCard runs the
+ThinkGraph card, and that card's own scoped read_thinkgraph_scope /
+apply_thinkgraph_patch tools (authority injected from the trusted card-run
+context, never the model) perform the transaction. The obsolete post-chat pair
+front door and the model-facing apply_live_patch tool were removed.
 """
 
 from __future__ import annotations
@@ -42,7 +40,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -81,89 +78,44 @@ async def _bridge(path: str, payload: dict[str, Any]) -> list[TextContent]:
     return [TextContent(type="text", text=text)]
 
 
-async def _apply_live_patch(args: dict[str, Any]) -> list[TextContent]:
-    authority, error = _validate_live_authority(args)
-    if error:
-        return [TextContent(type="text", text=json.dumps({"ok": False, "error": error}))]
-    payload = {
-        "authority": {
-            "projectId": authority["projectId"],
-            "cardId": authority["writerCardId"],
-            "correlationId": f"live:{authority['liveTurnId']}:{authority['agentRunId']}",
-            "conversationId": authority["conversationId"],
-        },
-        "patch": {
-            "resources": args.get("resources") or [],
-            "relations": args.get("relations") or [],
-            "statements": args.get("statements") or [],
-        },
-    }
-    return await _bridge("thinkgraph_apply_patch", payload)
-
-
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     return [
         Tool(
-            name="describe_agent_fabric",
+            name="mag_one.describe_connected_agents",
             description=(
-                "Inspect the REAL downstream Agent Fabric before writing an executable plan step: "
-                "visible flow catalog, runnable/connected state, and (for the selected flow) connected "
-                "agents + roles, tools, models, expected artifacts, needs-input conditions, and "
-                "graph-write policy. Do not invent agents, tools, data, or outputs."
+                "Read the currently connected, bus-eligible (magentic_option) Mag One Agent Cards and "
+                "their actual capabilities before writing a run_mag_one prompt: cardId, title, "
+                "role/capability, selected model, configured Python tools, and connected status. "
+                "Read-only and deck-authentic — never invents agents, tools, models, or outputs."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "projectId": {"type": "string"},
                     "deckId": {"type": "string"},
-                    "selectedCardId": {"type": "string"},
                 },
                 "required": ["projectId", "deckId"],
             },
         ),
         Tool(
-            name="execute_visible_flow",
+            name="run_mag_one",
             description=(
-                "Run the selected visible Agent Builder flow as a mission via the LiquidAIty Python "
-                "AutoGen / Mag One runner. No approval boolean — calling this is the execution command. "
-                "Returns runId, task updates keyed to the provided plan task IDs, artifacts, evidence, "
-                "progress, needs_input (when the flow is not runnable), failure, and provenance."
+                "Run regular native Mag One from a Harness-authored Markdown orchestration prompt. "
+                "promptMarkdown IS Mag One's job (objective, relevant findings, constraints, available "
+                "connected agents, desired result/proof) and is used verbatim — never translated into a "
+                "plan or task object. Mag One reasons over it, selects among the connected eligible "
+                "workers itself, keeps its own natural internal task ledger, and returns its result. "
+                "No structured plan, no task ledger gate, no approval gate, no visible-flow wrapper."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "projectId": {"type": "string"},
                     "deckId": {"type": "string"},
-                    "taskIds": {"type": "array", "items": {"type": "string"}},
-                    "selectedCardId": {"type": "string"},
-                    "missionPacket": {"type": "object"},
-                    "plan": {"type": "object"},
+                    "promptMarkdown": {"type": "string"},
                 },
-                "required": ["projectId", "deckId"],
-            },
-        ),
-        Tool(
-            name="thinkgraph.process_conversation_pair",
-            description=(
-                "ThinkGraph front door: process ONE exact completed conversation pair through the "
-                "deck's configured ThinkGraph card. Accepts only server-trusted structural references "
-                "(project, deck, conversation, exact user/assistant message ids, correlation id) — "
-                "never raw prompts, models, cards, tools, patches, or task data. The configured card "
-                "maintains the noun-and-verb graph through its own scoped tools, updating it when the "
-                "exchange adds something durable and leaving it unchanged otherwise."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "deckId": {"type": "string"},
-                    "conversationId": {"type": "string"},
-                    "userMessageId": {"type": "string"},
-                    "assistantMessageId": {"type": "string"},
-                    "correlationId": {"type": "string"},
-                },
-                "required": ["projectId", "conversationId", "userMessageId", "assistantMessageId", "correlationId"],
+                "required": ["projectId", "deckId", "promptMarkdown"],
             },
         ),
         Tool(
@@ -265,25 +217,6 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="thinkgraph.apply_live_patch",
-            description=(
-                "Apply one compact ThinkGraph patch during the current live agent turn: "
-                "resources (nodes), relations, and/or statements (subject/predicateTerm/object "
-                "triples). One transaction. Returns the real applied/duplicate/empty result with "
-                "the stored resource/statement ids. You supply only the patch content — identity "
-                "and provenance for this call are bound to the current authorized run, not to "
-                "anything you provide."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "resources": {"type": "array", "items": {"type": "object"}},
-                    "relations": {"type": "array", "items": {"type": "object"}},
-                    "statements": {"type": "array", "items": {"type": "object"}},
-                },
-            },
-        ),
-        Tool(
             name="card.run_assistant_agent",
             description=(
                 "Run ONE saved, enabled assistant_agent card with its saved prompt/model/tools and "
@@ -312,11 +245,8 @@ async def list_tools() -> list[Tool]:
 # Structural allow-list per tool: unexpected keys are rejected honestly, never
 # silently forwarded (prevents smuggling prompts/models/patches through the host).
 _ALLOWED_KEYS: dict[str, set[str]] = {
-    "describe_agent_fabric": {"projectId", "deckId", "selectedCardId"},
-    "execute_visible_flow": {"projectId", "deckId", "taskIds", "selectedCardId", "missionPacket", "plan"},
-    "thinkgraph.process_conversation_pair": {
-        "projectId", "deckId", "conversationId", "userMessageId", "assistantMessageId", "correlationId",
-    },
+    "mag_one.describe_connected_agents": {"projectId", "deckId"},
+    "run_mag_one": {"projectId", "deckId", "promptMarkdown"},
     "canvas.inspect": {"projectId", "deckId"},
     "card.update_configuration": {"projectId", "deckId", "cardId", "updates"},
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
@@ -324,48 +254,11 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "card.assign_data_binding": {"projectId", "deckId", "cardId", "bindingType", "bindingRef", "op"},
     "card.run_assistant_agent": {"projectId", "deckId", "cardId", "correlationId", "conversationId", "input"},
     "thinkgraph.get_graph_slice": {"projectId", "limit"},
-    # "authority" is never in this tool's advertised inputSchema (the model never
-    # sees it) — it arrives only because the trusted gRPC Harness injects it into
-    # the actual call outside the model-visible arguments. Listed here only so the
-    # structural allowlist doesn't reject the one key the trusted runtime adds.
-    "thinkgraph.apply_live_patch": {"resources", "relations", "statements", "authority"},
 }
 
-# The one trusted authority kind for live, in-turn, model-directed ThinkGraph
-# writes. Minted only by the gRPC Harness at the start of a chat turn and bound
-# to that turn's ThinkGraph Agent child — never chosen, forged, or reused by the
-# model, and never a completed-pair identity (no userMessageId/assistantMessageId).
-_LIVE_AUTHORITY_KIND = "thinkgraph_live_agent_turn"
-_LIVE_AUTHORITY_REQUIRED_FIELDS = (
-    "projectId",
-    "conversationId",
-    "liveTurnId",
-    "agentRunId",
-    "writerCardId",
-    "issuedAt",
-    "expiresAt",
-)
-
-
-def _validate_live_authority(args: dict[str, Any]) -> tuple[dict[str, str] | None, str | None]:
-    authority = args.get("authority")
-    if not isinstance(authority, dict) or authority.get("kind") != _LIVE_AUTHORITY_KIND:
-        return None, "thinkgraph_live_authority_missing"
-    for field in _LIVE_AUTHORITY_REQUIRED_FIELDS:
-        if not str(authority.get(field) or "").strip():
-            return None, f"thinkgraph_live_authority_incomplete: {field}"
-    try:
-        expires_at = float(authority["expiresAt"])
-    except (TypeError, ValueError):
-        return None, "thinkgraph_live_authority_invalid_expiry"
-    if time.time() > expires_at:
-        return None, "thinkgraph_live_authority_expired"
-    return authority, None
-
 _BRIDGE_PATHS: dict[str, str] = {
-    "describe_agent_fabric": "describe_agent_fabric",
-    "execute_visible_flow": "execute_visible_flow",
-    "thinkgraph.process_conversation_pair": "thinkgraph_process_pair",
+    "mag_one.describe_connected_agents": "describe_connected_agents",
+    "run_mag_one": "run_mag_one",
 }
 
 # Control tools dispatch to the Python control-plane handlers (app/control_plane.py).
@@ -404,8 +297,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             return [TextContent(type="text", text=json.dumps(result))]
         except control_plane.ControlPlaneError as err:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
-    if name == "thinkgraph.apply_live_patch":
-        return await _apply_live_patch(args)
     return await _bridge(_BRIDGE_PATHS[name], args)
 
 

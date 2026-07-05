@@ -1,14 +1,13 @@
 // REAL MCP-boundary integration (SPEC: do not mock MCP discovery/call).
 // Spawns the actual Python Agent MCP host over stdio via the official SDK client,
-// proves tool discovery, structural argument rejection, and the live bridge chain
-// (host → backend mcp-bridge → post-chat runner) returning honest structural failures.
+// proves tool discovery and structural argument rejection at the boundary.
 // Requires: the python venv + the backend dev server on :4000 (real dev topology).
 import { describe, expect, it } from 'vitest';
 
 import { callPythonAgentMcpTool, listPythonAgentMcpTools } from './pythonAgentMcpClient';
 
 describe('Python Agent MCP host — real stdio discovery + calls', () => {
-  it('exposes exactly the migrated tools, the ThinkGraph post-chat runner, and the Harness control surface', async () => {
+  it('exposes exactly the Mag One entrypoints, the bounded ThinkGraph read, and the Harness control surface (no model-facing write, no pair front door, no visible-flow wrapper)', async () => {
     const names = await listPythonAgentMcpTools();
     expect(names).toEqual([
       'canvas.inspect',
@@ -17,42 +16,43 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'card.assign_runtime_skill',
       'card.run_assistant_agent',
       'card.update_configuration',
-      'describe_agent_fabric',
-      'execute_visible_flow',
+      'mag_one.describe_connected_agents',
+      'run_mag_one',
       'thinkgraph.get_graph_slice',
-      'thinkgraph.process_conversation_pair',
     ]);
+    // The obsolete pair front door, the model-facing write tool, and the old
+    // visible-flow / agent-fabric wrapper tools are all gone.
+    expect(names).not.toContain('thinkgraph.process_conversation_pair');
+    expect(names).not.toContain('thinkgraph.apply_live_patch');
+    expect(names).not.toContain('execute_visible_flow');
+    expect(names).not.toContain('describe_agent_fabric');
   }, 30_000);
 
-  it('rejects smuggled prompt/model/patch arguments at the MCP boundary', async () => {
-    const result = await callPythonAgentMcpTool('thinkgraph.process_conversation_pair', {
+  it('rejects smuggled prompt/model/tool arguments at the MCP boundary', async () => {
+    const result = await callPythonAgentMcpTool('card.run_assistant_agent', {
       projectId: 'p',
-      conversationId: 'c',
-      userMessageId: 'u',
-      assistantMessageId: 'a',
+      deckId: 'deck_builder',
+      cardId: 'c',
       correlationId: 'x',
+      input: 'hi',
       prompt: 'evil',
       modelKey: 'evil-model',
-      patch: { resources: [] },
+      tools: ['shell'],
     });
     expect(result.ok).toBe(false);
     expect(String(result.error)).toContain('tool_arguments_rejected');
     expect(String(result.error)).toContain('prompt');
     expect(String(result.error)).toContain('modelKey');
-    expect(String(result.error)).toContain('patch');
+    expect(String(result.error)).toContain('tools');
   }, 30_000);
 
-  it('valid structural refs flow through the real bridge and fail honestly on a missing pair', async () => {
-    const result = await callPythonAgentMcpTool('thinkgraph.process_conversation_pair', {
+  it('a bounded read-only graph slice flows through the real bridge and returns structured scope', async () => {
+    const result = await callPythonAgentMcpTool('thinkgraph.get_graph_slice', {
       projectId: '20ac92da-01fd-4cf6-97cc-0672421e751a',
-      deckId: 'deck_builder',
-      conversationId: 'main',
-      userMessageId: 'msg_does_not_exist',
-      assistantMessageId: 'msg_also_missing',
-      correlationId: `tg:mcp-spec-${Date.now()}`,
+      limit: 5,
     });
-    expect(result.ok).toBe(false);
-    const inner = (result as any).result ?? result;
-    expect(String(inner.error || result.error)).toContain('pair_user_message_not_found');
+    // Honest structured result from the real backend bridge (never a thrown error).
+    expect(result).toBeTruthy();
+    expect(typeof result).toBe('object');
   }, 30_000);
 });

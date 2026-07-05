@@ -14,15 +14,14 @@ import type { BuiltInAgentDefinition } from '../tools/AgentTool/loadAgentsDir.js
 
 const PROTO_PATH = path.resolve(import.meta.dirname, '../proto/openclaude.proto')
 
-// The two ThinkGraph tools the official Python MCP host exposes
-// (apps/python-models/app/mcp_host.py: thinkgraph.get_graph_slice /
-// thinkgraph.apply_live_patch). Qualified per the runtime's own MCP naming
-// (mcp__<clientName>__<normalizedToolName>, see services/mcp/mcpStringUtils.ts)
-// for the 'liquidaity' client this server connects — fixed identity constants,
-// not a name-translation mapper: the saved card grants these exact strings
-// directly, nothing here rewrites what the card says.
+// The bounded READ-ONLY ThinkGraph slice tool the official Python MCP host
+// exposes (apps/python-models/app/mcp_host.py: thinkgraph.get_graph_slice),
+// qualified per the runtime's own MCP naming (mcp__<clientName>__<normalizedToolName>,
+// see services/mcp/mcpStringUtils.ts) for the 'liquidaity' client this server
+// connects. There is NO model-facing graph-write tool: live ThinkGraph writes
+// happen only inside a real configured ThinkGraph card run (card.run_assistant_agent
+// → Python runConfiguredCard → the card's own scoped apply_thinkgraph_patch tool).
 const THINKGRAPH_READ_TOOL_NAME = 'mcp__liquidaity__thinkgraph_get_graph_slice'
-const THINKGRAPH_LIVE_WRITE_TOOL_NAME = 'mcp__liquidaity__thinkgraph_apply_live_patch'
 
 // The one MCP control tool a card doorway child calls to run its bound saved
 // card through the canonical Python executor (card.run_assistant_agent on the
@@ -67,21 +66,16 @@ export type PythonMcpConfig = {
   hostPath: string
 }
 
-/** Fail-closed startup check: the control-surface tools the merged card
- * architecture depends on must exist in the actually-fetched Python MCP tool
- * pool — the card-run doorway tool, the bounded ThinkGraph read, and (until
- * the post-proof cleanup removes the legacy live-write surface) the scoped
- * live-write tool. Pure so it is directly testable. */
+/** Fail-closed startup check: the control-surface tools the card architecture
+ * depends on must exist in the actually-fetched Python MCP tool pool — the
+ * card-run doorway tool and the bounded READ-ONLY ThinkGraph slice. There is
+ * no model-facing write tool to require. Pure so it is directly testable. */
 export function missingRequiredThinkGraphTools(toolNames: string[]): string[] {
   const pool = new Set(toolNames)
-  return [
-    CARD_RUN_CONTROL_TOOL_NAME,
-    THINKGRAPH_READ_TOOL_NAME,
-    THINKGRAPH_LIVE_WRITE_TOOL_NAME,
-  ].filter(name => !pool.has(name))
+  return [CARD_RUN_CONTROL_TOOL_NAME, THINKGRAPH_READ_TOOL_NAME].filter(
+    name => !pool.has(name),
+  )
 }
-const THINKGRAPH_LIVE_AUTHORITY_KIND = 'thinkgraph_live_agent_turn'
-const THINKGRAPH_LIVE_AUTHORITY_TTL_SECONDS = 900
 
 // Structural bridge only: turns the request's AgentDefinitionConfig entries
 // (saved card id/prompt/tool-grants, carried verbatim over the wire — see
@@ -110,9 +104,10 @@ export function buildAgentDefinitionsFromRequest(req: any): BuiltInAgentDefiniti
 }
 
 // Inverse of grpcChatClient.ts's deriveSessionId ("mag1:{projectId}:{conversationId}"),
-// owned separately here since localcoder cannot import from apps/backend. Used only to
-// mint the live ThinkGraph write authority below — never exposed to the model.
-function parseSessionIdForLiveAuthority(sessionId: string): { projectId: string; conversationId: string } | null {
+// owned separately here since localcoder cannot import from apps/backend. Used to
+// recover the trusted projectId/conversationId this server injects into a doorway
+// child's card-run control call — never exposed to the model.
+function parseSessionIdParts(sessionId: string): { projectId: string; conversationId: string } | null {
   const parts = String(sessionId || '').split(':')
   if (parts.length < 3 || parts[0] !== 'mag1' || !parts[1]) return null
   return { projectId: parts[1], conversationId: parts.slice(2).join(':') }
@@ -269,36 +264,15 @@ export class GrpcServer {
           const toolNameById = new Map<string, string>()
 
           // This turn's doorway children: agentType → bound saved card id. The
-          // trusted card-run gate below forces each child to its own card.
+          // trusted card-run gate below forces each child to its own card and
+          // injects the real session identity (projectId/conversationId).
           const rawAgentDefinitions: any[] = Array.isArray(req.agent_definitions) ? req.agent_definitions : []
           const cardIdByAgentType = new Map<string, string>(
             rawAgentDefinitions
               .filter((d: any) => String(d?.agent_type || '').trim() && String(d?.card_id || '').trim())
               .map((d: any) => [String(d.agent_type), String(d.card_id)]),
           )
-
-          // Mint the live ThinkGraph write authority once per turn, at this trusted
-          // server boundary — never chosen, forged, or reused by the model. Scoped to
-          // the resolved ThinkGraph card's agentType for THIS turn only (found by its
-          // persisted runtime binding, never by list position); a stale or absent card
-          // resolution means no child exists to hold the write grant.
-          const rawThinkGraphAgent = rawAgentDefinitions.find(
-            (d: any) => String(d?.runtime_binding || '') === 'thinkgraph_agent',
-          )
-          const thinkGraphAgentType = rawThinkGraphAgent ? String(rawThinkGraphAgent.agent_type || '') : ''
-          const sessionParts = parseSessionIdForLiveAuthority(sessionId)
-          const liveAuthority = sessionParts && thinkGraphAgentType
-            ? {
-                kind: THINKGRAPH_LIVE_AUTHORITY_KIND,
-                projectId: sessionParts.projectId,
-                conversationId: sessionParts.conversationId,
-                liveTurnId: randomUUID(),
-                agentRunId: randomUUID(),
-                writerCardId: String(rawThinkGraphAgent.card_id || ''),
-                issuedAt: String(Date.now() / 1000),
-                expiresAt: String(Date.now() / 1000 + THINKGRAPH_LIVE_AUTHORITY_TTL_SECONDS),
-              }
-            : null
+          const sessionParts = parseSessionIdParts(sessionId)
 
           engine = new QueryEngine({
             cwd: req.working_directory || process.cwd(),
@@ -349,28 +323,10 @@ export class GrpcServer {
                 return { behavior: 'allow', updatedInput: resolved.updatedInput }
               }
 
-              // No interactive human-confirmation gate: every tool call is allowed
-              // to proceed immediately. The ThinkGraph live-write tool keeps its
-              // automated identity check (not a human prompt, a structural
-              // authority binding) — it still only ever executes for the resolved
-              // ThinkGraph Agent child for this turn, never the main OpenClaude
-              // Chat thread, never a different agent.
-              if (tool.name === THINKGRAPH_LIVE_WRITE_TOOL_NAME) {
-                if (!liveAuthority || context.agentType !== thinkGraphAgentType) {
-                  return {
-                    behavior: 'deny',
-                    message: 'thinkgraph_live_write_requires_thinkgraph_agent_child',
-                    decisionReason: { type: 'other', reason: 'thinkgraph_live_write_requires_thinkgraph_agent_child' },
-                  }
-                }
-                // Inject the trusted authority outside the model's visible
-                // arguments — the model supplied only the patch content.
-                return {
-                  behavior: 'allow',
-                  updatedInput: { ...(input as Record<string, unknown>), authority: liveAuthority },
-                }
-              }
-
+              // No interactive human-confirmation gate: every other tool call is
+              // allowed to proceed immediately. There is no model-facing
+              // ThinkGraph write tool — live graph writes happen only inside the
+              // configured ThinkGraph card run reached through the doorway above.
               return { behavior: 'allow' }
             },
             getAppState: () => appState,
