@@ -172,7 +172,6 @@ export type DeckExecutionOutput = {
   error?: string;
   steps?: any[];
   events?: any[];
-  mission?: any;
   workspaceContext?: any;
   workspaceObjectContext?: any;
   validationSummary?: any;

@@ -293,9 +293,6 @@ export type SemanticGraphSourceRef = {
 export type SemanticGraphProvenance = {
   createdByAgent?: string | null;
   createdByModel?: string | null;
-  missionSpecId?: string | null;
-  missionRunId?: string | null;
-  missionAgentRunId?: string | null;
   sourceRefs?: SemanticGraphSourceRef[];
   reasoningSummary?: string | null;
   createdAt?: string | null;
@@ -644,7 +641,4 @@ export type DeckRunResponse = {
   run?: DeckRun;
   meta?: Record<string, unknown> | null;
   error?: string;
-  resultSummary?: string | null;
-  needsUserInputReason?: string | null;
-  errorReason?: string | null;
 };

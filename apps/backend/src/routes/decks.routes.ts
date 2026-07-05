@@ -6,17 +6,12 @@ import {
   saveDeckDocument,
   saveDeckRun,
 } from '../decks/store';
-import { executeDeck } from '../decks/deckRuntime';
 import { isSingleAssistRunDocument, runSingleAssistCardAsDeckRun } from '../cards/runtime';
 import type {
   AgentTemplate,
   DeckDocument,
   DeckRun,
   DeckRunResponse,
-  MissionAgentRunStatus,
-  MissionRunStatus,
-  MissionSpec,
-  PromptTemplate,
 } from '../types';
 
 const router = Router();
@@ -134,23 +129,9 @@ router.post('/:projectId/decks/:deckId/run', async (req, res) => {
   const templates = Array.isArray(req.body?.templates)
     ? (req.body.templates as AgentTemplate[])
     : [];
-  const promptTemplates = Array.isArray(req.body?.promptTemplates)
-    ? (req.body.promptTemplates as PromptTemplate[])
-    : [];
   const useStream =
     String(req.query.stream || req.body?.stream || '').trim() === '1' ||
     req.body?.stream === true;
-  const missionSpec =
-    req.body?.missionSpec && typeof req.body.missionSpec === 'object'
-      ? (req.body.missionSpec as MissionSpec)
-      : undefined;
-  const missionRunId = String(req.body?.missionRunId || '').trim() || undefined;
-  const missionAgentRunId = String(req.body?.missionAgentRunId || '').trim() || undefined;
-  const baseMissionMeta = {
-    missionRunId: missionRunId || null,
-    missionAgentRunId: missionAgentRunId || null,
-  };
-
   if (!deckId) {
     return res.status(400).json({ ok: false, error: 'deck_id_required' });
   }
@@ -181,7 +162,6 @@ router.post('/:projectId/decks/:deckId/run', async (req, res) => {
     console.log('[DEBUG-TRACE] POST /run received deck:', deckId);
     console.log('[DEBUG-TRACE] user input:', req.body?.input);
     console.log('[DEBUG-TRACE] templates count:', templates.length);
-    console.log('[DEBUG-TRACE] promptTemplates count:', promptTemplates.length);
     console.log('[DEBUG-TRACE] document node count:', deck?.nodes?.length);
     console.log('[DEBUG-TRACE] document edge count:', deck?.edges?.length);
     const bodyStr = JSON.stringify(req.body || {});
@@ -196,61 +176,33 @@ router.post('/:projectId/decks/:deckId/run', async (req, res) => {
       res.flushHeaders?.();
     }
 
-    // Single Assist: a posted selection with no Mag One orchestrator and exactly
-    // one top-level card runs through the ONE canonical configured-card executor
-    // (runConfiguredCard — the same core the MCP card.run_assistant_agent path
-    // uses), never through the Mag One team runtime. Structural detection only;
-    // runnability is enforced inside runConfiguredCard itself.
+    // The deck-run route executes Canvas Single Assist ONLY: a posted selection
+    // with no Mag One orchestrator and exactly one top-level card runs through the
+    // ONE configured-card executor (runConfiguredCard). A full-deck / Mag One team
+    // run is NOT executed here — the one team-run entrypoint is run_mag_one
+    // (a Harness-authored Markdown prompt → native Mag One).
     const singleAssist = isSingleAssistRunDocument(deck);
-    const run = (singleAssist.ok
-      ? await runSingleAssistCardAsDeckRun({
-          projectId: req.params.projectId,
-          deckId,
-          cardId: singleAssist.cardId,
-          input: String(req.body?.input || ''),
-        })
-      : await executeDeck(deck, templates, {
-          input: String(req.body?.input || ''),
-          promptTemplates: promptTemplates.length > 0 ? promptTemplates : deck.promptTemplates,
-          projectId: req.params.projectId,
-          workspaceContext: req.body?.workspaceContext,
-          workspaceObjectContext: req.body?.workspaceObjectContext,
-          missionSpec,
-          missionRunId,
-          missionAgentRunId,
-          onRuntimeEvent: useStream
-            ? (event: any) => {
-                writeStreamChunk(res, { kind: 'event', event });
-              }
-            : undefined,
-        })) as unknown as DeckRun;
+    if (!singleAssist.ok) {
+      const error = 'deck_team_run_use_chat_mag_one';
+      if (useStream) {
+        writeStreamChunk(res, { kind: 'error', error });
+        return res.end();
+      }
+      return res.status(400).json({ ok: false, error } satisfies DeckRunResponse);
+    }
+    const run = (await runSingleAssistCardAsDeckRun({
+      projectId: req.params.projectId,
+      deckId,
+      cardId: singleAssist.cardId,
+      input: String(req.body?.input || ''),
+    })) as unknown as DeckRun;
 
     const persistedRun = await saveDeckRun(req.params.projectId, deckId, run);
-    const missionStatus =
-      (run.mission?.missionStatus ||
-        (missionSpec?.runState as MissionRunStatus | undefined) ||
-        null) as MissionRunStatus | null;
-    const agentRunStatus =
-      (run.mission?.agentRunStatus ||
-        (run.status === 'success'
-          ? 'complete'
-          : run.status === 'running'
-            ? 'running'
-            : run.status === 'skipped'
-              ? 'skipped'
-              : 'failed')) as MissionAgentRunStatus;
     const payload: DeckRunResponse = {
       ok: true,
       deck,
       run,
       meta: persistedRun.meta || deckMeta,
-      missionRunId: run.mission?.missionRunId || baseMissionMeta.missionRunId,
-      missionAgentRunId: run.mission?.missionAgentRunId || baseMissionMeta.missionAgentRunId,
-      missionStatus,
-      agentRunStatus,
-      resultSummary: run.mission?.resultSummary || null,
-      needsUserInputReason: run.mission?.needsUserInputReason || null,
-      errorReason: run.mission?.errorReason || null,
     };
     if (useStream) {
       writeStreamChunk(res, { kind: 'result', ...payload });
@@ -259,25 +211,12 @@ router.post('/:projectId/decks/:deckId/run', async (req, res) => {
     return res.json(payload);
   } catch (err: any) {
     const status = err?.message === 'project_not_found' ? 404 : 500;
+    const error = err?.message || 'deck_run_failed';
     if (useStream) {
-      writeStreamChunk(res, {
-        kind: 'error',
-        error: err?.message || 'deck_run_failed',
-        ...baseMissionMeta,
-        missionStatus: 'failed' as MissionRunStatus,
-        agentRunStatus: 'failed' as MissionAgentRunStatus,
-        errorReason: err?.message || 'deck_run_failed',
-      });
+      writeStreamChunk(res, { kind: 'error', error });
       return res.status(status).end();
     }
-    return res.status(status).json({
-      ok: false,
-      error: err?.message || 'deck_run_failed',
-      ...baseMissionMeta,
-      missionStatus: 'failed' as MissionRunStatus,
-      agentRunStatus: 'failed' as MissionAgentRunStatus,
-      errorReason: err?.message || 'deck_run_failed',
-    } satisfies DeckRunResponse);
+    return res.status(status).json({ ok: false, error } satisfies DeckRunResponse);
   }
 });
 

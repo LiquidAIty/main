@@ -281,9 +281,6 @@ export type SemanticGraphSourceRef = {
 export type SemanticGraphProvenance = {
   createdByAgent?: string | null;
   createdByModel?: string | null;
-  missionSpecId?: string | null;
-  missionRunId?: string | null;
-  missionAgentRunId?: string | null;
   sourceRefs?: SemanticGraphSourceRef[];
   reasoningSummary?: string | null;
   createdAt?: string | null;
@@ -569,191 +566,6 @@ export type WorkspaceObjectContext = {
   excludedAgents?: string[];
 };
 
-export type MissionSpecRunState =
-  | 'draft'
-  | 'approved'
-  | 'wiring'
-  | 'running'
-  | 'complete'
-  | 'failed'
-  | 'cancelled'
-  | 'needs_user_input';
-
-export type MissionAgentRunStatus =
-  | 'queued'
-  | 'running'
-  | 'complete'
-  | 'failed'
-  | 'skipped'
-  | 'needs_user_input';
-
-export type MissionRunStatus =
-  | 'approved'
-  | 'wiring'
-  | 'running'
-  | 'complete'
-  | 'failed'
-  | 'cancelled'
-  | 'needs_user_input';
-
-export type MissionSpec = {
-  id: string;
-  title: string;
-  userGoal: string;
-  target: string;
-  readContext: string[];
-  agentRuns: Array<{
-    id?: string;
-    agentId: string;
-    promptSeed: string;
-    required?: boolean;
-  }>;
-  runState: MissionSpecRunState;
-};
-
-export type MissionRun = {
-  id: string;
-  missionSpecId: string;
-  status: MissionRunStatus;
-  activeAgentRunId: string | null;
-  agentRuns: Array<{
-    id: string;
-    agentId: string;
-    status: MissionAgentRunStatus;
-    required: boolean;
-    promptSeed: string;
-    resultSummary?: string | null;
-    error?: string | null;
-  }>;
-  results: Array<{
-    agentRunId: string;
-    agentId: string;
-    status: MissionAgentRunStatus;
-    output?: string | null;
-    reason?: string | null;
-  }>;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type MissionDeckPatch = {
-  missionSpecId: string;
-  nodesToCreate: AgentCardInstance[];
-  nodesToUpdate: Array<Pick<AgentCardInstance, 'id'> & Partial<AgentCardInstance>>;
-  edgesToCreate: DeckEdge[];
-  edgesToUpdate: Array<Pick<DeckEdge, 'id'> & Partial<DeckEdge>>;
-  promptFieldsToUpdate: Array<{
-    nodeId: string;
-    prompt: string;
-  }>;
-  runState: MissionSpecRunState;
-};
-
-export type WorkspaceHarnessProvider =
-  | 'internal-workspace'
-  | 'openclaude'
-  | 'claude-code'
-  | 'codex'
-  | 'local';
-
-export type WorkspaceHarnessOperation =
-  | 'inspect_context'
-  | 'draft_mission'
-  | 'refine_mission'
-  | 'generate_deck_patch'
-  | 'apply_deck_patch'
-  | 'connect_agents'
-  | 'seed_prompts'
-  | 'run_approved_mission'
-  | 'query_graph'
-  | 'traverse_graph'
-  | 'ask_clarifying_questions'
-  | 'request_graph_update';
-
-export type WorkspaceHarnessPermission =
-  | 'deck.read'
-  | 'deck.write'
-  | 'canvas.read'
-  | 'canvas.write'
-  | 'plan.read'
-  | 'plan.write'
-  | 'mission.read'
-  | 'mission.write'
-  | 'agent.read'
-  | 'agent.connect'
-  | 'agent.prompt.read'
-  | 'agent.prompt.write'
-  | 'reactflow.nodes.create'
-  | 'reactflow.nodes.update'
-  | 'reactflow.edges.create'
-  | 'reactflow.edges.update'
-  | 'graph.query'
-  | 'graph.traverse'
-  | 'graph.write.request';
-
-export type OpenMissionMessage = {
-  missionRunId: string;
-  title: string;
-  status: MissionRunStatus;
-  activeAgents: Array<{
-    agentRunId: string;
-    label: string;
-    status: MissionAgentRunStatus;
-    summary?: string;
-  }>;
-  latestSummary?: string;
-  suggestedUserActions?: string[];
-};
-
-export type WorkspaceHarnessRequest = {
-  provider: WorkspaceHarnessProvider;
-  operation: WorkspaceHarnessOperation;
-  userGoal: string;
-  activeCanvasId?: string | null;
-  selectedObject?: CanvasObjectContext | WorkspaceObjectContext | null;
-  missionSpec?: MissionSpec | null;
-  missionRun?: MissionRun | null;
-  currentDeckSummary?: {
-    id: string;
-    name: string;
-    nodeCount: number;
-    edgeCount: number;
-  } | null;
-  availableAgents?: Array<{ id: string; label: string }>;
-  graphContextRefs?: string[];
-  priorResults?: Array<{ agentId: string; summary?: string | null }>;
-  permissions: WorkspaceHarnessPermission[];
-};
-
-export type WorkspaceHarnessResult = {
-  status: 'complete' | 'needs_user_input' | 'failed';
-  summary: string;
-  questions?: string[];
-  missionSpecPatch?: Partial<MissionSpec> | null;
-  missionDeckPatch?: MissionDeckPatch | null;
-  missionRunUpdate?: Partial<MissionRun> | null;
-  agentRunUpdates?: Array<{
-    id: string;
-    status: MissionAgentRunStatus;
-    resultSummary?: string | null;
-    error?: string | null;
-  }>;
-  openMissionMessage?: OpenMissionMessage | null;
-  graphUpdateRequests?: GraphUpdateRequest[];
-  suggestedNextAction?: WorkspaceHarnessOperation | null;
-  errorReason?: string | null;
-};
-
-export type DeckRunMissionMetadata = {
-  missionRunId?: string | null;
-  missionAgentRunId?: string | null;
-  missionStatus?: MissionRunStatus | null;
-  agentRunStatus?: MissionAgentRunStatus | null;
-  resultSummary?: string | null;
-  needsUserInputReason?: string | null;
-  errorReason?: string | null;
-};
-
 export type CanvasObjectContext = {
   id: string;
   canvasId: string;
@@ -786,7 +598,6 @@ export type DeckRun = {
     simpleOrderCardIds: string[];
     expandedStepIds: string[];
   };
-  mission?: DeckRunMissionMetadata | null;
 };
 
 export type DeckRunRequest = {
@@ -798,9 +609,6 @@ export type DeckRunRequest = {
   stream?: boolean;
   workspaceContext?: DeckWorkspaceContext | null;
   workspaceObjectContext?: WorkspaceObjectContext | null;
-  missionSpec?: MissionSpec;
-  missionRunId?: string;
-  missionAgentRunId?: string;
 };
 
 export type DeckRunResponse = {
@@ -809,13 +617,6 @@ export type DeckRunResponse = {
   run?: DeckRun;
   meta?: Record<string, unknown> | null;
   error?: string;
-  missionRunId?: string | null;
-  missionAgentRunId?: string | null;
-  missionStatus?: MissionRunStatus | null;
-  agentRunStatus?: MissionAgentRunStatus | null;
-  resultSummary?: string | null;
-  needsUserInputReason?: string | null;
-  errorReason?: string | null;
 };
 
 export type V3RevisionMeta = {

@@ -105,24 +105,6 @@ async function closeServer(server: Server): Promise<void> {
 }
 
 describe('coder routes', () => {
-  it('rejects the removed plain task OpenClaude run', async () => {
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/openclaude/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: 'pretend to code' }),
-      });
-      expect(response.status).toBe(410);
-      expect(await response.json()).toMatchObject({
-        ok: false,
-        error: 'openclaude_plain_task_run_removed_use_localcoder_run',
-      });
-    } finally {
-      await closeServer(server);
-    }
-  });
-
   // Force a deterministic blocked state via a broken explicit command so these
   // route tests never spawn a real coder process, regardless of whether the
   // vendored runtime is built or API keys are exported on the test machine.

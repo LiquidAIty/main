@@ -303,13 +303,6 @@ router.get('/openclaude/terminal/launch', (req, res) => {
   return res.status(statusCode).json({ ok: launch.ok, launch });
 });
 
-router.post('/openclaude/run', async (req, res) => {
-  return res.status(410).json({
-    ok: false,
-    error: 'openclaude_plain_task_run_removed_use_localcoder_run',
-  });
-});
-
 // ── OpenClaude Console Bridge ──────────────────────────────────────────────
 // Runs the real OpenClaude CLI as a long-lived, streamed process for the in-app
 // terminal view. Not a sandbox; not a CoderReport. See PLAN.md.
