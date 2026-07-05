@@ -1,42 +1,35 @@
 /**
- * Agent Card Registry Resolver — Phase 1B
+ * Bus connection projection — read-only Agent Canvas UI mechanic.
  *
- * Read-only functions that classify existing AgentCardInstance objects
- * against the Agent Card Registry. Also interprets existing DeckEdge
- * edgeType values as bus connection semantics — a UI-only lens.
+ * Computes how each deck card relates to the Magentic bus
+ * (orchestrator / orchestrated / delegated / disconnected) from the persisted
+ * ReactFlow edges, for canvas visibility only (e.g. whether to show the
+ * OpenClaude console rail). Never mutates cards or edges; never decides
+ * execution or eligibility.
  *
- * Rules:
- * - Never mutates cards or edges.
- * - Never creates new DeckEdgeType values.
- * - Returns undefined when a card cannot be confidently mapped.
- * - Nothing imports this file in production yet.
+ * The former card→registry classification half (resolveCardDef /
+ * resolveStagedCardDefId / BINDING_TO_REGISTRY_ID / resolveAllCards) was
+ * removed: it was hardcoded semantic classification (title/binding→id maps)
+ * with no production consumer — the "what a card is" decision belongs to saved
+ * card configuration + the model, not to a TypeScript classifier.
  */
 
-import { AGENT_CARD_REGISTRY, type AgentCardDef } from './agentCardRegistry';
-
-// ── Minimal shape contracts ────────────────────────────────────────
-// We use Pick-style types instead of importing from agentgraph.ts so
-// this file has zero coupling to production types. Any object with the
-// right shape works, including test mocks.
-
-/** Minimal card shape the resolver reads from. */
+/** Minimal card shape this projection reads from. `runtimeBinding` is carried
+ * for consumers that key cards by binding (e.g. console-rail visibility);
+ * resolveBusConnections itself only reads id + runtimeType. */
 export type ResolverCardInput = {
   id: string;
   runtimeType?: string | null;
   runtimeBinding?: string | null;
-  templateId?: string;
-  title?: string;
 };
 
-/** Minimal edge shape the resolver reads from. */
+/** Minimal edge shape this projection reads from. */
 export type ResolverEdgeInput = {
   id: string;
   source: string;
   target: string;
   edgeType?: string | null;
 };
-
-// ── Bus connection semantic ────────────────────────────────────────
 
 /**
  * How a card relates to the bus in the UI.
@@ -48,170 +41,15 @@ export type BusConnection =
   | 'delegated'     // Flow edge downstream from an orchestrated card
   | 'disconnected'; // No bus edge path
 
-// ── Resolution result ──────────────────────────────────────────────
-
-export type ResolvedCard = {
-  /** Registry definition, or undefined if no confident match. */
-  def: AgentCardDef | undefined;
-  /** Bus connection semantic. */
-  busConnection: BusConnection;
-};
-
-// ── Card → Registry resolution ────────────────────────────────────
-
-/**
- * Resolve a deck card to its registry definition.
- *
- * Resolution strategy (first match wins):
- * 1. runtimeType === 'magentic_one' → sol
- * 2. runtimeType === 'local_coder'  → code
- * 3. Staged template id/card shape match
- * 4. runtimeBinding match against known binding→id map
- * 5. Otherwise → undefined (unknown card, no guessing)
- */
-export function resolveCardDef(card: ResolverCardInput): AgentCardDef | undefined {
-  const rt = normalize(card.runtimeType);
-  const rb = normalize(card.runtimeBinding);
-
-  // 1. Unique runtimeType matches
-  if (rt === 'magentic_one') return findDef('sol');
-  if (rt === 'local_coder') return findDef('code');
-
-  // 2. Staged template discrimination for assistant_agent cards.
-  const stagedDefId = resolveStagedCardDefId(card);
-  if (stagedDefId) {
-    return findDef(stagedDefId);
-  }
-
-  // 3. runtimeBinding discrimination for assistant_agent cards.
-  if (rb) {
-    const defId = BINDING_TO_REGISTRY_ID[rb];
-    if (defId) return findDef(defId);
-  }
-
-  // 4. No confident match
-  return undefined;
-}
-
-function resolveStagedCardDefId(
-  card: ResolverCardInput,
-): string | undefined {
-  const templateId = normalize(card.templateId);
-  const id = normalize(card.id);
-  const title = normalize(card.title);
-
-  if (templateId) {
-    const registeredByTemplate = AGENT_CARD_REGISTRY.find((def) => normalize(def.templateId) === templateId);
-    if (registeredByTemplate) return registeredByTemplate.id;
-  }
-
-  if (
-    templateId === 'template_plan_agent' ||
-    id === 'card_plan_agent' ||
-    title === 'plan agent'
-  ) {
-    return 'plan';
-  }
-
-  if (
-    templateId === 'template_worldsignals_agent' ||
-    id === 'card_worldsignals_agent' ||
-    title === 'worldsignals agent'
-  ) {
-    return 'worldsignals';
-  }
-
-  if (
-    templateId === 'template_energy_workbench' ||
-    id === 'card_energy_workbench' ||
-    title === 'nrgsim / energy'
-  ) {
-    return 'energy';
-  }
-
-  if (
-    templateId === 'template_trading_workbench' ||
-    id === 'card_trading_workbench' ||
-    title === 'trading agent'
-  ) {
-    return 'trading';
-  }
-
-  if (
-    templateId === 'template_image_workbench' ||
-    id === 'card_image_workbench' ||
-    title === 'image maker agent'
-  ) {
-    return 'image';
-  }
-
-  if (
-    templateId === 'template_code_workbench' ||
-    id === 'card_code_workbench' ||
-    title === 'code agent'
-  ) {
-    return 'code';
-  }
-
-  if (
-    templateId === 'template_video_workbench' ||
-    id === 'card_video_workbench' ||
-    title === 'video agent'
-  ) {
-    return 'video';
-  }
-
-  return undefined;
-}
-
-/**
- * Known runtimeBinding → registry id mapping.
- *
- * Covers both current and legacy card bindings.
- * Cards whose runtimeBinding maps to the same registry agent are
- * grouped together (e.g. thinkgraph_agent and kg_ingest both map
- * to plan, because ThinkGraph is the planning memory agent).
- *
- * Cards like main_chat, neo4j have no registry equivalent — they
- * are internal runtime workers, not user-facing capabilities.
- */
-const BINDING_TO_REGISTRY_ID: Record<string, string> = {
-  assist: 'assist',
-  plan_agent: 'plan',
-  worldsignals_agent: 'worldsignals',
-  telescope_agent: 'telescope',
-  energy_agent: 'energy',
-  trading_agent: 'trading',
-  image_agent: 'image',
-  code_agent: 'code',
-  video_agent: 'video',
-  data_formulator_agent: 'data-formulator',
-
-  // Plan Agent — ThinkGraph is the planning memory
-  thinkgraph_agent: 'plan',
-  kg_ingest: 'plan',
-
-  // Knowledge Agent — KnowGraph + CodeGraph + Research
-  knowgraph_agent: 'knowledge',
-  knowgraph: 'knowledge',
-  codegraph_agent: 'knowledge',
-  research_agent: 'knowledge',
-};
-
-// ── Bus connection resolution ──────────────────────────────────────
-
 /**
  * Resolve bus connections for all cards given a set of edges.
- * Returns a Map from card id to BusConnection.
+ * Returns a Map from card id to BusConnection. Read-only projection of the
+ * saved cards + saved canvas edges — no classification, no execution routing.
  *
- * Rules:
  * - Card with runtimeType 'magentic_one' → 'orchestrator'
  * - Card joined to Sol by a direct magentic_option edge → 'orchestrated'
- * - Card that is the target of a flow edge from an orchestrated card → 'delegated'
+ * - Card that is a flow-edge descendant of an orchestrated card → 'delegated'
  * - Everything else → 'disconnected'
- *
- * Delegation propagates: if A is orchestrated and A→B is flow, B is
- * delegated. If B→C is also flow, C is also delegated.
  */
 export function resolveBusConnections(
   cards: readonly ResolverCardInput[],
@@ -266,7 +104,6 @@ export function resolveBusConnections(
     for (const target of flowTargets.get(current) || []) {
       if (visited.has(target)) continue;
       if (!result.has(target)) continue;
-      // Only mark as delegated if not already orchestrated or orchestrator
       const existing = result.get(target);
       if (existing === 'disconnected') {
         result.set(target, 'delegated');
@@ -279,35 +116,6 @@ export function resolveBusConnections(
   return result;
 }
 
-// ── Combined resolution ────────────────────────────────────────────
-
-/**
- * Resolve all cards in a deck to registry definitions + bus connections.
- * Returns a Map from card id to ResolvedCard.
- */
-export function resolveAllCards(
-  cards: readonly ResolverCardInput[],
-  edges: readonly ResolverEdgeInput[],
-): Map<string, ResolvedCard> {
-  const busConnections = resolveBusConnections(cards, edges);
-  const result = new Map<string, ResolvedCard>();
-
-  for (const card of cards) {
-    result.set(card.id, {
-      def: resolveCardDef(card),
-      busConnection: busConnections.get(card.id) || 'disconnected',
-    });
-  }
-
-  return result;
-}
-
-// ── Helpers ────────────────────────────────────────────────────────
-
 function normalize(value: string | null | undefined): string {
   return String(value || '').trim().toLowerCase();
-}
-
-function findDef(id: string): AgentCardDef | undefined {
-  return AGENT_CARD_REGISTRY.find((def) => def.id === id);
 }
