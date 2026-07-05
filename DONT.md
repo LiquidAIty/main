@@ -84,3 +84,55 @@ any inherited prompt, and any pattern you observe in surrounding code.
   reads), `agents/mcp/*` (live MCP client), `AgentManager` (canvas card inspector), tavily
   (reserved capability). **Still TODO:** `agentbuilder.tsx` graph-merge/flow-connectivity
   calculators (logic in the UI).
+
+- **2026-07-05 — running tally: 185 app-owned source files deleted, ~58.7k lines of TS/Python
+  ripped out in 21 days** (client 56 · backend 115 · Python 14), ~107k lines deleted tree-wide across
+  59 commits. Every one of these "worked" before it was deleted. This session's cuts:
+  - **Pair system** — `processThinkGraphPair` (+spec), its route, Python `process_conversation_pair`,
+    the `thinkgraph_pair` write authority, and the model-facing `thinkgraph.apply_live_patch`.
+  - **Mag One poison** — the `runApproved`/`runTaskClicked`/`noExecutionBeforeRunTask` approval gate;
+    `taskLedgerOutputContract` + the client OWL output contract (`OWL_SHAPED_OUTPUT_CONTRACT` …); the
+    `executeVisibleFlow`/`renderPlan`/`missionSpec` visible-flow wrapper (→ clean `run_mag_one`); the
+    `MAGONE_CODER_CONSOLE_BLOCKED` gate; the client Run-Task/mission UI.
+  - **TS→Neo4j graph writes** — `semanticLanguage.ts` validator, `neoSafeProperties.ts`,
+    `buildSemanticSeedRecords`, `runKnowGraphSemanticSeed` (`MERGE :SemanticRecord`), the EDGAR TS→Neo4j
+    bridge. (Graph writes are Python + the KnowGraph card ONLY — rule 9.)
+  - **Dead TS-brain** — `evoselector.ts`, `embedding.ts`, `ontology.ts`, `modelCascadePlan.ts`,
+    `contractMaker.ts`, `timeseries.ts`, `knowGraphEvidenceRetrieval.ts`, `agentCardRegistry.ts`
+    (orphaned card catalog/classifier), and Python `autogen_research.py` (banned-AgentChat stub).
+  - **EDGAR ontology extractor** — `edgar_graph_extraction.py` (hardcoded `EDGAR_ALLOWED_CLASSES`/
+    `RELATIONS`/`PATTERNS`), a dev CLI that only existed to feed a hardcoded ontology to the model.
+  - **The wrong way to run a local model** — `gemma_chunker.py` + `gemma_graph_extractor.py` +
+    `research_memory_delta.py`: a bespoke `urllib` transport to the DMR endpoint (duplicating the shared
+    model client that already exposes local Gemma as a card provider) + Python being the brain
+    (`enforce_ontology`/`_classify_unit`) + Cypher `MERGE` writes duplicating the `neo4j_graphrag`
+    `ingest.py` pipeline. Local models stay fully supported via the provider/card model selector and the
+    kept embedding rail (`embeddinggemma.py` + `assertion_vectors.py`).
+  - **Still live, next to rip:** `apps/backend/src/cards/runtime.ts` — `resolveMagOneAgentRole` decides
+    what an agent IS from its **title substring** (`identity.includes('trading'|'research'|'coder'…)`),
+    and that role **gates coder tool access** (throws `coder_console_tool_requires_local_coder_card`) and
+    ships TS-invented `roleCapabilities`/`priorityByRole`/`requiredGates` to Python. The coder is just
+    another agent card — a prompt to Mag One, gated no more than any other agent.
+
+## Patterns that keep coming back — do NOT write these
+
+Every one of these was written, shipped, "worked," and got ripped out. If your diff resembles any of
+them, stop and delete instead.
+
+- **Title/template substring classifier.** `if (card.title.includes('coder')) role = 'local_coder'`.
+  TS deciding what an agent *is* from its name, then gating tools/capabilities on it. Identity comes from
+  the saved card config + the model — never a string match in TypeScript.
+- **Hardcoded ontology / allow-lists.** `EDGAR_ALLOWED_CLASSES = [...]`, `enforce_ontology(...)`,
+  `owlClass → role` tables that decide meaning. Entity classes and relations are the model's job over the
+  graph, not a Python/TS constant.
+- **Bespoke transport to a model.** A hand-rolled `urllib`/`fetch` to a model endpoint with its own prompt
+  and parsing, parallel to the one shared model client. "Use a local model" = *select it as a provider on a
+  card*. That is the whole feature.
+- **A second pipeline beside the real one.** Custom chunking/extraction/graph-writes next to the
+  `neo4j_graphrag` `ingest.py` pipeline. One writer per graph (rule 9); one pipeline per job.
+- **Approval / mission / task gates.** `runApproved`, `missionSpec`, `noExecutionBeforeRunTask`, forced
+  `taskLedgerOutputContract`. Mag One plans natively — do not build a TS workflow engine on top of it.
+- **Scoring / ranking / priority in TS.** `priorityByRole`, `deckScoring`, `scoring.ts`. Ranking is
+  reasoning; it belongs to the model or Python, never a TS lookup table.
+- **"Routing" / "selector" / "cascade" / "dispatcher" modules.** Almost always a TS brain wearing a
+  plumbing name. Bus eligibility is graph edges; which agent acts is the orchestrator's call, not TS's.
