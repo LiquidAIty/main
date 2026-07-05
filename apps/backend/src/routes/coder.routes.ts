@@ -197,12 +197,17 @@ router.post('/cards/assign-data-binding', async (req, res) => {
 router.post('/mcp-bridge/run_configured_card', async (req, res) => {
   try {
     const body = req.body || {};
+    // conversationId is a structural reference to the real live conversation
+    // (the Harness injects it server-side for doorway calls; absent for a
+    // Task-tab test run). Card-specific authority is minted inside
+    // runConfiguredCard itself — never accepted from the caller.
     const result = await runConfiguredCard({
       projectId: String(body.projectId || ''),
       deckId: String(body.deckId || BUILDER_DECK_ID),
       cardId: String(body.cardId || ''),
       correlationId: String(body.correlationId || ''),
       input: String(body.input || ''),
+      conversationId: String(body.conversationId || ''),
     });
     return res.json({ ok: result.status === 'completed', result });
   } catch (error) {
@@ -220,6 +225,10 @@ router.post('/openclaude/session/chat', async (req, res) => {
   const conversationId = String(req.body?.conversationId || 'default');
   const message = String(req.body?.message || '');
   const model = typeof req.body?.model === 'string' ? req.body.model : undefined;
+  // Explicit Harness surface state from the client (chat vs Agent Canvas /
+  // Edit mode) — decides which card doorways this turn exposes. Never inferred
+  // from message content.
+  const mode = req.body?.mode === 'canvas' ? ('canvas' as const) : ('chat' as const);
   const workingDirectory = String(
     req.body?.workingDirectory || process.env.LIQUIDAITY_GRPC_CWD || 'C:/Projects/main',
   );
@@ -238,7 +247,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
   // a DB failure must never block or break the live SSE stream.
   void appendMessage({ projectId, conversationId, role: 'user', content: message }).catch(() => null);
   try {
-    const handle = await startGrpcTurn({ sessionId, message, workingDirectory, model }, (event) => {
+    const handle = await startGrpcTurn({ sessionId, message, workingDirectory, model, mode }, (event) => {
       res.write(`event: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`);
     });
     activeGrpcTurns.set(sessionId, handle);

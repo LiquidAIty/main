@@ -10,80 +10,104 @@ vi.mock('../../../decks/store', () => ({
   getDeckDocument: deckMocks.getDeckDocument,
 }));
 
-import { deriveSessionId, resolveMainChatSystemPrompt, resolveThinkGraphAgentDefinition } from './grpcChatClient';
+import {
+  deriveSessionId,
+  resolveCardDoorwayDefinitions,
+  resolveMainChatSystemPrompt,
+  selectDoorwayCards,
+} from './grpcChatClient';
 
-const THINKGRAPH_TOOLS = ['mcp__liquidaity__thinkgraph_get_graph_slice', 'mcp__liquidaity__thinkgraph_apply_live_patch'];
+const CARD_RUN_CONTROL_TOOL = 'mcp__liquidaity__card_run_assistant_agent';
 
 function deckWith(nodes: any[]) {
   return { deck: { id: 'deck_builder', name: 'Deck', nodes, edges: [] }, latestRun: null, runs: [], meta: { deckRevision: null, deckSavedAt: null } };
 }
 
-describe('resolveThinkGraphAgentDefinition', () => {
+const TG_CARD = { id: 'card_thinkgraph_agent', title: 'ThinkGraph Agent', prompt: 'Saved ThinkGraph prompt.', runtimeOptions: { tools: ['read_thinkgraph_scope', 'apply_thinkgraph_patch'] } };
+const RESEARCH_CARD = { id: 'card_research_agent', title: 'Research Agent', prompt: 'Saved research prompt.', runtimeOptions: { tools: ['retrieve_knowgraph_context'] } };
+const MAIN_CHAT_CARD = { id: 'card_main_chat', title: 'OpenClaude Chat', prompt: 'parent prompt' };
+
+describe('resolveCardDoorwayDefinitions — thin card-bound doorways, one per saved card', () => {
   beforeEach(() => {
     deckMocks.getDeckDocument.mockClear();
   });
 
-  it('returns the saved card prompt and exact tool grants as structural config, with inherited context on', async () => {
-    deckMocks.getDeckDocument.mockResolvedValueOnce(
-      deckWith([{ id: 'card_thinkgraph_agent', prompt: 'Saved ThinkGraph prompt.', runtimeOptions: { tools: THINKGRAPH_TOOLS } }]),
-    );
-    const sessionId = deriveSessionId('project-1', 'main');
-    const result = await resolveThinkGraphAgentDefinition(sessionId);
-    expect(result).toEqual({
-      agent_type: 'card_thinkgraph_agent',
-      card_id: 'card_thinkgraph_agent',
-      runtime_binding: 'thinkgraph_agent',
-      system_prompt: 'Saved ThinkGraph prompt.',
-      allowed_tools: THINKGRAPH_TOOLS,
-      context_mode_inherit_parent: true,
-    });
+  it('chat mode exposes exactly the one ThinkGraph doorway with ONLY the generic control tool', async () => {
+    deckMocks.getDeckDocument.mockResolvedValueOnce(deckWith([MAIN_CHAT_CARD, TG_CARD, RESEARCH_CARD]));
+    const defs = await resolveCardDoorwayDefinitions(deriveSessionId('project-1', 'main'), 'chat');
+    expect(defs).toHaveLength(1);
+    const def = defs[0] as any;
+    expect(def.agent_type).toBe('card_thinkgraph_agent');
+    expect(def.card_id).toBe('card_thinkgraph_agent');
+    expect(def.runtime_binding).toBe('thinkgraph_agent');
+    expect(def.allowed_tools).toEqual([CARD_RUN_CONTROL_TOOL]);
+    expect(def.context_mode_inherit_parent).toBe(true);
   });
 
-  it('never carries graph rows, graph text, or conversation content — only card id/prompt/tools', async () => {
-    deckMocks.getDeckDocument.mockResolvedValueOnce(
-      deckWith([{ id: 'card_thinkgraph_agent', prompt: 'Saved ThinkGraph prompt.', runtimeOptions: { tools: THINKGRAPH_TOOLS } }]),
-    );
-    const result = await resolveThinkGraphAgentDefinition(deriveSessionId('project-1', 'main'));
-    expect(Object.keys(result || {}).sort()).toEqual(
-      ['agent_type', 'allowed_tools', 'card_id', 'context_mode_inherit_parent', 'runtime_binding', 'system_prompt'].sort(),
-    );
+  it('the doorway never duplicates card configuration — no card prompt, no card tool grants', async () => {
+    deckMocks.getDeckDocument.mockResolvedValueOnce(deckWith([TG_CARD]));
+    const [def] = (await resolveCardDoorwayDefinitions(deriveSessionId('project-1', 'main'), 'chat')) as any[];
+    expect(def.system_prompt).not.toContain('Saved ThinkGraph prompt.');
+    expect(def.allowed_tools).not.toContain('read_thinkgraph_scope');
+    expect(def.allowed_tools).not.toContain('apply_thinkgraph_patch');
+    // The doorway relays through the one control tool it is bound to.
+    expect(def.system_prompt).toContain(CARD_RUN_CONTROL_TOOL);
+    expect(def.system_prompt).toContain('card_thinkgraph_agent');
   });
 
-  it('returns null when zero ThinkGraph cards are configured (honest, no guess)', async () => {
-    deckMocks.getDeckDocument.mockResolvedValueOnce(deckWith([{ id: 'card_main_chat', prompt: 'chat' }]));
-    const result = await resolveThinkGraphAgentDefinition(deriveSessionId('project-1', 'main'));
-    expect(result).toBeNull();
-  });
-
-  it('returns null when multiple ThinkGraph cards are ambiguous (honest, no guess)', async () => {
+  it('canvas mode exposes every eligible card as a doorway — never main_chat, never subgraph children, never disabled', async () => {
     deckMocks.getDeckDocument.mockResolvedValueOnce(
       deckWith([
-        { id: 'card_thinkgraph_agent', prompt: 'a', runtimeOptions: { tools: THINKGRAPH_TOOLS } },
-        { id: 'card_thinkgraph_agent_2', prompt: 'b', runtimeOptions: { binding: 'thinkgraph_agent', tools: THINKGRAPH_TOOLS } },
+        MAIN_CHAT_CARD,
+        TG_CARD,
+        RESEARCH_CARD,
+        { ...RESEARCH_CARD, id: 'card_child', parentGraphId: 'card_research_agent' },
+        { ...RESEARCH_CARD, id: 'card_disabled', enabled: false },
+        { ...RESEARCH_CARD, id: 'card_bus', runtimeType: 'magentic_one' },
       ]),
     );
-    const result = await resolveThinkGraphAgentDefinition(deriveSessionId('project-1', 'main'));
-    expect(result).toBeNull();
+    const defs = await resolveCardDoorwayDefinitions(deriveSessionId('project-1', 'main'), 'canvas');
+    expect(defs.map((d: any) => d.agent_type).sort()).toEqual(['card_research_agent', 'card_thinkgraph_agent']);
   });
 
-  it('returns null when the resolved card does not have exactly the two scoped graph tools', async () => {
+  it('chat mode yields no doorways when zero ThinkGraph cards exist (honest, no guess)', async () => {
+    deckMocks.getDeckDocument.mockResolvedValueOnce(deckWith([MAIN_CHAT_CARD, RESEARCH_CARD]));
+    const defs = await resolveCardDoorwayDefinitions(deriveSessionId('project-1', 'main'), 'chat');
+    expect(defs).toEqual([]);
+  });
+
+  it('chat mode yields no doorways when multiple ThinkGraph cards are ambiguous (honest, no guess)', async () => {
     deckMocks.getDeckDocument.mockResolvedValueOnce(
-      deckWith([{ id: 'card_thinkgraph_agent', prompt: 'Saved prompt.', runtimeOptions: { tools: ['read_thinkgraph_scope'] } }]),
+      deckWith([TG_CARD, { ...TG_CARD, id: 'card_tg_2', runtimeOptions: { binding: 'thinkgraph_agent' } }]),
     );
-    const result = await resolveThinkGraphAgentDefinition(deriveSessionId('project-1', 'main'));
-    expect(result).toBeNull();
+    const defs = await resolveCardDoorwayDefinitions(deriveSessionId('project-1', 'main'), 'chat');
+    expect(defs).toEqual([]);
   });
 
-  it('degrades honestly to null on a deck/DB lookup failure — never throws into the chat turn', async () => {
+  it('degrades honestly to no doorways on a deck/DB lookup failure — never throws into the chat turn', async () => {
     deckMocks.getDeckDocument.mockRejectedValueOnce(new Error('project_not_found'));
-    const result = await resolveThinkGraphAgentDefinition(deriveSessionId('missing-project', 'main'));
-    expect(result).toBeNull();
+    const defs = await resolveCardDoorwayDefinitions(deriveSessionId('missing-project', 'main'), 'chat');
+    expect(defs).toEqual([]);
   });
 
-  it('returns null for a malformed session id it cannot resolve a projectId from', async () => {
-    const result = await resolveThinkGraphAgentDefinition('not-a-real-session-id');
-    expect(result).toBeNull();
+  it('returns no doorways for a malformed session id without a deck lookup', async () => {
+    const defs = await resolveCardDoorwayDefinitions('not-a-real-session-id', 'chat');
+    expect(defs).toEqual([]);
     expect(deckMocks.getDeckDocument).not.toHaveBeenCalled();
+  });
+});
+
+describe('selectDoorwayCards — structural mode filters only', () => {
+  it('chat mode selects only the single thinkgraph-bound card', () => {
+    expect(selectDoorwayCards([MAIN_CHAT_CARD, TG_CARD, RESEARCH_CARD], 'chat').map((c) => c.id)).toEqual([
+      'card_thinkgraph_agent',
+    ]);
+  });
+
+  it('canvas mode excludes the main_chat parent card', () => {
+    const ids = selectDoorwayCards([MAIN_CHAT_CARD, TG_CARD, RESEARCH_CARD], 'canvas').map((c) => c.id);
+    expect(ids).not.toContain('card_main_chat');
+    expect(ids).toEqual(['card_thinkgraph_agent', 'card_research_agent']);
   });
 });
 

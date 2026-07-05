@@ -14,13 +14,72 @@ import type { BuiltInAgentDefinition } from '../tools/AgentTool/loadAgentsDir.js
 
 const PROTO_PATH = path.resolve(import.meta.dirname, '../proto/openclaude.proto')
 
-// The one tool the official Python MCP host exposes for live, in-turn ThinkGraph
-// writes (apps/python-models/app/mcp_host.py: thinkgraph.apply_live_patch).
-// Qualified per the runtime's own MCP naming (mcp__<clientName>__<normalizedToolName>,
-// see services/mcp/mcpStringUtils.ts) for the 'liquidaity' client this file connects —
-// a fixed identity constant, not a name-translation mapper: the saved card grants
-// this exact string directly, nothing here rewrites what the card says.
+// The two ThinkGraph tools the official Python MCP host exposes
+// (apps/python-models/app/mcp_host.py: thinkgraph.get_graph_slice /
+// thinkgraph.apply_live_patch). Qualified per the runtime's own MCP naming
+// (mcp__<clientName>__<normalizedToolName>, see services/mcp/mcpStringUtils.ts)
+// for the 'liquidaity' client this server connects — fixed identity constants,
+// not a name-translation mapper: the saved card grants these exact strings
+// directly, nothing here rewrites what the card says.
+const THINKGRAPH_READ_TOOL_NAME = 'mcp__liquidaity__thinkgraph_get_graph_slice'
 const THINKGRAPH_LIVE_WRITE_TOOL_NAME = 'mcp__liquidaity__thinkgraph_apply_live_patch'
+
+// The one MCP control tool a card doorway child calls to run its bound saved
+// card through the canonical Python executor (card.run_assistant_agent on the
+// official Python MCP host, qualified per the runtime's own MCP naming).
+const CARD_RUN_CONTROL_TOOL_NAME = 'mcp__liquidaity__card_run_assistant_agent'
+
+/** Trusted identity resolution for a doorway child's card-run control call.
+ * The model supplies only { cardId, input }; this forces the child's BOUND
+ * card id and injects the real session identity — the model can neither pick
+ * another card nor forge project/conversation identity. A caller that is not
+ * one of this turn's doorway children is denied. Pure, directly testable. */
+export function resolveCardRunControlCall(params: {
+  input: Record<string, unknown>
+  agentType: string | undefined
+  cardIdByAgentType: Map<string, string>
+  projectId: string
+  conversationId: string
+  correlationId: string
+}): { deny: string } | { updatedInput: Record<string, unknown> } {
+  const agentType = String(params.agentType || '')
+  const boundCardId = agentType ? params.cardIdByAgentType.get(agentType) : undefined
+  if (!boundCardId) return { deny: 'card_run_requires_card_doorway_child' }
+  if (!params.projectId || !params.conversationId) {
+    return { deny: 'card_run_session_identity_unavailable' }
+  }
+  return {
+    updatedInput: {
+      ...params.input,
+      cardId: boundCardId,
+      projectId: params.projectId,
+      conversationId: params.conversationId,
+      correlationId: params.correlationId,
+    },
+  }
+}
+
+/** The official Python MCP host launch identity, resolved and file-validated by
+ * scripts/start-grpc.ts from the real repo layout. No env vars, no .env. */
+export type PythonMcpConfig = {
+  serverName: string
+  command: string
+  hostPath: string
+}
+
+/** Fail-closed startup check: the control-surface tools the merged card
+ * architecture depends on must exist in the actually-fetched Python MCP tool
+ * pool — the card-run doorway tool, the bounded ThinkGraph read, and (until
+ * the post-proof cleanup removes the legacy live-write surface) the scoped
+ * live-write tool. Pure so it is directly testable. */
+export function missingRequiredThinkGraphTools(toolNames: string[]): string[] {
+  const pool = new Set(toolNames)
+  return [
+    CARD_RUN_CONTROL_TOOL_NAME,
+    THINKGRAPH_READ_TOOL_NAME,
+    THINKGRAPH_LIVE_WRITE_TOOL_NAME,
+  ].filter(name => !pool.has(name))
+}
 const THINKGRAPH_LIVE_AUTHORITY_KIND = 'thinkgraph_live_agent_turn'
 const THINKGRAPH_LIVE_AUTHORITY_TTL_SECONDS = 900
 
@@ -75,15 +134,71 @@ const MAX_SESSIONS = 1000
 export class GrpcServer {
   private server: grpc.Server
   private sessions: Map<string, any[]> = new Map()
+  private pythonMcp: PythonMcpConfig
+  // The one server-lifetime Python MCP connection + its fetched tool pool.
+  // Established once in start() before the server binds; every chat turn and
+  // every Agent child reuses these exact objects — no per-turn spawn, no
+  // env-var wiring, no degraded no-MCP mode.
+  private mcpClients: MCPServerConnection[] = []
+  private mcpTools: Tool[] = []
 
-  constructor() {
+  constructor(pythonMcp: PythonMcpConfig) {
+    this.pythonMcp = pythonMcp
     this.server = new grpc.Server()
     this.server.addService(openclaudeProto.AgentService.service, {
       Chat: this.handleChat.bind(this),
     })
   }
 
-  start(port: number = 50051, host: string = 'localhost') {
+  /** Connect the official Python MCP host for the server's lifetime. Any
+   * failure (spawn, handshake, tool fetch, missing ThinkGraph tools) is one
+   * exact fatal startup error — chat never starts against a broken registry. */
+  private async connectOfficialPythonMcp(): Promise<void> {
+    const { serverName, command, hostPath } = this.pythonMcp
+    let connection: MCPServerConnection
+    try {
+      connection = await connectToServer(serverName, {
+        type: 'stdio',
+        command,
+        args: [hostPath],
+      } as any)
+    } catch (err) {
+      console.error(
+        `gRPC Server: FATAL — official Python MCP host failed to connect: ${command} ${hostPath} — ${err instanceof Error ? err.message : err}`,
+      )
+      process.exit(1)
+    }
+    if (!connection || connection.type !== 'connected') {
+      console.error(
+        `gRPC Server: FATAL — official Python MCP host not connected (state=${connection?.type ?? 'none'}): ${command} ${hostPath}`,
+      )
+      process.exit(1)
+    }
+    let tools: Tool[]
+    try {
+      tools = await fetchToolsForClient(connection)
+    } catch (err) {
+      console.error(
+        `gRPC Server: FATAL — official Python MCP tool fetch failed: ${err instanceof Error ? err.message : err}`,
+      )
+      process.exit(1)
+    }
+    const missing = missingRequiredThinkGraphTools(tools.map(t => t.name))
+    if (missing.length > 0) {
+      console.error(
+        `gRPC Server: FATAL — Python MCP host connected but required ThinkGraph tools are missing: ${missing.join(', ')}`,
+      )
+      process.exit(1)
+    }
+    this.mcpClients = [connection]
+    this.mcpTools = tools
+    console.log(
+      `gRPC Server: official Python MCP connected (${serverName}); tools=${tools.length}`,
+    )
+  }
+
+  async start(port: number = 50051, host: string = 'localhost') {
+    await this.connectOfficialPythonMcp()
     const bindTarget = `${host}:${port}`
     console.log(`gRPC Server: requesting bind on ${bindTarget}`)
     this.server.bindAsync(
@@ -110,7 +225,15 @@ export class GrpcServer {
 
   private handleChat(call: grpc.ServerDuplexStream<any, any>) {
     let engine: QueryEngine | null = null
-    let appState: AppState = getDefaultAppState()
+    // The SAME server-lifetime Python MCP client/tool objects go into
+    // AppState.mcp here, BEFORE any AgentTool call — the child worker pool is
+    // assembled from appState.mcp.tools (AgentTool.tsx → assembleToolPool), so
+    // this is what makes the saved card's exact tool grants resolvable.
+    const defaults = getDefaultAppState()
+    let appState: AppState = {
+      ...defaults,
+      mcp: { ...defaults.mcp, clients: this.mcpClients, tools: this.mcpTools },
+    }
     const fileCache: FileStateCache = new FileStateCache(READ_FILE_STATE_CACHE_SIZE, 25 * 1024 * 1024)
 
     // To handle ActionRequired (ask user for permission)
@@ -145,45 +268,23 @@ export class GrpcServer {
 
           const toolNameById = new Map<string, string>()
 
-          // Load exactly ONE LiquidAIty MCP client (the separate host process that
-          // bridges to backend authority) using the runtime's existing MCP
-          // mechanism. Guarded: a failed/absent host degrades to no MCP, never a
-          // crash. No parallel tool framework; no vendored-internal redesign.
-          let liquidAItyMcpClients: MCPServerConnection[] = []
-          let liquidAItyMcpTools: Tool[] = []
-          const mcpHostPath = process.env.LIQUIDAITY_MCP_HOST
-          const mcpCommand = process.env.LIQUIDAITY_MCP_NODE
-          if (mcpHostPath && mcpCommand) {
-            try {
-              const conn = await connectToServer('liquidaity', {
-                type: 'stdio',
-                command: mcpCommand,
-                args: [mcpHostPath],
-              } as any)
-              if (conn && conn.type === 'connected') {
-                liquidAItyMcpClients = [conn]
-                // Merge the MCP client's tools into the model's tool list so the
-                // session can actually call them (connecting the client alone does
-                // not surface its tools to the model).
-                try {
-                  liquidAItyMcpTools = await fetchToolsForClient(conn)
-                } catch (toolErr) {
-                  console.error('[grpc] liquidaity MCP tool fetch failed:', toolErr instanceof Error ? toolErr.message : toolErr)
-                }
-                console.log(`[grpc] liquidaity MCP client connected; mcpTools=${liquidAItyMcpTools.length}`)
-              } else {
-                console.error('[grpc] liquidaity MCP client not connected:', conn?.type)
-              }
-            } catch (err) {
-              console.error('[grpc] liquidaity MCP client load failed:', err instanceof Error ? err.message : err)
-            }
-          }
+          // This turn's doorway children: agentType → bound saved card id. The
+          // trusted card-run gate below forces each child to its own card.
+          const rawAgentDefinitions: any[] = Array.isArray(req.agent_definitions) ? req.agent_definitions : []
+          const cardIdByAgentType = new Map<string, string>(
+            rawAgentDefinitions
+              .filter((d: any) => String(d?.agent_type || '').trim() && String(d?.card_id || '').trim())
+              .map((d: any) => [String(d.agent_type), String(d.card_id)]),
+          )
 
           // Mint the live ThinkGraph write authority once per turn, at this trusted
           // server boundary — never chosen, forged, or reused by the model. Scoped to
-          // the resolved ThinkGraph card's agentType for THIS turn only; a stale or
-          // absent card resolution means no child exists to hold the write grant.
-          const rawThinkGraphAgent = Array.isArray(req.agent_definitions) ? req.agent_definitions[0] : undefined
+          // the resolved ThinkGraph card's agentType for THIS turn only (found by its
+          // persisted runtime binding, never by list position); a stale or absent card
+          // resolution means no child exists to hold the write grant.
+          const rawThinkGraphAgent = rawAgentDefinitions.find(
+            (d: any) => String(d?.runtime_binding || '') === 'thinkgraph_agent',
+          )
           const thinkGraphAgentType = rawThinkGraphAgent ? String(rawThinkGraphAgent.agent_type || '') : ''
           const sessionParts = parseSessionIdForLiveAuthority(sessionId)
           const liveAuthority = sessionParts && thinkGraphAgentType
@@ -201,9 +302,9 @@ export class GrpcServer {
 
           engine = new QueryEngine({
             cwd: req.working_directory || process.cwd(),
-            tools: [...getTools(appState.toolPermissionContext), ...liquidAItyMcpTools], // base tools + LiquidAIty MCP tools
+            tools: [...getTools(appState.toolPermissionContext), ...this.mcpTools], // base tools + the server-lifetime Python MCP tools
             commands: [], // Slash commands
-            mcpClients: liquidAItyMcpClients,
+            mcpClients: this.mcpClients,
             agents: buildAgentDefinitionsFromRequest(req),
             ...(typeof req.append_system_prompt === 'string' && req.append_system_prompt.trim()
               ? { appendSystemPrompt: req.append_system_prompt }
@@ -222,6 +323,31 @@ export class GrpcServer {
                   tool_use_id: toolUseID
                 }
               })
+
+              // Card doorway control call: only one of this turn's doorway
+              // children may call it, its bound card id is forced, and the real
+              // session identity (projectId/conversationId) plus a fresh
+              // correlationId are injected server-side — the model supplies only
+              // the task. A parent/direct call is denied: in chat mode the
+              // doorways ARE the only direct card surface.
+              if (tool.name === CARD_RUN_CONTROL_TOOL_NAME) {
+                const resolved = resolveCardRunControlCall({
+                  input: input as Record<string, unknown>,
+                  agentType: context.agentType,
+                  cardIdByAgentType,
+                  projectId: sessionParts?.projectId ?? '',
+                  conversationId: sessionParts?.conversationId ?? '',
+                  correlationId: randomUUID(),
+                })
+                if ('deny' in resolved) {
+                  return {
+                    behavior: 'deny',
+                    message: resolved.deny,
+                    decisionReason: { type: 'other', reason: resolved.deny },
+                  }
+                }
+                return { behavior: 'allow', updatedInput: resolved.updatedInput }
+              }
 
               // No interactive human-confirmation gate: every tool call is allowed
               // to proceed immediately. The ThinkGraph live-write tool keeps its

@@ -16,7 +16,12 @@ vi.mock('../services/autogen/autogenOrchestratorClient', () => ({
 
 import { getDeckDocument } from '../decks/store';
 import { runSingleCardWithAutoGen } from '../services/autogen/autogenOrchestratorClient';
-import { runConfiguredCard } from './runtime';
+import {
+  isSingleAssistRunDocument,
+  runConfiguredCard,
+  runSingleAssistCardAsDeckRun,
+  toAgentRunResult,
+} from './runtime';
 
 const mockGetDeck = getDeckDocument as unknown as ReturnType<typeof vi.fn>;
 const mockRunCard = runSingleCardWithAutoGen as unknown as ReturnType<typeof vi.fn>;
@@ -140,5 +145,182 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     const result = await runConfiguredCard(ARGS);
     expect(result.status).toBe('failed');
     expect(result.error).toContain('PYTHON_AUTOGEN_RAILS_UNAVAILABLE');
+  });
+
+  it('mints thinkgraph_pair authority in the ONE executor for a thinkgraph-bound card with a real conversation', async () => {
+    mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
+    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'ok' });
+    await runConfiguredCard({ ...ARGS, conversationId: 'conv-7' });
+    const payload = mockRunCard.mock.calls[0][0];
+    expect(payload.cardRuntime.runtimeScope).toEqual({
+      kind: 'thinkgraph_pair',
+      projectId: 'proj-1',
+      deckId: 'deck_builder',
+      cardId: 'card_thinkgraph_agent',
+      correlationId: 'corr-123',
+      conversationId: 'conv-7',
+    });
+    // No fake message-pair identity is ever fabricated for a live run.
+    expect(payload.cardRuntime.runtimeScope.userMessageId).toBeUndefined();
+    expect(payload.cardRuntime.runtimeScope.assistantMessageId).toBeUndefined();
+  });
+
+  it('mints NO authority without a real conversation — a Task-tab test run fabricates nothing', async () => {
+    mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
+    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'ok' });
+    await runConfiguredCard(ARGS);
+    const payload = mockRunCard.mock.calls[0][0];
+    expect(payload.cardRuntime.runtimeScope).toBeUndefined();
+  });
+
+  it('never mints thinkgraph authority for a non-thinkgraph card, conversation or not', async () => {
+    mockGetDeck.mockResolvedValue(
+      deckWith([{ ...AGENT_CARD, id: 'card_research_agent', runtimeBinding: 'research_agent' }]),
+    );
+    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'ok' });
+    await runConfiguredCard({ ...ARGS, cardId: 'card_research_agent', conversationId: 'conv-7' });
+    const payload = mockRunCard.mock.calls[0][0];
+    expect(payload.cardRuntime.runtimeScope).toBeUndefined();
+  });
+
+  it('an explicit caller runAuthority (the completed-pair path) always wins untouched', async () => {
+    mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
+    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'ok' });
+    const pairAuthority = {
+      kind: 'thinkgraph_pair',
+      projectId: 'proj-1',
+      deckId: 'deck_builder',
+      cardId: 'card_thinkgraph_agent',
+      correlationId: 'corr-123',
+      conversationId: 'conv-7',
+      userMessageId: 'um-1',
+      assistantMessageId: 'am-1',
+    };
+    await runConfiguredCard({ ...ARGS, conversationId: 'conv-OTHER', runAuthority: pairAuthority });
+    const payload = mockRunCard.mock.calls[0][0];
+    expect(payload.cardRuntime.runtimeScope).toEqual(pairAuthority);
+  });
+});
+
+describe('toAgentRunResult — one normalized report for every invocation surface', () => {
+  const BASE = {
+    correlationId: 'corr-9',
+    cardId: 'card_x',
+    runtimeType: 'assistant_agent',
+    tools: ['current_datetime'],
+    output: 'done',
+    error: null,
+    startedAt: 't0',
+    endedAt: 't1',
+    toolCallCount: 2,
+  };
+
+  it('maps completed → succeeded and preserves identity/tool facts', () => {
+    const result = toAgentRunResult({ ...BASE, status: 'completed' } as any, 'single_assist');
+    expect(result).toEqual({
+      runId: 'corr-9',
+      cardId: 'card_x',
+      invocation: 'single_assist',
+      status: 'succeeded',
+      summary: 'done',
+      error: null,
+      tools: ['current_datetime'],
+      toolCallCount: 2,
+      startedAt: 't0',
+      endedAt: 't1',
+    });
+  });
+
+  it.each(['failed', 'disabled', 'not_found', 'not_runnable'] as const)(
+    'maps %s → failed with the exact reason preserved',
+    (status) => {
+      const result = toAgentRunResult(
+        { ...BASE, status, output: '', error: `card_${status}` } as any,
+        'mag_one_orchestrated',
+      );
+      expect(result.status).toBe('failed');
+      expect(result.error).toBe(`card_${status}`);
+      expect(result.summary).toBe('');
+    },
+  );
+});
+
+describe('isSingleAssistRunDocument — structural detection only', () => {
+  it('accepts exactly one top-level agent card', () => {
+    expect(isSingleAssistRunDocument({ nodes: [AGENT_CARD] })).toEqual({
+      ok: true,
+      cardId: 'card_thinkgraph_agent',
+    });
+  });
+
+  it('rejects any selection containing a Mag One orchestrator (team runtime owns it)', () => {
+    expect(
+      isSingleAssistRunDocument({
+        nodes: [{ ...AGENT_CARD, id: 'card_bus', runtimeType: 'magentic_one' }, AGENT_CARD],
+      }),
+    ).toEqual({ ok: false });
+  });
+
+  it('rejects multi-card selections without an orchestrator', () => {
+    expect(
+      isSingleAssistRunDocument({ nodes: [AGENT_CARD, { ...AGENT_CARD, id: 'card_two' }] }),
+    ).toEqual({ ok: false });
+  });
+
+  it('ignores subgraph children when counting top-level cards', () => {
+    expect(
+      isSingleAssistRunDocument({
+        nodes: [AGENT_CARD, { ...AGENT_CARD, id: 'card_child', parentGraphId: 'card_thinkgraph_agent' }],
+      }),
+    ).toEqual({ ok: true, cardId: 'card_thinkgraph_agent' });
+  });
+
+  it('rejects an empty selection', () => {
+    expect(isSingleAssistRunDocument({ nodes: [] })).toEqual({ ok: false });
+  });
+});
+
+describe('runSingleAssistCardAsDeckRun — Task-tab surface over the one executor', () => {
+  it('reports a completed run as a success deck-run step carrying the AgentRunResult', async () => {
+    mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
+    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'assist output' });
+
+    const run = await runSingleAssistCardAsDeckRun({
+      projectId: 'proj-1',
+      deckId: 'deck_builder',
+      cardId: 'card_thinkgraph_agent',
+      input: 'do the thing',
+    });
+
+    expect(run.status).toBe('success');
+    expect(run.finalOutput).toBe('assist output');
+    expect(run.steps).toHaveLength(1);
+    const step = (run.steps as any[])[0];
+    expect(step.cardId).toBe('card_thinkgraph_agent');
+    expect(step.status).toBe('success');
+    expect(step.output).toBe('assist output');
+    expect(step.agentRunResult.status).toBe('succeeded');
+    expect(step.agentRunResult.invocation).toBe('single_assist');
+    expect(step.agentRunResult.runId).toMatch(/^assist_/);
+    // Same one executor underneath — the Python rails single-card transport.
+    expect(mockRunCard).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports an honest failure (unknown card) without a fake success shape', async () => {
+    mockGetDeck.mockResolvedValue(deckWith([]));
+
+    const run = await runSingleAssistCardAsDeckRun({
+      projectId: 'proj-1',
+      deckId: 'deck_builder',
+      cardId: 'card_missing',
+      input: 'do the thing',
+    });
+
+    expect(run.status).toBe('error');
+    expect(run.error).toContain('card_not_found');
+    const step = (run.steps as any[])[0];
+    expect(step.status).toBe('error');
+    expect(step.agentRunResult.status).toBe('failed');
+    expect(mockRunCard).not.toHaveBeenCalled();
   });
 });

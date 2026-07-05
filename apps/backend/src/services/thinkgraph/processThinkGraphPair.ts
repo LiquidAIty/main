@@ -22,7 +22,11 @@ import { resolveRuntimeBinding } from '../../contracts/runtimeBinding';
 import { runCypherOnGraph, ensureVertexLabel } from '../graphService';
 
 const GRAPH = 'thinkgraph_liq';
-const REQUIRED_TOOLS = ['mcp__liquidaity__thinkgraph_get_graph_slice', 'mcp__liquidaity__thinkgraph_apply_live_patch'];
+// The two REAL Python AutoGen registry tools the ThinkGraph card runs with
+// (apps/python-models tool_registry.py). These are the names the runtime
+// actually resolves — MCP-qualified mcp__liquidaity__* names belong to the
+// Harness control surface, never to a card's Python tool grants.
+const REQUIRED_TOOLS = ['read_thinkgraph_scope', 'apply_thinkgraph_patch'];
 const ALLOWED_ARG_KEYS = ['projectId', 'deckId', 'conversationId', 'userMessageId', 'assistantMessageId', 'correlationId'] as const;
 const PAIR_TEXT_CAP = 24_000;
 

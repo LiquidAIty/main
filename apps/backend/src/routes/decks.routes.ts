@@ -7,6 +7,7 @@ import {
   saveDeckRun,
 } from '../decks/store';
 import { executeDeck } from '../decks/deckRuntime';
+import { isSingleAssistRunDocument, runSingleAssistCardAsDeckRun } from '../cards/runtime';
 import type {
   AgentTemplate,
   DeckDocument,
@@ -195,23 +196,36 @@ router.post('/:projectId/decks/:deckId/run', async (req, res) => {
       res.flushHeaders?.();
     }
 
-    const run = await executeDeck(deck, templates, {
-      input: String(req.body?.input || ''),
-      promptTemplates: promptTemplates.length > 0 ? promptTemplates : deck.promptTemplates,
-      projectId: req.params.projectId,
-      workspaceContext: req.body?.workspaceContext,
-      workspaceObjectContext: req.body?.workspaceObjectContext,
-      // Structured Run Task approval gate (no magic userText command).
-      runApproved: req.body?.runApproved === true,
-      missionSpec,
-      missionRunId,
-      missionAgentRunId,
-      onRuntimeEvent: useStream
-        ? (event: any) => {
-            writeStreamChunk(res, { kind: 'event', event });
-          }
-        : undefined,
-    }) as unknown as DeckRun;
+    // Single Assist: a posted selection with no Mag One orchestrator and exactly
+    // one top-level card runs through the ONE canonical configured-card executor
+    // (runConfiguredCard — the same core the MCP card.run_assistant_agent path
+    // uses), never through the Mag One team runtime. Structural detection only;
+    // runnability is enforced inside runConfiguredCard itself.
+    const singleAssist = isSingleAssistRunDocument(deck);
+    const run = (singleAssist.ok
+      ? await runSingleAssistCardAsDeckRun({
+          projectId: req.params.projectId,
+          deckId,
+          cardId: singleAssist.cardId,
+          input: String(req.body?.input || ''),
+        })
+      : await executeDeck(deck, templates, {
+          input: String(req.body?.input || ''),
+          promptTemplates: promptTemplates.length > 0 ? promptTemplates : deck.promptTemplates,
+          projectId: req.params.projectId,
+          workspaceContext: req.body?.workspaceContext,
+          workspaceObjectContext: req.body?.workspaceObjectContext,
+          // Structured Run Task approval gate (no magic userText command).
+          runApproved: req.body?.runApproved === true,
+          missionSpec,
+          missionRunId,
+          missionAgentRunId,
+          onRuntimeEvent: useStream
+            ? (event: any) => {
+                writeStreamChunk(res, { kind: 'event', event });
+              }
+            : undefined,
+        })) as unknown as DeckRun;
 
     const persistedRun = await saveDeckRun(req.params.projectId, deckId, run);
     const missionStatus =

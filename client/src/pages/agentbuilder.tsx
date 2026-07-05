@@ -5415,6 +5415,11 @@ export default function AgentBuilder(): React.ReactElement {
         projectId: canvasProjectId,
         conversationId,
         message: trimmed,
+        // Agent Builder canvas surface (the hex+ view) = canvas mode: every
+        // eligible saved card is a direct Single Assist doorway. Normal project
+        // chat = chat mode: only the ThinkGraph doorway. Explicit surface state,
+        // never inferred from message content.
+        mode: workspaceView === 'canvas' ? 'canvas' : 'chat',
         onEvent: (event) => {
           if (event.kind === 'text') {
             // Real model text streams into the chat — creates the assistant bubble on
@@ -5437,7 +5442,7 @@ export default function AgentBuilder(): React.ReactElement {
           setNativeSessionBusy(false);
         });
     },
-    [canvasProjectId, nativeSessionBusy],
+    [canvasProjectId, nativeSessionBusy, workspaceView],
   );
 
   const renderChatSurface = (

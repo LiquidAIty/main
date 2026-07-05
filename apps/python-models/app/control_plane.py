@@ -366,19 +366,23 @@ async def thinkgraph_get_graph_slice(args: dict[str, Any]) -> dict[str, Any]:
 
 
 async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
-    _require(args, "projectId", "deckId", "cardId", "correlationId", "input")
-    # Thin transport to the backend's single-card runner: saved card identity,
-    # saved prompt/model/tools only. runConfiguredCard structurally rejects every
-    # extra key, so prompt/model/tool/card overrides cannot exist on this path.
+    # deckId is optional transport: the backend bridge owns the canonical
+    # Agent Canvas default. conversationId is a structural reference to the
+    # real live conversation when one exists — the backend mints card-scoped
+    # authority from it; this layer never authors or invents authority.
+    _require(args, "projectId", "cardId", "correlationId", "input")
+    deck_id = str(args.get("deckId") or "").strip()
+    conversation_id = str(args.get("conversationId") or "").strip()
     return await asyncio.to_thread(
         _backend_json,
         "POST",
         "/api/coder/mcp-bridge/run_configured_card",
         {
             "projectId": str(args["projectId"]).strip(),
-            "deckId": str(args["deckId"]).strip(),
+            **({"deckId": deck_id} if deck_id else {}),
             "cardId": str(args["cardId"]).strip(),
             "correlationId": str(args["correlationId"]).strip(),
+            **({"conversationId": conversation_id} if conversation_id else {}),
             "input": str(args["input"]),
         },
     )

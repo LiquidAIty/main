@@ -63,10 +63,10 @@ describe('resolveThinkGraphCardFromDeck — structural, persisted, never by name
   });
 });
 
-describe('validateThinkGraphCardTools — exactly the two scoped tools, never substituted', () => {
+describe('validateThinkGraphCardTools — exactly the two REAL Python registry tools, never substituted', () => {
   const withTools = (tools: unknown) => ({ runtimeOptions: { tools } });
-  const READ_TOOL = 'mcp__liquidaity__thinkgraph_get_graph_slice';
-  const WRITE_TOOL = 'mcp__liquidaity__thinkgraph_apply_live_patch';
+  const READ_TOOL = 'read_thinkgraph_scope';
+  const WRITE_TOOL = 'apply_thinkgraph_patch';
 
   it('accepts exactly the two ThinkGraph tools in either order', () => {
     expect(validateThinkGraphCardTools(withTools([READ_TOOL, WRITE_TOOL]))).toBeNull();
@@ -79,10 +79,12 @@ describe('validateThinkGraphCardTools — exactly the two scoped tools, never su
     expect(error).toContain('got [current_datetime,calculator]');
   });
 
-  it('rejects the old obsolete bare tool names — no silent backward-compatibility', () => {
-    expect(validateThinkGraphCardTools(withTools(['read_thinkgraph_scope', 'apply_thinkgraph_patch']))).toContain(
-      'thinkgraph_card_tools_invalid',
-    );
+  it('rejects the Harness MCP control-surface names — those are NOT Python card tools, no aliasing', () => {
+    expect(
+      validateThinkGraphCardTools(
+        withTools(['mcp__liquidaity__thinkgraph_get_graph_slice', 'mcp__liquidaity__thinkgraph_apply_live_patch']),
+      ),
+    ).toContain('thinkgraph_card_tools_invalid');
   });
 
   it('rejects subsets, supersets, and missing tools — no fallback fills the gap', () => {

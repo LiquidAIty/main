@@ -21,13 +21,32 @@ def _read(relative: str) -> str:
 class TestHarnessGrpcServerWall:
     def test_harness_crosses_only_via_the_mcp_host(self):
         source = _read("localcoder/src/grpc/server.ts")
-        assert "LIQUIDAITY_MCP_HOST" in source  # the one MCP boundary
+        # The env-var/.env MCP wiring is dead: the official Python MCP config is
+        # constructor-injected (PythonMcpConfig) and connected once for the
+        # server's lifetime, never read from LIQUIDAITY_MCP_* env vars.
+        assert "LIQUIDAITY_MCP_HOST" not in source
+        assert "LIQUIDAITY_MCP_NODE" not in source
+        assert "PythonMcpConfig" in source
+        assert "connectOfficialPythonMcp" in source
         # No direct database / graph clients on the Harness side.
         for forbidden in ("from 'pg'", 'from "pg"', "neo4j", "psycopg", "ag_catalog"):
             assert forbidden not in source, f"harness gained direct dependency: {forbidden}"
         # No direct backend capability HTTP from the Harness gRPC server.
         for forbidden in ("/api/coder/mcp-bridge", "127.0.0.1:4000", "localhost:4000"):
             assert forbidden not in source, f"harness gained direct backend HTTP: {forbidden}"
+
+    def test_start_grpc_resolves_and_validates_the_official_python_host(self):
+        # start-grpc.ts is the only place the official host identity is built:
+        # exact repo-root-resolved paths, existence-validated, fail-closed
+        # (process.exit) before the server is constructed. No env vars, no
+        # .env, no Node .mjs host.
+        launcher = _read("localcoder/scripts/start-grpc.ts")
+        assert "mcp_host.py" in launcher
+        assert "python.exe" in launcher
+        assert "existsSync" in launcher
+        assert "process.exit(1)" in launcher
+        for forbidden in ("LIQUIDAITY_MCP_HOST", "LIQUIDAITY_MCP_NODE", ".mjs", "liquidAItyMcpHost"):
+            assert forbidden not in launcher, f"launcher regressed to: {forbidden}"
 
 
 class TestBackendHarnessMcpClientWall:

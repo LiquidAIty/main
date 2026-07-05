@@ -15,10 +15,6 @@
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { getDeckDocument } from '../../../decks/store';
-import {
-  resolveThinkGraphCardFromDeck,
-  validateThinkGraphCardTools,
-} from '../../../services/thinkgraph/processThinkGraphPair';
 import { resolveRuntimeBinding } from '../../../contracts/runtimeBinding';
 
 // The app's one canonical Agent Canvas deck (mirrors coder.routes.ts's own
@@ -38,7 +34,14 @@ export type GrpcTurnArgs = {
   message: string;
   workingDirectory: string;
   model?: string;
+  /** Which Harness surface this turn runs in. Chat mode exposes only the
+   * ThinkGraph doorway; canvas mode exposes every eligible saved card as a
+   * direct Single Assist doorway. Explicit surface state from the client —
+   * never inferred from message content. */
+  mode?: HarnessMode;
 };
+
+export type HarnessMode = 'chat' | 'canvas';
 
 export type GrpcTurnHandle = {
   /** Answer an action_required permission prompt mid-turn. */
@@ -63,37 +66,82 @@ function parseSessionId(sessionId: string): { projectId: string; conversationId:
   return { projectId, conversationId: parts.slice(2).join(':') };
 }
 
-/** Structural saved-card configuration only (id, prompt, tool grants) — never
- * graph data, conversation text, or backend-invented semantics. Resolved the
- * same way processThinkGraphPair already resolves it: exactly one persisted
- * card with runtimeBinding=thinkgraph_agent and exactly the two scoped graph
- * tools. Best-effort: any resolution failure yields no agent definition for
- * this turn — it must never block or alter the normal chat turn itself. */
-export async function resolveThinkGraphAgentDefinition(
+/** The one MCP control tool a card doorway child may call. Qualified per the
+ * runtime's own MCP naming for the 'liquidaity' Python host (dots→underscores).
+ * A fixed identity constant, not a mapping. */
+const CARD_RUN_CONTROL_TOOL = 'mcp__liquidaity__card_run_assistant_agent';
+
+/** A thin native doorway definition bound to ONE saved card. Pure transport:
+ * it carries no card prompt, no card tool grants, no model configuration and
+ * no data bindings — Python resolves ALL of those from the saved card when
+ * runConfiguredCard executes it. The doorway only relays the task and returns
+ * the structured result. */
+export function buildCardDoorwayDefinition(card: any): Record<string, unknown> | null {
+  const cardId = String(card?.id || '').trim();
+  if (!cardId) return null;
+  const title = String(card?.title || cardId).trim();
+  const binding = resolveRuntimeBinding(
+    card?.runtimeOptions?.binding ?? card?.runtimeBinding ?? card?.binding,
+    card?.id,
+  );
+  return {
+    agent_type: cardId,
+    card_id: cardId,
+    runtime_binding: binding || '',
+    system_prompt: [
+      `You are the Harness doorway for the saved agent card "${title}" (cardId ${cardId}).`,
+      `Call the tool ${CARD_RUN_CONTROL_TOOL} exactly once with { "cardId": "${cardId}", "input": <the task you were given, as one bounded instruction> }.`,
+      'The server supplies projectId, conversationId, and correlationId for the call — never invent or override them.',
+      "Return the tool's JSON result verbatim as your final answer. Do not summarize it away, do not add fields, and do not claim work the result does not show.",
+    ].join('\n'),
+    allowed_tools: [CARD_RUN_CONTROL_TOOL],
+    context_mode_inherit_parent: true,
+  };
+}
+
+/** Doorway-eligible saved cards for a Harness surface. Structural filters only:
+ * top-level enabled assistant_agent cards; the main_chat card is the parent
+ * itself, never a runnable doorway. Chat mode exposes exactly the one
+ * ThinkGraph card (ambiguity → none, honest degrade); canvas mode exposes
+ * every eligible card for direct Single Assist configure/test work. */
+export function selectDoorwayCards(nodes: any[], mode: HarnessMode): any[] {
+  const eligible = (nodes || []).filter((node) => {
+    if (String(node?.kind || 'agent') !== 'agent') return false;
+    if (String(node?.parentGraphId || '').trim()) return false;
+    if (node?.enabled === false || node?.runtimeOptions?.enabled === false) return false;
+    if ((node?.runtimeType ?? 'assistant_agent') !== 'assistant_agent') return false;
+    const binding = resolveRuntimeBinding(
+      node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
+      node?.id,
+    );
+    return binding !== 'main_chat';
+  });
+  if (mode === 'canvas') return eligible;
+  const thinkgraph = eligible.filter(
+    (node) =>
+      resolveRuntimeBinding(node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding, node?.id) ===
+      'thinkgraph_agent',
+  );
+  return thinkgraph.length === 1 ? thinkgraph : [];
+}
+
+/** Resolve this turn's native doorway definitions from the persisted deck.
+ * Best-effort: any resolution failure yields no definitions — it must never
+ * block or alter the normal chat turn itself. */
+export async function resolveCardDoorwayDefinitions(
   sessionId: string,
-): Promise<Record<string, unknown> | null> {
+  mode: HarnessMode,
+): Promise<Record<string, unknown>[]> {
   const parsed = parseSessionId(sessionId);
-  if (!parsed) return null;
+  if (!parsed) return [];
   try {
     const doc = await getDeckDocument(parsed.projectId, BUILDER_DECK_ID);
     const nodes: any[] = Array.isArray((doc?.deck as any)?.nodes) ? (doc!.deck as any).nodes : [];
-    const resolution = resolveThinkGraphCardFromDeck(nodes);
-    if (!resolution.ok) return null;
-    const card = resolution.card;
-    if (validateThinkGraphCardTools(card)) return null;
-    const allowedTools = Array.isArray(card?.runtimeOptions?.tools) ? card.runtimeOptions.tools.map(String) : [];
-    const prompt = String(card?.prompt || '').trim();
-    if (!prompt) return null;
-    return {
-      agent_type: String(card.id || ''),
-      card_id: String(card.id || ''),
-      runtime_binding: 'thinkgraph_agent',
-      system_prompt: prompt,
-      allowed_tools: allowedTools,
-      context_mode_inherit_parent: true,
-    };
+    return selectDoorwayCards(nodes, mode)
+      .map(buildCardDoorwayDefinition)
+      .filter((def): def is Record<string, unknown> => Boolean(def));
   } catch {
-    return null;
+    return [];
   }
 }
 
@@ -222,8 +270,8 @@ export async function startGrpcTurn(
     });
   });
 
-  const [thinkGraphAgentDefinition, appendSystemPrompt] = await Promise.all([
-    resolveThinkGraphAgentDefinition(args.sessionId),
+  const [doorwayDefinitions, appendSystemPrompt] = await Promise.all([
+    resolveCardDoorwayDefinitions(args.sessionId, args.mode === 'canvas' ? 'canvas' : 'chat'),
     resolveMainChatSystemPrompt(args.sessionId),
   ]);
 
@@ -233,7 +281,7 @@ export async function startGrpcTurn(
       working_directory: args.workingDirectory,
       session_id: args.sessionId,
       ...(args.model ? { model: args.model } : {}),
-      ...(thinkGraphAgentDefinition ? { agent_definitions: [thinkGraphAgentDefinition] } : {}),
+      ...(doorwayDefinitions.length > 0 ? { agent_definitions: doorwayDefinitions } : {}),
       // Appended AFTER the locked vendored base prompt (QueryEngine's
       // appendSystemPrompt), never replacing it — the saved card is the only
       // LiquidAIty-specific layer, added on top of the base, not instead of it.

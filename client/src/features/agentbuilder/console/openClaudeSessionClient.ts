@@ -14,10 +14,16 @@ export type NativeSessionEvent = {
 
 const BASE = '/api/coder/openclaude/session';
 
+/** Which Harness surface the turn runs in. Chat mode exposes only the
+ * ThinkGraph doorway; canvas (Agent Builder / Edit) mode exposes every eligible
+ * saved card as a direct Single Assist doorway. Explicit — never inferred. */
+export type HarnessMode = 'chat' | 'canvas';
+
 export async function streamSession(args: {
   projectId: string;
   conversationId: string;
   message: string;
+  mode?: HarnessMode;
   onEvent: (event: NativeSessionEvent) => void;
   signal?: AbortSignal;
 }): Promise<{ finalText: string }> {
@@ -29,6 +35,8 @@ export async function streamSession(args: {
       projectId: args.projectId,
       conversationId: args.conversationId,
       message: args.message,
+      // Default 'chat' when omitted (backend also defaults to chat).
+      mode: args.mode === 'canvas' ? 'canvas' : 'chat',
     }),
     signal: args.signal,
   });

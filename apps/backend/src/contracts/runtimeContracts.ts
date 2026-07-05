@@ -159,6 +159,34 @@ export type CardRunResult = {
   magenticTrace?: Record<string, unknown> | null;
 };
 
+// ── AgentRunResult — the ONE normalized card-run report ─────────────────────
+// Every card execution surface (direct Task-tab Single Assist run, Harness
+// native card doorway via card.run_assistant_agent, Mag One worker delegation)
+// reports through this same shape. It is a structural projection of the
+// existing ConfiguredCardRunResult (cards/runtime.ts) — never a second
+// execution report type and never inferred from model text.
+export type AgentRunStatus = 'running' | 'succeeded' | 'partial' | 'failed' | 'cancelled';
+
+export type AgentRunInvocation = 'single_assist' | 'mag_one_orchestrated';
+
+export type AgentRunResult = {
+  /** The run's correlationId — one identity across transport, Python, and storage. */
+  runId: string;
+  cardId: string;
+  invocation: AgentRunInvocation;
+  status: AgentRunStatus;
+  /** The card's real final output text; empty on failure — never fabricated. */
+  summary: string;
+  error: string | null;
+  /** Exact configured tools attached to the run (never inferred). */
+  tools: string[];
+  /** Mechanical count of authorized tool calls recorded during the run;
+   * null when the run has no profile/terminal reporting for this. */
+  toolCallCount: number | null;
+  startedAt: string;
+  endedAt: string;
+};
+
 export type DeckExecutionInput = {
   deckId: string;
   deckName?: string;

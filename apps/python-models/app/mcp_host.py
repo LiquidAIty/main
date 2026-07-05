@@ -1,9 +1,10 @@
 """LiquidAIty Python MCP host (stdio) — THE one MCP host the Harness launches.
 
-Replaces the Node workaround host (liquidAItyMcpHost.mjs). Same launch shape:
-the gRPC Harness spawns `<LIQUIDAITY_MCP_NODE> <LIQUIDAITY_MCP_HOST>` as one
-stdio MCP client, where LIQUIDAITY_MCP_NODE is this venv's python.exe and
-LIQUIDAITY_MCP_HOST is this file's absolute path.
+Launch shape: localcoder/scripts/start-grpc.ts resolves this venv's python.exe
+and this file's absolute path from the real repo layout, validates both exist,
+and the gRPC Harness (localcoder/src/grpc/server.ts) spawns them as ONE stdio
+MCP client for the server's lifetime — before any chat work is accepted. No
+env vars, no .env, no per-turn spawn, no fallback host.
 
 Exposes exactly this tool surface:
   * describe_agent_fabric            (compatibility migration — unchanged contract)
@@ -287,7 +288,10 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Run ONE saved, enabled assistant_agent card with its saved prompt/model/tools and "
                 "its assigned profile/skills/data bindings. No prompt/model/tool/card overrides "
-                "exist on this path — extra arguments are rejected structurally."
+                "exist on this path — extra arguments are rejected structurally. deckId defaults to "
+                "the canonical Agent Canvas deck. conversationId is the real live conversation this "
+                "run belongs to, when one exists — card-scoped authority is minted server-side from "
+                "it; never invent one."
             ),
             inputSchema={
                 "type": "object",
@@ -296,9 +300,10 @@ async def list_tools() -> list[Tool]:
                     "deckId": {"type": "string"},
                     "cardId": {"type": "string"},
                     "correlationId": {"type": "string"},
+                    "conversationId": {"type": "string"},
                     "input": {"type": "string"},
                 },
-                "required": ["projectId", "deckId", "cardId", "correlationId", "input"],
+                "required": ["projectId", "cardId", "correlationId", "input"],
             },
         ),
     ]
@@ -317,7 +322,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
     "card.assign_runtime_skill": {"projectId", "deckId", "cardId", "skillId", "skillVersion", "op"},
     "card.assign_data_binding": {"projectId", "deckId", "cardId", "bindingType", "bindingRef", "op"},
-    "card.run_assistant_agent": {"projectId", "deckId", "cardId", "correlationId", "input"},
+    "card.run_assistant_agent": {"projectId", "deckId", "cardId", "correlationId", "conversationId", "input"},
     "thinkgraph.get_graph_slice": {"projectId", "limit"},
     # "authority" is never in this tool's advertised inputSchema (the model never
     # sees it) — it arrives only because the trusted gRPC Harness injects it into
