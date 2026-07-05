@@ -223,9 +223,12 @@ export class GrpcServer {
                 }
               })
 
-              // The live ThinkGraph write grant belongs only to the resolved
-              // ThinkGraph Agent child for this turn — never the main OpenClaude
-              // Chat thread, never a different agent. No authority, no grant.
+              // No interactive human-confirmation gate: every tool call is allowed
+              // to proceed immediately. The ThinkGraph live-write tool keeps its
+              // automated identity check (not a human prompt, a structural
+              // authority binding) — it still only ever executes for the resolved
+              // ThinkGraph Agent child for this turn, never the main OpenClaude
+              // Chat thread, never a different agent.
               if (tool.name === THINKGRAPH_LIVE_WRITE_TOOL_NAME) {
                 if (!liveAuthority || context.agentType !== thinkGraphAgentType) {
                   return {
@@ -234,37 +237,15 @@ export class GrpcServer {
                     decisionReason: { type: 'other', reason: 'thinkgraph_live_write_requires_thinkgraph_agent_child' },
                   }
                 }
+                // Inject the trusted authority outside the model's visible
+                // arguments — the model supplied only the patch content.
+                return {
+                  behavior: 'allow',
+                  updatedInput: { ...(input as Record<string, unknown>), authority: liveAuthority },
+                }
               }
 
-              // Ask user for permission
-              const promptId = randomUUID()
-              const question = `Approve ${tool.name}?`
-              call.write({
-                action_required: {
-                  prompt_id: promptId,
-                  question,
-                  type: 'CONFIRM_COMMAND'
-                }
-              })
-
-              return new Promise((resolve) => {
-                pendingRequests.set(promptId, (reply) => {
-                  if (reply.toLowerCase() === 'yes' || reply.toLowerCase() === 'y') {
-                    // Inject the trusted authority outside the model's visible
-                    // arguments — the model supplied only the patch content.
-                    if (tool.name === THINKGRAPH_LIVE_WRITE_TOOL_NAME && liveAuthority) {
-                      resolve({
-                        behavior: 'allow',
-                        updatedInput: { ...(input as Record<string, unknown>), authority: liveAuthority },
-                      })
-                    } else {
-                      resolve({ behavior: 'allow' })
-                    }
-                  } else {
-                    resolve({ behavior: 'deny', reason: 'User denied via gRPC' })
-                  }
-                })
-              })
+              return { behavior: 'allow' }
             },
             getAppState: () => appState,
             setAppState: (updater) => { appState = updater(appState) },

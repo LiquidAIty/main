@@ -65,10 +65,12 @@ describe('resolveThinkGraphCardFromDeck — structural, persisted, never by name
 
 describe('validateThinkGraphCardTools — exactly the two scoped tools, never substituted', () => {
   const withTools = (tools: unknown) => ({ runtimeOptions: { tools } });
+  const READ_TOOL = 'mcp__liquidaity__thinkgraph_get_graph_slice';
+  const WRITE_TOOL = 'mcp__liquidaity__thinkgraph_apply_live_patch';
 
   it('accepts exactly the two ThinkGraph tools in either order', () => {
-    expect(validateThinkGraphCardTools(withTools(['read_thinkgraph_scope', 'apply_thinkgraph_patch']))).toBeNull();
-    expect(validateThinkGraphCardTools(withTools(['apply_thinkgraph_patch', 'read_thinkgraph_scope']))).toBeNull();
+    expect(validateThinkGraphCardTools(withTools([READ_TOOL, WRITE_TOOL]))).toBeNull();
+    expect(validateThinkGraphCardTools(withTools([WRITE_TOOL, READ_TOOL]))).toBeNull();
   });
 
   it('honestly rejects the legacy default AutoGen tool pair (the real observed blocker)', () => {
@@ -77,12 +79,16 @@ describe('validateThinkGraphCardTools — exactly the two scoped tools, never su
     expect(error).toContain('got [current_datetime,calculator]');
   });
 
+  it('rejects the old obsolete bare tool names — no silent backward-compatibility', () => {
+    expect(validateThinkGraphCardTools(withTools(['read_thinkgraph_scope', 'apply_thinkgraph_patch']))).toContain(
+      'thinkgraph_card_tools_invalid',
+    );
+  });
+
   it('rejects subsets, supersets, and missing tools — no fallback fills the gap', () => {
-    expect(validateThinkGraphCardTools(withTools(['read_thinkgraph_scope']))).toContain('thinkgraph_card_tools_invalid');
+    expect(validateThinkGraphCardTools(withTools([READ_TOOL]))).toContain('thinkgraph_card_tools_invalid');
     expect(
-      validateThinkGraphCardTools(
-        withTools(['read_thinkgraph_scope', 'apply_thinkgraph_patch', 'calculator']),
-      ),
+      validateThinkGraphCardTools(withTools([READ_TOOL, WRITE_TOOL, 'calculator'])),
     ).toContain('thinkgraph_card_tools_invalid');
     expect(validateThinkGraphCardTools(withTools(undefined))).toContain('got []');
   });

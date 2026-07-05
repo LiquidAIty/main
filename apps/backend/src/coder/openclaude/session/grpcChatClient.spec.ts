@@ -12,7 +12,7 @@ vi.mock('../../../decks/store', () => ({
 
 import { deriveSessionId, resolveMainChatSystemPrompt, resolveThinkGraphAgentDefinition } from './grpcChatClient';
 
-const THINKGRAPH_TOOLS = ['read_thinkgraph_scope', 'apply_thinkgraph_patch'];
+const THINKGRAPH_TOOLS = ['mcp__liquidaity__thinkgraph_get_graph_slice', 'mcp__liquidaity__thinkgraph_apply_live_patch'];
 
 function deckWith(nodes: any[]) {
   return { deck: { id: 'deck_builder', name: 'Deck', nodes, edges: [] }, latestRun: null, runs: [], meta: { deckRevision: null, deckSavedAt: null } };

@@ -22,7 +22,7 @@ import { resolveRuntimeBinding } from '../../contracts/runtimeBinding';
 import { runCypherOnGraph, ensureVertexLabel } from '../graphService';
 
 const GRAPH = 'thinkgraph_liq';
-const REQUIRED_TOOLS = ['read_thinkgraph_scope', 'apply_thinkgraph_patch'];
+const REQUIRED_TOOLS = ['mcp__liquidaity__thinkgraph_get_graph_slice', 'mcp__liquidaity__thinkgraph_apply_live_patch'];
 const ALLOWED_ARG_KEYS = ['projectId', 'deckId', 'conversationId', 'userMessageId', 'assistantMessageId', 'correlationId'] as const;
 const PAIR_TEXT_CAP = 24_000;
 
