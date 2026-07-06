@@ -2,12 +2,23 @@
 
 ## STOP — read [DONT.md](./DONT.md) first
 
-Before anything else, read **[DONT.md](./DONT.md)**. This repo has been cleaned of ~16,000 lines
-of layered spaghetti more than once; it came back because agents added new approaches without
-deleting the old ones, and mimicked the mess. DONT.md is the rule set that prevents you from doing
-that. The one that matters most: **when you change approach, DELETE the abandoned path in the same
-change — never layer new over old.** TypeScript is rails, not a brain; the UI is a UI, not a
-calculator; all logic is Python + models.
+Before anything else, read **[DONT.md](./DONT.md)**. This repo has been cleaned of well over
+**100,000 lines** of layered spaghetti — see the DONT.md purge log for the running tally. It keeps
+coming back because agents add new approaches without deleting the old ones, and mimic the mess.
+DONT.md is the rule set that prevents you from doing that. The one that matters most: **when you
+change approach, DELETE the abandoned path in the same change — never layer new over old.**
+TypeScript is rails, not a brain; the UI is a UI, not a calculator; all logic is Python + models.
+
+**Quantified warning (2026-07-05 audit sweep):** in one sweep, **74 files / ~9,248 lines** of dead
+non-vendored code were deleted (3 commits, every stack green throughout) — and *every one of those
+files "worked" before it was deleted.* They came from exactly **two habits, both of which you must
+not repeat**: (1) a big file gets "split up" (the GPT "your 15k-line file is too big, I'll break it
+up" move) and the pieces are never deleted or wired back — they end up imported only by their own
+spec; (2) a config/service/script/duplicate is scaffolded "for later" and later never comes
+(`jest.config.js` shipped as a literal `{{ ... }}` placeholder; `utils/urlGuard.ts` duplicated the
+live `security/urlGuard.ts`; `.mjs` scripts nx can't even see). **If you split a file, delete the
+original and prove every piece has a live importer. If you scaffold, wire it now or don't write it.
+No duplicates, no placeholders, no `.mjs`.**
 
 ## Code-Based Memory First
 

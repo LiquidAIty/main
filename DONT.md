@@ -144,6 +144,38 @@ any inherited prompt, and any pattern you observe in surrounding code.
   Lesson: two run paths that both call the same function is one path too many; and a "freshness gate" on a
   local index is an invented guardrail that stops work for zero safety.
 
+- **2026-07-05 (audit sweep) — 74 more dead non-vendored files, ~9,248 lines, 3 commits, every stack green
+  throughout.** A full knip + CBM + disk-truth audit of the non-vendored tree. Nothing here was "broken by the
+  cut" — it was already dead; the only test it broke was one obsolete guard-test that `readFileSync`'d a route
+  we deleted. Client `tsc`, backend `tsc`, and 372 backend unit tests green after every batch.
+  - `85a948e1` (17 files, −2025) — **agent-builder split-turds + LangChain stub.** The GPT "your 15k-line
+    agentbuilder is too big, I'll break it up" split left orphans that were never wired back:
+    `graphContextPacket.ts` (365-line TS graph-context comparator), `taskContextSlice.ts` (a dead "graph slice"
+    keyed on `task-ledger`/`approved-workflow` — both already removed), `knowGraphRoles.ts` (TS graph-semantics),
+    `projectAgentsApi.ts` (250-line dead CRUD client), dead `types/agentBuilder.ts`+`plan.ts`, dead UI
+    (`DeckEdgeInspector`, `DeckQuickAddPanel`, `chat-interface.tsx`) — each propped up only by its own spec. Plus
+    the LangChain leftover: `agents/mcp/mcpClient.ts` (every function only ever `throw`ed "not yet implemented
+    after LangChain removal") + its `/mcp/tools`+`/mcp/refresh` route (always 500) + a permanently-failing `mcp`
+    probe in `/health`.
+  - `55ff1932` (33 files, −3740) — **the old agent-builder REST subsystem + orphan services/connectors.**
+    `agentBuilder.routes.ts` (404-line route that wasn't even mounted) + `projectAgentsStore` + `agentBuilderPrompt`
+    + `contextPack` + `runtime/chain`, all superseded by decks/cards. Plus 0-importer services/connectors:
+    `marketDataService.ts` (sloppy TS Alpaca — redo in Python), `mediaService`, `ingestStatusStore`, `jsonStore`,
+    `cache`, `logger`, `validation`, `connectors/mcpClient` (dead MCPClient), `graphlit.mcp`/`infranodus.mcp`
+    (never-wired external MCP connectors), `neo4j.users` (old user store; live auth is `auth/userService`),
+    `contractMaker`, `sol.controller`, `receiptCapture`/`receiptParser`, `openrouterEmbeddings` (embeddings are
+    Python), `ragsearch.tool`/`rag.search`, `middleware/projectOwnership`, `security/password` (dup), dead types.
+  - `4ad99b56` (24 files, −3483) — **knip audit: scratch, dead configs, .mjs, orphan source.** Root scratch
+    (`dump.cjs`/`dump.ts`/`dump_pg.ts`/`test_playwright.cjs`/`test_run.cjs`); the entire dead jest config set
+    (`jest.config.js` was a literal `{{ ... }}` placeholder GPT never filled — the repo runs **vitest**); five
+    nx-invisible `scripts/*.mjs`; orphan backend source (`llm/client`+`responses`, `messages/store`,
+    `services/stream`+`types/agent`, `types/kg`, `research/types`, `utils/urlGuard` — a **duplicate** of the live
+    `security/urlGuard` — `agents/mcp/tavilyClient`); dead `pages/agentpage.tsx`.
+  Lesson, quantified: **74 files and ~9.2k lines that all "worked," produced by exactly two habits** — (a) a big
+  file gets "split up" and the pieces are never deleted or rewired, and (b) a config/service/script is scaffolded
+  "for later" and later never comes. Do not create either. If you split a file, delete the original and prove
+  every piece has a live importer. If you scaffold, wire it now or don't write it.
+
 ## Patterns that keep coming back — do NOT write these
 
 Every one of these was written, shipped, "worked," and got ripped out. If your diff resembles any of
@@ -166,3 +198,18 @@ them, stop and delete instead.
   reasoning; it belongs to the model or Python, never a TS lookup table.
 - **"Routing" / "selector" / "cascade" / "dispatcher" modules.** Almost always a TS brain wearing a
   plumbing name. Bus eligibility is graph edges; which agent acts is the orchestrator's call, not TS's.
+- **A file "split out" and never wired back.** The "this file is too big, I'll break it up" move: the extracted
+  modules end up imported by nothing but their own spec. A split is not done until the original is deleted and
+  every piece has a live importer. Zero-importer + has-a-spec = the spec is life support for a corpse; delete both.
+- **A duplicate of a live file.** `utils/urlGuard.ts` beside the real `security/urlGuard.ts`; `agents/mcp/mcpClient.ts`
+  beside `connectors/mcpClient.ts`. Two files with the same name/job means one is dead — find the live one, delete
+  the other. Never "make a copy to be safe."
+- **A stub that only `throw`s, left wired.** `mcpClient.ts` had three exported functions each `throw`ing "not
+  implemented after LangChain removal," wired into a live route + health probe that therefore always failed. A
+  not-implemented stub is a landmine, not a placeholder — delete it and its callers in the same change.
+- **Placeholder configs + wrong-runner configs.** `jest.config.js` shipped as a literal `{{ ... }}` token that
+  never compiled, in a repo that runs **vitest**. Fill a generated config or delete it; never commit a `{{ }}`
+  placeholder, and never add jest configs to a vitest repo.
+- **`.mjs` scripts and root scratch files.** nx/tooling can't see `.mjs`, so they rot invisibly; `dump.*` /
+  `test_*.cjs` at the repo root are throwaway code committed as product. Write `.ts`, run it, delete it — don't
+  leave scratch in the tree.

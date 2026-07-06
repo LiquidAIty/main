@@ -408,6 +408,31 @@ explicit deferred work
 
 ## Near-Term Route
 
+### Batch 0 — Codebase Health (cleanup status, 2026-07-05)
+
+The point of the cleanup is **function over form: make it easier to write good code in good code,
+not spaghetti-soup.** A legible base is the prerequisite for every batch below.
+
+Running tally (see [DONT.md](./DONT.md) purge log for the itemized record): **>100,000 lines** of
+dead/spaghetti removed across the project's life. The 2026-07-05 audit sweep alone deleted **74
+non-vendored files / ~9,248 lines** in 3 commits (`85a948e1`, `55ff1932`, `4ad99b56`) — client tsc,
+backend tsc, and 372 backend unit tests green throughout. Every deleted file "worked" first.
+
+Verified state after the sweep: all four stacks build/import clean (backend tsc, client tsc, Python
+core compile + 25 MCP/coder tests, localcoder gRPC harness tsc) and the core seams (`run_mag_one`,
+`run_local_coder`, Harness chat) are wired to real handlers, not stubs. The one red test is a
+pre-existing live-stack integration test (`pythonAgentMcpClient` graph-slice) that needs the full
+running stack.
+
+**The rule this buys us (future agents: obey it):** the dead code came from two habits — (1) splitting
+a big file and never deleting/rewiring the pieces, and (2) scaffolding a config/service/duplicate "for
+later." Do neither. Delete-with-replace, no placeholders, no duplicates, no `.mjs`. Vendored top-level
+repos are a free pass (excluded from CBM); everything else stays clean.
+
+Still open (reported, not yet actioned): unused npm dependencies (~108 flagged by knip — needs careful
+per-workspace review, hoisting-sensitive), ~392 unused exports/types (finicky, review before cutting),
+and the broken root `eslint.config.mjs` (imports uninstalled `eslint-plugin-unused-imports`).
+
 ### Batch A — Graph Truth and Context
 
 1. Audit and freeze a real baseline.
