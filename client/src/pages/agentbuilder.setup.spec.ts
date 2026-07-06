@@ -177,6 +177,7 @@ describe('agentbuilder authoring flow', () => {
 
   it('ships the default example using the real magentic-led agent graph', () => {
     expect(INITIAL_DECK.nodes.map((node) => node.title)).toEqual([
+      'Harness',
       'Magentic-One',
       'ThinkGraph Agent',
       'CodeGraph Agent',
@@ -197,6 +198,7 @@ describe('agentbuilder authoring flow', () => {
 
     expect(INITIAL_DECK.nodes.filter((node) => node.runtimeType === 'graph_flow')).toEqual([]);
     expect(INITIAL_DECK.nodes.map((node) => node.runtimeBinding)).toEqual([
+      'main_chat',
       null,
       'thinkgraph_agent',
       'codegraph_agent',
@@ -215,6 +217,7 @@ describe('agentbuilder authoring flow', () => {
       'assist',
     ]);
     expect(INITIAL_DECK.nodes.map((node) => node.templateId)).toEqual([
+      'template_main_chat',
       'template_magentic',
       'template_thinkgraph_agent',
       'template_codegraph_agent',
@@ -469,6 +472,7 @@ describe('agentbuilder authoring flow', () => {
     const hydrated = hydrateDeckDocument(legacyDeck);
 
     expect(hydrated.nodes.map((node) => node.id)).toEqual([
+      'card_main_chat',
       'card_magentic',
       'card_thinkgraph_agent',
       'card_codegraph_agent',

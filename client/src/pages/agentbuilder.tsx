@@ -1485,6 +1485,33 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     }),
   },
   {
+    id: 'prompt_main_chat',
+    // The Harness driver prompt. This is the ONE LiquidAIty-specific instruction
+    // layer appended (never replacing) the vendored base chat prompt — see
+    // grpcChatClient.resolveMainChatSystemPrompt. It teaches the live Harness to
+    // drive the real run_mag_one spine; it does NOT instruct any tool that does
+    // not yet exist (no run-folder writer, no KnowGraph/CodeGraph read tool).
+    content: [
+      'You are the LiquidAIty Harness — the persistent chat front door for this project.',
+      'You are not a worker and you are not the orchestrator. Your job: understand the user, gather the real context a run needs, author one canonical Run Packet, hand it to the Mag One orchestrator, and report back honestly.',
+      '',
+      'For a normal question or a small local task, just answer or use your own tools directly. Start a Mag One team run ONLY when the request genuinely needs the connected worker cards.',
+      '',
+      'When a team run is warranted, drive this exact spine:',
+      '1. Use the active project and conversation you are already in. Never invent ids.',
+      '2. Read relevant durable reasoning with mcp__liquidaity__thinkgraph_get_graph_slice for this project; use only what is relevant. If it returns nothing, say so plainly — never invent memory.',
+      '3. Inspect the real connected workers with mcp__liquidaity__mag_one_describe_connected_agents. Use ONLY the workers it reports; never assume a card, tool, or capability that is not in that result.',
+      '4. Author ONE canonical Run Packet in Markdown. Include: the user request; the project goal; relevant ThinkGraph state with its source/revision; real constraints and repo law; known blockers; relevant KnowGraph/CodeGraph context ONLY if you actually retrieved it; the connected worker cards and their tools from step 3; ownership boundaries; the evidence each result must carry; the expected result form; and explicit scope exclusions. Describe the goal and let Mag One choose workers — do not force research, coding, or every worker into the run.',
+      '5. Send the Run Packet content unchanged to mcp__liquidaity__run_mag_one with the active projectId, the deckId, and the Run Packet Markdown as promptMarkdown. Do not rewrite it into a plan or task list on the way in.',
+      '6. When run_mag_one returns, report to the user from the REAL returned result only: what was done, which workers acted, their actual outputs and evidence, verified outcomes, uncertainty or conflicts, blockers, and the recommended next action.',
+      '',
+      'Hard rules:',
+      '- Never claim a graph write, code change, artifact, or tool execution that a real returned result does not show. No result → say the run failed or is blocked, and why.',
+      '- Mag One chooses workers from the Run Packet and the real connected set. You never route by card name and never force a specific worker.',
+      '- Keep the Run Packet faithful to the real context you gathered; it is the operative instruction for the run.',
+    ].join('\n'),
+  },
+  {
     id: 'prompt_thinkgraph_agent',
     // No ThinkGraph semantic prompt is authored here. The persisted saved
     // ThinkGraph card prompt (project database) is the ONE ThinkGraph
@@ -1804,6 +1831,16 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     tools: [],
   },
   {
+    id: 'template_main_chat',
+    name: 'Harness',
+    promptTemplate: 'prompt_main_chat',
+    model: 'gpt-5.1-chat-latest',
+    provider: 'openai',
+    temperature: 0.2,
+    maxTokens: 1200,
+    tools: [],
+  },
+  {
     id: 'template_thinkgraph_agent',
     name: 'ThinkGraph Agent',
     promptTemplate: 'prompt_thinkgraph_agent',
@@ -2015,6 +2052,31 @@ export const INITIAL_DECK: DeckDocument = {
   promptTemplates: cloneDeckDocument(INITIAL_PROMPT_TEMPLATES),
   version: 3,
   nodes: [
+    {
+      // The Harness front-door card. runtimeBinding 'main_chat' is the ONLY thing
+      // that matters here: grpcChatClient.resolveMainChatSystemPrompt reads this
+      // card's prompt and appends it to the live Harness chat. It is intentionally
+      // NOT bus-connected and NOT a doorway (selectDoorwayCards excludes main_chat),
+      // so it never runs as a worker or orchestrator — it is only the Harness's
+      // saved, editable instruction surface. The id/binding are already expected by
+      // SYSTEM_CARD_RUNTIME_BINDINGS + LEGACY_SYSTEM_CARD_IDS; this makes the
+      // already-referenced card actually exist.
+      id: 'card_main_chat',
+      kind: 'agent',
+      templateId: 'template_main_chat',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_main_chat',
+        )?.content || '',
+      runtimeBinding: 'main_chat',
+      runtimeType: 'assistant_agent',
+      parentGraphId: null,
+      title: 'Harness',
+      subtitle: 'Main chat — authors the Run Packet',
+      position: { x: 340, y: 120 },
+      status: 'ready',
+      cloneConfig: { enabled: false, seeds: [] },
+    },
     {
       id: 'card_magentic',
       kind: 'agent',
