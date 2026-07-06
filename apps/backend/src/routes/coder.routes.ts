@@ -28,6 +28,7 @@ import {
   readThinkGraphScope,
   type ThinkGraphPatchAuthority,
 } from '../services/thinkgraph/thinkGraphStore';
+import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/harnessTrace';
 
 // The app's one canonical Agent Canvas deck (client BUILDER_DECK_ID).
 const BUILDER_DECK_ID = 'deck_builder';
@@ -197,6 +198,10 @@ router.post('/openclaude/session/chat', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'projectId_and_message_required' });
   }
   const sessionId = deriveSessionId(projectId, conversationId);
+  // One correlation id per turn for the concise backend trace. This does NOT change
+  // the SSE stream or browser behavior — it only makes the real Harness events
+  // (already flowing to the browser) legible in the backend dev terminal.
+  const correlationId = `req_${randomUUID().slice(0, 8)}`;
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -204,11 +209,16 @@ router.post('/openclaude/session/chat', async (req, res) => {
     'X-Accel-Buffering': 'no',
   });
   res.write(`event: session\ndata: ${JSON.stringify({ sessionId })}\n\n`);
+  logHarnessTrace(`[harness] request received ${`corr=${correlationId}`} project=${projectId} mode=${mode}`);
   // Durable project-scoped transcript persistence (conversations/store.ts). Best-effort:
   // a DB failure must never block or break the live SSE stream.
   void appendMessage({ projectId, conversationId, role: 'user', content: message }).catch(() => null);
   try {
     const handle = await startGrpcTurn({ sessionId, message, workingDirectory, model, mode }, (event) => {
+      // Backend trace of the REAL event (only when it carries lifecycle signal),
+      // then the unchanged SSE forward to the browser.
+      const traceLine = formatHarnessTrace(event, correlationId);
+      if (traceLine) logHarnessTrace(traceLine);
       res.write(`event: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`);
     });
     activeGrpcTurns.set(sessionId, handle);
@@ -217,6 +227,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
       activeGrpcTurns.delete(sessionId);
     });
     const { finalText } = await handle.done;
+    logHarnessTrace(`[harness] request completed corr=${correlationId}`);
     // Save the assistant reply only when real text was produced — never an empty
     // bubble (mirrors the frontend's "no text → no bubble" contract). Best-effort,
     // same as the user message: a DB failure must never block or break the live
@@ -231,8 +242,10 @@ router.post('/openclaude/session/chat', async (req, res) => {
       }).catch(() => null);
     }
   } catch (error) {
+    const reason = error instanceof Error ? error.message : 'grpc_turn_failed';
+    logHarnessTrace(`[harness] request failed corr=${correlationId} reason=${redactTrace(reason)}`);
     res.write(
-      `event: error\ndata: ${JSON.stringify({ message: error instanceof Error ? error.message : 'grpc_turn_failed' })}\n\n`,
+      `event: error\ndata: ${JSON.stringify({ message: reason })}\n\n`,
     );
   } finally {
     activeGrpcTurns.delete(sessionId);
