@@ -35,9 +35,9 @@ export type GrpcTurnArgs = {
   workingDirectory: string;
   model?: string;
   /** Which Harness surface this turn runs in. Chat mode exposes only the
-   * ThinkGraph doorway; canvas mode exposes every eligible saved card as a
-   * direct Single Assist doorway. Explicit surface state from the client —
-   * never inferred from message content. */
+   * structurally selected always-on card doorways; canvas mode exposes every
+   * eligible saved card as a direct Single Assist doorway. Explicit surface
+   * state from the client — never inferred from message content. */
   mode?: HarnessMode;
 };
 
@@ -100,16 +100,18 @@ export function buildCardDoorwayDefinition(card: any): Record<string, unknown> |
 }
 
 /** Doorway-eligible saved cards for a Harness surface. Structural filters only:
- * top-level enabled assistant_agent cards; the main_chat card is the parent
- * itself, never a runnable doorway. Chat mode exposes exactly the one
- * ThinkGraph card (ambiguity → none, honest degrade); canvas mode exposes
- * every eligible card for direct Single Assist configure/test work. */
+ * top-level enabled assistant/local-coder cards; the main_chat card is the
+ * parent itself, never a runnable doorway. Chat mode exposes at most one
+ * ThinkGraph card and at most one Local Coder card (ambiguity → omit that
+ * doorway, honest degrade); canvas mode exposes every eligible card for direct
+ * Single Assist configure/test work. */
 export function selectDoorwayCards(nodes: any[], mode: HarnessMode): any[] {
   const eligible = (nodes || []).filter((node) => {
     if (String(node?.kind || 'agent') !== 'agent') return false;
     if (String(node?.parentGraphId || '').trim()) return false;
     if (node?.enabled === false || node?.runtimeOptions?.enabled === false) return false;
-    if ((node?.runtimeType ?? 'assistant_agent') !== 'assistant_agent') return false;
+    const runtimeType = String(node?.runtimeType ?? 'assistant_agent');
+    if (runtimeType !== 'assistant_agent' && runtimeType !== 'local_coder') return false;
     const binding = resolveRuntimeBinding(
       node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
       node?.id,
@@ -117,12 +119,18 @@ export function selectDoorwayCards(nodes: any[], mode: HarnessMode): any[] {
     return binding !== 'main_chat';
   });
   if (mode === 'canvas') return eligible;
-  const thinkgraph = eligible.filter(
-    (node) =>
+  const byBinding = (binding: string) =>
+    eligible.filter(
+      (node) =>
       resolveRuntimeBinding(node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding, node?.id) ===
-      'thinkgraph_agent',
-  );
-  return thinkgraph.length === 1 ? thinkgraph : [];
+      binding,
+    );
+  const thinkgraph = byBinding('thinkgraph_agent');
+  const localCoder = byBinding('local_coder');
+  return [
+    ...(thinkgraph.length === 1 ? thinkgraph : []),
+    ...(localCoder.length === 1 ? localCoder : []),
+  ];
 }
 
 /** Resolve this turn's native doorway definitions from the persisted deck.

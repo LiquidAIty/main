@@ -530,7 +530,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     return done({ status: 'disabled', error: `card_disabled: ${cardId}` });
   }
   const runtimeType = resolveCardRuntimeType(card);
-  if (String(card.kind || 'agent') !== 'agent' || runtimeType !== 'assistant_agent') {
+  if (String(card.kind || 'agent') !== 'agent' || !isPythonAutoGenCallableRuntimeType(runtimeType)) {
     return done({
       status: 'not_runnable',
       runtimeType,

@@ -138,28 +138,31 @@ function nowIso(): string {
 /**
  * Resolve which OpenAI-compatible provider the console runs against.
  *
- * OpenClaude treats OpenRouter as an OpenAI-compatible provider (see vendored
- * `providerProfiles.ts`: `case 'openrouter' -> provider:'openai'`), so routing
- * at OpenRouter is purely env: point `OPENAI_BASE_URL` at OpenRouter, use the
- * OpenRouter key, and pick an OpenRouter model slug. OpenRouter is preferred
- * when `LIVE_OPENROUTER=1` and a key is present (proven working: gpt-4o-mini,
- * gpt-4o, kimi-k2-thinking, gpt-5-mini all returned in <10s). Otherwise the
- * direct OpenAI env is used unchanged.
+ * Resolve provider-specific env for the provider selected by the visible Local
+ * Coder controller card. This does not choose a model; model authority belongs
+ * to the card and is passed in the session request.
  */
 export type ConsoleProviderResolution = {
   label: 'openrouter' | 'openai';
-  defaultModel: string;
   envOverrides: NodeJS.ProcessEnv;
 };
 
-export function resolveConsoleProviderEnv(env: NodeJS.ProcessEnv): ConsoleProviderResolution {
-  const openRouterKey = String(env.OPENROUTER_API_KEY || '').trim();
-  const openRouterEnabled =
-    String(env.LIVE_OPENROUTER || '').trim() === '1' && openRouterKey.length > 0;
-  if (openRouterEnabled) {
+function normalizeConsoleProvider(value: unknown): 'openai' | 'openrouter' | null {
+  const provider = String(value || '').trim().toLowerCase();
+  if (provider === 'openai' || provider === 'openrouter') return provider;
+  return null;
+}
+
+export function resolveConsoleProviderEnv(
+  env: NodeJS.ProcessEnv,
+  requestedProvider: unknown,
+): ConsoleProviderResolution | null {
+  const provider = normalizeConsoleProvider(requestedProvider);
+  if (!provider) return null;
+  if (provider === 'openrouter') {
+    const openRouterKey = String(env.OPENROUTER_API_KEY || '').trim();
     return {
       label: 'openrouter',
-      defaultModel: String(env.OPENROUTER_DEFAULT_MODEL || 'openai/gpt-4o-mini').trim(),
       envOverrides: {
         CLAUDE_CODE_USE_OPENAI: '1',
         OPENAI_BASE_URL: String(env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').trim(),
@@ -170,7 +173,6 @@ export function resolveConsoleProviderEnv(env: NodeJS.ProcessEnv): ConsoleProvid
   }
   return {
     label: 'openai',
-    defaultModel: String(env.OPENAI_MODEL || '').trim(),
     envOverrides: { CLAUDE_CODE_USE_OPENAI: '1' },
   };
 }
@@ -459,7 +461,6 @@ export class OpenClaudeConsoleSessionManager {
   private readonly sessions = new Map<string, OpenClaudeConsoleSession>();
   private readonly workspaceRoot: string;
   private readonly env: NodeJS.ProcessEnv;
-  private readonly provider: ConsoleProviderResolution;
   private readonly spawnProcess: ConsoleSpawn;
   private readonly ptySpawn: ConsoleSpawn | null;
   private readonly resolveRuntime: (workspaceRoot: string, env: NodeJS.ProcessEnv) => ConsoleRuntimeResolution;
@@ -473,7 +474,6 @@ export class OpenClaudeConsoleSessionManager {
       ? path.resolve(options.workspaceRoot)
       : resolveLocalCoderWorkspaceRoot(process.cwd());
     this.env = options.env || process.env;
-    this.provider = resolveConsoleProviderEnv(this.env);
     this.spawnProcess = options.spawnProcess || defaultSpawn;
     // node-pty only when not overridden by an injected pipe spawn.
     this.ptySpawn =
@@ -492,15 +492,17 @@ export class OpenClaudeConsoleSessionManager {
   }
 
   private resolveModel(request: StartConsoleSessionRequest): string {
-    return String(request.model || this.provider.defaultModel || '').trim();
+    return String(request.model || '').trim();
   }
 
-  private buildArgs(request: StartConsoleSessionRequest, mode: ConsoleMode): string[] {
+  private buildArgs(
+    request: StartConsoleSessionRequest,
+    mode: ConsoleMode,
+    provider: 'openai' | 'openrouter' | null,
+    model: string,
+  ): string[] {
     if (request.args && request.args.length > 0) return [...request.args];
-    // OpenRouter is OpenAI-compatible, so the CLI provider stays "openai".
-    const provider = request.provider || 'openai';
-    const model = this.resolveModel(request);
-    const modelFlags = model ? ['--model', model, '--provider', provider] : [];
+    const modelFlags = model && provider ? ['--model', model, '--provider', provider] : [];
     if (mode === 'interactive') {
       // A normal interactive OpenClaude session keeps its full CLI abilities.
       return [...modelFlags];
@@ -528,6 +530,22 @@ export class OpenClaudeConsoleSessionManager {
       return this.startShellSession(request, targetRoot);
     }
 
+    const requestedModel = this.resolveModel(request);
+    const requestedProvider = normalizeConsoleProvider(request.provider);
+    const hasArgOverride = Boolean(request.args && request.args.length > 0);
+    if (!hasArgOverride && (!requestedProvider || !requestedModel)) {
+      const missing = [
+        ...(!requestedProvider ? ['controller_provider'] : []),
+        ...(!requestedModel ? ['controller_model'] : []),
+      ];
+      return {
+        ok: false,
+        error: 'console_controller_model_required',
+        missing,
+      };
+    }
+    const providerResolution = resolveConsoleProviderEnv(this.env, requestedProvider);
+
     const runtime = this.resolveRuntime(this.workspaceRoot, this.env);
     if (!runtime.ready) {
       return { ok: false, error: 'console_runtime_unavailable', missing: runtime.missing };
@@ -538,8 +556,7 @@ export class OpenClaudeConsoleSessionManager {
       return { ok: false, error: 'console_env_missing', missing: runtime.envMissing };
     }
 
-    const args = this.buildArgs(request, mode);
-    const resolvedModel = this.resolveModel(request);
+    const args = this.buildArgs(request, mode, requestedProvider, requestedModel);
     const interactive = mode === 'interactive';
     // Interactive sessions use a real PTY when node-pty is available so the
     // OpenClaude REPL gets a TTY; print/task one-shots use stdio pipes (keeps
@@ -554,8 +571,8 @@ export class OpenClaudeConsoleSessionManager {
       commandPath: redactConsoleSecrets(runtime.describe),
       runtimeSource: runtime.source,
       transportMode,
-      provider: this.provider.label,
-      model: resolvedModel || null,
+      provider: requestedProvider,
+      model: requestedModel || null,
       interactiveSupported: interactive,
       pid: null,
       startedAt: this.now(),
@@ -577,8 +594,8 @@ export class OpenClaudeConsoleSessionManager {
         // Route the OpenAI-compatible provider (OpenRouter when configured).
         env: {
           ...this.env,
-          ...this.provider.envOverrides,
-          ...(resolvedModel ? { OPENAI_MODEL: resolvedModel } : {}),
+          ...(providerResolution?.envOverrides ?? { CLAUDE_CODE_USE_OPENAI: '1' }),
+          ...(requestedModel ? { OPENAI_MODEL: requestedModel } : {}),
         },
         shell: runtime.shell,
         interactive,

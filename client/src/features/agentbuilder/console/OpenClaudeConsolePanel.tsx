@@ -25,6 +25,8 @@ export type OpenClaudeConsolePanelProps = {
   open: boolean;
   targetRoot: string;
   projectId?: string;
+  provider?: string | null;
+  model?: string | null;
   onClose?: () => void;
   /** Injectable for tests. Defaults to the real backend client. */
   client?: OpenClaudeConsoleClient;
@@ -63,6 +65,8 @@ function OpenClaudeConsolePanelInner({
   open,
   targetRoot,
   projectId,
+  provider,
+  model,
   onClose,
   client = openClaudeConsoleClient,
   initialSession = null,
@@ -117,7 +121,12 @@ function OpenClaudeConsolePanelInner({
     async (mode: ConsoleMode) => {
       setBusy(true);
       setStartError(null);
-      const result = await client.startSession({ targetRoot, mode });
+      const result = await client.startSession({
+        targetRoot,
+        mode,
+        ...(provider ? { provider } : {}),
+        ...(model ? { model } : {}),
+      });
       setBusy(false);
       if (result.ok) {
         setSession(result.session);
@@ -126,7 +135,7 @@ function OpenClaudeConsolePanelInner({
         setStartError(`${result.error}${result.missing.length ? `: ${result.missing.join(', ')}` : ''}`);
       }
     },
-    [client, targetRoot],
+    [client, model, provider, targetRoot],
   );
 
   const sendInput = useCallback(async () => {

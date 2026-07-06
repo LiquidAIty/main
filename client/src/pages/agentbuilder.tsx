@@ -557,6 +557,15 @@ function cleanOptionalText(value: unknown): string | null {
   return text || null;
 }
 
+const LOCAL_CODER_CONTROLLER_MODEL_KEY = 'gpt-5.1-chat-latest';
+const LOCAL_CODER_CONTROLLER_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
+const LOCAL_CODER_CONTROLLER_TOOLS = ['run_local_coder'] as const;
+const STALE_LOCAL_CODER_MODEL_KEYS = new Set([
+  'kimi-k2-thinking',
+  'moonshotai/kimi-k2-thinking',
+  'moonshotai/kimi-k2:free',
+]);
+
 function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   const normalized = safeText(value).trim().toLowerCase();
   if (normalized === 'assistant_agent') return 'assistant_agent';
@@ -1205,6 +1214,74 @@ function normalizeRuntimeOptions(
 ): AgentCardRuntimeOptions | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return cloneDeckDocument(value as AgentCardRuntimeOptions);
+}
+
+function isLocalCoderControllerCard(card: AgentCardInstance | null | undefined): boolean {
+  if (!card) return false;
+  return (
+    safeText(card.id).trim().toLowerCase() === 'card_local_coder' ||
+    safeText(card.runtimeBinding).trim().toLowerCase() === 'local_coder' ||
+    safeText(card.runtimeType).trim().toLowerCase() === 'local_coder' ||
+    safeText(card.templateId).trim().toLowerCase() === 'template_local_coder'
+  );
+}
+
+function isStaleLocalCoderModel(modelKey: string | null): boolean {
+  return Boolean(modelKey && STALE_LOCAL_CODER_MODEL_KEYS.has(modelKey));
+}
+
+function normalizeLocalCoderControllerCard(card: AgentCardInstance): AgentCardInstance {
+  if (!isLocalCoderControllerCard(card)) return card;
+  const runtimeOptions = normalizeRuntimeOptions(card.runtimeOptions) ?? {};
+  const modelKey = cleanOptionalText(runtimeOptions.modelKey);
+  const provider = cleanOptionalText(runtimeOptions.provider);
+  const shouldUseControllerDefault = !modelKey || isStaleLocalCoderModel(modelKey);
+  return {
+    ...card,
+    runtimeBinding: 'local_coder',
+    runtimeType: 'local_coder',
+    runtimeOptions: {
+      ...runtimeOptions,
+      provider:
+        shouldUseControllerDefault || !provider
+          ? LOCAL_CODER_CONTROLLER_PROVIDER
+          : runtimeOptions.provider,
+      modelKey: shouldUseControllerDefault
+        ? LOCAL_CODER_CONTROLLER_MODEL_KEY
+        : runtimeOptions.modelKey,
+      tools: Array.from(new Set([
+        ...LOCAL_CODER_CONTROLLER_TOOLS,
+        ...(Array.isArray(runtimeOptions.tools)
+          ? runtimeOptions.tools.map((tool) => safeText(tool).trim()).filter(Boolean)
+          : []),
+      ])),
+    },
+  };
+}
+
+function resolveLocalCoderControllerConsoleConfig(
+  deck: Pick<DeckDocument, 'nodes'>,
+): { provider: string; model: string } {
+  const card = deck.nodes.find(isLocalCoderControllerCard) || null;
+  const runtimeOptions = normalizeRuntimeOptions(card?.runtimeOptions) ?? {};
+  const template =
+    INITIAL_AGENT_TEMPLATES.find((candidate) => candidate.id === card?.templateId) ||
+    INITIAL_AGENT_TEMPLATES.find((candidate) => candidate.id === 'template_local_coder') ||
+    null;
+  const rawModel =
+    cleanOptionalText(runtimeOptions.modelKey) ||
+    cleanOptionalText(template?.model) ||
+    LOCAL_CODER_CONTROLLER_MODEL_KEY;
+  const shouldUseControllerDefault = isStaleLocalCoderModel(rawModel);
+  return {
+    provider:
+      shouldUseControllerDefault
+        ? LOCAL_CODER_CONTROLLER_PROVIDER
+        : cleanOptionalText(runtimeOptions.provider) ||
+          cleanOptionalText(template?.provider) ||
+          LOCAL_CODER_CONTROLLER_PROVIDER,
+    model: shouldUseControllerDefault ? LOCAL_CODER_CONTROLLER_MODEL_KEY : rawModel,
+  };
 }
 
 function normalizeDeckEdgeType(value: unknown): DeckEdgeType {
@@ -1906,11 +1983,11 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     id: 'template_local_coder',
     name: 'Local Coder',
     promptTemplate: 'prompt_assist',
-    model: 'gpt-5-mini',
-    provider: 'openai',
+    model: LOCAL_CODER_CONTROLLER_MODEL_KEY,
+    provider: LOCAL_CODER_CONTROLLER_PROVIDER,
     temperature: 0.2,
     maxTokens: 1200,
-    tools: [],
+    tools: [...LOCAL_CODER_CONTROLLER_TOOLS],
   },
   {
     id: 'template_energy_workbench',
@@ -2204,6 +2281,11 @@ export const INITIAL_DECK: DeckDocument = {
         )?.content || '',
       runtimeBinding: 'local_coder',
       runtimeType: 'local_coder',
+      runtimeOptions: {
+        provider: LOCAL_CODER_CONTROLLER_PROVIDER,
+        modelKey: LOCAL_CODER_CONTROLLER_MODEL_KEY,
+        tools: [...LOCAL_CODER_CONTROLLER_TOOLS],
+      },
       parentGraphId: null,
       title: 'Local Coder',
       subtitle: 'Controlled code patch/test execution',
@@ -3041,7 +3123,9 @@ export function hydrateDeckDocument(
   ]);
   const baseDeck = {
     ...hydratedDeck,
-    nodes: hydratedDeck.nodes.filter((node) => !bannedNodeIds.has(node.id)),
+    nodes: hydratedDeck.nodes
+      .filter((node) => !bannedNodeIds.has(node.id))
+      .map(normalizeLocalCoderControllerCard),
     edges: hydratedDeck.edges.filter(
       (edge) =>
         !bannedNodeIds.has(edge.source) && !bannedNodeIds.has(edge.target),
@@ -3388,6 +3472,10 @@ export default function AgentBuilder(): React.ReactElement {
     currentDeckRef.current = deck;
   }, [deck]);
   const [openClaudeConsoleOpen, setOpenClaudeConsoleOpen] = useState(false);
+  const localCoderConsoleConfig = useMemo(
+    () => resolveLocalCoderControllerConsoleConfig(deck),
+    [deck],
+  );
   const visibleRailItems = useMemo(
     () =>
       deriveVisibleRailItems({
@@ -6137,6 +6225,8 @@ export default function AgentBuilder(): React.ReactElement {
                     open={openClaudeConsoleOpen}
                     targetRoot="C:/Projects/main"
                     projectId={typeof activeProject === 'string' ? activeProject : undefined}
+                    provider={localCoderConsoleConfig.provider}
+                    model={localCoderConsoleConfig.model}
                     onClose={() => setOpenClaudeConsoleOpen(false)}
                   />
                 </>

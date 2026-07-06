@@ -36,6 +36,16 @@ const AGENT_CARD = {
   runtimeOptions: { modelKey: 'gpt-5-nano', tools: [] },
 };
 
+const LOCAL_CODER_CARD = {
+  id: 'card_local_coder',
+  kind: 'agent',
+  title: 'Local Coder',
+  runtimeType: 'local_coder',
+  runtimeBinding: 'local_coder',
+  prompt: 'You are the Local Coder controller.',
+  runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.1-chat-latest', tools: ['run_local_coder'] },
+};
+
 function deckWith(nodes: any[]) {
   return { deck: { id: 'deck_builder', nodes, edges: [] }, latestRun: null, runs: [], meta: { deckRevision: null, deckSavedAt: null } };
 }
@@ -128,6 +138,29 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     const raw = JSON.stringify(payload);
     expect(raw).not.toContain('taskIds');
     expect(raw).not.toContain('taskLedger');
+  });
+
+  it('runs the saved Local Coder card through the same single-card doorway with its configured model and tool', async () => {
+    mockGetDeck.mockResolvedValue(deckWith([LOCAL_CODER_CARD]));
+    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: '{"status":"succeeded"}' });
+
+    const result = await runConfiguredCard({
+      ...ARGS,
+      cardId: 'card_local_coder',
+      input: 'write the bounded plan file',
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.runtimeType).toBe('local_coder');
+    expect(result.tools).toEqual(['run_local_coder']);
+    const payload = mockRunCard.mock.calls[0][0];
+    expect(payload.session.modelProvider).toBe('openai');
+    expect(payload.session.modelKey).toBe('gpt-5.1-chat-latest');
+    expect(payload.session.providerModelId).toBe('gpt-5.1-chat-latest');
+    expect(payload.cardRuntime.runtimeType).toBe('assistant_agent');
+    expect(payload.cardRuntime.participants[0].runtimeBinding).toBe('local_coder');
+    expect(payload.cardRuntime.participants[0].tools).toEqual(['run_local_coder']);
+    expect(payload.cardRuntime.privateParticipants[0].prompt).toBe('You are the Local Coder controller.');
   });
 
   it('propagates an honest Python failure without retry or fallback', async () => {

@@ -25,6 +25,7 @@ function deckWith(nodes: any[]) {
 
 const TG_CARD = { id: 'card_thinkgraph_agent', title: 'ThinkGraph Agent', prompt: 'Saved ThinkGraph prompt.', runtimeOptions: { tools: ['read_thinkgraph_scope', 'apply_thinkgraph_patch'] } };
 const RESEARCH_CARD = { id: 'card_research_agent', title: 'Research Agent', prompt: 'Saved research prompt.', runtimeOptions: { tools: ['retrieve_knowgraph_context'] } };
+const LOCAL_CODER_CARD = { id: 'card_local_coder', title: 'Local Coder', runtimeType: 'local_coder', runtimeBinding: 'local_coder', prompt: 'Saved coder prompt.', runtimeOptions: { tools: ['run_local_coder'], provider: 'openai', modelKey: 'gpt-5.1-chat-latest' } };
 const MAIN_CHAT_CARD = { id: 'card_main_chat', title: 'OpenClaude Chat', prompt: 'parent prompt' };
 
 describe('resolveCardDoorwayDefinitions — thin card-bound doorways, one per saved card', () => {
@@ -32,16 +33,20 @@ describe('resolveCardDoorwayDefinitions — thin card-bound doorways, one per sa
     deckMocks.getDeckDocument.mockClear();
   });
 
-  it('chat mode exposes exactly the one ThinkGraph doorway with ONLY the generic control tool', async () => {
-    deckMocks.getDeckDocument.mockResolvedValueOnce(deckWith([MAIN_CHAT_CARD, TG_CARD, RESEARCH_CARD]));
+  it('chat mode exposes the structural ThinkGraph and Local Coder doorways with ONLY the generic control tool', async () => {
+    deckMocks.getDeckDocument.mockResolvedValueOnce(deckWith([MAIN_CHAT_CARD, TG_CARD, LOCAL_CODER_CARD, RESEARCH_CARD]));
     const defs = await resolveCardDoorwayDefinitions(deriveSessionId('project-1', 'main'), 'chat');
-    expect(defs).toHaveLength(1);
-    const def = defs[0] as any;
-    expect(def.agent_type).toBe('card_thinkgraph_agent');
-    expect(def.card_id).toBe('card_thinkgraph_agent');
-    expect(def.runtime_binding).toBe('thinkgraph_agent');
-    expect(def.allowed_tools).toEqual([CARD_RUN_CONTROL_TOOL]);
-    expect(def.context_mode_inherit_parent).toBe(true);
+    expect(defs).toHaveLength(2);
+    const byCard = new Map(defs.map((def: any) => [def.card_id, def]));
+    const thinkgraph = byCard.get('card_thinkgraph_agent') as any;
+    const localCoder = byCard.get('card_local_coder') as any;
+    expect(thinkgraph.agent_type).toBe('card_thinkgraph_agent');
+    expect(thinkgraph.runtime_binding).toBe('thinkgraph_agent');
+    expect(localCoder.agent_type).toBe('card_local_coder');
+    expect(localCoder.runtime_binding).toBe('local_coder');
+    expect(thinkgraph.allowed_tools).toEqual([CARD_RUN_CONTROL_TOOL]);
+    expect(localCoder.allowed_tools).toEqual([CARD_RUN_CONTROL_TOOL]);
+    expect(localCoder.context_mode_inherit_parent).toBe(true);
   });
 
   it('the doorway never duplicates card configuration — no card prompt, no card tool grants', async () => {
@@ -60,6 +65,7 @@ describe('resolveCardDoorwayDefinitions — thin card-bound doorways, one per sa
       deckWith([
         MAIN_CHAT_CARD,
         TG_CARD,
+        LOCAL_CODER_CARD,
         RESEARCH_CARD,
         { ...RESEARCH_CARD, id: 'card_child', parentGraphId: 'card_research_agent' },
         { ...RESEARCH_CARD, id: 'card_disabled', enabled: false },
@@ -67,21 +73,27 @@ describe('resolveCardDoorwayDefinitions — thin card-bound doorways, one per sa
       ]),
     );
     const defs = await resolveCardDoorwayDefinitions(deriveSessionId('project-1', 'main'), 'canvas');
-    expect(defs.map((d: any) => d.agent_type).sort()).toEqual(['card_research_agent', 'card_thinkgraph_agent']);
+    expect(defs.map((d: any) => d.agent_type).sort()).toEqual(['card_local_coder', 'card_research_agent', 'card_thinkgraph_agent']);
   });
 
-  it('chat mode yields no doorways when zero ThinkGraph cards exist (honest, no guess)', async () => {
+  it('chat mode still exposes Local Coder when zero ThinkGraph cards exist', async () => {
+    deckMocks.getDeckDocument.mockResolvedValueOnce(deckWith([MAIN_CHAT_CARD, LOCAL_CODER_CARD, RESEARCH_CARD]));
+    const defs = await resolveCardDoorwayDefinitions(deriveSessionId('project-1', 'main'), 'chat');
+    expect(defs.map((d: any) => d.agent_type)).toEqual(['card_local_coder']);
+  });
+
+  it('chat mode yields no doorways when neither structural doorway card exists (honest, no guess)', async () => {
     deckMocks.getDeckDocument.mockResolvedValueOnce(deckWith([MAIN_CHAT_CARD, RESEARCH_CARD]));
     const defs = await resolveCardDoorwayDefinitions(deriveSessionId('project-1', 'main'), 'chat');
     expect(defs).toEqual([]);
   });
 
-  it('chat mode yields no doorways when multiple ThinkGraph cards are ambiguous (honest, no guess)', async () => {
+  it('chat mode omits only the ambiguous doorway when multiple matching cards exist', async () => {
     deckMocks.getDeckDocument.mockResolvedValueOnce(
-      deckWith([TG_CARD, { ...TG_CARD, id: 'card_tg_2', runtimeOptions: { binding: 'thinkgraph_agent' } }]),
+      deckWith([LOCAL_CODER_CARD, TG_CARD, { ...TG_CARD, id: 'card_tg_2', runtimeOptions: { binding: 'thinkgraph_agent' } }]),
     );
     const defs = await resolveCardDoorwayDefinitions(deriveSessionId('project-1', 'main'), 'chat');
-    expect(defs).toEqual([]);
+    expect(defs.map((d: any) => d.agent_type)).toEqual(['card_local_coder']);
   });
 
   it('degrades honestly to no doorways on a deck/DB lookup failure — never throws into the chat turn', async () => {
@@ -98,16 +110,17 @@ describe('resolveCardDoorwayDefinitions — thin card-bound doorways, one per sa
 });
 
 describe('selectDoorwayCards — structural mode filters only', () => {
-  it('chat mode selects only the single thinkgraph-bound card', () => {
-    expect(selectDoorwayCards([MAIN_CHAT_CARD, TG_CARD, RESEARCH_CARD], 'chat').map((c) => c.id)).toEqual([
+  it('chat mode selects the single thinkgraph-bound card and the single local-coder card', () => {
+    expect(selectDoorwayCards([MAIN_CHAT_CARD, TG_CARD, LOCAL_CODER_CARD, RESEARCH_CARD], 'chat').map((c) => c.id)).toEqual([
       'card_thinkgraph_agent',
+      'card_local_coder',
     ]);
   });
 
   it('canvas mode excludes the main_chat parent card', () => {
-    const ids = selectDoorwayCards([MAIN_CHAT_CARD, TG_CARD, RESEARCH_CARD], 'canvas').map((c) => c.id);
+    const ids = selectDoorwayCards([MAIN_CHAT_CARD, TG_CARD, LOCAL_CODER_CARD, RESEARCH_CARD], 'canvas').map((c) => c.id);
     expect(ids).not.toContain('card_main_chat');
-    expect(ids).toEqual(['card_thinkgraph_agent', 'card_research_agent']);
+    expect(ids).toEqual(['card_thinkgraph_agent', 'card_local_coder', 'card_research_agent']);
   });
 });
 

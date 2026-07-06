@@ -47,6 +47,11 @@ const readyRuntime = {
   envMissing: [] as string[],
 };
 
+const controllerRequest = {
+  provider: 'openai',
+  model: 'gpt-5.3-codex',
+} as const;
+
 function managerWith(
   child: FakeChild,
   overrides: Partial<{
@@ -74,7 +79,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
   it('starts an interactive session for the target root and reports it running', () => {
     const child = new FakeChild();
     const { manager, spawnProcess } = managerWith(child);
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    const result = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -91,7 +96,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
   it('points the spawned command at the vendored OpenClaude entrypoint', () => {
     const child = new FakeChild();
     const { manager, spawnProcess } = managerWith(child);
-    manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
     const [command, args] = spawnProcess.mock.calls[0];
     expect(command).toBe('node');
     expect(args[0]).toBe('localcoder/bin/openclaude');
@@ -100,7 +105,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
   it('streams stdout through the bridge transcript', async () => {
     const child = new FakeChild();
     const { manager } = managerWith(child);
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    const result = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
     if (!result.ok) throw new Error('expected ok');
     child.stdout.write('OpenClaude help text\n');
     await flush();
@@ -110,7 +115,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
   it('streams stderr through the bridge transcript', async () => {
     const child = new FakeChild();
     const { manager } = managerWith(child);
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    const result = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
     if (!result.ok) throw new Error('expected ok');
     child.stderr.write('a warning line\n');
     await flush();
@@ -121,7 +126,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
   it('forwards input to the child stdin for interactive sessions', () => {
     const child = new FakeChild();
     const { manager } = managerWith(child);
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    const result = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
     if (!result.ok) throw new Error('expected ok');
     expect(result.session.write('/help\n')).toBe(true);
     expect(child.stdinChunks.join('')).toBe('/help\n');
@@ -130,7 +135,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
   it('refuses input for non-interactive print sessions (stdin not attached)', () => {
     const child = new FakeChild();
     const { manager } = managerWith(child);
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'print', prompt: 'do work' });
+    const result = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'print', prompt: 'do work' });
     if (!result.ok) throw new Error('expected ok');
     expect(result.session.info.interactiveSupported).toBe(false);
     expect(result.session.write('input')).toBe(false);
@@ -139,7 +144,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
   it('redacts secrets from streamed output', async () => {
     const child = new FakeChild();
     const { manager } = managerWith(child);
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    const result = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
     if (!result.ok) throw new Error('expected ok');
     child.stdout.write('using key sk-abcdefgh12345678 now\n');
     await flush();
@@ -151,7 +156,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
   it('bounds the retained output buffer', async () => {
     const child = new FakeChild();
     const { manager } = managerWith(child, { maxBufferChars: 50 });
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    const result = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
     if (!result.ok) throw new Error('expected ok');
     for (let i = 0; i < 20; i++) child.stdout.write(`line-${i}-xxxxxxxx\n`);
     await flush();
@@ -164,7 +169,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
   it('stops the session, killing the child and reporting exit', async () => {
     const child = new FakeChild();
     const { manager } = managerWith(child);
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    const result = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
     if (!result.ok) throw new Error('expected ok');
     expect(result.session.stop()).toBe(true);
     expect(child.killedWith).toBe('SIGTERM');
@@ -175,7 +180,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
   it('reports the child exit code and signal honestly', async () => {
     const child = new FakeChild();
     const { manager } = managerWith(child);
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    const result = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
     if (!result.ok) throw new Error('expected ok');
     child.emit('exit', 0, null);
     await flush();
@@ -187,7 +192,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
   it('replays the bounded transcript to a late subscriber (UI data source)', async () => {
     const child = new FakeChild();
     const { manager } = managerWith(child);
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    const result = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
     if (!result.ok) throw new Error('expected ok');
     child.stdout.write('early output\n');
     await flush();
@@ -203,11 +208,21 @@ describe('OpenClaudeConsoleSessionManager', () => {
     const { manager } = managerWith(child, {
       runtime: { ready: false, missing: ['localcoder_entrypoint_missing'] },
     });
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    const result = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected blocked');
     expect(result.error).toBe('console_runtime_unavailable');
     expect(result.missing).toContain('localcoder_entrypoint_missing');
+  });
+
+  it('fails closed when a real console start is missing the controller provider/model', () => {
+    const child = new FakeChild();
+    const { manager } = managerWith(child);
+    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected blocked');
+    expect(result.error).toBe('console_controller_model_required');
+    expect(result.missing).toEqual(['controller_provider', 'controller_model']);
   });
 
   it('requires a prompt for print/task modes', () => {
@@ -225,14 +240,14 @@ describe('OpenClaudeConsoleSessionManager', () => {
       env: {},
       runtime: { ...readyRuntime, envMissing: ['localcoder_env_missing: OPENAI_API_KEY'] },
     });
-    const print = manager.start({ targetRoot: tmpdir(), mode: 'print', prompt: 'x' });
+    const print = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'print', prompt: 'x' });
     expect(print.ok).toBe(false);
     const interactive = new OpenClaudeConsoleSessionManager({
       workspaceRoot: tmpdir(),
       env: {},
       spawnProcess: () => new FakeChild() as unknown as ConsoleChild,
       resolveRuntime: () => ({ ...readyRuntime, envMissing: ['localcoder_env_missing: OPENAI_API_KEY'] }),
-    }).start({ targetRoot: tmpdir(), mode: 'interactive' });
+    }).start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
     expect(interactive.ok).toBe(true);
   });
 
@@ -247,7 +262,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
   it('finds a running session to reuse for a target root', () => {
     const child = new FakeChild();
     const { manager } = managerWith(child);
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    const result = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
     if (!result.ok) throw new Error('expected ok');
     expect(manager.findRunningForRoot(tmpdir())?.info.id).toBe(result.session.info.id);
     expect(manager.hasAnySession()).toBe(true);
@@ -256,7 +271,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
   it('reports pipe transport when an explicit pipe spawn is injected', () => {
     const child = new FakeChild();
     const { manager } = managerWith(child);
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    const result = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
     if (!result.ok) throw new Error('expected ok');
     expect(result.session.info.transportMode).toBe('pipe');
   });
@@ -272,7 +287,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
       now: () => '2026-06-13T00:00:00.000Z',
       idFactory: () => 'occ_pty',
     });
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    const result = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
     if (!result.ok) throw new Error('expected ok');
     expect(ptySpawn).toHaveBeenCalledOnce();
     expect(result.session.info.transportMode).toBe('pty');
@@ -290,7 +305,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
       ptySpawn: null,
       resolveRuntime: () => readyRuntime,
     });
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    const result = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
     if (!result.ok) throw new Error('expected ok');
     expect(result.session.info.transportMode).toBe('pipe');
     // Pipe child exposes no resize.
@@ -300,48 +315,57 @@ describe('OpenClaudeConsoleSessionManager', () => {
   it('never leaks the API key into session diagnostics', () => {
     const child = new FakeChild();
     const { manager } = managerWith(child);
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    const result = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
     if (!result.ok) throw new Error('expected ok');
     expect(JSON.stringify(result.session.info)).not.toContain('sk-secretkey1234567890');
   });
 });
 
 describe('resolveConsoleProviderEnv', () => {
-  it('routes through OpenRouter when LIVE_OPENROUTER=1 and a key is present', () => {
+  it('uses direct OpenAI only when the controller request asks for OpenAI', () => {
     const r = resolveConsoleProviderEnv({
       LIVE_OPENROUTER: '1',
       OPENROUTER_API_KEY: 'sk-or-abc123def456',
       OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1',
       OPENROUTER_DEFAULT_MODEL: 'kimi-k2-thinking',
+      OPENAI_API_KEY: 'sk-openai-abc123def456',
       OPENAI_MODEL: 'gpt-5.1-chat-latest',
-    });
-    expect(r.label).toBe('openrouter');
-    expect(r.defaultModel).toBe('kimi-k2-thinking');
-    expect(r.envOverrides.OPENAI_BASE_URL).toBe('https://openrouter.ai/api/v1');
-    expect(r.envOverrides.OPENAI_API_KEY).toBe('sk-or-abc123def456');
-    expect(r.envOverrides.CLAUDE_CODE_USE_OPENAI).toBe('1');
+    }, 'openai');
+    expect(r?.label).toBe('openai');
+    expect(r?.envOverrides.OPENAI_BASE_URL).toBeUndefined();
+    expect(r?.envOverrides.CLAUDE_CODE_USE_OPENAI).toBe('1');
   });
 
-  it('stays on direct OpenAI when OpenRouter is not enabled', () => {
-    const r = resolveConsoleProviderEnv({ OPENAI_MODEL: 'gpt-5.1-chat-latest' });
-    expect(r.label).toBe('openai');
-    expect(r.defaultModel).toBe('gpt-5.1-chat-latest');
-    expect(r.envOverrides.OPENAI_BASE_URL).toBeUndefined();
+  it('returns null without a requested controller provider', () => {
+    expect(resolveConsoleProviderEnv({}, undefined)).toBeNull();
   });
 
-  it('does not enable OpenRouter without a key even if the flag is set', () => {
-    expect(resolveConsoleProviderEnv({ LIVE_OPENROUTER: '1' }).label).toBe('openai');
+  it('routes through OpenRouter only when the controller request asks for OpenRouter', () => {
+    const r = resolveConsoleProviderEnv({
+      OPENROUTER_API_KEY: 'sk-or-abc123def456',
+      OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1',
+      OPENROUTER_DEFAULT_MODEL: 'kimi-k2-thinking',
+    }, 'openrouter');
+    expect(r?.label).toBe('openrouter');
+    expect(r?.envOverrides.OPENAI_BASE_URL).toBe('https://openrouter.ai/api/v1');
+    expect(r?.envOverrides.OPENAI_API_KEY).toBe('sk-or-abc123def456');
+  });
+
+  it('rejects unknown requested providers', () => {
+    expect(resolveConsoleProviderEnv({}, 'kimi')).toBeNull();
   });
 });
 
 describe('OpenClaudeConsoleSessionManager OpenRouter routing', () => {
-  it('points the child at OpenRouter and reports the resolved provider/model', () => {
+  it('uses the controller card OpenAI GPT-5.1 model even when the process has stale OpenRouter Kimi env', () => {
     const child = new FakeChild();
     const spawnProcess = vi.fn(() => child as unknown as ConsoleChild);
     const manager = new OpenClaudeConsoleSessionManager({
       workspaceRoot: tmpdir(),
       env: {
         LIVE_OPENROUTER: '1',
+        OPENAI_API_KEY: 'sk-openai-secretkey',
+        OPENAI_MODEL: 'gpt-5.1-chat-latest',
         OPENROUTER_API_KEY: 'sk-or-secretrouterkey',
         OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1',
         OPENROUTER_DEFAULT_MODEL: 'kimi-k2-thinking',
@@ -349,16 +373,51 @@ describe('OpenClaudeConsoleSessionManager OpenRouter routing', () => {
       spawnProcess,
       resolveRuntime: () => readyRuntime,
     });
-    const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+    const result = manager.start({
+      provider: 'openai',
+      model: 'gpt-5.1-chat-latest',
+      targetRoot: tmpdir(),
+      mode: 'interactive',
+    });
     if (!result.ok) throw new Error('expected ok');
-    expect(result.session.info.provider).toBe('openrouter');
-    expect(result.session.info.model).toBe('kimi-k2-thinking');
+    expect(result.session.info.provider).toBe('openai');
+    expect(result.session.info.model).toBe('gpt-5.1-chat-latest');
     const [, args, options] = spawnProcess.mock.calls[0];
     expect(args).toContain('--model');
-    expect(args[args.indexOf('--model') + 1]).toBe('kimi-k2-thinking');
+    expect(args[args.indexOf('--model') + 1]).toBe('gpt-5.1-chat-latest');
+    expect(options.env.OPENAI_BASE_URL).toBeUndefined();
+    expect(options.env.OPENAI_API_KEY).toBe('sk-openai-secretkey');
+    expect(options.env.OPENAI_MODEL).toBe('gpt-5.1-chat-latest');
+  });
+
+  it('points the child at OpenRouter when explicitly requested and reports the resolved provider/model', () => {
+    const child = new FakeChild();
+    const spawnProcess = vi.fn(() => child as unknown as ConsoleChild);
+    const manager = new OpenClaudeConsoleSessionManager({
+      workspaceRoot: tmpdir(),
+      env: {
+        OPENROUTER_API_KEY: 'sk-or-secretrouterkey',
+        OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1',
+        OPENROUTER_DEFAULT_MODEL: 'kimi-k2-thinking',
+      },
+      spawnProcess,
+      resolveRuntime: () => readyRuntime,
+    });
+    const result = manager.start({
+      provider: 'openrouter',
+      model: 'openai/gpt-5.1-chat',
+      targetRoot: tmpdir(),
+      mode: 'interactive',
+    });
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.session.info.provider).toBe('openrouter');
+    expect(result.session.info.model).toBe('openai/gpt-5.1-chat');
+    const [, args, options] = spawnProcess.mock.calls[0];
+    expect(args).toContain('--model');
+    expect(args[args.indexOf('--model') + 1]).toBe('openai/gpt-5.1-chat');
     expect(options.env.OPENAI_BASE_URL).toBe('https://openrouter.ai/api/v1');
     expect(options.env.OPENAI_API_KEY).toBe('sk-or-secretrouterkey');
-    expect(options.env.OPENAI_MODEL).toBe('kimi-k2-thinking');
+    expect(options.env.OPENAI_MODEL).toBe('openai/gpt-5.1-chat');
   });
 
   it('submitLine writes the text immediately and Enter as a separate keystroke', () => {
@@ -371,7 +430,7 @@ describe('OpenClaudeConsoleSessionManager OpenRouter routing', () => {
         spawnProcess: () => child as unknown as ConsoleChild,
         resolveRuntime: () => readyRuntime,
       });
-      const result = manager.start({ targetRoot: tmpdir(), mode: 'interactive' });
+      const result = manager.start({ ...controllerRequest, targetRoot: tmpdir(), mode: 'interactive' });
       if (!result.ok) throw new Error('expected ok');
       expect(result.session.submitLine('do a small task', 1200)).toBe(true);
       // Text delivered immediately; Enter not yet.

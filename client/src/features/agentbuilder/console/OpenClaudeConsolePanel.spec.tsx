@@ -102,6 +102,31 @@ describe('OpenClaudeConsolePanel', () => {
     expect(host.querySelector('[data-testid="openclaude-console-status"]')?.textContent).toBe('Running');
   });
 
+  it('starts with the Local Coder controller provider and model when supplied', async () => {
+    const client = fakeClient();
+    const host = await render(
+      <OpenClaudeConsolePanel
+        open
+        targetRoot="C:/Projects/main"
+        provider="openai"
+        model="gpt-5.1-chat-latest"
+        client={client}
+      />,
+    );
+    const start = host.querySelector('[data-testid="openclaude-console-start"]') as HTMLButtonElement;
+    await act(async () => {
+      start.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(client.startSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetRoot: 'C:/Projects/main',
+        mode: 'interactive',
+        provider: 'openai',
+        model: 'gpt-5.1-chat-latest',
+      }),
+    );
+  });
+
   it('shows an existing session transcript and running state', async () => {
     const host = await render(
       <OpenClaudeConsolePanel
