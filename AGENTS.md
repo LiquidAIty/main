@@ -717,7 +717,9 @@ Allowed durable docs:
 
 ```txt
 PLAN.md
+FUTURE.md
 AGENTS.md
+DONT.md
 skills/*.md
 repo-intake/*.md only when explicitly needed
 ```
