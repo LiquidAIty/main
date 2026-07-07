@@ -22,12 +22,15 @@ from typing import Any
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.teams import MagenticOneGroupChat
 
+from app.python_models import job_folder as jf
 from app.python_models import runtime_profile_executor as rpe
 from app.python_models.autogen_provider_env import AutoGenAgentConfig, _build_model_client
 from app.python_models.tool_registry import (
     DEFAULT_TOOL_REGISTRY,
+    JOB_RETURN_ROOT,
     THINKGRAPH_PATCH_EVENTS,
     THINKGRAPH_RUN_AUTHORITY,
+    build_return_writer_tool,
 )
 from app.python_models.orchestration_contracts import (
     ContextPack,
@@ -188,8 +191,15 @@ def _build_participants(context: ContextPack, model_client: Any) -> list[Assista
         # behavior). Unknown/disabled IDs fail loudly through resolve_selected
         # rather than being silently dropped.
         selected_tools = [_as_text(tool) for tool in (getattr(participant, "tools", []) or []) if _as_text(tool)]
-        if selected_tools:
-            kwargs["tools"] = DEFAULT_TOOL_REGISTRY.resolve_selected(selected_tools)
+        tools = DEFAULT_TOOL_REGISTRY.resolve_selected(selected_tools) if selected_tools else []
+        # Any run with an assigned result folder (a Coder handoff OR a standalone
+        # single-agent run) additionally gets a return writer scoped to THIS agent's
+        # own returns/<run-id>/<card-id>/ subdir (card id from trusted participant
+        # context — no agent-name branch, no shared folder).
+        if context.jobHandoff is not None or context.resultFolder is not None:
+            tools = [*tools, build_return_writer_tool(card_id or name)]
+        if tools:
+            kwargs["tools"] = tools
             # Single-card runs need a real tool loop (e.g. read a scope, then write)
             # inside one turn; default max_tool_iterations=1 would end the turn at
             # the first tool summary. Mag One team behavior is unchanged.
@@ -274,6 +284,29 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             knowGraph=KnowGraphUpdateReport(sourceAgent="single_card", summary=summary),
         )
 
+    # Standalone single-agent run: assign returns/<run-id>/ (the run's own identity),
+    # WITHOUT changing its task or turning it into a Mag One run. A bad/invalid
+    # result folder fails honestly rather than silently writing somewhere else.
+    result_folder: jf.JobFolder | None = None
+    if context.resultFolder is not None:
+        try:
+            result_folder = jf.resolve_job_folder(
+                context.resultFolder.workspaceRoot, context.resultFolder.runId
+            )
+            jf.ensure_returns_dir(result_folder)
+        except (ValueError, OSError) as err:
+            return _fail(f"result_folder_unresolved: {err}", "result_folder_unresolved")
+
+    def _returns_fields() -> dict:
+        if result_folder is None:
+            return {}
+        files = jf.list_return_files(result_folder)
+        return {
+            "returnsDir": f"{result_folder.returns_rel}/",
+            "returnedFiles": files,
+            "returnStatus": "return_files_created" if files else "no_return_files_created",
+        }
+
     runtime_scope = getattr(context.cardRuntime, "runtimeScope", None)
     runtime_options = getattr(context.cardRuntime, "runtimeOptions", None) or {}
     single = context.cardRuntime.participants[0]
@@ -316,6 +349,8 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
     # what the authorized tools actually did.
     authority_token = None
     patch_events_token = None
+    # Arm the run-scoped return writer for this single-card run's assigned folder.
+    return_root_token = JOB_RETURN_ROOT.set(result_folder) if result_folder is not None else None
     if isinstance(runtime_scope, dict) and runtime_scope.get("kind") == "thinkgraph_card_run":
         authority_token = THINKGRAPH_RUN_AUTHORITY.set(
             {str(k): str(v) for k, v in runtime_scope.items()}
@@ -406,6 +441,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
                 thinkGraph=context.thinkGraph,
                 knowGraph=KnowGraphUpdateReport(sourceAgent="single_card", summary="empty_response"),
                 transcript=[run_info],
+                **_returns_fields(),
             )
 
         return OrchestratorRunResponse(
@@ -416,6 +452,7 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             thinkGraph=context.thinkGraph,
             knowGraph=KnowGraphUpdateReport(sourceAgent="single_card", summary="single_card_run"),
             transcript=[run_info],
+            **_returns_fields(),
         )
     except Exception as err:  # honest runtime failure — no retry, no fallback
         return OrchestratorRunResponse(
@@ -428,6 +465,8 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             knowGraph=KnowGraphUpdateReport(sourceAgent="single_card", summary="run_failed"),
         )
     finally:
+        if return_root_token is not None:
+            JOB_RETURN_ROOT.reset(return_root_token)
         if authority_token is not None:
             THINKGRAPH_RUN_AUTHORITY.reset(authority_token)
         if patch_events_token is not None:
@@ -448,7 +487,30 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
     if context.cardRuntime is None:
         raise RuntimeError("card_runtime_missing")
 
-    task = _as_text(context.userText)
+    # Coder job-folder handoff: the run's task is the EXACT bytes of the Coder's
+    # handoff/<jobId>/prompt.md (never chat text, a wrapper, or userText), and
+    # returns/<jobId>/ is its assigned return surface. The workspace root is the
+    # server-forced trusted root carried in the contract, re-validated here.
+    folder: jf.JobFolder | None = None
+    if context.jobHandoff is not None:
+        try:
+            folder = jf.resolve_job_folder(
+                context.jobHandoff.workspaceRoot, context.jobHandoff.jobId
+            )
+            task = jf.read_handoff_prompt(folder)
+            jf.ensure_returns_dir(folder)
+        except (ValueError, FileNotFoundError, OSError) as err:
+            return OrchestratorRunResponse(
+                ok=False,
+                session=context.session,
+                finalResponseText="",
+                error=f"job_handoff_unresolved: {err}",
+                plan=context.plan,
+                thinkGraph=context.thinkGraph,
+                knowGraph=KnowGraphUpdateReport(sourceAgent="magentic_one", summary="no_run"),
+            )
+    else:
+        task = _as_text(context.userText)
     if not task:
         return OrchestratorRunResponse(
             ok=False,
@@ -466,6 +528,11 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             provider_model_id=context.session.providerModelId,
         )
     )
+
+    # Arm the run-scoped return writer for a handoff run: participants' write_return_file
+    # tool resolves against THIS folder's returns/<job-id>/ only. Always reset below so
+    # no return authority leaks across runs.
+    return_root_token = JOB_RETURN_ROOT.set(folder) if folder is not None else None
 
     try:
         participants = _build_participants(context, client)
@@ -533,6 +600,19 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             },
         )
 
+        # Job-folder handoff: report the assigned returns dir and the files the run
+        # actually wrote there. Empty is honest ("no_return_files_created") — the
+        # normal final text is preserved as text and no result file is fabricated.
+        returns_rel: str | None = None
+        returned_files: list[str] = []
+        return_status: str | None = None
+        if folder is not None:
+            returned_files = jf.list_return_files(folder)
+            returns_rel = f"{folder.returns_rel}/"
+            return_status = (
+                "return_files_created" if returned_files else "no_return_files_created"
+            )
+
         ok = bool(final_response_text)
         return OrchestratorRunResponse(
             ok=ok,
@@ -553,6 +633,9 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             autogenEvents=autogen_events,
             taskLedgerArtifact=task_ledger_artifact,
             progressLedgerReference=None,
+            returnsDir=returns_rel,
+            returnedFiles=returned_files,
+            returnStatus=return_status,
             error=None if ok else "no_model_output",
             plan=context.plan,
             thinkGraph=context.thinkGraph,
@@ -567,6 +650,8 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             ),
         )
     finally:
+        if return_root_token is not None:
+            JOB_RETURN_ROOT.reset(return_root_token)
         close = getattr(client, "close", None)
         if callable(close):
             try:

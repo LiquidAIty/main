@@ -12,6 +12,7 @@ vi.mock('../../../decks/store', () => ({
 
 import {
   deriveSessionId,
+  doorwayWhenToUse,
   resolveCardDoorwayDefinitions,
   resolveMainChatSystemPrompt,
   selectDoorwayCards,
@@ -58,6 +59,23 @@ describe('resolveCardDoorwayDefinitions — thin card-bound doorways, one per sa
     // The doorway relays through the one control tool it is bound to.
     expect(def.system_prompt).toContain(CARD_RUN_CONTROL_TOOL);
     expect(def.system_prompt).toContain('card_thinkgraph_agent');
+  });
+
+  it('the ThinkGraph doorway tells the model it can WRITE the real graph (so it delegates, not conceptualizes)', async () => {
+    deckMocks.getDeckDocument.mockResolvedValueOnce(deckWith([TG_CARD]));
+    const [def] = (await resolveCardDoorwayDefinitions(deriveSessionId('project-1', 'main'), 'chat')) as any[];
+    const wtu = String(def.when_to_use || '');
+    expect(wtu).toMatch(/write/i);
+    expect(wtu).toMatch(/ThinkGraph/);
+    expect(wtu).toMatch(/conceptual|text-only/i); // explicitly forbids the conceptual substitute
+    // The raw write tool is still NEVER exposed to the Harness model directly.
+    expect(def.allowed_tools).toEqual([CARD_RUN_CONTROL_TOOL]);
+  });
+
+  it('doorwayWhenToUse states real capability per binding, generic otherwise', () => {
+    expect(doorwayWhenToUse('thinkgraph_agent', 'ThinkGraph Agent')).toMatch(/READ and WRITE/);
+    expect(doorwayWhenToUse('local_coder', 'Local Coder')).toMatch(/coding/i);
+    expect(doorwayWhenToUse('', 'Some Card')).toContain('Some Card');
   });
 
   it('canvas mode exposes every eligible card as a doorway — never main_chat, never subgraph children, never disabled', async () => {

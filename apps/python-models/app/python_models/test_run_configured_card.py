@@ -16,6 +16,7 @@ from app.python_models.orchestration_contracts import (
     CardRuntimeParticipant,
     ContextPack,
     ProjectSession,
+    ResultFolder,
 )
 
 MODEL = "openai/gpt-5.1-chat"
@@ -96,6 +97,15 @@ class TestGuardFailureResponse:
         assert response.finalResponseText == ""
         assert response.taskLedgerArtifact is None
         assert response.session.turnId == "corr-1"  # correlation preserved
+
+    def test_invalid_result_folder_fails_honestly_before_any_model_call(self):
+        # A standalone run assigned a returns folder it cannot resolve fails honestly
+        # (never silently writes elsewhere). This runs before the model client is built.
+        ctx = _context()
+        ctx.resultFolder = ResultFolder(workspaceRoot="C:/does/not/exist/xyz123", runId="run_x")
+        response = asyncio.run(mac.run_configured_card(ctx))
+        assert response.ok is False
+        assert "result_folder_unresolved" in (response.error or "")
 
 
 # --------------------------------------------------------------------------- #

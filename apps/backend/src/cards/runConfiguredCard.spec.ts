@@ -163,6 +163,46 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(payload.cardRuntime.privateParticipants[0].prompt).toBe('You are the Local Coder controller.');
   });
 
+  it('assigns a standalone run a returns folder under the default coder-workspace, and threads returned files back', async () => {
+    mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
+    mockRunCard.mockResolvedValue({
+      ok: true,
+      finalResponseText: 'ok',
+      returnsDir: 'returns/corr-123/card_thinkgraph_agent/',
+      returnedFiles: ['returns/corr-123/card_thinkgraph_agent/report.md'],
+      returnStatus: 'return_files_created',
+    });
+    const result = await runConfiguredCard(ARGS);
+    const payload = mockRunCard.mock.calls[0][0];
+    // Result root is the default owned Coder workspace, not the repo root, and it is
+    // NOT a Mag One handoff.
+    expect(payload.resultFolder.runId).toBe('corr-123');
+    expect(payload.resultFolder.workspaceRoot).toContain('coder-workspace');
+    expect(payload.jobHandoff).toBeUndefined();
+    // Real created files threaded back to the caller for read_model_results.
+    expect(result.returnFolder).toEqual({
+      returnsDir: 'returns/corr-123/card_thinkgraph_agent/',
+      returnedFiles: ['returns/corr-123/card_thinkgraph_agent/report.md'],
+      returnStatus: 'return_files_created',
+    });
+  });
+
+  it('reports an empty standalone returns folder honestly (no fake report.md)', async () => {
+    mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
+    mockRunCard.mockResolvedValue({
+      ok: true,
+      finalResponseText: 'text only',
+      returnsDir: 'returns/corr-123/',
+      returnedFiles: [],
+      returnStatus: 'no_return_files_created',
+    });
+    const result = await runConfiguredCard(ARGS);
+    expect(result.output).toBe('text only');
+    expect(result.returnFolder?.returnStatus).toBe('no_return_files_created');
+    expect(JSON.stringify(result)).not.toContain('report.md');
+    expect(JSON.stringify(result)).not.toContain('result.md');
+  });
+
   it('propagates an honest Python failure without retry or fallback', async () => {
     mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
     mockRunCard.mockResolvedValue({ ok: false, error: 'single_card_run_failed: provider_down' });

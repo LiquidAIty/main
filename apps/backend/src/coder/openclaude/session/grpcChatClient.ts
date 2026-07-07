@@ -71,6 +71,31 @@ function parseSessionId(sessionId: string): { projectId: string; conversationId:
  * A fixed identity constant, not a mapping. */
 const CARD_RUN_CONTROL_TOOL = 'mcp__liquidaity__card_run_assistant_agent';
 
+/** The truthful parent-facing capability line for a card doorway, keyed on the
+ * saved binding (the same architectural signal runtime.ts uses for write
+ * authority). This is what the main-chat model reads to decide when to delegate —
+ * it must state the sub-agent's REAL capability so the model routes the work here
+ * instead of substituting a conceptual answer. Not a prompt copy; one honest line. */
+export function doorwayWhenToUse(binding: string, title: string): string {
+  if (binding === 'thinkgraph_agent') {
+    return (
+      'Delegate here to READ and WRITE the project\'s real ThinkGraph. This agent has ' +
+      'the scoped graph-read plus a server-authorized graph-write internally (it creates/' +
+      'updates actual ThinkGraph nodes and relationships) — you do not need a write tool ' +
+      'yourself. Route EVERY request to build, update, record, or map anything into the ' +
+      'ThinkGraph to this sub-agent; never answer such a request with a conceptual or ' +
+      'text-only graph, and never claim no write tool exists.'
+    );
+  }
+  if (binding === 'local_coder') {
+    return (
+      'Delegate here to run real coding work in the Coder workspace (create/edit files, ' +
+      'run commands, produce real artifacts). Route implementation tasks to this sub-agent.'
+    );
+  }
+  return `The saved agent card "${title}". Delegate the matching task to it and relay its result.`;
+}
+
 /** A thin native doorway definition bound to ONE saved card. Pure transport:
  * it carries no card prompt, no card tool grants, no model configuration and
  * no data bindings — Python resolves ALL of those from the saved card when
@@ -88,6 +113,12 @@ export function buildCardDoorwayDefinition(card: any): Record<string, unknown> |
     agent_type: cardId,
     card_id: cardId,
     runtime_binding: binding || '',
+    // The PARENT-facing capability description the main-chat model reads to decide
+    // when to delegate to this sub-agent. Backend owns this (it already keys write
+    // authority on the binding); the vendored server only relays it. Truthful, so
+    // the model routes a real graph write here instead of inventing a conceptual
+    // text-only graph or claiming "no write tool".
+    when_to_use: doorwayWhenToUse(binding || '', title),
     system_prompt: [
       `You are the Harness doorway for the saved agent card "${title}" (cardId ${cardId}).`,
       `Call the tool ${CARD_RUN_CONTROL_TOOL} exactly once with { "cardId": "${cardId}", "input": <the task you were given, as one bounded instruction> }.`,

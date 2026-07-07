@@ -35,6 +35,8 @@ export type AutoGenOrchestratorRequest = {
   attachments?: Array<Record<string, unknown>>;
   maxResearchTasks?: number;
   workspaceObjectContext?: Record<string, unknown> | null;
+  jobHandoff?: { workspaceRoot: string; jobId: string };
+  resultFolder?: { workspaceRoot: string; runId: string };
   cardRuntime?: Record<string, unknown>;
 };
 
@@ -68,6 +70,10 @@ export type AutoGenOrchestratorResponse = {
   taskLedgerArtifact?: unknown;
   // Progress Ledger is identify-only in this scope: referenced, never started.
   progressLedgerReference?: unknown;
+  // Job-folder handoff run outputs (present only for a handoff run).
+  returnsDir?: string | null;
+  returnedFiles?: string[];
+  returnStatus?: 'return_files_created' | 'no_return_files_created' | null;
   error?: string;
   stopReason?: string | null;
   transcript?: string[];

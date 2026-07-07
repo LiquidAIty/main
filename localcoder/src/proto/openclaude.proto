@@ -51,6 +51,7 @@ message AgentDefinitionConfig {
   string system_prompt = 4;           // saved card's visible prompt, verbatim
   repeated string allowed_tools = 5;  // saved card's visible tool grants
   bool context_mode_inherit_parent = 6; // true = live inherited-context fork
+  string when_to_use = 7;             // parent-facing capability line (backend-authored)
 }
 
 message UserInput {

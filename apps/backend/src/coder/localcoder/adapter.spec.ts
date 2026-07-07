@@ -602,6 +602,52 @@ describe('LocalCoderAdapter MCP config handling', () => {
     expect(report.assumptions.join(' ')).toContain('localcoder_mcp_config_normalized');
   });
 
+  /** Create the resolved liquidaity host layout under a fixture root (dummy files;
+   * the adapter only existsSync-checks them) and run, capturing the generated MCP
+   * config. Proves the card-Coder connects the SAME one Python MCP host the
+   * chat-Coder gets, so write_mag_one_instructions/read_model_results reach both. */
+  async function runWithLiquidaityHost(mcpConfig: string | null): Promise<{
+    mcpContent: string;
+    report: Awaited<ReturnType<LocalCoderAdapter['run']>>;
+    pyExe: string;
+    hostPath: string;
+  }> {
+    const root = createRuntimeFixture(mcpConfig);
+    const pyExe = path.join(root, 'apps', 'python-models', '.venv', 'Scripts', 'python.exe');
+    const hostPath = path.join(root, 'apps', 'python-models', 'app', 'mcp_host.py');
+    mkdirSync(path.dirname(pyExe), { recursive: true });
+    writeFileSync(pyExe, '');
+    mkdirSync(path.dirname(hostPath), { recursive: true });
+    writeFileSync(hostPath, '# host');
+    let mcpContent = '';
+    const adapter = new LocalCoderAdapter({
+      workspaceRoot: root,
+      env: { PATH: '', OPENAI_API_KEY: 'key', OPENAI_MODEL: 'gpt-5.3-codex' },
+      runProcess: async (_command, args) => {
+        const idx = args.indexOf('--mcp-config');
+        if (idx >= 0) mcpContent = readFileSync(args[idx + 1], 'utf8');
+        return { started: true, exitCode: 0, stdout: structuredStdout(), stderr: '' };
+      },
+    });
+    const report = await adapter.run(packet(root));
+    return { mcpContent, report, pyExe, hostPath };
+  }
+
+  it('injects the one liquidaity Python MCP host so the card-Coder shares the chat-Coder tool surface', async () => {
+    const { mcpContent, report, pyExe, hostPath } = await runWithLiquidaityHost(VALID_MCP_CONFIG);
+    expect(report.status).toBe('succeeded');
+    const parsed = JSON.parse(mcpContent);
+    expect(parsed.mcpServers.liquidaity).toEqual({ type: 'stdio', command: pyExe, args: [hostPath] });
+    expect(report.assumptions.join(' ')).toContain('localcoder_mcp_liquidaity_injected');
+  });
+
+  it('injects the liquidaity host even when mcp.config.json is absent — the card-Coder always gets it', async () => {
+    const { mcpContent, report } = await runWithLiquidaityHost(null);
+    expect(report.status).toBe('succeeded');
+    const parsed = JSON.parse(mcpContent);
+    expect(Object.keys(parsed.mcpServers)).toEqual(['liquidaity']);
+  });
+
   it('transforms backend transport:"sse" into OpenClaude type:"sse" when the url resolves', async () => {
     const backendConfig = JSON.stringify({
       mcpServers: { remote: { transport: 'sse', url: '${SMOKE_MCP_URL}', headers: { Authorization: 'Bearer x' } } },

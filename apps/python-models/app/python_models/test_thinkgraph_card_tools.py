@@ -117,6 +117,8 @@ class TestPythonMcpHost:
         assert names == sorted([
             "mag_one.describe_connected_agents",
             "run_mag_one",
+            "write_mag_one_instructions",
+            "read_model_results",
             "canvas.inspect",
             "card.update_configuration",
             "canvas.upsert_wire",

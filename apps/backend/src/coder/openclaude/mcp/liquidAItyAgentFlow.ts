@@ -16,6 +16,7 @@
 
 import { getDeckDocument } from '../../../decks/store';
 import { resolvedMagenticOptions, runCardWithContract } from '../../../cards/runtime';
+import { resolveCoderWorkspaceRoot } from '../../workspaceRoot';
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value);
@@ -113,7 +114,14 @@ export type RunMagOneInput = {
   // graph/repo/research findings, constraints, available connected agents, and
   // desired result/proof, exactly as Harness judged relevant. Used verbatim as
   // the native Mag One task; never translated into a plan or task object.
-  promptMarkdown: string;
+  // Optional: supply this OR jobId (the Coder job-folder handoff).
+  promptMarkdown?: string;
+  // Coder job-folder handoff: the shared job id. When set, the run's task is the
+  // EXACT bytes of handoff/<jobId>/prompt.md (the Coder wrote it with its native
+  // Write tool) and its return surface is returns/<jobId>/. The workspace root is
+  // the server-forced trusted root — never a client path. Takes precedence over
+  // promptMarkdown so the job FILE is always the contract.
+  jobId?: string;
 };
 
 export type RunMagOneResult = {
@@ -122,6 +130,13 @@ export type RunMagOneResult = {
   finalText: string;
   failure: string | null;
   provenance: { route: string };
+  // Coder job-folder handoff: the assigned return surface + the files the run
+  // actually wrote there, so the Coder can read and continue from them. Null /
+  // empty for a normal (promptMarkdown) run.
+  jobId: string | null;
+  returnsDir: string | null;
+  returnedFiles: string[];
+  returnStatus: 'return_files_created' | 'no_return_files_created' | null;
 };
 
 export async function runMagOne(
@@ -133,6 +148,7 @@ export async function runMagOne(
 
   const projectId = asString(input?.projectId).trim();
   const deckId = asString(input?.deckId).trim();
+  const jobId = asString(input?.jobId).trim();
   const promptMarkdown = asString(input?.promptMarkdown).trim();
   const route = 'liquidaity_mcp(run_mag_one) -> cards/runtime -> autogen rails -> magentic-one';
   const runId = `mag_one_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -140,8 +156,10 @@ export async function runMagOne(
   if (!projectId || !deckId) {
     throw new Error('run_mag_one_missing_selected_flow: projectId and deckId are required');
   }
-  if (!promptMarkdown) {
-    throw new Error('run_mag_one_missing_prompt: a Markdown orchestration prompt is required');
+  // Either a Coder job-folder handoff (jobId) or an inline Markdown prompt is the
+  // task source. jobId wins so the on-disk handoff FILE is always the contract.
+  if (!jobId && !promptMarkdown) {
+    throw new Error('run_mag_one_missing_input: provide jobId (job-folder handoff) or promptMarkdown');
   }
 
   const { deck } = await loadDeck(projectId, deckId);
@@ -155,24 +173,36 @@ export async function runMagOne(
     throw new Error('run_mag_one_no_orchestrator_card');
   }
 
-  // Regular native Mag One run: the Markdown prompt is the task. Bus eligibility
-  // (magentic_option) is enforced inside runCardWithContract, which throws
-  // honestly when no worker is connected. No wrapper, no gate.
-  const result = await runCard(orchestrator, {}, promptMarkdown, {
+  // The coder workspace root is SERVER-OWNED and trusted — the default owned Coder
+  // workspace (<repo-root>/coder-workspace), never a client path; a client-supplied
+  // job id only names a folder UNDER this root.
+  const workspaceRoot = resolveCoderWorkspaceRoot();
+
+  // Regular native Mag One run. For a handoff run the runtime input is empty —
+  // the Python rails read handoff/<jobId>/prompt.md as the exact task; otherwise
+  // the Markdown prompt is the task. Bus eligibility (magentic_option) is enforced
+  // inside runCardWithContract, which throws honestly when no worker is connected.
+  const result = await runCard(orchestrator, {}, jobId ? '' : promptMarkdown, {
     deckId,
     projectId,
     allCards: nodes,
     allEdges: edges,
     allTemplates: [],
     previousOutput: '',
+    ...(jobId ? { jobHandoff: { workspaceRoot, jobId } } : {}),
   });
 
   const failed = result?.status === 'error';
+  const handoff = (result as any)?.jobHandoffResult ?? null;
   return {
     status: failed ? 'failed' : 'completed',
     runId,
     finalText: asString(result?.output),
     failure: failed ? asString(result?.error) || 'run_mag_one_failed' : null,
     provenance: { route },
+    jobId: jobId || null,
+    returnsDir: handoff?.returnsDir ?? null,
+    returnedFiles: Array.isArray(handoff?.returnedFiles) ? handoff.returnedFiles : [],
+    returnStatus: handoff?.returnStatus ?? null,
   };
 }

@@ -807,6 +807,31 @@ export class LocalCoderAdapter {
    * file is missing/unparseable) the run is MCP-less and the reason is recorded
    * so it stays visible in the CoderReport.
    */
+  /**
+   * The ONE app Python MCP host (apps/python-models/app/mcp_host.py), resolved
+   * from the workspace root exactly like the gRPC harness does
+   * (localcoder/scripts/start-grpc.ts). Injecting it here is what gives the
+   * card-Coder the SAME MCP tool surface the chat-Coder already gets from the
+   * server-lifetime host — including write_mag_one_instructions /
+   * read_model_results. Absent build → honest note, host omitted (no fake).
+   */
+  private resolveLiquidaityMcpServer():
+    | { server: Record<string, unknown>; note: string }
+    | { note: string } {
+    const pythonExe = path.join(
+      this.workspaceRoot, 'apps', 'python-models', '.venv', 'Scripts', 'python.exe',
+    );
+    const hostPath = path.join(this.workspaceRoot, 'apps', 'python-models', 'app', 'mcp_host.py');
+    if (!existsSync(pythonExe) || !existsSync(hostPath)) {
+      const missing = !existsSync(pythonExe) ? pythonExe : hostPath;
+      return { note: `localcoder_mcp_liquidaity_unavailable: ${missing}` };
+    }
+    return {
+      server: { type: 'stdio', command: pythonExe, args: [hostPath] },
+      note: 'localcoder_mcp_liquidaity_injected',
+    };
+  }
+
   private prepareMcpConfig(): McpPrepResult {
     if (this.diagnosticMcpMode === 'disabled') {
       return {
@@ -816,31 +841,33 @@ export class LocalCoderAdapter {
       };
     }
     const configPath = this.mcpConfigPath();
+    // Read the declared servers when the file exists/parses; a missing or bad
+    // file is a note, not an early return — the liquidaity host is still injected.
+    let servers: Record<string, unknown> = {};
+    let fileNote = '';
     if (!existsSync(configPath)) {
-      return { flags: [], note: `localcoder_mcp_config_absent: ${configPath}`, tempPath: null };
+      fileNote = `localcoder_mcp_config_absent: ${configPath}`;
+    } else {
+      try {
+        const parsed = JSON.parse(readFileSync(configPath, 'utf8'));
+        if (
+          parsed &&
+          typeof parsed === 'object' &&
+          typeof (parsed as { mcpServers?: unknown }).mcpServers === 'object' &&
+          (parsed as { mcpServers?: unknown }).mcpServers !== null
+        ) {
+          servers = (parsed as { mcpServers: Record<string, unknown> }).mcpServers;
+        }
+      } catch (error) {
+        fileNote = `localcoder_mcp_config_unparseable: ${error instanceof Error ? error.message : 'invalid json'}`;
+      }
     }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(readFileSync(configPath, 'utf8'));
-    } catch (error) {
-      return {
-        flags: [],
-        note: `localcoder_mcp_config_unparseable: ${error instanceof Error ? error.message : 'invalid json'}`,
-        tempPath: null,
-      };
-    }
-    const servers =
-      parsed &&
-      typeof parsed === 'object' &&
-      typeof (parsed as { mcpServers?: unknown }).mcpServers === 'object' &&
-      (parsed as { mcpServers?: unknown }).mcpServers !== null
-        ? ((parsed as { mcpServers: Record<string, unknown> }).mcpServers)
-        : {};
 
     const kept: Record<string, unknown> = {};
     const keptNames: string[] = [];
     const dropped: string[] = [];
     for (const [name, raw] of Object.entries(servers)) {
+      if (name === 'liquidaity') continue; // injected below from the resolved layout
       const result = normalizeMcpServer(name, raw, this.env);
       if (result.ok) {
         kept[name] = result.value;
@@ -850,16 +877,29 @@ export class LocalCoderAdapter {
       }
     }
 
+    const liquidaity = this.resolveLiquidaityMcpServer();
+    if ('server' in liquidaity) {
+      kept['liquidaity'] = liquidaity.server;
+      keptNames.push('liquidaity');
+    }
+
     if (keptNames.length === 0) {
-      const reason = dropped.length ? `dropped: ${dropped.join('; ')}` : 'no mcpServers defined';
+      const reason = [
+        fileNote,
+        dropped.length ? `dropped: ${dropped.join('; ')}` : 'no mcpServers defined',
+        liquidaity.note,
+      ].filter(Boolean).join('; ');
       return { flags: [], note: `localcoder_mcp_config_omitted: ${reason}`, tempPath: null };
     }
 
     const tempPath = path.join(tmpdir(), `liquidaity-mcp-${Date.now()}-${process.pid}.json`);
     writeFileSync(tempPath, JSON.stringify({ mcpServers: kept }, null, 2));
-    const note =
-      `localcoder_mcp_config_normalized: kept [${keptNames.join(', ')}]` +
-      (dropped.length ? `; dropped: ${dropped.join('; ')}` : '');
+    const note = [
+      `localcoder_mcp_config_normalized: kept [${keptNames.join(', ')}]`,
+      dropped.length ? `dropped: ${dropped.join('; ')}` : '',
+      fileNote,
+      liquidaity.note,
+    ].filter(Boolean).join('; ');
     return { flags: ['--mcp-config', tempPath, '--strict-mcp-config'], note, tempPath };
   }
 

@@ -91,9 +91,14 @@ export function buildAgentDefinitionsFromRequest(req: any): BuiltInAgentDefiniti
     .map((c: any): BuiltInAgentDefinition => {
       const systemPrompt = String(c.system_prompt)
       const allowedTools = Array.isArray(c.allowed_tools) ? c.allowed_tools.map(String) : []
+      // Parent-facing capability line: use the backend-authored when_to_use (which
+      // states the sub-agent's REAL read/write capability) so the model delegates
+      // correctly; fall back to the generic line only when absent.
+      const whenToUse = String(c.when_to_use || '').trim()
+        || `Saved card agent (runtimeBinding=${String(c.runtime_binding || '')}).`
       return {
         agentType: String(c.agent_type),
-        whenToUse: `Saved card agent (runtimeBinding=${String(c.runtime_binding || '')}).`,
+        whenToUse,
         ...(allowedTools.length > 0 ? { tools: allowedTools } : {}),
         source: 'built-in',
         baseDir: 'built-in',

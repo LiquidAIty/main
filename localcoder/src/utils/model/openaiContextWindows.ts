@@ -74,6 +74,14 @@ const OPENAI_CONTEXT_WINDOWS: Record<string, number> = {
   'gpt-5.4':               1_050_000,
   'gpt-5.4-mini':            400_000,
   'gpt-5.4-nano':            400_000,
+  // gpt-5.1 family — mirrors the repo's existing gpt-5.1 metadata (264k, see the
+  // github:copilot entries). Covers the bare name, the -chat / -chat-latest chat
+  // aliases, and codex, so the configured Main Chat model resolves exactly instead
+  // of falling through to the conservative default + a warning.
+  'gpt-5.1':                 264_000,
+  'gpt-5.1-chat-latest':     264_000,
+  'gpt-5.1-chat':            264_000,
+  'gpt-5.1-codex':           400_000,
   'gpt-4o':                   128_000,
   'gpt-4o-mini':              128_000,
   'gpt-4.1':                  1_047_576,

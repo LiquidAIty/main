@@ -4,6 +4,10 @@
 !.env.example
 *.pem
 
+# Default owned Local Coder workspace (handoff prompts, returned model artifacts,
+# and the Coder's own generated repos/apps) — never part of the LiquidAIty app repo.
+/coder-workspace/
+
 # Dependency folders
 node_modules/
 **/node_modules/

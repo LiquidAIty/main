@@ -141,6 +141,14 @@ export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
   },
 ];
 
+// Job-folder handoff run outputs, threaded verbatim from the Python rails.
+// Present only for a handoff run (a jobId was supplied); null otherwise.
+export type JobHandoffRunResult = {
+  returnsDir: string | null;
+  returnedFiles: string[];
+  returnStatus: 'return_files_created' | 'no_return_files_created' | null;
+};
+
 export type CardRunResult = {
   output: string | null;
   status: DeckRunStatus;
@@ -153,6 +161,7 @@ export type CardRunResult = {
   inputSummary?: string;
   outputSummary?: string;
   magenticTrace?: Record<string, unknown> | null;
+  jobHandoffResult?: JobHandoffRunResult | null;
 };
 
 // ── AgentRunResult — the ONE normalized card-run report ─────────────────────
@@ -271,6 +280,10 @@ export type PythonAutoGenPayloadShape = {
   knowGraph?: Record<string, any>;
   blackboard?: Record<string, any>;
   workspaceObjectContext?: Record<string, any>;
+  // Coder job-folder handoff: server-forced workspace root + shared job id. When
+  // present, the Python run reads handoff/<jobId>/prompt.md as its exact task and
+  // writes deliverables into returns/<jobId>/.
+  jobHandoff?: { workspaceRoot: string; jobId: string };
   cardRuntime: {
     cardId: string;
     title: string;

@@ -14,6 +14,11 @@ export const MODEL_CONTEXT_WINDOW_DEFAULT = 200_000
 // otherwise auto-compact fires on every message (issue #635).
 export const OPENAI_FALLBACK_CONTEXT_WINDOW = 128_000
 
+// Unknown-model context warnings are emitted ONCE per model name for the process,
+// not on every token-budget check within a request (which flooded the dev terminal).
+// A truly unknown model still gets one honest warning.
+const warnedUnknownContextModels = new Set<string>()
+
 // Maximum output tokens for compact operations
 export const COMPACT_MAX_OUTPUT_TOKENS = 20_000
 
@@ -91,10 +96,13 @@ export function getContextWindowForModel(
     if (openaiWindow !== undefined) {
       return openaiWindow
     }
-    console.error(
-      `[context] Warning: model "${model}" not in context window table — using conservative 128k default. ` +
-      'Add it to src/utils/model/openaiContextWindows.ts for accurate compaction.',
-    )
+    if (!warnedUnknownContextModels.has(model)) {
+      warnedUnknownContextModels.add(model)
+      console.error(
+        `[context] Warning: model "${model}" not in context window table — using conservative 128k default. ` +
+        'Add it to src/utils/model/openaiContextWindows.ts for accurate compaction.',
+      )
+    }
     return OPENAI_FALLBACK_CONTEXT_WINDOW
   }
 

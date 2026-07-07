@@ -422,6 +422,30 @@ class AttachmentInput(BaseModel):
     fileName: str
 
 
+class JobHandoff(BaseModel):
+    """Coder job-folder handoff into one existing Mag One run.
+
+    ``workspaceRoot`` is the server-forced trusted root (never model-supplied);
+    ``jobId`` is the one opaque id shared across handoff/, prompt.md, this run,
+    and returns/. When present, the run's task is the EXACT bytes of
+    ``handoff/<jobId>/prompt.md`` and its return surface is ``returns/<jobId>/``.
+    """
+
+    workspaceRoot: RequiredRuntimeString
+    jobId: RequiredRuntimeString
+
+
+class ResultFolder(BaseModel):
+    """Assigned returns/<runId>/ result folder for any run that is NOT a Coder
+    handoff (e.g. a standalone single-agent run). Unlike JobHandoff it does not
+    change the run's task — it only assigns a return surface. workspaceRoot is the
+    server-forced trusted root; runId is the run's existing identity.
+    """
+
+    workspaceRoot: RequiredRuntimeString
+    runId: RequiredRuntimeString
+
+
 class ContextPack(BaseModel):
     session: ProjectSession
     userText: str
@@ -434,6 +458,8 @@ class ContextPack(BaseModel):
     attachments: list[AttachmentInput] = Field(default_factory=list)
     maxResearchTasks: int = 6
     workspaceObjectContext: WorkspaceObjectContext | None = None
+    jobHandoff: JobHandoff | None = None
+    resultFolder: ResultFolder | None = None
     cardRuntime: CardRuntimeConfig | None = None
 
 
@@ -518,6 +544,13 @@ class OrchestratorRunResponse(BaseModel):
     taskLedgerArtifact: TaskLedgerArtifact | None = None
     # Progress Ledger is identify-only in this scope: referenced, never started.
     progressLedgerReference: ProgressLedgerReference | None = None
+    # Job-folder handoff run outputs (None for a normal, non-handoff run). The
+    # workspace-relative returns dir, the paths of files the run actually wrote
+    # there, and an honest status — "no_return_files_created" is a valid outcome
+    # and never triggers a fabricated result file.
+    returnsDir: str | None = None
+    returnedFiles: list[str] = Field(default_factory=list)
+    returnStatus: Literal["return_files_created", "no_return_files_created"] | None = None
     error: str | None = None
     blackboardEntries: list[BlackboardEntry] = Field(default_factory=list)
     plan: PlanContext

@@ -3,6 +3,7 @@ import {
   AgentRunResult,
   CardRunResult,
   DeckExecutionOutput,
+  JobHandoffRunResult,
   PythonAutoGenPayloadShape,
   RUNTIME_TOOL_SPECS,
   RuntimeGraph,
@@ -13,6 +14,9 @@ import { randomUUID } from 'crypto';
 import { orchestrateWithAutoGen, runSingleCardWithAutoGen } from '../services/autogen/autogenOrchestratorClient';
 import { getDeckDocument } from '../decks/store';
 import { resolveModel } from '../llm/models.config';
+import { resolveCoderWorkspaceRoot } from '../coder/workspaceRoot';
+import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
+import { logHarnessTrace, redactTrace } from '../services/harnessTrace';
 
 function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
   const provider = String(value ?? '').trim().toLowerCase();
@@ -410,6 +414,10 @@ export function buildPythonAutoGenCardRuntimePayload(
       findings: [],
     },
     workspaceObjectContext: context.workspaceObjectContext ?? undefined,
+    // Coder job-folder handoff (server-forced workspace root + job id), when this
+    // run was triggered from a handoff. Python reads handoff/<jobId>/prompt.md as
+    // the task and writes deliverables into returns/<jobId>/.
+    jobHandoff: context.jobHandoff ?? undefined,
     cardRuntime: {
       cardId: String(card.id || ''),
       title: String(card.title || 'Magentic Agent'),
@@ -476,6 +484,9 @@ export type ConfiguredCardRunResult = {
    * (null when the run has no profile/terminal reporting for this). Parsed from
    * the real transcript line, never inferred from the final response text. */
   toolCallCount: number | null;
+  /** This run's assigned returns/<run-id>/ folder + the files the run actually
+   * wrote there (a standalone single-agent run gets one; null otherwise). */
+  returnFolder: JobHandoffRunResult | null;
 };
 
 function parseToolCallCount(transcript: unknown): number | null {
@@ -489,18 +500,33 @@ function parseToolCallCount(transcript: unknown): number | null {
 
 export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<ConfiguredCardRunResult> {
   const startedAt = new Date().toISOString();
-  const done = (partial: Partial<ConfiguredCardRunResult> & Pick<ConfiguredCardRunResult, 'status'>): ConfiguredCardRunResult => ({
-    correlationId: String(args?.correlationId || ''),
-    cardId: String(args?.cardId || ''),
-    runtimeType: null,
-    tools: [],
-    output: '',
-    error: null,
-    startedAt,
-    endedAt: new Date().toISOString(),
-    toolCallCount: null,
-    ...partial,
-  });
+  // Real backend-terminal trace of the ACTUAL card/sub-agent run. Every terminal
+  // outcome is logged, so watching the terminal answers "was this agent invoked,
+  // and did it run or fail" — never inferred from model prose.
+  logHarnessTrace(
+    `[agent] card-run requested cardId=${String(args?.cardId || '?')} corr=${String(args?.correlationId || '?')} conversationId=${String(args?.conversationId || '').trim() ? 'present' : 'absent'}`,
+  );
+  const done = (partial: Partial<ConfiguredCardRunResult> & Pick<ConfiguredCardRunResult, 'status'>): ConfiguredCardRunResult => {
+    const result: ConfiguredCardRunResult = {
+      correlationId: String(args?.correlationId || ''),
+      cardId: String(args?.cardId || ''),
+      runtimeType: null,
+      tools: [],
+      output: '',
+      error: null,
+      startedAt,
+      endedAt: new Date().toISOString(),
+      toolCallCount: null,
+      returnFolder: null,
+      ...partial,
+    };
+    logHarnessTrace(
+      `[agent] card ${result.cardId || '?'} ${result.status} corr=${result.correlationId}` +
+        (result.tools.length ? ` tools=[${result.tools.join(',')}]` : '') +
+        (result.error ? ` error=${redactTrace(result.error)}` : ''),
+    );
+    return result;
+  };
 
   // Reject caller-supplied runtime overrides structurally: any extra key (model,
   // provider, prompt, tools, card definition, scope…) is an honest failure, never
@@ -559,10 +585,18 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
   // Nothing is fabricated to pretend a conversation exists. An explicit caller
   // runAuthority (the completed-pair path) always wins untouched.
   const conversationId = String(args?.conversationId || '').trim();
+  // Resolve the binding the SAME way the Harness doorway does (by binding field OR
+  // cardId), so a card exposed as the ThinkGraph doorway (card_thinkgraph_agent)
+  // actually gets its scoped write authority — otherwise apply_thinkgraph_patch
+  // reports thinkgraph_authority_missing and the card cannot write.
+  const resolvedBinding = resolveRuntimeBinding(
+    card?.runtimeOptions?.binding ?? card?.runtimeBinding ?? card?.binding,
+    card?.id,
+  );
   const runAuthority =
     args.runAuthority && Object.keys(args.runAuthority).length > 0
       ? args.runAuthority
-      : card.runtimeBinding === 'thinkgraph_agent' && conversationId
+      : resolvedBinding === 'thinkgraph_agent' && conversationId
         ? {
             // Direct configured-card-run authority — describes what it actually
             // is (a live ThinkGraph card run), never a user/assistant pair. Only
@@ -588,6 +622,14 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       startedAt,
     },
     userText: input,
+    // Every standalone single-agent run receives its own returns/<run-id>/<card-id>/
+    // folder (run-id = correlationId) under the default owned Coder workspace
+    // (<repo-root>/coder-workspace) — never a client path. This is only the job-folder
+    // result root; it does NOT restrict the coder's wider filesystem access.
+    resultFolder: {
+      workspaceRoot: resolveCoderWorkspaceRoot(),
+      runId: correlationId,
+    },
     cardRuntime: {
       cardId,
       title: String(card.title || 'Agent'),
@@ -602,6 +644,15 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     },
   };
 
+  // The decisive diagnostic line: the card IS being run in Python now — with which
+  // resolved binding, whether scoped write-authority armed (thinkgraph_card_run vs
+  // none), and exactly which tools it carries. If a ThinkGraph write never happens,
+  // this line shows whether authority/tools were the cause.
+  logHarnessTrace(
+    `[agent] card ${cardId} invoking-python binding=${resolvedBinding || 'none'} ` +
+      `authority=${runAuthority ? String((runAuthority as any).kind || 'set') : 'none'} ` +
+      `tools=[${(Array.isArray((participant as any).tools) ? (participant as any).tools : []).join(',') || 'none'}]`,
+  );
   try {
     const response = await runSingleCardWithAutoGen(payload as any);
     const tools = Array.isArray((participant as any).tools) ? ((participant as any).tools as string[]) : [];
@@ -613,12 +664,23 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
         error: String(response.error || 'single_card_run_failed'),
       });
     }
+    const returnsDir = (response as any).returnsDir ?? null;
     return done({
       status: 'completed',
       runtimeType,
       tools,
       output: String(response.finalResponseText || ''),
       toolCallCount: parseToolCallCount((response as any).transcript),
+      returnFolder:
+        returnsDir || Array.isArray((response as any).returnedFiles)
+          ? {
+              returnsDir: returnsDir ?? null,
+              returnedFiles: Array.isArray((response as any).returnedFiles)
+                ? ((response as any).returnedFiles as string[])
+                : [],
+              returnStatus: (response as any).returnStatus ?? null,
+            }
+          : null,
     });
   } catch (error: any) {
     // Transport/rails failure is honest — no retry into a fallback path.
@@ -771,6 +833,7 @@ export async function runCardWithContract(
     let magenticPlan: Record<string, unknown> | null = null;
     // Honest TaskLedger trace from the real Python Magentic-One path.
     let ledgerTrace: Record<string, unknown> | undefined;
+    let jobHandoffResult: JobHandoffRunResult | null = null;
     try {
         console.log('[runCardWithContract] executing Python AutoGen rails route.');
         const sidecarResponse = await orchestrateWithAutoGen(payload as any);
@@ -801,6 +864,18 @@ export async function runCardWithContract(
           sidecarResponse.ledgerTrace && typeof sidecarResponse.ledgerTrace === 'object'
             ? (sidecarResponse.ledgerTrace as Record<string, unknown>)
             : undefined;
+        // Job-folder handoff outputs (present only for a handoff run) — threaded
+        // verbatim from the Python rails, never authored here.
+        const returnsDir = (sidecarResponse as any).returnsDir ?? null;
+        if (returnsDir || Array.isArray((sidecarResponse as any).returnedFiles)) {
+          jobHandoffResult = {
+            returnsDir: returnsDir ?? null,
+            returnedFiles: Array.isArray((sidecarResponse as any).returnedFiles)
+              ? ((sidecarResponse as any).returnedFiles as string[])
+              : [],
+            returnStatus: (sidecarResponse as any).returnStatus ?? null,
+          };
+        }
     } catch (e: any) {
         console.error('[runCardWithContract] Exact caught error message:', e?.message || e);
         throw e;
@@ -828,6 +903,7 @@ export async function runCardWithContract(
               ...(ledgerTrace ? { ledgerTrace } : {}),
             }
           : null,
+      jobHandoffResult,
     };
   }
   

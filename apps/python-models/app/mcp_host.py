@@ -40,6 +40,18 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
+
+# Bootstrap the package root onto sys.path. The gRPC harness launches this host as a
+# SCRIPT (`python .../apps/python-models/app/mcp_host.py`), so sys.path[0] is the
+# `app/` dir and the `app` package (rooted at apps/python-models) is NOT importable —
+# which broke every `from app...` control handler at call time ("No module named
+# 'app'"). Adding the package root here (the ONE launch/bootstrap boundary) makes all
+# `app.*` imports resolve, for every tool. Not a per-tool sys.path hack.
+_PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PACKAGE_ROOT not in sys.path:
+    sys.path.insert(0, _PACKAGE_ROOT)
+
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -101,12 +113,15 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="run_mag_one",
             description=(
-                "Run regular native Mag One from a Harness-authored Markdown orchestration prompt. "
-                "promptMarkdown IS Mag One's job (objective, relevant findings, constraints, available "
-                "connected agents, desired result/proof) and is used verbatim — never translated into a "
-                "plan or task object. Mag One reasons over it, selects among the connected eligible "
-                "workers itself, keeps its own natural internal task ledger, and returns its result. "
-                "No structured plan, no task ledger gate, no approval gate, no visible-flow wrapper."
+                "Run regular native Mag One. Task source is EITHER promptMarkdown OR a Coder "
+                "job-folder handoff (jobId). With jobId, the run's task is the EXACT bytes of "
+                "handoff/<jobId>/prompt.md (which the Coder wrote with its own Write tool) and its "
+                "return surface is returns/<jobId>/ under the server-forced trusted workspace root — "
+                "the result reports that returns dir and the files actually written there (honest "
+                "no_return_files_created when none). With promptMarkdown, that string IS Mag One's "
+                "job, used verbatim. jobId takes precedence so the on-disk file is the contract. "
+                "Mag One reasons over the task, selects among connected eligible workers itself, and "
+                "returns its result. No structured plan, no task ledger gate, no approval gate."
             ),
             inputSchema={
                 "type": "object",
@@ -114,8 +129,48 @@ async def list_tools() -> list[Tool]:
                     "projectId": {"type": "string"},
                     "deckId": {"type": "string"},
                     "promptMarkdown": {"type": "string"},
+                    "jobId": {"type": "string"},
                 },
-                "required": ["projectId", "deckId", "promptMarkdown"],
+                "required": ["projectId", "deckId"],
+            },
+        ),
+        Tool(
+            name="write_mag_one_instructions",
+            description=(
+                "Local Coder: write EXACT Mag One task instructions into handoff/<run-id>/prompt.md "
+                "in the trusted active Coder workspace, and assign returns/<run-id>/ as the run's "
+                "result folder. Supply `instructions` (the exact text Mag One receives — not "
+                "summarized/wrapped/rewritten) and optionally `runId` to reuse an existing handoff. "
+                "Returns runId + workspace-relative handoff and returns paths. Run run_mag_one with "
+                "that runId as jobId to have Mag One read those exact bytes as its task."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "instructions": {"type": "string"},
+                    "runId": {"type": "string"},
+                },
+                "required": ["instructions"],
+            },
+        ),
+        Tool(
+            name="read_model_results",
+            description=(
+                "Local Coder: discover and read model-produced result files under returns/<run-id>/ "
+                "in the trusted active Coder workspace. With no runId, lists available return runs. "
+                "With a runId and no path, lists that run's actual artifacts. With a runId and a "
+                "workspace-return-relative path, reads one artifact — text/code/reports inline; "
+                "images/video/PDFs/other binaries as a reference + metadata (never corrupted, never "
+                "base64-dumped). Absolute paths and traversal are rejected. Honest empty states: "
+                "no_return_runs_found / no_return_files_created / artifact_not_found."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "runId": {"type": "string"},
+                    "path": {"type": "string"},
+                },
+                "required": [],
             },
         ),
         Tool(
@@ -246,7 +301,9 @@ async def list_tools() -> list[Tool]:
 # silently forwarded (prevents smuggling prompts/models/patches through the host).
 _ALLOWED_KEYS: dict[str, set[str]] = {
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
-    "run_mag_one": {"projectId", "deckId", "promptMarkdown"},
+    "run_mag_one": {"projectId", "deckId", "promptMarkdown", "jobId"},
+    "write_mag_one_instructions": {"instructions", "runId"},
+    "read_model_results": {"runId", "path"},
     "canvas.inspect": {"projectId", "deckId"},
     "card.update_configuration": {"projectId", "deckId", "cardId", "updates"},
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
@@ -259,6 +316,14 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
 _BRIDGE_PATHS: dict[str, str] = {
     "mag_one.describe_connected_agents": "describe_connected_agents",
     "run_mag_one": "run_mag_one",
+}
+
+# Coder job-folder tools dispatch to the ONE shared Python implementation
+# (app.python_models.coder_job_tools) — pure filesystem over the trusted
+# workspace, no backend/psycopg dependency. Same functions for both Coder surfaces.
+_JOB_TOOL_HANDLERS: dict[str, str] = {
+    "write_mag_one_instructions": "write_mag_one_instructions",
+    "read_model_results": "read_model_results",
 }
 
 # Control tools dispatch to the Python control-plane handlers (app/control_plane.py).
@@ -297,6 +362,12 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             return [TextContent(type="text", text=json.dumps(result))]
         except control_plane.ControlPlaneError as err:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
+    job_handler = _JOB_TOOL_HANDLERS.get(name)
+    if job_handler is not None:
+        from app.python_models import coder_job_tools
+
+        result = await asyncio.to_thread(getattr(coder_job_tools, job_handler), args)
+        return [TextContent(type="text", text=json.dumps(result))]
     return await _bridge(_BRIDGE_PATHS[name], args)
 
 
