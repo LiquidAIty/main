@@ -1,0 +1,2100 @@
+{
+  "meta": {
+    "checked_at": "2026-07-07T08:42:26.762Z",
+    "list_projects": {
+      "projects": [
+        {
+          "name": "C-Projects-main",
+          "root_path": "C:/Projects/main",
+          "nodes": 5796,
+          "edges": 11712,
+          "size_bytes": 14155776
+        }
+      ]
+    },
+    "index_status": {
+      "project": "C-Projects-main",
+      "nodes": 5796,
+      "edges": 11712,
+      "status": "ready"
+    },
+    "detect_changes": {
+      "changed_files": [],
+      "changed_count": 0,
+      "impacted_symbols": [],
+      "depth": 2
+    },
+    "get_graph_schema": {
+      "node_labels": [
+        {
+          "label": "Function",
+          "count": 1552,
+          "properties": [
+            "name",
+            "qualified_name",
+            "file_path",
+            "start_line",
+            "end_line",
+            "bt",
+            "complexity",
+            "decorator_tags",
+            "decorators",
+            "docstring",
+            "fp",
+            "is_entry_point",
+            "is_exported",
+            "is_test",
+            "lines",
+            "param_names",
+            "param_types",
+            "return_type",
+            "route_method",
+            "route_path",
+            "signature",
+            "sp"
+          ]
+        },
+        {
+          "label": "Variable",
+          "count": 1509,
+          "properties": [
+            "name",
+            "qualified_name",
+            "file_path",
+            "start_line",
+            "end_line",
+            "complexity",
+            "is_entry_point",
+            "is_exported",
+            "is_test",
+            "lines"
+          ]
+        },
+        {
+          "label": "Type",
+          "count": 609,
+          "properties": [
+            "name",
+            "qualified_name",
+            "file_path",
+            "start_line",
+            "end_line",
+            "complexity",
+            "docstring",
+            "is_entry_point",
+            "is_exported",
+            "is_test",
+            "lines"
+          ]
+        },
+        {
+          "label": "File",
+          "count": 537,
+          "properties": [
+            "name",
+            "qualified_name",
+            "file_path",
+            "start_line",
+            "end_line",
+            "extension"
+          ]
+        },
+        {
+          "label": "Module",
+          "count": 534,
+          "properties": [
+            "name",
+            "qualified_name",
+            "file_path",
+            "start_line",
+            "end_line",
+            "complexity",
+            "is_entry_point",
+            "is_exported",
+            "is_test",
+            "lines"
+          ]
+        },
+        {
+          "label": "Section",
+          "count": 297,
+          "properties": [
+            "name",
+            "qualified_name",
+            "file_path",
+            "start_line",
+            "end_line",
+            "complexity",
+            "is_entry_point",
+            "is_exported",
+            "is_test",
+            "lines"
+          ]
+        },
+        {
+          "label": "Method",
+          "count": 291,
+          "properties": [
+            "name",
+            "qualified_name",
+            "file_path",
+            "start_line",
+            "end_line",
+            "bt",
+            "complexity",
+            "docstring",
+            "fp",
+            "is_entry_point",
+            "is_exported",
+            "is_test",
+            "lines",
+            "param_types",
+            "parent_class",
+            "return_type",
+            "signature",
+            "sp"
+          ]
+        },
+        {
+          "label": "Class",
+          "count": 190,
+          "properties": [
+            "name",
+            "qualified_name",
+            "file_path",
+            "start_line",
+            "end_line",
+            "base_classes",
+            "complexity",
+            "decorator_tags",
+            "decorators",
+            "docstring",
+            "is_entry_point",
+            "is_exported",
+            "is_test",
+            "lines"
+          ]
+        },
+        {
+          "label": "Folder",
+          "count": 119,
+          "properties": [
+            "name",
+            "qualified_name",
+            "file_path",
+            "start_line",
+            "end_line"
+          ]
+        },
+        {
+          "label": "Route",
+          "count": 98,
+          "properties": [
+            "name",
+            "qualified_name",
+            "file_path",
+            "start_line",
+            "end_line",
+            "method",
+            "source"
+          ]
+        },
+        {
+          "label": "Interface",
+          "count": 54,
+          "properties": [
+            "name",
+            "qualified_name",
+            "file_path",
+            "start_line",
+            "end_line",
+            "complexity",
+            "docstring",
+            "is_entry_point",
+            "is_exported",
+            "is_test",
+            "lines"
+          ]
+        },
+        {
+          "label": "Channel",
+          "count": 5,
+          "properties": [
+            "name",
+            "qualified_name",
+            "file_path",
+            "start_line",
+            "end_line",
+            "name",
+            "transport"
+          ]
+        },
+        {
+          "label": "Project",
+          "count": 1,
+          "properties": [
+            "name",
+            "qualified_name",
+            "file_path",
+            "start_line",
+            "end_line"
+          ]
+        }
+      ],
+      "edge_types": [
+        {
+          "type": "DEFINES",
+          "count": 5036,
+          "properties": [
+            "source_id",
+            "target_id"
+          ]
+        },
+        {
+          "type": "CALLS",
+          "count": 3341,
+          "properties": [
+            "source_id",
+            "target_id",
+            "args",
+            "callee",
+            "candidates",
+            "confidence",
+            "strategy",
+            "url_path",
+            "via"
+          ]
+        },
+        {
+          "type": "USAGE",
+          "count": 1060,
+          "properties": [
+            "source_id",
+            "target_id",
+            "callee"
+          ]
+        },
+        {
+          "type": "CONTAINS_FILE",
+          "count": 537,
+          "properties": [
+            "source_id",
+            "target_id"
+          ]
+        },
+        {
+          "type": "IMPORTS",
+          "count": 418,
+          "properties": [
+            "source_id",
+            "target_id",
+            "local_name"
+          ]
+        },
+        {
+          "type": "TESTS",
+          "count": 354,
+          "properties": [
+            "source_id",
+            "target_id"
+          ]
+        },
+        {
+          "type": "DEFINES_METHOD",
+          "count": 291,
+          "properties": [
+            "source_id",
+            "target_id"
+          ]
+        },
+        {
+          "type": "SEMANTICALLY_RELATED",
+          "count": 153,
+          "properties": [
+            "source_id",
+            "target_id",
+            "same_file",
+            "score"
+          ]
+        },
+        {
+          "type": "CONFIGURES",
+          "count": 136,
+          "properties": [
+            "source_id",
+            "target_id",
+            "confidence",
+            "config_key",
+            "strategy"
+          ]
+        },
+        {
+          "type": "WRITES",
+          "count": 108,
+          "properties": [
+            "source_id",
+            "target_id"
+          ]
+        },
+        {
+          "type": "CONTAINS_FOLDER",
+          "count": 104,
+          "properties": [
+            "source_id",
+            "target_id"
+          ]
+        },
+        {
+          "type": "SIMILAR_TO",
+          "count": 50,
+          "properties": [
+            "source_id",
+            "target_id",
+            "jaccard",
+            "same_file"
+          ]
+        },
+        {
+          "type": "TESTS_FILE",
+          "count": 50,
+          "properties": [
+            "source_id",
+            "target_id"
+          ]
+        },
+        {
+          "type": "HANDLES",
+          "count": 29,
+          "properties": [
+            "source_id",
+            "target_id",
+            "handler"
+          ]
+        },
+        {
+          "type": "RAISES",
+          "count": 28,
+          "properties": [
+            "source_id",
+            "target_id"
+          ]
+        },
+        {
+          "type": "DECORATES",
+          "count": 8,
+          "properties": [
+            "source_id",
+            "target_id"
+          ]
+        },
+        {
+          "type": "HTTP_CALLS",
+          "count": 5,
+          "properties": [
+            "source_id",
+            "target_id",
+            "args",
+            "callee",
+            "method",
+            "url_path",
+            "via"
+          ]
+        },
+        {
+          "type": "LISTENS_ON",
+          "count": 3,
+          "properties": [
+            "source_id",
+            "target_id",
+            "transport"
+          ]
+        },
+        {
+          "type": "GRPC_CALLS",
+          "count": 1,
+          "properties": [
+            "source_id",
+            "target_id",
+            "callee",
+            "confidence",
+            "method",
+            "service"
+          ]
+        }
+      ],
+      "adr_present": false,
+      "adr_hint": "No ADR found. Use manage_adr(mode='update') to persist architectural decisions across sessions. Run get_architecture(aspects=['all']) first."
+    }
+  },
+  "main_chat": {
+    "search": {
+      "total": 2718,
+      "search_mode": "bm25",
+      "results": [
+        {
+          "name": "/openclaude/session/chat",
+          "qualified_name": "__route__POST__/openclaude/session/chat",
+          "label": "Route",
+          "file_path": "",
+          "start_line": 0,
+          "end_line": 0,
+          "rank": -38.84011126523082
+        },
+        {
+          "name": "resolveMainChatSystemPrompt",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.resolveMainChatSystemPrompt",
+          "label": "Function",
+          "file_path": "apps/backend/src/coder/openclaude/session/grpcChatClient.ts",
+          "start_line": 167,
+          "end_line": 180,
+          "rank": -29.6875690112088
+        },
+        {
+          "name": "resolveMainChatCardFromDeck",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.resolveMainChatCardFromDeck",
+          "label": "Function",
+          "file_path": "apps/backend/src/coder/openclaude/session/grpcChatClient.ts",
+          "start_line": 153,
+          "end_line": 159,
+          "rank": -29.413215430664025
+        },
+        {
+          "name": "test_chat_route_never_reintroduces_the_obsolete_pair_processor",
+          "qualified_name": "C-Projects-main.apps.python-models.app.python_models.test_harness_mcp_wall.TestBackendHarnessMcpClientWall.test_chat_route_never_reintroduces_the_obsolete_pair_processor",
+          "label": "Method",
+          "file_path": "apps/python-models/app/python_models/test_harness_mcp_wall.py",
+          "start_line": 59,
+          "end_line": 71,
+          "rank": -27.42809013164775
+        },
+        {
+          "name": "Chat",
+          "qualified_name": "C-Projects-main.client.src.pages.agentpage.Chat",
+          "label": "Function",
+          "file_path": "client/src/pages/agentpage.tsx",
+          "start_line": 146,
+          "end_line": 265,
+          "rank": -26.609371825956707
+        },
+        {
+          "name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChat/getAgentServiceClient",
+          "qualified_name": "__grpc__C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChat/getAgentServiceClient",
+          "label": "Route",
+          "file_path": "",
+          "start_line": 0,
+          "end_line": 0,
+          "rank": -26.32288985405946
+        },
+        {
+          "name": "HarnessChatPanel",
+          "qualified_name": "C-Projects-main.client.src.features.agentbuilder.console.HarnessChatPanel.HarnessChatPanel",
+          "label": "Function",
+          "file_path": "client/src/features/agentbuilder/console/HarnessChatPanel.tsx",
+          "start_line": 27,
+          "end_line": 137,
+          "rank": -25.40879127737561
+        },
+        {
+          "name": "_create_group_chat_manager_factory",
+          "qualified_name": "C-Projects-main.apps.python-models.app.python_models.magentic_agentchat._CapturingMagenticOneGroupChat._create_group_chat_manager_factory",
+          "label": "Method",
+          "file_path": "apps/python-models/app/python_models/magentic_agentchat.py",
+          "start_line": 54,
+          "end_line": 62,
+          "rank": -23.754824740904887
+        },
+        {
+          "name": "test_default_endpoint_is_local_embeddings_not_chat",
+          "qualified_name": "C-Projects-main.services.knowgraph.test_assertion_vectors.EmbeddingGemmaTests.test_default_endpoint_is_local_embeddings_not_chat",
+          "label": "Method",
+          "file_path": "services/knowgraph/test_assertion_vectors.py",
+          "start_line": 188,
+          "end_line": 191,
+          "rank": -23.425209687604553
+        },
+        {
+          "name": "/openclaude/session/answer",
+          "qualified_name": "__route__POST__/openclaude/session/answer",
+          "label": "Route",
+          "file_path": "",
+          "start_line": 0,
+          "end_line": 0,
+          "rank": -21.547156365257205
+        },
+        {
+          "name": "/openclaude/session/history",
+          "qualified_name": "__route__GET__/openclaude/session/history",
+          "label": "Route",
+          "file_path": "",
+          "start_line": 0,
+          "end_line": 0,
+          "rank": -21.547156365257205
+        },
+        {
+          "name": "deriveSessionId",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.deriveSessionId",
+          "label": "Function",
+          "file_path": "apps/backend/src/coder/openclaude/session/grpcChatClient.ts",
+          "start_line": 54,
+          "end_line": 56,
+          "rank": -21.379771924676344
+        },
+        {
+          "name": "parseSessionId",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.parseSessionId",
+          "label": "Function",
+          "file_path": "apps/backend/src/coder/openclaude/session/grpcChatClient.ts",
+          "start_line": 61,
+          "end_line": 67,
+          "rank": -21.379771924676344
+        },
+        {
+          "name": "HarnessMode",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.HarnessMode",
+          "label": "Type",
+          "file_path": "apps/backend/src/coder/openclaude/session/grpcChatClient.ts",
+          "start_line": 44,
+          "end_line": 44,
+          "rank": -20.8869217065561
+        },
+        {
+          "name": "BuilderChat",
+          "qualified_name": "C-Projects-main.client.src.components.builder.BuilderChat.BuilderChat",
+          "label": "Function",
+          "file_path": "client/src/components/builder/BuilderChat.tsx",
+          "start_line": 27,
+          "end_line": 206,
+          "rank": -20.659003567945838
+        },
+        {
+          "name": "selectDoorwayCards",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.selectDoorwayCards",
+          "label": "Function",
+          "file_path": "apps/backend/src/coder/openclaude/session/grpcChatClient.ts",
+          "start_line": 107,
+          "end_line": 126,
+          "rank": -20.527939165851766
+        },
+        {
+          "name": "resolveProtoPath",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.resolveProtoPath",
+          "label": "Function",
+          "file_path": "apps/backend/src/coder/openclaude/session/grpcChatClient.ts",
+          "start_line": 182,
+          "end_line": 192,
+          "rank": -20.527939165851766
+        },
+        {
+          "name": "startGrpcTurn",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.startGrpcTurn",
+          "label": "Function",
+          "file_path": "apps/backend/src/coder/openclaude/session/grpcChatClient.ts",
+          "start_line": 221,
+          "end_line": 302,
+          "rank": -20.527939165851766
+        },
+        {
+          "name": "deckWith",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.spec.deckWith",
+          "label": "Function",
+          "file_path": "apps/backend/src/coder/openclaude/session/grpcChatClient.spec.ts",
+          "start_line": 22,
+          "end_line": 24,
+          "rank": -20.403163259377898
+        },
+        {
+          "name": "buildCardDoorwayDefinition",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.buildCardDoorwayDefinition",
+          "label": "Function",
+          "file_path": "apps/backend/src/coder/openclaude/session/grpcChatClient.ts",
+          "start_line": 79,
+          "end_line": 100,
+          "rank": -20.403163259377898
+        },
+        {
+          "name": "resolveCardDoorwayDefinitions",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.resolveCardDoorwayDefinitions",
+          "label": "Function",
+          "file_path": "apps/backend/src/coder/openclaude/session/grpcChatClient.ts",
+          "start_line": 131,
+          "end_line": 146,
+          "rank": -20.403163259377898
+        },
+        {
+          "name": "getAgentServiceClient",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.getAgentServiceClient",
+          "label": "Function",
+          "file_path": "apps/backend/src/coder/openclaude/session/grpcChatClient.ts",
+          "start_line": 195,
+          "end_line": 213,
+          "rank": -20.403163259377898
+        },
+        {
+          "name": "HarnessChatPanelProps",
+          "qualified_name": "C-Projects-main.client.src.features.agentbuilder.console.HarnessChatPanel.HarnessChatPanelProps",
+          "label": "Type",
+          "file_path": "client/src/features/agentbuilder/console/HarnessChatPanel.tsx",
+          "start_line": 21,
+          "end_line": 25,
+          "rank": -20.136356969570638
+        },
+        {
+          "name": "resolveDeckRunChatReply",
+          "qualified_name": "C-Projects-main.client.src.components.builder.deckRunState.resolveDeckRunChatReply",
+          "label": "Function",
+          "file_path": "client/src/components/builder/deckRunState.ts",
+          "start_line": 315,
+          "end_line": 333,
+          "rank": -20.083459875742648
+        },
+        {
+          "name": "ChatTerminalView",
+          "qualified_name": "C-Projects-main.client.src.features.agentbuilder.console.ChatTerminalView.ChatTerminalView",
+          "label": "Function",
+          "file_path": "client/src/features/agentbuilder/console/ChatTerminalView.tsx",
+          "start_line": 35,
+          "end_line": 262,
+          "rank": -20.083459875742648
+        },
+        {
+          "name": "buildVideoObjectChatContext",
+          "qualified_name": "C-Projects-main.client.src.features.media.MediaStudioCanvas.buildVideoObjectChatContext",
+          "label": "Function",
+          "file_path": "client/src/features/media/MediaStudioCanvas.tsx",
+          "start_line": 263,
+          "end_line": 370,
+          "rank": -20.083459875742648
+        },
+        {
+          "name": "buildVideoSceneChatContext",
+          "qualified_name": "C-Projects-main.client.src.features.media.MediaStudioCanvas.buildVideoSceneChatContext",
+          "label": "Function",
+          "file_path": "client/src/features/media/MediaStudioCanvas.tsx",
+          "start_line": 372,
+          "end_line": 378,
+          "rank": -20.083459875742648
+        },
+        {
+          "name": "queryChatInput",
+          "qualified_name": "C-Projects-main.client.src.pages.agentbuilder.ui.spec.queryChatInput",
+          "label": "Function",
+          "file_path": "client/src/pages/agentbuilder.ui.spec.tsx",
+          "start_line": 358,
+          "end_line": 361,
+          "rank": -20.083459875742648
+        },
+        {
+          "name": "AgentBuilderChatPane",
+          "qualified_name": "C-Projects-main.client.src.features.agentbuilder.core.AgentBuilderChatPane.AgentBuilderChatPane",
+          "label": "Function",
+          "file_path": "client/src/features/agentbuilder/core/AgentBuilderChatPane.tsx",
+          "start_line": 11,
+          "end_line": 40,
+          "rank": -19.90517980418631
+        },
+        {
+          "name": "startShellSession",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.console.consoleSession.OpenClaudeConsoleSessionManager.startShellSession",
+          "label": "Method",
+          "file_path": "apps/backend/src/coder/openclaude/console/consoleSession.ts",
+          "start_line": 613,
+          "end_line": 662,
+          "rank": -18.784225386172242
+        }
+      ],
+      "has_more": true
+    },
+    "trace_startGrpcTurn": {
+      "function": "startGrpcTurn",
+      "direction": "both",
+      "callees": [
+        {
+          "name": "write",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.console.consoleSession.OpenClaudeConsoleSession.write",
+          "hop": 1
+        },
+        {
+          "name": "Chat",
+          "qualified_name": "C-Projects-main.client.src.pages.agentpage.Chat",
+          "hop": 1
+        },
+        {
+          "name": "resolveCardDoorwayDefinitions",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.resolveCardDoorwayDefinitions",
+          "hop": 1
+        },
+        {
+          "name": "resolveMainChatSystemPrompt",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.resolveMainChatSystemPrompt",
+          "hop": 1
+        },
+        {
+          "name": "CoachBar",
+          "qualified_name": "C-Projects-main.client.src.pages.agentpage.CoachBar",
+          "hop": 2
+        },
+        {
+          "name": "getDeckDocument",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.getDeckDocument",
+          "hop": 2
+        },
+        {
+          "name": "parseSessionId",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.parseSessionId",
+          "hop": 2
+        },
+        {
+          "name": "selectDoorwayCards",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.selectDoorwayCards",
+          "hop": 2
+        },
+        {
+          "name": "resolveMainChatCardFromDeck",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.resolveMainChatCardFromDeck",
+          "hop": 2
+        }
+      ],
+      "callers": [
+        {
+          "name": "apps/backend/src/routes/coder.routes.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.routes.coder.routes",
+          "hop": 1
+        },
+        {
+          "name": "apps/backend/src/routes/coder.routes.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.routes.coder.routes",
+          "hop": 2
+        }
+      ]
+    },
+    "trace_resolveMainChatCardFromDeck": {
+      "function": "resolveMainChatCardFromDeck",
+      "direction": "both",
+      "callees": [
+        {
+          "name": "resolveRuntimeBinding",
+          "qualified_name": "C-Projects-main.apps.backend.src.contracts.runtimeBinding.resolveRuntimeBinding",
+          "hop": 1
+        },
+        {
+          "name": "normalizeRuntimeBinding",
+          "qualified_name": "C-Projects-main.apps.backend.src.contracts.runtimeBinding.normalizeRuntimeBinding",
+          "hop": 2
+        }
+      ],
+      "callers": [
+        {
+          "name": "resolveMainChatSystemPrompt",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.resolveMainChatSystemPrompt",
+          "hop": 1
+        },
+        {
+          "name": "startGrpcTurn",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.startGrpcTurn",
+          "hop": 2
+        },
+        {
+          "name": "apps/backend/src/coder/openclaude/session/grpcChatClient.spec.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.spec",
+          "hop": 2
+        }
+      ]
+    },
+    "trace_resolvedMagenticOptions": {
+      "function": "resolvedMagenticOptions",
+      "direction": "both",
+      "callees": [
+        {
+          "name": "normalizeEdgeType",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.normalizeEdgeType",
+          "hop": 1
+        },
+        {
+          "name": "resolveCardRuntimeType",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.resolveCardRuntimeType",
+          "hop": 1
+        },
+        {
+          "name": "isAssistLikeRuntimeType",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.isAssistLikeRuntimeType",
+          "hop": 1
+        },
+        {
+          "name": "get",
+          "qualified_name": "C-Projects-main.apps.backend.src.db.pool.get",
+          "hop": 1
+        },
+        {
+          "name": "connect",
+          "qualified_name": "C-Projects-main.apps.backend.src.services.mcp.pythonAgentMcpClient.connect",
+          "hop": 2
+        },
+        {
+          "name": "getActivePool",
+          "qualified_name": "C-Projects-main.apps.backend.src.db.pool.getActivePool",
+          "hop": 2
+        },
+        {
+          "name": "disposePool",
+          "qualified_name": "C-Projects-main.apps.backend.src.db.pool.disposePool",
+          "hop": 2
+        },
+        {
+          "name": "withFreshPool",
+          "qualified_name": "C-Projects-main.apps.backend.src.db.pool.withFreshPool",
+          "hop": 2
+        }
+      ],
+      "callers": [
+        {
+          "name": "apps/backend/src/cards/runtime.spec.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.spec",
+          "hop": 1
+        },
+        {
+          "name": "describeConnectedAgents",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.mcp.liquidAItyAgentFlow.describeConnectedAgents",
+          "hop": 1
+        },
+        {
+          "name": "runCardWithContract",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.runCardWithContract",
+          "hop": 1
+        },
+        {
+          "name": "apps/backend/src/coder/openclaude/mcp/liquidAItyAgentFlow.spec.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.mcp.liquidAItyAgentFlow.spec",
+          "hop": 2
+        },
+        {
+          "name": "apps/backend/src/routes/coder.routes.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.routes.coder.routes",
+          "hop": 2
+        },
+        {
+          "name": "apps/backend/src/cards/runtime.spec.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.spec",
+          "hop": 2
+        }
+      ]
+    },
+    "q_routes": {
+      "columns": [
+        "route_name",
+        "route_qn"
+      ],
+      "rows": [
+        [
+          "/openclaude/session/answer",
+          "__route__POST__/openclaude/session/answer"
+        ],
+        [
+          "/openclaude/session/chat",
+          "__route__POST__/openclaude/session/chat"
+        ],
+        [
+          "/openclaude/session/history",
+          "__route__GET__/openclaude/session/history"
+        ]
+      ],
+      "total": 3
+    },
+    "q_calls_mainchat": {
+      "columns": [
+        "from_qn",
+        "to_qn"
+      ],
+      "rows": [
+        [
+          "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.resolveMainChatCardFromDeck",
+          "C-Projects-main.apps.backend.src.contracts.runtimeBinding.resolveRuntimeBinding"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.resolveMainChatSystemPrompt",
+          "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.parseSessionId"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.resolveMainChatSystemPrompt",
+          "C-Projects-main.apps.backend.src.decks.store.getDeckDocument"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.resolveMainChatSystemPrompt",
+          "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.resolveMainChatCardFromDeck"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.startGrpcTurn",
+          "C-Projects-main.client.src.pages.agentpage.Chat"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.startGrpcTurn",
+          "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.resolveCardDoorwayDefinitions"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.startGrpcTurn",
+          "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.resolveMainChatSystemPrompt"
+        ]
+      ],
+      "total": 7
+    }
+  },
+  "agent_builder": {
+    "search": {
+      "total": 156,
+      "search_mode": "bm25",
+      "results": [
+        {
+          "name": "/:projectId/decks",
+          "qualified_name": "__route__GET__/:projectId/decks",
+          "label": "Route",
+          "file_path": "",
+          "start_line": 0,
+          "end_line": 0,
+          "rank": -23.00834773295248
+        },
+        {
+          "name": "/:projectId/decks",
+          "qualified_name": "__route__POST__/:projectId/decks",
+          "label": "Route",
+          "file_path": "",
+          "start_line": 0,
+          "end_line": 0,
+          "rank": -23.00834773295248
+        },
+        {
+          "name": "/:projectId/decks/:deckId",
+          "qualified_name": "__route__GET__/:projectId/decks/:deckId",
+          "label": "Route",
+          "file_path": "",
+          "start_line": 0,
+          "end_line": 0,
+          "rank": -22.310914430800235
+        },
+        {
+          "name": "/:projectId/decks/:deckId",
+          "qualified_name": "__route__PUT__/:projectId/decks/:deckId",
+          "label": "Route",
+          "file_path": "",
+          "start_line": 0,
+          "end_line": 0,
+          "rank": -22.310914430800235
+        },
+        {
+          "name": "/:projectId/decks/:deckId",
+          "qualified_name": "__route__DELETE__/:projectId/decks/:deckId",
+          "label": "Route",
+          "file_path": "",
+          "start_line": 0,
+          "end_line": 0,
+          "rank": -22.310914430800235
+        },
+        {
+          "name": "/:projectId/decks/:deckId/run",
+          "qualified_name": "__route__POST__/:projectId/decks/:deckId/run",
+          "label": "Route",
+          "file_path": "",
+          "start_line": 0,
+          "end_line": 0,
+          "rank": -21.829821571070966
+        },
+        {
+          "name": "resolvedMagenticOptions",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.resolvedMagenticOptions",
+          "label": "Function",
+          "file_path": "apps/backend/src/cards/runtime.ts",
+          "start_line": 86,
+          "end_line": 112,
+          "rank": -21.819288718948528
+        },
+        {
+          "name": "test_magentic_option_upsert_persists",
+          "qualified_name": "C-Projects-main.apps.python-models.app.python_models.test_control_plane.TestUpsertWire.test_magentic_option_upsert_persists",
+          "label": "Method",
+          "file_path": "apps/python-models/app/python_models/test_control_plane.py",
+          "start_line": 91,
+          "end_line": 98,
+          "rank": -21.331276878018457
+        },
+        {
+          "name": "test_prompt_contains_required_sections_in_order",
+          "qualified_name": "C-Projects-main.services.knowgraph.test_skill_retrieve.HandoffTests.test_prompt_contains_required_sections_in_order",
+          "label": "Method",
+          "file_path": "services/knowgraph/test_skill_retrieve.py",
+          "start_line": 306,
+          "end_line": 314,
+          "rank": -17.935881631753222
+        },
+        {
+          "name": "test_compile_requires_participant_bus_edge",
+          "qualified_name": "C-Projects-main.apps.python-models.app.python_models.test_graph_compiler.test_compile_requires_participant_bus_edge",
+          "label": "Function",
+          "file_path": "apps/python-models/app/python_models/test_graph_compiler.py",
+          "start_line": 52,
+          "end_line": 56,
+          "rank": -17.830903760956197
+        },
+        {
+          "name": "test_no_downloads_candidate_scanning_in_runtime_path",
+          "qualified_name": "C-Projects-main.services.knowgraph.test_seed_atlas_source.test_no_downloads_candidate_scanning_in_runtime_path",
+          "label": "Function",
+          "file_path": "services/knowgraph/test_seed_atlas_source.py",
+          "start_line": 44,
+          "end_line": 49,
+          "rank": -17.68432801094021
+        },
+        {
+          "name": "test_batch_returns_one_vector_per_input_in_order",
+          "qualified_name": "C-Projects-main.services.knowgraph.test_assertion_vectors.EmbeddingGemmaTests.test_batch_returns_one_vector_per_input_in_order",
+          "label": "Method",
+          "file_path": "services/knowgraph/test_assertion_vectors.py",
+          "start_line": 148,
+          "end_line": 156,
+          "rank": -17.56443825447535
+        },
+        {
+          "name": "test_api_key_never_appears_in_output",
+          "qualified_name": "C-Projects-main.apps.python-models.app.python_models.test_sec_filing_signals.test_api_key_never_appears_in_output",
+          "label": "Function",
+          "file_path": "apps/python-models/app/python_models/test_sec_filing_signals.py",
+          "start_line": 156,
+          "end_line": 161,
+          "rank": -17.39145760141899
+        },
+        {
+          "name": "test_wire_endpoints_must_exist_in_saved_deck",
+          "qualified_name": "C-Projects-main.apps.python-models.app.python_models.test_control_plane.TestUpsertWire.test_wire_endpoints_must_exist_in_saved_deck",
+          "label": "Method",
+          "file_path": "apps/python-models/app/python_models/test_control_plane.py",
+          "start_line": 84,
+          "end_line": 89,
+          "rank": -17.28046633944767
+        },
+        {
+          "name": "test_api_secret_never_appears_in_any_result",
+          "qualified_name": "C-Projects-main.apps.python-models.app.python_models.test_alpaca_market_data.test_api_secret_never_appears_in_any_result",
+          "label": "Function",
+          "file_path": "apps/python-models/app/python_models/test_alpaca_market_data.py",
+          "start_line": 195,
+          "end_line": 200,
+          "rank": -17.22621138970267
+        },
+        {
+          "name": "test_tools_registered_in_the_one_canonical_registry",
+          "qualified_name": "C-Projects-main.apps.python-models.app.python_models.test_thinkgraph_card_tools.TestThinkGraphToolAuthority.test_tools_registered_in_the_one_canonical_registry",
+          "label": "Method",
+          "file_path": "apps/python-models/app/python_models/test_thinkgraph_card_tools.py",
+          "start_line": 75,
+          "end_line": 82,
+          "rank": -17.172759087926355
+        },
+        {
+          "name": "test_no_score_no_verdict_no_order_no_scheduler_in_output",
+          "qualified_name": "C-Projects-main.services.knowgraph.test_issuer_case_loop.test_no_score_no_verdict_no_order_no_scheduler_in_output",
+          "label": "Function",
+          "file_path": "services/knowgraph/test_issuer_case_loop.py",
+          "start_line": 179,
+          "end_line": 184,
+          "rank": -17.172759087926355
+        },
+        {
+          "name": "test_assignment_requires_card_to_exist_in_saved_deck",
+          "qualified_name": "C-Projects-main.apps.python-models.app.python_models.test_control_plane.TestAssignments.test_assignment_requires_card_to_exist_in_saved_deck",
+          "label": "Method",
+          "file_path": "apps/python-models/app/python_models/test_control_plane.py",
+          "start_line": 129,
+          "end_line": 135,
+          "rank": -17.120091753337064
+        },
+        {
+          "name": "projectLookup",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.projectLookup",
+          "label": "Function",
+          "file_path": "apps/backend/src/decks/store.ts",
+          "start_line": 31,
+          "end_line": 36,
+          "rank": -16.89064247448907
+        },
+        {
+          "name": "normalizeJson",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.normalizeJson",
+          "label": "Function",
+          "file_path": "apps/backend/src/decks/store.ts",
+          "start_line": 38,
+          "end_line": 53,
+          "rank": -16.89064247448907
+        },
+        {
+          "name": "hashRevision",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.hashRevision",
+          "label": "Function",
+          "file_path": "apps/backend/src/decks/store.ts",
+          "start_line": 320,
+          "end_line": 322,
+          "rank": -16.89064247448907
+        },
+        {
+          "name": "normalizeRuntimeType",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.normalizeRuntimeType",
+          "label": "Function",
+          "file_path": "apps/backend/src/decks/store.ts",
+          "start_line": 55,
+          "end_line": 62,
+          "rank": -16.803830989603107
+        },
+        {
+          "name": "normalizeEdgeType",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.normalizeEdgeType",
+          "label": "Function",
+          "file_path": "apps/backend/src/decks/store.ts",
+          "start_line": 64,
+          "end_line": 68,
+          "rank": -16.803830989603107
+        },
+        {
+          "name": "cleanOptionalText",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.cleanOptionalText",
+          "label": "Function",
+          "file_path": "apps/backend/src/decks/store.ts",
+          "start_line": 92,
+          "end_line": 95,
+          "rank": -16.803830989603107
+        },
+        {
+          "name": "cleanOptionalNumber",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.cleanOptionalNumber",
+          "label": "Function",
+          "file_path": "apps/backend/src/decks/store.ts",
+          "start_line": 97,
+          "end_line": 102,
+          "rank": -16.803830989603107
+        },
+        {
+          "name": "cleanOptionalBoolean",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.cleanOptionalBoolean",
+          "label": "Function",
+          "file_path": "apps/backend/src/decks/store.ts",
+          "start_line": 104,
+          "end_line": 106,
+          "rank": -16.803830989603107
+        },
+        {
+          "name": "cleanToolNames",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.cleanToolNames",
+          "label": "Function",
+          "file_path": "apps/backend/src/decks/store.ts",
+          "start_line": 151,
+          "end_line": 157,
+          "rank": -16.803830989603107
+        },
+        {
+          "name": "normalizeRuntimeOptions",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.normalizeRuntimeOptions",
+          "label": "Function",
+          "file_path": "apps/backend/src/decks/store.ts",
+          "start_line": 159,
+          "end_line": 224,
+          "rank": -16.803830989603107
+        },
+        {
+          "name": "normalizeDeckNode",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.normalizeDeckNode",
+          "label": "Function",
+          "file_path": "apps/backend/src/decks/store.ts",
+          "start_line": 226,
+          "end_line": 267,
+          "rank": -16.803830989603107
+        },
+        {
+          "name": "normalizeDeckEdge",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.normalizeDeckEdge",
+          "label": "Function",
+          "file_path": "apps/backend/src/decks/store.ts",
+          "start_line": 269,
+          "end_line": 284,
+          "rank": -16.803830989603107
+        }
+      ],
+      "has_more": true
+    },
+    "trace_getDeckDocument": {
+      "function": "getDeckDocument",
+      "direction": "both",
+      "callees": [
+        {
+          "name": "getV3ProjectBlob",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.getV3ProjectBlob",
+          "hop": 1
+        },
+        {
+          "name": "buildDeckResponseMeta",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.buildDeckResponseMeta",
+          "hop": 1
+        },
+        {
+          "name": "normalizeProjectBlob",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.normalizeProjectBlob",
+          "hop": 2
+        },
+        {
+          "name": "loadProjectSchema",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.loadProjectSchema",
+          "hop": 2
+        }
+      ],
+      "callers": [
+        {
+          "name": "apps/backend/src/routes/decks.routes.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.routes.decks.routes",
+          "hop": 1
+        },
+        {
+          "name": "resolveCardDoorwayDefinitions",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.resolveCardDoorwayDefinitions",
+          "hop": 1
+        },
+        {
+          "name": "resolveMainChatSystemPrompt",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.resolveMainChatSystemPrompt",
+          "hop": 1
+        },
+        {
+          "name": "runConfiguredCard",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.runConfiguredCard",
+          "hop": 1
+        },
+        {
+          "name": "startGrpcTurn",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.startGrpcTurn",
+          "hop": 2
+        },
+        {
+          "name": "apps/backend/src/coder/openclaude/session/grpcChatClient.spec.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.session.grpcChatClient.spec",
+          "hop": 2
+        },
+        {
+          "name": "apps/backend/src/routes/coder.routes.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.routes.coder.routes",
+          "hop": 2
+        },
+        {
+          "name": "apps/backend/src/cards/runConfiguredCard.spec.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runConfiguredCard.spec",
+          "hop": 2
+        },
+        {
+          "name": "runSingleAssistCardAsDeckRun",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.runSingleAssistCardAsDeckRun",
+          "hop": 2
+        }
+      ]
+    },
+    "trace_saveDeckDocument": {
+      "function": "saveDeckDocument",
+      "direction": "both",
+      "callees": [
+        {
+          "name": "validateDeckIntegrityTransition",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.validateDeckIntegrityTransition",
+          "hop": 1
+        },
+        {
+          "name": "normalizeDeckDocument",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.normalizeDeckDocument",
+          "hop": 1
+        },
+        {
+          "name": "normalizeRevisionMeta",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.normalizeRevisionMeta",
+          "hop": 1
+        },
+        {
+          "name": "cloneBlobMeta",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.cloneBlobMeta",
+          "hop": 1
+        },
+        {
+          "name": "writeV3ProjectBlobCas",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.writeV3ProjectBlobCas",
+          "hop": 1
+        },
+        {
+          "name": "buildDeckResponseMeta",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.buildDeckResponseMeta",
+          "hop": 1
+        },
+        {
+          "name": "cleanOptionalText",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.cleanOptionalText",
+          "hop": 2
+        },
+        {
+          "name": "normalizeDeckNode",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.normalizeDeckNode",
+          "hop": 2
+        },
+        {
+          "name": "normalizeDeckEdge",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.normalizeDeckEdge",
+          "hop": 2
+        },
+        {
+          "name": "hashRevision",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.hashRevision",
+          "hop": 2
+        },
+        {
+          "name": "normalizeJson",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.normalizeJson",
+          "hop": 2
+        },
+        {
+          "name": "normalizeProjectBlob",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.normalizeProjectBlob",
+          "hop": 2
+        },
+        {
+          "name": "loadProjectSchema",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.loadProjectSchema",
+          "hop": 2
+        }
+      ],
+      "callers": [
+        {
+          "name": "apps/backend/src/routes/decks.routes.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.routes.decks.routes",
+          "hop": 1
+        }
+      ]
+    },
+    "trace_resolvedMagenticOptions": {
+      "function": "resolvedMagenticOptions",
+      "direction": "both",
+      "callees": [
+        {
+          "name": "normalizeEdgeType",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.normalizeEdgeType",
+          "hop": 1
+        },
+        {
+          "name": "resolveCardRuntimeType",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.resolveCardRuntimeType",
+          "hop": 1
+        },
+        {
+          "name": "isAssistLikeRuntimeType",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.isAssistLikeRuntimeType",
+          "hop": 1
+        },
+        {
+          "name": "get",
+          "qualified_name": "C-Projects-main.apps.backend.src.db.pool.get",
+          "hop": 1
+        },
+        {
+          "name": "connect",
+          "qualified_name": "C-Projects-main.apps.backend.src.services.mcp.pythonAgentMcpClient.connect",
+          "hop": 2
+        },
+        {
+          "name": "getActivePool",
+          "qualified_name": "C-Projects-main.apps.backend.src.db.pool.getActivePool",
+          "hop": 2
+        },
+        {
+          "name": "disposePool",
+          "qualified_name": "C-Projects-main.apps.backend.src.db.pool.disposePool",
+          "hop": 2
+        },
+        {
+          "name": "withFreshPool",
+          "qualified_name": "C-Projects-main.apps.backend.src.db.pool.withFreshPool",
+          "hop": 2
+        }
+      ],
+      "callers": [
+        {
+          "name": "apps/backend/src/cards/runtime.spec.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.spec",
+          "hop": 1
+        },
+        {
+          "name": "describeConnectedAgents",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.mcp.liquidAItyAgentFlow.describeConnectedAgents",
+          "hop": 1
+        },
+        {
+          "name": "runCardWithContract",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.runCardWithContract",
+          "hop": 1
+        },
+        {
+          "name": "apps/backend/src/coder/openclaude/mcp/liquidAItyAgentFlow.spec.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.mcp.liquidAItyAgentFlow.spec",
+          "hop": 2
+        },
+        {
+          "name": "apps/backend/src/routes/coder.routes.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.routes.coder.routes",
+          "hop": 2
+        },
+        {
+          "name": "apps/backend/src/cards/runtime.spec.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.spec",
+          "hop": 2
+        }
+      ]
+    },
+    "q_routes": {
+      "columns": [
+        "route_name",
+        "route_qn"
+      ],
+      "rows": [
+        [
+          "/:projectId/decks",
+          "__route__GET__/:projectId/decks"
+        ],
+        [
+          "/:projectId/decks",
+          "__route__POST__/:projectId/decks"
+        ],
+        [
+          "/:projectId/decks/:deckId",
+          "__route__GET__/:projectId/decks/:deckId"
+        ],
+        [
+          "/:projectId/decks/:deckId",
+          "__route__PUT__/:projectId/decks/:deckId"
+        ],
+        [
+          "/:projectId/decks/:deckId",
+          "__route__DELETE__/:projectId/decks/:deckId"
+        ],
+        [
+          "/:projectId/decks/:deckId/run",
+          "__route__POST__/:projectId/decks/:deckId/run"
+        ]
+      ],
+      "total": 6
+    },
+    "q_calls_decks": {
+      "columns": [
+        "from_qn",
+        "to_qn"
+      ],
+      "rows": [
+        [
+          "C-Projects-main.apps.backend.src.cards.runtime.resolvedMagenticOptions",
+          "C-Projects-main.apps.backend.src.cards.runtime.normalizeEdgeType"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.cards.runtime.resolvedMagenticOptions",
+          "C-Projects-main.apps.backend.src.db.pool.get"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.cards.runtime.resolvedMagenticOptions",
+          "C-Projects-main.apps.backend.src.cards.runtime.resolveCardRuntimeType"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.cards.runtime.resolvedMagenticOptions",
+          "C-Projects-main.apps.backend.src.cards.runtime.isAssistLikeRuntimeType"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.decks.store.deleteDeckDocument",
+          "C-Projects-main.apps.backend.src.decks.store.writeV3ProjectBlobCas"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.decks.store.deleteDeckDocument",
+          "C-Projects-main.apps.backend.src.decks.store.cloneBlobMeta"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.decks.store.getDeckDocument",
+          "C-Projects-main.apps.backend.src.decks.store.getV3ProjectBlob"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.decks.store.getDeckDocument",
+          "C-Projects-main.apps.backend.src.decks.store.buildDeckResponseMeta"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.decks.store.saveDeckDocument",
+          "C-Projects-main.apps.backend.src.decks.store.normalizeDeckDocument"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.decks.store.saveDeckDocument",
+          "C-Projects-main.apps.backend.src.decks.store.writeV3ProjectBlobCas"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.decks.store.saveDeckDocument",
+          "C-Projects-main.apps.backend.src.decks.store.normalizeRevisionMeta"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.decks.store.saveDeckDocument",
+          "C-Projects-main.apps.backend.src.decks.store.validateDeckIntegrityTransition"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.decks.store.saveDeckDocument",
+          "C-Projects-main.apps.backend.src.decks.store.cloneBlobMeta"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.decks.store.saveDeckDocument",
+          "C-Projects-main.apps.backend.src.decks.store.buildDeckResponseMeta"
+        ]
+      ],
+      "total": 14
+    }
+  },
+  "saved_runtime": {
+    "search": {
+      "total": 1445,
+      "search_mode": "bm25",
+      "results": [
+        {
+          "name": "resolveCardModelStrict",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.resolveCardModelStrict",
+          "label": "Function",
+          "file_path": "apps/backend/src/cards/runtime.ts",
+          "start_line": 118,
+          "end_line": 136,
+          "rank": -30.1692160850608
+        },
+        {
+          "name": "resolveCardTools",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.resolveCardTools",
+          "label": "Function",
+          "file_path": "apps/backend/src/cards/runtime.ts",
+          "start_line": 138,
+          "end_line": 160,
+          "rank": -29.7180714278456
+        },
+        {
+          "name": "runConfiguredCard",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.runConfiguredCard",
+          "label": "Function",
+          "file_path": "apps/backend/src/cards/runtime.ts",
+          "start_line": 490,
+          "end_line": 627,
+          "rank": -27.96534736104996
+        },
+        {
+          "name": "card_run_assistant_agent",
+          "qualified_name": "C-Projects-main.apps.python-models.app.control_plane.card_run_assistant_agent",
+          "label": "Function",
+          "file_path": "apps/python-models/app/control_plane.py",
+          "start_line": 368,
+          "end_line": 388,
+          "rank": -26.681992039832206
+        },
+        {
+          "name": "resolveCardTools",
+          "qualified_name": "C-Projects-main.apps.backend.src.coder.openclaude.mcp.liquidAItyAgentFlow.resolveCardTools",
+          "label": "Function",
+          "file_path": "apps/backend/src/coder/openclaude/mcp/liquidAItyAgentFlow.ts",
+          "start_line": 28,
+          "end_line": 32,
+          "rank": -24.614738870174826
+        },
+        {
+          "name": "card",
+          "qualified_name": "C-Projects-main.client.src.runtime.agentCardRegistryResolver.spec.card",
+          "label": "Function",
+          "file_path": "client/src/runtime/agentCardRegistryResolver.spec.ts",
+          "start_line": 11,
+          "end_line": 13,
+          "rank": -20.795870943138
+        },
+        {
+          "name": "deckWith",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runConfiguredCard.spec.deckWith",
+          "label": "Function",
+          "file_path": "apps/backend/src/cards/runConfiguredCard.spec.ts",
+          "start_line": 39,
+          "end_line": 41,
+          "rank": -19.928463368605403
+        },
+        {
+          "name": "card_assign_runtime_skill",
+          "qualified_name": "C-Projects-main.apps.python-models.app.control_plane.card_assign_runtime_skill",
+          "label": "Function",
+          "file_path": "apps/python-models/app/control_plane.py",
+          "start_line": 279,
+          "end_line": 310,
+          "rank": -19.57122028340312
+        },
+        {
+          "name": "resolveCardRuntimeType",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.resolveCardRuntimeType",
+          "label": "Function",
+          "file_path": "apps/backend/src/cards/runtime.ts",
+          "start_line": 70,
+          "end_line": 74,
+          "rank": -19.067479380216305
+        },
+        {
+          "name": "test_orchestrate_requires_card_runtime",
+          "qualified_name": "C-Projects-main.apps.python-models.app.python_models.test_autogen_orchestrator.test_orchestrate_requires_card_runtime",
+          "label": "Function",
+          "file_path": "apps/python-models/app/python_models/test_autogen_orchestrator.py",
+          "start_line": 23,
+          "end_line": 26,
+          "rank": -18.871966677429004
+        },
+        {
+          "name": "buildPythonAutoGenCardRuntimePayload",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.buildPythonAutoGenCardRuntimePayload",
+          "label": "Function",
+          "file_path": "apps/backend/src/cards/runtime.ts",
+          "start_line": 334,
+          "end_line": 439,
+          "rank": -18.712825153081337
+        },
+        {
+          "name": "serializeCardParticipant",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.serializeCardParticipant",
+          "label": "Function",
+          "file_path": "apps/backend/src/cards/runtime.ts",
+          "start_line": 284,
+          "end_line": 310,
+          "rank": -18.63002900143134
+        },
+        {
+          "name": "resolveOrchestratorCardModel",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.resolveOrchestratorCardModel",
+          "label": "Function",
+          "file_path": "apps/backend/src/cards/runtime.ts",
+          "start_line": 28,
+          "end_line": 56,
+          "rank": -18.496979573115265
+        },
+        {
+          "name": "resolveCardFanOut",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.resolveCardFanOut",
+          "label": "Function",
+          "file_path": "apps/backend/src/cards/runtime.ts",
+          "start_line": 162,
+          "end_line": 175,
+          "rank": -18.496979573115265
+        },
+        {
+          "name": "cardHasChildSubgraph",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.cardHasChildSubgraph",
+          "label": "Function",
+          "file_path": "apps/backend/src/cards/runtime.ts",
+          "start_line": 177,
+          "end_line": 179,
+          "rank": -18.496979573115265
+        },
+        {
+          "name": "serializeCardPrivateParticipant",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.serializeCardPrivateParticipant",
+          "label": "Function",
+          "file_path": "apps/backend/src/cards/runtime.ts",
+          "start_line": 312,
+          "end_line": 332,
+          "rank": -18.496979573115265
+        },
+        {
+          "name": "runCardWithContract",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.runCardWithContract",
+          "label": "Function",
+          "file_path": "apps/backend/src/cards/runtime.ts",
+          "start_line": 737,
+          "end_line": 841,
+          "rank": -18.496979573115265
+        },
+        {
+          "name": "runSingleAssistCardAsDeckRun",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.runSingleAssistCardAsDeckRun",
+          "label": "Function",
+          "file_path": "apps/backend/src/cards/runtime.ts",
+          "start_line": 679,
+          "end_line": 735,
+          "rank": -18.122141404902358
+        },
+        {
+          "name": "test_magentic_runtime_type_is_rejected",
+          "qualified_name": "C-Projects-main.apps.python-models.app.python_models.test_run_configured_card.TestSingleCardGuard.test_magentic_runtime_type_is_rejected",
+          "label": "Method",
+          "file_path": "apps/python-models/app/python_models/test_run_configured_card.py",
+          "start_line": 65,
+          "end_line": 67,
+          "rank": -17.70471090427212
+        },
+        {
+          "name": "Card",
+          "qualified_name": "C-Projects-main.client.src.pages.userpanel.Card",
+          "label": "Function",
+          "file_path": "client/src/pages/userpanel.tsx",
+          "start_line": 44,
+          "end_line": 56,
+          "rank": -15.778725247318715
+        },
+        {
+          "name": "buildRuntimeGraph",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.buildRuntimeGraph",
+          "label": "Function",
+          "file_path": "apps/backend/src/cards/runtime.ts",
+          "start_line": 181,
+          "end_line": 276,
+          "rank": -15.553684171842505
+        },
+        {
+          "name": "_card",
+          "qualified_name": "C-Projects-main.apps.python-models.prove_knowgraph_tool_attach._card",
+          "label": "Function",
+          "file_path": "apps/python-models/prove_knowgraph_tool_attach.py",
+          "start_line": 40,
+          "end_line": 62,
+          "rank": -15.455258660129264
+        },
+        {
+          "name": "isAssistLikeRuntimeType",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.isAssistLikeRuntimeType",
+          "label": "Function",
+          "file_path": "apps/backend/src/cards/runtime.ts",
+          "start_line": 76,
+          "end_line": 78,
+          "rank": -15.437532953504569
+        },
+        {
+          "name": "_find_card",
+          "qualified_name": "C-Projects-main.apps.python-models.app.control_plane._find_card",
+          "label": "Function",
+          "file_path": "apps/python-models/app/control_plane.py",
+          "start_line": 90,
+          "end_line": 94,
+          "rank": -15.40483566680353
+        },
+        {
+          "name": "test_valid_single_card_context_passes",
+          "qualified_name": "C-Projects-main.apps.python-models.app.python_models.test_run_configured_card.TestSingleCardGuard.test_valid_single_card_context_passes",
+          "label": "Method",
+          "file_path": "apps/python-models/app/python_models/test_run_configured_card.py",
+          "start_line": 62,
+          "end_line": 63,
+          "rank": -15.389781458123798
+        },
+        {
+          "name": "autogen_run_card",
+          "qualified_name": "C-Projects-main.apps.python-models.app.main.autogen_run_card",
+          "label": "Function",
+          "file_path": "apps/python-models/app/main.py",
+          "start_line": 96,
+          "end_line": 105,
+          "rank": -15.355336256937925
+        },
+        {
+          "name": "isPythonAutoGenCallableRuntimeType",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.isPythonAutoGenCallableRuntimeType",
+          "label": "Function",
+          "file_path": "apps/backend/src/cards/runtime.ts",
+          "start_line": 114,
+          "end_line": 116,
+          "rank": -15.326491411403518
+        },
+        {
+          "name": "test_card_run_smuggled_arguments_are_rejected",
+          "qualified_name": "C-Projects-main.apps.python-models.app.python_models.test_thinkgraph_card_tools.TestControlToolArgumentRejection.test_card_run_smuggled_arguments_are_rejected",
+          "label": "Method",
+          "file_path": "apps/python-models/app/python_models/test_thinkgraph_card_tools.py",
+          "start_line": 154,
+          "end_line": 166,
+          "rank": -15.301818604823925
+        },
+        {
+          "name": "normalize",
+          "qualified_name": "C-Projects-main.client.src.runtime.agentCardRegistryResolver.normalize",
+          "label": "Function",
+          "file_path": "client/src/runtime/agentCardRegistryResolver.ts",
+          "start_line": 119,
+          "end_line": 121,
+          "rank": -15.27561840737922
+        },
+        {
+          "name": "card_update_configuration",
+          "qualified_name": "C-Projects-main.apps.python-models.app.control_plane.card_update_configuration",
+          "label": "Function",
+          "file_path": "apps/python-models/app/control_plane.py",
+          "start_line": 173,
+          "end_line": 225,
+          "rank": -15.259008511254859
+        }
+      ],
+      "has_more": true
+    },
+    "trace_runConfiguredCard": {
+      "function": "runConfiguredCard",
+      "direction": "both",
+      "callees": [
+        {
+          "name": "runSingleCardWithAutoGen",
+          "qualified_name": "C-Projects-main.apps.backend.src.services.autogen.autogenOrchestratorClient.runSingleCardWithAutoGen",
+          "hop": 1
+        },
+        {
+          "name": "resolveCardRuntimeType",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.resolveCardRuntimeType",
+          "hop": 1
+        },
+        {
+          "name": "resolveCardModelStrict",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.resolveCardModelStrict",
+          "hop": 1
+        },
+        {
+          "name": "serializeCardParticipant",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.serializeCardParticipant",
+          "hop": 1
+        },
+        {
+          "name": "serializeCardPrivateParticipant",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.serializeCardPrivateParticipant",
+          "hop": 1
+        },
+        {
+          "name": "parseToolCallCount",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.parseToolCallCount",
+          "hop": 1
+        },
+        {
+          "name": "getDeckDocument",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.getDeckDocument",
+          "hop": 1
+        },
+        {
+          "name": "buildSidecarBaseUrls",
+          "qualified_name": "C-Projects-main.apps.backend.src.services.autogen.autogenOrchestratorClient.buildSidecarBaseUrls",
+          "hop": 2
+        },
+        {
+          "name": "isRetryableSidecarError",
+          "qualified_name": "C-Projects-main.apps.backend.src.services.autogen.autogenOrchestratorClient.isRetryableSidecarError",
+          "hop": 2
+        },
+        {
+          "name": "readTimeoutMs",
+          "qualified_name": "C-Projects-main.apps.backend.src.services.autogen.autogenOrchestratorClient.readTimeoutMs",
+          "hop": 2
+        },
+        {
+          "name": "normalizeProvider",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.normalizeProvider",
+          "hop": 2
+        },
+        {
+          "name": "resolveModel",
+          "qualified_name": "C-Projects-main.apps.backend.src.llm.models.config.resolveModel",
+          "hop": 2
+        },
+        {
+          "name": "resolveCardModelStrict",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.resolveCardModelStrict",
+          "hop": 2
+        },
+        {
+          "name": "resolveCardTools",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.resolveCardTools",
+          "hop": 2
+        },
+        {
+          "name": "resolveCardFanOut",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.resolveCardFanOut",
+          "hop": 2
+        },
+        {
+          "name": "cardHasChildSubgraph",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.cardHasChildSubgraph",
+          "hop": 2
+        },
+        {
+          "name": "getV3ProjectBlob",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.getV3ProjectBlob",
+          "hop": 2
+        },
+        {
+          "name": "buildDeckResponseMeta",
+          "qualified_name": "C-Projects-main.apps.backend.src.decks.store.buildDeckResponseMeta",
+          "hop": 2
+        }
+      ],
+      "callers": [
+        {
+          "name": "apps/backend/src/routes/coder.routes.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.routes.coder.routes",
+          "hop": 1
+        },
+        {
+          "name": "apps/backend/src/cards/runConfiguredCard.spec.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runConfiguredCard.spec",
+          "hop": 1
+        },
+        {
+          "name": "runSingleAssistCardAsDeckRun",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.runSingleAssistCardAsDeckRun",
+          "hop": 1
+        },
+        {
+          "name": "apps/backend/src/routes/coder.routes.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.routes.coder.routes",
+          "hop": 2
+        },
+        {
+          "name": "apps/backend/src/routes/decks.routes.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.routes.decks.routes",
+          "hop": 2
+        },
+        {
+          "name": "apps/backend/src/cards/runConfiguredCard.spec.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runConfiguredCard.spec",
+          "hop": 2
+        }
+      ]
+    },
+    "trace_resolveCardModelStrict": {
+      "function": "resolveCardModelStrict",
+      "direction": "both",
+      "callees": [
+        {
+          "name": "normalizeProvider",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.normalizeProvider",
+          "hop": 1
+        },
+        {
+          "name": "resolveModel",
+          "qualified_name": "C-Projects-main.apps.backend.src.llm.models.config.resolveModel",
+          "hop": 1
+        }
+      ],
+      "callers": [
+        {
+          "name": "buildRuntimeGraph",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.buildRuntimeGraph",
+          "hop": 1
+        },
+        {
+          "name": "serializeCardParticipant",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.serializeCardParticipant",
+          "hop": 1
+        },
+        {
+          "name": "serializeCardPrivateParticipant",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.serializeCardPrivateParticipant",
+          "hop": 1
+        },
+        {
+          "name": "runConfiguredCard",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.runConfiguredCard",
+          "hop": 1
+        },
+        {
+          "name": "buildPythonAutoGenCardRuntimePayload",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.buildPythonAutoGenCardRuntimePayload",
+          "hop": 2
+        },
+        {
+          "name": "runConfiguredCard",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.runConfiguredCard",
+          "hop": 2
+        },
+        {
+          "name": "apps/backend/src/routes/coder.routes.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.routes.coder.routes",
+          "hop": 2
+        },
+        {
+          "name": "apps/backend/src/cards/runConfiguredCard.spec.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runConfiguredCard.spec",
+          "hop": 2
+        },
+        {
+          "name": "runSingleAssistCardAsDeckRun",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.runSingleAssistCardAsDeckRun",
+          "hop": 2
+        }
+      ]
+    },
+    "trace_resolveCardTools": {
+      "function": "resolveCardTools",
+      "direction": "both",
+      "callees": [],
+      "callers": [
+        {
+          "name": "runtime.ts",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.__file__",
+          "hop": 1
+        },
+        {
+          "name": "serializeCardParticipant",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.serializeCardParticipant",
+          "hop": 1
+        },
+        {
+          "name": "buildPythonAutoGenCardRuntimePayload",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.buildPythonAutoGenCardRuntimePayload",
+          "hop": 2
+        },
+        {
+          "name": "runConfiguredCard",
+          "qualified_name": "C-Projects-main.apps.backend.src.cards.runtime.runConfiguredCard",
+          "hop": 2
+        }
+      ]
+    },
+    "q_calls_runtime": {
+      "columns": [
+        "from_qn",
+        "to_qn"
+      ],
+      "rows": [
+        [
+          "C-Projects-main.apps.backend.src.cards.runtime.runConfiguredCard",
+          "C-Projects-main.apps.backend.src.cards.runtime.parseToolCallCount"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.cards.runtime.runConfiguredCard",
+          "C-Projects-main.apps.backend.src.cards.runtime.resolveCardModelStrict"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.cards.runtime.runConfiguredCard",
+          "C-Projects-main.apps.backend.src.cards.runtime.resolveCardRuntimeType"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.cards.runtime.runConfiguredCard",
+          "C-Projects-main.apps.backend.src.cards.runtime.serializeCardParticipant"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.cards.runtime.runConfiguredCard",
+          "C-Projects-main.apps.backend.src.cards.runtime.serializeCardPrivateParticipant"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.cards.runtime.runConfiguredCard",
+          "C-Projects-main.apps.backend.src.decks.store.getDeckDocument"
+        ],
+        [
+          "C-Projects-main.apps.backend.src.cards.runtime.runConfiguredCard",
+          "C-Projects-main.apps.backend.src.services.autogen.autogenOrchestratorClient.runSingleCardWithAutoGen"
+        ]
+      ],
+      "total": 7
+    },
+    "q_tests_runtime": {
+      "columns": [
+        "test_file",
+        "test_name",
+        "target_qn"
+      ],
+      "rows": [
+        [
+          "apps/python-models/app/python_models/test_control_plane.py",
+          "test_all_structural_references_required",
+          "C-Projects-main.apps.python-models.app.control_plane.card_run_assistant_agent"
+        ],
+        [
+          "apps/python-models/app/python_models/test_control_plane.py",
+          "test_forwards_only_the_five_saved_references",
+          "C-Projects-main.apps.python-models.app.control_plane.card_run_assistant_agent"
+        ]
+      ],
+      "total": 2
+    }
+  }
+}

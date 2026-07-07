@@ -37,6 +37,7 @@ The normal code-work order is:
 ```txt
 read AGENTS.md
 read PLAN.md
+read selected wiki/*.md feature manifest(s)
 read relevant skills/*.md
 refresh or prove Code-Based Memory
 record CBM project/root/status/nodes/edges
@@ -195,6 +196,38 @@ If a new file exists on disk but is absent from CBM indexed File nodes, treat fr
 If node/edge counts do not change after expected new code, do not assume freshness. Confirm by file/symbol search and direct read.
 
 Never invent an indexed revision, indexed timestamp, chunk count, node count, or edge count.
+
+## Feature Manifest Registry
+
+`wiki/*.md` is the flat Feature Manifest registry. One file equals one real product or
+runtime feature. Each feature manifest is a compact semantic pointer card — not a
+source-of-truth replacement and not a mini manual.
+
+A feature manifest tells an agent:
+- what the feature is and what user/agent outcome it exists for;
+- what must not break;
+- where to start in CBM (exact file paths + simple symbol names);
+- which code landmarks matter;
+- what proof is valid;
+- what remains risky or unproven.
+
+Source code, tests, persisted data, real runtime evidence, and fresh CBM remain
+authoritative over any feature manifest. A manifest is stale when its anchors drift
+from the live codebase.
+
+Before a coding task touching a known feature, the explicitly selected feature
+manifest(s) are loaded and their anchors are re-resolved through live CBM.
+
+Primary and supporting features are selected by the Planner, Task Ledger, or current
+SPEC — never inferred by regex, phrase routing, or automatic classification.
+
+After a coding task completes, the CoderReport identifies affected feature IDs and
+whether a manifest refresh is needed. The cheap Wiki Librarian (refresh-only agent)
+updates only the affected manifests using evidence from the completed work.
+
+Do not create feature files for random folders, helpers, tests, or every source file.
+Do not create generic wiki scaffolding, nested wiki folders, or separate documentation
+ledgers.
 
 ## Skills System
 

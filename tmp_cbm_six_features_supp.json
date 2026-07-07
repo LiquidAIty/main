@@ -1,0 +1,695 @@
+{
+  "local_calls_any": {
+    "columns": [
+      "from_qn",
+      "to_qn"
+    ],
+    "rows": [
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.inspectRuntime",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.blockedInspection"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.inspectRuntime",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.discoverRuntime"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.inspectRuntime",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.envMissing"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.inspectRuntime",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.vendoredRoot"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.inspectRuntime",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.vendoredEntrypoint"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.inspectRuntime",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.buildSetupCommand"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.run",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.runWithDiagnostics"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.runWithDiagnostics",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.buildSetupCommand"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.runWithDiagnostics",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.vendoredRoot"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.runWithDiagnostics",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.buildCoderPrompt"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.runWithDiagnostics",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.createRuntimeDiagnostics"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.runWithDiagnostics",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.buildBlockedReport"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.runWithDiagnostics",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.discoverRuntime"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.runWithDiagnostics",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.envMissing"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.runWithDiagnostics",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.prepareMcpConfig"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.runWithDiagnostics",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.jobArgs"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.runWithDiagnostics",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.redactArgv"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.runWithDiagnostics",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.localCoderRunTimeoutMs"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.runWithDiagnostics",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.applyProcessDiagnostics"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.runWithDiagnostics",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.buildFailedReport"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.runWithDiagnostics",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.parseLocalCoderOutput"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.service.LocalCoderService.run",
+        "C-Projects-main.apps.backend.src.contracts.coderContracts.parseCoderPacket"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.service.LocalCoderService.run",
+        "C-Projects-main.apps.backend.src.coder.localcoder.service.buildCbmScopeBlockedReport"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.service.LocalCoderService.run",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.runWithDiagnostics"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.service.LocalCoderService.run",
+        "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.run"
+      ],
+      [
+        "C-Projects-main.apps.backend.src.coder.localcoder.service.LocalCoderService.run",
+        "C-Projects-main.apps.backend.src.contracts.coderContracts.compareCoderReportToPacket"
+      ]
+    ],
+    "total": 26
+  },
+  "local_tests_any": {
+    "columns": [
+      "test_file",
+      "test_name",
+      "target_qn"
+    ],
+    "rows": [],
+    "total": 0,
+    "hint": "Query returned no results. Use get_graph_schema() to see available labels and edge types."
+  },
+  "handoff_search_write": {
+    "total": 937,
+    "search_mode": "bm25",
+    "results": [
+      {
+        "name": "ingest",
+        "qualified_name": "C-Projects-main.services.knowgraph.app.ingest",
+        "label": "Function",
+        "file_path": "services/knowgraph/app.py",
+        "start_line": 64,
+        "end_line": 120,
+        "rank": -11.39094867388579
+      },
+      {
+        "name": "health",
+        "qualified_name": "C-Projects-main.services.knowgraph.app.health",
+        "label": "Function",
+        "file_path": "services/knowgraph/app.py",
+        "start_line": 211,
+        "end_line": 212,
+        "rank": -11.39094867388579
+      },
+      {
+        "name": "main",
+        "qualified_name": "C-Projects-main.services.knowgraph.embeddinggemma.main",
+        "label": "Function",
+        "file_path": "services/knowgraph/embeddinggemma.py",
+        "start_line": 197,
+        "end_line": 213,
+        "rank": -11.39094867388579
+      },
+      {
+        "name": "__init__",
+        "qualified_name": "C-Projects-main.services.knowgraph.ingest.DeterministicFixedSizeSplitter.__init__",
+        "label": "Method",
+        "file_path": "services/knowgraph/ingest.py",
+        "start_line": 172,
+        "end_line": 185,
+        "rank": -11.362304553825522
+      },
+      {
+        "name": "run",
+        "qualified_name": "C-Projects-main.services.knowgraph.ingest.DeterministicFixedSizeSplitter.run",
+        "label": "Method",
+        "file_path": "services/knowgraph/ingest.py",
+        "start_line": 187,
+        "end_line": 215,
+        "rank": -11.362304553825522
+      },
+      {
+        "name": "main",
+        "qualified_name": "C-Projects-main.scripts.telescope.fits-inspect.main",
+        "label": "Function",
+        "file_path": "scripts/telescope/fits-inspect.py",
+        "start_line": 21,
+        "end_line": 92,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "main",
+        "qualified_name": "C-Projects-main.scripts.telescope.tile-image.main",
+        "label": "Function",
+        "file_path": "scripts/telescope/tile-image.py",
+        "start_line": 21,
+        "end_line": 89,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "health",
+        "qualified_name": "C-Projects-main.services.esn_rls.main.health",
+        "label": "Function",
+        "file_path": "services/esn_rls/main.py",
+        "start_line": 137,
+        "end_line": 138,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_records",
+        "qualified_name": "C-Projects-main.services.knowgraph.assertion_vectors._records",
+        "label": "Function",
+        "file_path": "services/knowgraph/assertion_vectors.py",
+        "start_line": 85,
+        "end_line": 91,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_clean",
+        "qualified_name": "C-Projects-main.services.knowgraph.assertion_vectors._clean",
+        "label": "Function",
+        "file_path": "services/knowgraph/assertion_vectors.py",
+        "start_line": 132,
+        "end_line": 135,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "main",
+        "qualified_name": "C-Projects-main.services.knowgraph.assertion_vectors.main",
+        "label": "Function",
+        "file_path": "services/knowgraph/assertion_vectors.py",
+        "start_line": 644,
+        "end_line": 679,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_clean",
+        "qualified_name": "C-Projects-main.services.knowgraph.hybrid_retrieval._clean",
+        "label": "Function",
+        "file_path": "services/knowgraph/hybrid_retrieval.py",
+        "start_line": 114,
+        "end_line": 115,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_records",
+        "qualified_name": "C-Projects-main.services.knowgraph.hybrid_retrieval._records",
+        "label": "Function",
+        "file_path": "services/knowgraph/hybrid_retrieval.py",
+        "start_line": 118,
+        "end_line": 124,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_domain",
+        "qualified_name": "C-Projects-main.services.knowgraph.hybrid_retrieval._domain",
+        "label": "Function",
+        "file_path": "services/knowgraph/hybrid_retrieval.py",
+        "start_line": 137,
+        "end_line": 141,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_fuse",
+        "qualified_name": "C-Projects-main.services.knowgraph.hybrid_retrieval._fuse",
+        "label": "Function",
+        "file_path": "services/knowgraph/hybrid_retrieval.py",
+        "start_line": 432,
+        "end_line": 451,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_sha8",
+        "qualified_name": "C-Projects-main.services.knowgraph.skill_ingest._sha8",
+        "label": "Function",
+        "file_path": "services/knowgraph/skill_ingest.py",
+        "start_line": 107,
+        "end_line": 108,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_kv",
+        "qualified_name": "C-Projects-main.services.knowgraph.skill_ingest._kv",
+        "label": "Function",
+        "file_path": "services/knowgraph/skill_ingest.py",
+        "start_line": 111,
+        "end_line": 115,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_slug",
+        "qualified_name": "C-Projects-main.services.knowgraph.skill_ingest._slug",
+        "label": "Function",
+        "file_path": "services/knowgraph/skill_ingest.py",
+        "start_line": 125,
+        "end_line": 127,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_connect",
+        "qualified_name": "C-Projects-main.services.knowgraph.skill_ingest._connect",
+        "label": "Function",
+        "file_path": "services/knowgraph/skill_ingest.py",
+        "start_line": 654,
+        "end_line": 660,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_truncate",
+        "qualified_name": "C-Projects-main.services.knowgraph.skill_ingest._truncate",
+        "label": "Function",
+        "file_path": "services/knowgraph/skill_ingest.py",
+        "start_line": 1067,
+        "end_line": 1070,
+        "rank": -11.334816378790514
+      }
+    ],
+    "has_more": true
+  },
+  "handoff_search_read": {
+    "total": 937,
+    "search_mode": "bm25",
+    "results": [
+      {
+        "name": "ingest",
+        "qualified_name": "C-Projects-main.services.knowgraph.app.ingest",
+        "label": "Function",
+        "file_path": "services/knowgraph/app.py",
+        "start_line": 64,
+        "end_line": 120,
+        "rank": -11.39094867388579
+      },
+      {
+        "name": "health",
+        "qualified_name": "C-Projects-main.services.knowgraph.app.health",
+        "label": "Function",
+        "file_path": "services/knowgraph/app.py",
+        "start_line": 211,
+        "end_line": 212,
+        "rank": -11.39094867388579
+      },
+      {
+        "name": "main",
+        "qualified_name": "C-Projects-main.services.knowgraph.embeddinggemma.main",
+        "label": "Function",
+        "file_path": "services/knowgraph/embeddinggemma.py",
+        "start_line": 197,
+        "end_line": 213,
+        "rank": -11.39094867388579
+      },
+      {
+        "name": "__init__",
+        "qualified_name": "C-Projects-main.services.knowgraph.ingest.DeterministicFixedSizeSplitter.__init__",
+        "label": "Method",
+        "file_path": "services/knowgraph/ingest.py",
+        "start_line": 172,
+        "end_line": 185,
+        "rank": -11.362304553825522
+      },
+      {
+        "name": "run",
+        "qualified_name": "C-Projects-main.services.knowgraph.ingest.DeterministicFixedSizeSplitter.run",
+        "label": "Method",
+        "file_path": "services/knowgraph/ingest.py",
+        "start_line": 187,
+        "end_line": 215,
+        "rank": -11.362304553825522
+      },
+      {
+        "name": "main",
+        "qualified_name": "C-Projects-main.scripts.telescope.fits-inspect.main",
+        "label": "Function",
+        "file_path": "scripts/telescope/fits-inspect.py",
+        "start_line": 21,
+        "end_line": 92,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "main",
+        "qualified_name": "C-Projects-main.scripts.telescope.tile-image.main",
+        "label": "Function",
+        "file_path": "scripts/telescope/tile-image.py",
+        "start_line": 21,
+        "end_line": 89,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "health",
+        "qualified_name": "C-Projects-main.services.esn_rls.main.health",
+        "label": "Function",
+        "file_path": "services/esn_rls/main.py",
+        "start_line": 137,
+        "end_line": 138,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_records",
+        "qualified_name": "C-Projects-main.services.knowgraph.assertion_vectors._records",
+        "label": "Function",
+        "file_path": "services/knowgraph/assertion_vectors.py",
+        "start_line": 85,
+        "end_line": 91,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_clean",
+        "qualified_name": "C-Projects-main.services.knowgraph.assertion_vectors._clean",
+        "label": "Function",
+        "file_path": "services/knowgraph/assertion_vectors.py",
+        "start_line": 132,
+        "end_line": 135,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "main",
+        "qualified_name": "C-Projects-main.services.knowgraph.assertion_vectors.main",
+        "label": "Function",
+        "file_path": "services/knowgraph/assertion_vectors.py",
+        "start_line": 644,
+        "end_line": 679,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_clean",
+        "qualified_name": "C-Projects-main.services.knowgraph.hybrid_retrieval._clean",
+        "label": "Function",
+        "file_path": "services/knowgraph/hybrid_retrieval.py",
+        "start_line": 114,
+        "end_line": 115,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_records",
+        "qualified_name": "C-Projects-main.services.knowgraph.hybrid_retrieval._records",
+        "label": "Function",
+        "file_path": "services/knowgraph/hybrid_retrieval.py",
+        "start_line": 118,
+        "end_line": 124,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_domain",
+        "qualified_name": "C-Projects-main.services.knowgraph.hybrid_retrieval._domain",
+        "label": "Function",
+        "file_path": "services/knowgraph/hybrid_retrieval.py",
+        "start_line": 137,
+        "end_line": 141,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_fuse",
+        "qualified_name": "C-Projects-main.services.knowgraph.hybrid_retrieval._fuse",
+        "label": "Function",
+        "file_path": "services/knowgraph/hybrid_retrieval.py",
+        "start_line": 432,
+        "end_line": 451,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_sha8",
+        "qualified_name": "C-Projects-main.services.knowgraph.skill_ingest._sha8",
+        "label": "Function",
+        "file_path": "services/knowgraph/skill_ingest.py",
+        "start_line": 107,
+        "end_line": 108,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_kv",
+        "qualified_name": "C-Projects-main.services.knowgraph.skill_ingest._kv",
+        "label": "Function",
+        "file_path": "services/knowgraph/skill_ingest.py",
+        "start_line": 111,
+        "end_line": 115,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_slug",
+        "qualified_name": "C-Projects-main.services.knowgraph.skill_ingest._slug",
+        "label": "Function",
+        "file_path": "services/knowgraph/skill_ingest.py",
+        "start_line": 125,
+        "end_line": 127,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_connect",
+        "qualified_name": "C-Projects-main.services.knowgraph.skill_ingest._connect",
+        "label": "Function",
+        "file_path": "services/knowgraph/skill_ingest.py",
+        "start_line": 654,
+        "end_line": 660,
+        "rank": -11.334816378790514
+      },
+      {
+        "name": "_truncate",
+        "qualified_name": "C-Projects-main.services.knowgraph.skill_ingest._truncate",
+        "label": "Function",
+        "file_path": "services/knowgraph/skill_ingest.py",
+        "start_line": 1067,
+        "end_line": 1070,
+        "rank": -11.334816378790514
+      }
+    ],
+    "has_more": true
+  },
+  "handoff_search_code_write": {
+    "content": [
+      {
+        "type": "text",
+        "text": "search failed: cannot create temp file (No such file or directory)"
+      }
+    ],
+    "isError": true
+  },
+  "handoff_search_code_read": {
+    "content": [
+      {
+        "type": "text",
+        "text": "search failed: cannot create temp file (No such file or directory)"
+      }
+    ],
+    "isError": true
+  },
+  "lifecycle_search_runprocess": {
+    "total": 18,
+    "search_mode": "bm25",
+    "results": [
+      {
+        "name": "RunProcess",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.RunProcess",
+        "label": "Type",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 33,
+        "end_line": 37,
+        "rank": -28.344473023891073
+      },
+      {
+        "name": "constructor",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.constructor",
+        "label": "Method",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 595,
+        "end_line": 602,
+        "rank": -16.03731161548549
+      },
+      {
+        "name": "run",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.run",
+        "label": "Method",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 1085,
+        "end_line": 1087,
+        "rank": -16.03731161548549
+      },
+      {
+        "name": "vendoredRoot",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.vendoredRoot",
+        "label": "Method",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 604,
+        "end_line": 606,
+        "rank": -15.928648030563815
+      },
+      {
+        "name": "vendoredEntrypoint",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.vendoredEntrypoint",
+        "label": "Method",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 608,
+        "end_line": 610,
+        "rank": -15.928648030563815
+      },
+      {
+        "name": "discoverRuntime",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.discoverRuntime",
+        "label": "Method",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 750,
+        "end_line": 756,
+        "rank": -15.928648030563815
+      },
+      {
+        "name": "envMissing",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.envMissing",
+        "label": "Method",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 780,
+        "end_line": 789,
+        "rank": -15.928648030563815
+      },
+      {
+        "name": "blockedInspection",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.blockedInspection",
+        "label": "Method",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 791,
+        "end_line": 801,
+        "rank": -15.928648030563815
+      },
+      {
+        "name": "jobArgs",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.jobArgs",
+        "label": "Method",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 866,
+        "end_line": 886,
+        "rank": -15.928648030563815
+      },
+      {
+        "name": "inspectRuntime",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.inspectRuntime",
+        "label": "Method",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 893,
+        "end_line": 947,
+        "rank": -15.928648030563815
+      },
+      {
+        "name": "mcpConfigPath",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.mcpConfigPath",
+        "label": "Method",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 612,
+        "end_line": 614,
+        "rank": -15.823826887013283
+      },
+      {
+        "name": "resolveExplicitRuntime",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.resolveExplicitRuntime",
+        "label": "Method",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 617,
+        "end_line": 693,
+        "rank": -15.823826887013283
+      },
+      {
+        "name": "resolvePathRuntime",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.resolvePathRuntime",
+        "label": "Method",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 696,
+        "end_line": 717,
+        "rank": -15.823826887013283
+      },
+      {
+        "name": "resolveVendoredRuntime",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.resolveVendoredRuntime",
+        "label": "Method",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 720,
+        "end_line": 744,
+        "rank": -15.823826887013283
+      },
+      {
+        "name": "resolveConsoleRuntime",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.resolveConsoleRuntime",
+        "label": "Method",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 764,
+        "end_line": 778,
+        "rank": -15.823826887013283
+      },
+      {
+        "name": "prepareMcpConfig",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.prepareMcpConfig",
+        "label": "Method",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 810,
+        "end_line": 864,
+        "rank": -15.823826887013283
+      },
+      {
+        "name": "runWithDiagnostics",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter.runWithDiagnostics",
+        "label": "Method",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 949,
+        "end_line": 1083,
+        "rank": -15.823826887013283
+      },
+      {
+        "name": "LocalCoderAdapter",
+        "qualified_name": "C-Projects-main.apps.backend.src.coder.localcoder.adapter.LocalCoderAdapter",
+        "label": "Class",
+        "file_path": "apps/backend/src/coder/localcoder/adapter.ts",
+        "start_line": 589,
+        "end_line": 1088,
+        "rank": -13.095718571445893
+      }
+    ],
+    "has_more": false
+  },
+  "lifecycle_search_code_runprocess": {
+    "content": [
+      {
+        "type": "text",
+        "text": "search failed: cannot create temp file (No such file or directory)"
+      }
+    ],
+    "isError": true
+  }
+}

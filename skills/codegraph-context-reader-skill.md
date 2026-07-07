@@ -15,10 +15,15 @@ active CoderPacket prompt.
 ## Procedure
 
 1. Refresh CBM and record readiness, nodes, and edges.
-2. Search graph structure for relevant files, symbols, routes, tests, and call paths.
-3. Direct-read resolved files.
-4. Include queries used, evidence, and warnings in the Context Packet.
-5. Block active-prompt creation when required code evidence is missing or stale.
+2. If an explicit feature manifest was selected (wiki/*.md), read its declared
+   file + simple-symbol anchors first. Use them as the starting point for graph
+   exploration.
+3. Search graph structure for relevant files, symbols, routes, tests, and call paths.
+4. Direct-read resolved files.
+5. Include queries used, evidence, and warnings in the Context Packet.
+6. Block active-prompt creation when required code evidence is missing or stale.
+7. Mark unresolved or ambiguous anchors honestly — do not silently choose one
+   when multiple same-name symbols exist. Prefer exact file path matching.
 
 ## Guardrails
 

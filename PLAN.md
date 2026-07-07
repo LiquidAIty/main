@@ -136,6 +136,25 @@ Get the primitives above running end-to-end and legible: **chat → orchestrator
 graph reads, with each seam proven. Then pull the next capability from [FUTURE.md](./FUTURE.md) — starting
 with Batch A (graph truth + context). The full batch breakdown and product vision live in FUTURE.md.
 
+### Feature Context Resolver
+
+The next foundation to build is the Feature Context Resolver.
+
+Its job:
+
+```
+explicitly selected wiki/*.md feature manifest(s)
+→ fresh CBM anchor resolution (search_graph + trace_path on declared symbols/files)
+→ bounded live source, test, and context retrieval
+→ Feature Context inserted into the CoderPacket
+```
+
+Agent usefulness comes first. Graph UI filtering is a later consumer of the same
+resolver output. Do not build visual CodeGraph filtering before feature-context
+loading works. Do not create an automatic feature classifier or phrase-based router —
+primary and supporting features are selected by the planner, Task Ledger, or current
+SPEC, never inferred by the resolver.
+
 ## Durable docs
 
 ```txt
@@ -143,6 +162,7 @@ PLAN.md      this — real architecture + build route
 FUTURE.md    product vision & deferred features
 AGENTS.md    execution law
 DONT.md      what not to write (+ purge log)
+wiki/*.md    feature manifest registry (flat, one file per feature)
 skills/*.md  reusable proven procedures
 ```
 

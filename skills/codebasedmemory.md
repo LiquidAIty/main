@@ -12,7 +12,8 @@ real proof win when graph memory disagrees.
 
 ## Procedure
 
-1. Read `AGENTS.md`, `PLAN.md`, and the active CoderPacket prompt.
+1. Read `AGENTS.md`, `PLAN.md`, selected `wiki/*.md` feature manifest(s), and the
+   active CoderPacket prompt.
 2. Refresh or prove fresh CBM and record status, nodes, and edges.
 3. Search graph nodes, paths, files, and symbols before focused text search.
 4. Direct-read resolved files before claims or edits.
