@@ -16,6 +16,8 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { getDeckDocument } from '../../../decks/store';
 import { resolveRuntimeBinding } from '../../../contracts/runtimeBinding';
+import { resolveModel } from '../../../llm/models.config';
+import { logHarnessTrace } from '../../../services/harnessTrace';
 
 // The app's one canonical Agent Canvas deck (mirrors coder.routes.ts's own
 // BUILDER_DECK_ID — no cross-file re-export exists for this constant yet).
@@ -39,6 +41,7 @@ export type GrpcTurnArgs = {
    * eligible saved card as a direct Single Assist doorway. Explicit surface
    * state from the client — never inferred from message content. */
   mode?: HarnessMode;
+  traceId?: string;
 };
 
 export type HarnessMode = 'chat' | 'canvas';
@@ -184,6 +187,17 @@ export async function resolveCardDoorwayDefinitions(
   }
 }
 
+export type MainChatRuntimeConfig = {
+  cardId: string;
+  title: string;
+  prompt: string | null;
+  provider: string;
+  modelKey: string;
+  providerModelId: string;
+  deckRevision: string | null;
+  doorwayDefinitions: Record<string, unknown>[];
+};
+
 /**
  * Structural resolution from persisted deck nodes: exactly ONE card whose
  * runtimeBinding classifies as 'main_chat', by persisted binding — never
@@ -213,6 +227,40 @@ export async function resolveMainChatSystemPrompt(sessionId: string): Promise<st
     if (!resolution.ok) return null;
     const prompt = String(resolution.card?.prompt || '').trim();
     return prompt || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveMainChatRuntimeConfig(
+  sessionId: string,
+  mode: HarnessMode,
+): Promise<MainChatRuntimeConfig | null> {
+  const parsed = parseSessionId(sessionId);
+  if (!parsed) return null;
+  try {
+    const doc = await getDeckDocument(parsed.projectId, BUILDER_DECK_ID);
+    const nodes: any[] = Array.isArray((doc?.deck as any)?.nodes) ? (doc!.deck as any).nodes : [];
+    const resolution = resolveMainChatCardFromDeck(nodes);
+    if (!resolution.ok) return null;
+    const card = resolution.card;
+    const modelKey = String(card?.runtimeOptions?.modelKey || '').trim();
+    if (!modelKey) return null;
+    const resolved = resolveModel(modelKey);
+    const uiProvider = String(card?.runtimeOptions?.provider || '').trim().toLowerCase();
+    if (uiProvider && uiProvider !== resolved.provider) return null;
+    return {
+      cardId: String(card?.id || ''),
+      title: String(card?.title || card?.id || ''),
+      prompt: String(card?.prompt || '').trim() || null,
+      provider: resolved.provider,
+      modelKey,
+      providerModelId: resolved.id,
+      deckRevision: doc?.meta?.deckRevision || null,
+      doorwayDefinitions: selectDoorwayCards(nodes, mode)
+        .map(buildCardDoorwayDefinition)
+        .filter((def): def is Record<string, unknown> => Boolean(def)),
+    };
   } catch {
     return null;
   }
@@ -309,17 +357,31 @@ export async function startGrpcTurn(
     });
   });
 
-  const [doorwayDefinitions, appendSystemPrompt] = await Promise.all([
-    resolveCardDoorwayDefinitions(args.sessionId, args.mode === 'canvas' ? 'canvas' : 'chat'),
-    resolveMainChatSystemPrompt(args.sessionId),
-  ]);
+  const mode = args.mode === 'canvas' ? 'canvas' : 'chat';
+  const mainChatConfig = await resolveMainChatRuntimeConfig(args.sessionId, mode);
+  const doorwayDefinitions = mainChatConfig?.doorwayDefinitions ?? [];
+  const appendSystemPrompt = mainChatConfig?.prompt ?? null;
+  const resolvedModel = mainChatConfig?.providerModelId || args.model || '';
+  if (args.traceId) {
+    logHarnessTrace(
+      [
+        `[harness] main_chat resolved corr=${args.traceId}`,
+        `cardId=${mainChatConfig?.cardId || 'none'}`,
+        `provider=${mainChatConfig?.provider || 'none'}`,
+        `model=${mainChatConfig?.modelKey || 'none'}`,
+        `prompt=${appendSystemPrompt ? 'present' : 'missing'}`,
+        `doorways=${doorwayDefinitions.map((def: any) => def.card_id).join(',') || 'none'}`,
+        `deckRevision=${mainChatConfig?.deckRevision || 'none'}`,
+      ].join(' '),
+    );
+  }
 
   call.write({
     request: {
       message: args.message,
       working_directory: args.workingDirectory,
       session_id: args.sessionId,
-      ...(args.model ? { model: args.model } : {}),
+      ...(resolvedModel ? { model: resolvedModel } : {}),
       ...(doorwayDefinitions.length > 0 ? { agent_definitions: doorwayDefinitions } : {}),
       // Appended AFTER the locked vendored base prompt (QueryEngine's
       // appendSystemPrompt), never replacing it — the saved card is the only

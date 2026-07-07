@@ -14,6 +14,7 @@ import {
   deriveSessionId,
   doorwayWhenToUse,
   resolveCardDoorwayDefinitions,
+  resolveMainChatRuntimeConfig,
   resolveMainChatSystemPrompt,
   selectDoorwayCards,
 } from './grpcChatClient';
@@ -176,6 +177,50 @@ describe('resolveMainChatSystemPrompt', () => {
     deckMocks.getDeckDocument.mockRejectedValueOnce(new Error('project_not_found'));
     const result = await resolveMainChatSystemPrompt(deriveSessionId('missing-project', 'main'));
     expect(result).toBeNull();
+  });
+});
+
+describe('resolveMainChatRuntimeConfig', () => {
+  beforeEach(() => {
+    deckMocks.getDeckDocument.mockClear();
+  });
+
+  it('resolves saved main_chat prompt/model plus real doorways from the persisted deck', async () => {
+    deckMocks.getDeckDocument.mockResolvedValueOnce({
+      ...deckWith([
+        {
+          id: 'card_main_chat',
+          runtimeBinding: 'main_chat',
+          prompt: 'Saved parent prompt.',
+          title: 'Main Chat / Harness',
+          runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.1-chat-latest' },
+        },
+        TG_CARD,
+        LOCAL_CODER_CARD,
+      ]),
+      meta: { deckRevision: 'rev-1', deckSavedAt: null },
+    });
+
+    const config = await resolveMainChatRuntimeConfig(deriveSessionId('project-1', 'main'), 'chat');
+    expect(config).toMatchObject({
+      cardId: 'card_main_chat',
+      provider: 'openai',
+      modelKey: 'gpt-5.1-chat-latest',
+      providerModelId: 'gpt-5.1-chat-latest',
+      prompt: 'Saved parent prompt.',
+      deckRevision: 'rev-1',
+    });
+    expect(config?.doorwayDefinitions.map((def: any) => def.card_id)).toEqual([
+      'card_thinkgraph_agent',
+      'card_local_coder',
+    ]);
+  });
+
+  it('returns null when the saved main_chat model is missing instead of using a hidden default', async () => {
+    deckMocks.getDeckDocument.mockResolvedValueOnce(
+      deckWith([{ id: 'card_main_chat', runtimeBinding: 'main_chat', prompt: 'Saved parent prompt.' }]),
+    );
+    await expect(resolveMainChatRuntimeConfig(deriveSessionId('project-1', 'main'), 'chat')).resolves.toBeNull();
   });
 });
 

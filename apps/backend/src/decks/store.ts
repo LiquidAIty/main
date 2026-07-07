@@ -5,7 +5,15 @@
 // @graph feeds_to: DeckRunRoute
 import { createHash, randomUUID } from 'crypto';
 import { pool } from '../db/pool';
+import { normalizeLocalCoderControllerCard } from '../cards/localCoderController';
 import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
+import {
+  buildMainChatBusEdge,
+  buildMainChatControllerCard,
+  MAIN_CHAT_CARD_ID,
+  MAIN_CHAT_PROMPT_ID,
+  MAIN_CHAT_PROMPT_TEMPLATE,
+} from './mainChatControllerCard';
 import type {
   AgentCardInstance,
   AgentCardRuntimeOptions,
@@ -247,7 +255,7 @@ function normalizeDeckNode(value: unknown): AgentCardInstance | null {
           y: Number((raw.position as Record<string, unknown>).y) || 0,
         }
       : { x: 0, y: 0 };
-  return {
+  return normalizeLocalCoderControllerCard({
     id: String(raw.id || '').trim(),
     kind: 'agent',
     templateId: String(raw.templateId || '').trim(),
@@ -263,7 +271,7 @@ function normalizeDeckNode(value: unknown): AgentCardInstance | null {
     overrides: overrides as AgentCardInstance['overrides'],
     status,
     cloneConfig: cloneConfig as AgentCardInstance['cloneConfig'],
-  };
+  } as AgentCardInstance);
 }
 
 function normalizeDeckEdge(value: unknown): DeckEdge | null {
@@ -283,10 +291,57 @@ function normalizeDeckEdge(value: unknown): DeckEdge | null {
   };
 }
 
+function ensureMainChatControllerCard(deck: DeckDocument): DeckDocument {
+  if (deck.id !== 'deck_builder') return deck;
+  const promptTemplateExists = deck.promptTemplates.some((template) => template.id === MAIN_CHAT_PROMPT_ID);
+  const promptTemplates = promptTemplateExists
+    ? deck.promptTemplates
+    : [MAIN_CHAT_PROMPT_TEMPLATE, ...deck.promptTemplates];
+  const mainChatMatches = deck.nodes.filter(
+    (node) =>
+      resolveRuntimeBinding((node.runtimeOptions as any)?.binding ?? node.runtimeBinding, node.id) ===
+      'main_chat',
+  );
+  const prompt =
+    mainChatMatches[0]?.prompt?.trim() ||
+    promptTemplates.find((template) => template.id === MAIN_CHAT_PROMPT_ID)?.content ||
+    MAIN_CHAT_PROMPT_TEMPLATE.content;
+  const nodes =
+    mainChatMatches.length === 0
+      ? [buildMainChatControllerCard(prompt), ...deck.nodes]
+      : deck.nodes.map((node) => {
+          if (node.id !== mainChatMatches[0].id) return node;
+          return normalizeDeckNode({
+            ...node,
+            id: MAIN_CHAT_CARD_ID,
+            title: node.title?.trim() || 'Main Chat / Harness',
+            subtitle: node.subtitle?.trim() || 'Native Harness front door',
+            templateId: node.templateId?.trim() || 'template_main_chat',
+            prompt,
+            runtimeBinding: 'main_chat',
+            runtimeType: 'assistant_agent',
+            runtimeOptions: {
+              ...(node.runtimeOptions || {}),
+              provider: node.runtimeOptions?.provider || 'openai',
+              modelKey: node.runtimeOptions?.modelKey || 'gpt-5.1-chat-latest',
+            },
+            parentGraphId: null,
+          }) || node;
+        });
+  const hasMainChatBusEdge = deck.edges.some(
+    (edge) =>
+      edge.edgeType === 'magentic_option' &&
+      ((edge.source === MAIN_CHAT_CARD_ID && edge.target === 'card_magentic') ||
+        (edge.target === MAIN_CHAT_CARD_ID && edge.source === 'card_magentic')),
+  );
+  const edges = hasMainChatBusEdge ? deck.edges : [buildMainChatBusEdge(), ...deck.edges];
+  return { ...deck, promptTemplates, nodes, edges };
+}
+
 function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as any;
-  return {
+  const deck = {
     id: String(raw.id || fallbackId).trim() || fallbackId,
     name: String(raw.name || 'Deck').trim() || 'Deck',
     workspaceRoot: cleanOptionalText(raw.workspaceRoot),
@@ -311,6 +366,7 @@ function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument
           .filter((edge: DeckEdge | null): edge is DeckEdge => Boolean(edge))
       : [],
   };
+  return ensureMainChatControllerCard(deck);
 }
 
 function normalizeDeckRuns(value: unknown): DeckRun[] {

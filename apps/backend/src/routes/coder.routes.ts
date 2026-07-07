@@ -186,7 +186,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
   const projectId = String(req.body?.projectId || '');
   const conversationId = String(req.body?.conversationId || 'default');
   const message = String(req.body?.message || '');
-  const model = typeof req.body?.model === 'string' ? req.body.model : undefined;
   // Explicit Harness surface state from the client (chat vs Agent Canvas /
   // Edit mode) — decides which card doorways this turn exposes. Never inferred
   // from message content.
@@ -214,7 +213,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
   // a DB failure must never block or break the live SSE stream.
   void appendMessage({ projectId, conversationId, role: 'user', content: message }).catch(() => null);
   try {
-    const handle = await startGrpcTurn({ sessionId, message, workingDirectory, model, mode }, (event) => {
+    const handle = await startGrpcTurn({ sessionId, message, workingDirectory, mode, traceId: correlationId }, (event) => {
       // Backend trace of the REAL event (only when it carries lifecycle signal),
       // then the unchanged SSE forward to the browser.
       const traceLine = formatHarnessTrace(event, correlationId);

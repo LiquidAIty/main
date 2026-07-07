@@ -17,6 +17,7 @@ import { resolveModel } from '../llm/models.config';
 import { resolveCoderWorkspaceRoot } from '../coder/workspaceRoot';
 import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
 import { logHarnessTrace, redactTrace } from '../services/harnessTrace';
+import { normalizeLocalCoderControllerCard } from './localCoderController';
 
 function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
   const provider = String(value ?? '').trim().toLowerCase();
@@ -105,6 +106,8 @@ export function resolvedMagenticOptions(
     .filter((node): node is any => Boolean(node && node.kind === 'agent'))
     .filter((node) => !String(node.parentGraphId || '').trim())
     .filter((node) => {
+      const binding = resolveRuntimeBinding(node.runtimeOptions?.binding ?? node.runtimeBinding ?? node.binding, node.id);
+      if (binding === 'main_chat') return false;
       const runtimeType = resolveCardRuntimeType(node);
       return isAssistLikeRuntimeType(runtimeType) || runtimeType === 'graph_flow';
     })
@@ -123,6 +126,7 @@ function resolveCardModelStrict(card: any): {
   provider: string;
   providerModelId: string;
 } {
+  card = normalizeLocalCoderControllerCard(card);
   const modelKey = card.runtimeOptions?.modelKey;
   if (!modelKey) {
     throw new Error(
@@ -140,6 +144,7 @@ function resolveCardModelStrict(card: any): {
 }
 
 function resolveCardTools(card: any): string[] {
+  card = normalizeLocalCoderControllerCard(card);
   const fromOptions = card.runtimeOptions?.tools;
   const raw = Array.isArray(fromOptions) ? fromOptions : Array.isArray(card.tools) ? card.tools : [];
   // The card Tools tab is the only allowed source, and only known enabled
@@ -164,6 +169,7 @@ function resolveCardTools(card: any): string[] {
 }
 
 function resolveCardFanOut(card: any): Record<string, any> | null {
+  card = normalizeLocalCoderControllerCard(card);
   const fanOut = card.runtimeOptions?.fanOut;
   if (fanOut && typeof fanOut === 'object') return fanOut;
   // The persisted card-editor fan-out setting is executionMode='swarm'.
@@ -286,6 +292,7 @@ export function buildRuntimeGraph(
  * source of truth for how a canvas card becomes a Python AutoGen participant.
  */
 export function serializeCardParticipant(head: any, allCards: any[]): Record<string, unknown> {
+  head = normalizeLocalCoderControllerCard(head);
   const model = resolveCardModelStrict(head);
   return {
     cardId: String(head.id || ''),
@@ -314,6 +321,7 @@ export function serializeCardParticipant(head: any, allCards: any[]): Record<str
 }
 
 export function serializeCardPrivateParticipant(head: any): Record<string, unknown> {
+  head = normalizeLocalCoderControllerCard(head);
   // Saved runtimeType only — no templateId/title inference. A card is whatever
   // its saved configuration says it is.
   const mappedRuntimeType =
@@ -564,15 +572,16 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     });
   }
 
+  const effectiveCard = normalizeLocalCoderControllerCard(card);
   let participant: Record<string, unknown>;
   let privateParticipant: Record<string, unknown>;
   let model: { provider: string; providerModelId: string };
   try {
     // Same strict resolution the Mag One path uses — throws honest
     // card_model_config_missing / card_tool_unknown / card_tool_disabled errors.
-    model = resolveCardModelStrict(card);
-    participant = serializeCardParticipant(card, nodes);
-    privateParticipant = serializeCardPrivateParticipant(card);
+    model = resolveCardModelStrict(effectiveCard);
+    participant = serializeCardParticipant(effectiveCard, nodes);
+    privateParticipant = serializeCardPrivateParticipant(effectiveCard);
   } catch (error: any) {
     return done({ status: 'failed', runtimeType, error: String(error?.message || 'card_resolution_failed') });
   }
@@ -590,8 +599,8 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
   // actually gets its scoped write authority — otherwise apply_thinkgraph_patch
   // reports thinkgraph_authority_missing and the card cannot write.
   const resolvedBinding = resolveRuntimeBinding(
-    card?.runtimeOptions?.binding ?? card?.runtimeBinding ?? card?.binding,
-    card?.id,
+    effectiveCard?.runtimeOptions?.binding ?? effectiveCard?.runtimeBinding ?? effectiveCard?.binding,
+    effectiveCard?.id,
   );
   const runAuthority =
     args.runAuthority && Object.keys(args.runAuthority).length > 0
@@ -617,7 +626,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
       route: 'single_card',
       orchestrator: 'assistant_agent' as const,
       modelProvider: model.provider,
-      modelKey: String(card.runtimeOptions?.modelKey || ''),
+      modelKey: String(effectiveCard.runtimeOptions?.modelKey || ''),
       providerModelId: model.providerModelId,
       startedAt,
     },
@@ -632,7 +641,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     },
     cardRuntime: {
       cardId,
-      title: String(card.title || 'Agent'),
+      title: String(effectiveCard.title || 'Agent'),
       runtimeType: 'assistant_agent' as const,
       prompt: '',
       // deckId is a persisted structural reference only — the Python runtime uses it

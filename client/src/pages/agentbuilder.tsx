@@ -561,6 +561,8 @@ const LOCAL_CODER_CONTROLLER_MODEL_KEY = 'gpt-5.1-chat-latest';
 const LOCAL_CODER_CONTROLLER_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
 const LOCAL_CODER_CONTROLLER_TOOLS = ['run_local_coder'] as const;
 const STALE_LOCAL_CODER_MODEL_KEYS = new Set([
+  'gpt-5-mini',
+  'or-openai-gpt-5-mini',
   'kimi-k2-thinking',
   'moonshotai/kimi-k2-thinking',
   'moonshotai/kimi-k2:free',
@@ -1909,7 +1911,7 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
   },
   {
     id: 'template_main_chat',
-    name: 'Harness',
+    name: 'Main Chat / Harness',
     promptTemplate: 'prompt_main_chat',
     model: 'gpt-5.1-chat-latest',
     provider: 'openai',
@@ -2131,13 +2133,10 @@ export const INITIAL_DECK: DeckDocument = {
   nodes: [
     {
       // The Harness front-door card. runtimeBinding 'main_chat' is the ONLY thing
-      // that matters here: grpcChatClient.resolveMainChatSystemPrompt reads this
-      // card's prompt and appends it to the live Harness chat. It is intentionally
-      // NOT bus-connected and NOT a doorway (selectDoorwayCards excludes main_chat),
-      // so it never runs as a worker or orchestrator — it is only the Harness's
-      // saved, editable instruction surface. The id/binding are already expected by
-      // SYSTEM_CARD_RUNTIME_BINDINGS + LEGACY_SYSTEM_CARD_IDS; this makes the
-      // already-referenced card actually exist.
+      // that matters here: grpcChatClient reads this card's saved prompt/model
+      // and appends the prompt to the live Harness chat. It is visually
+      // bus-connected as the front door, but never a doorway or Mag One worker
+      // (runtime filters exclude main_chat).
       id: 'card_main_chat',
       kind: 'agent',
       templateId: 'template_main_chat',
@@ -2147,10 +2146,14 @@ export const INITIAL_DECK: DeckDocument = {
         )?.content || '',
       runtimeBinding: 'main_chat',
       runtimeType: 'assistant_agent',
+      runtimeOptions: {
+        provider: 'openai',
+        modelKey: 'gpt-5.1-chat-latest',
+      },
       parentGraphId: null,
-      title: 'Harness',
-      subtitle: 'Main chat — authors the Run Packet',
-      position: { x: 340, y: 120 },
+      title: 'Main Chat / Harness',
+      subtitle: 'Native Harness front door',
+      position: { x: -24, y: -24 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -2431,7 +2434,15 @@ export const INITIAL_DECK: DeckDocument = {
     },
     ...buildUaAgentSeedNodes(),
   ],
-  edges: [],
+  edges: [
+    {
+      id: 'edge_main_chat_harness_bus',
+      source: 'card_main_chat',
+      target: 'card_magentic',
+      targetHandle: 'bus-in-0',
+      edgeType: 'magentic_option',
+    },
+  ],
 };
 
 const BUILDER_DECK_ID = INITIAL_DECK.id;

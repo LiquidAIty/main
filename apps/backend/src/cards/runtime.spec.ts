@@ -65,6 +65,31 @@ describe('Canonical Cards Runtime', () => {
     expect(resolved.map(r => r.id)).toEqual(expect.arrayContaining(['agentA', 'agentB']));
   });
 
+  it('does not treat the visually bus-connected main_chat controller as a Mag One worker', () => {
+    const cardM = { id: 'card_magentic', kind: 'agent', runtimeType: 'magentic_one' };
+    const mainChat = {
+      id: 'card_main_chat',
+      kind: 'agent',
+      runtimeType: 'assistant_agent',
+      runtimeBinding: 'main_chat',
+      runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.1-chat-latest' },
+    };
+    const think = {
+      id: 'card_thinkgraph_agent',
+      kind: 'agent',
+      runtimeType: 'assistant_agent',
+      runtimeBinding: 'thinkgraph_agent',
+      runtimeOptions: { modelKey: 'gpt-5-nano' },
+    };
+    const edges = [
+      { id: 'edge_main_chat_harness_bus', source: mainChat.id, target: cardM.id, edgeType: 'magentic_option' },
+      { id: 'edge_thinkgraph', source: think.id, target: cardM.id, edgeType: 'magentic_option' },
+    ];
+
+    const resolved = resolvedMagenticOptions(cardM.id, [cardM, mainChat, think], edges);
+    expect(resolved.map((node) => node.id)).toEqual(['card_thinkgraph_agent']);
+  });
+
   it('flow-only edge does not imply Magentic option', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const cardA = { id: 'agentA', kind: 'agent', runtimeType: 'assistant_agent' };

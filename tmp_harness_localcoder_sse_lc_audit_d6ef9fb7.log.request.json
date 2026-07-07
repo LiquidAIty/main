@@ -1,0 +1,1 @@
+{"projectId":"20ac92da-01fd-4cf6-97cc-0672421e751a","message":"Delegate this to the Local Coder saved card. Have it read apps/backend/src/cards/runtime.ts and create a grounded markdown artifact named CODER_RUNTIME_AUDIT.md with concrete findings based only on what it actually reads. Do not summarize from memory.","conversationId":"lc_audit_d6ef9fb7"}

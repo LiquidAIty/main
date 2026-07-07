@@ -46,6 +46,11 @@ const LOCAL_CODER_CARD = {
   runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.1-chat-latest', tools: ['run_local_coder'] },
 };
 
+const STALE_LOCAL_CODER_CARD = {
+  ...LOCAL_CODER_CARD,
+  runtimeOptions: { provider: 'openai', modelKey: 'gpt-5-mini', tools: ['run_local_coder'] },
+};
+
 function deckWith(nodes: any[]) {
   return { deck: { id: 'deck_builder', nodes, edges: [] }, latestRun: null, runs: [], meta: { deckRevision: null, deckSavedAt: null } };
 }
@@ -161,6 +166,24 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(payload.cardRuntime.participants[0].runtimeBinding).toBe('local_coder');
     expect(payload.cardRuntime.participants[0].tools).toEqual(['run_local_coder']);
     expect(payload.cardRuntime.privateParticipants[0].prompt).toBe('You are the Local Coder controller.');
+  });
+
+  it('upgrades the broken mini Local Coder controller model before dispatch', async () => {
+    mockGetDeck.mockResolvedValue(deckWith([STALE_LOCAL_CODER_CARD]));
+    mockRunCard.mockResolvedValue({ ok: true, finalResponseText: '{"status":"succeeded"}' });
+
+    const result = await runConfiguredCard({
+      ...ARGS,
+      cardId: 'card_local_coder',
+      input: 'write the bounded plan file',
+    });
+
+    expect(result.status).toBe('completed');
+    const payload = mockRunCard.mock.calls[0][0];
+    expect(payload.session.modelKey).toBe('gpt-5.1-chat-latest');
+    expect(payload.session.providerModelId).toBe('gpt-5.1-chat-latest');
+    expect(payload.cardRuntime.participants[0].providerModelId).toBe('gpt-5.1-chat-latest');
+    expect(payload.cardRuntime.privateParticipants[0].providerModelId).toBe('gpt-5.1-chat-latest');
   });
 
   it('assigns a standalone run a returns folder under the default coder-workspace, and threads returned files back', async () => {

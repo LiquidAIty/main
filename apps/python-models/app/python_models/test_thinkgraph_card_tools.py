@@ -128,6 +128,14 @@ class TestPythonMcpHost:
             "thinkgraph.get_graph_slice",
         ])
 
+    def test_card_run_schema_matches_the_doorway_contract(self):
+        from app import mcp_host
+
+        tools = asyncio.run(mcp_host.list_tools())
+        card_run = next(t for t in tools if t.name == "card.run_assistant_agent")
+        required = set((card_run.inputSchema or {}).get("required") or [])
+        assert required == {"cardId", "input"}
+
     def test_host_never_exposes_a_write_tool_or_pair_front_door(self):
         from app import mcp_host
 

@@ -277,9 +277,11 @@ async def list_tools() -> list[Tool]:
                 "Run ONE saved, enabled assistant_agent card with its saved prompt/model/tools and "
                 "its assigned profile/skills/data bindings. No prompt/model/tool/card overrides "
                 "exist on this path — extra arguments are rejected structurally. deckId defaults to "
-                "the canonical Agent Canvas deck. conversationId is the real live conversation this "
-                "run belongs to, when one exists — card-scoped authority is minted server-side from "
-                "it; never invent one."
+                "the canonical Agent Canvas deck. On the Harness saved-card doorway path, the "
+                "server injects projectId/correlationId/conversationId; the model supplies the "
+                "bound cardId plus the task input only. conversationId is the real live "
+                "conversation this run belongs to, when one exists — card-scoped authority is "
+                "minted server-side from it; never invent one."
             ),
             inputSchema={
                 "type": "object",
@@ -291,7 +293,7 @@ async def list_tools() -> list[Tool]:
                     "conversationId": {"type": "string"},
                     "input": {"type": "string"},
                 },
-                "required": ["projectId", "cardId", "correlationId", "input"],
+                "required": ["cardId", "input"],
             },
         ),
     ]
