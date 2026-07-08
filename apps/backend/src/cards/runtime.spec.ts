@@ -24,7 +24,7 @@ describe('Canonical Cards Runtime', () => {
     const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one', title: 'Magentic-One' };
     const coder = {
       id: 'coder', kind: 'agent', runtimeType: 'local_coder', runtimeBinding: 'local_coder',
-      title: 'Local Coder', runtimeOptions: { modelKey: 'gpt-5-nano' },
+      title: 'Local Coder', runtimeOptions: { modelKey: 'z-ai/glm-5.2', provider: 'openrouter' },
     };
     const codegraph = {
       id: 'codegraph', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'codegraph_agent',
@@ -152,6 +152,90 @@ describe('Canonical Cards Runtime', () => {
     expect(participant?.tools).toContain('retrieve_knowgraph_context');
   });
 
+  it('does not add ThinkGraph authority to the Mag One runtime scope', () => {
+    const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
+    const think = {
+      id: 'think',
+      kind: 'agent',
+      runtimeType: 'assistant_agent',
+      runtimeBinding: 'thinkgraph_agent',
+      runtimeOptions: {
+        modelKey: 'z-ai/glm-5.2',
+        provider: 'openrouter',
+        tools: ['read_thinkgraph_scope', 'apply_thinkgraph_patch'],
+      },
+    };
+    const plan = {
+      id: 'plan',
+      kind: 'agent',
+      runtimeType: 'assistant_agent',
+      runtimeBinding: 'plan_agent',
+      runtimeOptions: { modelKey: 'z-ai/glm-5.2', provider: 'openrouter', tools: ['calculator'] },
+    };
+    const allCards = [cardM, think, plan];
+    const allEdges = [think, plan].map((agent) => ({
+      id: `edge-${agent.id}`, source: agent.id, target: cardM.id, edgeType: 'magentic_option',
+    }));
+    const callable = resolvedMagenticOptions(cardM.id, allCards, allEdges);
+    const payload = buildPythonAutoGenCardRuntimePayload(
+      cardM, {}, 'probe graph tools', { projectId: 'project-1', deckId: 'deck', allCards, allEdges }, {}, callable, '2026',
+    );
+
+    expect((payload.cardRuntime.runtimeScope as any)?.thinkGraphReadAuthority).toBeUndefined();
+    expect(payload.cardRuntime.participants.find((p) => p.cardId === 'think')?.tools).toEqual([
+      'read_thinkgraph_scope',
+      'apply_thinkgraph_patch',
+    ]);
+  });
+
+  it('does not add hidden graph authority for non-ThinkGraph workers or ThinkGraph cards without the read tool', () => {
+    const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
+    const thinkNoRead = {
+      id: 'think',
+      kind: 'agent',
+      runtimeType: 'assistant_agent',
+      runtimeBinding: 'thinkgraph_agent',
+      runtimeOptions: { modelKey: 'z-ai/glm-5.2', provider: 'openrouter', tools: ['calculator'] },
+    };
+    const researchWithReadToolButWrongBinding = {
+      id: 'research',
+      kind: 'agent',
+      runtimeType: 'assistant_agent',
+      runtimeBinding: 'research_agent',
+      runtimeOptions: { modelKey: 'z-ai/glm-5.2', provider: 'openrouter', tools: ['read_thinkgraph_scope'] },
+    };
+    const allCards = [cardM, thinkNoRead, researchWithReadToolButWrongBinding];
+    const allEdges = [thinkNoRead, researchWithReadToolButWrongBinding].map((agent) => ({
+      id: `edge-${agent.id}`, source: agent.id, target: cardM.id, edgeType: 'magentic_option',
+    }));
+    const callable = resolvedMagenticOptions(cardM.id, allCards, allEdges);
+    const payload = buildPythonAutoGenCardRuntimePayload(
+      cardM, {}, 'probe graph tools', { projectId: 'project-1', deckId: 'deck', allCards, allEdges }, {}, callable, '2026',
+    );
+
+    expect((payload.cardRuntime.runtimeScope as any)?.thinkGraphReadAuthority).toBeUndefined();
+  });
+
+  it('contains no magnet packet graph authority field or hard-coded mission strings in the Mag One runtime scope', () => {
+    const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
+    const think = {
+      id: 'think',
+      kind: 'agent',
+      runtimeType: 'assistant_agent',
+      runtimeBinding: 'thinkgraph_agent',
+      runtimeOptions: { modelKey: 'z-ai/glm-5.2', provider: 'openrouter', tools: ['read_thinkgraph_scope'] },
+    };
+    const payload = buildPythonAutoGenCardRuntimePayload(
+      cardM, {}, 'generic task', { projectId: 'project-1', deckId: 'deck', allCards: [cardM, think], allEdges: [] }, {}, [think], '2026',
+    );
+    const raw = JSON.stringify(payload.cardRuntime.runtimeScope);
+    expect(raw).not.toContain('thinkGraphReadAuthority');
+    expect(raw).not.toContain('magone_graph_tool_probe');
+    expect(raw).not.toContain('trading');
+    expect(raw).not.toContain('EDGAR');
+    expect(raw).not.toContain('liquidity');
+  });
+
   it('rejects an unknown card tool id honestly (not silently dropped)', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const research = {
@@ -225,7 +309,7 @@ describe('Canonical Cards Runtime', () => {
       runtimeType: 'local_coder',
       runtimeBinding: 'local_coder',
       title: 'Local Coder',
-      runtimeOptions: { modelKey: 'gpt-5-nano' },
+      runtimeOptions: { modelKey: 'z-ai/glm-5.2', provider: 'openrouter' },
     };
     const think = { id: 'think', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'thinkgraph_agent', title: 'ThinkGraph Agent', runtimeOptions: { modelKey: 'gpt-5-nano' } };
     const allCards = [mag, plan, codegraph, coder, think];

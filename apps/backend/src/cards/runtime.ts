@@ -78,6 +78,14 @@ function resolveCardRuntimeType(card: any): string {
     : 'assistant_agent';
 }
 
+function resolveCardBinding(card: any): string | null {
+  const binding = resolveRuntimeBinding(
+    card?.runtimeOptions?.binding ?? card?.runtimeBinding ?? card?.binding,
+    card?.id,
+  );
+  return binding || null;
+}
+
 function isAssistLikeRuntimeType(runtimeType: string): boolean {
   return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
 }
@@ -106,7 +114,7 @@ export function resolvedMagenticOptions(
     .filter((node): node is any => Boolean(node && node.kind === 'agent'))
     .filter((node) => !String(node.parentGraphId || '').trim())
     .filter((node) => {
-      const binding = resolveRuntimeBinding(node.runtimeOptions?.binding ?? node.runtimeBinding ?? node.binding, node.id);
+      const binding = resolveCardBinding(node);
       if (binding === 'main_chat') return false;
       const runtimeType = resolveCardRuntimeType(node);
       return isAssistLikeRuntimeType(runtimeType) || runtimeType === 'graph_flow';
@@ -294,11 +302,12 @@ export function buildRuntimeGraph(
 export function serializeCardParticipant(head: any, allCards: any[]): Record<string, unknown> {
   head = normalizeLocalCoderControllerCard(head);
   const model = resolveCardModelStrict(head);
+  const runtimeBinding = resolveCardBinding(head);
   return {
     cardId: String(head.id || ''),
     title: String(head.title || 'Agent'),
     runtimeType: 'assistant_agent',
-    runtimeBinding: head.runtimeBinding || null,
+    runtimeBinding,
     summary: `Participant ${head.title || 'Agent'}`,
     allowedActions: [],
     inputContract: 'text',
@@ -330,11 +339,12 @@ export function serializeCardPrivateParticipant(head: any): Record<string, unkno
       : 'assistant_agent';
 
   const model = resolveCardModelStrict(head);
+  const runtimeBinding = resolveCardBinding(head);
 
   return {
     cardId: String(head.id || ''),
     runtimeType: mappedRuntimeType,
-    runtimeBinding: head.runtimeBinding || null,
+    runtimeBinding,
     prompt: String(head.prompt || '').trim(),
     provider: model.provider,
     providerModelId: model.providerModelId,
@@ -396,7 +406,6 @@ export function buildPythonAutoGenCardRuntimePayload(
   // The mission input passes through normally. No deterministic keyword classifier
   // and no mutation of the prior assistant text — native Mag One owns interpretation.
   const priorAssistantText = String(context.previousOutput || '').trim();
-
   const payload: PythonAutoGenPayloadShape = {
     session: {
       sessionId,
