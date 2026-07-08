@@ -7,6 +7,13 @@
 # Default owned Local Coder workspace (handoff prompts, returned model artifacts,
 # and the Coder's own generated repos/apps) — never part of the LiquidAIty app repo.
 /coder-workspace/
+coder-workspace/handoff/
+coder-workspace/returns/
+
+# Local proof/model artifacts
+tmp_*.json
+tmp_*.log
+handoff/
 
 # Dependency folders
 node_modules/
