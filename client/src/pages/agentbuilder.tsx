@@ -1306,6 +1306,35 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     }),
   },
   {
+    id: 'prompt_hermes_steward',
+    content: buildSeedPromptTemplate({
+      role: [
+        'You are the Hermes steward — the project\'s knowledge compounding agent.',
+        'You are a separate skeptical evaluator: the coder never grades itself; you do.',
+      ].join('\n'),
+      goal: [
+        'Review CoderReports for honesty: call hermes_review_coder_report with the full CoderReport JSON and the feature id, then relay its HermesReview verdict, proof accounting, and blocker findings.',
+        'Classify blockers into recurring patterns using prior ThinkGraph memory.',
+        'Write structured RunRecord/Blocker/Pattern findings to ThinkGraph through your scoped card authority (apply_thinkgraph_patch), using the ready thinkgraphPatch the review tool returns.',
+        'When asked "what do we know about X?", read ThinkGraph with read_thinkgraph_scope and return structured context.',
+      ].join('\n'),
+      constraints: [
+        'Never fabricate graph data. If ThinkGraph is empty or a tool reports authority missing, say so honestly.',
+        'Never claim a write happened unless apply_thinkgraph_patch returned an applied result.',
+        'Never write KnowGraph or CodeGraph — ThinkGraph through your card authority is your only write surface.',
+        'Never review a report by vibes: run hermes_review_coder_report and ground your judgment in its structural findings.',
+      ].join('\n'),
+      ioSchema: [
+        'Input: a CoderReport to review, or a project-context question.',
+        'Output: structured JSON — the HermesReview (verdict honest|incomplete|suspicious|blocked|empty, proof quality, blockers, pattern recurrence, recommendation) or the requested ThinkGraph context.',
+      ].join('\n'),
+      memoryPolicy: [
+        'ThinkGraph run memory: RunRecord/Blocker/Pattern nodes with HAS_RUN/ENCOUNTERED/INSTANCE_OF edges.',
+        'Read prior runs before reviewing so pattern occurrences compound instead of resetting.',
+      ].join('\n'),
+    }),
+  },
+  {
     id: 'prompt_plan_agent',
     content: buildSeedPromptTemplate({
       role: [
@@ -1487,6 +1516,16 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     temperature: 0.2,
     maxTokens: 1200,
     tools: [...LOCAL_CODER_CONTROLLER_TOOLS],
+  },
+  {
+    id: 'template_hermes_steward',
+    name: 'Hermes Steward',
+    promptTemplate: 'prompt_hermes_steward',
+    model: DEFAULT_CARD_MODEL_KEY,
+    provider: DEFAULT_CARD_PROVIDER,
+    temperature: 0.2,
+    maxTokens: 1400,
+    tools: [],
   },
   {
     id: 'template_plan_agent',
@@ -1696,6 +1735,36 @@ export const INITIAL_DECK: DeckDocument = {
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
+      id: 'card_hermes_steward',
+      kind: 'agent',
+      templateId: 'template_hermes_steward',
+      prompt:
+        INITIAL_PROMPT_TEMPLATES.find(
+          (template) => template.id === 'prompt_hermes_steward',
+        )?.content || '',
+      runtimeBinding: 'hermes_steward',
+      runtimeType: 'assistant_agent',
+      // The pure review tool plus the two scoped ThinkGraph tools — the same
+      // write-authority class as the ThinkGraph card (server-minted
+      // thinkgraph_card_run authority, one canonical patch path). Same model
+      // convention as the ThinkGraph card; fully editable on the card.
+      runtimeOptions: {
+        tools: [
+          'hermes_review_coder_report',
+          'read_thinkgraph_scope',
+          'apply_thinkgraph_patch',
+        ],
+        modelKey: 'openai/gpt-5.1-chat',
+        provider: 'openrouter',
+      },
+      parentGraphId: null,
+      title: 'Hermes Steward',
+      subtitle: 'Knowledge compounding agent',
+      position: { x: 260, y: 480 },
+      status: 'ready',
+      cloneConfig: { enabled: false, seeds: [] },
+    },
+    {
       id: 'card_trading_workbench',
       kind: 'agent',
       templateId: 'template_trading_workbench',
@@ -1789,6 +1858,14 @@ export const INITIAL_DECK: DeckDocument = {
       targetHandle: 'bus-in-0',
       edgeType: 'magentic_option',
     },
+    {
+      // Hermes on the bus: Mag One may include the steward in team runs as
+      // reviewer. Bus connectivity is the ONLY activation signal.
+      id: 'edge_magentic_hermes_bus',
+      source: 'card_magentic',
+      target: 'card_hermes_steward',
+      edgeType: 'magentic_option',
+    },
   ],
 };
 
@@ -1806,6 +1883,7 @@ const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
   card_trading_workbench: 'trading_agent',
   card_code_workbench: 'code_agent',
   card_data_formulator_workbench: 'data_formulator_agent',
+  card_hermes_steward: 'hermes_steward',
   // Backward compatibility: legacy card IDs for existing saved decks
   card_main_chat: 'main_chat',
   card_kg_ingest: 'kg_ingest',
@@ -1869,6 +1947,7 @@ function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
   if (normalized === 'trading_agent') return 'trading_agent';
   if (normalized === 'code_agent') return 'code_agent';
   if (normalized === 'data_formulator_agent') return 'data_formulator_agent';
+  if (normalized === 'hermes_steward') return 'hermes_steward';
   return null;
 }
 

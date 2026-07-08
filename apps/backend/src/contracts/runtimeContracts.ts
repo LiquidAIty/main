@@ -106,6 +106,35 @@ export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
     },
   },
   {
+    // Transport-validation mirror only. The real tool (pure Hermes review logic)
+    // lives solely in the Python registry (tool_registry.py
+    // hermes_review_coder_report -> app/python_models/hermes). No persistence:
+    // the returned thinkgraphPatch executes only via apply_thinkgraph_patch
+    // under the card's trusted run authority.
+    name: 'hermes_review_coder_report',
+    description:
+      'Hermes steward: skeptically review ONE CoderReport (pure logic, no persistence). ' +
+      'Returns a HermesReview (verdict, proof accounting, blocker findings, pattern ' +
+      'recurrence) plus a ready apply_thinkgraph_patch payload.',
+    enabled: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        coder_report_json: { type: 'string' },
+        feature_id: { type: 'string' },
+        run_id: { type: 'string' },
+        project_id: { type: 'string' },
+        thinkgraph_context_json: { type: 'string' },
+        codegraph_status_json: { type: 'string' },
+      },
+      required: ['coder_report_json', 'feature_id'],
+    },
+    outputSchema: {
+      type: 'string',
+      description: 'JSON { ok, review: HermesReview, thinkgraphPatch } or honest error',
+    },
+  },
+  {
     // Transport-validation mirror only. The real tool lives in the Python Mag One
     // registry (tool_registry.py run_local_coder -> POST /api/coder/localcoder/run).
     // The model supplies ONLY the logical coding task; the backend injects the

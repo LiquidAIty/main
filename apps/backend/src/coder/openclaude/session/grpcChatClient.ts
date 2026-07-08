@@ -99,6 +99,17 @@ export function doorwayWhenToUse(binding: string, title: string): string {
       'own file tools or summarizing from parent context.'
     );
   }
+  if (binding === 'hermes_steward') {
+    return (
+      'Delegate here when you need project context, run history, blocker patterns, or ' +
+      'CoderReport review. This agent has READ access to ThinkGraph project memory ' +
+      '(past runs, blockers, patterns, feature status, decisions) and can WRITE ' +
+      'structured findings back to ThinkGraph through its scoped card authority. ' +
+      'Ask it: "What do we know about X?" "Review this CoderReport." ' +
+      '"What patterns have emerged?" "What invariants touch this file?" ' +
+      'Do not review a CoderReport yourself or fabricate run history — route it here.'
+    );
+  }
   return `The saved agent card "${title}". Delegate the matching task to it and relay its result.`;
 }
 
@@ -139,9 +150,9 @@ export function buildCardDoorwayDefinition(card: any): Record<string, unknown> |
 /** Doorway-eligible saved cards for a Harness surface. Structural filters only:
  * top-level enabled assistant/local-coder cards; the main_chat card is the
  * parent itself, never a runnable doorway. Chat mode exposes at most one
- * ThinkGraph card and at most one Local Coder card (ambiguity → omit that
- * doorway, honest degrade); canvas mode exposes every eligible card for direct
- * Single Assist configure/test work. */
+ * ThinkGraph card, at most one Local Coder card, and at most one Hermes
+ * steward card (ambiguity → omit that doorway, honest degrade); canvas mode
+ * exposes every eligible card for direct Single Assist configure/test work. */
 export function selectDoorwayCards(nodes: any[], mode: HarnessMode): any[] {
   const eligible = (nodes || []).filter((node) => {
     if (String(node?.kind || 'agent') !== 'agent') return false;
@@ -164,9 +175,11 @@ export function selectDoorwayCards(nodes: any[], mode: HarnessMode): any[] {
     );
   const thinkgraph = byBinding('thinkgraph_agent');
   const localCoder = byBinding('local_coder');
+  const hermes = byBinding('hermes_steward');
   return [
     ...(thinkgraph.length === 1 ? thinkgraph : []),
     ...(localCoder.length === 1 ? localCoder : []),
+    ...(hermes.length === 1 ? hermes : []),
   ];
 }
 

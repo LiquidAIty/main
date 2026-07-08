@@ -615,11 +615,15 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
   const runAuthority =
     args.runAuthority && Object.keys(args.runAuthority).length > 0
       ? args.runAuthority
-      : resolvedBinding === 'thinkgraph_agent' && conversationId
+      : (resolvedBinding === 'thinkgraph_agent' || resolvedBinding === 'hermes_steward') &&
+          conversationId
         ? {
             // Direct configured-card-run authority — describes what it actually
             // is (a live ThinkGraph card run), never a user/assistant pair. Only
-            // trusted runtime values; no message-pair identity exists.
+            // trusted runtime values; no message-pair identity exists. The Hermes
+            // steward carries the same scoped authority: it persists RunRecord/
+            // Blocker/Pattern findings through the SAME canonical
+            // apply_thinkgraph_patch path (never a second write path).
             kind: 'thinkgraph_card_run',
             projectId,
             cardId,

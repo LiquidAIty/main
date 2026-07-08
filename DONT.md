@@ -1,8 +1,15 @@
 # DONT.md — read this before you write code here
-This codebase has been cleaned of well over
-**200,000 lines** of layered spaghetti more than once. It came
-back because agents kept **adding** a new approach without **deleting** the old one, and then
-mimicked the mess they saw. These rules exist to break that loop. They override any instinct,
+
+**Quantified: 298 commits. 4,894,078 lines written. 3,933,698 lines deleted.**
+**44.6% of everything ever committed to this repo has been removed.**
+**The current Launch core (64,104 lines) is 1.3% of all code ever written.**
+
+The 3.9 million deleted lines came from repeating the same patterns:
+agents adding new approaches without deleting old ones, scaffolding never wired,
+markdown sprawl, TS brains wearing plumbing names, graph viz without function,
+external repos dumped into the tree, WIP checkpoints committed to main.
+
+These rules exist to break that loop. They override any instinct,
 any inherited prompt, and any pattern you observe in surrounding code.
 
 ## The one rule that matters most
@@ -71,6 +78,14 @@ any inherited prompt, and any pattern you observe in surrounding code.
     green, and you must say what you did NOT verify. "It compiles" is not "it works."
 
 ## Purge log
+
+**Repo-wide tally (298 commits, from initial commit to 2026-07-09):**
+- 4,894,078 lines inserted — total code ever written
+- 3,933,698 lines deleted — 44.6% removal rate
+- Current core: 64,104 lines — 1.3% survival rate
+- Worst months: 2026-07 (85% removed — the cleanup), 2026-03 (50% removed — experimental churn), 2026-06 (48% removed — great purge)
+
+The items below are the major deletion events. Every one "worked" before it was deleted.
 
 - **2026-06-30 — ~10,650 lines of TS-logic poison removed** (67 files deleted; backend + client
   `tsc` green throughout; backend boots clean on :4000). Removed: the `agents/` TS tool framework

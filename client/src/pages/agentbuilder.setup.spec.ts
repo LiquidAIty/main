@@ -184,6 +184,7 @@ describe('agentbuilder authoring flow', () => {
       'Research Agent',
       'KnowGraph Agent',
       'Local Coder',
+      'Hermes Steward',
       'Trading Agent',
       'Code Agent',
       'Data Formulator',
@@ -200,6 +201,7 @@ describe('agentbuilder authoring flow', () => {
       'research_agent',
       'knowgraph_agent',
       'local_coder',
+      'hermes_steward',
       'trading_agent',
       'code_agent',
       'data_formulator_agent',
@@ -214,6 +216,7 @@ describe('agentbuilder authoring flow', () => {
       'template_research_agent',
       'template_knowgraph_agent',
       'template_local_coder',
+      'template_hermes_steward',
       'template_trading_workbench',
       'template_code_workbench',
       'template_data_formulator_workbench',
@@ -229,6 +232,11 @@ describe('agentbuilder authoring flow', () => {
       {
         source: 'card_main_chat',
         target: 'card_magentic',
+        edgeType: 'magentic_option',
+      },
+      {
+        source: 'card_magentic',
+        target: 'card_hermes_steward',
         edgeType: 'magentic_option',
       },
     ]);
@@ -470,6 +478,7 @@ describe('agentbuilder authoring flow', () => {
       'card_research_agent',
       'card_knowgraph_agent',
       'card_local_coder',
+      'card_hermes_steward',
       'card_trading_workbench',
       'card_code_workbench',
       'card_data_formulator_workbench',

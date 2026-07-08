@@ -78,6 +78,9 @@ describe('resolveCardDoorwayDefinitions — thin card-bound doorways, one per sa
     expect(doorwayWhenToUse('local_coder', 'Local Coder')).toMatch(/coding/i);
     expect(doorwayWhenToUse('local_coder', 'Local Coder')).toMatch(/read-only source audits/i);
     expect(doorwayWhenToUse('local_coder', 'Local Coder')).toMatch(/own file tools/i);
+    expect(doorwayWhenToUse('hermes_steward', 'Hermes Steward')).toMatch(/CoderReport review/);
+    expect(doorwayWhenToUse('hermes_steward', 'Hermes Steward')).toMatch(/blocker patterns/i);
+    expect(doorwayWhenToUse('hermes_steward', 'Hermes Steward')).toMatch(/ThinkGraph/);
     expect(doorwayWhenToUse('', 'Some Card')).toContain('Some Card');
   });
 
@@ -136,6 +139,19 @@ describe('selectDoorwayCards — structural mode filters only', () => {
       'card_thinkgraph_agent',
       'card_local_coder',
     ]);
+  });
+
+  it('chat mode also selects the single hermes-steward card; duplicates omit only that doorway', () => {
+    const HERMES_CARD = { id: 'card_hermes_steward', title: 'Hermes Steward', runtimeBinding: 'hermes_steward' };
+    expect(
+      selectDoorwayCards([MAIN_CHAT_CARD, TG_CARD, LOCAL_CODER_CARD, HERMES_CARD], 'chat').map((c) => c.id),
+    ).toEqual(['card_thinkgraph_agent', 'card_local_coder', 'card_hermes_steward']);
+    expect(
+      selectDoorwayCards(
+        [MAIN_CHAT_CARD, TG_CARD, LOCAL_CODER_CARD, HERMES_CARD, { ...HERMES_CARD, id: 'card_hermes_2' }],
+        'chat',
+      ).map((c) => c.id),
+    ).toEqual(['card_thinkgraph_agent', 'card_local_coder']);
   });
 
   it('canvas mode excludes the main_chat parent card', () => {

@@ -77,6 +77,69 @@ def test_manifest_exposes_thinkgraph_tools_for_assistant_agent_cards():
         assert entry["description"]
 
 
+def test_hermes_review_tool_registered_resolves_and_reviews():
+    registry = build_default_tool_registry()
+    assert "hermes_review_coder_report" in registry.known_names()
+    tool = registry.resolve_one("hermes_review_coder_report")
+    assert isinstance(tool, FunctionTool)
+
+    from app.python_models.tool_registry import hermes_review_coder_report_tool
+
+    report = {
+        "coderPacketId": "packet_x",
+        "status": "blocked",
+        "summary": "s",
+        "specComparison": [],
+        "filesChanged": [],
+        "proofCommands": [],
+        "proofResults": [],
+        "failedCommands": [],
+        "blockers": ["graph readback returned 0 nodes"],
+        "assumptions": [],
+        "outOfScopeFindings": [],
+        "nextRecommendedTask": "",
+        "rawOutput": "...",
+    }
+    result = json.loads(
+        asyncio.run(
+            hermes_review_coder_report_tool(
+                coder_report_json=json.dumps(report), feature_id="feature.x"
+            )
+        )
+    )
+    assert result["ok"] is True
+    assert result["review"]["verdict"] == "blocked"
+    # The returned patch is ready for apply_thinkgraph_patch (the ONLY write path).
+    assert {r["kind"] for r in result["thinkgraphPatch"]["resources"]} == {
+        "RunRecord",
+        "Blocker",
+        "Pattern",
+    }
+
+
+def test_hermes_review_tool_rejects_non_json_honestly():
+    from app.python_models.tool_registry import hermes_review_coder_report_tool
+
+    result = json.loads(
+        asyncio.run(
+            hermes_review_coder_report_tool(
+                coder_report_json="not json at all {", feature_id="feature.x"
+            )
+        )
+    )
+    assert result["ok"] is False
+    assert "hermes_argument_not_json" in result["error"]
+
+
+def test_manifest_exposes_hermes_review_for_assistant_agent_cards():
+    manifest = tool_manifest()
+    entry = next((m for m in manifest if m["id"] == "hermes_review_coder_report"), None)
+    assert entry is not None
+    assert entry["displayName"] == "Hermes CoderReport Review"
+    assert entry["agentCompatibility"] == ["assistant_agent"]
+    assert "coder_report_json" in entry["inputSchemaSummary"]
+
+
 def test_manifest_is_registry_backed_no_duplicate_entries():
     manifest = tool_manifest()
     ids = [m["id"] for m in manifest]

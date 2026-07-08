@@ -30,6 +30,9 @@ from urllib.request import Request, urlopen
 from autogen_core.tools import FunctionTool
 
 from app.python_models import job_folder as jf
+from app.python_models.hermes.graph_memory import to_thinkgraph_patch
+from app.python_models.hermes.protocol import HermesReviewInput
+from app.python_models.hermes.review import review_coder_report
 from app.python_models.orchestration_contracts import ContextPack, ToolSpec
 from app.python_models.sec_filing_signals import (
     IssuerRef,
@@ -362,6 +365,73 @@ async def apply_thinkgraph_patch_tool(
 
 
 # ---------------------------------------------------------------------------
+# Hermes review tool (pure — no authority needed, no persistence).
+#
+# Computes a HermesReview + ThinkGraph write PLAN from a CoderReport. The
+# returned thinkgraphPatch is ready for apply_thinkgraph_patch, which is the
+# ONLY persistence path and carries its own trusted card-run authority.
+# ---------------------------------------------------------------------------
+
+
+def _parse_tool_json_object(raw: str, field: str) -> dict[str, Any]:
+    """Parse a JSON-object argument. AutoGen FunctionTool is known to relay
+    dict arguments as their Python str() repr, so a literal_eval of that exact
+    encoding is accepted too; anything else fails honestly."""
+    text = str(raw or "").strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        try:
+            parsed = ast.literal_eval(text)
+        except (ValueError, SyntaxError) as err:
+            raise ValueError(f"hermes_argument_not_json: {field} ({err})") from err
+    if not isinstance(parsed, dict):
+        raise ValueError(f"hermes_argument_not_object: {field}")
+    return parsed
+
+
+async def hermes_review_coder_report_tool(
+    coder_report_json: str,
+    feature_id: str,
+    run_id: str | None = None,
+    project_id: str | None = None,
+    thinkgraph_context_json: str | None = None,
+    codegraph_status_json: str | None = None,
+) -> str:
+    """Hermes card tool: skeptically review one CoderReport (pure logic)."""
+    try:
+        review_input = HermesReviewInput(
+            coderReport=_parse_tool_json_object(coder_report_json, "coder_report_json"),
+            featureId=str(feature_id or "").strip(),
+            projectId=str(project_id).strip() if project_id else None,
+            runId=str(run_id).strip() if run_id else None,
+            thinkGraphContext=(
+                _parse_tool_json_object(thinkgraph_context_json, "thinkgraph_context_json")
+                if thinkgraph_context_json
+                else None
+            ),
+            codeGraphStatus=(
+                _parse_tool_json_object(codegraph_status_json, "codegraph_status_json")
+                if codegraph_status_json
+                else None
+            ),
+        )
+    except ValueError as err:
+        return json.dumps({"ok": False, "error": str(err)})
+    review = await asyncio.to_thread(review_coder_report, review_input)
+    return json.dumps(
+        {
+            "ok": True,
+            "review": review.to_dict(),
+            # Ready for apply_thinkgraph_patch (the card's scoped write path).
+            "thinkgraphPatch": to_thinkgraph_patch(review.graphMemoryWritePlan),
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
 # Job-folder return writer (run-scoped, NOT a card-selectable tool).
 #
 # Available ONLY inside an explicit Coder job-folder handoff run: the single-run
@@ -633,6 +703,40 @@ def build_default_tool_registry() -> ToolRegistry:
             outputSchema={"type": "string", "description": "JSON honest applied/duplicate/empty result"},
         ),
         apply_thinkgraph_patch_tool,
+    )
+    registry.register(
+        ToolSpec(
+            name="hermes_review_coder_report",
+            description=(
+                "Hermes steward: skeptically review ONE CoderReport (pure logic, no "
+                "persistence). Input: coder_report_json = the full CoderReport JSON; "
+                "feature_id; optional run_id/project_id; optional thinkgraph_context_json "
+                "(prior {runs, blockers, patterns} read from ThinkGraph); optional "
+                "codegraph_status_json (CBM freshness). Returns {ok, review, thinkgraphPatch}: "
+                "the HermesReview (verdict honest|incomplete|suspicious|blocked|empty, proof "
+                "accounting, blocker findings, pattern recurrence) plus a ready "
+                "apply_thinkgraph_patch payload. Persistence happens ONLY via "
+                "apply_thinkgraph_patch under the card's trusted run authority."
+            ),
+            enabled=True,
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "coder_report_json": {"type": "string"},
+                    "feature_id": {"type": "string"},
+                    "run_id": {"type": "string"},
+                    "project_id": {"type": "string"},
+                    "thinkgraph_context_json": {"type": "string"},
+                    "codegraph_status_json": {"type": "string"},
+                },
+                "required": ["coder_report_json", "feature_id"],
+            },
+            outputSchema={
+                "type": "string",
+                "description": "JSON {ok, review: HermesReview, thinkgraphPatch} or honest error",
+            },
+        ),
+        hermes_review_coder_report_tool,
     )
     registry.register(
         ToolSpec(
@@ -912,6 +1016,10 @@ _TOOL_DISPLAY_METADATA: dict[str, dict[str, Any]] = {
     },
     "apply_thinkgraph_patch": {
         "displayName": "ThinkGraph Patch (authorized write)",
+        "agentCompatibility": ["assistant_agent"],
+    },
+    "hermes_review_coder_report": {
+        "displayName": "Hermes CoderReport Review",
         "agentCompatibility": ["assistant_agent"],
     },
     "run_local_coder": {
