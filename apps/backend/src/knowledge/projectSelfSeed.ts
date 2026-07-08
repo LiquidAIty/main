@@ -89,7 +89,7 @@ export function buildProjectSelfSeed(projectId: string, now = new Date()): Proje
       id: 'framework:react_flow',
       kind: 'Framework',
       name: 'React Flow',
-      summary: 'Visual graph/canvas framework for Agents and Plan mission canvases.',
+      summary: 'Visual graph/canvas framework for the Agent Canvas and Plan surfaces.',
       status: 'current',
       confidence: 0.94,
     },
@@ -229,7 +229,7 @@ export function buildProjectSelfSeed(projectId: string, now = new Date()): Proje
     {
       id: 'pattern:goal_tasks_output',
       name: 'Goal -> Tasks -> Output',
-      summary: 'Canonical mission flow from goal definition to executable tasks and concrete output.',
+      summary: 'Canonical work flow from goal definition to executable tasks and concrete output.',
       nodeTypes: ['Goal', 'Task', 'Output'],
       edgeTypes: ['FLOWS_TO'],
       confidence: 0.94,

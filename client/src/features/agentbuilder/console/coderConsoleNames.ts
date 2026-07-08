@@ -13,8 +13,9 @@ export const CODER_DISPLAY_NAMES = {
   card: 'Coder',
   /** Left rail item + terminal panel title + feature name. */
   console: 'Code Console',
-  /** Runtime/engine label (the OpenClaude/Local Coder runtime is now "Harness"). */
-  runtime: 'Harness',
+  /** Runtime/engine label. "Harness" was briefly used here but collides with
+   * the chat front door's product name — the coder runtime is "Coder Engine". */
+  runtime: 'Coder Engine',
   /** Task/session label. */
   session: 'Coder Session',
 } as const;

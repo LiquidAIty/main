@@ -33,6 +33,11 @@ import type {
   V3RevisionMeta,
 } from '../types';
 
+/** The app's one canonical Agent Canvas deck id. The deck store is the deck
+ * authority, so this is THE definition — route/session modules import it
+ * instead of keeping their own string copies. */
+export const BUILDER_DECK_ID = 'deck_builder';
+
 const PROJECTS_TABLE = 'ag_catalog.projects';
 const V3_STATE_KEY = 'v3_state';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -294,7 +299,7 @@ function normalizeDeckEdge(value: unknown): DeckEdge | null {
 }
 
 function ensureMainChatControllerCard(deck: DeckDocument): DeckDocument {
-  if (deck.id !== 'deck_builder') return deck;
+  if (deck.id !== BUILDER_DECK_ID) return deck;
   const promptTemplateExists = deck.promptTemplates.some((template) => template.id === MAIN_CHAT_PROMPT_ID);
   const promptTemplates = promptTemplateExists
     ? deck.promptTemplates

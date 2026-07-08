@@ -35,9 +35,8 @@ function runningSession(): ConsoleSessionInfo {
 
 function fakeClient(overrides: Partial<OpenClaudeConsoleClient> = {}): OpenClaudeConsoleClient {
   return {
-    startSession: vi.fn(async () => ({ ok: true, session: runningSession() })),
+    startSession: vi.fn(async () => ({ ok: true as const, session: runningSession() })),
     getSession: vi.fn(async () => null),
-    getCodingRun: vi.fn(async () => null),
     sendInput: vi.fn(async () => true),
     resizeSession: vi.fn(async () => true),
     stopSession: vi.fn(async () => true),
@@ -209,15 +208,14 @@ describe('OpenClaudeConsolePanel', () => {
     );
     const transcript = host.querySelector('[data-testid="openclaude-console-transcript"]');
     expect(transcript?.textContent).not.toContain('OpenClaude');
-    // Runtime display name renamed 'Coder Engine' → 'Harness' in eb992070.
-    expect(transcript?.textContent).toContain('Harness');
+    expect(transcript?.textContent).toContain('Coder Engine');
     expect(host.querySelector('[data-testid="openclaude-console-redacted-note"]')).not.toBeNull();
   });
 
   it('surfaces a blocked start without faking a session', async () => {
     const client = fakeClient({
       startSession: vi.fn(async () => ({
-        ok: false,
+        ok: false as const,
         error: 'console_runtime_unavailable',
         missing: ['localcoder_entrypoint_missing'],
       })),

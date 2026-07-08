@@ -63,7 +63,6 @@ type UseAgentBuilderDeckLoadArgs = {
   setLatestCardRun: Dispatch<SetStateAction<LatestCardRunRecord | null>>;
   setLiveDeckEvents: Dispatch<SetStateAction<DeckRuntimeEvent[]>>;
   setMessages: Dispatch<SetStateAction<BuilderChatMessage[]>>;
-  setPendingActivationProposal: Dispatch<SetStateAction<unknown>>;
   setLinks: Dispatch<SetStateAction<LinkRef[]>>;
   setStateLoaded: Dispatch<SetStateAction<boolean>>;
   setDeckStatusMessage: Dispatch<SetStateAction<string | null>>;
@@ -93,7 +92,6 @@ export default function useAgentBuilderDeckLoad({
   setLatestCardRun,
   setLiveDeckEvents,
   setMessages,
-  setPendingActivationProposal,
   setLinks,
   setStateLoaded,
   setDeckStatusMessage,
@@ -181,7 +179,6 @@ export default function useAgentBuilderDeckLoad({
         // re-painted from saved deck runs. Re-injecting deck-run output here
         // clobbered the live user message and rendered old run text as fake chat
         // bubbles. Deck runs still drive the plan/links below; not the chat.
-        setPendingActivationProposal(null);
         setLinks(continuity.links);
         setStateLoaded(true);
         setDeckLoadError(null);
@@ -209,7 +206,6 @@ export default function useAgentBuilderDeckLoad({
         setLiveDeckEvents([]);
         setDeckRevision(null);
         setMessages([...next.messages]);
-        setPendingActivationProposal(null);
         setLinks([...next.links]);
         setStateLoaded(true);
         const errorMessage =
@@ -268,7 +264,6 @@ export default function useAgentBuilderDeckLoad({
     setLinks,
     setLiveDeckEvents,
     setMessages,
-    setPendingActivationProposal,
     setStateLoaded,
     snapshotDeckBoard,
   ]);

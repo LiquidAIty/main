@@ -9,17 +9,6 @@ import type {
   DeckRuntimeEvent,
 } from '../../../types/agentgraph';
 
-type ActivationProposalState = {
-  capability:
-    | 'knowledge'
-    | 'worldsignal'
-    | 'code'
-    | 'trading';
-  title: string;
-  sourceText: string;
-  status: 'pending' | 'approved';
-};
-
 type UseAgentBuilderDeckArgs = {
   createInitialDeck: () => DeckDocument;
 };
@@ -28,8 +17,6 @@ export default function useAgentBuilderDeck({
   createInitialDeck,
 }: UseAgentBuilderDeckArgs) {
   const [deck, setDeckState] = useState<DeckDocument>(() => createInitialDeck());
-  const [pendingActivationProposal, setPendingActivationProposal] =
-    useState<ActivationProposalState | null>(null);
   const [deckRevision, setDeckRevision] = useState<string | null>(null);
   const [latestDeckRun, setLatestDeckRun] = useState<DeckRun | null>(null);
   const [latestCardRun, setLatestCardRun] = useState<LatestCardRunRecord | null>(null);
@@ -44,8 +31,6 @@ export default function useAgentBuilderDeck({
   return {
     deck,
     setDeckState,
-    pendingActivationProposal,
-    setPendingActivationProposal,
     deckRevision,
     setDeckRevision,
     latestDeckRun,

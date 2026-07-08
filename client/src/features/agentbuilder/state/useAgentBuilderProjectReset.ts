@@ -10,7 +10,6 @@ type UseAgentBuilderProjectResetArgs = {
   setDeckSaveBusy: Dispatch<SetStateAction<boolean>>;
   setDeckRunBusy: Dispatch<SetStateAction<boolean>>;
   setCardRunBusy: Dispatch<SetStateAction<boolean>>;
-  setPendingActivationProposal: Dispatch<SetStateAction<unknown>>;
 };
 
 export default function useAgentBuilderProjectReset({
@@ -22,7 +21,6 @@ export default function useAgentBuilderProjectReset({
   setDeckSaveBusy,
   setDeckRunBusy,
   setCardRunBusy,
-  setPendingActivationProposal,
 }: UseAgentBuilderProjectResetArgs) {
   useEffect(() => {
     deckSaveAbortRef.current?.abort();
@@ -35,7 +33,6 @@ export default function useAgentBuilderProjectReset({
     setDeckSaveBusy(false);
     setDeckRunBusy(false);
     setCardRunBusy(false);
-    setPendingActivationProposal(null);
   }, [
     canvasProjectId,
     deckExecutionAbortRef,
@@ -44,7 +41,6 @@ export default function useAgentBuilderProjectReset({
     setCardRunBusy,
     setDeckRunBusy,
     setDeckSaveBusy,
-    setPendingActivationProposal,
     setSending,
   ]);
 }

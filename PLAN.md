@@ -127,8 +127,9 @@ Do neither. Delete-with-replace; no placeholders, no duplicates, no `.mjs`. Vend
 free pass (excluded from CBM); everything else stays clean.
 
 Still open (reported, not actioned): ~108 unused npm deps (knip — careful per-workspace review,
-hoisting-sensitive), ~392 unused exports/types (finicky — review before cutting), and the broken root
-`eslint.config.mjs` (imports uninstalled `eslint-plugin-unused-imports`).
+hoisting-sensitive) and ~392 unused exports/types (finicky — review before cutting). The root
+`eslint.config.mjs` works again (verified 2026-07-08 — `eslint-plugin-unused-imports` is installed;
+`npx eslint <file>` exits 0).
 
 ## Near-Term Route
 

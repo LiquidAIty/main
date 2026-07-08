@@ -253,7 +253,7 @@ function cleanNumber(value: unknown): number | null {
 // Local SLM graph worker, selectable as a card provider. The actual model id comes
 // from the card's Model field (default below); provider routes to the local endpoint.
 export const LOCAL_MODEL_PROVIDER = 'local_openai_compatible';
-export const LOCAL_MODEL_LABEL = 'Local Gemma / SLM Graph Worker';
+export const LOCAL_MODEL_LABEL = 'Local Gemma Worker';
 export const LOCAL_MODEL_DEFAULT_KEY = 'local-gemma-slm';
 
 export type ModelProviderChoice = 'openai' | 'openrouter' | 'local_openai_compatible' | '';
@@ -394,7 +394,7 @@ function deriveRuntimeOptions(localConfig: AgentManagerLocalConfig | null | unde
 
 function getRuntimeTypeLabel(runtimeType: AgentCardRuntimeType): string {
   if (runtimeType === 'assistant_agent') return 'Assist';
-  if (runtimeType === 'local_coder') return 'Harness';
+  if (runtimeType === 'local_coder') return 'Coder';
   if (runtimeType === 'magentic_one') return 'Magentic';
   if (runtimeType === 'graph_flow') return 'Legacy Workflow (compat)';
   return `Legacy: ${runtimeType}`;

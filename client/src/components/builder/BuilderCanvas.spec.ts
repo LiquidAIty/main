@@ -1294,7 +1294,9 @@ function createBusTestDocument(edges: DeckEdge[] = []): DeckDocument {
   };
 }
 
-function collectHandleElements(value: React.ReactNode): React.ReactElement[] {
+type HandleElement = React.ReactElement<{ id: string; style: Record<string, unknown> }>;
+
+function collectHandleElements(value: React.ReactNode): HandleElement[] {
   if (Array.isArray(value)) {
     return value.flatMap((entry) => collectHandleElements(entry));
   }
@@ -1304,7 +1306,7 @@ function collectHandleElements(value: React.ReactNode): React.ReactElement[] {
 
   const children = (value.props as { children?: React.ReactNode }).children;
   return [
-    ...(value.type === Handle ? [value] : []),
+    ...(value.type === Handle ? [value as HandleElement] : []),
     ...collectHandleElements(children),
   ];
 }

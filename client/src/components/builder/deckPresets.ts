@@ -30,15 +30,17 @@ export const DECK_NODE_PRESETS: DeckNodePreset[] = [
     subtitle: "Single worker or swarm worker",
   },
   {
+    // Product name is "Coder"; the internal key/binding/runtimeType stay
+    // 'local_coder' (persisted deck identity — never display copy).
     key: "local_coder",
-    label: "Local Coder",
+    label: "Coder",
     kind: "agent",
     templateId: "template_local_coder",
     promptTemplateId: "prompt_assist",
     runtimeBinding: "local_coder",
     runtimeType: "local_coder",
-    title: "Local Coder",
-    subtitle: "Runs via local coder subsystem",
+    title: "Coder",
+    subtitle: "Writes and proves code through the Coder Engine",
   },
 ];
 

@@ -69,5 +69,7 @@ describe('POST /localcoder/run — trusted root injection', () => {
         server.close((error) => (error ? reject(error) : resolve())),
       );
     }
-  });
+    // Real-service integration (runtime discovery probes the filesystem):
+    // ~1.5s idle but past vitest's 5s default under full-suite load.
+  }, 20_000);
 });

@@ -2,15 +2,17 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AgentCardInstance, DeckDocument, DeckRun, DeckRuntimeEvent } from '../types/agentgraph';
+// Deck logic moved out of the page in the 2026-07-08 decomposition; the spec
+// tests the real modules directly.
+import { INITIAL_DECK } from '../features/agentbuilder/deck/deckSeed';
 import {
   buildQuickAddDeckMutation,
   buildSingleCardRunDocument,
   filterAuthoringCompatibleEdges,
   hydrateDeckDocument,
-  INITIAL_DECK,
   resolveProjectDeckLoadResult,
   resolveProjectDeckPayload,
-} from './agentbuilder';
+} from '../features/agentbuilder/deck/deckDocument';
 import {
   buildDeckRuntimeVisualState,
   buildReloadStateFromDeckRuns,
@@ -183,7 +185,7 @@ describe('agentbuilder authoring flow', () => {
       'CodeGraph Agent',
       'Research Agent',
       'KnowGraph Agent',
-      'Local Coder',
+      'Coder',
       'Hermes Steward',
       'Trading Agent',
       'Code Agent',
@@ -762,7 +764,8 @@ describe('agentbuilder authoring flow', () => {
       version: 1,
       promptTemplates: [],
       nodes: [
-        createCard('card_selector', 'selector', {
+        // deliberately a RETIRED runtime type outside the current union
+        createCard('card_selector', 'selector' as unknown as AgentCardInstance['runtimeType'], {
           templateId: 'template_selector',
           title: 'Selector Head',
           runtimeOptions: {
@@ -877,8 +880,8 @@ describe('agentbuilder authoring flow', () => {
       { role: 'user', text: 'Map the next move' },
       { role: 'assistant', text: 'Here is the next move.' },
     ]);
-    expect(continuity.planSource ?? []).toEqual([]);
-    expect(continuity.plan ?? []).toEqual([]);
+    // planSource/plan fields no longer exist on the reload state — the plan
+    // projection went with the mission/Run-Task purge; links is the survivor.
     expect(continuity.links ?? []).toEqual([]);
   });
 

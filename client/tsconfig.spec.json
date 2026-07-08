@@ -1,4 +1,10 @@
 {
+  // Spec typecheck: same leniency as tsconfig.app.json (specs are not held to
+  // a stricter bar than the app), and NO project reference — the old
+  // `references: [tsconfig.app.json]` made tsc demand built dist/*.d.ts files
+  // (TS6305) that nothing ever builds. Specs typecheck against app SOURCE.
+  // NOTE: vitest (esbuild) is the test gate; this command is a supplementary
+  // typecheck and currently reports real @types/react 19 vs react 18 skew.
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./out-tsc/vitest",
@@ -12,6 +18,19 @@
       "@nx/react/typings/image.d.ts"
     ],
     "jsx": "react-jsx",
+    "lib": ["dom"],
+    // base sets composite:true which demands every transitively-imported app
+    // source be listed here (TS6307 ×70). Specs import app sources freely;
+    // this is a check-only config, never a build project — so the base's
+    // declaration/emit options are switched off with it.
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "emitDeclarationOnly": false,
+    "noImplicitAny": false,
+    "noImplicitOverride": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
     "module": "esnext",
     "moduleResolution": "bundler"
   },
@@ -29,10 +48,5 @@
     "src/**/*.test.jsx",
     "src/**/*.spec.jsx",
     "src/**/*.d.ts"
-  ],
-  "references": [
-    {
-      "path": "./tsconfig.app.json"
-    }
   ]
 }

@@ -1,24 +1,18 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest';
+// Rail derivation moved out of the page in the 2026-07-08 decomposition; the
+// spec tests the real modules directly (no page import, no surface mocks).
+import { describe, expect, it } from 'vitest';
 
-vi.mock('../components/worldsignal/WorldSignalSurface', () => ({
-  default: () => null,
-}));
-
-vi.mock('../components/dataformulator/DataFormulatorSurface', () => ({
-  default: () => null,
-}));
-
+import { INITIAL_DECK } from '../features/agentbuilder/deck/deckSeed';
 import {
   deriveConnectedGraphStreams,
   deriveVisibleRailItems,
   getConnectedKnowledgeGraphKinds,
-  INITIAL_DECK,
   isCodeWorkbenchActive,
   isKnowledgeChainActive,
   isTradingWorkbenchActive,
   isWorldSignalsAgentActive,
-} from './agentbuilder';
+} from '../features/agentbuilder/rail/railVisibility';
 
 const ADMIN_STAGE0_DECK = {
   ...INITIAL_DECK,
@@ -163,7 +157,6 @@ describe('agentbuilder progressive activation startup', () => {
     const visibility = deriveVisibleRailItems({
       deck: ADMIN_STAGE0_DECK,
       workspaceView: 'chat',
-      pendingActivationProposal: null,
     });
     expect(visibility.showKnowledge).toBe(true);
     // The Plan rail (showPlan) was removed with the mission/Run-Task UI purge;
@@ -179,14 +172,12 @@ describe('agentbuilder progressive activation startup', () => {
       deriveVisibleRailItems({
         deck: INITIAL_DECK,
         workspaceView: 'canvas',
-        pendingActivationProposal: null,
       }).showTrading,
     ).toBe(false);
     expect(
       deriveVisibleRailItems({
         deck: INITIAL_DECK,
         workspaceView: 'trading',
-        pendingActivationProposal: null,
       }).showTrading,
     ).toBe(true);
   });
@@ -202,7 +193,6 @@ describe('agentbuilder progressive activation startup', () => {
       deriveVisibleRailItems({
         deck: connectedDeck,
         workspaceView: 'canvas',
-        pendingActivationProposal: null,
       }).showTrading,
     ).toBe(true);
   });
@@ -213,14 +203,12 @@ describe('agentbuilder progressive activation startup', () => {
       deriveVisibleRailItems({
         deck: INITIAL_DECK,
         workspaceView: 'canvas',
-        pendingActivationProposal: null,
       }).showCode,
     ).toBe(false);
     expect(
       deriveVisibleRailItems({
         deck: INITIAL_DECK,
         workspaceView: 'code',
-        pendingActivationProposal: null,
       }).showCode,
     ).toBe(true);
   });
@@ -236,7 +224,6 @@ describe('agentbuilder progressive activation startup', () => {
       deriveVisibleRailItems({
         deck: connectedDeck,
         workspaceView: 'canvas',
-        pendingActivationProposal: null,
       }).showCode,
     ).toBe(true);
   });
@@ -247,7 +234,6 @@ describe('agentbuilder progressive activation startup', () => {
       deriveVisibleRailItems({
         deck: ADMIN_STAGE0_DECK,
         workspaceView: 'canvas',
-        pendingActivationProposal: null,
       }).showKnowledge,
     ).toBe(true);
   });
@@ -273,7 +259,6 @@ describe('agentbuilder progressive activation startup', () => {
       deriveVisibleRailItems({
         deck: parkedDeck,
         workspaceView: 'canvas',
-        pendingActivationProposal: null,
       }).showKnowledge,
     ).toBe(true);
     expect(getConnectedKnowledgeGraphKinds(deriveConnectedGraphStreams(parkedDeck))).toEqual([
@@ -309,7 +294,6 @@ describe('agentbuilder progressive activation startup', () => {
       deriveVisibleRailItems({
         deck: codeOnlyDeck,
         workspaceView: 'canvas',
-        pendingActivationProposal: null,
       }).showKnowledge,
     ).toBe(true);
     expect(getConnectedKnowledgeGraphKinds(deriveConnectedGraphStreams(codeOnlyDeck))).toEqual([
@@ -353,7 +337,6 @@ describe('agentbuilder progressive activation startup', () => {
       deriveVisibleRailItems({
         deck: noGraphDeck,
         workspaceView: 'canvas',
-        pendingActivationProposal: null,
       }).showKnowledge,
     ).toBe(false);
   });
@@ -370,7 +353,6 @@ describe('agentbuilder progressive activation startup', () => {
       deriveVisibleRailItems({
         deck: connectedDeck,
         workspaceView: 'canvas',
-        pendingActivationProposal: null,
       }).showKnowledge,
     ).toBe(true);
   });
@@ -386,7 +368,6 @@ describe('agentbuilder progressive activation startup', () => {
       deriveVisibleRailItems({
         deck: INITIAL_DECK,
         workspaceView: 'canvas',
-        pendingActivationProposal: null,
       }).showWorldsignal,
     ).toBe(false);
 
@@ -400,14 +381,12 @@ describe('agentbuilder progressive activation startup', () => {
       deriveVisibleRailItems({
         deck: connectedDeck,
         workspaceView: 'canvas',
-        pendingActivationProposal: null,
       }).showWorldsignal,
     ).toBe(true);
     expect(
       deriveVisibleRailItems({
         deck: INITIAL_DECK,
         workspaceView: 'worldsignal',
-        pendingActivationProposal: null,
       }).showWorldsignal,
     ).toBe(true);
   });

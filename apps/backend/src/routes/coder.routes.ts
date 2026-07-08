@@ -29,9 +29,15 @@ import {
   type ThinkGraphPatchAuthority,
 } from '../services/thinkgraph/thinkGraphStore';
 import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/harnessTrace';
-
-// The app's one canonical Agent Canvas deck (client BUILDER_DECK_ID).
-const BUILDER_DECK_ID = 'deck_builder';
+// The app's one canonical Agent Canvas deck id, defined once on the deck store.
+import { BUILDER_DECK_ID } from '../decks/store';
+import { requestHermesReview } from '../services/autogen/autogenOrchestratorClient';
+import {
+  appendHermesActivity,
+  appendHermesBlocked,
+  listHermesActivity,
+  normalizeHermesActivityEntry,
+} from '../coder/hermes/hermesActivity';
 
 const router = Router();
 export const OPENCLAUDE_HARNESS_ROUTE_PREFIX = '/coder/openclaude';
@@ -425,6 +431,77 @@ router.post('/openclaude/console/sessions/:id/stop', (req, res) => {
 });
 
 
+// ── Hermes steward: review + activity seams ────────────────────────────────
+// The review itself is PURE Python on the rails (/hermes/review — no model
+// call, no DB). This backend layer is transport plus the transient activity
+// buffer the Hermes console reads. Persistence of findings happens ONLY via
+// the Hermes card's scoped apply_thinkgraph_patch authority — never here.
+
+/** Run the Hermes review for one real CoderReport and record honest activity.
+ * Never throws: a failed review becomes a blocked activity entry, so the
+ * CoderReport path that triggered it is never disturbed. */
+async function runHermesReviewAndRecord(
+  payload: Record<string, unknown>,
+  runId: string | null,
+): Promise<
+  | { ok: true; review: Record<string, unknown>; thinkgraphPatch: Record<string, unknown> }
+  | { ok: false; error: string }
+> {
+  try {
+    const result = await requestHermesReview(payload);
+    if (!result.ok) {
+      appendHermesBlocked(result.error, runId);
+      return result;
+    }
+    const events = Array.isArray((result.review as any)?.activityEvents)
+      ? ((result.review as any).activityEvents as unknown[])
+      : [];
+    appendHermesActivity(
+      events
+        .map(normalizeHermesActivityEntry)
+        .filter((entry): entry is NonNullable<typeof entry> => entry !== null),
+    );
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'hermes_review_failed';
+    appendHermesBlocked(message, runId);
+    return { ok: false, error: message };
+  }
+}
+
+router.get('/hermes/activity', (req, res) => {
+  const limit = Number(req.query?.limit);
+  return res.json({ ok: true, activity: listHermesActivity(Number.isFinite(limit) ? limit : 50) });
+});
+
+router.post('/hermes/review', async (req, res) => {
+  const body = (req.body || {}) as Record<string, unknown>;
+  const coderReport = body.coderReport;
+  if (!coderReport || typeof coderReport !== 'object') {
+    return res.status(400).json({ ok: false, error: 'coderReport_object_required' });
+  }
+  const runId = String((coderReport as any)?.coderPacketId || body.runId || '') || null;
+  const result = await runHermesReviewAndRecord(
+    {
+      coderReport,
+      featureId: String(body.featureId || ''),
+      ...(body.runId ? { runId: String(body.runId) } : {}),
+      ...(body.projectId ? { projectId: String(body.projectId) } : {}),
+      ...(body.thinkGraphContext && typeof body.thinkGraphContext === 'object'
+        ? { thinkGraphContext: body.thinkGraphContext }
+        : {}),
+      ...(body.codeGraphStatus && typeof body.codeGraphStatus === 'object'
+        ? { codeGraphStatus: body.codeGraphStatus }
+        : {}),
+    },
+    runId,
+  );
+  if (!result.ok) {
+    return res.status(502).json(result);
+  }
+  return res.json(result);
+});
+
 router.get('/localcoder/status', async (req, res) => {
   const repoPath = typeof req.query.repoPath === 'string' ? req.query.repoPath : undefined;
   const inspection = await localCoderService.inspect(repoPath);
@@ -457,6 +534,20 @@ router.post('/localcoder/run', async (req, res) => {
         : result.report.status === 'failed'
           ? 502
           : 200;
+    // Hermes postflight: every REAL CoderReport gets a pure review after the
+    // fact (fire-and-forget — the report below returns regardless; a review
+    // failure only records an honest blocked activity entry, never touches
+    // this response). featureId is honestly absent until packets carry one.
+    void runHermesReviewAndRecord(
+      {
+        coderReport: result.report,
+        featureId: '',
+        ...(typeof incoming.projectId === 'string' && incoming.projectId
+          ? { projectId: incoming.projectId }
+          : {}),
+      },
+      String(result.report.coderPacketId || '') || null,
+    );
     return res.status(statusCode).json({
       ok: reportOk,
       ...result,

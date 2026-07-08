@@ -261,6 +261,65 @@ export async function fetchToolManifest(): Promise<ToolCapabilityManifestEntry[]
   }
 }
 
+const HERMES_REVIEW_ENDPOINT = '/hermes/review';
+
+export type HermesReviewTransportResult =
+  | { ok: true; review: Record<string, unknown>; thinkgraphPatch: Record<string, unknown> }
+  | { ok: false; error: string };
+
+/**
+ * Transport-only: run the Hermes steward's PURE CoderReport review on the
+ * Python rails (`/hermes/review`; no model call, no DB, no persistence there).
+ * Returns an honest ok:false instead of throwing — postflight callers must
+ * never let a review failure break the original CoderReport path.
+ */
+export async function requestHermesReview(
+  payload: Record<string, unknown>,
+): Promise<HermesReviewTransportResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const baseUrls = buildSidecarBaseUrls();
+    let lastError: any = null;
+    for (const baseUrl of baseUrls) {
+      const endpoint = `${baseUrl}${HERMES_REVIEW_ENDPOINT}`;
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        const text = await response.text();
+        const data = text ? JSON.parse(text) : null;
+        if (!response.ok) {
+          const message = String(
+            (data as any)?.detail || response.statusText || 'hermes_review_http_error',
+          ).trim();
+          return { ok: false, error: `hermes_review_http_${response.status}:${message}` };
+        }
+        if (!data || typeof data !== 'object' || (data as any).ok !== true || !(data as any).review) {
+          return { ok: false, error: 'hermes_review_invalid_response' };
+        }
+        return {
+          ok: true,
+          review: (data as any).review as Record<string, unknown>,
+          thinkgraphPatch: ((data as any).thinkgraphPatch || {}) as Record<string, unknown>,
+        };
+      } catch (error: any) {
+        lastError = error;
+        if (!isRetryableSidecarError(error)) break;
+      }
+    }
+    return {
+      ok: false,
+      error: String(lastError?.message || 'PYTHON_AUTOGEN_RAILS_UNAVAILABLE'),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 const THINKGRAPH_PROJECTION_ENDPOINT = '/thinkgraph/projection';
 
 /**

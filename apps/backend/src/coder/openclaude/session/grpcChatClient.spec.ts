@@ -7,6 +7,7 @@ const deckMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../decks/store', () => ({
+  BUILDER_DECK_ID: 'deck_builder',
   getDeckDocument: deckMocks.getDeckDocument,
 }));
 

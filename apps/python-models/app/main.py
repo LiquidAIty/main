@@ -92,6 +92,29 @@ def thinkgraph_projection(projectId: str, limit: int | None = None):
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
+@app.post("/hermes/review")
+def hermes_review(req: dict):
+    """Hermes steward: pure CoderReport review (no model call, no DB, no
+    persistence). Body: {coderReport, featureId, runId?, projectId?,
+    thinkGraphContext?, codeGraphStatus?}. Returns the HermesReview plus a
+    ready apply_thinkgraph_patch payload — persistence happens ONLY through
+    the card's scoped authority, never here."""
+    from app.python_models.hermes.graph_memory import to_thinkgraph_patch
+    from app.python_models.hermes.review import review_coder_report
+
+    if not isinstance(req, dict):
+        raise HTTPException(status_code=400, detail="body must be a JSON object")
+    try:
+        review = review_coder_report(req)
+    except Exception as err:  # honest failure — never a fabricated review
+        raise HTTPException(status_code=500, detail=str(err)) from err
+    return {
+        "ok": True,
+        "review": review.to_dict(),
+        "thinkgraphPatch": to_thinkgraph_patch(review.graphMemoryWritePlan),
+    }
+
+
 @app.post("/autogen/run_card")
 async def autogen_run_card(req: ContextPack):
     """Run ONE configured canvas card as a single AssistantAgent.

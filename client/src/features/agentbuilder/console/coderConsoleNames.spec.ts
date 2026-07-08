@@ -9,9 +9,9 @@ import {
 describe('coder console display names', () => {
   it('exposes clean public names with no forbidden branding', () => {
     const values = Object.values(CODER_DISPLAY_NAMES).join(' ');
-    // Runtime label renamed 'Coder Engine' → 'Harness' in eb992070 (the
-    // Harness MCP wiring commit) — the firewall itself is unchanged.
-    expect(values).toBe('Coder Code Console Harness Coder Session');
+    // Product language: the coder runtime is "Coder Engine" ("Harness" names
+    // the chat front door, not the coder).
+    expect(values).toBe('Coder Code Console Coder Engine Coder Session');
     expect(containsCoderBranding(values)).toBe(false);
   });
 
@@ -27,9 +27,9 @@ describe('coder console display names', () => {
 
 describe('redactCoderBranding', () => {
   it('replaces underlying CLI branding with clean product names', () => {
-    expect(redactCoderBranding('Welcome to OpenClaude')).toBe('Welcome to Harness');
-    expect(redactCoderBranding('LocalCoder ready')).toBe('Harness ready');
-    expect(redactCoderBranding('Claude Code v1')).toBe('Harness v1');
+    expect(redactCoderBranding('Welcome to OpenClaude')).toBe('Welcome to Coder Engine');
+    expect(redactCoderBranding('LocalCoder ready')).toBe('Coder Engine ready');
+    expect(redactCoderBranding('Claude Code v1')).toBe('Coder Engine v1');
     expect(redactCoderBranding('Ask Claude anything')).toBe('Ask Coder anything');
     const out = redactCoderBranding('OpenClaude / LocalCoder / Claude');
     expect(containsCoderBranding(out)).toBe(false);

@@ -7,7 +7,7 @@ import { buildReloadStateFromDeckRuns } from './deckRunState';
 // agentbuilder.tsx, so no WorldSignals globe / d3 / three). Proves: a real clean
 // answer appears in chat; a failed run does not become an assistant bubble.
 
-function makeRun(partial: Partial<DeckRun> & { steps?: any[] }): DeckRun {
+function makeRun(partial: Omit<Partial<DeckRun>, 'steps'> & { steps?: unknown[] }): DeckRun {
   return {
     id: 'run-1',
     deckId: 'deck-1',

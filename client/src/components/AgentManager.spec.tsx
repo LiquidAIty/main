@@ -225,7 +225,8 @@ describe('AgentManager runtime editor', () => {
     // saves as assistant_agent, but its saved options are never destroyed.
     const payload = buildActiveAgentManagerLocalConfig({
       runtimeBinding: '',
-      runtimeType: 'selector',
+      // deliberately a RETIRED value outside the current union
+      runtimeType: 'selector' as unknown as AgentCardRuntimeType,
       runtimeOptions: {
         provider: 'openai',
         modelKey: 'gpt-5-mini',
@@ -416,7 +417,7 @@ describe('AgentManager runtime editor', () => {
     // and graph_flow as an always-available compatibility runtime.
     expect(optionValues).toEqual([
       { value: 'assistant_agent', disabled: false, label: 'Assist' },
-      { value: 'local_coder', disabled: false, label: 'Harness' },
+      { value: 'local_coder', disabled: false, label: 'Coder' },
       { value: 'magentic_one', disabled: false, label: 'Magentic' },
       { value: 'graph_flow', disabled: false, label: 'Legacy Workflow (compat)' },
     ]);
@@ -424,7 +425,8 @@ describe('AgentManager runtime editor', () => {
   });
 
   it('shows advanced runtime JSON for legacy team runtimes and preserves it on save', () => {
-    const localConfig = createLocalConfig('selector', {
+    // 'selector' is deliberately a RETIRED value outside the current union.
+    const localConfig = createLocalConfig('selector' as unknown as AgentCardRuntimeType, {
       runtime_options: {
         provider: 'openai',
         modelKey: 'gpt-5-mini',

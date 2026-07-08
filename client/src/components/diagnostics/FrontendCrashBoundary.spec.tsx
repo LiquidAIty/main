@@ -5,7 +5,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import FrontendCrashBoundary from "./FrontendCrashBoundary";
 import { clearFrontendCrash } from "../../lib/frontendCrashDiagnostics";
 
-function ThrowingChild() {
+function ThrowingChild(): React.ReactNode {
   throw new Error("boundary_test_crash");
 }
 

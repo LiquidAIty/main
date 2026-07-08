@@ -14,14 +14,10 @@
 
 import path from 'node:path';
 import { existsSync } from 'node:fs';
-import { getDeckDocument } from '../../../decks/store';
+import { BUILDER_DECK_ID, getDeckDocument } from '../../../decks/store';
 import { resolveRuntimeBinding } from '../../../contracts/runtimeBinding';
 import { resolveModel } from '../../../llm/models.config';
 import { logHarnessTrace } from '../../../services/harnessTrace';
-
-// The app's one canonical Agent Canvas deck (mirrors coder.routes.ts's own
-// BUILDER_DECK_ID — no cross-file re-export exists for this constant yet).
-const BUILDER_DECK_ID = 'deck_builder';
 
 export type GrpcSessionEvent =
   | { kind: 'text'; text: string }
