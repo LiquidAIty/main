@@ -99,16 +99,6 @@ import type {
   PromptTemplate,
   RuntimeBinding,
 } from '../types/agentgraph';
-import {
-  ENERGY_DEFAULT_PARAMETERS,
-  type EnergyObjectId,
-  type EnergyParameterKey,
-  type EnergySurfaceParameters,
-  type WorkspaceAction,
-  type WorkspaceActionCall,
-  type WorkspaceActionResult,
-  type WorkspaceObject,
-} from '../types/workspaceActions';
 import type { CodeGraphViewContract } from '../components/codegraph/types';
 import {
   createWorkspaceTestingInteractionId,
@@ -139,12 +129,6 @@ const CodeGraphSurface = lazy(() =>
   import('../components/codegraph/CodeGraphSurface').then((mod) => ({ default: mod.CodeGraphSurface })),
 );
 import { resolveCbmProjectName } from '../components/codegraph/resolveCodeGraphProjectIdentity';
-const EnergyFacadeSurface = lazy(
-  () => import('../components/energy/EnergyFacadeSurface'),
-);
-const MediaStudioCanvas = lazy(
-  () => import('../features/media/MediaStudioCanvas'),
-);
 const DEFAULT_WORKSPACE_ROOT = 'C:\\Projects\\main';
 void KnowledgeSummaryPanel;
 void KnowledgeEvidencePanel;
@@ -162,186 +146,6 @@ const C = {
   accent: '#8358A4',
   warn: '#D98458',
 };
-
-const ENERGY_WORKSPACE_ACTIONS: WorkspaceAction[] = [
-  {
-    id: 'select_object',
-    label: 'Select object',
-    surface: 'energy',
-  },
-  {
-    id: 'update_object_parameter',
-    label: 'Update object parameter',
-    surface: 'energy',
-  },
-  {
-    id: 'reset_energy_surface',
-    label: 'Reset energy surface',
-    surface: 'energy',
-  },
-];
-
-const ENERGY_OBJECT_PARAMETERS: Record<EnergyObjectId, EnergyParameterKey[]> = {
-  'energy:surface': [
-    'width',
-    'height',
-    'depth',
-    'glazing',
-    'overhang',
-    'leftFin',
-    'rightFin',
-    'day',
-    'hour',
-    'orientation',
-  ],
-  'energy:facade': ['width', 'height', 'depth'],
-  'energy:window': ['glazing'],
-  'energy:overhang': ['overhang'],
-  'energy:leftFin': ['leftFin'],
-  'energy:rightFin': ['rightFin'],
-  'energy:sun': ['day', 'hour'],
-  'energy:results': [],
-};
-
-function isEnergyObjectId(value: string): value is EnergyObjectId {
-  return Object.prototype.hasOwnProperty.call(ENERGY_OBJECT_PARAMETERS, value);
-}
-
-function isEnergyParameterKey(value: string): value is EnergyParameterKey {
-  return Object.prototype.hasOwnProperty.call(ENERGY_DEFAULT_PARAMETERS, value);
-}
-
-function buildEnergyWorkspaceObjects(
-  inputs: EnergySurfaceParameters,
-): WorkspaceObject[] {
-  return [
-    {
-      id: 'energy:surface',
-      surface: 'energy',
-      type: 'energy_surface',
-      label: 'Energy Surface',
-      parameters: { ...inputs },
-    },
-    {
-      id: 'energy:facade',
-      surface: 'energy',
-      type: 'facade_mass',
-      label: 'Facade',
-      parameters: {
-        width: inputs.width,
-        height: inputs.height,
-        depth: inputs.depth,
-      },
-    },
-    {
-      id: 'energy:window',
-      surface: 'energy',
-      type: 'window_glazing',
-      label: 'Window / Glazing',
-      parameters: {
-        glazing: inputs.glazing,
-      },
-    },
-    {
-      id: 'energy:overhang',
-      surface: 'energy',
-      type: 'shade_overhang',
-      label: 'Overhang',
-      parameters: {
-        overhang: inputs.overhang,
-      },
-    },
-    {
-      id: 'energy:leftFin',
-      surface: 'energy',
-      type: 'shade_fin',
-      label: 'Left Fin',
-      parameters: {
-        leftFin: inputs.leftFin,
-      },
-    },
-    {
-      id: 'energy:rightFin',
-      surface: 'energy',
-      type: 'shade_fin',
-      label: 'Right Fin',
-      parameters: {
-        rightFin: inputs.rightFin,
-      },
-    },
-    {
-      id: 'energy:sun',
-      surface: 'energy',
-      type: 'solar_context',
-      label: 'Sun',
-      parameters: {
-        day: inputs.day,
-        hour: inputs.hour,
-      },
-    },
-    {
-      id: 'energy:results',
-      surface: 'energy',
-      type: 'results_summary',
-      label: 'Results Summary',
-    },
-  ];
-}
-
-function formatEnergyParameterLabel(value: string): string {
-  return value.replace(/([A-Z])/g, ' $1').toLowerCase();
-}
-
-class EnergySurfaceErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { error: Error | null }
-> {
-  state: { error: Error | null } = { error: null };
-
-  static getDerivedStateFromError(error: Error) {
-    return { error };
-  }
-
-  render() {
-    if (this.state.error) {
-      return (
-        <div
-          data-testid="energy-facade-error"
-          style={{
-            height: '100%',
-            padding: 16,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: GRAPH_THEME.background.knowledgeSurface,
-          }}
-        >
-          <div
-            style={graphDrawerSectionStyle({
-              width: 'min(520px, 100%)',
-              padding: 16,
-              color: GRAPH_THEME.drawer.inputMuted,
-              lineHeight: 1.5,
-            })}
-          >
-            <div
-              style={{
-                color: GRAPH_THEME.drawer.inputText,
-                fontWeight: 700,
-                marginBottom: 6,
-              }}
-            >
-              Energy canvas unavailable
-            </div>
-            <div>{this.state.error.message || 'The Energy surface failed to load.'}</div>
-          </div>
-        </div>
-      );
-    }
-
-    return this.props.children;
-  }
-}
 
 class KnowledgeSurfaceErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -424,12 +228,9 @@ function normalizeWorkspaceSurface(
     normalized === 'canvas' ||
     normalized === 'knowledge' ||
     normalized === 'codegraph' ||
-    normalized === 'energy' ||
     normalized === 'worldsignal' ||
     normalized === 'trading' ||
-    normalized === 'image' ||
-    normalized === 'code' ||
-    normalized === 'video'
+    normalized === 'code'
   ) {
     return normalized as WorkspaceTestingSurface;
   }
@@ -514,14 +315,6 @@ function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   return null;
 }
 
-function isEnergyWorkbenchCard(card: AgentCardInstance | null | undefined): boolean {
-  if (!card) return false;
-  return (
-    safeText(card.id).trim() === 'card_energy_workbench' ||
-    safeText(card.templateId).trim() === 'template_energy_workbench'
-  );
-}
-
 function isTradingWorkbenchCard(card: AgentCardInstance | null | undefined): boolean {
   if (!card) return false;
   return (
@@ -530,27 +323,11 @@ function isTradingWorkbenchCard(card: AgentCardInstance | null | undefined): boo
   );
 }
 
-function isImageWorkbenchCard(card: AgentCardInstance | null | undefined): boolean {
-  if (!card) return false;
-  return (
-    safeText(card.id).trim() === 'card_image_workbench' ||
-    safeText(card.templateId).trim() === 'template_image_workbench'
-  );
-}
-
 function isCodeWorkbenchCard(card: AgentCardInstance | null | undefined): boolean {
   if (!card) return false;
   return (
     safeText(card.id).trim() === 'card_code_workbench' ||
     safeText(card.templateId).trim() === 'template_code_workbench'
-  );
-}
-
-function isVideoWorkbenchCard(card: AgentCardInstance | null | undefined): boolean {
-  if (!card) return false;
-  return (
-    safeText(card.id).trim() === 'card_video_workbench' ||
-    safeText(card.templateId).trim() === 'template_video_workbench'
   );
 }
 
@@ -580,11 +357,8 @@ function isLegacyUaCard(
 }
 
 type WorkbenchSurfaceId =
-  | 'energy'
   | 'trading'
-  | 'image'
   | 'code'
-  | 'video'
   | 'data-formulator';
 
 type WorkbenchCardDescriptor = {
@@ -597,14 +371,6 @@ type WorkbenchCardDescriptor = {
 
 const WORKBENCH_CARD_DESCRIPTORS: readonly WorkbenchCardDescriptor[] = [
   {
-    id: 'energy',
-    title: 'NRGSim / Energy',
-    openLabel: 'Open Energy Surface',
-    disabledCopy:
-      'NRGSim is staged as a selectable workbench card. Runtime is disabled until the dedicated Energy backend exists.',
-    matches: isEnergyWorkbenchCard,
-  },
-  {
     id: 'trading',
     title: 'Trading Agent',
     openLabel: 'Open Trading Workspace',
@@ -613,28 +379,12 @@ const WORKBENCH_CARD_DESCRIPTORS: readonly WorkbenchCardDescriptor[] = [
     matches: isTradingWorkbenchCard,
   },
   {
-    id: 'image',
-    title: 'Image Maker Agent',
-    openLabel: 'Open Image Workspace',
-    disabledCopy:
-      'Image Maker is staged as a selectable workbench card. Runtime is disabled until the image generation bridge exists.',
-    matches: isImageWorkbenchCard,
-  },
-  {
     id: 'code',
     title: 'Code Agent',
     openLabel: 'Open Code Workspace',
     disabledCopy:
       'Code Agent is staged as a selectable workbench card. Runtime is disabled until the canvas-owned code bridge is restored.',
     matches: isCodeWorkbenchCard,
-  },
-  {
-    id: 'video',
-    title: 'Video Agent',
-    openLabel: 'Open Video Workspace',
-    disabledCopy:
-      'Video Agent is staged as a selectable workbench card. Runtime is disabled until the video generation bridge exists.',
-    matches: isVideoWorkbenchCard,
   },
   {
     id: 'data-formulator',
@@ -705,11 +455,8 @@ function isCodeGraphSystemCard(
 export type ActivationProposalState = {
   capability:
     | 'knowledge'
-    | 'energy'
     | 'worldsignal'
-    | 'image'
     | 'code'
-    | 'video'
     | 'trading';
   title: string;
   sourceText: string;
@@ -719,11 +466,8 @@ export type ActivationProposalState = {
 export type ProgressiveRailVisibility = {
   showKnowledge: boolean;
   showWorldsignal: boolean;
-  showEnergy: boolean;
   showTrading: boolean;
-  showImage: boolean;
   showCode: boolean;
-  showVideo: boolean;
   showDataFormulator: boolean;
   showOpenClaudeConsole: boolean;
 };
@@ -970,13 +714,6 @@ export function isWorldSignalsAgentActive(
   );
 }
 
-export function isEnergyWorkbenchActive(
-  nodes: readonly AgentCardInstance[],
-  edges: readonly DeckEdge[],
-): boolean {
-  return isWorkbenchSurfaceActive(nodes, edges, isEnergyWorkbenchCard);
-}
-
 export function isTradingWorkbenchActive(
   nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
@@ -984,25 +721,11 @@ export function isTradingWorkbenchActive(
   return isWorkbenchSurfaceActive(nodes, edges, isTradingWorkbenchCard);
 }
 
-export function isImageWorkbenchActive(
-  nodes: readonly AgentCardInstance[],
-  edges: readonly DeckEdge[],
-): boolean {
-  return isWorkbenchSurfaceActive(nodes, edges, isImageWorkbenchCard);
-}
-
 export function isCodeWorkbenchActive(
   nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
 ): boolean {
   return isWorkbenchSurfaceActive(nodes, edges, isCodeWorkbenchCard);
-}
-
-export function isVideoWorkbenchActive(
-  nodes: readonly AgentCardInstance[],
-  edges: readonly DeckEdge[],
-): boolean {
-  return isWorkbenchSurfaceActive(nodes, edges, isVideoWorkbenchCard);
 }
 
 export function isDataFormulatorWorkbenchActive(
@@ -1023,17 +746,6 @@ function isWorkbenchSurfaceActive(
   );
 }
 
-export function shouldShowEnergyRailButton(
-  deck: Pick<DeckDocument, 'nodes' | 'edges'>,
-  workspaceView: string,
-): boolean {
-  return deriveVisibleRailItems({
-    deck,
-    workspaceView,
-    pendingActivationProposal: null,
-  }).showEnergy;
-}
-
 export function deriveVisibleRailItems({
   deck,
   workspaceView,
@@ -1049,21 +761,12 @@ export function deriveVisibleRailItems({
     showWorldsignal:
       workspaceView === 'worldsignal' ||
       isWorldSignalsAgentActive(deck.nodes, deck.edges),
-    showEnergy:
-      workspaceView === 'energy' ||
-      isEnergyWorkbenchActive(deck.nodes, deck.edges),
     showTrading:
       workspaceView === 'trading' ||
       isTradingWorkbenchActive(deck.nodes, deck.edges),
-    showImage:
-      workspaceView === 'image' ||
-      isImageWorkbenchActive(deck.nodes, deck.edges),
     showCode:
       workspaceView === 'code' ||
       isCodeWorkbenchActive(deck.nodes, deck.edges),
-    showVideo:
-      workspaceView === 'video' ||
-      isVideoWorkbenchActive(deck.nodes, deck.edges),
     showDataFormulator:
       workspaceView === 'data-formulator' ||
       isDataFormulatorWorkbenchActive(deck.nodes, deck.edges),
@@ -1087,30 +790,21 @@ function detectActivationProposal(
             normalized,
           )
         ? 'knowledge'
-        : /\b(energy|nrgsim)\b/.test(normalized)
-          ? 'energy'
-          : /\b(worldsignal|world signals|world)\b/.test(normalized)
-            ? 'worldsignal'
-            : /\b(image|poster|print|shirt)\b/.test(normalized)
-              ? 'image'
-              : /\b(code|coder|openclaude|claude code|localcoder)\b/.test(
-                    normalized,
-                  )
-                ? 'code'
-                : /\b(video|clips|storyboard)\b/.test(normalized)
-                  ? 'video'
-                  : /\btrading\b/.test(normalized)
-                    ? 'trading'
-                    : null;
+        : /\b(worldsignal|world signals|world)\b/.test(normalized)
+          ? 'worldsignal'
+          : /\b(code|coder|openclaude|claude code|localcoder)\b/.test(
+                  normalized,
+                )
+              ? 'code'
+              : /\btrading\b/.test(normalized)
+                ? 'trading'
+                : null;
   if (!capability) return null;
 
   const titleByCapability = {
     knowledge: 'Enable Research + Knowledge',
-    energy: 'Enable Energy',
     worldsignal: 'Enable WorldSignals',
-    image: 'Enable Image Maker',
     code: 'Enable Code Agent',
-    video: 'Enable Video Agent',
     trading: 'Enable Trading',
   } as const;
 
@@ -1612,30 +1306,6 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     }),
   },
   {
-    id: 'prompt_energy_workbench',
-    content: buildSeedPromptTemplate({
-      role: [
-        'You are the NRGSim / Energy workbench card.',
-        'You represent the visible Building Modeler and Energy surface on the board.',
-      ].join('\n'),
-      goal: [
-        'Expose the Energy workspace as a selectable board capability.',
-        'Keep this as a staged capability; a runtime bridge can be attached later.',
-      ].join('\n'),
-      constraints: [
-        'Do not call backend model runtime from this card.',
-        'Use the existing Energy surface for interaction.',
-      ].join('\n'),
-      ioSchema: [
-        'Input: user selection or future Energy workbench request.',
-        'Output: open or focus the Energy workspace surface.',
-      ].join('\n'),
-      memoryPolicy: [
-        'Use this as a placeholder workspace until a runtime bridge is connected.',
-      ].join('\n'),
-    }),
-  },
-  {
     id: 'prompt_plan_agent',
     content: buildSeedPromptTemplate({
       role: [
@@ -1712,30 +1382,6 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     }),
   },
   {
-    id: 'prompt_image_workbench',
-    content: buildSeedPromptTemplate({
-      role: [
-        'You are the Image Maker Agent workbench card.',
-        'You represent the visible image generation and print-placement workspace on the board.',
-      ].join('\n'),
-      goal: [
-        'Expose the Image Maker workspace as a connectable workbench capability.',
-        'Keep this staged until the app-owned image generation bridge is restored.',
-      ].join('\n'),
-      constraints: [
-        'Do not call backend model runtime from this card.',
-        'Do not claim images were generated or exported unless a real bridge exists.',
-      ].join('\n'),
-      ioSchema: [
-        'Input: user selection or future image workbench request.',
-        'Output: open or focus the Image Maker workspace surface.',
-      ].join('\n'),
-      memoryPolicy: [
-        'Treat this as a visible activation stub for the future image workflow.',
-      ].join('\n'),
-    }),
-  },
-  {
     id: 'prompt_code_workbench',
     content: buildSeedPromptTemplate({
       role: [
@@ -1756,30 +1402,6 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       memoryPolicy: [
         'Treat this as a visible activation stub for the future code workflow.',
-      ].join('\n'),
-    }),
-  },
-  {
-    id: 'prompt_video_workbench',
-    content: buildSeedPromptTemplate({
-      role: [
-        'You are the Video Agent workbench card.',
-        'You represent the visible video workflow workspace on the board.',
-      ].join('\n'),
-      goal: [
-        'Expose the Video workspace as a connectable workbench capability.',
-        'Keep this staged until the app-owned video generation bridge is restored.',
-      ].join('\n'),
-      constraints: [
-        'Do not call backend model runtime from this card.',
-        'Do not claim clips, renders, or exports were produced unless a real bridge exists.',
-      ].join('\n'),
-      ioSchema: [
-        'Input: user selection or future video workbench request.',
-        'Output: open or focus the Video workspace surface.',
-      ].join('\n'),
-      memoryPolicy: [
-        'Treat this as a visible activation stub for the future video workflow.',
       ].join('\n'),
     }),
   },
@@ -1867,16 +1489,6 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     tools: [...LOCAL_CODER_CONTROLLER_TOOLS],
   },
   {
-    id: 'template_energy_workbench',
-    name: 'NRGSim / Energy',
-    promptTemplate: 'prompt_energy_workbench',
-    model: DEFAULT_CARD_MODEL_KEY,
-    provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 800,
-    tools: [],
-  },
-  {
     id: 'template_plan_agent',
     name: 'Plan Agent',
     promptTemplate: 'prompt_plan_agent',
@@ -1907,29 +1519,9 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     tools: [],
   },
   {
-    id: 'template_image_workbench',
-    name: 'Image Maker Agent',
-    promptTemplate: 'prompt_image_workbench',
-    model: DEFAULT_CARD_MODEL_KEY,
-    provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 800,
-    tools: [],
-  },
-  {
     id: 'template_code_workbench',
     name: 'Code Agent',
     promptTemplate: 'prompt_code_workbench',
-    model: DEFAULT_CARD_MODEL_KEY,
-    provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 800,
-    tools: [],
-  },
-  {
-    id: 'template_video_workbench',
-    name: 'Video Agent',
-    promptTemplate: 'prompt_video_workbench',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
     temperature: 0.2,
@@ -2082,23 +1674,6 @@ export const INITIAL_DECK: DeckDocument = {
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
-      id: 'card_energy_workbench',
-      kind: 'agent',
-      templateId: 'template_energy_workbench',
-      prompt:
-        INITIAL_PROMPT_TEMPLATES.find(
-          (template) => template.id === 'prompt_energy_workbench',
-        )?.content || '',
-      runtimeBinding: 'energy_agent',
-      runtimeType: 'assistant_agent',
-      parentGraphId: 'workbench_energy',
-      title: 'NRGSim / Energy',
-      subtitle: 'Building Modeler workbench',
-      position: { x: 260, y: 140 },
-      status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
-    },
-    {
       id: 'card_local_coder',
       kind: 'agent',
       templateId: 'template_local_coder',
@@ -2138,23 +1713,6 @@ export const INITIAL_DECK: DeckDocument = {
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
-      id: 'card_image_workbench',
-      kind: 'agent',
-      templateId: 'template_image_workbench',
-      prompt:
-        INITIAL_PROMPT_TEMPLATES.find(
-          (template) => template.id === 'prompt_image_workbench',
-        )?.content || '',
-      runtimeBinding: 'image_agent',
-      runtimeType: 'assistant_agent',
-      parentGraphId: 'workbench_image',
-      title: 'Image Maker Agent',
-      subtitle: 'Generation and print placement',
-      position: { x: 780, y: 140 },
-      status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
-    },
-    {
       id: 'card_code_workbench',
       kind: 'agent',
       templateId: 'template_code_workbench',
@@ -2168,23 +1726,6 @@ export const INITIAL_DECK: DeckDocument = {
       title: 'Code Agent',
       subtitle: 'Scoped repo tasks',
       position: { x: 1040, y: 140 },
-      status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
-    },
-    {
-      id: 'card_video_workbench',
-      kind: 'agent',
-      templateId: 'template_video_workbench',
-      prompt:
-        INITIAL_PROMPT_TEMPLATES.find(
-          (template) => template.id === 'prompt_video_workbench',
-        )?.content || '',
-      runtimeBinding: 'video_agent',
-      runtimeType: 'assistant_agent',
-      parentGraphId: 'workbench_video',
-      title: 'Video Agent',
-      subtitle: 'Storyboard and clips',
-      position: { x: 780, y: 320 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -2262,11 +1803,8 @@ const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
   card_knowgraph_agent: 'knowgraph_agent',
   card_plan_agent: 'plan_agent',
   card_worldsignals_agent: 'worldsignals_agent',
-  card_energy_workbench: 'energy_agent',
   card_trading_workbench: 'trading_agent',
-  card_image_workbench: 'image_agent',
   card_code_workbench: 'code_agent',
-  card_video_workbench: 'video_agent',
   card_data_formulator_workbench: 'data_formulator_agent',
   // Backward compatibility: legacy card IDs for existing saved decks
   card_main_chat: 'main_chat',
@@ -2290,11 +1828,8 @@ const BASELINE_OPTIONAL_CARD_IDS = new Set([
   'card_local_coder',
   'card_plan_agent',
   'card_worldsignals_agent',
-  'card_energy_workbench',
   'card_trading_workbench',
-  'card_image_workbench',
   'card_code_workbench',
-  'card_video_workbench',
   'card_data_formulator_workbench',
 ]);
 const REMOVED_DEFAULT_CARD_IDS = new Set(['card_assist']);
@@ -2331,11 +1866,8 @@ function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
   if (normalized === 'knowgraph_agent') return 'knowgraph_agent';
   if (normalized === 'plan_agent') return 'plan_agent';
   if (normalized === 'worldsignals_agent') return 'worldsignals_agent';
-  if (normalized === 'energy_agent') return 'energy_agent';
   if (normalized === 'trading_agent') return 'trading_agent';
-  if (normalized === 'image_agent') return 'image_agent';
   if (normalized === 'code_agent') return 'code_agent';
-  if (normalized === 'video_agent') return 'video_agent';
   if (normalized === 'data_formulator_agent') return 'data_formulator_agent';
   return null;
 }
@@ -2357,7 +1889,7 @@ export function filterAuthoringCompatibleEdges(
         return (
           normalizeRuntimeType(sourceNode.runtimeType) === 'magentic_one' &&
           isTopLevelCanvasCard(sourceNode) &&
-          (isTopLevelCanvasCard(targetNode) || isEnergyWorkbenchCard(targetNode)) &&
+          isTopLevelCanvasCard(targetNode) &&
           ['assistant_agent', 'local_coder', 'graph_flow'].includes(
             normalizeRuntimeType(targetNode.runtimeType) || '',
           )
@@ -3180,11 +2712,8 @@ export default function AgentBuilder(): React.ReactElement {
     | 'canvas'
     | 'knowledge'
     | 'codegraph'
-    | 'energy'
     | 'trading'
-    | 'image'
     | 'code'
-    | 'video'
     | 'data-formulator'
     | 'worldsignal'
   >(() =>
@@ -4627,114 +4156,6 @@ export default function AgentBuilder(): React.ReactElement {
     }
   }, [activeProject]);
 
-  const [energyInputs, setEnergyInputs] = useState<EnergySurfaceParameters>(
-    () => ({ ...ENERGY_DEFAULT_PARAMETERS }),
-  );
-  const [selectedWorkspaceObjectId, setSelectedWorkspaceObjectId] =
-    useState<EnergyObjectId>('energy:facade');
-  const [latestWorkspaceActionSummary, setLatestWorkspaceActionSummary] =
-    useState<string | null>(null);
-  const energyWorkspaceObjects = useMemo(
-    () => buildEnergyWorkspaceObjects(energyInputs),
-    [energyInputs],
-  );
-  const applyWorkspaceAction = useCallback(
-    (actionCall: WorkspaceActionCall): WorkspaceActionResult => {
-      const action = ENERGY_WORKSPACE_ACTIONS.find(
-        (entry) => entry.id === actionCall.actionId,
-      );
-      if (!action) {
-        return {
-          ok: false,
-          actionId: actionCall.actionId,
-          targetObjectId: actionCall.targetObjectId,
-          summary: `Unknown workspace action: ${safeText(actionCall.actionId)}`,
-          error: 'unknown_action',
-        };
-      }
-
-      if (!isEnergyObjectId(actionCall.targetObjectId)) {
-        return {
-          ok: false,
-          actionId: action.id,
-          targetObjectId: actionCall.targetObjectId,
-          summary: `Unknown workspace object: ${safeText(actionCall.targetObjectId)}`,
-          error: 'unknown_target_object',
-        };
-      }
-
-      const targetObject = energyWorkspaceObjects.find(
-        (entry) => entry.id === actionCall.targetObjectId,
-      );
-      const targetLabel = targetObject?.label || actionCall.targetObjectId;
-      let summary = '';
-
-      if (action.id === 'select_object') {
-        setSelectedWorkspaceObjectId(actionCall.targetObjectId);
-        summary = `Selected ${targetLabel}.`;
-      } else if (action.id === 'reset_energy_surface') {
-        setEnergyInputs({ ...ENERGY_DEFAULT_PARAMETERS });
-        setSelectedWorkspaceObjectId('energy:facade');
-        summary = 'Reset the Energy surface to default parameters.';
-      } else if (action.id === 'update_object_parameter') {
-        const parameter = safeText(actionCall.parameters?.parameter);
-        const value = Number(actionCall.parameters?.value);
-        if (!isEnergyParameterKey(parameter)) {
-          return {
-            ok: false,
-            actionId: action.id,
-            targetObjectId: actionCall.targetObjectId,
-            summary: `Unknown Energy parameter: ${parameter || 'empty'}`,
-            error: 'unknown_parameter',
-          };
-        }
-        if (!ENERGY_OBJECT_PARAMETERS[actionCall.targetObjectId].includes(parameter)) {
-          return {
-            ok: false,
-            actionId: action.id,
-            targetObjectId: actionCall.targetObjectId,
-            summary: `${targetLabel} does not expose ${formatEnergyParameterLabel(parameter)}.`,
-            error: 'parameter_not_allowed_for_object',
-          };
-        }
-        if (!Number.isFinite(value)) {
-          return {
-            ok: false,
-            actionId: action.id,
-            targetObjectId: actionCall.targetObjectId,
-            summary: `Invalid value for ${formatEnergyParameterLabel(parameter)}.`,
-            error: 'invalid_parameter_value',
-          };
-        }
-        setEnergyInputs((current) => ({
-          ...current,
-          [parameter]: value,
-        }));
-        setSelectedWorkspaceObjectId(actionCall.targetObjectId);
-        summary = `Updated ${targetLabel} ${formatEnergyParameterLabel(parameter)} to ${value}.`;
-      }
-
-      const planEventSummary = `[workspace_action] ${summary}`;
-      setLatestWorkspaceActionSummary(planEventSummary);
-      return {
-        ok: true,
-        actionId: action.id,
-        targetObjectId: actionCall.targetObjectId,
-        summary,
-        planEventSummary,
-      };
-    },
-    [energyWorkspaceObjects],
-  );
-
-  useEffect(() => {
-    (window as any).__LIQUIDAITY_APPLY_WORKSPACE_ACTION__ =
-      applyWorkspaceAction;
-    return () => {
-      delete (window as any).__LIQUIDAITY_APPLY_WORKSPACE_ACTION__;
-    };
-  }, [applyWorkspaceAction]);
-
   useEffect(() => {
     if (
       dashboardPollAbortRef.current &&
@@ -5425,24 +4846,12 @@ export default function AgentBuilder(): React.ReactElement {
     setWorkspaceView(surface);
   }, [closeObjectDrawer]);
 
-  const showEnergyWorkspace = useCallback(() => {
-    showWorkbenchWorkspace('energy');
-  }, [showWorkbenchWorkspace]);
-
   const showTradingWorkspace = useCallback(() => {
     showWorkbenchWorkspace('trading');
   }, [showWorkbenchWorkspace]);
 
-  const showImageWorkspace = useCallback(() => {
-    showWorkbenchWorkspace('image');
-  }, [showWorkbenchWorkspace]);
-
   const showCodeWorkspace = useCallback(() => {
     showWorkbenchWorkspace('code');
-  }, [showWorkbenchWorkspace]);
-
-  const showVideoWorkspace = useCallback(() => {
-    showWorkbenchWorkspace('video');
   }, [showWorkbenchWorkspace]);
 
   const showDataFormulatorWorkspace = useCallback(() => {
@@ -5567,11 +4976,8 @@ export default function AgentBuilder(): React.ReactElement {
       onShowCanvasWorkspace={showCanvasWorkspace}
       onQuickAddAssistNode={() => handleQuickAddDeckNode('assist')}
       onShowKnowledgeWorkspace={showKnowledgeWorkspace}
-      onShowEnergyWorkspace={showEnergyWorkspace}
       onShowTradingWorkspace={showTradingWorkspace}
-      onShowImageWorkspace={showImageWorkspace}
       onShowCodeWorkspace={showCodeWorkspace}
-      onShowVideoWorkspace={showVideoWorkspace}
       onShowDataFormulatorWorkspace={showDataFormulatorWorkspace}
       onOpenNavigationDrawer={() => setOpenDrawer('navigation')}
       openClaudeConsoleActive={openClaudeConsoleOpen}
@@ -5643,54 +5049,7 @@ export default function AgentBuilder(): React.ReactElement {
           surfaceRole="companion"
         />
       }
-      energySurface={
-        <EnergySurfaceErrorBoundary key="energy-surface">
-          <Suspense
-            fallback={
-              <div
-                data-testid="energy-facade-loading"
-                style={{
-                  height: '100%',
-                  padding: 16,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  background:
-                    GRAPH_THEME.background.knowledgeSurface,
-                }}
-              >
-                <div
-                  style={graphDrawerSectionStyle({
-                    padding: '12px 14px',
-                    color: GRAPH_THEME.drawer.inputMuted,
-                  })}
-                >
-                  Loading energy canvas...
-                </div>
-              </div>
-            }
-          >
-            <EnergyFacadeSurface
-              inputs={energyInputs}
-              selectedObjectId={selectedWorkspaceObjectId}
-              latestActionSummary={latestWorkspaceActionSummary}
-              onWorkspaceAction={applyWorkspaceAction}
-            />
-          </Suspense>
-        </EnergySurfaceErrorBoundary>
-      }
       tradingSurface={<TradingCanvasSurface />}
-      imageSurface={renderWorkbenchPlaceholderSurface({
-        testId: 'image-workspace-placeholder',
-        title: 'Image Maker',
-        status: 'Demo / planned integration',
-        accentColor: GRAPH_THEME.drawer.inputText,
-        steps: [
-          'Prompt the image concept and generate variations.',
-          'Place approved art on shirt, hoodie, poster, or canvas layouts.',
-          'Export order-ready files later when the generation bridge exists.',
-        ],
-      })}
       codeSurface={renderWorkbenchPlaceholderSurface({
         testId: 'code-workspace-placeholder',
         title: 'Code Agent Workspace',
@@ -5702,29 +5061,6 @@ export default function AgentBuilder(): React.ReactElement {
           'A future Claude Code or sandbox bridge executes the task and returns reviewable diffs and tests.',
         ],
       })}
-      videoSurface={
-        <Suspense
-          fallback={
-            <div
-              data-testid="video-canvas-loading"
-              style={{
-                height: '100%',
-                padding: 16,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                background: GRAPH_THEME.background.knowledgeSurface,
-              }}
-            >
-              <div style={{ color: GRAPH_THEME.drawer.inputMuted, fontSize: 13 }}>
-                Loading media studio...
-              </div>
-            </div>
-          }
-        >
-          <MediaStudioCanvas projectId={canvasProjectId || null} />
-        </Suspense>
-      }
       dataFormulatorSurface={
         <DataFormulatorSurface
           modelConfig={dataFormulatorModelConfig}

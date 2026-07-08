@@ -141,7 +141,7 @@ persists edges (UI-proven), Python `canvas_inspect` matches deck store (integrat
 - **Canvas UI** (AgentCanvasPane) is CBM-verified as function nodes. Selection, edge
   drawing, drag behavior are UI-proven, not graph-traversable.
 - **Python MCP boundary** is a network call. CBM verifies the TypeScript call site,
-  not the Python response shape or sidecar availability.
+  not the Python response shape or Python rails availability.
 
 ## Future agent load set
 

@@ -12,11 +12,8 @@ import type {
 type ActivationProposalState = {
   capability:
     | 'knowledge'
-    | 'energy'
     | 'worldsignal'
-    | 'image'
     | 'code'
-    | 'video'
     | 'trading';
   title: string;
   sourceText: string;

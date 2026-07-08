@@ -183,12 +183,9 @@ describe('agentbuilder authoring flow', () => {
       'CodeGraph Agent',
       'Research Agent',
       'KnowGraph Agent',
-      'NRGSim / Energy',
       'Local Coder',
       'Trading Agent',
-      'Image Maker Agent',
       'Code Agent',
-      'Video Agent',
       'Data Formulator',
       'Plan Agent',
       'WorldSignals Agent',
@@ -202,12 +199,9 @@ describe('agentbuilder authoring flow', () => {
       'codegraph_agent',
       'research_agent',
       'knowgraph_agent',
-      'energy_agent',
       'local_coder',
       'trading_agent',
-      'image_agent',
       'code_agent',
-      'video_agent',
       'data_formulator_agent',
       'plan_agent',
       'worldsignals_agent',
@@ -219,12 +213,9 @@ describe('agentbuilder authoring flow', () => {
       'template_codegraph_agent',
       'template_research_agent',
       'template_knowgraph_agent',
-      'template_energy_workbench',
       'template_local_coder',
       'template_trading_workbench',
-      'template_image_workbench',
       'template_code_workbench',
-      'template_video_workbench',
       'template_data_formulator_workbench',
       'template_plan_agent',
       'template_worldsignals_agent',
@@ -478,12 +469,9 @@ describe('agentbuilder authoring flow', () => {
       'card_codegraph_agent',
       'card_research_agent',
       'card_knowgraph_agent',
-      'card_energy_workbench',
       'card_local_coder',
       'card_trading_workbench',
-      'card_image_workbench',
       'card_code_workbench',
-      'card_video_workbench',
       'card_data_formulator_workbench',
       'card_plan_agent',
       'card_worldsignals_agent',
@@ -600,8 +588,8 @@ describe('agentbuilder authoring flow', () => {
       version: 5,
       nodes: INITIAL_DECK.nodes.filter(
         (node) =>
-          node.id !== 'card_energy_workbench' &&
-          node.id !== 'card_image_workbench' &&
+          node.id !== 'card_trading_workbench' &&
+          node.id !== 'card_code_workbench' &&
           node.id !== 'card_worldsignals_agent',
       ),
       edges: [],
@@ -611,8 +599,8 @@ describe('agentbuilder authoring flow', () => {
     const rehydrated = hydrateDeckDocument(JSON.parse(JSON.stringify(loaded.deck)));
 
     expect(loaded.usedFallback).toBe(false);
-    expect(rehydrated.nodes.map((node) => node.id)).not.toContain('card_energy_workbench');
-    expect(rehydrated.nodes.map((node) => node.id)).not.toContain('card_image_workbench');
+    expect(rehydrated.nodes.map((node) => node.id)).not.toContain('card_trading_workbench');
+    expect(rehydrated.nodes.map((node) => node.id)).not.toContain('card_code_workbench');
     expect(rehydrated.nodes.map((node) => node.id)).not.toContain('card_worldsignals_agent');
   });
 

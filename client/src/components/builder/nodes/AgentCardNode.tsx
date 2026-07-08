@@ -16,34 +16,6 @@ type AgentCardNodeData = AgentCardInstance & {
   isInspecting?: boolean;
 };
 
-function NrgSimCubeIcon() {
-  return (
-    <svg
-      width="22"
-      height="18"
-      viewBox="0 0 22 18"
-      fill="none"
-      aria-hidden="true"
-      focusable="false"
-      style={{ flex: '0 0 auto' }}
-    >
-      <path
-        d="M7.2 4.2 13.2 1.6 19 4.7v8.5l-6 3.2-6-3.1V4.2Z"
-        stroke="rgba(157, 239, 238, 0.9)"
-        strokeWidth="1.35"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M7.2 4.2 13 7.4l6-2.7M13 7.4v9M4 6.7l3.2-2.5M4 6.7v8.5l6 1.2"
-        stroke="rgba(224, 247, 246, 0.62)"
-        strokeWidth="1.15"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
 export default function AgentCardNode({
   data,
   selected,
@@ -58,9 +30,6 @@ export default function AgentCardNode({
   const shellActive = Boolean(selected || data?.isInspecting || data?.isRuntimeActive);
   const name = String(data?.title || '').trim() || 'Agent';
   const subtext = String(data?.subtitle || '').replace(/\s+/g, ' ').trim() || 'Operational agent';
-  const isEnergyWorkbench =
-    String(data?.id || '').trim() === 'card_energy_workbench' ||
-    String(data?.templateId || '').trim() === 'template_energy_workbench';
   const compactSubtext =
     subtext.length > 88 ? `${subtext.slice(0, 88).trimEnd()}…` : subtext;
 
@@ -159,7 +128,6 @@ export default function AgentCardNode({
             gap: 6,
           }}
         >
-          {isEnergyWorkbench ? <NrgSimCubeIcon /> : null}
           <span>{name}</span>
         </div>
         <div

@@ -3,15 +3,9 @@ import type { DeckDocument } from '../../../types/agentgraph';
 const MAGENTIC_BUS_BODY_WIDTH = 26;
 const LANDING_BUS_TOP_Y = 72;
 const LANDING_BUS_CENTER_X = 0;
-const LANDING_WORKBENCH_NODE_IDS = new Set([
-  'card_energy_workbench',
-  'template_energy_workbench',
-]);
-
 function isLandingWorkbenchNode(value: unknown): boolean {
   const normalized = String(value ?? '').trim().toLowerCase();
   if (!normalized) return false;
-  if (LANDING_WORKBENCH_NODE_IDS.has(normalized)) return true;
   return normalized.endsWith('_workbench');
 }
 

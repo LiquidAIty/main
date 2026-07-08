@@ -54,8 +54,8 @@ export type DeckExecutionPlan = {
 
 function isNonRunnableWorkbenchNode(node: AgentCardInstance): boolean {
   return (
-    String(node.id || '').trim() === 'card_energy_workbench' ||
-    String(node.templateId || '').trim() === 'template_energy_workbench'
+    String(node.id || '').trim().endsWith('_workbench') ||
+    String(node.templateId || '').trim().endsWith('_workbench')
   );
 }
 

@@ -4,12 +4,9 @@ export type WorkspaceTestingSurface =
   | "canvas"
   | "knowledge"
   | "codegraph"
-  | "energy"
   | "worldsignal"
   | "trading"
-  | "image"
-  | "code"
-  | "video";
+  | "code";
 export type WorkspaceTestingSurfaceRole = "large" | "companion";
 export type WorkspaceTestingObjectType =
   | "agent_node"

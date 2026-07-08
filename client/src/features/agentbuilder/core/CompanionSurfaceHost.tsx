@@ -10,11 +10,8 @@ type CompanionSurfaceHostProps = {
   knowledgeSelectionSurface: ReactNode;
   knowledgeSurface: ReactNode;
   codegraphSurface: ReactNode;
-  energySurface: ReactNode;
   tradingSurface: ReactNode;
-  imageSurface: ReactNode;
   codeSurface: ReactNode;
-  videoSurface: ReactNode;
   dataFormulatorSurface: ReactNode;
   uaSurface: ReactNode;
   worldsignalSurface: ReactNode;
@@ -28,11 +25,8 @@ export default function CompanionSurfaceHost({
   knowledgeSelectionSurface,
   knowledgeSurface,
   codegraphSurface,
-  energySurface,
   tradingSurface,
-  imageSurface,
   codeSurface,
-  videoSurface,
   dataFormulatorSurface,
   uaSurface,
   worldsignalSurface,
@@ -68,11 +62,8 @@ export default function CompanionSurfaceHost({
             !hasKnowledgeWorkspaceSelection &&
             knowledgeSurface}
           {workspaceView === 'codegraph' && codegraphSurface}
-          {workspaceView === 'energy' && energySurface}
           {workspaceView === 'trading' && tradingSurface}
-          {workspaceView === 'image' && imageSurface}
           {workspaceView === 'code' && codeSurface}
-          {workspaceView === 'video' && videoSurface}
           {workspaceView === 'data-formulator' && dataFormulatorSurface}
           {hasActiveUaSurface && uaSurface}
           {workspaceView === 'worldsignal' && worldsignalSurface}

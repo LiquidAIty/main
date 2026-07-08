@@ -19,7 +19,6 @@ import kgRoutes from './kg.routes';
 import devRoutes from './dev.routes';
 import worldsignalRoutes from './worldsignal.routes';
 import knowledgeSeedRoutes from './knowledgeSeed.routes';
-import mediaVideoRoutes from './mediaVideo.routes';
 
 const router = Router();
 
@@ -46,6 +45,5 @@ router.use('/projects', authMiddleware, projectsRoutes);
 router.use('/projects', authMiddleware, decksRoutes);
 router.use('/projects/:projectId/kg', authMiddleware, kgRoutes);
 router.use('/projects', authMiddleware, knowledgeSeedRoutes);
-router.use('/projects', authMiddleware, mediaVideoRoutes);
 
 export default router;

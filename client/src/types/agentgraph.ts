@@ -16,11 +16,8 @@ export type RuntimeBinding =
   | 'knowgraph_agent'
   | 'plan_agent'
   | 'worldsignals_agent'
-  | 'energy_agent'
   | 'trading_agent'
-  | 'image_agent'
   | 'code_agent'
-  | 'video_agent'
   | 'data_formulator_agent';
 
 export type AgentCardRuntimeType =

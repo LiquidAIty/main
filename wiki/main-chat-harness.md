@@ -128,7 +128,7 @@ assert(response.headers.get('Content-Type') === 'text/event-stream');
 ```
 
 Proves: Harness route accepts chat turns and streams SSE events. Does not prove:
-gRPC QueryEngine is running (requires live sidecar), doorway definitions correctly
+gRPC QueryEngine is running (requires the live gRPC harness), doorway definitions correctly
 surface (requires runtime observation).
 
 ## Limitations

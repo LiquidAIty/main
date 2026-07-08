@@ -12,11 +12,8 @@ type RailColors = {
 type RailVisibility = {
   showKnowledge: boolean;
   showWorldsignal: boolean;
-  showEnergy: boolean;
   showTrading: boolean;
-  showImage: boolean;
   showCode: boolean;
-  showVideo: boolean;
   showDataFormulator: boolean;
   // Terminal icon for the OpenClaude Console Bridge. Optional so existing
   // callers keep compiling; shown when Local Coder is bus-connected or a
@@ -33,11 +30,8 @@ type AgentBuilderRailProps = {
   onShowCanvasWorkspace: () => void;
   onQuickAddAssistNode: () => void;
   onShowKnowledgeWorkspace: () => void;
-  onShowEnergyWorkspace: () => void;
   onShowTradingWorkspace: () => void;
-  onShowImageWorkspace: () => void;
   onShowCodeWorkspace: () => void;
-  onShowVideoWorkspace: () => void;
   onShowDataFormulatorWorkspace: () => void;
   onOpenNavigationDrawer: () => void;
   openClaudeConsoleActive?: boolean;
@@ -89,11 +83,8 @@ export default function AgentBuilderRail({
   onShowCanvasWorkspace,
   onQuickAddAssistNode,
   onShowKnowledgeWorkspace,
-  onShowEnergyWorkspace,
   onShowTradingWorkspace,
-  onShowImageWorkspace,
   onShowCodeWorkspace,
-  onShowVideoWorkspace,
   onShowDataFormulatorWorkspace,
   onOpenNavigationDrawer,
   openClaudeConsoleActive,
@@ -160,21 +151,6 @@ export default function AgentBuilderRail({
           <Icon d="M12 1v3M12 20v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M1 12h3M20 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" />
         </button>
       ) : null}
-      {visibleRailItems.showEnergy ? (
-        <button
-          title="Energy"
-          aria-label="Energy"
-          data-testid="rail-energy-button"
-          onClick={onShowEnergyWorkspace}
-          className="p-2 rounded"
-          style={{
-            color:
-              workspaceView === 'energy' ? GRAPH_THEME.accent.solar : colors.text,
-          }}
-        >
-          <Icon d="M7.2 4.2 13.2 1.6 19 4.7v8.5l-6 3.2-6-3.1V4.2Z M7.2 4.2 13 7.4l6-2.7 M13 7.4v9 M4 6.7l3.2-2.5 M4 6.7v8.5l6 1.2" />
-        </button>
-      ) : null}
       {visibleRailItems.showTrading ? (
         <button
           title="Trading"
@@ -192,21 +168,6 @@ export default function AgentBuilderRail({
           <Icon d="M4 18h16M6 15l3-3 3 2 4-6 2 2" />
         </button>
       ) : null}
-      {visibleRailItems.showImage ? (
-        <button
-          title="Image"
-          aria-label="Image"
-          data-testid="rail-image-button"
-          onClick={onShowImageWorkspace}
-          className="p-2 rounded"
-          style={{
-            color:
-              workspaceView === 'image' ? GRAPH_THEME.accent.solar : colors.text,
-          }}
-        >
-          <Icon d="M5 6h14v12H5z M8 14l2.5-2.5L13 14l2-2 2 2 M9 10h.01" />
-        </button>
-      ) : null}
       {visibleRailItems.showCode ? (
         <button
           title="Code"
@@ -220,21 +181,6 @@ export default function AgentBuilderRail({
           }}
         >
           <Icon d="M9 7 4 12l5 5 M15 7l5 5-5 5 M13 5l-2 14" />
-        </button>
-      ) : null}
-      {visibleRailItems.showVideo ? (
-        <button
-          title="Video"
-          aria-label="Video"
-          data-testid="rail-video-button"
-          onClick={onShowVideoWorkspace}
-          className="p-2 rounded"
-          style={{
-            color:
-              workspaceView === 'video' ? GRAPH_THEME.accent.solar : colors.text,
-          }}
-        >
-          <Icon d="M5 7h10v10H5z M15 10l4-2v8l-4-2" />
         </button>
       ) : null}
       {visibleRailItems.showDataFormulator ? (

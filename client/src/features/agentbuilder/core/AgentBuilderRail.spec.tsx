@@ -11,11 +11,8 @@ const baseVisibility = {
   showKnowledge: false,
   showPlan: false,
   showWorldsignal: false,
-  showEnergy: false,
   showTrading: false,
-  showImage: false,
   showCode: false,
-  showVideo: false,
   showDataFormulator: false,
 };
 
@@ -27,11 +24,8 @@ const baseProps = {
   onShowCanvasWorkspace: () => undefined,
   onQuickAddAssistNode: () => undefined,
   onShowKnowledgeWorkspace: () => undefined,
-  onShowEnergyWorkspace: () => undefined,
   onShowTradingWorkspace: () => undefined,
-  onShowImageWorkspace: () => undefined,
   onShowCodeWorkspace: () => undefined,
-  onShowVideoWorkspace: () => undefined,
   onShowDataFormulatorWorkspace: () => undefined,
   onShowPlanWorkspace: () => undefined,
   onOpenNavigationDrawer: () => undefined,

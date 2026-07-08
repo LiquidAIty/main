@@ -5,10 +5,6 @@ vi.mock('../components/worldsignal/WorldSignalSurface', () => ({
   default: () => null,
 }));
 
-vi.mock('../components/energy/EnergyFacadeSurface', () => ({
-  default: () => null,
-}));
-
 vi.mock('../components/dataformulator/DataFormulatorSurface', () => ({
   default: () => null,
 }));
@@ -19,14 +15,10 @@ import {
   getConnectedKnowledgeGraphKinds,
   INITIAL_DECK,
   isCodeWorkbenchActive,
-  isEnergyWorkbenchActive,
-  isImageWorkbenchActive,
   isKnowledgeChainActive,
   isPlanAgentActive,
   isTradingWorkbenchActive,
-  isVideoWorkbenchActive,
   isWorldSignalsAgentActive,
-  shouldShowEnergyRailButton,
   type ActivationProposalState,
 } from './agentbuilder';
 
@@ -178,34 +170,8 @@ describe('agentbuilder progressive activation startup', () => {
     expect(visibility.showKnowledge).toBe(true);
     expect(visibility.showPlan).toBe(true);
     expect(visibility.showWorldsignal).toBe(false);
-    expect(visibility.showEnergy).toBe(false);
     expect(visibility.showTrading).toBe(false);
-    expect(visibility.showImage).toBe(false);
     expect(visibility.showCode).toBe(false);
-    expect(visibility.showVideo).toBe(false);
-  });
-
-  it('keeps Energy hidden until NRGSim is connected or open', () => {
-    expect(isEnergyWorkbenchActive(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(false);
-    expect(shouldShowEnergyRailButton(INITIAL_DECK, 'canvas')).toBe(false);
-    expect(shouldShowEnergyRailButton(INITIAL_DECK, 'energy')).toBe(true);
-  });
-
-  it('shows Energy when NRGSim is connected to the bus', () => {
-    const connectedDeck = connectToBus(
-      INITIAL_DECK,
-      'card_energy_workbench',
-      'edge_magentic_energy',
-    );
-
-    expect(isEnergyWorkbenchActive(connectedDeck.nodes, connectedDeck.edges)).toBe(true);
-    expect(
-      deriveVisibleRailItems({
-        deck: connectedDeck,
-        workspaceView: 'canvas',
-        pendingActivationProposal: null,
-      }).showEnergy,
-    ).toBe(true);
   });
 
   it('keeps Trading hidden until the Trading Agent is connected or open', () => {
@@ -242,40 +208,6 @@ describe('agentbuilder progressive activation startup', () => {
     ).toBe(true);
   });
 
-  it('keeps Image hidden until the Image Maker Agent is connected or open', () => {
-    expect(isImageWorkbenchActive(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(false);
-    expect(
-      deriveVisibleRailItems({
-        deck: INITIAL_DECK,
-        workspaceView: 'canvas',
-        pendingActivationProposal: null,
-      }).showImage,
-    ).toBe(false);
-    expect(
-      deriveVisibleRailItems({
-        deck: INITIAL_DECK,
-        workspaceView: 'image',
-        pendingActivationProposal: null,
-      }).showImage,
-    ).toBe(true);
-  });
-
-  it('shows Image when the Image Maker Agent is connected to the bus', () => {
-    const connectedDeck = connectToBus(
-      INITIAL_DECK,
-      'card_image_workbench',
-      'edge_magentic_image',
-    );
-    expect(isImageWorkbenchActive(connectedDeck.nodes, connectedDeck.edges)).toBe(true);
-    expect(
-      deriveVisibleRailItems({
-        deck: connectedDeck,
-        workspaceView: 'canvas',
-        pendingActivationProposal: null,
-      }).showImage,
-    ).toBe(true);
-  });
-
   it('keeps Code hidden until the Code Agent is connected or open', () => {
     expect(isCodeWorkbenchActive(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(false);
     expect(
@@ -307,24 +239,6 @@ describe('agentbuilder progressive activation startup', () => {
         workspaceView: 'canvas',
         pendingActivationProposal: null,
       }).showCode,
-    ).toBe(true);
-  });
-
-  it('keeps Video hidden until the Video Agent is connected or open', () => {
-    expect(isVideoWorkbenchActive(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(false);
-    expect(
-      deriveVisibleRailItems({
-        deck: INITIAL_DECK,
-        workspaceView: 'canvas',
-        pendingActivationProposal: null,
-      }).showVideo,
-    ).toBe(false);
-    expect(
-      deriveVisibleRailItems({
-        deck: INITIAL_DECK,
-        workspaceView: 'video',
-        pendingActivationProposal: null,
-      }).showVideo,
     ).toBe(true);
   });
 
@@ -475,9 +389,9 @@ describe('agentbuilder progressive activation startup', () => {
 
   it('shows Plan when a pending activation proposal exists', () => {
     const proposal: ActivationProposalState = {
-      capability: 'energy',
-      title: 'Enable Energy',
-      sourceText: 'enable energy',
+      capability: 'trading',
+      title: 'Enable Trading',
+      sourceText: 'enable trading',
       status: 'pending',
     };
 

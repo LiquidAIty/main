@@ -34,7 +34,7 @@ function deck(nodes: AgentCardInstance[]): DeckDocument {
 }
 
 describe('deckExecution topology guards', () => {
-  it('does not treat the staged NRGSim/Energy workbench as runnable', () => {
+  it('does not treat a staged workbench card as runnable', () => {
     const plan = buildExecutionPlan(
       deck([
         node('card_magentic', {
@@ -42,9 +42,9 @@ describe('deckExecution topology guards', () => {
           runtimeType: 'magentic_one',
           title: 'Magentic-One',
         }),
-        node('card_energy_workbench', {
-          templateId: 'template_energy_workbench',
-          title: 'NRGSim / Energy',
+        node('card_trading_workbench', {
+          templateId: 'template_trading_workbench',
+          title: 'Trading Agent',
         }),
       ]),
     );
@@ -53,3 +53,4 @@ describe('deckExecution topology guards', () => {
     expect(plan.startCardIds).toEqual(['card_magentic']);
   });
 });
+

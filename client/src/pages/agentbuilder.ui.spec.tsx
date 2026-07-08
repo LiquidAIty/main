@@ -176,12 +176,6 @@ vi.mock("../components/assist/PlanMissionFlow", () => ({
   },
 }));
 
-vi.mock("../components/energy/EnergyFacadeSurface", () => ({
-  default: function EnergyFacadeSurfaceMock() {
-    return <div data-testid="energy-facade-surface">Energy Facade Surface</div>;
-  },
-}));
-
 const ASSIST_PROJECT = {
   id: "assist_alpha",
   name: "Alpha Project",
@@ -1225,16 +1219,6 @@ describe("AgentBuilder locked 3-state flow", () => {
     expect(getByTestId(container, "drawer-projects-section")).toBeTruthy();
     expect(container.textContent).toContain("Chat Projects");
     expect(container.textContent).toContain("Alpha Project");
-  });
-
-  it("hides the Energy rail button while the NRGSim workbench is disconnected", async () => {
-    const container = mount(<AgentBuilder />);
-
-    await waitFor(() => {
-      expect(queryByTestId(container, "large-surface-chat")).toBeTruthy();
-    });
-
-    expect(queryByTestId(container, "rail-energy-button")).toBeNull();
   });
 
   it("creates a new project using inline form without browser prompts", async () => {
