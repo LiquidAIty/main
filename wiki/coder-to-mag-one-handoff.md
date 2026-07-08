@@ -8,8 +8,8 @@ proof_level: cbm_anchor_verified_and_source_verified
 cbm:
   project_identity: C-Projects-main
   index_root: C:/Projects/main
-  full_index_nodes: 5796
-  full_index_edges: 11712
+  full_index_nodes: 5849
+  full_index_edges: 11002
   freshness: ready
 
 roots:
@@ -39,16 +39,13 @@ roots:
 ## What this is
 
 When the Coder needs work done that requires the Mag One team (orchestrator + connected
-workers), it writes an exact prompt into `handoff/<run-id>/prompt.md` via its native
-Write tool, then calls `run_mag_one` with the shared `jobId`. The Python rails read the
-exact bytes from that file as the task — no wrapping, no rewriting. Return artifacts
-land in `returns/<run-id>/<card-id>/` for the Coder to inspect.
-
-## What the user/agent experiences
-
-The Coder model writes a task file and calls run_mag_one with jobId. Mag One executes
-the team run, workers write return files to `returns/<run-id>/<card-id>/`, and the
-Coder reads those results to continue its work. The handoff prompt is the exact contract.
+workers), it writes an exact prompt into
+`C:/Projects/main/coder-workspace/handoff/<jobId>/prompt.md`, then calls
+`run_mag_one` with the shared `jobId`. The Python rails read the exact bytes from
+that file as the task — no wrapping, no rewriting. Return artifacts land in
+`C:/Projects/main/coder-workspace/returns/<jobId>/<card-id>/...` for inspection.
+Repo-root `handoff/` was useful for earlier proof artifacts, but it is not the
+backend `run_mag_one` jobId consumption path.
 
 ## How it works
 
@@ -56,8 +53,8 @@ Coder reads those results to continue its work. The handoff prompt is the exact 
 Coder writes handoff prompt:
   model calls write_return_file(path, content) (or write_mag_one_instructions tool)
     → jf.write_handoff_prompt(folder, instructions)   [job_folder.py:96]
-      → writes to: handoff/<run-id>/prompt.md (utf-8, exact bytes)
-    → also creates: returns/<run-id>/ directory
+      → writes to: coder-workspace/handoff/<jobId>/prompt.md (utf-8, exact bytes)
+    → also creates: coder-workspace/returns/<jobId>/ directory
 
 Coder triggers Mag One:
   run_mag_one({ jobId, projectId, deckId })            [liquidAItyAgentFlow.ts:142]
@@ -76,12 +73,13 @@ Coder triggers Mag One:
 
 Return artifacts:
   workers call write_return_file(card_id, path, content) [tool_registry.py:378]
-    → writes to returns/<run-id>/<card-id>/<path>
+    → writes to coder-workspace/returns/<jobId>/<card-id>/<path>
     → NOT registered in card tool registry — only available inside handoff run
   RunMagOneResult returns:
-    returnsDir: "<root>/returns/<jobId>"
-    returnedFiles: ["card-id/path", ...]
+    returnsDir: "returns/<jobId>/"
+    returnedFiles: ["returns/<jobId>/<card-id>/<path>", ...]
     returnStatus: "return_files_created" | "no_return_files_created"
+    status: "completed" | "partial" | "failed"
 ```
 
 ## Must not break
@@ -99,40 +97,46 @@ Return artifacts:
    another agent's folder.
 5. `JOB_RETURN_ROOT` ContextVar — if not set (call outside a handoff run), the tool
    returns `job_return_authority_missing` error. Honest degrade.
-6. Active coding target: `C:/Projects/main` is the canonical LiquidAIty repo root.
+6. Route completion must surface handoff metadata. After artifact creation, `runMagOne`
+   returns `completed` or structured `partial`/`failed` metadata instead of hiding useful
+   return files behind a generic 502.
+7. Active coding target: `C:/Projects/main` is the canonical LiquidAIty repo root.
    `coder-workspace/` is the Coder's workspace (not a sandbox).
 
 ## Start in CBM
 
 ```
-search_graph(project="C-Projects-main", query="runMagOne")
-search_graph(project="C-Projects-main", query="resolveCoderWorkspaceRoot")
-search_graph(project="C-Projects-main", query="write_mag_one_instructions")
-search_graph(project="C-Projects-main", query="write_return_file_tool")
-search_graph(project="C-Projects-main", query="resolve_job_folder")
-
-trace_path(project="C-Projects-main", function_name="runMagOne",
-           mode="calls", direction="inbound", depth=1)
-
 index_status(project="C-Projects-main")
+search_graph(project="C-Projects-main", name_pattern="^runMagOne$")
+search_graph(project="C-Projects-main", name_pattern="^runCardWithContract$")
+search_graph(project="C-Projects-main", name_pattern="^run_native_magentic_mission$")
+search_graph(project="C-Projects-main", name_pattern="^write_return_file_tool$")
 ```
 
 ## Valid proof
 
 ```python
-# Proves: handoff folder + prompt.md created with exact bytes
 import app.python_models.job_folder as jf
 
 folder = jf.resolve_job_folder("<root>", "test-run-1", create=True)
 jf.write_handoff_prompt(folder, "# Task\nbuild X\n")
-prompt = jf.read_handoff_prompt(folder)
-assert prompt == "# Task\nbuild X\n"
+assert jf.read_handoff_prompt(folder) == "# Task\nbuild X\n"
 assert folder.handoff_rel == "handoff/test-run-1/prompt.md"
 ```
 
 Proves: handoff prompt is written and read back with exact bytes, paths are
-workspace-contained. Does not prove: Mag One team actually runs with that prompt
-(requires real AutoGen sidecar + configured deck with orchestrator card).
+workspace-contained.
+
+Runtime proof, 2026-07-07:
+
+- `run_mag_one` consumed jobId `magone_trading_research_completion_20260707_2352`
+  from `coder-workspace/handoff/<jobId>/prompt.md`.
+- Route returned `ok:true`, `result.status:completed`, `returnStatus:return_files_created`.
+- `returnedFiles` included
+  `returns/magone_trading_research_completion_20260707_2352/card_plan_agent/trading_intelligence_research_plan.md`.
+- `read_model_results` returned `artifact_read` for that artifact (`10895` bytes).
+- Late abort after artifact creation is covered as structured `partial` success.
+- Process proof detected no Local Coder and no native `openclaude --print`.
 
 ## Limitations
 
@@ -146,6 +150,9 @@ workspace-contained. Does not prove: Mag One team actually runs with that prompt
 - **workspaceRoot is best-effort.** `mkdirSync` in `resolveCoderWorkspaceRoot` uses
   try/catch — a disk-write failure degrades silently to a missing directory, and the
   Python job-folder resolver re-validates independently (catching `FileNotFoundError`).
+- **Graph/research tools inside Mag One are still unproven.** The route and artifact
+  handoff are proven; ThinkGraph, KnowGraph, web, and SEC/EDGAR tool availability inside
+  Mag One still need an authorized-tool proof.
 
 ## Future agent load set
 
