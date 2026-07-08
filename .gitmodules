@@ -1,12 +1,3 @@
-[submodule "videocanvas/remotion-templates"]
-	path = videocanvas/remotion-templates
-	url = https://github.com/reactvideoeditor/remotion-templates.git
-[submodule "videocanvas/react-video-editor"]
-	path = videocanvas/react-video-editor
-	url = https://github.com/designcombo/react-video-editor.git
-[submodule "videocanvas/clip-js"]
-	path = videocanvas/clip-js
-	url = https://github.com/mohyware/clip-js.git
 [submodule "Kronos-main"]
 	path = Kronos-main
 	url = https://github.com/shiyu-coder/Kronos.git

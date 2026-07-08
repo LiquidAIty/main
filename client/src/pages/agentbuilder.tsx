@@ -1688,30 +1688,6 @@ const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     }),
   },
   {
-    id: 'prompt_telescope_agent',
-    content: buildSeedPromptTemplate({
-      role: [
-        'You are the Telescope Agent.',
-        'You represent the visible Telescope imagery and inspection workspace on the board.',
-      ].join('\n'),
-      goal: [
-        'Explain and coordinate Telescope/JWST imagery context when the user selects that capability.',
-        'Keep this prompt-only until a safe Telescope tool bridge is connected.',
-      ].join('\n'),
-      constraints: [
-        'Do not claim image tiles, external data pulls, or exports were produced unless a real bridge exists.',
-        'Use only canvas context and explicit user input until direct tooling is available.',
-      ].join('\n'),
-      ioSchema: [
-        'Input: user selection or future Telescope workbench request.',
-        'Output: image/context reasoning or a request to open the Telescope workspace.',
-      ].join('\n'),
-      memoryPolicy: [
-        'Treat this as a visible prompt-level agent until the Telescope tool bridge is available.',
-      ].join('\n'),
-    }),
-  },
-  {
     id: 'prompt_trading_workbench',
     content: buildSeedPromptTemplate({
       role: [
@@ -1914,16 +1890,6 @@ const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     id: 'template_worldsignals_agent',
     name: 'WorldSignals Agent',
     promptTemplate: 'prompt_worldsignals_agent',
-    model: DEFAULT_CARD_MODEL_KEY,
-    provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 800,
-    tools: [],
-  },
-  {
-    id: 'template_telescope_agent',
-    name: 'Telescope Agent',
-    promptTemplate: 'prompt_telescope_agent',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
     temperature: 0.2,
@@ -2240,23 +2206,6 @@ export const INITIAL_DECK: DeckDocument = {
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
-      id: 'card_telescope_agent',
-      kind: 'agent',
-      templateId: 'template_telescope_agent',
-      prompt:
-        INITIAL_PROMPT_TEMPLATES.find(
-          (template) => template.id === 'prompt_telescope_agent',
-        )?.content || '',
-      runtimeBinding: 'telescope_agent',
-      runtimeType: 'assistant_agent',
-      parentGraphId: null,
-      title: 'Telescope Agent',
-      subtitle: 'JWST imagery and inspection context',
-      position: { x: 1040, y: 320 },
-      status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
-    },
-    {
       id: 'card_plan_agent',
       kind: 'agent',
       templateId: 'template_plan_agent',
@@ -2313,7 +2262,6 @@ const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
   card_knowgraph_agent: 'knowgraph_agent',
   card_plan_agent: 'plan_agent',
   card_worldsignals_agent: 'worldsignals_agent',
-  card_telescope_agent: 'telescope_agent',
   card_energy_workbench: 'energy_agent',
   card_trading_workbench: 'trading_agent',
   card_image_workbench: 'image_agent',
@@ -2342,7 +2290,6 @@ const BASELINE_OPTIONAL_CARD_IDS = new Set([
   'card_local_coder',
   'card_plan_agent',
   'card_worldsignals_agent',
-  'card_telescope_agent',
   'card_energy_workbench',
   'card_trading_workbench',
   'card_image_workbench',
@@ -2384,7 +2331,6 @@ function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
   if (normalized === 'knowgraph_agent') return 'knowgraph_agent';
   if (normalized === 'plan_agent') return 'plan_agent';
   if (normalized === 'worldsignals_agent') return 'worldsignals_agent';
-  if (normalized === 'telescope_agent') return 'telescope_agent';
   if (normalized === 'energy_agent') return 'energy_agent';
   if (normalized === 'trading_agent') return 'trading_agent';
   if (normalized === 'image_agent') return 'image_agent';

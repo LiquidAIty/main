@@ -190,7 +190,6 @@ describe('agentbuilder authoring flow', () => {
       'Code Agent',
       'Video Agent',
       'Data Formulator',
-      'Telescope Agent',
       'Plan Agent',
       'WorldSignals Agent',
     ]);
@@ -210,7 +209,6 @@ describe('agentbuilder authoring flow', () => {
       'code_agent',
       'video_agent',
       'data_formulator_agent',
-      'telescope_agent',
       'plan_agent',
       'worldsignals_agent',
     ]);
@@ -228,7 +226,6 @@ describe('agentbuilder authoring flow', () => {
       'template_code_workbench',
       'template_video_workbench',
       'template_data_formulator_workbench',
-      'template_telescope_agent',
       'template_plan_agent',
       'template_worldsignals_agent',
     ]);
@@ -488,7 +485,6 @@ describe('agentbuilder authoring flow', () => {
       'card_code_workbench',
       'card_video_workbench',
       'card_data_formulator_workbench',
-      'card_telescope_agent',
       'card_plan_agent',
       'card_worldsignals_agent',
     ]);

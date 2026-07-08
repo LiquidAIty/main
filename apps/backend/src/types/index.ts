@@ -16,7 +16,6 @@ export type RuntimeBinding =
   | 'neo4j'
   | 'plan_agent'
   | 'worldsignals_agent'
-  | 'telescope_agent'
   | 'energy_agent'
   | 'trading_agent'
   | 'image_agent'

@@ -12,7 +12,7 @@ import {
   graphGlassPillStyle,
   graphPillButtonStyle,
 } from '../graph/graphVisualTokens';
-import type { WorldViewportMode } from '../skyview/types';
+type WorldViewportMode = 'globe' | 'flat' | 'telescope';
 
 type WorldsignalHealth = {
   enabled: true;
