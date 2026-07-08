@@ -81,6 +81,17 @@ POST /api/coder/mcp-bridge/run_configured_card    [coder.routes.ts:159]
 4. `not_found`, `disabled`, and config errors (`card_model_config_missing`,
    `card_model_config_mismatch`) are honest — never a fabricated run.
 5. correlationId preserved through the entire chain.
+6. Durable constants stay on saved cards/runtime, not in Magnetic One `prompt.md`
+   packets. Card config owns system prompt/role definition, model/provider, selected
+   tools, what the agent does/does not do, output expectations, graph write
+   permissions, runtime binding, and card-specific behavior rules. `prompt.md`
+   carries only run-specific variables.
+7. Hooks/runtime gates enforce invariants: no commit/push unless explicitly allowed,
+   no Local Coder unless selected, no Magnetic One graph write authority, CodeGraph
+   measurement-only, required packet exists before run, CBM dirty-overlay warnings,
+   exact-byte packet readback, card-owned tool calls only, and graph writes only by
+   the owning graph agent/card. Hooks must not become phrase-based workflow routers,
+   deterministic user-intent classifiers, or hidden model/tool fallback.
 
 ## Start in CBM
 

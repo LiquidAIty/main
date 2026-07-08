@@ -1,9 +1,9 @@
 """Coder ↔ Mag One job-folder handoff resolver.
 
-The job FOLDER is the handoff contract. The Coder writes its own task into
-``handoff/<job-id>/prompt.md`` with its existing native Write tool; one existing
-Mag One run is then given the EXACT bytes of that file as its task and an assigned
-``returns/<job-id>/`` directory as its return surface.
+The job FOLDER is the handoff contract. The packet-builder writes one run-specific
+Magnetic One variable context packet into ``handoff/<job-id>/prompt.md``; one
+existing Mag One run is then given the EXACT bytes of that file as its task and an
+assigned ``returns/<job-id>/`` directory as its return surface.
 
 This module is the single, pure resolver for those two workspace-relative paths.
 It never trusts a caller path: the workspace root is the server-forced trusted
@@ -94,10 +94,17 @@ def new_run_id() -> str:
 
 
 def write_handoff_prompt(folder: JobFolder, instructions: str) -> None:
-    """Write the exact Coder-supplied instruction bytes to handoff/<run-id>/prompt.md.
+    """Write exact packet bytes to handoff/<run-id>/prompt.md.
 
-    No system prompt, wrapper, summary, or rewrite — the bytes are the Mag One task.
-    Creates the handoff dir if needed.
+    ``prompt.md`` is the Magnetic One variable context packet for this run. It may
+    contain job/project ids, selected summaries, scoped graph context pointers, CBM
+    anchors, and dirty-overlay facts. Durable constants such as system prompts,
+    role definitions, output contracts, model/provider, permanent tools, graph
+    write policy, denied-tool lists, and fallback behavior belong to saved agent
+    cards/repo law/runtime validation, not this packet.
+
+    No system prompt, wrapper, summary, or rewrite is added here — the bytes are the
+    Mag One task. Creates the handoff dir if needed.
     """
     os.makedirs(os.path.dirname(folder.handoff_prompt_path), exist_ok=True)
     text = instructions if isinstance(instructions, str) else str(instructions)
@@ -106,10 +113,10 @@ def write_handoff_prompt(folder: JobFolder, instructions: str) -> None:
 
 
 def read_handoff_prompt(folder: JobFolder) -> str:
-    """Return the EXACT bytes of the handoff prompt.md as text (utf-8, no rewrite).
+    """Return the EXACT bytes of the handoff prompt.md packet (utf-8, no rewrite).
 
     Read in binary and decoded so newlines are preserved verbatim — the run's task
-    is the Coder's file content, never a summary, wrapper, or transformed prompt.
+    is the packet file content, never a summary, wrapper, or transformed prompt.
     """
     if not os.path.isfile(folder.handoff_prompt_path):
         raise FileNotFoundError(f"handoff_prompt_missing: {folder.handoff_rel}")

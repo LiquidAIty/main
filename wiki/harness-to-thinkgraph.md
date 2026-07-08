@@ -89,6 +89,10 @@ Readback:
    the full CBM index. Full index counts come from `list_projects`/`index_status`.
 4. `card_run_assistant_agent` and `thinkgraph.get_graph_slice` are registered Python
    MCP tools — not generic write surfaces.
+5. Magnetic One `prompt.md` packets may contain scoped ThinkGraph context pointers
+   selected by Harness / the packet-builder, but those pointers are read handles only.
+   They do not grant Mag One raw graph DB access, ThinkGraph write authority, arbitrary
+   graph queries, or generic graph delta behavior.
 
 ## Start in CBM
 

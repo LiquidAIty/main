@@ -216,7 +216,7 @@ describe('Canonical Cards Runtime', () => {
     expect((payload.cardRuntime.runtimeScope as any)?.thinkGraphReadAuthority).toBeUndefined();
   });
 
-  it('contains no magnet packet graph authority field or hard-coded mission strings in the Mag One runtime scope', () => {
+  it('contains no prompt packet graph authority field or hard-coded mission strings in the Mag One runtime scope', () => {
     const cardM = { id: 'mag1', kind: 'agent', runtimeType: 'magentic_one' };
     const think = {
       id: 'think',

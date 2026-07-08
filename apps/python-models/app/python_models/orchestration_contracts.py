@@ -427,8 +427,9 @@ class JobHandoff(BaseModel):
 
     ``workspaceRoot`` is the server-forced trusted root (never model-supplied);
     ``jobId`` is the one opaque id shared across handoff/, prompt.md, this run,
-    and returns/. When present, the run's task is the EXACT bytes of
-    ``handoff/<jobId>/prompt.md`` and its return surface is ``returns/<jobId>/``.
+    and returns/. When present, the run's task is the EXACT bytes of the Magnetic
+    One variable context packet at ``handoff/<jobId>/prompt.md`` and its return
+    surface is ``returns/<jobId>/``.
     """
 
     workspaceRoot: RequiredRuntimeString

@@ -1,7 +1,7 @@
 """Focused coverage for the Coder job-folder handoff resolver + return writer.
 
-Proves: exact prompt bytes are read; the run-scoped return writer creates real
-files only under returns/<job-id>/; absolute paths, traversal, and source-tree
+Proves: exact prompt.md packet bytes are read; the run-scoped return writer creates
+real files only under returns/<job-id>/; absolute paths, traversal, and source-tree
 writes are rejected; written paths are collected; an empty return folder is honest
 (no fabricated result.md); and the writer tool has no ambient authority.
 """
@@ -16,7 +16,7 @@ from app.python_models import tool_registry as tr
 
 
 def _workspace(tmp_path) -> str:
-    # A realistic workspace: a source tree file plus the handoff prompt the Coder wrote.
+    # A realistic workspace: a source tree file plus the handoff packet the Coder wrote.
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "secret.py").write_text("SOURCE = 1\n", encoding="utf-8")
     handoff = tmp_path / "handoff" / "job_abc"
@@ -48,7 +48,7 @@ class TestResolveJobFolder:
 
 
 # --------------------------------------------------------------------------- #
-# exact prompt bytes
+# exact prompt.md packet bytes
 # --------------------------------------------------------------------------- #
 class TestExactPromptBytes:
     def test_reads_prompt_md_verbatim(self, tmp_path):
@@ -60,6 +60,62 @@ class TestExactPromptBytes:
         folder = jf.resolve_job_folder(str(tmp_path), "no_prompt")
         with pytest.raises(FileNotFoundError):
             jf.read_handoff_prompt(folder)
+
+    def test_prompt_md_can_be_variable_context_packet(self, tmp_path):
+        (tmp_path / "src").mkdir()
+        folder = jf.resolve_job_folder(str(tmp_path), "job_packet")
+        packet = """---
+jobId: job_packet
+projectId: project-123
+createdBy: harness_packet_builder
+packetKind: magnetic_one_context
+cbm:
+  project: C-Projects-main
+  status: ready
+  changedCount: 0
+contextPointers:
+  - id: tg-plan-focus
+    graph: thinkgraph
+    mode: read
+    purpose: selected planning context
+    scope:
+      projectId: project-123
+      featureIds:
+        - feature.coder-to-mag-one-handoff
+      nodeIds:
+        - think:node-1
+      topics:
+        - handoff packet
+      files:
+        - apps/python-models/app/python_models/job_folder.py
+      symbols:
+        - resolve_job_folder
+      relationTypes:
+        - related_to
+      maxDepth: 1
+      maxNodes: 8
+      maxTokens: 1200
+anchors:
+  wiki:
+    - wiki/coder-to-mag-one-handoff.md
+  skills:
+    - skills/cbm-graph-reader-skill.md
+  files:
+    - apps/python-models/app/python_models/job_folder.py
+  symbols:
+    - read_handoff_prompt
+---
+
+# Current ask
+
+Prove the packet boundary.
+
+# Selected context
+
+Scoped graph pointers and CBM anchors are run-specific context handles only.
+"""
+        jf.write_handoff_prompt(folder, packet)
+        assert jf.read_handoff_prompt(folder) == packet
 
 
 # --------------------------------------------------------------------------- #

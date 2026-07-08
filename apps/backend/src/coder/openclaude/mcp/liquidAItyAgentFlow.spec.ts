@@ -141,7 +141,7 @@ describe('runMagOne — Coder job-folder handoff (jobId)', () => {
       deps({ runCard: runCard as any }),
     );
 
-    // The task passed to Mag One is empty — Python reads handoff/<jobId>/prompt.md.
+    // The task passed to Mag One is empty — Python reads the prompt.md variable context packet.
     expect(runCard.mock.calls[0][2]).toBe('');
     const ctxArg = runCard.mock.calls[0][3] as any;
     // The trusted job-folder root is the default owned Coder workspace

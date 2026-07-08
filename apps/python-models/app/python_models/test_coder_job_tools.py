@@ -1,9 +1,9 @@
 """The ONE shared implementation behind write_mag_one_instructions / read_model_results.
 
 Proves: the workspace is resolved from server state (env), never a client path; the
-handoff prompt is byte-exact and reusable by run id; the Mag One handoff read path
-sees those exact bytes; and read_model_results lists runs/files, reads text, and
-returns honest empty/invalid states.
+handoff prompt.md packet is byte-exact and reusable by run id; the Mag One handoff
+read path sees those exact bytes; and read_model_results lists runs/files, reads
+text, and returns honest empty/invalid states.
 """
 import asyncio
 import json
@@ -45,7 +45,8 @@ class TestWorkspaceAuthority:
 
 class TestWriteMagOneInstructions:
     def test_creates_handoff_and_returns_folders_with_exact_bytes(self, workspace):
-        out = cjt.write_mag_one_instructions({"instructions": "# Task\nbuild X\n"})
+        packet = "---\njobId: run_x\npacketKind: magnetic_one_context\ncontextPointers: []\n---\n\n# Current ask\nbuild X\n"
+        out = cjt.write_mag_one_instructions({"instructions": packet})
         assert out["ok"] is True and out["status"] == "handoff_written"
         run_id = out["runId"]
         assert out["handoffPath"] == f"handoff/{run_id}/prompt.md"
@@ -53,7 +54,7 @@ class TestWriteMagOneInstructions:
         assert os.path.isdir(os.path.join(workspace, "returns", run_id))
         # Byte-exact, and readable through the SAME path a Coder-created Mag One run uses.
         folder = jf.resolve_job_folder(workspace, run_id)
-        assert jf.read_handoff_prompt(folder) == "# Task\nbuild X\n"
+        assert jf.read_handoff_prompt(folder) == packet
 
     def test_reuses_an_existing_run_id(self, workspace):
         first = cjt.write_mag_one_instructions({"instructions": "v1"})

@@ -44,6 +44,15 @@ detect_changes(project="C-Projects-main")
 `index_status` returns `{"project":"C-Projects-main","nodes":N,"edges":N,"status":"ready"}`.
 `detect_changes` returns `{"changed_files":[],"changed_count":0,...}` when clean.
 
+**Important: detect_changes reports worktree differences from git HEAD.**
+- It only reports tracked files that have been modified (not committed yet).
+- It does NOT report new untracked files.
+- It is NOT cleared by `index_repository` — it's a git diff, not a CBM index
+  freshness signal. It only clears when the modified files are committed or reverted.
+- A clean `detect_changes` means no tracked files have been modified since HEAD.
+- An untracked file that has never been staged or committed will NOT appear in
+  detect_changes and will NOT be indexed by `index_repository`.
+
 **Proof labels at this stage:**
 
 - CBM-freshness-proven: index_status=ready AND changed_count=0.
@@ -58,7 +67,9 @@ detect_changes(project="C-Projects-main")
 **If changed_count>0:**
 - For documentation/graph claims: mark CBM stale. Do not make current graph claims.
 - If the task explicitly allows refresh: run `index_repository(repo_path="C:/Projects/main")`.
-- After reindex: run `index_status` and `detect_changes` again.
+- After reindex: run `index_status` again to confirm ready status.
+  `detect_changes` will NOT clear — it reports git worktree diff, not CBM index
+  freshness. To clear detect_changes, the modified files must be committed or reverted.
 - Report before/after node and edge counts.
 
 **If reindex fails:**

@@ -498,10 +498,11 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
     if context.cardRuntime is None:
         raise RuntimeError("card_runtime_missing")
 
-    # Coder job-folder handoff: the run's task is the EXACT bytes of the Coder's
-    # handoff/<jobId>/prompt.md (never chat text, a wrapper, or userText), and
-    # returns/<jobId>/ is its assigned return surface. The workspace root is the
-    # server-forced trusted root carried in the contract, re-validated here.
+    # Coder job-folder handoff: the run's task is the EXACT bytes of the Magnetic
+    # One variable context packet at handoff/<jobId>/prompt.md (never chat text, a
+    # wrapper, or userText), and returns/<jobId>/ is its assigned return surface.
+    # The workspace root is the server-forced trusted root carried in the contract,
+    # re-validated here.
     folder: jf.JobFolder | None = None
     if context.jobHandoff is not None:
         try:

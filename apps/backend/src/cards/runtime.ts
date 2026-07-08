@@ -433,7 +433,8 @@ export function buildPythonAutoGenCardRuntimePayload(
     workspaceObjectContext: context.workspaceObjectContext ?? undefined,
     // Coder job-folder handoff (server-forced workspace root + job id), when this
     // run was triggered from a handoff. Python reads handoff/<jobId>/prompt.md as
-    // the task and writes deliverables into returns/<jobId>/.
+    // the Magnetic One variable context packet and writes deliverables into
+    // returns/<jobId>/.
     jobHandoff: context.jobHandoff ?? undefined,
     cardRuntime: {
       cardId: String(card.id || ''),

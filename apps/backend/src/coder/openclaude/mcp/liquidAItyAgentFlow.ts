@@ -119,10 +119,10 @@ export type RunMagOneInput = {
   // Optional: supply this OR jobId (the Coder job-folder handoff).
   promptMarkdown?: string;
   // Coder job-folder handoff: the shared job id. When set, the run's task is the
-  // EXACT bytes of handoff/<jobId>/prompt.md (the Coder wrote it with its native
-  // Write tool) and its return surface is returns/<jobId>/. The workspace root is
-  // the server-forced trusted root — never a client path. Takes precedence over
-  // promptMarkdown so the job FILE is always the contract.
+  // EXACT bytes of handoff/<jobId>/prompt.md, the Magnetic One variable context
+  // packet for this run, and its return surface is returns/<jobId>/. The workspace
+  // root is the server-forced trusted root — never a client path. Takes precedence
+  // over promptMarkdown so the job FILE is always the contract.
   jobId?: string;
 };
 
@@ -210,9 +210,10 @@ export async function runMagOne(
   const workspaceRoot = resolveCoderWorkspaceRoot();
 
   // Regular native Mag One run. For a handoff run the runtime input is empty —
-  // the Python rails read handoff/<jobId>/prompt.md as the exact task; otherwise
-  // the Markdown prompt is the task. Bus eligibility (magentic_option) is enforced
-  // inside runCardWithContract, which throws honestly when no worker is connected.
+  // the Python rails read handoff/<jobId>/prompt.md as the exact variable context
+  // packet; otherwise the Markdown prompt is the task. Bus eligibility
+  // (magentic_option) is enforced inside runCardWithContract, which throws
+  // honestly when no worker is connected.
   let result: any;
   try {
     result = await runCard(orchestrator, {}, jobId ? '' : promptMarkdown, {

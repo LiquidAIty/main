@@ -1,6 +1,6 @@
 # DONT.md — read this before you write code here
-
-This codebase has been cleaned of ~16,000 lines of layered spaghetti more than once. It came
+This codebase has been cleaned of well over
+**200,000 lines** of layered spaghetti more than once. It came
 back because agents kept **adding** a new approach without **deleting** the old one, and then
 mimicked the mess they saw. These rules exist to break that loop. They override any instinct,
 any inherited prompt, and any pattern you observe in surrounding code.
@@ -144,10 +144,32 @@ any inherited prompt, and any pattern you observe in surrounding code.
   Lesson: two run paths that both call the same function is one path too many; and a "freshness gate" on a
   local index is an invented guardrail that stops work for zero safety.
 
-- **2026-07-05 (audit sweep) — 74 more dead non-vendored files, ~9,248 lines, 3 commits, every stack green
-  throughout.** A full knip + CBM + disk-truth audit of the non-vendored tree. Nothing here was "broken by the
-  cut" — it was already dead; the only test it broke was one obsolete guard-test that `readFileSync`'d a route
-  we deleted. Client `tsc`, backend `tsc`, and 372 backend unit tests green after every batch.
+- **2026-06-01 through 2026-07-05 (full audit from git log) — running tally from the actual commit
+  record: 5,963 files changed, +175,192 / -182,915 lines across ~90 commits.** The DONT.md entries above
+  come from studying every deletion commit >500 lines to extract reusable anti-patterns. Major deletion
+  events not individually itemized above but informing the rules:
+
+  - **Spec sprawl removal** — `.specify/` spec-kit toolchain (149 files, spec/plan/tasks/checklist
+    generators in PowerShell and bash), 14 speckit skill files, 10 `.skills/` duplicates, `.codex-smoke/`
+    import probes, `analysis.txt`, `cbm_search.txt` root scratch. ~32,000 lines of tooling that generated
+    markdown nobody read.
+  - **Versioned directory collapse** — `apps/backend/src/v3/` (1,895-line runtime, 525-line spec, 252-line
+    execution plan, 189-line deck route, 65-line card route) and `apps/backend/src/routes/v2/` (372-line
+    config route, 159-line projects route). 5,627 lines of duplicate runtime paths.
+  - **Graph visualization shitcode** — KnowGraph viz (loaders, neighborhood/normalize/precedence/
+    source-label calculators, `/explore` lens, dossier), Cytoscape foundation experiments, legacy TS
+    graph brain. ~21,000 lines of working visuals with zero product function.
+  - **Repo eating** — `quant-mind-master/` entire external project committed as subdirectory.
+    13,376 lines.
+  - **Agentbuilder split-turds** — extracted workspace shell components never wired back,
+    admin board recovery patches. ~6,000 lines.
+  - **Rescue/panic patches** — `_rescue_branch_work.patch` (3,958 lines), `_rescue_uncommitted_work.patch`.
+  - **WIP checkpoint commits** — 13 commits titled "checkpoint", "WIP", "save current work",
+    "stop point before X". ~25,000 lines of dead-end code cleaned up later.
+
+  Full tally of the 2026-07-05 DONT.md audit (the items already recorded above) was 74 files / ~9,248
+  lines. The git log reveals the true scale across the whole period was ~10x larger — the patterns above
+  are what produced those 182,915 deleted lines.
   - `85a948e1` (17 files, −2025) — **agent-builder split-turds + LangChain stub.** The GPT "your 15k-line
     agentbuilder is too big, I'll break it up" split left orphans that were never wired back:
     `graphContextPacket.ts` (365-line TS graph-context comparator), `taskContextSlice.ts` (a dead "graph slice"
@@ -213,3 +235,41 @@ them, stop and delete instead.
 - **`.mjs` scripts and root scratch files.** nx/tooling can't see `.mjs`, so they rot invisibly; `dump.*` /
   `test_*.cjs` at the repo root are throwaway code committed as product. Write `.ts`, run it, delete it — don't
   leave scratch in the tree.
+- **Versioned directory paths.** `v2/`, `v3/` directories inside `src/` or `routes/`. Version the API contract
+  if you must, not the directory name. If a rewrite is needed, delete v1 and move forward — never keep v1, v2,
+  and v3 side by side with different implementations of the same thing. `apps/backend/src/v3/` (1,895-line
+  runtime duplicate, 189-line deck route duplicate) and `apps/backend/src/routes/v2/` (372-line config route,
+  159-line projects route) were deleted because the non-versioned paths already had the working code.
+- **Spec toolchain sprawl.** `.specify/`, `.agents/skills/speckit-*`, `.codex-smoke/` — meta-tooling
+  that generates spec files, task files, checklists, and workflow YAMLs from templates. The active CoderPacket
+  prompt IS the spec. Skills live in `skills/*.md`. Everything else is an indirection layer that produces
+  markdown nobody reads and PowerShell scripts nobody runs. The `.specify/` directory alone was 149 files
+  (extensions, git hooks, PowerShell/bash scripts, workflow YMLs). Speckit was 14 skill files that duplicated
+  the real skill system. Deleted: `.specify/` (149 files), `.agents/skills/speckit-*` (14 files), `.skills/`
+  (parallel skill directory, 10 files with a README that treated skills as a hidden dotfolder), `.codex-smoke/`
+  (import probes that were never run).
+- **Parallel skill directories.** `.skills/`, `.agents/skills/` alongside the real `skills/`. One skill
+  directory. One skill format. Multiple directories mean multiple conventions — the `.skills/` README treated
+  them as reusable templates for a different agent, not the same skill system `skills/*.md` defines.
+- **Rescue / panic patches committed to the repo.** `_rescue_branch_work.patch` (3,958 lines),
+  `_rescue_uncommitted_work.patch` — git patch files dumped at the repo root as a panic-save. A patch file
+  is a temporary escape hatch, not a product artifact. If you need it, apply it, then delete the .patch file
+  in the same commit.
+- **Graph visualization without product function.** A beautiful 3D/Cytoscape/ReactFlow visualization that
+  renders nodes and edges but serves zero product function — no feature selection, no context loading, no
+  coding handoff. The KnowGraph viz was removed (loaders, neighborhood/normalize/precedence/source-label
+  calculators, `/explore` lens, dossier — 11,720 lines of working visual code) because it was a standalone
+  art project, not a product feature. Visualization is a UI feature wireable to real data through a real
+  product path; do not build "graph explorer" as a standalone.
+- **Repo eating — dumping an external repo into the project tree.** `quant-mind-master/` (entire external
+  project, 13,376 lines committed as a subdirectory). Extract the one useful pattern, skill, or persona
+  into the curated set; the external source stays out (gitignored or in Downloads). Never commit another
+  project's full tree into this one.
+- **"Stop point" / WIP checkpoint commits.** Commits titled "checkpoint", "WIP", "save current work",
+  "stop point before X" that leave half-finished dead-end code in the tree. A checkpoint is a git stash or
+  a branch — not a commit to main that someone else has to clean up later. The `checkpoint` commits
+  deleted in the cleanup passes contained dead code that was never going to ship: dangling ThinkGraph
+  rewrite attempts (7,759 lines), chat recovery dead-ends (2,591 lines), Cytoscape foundation experiments
+  (4,049 lines), and the massive "stop point before quantmind repo eating" (13,376 lines of external repo
+  committed as a panic-save). If you need a checkpoint, use a branch. If you committed one, delete it
+  before merging.

@@ -115,7 +115,7 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Run regular native Mag One. Task source is EITHER promptMarkdown OR a Coder "
                 "job-folder handoff (jobId). With jobId, the run's task is the EXACT bytes of "
-                "handoff/<jobId>/prompt.md (which the Coder wrote with its own Write tool) and its "
+                "handoff/<jobId>/prompt.md, the Magnetic One variable context packet for this run, and its "
                 "return surface is returns/<jobId>/ under the server-forced trusted workspace root — "
                 "the result reports that returns dir and the files actually written there (honest "
                 "no_return_files_created when none). With promptMarkdown, that string IS Mag One's "
@@ -137,10 +137,10 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="write_mag_one_instructions",
             description=(
-                "Local Coder: write EXACT Mag One task instructions into handoff/<run-id>/prompt.md "
+                "Local Coder: write EXACT Mag One variable context packet into handoff/<run-id>/prompt.md "
                 "in the trusted active Coder workspace, and assign returns/<run-id>/ as the run's "
-                "result folder. Supply `instructions` (the exact text Mag One receives — not "
-                "summarized/wrapped/rewritten) and optionally `runId` to reuse an existing handoff. "
+                "result folder. Supply `instructions` (the exact run-specific text Mag One receives — not "
+                "summarized/wrapped/rewritten, and not durable card constants) and optionally `runId` to reuse an existing handoff. "
                 "Returns runId + workspace-relative handoff and returns paths. Run run_mag_one with "
                 "that runId as jobId to have Mag One read those exact bytes as its task."
             ),

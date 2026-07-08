@@ -1,7 +1,8 @@
 """The ONE shared implementation behind the two explicit Local Coder capabilities.
 
-  * write_mag_one_instructions — write Mag One's task into handoff/<run-id>/prompt.md
-                                 (exact bytes) and assign returns/<run-id>/.
+  * write_mag_one_instructions — write Mag One's variable context packet into
+                                 handoff/<run-id>/prompt.md (exact bytes) and
+                                 assign returns/<run-id>/.
   * read_model_results         — discover/read model-produced artifacts under
                                  returns/<run-id>/ (list runs, list files, read text,
                                  reference binaries), all inside the trusted workspace.
@@ -37,11 +38,13 @@ def resolve_workspace_root() -> str:
 
 
 def write_mag_one_instructions(args: dict) -> dict:
-    """TOOL 1: write exact Mag One instructions into handoff/<run-id>/prompt.md.
+    """TOOL 1: write exact Mag One packet bytes into handoff/<run-id>/prompt.md.
 
     Inputs: instructions (required, exact text); optional runId to reuse an existing
-    handoff. Creates handoff/<run-id>/ and returns/<run-id>/ inside the trusted
-    workspace and returns the run id + workspace-relative paths.
+    handoff. The text is the Magnetic One variable context packet: run-specific
+    context only, not durable card constants. Creates handoff/<run-id>/ and
+    returns/<run-id>/ inside the trusted workspace and returns the run id +
+    workspace-relative paths.
     """
     instructions = args.get("instructions")
     if not isinstance(instructions, str) or not instructions.strip():

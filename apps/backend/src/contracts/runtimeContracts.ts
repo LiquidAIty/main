@@ -281,8 +281,8 @@ export type PythonAutoGenPayloadShape = {
   blackboard?: Record<string, any>;
   workspaceObjectContext?: Record<string, any>;
   // Coder job-folder handoff: server-forced workspace root + shared job id. When
-  // present, the Python run reads handoff/<jobId>/prompt.md as its exact task and
-  // writes deliverables into returns/<jobId>/.
+  // present, the Python run reads handoff/<jobId>/prompt.md as the exact Magnetic
+  // One variable context packet and writes deliverables into returns/<jobId>/.
   jobHandoff?: { workspaceRoot: string; jobId: string };
   cardRuntime: {
     cardId: string;
