@@ -58,14 +58,17 @@ function entryTimeLabel(entry: HermesActivityEntry): string {
 export type HermesConsoleProps = {
   /** Injectable for tests; defaults to the real backend activity endpoint. */
   fetchActivity?: () => Promise<HermesActivityFetchResult>;
+  /** Start with the feed open — used when Hermes IS the pull-up surface. */
+  defaultExpanded?: boolean;
 };
 
 export default function HermesConsole({
   fetchActivity = fetchHermesActivityFromBackend,
+  defaultExpanded = false,
 }: HermesConsoleProps) {
   const [entries, setEntries] = useState<HermesActivityEntry[]>([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
 
   const refresh = useCallback(async () => {
     const result = await fetchActivity();
@@ -92,9 +95,10 @@ export default function HermesConsole({
     <div
       data-testid="hermes-console"
       style={{
-        flex: '0 0 auto',
-        borderTop: '1px solid rgba(255,255,255,0.06)',
-        background: 'linear-gradient(180deg, rgba(24,26,32,0.55) 0%, rgba(18,20,26,0.72) 100%)',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        minHeight: 0,
         fontSize: 12,
         color: 'rgba(214,222,235,0.82)',
       }}
@@ -141,7 +145,7 @@ export default function HermesConsole({
       {expanded ? (
         <div
           data-testid="hermes-console-feed"
-          style={{ maxHeight: 220, overflowY: 'auto', padding: '0 14px 10px' }}
+          style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 14px 10px' }}
         >
           {fetchError ? (
             <div data-testid="hermes-console-error" style={{ opacity: 0.8 }}>

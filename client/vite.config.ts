@@ -75,17 +75,22 @@ export default defineConfig(() => {
           find: '@data-formulator',
           replacement: path.resolve(__dirname, '../data-formulator-main/src'),
         },
+        // npm hoisted react/react-dom to the ROOT node_modules (the old
+        // client/node_modules copies no longer exist) — same install-proof
+        // pinning as troika above, pointed at the hoisted copies. A stale
+        // client-local path here crashes dev startup with
+        // ENOENT jsx-dev-runtime.js.
         {
           find: 'react/jsx-runtime',
-          replacement: path.resolve(__dirname, 'node_modules/react/jsx-runtime.js'),
+          replacement: path.resolve(__dirname, '../node_modules/react/jsx-runtime.js'),
         },
         {
           find: 'react/jsx-dev-runtime',
-          replacement: path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime.js'),
+          replacement: path.resolve(__dirname, '../node_modules/react/jsx-dev-runtime.js'),
         },
         {
           find: 'react-dom/client',
-          replacement: path.resolve(__dirname, 'node_modules/react-dom/client.js'),
+          replacement: path.resolve(__dirname, '../node_modules/react-dom/client.js'),
         },
       ],
     },

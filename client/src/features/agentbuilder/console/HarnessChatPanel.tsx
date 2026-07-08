@@ -1,30 +1,29 @@
 import { useCallback, useRef, useState, type ReactNode } from 'react';
-import ChatTerminalView from './ChatTerminalView';
 
 /**
  * The left panel: the Harness chat surface on top (the passed `chat`, i.e.
- * BuilderChat with inline work), and a near-invisible pull-tab at the bottom that
- * reveals the real PTY terminal ("chat terminal" in the backend). The terminal:
- *   - has no UI name/label (no "shell"/"session"/"console" text)
- *   - is near-invisible until grabbed (a thin minimal handle)
- *   - renders transparent so its text sits on the panel background
- *   - is NOT where Harness replies/work appear (those are in chat)
- * The terminal PTY starts only on first open and stays mounted thereafter.
+ * BuilderChat with inline work), and a near-invisible pull-tab at the bottom
+ * that reveals the under-chat surface. That surface IS the Hermes steward's
+ * run/review feed — one surface, nothing else lives under the chat. Terminal
+ * work belongs to the Code Console (rail icon), never here.
+ *   - no UI name/label beyond what the Hermes feed renders itself
+ *   - near-invisible until grabbed (a thin minimal handle)
+ *   - NOT where Harness replies/work appear (those are in chat)
  */
 
 const HANDLE_HEIGHT = 9;
 const MIN_OPEN_HEIGHT = 120;
-// The terminal is a contained window below chat — it must never grow tall enough
-// to take over. Capped to a modest fixed height (and never past ~42% of the panel).
+// A contained window below chat — it must never grow tall enough to take
+// over. Capped to a modest fixed height (and never past ~42% of the panel).
 const MAX_OPEN_HEIGHT = 240;
 
 export type HarnessChatPanelProps = {
   chat: ReactNode;
-  targetRoot: string;
-  projectId: string;
+  /** The Hermes steward's review/memory feed — the ONE under-chat surface. */
+  hermes: ReactNode;
 };
 
-export default function HarnessChatPanel({ chat, targetRoot, projectId }: HarnessChatPanelProps) {
+export default function HarnessChatPanel({ chat, hermes }: HarnessChatPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [opened, setOpened] = useState(false);
   const [height, setHeight] = useState(0);
@@ -41,7 +40,7 @@ export default function HarnessChatPanel({ chat, targetRoot, projectId }: Harnes
       setOpened(true);
       const rect = containerRef.current.getBoundingClientRect();
       const next = rect.bottom - move.clientY;
-      // Contained: a modest terminal window, never tall enough to take over chat.
+      // Contained: a modest window, never tall enough to take over chat.
       const max = Math.min(MAX_OPEN_HEIGHT, Math.max(MIN_OPEN_HEIGHT, Math.round(rect.height * 0.42)));
       setHeight(next < MIN_OPEN_HEIGHT / 2 ? 0 : Math.min(max, Math.max(MIN_OPEN_HEIGHT, next)));
     };
@@ -54,9 +53,9 @@ export default function HarnessChatPanel({ chat, targetRoot, projectId }: Harnes
     window.addEventListener('mouseup', onUp);
   }, []);
 
-  // Reveal is by PULLING the handle up (drag) — chat stays primary, the terminal
+  // Reveal is by PULLING the handle up (drag) — chat stays primary, Hermes
   // is uncovered beneath it. A plain click only collapses an already-open
-  // terminal; it never jumps open / takes over the chat.
+  // panel; it never jumps open / takes over the chat.
   const onHandleClick = useCallback(() => {
     if (movedRef.current) return;
     setHeight((h) => (h > 0 ? 0 : h));
@@ -74,10 +73,10 @@ export default function HarnessChatPanel({ chat, targetRoot, projectId }: Harnes
 
       {/* Near-invisible pull tab — a thin minimal grab handle, no label. */}
       <div
-        data-testid="chat-terminal-handle"
+        data-testid="chat-hermes-handle"
         role="separator"
         aria-orientation="horizontal"
-        aria-label="Resize terminal"
+        aria-label="Resize Hermes panel"
         title=""
         onMouseDown={onDragStart}
         onClick={onHandleClick}
@@ -101,11 +100,11 @@ export default function HarnessChatPanel({ chat, targetRoot, projectId }: Harnes
         <div style={{ width: 28, height: 3, borderRadius: 2, background: 'currentColor' }} />
       </div>
 
-      {/* Terminal lives below chat: a contained, centered "window" using the same
-          dark look as agent replies, inset to match the chat sides. Hidden until
-          the handle is pulled up. */}
+      {/* Hermes lives below chat: a contained, centered "window" using the
+          same dark look as agent replies, inset to match the chat sides.
+          Hidden until the handle is pulled up. */}
       <div
-        data-testid="chat-terminal-region"
+        data-testid="chat-hermes-region"
         style={{
           flex: '0 0 auto',
           height: opened ? height : 0,
@@ -116,9 +115,11 @@ export default function HarnessChatPanel({ chat, targetRoot, projectId }: Harnes
       >
         {opened ? (
           <div
-            data-testid="chat-terminal-window"
+            data-testid="chat-hermes-window"
             style={{
               height: '100%',
+              display: 'flex',
+              flexDirection: 'column',
               borderRadius: 14,
               overflow: 'hidden',
               background:
@@ -128,7 +129,7 @@ export default function HarnessChatPanel({ chat, targetRoot, projectId }: Harnes
                 'inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -1px 0 rgba(0,0,0,0.18), 0 4px 18px rgba(0,0,0,0.14)',
             }}
           >
-            <ChatTerminalView targetRoot={targetRoot} projectId={projectId} transparent minimal />
+            {hermes}
           </div>
         ) : null}
       </div>

@@ -257,35 +257,6 @@ function clamp(x: number, a: number, b: number) {
   return Math.min(b, Math.max(a, x));
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      style={graphDrawerSectionStyle({
-        borderRadius: 8,
-        padding: '12px 14px',
-      })}
-    >
-      <div
-        className="text-xs"
-        style={{
-          color: GRAPH_THEME.drawer.inputText,
-          fontWeight: 700,
-          marginBottom: 8,
-        }}
-      >
-        {title}
-      </div>
-      {children}
-    </div>
-  );
-}
-
 
 const WORKSPACE_OBJECT_CONTEXT_LIST_LIMIT = 12;
 const WORKSPACE_OBJECT_SELECTED_TEXT_LIMIT = 240;
@@ -1020,10 +991,6 @@ export default function AgentBuilder(): React.ReactElement {
   const selectedWorkbenchDescriptor = useMemo(
     () => resolveWorkbenchDescriptor(selectedCard),
     [selectedCard],
-  );
-  const selectedEdge = useMemo(
-    () => deck.edges.find((edge) => edge.id === selectedEdgeId) || null,
-    [deck.edges, selectedEdgeId],
   );
   const selectedTemplate = useMemo(
     () => resolveAgentTemplate(selectedCard, INITIAL_AGENT_TEMPLATES),
@@ -1977,90 +1944,6 @@ export default function AgentBuilder(): React.ReactElement {
     };
   }, [tab, activeProject]);
 
-  const handleSend = (t: string) => {
-    const trimmed = t.trim();
-    if (!trimmed) return;
-    if (sending || deckRunBusy || cardRunBusy || deckLoadBusy) return;
-
-    if (!canvasProjectId) {
-      setMessages((m) => [
-        ...m,
-        {
-          role: 'assistant',
-          text: 'Select or create a project before running chat tasks.',
-        },
-      ]);
-      return;
-    }
-    const interactionId = createWorkspaceTestingInteractionId('chat');
-    const sendStartedAt = Date.now();
-    const turnId = `assist:${Date.now()}:${uid()}`;
-    chatLoopTelemetryRef.current = {
-      interactionId,
-      sendStartedAt,
-      responseReceivedAt: null,
-      refreshRecorded: false,
-    };
-    emitWorkspaceTestingEvent({
-      event: 'chat_send_started',
-      interactionId,
-      surface:
-        largeSurface === 'chat' ? 'chat' : normalizeWorkspaceSurface(tab),
-      surfaceRole: largeSurface === 'chat' ? 'large' : 'companion',
-      metadata: {
-        messageLength: trimmed.length,
-        responseMode: 'blocked_honest',
-        turnId,
-        workspaceView: activeDeckWorkspaceContext.workspaceView,
-        objectEditorOpen: activeDeckWorkspaceContext.objectEditor.open,
-        objectEditorCardId:
-          activeDeckWorkspaceContext.objectEditor.selectedCardId,
-        objectEditorTab: activeDeckWorkspaceContext.objectEditor.activeTab,
-      },
-    });
-
-    setMessages((m) => [...m, { role: 'user', text: trimmed }]);
-    setDeckRunInput(trimmed);
-
-    setTimeout(async () => {
-      // Real AutoGen run on the backend/Python path.
-      const outcome = await handleRunDeck(trimmed);
-
-      if (outcome && outcome.ok) {
-        // Chat shows the real Magentic-One answer (outcome.finalText) when present.
-        const answer = String(outcome.finalText || '').trim();
-        if (answer) {
-          setMessages((m) => [...m, { role: 'assistant', text: answer }]);
-        }
-      } else {
-        setLatestDeckRun(null);
-        setDeckStatusMessage(
-          `AI call failed: ${outcome?.error || 'no answer returned'}`,
-        );
-      }
-
-      const responseReceivedAt = Date.now();
-      chatLoopTelemetryRef.current = {
-        interactionId,
-        sendStartedAt,
-        responseReceivedAt,
-        refreshRecorded: true,
-      };
-      emitWorkspaceTestingEvent({
-        event: 'chat_response_received',
-        interactionId,
-        durationMs: Math.max(0, responseReceivedAt - sendStartedAt),
-        surface: largeSurface === 'chat' ? 'chat' : normalizeWorkspaceSurface(tab),
-        surfaceRole: largeSurface === 'chat' ? 'large' : 'companion',
-        metadata: {
-          responseMode: 'magentic_run',
-          turnId,
-          ok: outcome?.ok ?? false,
-        },
-      });
-    }, 100);
-  };
-
   const objectDrawerRole = useMemo<'agent' | null>(() => {
     if (workspaceView === 'canvas' && selectedCard) return 'agent';
     return null;
@@ -2342,14 +2225,12 @@ export default function AgentBuilder(): React.ReactElement {
         {compact ? (
           <div style={{ height: '100%' }}>{chat}</div>
         ) : (
-          <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <div style={{ flex: 1, minHeight: 0 }}>
-              <HarnessChatPanel chat={chat} targetRoot={DEFAULT_WORKSPACE_ROOT} projectId={projectId} />
-            </div>
-            {/* Hermes steward's under-chat review/memory console — real activity
-                only. Not the Code Console and not the Local Coder terminal. */}
-            <HermesConsole />
-          </div>
+          <HarnessChatPanel
+            chat={chat}
+            // The pull-up under-chat surface IS Hermes (one surface; real
+            // activity only). Terminal work = Code Console via the rail.
+            hermes={<HermesConsole defaultExpanded />}
+          />
         )}
       </div>
     );
