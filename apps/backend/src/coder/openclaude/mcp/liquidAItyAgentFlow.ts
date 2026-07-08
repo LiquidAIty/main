@@ -17,6 +17,8 @@
 import { getDeckDocument } from '../../../decks/store';
 import { resolvedMagenticOptions, runCardWithContract } from '../../../cards/runtime';
 import { resolveCoderWorkspaceRoot } from '../../workspaceRoot';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import path from 'node:path';
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value);
@@ -125,7 +127,7 @@ export type RunMagOneInput = {
 };
 
 export type RunMagOneResult = {
-  status: 'completed' | 'failed';
+  status: 'completed' | 'partial' | 'failed';
   runId: string;
   finalText: string;
   failure: string | null;
@@ -138,6 +140,35 @@ export type RunMagOneResult = {
   returnedFiles: string[];
   returnStatus: 'return_files_created' | 'no_return_files_created' | null;
 };
+
+function listJobReturnFiles(workspaceRoot: string, jobId: string): { returnsDir: string; returnedFiles: string[]; returnStatus: 'return_files_created' | 'no_return_files_created' } {
+  const returnsRel = `returns/${jobId}/`;
+  const returnsAbs = path.join(workspaceRoot, 'returns', jobId);
+  const returnedFiles: string[] = [];
+  if (existsSync(returnsAbs)) {
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const abs = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(abs);
+        } else if (entry.isFile()) {
+          returnedFiles.push(path.relative(workspaceRoot, abs).replace(/\\/g, '/'));
+        }
+      }
+    };
+    try {
+      if (statSync(returnsAbs).isDirectory()) walk(returnsAbs);
+    } catch {
+      // The Python read_model_results path remains authoritative for detailed errors.
+    }
+  }
+  returnedFiles.sort();
+  return {
+    returnsDir: returnsRel,
+    returnedFiles,
+    returnStatus: returnedFiles.length > 0 ? 'return_files_created' : 'no_return_files_created',
+  };
+}
 
 export async function runMagOne(
   input: RunMagOneInput,
@@ -182,15 +213,48 @@ export async function runMagOne(
   // the Python rails read handoff/<jobId>/prompt.md as the exact task; otherwise
   // the Markdown prompt is the task. Bus eligibility (magentic_option) is enforced
   // inside runCardWithContract, which throws honestly when no worker is connected.
-  const result = await runCard(orchestrator, {}, jobId ? '' : promptMarkdown, {
-    deckId,
-    projectId,
-    allCards: nodes,
-    allEdges: edges,
-    allTemplates: [],
-    previousOutput: '',
-    ...(jobId ? { jobHandoff: { workspaceRoot, jobId } } : {}),
-  });
+  let result: any;
+  try {
+    result = await runCard(orchestrator, {}, jobId ? '' : promptMarkdown, {
+      deckId,
+      projectId,
+      allCards: nodes,
+      allEdges: edges,
+      allTemplates: [],
+      previousOutput: '',
+      ...(jobId ? { jobHandoff: { workspaceRoot, jobId } } : {}),
+    });
+  } catch (error) {
+    const failure = error instanceof Error ? error.message : String(error);
+    if (jobId) {
+      const handoff = listJobReturnFiles(workspaceRoot, jobId);
+      if (handoff.returnedFiles.length > 0) {
+        return {
+          status: 'partial',
+          runId,
+          finalText: '',
+          failure,
+          provenance: { route },
+          jobId,
+          returnsDir: handoff.returnsDir,
+          returnedFiles: handoff.returnedFiles,
+          returnStatus: handoff.returnStatus,
+        };
+      }
+      return {
+        status: 'failed',
+        runId,
+        finalText: '',
+        failure,
+        provenance: { route },
+        jobId,
+        returnsDir: handoff.returnsDir,
+        returnedFiles: [],
+        returnStatus: handoff.returnStatus,
+      };
+    }
+    throw error;
+  }
 
   const failed = result?.status === 'error';
   const handoff = (result as any)?.jobHandoffResult ?? null;

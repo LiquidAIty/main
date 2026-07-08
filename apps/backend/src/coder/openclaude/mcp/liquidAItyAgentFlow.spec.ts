@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { join as pathJoin } from 'node:path';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import {
   describeConnectedAgents,
   runMagOne,
@@ -184,5 +186,52 @@ describe('runMagOne — Coder job-folder handoff (jobId)', () => {
     expect(result.returnedFiles).toEqual([]);
     expect(result.returnsDir).toBe('returns/job_empty/');
     expect(JSON.stringify(result)).not.toContain('result.md');
+  });
+
+  it('returns partial artifact metadata when Python aborts after a handoff artifact exists', async () => {
+    const root = mkdtempSync(pathJoin(tmpdir(), 'liq-magone-artifact-'));
+    const previous = process.env.LIQUIDAITY_GRPC_CWD;
+    process.env.LIQUIDAITY_GRPC_CWD = root;
+    try {
+      const artifactDir = pathJoin(root, 'coder-workspace', 'returns', 'job_partial', 'card_plan_agent');
+      mkdirSync(artifactDir, { recursive: true });
+      writeFileSync(pathJoin(artifactDir, 'trading_intelligence_research_plan.md'), '# plan\n');
+      const result = await runMagOne(
+        { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_partial' },
+        deps({ runCard: vi.fn(async () => { throw new Error('This operation was aborted'); }) as any }),
+      );
+      expect(result.status).toBe('partial');
+      expect(result.failure).toBe('This operation was aborted');
+      expect(result.returnsDir).toBe('returns/job_partial/');
+      expect(result.returnStatus).toBe('return_files_created');
+      expect(result.returnedFiles).toEqual([
+        'returns/job_partial/card_plan_agent/trading_intelligence_research_plan.md',
+      ]);
+    } finally {
+      if (previous === undefined) delete process.env.LIQUIDAITY_GRPC_CWD;
+      else process.env.LIQUIDAITY_GRPC_CWD = previous;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns a structured failure when Python aborts before any handoff artifact exists', async () => {
+    const root = mkdtempSync(pathJoin(tmpdir(), 'liq-magone-empty-'));
+    const previous = process.env.LIQUIDAITY_GRPC_CWD;
+    process.env.LIQUIDAITY_GRPC_CWD = root;
+    try {
+      const result = await runMagOne(
+        { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_empty_abort' },
+        deps({ runCard: vi.fn(async () => { throw new Error('This operation was aborted'); }) as any }),
+      );
+      expect(result.status).toBe('failed');
+      expect(result.failure).toBe('This operation was aborted');
+      expect(result.returnsDir).toBe('returns/job_empty_abort/');
+      expect(result.returnStatus).toBe('no_return_files_created');
+      expect(result.returnedFiles).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env.LIQUIDAITY_GRPC_CWD;
+      else process.env.LIQUIDAITY_GRPC_CWD = previous;
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
