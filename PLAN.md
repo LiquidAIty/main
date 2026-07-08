@@ -132,13 +132,35 @@ hoisting-sensitive), ~392 unused exports/types (finicky — review before cuttin
 
 ## Near-Term Route
 
-Get the primitives above running end-to-end and legible: **chat → orchestrator → cards → coder**, on real
-graph reads, with each seam proven. Then pull the next capability from [FUTURE.md](./FUTURE.md) — starting
-with Batch A (graph truth + context). The full batch breakdown and product vision live in FUTURE.md.
+The primitives run end-to-end: **chat → orchestrator → cards → coder**, with each seam proven.
+The repo has been cleaned down to the Launch core: non-core experiments (video, image, energy,
+modeling, Understand-Anything, telescope, game/motion/spatial canvases) removed. ~200K lines of
+dead code purged across the project's life, lessons encoded in DONT.md.
 
-### Feature Context Resolver
+Next: pull capabilities from [FUTURE.md](./FUTURE.md) in order. The current batch breakdown
+and product vision live in FUTURE.md.
 
-The next foundation to build is the Feature Context Resolver.
+### Fable 5 — Hermes Integration (current)
+
+The loop is incomplete. Launch has discovery (Harness), handoff (prompt.md, doorways), and
+execution (Local Coder, Mag One). Missing: verification, persistence, and context compounding.
+
+Hermes fills this gap as the knowledge compounding agent:
+
+- reviews CoderReports skeptically (separate evaluator, not the coder);
+- classifies blockers into patterns;
+- writes structured findings to ThinkGraph through authorized card path;
+- reads ThinkGraph/CodeGraph for context;
+- prepares context for the next run.
+
+Hermes is a Python module in `apps/python-models/app/python_models/hermes/`, not a UI card
+or console (those come later). The first pass builds the CoderReport review protocol and
+proves the ThinkGraph write path. No new MCP host. No new graph writer. No TS brain.
+
+### Feature Context Resolver (deferred to Fable 6+)
+
+After Hermes is integrated and ThinkGraph has run data, the Feature Context Resolver
+becomes the next foundation:
 
 Its job:
 

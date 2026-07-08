@@ -3,11 +3,11 @@
 ## STOP — read [DONT.md](./DONT.md) first
 
 Before anything else, read **[DONT.md](./DONT.md)**. This repo has been cleaned of well over
-**100,000 lines** of layered spaghetti — see the DONT.md purge log for the running tally. It keeps
+**200,000 lines** of layered spaghetti — see the DONT.md purge log for the running tally. It keeps
 coming back because agents add new approaches without deleting the old ones, and mimic the mess.
 DONT.md is the rule set that prevents you from doing that. The one that matters most: **when you
 change approach, DELETE the abandoned path in the same change — never layer new over old.**
-TypeScript is rails, not a brain; the UI is a UI, not a calculator; all logic is Python + models.
+TS = transport/pixels, Python = rails, models = brain. The UI is a UI, not a calculator; all logic is Python + models.
 
 **Quantified warning (2026-07-05 audit sweep):** in one sweep, **74 files / ~9,248 lines** of dead
 non-vendored code were deleted (3 commits, every stack green throughout) — and *every one of those

@@ -4,7 +4,14 @@ This file holds the **aspirational product vision** and **deferred features**. I
 `PLAN.md` on 2026-07-05 so that PLAN.md leads with the *actual* wired architecture primitives.
 Nothing here is load-bearing today — build the primitives in [PLAN.md](./PLAN.md) first, then pull a
 capability from here only when the primitive it depends on is proven. Same law applies:
-[DONT.md](./DONT.md) and [AGENTS.md](./AGENTS.md) govern; no fakes, one writer per graph, TS is rails.
+[DONT.md](./DONT.md) and [AGENTS.md](./AGENTS.md) govern; no fakes, one writer per graph,
+TS on Python rails with AI brain.
+
+Repo state (2026-07-09): cleaned to Launch core. Non-core experiments removed (~200K lines
+deleted). DONT.md encodes lessons from the purge. The three-graph system (ThinkGraph, KnowGraph,
+CodeGraph) and trading wedge (WorldSignals, Kronos, Alpaca, SEC filings) are wired. Hermes
+integration is the current Fable 5 target — completing the loop with verification, persistence,
+and context compounding.
 
 ---
 
