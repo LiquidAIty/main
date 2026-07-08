@@ -23,6 +23,10 @@ export const coderPacketSchema = z.object({
   // Declares whether the coder may edit files. Optional: when absent, the
   // adapter derives a conservative mode from the packet's no-edit language.
   writeMode: coderWriteModeSchema.optional(),
+  // Trusted runtime model selection injected by the configured-card path.
+  // The model-facing run_local_coder tool does not expose these controls.
+  modelProvider: z.enum(['openai', 'openrouter']).optional(),
+  providerModelId: nonEmptyText.optional(),
 }).strict();
 
 export const coderReportStatusSchema = z.enum([

@@ -92,8 +92,11 @@ export function doorwayWhenToUse(binding: string, title: string): string {
   }
   if (binding === 'local_coder') {
     return (
-      'Delegate here to run real coding work in the Coder workspace (create/edit files, ' +
-      'run commands, produce real artifacts). Route implementation tasks to this sub-agent.'
+      'Delegate here to run real coding work in the Coder workspace: read-only source ' +
+      'audits, codebase/file inspection, CoderReport generation, command proof, and ' +
+      'create/edit implementation tasks. If the user asks to use the saved Local Coder ' +
+      'card, route the bounded coding/audit task to this sub-agent instead of using your ' +
+      'own file tools or summarizing from parent context.'
     );
   }
   return `The saved agent card "${title}". Delegate the matching task to it and relay its result.`;
@@ -312,21 +315,32 @@ export async function startGrpcTurn(
   const client = await getAgentServiceClient();
   const call = client.Chat();
   let accumulated = '';
+  let terminal = false;
+
+  const safeOnEvent = (event: GrpcSessionEvent): void => {
+    try {
+      onEvent(event);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      logHarnessTrace(`[harness] event forward skipped reason=${reason}`);
+    }
+  };
 
   const done = new Promise<{ finalText: string }>((resolve, reject) => {
     call.on('data', (msg: any) => {
+      if (terminal) return;
       if (msg.text_chunk) {
         accumulated += msg.text_chunk.text || '';
-        onEvent({ kind: 'text', text: msg.text_chunk.text || '' });
+        safeOnEvent({ kind: 'text', text: msg.text_chunk.text || '' });
       } else if (msg.tool_start) {
-        onEvent({
+        safeOnEvent({
           kind: 'tool_start',
           toolName: msg.tool_start.tool_name,
           argsJson: msg.tool_start.arguments_json,
           toolUseId: msg.tool_start.tool_use_id,
         });
       } else if (msg.tool_result) {
-        onEvent({
+        safeOnEvent({
           kind: 'tool_result',
           toolName: msg.tool_result.tool_name,
           toolUseId: msg.tool_result.tool_use_id,
@@ -334,25 +348,32 @@ export async function startGrpcTurn(
           isError: Boolean(msg.tool_result.is_error),
         });
       } else if (msg.action_required) {
-        onEvent({
+        safeOnEvent({
           kind: 'permission',
           promptId: msg.action_required.prompt_id,
           question: msg.action_required.question,
           promptType: String(msg.action_required.type),
         });
       } else if (msg.done) {
+        terminal = true;
         const finalText = msg.done.full_text || accumulated;
-        onEvent({ kind: 'done', fullText: finalText });
+        safeOnEvent({ kind: 'done', fullText: finalText });
         resolve({ finalText });
         try { call.end(); } catch { /* already closed */ }
       } else if (msg.error) {
-        onEvent({ kind: 'error', message: msg.error.message, code: msg.error.code });
+        terminal = true;
+        safeOnEvent({ kind: 'error', message: msg.error.message, code: msg.error.code });
         reject(new Error(msg.error.message || 'grpc_chat_error'));
         try { call.end(); } catch { /* already closed */ }
       }
     });
     call.on('error', (err: Error) => {
-      onEvent({ kind: 'error', message: err.message });
+      if (terminal) {
+        logHarnessTrace(`[harness] late grpc error ignored reason=${err.message}`);
+        return;
+      }
+      terminal = true;
+      safeOnEvent({ kind: 'error', message: err.message });
       reject(err);
     });
   });

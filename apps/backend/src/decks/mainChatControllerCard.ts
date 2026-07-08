@@ -4,8 +4,8 @@ export const MAIN_CHAT_CARD_ID = 'card_main_chat';
 export const MAIN_CHAT_PROMPT_ID = 'prompt_main_chat';
 export const MAIN_CHAT_TEMPLATE_ID = 'template_main_chat';
 export const MAIN_CHAT_BUS_EDGE_ID = 'edge_main_chat_harness_bus';
-export const MAIN_CHAT_MODEL_KEY = 'gpt-5.1-chat-latest';
-export const MAIN_CHAT_PROVIDER = 'openai';
+export const MAIN_CHAT_MODEL_KEY = 'z-ai/glm-5.2';
+export const MAIN_CHAT_PROVIDER = 'openrouter';
 
 export const MAIN_CHAT_PROMPT_TEMPLATE: PromptTemplate = {
   id: MAIN_CHAT_PROMPT_ID,

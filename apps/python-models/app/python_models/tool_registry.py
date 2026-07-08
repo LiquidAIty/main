@@ -475,6 +475,61 @@ async def run_local_coder(
     )
 
 
+def build_local_coder_tool(model_provider: str, provider_model_id: str) -> FunctionTool:
+    """Create a run_local_coder tool bound to the trusted participant model.
+
+    Provider/model come from the backend-authored card runtime, not from model
+    arguments, so a tool call can carry the saved card selection without exposing
+    those runtime controls to the assistant.
+    """
+    provider = str(model_provider or "").strip()
+    model_id = str(provider_model_id or "").strip()
+
+    async def _adapter_with_model(
+        objective: str,
+        plan_excerpt: str = "",
+        context_summary: str = "",
+        guardrails: list[str] | None = None,
+        allowed_files: list[str] | None = None,
+        forbidden_work: list[str] | None = None,
+        proof_required: list[str] | None = None,
+        stop_conditions: list[str] | None = None,
+        code_anchors: list[str] | None = None,
+        cbm_queries: list[str] | None = None,
+        report_format: str = "Return a CoderReport JSON: status, filesChanged, proofResults, blockers, nextRecommendedTask.",
+        write_mode: str = "read-only",
+        project_id: str = "default",
+    ) -> str:
+        packet = {
+            "projectId": str(project_id or "default").strip() or "default",
+            "objective": str(objective or "").strip(),
+            "planExcerpt": str(plan_excerpt or "").strip() or str(objective or "").strip(),
+            "contextSummary": str(context_summary or "").strip() or "Provided by the orchestrator run.",
+            "codeAnchors": [str(x) for x in (code_anchors or []) if str(x).strip()],
+            "cbmQueries": [str(x) for x in (cbm_queries or []) if str(x).strip()],
+            "guardrails": [str(x) for x in (guardrails or []) if str(x).strip()],
+            "allowedFiles": [str(x) for x in (allowed_files or []) if str(x).strip()],
+            "forbiddenWork": [str(x) for x in (forbidden_work or []) if str(x).strip()],
+            "proofRequired": [str(x) for x in (proof_required or []) if str(x).strip()],
+            "reportFormat": str(report_format or "").strip() or "CoderReport JSON",
+            "stopConditions": [str(x) for x in (stop_conditions or []) if str(x).strip()],
+            "writeMode": "edit" if str(write_mode or "").strip().lower() == "edit" else "read-only",
+            "modelProvider": provider,
+            "providerModelId": model_id,
+        }
+        return await asyncio.to_thread(
+            _post_backend_json_sync,
+            "/api/coder/localcoder/run",
+            {"coderPacket": packet},
+        )
+
+    return FunctionTool(
+        _adapter_with_model,
+        description=DEFAULT_TOOL_REGISTRY.spec("run_local_coder").description,
+        name="run_local_coder",
+    )
+
+
 # ---------------------------------------------------------------------------
 # ToolRegistry.
 # ---------------------------------------------------------------------------

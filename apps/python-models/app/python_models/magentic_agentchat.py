@@ -30,6 +30,7 @@ from app.python_models.tool_registry import (
     JOB_RETURN_ROOT,
     THINKGRAPH_PATCH_EVENTS,
     THINKGRAPH_RUN_AUTHORITY,
+    build_local_coder_tool,
     build_return_writer_tool,
 )
 from app.python_models.orchestration_contracts import (
@@ -192,6 +193,16 @@ def _build_participants(context: ContextPack, model_client: Any) -> list[Assista
         # rather than being silently dropped.
         selected_tools = [_as_text(tool) for tool in (getattr(participant, "tools", []) or []) if _as_text(tool)]
         tools = DEFAULT_TOOL_REGISTRY.resolve_selected(selected_tools) if selected_tools else []
+        if "run_local_coder" in selected_tools:
+            tools = [
+                build_local_coder_tool(
+                    _as_text(getattr(participant, "provider", "")),
+                    _as_text(getattr(participant, "providerModelId", "")),
+                )
+                if getattr(tool, "name", "") == "run_local_coder"
+                else tool
+                for tool in tools
+            ]
         # Any run with an assigned result folder (a Coder handoff OR a standalone
         # single-agent run) additionally gets a return writer scoped to THIS agent's
         # own returns/<run-id>/<card-id>/ subdir (card id from trusted participant
@@ -658,4 +669,3 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
                 await close()
             except Exception:
                 pass
-

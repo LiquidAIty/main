@@ -5,6 +5,7 @@
 @status active
 @related_to codebasedmemory
 @related_to context-packet
+@related_to cbm-graph-reader
 @requires fresh_cbm_index
 
 ## Vector Summary
@@ -14,7 +15,8 @@ active CoderPacket prompt.
 
 ## Procedure
 
-1. Refresh CBM and record readiness, nodes, and edges.
+1. Load `skills/cbm-graph-reader-skill.md` and follow its freshness check procedure
+   first. Use the CBMReadPacket shape for all graph evidence.
 2. If an explicit feature manifest was selected (wiki/*.md), read its declared
    file + simple-symbol anchors first. Use them as the starting point for graph
    exploration.

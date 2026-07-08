@@ -11,8 +11,10 @@ import {
   buildMainChatBusEdge,
   buildMainChatControllerCard,
   MAIN_CHAT_CARD_ID,
+  MAIN_CHAT_MODEL_KEY,
   MAIN_CHAT_PROMPT_ID,
   MAIN_CHAT_PROMPT_TEMPLATE,
+  MAIN_CHAT_PROVIDER,
 } from './mainChatControllerCard';
 import type {
   AgentCardInstance,
@@ -322,8 +324,8 @@ function ensureMainChatControllerCard(deck: DeckDocument): DeckDocument {
             runtimeType: 'assistant_agent',
             runtimeOptions: {
               ...(node.runtimeOptions || {}),
-              provider: node.runtimeOptions?.provider || 'openai',
-              modelKey: node.runtimeOptions?.modelKey || 'gpt-5.1-chat-latest',
+              provider: node.runtimeOptions?.provider || MAIN_CHAT_PROVIDER,
+              modelKey: node.runtimeOptions?.modelKey || MAIN_CHAT_MODEL_KEY,
             },
             parentGraphId: null,
           }) || node;

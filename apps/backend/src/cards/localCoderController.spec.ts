@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   LOCAL_CODER_CONTROLLER_MODEL_KEY,
+  LOCAL_CODER_CONTROLLER_PROVIDER,
   normalizeLocalCoderControllerCard,
 } from './localCoderController';
 
 describe('normalizeLocalCoderControllerCard', () => {
-  it('upgrades the broken mini controller model to the proven 5.1 default', () => {
+  it('upgrades stale controller models to the configured OpenRouter GLM default', () => {
     const normalized = normalizeLocalCoderControllerCard({
       id: 'card_local_coder',
       templateId: 'template_local_coder',
@@ -21,7 +22,7 @@ describe('normalizeLocalCoderControllerCard', () => {
 
     expect(normalized.runtimeType).toBe('local_coder');
     expect(normalized.runtimeBinding).toBe('local_coder');
-    expect(normalized.runtimeOptions?.provider).toBe('openai');
+    expect(normalized.runtimeOptions?.provider).toBe(LOCAL_CODER_CONTROLLER_PROVIDER);
     expect(normalized.runtimeOptions?.modelKey).toBe(LOCAL_CODER_CONTROLLER_MODEL_KEY);
     expect(normalized.runtimeOptions?.tools).toEqual(['run_local_coder']);
   });

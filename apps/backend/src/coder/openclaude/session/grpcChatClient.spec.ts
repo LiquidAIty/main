@@ -76,6 +76,8 @@ describe('resolveCardDoorwayDefinitions — thin card-bound doorways, one per sa
   it('doorwayWhenToUse states real capability per binding, generic otherwise', () => {
     expect(doorwayWhenToUse('thinkgraph_agent', 'ThinkGraph Agent')).toMatch(/READ and WRITE/);
     expect(doorwayWhenToUse('local_coder', 'Local Coder')).toMatch(/coding/i);
+    expect(doorwayWhenToUse('local_coder', 'Local Coder')).toMatch(/read-only source audits/i);
+    expect(doorwayWhenToUse('local_coder', 'Local Coder')).toMatch(/own file tools/i);
     expect(doorwayWhenToUse('', 'Some Card')).toContain('Some Card');
   });
 

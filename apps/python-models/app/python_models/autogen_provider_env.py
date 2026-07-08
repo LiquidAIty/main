@@ -35,6 +35,7 @@ class AutoGenAgentConfig(BaseModel):
 MAGENTIC_SAFE_OPENROUTER_PREFIXES = (
     "openai/gpt-5.1-chat",
     "openai/gpt-5.1-chat-",
+    "z-ai/glm-5.2",
 )
 MAGENTIC_SAFE_OPENAI_PREFIXES = (
     "gpt-5.1-chat",
@@ -51,6 +52,8 @@ _OPENAI_TOOL_CAPABLE_FRAGMENTS = (
     "gpt-4o",
     "gpt-4.1",
     "gpt-5",
+    "glm-5",
+    "glm-4",
     "o1",
     "o3",
     "o4",
@@ -110,7 +113,7 @@ def _assert_magentic_safe_model(config: AutoGenAgentConfig) -> None:
     raise RuntimeError(
         "magentic_model_not_approved: "
         f"provider={provider or 'unknown'} model={config.provider_model_id or 'unknown'} "
-        "allowed=openrouter:openai/gpt-5.1-chat*,openai:gpt-5.1-chat*"
+        "allowed=openrouter:openai/gpt-5.1-chat*,z-ai/glm-5.2,openai:gpt-5.1-chat*"
     )
 
 

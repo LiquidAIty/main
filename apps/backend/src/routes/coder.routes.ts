@@ -207,25 +207,40 @@ router.post('/openclaude/session/chat', async (req, res) => {
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
-  res.write(`event: session\ndata: ${JSON.stringify({ sessionId })}\n\n`);
+  const writeSse = (eventName: string, payload: unknown): boolean => {
+    if (res.destroyed || res.writableEnded) return false;
+    try {
+      res.write(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
+      return true;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      logHarnessTrace(`[harness] sse write skipped corr=${correlationId} reason=${redactTrace(reason)}`);
+      return false;
+    }
+  };
+  writeSse('session', { sessionId });
   logHarnessTrace(`[harness] request received ${`corr=${correlationId}`} project=${projectId} mode=${mode}`);
   // Durable project-scoped transcript persistence (conversations/store.ts). Best-effort:
   // a DB failure must never block or break the live SSE stream.
   void appendMessage({ projectId, conversationId, role: 'user', content: message }).catch(() => null);
+  let turnFinished = false;
   try {
     const handle = await startGrpcTurn({ sessionId, message, workingDirectory, mode, traceId: correlationId }, (event) => {
+      if (turnFinished) return;
       // Backend trace of the REAL event (only when it carries lifecycle signal),
       // then the unchanged SSE forward to the browser.
       const traceLine = formatHarnessTrace(event, correlationId);
       if (traceLine) logHarnessTrace(traceLine);
-      res.write(`event: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`);
+      writeSse(event.kind, event);
     });
     activeGrpcTurns.set(sessionId, handle);
     req.on('close', () => {
+      if (turnFinished) return;
       handle.cancel();
       activeGrpcTurns.delete(sessionId);
     });
     const { finalText } = await handle.done;
+    turnFinished = true;
     logHarnessTrace(`[harness] request completed corr=${correlationId}`);
     // Save the assistant reply only when real text was produced — never an empty
     // bubble (mirrors the frontend's "no text → no bubble" contract). Best-effort,
@@ -241,15 +256,15 @@ router.post('/openclaude/session/chat', async (req, res) => {
       }).catch(() => null);
     }
   } catch (error) {
+    turnFinished = true;
     const reason = error instanceof Error ? error.message : 'grpc_turn_failed';
     logHarnessTrace(`[harness] request failed corr=${correlationId} reason=${redactTrace(reason)}`);
-    res.write(
-      `event: error\ndata: ${JSON.stringify({ message: reason })}\n\n`,
-    );
+    writeSse('error', { message: reason });
   } finally {
+    turnFinished = true;
     activeGrpcTurns.delete(sessionId);
-    res.write('event: end\ndata: {}\n\n');
-    res.end();
+    writeSse('end', {});
+    if (!res.destroyed && !res.writableEnded) res.end();
   }
   return undefined;
 });

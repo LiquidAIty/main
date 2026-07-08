@@ -544,12 +544,13 @@ function createRuntimeDiagnostics(
   env: NodeJS.ProcessEnv,
   mcpMode: 'production' | 'disabled',
 ): LocalCoderRuntimeDiagnostics {
+  const model = String(packet.providerModelId || env.OPENAI_MODEL || '');
   return {
     commandPath: '',
     argvShape: [],
     workingDirectory,
     provider: 'openai',
-    model: String(env.OPENAI_MODEL || ''),
+    model,
     permissionMode: deriveLocalCoderPermissionMode(packet),
     timeoutMs: localCoderRunTimeoutMs(env),
     promptDelivery: 'argv',
@@ -777,13 +778,18 @@ export class LocalCoderAdapter {
     };
   }
 
-  private envMissing(): string[] {
+  private envMissing(packet?: CoderPacket): string[] {
     const missing: string[] = [];
-    if (!String(this.env.OPENAI_API_KEY || '').trim()) {
+    const provider = String(packet?.modelProvider || 'openai').trim().toLowerCase();
+    const apiKey =
+      provider === 'openrouter'
+        ? String(this.env.OPENROUTER_API_KEY || '').trim()
+        : String(this.env.OPENAI_API_KEY || '').trim();
+    if (!apiKey) {
       missing.push('localcoder_env_missing: OPENAI_API_KEY');
     }
-    if (!String(this.env.OPENAI_MODEL || '').trim()) {
-      missing.push('localcoder_model_missing: OPENAI_MODEL');
+    if (!String(packet?.providerModelId || this.env.OPENAI_MODEL || '').trim()) {
+      missing.push('localcoder_model_missing: providerModelId_or_OPENAI_MODEL');
     }
     return missing;
   }
@@ -904,6 +910,7 @@ export class LocalCoderAdapter {
   }
 
   private jobArgs(packet: CoderPacket, mcpFlags: string[], prompt: string): string[] {
+    const model = String(packet.providerModelId || this.env.OPENAI_MODEL);
     const args = [
       '--print',
       prompt,
@@ -917,7 +924,7 @@ export class LocalCoderAdapter {
       '--permission-mode',
       deriveLocalCoderPermissionMode(packet),
       '--model',
-      String(this.env.OPENAI_MODEL),
+      model,
       '--provider',
       'openai',
       '--no-session-persistence',
@@ -1053,7 +1060,17 @@ export class LocalCoderAdapter {
       args,
       {
         cwd: resolvedRepo,
-        env: { ...this.env, CLAUDE_CODE_USE_OPENAI: '1' },
+        env: {
+          ...this.env,
+          ...(packet.modelProvider === 'openrouter'
+            ? {
+                OPENAI_API_KEY: String(this.env.OPENROUTER_API_KEY || ''),
+                OPENAI_BASE_URL: String(this.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1'),
+              }
+            : {}),
+          OPENAI_MODEL: String(packet.providerModelId || this.env.OPENAI_MODEL || ''),
+          CLAUDE_CODE_USE_OPENAI: '1',
+        },
         shell: runtime.shell,
         timeoutMs: localCoderRunTimeoutMs(this.env),
       },

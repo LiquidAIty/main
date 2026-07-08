@@ -38,17 +38,22 @@ const cbmScopeMocks = vi.hoisted(() => ({
   })),
 }));
 
-const chatSessionMocks = vi.hoisted(() => ({
-  appendMessage: vi.fn(async (msg: { role: string }) => ({
-    messageId: `${msg.role}-msg-1`,
-  })),
-  getConversationMessages: vi.fn(async () => []),
-  startGrpcTurn: vi.fn(async (_params: unknown, _onEvent: (event: any) => void) => ({
+const chatSessionMocks = vi.hoisted(() => {
+  const mocks = {
+    appendMessage: vi.fn(async (msg: { role: string }) => ({
+      messageId: `${msg.role}-msg-1`,
+    })),
+    getConversationMessages: vi.fn(async () => []),
+    lastCancel: vi.fn(),
+    startGrpcTurn: vi.fn(),
+  };
+  mocks.startGrpcTurn.mockImplementation(async (_params: unknown, _onEvent: (event: any) => void) => ({
     done: Promise.resolve({ finalText: 'Real assistant reply.' }),
-    cancel: vi.fn(),
+    cancel: mocks.lastCancel,
     answer: vi.fn(),
-  })),
-}));
+  }));
+  return mocks;
+});
 
 const mcpClientMocks = vi.hoisted(() => ({
   callPythonAgentMcpTool: vi.fn(async () => ({ ok: true })),
@@ -203,6 +208,7 @@ describe('coder routes', () => {
     it('persists the user and assistant messages and never dispatches the old post-chat ThinkGraph pair handoff', async () => {
       chatSessionMocks.appendMessage.mockClear();
       chatSessionMocks.startGrpcTurn.mockClear();
+      chatSessionMocks.lastCancel.mockClear();
       mcpClientMocks.callPythonAgentMcpTool.mockClear();
       const { server, baseUrl } = await createApiServer();
       try {
@@ -227,6 +233,40 @@ describe('coder routes', () => {
 
         // The obsolete post-chat pair handoff must never fire from this route.
         expect(mcpClientMocks.callPythonAgentMcpTool).not.toHaveBeenCalled();
+        expect(chatSessionMocks.lastCancel).not.toHaveBeenCalled();
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('ignores late gRPC events after the SSE turn has completed', async () => {
+      chatSessionMocks.appendMessage.mockClear();
+      chatSessionMocks.lastCancel.mockClear();
+      chatSessionMocks.startGrpcTurn.mockImplementationOnce(async (_params: unknown, onEvent: (event: any) => void) => {
+        const done = Promise.resolve({ finalText: 'Finished before late event.' });
+        void done.then(() => {
+          setTimeout(() => onEvent({ kind: 'error', message: 'late grpc reset' }), 0);
+        });
+        return {
+          done,
+          cancel: chatSessionMocks.lastCancel,
+          answer: vi.fn(),
+        };
+      });
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'late', message: 'hello' }),
+        });
+        const body = await response.text();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        expect(response.status).toBe(200);
+        expect(body).toContain('event: end');
+        expect(body).not.toContain('late grpc reset');
+        expect(chatSessionMocks.lastCancel).not.toHaveBeenCalled();
       } finally {
         await closeServer(server);
       }
