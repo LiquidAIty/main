@@ -16,10 +16,8 @@ import {
   INITIAL_DECK,
   isCodeWorkbenchActive,
   isKnowledgeChainActive,
-  isPlanAgentActive,
   isTradingWorkbenchActive,
   isWorldSignalsAgentActive,
-  type ActivationProposalState,
 } from './agentbuilder';
 
 const ADMIN_STAGE0_DECK = {
@@ -168,7 +166,8 @@ describe('agentbuilder progressive activation startup', () => {
       pendingActivationProposal: null,
     });
     expect(visibility.showKnowledge).toBe(true);
-    expect(visibility.showPlan).toBe(true);
+    // The Plan rail (showPlan) was removed with the mission/Run-Task UI purge;
+    // the Plan object lives in FUTURE.md, not the current rail contract.
     expect(visibility.showWorldsignal).toBe(false);
     expect(visibility.showTrading).toBe(false);
     expect(visibility.showCode).toBe(false);
@@ -376,43 +375,10 @@ describe('agentbuilder progressive activation startup', () => {
     ).toBe(true);
   });
 
-  it('keeps Plan hidden with no proposal and no bus connection', () => {
-    expect(isPlanAgentActive(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(false);
-    expect(
-      deriveVisibleRailItems({
-        deck: INITIAL_DECK,
-        workspaceView: 'canvas',
-        pendingActivationProposal: null,
-      }).showPlan,
-    ).toBe(false);
-  });
-
-  it('shows Plan when a pending activation proposal exists', () => {
-    const proposal: ActivationProposalState = {
-      capability: 'trading',
-      title: 'Enable Trading',
-      sourceText: 'enable trading',
-      status: 'pending',
-    };
-
-    expect(
-      deriveVisibleRailItems({
-        deck: INITIAL_DECK,
-        workspaceView: 'chat',
-        pendingActivationProposal: proposal,
-      }).showPlan,
-    ).toBe(true);
-  });
-
-  it('shows Plan when the plan workspace is open even if no plan card is connected', () => {
-    expect(
-      deriveVisibleRailItems({
-        deck: INITIAL_DECK,
-        workspaceView: 'plan',
-        pendingActivationProposal: null,
-      }).showPlan,
-    ).toBe(true);
-  });
+  // The three Plan-rail tests were removed with the Plan rail itself
+  // (showPlan is no longer part of ProgressiveRailVisibility and
+  // isPlanAgentActive no longer exists) — the Plan surface is a FUTURE.md
+  // capability, not current rail contract.
 
   it('shows WorldSignals only when connected or already open', () => {
     expect(isWorldSignalsAgentActive(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(false);

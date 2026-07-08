@@ -10,9 +10,6 @@ import {
   buildAssistStructureSummaries,
   buildDeckEdgeFromConnection,
   buildDeckEdgeVisualStates,
-  buildInitialBusSeamViewport,
-  buildPresentationLandingViewport,
-  buildInitialWorkbenchLandingViewport,
   getAssistSwarmBadge,
   isPlainConnectionAllowedForDocument,
   isAnyCanvasNodeVisible,
@@ -26,6 +23,13 @@ import {
   toFlowEdges,
   toFlowNodes,
 } from './BuilderCanvas';
+// The viewport-math helpers were extracted out of BuilderCanvas into the
+// shared agentbuilder core module; the spec follows the live import path.
+import {
+  buildInitialBusSeamViewport,
+  buildInitialWorkbenchLandingViewport,
+  buildPresentationLandingViewport,
+} from '../../features/agentbuilder/core/agentBuilderViewportMath';
 import { buildDeckEdgeIdentityKey, sanitizeDeckEdges } from './deckValidation';
 import MagenticBusNode from './nodes/MagenticBusNode';
 
@@ -81,13 +85,13 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       edges: [],
     };
 
-    expect(buildInitialWorkbenchLandingViewport(document)).toEqual({
+    expect(buildInitialWorkbenchLandingViewport(document, 1)).toEqual({
       x: -153,
       y: -48,
       zoom: 1,
     });
     expect(
-      buildInitialWorkbenchLandingViewport(document, {
+      buildInitialWorkbenchLandingViewport(document, 1, {
         desiredBusCenterX: -10,
       }),
     ).toEqual({
@@ -136,7 +140,9 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       edges: [],
     };
 
-    expect(buildPresentationLandingViewport(documentModel, canvasElement as HTMLDivElement)).toEqual({
+    expect(
+      buildPresentationLandingViewport(documentModel, canvasElement as HTMLDivElement, 1),
+    ).toEqual({
       x: -163,
       y: -48,
       zoom: 1,
@@ -162,7 +168,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       edges: [],
     };
 
-    expect(buildInitialWorkbenchLandingViewport(document)).toBeNull();
+    expect(buildInitialWorkbenchLandingViewport(document, 1)).toBeNull();
   });
 
   it('does not persist selection-only node or edge changes', () => {
@@ -1203,11 +1209,14 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     });
   });
 
-  it('renders exactly twelve real React Flow handles on MagenticBusNode', () => {
+  it('renders exactly thirteen real React Flow handles on MagenticBusNode', () => {
+    // 12 side bus handles + the top task-bus-top target (the selected task's
+    // task_to_bus edge enters the bus from the task graph above).
     const handles = collectHandleElements(MagenticBusNode());
 
-    expect(handles).toHaveLength(12);
+    expect(handles).toHaveLength(13);
     expect(handles.map((handle) => handle.props.id)).toEqual([
+      'task-bus-top',
       'bus-in-1',
       'bus-in-2',
       'bus-in-3',
@@ -1221,7 +1230,8 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       'bus-out-5',
       'bus-out-6',
     ]);
-    handles.forEach((handle) => {
+    const sideHandles = handles.slice(1);
+    sideHandles.forEach((handle) => {
       const style = handle.props.style as Record<string, unknown>;
       expect(style.width).toBe(6);
       expect(style.height).toBe(16);
@@ -1231,10 +1241,10 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       expect(style.display).toBeUndefined();
       expect(style.visibility).toBeUndefined();
     });
-    handles.slice(0, 6).forEach((handle) => {
+    sideHandles.slice(0, 6).forEach((handle) => {
       expect((handle.props.style as Record<string, unknown>).left).toBe(-3);
     });
-    handles.slice(6).forEach((handle) => {
+    sideHandles.slice(6).forEach((handle) => {
       expect((handle.props.style as Record<string, unknown>).right).toBe(-3);
     });
   });

@@ -14,14 +14,13 @@ import {
 const KG_CACHE_PREFIX = 'agentbuilder:kg-cache:v1';
 const keyFor = (projectId: string) => `${KG_CACHE_PREFIX}:${projectId}:all:all:0`;
 
+// Live CachedGraphPayload shape: {updatedAt, cypher, graphResult} — the old
+// knowGraphData field went with the purged KnowGraph viz; project-distinct
+// content now rides in graphResult.
 const payloadFor = (projectId: string): CachedGraphPayload => ({
   updatedAt: Date.now(),
-  cypher: '',
-  graphResult: [],
-  knowGraphData: {
-    nodes: [{ id: `${projectId}-node`, label: projectId, type: 'Issuer' }],
-    relationships: [],
-  },
+  cypher: `MATCH (n) WHERE n.projectId = '${projectId}' RETURN n`,
+  graphResult: [{ id: `${projectId}-node`, label: projectId, type: 'Issuer' }],
 });
 
 afterEach(() => {
@@ -42,7 +41,8 @@ describe('KnowGraph cache is project-scoped (stale cross-project graph never ren
     writeCachedGraphPayload(keyFor(PROJECT_A), payloadFor(PROJECT_A));
     writeCachedGraphPayload(keyFor(PROJECT_B), payloadFor(PROJECT_B));
     const back = readCachedGraphPayload(keyFor(PROJECT_A));
-    expect(back?.knowGraphData.nodes).toHaveLength(1);
-    expect(back?.knowGraphData.nodes[0].id).toBe(`${PROJECT_A}-node`);
+    expect(back?.graphResult).toHaveLength(1);
+    expect((back?.graphResult[0] as { id: string }).id).toBe(`${PROJECT_A}-node`);
+    expect(back?.cypher).toContain(PROJECT_A);
   });
 });

@@ -9,7 +9,6 @@ import AgentBuilderRail from './AgentBuilderRail';
 
 const baseVisibility = {
   showKnowledge: false,
-  showPlan: false,
   showWorldsignal: false,
   showTrading: false,
   showCode: false,
@@ -61,7 +60,8 @@ describe('AgentBuilderRail OpenClaude console icon', () => {
     expect(host.querySelector('[data-testid="rail-openclaude-console-button"]')).not.toBeNull();
   });
 
-  it('labels the terminal icon "Code Console" with no internal branding', () => {
+  it('labels the terminal icon "Terminal" with no internal branding', () => {
+    // Renamed 'Code Console' → 'Terminal' in eb992070 (Harness MCP wiring).
     const host = render(
       <AgentBuilderRail
         {...baseProps}
@@ -71,8 +71,8 @@ describe('AgentBuilderRail OpenClaude console icon', () => {
     const button = host.querySelector(
       '[data-testid="rail-openclaude-console-button"]',
     ) as HTMLButtonElement;
-    expect(button.getAttribute('aria-label')).toBe('Code Console');
-    expect(button.getAttribute('title')).toBe('Code Console');
+    expect(button.getAttribute('aria-label')).toBe('Terminal');
+    expect(button.getAttribute('title')).toBe('Terminal');
     // Visible chrome is clean. (Internal data-testids may still carry old names.)
     expect(/OpenClaude|LocalCoder|Local Coder|Claude/i.test(host.textContent || '')).toBe(false);
   });

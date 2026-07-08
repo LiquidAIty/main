@@ -166,10 +166,11 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     expect(edge.data.mentionCount).toBe(2);
     expect(edge.data.properties).toEqual({ source: 'working project reasoning' });
 
-    // Exactly one non-animated fCoSE run — the only layout this renderer knows.
+    // Exactly one fCoSE run — the only layout this renderer knows. It animates
+    // and settles via the layout's stop callback (fit/center on stop).
     expect(cy.layouts).toHaveLength(1);
     expect(cy.layouts[0].name).toBe('fcose');
-    expect(cy.layouts[0].animate).toBe(false);
+    expect(cy.layouts[0].animate).toBe(true);
   });
 
   it('uses NO visual-class vocabulary at all: no classes on any element, one uniform stylesheet', async () => {

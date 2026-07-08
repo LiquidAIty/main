@@ -220,7 +220,9 @@ describe('AgentManager runtime editor', () => {
     expect(payload.runtime_options?.modelKey).toBe('local-gemma-slm');
   });
 
-  it('preserves advanced legacy runtime options in save payloads', () => {
+  it('normalizes retired runtime types to assistant_agent while preserving their options as passthrough', () => {
+    // 'selector' was retired with the TS-brain purge (c3b1c64b); a legacy card
+    // saves as assistant_agent, but its saved options are never destroyed.
     const payload = buildActiveAgentManagerLocalConfig({
       runtimeBinding: '',
       runtimeType: 'selector',
@@ -245,16 +247,18 @@ describe('AgentManager runtime editor', () => {
       existingResponseFormat: null,
     });
 
-    expect(payload.runtime_type).toBe('selector');
-    expect(payload.runtime_options).toEqual({
-      provider: 'openai',
-      modelKey: 'gpt-5-mini',
-      temperature: 0.3,
-      maxTokens: 1200,
-      selectorPrompt: 'Choose the most grounded route.',
-      allowRepeatedSpeaker: false,
-      emitTeamEvents: true,
-    });
+    expect(payload.runtime_type).toBe('assistant_agent');
+    expect(payload.runtime_options).toEqual(
+      expect.objectContaining({
+        provider: 'openai',
+        modelKey: 'gpt-5-mini',
+        temperature: 0.3,
+        maxTokens: 1200,
+        selectorPrompt: 'Choose the most grounded route.',
+        allowRepeatedSpeaker: false,
+        emitTeamEvents: true,
+      }),
+    );
   });
 
   it('shows only the active runtime fields that now apply', () => {
@@ -408,10 +412,13 @@ describe('AgentManager runtime editor', () => {
       label: option.textContent?.trim(),
     }));
 
+    // Current active runtime set: Assist, Harness (local_coder), Magentic,
+    // and graph_flow as an always-available compatibility runtime.
     expect(optionValues).toEqual([
       { value: 'assistant_agent', disabled: false, label: 'Assist' },
+      { value: 'local_coder', disabled: false, label: 'Harness' },
       { value: 'magentic_one', disabled: false, label: 'Magentic' },
-      { value: 'graph_flow', disabled: true, label: 'Legacy Workflow (compat)' },
+      { value: 'graph_flow', disabled: false, label: 'Legacy Workflow (compat)' },
     ]);
     expect(container.textContent).toContain('legacy compatibility runtime');
   });
@@ -442,7 +449,9 @@ describe('AgentManager runtime editor', () => {
 
     expect(onSaveLocalConfig).toHaveBeenCalledWith(
       expect.objectContaining({
-        runtime_type: 'selector',
+        // Retired team runtimes normalize to assistant_agent on save; their
+        // advanced options ride along untouched as passthrough.
+        runtime_type: 'assistant_agent',
         runtime_options: expect.objectContaining({
           selectorPrompt: 'Pick the best worker.',
           allowRepeatedSpeaker: false,

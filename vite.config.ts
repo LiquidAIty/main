@@ -1,9 +1,25 @@
-import { defineConfig } from "vite";
+// vitest/config re-exports Vite's defineConfig with the `test` key typed.
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 
 export default defineConfig({
   plugins: [react()],
+  test: {
+    // The root vitest project owns ONLY the client suite. apps/* and scripts
+    // are their own workspace projects (vitest.workspace.ts), vendored repos
+    // (localcoder, worldsignal, data-formulator-main, src/vendor, ...) run
+    // their own test infra, e2e/playwright is a Playwright runner, and stale
+    // Claude worktrees under .claude are full repo copies. Before this include
+    // list, a bare `npx vitest run` collected all of those and reported
+    // hundreds of foreign/doubled failures.
+    include: ["client/src/**/*.{spec,test}.{ts,tsx}"],
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "client/src/vendor/**",
+    ],
+  },
   resolve: {
     alias: {
       "@data-formulator": path.resolve(process.cwd(), "data-formulator-main/src"),

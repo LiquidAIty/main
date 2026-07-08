@@ -209,7 +209,8 @@ describe('OpenClaudeConsolePanel', () => {
     );
     const transcript = host.querySelector('[data-testid="openclaude-console-transcript"]');
     expect(transcript?.textContent).not.toContain('OpenClaude');
-    expect(transcript?.textContent).toContain('Coder Engine');
+    // Runtime display name renamed 'Coder Engine' → 'Harness' in eb992070.
+    expect(transcript?.textContent).toContain('Harness');
     expect(host.querySelector('[data-testid="openclaude-console-redacted-note"]')).not.toBeNull();
   });
 

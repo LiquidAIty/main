@@ -1,14 +1,21 @@
 // REAL MCP-boundary integration (SPEC: do not mock MCP discovery/call).
 // Spawns the actual Python Agent MCP host over stdio via the official SDK client,
 // proves tool discovery and structural argument rejection at the boundary.
-// Requires: the python venv + the backend dev server on :4000 (real dev topology).
+// Discovery + argument rejection need only the python venv (offline-runnable);
+// the graph-slice call needs the live backend on :4000 and is explicitly gated
+// on LIQUIDAITY_LIVE_STACK=1 — a visible skip offline, never a hidden failure.
 import { describe, expect, it } from 'vitest';
 
 import { callPythonAgentMcpTool, listPythonAgentMcpTools } from './pythonAgentMcpClient';
 
+const LIVE_STACK = process.env.LIQUIDAITY_LIVE_STACK === '1';
+
 describe('Python Agent MCP host — real stdio discovery + calls', () => {
   it('exposes exactly the Mag One entrypoints, the bounded ThinkGraph read, and the Harness control surface (no model-facing write, no pair front door, no visible-flow wrapper)', async () => {
     const names = await listPythonAgentMcpTools();
+    // Mirror of the Python host's own surface test (test_thinkgraph_card_tools
+    // TestPythonMcpHost) — 11 tools including the job-folder handoff pair
+    // (write_mag_one_instructions + read_model_results) added 2026-07-07.
     expect(names).toEqual([
       'canvas.inspect',
       'canvas.upsert_wire',
@@ -17,8 +24,10 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'card.run_assistant_agent',
       'card.update_configuration',
       'mag_one.describe_connected_agents',
+      'read_model_results',
       'run_mag_one',
       'thinkgraph.get_graph_slice',
+      'write_mag_one_instructions',
     ]);
     // The obsolete pair front door, the model-facing write tool, and the old
     // visible-flow / agent-fabric wrapper tools are all gone.
@@ -46,7 +55,7 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
     expect(String(result.error)).toContain('tools');
   }, 30_000);
 
-  it('a bounded read-only graph slice flows through the real bridge and returns structured scope', async () => {
+  it.runIf(LIVE_STACK)('a bounded read-only graph slice flows through the real bridge and returns structured scope', async () => {
     const result = await callPythonAgentMcpTool('thinkgraph.get_graph_slice', {
       projectId: '20ac92da-01fd-4cf6-97cc-0672421e751a',
       limit: 5,
