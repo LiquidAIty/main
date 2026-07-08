@@ -36,7 +36,7 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: getDevTestJsonBodyLimit() }));
-app.use(cookieParser() as any);
+app.use(cookieParser() as unknown as express.RequestHandler);
 
 // Disable caching for API responses to avoid 304/empty body JSON issues
 app.use((req, res, next) => {
@@ -216,10 +216,19 @@ async function startServer() {
 app.use("/api", routes);
 
 // Add final error middleware to surface stack as JSON (must be after routes)
-app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  void next;
+  const error = err as {
+    type?: string;
+    message?: string;
+    name?: string;
+    stack?: string;
+  };
   const isJsonParseError =
-    err?.type === 'entity.parse.failed' ||
-    (err instanceof SyntaxError && typeof err?.message === 'string' && /json/i.test(err.message));
+    error.type === 'entity.parse.failed' ||
+    (err instanceof SyntaxError &&
+      typeof error.message === 'string' &&
+      /json/i.test(error.message));
   if (isJsonParseError) {
     return res.status(400).json({
       ok: false,
@@ -232,15 +241,15 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
     method: req.method,
     path: req.path,
     status: 500,
-    message: err?.message,
-    name: err?.name,
-    stack: err?.stack,
+    message: error.message,
+    name: error.name,
+    stack: error.stack,
   });
   return res.status(500).json({ 
     ok: false, 
     error: { 
-      message: err?.message || 'Internal server error', 
-      name: err?.name || 'Error' 
+      message: error.message || 'Internal server error', 
+      name: error.name || 'Error' 
     },
     requestId 
   });

@@ -17,7 +17,6 @@ const baseVisibility = {
   showCode: false,
   showVideo: false,
   showDataFormulator: false,
-  uaAgents: [] as const,
 };
 
 const baseProps = {
@@ -34,7 +33,6 @@ const baseProps = {
   onShowCodeWorkspace: () => undefined,
   onShowVideoWorkspace: () => undefined,
   onShowDataFormulatorWorkspace: () => undefined,
-  onShowWorkbenchWorkspace: () => undefined,
   onShowPlanWorkspace: () => undefined,
   onOpenNavigationDrawer: () => undefined,
 };

@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
 
 import { GRAPH_THEME } from '../../../components/graph/graphVisualTokens';
-import type { UaUiAgentDefinition } from '../../../runtime/uaAgentDefinitions';
 
 type RailColors = {
   panel: string;
@@ -19,7 +18,6 @@ type RailVisibility = {
   showCode: boolean;
   showVideo: boolean;
   showDataFormulator: boolean;
-  uaAgents: readonly UaUiAgentDefinition[];
   // Terminal icon for the OpenClaude Console Bridge. Optional so existing
   // callers keep compiling; shown when Local Coder is bus-connected or a
   // console session exists.
@@ -41,7 +39,6 @@ type AgentBuilderRailProps = {
   onShowCodeWorkspace: () => void;
   onShowVideoWorkspace: () => void;
   onShowDataFormulatorWorkspace: () => void;
-  onShowWorkbenchWorkspace: (surfaceId: UaUiAgentDefinition['surfaceId']) => void;
   onOpenNavigationDrawer: () => void;
   openClaudeConsoleActive?: boolean;
   onOpenOpenClaudeConsole?: () => void;
@@ -98,7 +95,6 @@ export default function AgentBuilderRail({
   onShowCodeWorkspace,
   onShowVideoWorkspace,
   onShowDataFormulatorWorkspace,
-  onShowWorkbenchWorkspace,
   onOpenNavigationDrawer,
   openClaudeConsoleActive,
   onOpenOpenClaudeConsole,
@@ -258,24 +254,6 @@ export default function AgentBuilderRail({
           <Icon d="M4 5h16v14H4z M7 9h4 M7 13h4 M13 9h4 M13 13h4" />
         </button>
       ) : null}
-      {visibleRailItems.uaAgents.map((agent) => (
-        <button
-          key={agent.id}
-          title={agent.name}
-          aria-label={agent.name}
-          data-testid={`rail-${agent.id}-button`}
-          onClick={() => onShowWorkbenchWorkspace(agent.surfaceId)}
-          className="p-2 rounded"
-          style={{
-            color:
-              workspaceView === agent.surfaceId
-                ? GRAPH_THEME.accent.solar
-                : colors.text,
-          }}
-        >
-          <Icon d={agent.railIcon} />
-        </button>
-      ))}
       {visibleRailItems.showOpenClaudeConsole ? (
         <button
           type="button"

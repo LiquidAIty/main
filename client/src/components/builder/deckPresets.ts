@@ -3,7 +3,6 @@ import type {
   AgentCardRuntimeType,
   RuntimeBinding,
 } from "../../types/agentgraph";
-import { getUiUaAgentDefinitions } from "../../runtime/uaAgentDefinitions";
 
 export type DeckNodePreset = {
   key: string;
@@ -41,19 +40,6 @@ export const DECK_NODE_PRESETS: DeckNodePreset[] = [
     title: "Local Coder",
     subtitle: "Runs via local coder subsystem",
   },
-  ...getUiUaAgentDefinitions().map(
-    (agent): DeckNodePreset => ({
-      key: agent.id,
-      label: agent.name,
-      kind: "agent",
-      templateId: agent.templateId,
-      promptTemplateId: agent.promptTemplateId,
-      runtimeBinding: agent.runtimeBinding,
-      runtimeType: agent.runtimeType,
-      title: agent.name,
-      subtitle: agent.subtitle,
-    }),
-  ),
 ];
 
 export function findDeckNodePreset(key: string): DeckNodePreset | null {

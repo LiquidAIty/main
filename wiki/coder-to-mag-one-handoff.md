@@ -8,8 +8,8 @@ proof_level: cbm_anchor_verified_and_source_verified
 cbm:
   project_identity: C-Projects-main
   index_root: C:/Projects/main
-  full_index_nodes: 5849
-  full_index_edges: 11002
+  full_index_nodes: 5273
+  full_index_edges: 10327
   freshness: ready
 
 roots:

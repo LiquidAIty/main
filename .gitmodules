@@ -7,18 +7,6 @@
 [submodule "videocanvas/clip-js"]
 	path = videocanvas/clip-js
 	url = https://github.com/mohyware/clip-js.git
-[submodule "gamecanvas/triplex"]
-	path = gamecanvas/triplex
-	url = https://github.com/pmndrs/triplex.git
-[submodule "motioncanvas/theatre"]
-	path = motioncanvas/theatre
-	url = https://github.com/theatre-js/theatre.git
-[submodule "spatialcanvas/needle-engine-support"]
-	path = spatialcanvas/needle-engine-support
-	url = https://github.com/needle-tools/needle-engine-support.git
-[submodule "gamecanvas/react-three-game-engine"]
-	path = gamecanvas/react-three-game-engine
-	url = https://github.com/simonghales/react-three-game-engine.git
-[submodule "gamecanvas/cuberun"]
-	path = gamecanvas/cuberun
-	url = https://github.com/akarlsten/cuberun.git
+[submodule "Kronos-main"]
+	path = Kronos-main
+	url = https://github.com/shiyu-coder/Kronos.git

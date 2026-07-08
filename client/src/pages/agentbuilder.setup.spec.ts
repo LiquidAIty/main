@@ -177,7 +177,7 @@ describe('agentbuilder authoring flow', () => {
 
   it('ships the default example using the real magentic-led agent graph', () => {
     expect(INITIAL_DECK.nodes.map((node) => node.title)).toEqual([
-      'Harness',
+      'Main Chat / Harness',
       'Magentic-One',
       'ThinkGraph Agent',
       'CodeGraph Agent',
@@ -193,7 +193,6 @@ describe('agentbuilder authoring flow', () => {
       'Telescope Agent',
       'Plan Agent',
       'WorldSignals Agent',
-      'Understand Anything',
     ]);
 
     expect(INITIAL_DECK.nodes.filter((node) => node.runtimeType === 'graph_flow')).toEqual([]);
@@ -214,7 +213,6 @@ describe('agentbuilder authoring flow', () => {
       'telescope_agent',
       'plan_agent',
       'worldsignals_agent',
-      'assist',
     ]);
     expect(INITIAL_DECK.nodes.map((node) => node.templateId)).toEqual([
       'template_main_chat',
@@ -233,14 +231,19 @@ describe('agentbuilder authoring flow', () => {
       'template_telescope_agent',
       'template_plan_agent',
       'template_worldsignals_agent',
-      'template_understand_anything_workbench',
     ]);
 
     expect(INITIAL_DECK.edges.map((edge) => ({
       source: edge.source,
       target: edge.target,
       edgeType: edge.edgeType,
-    }))).toEqual([]);
+    }))).toEqual([
+      {
+        source: 'card_main_chat',
+        target: 'card_magentic',
+        edgeType: 'magentic_option',
+      },
+    ]);
   });
 
   it('prefers a real saved deck over the fallback seed and preserves its visible chain', () => {
@@ -488,13 +491,12 @@ describe('agentbuilder authoring flow', () => {
       'card_telescope_agent',
       'card_plan_agent',
       'card_worldsignals_agent',
-      'card_understand_anything',
     ]);
     expect(hydrated.edges).toEqual([]);
     expect(hydrated.nodes.find((node) => node.id === 'card_magentic')?.runtimeOptions).toMatchObject({
       executionBackend: 'python_autogen',
-      provider: 'openai',
-      modelKey: 'gpt-5.1-chat-latest',
+      provider: 'openrouter',
+      modelKey: 'z-ai/glm-5.2',
     });
   });
 
@@ -882,9 +884,9 @@ describe('agentbuilder authoring flow', () => {
       { role: 'user', text: 'Map the next move' },
       { role: 'assistant', text: 'Here is the next move.' },
     ]);
-    expect(continuity.planSource).toEqual([]);
-    expect(continuity.plan).toEqual([]);
-    expect(continuity.links).toEqual([]);
+    expect(continuity.planSource ?? []).toEqual([]);
+    expect(continuity.plan ?? []).toEqual([]);
+    expect(continuity.links ?? []).toEqual([]);
   });
 
   it('derives live runtime visuals from streamed deck events only', () => {

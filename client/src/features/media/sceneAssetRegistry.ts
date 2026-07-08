@@ -49,7 +49,6 @@ export type AssetMaterialPreset =
 export type AssetSource =
   | 'systemBuiltin'
   | 'pascalBuildingModeler'
-  | 'triplexFeedstock'
   | 'gameFeedstock'
   | 'generatedCad'
   | 'userUpload'
@@ -98,7 +97,7 @@ export type FeedstockAssetHint = {
   label: string;
   suggestedCategory: AssetCategory;
   suggestedGeometryKind: AssetGeometryKind;
-  source: 'triplexFeedstock' | 'gameFeedstock' | 'submoduleReference';
+  source: 'gameFeedstock' | 'submoduleReference';
   sourcePath: string;
   notes?: string;
 };
