@@ -1,0 +1,86 @@
+{
+  "ok": true,
+  "projectId": "20ac92da-01fd-4cf6-97cc-0672421e751a",
+  "deckId": "deck_builder",
+  "orchestratorCardId": "card_magentic",
+  "connectedAgents": [
+    {
+      "cardId": "card_worldsignals_agent",
+      "title": "WorldSignals Agent",
+      "model": {
+        "modelKey": "z-ai/glm-5.2",
+        "provider": "openrouter"
+      },
+      "tools": [],
+      "connected": true
+    },
+    {
+      "cardId": "card_research_agent",
+      "title": "Research Agent",
+      "model": {
+        "modelKey": "z-ai/glm-5.2",
+        "provider": "openrouter"
+      },
+      "tools": [],
+      "connected": true
+    },
+    {
+      "cardId": "card_local_coder",
+      "title": "OpenClaude Coder",
+      "model": {
+        "modelKey": "z-ai/glm-5.2",
+        "provider": "openrouter"
+      },
+      "tools": [
+        "run_local_coder"
+      ],
+      "connected": true
+    },
+    {
+      "cardId": "card_plan_agent",
+      "title": "Plan Agent",
+      "model": {
+        "modelKey": "z-ai/glm-5.2",
+        "provider": "openrouter"
+      },
+      "tools": [
+        "current_datetime",
+        "calculator"
+      ],
+      "connected": true
+    },
+    {
+      "cardId": "card_codegraph_agent",
+      "title": "CodeGraph Agent",
+      "model": {
+        "modelKey": "z-ai/glm-5.2",
+        "provider": "openrouter"
+      },
+      "tools": [],
+      "connected": true
+    },
+    {
+      "cardId": "card_knowgraph_agent",
+      "title": "KnowGraph Agent",
+      "model": {
+        "modelKey": "z-ai/glm-5.2",
+        "provider": "openrouter"
+      },
+      "tools": [],
+      "connected": true
+    },
+    {
+      "cardId": "card_thinkgraph_agent",
+      "title": "ThinkGraph Agent",
+      "model": {
+        "modelKey": "z-ai/glm-5.2",
+        "provider": "openrouter"
+      },
+      "tools": [
+        "read_thinkgraph_scope",
+        "apply_thinkgraph_patch"
+      ],
+      "connected": true
+    }
+  ]
+}

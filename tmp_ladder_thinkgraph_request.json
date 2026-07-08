@@ -1,0 +1,7 @@
+{
+  "projectId": "20ac92da-01fd-4cf6-97cc-0672421e751a",
+  "conversationId": "ladder-thinkgraph-20260707_223756",
+  "workingDirectory": "C:\\Projects\\main",
+  "mode": "chat",
+  "message": "Use the saved ThinkGraph capability only. Write this ThinkGraph proof fact for project 20ac92da-01fd-4cf6-97cc-0672421e751a: ladder_proof_chat_to_thinkgraph_20260707_223756. Store it as a project-scoped planning/proof fact. Then read it back from ThinkGraph and summarize exactly what was stored. Do not use Local Coder. Do not inspect source files."
+}
