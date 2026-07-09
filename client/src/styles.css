@@ -18,4 +18,30 @@
     -moz-osx-font-smoothing: grayscale;
     font-synthesis-weight: none;
   }
+
+  /* One scrollbar look everywhere: small, neutral grey, transparent track —
+     the same recipe BuilderChat already proved locally. Kills the default
+     chunky white Windows scrollbars on every panel, drawer, console, and
+     graph surface. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #4e4e4e transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: #4e4e4e;
+    border-radius: 4px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: #5e5e5e;
+  }
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 }

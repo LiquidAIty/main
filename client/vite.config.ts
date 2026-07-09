@@ -71,10 +71,6 @@ export default defineConfig(() => {
           find: 'troika-three-text',
           replacement: path.resolve(__dirname, '../node_modules/troika-three-text'),
         },
-        {
-          find: '@data-formulator',
-          replacement: path.resolve(__dirname, '../data-formulator-main/src'),
-        },
         // npm hoisted react/react-dom to the ROOT node_modules (the old
         // client/node_modules copies no longer exist) — same install-proof
         // pinning as troika above, pointed at the hoisted copies. A stale

@@ -14,7 +14,6 @@ type RailVisibility = {
   showWorldsignal: boolean;
   showTrading: boolean;
   showCode: boolean;
-  showDataFormulator: boolean;
   // Terminal icon for the OpenClaude Console Bridge. Optional so existing
   // callers keep compiling; shown when Local Coder is bus-connected or a
   // console session exists.
@@ -32,7 +31,6 @@ type AgentBuilderRailProps = {
   onShowKnowledgeWorkspace: () => void;
   onShowTradingWorkspace: () => void;
   onShowCodeWorkspace: () => void;
-  onShowDataFormulatorWorkspace: () => void;
   onOpenNavigationDrawer: () => void;
   openClaudeConsoleActive?: boolean;
   onOpenOpenClaudeConsole?: () => void;
@@ -85,7 +83,6 @@ export default function AgentBuilderRail({
   onShowKnowledgeWorkspace,
   onShowTradingWorkspace,
   onShowCodeWorkspace,
-  onShowDataFormulatorWorkspace,
   onOpenNavigationDrawer,
   openClaudeConsoleActive,
   onOpenOpenClaudeConsole,
@@ -181,23 +178,6 @@ export default function AgentBuilderRail({
           }}
         >
           <Icon d="M9 7 4 12l5 5 M15 7l5 5-5 5 M13 5l-2 14" />
-        </button>
-      ) : null}
-      {visibleRailItems.showDataFormulator ? (
-        <button
-          title="Data Formulator"
-          aria-label="Data Formulator"
-          data-testid="rail-data-formulator-button"
-          onClick={onShowDataFormulatorWorkspace}
-          className="p-2 rounded"
-          style={{
-            color:
-              workspaceView === 'data-formulator'
-                ? GRAPH_THEME.accent.solar
-                : colors.text,
-          }}
-        >
-          <Icon d="M4 5h16v14H4z M7 9h4 M7 13h4 M13 9h4 M13 13h4" />
         </button>
       ) : null}
       {visibleRailItems.showOpenClaudeConsole ? (

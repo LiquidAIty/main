@@ -268,6 +268,22 @@ export default function KnowledgeGraphFramework({
         if (event.target !== cyInstance) return;
         cyInstance.batch(() => cyInstance.elements().removeClass('kgf-dim'));
       });
+      // Force-directed feel on interaction: releasing a dragged node re-runs an
+      // INCREMENTAL fcose pass (randomize:false keeps every other node near its
+      // position), so the graph settles around the moved node like a live
+      // physics simulation instead of leaving a torn layout.
+      cyInstance.on('dragfree', 'node', () => {
+        if (cyInstance.elements().length === 0) return;
+        cyInstance
+          .layout({
+            name: 'fcose',
+            animate: true,
+            randomize: false,
+            fit: false,
+            animationDuration: 450,
+          } as LayoutOptions)
+          .run();
+      });
       cyRef.current = cyInstance;
     }
 
@@ -300,9 +316,10 @@ export default function KnowledgeGraphFramework({
     if (cy.elements().length === 0) {
       return;
     }
-    // Stock fCoSE, no custom physics tuning — its own defaults decide
-    // placement. After settling, clamp the fit zoom so a small graph
-    // composes calmly.
+    // fCoSE force simulation with knowledge-graph-scale physics: stronger
+    // repulsion + degree-independent ideal edge length spreads hub-and-spoke
+    // clusters instead of collapsing them into a blob. After settling, clamp
+    // the fit zoom so a small graph composes calmly.
     const settle = () => {
       cy.fit(undefined, FIT_PADDING_PX);
       if (cy.zoom() > SETTLE_MAX_ZOOM) {
@@ -315,6 +332,12 @@ export default function KnowledgeGraphFramework({
       animate: true,
       fit: true,
       padding: FIT_PADDING_PX,
+      quality: 'proof',
+      nodeRepulsion: 9000,
+      idealEdgeLength: 90,
+      edgeElasticity: 0.45,
+      gravity: 0.25,
+      numIter: 2500,
       stop: settle,
     } as LayoutOptions;
     cy.layout(layout).run();

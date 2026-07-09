@@ -110,7 +110,6 @@ export function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
   if (normalized === 'worldsignals_agent') return 'worldsignals_agent';
   if (normalized === 'trading_agent') return 'trading_agent';
   if (normalized === 'code_agent') return 'code_agent';
-  if (normalized === 'data_formulator_agent') return 'data_formulator_agent';
   if (normalized === 'hermes_steward') return 'hermes_steward';
   return null;
 }

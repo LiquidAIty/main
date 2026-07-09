@@ -9,7 +9,7 @@ export default defineConfig({
     // The one Vitest workspace definition (replaces the deprecated
     // vitest.workspace.ts). Three projects, nothing else is ever collected:
     //   client  — inline below; owns ONLY client/src specs. Vendored repos
-    //             (localcoder, worldsignal, data-formulator-main, src/vendor),
+    //             (localcoder, worldsignal, src/vendor),
     //             e2e/playwright (a Playwright runner), and stale Claude
     //             worktrees under .claude are full repo copies / foreign
     //             runners that used to produce hundreds of phantom failures.
@@ -35,83 +35,14 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@data-formulator": path.resolve(process.cwd(), "data-formulator-main/src"),
       // npm hoists these packages to the root node_modules (the old
       // client/node_modules copies no longer exist), so every alias must point
       // at the hoisted copy — a stale client path fails vitest collection for
-      // any spec that transitively imports the package. js-yaml is the one
-      // package that still keeps its own client copy (root holds a different
-      // transitive version), so it stays pinned to client/node_modules.
+      // any spec that transitively imports the package.
       // Verified against disk 2026-07-08; the dead "allotment" alias (no copy
       // anywhere, no importer) was removed.
-      "@reduxjs/toolkit": path.resolve(process.cwd(), "node_modules/@reduxjs/toolkit"),
-      "react-redux": path.resolve(process.cwd(), "node_modules/react-redux"),
-      "redux-persist": path.resolve(process.cwd(), "node_modules/redux-persist"),
-      "redux-persist/integration/react": path.resolve(
-        process.cwd(),
-        "node_modules/redux-persist/integration/react",
-      ),
-      "redux": path.resolve(process.cwd(), "node_modules/redux"),
-      "localforage": path.resolve(process.cwd(), "node_modules/localforage"),
-      "@mui/material": path.resolve(process.cwd(), "node_modules/@mui/material"),
-      "@mui/icons-material": path.resolve(
-        process.cwd(),
-        "node_modules/@mui/icons-material",
-      ),
-      "@mui/lab": path.resolve(process.cwd(), "node_modules/@mui/lab"),
-      "@emotion/react": path.resolve(process.cwd(), "node_modules/@emotion/react"),
-      "@emotion/styled": path.resolve(process.cwd(), "node_modules/@emotion/styled"),
       "react-router-dom": path.resolve(process.cwd(), "node_modules/react-router-dom"),
-      "react-dnd": path.resolve(process.cwd(), "node_modules/react-dnd"),
-      "react-dnd-html5-backend": path.resolve(
-        process.cwd(),
-        "node_modules/react-dnd-html5-backend",
-      ),
-      "react-virtuoso": path.resolve(process.cwd(), "node_modules/react-virtuoso"),
-      "react-simple-code-editor": path.resolve(
-        process.cwd(),
-        "node_modules/react-simple-code-editor",
-      ),
-      "prism-react-renderer": path.resolve(
-        process.cwd(),
-        "node_modules/prism-react-renderer",
-      ),
-      "prismjs": path.resolve(process.cwd(), "node_modules/prismjs"),
-      "html2canvas": path.resolve(process.cwd(), "node_modules/html2canvas"),
-      "exceljs": path.resolve(process.cwd(), "node_modules/exceljs"),
-      "dompurify": path.resolve(process.cwd(), "node_modules/dompurify"),
-      "validator": path.resolve(process.cwd(), "node_modules/validator"),
-      "lodash": path.resolve(process.cwd(), "node_modules/lodash"),
       "d3": path.resolve(process.cwd(), "node_modules/d3"),
-      "echarts": path.resolve(process.cwd(), "node_modules/echarts"),
-      "react-vega": path.resolve(process.cwd(), "node_modules/react-vega"),
-      "vega": path.resolve(process.cwd(), "node_modules/vega"),
-      "vega-lite": path.resolve(process.cwd(), "node_modules/vega-lite"),
-      "vega-embed": path.resolve(process.cwd(), "node_modules/vega-embed"),
-      "gofish-graphics": path.resolve(process.cwd(), "node_modules/gofish-graphics"),
-      "mui-markdown": path.resolve(process.cwd(), "node_modules/mui-markdown"),
-      "vm-browserify": path.resolve(process.cwd(), "node_modules/vm-browserify"),
-      "chart.js": path.resolve(process.cwd(), "node_modules/chart.js"),
-      "js-yaml": path.resolve(process.cwd(), "client/node_modules/js-yaml"),
-      "markdown-to-jsx": path.resolve(
-        process.cwd(),
-        "node_modules/markdown-to-jsx/dist/index.js",
-      ),
-      "markdown-to-jsx/entities": path.resolve(
-        process.cwd(),
-        "node_modules/markdown-to-jsx/dist/entities.js",
-      ),
-      "react-katex": path.resolve(process.cwd(), "node_modules/react-katex"),
-      "katex": path.resolve(process.cwd(), "node_modules/katex"),
-      "react-animate-height": path.resolve(process.cwd(), "node_modules/react-animate-height"),
-      "react-animate-on-change": path.resolve(
-        process.cwd(),
-        "node_modules/react-animate-on-change",
-      ),
-      "react-selectable-fast": path.resolve(
-        process.cwd(),
-        "node_modules/react-selectable-fast",
-      ),
     },
   },
   server: {

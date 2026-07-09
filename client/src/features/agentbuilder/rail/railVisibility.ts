@@ -31,20 +31,9 @@ export function isCodeWorkbenchCard(card: AgentCardInstance | null | undefined):
   );
 }
 
-export function isDataFormulatorWorkbenchCard(
-  card: AgentCardInstance | null | undefined,
-): boolean {
-  if (!card) return false;
-  return (
-    safeText(card.id).trim() === 'card_data_formulator_workbench' ||
-    safeText(card.templateId).trim() === 'template_data_formulator_workbench'
-  );
-}
-
 export type WorkbenchSurfaceId =
   | 'trading'
-  | 'code'
-  | 'data-formulator';
+  | 'code';
 
 export type WorkbenchCardDescriptor = {
   id: WorkbenchSurfaceId;
@@ -70,14 +59,6 @@ export const WORKBENCH_CARD_DESCRIPTORS: readonly WorkbenchCardDescriptor[] = [
     disabledCopy:
       'Code Agent is staged as a selectable workbench card. Runtime is disabled until the canvas-owned code bridge is restored.',
     matches: isCodeWorkbenchCard,
-  },
-  {
-    id: 'data-formulator',
-    title: 'Data Formulator',
-    openLabel: 'Open Data Formulator',
-    disabledCopy:
-      'Data Formulator opens the real in-process app surface.',
-    matches: isDataFormulatorWorkbenchCard,
   },
 ] as const;
 
@@ -142,7 +123,6 @@ export type ProgressiveRailVisibility = {
   showWorldsignal: boolean;
   showTrading: boolean;
   showCode: boolean;
-  showDataFormulator: boolean;
   showOpenClaudeConsole: boolean;
 };
 
@@ -329,13 +309,6 @@ export function isCodeWorkbenchActive(
   return isWorkbenchSurfaceActive(nodes, edges, isCodeWorkbenchCard);
 }
 
-export function isDataFormulatorWorkbenchActive(
-  nodes: readonly AgentCardInstance[],
-  edges: readonly DeckEdge[],
-): boolean {
-  return isWorkbenchSurfaceActive(nodes, edges, isDataFormulatorWorkbenchCard);
-}
-
 export function isWorkbenchSurfaceActive(
   nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
@@ -366,9 +339,6 @@ export function deriveVisibleRailItems({
     showCode:
       workspaceView === 'code' ||
       isCodeWorkbenchActive(deck.nodes, deck.edges),
-    showDataFormulator:
-      workspaceView === 'data-formulator' ||
-      isDataFormulatorWorkbenchActive(deck.nodes, deck.edges),
     showOpenClaudeConsole: shouldShowOpenClaudeConsoleRail({
       cards: deck.nodes,
       edges: deck.edges,

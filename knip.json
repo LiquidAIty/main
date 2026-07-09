@@ -1,0 +1,31 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "ignore": [
+    "localcoder/**",
+    "worldsignal/**",
+    "Kronos-main/**",
+    "vendor/**",
+    "client/src/vendor/**",
+    "coder-workspace/**",
+    "repo-intake/**"
+  ],
+  "ignoreBinaries": ["docker", "nx"],
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/*.ts", "vite.config.ts", "prisma/seed.ts"],
+      "project": ["scripts/**/*.ts"]
+    },
+    "client": {
+      "entry": ["src/main.tsx", "index.html", "vite.config.ts"],
+      "project": ["src/**/*.{ts,tsx}"]
+    },
+    "apps/backend": {
+      "entry": ["src/main.ts", "vitest.config.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "apps/python-models": {
+      "entry": [],
+      "project": []
+    }
+  }
+}

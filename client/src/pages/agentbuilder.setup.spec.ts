@@ -189,7 +189,6 @@ describe('agentbuilder authoring flow', () => {
       'Hermes',
       'Trading Agent',
       'Code Agent',
-      'Data Formulator',
       'Plan Agent',
       'WorldSignals Agent',
     ]);
@@ -206,7 +205,6 @@ describe('agentbuilder authoring flow', () => {
       'hermes_steward',
       'trading_agent',
       'code_agent',
-      'data_formulator_agent',
       'plan_agent',
       'worldsignals_agent',
     ]);
@@ -221,7 +219,6 @@ describe('agentbuilder authoring flow', () => {
       'template_hermes_steward',
       'template_trading_workbench',
       'template_code_workbench',
-      'template_data_formulator_workbench',
       'template_plan_agent',
       'template_worldsignals_agent',
     ]);
@@ -483,7 +480,6 @@ describe('agentbuilder authoring flow', () => {
       'card_hermes_steward',
       'card_trading_workbench',
       'card_code_workbench',
-      'card_data_formulator_workbench',
       'card_plan_agent',
       'card_worldsignals_agent',
     ]);

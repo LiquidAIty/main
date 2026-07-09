@@ -12,7 +12,6 @@ const baseVisibility = {
   showWorldsignal: false,
   showTrading: false,
   showCode: false,
-  showDataFormulator: false,
 };
 
 const baseProps = {
@@ -25,8 +24,6 @@ const baseProps = {
   onShowKnowledgeWorkspace: () => undefined,
   onShowTradingWorkspace: () => undefined,
   onShowCodeWorkspace: () => undefined,
-  onShowDataFormulatorWorkspace: () => undefined,
-  onShowPlanWorkspace: () => undefined,
   onOpenNavigationDrawer: () => undefined,
 };
 

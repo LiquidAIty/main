@@ -522,16 +522,6 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     maxTokens: 800,
     tools: [],
   },
-  {
-    id: 'template_data_formulator_workbench',
-    name: 'Data Formulator',
-    promptTemplate: 'prompt_assist',
-    model: DEFAULT_CARD_MODEL_KEY,
-    provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 800,
-    tools: [],
-  },
 ];
 
 export const INITIAL_DECK: DeckDocument = {
@@ -770,23 +760,6 @@ export const INITIAL_DECK: DeckDocument = {
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
-      id: 'card_data_formulator_workbench',
-      kind: 'agent',
-      templateId: 'template_data_formulator_workbench',
-      prompt:
-        INITIAL_PROMPT_TEMPLATES.find(
-          (template) => template.id === 'prompt_assist',
-        )?.content || '',
-      runtimeBinding: 'data_formulator_agent',
-      runtimeType: 'assistant_agent',
-      parentGraphId: 'workbench_data_formulator',
-      title: 'Data Formulator',
-      subtitle: 'Embedded upstream app',
-      position: { x: 1220, y: 320 },
-      status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
-    },
-    {
       id: 'card_plan_agent',
       kind: 'agent',
       templateId: 'template_plan_agent',
@@ -853,7 +826,6 @@ export const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
   card_worldsignals_agent: 'worldsignals_agent',
   card_trading_workbench: 'trading_agent',
   card_code_workbench: 'code_agent',
-  card_data_formulator_workbench: 'data_formulator_agent',
   card_hermes_steward: 'hermes_steward',
   // Backward compatibility: legacy card IDs for existing saved decks
   card_main_chat: 'main_chat',
@@ -869,9 +841,12 @@ export const BASELINE_OPTIONAL_CARD_IDS = new Set([
   'card_worldsignals_agent',
   'card_trading_workbench',
   'card_code_workbench',
+]);
+// Cards removed from the product: hydration drops them from stale saved decks.
+export const REMOVED_DEFAULT_CARD_IDS = new Set([
+  'card_assist',
   'card_data_formulator_workbench',
 ]);
-export const REMOVED_DEFAULT_CARD_IDS = new Set(['card_assist']);
 export const REMOVED_DEFAULT_EDGE_IDS = new Set([
   'edge_magentic_research',
   'edge_magentic_assist',

@@ -13,9 +13,6 @@ import BuilderChat from '../components/builder/BuilderChat';
 import FrontendCrashBoundary from '../components/diagnostics/FrontendCrashBoundary';
 import BuilderDrawer from '../components/builder/BuilderDrawer';
 import WorldSignalSurface from '../components/worldsignal/WorldSignalSurface';
-import DataFormulatorSurface, {
-  type DataFormulatorModelConfig,
-} from '../components/dataformulator/DataFormulatorSurface';
 import AgentCanvasPane from '../features/agentbuilder/canvas/AgentCanvasPane';
 import AgentBuilderCanvasRegion from '../features/agentbuilder/core/AgentBuilderCanvasRegion';
 import AgentBuilderChatPane from '../features/agentbuilder/core/AgentBuilderChatPane';
@@ -38,6 +35,7 @@ import useAgentBuilderProject from '../features/agentbuilder/state/useAgentBuild
 import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgentBuilderProjectReset';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import useAgentBuilderThinkGraphProjection from '../features/agentbuilder/state/useAgentBuilderThinkGraphProjection';
+import useAgentBuilderKnowGraphProjection from '../features/agentbuilder/state/useAgentBuilderKnowGraphProjection';
 import TradingCanvasSurface from '../features/trading/TradingCanvasSurface';
 import type { LinkRef } from '../components/builder/deckContinuityTypes';
 import { resolveDeckWorkspaceRoot } from '../features/agentbuilder/state/deckWorkspaceRoot';
@@ -88,7 +86,6 @@ import {
   deriveVisibleRailItems,
   getConnectedKnowledgeGraphKinds,
   getDefaultConnectedKnowledgeGraphKind,
-  isDataFormulatorWorkbenchCard,
   resolveWorkbenchDescriptor,
   type WorkbenchSurfaceId,
 } from '../features/agentbuilder/rail/railVisibility';
@@ -381,7 +378,6 @@ export default function AgentBuilder(): React.ReactElement {
     | 'codegraph'
     | 'trading'
     | 'code'
-    | 'data-formulator'
     | 'worldsignal'
   >(() =>
     new URLSearchParams(window.location.search).get('projectId')
@@ -507,6 +503,11 @@ export default function AgentBuilder(): React.ReactElement {
     knowledgeGraphKind,
   ]);
   const thinkGraphProjection = useAgentBuilderThinkGraphProjection({
+    activeProject,
+    knowledgeGraphKind,
+    workspaceView,
+  });
+  const knowGraphProjection = useAgentBuilderKnowGraphProjection({
     activeProject,
     knowledgeGraphKind,
     workspaceView,
@@ -944,34 +945,6 @@ export default function AgentBuilder(): React.ReactElement {
       : null,
     };
   }, [effectiveAgent, selectedCard]);
-  const dataFormulatorModelConfig =
-    useMemo<DataFormulatorModelConfig | null>(() => {
-      const card = deck.nodes.find(isDataFormulatorWorkbenchCard);
-      if (!card) return null;
-
-      const agent = resolveEffectiveAgent(card, INITIAL_AGENT_TEMPLATES);
-      if (!agent) return null;
-      const runtimeProvider =
-        card.runtimeOptions?.provider === 'openai' ||
-        card.runtimeOptions?.provider === 'openrouter'
-          ? card.runtimeOptions.provider
-          : null;
-      const provider =
-        runtimeProvider ||
-        (agent.provider === 'openai' || agent.provider === 'openrouter'
-          ? agent.provider
-          : null);
-      const model =
-        cleanOptionalText(card.runtimeOptions?.modelKey) ||
-        cleanOptionalText(agent.model);
-
-      if (!provider || !model) return null;
-      return {
-        provider,
-        model,
-        ready: true,
-      };
-    }, [deck.nodes]);
   const activeDeckWorkspaceContext = useMemo<DeckWorkspaceContext>(
     () => {
       const workspaceRoot = resolveDeckWorkspaceRoot(
@@ -2157,7 +2130,9 @@ export default function AgentBuilder(): React.ReactElement {
                   projection={
                     knowledgeGraphKind === 'thinkgraph'
                       ? (thinkGraphProjection.projection ?? undefined)
-                      : undefined
+                      : knowledgeGraphKind === 'knowgraph'
+                        ? (knowGraphProjection.projection ?? undefined)
+                        : undefined
                   }
                   minHeight={minHeight}
                 />
@@ -2214,13 +2189,31 @@ export default function AgentBuilder(): React.ReactElement {
             ThinkGraph projection unavailable: {thinkGraphProjection.error}
           </div>
         ) : null}
-        {/* Honest KnowGraph status: there is no browse projection and no write
-            path wired for KnowGraph in this build — connected agents read it
-            via the retrieve_knowgraph_context tool during runs. Say exactly
-            that instead of rendering a silent empty canvas that looks broken. */}
-        {knowledgeGraphKind === 'knowgraph' ? (
+        {/* Honest KnowGraph states: the tab now renders the REAL project-scoped
+            Neo4j browse projection (GET /api/knowgraph/graph). Loading, error,
+            and empty are each stated plainly; agent writes still go through the
+            Python rails only — this view is read-only. */}
+        {knowledgeGraphKind === 'knowgraph' &&
+        knowGraphProjection.status === 'loading' &&
+        !knowGraphProjection.projection ? (
           <div
-            data-testid="knowgraph-status-message"
+            data-testid="knowgraph-loading-message"
+            style={{
+              position: 'absolute',
+              bottom: 12,
+              left: 12,
+              zIndex: 5,
+              ...graphGlassPillStyle({ fontSize: 11, padding: '5px 10px' }),
+            }}
+          >
+            Loading KnowGraph projection…
+          </div>
+        ) : null}
+        {knowledgeGraphKind === 'knowgraph' &&
+        knowGraphProjection.status === 'ready' &&
+        (knowGraphProjection.projection?.nodes?.length ?? 0) === 0 ? (
+          <div
+            data-testid="knowgraph-empty-message"
             style={{
               position: 'absolute',
               bottom: 12,
@@ -2230,9 +2223,23 @@ export default function AgentBuilder(): React.ReactElement {
               ...graphGlassPillStyle({ fontSize: 11, padding: '5px 10px' }),
             }}
           >
-            KnowGraph (Neo4j) is read-only here: connected agents retrieve
-            source-backed evidence with the retrieve_knowgraph_context tool
-            during runs. No browse projection or write path is wired yet.
+            No KnowGraph evidence exists for this project yet. This view is
+            read-only; research runs write evidence through the Python rails.
+          </div>
+        ) : null}
+        {knowledgeGraphKind === 'knowgraph' && knowGraphProjection.status === 'error' ? (
+          <div
+            data-testid="knowgraph-projection-error"
+            style={{
+              position: 'absolute',
+              bottom: 12,
+              left: 12,
+              zIndex: 5,
+              maxWidth: 560,
+              ...graphGlassPillStyle({ fontSize: 11, padding: '5px 10px' }),
+            }}
+          >
+            KnowGraph projection unavailable: {knowGraphProjection.error}
           </div>
         ) : null}
       </div>
@@ -2265,10 +2272,6 @@ export default function AgentBuilder(): React.ReactElement {
 
   const showCodeWorkspace = useCallback(() => {
     showWorkbenchWorkspace('code');
-  }, [showWorkbenchWorkspace]);
-
-  const showDataFormulatorWorkspace = useCallback(() => {
-    showWorkbenchWorkspace('data-formulator');
   }, [showWorkbenchWorkspace]);
 
   const showWorldsignalWorkspace = useCallback(() => {
@@ -2391,7 +2394,6 @@ export default function AgentBuilder(): React.ReactElement {
       onShowKnowledgeWorkspace={showKnowledgeWorkspace}
       onShowTradingWorkspace={showTradingWorkspace}
       onShowCodeWorkspace={showCodeWorkspace}
-      onShowDataFormulatorWorkspace={showDataFormulatorWorkspace}
       onOpenNavigationDrawer={() => setOpenDrawer('navigation')}
       openClaudeConsoleActive={openClaudeConsoleOpen}
       onOpenOpenClaudeConsole={() => setOpenClaudeConsoleOpen((prev) => !prev)}
@@ -2474,11 +2476,6 @@ export default function AgentBuilder(): React.ReactElement {
           'The Coder Engine or a sandbox bridge executes the task and returns reviewable diffs and tests.',
         ],
       })}
-      dataFormulatorSurface={
-        <DataFormulatorSurface
-          modelConfig={dataFormulatorModelConfig}
-        />
-      }
       uaSurface={null}
       worldsignalSurface={<WorldSignalSurface />}
     />

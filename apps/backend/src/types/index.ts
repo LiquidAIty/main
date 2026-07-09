@@ -18,7 +18,6 @@ export type RuntimeBinding =
   | 'worldsignals_agent'
   | 'trading_agent'
   | 'code_agent'
-  | 'data_formulator_agent'
   | 'hermes_steward';
 
 export type AgentCardRuntimeType =
