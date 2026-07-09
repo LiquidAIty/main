@@ -2168,6 +2168,22 @@ export default function AgentBuilder(): React.ReactElement {
         {/* Honest ThinkGraph status OUTSIDE the graph canvas: real empty state or
             the actual transport error. Never fake nodes, never fallback data. */}
         {knowledgeGraphKind === 'thinkgraph' &&
+        thinkGraphProjection.status === 'loading' &&
+        !thinkGraphProjection.projection ? (
+          <div
+            data-testid="thinkgraph-loading-message"
+            style={{
+              position: 'absolute',
+              bottom: 12,
+              left: 12,
+              zIndex: 5,
+              ...graphGlassPillStyle({ fontSize: 11, padding: '5px 10px' }),
+            }}
+          >
+            Loading ThinkGraph projection…
+          </div>
+        ) : null}
+        {knowledgeGraphKind === 'thinkgraph' &&
         thinkGraphProjection.status === 'ready' &&
         (thinkGraphProjection.projection?.nodes?.length ?? 0) === 0 ? (
           <div
@@ -2196,6 +2212,27 @@ export default function AgentBuilder(): React.ReactElement {
             }}
           >
             ThinkGraph projection unavailable: {thinkGraphProjection.error}
+          </div>
+        ) : null}
+        {/* Honest KnowGraph status: there is no browse projection and no write
+            path wired for KnowGraph in this build — connected agents read it
+            via the retrieve_knowgraph_context tool during runs. Say exactly
+            that instead of rendering a silent empty canvas that looks broken. */}
+        {knowledgeGraphKind === 'knowgraph' ? (
+          <div
+            data-testid="knowgraph-status-message"
+            style={{
+              position: 'absolute',
+              bottom: 12,
+              left: 12,
+              zIndex: 5,
+              maxWidth: 560,
+              ...graphGlassPillStyle({ fontSize: 11, padding: '5px 10px' }),
+            }}
+          >
+            KnowGraph (Neo4j) is read-only here: connected agents retrieve
+            source-backed evidence with the retrieve_knowgraph_context tool
+            during runs. No browse projection or write path is wired yet.
           </div>
         ) : null}
       </div>

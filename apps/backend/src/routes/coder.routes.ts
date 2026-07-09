@@ -50,9 +50,12 @@ export const OPENCLAUDE_HARNESS_ROUTE_PREFIX = '/coder/openclaude';
 // / resource calls to these endpoints — single authority, no duplicated state.
 router.post('/mcp-bridge/describe_connected_agents', async (req, res) => {
   try {
+    // Blank deckId defaults to the ONE canonical Agent Canvas deck — the same
+    // convention run_configured_card already follows. A present-but-wrong
+    // deckId still fails honestly (no silent correction).
     const result = await describeConnectedAgents({
       projectId: String(req.body?.projectId || ''),
-      deckId: String(req.body?.deckId || ''),
+      deckId: String(req.body?.deckId || BUILDER_DECK_ID),
     });
     return res.json({ ok: true, ...result });
   } catch (error) {
@@ -62,7 +65,11 @@ router.post('/mcp-bridge/describe_connected_agents', async (req, res) => {
 
 router.post('/mcp-bridge/run_mag_one', async (req, res) => {
   try {
-    const result = await runMagOne(req.body);
+    // Same blank-deckId default as run_configured_card / describe_connected_agents.
+    const result = await runMagOne({
+      ...(req.body || {}),
+      deckId: String(req.body?.deckId || BUILDER_DECK_ID),
+    });
     return res.json({ ok: result.status !== 'failed', result });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'run_mag_one_failed' });

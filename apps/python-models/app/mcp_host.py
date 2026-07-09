@@ -99,7 +99,9 @@ async def list_tools() -> list[Tool]:
                 "Read the currently connected, bus-eligible (magentic_option) Mag One Agent Cards and "
                 "their actual capabilities before writing a run_mag_one prompt: cardId, title, "
                 "role/capability, selected model, configured Python tools, and connected status. "
-                "Read-only and deck-authentic — never invents agents, tools, models, or outputs."
+                "Read-only and deck-authentic — never invents agents, tools, models, or outputs. "
+                "deckId is optional and defaults to the one canonical Agent Canvas deck; never "
+                "guess a deckId."
             ),
             inputSchema={
                 "type": "object",
@@ -107,7 +109,7 @@ async def list_tools() -> list[Tool]:
                     "projectId": {"type": "string"},
                     "deckId": {"type": "string"},
                 },
-                "required": ["projectId", "deckId"],
+                "required": ["projectId"],
             },
         ),
         Tool(
@@ -121,7 +123,9 @@ async def list_tools() -> list[Tool]:
                 "no_return_files_created when none). With promptMarkdown, that string IS Mag One's "
                 "job, used verbatim. jobId takes precedence so the on-disk file is the contract. "
                 "Mag One reasons over the task, selects among connected eligible workers itself, and "
-                "returns its result. No structured plan, no task ledger gate, no approval gate."
+                "returns its result. No structured plan, no task ledger gate, no approval gate. "
+                "deckId is optional and defaults to the one canonical Agent Canvas deck; never "
+                "guess a deckId."
             ),
             inputSchema={
                 "type": "object",
@@ -131,7 +135,7 @@ async def list_tools() -> list[Tool]:
                     "promptMarkdown": {"type": "string"},
                     "jobId": {"type": "string"},
                 },
-                "required": ["projectId", "deckId"],
+                "required": ["projectId"],
             },
         ),
         Tool(

@@ -137,7 +137,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       'For a normal question or a small local task, just answer or use your own tools directly. Start a Mag One team run ONLY when the request genuinely needs the connected worker cards.',
       '',
       'When a team run is warranted, drive this exact spine:',
-      '1. Use the active project and conversation you are already in. Never invent ids.',
+      '1. Use the active project and conversation you are already in. Never invent ids. The one canonical Agent Canvas deck id is deck_builder — use it wherever a deckId is required.',
       '2. Read relevant durable reasoning with mcp__liquidaity__thinkgraph_get_graph_slice for this project; use only what is relevant. If it returns nothing, say so plainly — never invent memory.',
       '3. Inspect the real connected workers with mcp__liquidaity__mag_one_describe_connected_agents. Use ONLY the workers it reports; never assume a card, tool, or capability that is not in that result.',
       '4. Author ONE canonical Run Packet in Markdown. Include: the user request; the project goal; relevant ThinkGraph state with its source/revision; real constraints and repo law; known blockers; relevant KnowGraph/CodeGraph context ONLY if you actually retrieved it; the connected worker cards and their tools from step 3; ownership boundaries; the evidence each result must carry; the expected result form; and explicit scope exclusions. Describe the goal and let Mag One choose workers — do not force research, coding, or every worker into the run.',
@@ -192,17 +192,20 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'You are the Research Agent.',
       ].join('\n'),
       goal: [
-        'Gather source-backed evidence for and against the thesis.',
+        'Gather source-backed evidence for and against the current research question.',
       ].join('\n'),
       constraints: [
-        'May run only after status = approved_for_research.',
+        'You have NO tools: no web/search access and no direct graph access.',
+        'Evidence arrives from the KnowGraph Agent through the orchestrator; reason over it and label findings as graph-context research.',
+        'If no relevant evidence was provided, say so plainly; never invent sources or citations.',
         'Does not write KnowGraph itself.',
       ].join('\n'),
       ioSchema: [
-        'Return evidence objects with source, snippet, claim, date if available, provenance.',
+        'Return evidence-grounded findings with source, snippet, claim, date if available, provenance — exactly as provided.',
+        'Preserve each assertion\'s outcome (supported/contradicted/uncertain) and its sourceRef.',
       ].join('\n'),
       memoryPolicy: [
-        'Use researchable questions and evidence targets from provenance-backed Plan nodes and real ThinkGraph events.',
+        'Use only the current request and the graph context supplied by the team.',
         'Active Skills: search_confirming_evidence, search_disconfirming_evidence, extract_source_claims, preserve_provenance, avoid_unsourced_claims',
       ].join('\n'),
     }),
@@ -214,11 +217,12 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'You are the KnowGraph Agent.',
       ].join('\n'),
       goal: [
-        'Only store source-backed evidence/gaps/provenance.',
+        'Retrieve source-backed evidence/gaps/provenance for the team.',
       ].join('\n'),
       constraints: [
         'Must not store ThinkGraph reasoning as fact.',
-        'Runs only after Research Agent produces source-backed evidence.',
+        'Read evidence with the retrieve_knowgraph_context tool (project-scoped, read-only).',
+        'No KnowGraph write path is wired yet — never claim to have written KnowGraph.',
       ].join('\n'),
       ioSchema: [
         'Input: source-backed evidence from Research Agent.',
@@ -639,6 +643,14 @@ export const INITIAL_DECK: DeckDocument = {
         )?.content || '',
       runtimeBinding: 'research_agent',
       runtimeType: 'assistant_agent',
+      // Research is a pure reasoning worker on the bus: it carries NO tools.
+      // Graph evidence comes from the KnowGraph Agent (Mag One coordinates the
+      // two) — research must never claim internet or tool access it lacks.
+      // Same model convention as the ThinkGraph card; fully editable on the card.
+      runtimeOptions: {
+        modelKey: 'openai/gpt-5.1-chat',
+        provider: 'openrouter',
+      },
       parentGraphId: null,
       title: 'Research Agent',
       subtitle: 'Research and analysis worker',
@@ -656,6 +668,14 @@ export const INITIAL_DECK: DeckDocument = {
         )?.content || '',
       runtimeBinding: 'knowgraph_agent',
       runtimeType: 'assistant_agent',
+      // Read-only retrieval only — no KnowGraph write tool is wired yet, and
+      // this card must never pretend one exists. Same model convention as the
+      // ThinkGraph card; fully editable on the card.
+      runtimeOptions: {
+        tools: ['retrieve_knowgraph_context'],
+        modelKey: 'openai/gpt-5.1-chat',
+        provider: 'openrouter',
+      },
       parentGraphId: null,
       title: 'KnowGraph Agent',
       subtitle: 'Grounded / evidence-backed memory (Neo4j)',

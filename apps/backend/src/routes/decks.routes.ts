@@ -159,16 +159,6 @@ router.post('/:projectId/decks/:deckId/run', async (req, res) => {
     if (!deck) {
       return res.status(404).json({ ok: false, error: 'deck_not_found' });
     }
-    console.log('[DEBUG-TRACE] POST /run received deck:', deckId);
-    console.log('[DEBUG-TRACE] user input:', req.body?.input);
-    console.log('[DEBUG-TRACE] templates count:', templates.length);
-    console.log('[DEBUG-TRACE] document node count:', deck?.nodes?.length);
-    console.log('[DEBUG-TRACE] document edge count:', deck?.edges?.length);
-    const bodyStr = JSON.stringify(req.body || {});
-    console.log('[DEBUG-TRACE] Request body contains prompt?:', bodyStr.includes('prompt'));
-    console.log('[DEBUG-TRACE] Request body contains promptPart?:', bodyStr.includes('promptPart'));
-    console.log('[DEBUG-TRACE] Request body contains systemPrompt?:', bodyStr.includes('systemPrompt'));
-
     if (useStream) {
       res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
