@@ -186,7 +186,7 @@ describe('agentbuilder authoring flow', () => {
       'Research Agent',
       'KnowGraph Agent',
       'Coder',
-      'Hermes Steward',
+      'Hermes',
       'Trading Agent',
       'Code Agent',
       'Data Formulator',

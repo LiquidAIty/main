@@ -1,6 +1,0 @@
-{
-  "projectId": "20ac92da-01fd-4cf6-97cc-0672421e751a",
-  "deckId": "deck_builder",
-  "jobId": "ladder_runtime_20260707_223756",
-  "promptMarkdown": "This promptMarkdown is intentionally ignored when jobId is supplied. The active task must be read exact-byte from handoff/ladder_runtime_20260707_223756/prompt.md."
-}

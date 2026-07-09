@@ -260,7 +260,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     id: 'prompt_hermes_steward',
     content: buildSeedPromptTemplate({
       role: [
-        'You are the Hermes steward — the project\'s knowledge compounding agent.',
+        'You are Hermes — the project\'s knowledge compounding agent.',
         'You are a separate skeptical evaluator: the coder never grades itself; you do.',
       ].join('\n'),
       goal: [
@@ -470,7 +470,7 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
   },
   {
     id: 'template_hermes_steward',
-    name: 'Hermes Steward',
+    name: 'Hermes',
     promptTemplate: 'prompt_hermes_steward',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
@@ -709,7 +709,7 @@ export const INITIAL_DECK: DeckDocument = {
         provider: 'openrouter',
       },
       parentGraphId: null,
-      title: 'Hermes Steward',
+      title: 'Hermes',
       subtitle: 'Knowledge compounding agent',
       position: { x: 260, y: 480 },
       status: 'ready',

@@ -22,3 +22,12 @@ temp/
 *.gz
 apps/python-models/mock.json
 apps/python-models/simulate.py
+# root scratch / proof artifacts — never ingest (cleanup 2026-07-08)
+tmp_*
+tmp-*
+.tmp-*
+*_proof*
+repo-map*.json
+repo-graph-overlay.json
+mcp_query.json
+run_response.json

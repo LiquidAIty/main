@@ -3,7 +3,7 @@ import { useCallback, useRef, useState, type ReactNode } from 'react';
 /**
  * The left panel: the Harness chat surface on top (the passed `chat`, i.e.
  * BuilderChat with inline work), and a near-invisible pull-tab at the bottom
- * that reveals the under-chat surface. That surface IS the Hermes steward's
+ * that reveals the under-chat surface. That surface IS Hermes's
  * run/review feed — one surface, nothing else lives under the chat. Terminal
  * work belongs to the Code Console (rail icon), never here.
  *   - no UI name/label beyond what the Hermes feed renders itself
@@ -19,7 +19,7 @@ const MAX_OPEN_HEIGHT = 240;
 
 export type HarnessChatPanelProps = {
   chat: ReactNode;
-  /** The Hermes steward's review/memory feed — the ONE under-chat surface. */
+  /** Hermes's review/memory feed — the ONE under-chat surface. */
   hermes: ReactNode;
 };
 

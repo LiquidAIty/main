@@ -1,7 +1,0 @@
-{
-  "projectId": "20ac92da-01fd-4cf6-97cc-0672421e751a",
-  "conversationId": "localcoder-completion-final-20260707-222800",
-  "workingDirectory": "C:\\Projects\\main",
-  "mode": "chat",
-  "message": "Use the saved Local Coder card to audit one file only:\napps/backend/src/cards/runtime.ts\n\nFind the runConfiguredCard function and report:\n- the exact file path;\n- the function name;\n- the saved-card model/tool authority risk it protects against;\n- one valid next proof step.\n\nDo not edit source."
-}

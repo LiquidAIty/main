@@ -8,8 +8,8 @@ import { useCallback, useEffect, useState } from 'react';
  * writes, detected patterns, and honest blocked markers. It never invents
  * activity and never fakes graph writes — an empty feed says so plainly.
  *
- * This is NOT the Code Console and NOT the Local Coder terminal: those stay
- * on their own surfaces (rail Terminal icon / chat shell pull-up). Collapsed
+ * This is NOT the Code Console and NOT the Local Coder terminal: those live on
+ * the rail Terminal icon (the Code Console), never under chat. Collapsed
  * by default to a single latest-activity line; click to expand the feed.
  */
 
