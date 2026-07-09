@@ -26,7 +26,7 @@ from .protocol import (
     ProofQuality,
     RunRecord,
 )
-from .review import review_coder_report
+from .review import review_coder_report, review_run_result
 
 __all__ = [
     "CODER_REPORT_FIELDS",
@@ -45,5 +45,6 @@ __all__ = [
     "blocked_write_plan",
     "build_write_plan",
     "review_coder_report",
+    "review_run_result",
     "to_thinkgraph_patch",
 ]

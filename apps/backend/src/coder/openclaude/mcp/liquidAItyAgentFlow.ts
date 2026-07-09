@@ -124,6 +124,10 @@ export type RunMagOneInput = {
   // root is the server-forced trusted root — never a client path. Takes precedence
   // over promptMarkdown so the job FILE is always the contract.
   jobId?: string;
+  // The real conversation this run belongs to, when the Harness supplies it.
+  // Transport identity only — consumed by the backend's Hermes postflight hook
+  // for run-memory provenance; this function ignores it.
+  conversationId?: string;
 };
 
 export type RunMagOneResult = {
@@ -132,6 +136,10 @@ export type RunMagOneResult = {
   finalText: string;
   failure: string | null;
   provenance: { route: string };
+  // The bus-connected worker card ids this run was eligible to use (from the
+  // live deck's magentic_option edges at run time) — the same set Mag One saw.
+  // Disconnected cards are structurally absent, never filtered downstream.
+  connectedParticipants: string[];
   // Coder job-folder handoff: the assigned return surface + the files the run
   // actually wrote there, so the Coder can read and continue from them. Null /
   // empty for a normal (promptMarkdown) run.
@@ -203,6 +211,10 @@ export async function runMagOne(
   if (!orchestrator) {
     throw new Error('run_mag_one_no_orchestrator_card');
   }
+  // The eligible worker set at run time — the SAME resolution the runtime uses.
+  const connectedParticipants = resolvedMagenticOptions(asString(orchestrator.id), nodes, edges).map(
+    (card: any) => asString(card?.id),
+  );
 
   // The coder workspace root is SERVER-OWNED and trusted — the default owned Coder
   // workspace (<repo-root>/coder-workspace), never a client path; a client-supplied
@@ -236,6 +248,7 @@ export async function runMagOne(
           finalText: '',
           failure,
           provenance: { route },
+          connectedParticipants,
           jobId,
           returnsDir: handoff.returnsDir,
           returnedFiles: handoff.returnedFiles,
@@ -248,6 +261,7 @@ export async function runMagOne(
         finalText: '',
         failure,
         provenance: { route },
+        connectedParticipants,
         jobId,
         returnsDir: handoff.returnsDir,
         returnedFiles: [],
@@ -265,6 +279,7 @@ export async function runMagOne(
     finalText: asString(result?.output),
     failure: failed ? asString(result?.error) || 'run_mag_one_failed' : null,
     provenance: { route },
+    connectedParticipants,
     jobId: jobId || null,
     returnsDir: handoff?.returnsDir ?? null,
     returnedFiles: Array.isArray(handoff?.returnedFiles) ? handoff.returnedFiles : [],

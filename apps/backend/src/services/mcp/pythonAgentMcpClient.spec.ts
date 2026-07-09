@@ -14,8 +14,9 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
   it('exposes exactly the Mag One entrypoints, the bounded ThinkGraph read, and the Harness control surface (no model-facing write, no pair front door, no visible-flow wrapper)', async () => {
     const names = await listPythonAgentMcpTools();
     // Mirror of the Python host's own surface test (test_thinkgraph_card_tools
-    // TestPythonMcpHost) — 11 tools including the job-folder handoff pair
-    // (write_mag_one_instructions + read_model_results) added 2026-07-07.
+    // TestPythonMcpHost) — 12 tools: the job-folder handoff pair
+    // (write_mag_one_instructions + read_model_results, 2026-07-07) plus the
+    // Hermes memory preflight (hermes.preflight_context, 2026-07-09).
     expect(names).toEqual([
       'canvas.inspect',
       'canvas.upsert_wire',
@@ -23,6 +24,7 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'card.assign_runtime_skill',
       'card.run_assistant_agent',
       'card.update_configuration',
+      'hermes.preflight_context',
       'mag_one.describe_connected_agents',
       'read_model_results',
       'run_mag_one',

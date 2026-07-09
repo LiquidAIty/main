@@ -1,23 +1,58 @@
-// Hermes review + activity seams (SPEC: Hermes postflight/manual review).
-// Mocks ONLY the rails transport (requestHermesReview) and the same heavy
+// Hermes review + activity + postflight seams (SPEC: Hermes postflight/manual
+// review). Mocks ONLY the rails transports (requestHermesReview /
+// requestHermesRunReview), the graph writer, the deck read, and the same heavy
 // boundaries coder.routes.spec mocks. Proves: the manual review route relays
 // the real Python review and records its real activity; a rails failure is an
 // honest 502 plus a blocked activity entry (never a fabricated review); the
-// activity route serves exactly what real reviews produced.
+// activity route serves exactly what real reviews produced; postflight writes
+// run memory ONLY through the canonical patch writer under server-minted
+// Hermes-card authority, and blocks honestly without a conversation identity.
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const hermesTransportMocks = vi.hoisted(() => ({
   requestHermesReview: vi.fn(),
+  requestHermesRunReview: vi.fn(),
+}));
+
+const thinkGraphStoreMocks = vi.hoisted(() => ({
+  applyThinkGraphPatch: vi.fn(),
+  readThinkGraphScope: vi.fn(async () => ({ nodes: [], edges: [] })),
+}));
+
+const deckStoreMocks = vi.hoisted(() => ({
+  getDeckDocument: vi.fn(async () => ({
+    deck: {
+      nodes: [
+        { id: 'card_magentic', runtimeType: 'magentic_one' },
+        { id: 'card_hermes_steward', runtimeBinding: 'hermes_steward', runtimeType: 'assistant_agent' },
+      ],
+      edges: [],
+    },
+    latestRun: null,
+    runs: [],
+    meta: { deckRevision: null, deckSavedAt: null },
+  })),
 }));
 
 vi.mock('../services/autogen/autogenOrchestratorClient', () => ({
   requestHermesReview: hermesTransportMocks.requestHermesReview,
+  requestHermesRunReview: hermesTransportMocks.requestHermesRunReview,
   orchestrateWithAutoGen: vi.fn(),
   runSingleCardWithAutoGen: vi.fn(),
   fetchToolManifest: vi.fn(),
   fetchThinkGraphProjection: vi.fn(),
+}));
+
+vi.mock('../services/thinkgraph/thinkGraphStore', () => ({
+  applyThinkGraphPatch: thinkGraphStoreMocks.applyThinkGraphPatch,
+  readThinkGraphScope: thinkGraphStoreMocks.readThinkGraphScope,
+}));
+
+vi.mock('../decks/store', () => ({
+  BUILDER_DECK_ID: 'deck_builder',
+  getDeckDocument: deckStoreMocks.getDeckDocument,
 }));
 
 vi.mock('../cards/runtime', () => ({
@@ -81,10 +116,41 @@ const REVIEW_FIXTURE = {
   ],
 };
 
+const RUN_REVIEW_FIXTURE = {
+  verdict: 'blocked',
+  recommendation: 'Run blocked: rails unreachable. Record the blocker before retrying the same run.',
+  activityEvents: [
+    {
+      id: 'hermes:mag_one_run_1:1',
+      timestamp: '2026-07-09T00:00:00+00:00',
+      type: 'review_started',
+      summary: 'Reviewing run result for mag_one_run_1',
+      runId: 'mag_one_run_1',
+    },
+    {
+      id: 'hermes:mag_one_run_1:2',
+      timestamp: '2026-07-09T00:00:00+00:00',
+      type: 'review_complete',
+      summary: 'Run mag_one_run_1: verdict=blocked',
+      runId: 'mag_one_run_1',
+    },
+  ],
+};
+
+const RUN_PATCH_FIXTURE = {
+  resources: [
+    { id: 'run:mag_one_run_1', label: 'RunRecord mag_one_run_1', kind: 'RunRecord', properties: {} },
+  ],
+  statements: [],
+};
+
 describe('Hermes review + activity routes', () => {
   beforeEach(() => {
     clearHermesActivityForTest();
     hermesTransportMocks.requestHermesReview.mockReset();
+    hermesTransportMocks.requestHermesRunReview.mockReset();
+    thinkGraphStoreMocks.applyThinkGraphPatch.mockReset();
+    deckStoreMocks.getDeckDocument.mockClear();
   });
 
   it('relays the real Python review and records its real activity entries', async () => {
@@ -183,5 +249,129 @@ describe('Hermes review + activity routes', () => {
     } finally {
       await closeServer(server);
     }
+  });
+
+  describe('/hermes/postflight', () => {
+    it('reviews a real run result and writes run memory under Hermes-card authority', async () => {
+      hermesTransportMocks.requestHermesRunReview.mockResolvedValue({
+        ok: true,
+        review: RUN_REVIEW_FIXTURE,
+        thinkgraphPatch: RUN_PATCH_FIXTURE,
+      });
+      thinkGraphStoreMocks.applyThinkGraphPatch.mockResolvedValue({
+        ok: true,
+        status: 'applied',
+        correlationId: 'hermes_post_mag_one_run_1',
+        storedResourceIds: ['run:mag_one_run_1'],
+        storedStatementIds: [],
+        relationCount: 0,
+      });
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/hermes/postflight`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1',
+            conversationId: 'main',
+            runId: 'mag_one_run_1',
+            status: 'failed',
+            failure: 'rails unreachable',
+          }),
+        });
+        const payload = await response.json();
+        expect(response.status).toBe(200);
+        expect(payload.ok).toBe(true);
+        expect(payload.report.runId).toBe('mag_one_run_1');
+        expect(payload.report.verdict).toBe('blocked');
+        expect(payload.report.thinkGraphWrite).toMatchObject({
+          status: 'applied',
+          correlationId: 'hermes_post_mag_one_run_1',
+          storedResourceIds: ['run:mag_one_run_1'],
+        });
+        // The write went through the ONE canonical writer with server-minted
+        // Hermes-card authority — never model-supplied.
+        expect(thinkGraphStoreMocks.applyThinkGraphPatch).toHaveBeenCalledWith(
+          {
+            projectId: 'project-1',
+            cardId: 'card_hermes_steward',
+            correlationId: 'hermes_post_mag_one_run_1',
+            conversationId: 'main',
+          },
+          RUN_PATCH_FIXTURE,
+        );
+        // Real review activity + the write-complete entry landed in the feed.
+        const activity = await fetch(`${baseUrl}/hermes/activity`).then((r) => r.json());
+        const types = activity.activity.map((entry: { type: string }) => entry.type);
+        expect(types).toContain('review_started');
+        expect(types).toContain('review_complete');
+        expect(types).toContain('thinkgraph_write_complete');
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('blocks the memory write honestly when no conversation identity exists', async () => {
+      hermesTransportMocks.requestHermesRunReview.mockResolvedValue({
+        ok: true,
+        review: RUN_REVIEW_FIXTURE,
+        thinkgraphPatch: RUN_PATCH_FIXTURE,
+      });
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/hermes/postflight`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', runId: 'mag_one_run_1', status: 'failed' }),
+        });
+        const payload = await response.json();
+        expect(response.status).toBe(200);
+        expect(payload.report.thinkGraphWrite.status).toBe('blocked');
+        expect(payload.report.thinkGraphWrite.reason).toContain('conversationId_missing');
+        expect(thinkGraphStoreMocks.applyThinkGraphPatch).not.toHaveBeenCalled();
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('rejects a postflight without a runId — nothing reviewed, nothing written', async () => {
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/hermes/postflight`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toBe('runId_required');
+        expect(hermesTransportMocks.requestHermesRunReview).not.toHaveBeenCalled();
+        expect(thinkGraphStoreMocks.applyThinkGraphPatch).not.toHaveBeenCalled();
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('reports a rails failure as an honest 502 plus a blocked activity entry', async () => {
+      hermesTransportMocks.requestHermesRunReview.mockResolvedValue({
+        ok: false,
+        error: 'PYTHON_AUTOGEN_RAILS_UNAVAILABLE',
+      });
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/hermes/postflight`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'main', runId: 'run_z', status: 'completed' }),
+        });
+        expect(response.status).toBe(502);
+        const activity = await fetch(`${baseUrl}/hermes/activity`).then((r) => r.json());
+        expect(activity.activity).toHaveLength(1);
+        expect(activity.activity[0].type).toBe('blocked');
+        expect(activity.activity[0].runId).toBe('run_z');
+        expect(thinkGraphStoreMocks.applyThinkGraphPatch).not.toHaveBeenCalled();
+      } finally {
+        await closeServer(server);
+      }
+    });
   });
 });

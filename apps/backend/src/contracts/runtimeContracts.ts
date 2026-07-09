@@ -170,6 +170,89 @@ export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
   },
 ];
 
+// ── Authority-chain contracts (Harness → Hermes → Mag One → Hermes) ────────
+// One owner per artifact, matching the role model:
+//   RunIntent      — authored by the Harness (Main Chat) from the live turn.
+//   ContextPacket  — assembled by Hermes preflight from REAL graph/deck reads.
+//   RunPacketDraft — drafted by Hermes preflight; the Harness refines it and
+//                    sends the final Markdown to run_mag_one verbatim (the
+//                    Markdown IS the RunPacket Mag One receives — never a
+//                    structured plan/task object).
+//   HermesReviewReport — returned by Hermes postflight after a run result.
+// These are transport/data contracts only; no TS reasoning hangs off them.
+
+export type RunIntent = {
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  /** The user's request for this turn, verbatim — never rewritten in TS. */
+  userRequest: string;
+  /** Explicitly set by the Harness when the run needs code structure context. */
+  needsCodeContext?: boolean;
+};
+
+export type ContextPacket = {
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  thinkGraph: {
+    available: boolean;
+    reason?: string;
+    nodeCount: number;
+    edgeCount: number;
+    /** Bounded recent-node refs (ids/labels only) — pointers, not copies. */
+    recentNodes: Array<{ id: string; label: string; kind?: string }>;
+  };
+  knowGraph: {
+    available: boolean;
+    reason?: string;
+    /** Evidence retrieval happens in-run via the KnowGraph card's tool. */
+    accessPath: 'retrieve_knowgraph_context';
+  };
+  codeGraph: {
+    consulted: boolean;
+    reason: string;
+  };
+  connectedParticipants: Array<{ cardId: string; title: string; tools: string[] }>;
+  disconnectedExclusions: string[];
+};
+
+export type RunPacketDraft = {
+  userRequest: string;
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  connectedParticipants: string[];
+  disconnectedExclusions: string[];
+  hermesContextSummary: string;
+  graphContext: {
+    thinkGraph: 'available' | 'unavailable';
+    knowGraph: 'available' | 'unavailable';
+    codeGraph: 'not_consulted' | 'available' | 'unavailable';
+  };
+  proofRequirements: string[];
+  expectedVisibleOutput: string;
+  noFallbackRules: string[];
+  /** Structural Markdown rendering of the fields above — a draft the Harness
+   * may refine before run_mag_one; never a plan/task translation. */
+  promptMarkdown: string;
+};
+
+export type HermesReviewReport = {
+  runId: string;
+  verdict: string;
+  recommendation: string;
+  thinkGraphWrite:
+    | {
+        status: 'applied' | 'duplicate' | 'empty';
+        correlationId: string;
+        storedResourceIds: string[];
+        storedStatementIds: string[];
+      }
+    | { status: 'blocked'; reason: string };
+  activityCount: number;
+};
+
 // Job-folder handoff run outputs, threaded verbatim from the Python rails.
 // Present only for a handoff run (a jobId was supplied); null otherwise.
 export type JobHandoffRunResult = {

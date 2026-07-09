@@ -261,19 +261,15 @@ export async function fetchToolManifest(): Promise<ToolCapabilityManifestEntry[]
   }
 }
 
-const HERMES_REVIEW_ENDPOINT = '/hermes/review';
-
 export type HermesReviewTransportResult =
   | { ok: true; review: Record<string, unknown>; thinkgraphPatch: Record<string, unknown> }
   | { ok: false; error: string };
 
-/**
- * Transport-only: run the Hermes steward's PURE CoderReport review on the
- * Python rails (`/hermes/review`; no model call, no DB, no persistence there).
+/** Shared transport for the two PURE Hermes review endpoints on the rails.
  * Returns an honest ok:false instead of throwing — postflight callers must
- * never let a review failure break the original CoderReport path.
- */
-export async function requestHermesReview(
+ * never let a review failure break the original run/report path. */
+async function requestHermesRails(
+  endpointPath: string,
   payload: Record<string, unknown>,
 ): Promise<HermesReviewTransportResult> {
   const controller = new AbortController();
@@ -282,7 +278,7 @@ export async function requestHermesReview(
     const baseUrls = buildSidecarBaseUrls();
     let lastError: any = null;
     for (const baseUrl of baseUrls) {
-      const endpoint = `${baseUrl}${HERMES_REVIEW_ENDPOINT}`;
+      const endpoint = `${baseUrl}${endpointPath}`;
       try {
         const response = await fetch(endpoint, {
           method: 'POST',
@@ -318,6 +314,22 @@ export async function requestHermesReview(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** Transport-only: the Hermes steward's PURE CoderReport review
+ * (`/hermes/review`; no model call, no DB, no persistence there). */
+export async function requestHermesReview(
+  payload: Record<string, unknown>,
+): Promise<HermesReviewTransportResult> {
+  return requestHermesRails('/hermes/review', payload);
+}
+
+/** Transport-only: the Hermes steward's PURE Mag One run-result review
+ * (`/hermes/review_run`) — the postflight seam after a team run. */
+export async function requestHermesRunReview(
+  payload: Record<string, unknown>,
+): Promise<HermesReviewTransportResult> {
+  return requestHermesRails('/hermes/review_run', payload);
 }
 
 const THINKGRAPH_PROJECTION_ENDPOINT = '/thinkgraph/projection';

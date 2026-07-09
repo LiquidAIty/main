@@ -115,6 +115,29 @@ def hermes_review(req: dict):
     }
 
 
+@app.post("/hermes/review_run")
+def hermes_review_run(req: dict):
+    """Hermes postflight: pure review of ONE Mag One / team run result (no
+    model call, no DB, no persistence). Body: {runId, status, failure?,
+    finalTextPresent?, participants?, projectId?, conversationId?}. Returns
+    the HermesReview plus a ready apply_thinkgraph_patch payload — persistence
+    happens ONLY through the card-scoped authority on the backend, never here."""
+    from app.python_models.hermes.graph_memory import to_thinkgraph_patch
+    from app.python_models.hermes.review import review_run_result
+
+    if not isinstance(req, dict):
+        raise HTTPException(status_code=400, detail="body must be a JSON object")
+    try:
+        review = review_run_result(req)
+    except Exception as err:  # honest failure — never a fabricated review
+        raise HTTPException(status_code=500, detail=str(err)) from err
+    return {
+        "ok": True,
+        "review": review.to_dict(),
+        "thinkgraphPatch": to_thinkgraph_patch(review.graphMemoryWritePlan),
+    }
+
+
 @app.post("/autogen/run_card")
 async def autogen_run_card(req: ContextPack):
     """Run ONE configured canvas card as a single AssistantAgent.

@@ -10,6 +10,7 @@ from app.python_models.hermes import (
     HermesReview,
     HermesReviewInput,
     review_coder_report,
+    review_run_result,
 )
 
 NOW = "2026-07-08T00:00:00+00:00"
@@ -169,6 +170,56 @@ class TestCompounding:
             e.type == "pattern_detected" and "2 occurrence(s)" in e.summary
             for e in second.activityEvents
         )
+
+
+class TestRunResultReview:
+    """Postflight review of a Mag One run result (the RunMagOneResult seam)."""
+
+    def test_completed_run_with_visible_text_is_honest(self):
+        result = review_run_result(
+            {
+                "runId": "mag_one_run_1",
+                "status": "completed",
+                "finalTextPresent": True,
+                "participants": ["card_research_agent", "card_knowgraph_agent"],
+            },
+            now=NOW,
+        )
+        assert result.verdict == "honest"
+        assert result.graphMemoryWritePlan.status == "ready"
+        assert result.graphMemoryWritePlan.runRecord["status"] == "completed"
+        assert result.blockers == []
+        assert any(e.type == "review_complete" for e in result.activityEvents)
+
+    def test_failed_run_is_blocked_with_the_real_failure(self):
+        result = review_run_result(
+            {"runId": "mag_one_run_2", "status": "failed", "failure": "rails unreachable"},
+            now=NOW,
+        )
+        assert result.verdict == "blocked"
+        assert result.blockers[0].type == "run_failure"
+        assert result.blockers[0].summary == "rails unreachable"
+        assert result.graphMemoryWritePlan.status == "ready"
+        kinds = sorted(
+            {"RunRecord"}
+            | {"Blocker" for _ in result.graphMemoryWritePlan.blockers}
+            | {"Pattern" for _ in result.graphMemoryWritePlan.patterns}
+        )
+        assert kinds == ["Blocker", "Pattern", "RunRecord"]
+        assert any(e.type == "blocked" for e in result.activityEvents)
+
+    def test_completed_run_without_visible_text_is_suspicious(self):
+        result = review_run_result(
+            {"runId": "mag_one_run_3", "status": "completed", "finalTextPresent": False},
+            now=NOW,
+        )
+        assert result.verdict == "suspicious"
+        assert "no visible final text" in result.recommendation
+
+    def test_missing_run_id_is_empty_and_plans_no_write(self):
+        result = review_run_result({"status": "completed"}, now=NOW)
+        assert result.verdict == "empty"
+        assert result.graphMemoryWritePlan.status == "no_useful_finding"
 
 
 class TestSerialization:

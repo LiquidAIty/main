@@ -87,6 +87,169 @@ def _known_pattern_counts(think_graph_context: Optional[dict[str, Any]]) -> dict
     return known
 
 
+def review_run_result(
+    run_input: dict[str, Any],
+    now: Optional[str] = None,
+) -> HermesReview:
+    """Postflight review of ONE Mag One / team run result (pure, structural).
+
+    Input mirrors the REAL RunMagOneResult seam (liquidAItyAgentFlow.ts):
+    ``{runId, status: completed|partial|failed, failure?, finalTextPresent?,
+    participants?: [cardId...], projectId?, conversationId?}``. Verdicts are
+    deterministic over the supplied structure; nothing is inferred from prose.
+    The returned graphMemoryWritePlan persists only through the card-scoped
+    apply_thinkgraph_patch authority, elsewhere.
+    """
+    data = run_input if isinstance(run_input, dict) else {}
+    timestamp = now or _now_iso()
+    run_id = str(data.get("runId") or "").strip()
+
+    activity: list[HermesActivityEntry] = []
+    entry_count = 0
+
+    def add_activity(entry_type: str, summary: str, detail: Optional[str] = None) -> None:
+        nonlocal entry_count
+        entry_count += 1
+        activity.append(
+            HermesActivityEntry(
+                id=f"hermes:{run_id or 'unknown_run'}:{entry_count}",
+                timestamp=timestamp,
+                type=entry_type,
+                summary=summary,
+                detail=detail,
+                runId=run_id or None,
+            )
+        )
+
+    if not run_id:
+        add_activity("review_complete", "Verdict: empty — run result carries no runId")
+        return HermesReview(
+            verdict="empty",
+            missingEvidence=["run result has no runId — nothing attributable to review"],
+            recommendation="No reviewable run identity was supplied; nothing recorded.",
+            graphMemoryWritePlan=graph_memory.build_write_plan(
+                verdict="empty", run_record=None, blockers=[], patterns=[]
+            ),
+            sourceCitations=["runResult"],
+            activityEvents=activity,
+        )
+
+    add_activity("review_started", f"Reviewing run result for {run_id}")
+
+    status = str(data.get("status") or "").strip()
+    failure = str(data.get("failure") or "").strip()
+    final_text_present = bool(data.get("finalTextPresent"))
+    participants = [str(p) for p in (data.get("participants") or []) if str(p).strip()]
+
+    blocker_findings: list[BlockerFinding] = []
+    if failure:
+        blocker_findings.append(
+            BlockerFinding(
+                blockerId=f"{run_id}:blocker:0",
+                type="run_failure",
+                summary=failure,
+                runId=run_id,
+                timestamp=timestamp,
+                classifiedPattern=_pattern_key(failure),
+                sourceCitations=["runResult.failure"],
+            )
+        )
+
+    if status == "failed" or blocker_findings:
+        verdict = "blocked"
+    elif status == "partial":
+        verdict = "incomplete"
+    elif status == "completed" and not final_text_present:
+        verdict = "suspicious"
+    elif status == "completed":
+        verdict = "honest"
+    else:
+        verdict = "incomplete"
+
+    run_status = {"completed": "completed", "partial": "partial", "failed": "failed"}.get(
+        status, "failed"
+    )
+    citations = ["runResult.status"]
+    if failure:
+        citations.append("runResult.failure")
+    if participants:
+        citations.append("runResult.participants")
+    run_record = RunRecord(
+        runId=run_id,
+        featureId="",
+        status=run_status,
+        proofScore=0.0,
+        totalRequirements=0,
+        timestamp=timestamp,
+        filesChanged=[],
+        blockerSummary=blocker_findings[0].summary if blocker_findings else None,
+        sourceCitations=citations,
+    )
+
+    pattern_candidates: list[PatternCandidate] = []
+    for finding in blocker_findings:
+        key = finding.classifiedPattern or "unspecified"
+        pattern_candidates.append(
+            PatternCandidate(
+                patternId=key,
+                name=key,
+                occurrenceCount=1,
+                firstSeen=timestamp,
+                lastSeen=timestamp,
+                samples=[finding.summary],
+            )
+        )
+        add_activity("pattern_detected", f"Pattern {key}: 1st occurrence", detail=finding.summary)
+
+    write_plan = graph_memory.build_write_plan(
+        verdict=verdict,
+        run_record=run_record,
+        blockers=blocker_findings,
+        patterns=pattern_candidates,
+    )
+
+    if verdict == "blocked":
+        recommendation = (
+            f"Run blocked: {run_record.blockerSummary or 'see failure'}. "
+            "Record the blocker before retrying the same run."
+        )
+    elif verdict == "suspicious":
+        recommendation = (
+            "Run reports completed but returned no visible final text — "
+            "do not trust the run as delivered; re-run or inspect the transcript."
+        )
+    elif verdict == "incomplete":
+        recommendation = "Run is partial/unclassified — narrow the next Run Packet to the unfinished work."
+    else:
+        recommendation = "Run completed with a real visible result. Safe to record and proceed."
+
+    add_activity(
+        "review_complete",
+        f"Run {run_id}: verdict={verdict}"
+        + (f", participants=[{','.join(participants)}]" if participants else ""),
+    )
+    if write_plan.status == "ready":
+        planned = 1 + len(write_plan.blockers) + len(write_plan.patterns)
+        add_activity(
+            "thinkgraph_write_planned",
+            f"ThinkGraph write plan ready: {planned} node(s), {len(write_plan.edges)} edge(s)",
+        )
+    if verdict == "blocked":
+        add_activity("blocked", f"Blocker recorded for run {run_id}")
+
+    return HermesReview(
+        verdict=verdict,
+        proofQuality=ProofQuality(),
+        missingEvidence=[],
+        blockers=blocker_findings,
+        patternCandidates=pattern_candidates,
+        recommendation=recommendation,
+        graphMemoryWritePlan=write_plan,
+        sourceCitations=citations,
+        activityEvents=activity,
+    )
+
+
 def review_coder_report(
     review_input: Union[HermesReviewInput, dict[str, Any]],
     now: Optional[str] = None,

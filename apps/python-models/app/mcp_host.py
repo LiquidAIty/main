@@ -13,6 +13,9 @@ Exposes exactly this tool surface:
   * run_mag_one                      (run regular native Mag One from a
                                       Harness-authored Markdown orchestration
                                       prompt — used verbatim, no plan/task/gate)
+  * hermes.preflight_context         (Hermes memory preflight: ContextPacket
+                                      from real graph/deck reads + a draft Run
+                                      Packet; read-only, honest empty states)
   * thinkgraph.get_graph_slice       (bounded READ-ONLY graph scope)
   * canvas.inspect / card.update_configuration / canvas.upsert_wire /
     card.assign_runtime_skill / card.assign_data_binding /
@@ -134,8 +137,32 @@ async def list_tools() -> list[Tool]:
                     "deckId": {"type": "string"},
                     "promptMarkdown": {"type": "string"},
                     "jobId": {"type": "string"},
+                    "conversationId": {"type": "string"},
                 },
                 "required": ["projectId"],
+            },
+        ),
+        Tool(
+            name="hermes.preflight_context",
+            description=(
+                "Hermes memory preflight — call BEFORE writing a run_mag_one prompt. Takes the "
+                "user request (RunIntent) and returns a ContextPacket assembled from REAL reads "
+                "(bounded ThinkGraph scope, the live deck's connected/disconnected worker "
+                "topology, KnowGraph reachability) plus a draft Run Packet in Markdown to refine. "
+                "Read-only: writes nothing, never fakes graph context — an unavailable source is "
+                "reported as unavailable. Pass your real conversationId so run memory keeps its "
+                "provenance. deckId is optional and defaults to the one canonical Agent Canvas deck."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "deckId": {"type": "string"},
+                    "conversationId": {"type": "string"},
+                    "userRequest": {"type": "string"},
+                    "needsCodeContext": {"type": "boolean"},
+                },
+                "required": ["projectId", "userRequest"],
             },
         ),
         Tool(
@@ -307,7 +334,8 @@ async def list_tools() -> list[Tool]:
 # silently forwarded (prevents smuggling prompts/models/patches through the host).
 _ALLOWED_KEYS: dict[str, set[str]] = {
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
-    "run_mag_one": {"projectId", "deckId", "promptMarkdown", "jobId"},
+    "run_mag_one": {"projectId", "deckId", "promptMarkdown", "jobId", "conversationId"},
+    "hermes.preflight_context": {"projectId", "deckId", "conversationId", "userRequest", "needsCodeContext"},
     "write_mag_one_instructions": {"instructions", "runId"},
     "read_model_results": {"runId", "path"},
     "canvas.inspect": {"projectId", "deckId"},
@@ -322,6 +350,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
 _BRIDGE_PATHS: dict[str, str] = {
     "mag_one.describe_connected_agents": "describe_connected_agents",
     "run_mag_one": "run_mag_one",
+    "hermes.preflight_context": "hermes_preflight",
 }
 
 # Coder job-folder tools dispatch to the ONE shared Python implementation
