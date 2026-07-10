@@ -34,7 +34,6 @@ interface AgentManagerProps {
   cardSubtext?: string;
   onChangeCardName?: (value: string) => void;
   onChangeCardSubtext?: (value: string) => void;
-  graphOwnerOptions?: AgentManagerGraphOwnerOption[];
   promptPreviewPlanText?: string;
   onGraphRefresh?: () => void;
   onLastRun?: (lastRun: {
@@ -66,11 +65,6 @@ const ACTIVE_RUNTIME_TYPES: AgentCardRuntimeType[] = [
 ];
 
 const LEGACY_RUNTIME_TYPES: AgentCardRuntimeType[] = [];
-
-export type AgentManagerGraphOwnerOption = {
-  cardId: string;
-  title: string;
-};
 
 export type AgentManagerLocalConfig = {
   runtime_binding?: RuntimeBinding | null;
@@ -537,7 +531,6 @@ export function AgentManager({
   cardSubtext,
   onChangeCardName,
   onChangeCardSubtext,
-  graphOwnerOptions = [],
   localConfig,
   selectedCardId,
   onChangePromptTestInput,

@@ -159,9 +159,9 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(result.runtimeType).toBe('local_coder');
     expect(result.tools).toEqual(['run_local_coder']);
     const payload = mockRunCard.mock.calls[0][0];
-    expect(payload.session.modelProvider).toBe('openrouter');
-    expect(payload.session.modelKey).toBe('z-ai/glm-5.2');
-    expect(payload.session.providerModelId).toBe('z-ai/glm-5.2');
+    expect(payload.session.modelProvider).toBe('openai');
+    expect(payload.session.modelKey).toBe('gpt-5.1-chat-latest');
+    expect(payload.session.providerModelId).toBe('gpt-5.1-chat-latest');
     expect(payload.cardRuntime.runtimeType).toBe('assistant_agent');
     expect(payload.cardRuntime.participants[0].runtimeBinding).toBe('local_coder');
     expect(payload.cardRuntime.participants[0].tools).toEqual(['run_local_coder']);
@@ -180,10 +180,10 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
 
     expect(result.status).toBe('completed');
     const payload = mockRunCard.mock.calls[0][0];
-    expect(payload.session.modelKey).toBe('z-ai/glm-5.2');
-    expect(payload.session.providerModelId).toBe('z-ai/glm-5.2');
-    expect(payload.cardRuntime.participants[0].providerModelId).toBe('z-ai/glm-5.2');
-    expect(payload.cardRuntime.privateParticipants[0].providerModelId).toBe('z-ai/glm-5.2');
+    expect(payload.session.modelKey).toBe('gpt-5.1-chat-latest');
+    expect(payload.session.providerModelId).toBe('gpt-5.1-chat-latest');
+    expect(payload.cardRuntime.participants[0].providerModelId).toBe('gpt-5.1-chat-latest');
+    expect(payload.cardRuntime.privateParticipants[0].providerModelId).toBe('gpt-5.1-chat-latest');
   });
 
   it('assigns a standalone run a returns folder under the default coder-workspace, and threads returned files back', async () => {

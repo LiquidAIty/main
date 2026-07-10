@@ -188,7 +188,6 @@ describe('agentbuilder authoring flow', () => {
       'Coder',
       'Hermes',
       'Trading Agent',
-      'Code Agent',
       'Plan Agent',
       'WorldSignals Agent',
     ]);
@@ -204,7 +203,6 @@ describe('agentbuilder authoring flow', () => {
       'local_coder',
       'hermes_steward',
       'trading_agent',
-      'code_agent',
       'plan_agent',
       'worldsignals_agent',
     ]);
@@ -218,7 +216,6 @@ describe('agentbuilder authoring flow', () => {
       'template_local_coder',
       'template_hermes_steward',
       'template_trading_workbench',
-      'template_code_workbench',
       'template_plan_agent',
       'template_worldsignals_agent',
     ]);
@@ -479,16 +476,68 @@ describe('agentbuilder authoring flow', () => {
       'card_local_coder',
       'card_hermes_steward',
       'card_trading_workbench',
-      'card_code_workbench',
       'card_plan_agent',
       'card_worldsignals_agent',
     ]);
     expect(hydrated.edges).toEqual([]);
     expect(hydrated.nodes.find((node) => node.id === 'card_magentic')?.runtimeOptions).toMatchObject({
       executionBackend: 'python_autogen',
+      provider: 'openai',
+      modelKey: 'gpt-5.1-chat-latest',
+    });
+  });
+
+  it('migrates only the exact retired Magentic-One GLM seed default', () => {
+    const retiredDefault = JSON.parse(JSON.stringify(INITIAL_DECK)) as DeckDocument;
+    const retiredMagentic = retiredDefault.nodes.find((node) => node.id === 'card_magentic');
+    if (!retiredMagentic) throw new Error('seed_magentic_missing');
+    retiredMagentic.runtimeOptions = {
+      executionBackend: 'python_autogen',
       provider: 'openrouter',
       modelKey: 'z-ai/glm-5.2',
+      maxTurns: 2,
+      maxStalls: 1,
+    };
+
+    const migrated = hydrateDeckDocument(retiredDefault);
+    expect(migrated.nodes.find((node) => node.id === 'card_magentic')?.runtimeOptions).toMatchObject({
+      provider: 'openai',
+      modelKey: 'gpt-5.1-chat-latest',
     });
+
+    retiredMagentic.runtimeOptions.maxTurns = 3;
+    const intentionallyConfigured = hydrateDeckDocument(retiredDefault);
+    expect(intentionallyConfigured.nodes.find((node) => node.id === 'card_magentic')?.runtimeOptions).toMatchObject({
+      provider: 'openrouter',
+      modelKey: 'z-ai/glm-5.2',
+      maxTurns: 3,
+    });
+  });
+
+  it('drops the retired generic Code-workbench card and prompt from saved decks', () => {
+    const retiredCodeCard: AgentCardInstance = {
+      id: 'card_code_workbench',
+      kind: 'agent',
+      templateId: 'template_code_workbench',
+      prompt: 'retired',
+      runtimeBinding: null,
+      runtimeType: 'assistant_agent',
+      runtimeOptions: null,
+      parentGraphId: 'workbench_code',
+      title: 'Code Agent',
+      position: { x: 0, y: 0 },
+    };
+    const hydrated = hydrateDeckDocument({
+      ...INITIAL_DECK,
+      nodes: [...INITIAL_DECK.nodes, retiredCodeCard],
+      promptTemplates: [
+        ...INITIAL_DECK.promptTemplates,
+        { id: 'prompt_code_workbench', content: 'retired' },
+      ],
+    });
+
+    expect(hydrated.nodes.map((node) => node.id)).not.toContain('card_code_workbench');
+    expect(hydrated.promptTemplates.map((template) => template.id)).not.toContain('prompt_code_workbench');
   });
 
   it('preserves the current deck on project load failure instead of silently replacing it with fallback', () => {
@@ -596,7 +645,6 @@ describe('agentbuilder authoring flow', () => {
       nodes: INITIAL_DECK.nodes.filter(
         (node) =>
           node.id !== 'card_trading_workbench' &&
-          node.id !== 'card_code_workbench' &&
           node.id !== 'card_worldsignals_agent',
       ),
       edges: [],
@@ -607,7 +655,6 @@ describe('agentbuilder authoring flow', () => {
 
     expect(loaded.usedFallback).toBe(false);
     expect(rehydrated.nodes.map((node) => node.id)).not.toContain('card_trading_workbench');
-    expect(rehydrated.nodes.map((node) => node.id)).not.toContain('card_code_workbench');
     expect(rehydrated.nodes.map((node) => node.id)).not.toContain('card_worldsignals_agent');
   });
 

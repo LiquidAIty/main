@@ -87,10 +87,10 @@ function withAbortSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<
 
 function linkAbortSignal(externalSignal?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
   const controller = new AbortController();
-  if (!externalSignal) return { signal: controller.signal, cleanup: () => {} };
+  if (!externalSignal) return { signal: controller.signal, cleanup: () => undefined };
   if (externalSignal.aborted) {
     controller.abort();
-    return { signal: controller.signal, cleanup: () => {} };
+    return { signal: controller.signal, cleanup: () => undefined };
   }
   const onAbort = () => controller.abort();
   externalSignal.addEventListener("abort", onAbort, { once: true });

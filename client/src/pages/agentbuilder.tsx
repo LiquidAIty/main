@@ -25,6 +25,7 @@ import OpenClaudeConsolePanel from '../features/agentbuilder/console/OpenClaudeC
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
 import HermesConsole from '../components/hermes/HermesConsole';
 import {
+  SessionStreamError,
   streamSession,
   loadSessionHistory,
 } from '../features/agentbuilder/console/openClaudeSessionClient';
@@ -51,9 +52,6 @@ import {
   graphGlassPillStyle,
 } from '../components/graph/graphVisualTokens';
 import RightGlassDrawer from '../components/graph/RightGlassDrawer';
-import {
-  findDeckNodePreset,
-} from '../components/builder/deckPresets';
 // Decomposed Agent Builder modules (2026-07-08): the page is composition only;
 // deck primitives/seed/document logic and rail derivation live in the feature.
 import {
@@ -73,7 +71,6 @@ import {
 } from '../features/agentbuilder/deck/deckSeed';
 import {
   buildProjectlessDeckDocument,
-  buildQuickAddDeckMutation,
   buildSingleCardRunDocument,
   filterAuthoringCompatibleEdges,
   formatBuilderStatusMessage,
@@ -87,7 +84,6 @@ import {
   getConnectedKnowledgeGraphKinds,
   getDefaultConnectedKnowledgeGraphKind,
   resolveWorkbenchDescriptor,
-  type WorkbenchSurfaceId,
 } from '../features/agentbuilder/rail/railVisibility';
 import {
   BuilderRailMoonOrb,
@@ -230,8 +226,7 @@ function normalizeWorkspaceSurface(
     normalized === 'knowledge' ||
     normalized === 'codegraph' ||
     normalized === 'worldsignal' ||
-    normalized === 'trading' ||
-    normalized === 'code'
+    normalized === 'trading'
   ) {
     return normalized as WorkspaceTestingSurface;
   }
@@ -358,7 +353,7 @@ function compactAgentOverrides(
 }
 
 // helper: load all project-local state (defaults only; real data is fetched from backend)
-function loadProjectState(_projectId: string) {
+function loadProjectState() {
   return {
     messages: [...EMPTY_PROJECT_STATE.messages],
     links: [...EMPTY_PROJECT_STATE.links],
@@ -473,7 +468,6 @@ export default function AgentBuilder(): React.ReactElement {
     setSelectedCardId,
     selectedEdgeId,
     setSelectedEdgeId,
-    builderCanvasFocusRequest,
     setBuilderCanvasFocusRequest,
     tab,
     setTab,
@@ -488,7 +482,7 @@ export default function AgentBuilder(): React.ReactElement {
   const [deckRunInput, setDeckRunInput] = useState('');
   const [showCreateProjectForm, setShowCreateProjectForm] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
-  const [sending, setSending] = useState(false);
+  const [, setSending] = useState(false);
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
     useState<KnowledgeGraphKind>('thinkgraph');
   useEffect(() => {
@@ -534,9 +528,9 @@ export default function AgentBuilder(): React.ReactElement {
   // chat state must be declared before callbacks/effects that write to it.
   const [messages, setMessages] = useState<
     { role: 'assistant' | 'user'; text: string }[]
-  >(() => loadProjectState(activeProject).messages);
-  const [links, setLinks] = useState<LinkRef[]>(
-    () => loadProjectState(activeProject).links,
+  >(() => loadProjectState().messages);
+  const [, setLinks] = useState<LinkRef[]>(
+    () => loadProjectState().links,
   );
   const [stateLoaded, setStateLoaded] = useState(false);
 
@@ -566,7 +560,6 @@ export default function AgentBuilder(): React.ReactElement {
       cancelled = true;
       ctrl.abort();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasProjectId]);
 
   const lastLargeSurfaceTelemetryRef = useRef<WorkspaceTestingSurface | null>(
@@ -1201,33 +1194,6 @@ export default function AgentBuilder(): React.ReactElement {
     }));
     setSelectedEdgeId(null);
   }, [recordDeckWriteReason, selectedEdgeId]);
-
-  const handleQuickAddDeckNode = useCallback(
-    (presetKey: string) => {
-      const preset = findDeckNodePreset(presetKey);
-      if (!preset) return;
-
-      const mutation = buildQuickAddDeckMutation(deck, preset, null);
-      const anchorNode = selectedCardId
-        ? deck.nodes.find((node) => node.id === selectedCardId) || null
-        : null;
-
-      setLatestCardRun(null);
-      setLatestDeckRun(null);
-      recordDeckWriteReason('deck-quick-add');
-      setDeck(mutation.nextDeck);
-      setObjectDrawerOpen(false);
-      setSelectedEdgeId(null);
-      setSelectedCardId(null);
-      // NO camera jump, NO zoom lock - let user position manually
-      setDeckStatusMessage(
-        mutation.nextEdge && anchorNode
-          ? `Added ${preset.label} and connected it from ${safeText(anchorNode.title || anchorNode.id)}.`
-          : `Added ${preset.label} to the canvas.`,
-      );
-    },
-    [deck, recordDeckWriteReason, selectedCardId],
-  );
 
   const { handleSaveDeck, handleRunSelectedCard, handleRunDeck } =
     useBuilderDeckRuntimeActions({
@@ -1943,15 +1909,21 @@ export default function AgentBuilder(): React.ReactElement {
       })
         .then(({ finalText }) => {
           setNativeSessionBusy(false);
-          // If authoritative final text arrived but nothing streamed, create the one
-          // assistant bubble now. If NO text arrived, render NOTHING — no empty bubble,
-          // no "(no response text)", no status line.
-          if (!assistantStarted && finalText) appendAssistantText(finalText);
+          const completedText = finalText.trim();
+          if (!assistantStarted && completedText) {
+            appendAssistantText(completedText);
+          } else if (!assistantStarted) {
+            appendAssistantText('The chat completed without an assistant response. Please try again.');
+          }
         })
-        .catch(() => {
-          // No response / error / disconnect: clear busy, KEEP the user message, and
-          // render NO assistant bubble and NO fake error text.
+        .catch((error: unknown) => {
           setNativeSessionBusy(false);
+          if (error instanceof SessionStreamError) {
+            const correlation = error.correlationId ? ` Correlation: ${error.correlationId}.` : '';
+            appendAssistantText(`Chat failed (${error.code}).${correlation}`);
+            return;
+          }
+          appendAssistantText('Chat request failed before the stream opened. Route: /api/coder/openclaude/session/chat.');
         });
     },
     [canvasProjectId, nativeSessionBusy, workspaceView],
@@ -1972,7 +1944,6 @@ export default function AgentBuilder(): React.ReactElement {
         messages={messages}
         onSend={handleNativeSend}
         knowledgeProjectId={projectId}
-        disabled={nativeSessionBusy}
         colors={C}
       />
     );
@@ -2261,7 +2232,7 @@ export default function AgentBuilder(): React.ReactElement {
     );
   }, [closeObjectDrawer, connectedGraphStreams]);
 
-  const showWorkbenchWorkspace = useCallback((surface: WorkbenchSurfaceId) => {
+  const showWorkbenchWorkspace = useCallback((surface: 'trading') => {
     closeObjectDrawer();
     setWorkspaceView(surface);
   }, [closeObjectDrawer]);
@@ -2270,113 +2241,10 @@ export default function AgentBuilder(): React.ReactElement {
     showWorkbenchWorkspace('trading');
   }, [showWorkbenchWorkspace]);
 
-  const showCodeWorkspace = useCallback(() => {
-    showWorkbenchWorkspace('code');
-  }, [showWorkbenchWorkspace]);
-
   const showWorldsignalWorkspace = useCallback(() => {
     closeObjectDrawer();
     setWorkspaceView('worldsignal');
   }, [closeObjectDrawer]);
-
-  const renderWorkbenchPlaceholderSurface = useCallback(
-    ({
-      testId,
-      title,
-      status,
-      steps,
-      accentColor,
-    }: {
-      testId: string;
-      title: string;
-      status: string;
-      steps: readonly string[];
-      accentColor: string;
-    }) => (
-      <div
-        data-testid={testId}
-        style={{
-          height: '100%',
-          padding: 18,
-          display: 'grid',
-          gap: 14,
-          background: GRAPH_THEME.background.knowledgeSurface,
-          color: GRAPH_THEME.drawer.inputText,
-        }}
-      >
-        <div
-          style={graphDrawerSectionStyle({
-            padding: '16px 18px',
-            display: 'grid',
-            gap: 10,
-          })}
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 12,
-            }}
-          >
-            <div style={{ fontSize: 22, fontWeight: 700 }}>{title}</div>
-            <div
-              style={{
-                padding: '4px 8px',
-                borderRadius: 999,
-                border: `1px solid ${accentColor}`,
-                color: accentColor,
-                fontSize: 11,
-                letterSpacing: 0.2,
-              }}
-            >
-              {status}
-            </div>
-          </div>
-          <div
-            style={{
-              color: GRAPH_THEME.drawer.inputMuted,
-              fontSize: 13,
-              lineHeight: 1.5,
-            }}
-          >
-            Workspace path is staged. Activation comes from the canvas graph.
-          </div>
-        </div>
-        <div
-          style={graphDrawerSectionStyle({
-            padding: '16px 18px',
-          })}
-        >
-          <div
-            style={{
-              fontSize: 12,
-              fontWeight: 700,
-              color: GRAPH_THEME.drawer.inputText,
-              marginBottom: 10,
-            }}
-          >
-            Intended Flow
-          </div>
-          <ol
-            style={{
-              margin: 0,
-              paddingLeft: 18,
-              display: 'grid',
-              gap: 8,
-              color: GRAPH_THEME.drawer.inputMuted,
-              lineHeight: 1.5,
-            }}
-          >
-            {steps.map((step) => (
-              <li key={step}>{step}</li>
-            ))}
-          </ol>
-        </div>
-      </div>
-    ),
-    [],
-  );
 
   const handleCompanionTabClick = useCallback((nextTab: string) => {
     setTab(nextTab);
@@ -2390,10 +2258,8 @@ export default function AgentBuilder(): React.ReactElement {
       moonOrb={<BuilderRailMoonOrb phase01={moonPhase01} />}
       onShowWorldsignalWorkspace={showWorldsignalWorkspace}
       onShowCanvasWorkspace={showCanvasWorkspace}
-      onQuickAddAssistNode={() => handleQuickAddDeckNode('assist')}
       onShowKnowledgeWorkspace={showKnowledgeWorkspace}
       onShowTradingWorkspace={showTradingWorkspace}
-      onShowCodeWorkspace={showCodeWorkspace}
       onOpenNavigationDrawer={() => setOpenDrawer('navigation')}
       openClaudeConsoleActive={openClaudeConsoleOpen}
       onOpenOpenClaudeConsole={() => setOpenClaudeConsoleOpen((prev) => !prev)}
@@ -2465,17 +2331,6 @@ export default function AgentBuilder(): React.ReactElement {
         />
       }
       tradingSurface={<TradingCanvasSurface />}
-      codeSurface={renderWorkbenchPlaceholderSurface({
-        testId: 'code-workspace-placeholder',
-        title: 'Code Agent Workspace',
-        status: 'Planned integration',
-        accentColor: C.primary,
-        steps: [
-          'Main Chat creates a scoped code task.',
-          'Code Agent receives selected object and repo context.',
-          'The Coder Engine or a sandbox bridge executes the task and returns reviewable diffs and tests.',
-        ],
-      })}
       uaSurface={null}
       worldsignalSurface={<WorldSignalSurface />}
     />

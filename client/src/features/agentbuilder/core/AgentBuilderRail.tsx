@@ -13,7 +13,6 @@ type RailVisibility = {
   showKnowledge: boolean;
   showWorldsignal: boolean;
   showTrading: boolean;
-  showCode: boolean;
   // Terminal icon for the OpenClaude Console Bridge. Optional so existing
   // callers keep compiling; shown when Local Coder is bus-connected or a
   // console session exists.
@@ -27,10 +26,8 @@ type AgentBuilderRailProps = {
   moonOrb: ReactNode;
   onShowWorldsignalWorkspace: () => void;
   onShowCanvasWorkspace: () => void;
-  onQuickAddAssistNode: () => void;
   onShowKnowledgeWorkspace: () => void;
   onShowTradingWorkspace: () => void;
-  onShowCodeWorkspace: () => void;
   onOpenNavigationDrawer: () => void;
   openClaudeConsoleActive?: boolean;
   onOpenOpenClaudeConsole?: () => void;
@@ -79,10 +76,8 @@ export default function AgentBuilderRail({
   moonOrb,
   onShowWorldsignalWorkspace,
   onShowCanvasWorkspace,
-  onQuickAddAssistNode,
   onShowKnowledgeWorkspace,
   onShowTradingWorkspace,
-  onShowCodeWorkspace,
   onOpenNavigationDrawer,
   openClaudeConsoleActive,
   onOpenOpenClaudeConsole,
@@ -163,21 +158,6 @@ export default function AgentBuilderRail({
           }}
         >
           <Icon d="M4 18h16M6 15l3-3 3 2 4-6 2 2" />
-        </button>
-      ) : null}
-      {visibleRailItems.showCode ? (
-        <button
-          title="Code"
-          aria-label="Code"
-          data-testid="rail-code-button"
-          onClick={onShowCodeWorkspace}
-          className="p-2 rounded"
-          style={{
-            color:
-              workspaceView === 'code' ? GRAPH_THEME.accent.solar : colors.text,
-          }}
-        >
-          <Icon d="M9 7 4 12l5 5 M15 7l5 5-5 5 M13 5l-2 14" />
         </button>
       ) : null}
       {visibleRailItems.showOpenClaudeConsole ? (

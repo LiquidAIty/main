@@ -79,7 +79,6 @@ export default function XtermView({ chunks, interactive, onInput, onResize, tran
       termRef.current = null;
     };
     // Mount-only: chunk flushing is handled by the effect below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [interactive]);
 
   // Stream newly arrived chunks into the live terminal.

@@ -30,20 +30,18 @@ export function cleanOptionalText(value: unknown): string | null {
   return text || null;
 }
 
-export const DEFAULT_CARD_MODEL_KEY = 'z-ai/glm-5.2';
-export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openrouter';
+export const DEFAULT_CARD_MODEL_KEY = 'gpt-5.1-chat-latest';
+export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
 export const LOCAL_CODER_CONTROLLER_MODEL_KEY = DEFAULT_CARD_MODEL_KEY;
 export const LOCAL_CODER_CONTROLLER_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = DEFAULT_CARD_PROVIDER;
 export const LOCAL_CODER_CONTROLLER_TOOLS = ['run_local_coder'] as const;
 export const STALE_LOCAL_CODER_MODEL_KEYS = new Set([
+  'z-ai/glm-5.2',
   'gpt-5-mini',
   'or-openai-gpt-5-mini',
   'kimi-k2-thinking',
   'moonshotai/kimi-k2-thinking',
   'moonshotai/kimi-k2:free',
-  'gpt-5.1-chat-latest',
-  'or-openai-gpt-5.1-chat-latest',
-  'openai/gpt-5.1-chat',
 ]);
 
 export function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
@@ -109,9 +107,6 @@ export function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
   if (normalized === 'plan_agent') return 'plan_agent';
   if (normalized === 'worldsignals_agent') return 'worldsignals_agent';
   if (normalized === 'trading_agent') return 'trading_agent';
-  if (normalized === 'code_agent') return 'code_agent';
   if (normalized === 'hermes_steward') return 'hermes_steward';
   return null;
 }
-
-

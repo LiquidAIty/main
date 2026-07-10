@@ -78,7 +78,7 @@ export function getLastTrace(projectId: string): IngestTrace | null {
 /**
  * Get last N traces for a project
  */
-export function getTraces(projectId: string, limit: number = 20): IngestTrace[] {
+export function getTraces(projectId: string, limit = 20): IngestTrace[] {
   const traces = TRACE_BUFFER.get(projectId) || [];
   return traces.slice(-limit);
 }

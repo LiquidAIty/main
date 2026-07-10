@@ -123,9 +123,6 @@ function cleanOptionalBoolean(value: unknown): boolean | null {
 function validateDeckIntegrityTransition(
   currentDeck: DeckDocument | null,
   nextDeck: DeckDocument,
-  options?: {
-    removedNodeIds?: string[];
-  },
 ) {
   if (!currentDeck || currentDeck.nodes.length === 0) return;
   if (nextDeck.nodes.length === 0) {
@@ -551,9 +548,7 @@ export async function saveDeckDocument(
     if (expectedRevision && currentDeckMeta?.revision !== expectedRevision) {
       throw new Error('deck_conflict');
     }
-    validateDeckIntegrityTransition(currentDeck, nextDeck, {
-      removedNodeIds: options?.removedNodeIds ?? [],
-    });
+    validateDeckIntegrityTransition(currentDeck, nextDeck);
     return {
       ...blob,
       decks: {

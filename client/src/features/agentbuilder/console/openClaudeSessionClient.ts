@@ -14,6 +14,30 @@ export type NativeSessionEvent = {
 
 const BASE = '/api/coder/openclaude/session';
 
+export type SessionStreamFailure = {
+  code: string;
+  message: string;
+  correlationId?: string;
+  route?: string;
+  status?: number;
+};
+
+export class SessionStreamError extends Error {
+  readonly code: string;
+  readonly correlationId?: string;
+  readonly route?: string;
+  readonly status?: number;
+
+  constructor(failure: SessionStreamFailure) {
+    super(failure.message);
+    this.name = 'SessionStreamError';
+    this.code = failure.code;
+    this.correlationId = failure.correlationId;
+    this.route = failure.route;
+    this.status = failure.status;
+  }
+}
+
 /** Which Harness surface the turn runs in. Chat mode exposes only the
  * ThinkGraph doorway; canvas (Agent Builder / Edit) mode exposes every eligible
  * saved card as a direct Single Assist doorway. Explicit — never inferred. */
@@ -47,6 +71,8 @@ export async function streamSession(args: {
   const decoder = new TextDecoder();
   let buffer = '';
   let finalText = '';
+  let streamFailure: SessionStreamError | null = null;
+  let sawEnd = false;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -66,8 +92,28 @@ export async function streamSession(args: {
         /* keep empty */
       }
       if (kind === 'done') finalText = String((data as { fullText?: string }).fullText ?? finalText);
+      if (kind === 'error') {
+        streamFailure = new SessionStreamError({
+          code: typeof data.code === 'string' && data.code ? data.code : 'session_stream_failed',
+          message: typeof data.message === 'string' && data.message
+            ? data.message
+            : 'The chat stream reported a failure.',
+          correlationId: typeof data.correlationId === 'string' ? data.correlationId : undefined,
+          route: typeof data.route === 'string' ? data.route : undefined,
+          status: typeof data.status === 'number' ? data.status : undefined,
+        });
+      }
+      if (kind === 'end') sawEnd = true;
       args.onEvent({ ...data, kind });
     }
+  }
+  if (streamFailure) throw streamFailure;
+  if (!sawEnd) {
+    throw new SessionStreamError({
+      code: 'session_stream_incomplete',
+      message: 'The chat stream ended before reporting completion.',
+      route: `${BASE}/chat`,
+    });
   }
   // Transport-level turn-complete signal (same event UploadAttachment already
   // uses): durable knowledge may have changed server-side after this turn —

@@ -11,7 +11,6 @@ type CompanionSurfaceHostProps = {
   knowledgeSurface: ReactNode;
   codegraphSurface: ReactNode;
   tradingSurface: ReactNode;
-  codeSurface: ReactNode;
   uaSurface: ReactNode;
   worldsignalSurface: ReactNode;
 };
@@ -25,7 +24,6 @@ export default function CompanionSurfaceHost({
   knowledgeSurface,
   codegraphSurface,
   tradingSurface,
-  codeSurface,
   uaSurface,
   worldsignalSurface,
 }: CompanionSurfaceHostProps) {
@@ -61,7 +59,6 @@ export default function CompanionSurfaceHost({
             knowledgeSurface}
           {workspaceView === 'codegraph' && codegraphSurface}
           {workspaceView === 'trading' && tradingSurface}
-          {workspaceView === 'code' && codeSurface}
           {hasActiveUaSurface && uaSurface}
           {workspaceView === 'worldsignal' && worldsignalSurface}
         </div>

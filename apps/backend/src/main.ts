@@ -5,7 +5,7 @@ import cookieParser = require("cookie-parser");
 import routes from "./routes";
 import { logModelConfiguration } from "./startup/modelConfig";
 import { getDevTestJsonBodyLimit } from "./services/devTest";
-import { getAllowedCorsOrigins } from "./security/requestAccess";
+import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from "./security/requestAccess";
 
 const app = express();
 app.set('etag', false);
@@ -245,14 +245,15 @@ app.use((err: unknown, req: express.Request, res: express.Response, next: expres
     name: error.name,
     stack: error.stack,
   });
-  return res.status(500).json({ 
-    ok: false, 
-    error: { 
-      message: error.message || 'Internal server error', 
-      name: error.name || 'Error' 
-    },
-    requestId 
-  });
+  const errorDetails = isLocalDevLoopbackRequest(req)
+    ? {
+        message: error.message || 'Internal server error',
+        name: error.name || 'Error',
+      }
+    : {
+        message: 'Internal server error',
+      };
+  return res.status(500).json({ ok: false, error: errorDetails, requestId });
 });
 
 const PORT = Number(process.env.PORT || 4000);

@@ -323,7 +323,13 @@ router.post('/openclaude/session/chat', async (req, res) => {
     turnFinished = true;
     const reason = error instanceof Error ? error.message : 'grpc_turn_failed';
     logHarnessTrace(`[harness] request failed corr=${correlationId} reason=${redactTrace(reason)}`);
-    writeSse('error', { message: reason });
+    writeSse('error', {
+      code: 'harness_turn_failed',
+      message: 'The chat run failed. Check the correlation ID in the backend logs.',
+      correlationId,
+      route: '/api/coder/openclaude/session/chat',
+      status: 502,
+    });
   } finally {
     turnFinished = true;
     activeGrpcTurns.delete(sessionId);

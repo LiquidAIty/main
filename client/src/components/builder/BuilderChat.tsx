@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import UploadAttachment from "../knowledge/UploadAttachment";
 
@@ -28,13 +28,11 @@ export default function BuilderChat({
   messages,
   onSend,
   knowledgeProjectId,
-  disabled = false,
   colors,
 }: {
   messages: { role: "assistant" | "user"; text: string }[];
   onSend: (t: string) => void;
   knowledgeProjectId: string;
-  disabled?: boolean;
   colors: BuilderChatColors;
 }) {
   const [v, setV] = useState("");

@@ -64,7 +64,6 @@ function createLocalConfig(
 function renderManager(options?: {
   activeTab?: string;
   localConfig?: AgentManagerLocalConfig;
-  graphOwnerOptions?: Array<{ cardId: string; title: string }>;
   onSaveLocalConfig?: ReturnType<typeof vi.fn>;
 }) {
   const onSaveLocalConfig = options?.onSaveLocalConfig || vi.fn();
@@ -79,7 +78,6 @@ function renderManager(options?: {
         agentType: 'agent_builder',
         activeTab: options?.activeTab || 'Runtime',
         localConfig: options?.localConfig || createLocalConfig('assistant_agent'),
-        graphOwnerOptions: options?.graphOwnerOptions || [],
         onSaveLocalConfig,
         promptTestInput: '',
         onChangePromptTestInput: vi.fn(),

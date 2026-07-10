@@ -49,7 +49,9 @@ function TVChart({ symbol = 'NYSE:RDW' }: { symbol?: string }) {
           hide_legend: false,
           allow_symbol_change: true,
         });
-      } catch {}
+      } catch {
+        // External chart loading is optional for this parked future surface.
+      }
     });
 
     return () => {

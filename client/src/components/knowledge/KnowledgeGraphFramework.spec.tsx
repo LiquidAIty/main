@@ -9,7 +9,7 @@
 // mechanics only.
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 
 const cyState = vi.hoisted(() => ({
   instances: [] as any[],
@@ -97,7 +97,7 @@ const PROJECTION: GraphProjectionV1 = {
   schemaVersion: 'thinkgraph.projection.v1',
   projectId: 'proj-1',
   nodes: [
-    { id: 'asts', label: 'ASTS', mentionCount: 3, lastMentionedAt: '2026-07-04T00:00:00Z', properties: { ticker: 'ASTS' }, provenanceCount: 3 },
+    { id: 'asts', label: 'ASTS', title: 'AST SpaceMobile', type: 'Issuer', labels: ['Issuer', 'PublicCompany'], mentionCount: 3, lastMentionedAt: '2026-07-04T00:00:00Z', properties: { ticker: 'ASTS' }, provenanceCount: 3 },
     { id: 'spacex_launch_services', label: 'SpaceX launch services', mentionCount: 1, provenanceCount: 1 },
     { id: 'unreferenced', label: 'Unrelated older noun', mentionCount: 0, provenanceCount: 0 },
   ],
@@ -123,9 +123,9 @@ beforeEach(() => {
   vi.stubGlobal(
     'ResizeObserver',
     class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
+      observe() { return undefined; }
+      unobserve() { return undefined; }
+      disconnect() { return undefined; }
     },
   );
 });
@@ -265,7 +265,7 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
   });
 
   it('skips an edge only when its endpoint is missing from the same projection, with an exact reason', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const withGhostEdge: GraphProjectionV1 = {
       ...PROJECTION,
       edges: [
@@ -285,15 +285,15 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     warn.mockRestore();
   });
 
-  it('selection handlers only toggle display classes — tapping never runs layout', async () => {
+  it('selection handlers only toggle display classes; only dragfree reruns layout', async () => {
     render(<KnowledgeGraphFramework projection={PROJECTION} />);
     await waitFor(() => expect(cyState.instances).toHaveLength(1));
     const cy = cyState.instances[0];
-    expect(cy.handlers.map((h: any) => h.event)).toEqual(['tap', 'tap', 'tap']);
+    expect(cy.handlers.map((h: any) => h.event)).toEqual(['tap', 'tap', 'tap', 'dragfree']);
     const layoutRunsBefore = cy.layouts.length;
 
     const nodeTap = cy.handlers.find((h: any) => h.selector === 'node');
-    nodeTap.fn({ target: { closedNeighborhood: () => ({ length: 2 }) } });
+    nodeTap.fn({ target: { closedNeighborhood: () => ({ length: 2 }), data: () => PROJECTION.nodes[0] } });
     const edgeTap = cy.handlers.find((h: any) => h.selector === 'edge');
     edgeTap.fn({ target: { union: () => ({ length: 3 }), connectedNodes: () => ({ length: 2 }) } });
     const blankTap = cy.handlers.find((h: any) => h.selector === undefined);
@@ -301,6 +301,26 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
 
     expect(cy.layouts.length).toBe(layoutRunsBefore); // selection is never a layout trigger
     expect(cy.store.length).toBe(4); // and never a data change
+
+    const dragFree = cy.handlers.find((h: any) => h.event === 'dragfree');
+    dragFree.fn();
+    expect(cy.layouts.length).toBe(layoutRunsBefore + 1);
+  });
+
+  it('shows only the selected node fields returned by the projection', async () => {
+    render(<KnowledgeGraphFramework projection={PROJECTION} />);
+    await waitFor(() => expect(cyState.instances).toHaveLength(1));
+    const cy = cyState.instances[0];
+    const nodeTap = cy.handlers.find((h: any) => h.selector === 'node');
+
+    nodeTap.fn({ target: { closedNeighborhood: () => ({ length: 2 }), data: () => PROJECTION.nodes[0] } });
+
+    const inspector = await screen.findByTestId('knowledge-graph-node-inspector');
+    expect(inspector.textContent).toContain('AST SpaceMobile');
+    expect(inspector.textContent).toContain('Issuer');
+    expect(inspector.textContent).toContain('PublicCompany');
+    expect(inspector.textContent).toContain('"ticker": "ASTS"');
+    expect(inspector.textContent).toContain('connected edges');
   });
 
   it('reapplies elements after a StrictMode double-mount (destroyed instance must not keep the fingerprint)', async () => {

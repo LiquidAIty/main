@@ -271,5 +271,27 @@ describe('coder routes', () => {
         await closeServer(server);
       }
     });
+
+    it('emits a safe, correlated SSE error when the Harness turn fails', async () => {
+      chatSessionMocks.startGrpcTurn.mockRejectedValueOnce(new Error('provider credential leaked'));
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'failure', message: 'hello' }),
+        });
+        const body = await response.text();
+
+        expect(response.status).toBe(200);
+        expect(body).toContain('event: error');
+        expect(body).toContain('harness_turn_failed');
+        expect(body).toContain('"correlationId":"req_');
+        expect(body).toContain('/api/coder/openclaude/session/chat');
+        expect(body).not.toContain('provider credential leaked');
+      } finally {
+        await closeServer(server);
+      }
+    });
   });
 });

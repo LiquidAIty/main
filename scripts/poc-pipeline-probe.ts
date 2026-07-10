@@ -38,7 +38,7 @@
 
 import { spawn } from 'node:child_process';
 import { connect } from 'node:net';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -82,7 +82,7 @@ type DeckNode = {
   runtimeType?: string | null;
   runtimeBinding?: string | null;
   parentGraphId?: string | null;
-  runtimeOptions?: { tools?: unknown; binding?: unknown } | null;
+  runtimeOptions?: { tools?: unknown; binding?: unknown; modelKey?: unknown; provider?: unknown } | null;
   title?: string;
 };
 type DeckEdge = { source: string; target: string; edgeType?: string };
@@ -187,7 +187,6 @@ const EXPECTED_DISCONNECTED = [
   'card_local_coder',
   'card_plan_agent',
   'card_trading_workbench',
-  'card_worldsignals_agent',
 ];
 
 async function main(): Promise<void> {
@@ -198,6 +197,7 @@ async function main(): Promise<void> {
   }
   console.log(`POC pipeline probe — project=${args.project} deck=${args.deck} conversation=${args.conversation}`);
   console.log('');
+  const repoRoot = path.resolve(SCRIPT_DIR, '..');
 
   // 1 — backend health
   try {
@@ -205,6 +205,26 @@ async function main(): Promise<void> {
     report('backend-health', health?.status === 'ok' ? 'PASS' : 'FAIL', JSON.stringify(health));
   } catch (err: any) {
     report('backend-health', 'FAIL', String(err?.message || err));
+  }
+
+  // Chat route reachability without a model call, transcript write, or turn.
+  try {
+    const response = await fetch(`${args.backend}/api/coder/openclaude/session/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const body = await response.json().catch(() => null);
+    const ok = response.status === 400 && body?.error === 'projectId_and_message_required';
+    report(
+      'chat-sse-route',
+      ok ? 'PASS' : 'FAIL',
+      ok
+        ? 'route reachable — missing payload rejected before any chat turn starts'
+        : `unexpected status=${response.status} body=${JSON.stringify(body)?.slice(0, 160)}`,
+    );
+  } catch (err: any) {
+    report('chat-sse-route', 'FAIL', String(err?.message || err));
   }
 
   // 2 — sibling services listening
@@ -246,6 +266,21 @@ async function main(): Promise<void> {
   } catch (err: any) {
     report('deck-topology', 'FAIL', String(err?.message || err));
   }
+
+  // Model authority on the real Mag One card. The probe reads but never
+  // changes a deck; a stale provider/model is an explicit failure.
+  const magenticCard = deckNodes.find(
+    (node) => String(node.runtimeType || '').trim().toLowerCase() === 'magentic_one',
+  );
+  const magenticProvider = String(magenticCard?.runtimeOptions?.provider || '').trim();
+  const magenticModel = String(magenticCard?.runtimeOptions?.modelKey || '').trim();
+  report(
+    'mag-one-model',
+    magenticProvider === 'openai' && magenticModel === 'gpt-5.1-chat-latest' ? 'PASS' : 'FAIL',
+    magenticCard
+      ? `card=${magenticCard.id} provider=${magenticProvider || 'missing'} model=${magenticModel || 'missing'}`
+      : 'Magentic-One card missing from deck',
+  );
 
   // 4 — Mag One's own view (server-side resolvedMagenticOptions; blank deckId
   //     also proves the canonical-deck default on the bridge)
@@ -335,8 +370,31 @@ async function main(): Promise<void> {
     report('thinkgraph-read', 'FAIL', String(err?.message || err));
   }
 
+  // Source contract only, not a browser smoke: this proves the selected-node
+  // inspector seam is shipped without pretending interaction was exercised.
+  const inspectorPath = path.join(
+    repoRoot,
+    'client',
+    'src',
+    'components',
+    'knowledge',
+    'KnowledgeGraphFramework.tsx',
+  );
+  try {
+    const source = readFileSync(inspectorPath, 'utf8');
+    const ok = source.includes('knowledge-graph-node-inspector') && source.includes('selectedNodeId');
+    report(
+      'graph-inspector',
+      ok ? 'PASS' : 'FAIL',
+      ok
+        ? 'selected-node inspector source present (browser interaction not exercised by this probe)'
+        : 'selected-node inspector contract missing from KnowledgeGraphFramework',
+    );
+  } catch (err: any) {
+    report('graph-inspector', 'FAIL', String(err?.message || err));
+  }
+
   // 7 — KnowGraph read (the checked-in read-only Python probe against live Neo4j)
-  const repoRoot = path.resolve(SCRIPT_DIR, '..');
   const venvPython = path.join(repoRoot, 'apps', 'python-models', '.venv', 'Scripts', 'python.exe');
   const kgProbe = path.join(repoRoot, 'services', 'knowgraph', 'hybrid_retrieval_probe.py');
   if (!existsSync(venvPython) || !existsSync(kgProbe)) {

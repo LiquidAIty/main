@@ -7,7 +7,7 @@ import {
 } from './localCoderController';
 
 describe('normalizeLocalCoderControllerCard', () => {
-  it('upgrades stale controller models to the configured OpenRouter GLM default', () => {
+  it('upgrades stale controller models to the configured GPT default', () => {
     const normalized = normalizeLocalCoderControllerCard({
       id: 'card_local_coder',
       templateId: 'template_local_coder',

@@ -17,7 +17,6 @@ export type RuntimeBinding =
   | 'plan_agent'
   | 'worldsignals_agent'
   | 'trading_agent'
-  | 'code_agent'
   | 'hermes_steward';
 
 export type AgentCardRuntimeType =

@@ -22,7 +22,7 @@ describe("FrontendCrashBoundary", () => {
   it("catches child throw and renders diagnostic panel", () => {
     const consoleErrorSpy = vi
       .spyOn(console, "error")
-      .mockImplementation(() => {});
+      .mockImplementation(() => undefined);
 
     render(
       <FrontendCrashBoundary scopeLabel="UnitTestBoundary">

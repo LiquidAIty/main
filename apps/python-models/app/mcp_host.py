@@ -127,6 +127,8 @@ async def list_tools() -> list[Tool]:
                 "job, used verbatim. jobId takes precedence so the on-disk file is the contract. "
                 "Mag One reasons over the task, selects among connected eligible workers itself, and "
                 "returns its result. No structured plan, no task ledger gate, no approval gate. "
+                "Pass your real conversationId so Hermes postflight records the run's memory with "
+                "correct provenance — without it the run memory write is honestly blocked. "
                 "deckId is optional and defaults to the one canonical Agent Canvas deck; never "
                 "guess a deckId."
             ),

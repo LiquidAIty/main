@@ -5,8 +5,7 @@ export type WorkspaceTestingSurface =
   | "knowledge"
   | "codegraph"
   | "worldsignal"
-  | "trading"
-  | "code";
+  | "trading";
 export type WorkspaceTestingSurfaceRole = "large" | "companion";
 export type WorkspaceTestingObjectType =
   | "agent_node"

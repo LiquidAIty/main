@@ -16,7 +16,7 @@ function edge(
   id: string,
   source: string,
   target: string,
-  edgeType: string = 'flow',
+  edgeType = 'flow',
 ): ResolverEdgeInput {
   return { id, source, target, edgeType };
 }

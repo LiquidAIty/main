@@ -42,11 +42,7 @@ import {
   graphControlStackStyle,
   graphPillButtonStyle,
 } from '../graph/graphVisualTokens';
-import {
-  buildInitialWorkbenchLandingViewport,
-  buildPresentationLandingViewport,
-  type CanvasLandingViewport,
-} from '../../features/agentbuilder/core/agentBuilderViewportMath';
+import { buildPresentationLandingViewport } from '../../features/agentbuilder/core/agentBuilderViewportMath';
 import {
   GRAPH_WORKSPACE,
   buildFocusedNodeSet,
@@ -298,10 +294,6 @@ function normalizeRuntimeType(value: unknown): AgentCardRuntimeType {
 
 function isAssistLikeRuntimeType(runtimeType: AgentCardRuntimeType): boolean {
   return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
-}
-
-function isTopLevelCanvasCard(node: AgentCardInstance | undefined | null): node is AgentCardInstance {
-  return Boolean(node && !String(node.parentGraphId || '').trim());
 }
 
 function isAssistCanvasCard(node: AgentCardInstance | undefined | null): node is AgentCardInstance {

@@ -23,6 +23,8 @@ import {
 import {
   cleanOptionalText,
   cloneDeckDocument,
+  DEFAULT_CARD_MODEL_KEY,
+  DEFAULT_CARD_PROVIDER,
   isAssistLikeRuntimeType,
   isLegacyUaCard,
   LOCAL_CODER_CONTROLLER_MODEL_KEY,
@@ -86,6 +88,33 @@ export function normalizeLocalCoderControllerCard(card: AgentCardInstance): Agen
           ? runtimeOptions.tools.map((tool) => safeText(tool).trim()).filter(Boolean)
           : []),
       ])),
+    },
+  };
+}
+
+/**
+ * Upgrade only the exact retired Magentic-One seed configuration. A user who
+ * deliberately chose GLM keeps it; the uncustomized old default moves to the
+ * repository GPT default on hydration.
+ */
+function normalizeRetiredMagenticOneDefault(card: AgentCardInstance): AgentCardInstance {
+  if (card.id !== 'card_magentic' || card.templateId !== 'template_magentic') return card;
+  const runtimeOptions = normalizeRuntimeOptions(card.runtimeOptions) ?? {};
+  if (
+    runtimeOptions.executionBackend !== 'python_autogen' ||
+    runtimeOptions.provider !== 'openrouter' ||
+    runtimeOptions.modelKey !== 'z-ai/glm-5.2' ||
+    runtimeOptions.maxTurns !== 2 ||
+    runtimeOptions.maxStalls !== 1
+  ) {
+    return card;
+  }
+  return {
+    ...card,
+    runtimeOptions: {
+      ...runtimeOptions,
+      provider: DEFAULT_CARD_PROVIDER,
+      modelKey: DEFAULT_CARD_MODEL_KEY,
     },
   };
 }
@@ -842,12 +871,14 @@ export function hydrateDeckDocument(
   const bannedPromptTemplateIds = new Set([
     'prompt_synthesis',
     'prompt_review',
+    'prompt_code_workbench',
   ]);
   const baseDeck = {
     ...hydratedDeck,
     nodes: hydratedDeck.nodes
       .filter((node) => !bannedNodeIds.has(node.id))
-      .map(normalizeLocalCoderControllerCard),
+      .map(normalizeLocalCoderControllerCard)
+      .map(normalizeRetiredMagenticOneDefault),
     edges: hydratedDeck.edges.filter(
       (edge) =>
         !bannedNodeIds.has(edge.source) && !bannedNodeIds.has(edge.target),
@@ -909,5 +940,3 @@ export function buildProjectlessDeckDocument(): DeckDocument {
     edges: [],
   });
 }
-
-

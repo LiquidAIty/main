@@ -364,30 +364,6 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
     }),
   },
-  {
-    id: 'prompt_code_workbench',
-    content: buildSeedPromptTemplate({
-      role: [
-        'You are the Code Agent workbench card.',
-        'You represent the visible code workspace on the board.',
-      ].join('\n'),
-      goal: [
-        'Expose the Code workspace as a connectable workbench capability.',
-        'Keep this staged until the app-owned code bridge is restored.',
-      ].join('\n'),
-      constraints: [
-        'Do not call backend model runtime from this card.',
-        'Do not claim files changed, tests passed, or diffs exist unless a real code bridge produced them.',
-      ].join('\n'),
-      ioSchema: [
-        'Input: user selection or future code workbench request.',
-        'Output: open or focus the Code workspace surface.',
-      ].join('\n'),
-      memoryPolicy: [
-        'Treat this as a visible activation stub for the future code workflow.',
-      ].join('\n'),
-    }),
-  },
 ];
 
 export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
@@ -505,16 +481,6 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     id: 'template_trading_workbench',
     name: 'Trading Agent',
     promptTemplate: 'prompt_trading_workbench',
-    model: DEFAULT_CARD_MODEL_KEY,
-    provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 800,
-    tools: [],
-  },
-  {
-    id: 'template_code_workbench',
-    name: 'Code Agent',
-    promptTemplate: 'prompt_code_workbench',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
     temperature: 0.2,
@@ -742,23 +708,6 @@ export const INITIAL_DECK: DeckDocument = {
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
-      id: 'card_code_workbench',
-      kind: 'agent',
-      templateId: 'template_code_workbench',
-      prompt:
-        INITIAL_PROMPT_TEMPLATES.find(
-          (template) => template.id === 'prompt_code_workbench',
-        )?.content || '',
-      runtimeBinding: 'code_agent',
-      runtimeType: 'assistant_agent',
-      parentGraphId: 'workbench_code',
-      title: 'Code Agent',
-      subtitle: 'Scoped repo tasks',
-      position: { x: 1040, y: 140 },
-      status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
-    },
-    {
       id: 'card_plan_agent',
       kind: 'agent',
       templateId: 'template_plan_agent',
@@ -824,7 +773,6 @@ export const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
   card_plan_agent: 'plan_agent',
   card_worldsignals_agent: 'worldsignals_agent',
   card_trading_workbench: 'trading_agent',
-  card_code_workbench: 'code_agent',
   card_hermes_steward: 'hermes_steward',
   // Backward compatibility: legacy card IDs for existing saved decks
   card_main_chat: 'main_chat',
@@ -839,12 +787,12 @@ export const BASELINE_OPTIONAL_CARD_IDS = new Set([
   'card_plan_agent',
   'card_worldsignals_agent',
   'card_trading_workbench',
-  'card_code_workbench',
 ]);
 // Cards removed from the product: hydration drops them from stale saved decks.
 export const REMOVED_DEFAULT_CARD_IDS = new Set([
   'card_assist',
   'card_data_formulator_workbench',
+  'card_code_workbench',
 ]);
 export const REMOVED_DEFAULT_EDGE_IDS = new Set([
   'edge_magentic_research',
@@ -860,5 +808,4 @@ export const LEGACY_SYSTEM_CARD_IDS = new Set([
   'card_knowgraph',
   'card_neo4j',
 ]);
-
 

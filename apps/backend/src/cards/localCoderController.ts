@@ -1,19 +1,17 @@
 import type { AgentCardInstance, AgentCardRuntimeOptions } from '../types';
 
-export const LOCAL_CODER_CONTROLLER_MODEL_KEY = 'z-ai/glm-5.2';
+export const LOCAL_CODER_CONTROLLER_MODEL_KEY = 'gpt-5.1-chat-latest';
 export const LOCAL_CODER_CONTROLLER_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> =
-  'openrouter';
+  'openai';
 export const LOCAL_CODER_CONTROLLER_TOOLS = ['run_local_coder'] as const;
 
 const STALE_LOCAL_CODER_MODEL_KEYS = new Set([
+  'z-ai/glm-5.2',
   'gpt-5-mini',
   'or-openai-gpt-5-mini',
   'kimi-k2-thinking',
   'moonshotai/kimi-k2-thinking',
   'moonshotai/kimi-k2:free',
-  'gpt-5.1-chat-latest',
-  'or-openai-gpt-5.1-chat-latest',
-  'openai/gpt-5.1-chat',
 ]);
 
 type CardLike = Partial<

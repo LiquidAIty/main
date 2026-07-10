@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import cytoscape from 'cytoscape';
 import type {
@@ -44,6 +44,9 @@ export type GraphProjectionV1 = {
   nodes: Array<{
     id: string;
     label: string;
+    title?: string;
+    type?: string;
+    labels?: string[];
     mentionCount: number;
     lastMentionedAt?: string;
     properties?: Record<string, unknown>;
@@ -106,6 +109,9 @@ function projectionToElements(projection: GraphProjectionV1 | null | undefined):
     data: {
       id: node.id,
       label: node.label,
+      title: node.title,
+      type: node.type,
+      labels: node.labels,
       mentionCount: node.mentionCount,
       logMentions: cappedLogMentions(node.mentionCount),
       lastMentionedAt: node.lastMentionedAt,
@@ -220,12 +226,23 @@ export default function KnowledgeGraphFramework({
 }: KnowledgeGraphFrameworkProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   // Fingerprint of the last applied element content: an identical projection
   // (even as a new object) must never rerun layout or churn elements.
   const appliedFingerprintRef = useRef<string | null>(null);
   const { elements, skippedEdges } = useMemo(
     () => projectionToElements(projection),
     [projection],
+  );
+  const selectedNode = useMemo(
+    () => projection?.nodes.find((node) => node.id === selectedNodeId) ?? null,
+    [projection, selectedNodeId],
+  );
+  const selectedNodeEdgeCount = useMemo(
+    () => selectedNode
+      ? projection?.edges.filter((edge) => edge.source === selectedNode.id || edge.target === selectedNode.id).length ?? 0
+      : null,
+    [projection, selectedNode],
   );
 
   useEffect(() => {
@@ -252,6 +269,8 @@ export default function KnowledgeGraphFramework({
       // computation, no data mutation, no panels.
       cyInstance.on('tap', 'node', (event) => {
         const neighborhood = event.target.closedNeighborhood();
+        const data = event.target.data() as { id?: unknown };
+        setSelectedNodeId(typeof data.id === 'string' ? data.id : null);
         cyInstance.batch(() => {
           cyInstance.elements().removeClass('kgf-dim');
           cyInstance.elements().difference(neighborhood).addClass('kgf-dim');
@@ -266,6 +285,7 @@ export default function KnowledgeGraphFramework({
       });
       cyInstance.on('tap', (event) => {
         if (event.target !== cyInstance) return;
+        setSelectedNodeId(null);
         cyInstance.batch(() => cyInstance.elements().removeClass('kgf-dim'));
       });
       // Force-directed feel on interaction: releasing a dragged node re-runs an
@@ -415,6 +435,44 @@ export default function KnowledgeGraphFramework({
           zIndex: 1,
         }}
       />
+      {selectedNode ? (
+        <aside
+          data-testid="knowledge-graph-node-inspector"
+          aria-label="Selected graph node"
+          style={{
+            position: 'absolute',
+            zIndex: 2,
+            top: 12,
+            right: 12,
+            width: 'min(340px, calc(100% - 24px))',
+            maxHeight: 'calc(100% - 24px)',
+            overflow: 'auto',
+            padding: 12,
+            border: `1px solid ${GRAPH_THEME.accent.primary}`,
+            borderRadius: 10,
+            background: 'rgba(11, 14, 18, 0.96)',
+            color: GRAPH_THEME.surface.text,
+            fontSize: 12,
+            boxShadow: '0 12px 32px rgba(0, 0, 0, 0.35)',
+          }}
+        >
+          <strong style={{ display: 'block', marginBottom: 8 }}>Selected node</strong>
+          <dl style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '5px 10px', margin: 0 }}>
+            <dt>id</dt><dd style={{ margin: 0 }}>{selectedNode.id}</dd>
+            <dt>label / title</dt><dd style={{ margin: 0 }}>{selectedNode.title ?? selectedNode.label}</dd>
+            <dt>type</dt><dd style={{ margin: 0 }}>{selectedNode.type ?? 'not provided'}</dd>
+            <dt>labels</dt><dd style={{ margin: 0 }}>{selectedNode.labels?.length ? selectedNode.labels.join(', ') : 'not provided'}</dd>
+            <dt>mentionCount</dt><dd style={{ margin: 0 }}>{selectedNode.mentionCount}</dd>
+            <dt>provenanceCount</dt><dd style={{ margin: 0 }}>{selectedNode.provenanceCount ?? 'not provided'}</dd>
+            <dt>lastMentionedAt</dt><dd style={{ margin: 0 }}>{selectedNode.lastMentionedAt ?? 'not provided'}</dd>
+            <dt>connected edges</dt><dd style={{ margin: 0 }}>{selectedNodeEdgeCount}</dd>
+          </dl>
+          <div style={{ marginTop: 10 }}>properties</div>
+          <pre style={{ margin: '5px 0 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+            {JSON.stringify(selectedNode.properties ?? {}, null, 2)}
+          </pre>
+        </aside>
+      ) : null}
     </div>
   );
 }

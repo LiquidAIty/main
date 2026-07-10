@@ -8,7 +8,6 @@ import {
   deriveConnectedGraphStreams,
   deriveVisibleRailItems,
   getConnectedKnowledgeGraphKinds,
-  isCodeWorkbenchActive,
   isKnowledgeChainActive,
   isTradingWorkbenchActive,
   isWorldSignalsAgentActive,
@@ -163,7 +162,6 @@ describe('agentbuilder progressive activation startup', () => {
     // the Plan object lives in FUTURE.md, not the current rail contract.
     expect(visibility.showWorldsignal).toBe(false);
     expect(visibility.showTrading).toBe(false);
-    expect(visibility.showCode).toBe(false);
   });
 
   it('keeps Trading hidden until the Trading Agent is connected or open', () => {
@@ -194,37 +192,6 @@ describe('agentbuilder progressive activation startup', () => {
         deck: connectedDeck,
         workspaceView: 'canvas',
       }).showTrading,
-    ).toBe(true);
-  });
-
-  it('keeps Code hidden until the Code Agent is connected or open', () => {
-    expect(isCodeWorkbenchActive(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(false);
-    expect(
-      deriveVisibleRailItems({
-        deck: INITIAL_DECK,
-        workspaceView: 'canvas',
-      }).showCode,
-    ).toBe(false);
-    expect(
-      deriveVisibleRailItems({
-        deck: INITIAL_DECK,
-        workspaceView: 'code',
-      }).showCode,
-    ).toBe(true);
-  });
-
-  it('shows Code when the Code Agent is connected to the bus', () => {
-    const connectedDeck = connectToBus(
-      INITIAL_DECK,
-      'card_code_workbench',
-      'edge_magentic_code',
-    );
-    expect(isCodeWorkbenchActive(connectedDeck.nodes, connectedDeck.edges)).toBe(true);
-    expect(
-      deriveVisibleRailItems({
-        deck: connectedDeck,
-        workspaceView: 'canvas',
-      }).showCode,
     ).toBe(true);
   });
 

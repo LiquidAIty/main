@@ -23,17 +23,7 @@ export function isTradingWorkbenchCard(card: AgentCardInstance | null | undefine
   );
 }
 
-export function isCodeWorkbenchCard(card: AgentCardInstance | null | undefined): boolean {
-  if (!card) return false;
-  return (
-    safeText(card.id).trim() === 'card_code_workbench' ||
-    safeText(card.templateId).trim() === 'template_code_workbench'
-  );
-}
-
-export type WorkbenchSurfaceId =
-  | 'trading'
-  | 'code';
+export type WorkbenchSurfaceId = 'trading';
 
 export type WorkbenchCardDescriptor = {
   id: WorkbenchSurfaceId;
@@ -51,14 +41,6 @@ export const WORKBENCH_CARD_DESCRIPTORS: readonly WorkbenchCardDescriptor[] = [
     disabledCopy:
       'Trading is staged as a selectable workbench card. Runtime is disabled until the dedicated trading bridge exists.',
     matches: isTradingWorkbenchCard,
-  },
-  {
-    id: 'code',
-    title: 'Code Agent',
-    openLabel: 'Open Code Workspace',
-    disabledCopy:
-      'Code Agent is staged as a selectable workbench card. Runtime is disabled until the canvas-owned code bridge is restored.',
-    matches: isCodeWorkbenchCard,
   },
 ] as const;
 
@@ -122,7 +104,6 @@ export type ProgressiveRailVisibility = {
   showKnowledge: boolean;
   showWorldsignal: boolean;
   showTrading: boolean;
-  showCode: boolean;
   showOpenClaudeConsole: boolean;
 };
 
@@ -302,13 +283,6 @@ export function isTradingWorkbenchActive(
   return isWorkbenchSurfaceActive(nodes, edges, isTradingWorkbenchCard);
 }
 
-export function isCodeWorkbenchActive(
-  nodes: readonly AgentCardInstance[],
-  edges: readonly DeckEdge[],
-): boolean {
-  return isWorkbenchSurfaceActive(nodes, edges, isCodeWorkbenchCard);
-}
-
 export function isWorkbenchSurfaceActive(
   nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
@@ -336,9 +310,6 @@ export function deriveVisibleRailItems({
     showTrading:
       workspaceView === 'trading' ||
       isTradingWorkbenchActive(deck.nodes, deck.edges),
-    showCode:
-      workspaceView === 'code' ||
-      isCodeWorkbenchActive(deck.nodes, deck.edges),
     showOpenClaudeConsole: shouldShowOpenClaudeConsoleRail({
       cards: deck.nodes,
       edges: deck.edges,
@@ -350,5 +321,4 @@ export function deriveVisibleRailItems({
 // over user text) was dead plumbing: its detector had zero callers, its state
 // was only ever reset to null, and deriveVisibleRailItems ignored it. Removed
 // whole — banned pattern (regex intent-routing) with zero live function.
-
 

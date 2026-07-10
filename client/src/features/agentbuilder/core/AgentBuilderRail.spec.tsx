@@ -11,7 +11,6 @@ const baseVisibility = {
   showKnowledge: false,
   showWorldsignal: false,
   showTrading: false,
-  showCode: false,
 };
 
 const baseProps = {
@@ -20,10 +19,8 @@ const baseProps = {
   moonOrb: null,
   onShowWorldsignalWorkspace: () => undefined,
   onShowCanvasWorkspace: () => undefined,
-  onQuickAddAssistNode: () => undefined,
   onShowKnowledgeWorkspace: () => undefined,
   onShowTradingWorkspace: () => undefined,
-  onShowCodeWorkspace: () => undefined,
   onOpenNavigationDrawer: () => undefined,
 };
 

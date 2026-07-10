@@ -1,4 +1,5 @@
 import nx from '@nx/eslint-plugin';
+import reactHooks from 'eslint-plugin-react-hooks';
 import unusedImports from 'eslint-plugin-unused-imports';
 
 export default [
@@ -11,7 +12,7 @@ export default [
       '**/vite.config.*.timestamp*',
       '**/vitest.config.*.timestamp*',
       'localcoder/**',
-      'vendor/sim/**',
+      'client/src/vendor/**',
     ],
   },
   {
@@ -44,6 +45,7 @@ export default [
       '**/*.mjs',
     ],
     plugins: {
+      'react-hooks': reactHooks,
       'unused-imports': unusedImports,
     },
     rules: {
