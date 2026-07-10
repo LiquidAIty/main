@@ -221,6 +221,37 @@ class TestRunResultReview:
         assert result.verdict == "empty"
         assert result.graphMemoryWritePlan.status == "no_useful_finding"
 
+    def test_honest_run_retains_objective_and_decision_summary(self):
+        result = review_run_result(
+            {
+                "runId": "mag_one_run_5",
+                "status": "completed",
+                "finalTextPresent": True,
+                "objective": "Evaluate 2D vs 3D for graph memory",
+                "finalText": "Recommendation: 2D for memory graphs.",
+            },
+            now=NOW,
+        )
+        record = result.graphMemoryWritePlan.runRecord
+        assert record["objective"] == "Evaluate 2D vs 3D for graph memory"
+        assert record["decisionSummary"] == "Recommendation: 2D for memory graphs."
+        assert "runResult.objective" in record["sourceCitations"]
+
+    def test_blocked_run_keeps_objective_but_never_a_decision(self):
+        result = review_run_result(
+            {
+                "runId": "mag_one_run_6",
+                "status": "failed",
+                "failure": "rails unreachable",
+                "objective": "Evaluate 2D vs 3D for graph memory",
+                "finalText": "should not be remembered",
+            },
+            now=NOW,
+        )
+        record = result.graphMemoryWritePlan.runRecord
+        assert record["objective"] == "Evaluate 2D vs 3D for graph memory"
+        assert record["decisionSummary"] is None
+
 
 class TestSerialization:
     def test_round_trip(self):

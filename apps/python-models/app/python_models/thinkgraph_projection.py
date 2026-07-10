@@ -81,6 +81,11 @@ def assemble_projection(
                 **({"lastMentionedAt": row["last_mentioned_at"]} if row.get("last_mentioned_at") else {}),
                 "properties": _properties(row.get("properties")),
                 "provenanceCount": mention_count,
+                # Stored write provenance (conversation / card / run correlation),
+                # exactly as persisted by the one canonical writer. Never invented.
+                **({"conversationId": row["conversation_id"]} if row.get("conversation_id") else {}),
+                **({"cardId": row["card_id"]} if row.get("card_id") else {}),
+                **({"correlationId": row["correlation_id"]} if row.get("correlation_id") else {}),
             }
         )
 
@@ -161,7 +166,9 @@ def read_projection(project_id: str, limit: int | None = None) -> dict[str, Any]
                 f"""
                 MATCH (n:Resource {{project_id: $projectId}})
                 RETURN {{ id: n.id, label: n.label, mention_count: n.mention_count,
-                          last_mentioned_at: n.last_mentioned_at, properties: n.properties }} AS row
+                          last_mentioned_at: n.last_mentioned_at, properties: n.properties,
+                          conversation_id: n.conversation_id, card_id: n.card_id,
+                          correlation_id: n.correlation_id }} AS row
                 ORDER BY n.updated_at DESC
                 LIMIT {bounded_limit}
                 """,

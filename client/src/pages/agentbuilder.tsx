@@ -532,6 +532,11 @@ export default function AgentBuilder(): React.ReactElement {
     () => loadProjectState().links,
   );
   const [stateLoaded, setStateLoaded] = useState(false);
+  // Real Harness conversation identity. 'main' is the default per-project
+  // conversation; "New chat" mints a fresh id so a run gets a clean
+  // conversation boundary while keeping project memory (conversations/store.ts
+  // creates the conversation on first message).
+  const [conversationId, setConversationId] = useState('main');
 
   // Restore the durable project-scoped Harness transcript on open / project
   // switch, so a reload shows the same conversation (persisted server-side in
@@ -539,6 +544,11 @@ export default function AgentBuilder(): React.ReactElement {
   // best-effort: a fresh project or a read failure leaves chat empty, never
   // errors. A late response for a project the user already switched away from is
   // discarded (guarded by the captured projectId).
+  // Project switch always lands on the default conversation.
+  useEffect(() => {
+    setConversationId('main');
+  }, [canvasProjectId]);
+
   useEffect(() => {
     const pid = canvasProjectId;
     if (!pid) {
@@ -547,7 +557,7 @@ export default function AgentBuilder(): React.ReactElement {
     }
     const ctrl = new AbortController();
     let cancelled = false;
-    void loadSessionHistory({ projectId: pid, conversationId: 'main', signal: ctrl.signal })
+    void loadSessionHistory({ projectId: pid, conversationId, signal: ctrl.signal })
       .then((history) => {
         if (cancelled) return;
         setMessages(history);
@@ -559,7 +569,7 @@ export default function AgentBuilder(): React.ReactElement {
       cancelled = true;
       ctrl.abort();
     };
-  }, [canvasProjectId]);
+  }, [canvasProjectId, conversationId]);
 
   const lastLargeSurfaceTelemetryRef = useRef<WorkspaceTestingSurface | null>(
     null,
@@ -1864,7 +1874,6 @@ export default function AgentBuilder(): React.ReactElement {
         return;
       }
       if (nativeSessionBusy) return;
-      const conversationId = 'main';
       // Only the REAL user message is added on send. No empty assistant placeholder —
       // the assistant bubble is created lazily on the FIRST real text token (below),
       // never before. If the model emits no text, no assistant bubble is created.
@@ -1924,8 +1933,15 @@ export default function AgentBuilder(): React.ReactElement {
           appendAssistantText('Chat request failed before the stream opened. Route: /api/coder/openclaude/session/chat.');
         });
     },
-    [canvasProjectId, nativeSessionBusy, workspaceView],
+    [canvasProjectId, conversationId, nativeSessionBusy, workspaceView],
   );
+
+  // Mint a fresh real conversation in the current project; the history effect
+  // clears the transcript (a new conversation has none yet).
+  const startNewConversation = useCallback(() => {
+    if (nativeSessionBusy) return;
+    setConversationId(`conv_${crypto.randomUUID().slice(0, 8)}`);
+  }, [nativeSessionBusy]);
 
   const renderChatSurface = (
     projectId: string,
@@ -1944,6 +1960,8 @@ export default function AgentBuilder(): React.ReactElement {
         knowledgeProjectId={projectId}
         colors={C}
         busy={nativeSessionBusy}
+        conversationId={conversationId}
+        onNewConversation={startNewConversation}
       />
     );
     return (

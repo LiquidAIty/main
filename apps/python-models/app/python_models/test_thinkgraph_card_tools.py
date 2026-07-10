@@ -115,6 +115,7 @@ class TestPythonMcpHost:
         tools = asyncio.run(mcp_host.list_tools())
         names = sorted(t.name for t in tools)
         assert names == sorted([
+            "run_coder_subagent",
             "mag_one.describe_connected_agents",
             "run_mag_one",
             "hermes.preflight_context",

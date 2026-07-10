@@ -125,6 +125,11 @@ class RunRecord:
     blockerSummary: Optional[str] = None
     cbmStatus: Optional[str] = None
     sourceCitations: list[str] = field(default_factory=list)
+    # Durable run memory: the user objective the run served, and — only for an
+    # honest completed run — a bounded summary of the accepted result. Both are
+    # supplied structure, never inferred from prose here.
+    objective: Optional[str] = None
+    decisionSummary: Optional[str] = None
 
 
 @dataclass

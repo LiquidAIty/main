@@ -51,6 +51,11 @@ export type GraphProjectionV1 = {
     lastMentionedAt?: string;
     properties?: Record<string, unknown>;
     provenanceCount?: number;
+    // Stored write provenance (conversation / card / run correlation) exactly
+    // as persisted by the canonical writer — absent when the store has none.
+    conversationId?: string;
+    cardId?: string;
+    correlationId?: string;
   }>;
   edges: Array<{
     id: string;
@@ -466,6 +471,9 @@ export default function KnowledgeGraphFramework({
             <dt>mentionCount</dt><dd style={{ margin: 0 }}>{selectedNode.mentionCount}</dd>
             <dt>provenanceCount</dt><dd style={{ margin: 0 }}>{selectedNode.provenanceCount ?? 'not provided'}</dd>
             <dt>lastMentionedAt</dt><dd style={{ margin: 0 }}>{selectedNode.lastMentionedAt ?? 'not provided'}</dd>
+            <dt>conversation</dt><dd style={{ margin: 0 }}>{selectedNode.conversationId ?? 'not provided'}</dd>
+            <dt>written by card</dt><dd style={{ margin: 0 }}>{selectedNode.cardId ?? 'not provided'}</dd>
+            <dt>run correlation</dt><dd style={{ margin: 0 }}>{selectedNode.correlationId ?? 'not provided'}</dd>
             <dt>connected edges</dt><dd style={{ margin: 0 }}>{selectedNodeEdgeCount}</dd>
           </dl>
           <div style={{ marginTop: 10 }}>properties</div>

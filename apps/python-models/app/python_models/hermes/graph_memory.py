@@ -135,6 +135,8 @@ def build_write_plan(
         "blockerSummary": run_record.blockerSummary,
         "cbmStatus": run_record.cbmStatus,
         "sourceCitations": list(run_record.sourceCitations),
+        "objective": run_record.objective,
+        "decisionSummary": run_record.decisionSummary,
     }
 
     return GraphMemoryWritePlan(

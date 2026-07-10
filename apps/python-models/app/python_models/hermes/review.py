@@ -140,6 +140,10 @@ def review_run_result(
     failure = str(data.get("failure") or "").strip()
     final_text_present = bool(data.get("finalTextPresent"))
     participants = [str(p) for p in (data.get("participants") or []) if str(p).strip()]
+    # Supplied run-memory structure (bounded): the user objective the run
+    # served and the run's actual final text. Never inferred from prose here.
+    objective = " ".join(str(data.get("objective") or "").split())
+    final_text = " ".join(str(data.get("finalText") or "").split())
 
     blocker_findings: list[BlockerFinding] = []
     if failure:
@@ -174,6 +178,8 @@ def review_run_result(
         citations.append("runResult.failure")
     if participants:
         citations.append("runResult.participants")
+    if objective:
+        citations.append("runResult.objective")
     run_record = RunRecord(
         runId=run_id,
         featureId="",
@@ -184,6 +190,10 @@ def review_run_result(
         filesChanged=[],
         blockerSummary=blocker_findings[0].summary if blocker_findings else None,
         sourceCitations=citations,
+        objective=objective or None,
+        # The accepted decision is remembered only for an honest completed run
+        # with real visible text — never for blocked/partial/suspicious runs.
+        decisionSummary=final_text if verdict == "honest" and final_text else None,
     )
 
     pattern_candidates: list[PatternCandidate] = []

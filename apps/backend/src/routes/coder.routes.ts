@@ -78,6 +78,7 @@ router.post('/mcp-bridge/run_mag_one', async (req, res) => {
     // The real conversation this run belongs to, when the Harness supplies it —
     // postflight run-memory provenance only; never invented here.
     const conversationId = String(req.body?.conversationId || '').trim();
+    const promptMarkdown = String(req.body?.promptMarkdown || '');
     const result = await runMagOne({
       ...(req.body || {}),
       deckId,
@@ -96,6 +97,8 @@ router.post('/mcp-bridge/run_mag_one', async (req, res) => {
       ...(result.failure ? { failure: result.failure } : {}),
       finalTextPresent: Boolean(result.finalText),
       participants: result.connectedParticipants,
+      objective: packetUserRequest(promptMarkdown),
+      finalText: result.finalText,
     }).catch(() => null);
     return res.json({ ok: result.status !== 'failed', result });
   } catch (error) {
@@ -652,6 +655,14 @@ async function runHermesReviewAndRecord(
   }
 }
 
+/** The user objective carried by a Run Packet: the Hermes-authored draft (and
+ * the Harness's refined packet) keeps it under a '## User request' section.
+ * Absent section → empty string; nothing is inferred from other prose. */
+function packetUserRequest(promptMarkdown: string): string {
+  const match = /##\s*User request\s*\n([\s\S]*?)(?=\n##\s|$)/i.exec(promptMarkdown);
+  return match ? match[1].trim() : '';
+}
+
 /** Resolve the saved Hermes card from the live deck (binding, never a title
  * match) so postflight write provenance names the real card. */
 async function resolveHermesCardId(projectId: string, deckId: string): Promise<string | null> {
@@ -678,6 +689,10 @@ async function runHermesPostflightAndRecord(input: {
   failure?: string;
   finalTextPresent?: boolean;
   participants?: string[];
+  // Durable run-memory inputs: the user objective the run served and the
+  // run's real final text. Hermes decides what (if anything) is retained.
+  objective?: string;
+  finalText?: string;
 }): Promise<{ ok: true; report: HermesReviewReport } | { ok: false; error: string }> {
   const postflightStartedMs = Date.now();
   // Dev telemetry for the postflight boundary (non-blocking, dev-only).
@@ -711,6 +726,8 @@ async function runHermesPostflightAndRecord(input: {
       ...(input.participants?.length ? { participants: input.participants } : {}),
       ...(input.projectId ? { projectId: input.projectId } : {}),
       ...(input.conversationId ? { conversationId: input.conversationId } : {}),
+      ...(input.objective ? { objective: input.objective } : {}),
+      ...(input.finalText ? { finalText: input.finalText } : {}),
     });
     if (!reviewResult.ok) {
       appendHermesBlocked(reviewResult.error, input.runId);
@@ -835,6 +852,8 @@ router.post('/hermes/postflight', async (req, res) => {
     ...(Array.isArray(body.participants)
       ? { participants: (body.participants as unknown[]).map((p) => String(p)) }
       : {}),
+    ...(body.objective ? { objective: String(body.objective) } : {}),
+    ...(body.finalText ? { finalText: String(body.finalText) } : {}),
   });
   if (!result.ok) return res.status(502).json(result);
   return res.json({ ok: true, report: result.report });
