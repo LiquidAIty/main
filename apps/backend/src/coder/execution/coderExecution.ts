@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveRepoRoot } from '../workspaceRoot';
 
@@ -17,7 +17,7 @@ export type CoderRunPacket = {
   projectId: string;
   deckId: string;
   cardId: string;
-  adapter: 'claude_code';
+  adapter: CoderAdapterId;
   invocationMode: CoderInvocationMode;
   repositoryRoot: string;
   allowedPaths: string[];
@@ -71,16 +71,29 @@ const MAX_EVENT_TEXT = 32_000;
 const MAX_EVENTS = 1_000;
 const PATH_PATTERN = /^(?![A-Za-z]:)(?![\\/])(?!.*(?:^|[\\/])\.\.(?:[\\/]|$)).+$/;
 
+// One report contract for every CLI coder: the model's final structured answer.
+const CODER_REPORT_SCHEMA = {
+  type: 'object',
+  properties: {
+    exactCommand: { type: 'string' },
+    stdout: { type: 'string' },
+    stderr: { type: 'string' },
+    exitStatus: { type: 'integer' },
+    blockers: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['exactCommand', 'stdout', 'stderr', 'exitStatus', 'blockers'],
+  additionalProperties: false,
+} as const;
+
 export function hashPrompt(prompt: string): string {
   return createHash('sha256').update(Buffer.from(prompt, 'utf8')).digest('hex');
 }
 
-export function createApprovedCoderRun(input: Omit<CoderRunPacket, 'version' | 'runId' | 'correlationId' | 'promptHash' | 'approvedAt' | 'adapter'> & { runId?: string; correlationId?: string }): CoderRunPacket {
+export function createApprovedCoderRun(input: Omit<CoderRunPacket, 'version' | 'runId' | 'correlationId' | 'promptHash' | 'approvedAt'> & { runId?: string; correlationId?: string }): CoderRunPacket {
   const approvedPrompt = String(input.approvedPrompt ?? '');
   return {
     ...input,
     version: '1',
-    adapter: 'claude_code',
     runId: input.runId || `coder_${randomUUID()}`,
     correlationId: input.correlationId || `trace_${randomUUID()}`,
     approvedPrompt,
@@ -106,17 +119,24 @@ type InternalRun = CoderRunSnapshot & {
   resolveCompletion: () => void;
 };
 
-export class ClaudeCodeAdapter implements CoderExecutionAdapter {
-  readonly id = 'claude_code' as const;
+/**
+ * Shared lifecycle for every CLI coder (spawn, event ring, cancellation,
+ * snapshots). An adapter contributes only what differs per CLI: run files,
+ * argv, env hygiene, and structured-output parsing. Adding another coder
+ * stack (cursor, antigravity, …) = one small subclass, never a second
+ * lifecycle.
+ */
+abstract class CliCoderAdapter implements CoderExecutionAdapter {
+  abstract readonly id: CoderAdapterId;
   private readonly runs = new Map<string, InternalRun>();
 
-  constructor(private readonly executable = process.env.CLAUDE_CODE_EXECUTABLE || 'claude') {}
+  constructor(protected readonly executable: string) {}
 
   availability() {
     const probe = spawnSync(this.executable, ['--version'], { encoding: 'utf8', windowsHide: true });
     return probe.status === 0
       ? { available: true, executable: this.executable, version: String(probe.stdout).trim(), error: null }
-      : { available: false, executable: null, version: null, error: String(probe.error?.message || probe.stderr || 'claude_code_unavailable').trim() };
+      : { available: false, executable: null, version: null, error: String(probe.error?.message || probe.stderr || `${this.id}_unavailable`).trim() };
   }
 
   validate(packet: CoderRunPacket): void {
@@ -136,20 +156,10 @@ export class ClaudeCodeAdapter implements CoderExecutionAdapter {
     if (this.runs.has(packet.runId)) throw new Error('coder_run_already_exists');
     const runtimeDir = path.join(resolveRepoRoot(), 'coder-workspace', 'runs', packet.runId);
     mkdirSync(runtimeDir, { recursive: true });
-    const mcpConfig = {
-      mcpServers: {
-        liquid_aity_coder: {
-          type: 'stdio',
-          command: process.env.LIQUIDAITY_PYTHON || path.join(resolveRepoRoot(), 'apps', 'python-models', '.venv', 'Scripts', 'python.exe'),
-          args: [path.join(resolveRepoRoot(), 'apps', 'python-models', 'app', 'dev_agent_harness_mcp.py')],
-          env: { LIQUIDAITY_CODER_RUN_ID: packet.runId },
-        },
-      },
-    };
-    writeFileSync(path.join(runtimeDir, 'mcp.json'), JSON.stringify(mcpConfig), { encoding: 'utf8', flag: 'wx' });
     writeFileSync(path.join(runtimeDir, 'prompt.txt'), packet.approvedPrompt, { encoding: 'utf8', flag: 'wx' });
     writeFileSync(path.join(runtimeDir, 'run.json'), JSON.stringify({ ...packet, approvedPrompt: undefined }, null, 2), { encoding: 'utf8', flag: 'wx' });
-    let resolveCompletion = () => undefined;
+    this.writeAdapterRunFiles(packet, runtimeDir);
+    let resolveCompletion: () => void = () => undefined;
     const completion = new Promise<void>((resolve) => { resolveCompletion = resolve; });
     const run: InternalRun = { packet, status: 'prepared', sessionId: randomUUID(), processId: null, exitCode: null, error: null, events: [], finalOutput: '', report: null, child: null, runtimeDir, stdoutBuffer: '', completion, resolveCompletion };
     this.runs.set(packet.runId, run);
@@ -160,11 +170,9 @@ export class ClaudeCodeAdapter implements CoderExecutionAdapter {
   start(runId: string): CoderRunSnapshot {
     const run = this.required(runId);
     if (run.status !== 'prepared' || run.child) throw new Error('coder_run_duplicate_start');
-    const reportSchema = JSON.stringify({ type: 'object', properties: { exactCommand: { type: 'string' }, stdout: { type: 'string' }, stderr: { type: 'string' }, exitStatus: { type: 'integer' }, blockers: { type: 'array', items: { type: 'string' } } }, required: ['exactCommand', 'stdout', 'stderr', 'exitStatus', 'blockers'], additionalProperties: false });
-    const args = ['--print', '--output-format', 'stream-json', '--include-hook-events', '--input-format', 'text', '--session-id', run.sessionId, '--mcp-config', path.join(run.runtimeDir, 'mcp.json'), '--strict-mcp-config', '--permission-mode', 'dontAsk', '--disallowedTools', 'WebFetch,WebSearch,Write,Edit,NotebookEdit', '--json-schema', reportSchema, run.packet.approvedPrompt];
     const childEnv = { ...process.env, LIQUIDAITY_CODER_RUN_ID: runId };
-    for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN']) delete childEnv[name];
-    const child = spawn(this.executable, args, { cwd: run.packet.repositoryRoot, env: childEnv, windowsHide: true, shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+    this.pruneEnv(childEnv);
+    const child = spawn(this.executable, this.buildArgs(run), { cwd: run.packet.repositoryRoot, env: childEnv, windowsHide: true, shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
     run.child = child;
     run.status = 'running';
     run.processId = child.pid ?? null;
@@ -172,7 +180,7 @@ export class ClaudeCodeAdapter implements CoderExecutionAdapter {
     child.stdout.on('data', (chunk) => this.consume(run, 'stdout', chunk));
     child.stderr.on('data', (chunk) => this.consume(run, 'stderr', chunk));
     child.once('error', (error) => { run.error = error.message; run.status = 'failed'; this.event(run, { type: 'failed', text: error.message }); run.resolveCompletion(); });
-    child.once('close', (code) => { this.flushStdout(run); run.exitCode = code; run.child = null; if (run.status !== 'cancelled') run.status = code === 0 ? 'completed' : 'failed'; this.event(run, { type: run.status === 'completed' ? 'completed' : 'failed', text: `exit_code=${code}` }); run.resolveCompletion(); });
+    child.once('close', (code) => { this.flushStdout(run); this.onProcessClose(run); run.exitCode = code; run.child = null; if (run.status !== 'cancelled') run.status = code === 0 ? 'completed' : 'failed'; this.event(run, { type: run.status === 'completed' ? 'completed' : 'failed', text: `exit_code=${code}` }); run.resolveCompletion(); });
     child.stdin.end();
     return this.public(run);
   }
@@ -202,6 +210,17 @@ export class ClaudeCodeAdapter implements CoderExecutionAdapter {
   finalOutput(runId: string): string { return this.required(runId).finalOutput; }
   dispose(runId: string): void { const run = this.required(runId); if (run.child) throw new Error('coder_run_still_running'); rmSync(run.runtimeDir, { recursive: true, force: true }); this.runs.delete(runId); }
 
+  /** Extra run-scoped files this CLI needs (MCP config, output schema, …). */
+  protected abstract writeAdapterRunFiles(packet: CoderRunPacket, runtimeDir: string): void;
+  /** Full argv for one non-interactive run of this CLI. */
+  protected abstract buildArgs(run: InternalRun): string[];
+  /** Strip provider credentials so the CLI's own logged-in account is the only auth path. */
+  protected abstract pruneEnv(env: NodeJS.ProcessEnv): void;
+  /** One line of CLI stdout — extract session identity / structured report. */
+  protected abstract parseStructuredLine(run: InternalRun, line: string): void;
+  /** Called after the process closes, before final status is derived. */
+  protected onProcessClose(_run: InternalRun): void { /* default: nothing */ }
+
   private consume(run: InternalRun, stream: 'stdout' | 'stderr', chunk: Buffer): void {
     const text = chunk.toString('utf8').slice(0, MAX_EVENT_TEXT);
     run.finalOutput = (run.finalOutput + text).slice(-500_000);
@@ -210,25 +229,109 @@ export class ClaudeCodeAdapter implements CoderExecutionAdapter {
       run.stdoutBuffer += text;
       const lines = run.stdoutBuffer.split(/\r?\n/);
       run.stdoutBuffer = lines.pop() ?? '';
-      for (const line of lines) this.parseStructuredLine(run, line);
+      for (const line of lines) if (line.trim()) this.parseStructuredLine(run, line);
     }
   }
 
   private flushStdout(run: InternalRun): void { if (run.stdoutBuffer.trim()) this.parseStructuredLine(run, run.stdoutBuffer); run.stdoutBuffer = ''; }
-  private parseStructuredLine(run: InternalRun, line: string): void {
-    if (!line.trim()) return;
-    try {
-      const parsed = JSON.parse(line);
-      if (typeof parsed?.session_id === 'string' && parsed.session_id) run.sessionId = parsed.session_id;
-      if (parsed?.type === 'result' && parsed?.structured_output && typeof parsed.structured_output === 'object') { run.report = parsed.structured_output; this.event(run, { type: 'report' }); }
-    } catch { /* raw output event already preserves malformed lines */ }
-  }
 
-  private event(run: InternalRun, event: Omit<CoderRunEvent, 'sequence' | 'timestamp'>): void { run.events.push({ ...event, sequence: run.events.length + 1, timestamp: new Date().toISOString() }); if (run.events.length > MAX_EVENTS) run.events.splice(0, run.events.length - MAX_EVENTS); }
+  protected event(run: InternalRun, event: Omit<CoderRunEvent, 'sequence' | 'timestamp'>): void { run.events.push({ ...event, sequence: run.events.length + 1, timestamp: new Date().toISOString() }); if (run.events.length > MAX_EVENTS) run.events.splice(0, run.events.length - MAX_EVENTS); }
   private required(runId: string): InternalRun { const run = this.runs.get(runId); if (!run) throw new Error('coder_run_not_found'); return run; }
   private public(run: InternalRun): CoderRunSnapshot {
     return structuredClone({ packet: run.packet, status: run.status, sessionId: run.sessionId, processId: run.processId, exitCode: run.exitCode, error: run.error, events: run.events, finalOutput: run.finalOutput, report: run.report });
   }
 }
 
+export class ClaudeCodeAdapter extends CliCoderAdapter {
+  readonly id = 'claude_code' as const;
+
+  constructor(executable = process.env.CLAUDE_CODE_EXECUTABLE || 'claude') { super(executable); }
+
+  protected writeAdapterRunFiles(packet: CoderRunPacket, runtimeDir: string): void {
+    const mcpConfig = {
+      mcpServers: {
+        liquid_aity_coder: {
+          type: 'stdio',
+          command: process.env.LIQUIDAITY_PYTHON || path.join(resolveRepoRoot(), 'apps', 'python-models', '.venv', 'Scripts', 'python.exe'),
+          args: [path.join(resolveRepoRoot(), 'apps', 'python-models', 'app', 'dev_agent_harness_mcp.py')],
+          env: { LIQUIDAITY_CODER_RUN_ID: packet.runId },
+        },
+      },
+    };
+    writeFileSync(path.join(runtimeDir, 'mcp.json'), JSON.stringify(mcpConfig), { encoding: 'utf8', flag: 'wx' });
+  }
+
+  protected buildArgs(run: InternalRun): string[] {
+    return ['--print', '--output-format', 'stream-json', '--include-hook-events', '--input-format', 'text', '--session-id', run.sessionId, '--mcp-config', path.join(run.runtimeDir, 'mcp.json'), '--strict-mcp-config', '--permission-mode', 'dontAsk', '--disallowedTools', 'WebFetch,WebSearch,Write,Edit,NotebookEdit', '--json-schema', JSON.stringify(CODER_REPORT_SCHEMA), run.packet.approvedPrompt];
+  }
+
+  protected pruneEnv(env: NodeJS.ProcessEnv): void {
+    for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN']) delete env[name];
+  }
+
+  protected parseStructuredLine(run: InternalRun, line: string): void {
+    try {
+      const parsed = JSON.parse(line);
+      if (typeof parsed?.session_id === 'string' && parsed.session_id) run.sessionId = parsed.session_id;
+      if (parsed?.type === 'result' && parsed?.structured_output && typeof parsed.structured_output === 'object') { run.report = parsed.structured_output; this.event(run, { type: 'report' }); }
+    } catch { /* raw output event already preserves malformed lines */ }
+  }
+}
+
+/** Find the codex CLI: explicit env override, else the desktop-app install, else PATH. */
+export function discoverCodexExecutable(): string {
+  if (process.env.CODEX_EXECUTABLE) return process.env.CODEX_EXECUTABLE;
+  const local = process.env.LOCALAPPDATA;
+  if (local) {
+    const bin = path.join(local, 'OpenAI', 'Codex', 'bin');
+    if (existsSync(bin)) {
+      for (const entry of readdirSync(bin)) {
+        const exe = path.join(bin, entry, 'codex.exe');
+        if (existsSync(exe)) return exe;
+      }
+    }
+  }
+  return 'codex';
+}
+
+export class CodexAdapter extends CliCoderAdapter {
+  readonly id = 'codex' as const;
+
+  constructor(executable = discoverCodexExecutable()) { super(executable); }
+
+  protected writeAdapterRunFiles(_packet: CoderRunPacket, runtimeDir: string): void {
+    writeFileSync(path.join(runtimeDir, 'report-schema.json'), JSON.stringify(CODER_REPORT_SCHEMA), { encoding: 'utf8', flag: 'wx' });
+  }
+
+  protected buildArgs(run: InternalRun): string[] {
+    // `codex exec` = proven non-interactive mode (codex-cli 0.144.0): JSONL
+    // events on stdout, schema-shaped final message mirrored to a file.
+    // Sandbox stays workspace-write: the CLI's own sandbox bounds writes to
+    // the working root; auth is the user's existing Codex login, never a key.
+    return ['exec', '--json', '--output-schema', path.join(run.runtimeDir, 'report-schema.json'), '--output-last-message', path.join(run.runtimeDir, 'last-message.json'), '--sandbox', 'workspace-write', '--color', 'never', run.packet.approvedPrompt];
+  }
+
+  protected pruneEnv(env: NodeJS.ProcessEnv): void {
+    delete env.OPENAI_API_KEY;
+  }
+
+  protected parseStructuredLine(run: InternalRun, line: string): void {
+    try {
+      const parsed = JSON.parse(line);
+      const threadId = parsed?.thread_id ?? parsed?.threadId;
+      if (typeof threadId === 'string' && threadId) run.sessionId = threadId;
+    } catch { /* raw output event already preserves malformed lines */ }
+  }
+
+  protected override onProcessClose(run: InternalRun): void {
+    // The final agent message file is the report authority (robust against
+    // event-name drift across codex versions); its absence stays an honest null.
+    try {
+      const parsed = JSON.parse(readFileSync(path.join(run.runtimeDir, 'last-message.json'), 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) { run.report = parsed; this.event(run, { type: 'report' }); }
+    } catch { /* no readable last message = no report */ }
+  }
+}
+
 export const claudeCodeAdapter = new ClaudeCodeAdapter();
+export const codexAdapter = new CodexAdapter();

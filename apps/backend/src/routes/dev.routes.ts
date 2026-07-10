@@ -420,6 +420,8 @@ router.post('/agent-harness/coder-runs/prepare', (req, res) => {
       projectId: asTrimmed(body.projectId),
       deckId: asTrimmed(body.deckId) || BUILDER_DECK_ID,
       cardId: asTrimmed(body.cardId),
+      parentRunId: asTrimmed(body.parentRunId),
+      adapter: 'claude_code',
       invocationMode: asTrimmed(body.invocationMode) as CoderRunPacket['invocationMode'],
       repositoryRoot: asTrimmed(body.repositoryRoot),
       allowedPaths: Array.isArray(body.allowedPaths) ? body.allowedPaths : [],

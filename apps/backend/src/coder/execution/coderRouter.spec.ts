@@ -4,20 +4,20 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { resetCoderReportsForTest } from '../../services/coderReportEvidence';
 import { runCoderSubagent } from './coderRouter';
-import type { CoderExecutionAdapter, CoderRunPacket, CoderRunSnapshot } from './coderExecution';
+import type { CoderAdapterId, CoderExecutionAdapter, CoderRunPacket, CoderRunSnapshot } from './coderExecution';
 
 const temp = mkdtempSync(path.join(tmpdir(), 'coder-router-'));
 resetCoderReportsForTest(temp);
 
-function fakeAdapter(): CoderExecutionAdapter & { prepared: CoderRunPacket | null } {
+function fakeAdapter(id: CoderAdapterId, hello: string): CoderExecutionAdapter & { prepared: CoderRunPacket | null } {
   const adapter: CoderExecutionAdapter & { prepared: CoderRunPacket | null } = {
-    id: 'claude_code',
+    id,
     prepared: null,
-    availability: () => ({ available: true, executable: 'claude', version: 'test', error: null }),
+    availability: () => ({ available: true, executable: id, version: 'test', error: null }),
     validate: () => undefined,
     prepare: (packet) => { adapter.prepared = packet; return snapshot(packet, 'prepared'); },
     start: () => snapshot(adapter.prepared!, 'running'),
-    wait: async () => ({ ...snapshot(adapter.prepared!, 'completed'), exitCode: 0, sessionId: 'claude_session_1', report: { exactCommand: 'node -e "console.log(\'HELLO_FROM_CLAUDE_CODE\')"', stdout: 'HELLO_FROM_CLAUDE_CODE\n', stderr: '', exitStatus: 0, blockers: [] } }),
+    wait: async () => ({ ...snapshot(adapter.prepared!, 'completed'), exitCode: 0, sessionId: `${id}_session_1`, report: { exactCommand: `node -e "console.log('${hello}')"`, stdout: `${hello}\n`, stderr: '', exitStatus: 0, blockers: [] } }),
     sendInput: () => undefined,
     cancel: () => snapshot(adapter.prepared!, 'cancelled'),
     inspect: () => null,
@@ -35,17 +35,29 @@ afterEach(() => resetCoderReportsForTest(temp));
 
 describe('runCoderSubagent', () => {
   it('routes explicitly to Claude Code and links parent/child runs without rewriting prompt bytes', async () => {
-    const adapter = fakeAdapter();
+    const adapter = fakeAdapter('claude_code', 'HELLO_FROM_CLAUDE_CODE');
     const approvedPrompt = 'Run exactly: node -e "console.log(\'HELLO_FROM_CLAUDE_CODE\')"\nDo not modify files.\n';
     const result = await runCoderSubagent({ parentRunId: 'req_parent', projectId: 'p1', deckId: 'deck_builder', conversationId: 'c1', cardId: 'card_local_coder', adapter: 'claude_code', approvedPrompt }, adapter);
-    expect(result).toMatchObject({ ok: true, adapter: 'claude_code', parentRunId: 'req_parent', claudeSessionId: 'claude_session_1', exactCommand: 'node -e "console.log(\'HELLO_FROM_CLAUDE_CODE\')"', stdout: 'HELLO_FROM_CLAUDE_CODE\n', commandExitStatus: 0 });
+    expect(result).toMatchObject({ ok: true, adapter: 'claude_code', parentRunId: 'req_parent', sessionId: 'claude_code_session_1', exactCommand: 'node -e "console.log(\'HELLO_FROM_CLAUDE_CODE\')"', stdout: 'HELLO_FROM_CLAUDE_CODE\n', commandExitStatus: 0 });
     expect(result.childRunId).toMatch(/^coder_/);
     expect(adapter.prepared?.approvedPrompt).toBe(approvedPrompt);
     expect(adapter.prepared?.parentRunId).toBe('req_parent');
+    expect(adapter.prepared?.adapter).toBe('claude_code');
   });
 
-  it('rejects every adapter other than claude_code without fallback', async () => {
-    await expect(runCoderSubagent({ parentRunId: 'p', projectId: 'p1', deckId: 'd', conversationId: 'c', cardId: 'card', adapter: 'codex' as never, approvedPrompt: 'x' }, fakeAdapter())).rejects.toThrow('coder_router_adapter_unsupported');
+  it('routes explicitly to Codex with the same contract and linked identity', async () => {
+    const adapter = fakeAdapter('codex', 'HELLO_FROM_CODEX');
+    const result = await runCoderSubagent({ parentRunId: 'req_parent_2', projectId: 'p1', deckId: 'deck_builder', conversationId: 'c1', cardId: 'card_local_coder', adapter: 'codex', approvedPrompt: 'Create helloworld.md.\n' }, adapter);
+    expect(result).toMatchObject({ ok: true, adapter: 'codex', parentRunId: 'req_parent_2', sessionId: 'codex_session_1', stdout: 'HELLO_FROM_CODEX\n', commandExitStatus: 0 });
+    expect(adapter.prepared?.adapter).toBe('codex');
+  });
+
+  it('rejects unknown adapters without fallback', async () => {
+    await expect(runCoderSubagent({ parentRunId: 'p', projectId: 'p1', deckId: 'd', conversationId: 'c', cardId: 'card', adapter: 'cursor', approvedPrompt: 'x' })).rejects.toThrow('coder_router_adapter_unsupported');
+  });
+
+  it('rejects a requested adapter that does not match the resolved adapter (no silent substitution)', async () => {
+    await expect(runCoderSubagent({ parentRunId: 'p', projectId: 'p1', deckId: 'd', conversationId: 'c', cardId: 'card', adapter: 'codex', approvedPrompt: 'x' }, fakeAdapter('claude_code', 'X'))).rejects.toThrow('coder_router_adapter_mismatch');
   });
 });
 

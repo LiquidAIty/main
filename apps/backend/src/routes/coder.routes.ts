@@ -112,7 +112,7 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
       deckId: String(body.deckId || BUILDER_DECK_ID),
       conversationId: String(body.conversationId || ''),
       cardId: String(body.cardId || ''),
-      adapter: String(body.adapter || '') as 'claude_code',
+      adapter: String(body.adapter || ''),
       approvedPrompt: String(body.approvedPrompt || ''),
     });
     return res.status(result.ok ? 200 : 502).json(result);

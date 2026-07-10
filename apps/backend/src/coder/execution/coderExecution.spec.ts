@@ -1,13 +1,13 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ClaudeCodeAdapter, createApprovedCoderRun, hashPrompt } from './coderExecution';
+import { ClaudeCodeAdapter, CodexAdapter, createApprovedCoderRun, hashPrompt, type CoderAdapterId } from './coderExecution';
 
 const roots: string[] = [];
 
 function fixture() {
-  const root = mkdtempSync(path.join(tmpdir(), 'claude-adapter-'));
+  const root = mkdtempSync(path.join(tmpdir(), 'coder-adapter-'));
   roots.push(root);
   mkdirSync(path.join(root, '.git'));
   mkdirSync(path.join(root, 'coder-workspace', 'runs'), { recursive: true });
@@ -18,9 +18,10 @@ function fixture() {
 function packet(root: string, overrides: Record<string, unknown> = {}) {
   return createApprovedCoderRun({
     projectId: 'project_1',
-    parentRunId: 'sol_parent_1',
+    parentRunId: 'parent_run_1',
     deckId: 'deck_builder',
     cardId: 'card_local_coder',
+    adapter: 'claude_code' as CoderAdapterId,
     invocationMode: 'individual',
     repositoryRoot: root,
     allowedPaths: ['apps/backend/src'],
@@ -67,6 +68,30 @@ describe('ClaudeCodeAdapter', () => {
 
   it('reports availability without a model call', () => {
     const result = new ClaudeCodeAdapter(process.execPath).availability();
+    expect(result.available).toBe(true);
+    expect(result.version).toBeTruthy();
+  });
+});
+
+describe('CodexAdapter', () => {
+  it('rejects a packet approved for a different adapter', () => {
+    const adapter = new CodexAdapter(process.execPath);
+    expect(() => adapter.prepare(packet(fixture()))).toThrow('coder_adapter_mismatch');
+  });
+
+  it('prepares a run-scoped session with the shared report schema on disk', () => {
+    const root = fixture();
+    const adapter = new CodexAdapter(process.execPath);
+    const approved = packet(root, { adapter: 'codex', runId: 'coder_codex_one' });
+    expect(adapter.prepare(approved)).toMatchObject({ status: 'prepared', packet: { runId: 'coder_codex_one', adapter: 'codex' } });
+    expect(existsSync(path.join(root, 'coder-workspace', 'runs', 'coder_codex_one', 'report-schema.json'))).toBe(true);
+    expect(existsSync(path.join(root, 'coder-workspace', 'runs', 'coder_codex_one', 'prompt.txt'))).toBe(true);
+    adapter.dispose('coder_codex_one');
+    expect(adapter.inspect('coder_codex_one')).toBeNull();
+  });
+
+  it('reports availability without a model call', () => {
+    const result = new CodexAdapter(process.execPath).availability();
     expect(result.available).toBe(true);
     expect(result.version).toBeTruthy();
   });
