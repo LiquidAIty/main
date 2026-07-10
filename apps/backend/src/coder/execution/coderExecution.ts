@@ -301,7 +301,11 @@ export class ClaudeCodeAdapter extends CliCoderAdapter {
   }
 
   protected buildArgs(run: InternalRun): string[] {
-    return ['--print', '--output-format', 'stream-json', '--include-hook-events', '--input-format', 'text', '--session-id', run.sessionId, '--mcp-config', path.join(run.runtimeDir, 'mcp.json'), '--strict-mcp-config', '--permission-mode', 'dontAsk', '--disallowedTools', 'WebFetch,WebSearch,Write,Edit,NotebookEdit', '--json-schema', JSON.stringify(CODER_REPORT_SCHEMA), run.packet.approvedPrompt];
+    // dontAsk AUTO-DENIES anything not pre-approved (docs: permission modes) —
+    // shell must be explicitly allowed or the coder has no hands; everything
+    // else stays auto-denied on top of the explicit disallow list.
+    // --verbose is REQUIRED by the CLI whenever --print uses stream-json output.
+    return ['--print', '--output-format', 'stream-json', '--verbose', '--include-hook-events', '--input-format', 'text', '--session-id', run.sessionId, '--mcp-config', path.join(run.runtimeDir, 'mcp.json'), '--strict-mcp-config', '--permission-mode', 'dontAsk', '--allowedTools', 'Bash,PowerShell', '--disallowedTools', 'WebFetch,WebSearch,Write,Edit,NotebookEdit', '--json-schema', JSON.stringify(CODER_REPORT_SCHEMA), run.packet.approvedPrompt];
   }
 
   protected pruneEnv(env: NodeJS.ProcessEnv): void {
