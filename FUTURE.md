@@ -38,14 +38,31 @@ part of the active research loop until its own pass wires it in.
 - **Plan Agent** — parked card; the Plan object vision lives below in this file.
 - **e2e layer (barely started)** — `e2e/playwright/worldsignal.spec.ts` + `playwright.config.ts` +
   `@playwright/test`. One spec for a parked surface; grow or cut in a dedicated pass.
-- **Auth on Prisma (second DB layer)** — login/signup → `auth/userService` + `auth/sessionStore` →
-  `services/database.ts` (Prisma), while everything else uses the `pg` pool. Works; consolidation to
-  one DB access layer is a future simplification.
+- **Auth on Prisma, agent runtime on raw Postgres/graph stores** — login/signup →
+  `auth/userService` + `auth/sessionStore` → `services/database.ts` (Prisma) is the correct, deliberate
+  split: Prisma owns auth/session; ThinkGraph/KnowGraph/CodeGraph/deck state use `pg`/AGE/Neo4j directly
+  for active agent context. Not debt, not scheduled for consolidation — leave as-is unless it is
+  confusing or broken in a specific reported case.
 - **Hermes activity durability** — the under-chat feed buffer is RAM-only (wiped on backend restart);
   move to a store when Hermes history must survive restarts.
-- **Live deck worker models** — `card_magentic` runs `openai/gpt-5.1-chat-latest` (migrated); the
-  connected worker cards still carry their saved `openrouter/z-ai/glm-5.2` config. Deliberate
-  (user-chosen config survives hydration); switch per card if worker quality disappoints.
+- **Card model authority is per-card, by design** — `card_magentic` runs `openai/gpt-5.1-chat-latest`;
+  other cards carry their own saved provider/model (e.g. `openrouter/z-ai/glm-5.2`). Mixed models
+  across cards are correct when the live card configs say so — never normalize all cards to one
+  provider/model, and never let a caller override a card's own config. Service-only model calls
+  (embedding/rerank/extraction) are allowed but must never masquerade as a card-agent call.
+- **Card prompts: runtime source of truth is the persisted live card prompt/config**, not the
+  backend/client seed template. Seed templates are defaults for creating/resetting decks only. If a
+  seed template prompt changes and an existing project must pick it up, that requires an explicit live
+  deck migration/readback (as done for `card_main_chat` via the deck PUT API) — never assumed. Report
+  duplicated prompt sources if found; do not delete card prompts.
+- **Object-aware chat (planned, not residue)** — intended future wire: selected node/card/object →
+  active object context → Main Chat/Harness → Hermes context → Mag One RunPacket. The graph node
+  inspector (`KnowledgeGraphFramework.tsx`) is the first half of this; it does not yet feed chat/agent
+  context. Do not implement this wire or remove inspector/selection code as dead until a SPEC
+  explicitly asks for it.
+- **Deck/conversation JSONB is app persistence for canvas/card/deck state only** — not AutoGen memory,
+  not ThinkGraph, not KnowGraph, not CodeGraph. Not scheduled for replacement in cleanup passes; report
+  only if it causes a real bug.
 - **Deferred maintenance** — dependency security upgrades; eslint warnings on owned code.
 
 ## Product Objects (vision)
