@@ -18,6 +18,7 @@ function fixture() {
 function packet(root: string, overrides: Record<string, unknown> = {}) {
   return createApprovedCoderRun({
     projectId: 'project_1',
+    parentRunId: 'sol_parent_1',
     deckId: 'deck_builder',
     cardId: 'card_local_coder',
     invocationMode: 'individual',

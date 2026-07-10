@@ -97,6 +97,29 @@ async def _bridge(path: str, payload: dict[str, Any]) -> list[TextContent]:
 async def list_tools() -> list[Tool]:
     return [
         Tool(
+            name="run_coder_subagent",
+            description=(
+                "Sol only: run one approved coding assignment through the application-owned Coder Router. "
+                "The adapter must be exactly claude_code; there is no fallback. Pass the exact active "
+                "project/deck/conversation/parentRunId from LIQUIDAITY_RUNTIME_CONTEXT, the saved Coder card id, "
+                "and approvedPrompt bytes. Returns the linked child run, Claude session, structured command "
+                "evidence, CoderReport, and deterministic verifier result verbatim."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "parentRunId": {"type": "string"},
+                    "projectId": {"type": "string"},
+                    "deckId": {"type": "string"},
+                    "conversationId": {"type": "string"},
+                    "cardId": {"type": "string"},
+                    "adapter": {"type": "string", "enum": ["claude_code"]},
+                    "approvedPrompt": {"type": "string"},
+                },
+                "required": ["parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt"],
+            },
+        ),
+        Tool(
             name="mag_one.describe_connected_agents",
             description=(
                 "Read the currently connected, bus-eligible (magentic_option) Mag One Agent Cards and "
@@ -335,6 +358,7 @@ async def list_tools() -> list[Tool]:
 # Structural allow-list per tool: unexpected keys are rejected honestly, never
 # silently forwarded (prevents smuggling prompts/models/patches through the host).
 _ALLOWED_KEYS: dict[str, set[str]] = {
+    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "promptMarkdown", "jobId", "conversationId"},
     "hermes.preflight_context": {"projectId", "deckId", "conversationId", "userRequest", "needsCodeContext"},
@@ -350,6 +374,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
 }
 
 _BRIDGE_PATHS: dict[str, str] = {
+    "run_coder_subagent": "run_coder_subagent",
     "mag_one.describe_connected_agents": "describe_connected_agents",
     "run_mag_one": "run_mag_one",
     "hermes.preflight_context": "hermes_preflight",

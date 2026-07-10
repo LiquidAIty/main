@@ -59,7 +59,7 @@ export function deriveSessionId(projectId: string, conversationId: string): stri
  * tool-call arguments, so expose the server-owned values explicitly. This is
  * typed transport context, not an alternate card prompt or inferred workspace
  * identity: the persisted Main Chat prompt remains the instruction authority. */
-export function buildHarnessRuntimeContext(sessionId: string): string | null {
+export function buildHarnessRuntimeContext(sessionId: string, parentRunId?: string): string | null {
   const parsed = parseSessionId(sessionId);
   if (!parsed) return null;
   return [
@@ -67,6 +67,7 @@ export function buildHarnessRuntimeContext(sessionId: string): string | null {
     `active projectId: ${parsed.projectId}`,
     `active deckId: ${BUILDER_DECK_ID}`,
     `active conversationId: ${parsed.conversationId}`,
+    ...(parentRunId ? [`active parentRunId: ${parentRunId}`] : []),
     'Use these exact values for LiquidAIty MCP tool calls. Never derive an id from the working directory, repository name, or session label.',
   ].join('\n');
 }
@@ -405,7 +406,7 @@ export async function startGrpcTurn(
   const mode = args.mode === 'canvas' ? 'canvas' : 'chat';
   const mainChatConfig = await resolveMainChatRuntimeConfig(args.sessionId, mode);
   const doorwayDefinitions = mainChatConfig?.doorwayDefinitions ?? [];
-  const runtimeContext = buildHarnessRuntimeContext(args.sessionId);
+  const runtimeContext = buildHarnessRuntimeContext(args.sessionId, args.traceId);
   const appendSystemPrompt = [mainChatConfig?.prompt, runtimeContext]
     .filter((section): section is string => Boolean(section))
     .join('\n\n') || null;

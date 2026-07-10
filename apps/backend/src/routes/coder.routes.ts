@@ -45,6 +45,7 @@ import {
   normalizeHermesActivityEntry,
 } from '../coder/hermes/hermesActivity';
 import { hermesPreflightContext } from '../coder/hermes/hermesPreflight';
+import { runCoderSubagent } from '../coder/execution/coderRouter';
 
 const router = Router();
 export const OPENCLAUDE_HARNESS_ROUTE_PREFIX = '/coder/openclaude';
@@ -99,6 +100,24 @@ router.post('/mcp-bridge/run_mag_one', async (req, res) => {
     return res.json({ ok: result.status !== 'failed', result });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'run_mag_one_failed' });
+  }
+});
+
+router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const result = await runCoderSubagent({
+      parentRunId: String(body.parentRunId || ''),
+      projectId: String(body.projectId || ''),
+      deckId: String(body.deckId || BUILDER_DECK_ID),
+      conversationId: String(body.conversationId || ''),
+      cardId: String(body.cardId || ''),
+      adapter: String(body.adapter || '') as 'claude_code',
+      approvedPrompt: String(body.approvedPrompt || ''),
+    });
+    return res.status(result.ok ? 200 : 502).json(result);
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'run_coder_subagent_failed' });
   }
 });
 
