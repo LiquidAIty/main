@@ -23,13 +23,13 @@ import {
 import {
   cleanOptionalText,
   cloneDeckDocument,
-  DEFAULT_CARD_MODEL_KEY,
-  DEFAULT_CARD_PROVIDER,
   isAssistLikeRuntimeType,
   isLegacyUaCard,
   LOCAL_CODER_CONTROLLER_MODEL_KEY,
   LOCAL_CODER_CONTROLLER_PROVIDER,
   LOCAL_CODER_CONTROLLER_TOOLS,
+  MAGENTIC_ONE_DEFAULT_MODEL_KEY,
+  MAGENTIC_ONE_DEFAULT_PROVIDER,
   normalizeDeckEdgeType,
   normalizeRuntimeBinding,
   normalizeRuntimeOptions,
@@ -95,7 +95,7 @@ export function normalizeLocalCoderControllerCard(card: AgentCardInstance): Agen
 /**
  * Upgrade only the exact retired Magentic-One seed configuration. A user who
  * deliberately chose GLM keeps it; the uncustomized old default moves to the
- * repository GPT default on hydration.
+ * Mag One's current card default on hydration.
  */
 function normalizeRetiredMagenticOneDefault(card: AgentCardInstance): AgentCardInstance {
   if (card.id !== 'card_magentic' || card.templateId !== 'template_magentic') return card;
@@ -113,8 +113,8 @@ function normalizeRetiredMagenticOneDefault(card: AgentCardInstance): AgentCardI
     ...card,
     runtimeOptions: {
       ...runtimeOptions,
-      provider: DEFAULT_CARD_PROVIDER,
-      modelKey: DEFAULT_CARD_MODEL_KEY,
+      provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
+      modelKey: MAGENTIC_ONE_DEFAULT_MODEL_KEY,
     },
   };
 }

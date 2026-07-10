@@ -60,6 +60,7 @@ app.use((req, res, next) => {
 
 function logStartupBanner() {
   const nodeEnv = process.env.NODE_ENV || "development";
+  // Env default only — every card's saved config is the real model authority.
   const model = process.env.OPENAI_MODEL || "gpt-5.1-chat-latest";
   const baseUrl = process.env.OPENAI_BASE_URL || "(default)";
   const apiKey = process.env.OPENAI_API_KEY || "";
@@ -83,7 +84,7 @@ function logStartupBanner() {
 
   console.log("────────────── LIQUIDAITY BACKEND START ─────────────");
   console.log(`NODE_ENV:         ${nodeEnv}`);
-  console.log(`Runtime model:    ${model}`);
+  console.log(`Env default model:${model} (cards own their models)`);
   console.log(`OPENAI_BASE_URL:  ${baseUrl}`);
   console.log(`OPENAI_API_KEY:   ${redactedKey}`);
   console.log(`DB_HOST:          ${dbHost}`);

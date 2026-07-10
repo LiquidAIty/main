@@ -50,55 +50,6 @@ export function listModels() {
   return Object.entries(MODEL_REGISTRY).map(([k, v]) => ({ key: k, ...v }));
 }
 
-export type agent_role = 'orchestrator' | 'worker';
-
-export function resolve_model_by_role(role: agent_role) {
-  const p = (process.env.SOL_PRIMARY || 'openai').toLowerCase();
-  const via_openai = p === 'openai';
-
-  if (role === 'orchestrator') {
-    if (via_openai) {
-      const model = {
-        provider: 'openai',
-        id: 'gpt-5.1-chat-latest',
-        baseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
-        apiKey: process.env.OPENAI_API_KEY || '',
-        maxTokens: Number(process.env.DEFAULT_MAX_TOKENS ?? 2048),
-      };
-      console.log('[LLM] provider=%s model=%s temp=%s', model.provider, model.id, 'default');
-      return model;
-    }
-    const model = {
-      provider: 'openrouter',
-      id: 'openai/gpt-5.1-chat',
-      baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
-      apiKey: process.env.OPENROUTER_API_KEY || '',
-      temperature: Number(process.env.DEFAULT_TEMPERATURE ?? 0.2),
-      maxTokens: Number(process.env.DEFAULT_MAX_TOKENS ?? 2048),
-    };
-    console.log('[LLM] provider=%s model=%s temp=%s', model.provider, model.id, model.temperature);
-    return model;
-  }
-
-  if (via_openai) {
-    const model = {
-      provider: 'openai',
-      id: 'gpt-5-mini',
-      baseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
-      apiKey: process.env.OPENAI_API_KEY || '',
-      maxTokens: Number(process.env.DEFAULT_MAX_TOKENS ?? 2048),
-    };
-    console.log('[LLM] provider=%s model=%s temp=%s', model.provider, model.id, 'default');
-    return model;
-  }
-  const model = {
-    provider: 'openrouter',
-    id: 'openai/gpt-5.1-chat',
-    baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
-    apiKey: process.env.OPENROUTER_API_KEY || '',
-    temperature: Number(process.env.DEFAULT_TEMPERATURE ?? 0.2),
-    maxTokens: Number(process.env.DEFAULT_MAX_TOKENS ?? 2048),
-  };
-  console.log('[LLM] provider=%s model=%s temp=%s', model.provider, model.id, model.temperature);
-  return model;
-}
+// Removed: resolve_model_by_role / agent_role (dead Sol-era role→model picker
+// with zero callers). Cards own their model config; per-role TS model
+// selection is exactly the pattern DONT.md bans.

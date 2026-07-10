@@ -103,6 +103,9 @@ class ProjectSession(BaseModel):
     sessionId: str
     projectId: str
     turnId: str
+    # The backend's run identity (e.g. mag_one_run_*), when the caller supplies
+    # one — ties dev participant spans to the same trace as the dispatch event.
+    runId: str | None = None
     route: str
     orchestrator: Literal[
         "magentic_one",

@@ -17,6 +17,7 @@ import { resolveModel } from '../llm/models.config';
 import { resolveCoderWorkspaceRoot } from '../coder/workspaceRoot';
 import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
 import { logHarnessTrace, redactTrace } from '../services/harnessTrace';
+import { recordAgentEvent } from '../services/agentTelemetry';
 import { normalizeLocalCoderControllerCard } from './localCoderController';
 
 function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
@@ -130,7 +131,9 @@ function isPythonAutoGenCallableRuntimeType(runtimeType: string): boolean {
   return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
 }
 
-function resolveCardModelStrict(card: any): {
+/** Exported for the dev agent harness (dev.routes.ts) so a dry-run probe
+ * resolves a card's model EXACTLY the way the runtime does — same throws. */
+export function resolveCardModelStrict(card: any): {
   provider: string;
   providerModelId: string;
 } {
@@ -151,7 +154,9 @@ function resolveCardModelStrict(card: any): {
   return { provider: resolved.provider, providerModelId: resolved.id };
 }
 
-function resolveCardTools(card: any): string[] {
+/** Exported for the dev agent harness (dev.routes.ts) — same strict tool
+ * validation (unknown/disabled tools throw) the real run path uses. */
+export function resolveCardTools(card: any): string[] {
   card = normalizeLocalCoderControllerCard(card);
   const fromOptions = card.runtimeOptions?.tools;
   const raw = Array.isArray(fromOptions) ? fromOptions : Array.isArray(card.tools) ? card.tools : [];
@@ -411,6 +416,9 @@ export function buildPythonAutoGenCardRuntimePayload(
       sessionId,
       projectId: String(context.projectId || ''),
       turnId,
+      // The backend run identity (mag_one_run_*), when the caller supplies one —
+      // Python participant spans join the same telemetry trace through it.
+      ...(context.runId ? { runId: String(context.runId) } : {}),
       route: 'deck_runtime',
       orchestrator: 'magentic_one',
       modelProvider: modelConfig.provider,
@@ -524,6 +532,10 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
   logHarnessTrace(
     `[agent] card-run requested cardId=${String(args?.cardId || '?')} corr=${String(args?.correlationId || '?')} conversationId=${String(args?.conversationId || '').trim() ? 'present' : 'absent'}`,
   );
+  // Captured for the dev telemetry event once resolution reaches them; a run
+  // that fails before resolution honestly reports them as null.
+  let telemetryModel: { provider: string; providerModelId: string } | null = null;
+  let telemetryBinding: string | null = null;
   const done = (partial: Partial<ConfiguredCardRunResult> & Pick<ConfiguredCardRunResult, 'status'>): ConfiguredCardRunResult => {
     const result: ConfiguredCardRunResult = {
       correlationId: String(args?.correlationId || ''),
@@ -543,6 +555,31 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
         (result.tools.length ? ` tools=[${result.tools.join(',')}]` : '') +
         (result.error ? ` error=${redactTrace(result.error)}` : ''),
     );
+    // Dev telemetry for THE single card-call boundary (non-blocking, dev-only).
+    recordAgentEvent({
+      stage: 'card_call',
+      status:
+        result.status === 'completed' ? 'completed' : result.status === 'failed' ? 'failed' : 'blocked',
+      mode: 'real_model_call',
+      caller: String(args?.conversationId || '').trim() ? 'harness_doorway' : 'direct_card_run',
+      projectId: String(args?.projectId || '') || null,
+      deckId: String(args?.deckId || '') || null,
+      conversationId: String(args?.conversationId || '').trim() || null,
+      correlationId: result.correlationId || null,
+      cardId: result.cardId || null,
+      provider: telemetryModel?.provider ?? null,
+      model: telemetryModel?.providerModelId ?? null,
+      tools: result.tools,
+      inputSummary: String(args?.input || ''),
+      outputSummary: result.output,
+      errorSummary: result.error,
+      durationMs: Date.parse(result.endedAt) - Date.parse(result.startedAt) || 0,
+      metadata: {
+        runtimeType: result.runtimeType,
+        runtimeBinding: telemetryBinding,
+        toolCallCount: result.toolCallCount,
+      },
+    });
     return result;
   };
 
@@ -590,6 +627,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     // Same strict resolution the Mag One path uses — throws honest
     // card_model_config_missing / card_tool_unknown / card_tool_disabled errors.
     model = resolveCardModelStrict(effectiveCard);
+    telemetryModel = model;
     participant = serializeCardParticipant(effectiveCard, nodes);
     privateParticipant = serializeCardPrivateParticipant(effectiveCard);
   } catch (error: any) {
@@ -612,6 +650,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     effectiveCard?.runtimeOptions?.binding ?? effectiveCard?.runtimeBinding ?? effectiveCard?.binding,
     effectiveCard?.id,
   );
+  telemetryBinding = resolvedBinding || null;
   const runAuthority =
     args.runAuthority && Object.keys(args.runAuthority).length > 0
       ? args.runAuthority

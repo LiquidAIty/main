@@ -87,6 +87,13 @@ type DeckNode = {
 };
 type DeckEdge = { source: string; target: string; edgeType?: string };
 
+function cardToolNames(node: DeckNode): string[] {
+  const tools = node.runtimeOptions?.tools;
+  return Array.isArray(tools)
+    ? tools.filter((tool): tool is string => typeof tool === 'string')
+    : [];
+}
+
 export function busConnectedCardIds(nodes: DeckNode[], edges: DeckEdge[]): string[] {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const orchestrators = nodes.filter(
@@ -189,6 +196,8 @@ const EXPECTED_DISCONNECTED = [
   'card_trading_workbench',
   'card_worldsignals_agent',
 ];
+const EXPECTED_MAG_ONE_PROVIDER = 'openrouter';
+const EXPECTED_MAG_ONE_MODEL = 'openai/gpt-5.1-chat';
 
 async function main(): Promise<void> {
   const args = parseProbeArgs(process.argv.slice(2));
@@ -253,7 +262,7 @@ async function main(): Promise<void> {
     const wronglyConnected = connected.filter((id) => EXPECTED_DISCONNECTED.includes(id));
     const toolsLine = deckNodes
       .filter((n) => connected.includes(n.id))
-      .map((n) => `${n.id}:[${(Array.isArray(n.runtimeOptions?.tools) ? (n.runtimeOptions!.tools as string[]) : []).join(',')}]`)
+      .map((n) => `${n.id}:[${cardToolNames(n).join(',')}]`)
       .join(' ');
     const ok = missingConnected.length === 0 && wronglyConnected.length === 0;
     report(
@@ -277,9 +286,11 @@ async function main(): Promise<void> {
   const magenticModel = String(magenticCard?.runtimeOptions?.modelKey || '').trim();
   report(
     'mag-one-model',
-    magenticProvider === 'openai' && magenticModel === 'gpt-5.1-chat-latest' ? 'PASS' : 'FAIL',
+    magenticProvider === EXPECTED_MAG_ONE_PROVIDER && magenticModel === EXPECTED_MAG_ONE_MODEL
+      ? 'PASS'
+      : 'FAIL',
     magenticCard
-      ? `card=${magenticCard.id} provider=${magenticProvider || 'missing'} model=${magenticModel || 'missing'}`
+      ? `card=${magenticCard.id} provider=${magenticProvider || 'missing'} model=${magenticModel || 'missing'} openrouter=${magenticProvider === 'openrouter'}`
       : 'Magentic-One card missing from deck',
   );
 
@@ -520,9 +531,7 @@ async function main(): Promise<void> {
           : connectedIds.includes(node.id)
             ? 'connected'
             : 'disconnected';
-      const tools = Array.isArray(node.runtimeOptions?.tools)
-        ? (node.runtimeOptions!.tools as string[])
-        : [];
+      const tools = cardToolNames(node);
       console.log(
         `  ${node.id.padEnd(24)} ${String(state).padEnd(13)} binding=${String(node.runtimeBinding || 'none').padEnd(20)} tools=[${tools.join(',')}] title=${node.title || ''}`,
       );

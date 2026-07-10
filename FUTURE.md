@@ -45,6 +45,10 @@ part of the active research loop until its own pass wires it in.
   confusing or broken in a specific reported case.
 - **Hermes activity durability** — the under-chat feed buffer is RAM-only (wiped on backend restart);
   move to a store when Hermes history must survive restarts.
+- **Agent telemetry durability + Python-side spans** — the dev agent-harness telemetry ring
+  (PLAN.md §8) is RAM-only and TS-boundary-only by design. When run history must survive restarts
+  or per-participant calls inside a Mag One team run need spans, add a tiny dev-only store and a
+  rails-side event post — do not widen the ring into a product feature without that decision.
 - **Card model authority is per-card, by design** — `card_magentic` runs `openai/gpt-5.1-chat-latest`;
   other cards carry their own saved provider/model (e.g. `openrouter/z-ai/glm-5.2`). Mixed models
   across cards are correct when the live card configs say so — never normalize all cards to one
@@ -64,6 +68,46 @@ part of the active research loop until its own pass wires it in.
   not ThinkGraph, not KnowGraph, not CodeGraph. Not scheduled for replacement in cleanup passes; report
   only if it causes a real bug.
 - **Deferred maintenance** — dependency security upgrades; eslint warnings on owned code.
+
+## North Star — the phased map (2026-07-10)
+
+The long-term vision is a **personal cognitive operating system**: graph-based memory,
+object-aware chat, agent teams, user-owned data, tools tailored to the individual. It ships in
+phases; each phase must work repeatedly before the next is pulled. Honest ordering:
+
+```txt
+NOW (kernel)      research loop (chat → Hermes → Mag One → cards → report → run memory)
+                  + coding loop (bounded job → execution adapter → CoderReport → deterministic
+                  evidence verification → CBM refresh) + the Hermes Dev Observatory proving both.
+NEXT (wedges)     Trading research: user thesis anchors in ThinkGraph, sourced evidence in
+                  KnowGraph, probabilistic scenarios, inspectable deltas. NO financial advice,
+                  NO autonomous trading; paper trading later. Coding: dual-path Coder adapters
+                  (external frontier coder OR OpenClaude+API model) over one job/report contract.
+LATER (persona)   Entity/persona nodes with sourced beliefs and attributed perspectives.
+                  Simulated perspectives are ALWAYS labeled simulated ("A simulated perspective
+                  based on X's documented work might argue…"), strongest-supporting and
+                  strongest-opposing interpretations, provenance preserved, original thinkers
+                  credited. NEVER generated text as a real quote. The reasoning method the
+                  product supports: inversion, think-like-the-other-side, multifactor awareness,
+                  probabilistic scoring, class/property/transformation comparison, exposed
+                  uncertainty — the method, never self-promotional claims in prompts or copy.
+LATER (data)      Personal data belongs to the user: local/device-private where practical,
+                  explicit export, explicit permissions, no training use by default. Any shared
+                  knowledge graph is explicit opt-in, revocable, provenance-aware, separate from
+                  private memory. No automatic OSINT at sign-in — a future profile-discovery
+                  workflow must be user-triggered with visible sources, consent, retention, and
+                  removal controls.
+PARKED            MiroFish/agent-economy simulation (a later adapter/experiment, kept out of the
+                  core until both wedges work repeatedly) · knowledge marketplace / token /
+                  profit sharing (privacy, securities, attribution, fraud, market-design, and
+                  regulatory weight — only preserve provenance/ownership fields now) · avatar/
+                  video/marketing/social integrations (separate product modules, each with
+                  explicit scopes when they come).
+```
+
+Hermes across all phases: memory steward, runtime oversight, swarm observer, development
+evidence reviewer, and later a user-data permission broker — always through explicit audited
+tools, never an unrestricted invisible controller.
 
 ## Product Objects (vision)
 

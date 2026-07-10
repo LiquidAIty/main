@@ -32,6 +32,8 @@ export function cleanOptionalText(value: unknown): string | null {
 
 export const DEFAULT_CARD_MODEL_KEY = 'gpt-5.1-chat-latest';
 export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
+export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = 'openai/gpt-5.1-chat';
+export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openrouter';
 export const LOCAL_CODER_CONTROLLER_MODEL_KEY = DEFAULT_CARD_MODEL_KEY;
 export const LOCAL_CODER_CONTROLLER_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = DEFAULT_CARD_PROVIDER;
 export const LOCAL_CODER_CONTROLLER_TOOLS = ['run_local_coder'] as const;

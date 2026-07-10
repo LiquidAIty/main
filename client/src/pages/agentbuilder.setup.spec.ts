@@ -482,8 +482,8 @@ describe('agentbuilder authoring flow', () => {
     expect(hydrated.edges).toEqual([]);
     expect(hydrated.nodes.find((node) => node.id === 'card_magentic')?.runtimeOptions).toMatchObject({
       executionBackend: 'python_autogen',
-      provider: 'openai',
-      modelKey: 'gpt-5.1-chat-latest',
+      provider: 'openrouter',
+      modelKey: 'openai/gpt-5.1-chat',
     });
   });
 
@@ -501,8 +501,8 @@ describe('agentbuilder authoring flow', () => {
 
     const migrated = hydrateDeckDocument(retiredDefault);
     expect(migrated.nodes.find((node) => node.id === 'card_magentic')?.runtimeOptions).toMatchObject({
-      provider: 'openai',
-      modelKey: 'gpt-5.1-chat-latest',
+      provider: 'openrouter',
+      modelKey: 'openai/gpt-5.1-chat',
     });
 
     retiredMagentic.runtimeOptions.maxTurns = 3;

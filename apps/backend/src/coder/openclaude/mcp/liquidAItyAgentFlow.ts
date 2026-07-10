@@ -16,6 +16,7 @@
 
 import { getDeckDocument } from '../../../decks/store';
 import { resolvedMagenticOptions, runCardWithContract } from '../../../cards/runtime';
+import { recordAgentEvent } from '../../../services/agentTelemetry';
 import { resolveCoderWorkspaceRoot } from '../../workspaceRoot';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -221,6 +222,36 @@ export async function runMagOne(
   // job id only names a folder UNDER this root.
   const workspaceRoot = resolveCoderWorkspaceRoot();
 
+  // Dev telemetry for the Mag One dispatch boundary (non-blocking, dev-only).
+  const dispatchStartedMs = Date.now();
+  const recordDispatch = (
+    status: 'started' | 'completed' | 'failed',
+    extra: { outputSummary?: string; errorSummary?: string | null; calledAgents?: string[] } = {},
+  ): void => {
+    recordAgentEvent({
+      stage: 'mag_one_dispatch',
+      status,
+      mode: 'real_model_call',
+      caller: 'harness',
+      projectId,
+      deckId,
+      conversationId: asString(input?.conversationId).trim() || null,
+      correlationId: runId,
+      cardId: asString(orchestrator.id),
+      provider: asString(orchestrator.runtimeOptions?.provider).trim() || null,
+      model: asString(orchestrator.runtimeOptions?.modelKey).trim() || null,
+      inputSummary: jobId ? `job-folder handoff jobId=${jobId}` : promptMarkdown,
+      outputSummary: extra.outputSummary ?? '',
+      errorSummary: extra.errorSummary ?? null,
+      durationMs: status === 'started' ? null : Date.now() - dispatchStartedMs,
+      metadata: {
+        connectedParticipants,
+        ...(extra.calledAgents ? { calledAgents: extra.calledAgents } : {}),
+      },
+    });
+  };
+  recordDispatch('started');
+
   // Regular native Mag One run. For a handoff run the runtime input is empty —
   // the Python rails read handoff/<jobId>/prompt.md as the exact variable context
   // packet; otherwise the Markdown prompt is the task. Bus eligibility
@@ -235,10 +266,13 @@ export async function runMagOne(
       allEdges: edges,
       allTemplates: [],
       previousOutput: '',
+      // Ties Python participant spans to this run's telemetry trace.
+      runId,
       ...(jobId ? { jobHandoff: { workspaceRoot, jobId } } : {}),
     });
   } catch (error) {
     const failure = error instanceof Error ? error.message : String(error);
+    recordDispatch('failed', { errorSummary: failure });
     if (jobId) {
       const handoff = listJobReturnFiles(workspaceRoot, jobId);
       if (handoff.returnedFiles.length > 0) {
@@ -273,6 +307,17 @@ export async function runMagOne(
 
   const failed = result?.status === 'error';
   const handoff = (result as any)?.jobHandoffResult ?? null;
+  // Which participants actually spoke, read from the REAL AutoGen transcript
+  // (message sources) — never inferred from the final answer text.
+  const autogenMessages = (result as any)?.magenticTrace?.plan?.autogenMessages;
+  const calledAgents = Array.isArray(autogenMessages)
+    ? [...new Set(autogenMessages.map((m: any) => asString(m?.source)).filter((s: string) => s && s !== 'user'))]
+    : [];
+  recordDispatch(failed ? 'failed' : 'completed', {
+    outputSummary: asString(result?.output),
+    errorSummary: failed ? asString(result?.error) || 'run_mag_one_failed' : null,
+    calledAgents,
+  });
   return {
     status: failed ? 'failed' : 'completed',
     runId,

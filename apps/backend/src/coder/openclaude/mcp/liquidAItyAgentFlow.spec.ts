@@ -235,3 +235,54 @@ describe('runMagOne — Coder job-folder handoff (jobId)', () => {
     }
   });
 });
+
+describe('runMagOne — dev telemetry at the dispatch boundary', () => {
+  it('records started + completed events with participants and real calledAgents', async () => {
+    const { clearAgentEvents, listAgentEvents } = await import('../../../services/agentTelemetry');
+    clearAgentEvents();
+    const runCard = vi.fn(async () => ({
+      status: 'success',
+      output: 'team answer',
+      magenticTrace: {
+        plan: {
+          autogenMessages: [
+            { source: 'user', type: 'TextMessage', content: 'task' },
+            { source: 'Research Agent', type: 'TextMessage', content: 'finding' },
+          ],
+        },
+      },
+    }));
+    await runMagOne(
+      { projectId: 'project-1', deckId: 'deck_builder', promptMarkdown: '# job', conversationId: 'main' },
+      deps({ runCard: runCard as any }),
+    );
+    const events = listAgentEvents().filter((e) => e.stage === 'mag_one_dispatch');
+    expect(events.map((e) => e.status)).toEqual(['started', 'completed']);
+    expect(events[1]).toMatchObject({
+      mode: 'real_model_call',
+      cardId: 'card_magentic',
+      conversationId: 'main',
+      metadata: {
+        connectedParticipants: ['card_research'],
+        calledAgents: ['Research Agent'],
+      },
+    });
+    expect(events[1].correlationId).toMatch(/^mag_one_run_/);
+    clearAgentEvents();
+  });
+
+  it('records a failed dispatch event when the run throws', async () => {
+    const { clearAgentEvents, listAgentEvents } = await import('../../../services/agentTelemetry');
+    clearAgentEvents();
+    await expect(
+      runMagOne(
+        { projectId: 'project-1', deckId: 'deck_builder', promptMarkdown: '# job' },
+        deps({ runCard: vi.fn(async () => { throw new Error('rails down'); }) as any }),
+      ),
+    ).rejects.toThrow('rails down');
+    const events = listAgentEvents().filter((e) => e.stage === 'mag_one_dispatch');
+    expect(events.map((e) => e.status)).toEqual(['started', 'failed']);
+    expect(events[1].errorSummary).toBe('rails down');
+    clearAgentEvents();
+  });
+});

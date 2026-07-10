@@ -29,6 +29,7 @@ import {
   type ThinkGraphPatchAuthority,
 } from '../services/thinkgraph/thinkGraphStore';
 import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/harnessTrace';
+import { recordAgentEvent } from '../services/agentTelemetry';
 // The app's one canonical Agent Canvas deck id, defined once on the deck store.
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
@@ -108,22 +109,58 @@ router.post('/mcp-bridge/run_mag_one', async (req, res) => {
 // structural RunPacketDraft the Harness refines. Writes nothing; unavailable
 // graph sources are reported honestly, never faked.
 router.post('/mcp-bridge/hermes_preflight', async (req, res) => {
+  const preflightStartedMs = Date.now();
+  const body = req.body || {};
+  const intent = {
+    projectId: String(body.projectId || ''),
+    deckId: String(body.deckId || BUILDER_DECK_ID),
+    conversationId: String(body.conversationId || ''),
+    userRequest: String(body.userRequest || ''),
+  };
+  // Dev telemetry for the preflight boundary (non-blocking, dev-only).
+  const recordPreflight = (
+    status: 'completed' | 'failed',
+    extra: { outputSummary?: string; errorSummary?: string; metadata?: Record<string, unknown> } = {},
+  ): void => {
+    recordAgentEvent({
+      stage: 'hermes_preflight',
+      status,
+      mode: 'real_model_call',
+      caller: 'harness',
+      projectId: intent.projectId || null,
+      deckId: intent.deckId || null,
+      conversationId: intent.conversationId || null,
+      inputSummary: intent.userRequest,
+      outputSummary: extra.outputSummary ?? '',
+      errorSummary: extra.errorSummary ?? null,
+      durationMs: Date.now() - preflightStartedMs,
+      graphReads: ['thinkgraph_scope', 'knowgraph_reachability'],
+      metadata: extra.metadata ?? {},
+    });
+  };
   try {
-    const body = req.body || {};
     const result = await hermesPreflightContext({
-      projectId: String(body.projectId || ''),
-      deckId: String(body.deckId || BUILDER_DECK_ID),
-      conversationId: String(body.conversationId || ''),
-      userRequest: String(body.userRequest || ''),
+      ...intent,
       ...(body.needsCodeContext === true ? { needsCodeContext: true } : {}),
     });
     if (!result.ok) {
+      recordPreflight('failed', { errorSummary: result.error });
       const status = result.error.startsWith('preflight_intent_incomplete') ? 400 : 502;
       return res.status(status).json(result);
     }
+    recordPreflight('completed', {
+      outputSummary: result.runPacketDraft.hermesContextSummary,
+      metadata: {
+        connectedParticipants: result.runPacketDraft.connectedParticipants,
+        disconnectedExclusions: result.runPacketDraft.disconnectedExclusions,
+        graphContext: result.runPacketDraft.graphContext,
+      },
+    });
     return res.json(result);
   } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'hermes_preflight_failed' });
+    const message = error instanceof Error ? error.message : 'hermes_preflight_failed';
+    recordPreflight('failed', { errorSummary: message });
+    return res.status(502).json({ ok: false, error: message });
   }
 });
 
@@ -139,6 +176,16 @@ router.post('/mcp-bridge/thinkgraph_read_scope', async (req, res) => {
     }
     const scope = await readThinkGraphScope({ projectId, limit: Number(req.body?.limit) || undefined });
     console.log('[THINKGRAPH][tool] read_scope project=%s correlation=%s nodes=%d', projectId, correlationId, scope.nodes.length);
+    recordAgentEvent({
+      stage: 'graph_read',
+      status: 'completed',
+      mode: 'real_model_call',
+      caller: 'thinkgraph_card_tool',
+      projectId,
+      correlationId,
+      graphReads: ['thinkgraph'],
+      outputSummary: `${scope.nodes.length} node(s), ${scope.edges.length} edge(s)`,
+    });
     return res.json({ ok: true, scope });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'thinkgraph_read_scope_failed' });
@@ -156,6 +203,21 @@ router.post('/mcp-bridge/thinkgraph_apply_patch', async (req, res) => {
       String(authority?.correlationId || ''),
       result.ok ? result.status : `error:${result.error}`,
     );
+    recordAgentEvent({
+      stage: 'graph_write',
+      status: result.ok ? 'completed' : 'blocked',
+      mode: 'real_model_call',
+      caller: 'thinkgraph_card_tool',
+      projectId: String(authority?.projectId || '') || null,
+      cardId: String((authority as any)?.cardId || '') || null,
+      correlationId: String(authority?.correlationId || '') || null,
+      graphWrites: ['thinkgraph'],
+      outputSummary: result.ok ? result.status : '',
+      errorSummary: result.ok ? null : result.error,
+      metadata: result.ok
+        ? { storedResourceIds: result.storedResourceIds, storedStatementIds: result.storedStatementIds }
+        : {},
+    });
     return res.status(result.ok ? 200 : 400).json(result);
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'thinkgraph_apply_patch_failed' });
@@ -284,6 +346,19 @@ router.post('/openclaude/session/chat', async (req, res) => {
   };
   writeSse('session', { sessionId });
   logHarnessTrace(`[harness] request received ${`corr=${correlationId}`} project=${projectId} mode=${mode}`);
+  // Dev telemetry: the front door — a real user message entering Main Chat.
+  const frontdoorStartedMs = Date.now();
+  recordAgentEvent({
+    stage: 'frontdoor',
+    status: 'started',
+    mode: 'real_model_call',
+    caller: 'user',
+    projectId,
+    conversationId,
+    correlationId,
+    inputSummary: message,
+    metadata: { surfaceMode: mode, sessionId },
+  });
   // Durable project-scoped transcript persistence (conversations/store.ts). Best-effort:
   // a DB failure must never block or break the live SSE stream.
   void appendMessage({ projectId, conversationId, role: 'user', content: message }).catch(() => null);
@@ -306,6 +381,17 @@ router.post('/openclaude/session/chat', async (req, res) => {
     const { finalText } = await handle.done;
     turnFinished = true;
     logHarnessTrace(`[harness] request completed corr=${correlationId}`);
+    recordAgentEvent({
+      stage: 'frontdoor',
+      status: 'completed',
+      mode: 'real_model_call',
+      caller: 'user',
+      projectId,
+      conversationId,
+      correlationId,
+      outputSummary: String(finalText || ''),
+      durationMs: Date.now() - frontdoorStartedMs,
+    });
     // Save the assistant reply only when real text was produced — never an empty
     // bubble (mirrors the frontend's "no text → no bubble" contract). Best-effort,
     // same as the user message: a DB failure must never block or break the live
@@ -323,6 +409,17 @@ router.post('/openclaude/session/chat', async (req, res) => {
     turnFinished = true;
     const reason = error instanceof Error ? error.message : 'grpc_turn_failed';
     logHarnessTrace(`[harness] request failed corr=${correlationId} reason=${redactTrace(reason)}`);
+    recordAgentEvent({
+      stage: 'frontdoor',
+      status: 'failed',
+      mode: 'real_model_call',
+      caller: 'user',
+      projectId,
+      conversationId,
+      correlationId,
+      errorSummary: reason,
+      durationMs: Date.now() - frontdoorStartedMs,
+    });
     writeSse('error', {
       code: 'harness_turn_failed',
       message: 'The chat run failed. Check the correlation ID in the backend logs.',
@@ -563,6 +660,29 @@ async function runHermesPostflightAndRecord(input: {
   finalTextPresent?: boolean;
   participants?: string[];
 }): Promise<{ ok: true; report: HermesReviewReport } | { ok: false; error: string }> {
+  const postflightStartedMs = Date.now();
+  // Dev telemetry for the postflight boundary (non-blocking, dev-only).
+  const recordPostflight = (
+    status: 'completed' | 'failed',
+    extra: { outputSummary?: string; errorSummary?: string; graphWrites?: string[]; metadata?: Record<string, unknown> } = {},
+  ): void => {
+    recordAgentEvent({
+      stage: 'hermes_postflight',
+      status,
+      mode: 'real_model_call',
+      caller: 'hermes',
+      projectId: input.projectId || null,
+      deckId: input.deckId || null,
+      conversationId: input.conversationId || null,
+      correlationId: input.runId,
+      inputSummary: `run ${input.runId} status=${input.status}`,
+      outputSummary: extra.outputSummary ?? '',
+      errorSummary: extra.errorSummary ?? null,
+      durationMs: Date.now() - postflightStartedMs,
+      graphWrites: extra.graphWrites ?? [],
+      metadata: extra.metadata ?? {},
+    });
+  };
   try {
     const reviewResult = await requestHermesRunReview({
       runId: input.runId,
@@ -575,6 +695,7 @@ async function runHermesPostflightAndRecord(input: {
     });
     if (!reviewResult.ok) {
       appendHermesBlocked(reviewResult.error, input.runId);
+      recordPostflight('failed', { errorSummary: reviewResult.error });
       return reviewResult;
     }
     const events = Array.isArray((reviewResult.review as any)?.activityEvents)
@@ -645,6 +766,11 @@ async function runHermesPostflightAndRecord(input: {
       }
     }
 
+    recordPostflight('completed', {
+      outputSummary: `verdict=${String((reviewResult.review as any)?.verdict || 'empty')} write=${thinkGraphWrite.status}`,
+      graphWrites: thinkGraphWrite.status === 'applied' ? ['thinkgraph'] : [],
+      metadata: { thinkGraphWrite },
+    });
     return {
       ok: true,
       report: {
@@ -658,6 +784,7 @@ async function runHermesPostflightAndRecord(input: {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'hermes_postflight_failed';
     appendHermesBlocked(message, input.runId);
+    recordPostflight('failed', { errorSummary: message });
     return { ok: false, error: message };
   }
 }

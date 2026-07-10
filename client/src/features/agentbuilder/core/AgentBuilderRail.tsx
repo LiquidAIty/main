@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { GRAPH_THEME } from '../../../components/graph/graphVisualTokens';
+import DevHarnessRailButton from './DevHarnessRailButton';
 
 type RailColors = {
   panel: string;
@@ -175,6 +176,11 @@ export default function AgentBuilderRail({
       ) : null}
 
       <div className="flex-1" />
+
+      {/* Dev builds only: harness presence + door to /dev/agent-runs. */}
+      {import.meta.env.DEV ? (
+        <DevHarnessRailButton dimColor={colors.text} activeColor={colors.primary} />
+      ) : null}
 
       <button
         title="Menu"

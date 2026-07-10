@@ -17,6 +17,8 @@ import {
   LOCAL_CODER_CONTROLLER_MODEL_KEY,
   LOCAL_CODER_CONTROLLER_PROVIDER,
   LOCAL_CODER_CONTROLLER_TOOLS,
+  MAGENTIC_ONE_DEFAULT_MODEL_KEY,
+  MAGENTIC_ONE_DEFAULT_PROVIDER,
 } from './deckPrimitives';
 
 export function buildSeedPromptTemplate(parts: {
@@ -371,8 +373,8 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     id: 'template_magentic',
     name: 'Magentic-One',
     promptTemplate: 'prompt_magentic',
-    model: DEFAULT_CARD_MODEL_KEY,
-    provider: DEFAULT_CARD_PROVIDER,
+    model: MAGENTIC_ONE_DEFAULT_MODEL_KEY,
+    provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
     temperature: 0.2,
     maxTokens: 1200,
     tools: [],
@@ -534,8 +536,8 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeType: 'magentic_one',
       runtimeOptions: {
         executionBackend: 'python_autogen',
-        provider: DEFAULT_CARD_PROVIDER,
-        modelKey: DEFAULT_CARD_MODEL_KEY,
+        provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
+        modelKey: MAGENTIC_ONE_DEFAULT_MODEL_KEY,
         maxTurns: 2,
         maxStalls: 1,
       },
@@ -808,4 +810,3 @@ export const LEGACY_SYSTEM_CARD_IDS = new Set([
   'card_knowgraph',
   'card_neo4j',
 ]);
-
