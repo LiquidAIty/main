@@ -30,7 +30,7 @@ roots:
     - runLocalCoderCbmScopeGate
     - isLocalCoderCard
     - selectDoorwayCards
-    - buildCardDoorwayDefinition
+    - buildHarnessAgentDefinition
   routes:
     - POST /api/coder/localcoder/run
     - GET /api/coder/localcoder/status
@@ -63,7 +63,7 @@ CoderReport (status, filesChanged, proofResults, blockers).
 Harness chat → specialist doorway for card_local_coder
   → selectDoorwayCards(nodes, 'chat')          [grpcChatClient.ts:142]
     → runtimeType='local_coder', binding='local_coder'
-  → buildCardDoorwayDefinition(card)           [grpcChatClient.ts:107]
+  → buildHarnessAgentDefinition(card)
   → runConfiguredCard({ cardId: 'card_local_coder' })  [runtime.ts:490]
     → runSingleAssistCardAsDeckRun
       → resolveCardTools → ['run_local_coder']

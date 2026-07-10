@@ -15,9 +15,6 @@ const deckStoreMocks = vi.hoisted(() => ({
 const agentFlowMocks = vi.hoisted(() => ({
   describeConnectedAgents: vi.fn(),
 }));
-const preflightMocks = vi.hoisted(() => ({
-  hermesPreflightContext: vi.fn(),
-}));
 const runtimeMocks = vi.hoisted(() => ({
   runConfiguredCard: vi.fn(),
 }));
@@ -28,9 +25,6 @@ vi.mock('../decks/store', () => ({
 }));
 vi.mock('../coder/openclaude/mcp/liquidAItyAgentFlow', () => ({
   describeConnectedAgents: agentFlowMocks.describeConnectedAgents,
-}));
-vi.mock('../coder/hermes/hermesPreflight', () => ({
-  hermesPreflightContext: preflightMocks.hermesPreflightContext,
 }));
 vi.mock('../cards/runtime', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../cards/runtime')>();
@@ -211,7 +205,7 @@ describe('describe_system / describe_card', () => {
 });
 
 describe('probe_frontdoor', () => {
-  it('dry-run returns RunIntent + participants without preflight by default', async () => {
+  it('dry-run returns the raw turn probe and native Hermes route without executing it', async () => {
     const res = await fetch(`${baseUrl}/api/dev/agent-harness/probe-frontdoor`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -219,26 +213,13 @@ describe('probe_frontdoor', () => {
     });
     const body = await res.json();
     expect(body.ok).toBe(true);
-    expect(body.runIntent.userRequest).toBe('probe message');
+    expect(body.turnProbe.userMessage).toBe('probe message');
     expect(body.connectedParticipants.map((a: any) => a.cardId)).toEqual(['card_research_agent']);
     expect(body.disconnectedExclusions).toEqual(['card_plan_agent']);
-    expect(body.preflight).toBeNull();
-    expect(preflightMocks.hermesPreflightContext).not.toHaveBeenCalled();
+    expect(body.wouldCall.hermes).toMatch(/prompt omitted/);
     expect(runtimeMocks.runConfiguredCard).not.toHaveBeenCalled();
     // the probe left a real telemetry event
     expect(listAgentEvents().some((e) => e.stage === 'dev_probe' && e.mode === 'dry_run')).toBe(true);
-  });
-
-  it('runs the real read-only preflight only when explicitly allowed', async () => {
-    preflightMocks.hermesPreflightContext.mockResolvedValue({ ok: true, contextPacket: {}, runPacketDraft: {} });
-    const res = await fetch(`${baseUrl}/api/dev/agent-harness/probe-frontdoor`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId: 'p1', testUserMessage: 'probe', includePreflight: true }),
-    });
-    const body = await res.json();
-    expect(preflightMocks.hermesPreflightContext).toHaveBeenCalledTimes(1);
-    expect(body.preflight.ok).toBe(true);
   });
 
   it('refuses non-dry-run modes (never runs Mag One)', async () => {

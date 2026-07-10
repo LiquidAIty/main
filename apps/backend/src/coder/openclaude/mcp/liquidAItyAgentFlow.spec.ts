@@ -33,6 +33,28 @@ function deps(over: Partial<AgentFlowDeps> = {}): AgentFlowDeps {
   };
 }
 
+function packet(over: Record<string, unknown> = {}) {
+  return {
+    version: 'run_packet_v0' as const,
+    preparedBy: 'hermes' as const,
+    parentRunId: 'req_parent',
+    projectId: 'project-1',
+    deckId: 'deck_builder',
+    conversationId: 'main',
+    route: 'mag_one' as const,
+    userRequest: 'Do the work — exactly.',
+    objective: 'Do the work — exactly.',
+    contextSummary: 'ThinkGraph was read.',
+    graphContext: { thinkGraph: 'available' as const, knowGraph: 'not_consulted' as const, codeGraph: 'not_consulted' as const },
+    connectedParticipants: ['card_research'],
+    disconnectedExclusions: ['card_lonely'],
+    proofRequirements: ['Return real evidence.'],
+    expectedVisibleOutput: 'A grounded answer.',
+    noFallbackRules: ['Report failures honestly.'],
+    ...over,
+  };
+}
+
 describe('describeConnectedAgents (mag_one.describe_connected_agents)', () => {
   it('reports only the connected, bus-eligible agents + real capabilities — no visible-flow fields', async () => {
     const result = await describeConnectedAgents({ projectId: 'project-1', deckId: 'deck_builder' }, deps());
@@ -74,17 +96,18 @@ describe('describeConnectedAgents (mag_one.describe_connected_agents)', () => {
   });
 });
 
-describe('runMagOne — regular native Mag One from a Markdown prompt, no wrapper', () => {
-  it('runs the orchestrator with the Markdown prompt verbatim as the task', async () => {
+describe('runMagOne — regular native Mag One from one Hermes RunPacket', () => {
+  it('validates the packet, links the parent run, and passes its UTF-8 JSON to Mag One', async () => {
     const runCard = vi.fn(async () => ({ output: 'Mission complete.', status: 'success' }));
+    const runPacket = packet();
     const result = await runMagOne(
-      { projectId: 'project-1', deckId: 'deck_builder', promptMarkdown: '# Objective\nDo the work.' },
+      { runPacket },
       deps({ runCard: runCard as any }),
     );
 
     expect(runCard).toHaveBeenCalledTimes(1);
-    // The task passed to Mag One is the Markdown prompt itself — never a rendered plan.
-    expect(runCard.mock.calls[0][2]).toBe('# Objective\nDo the work.');
+    expect(runCard.mock.calls[0][2]).toBe(JSON.stringify(runPacket));
+    expect(runCard.mock.calls[0][2]).toContain('—');
     // No approval / plan / taskIds thread into the run context.
     const ctxArg = runCard.mock.calls[0][3] as Record<string, unknown>;
     expect('runApproved' in ctxArg).toBe(false);
@@ -94,6 +117,8 @@ describe('runMagOne — regular native Mag One from a Markdown prompt, no wrappe
     expect(result.status).toBe('completed');
     expect(result.finalText).toBe('Mission complete.');
     expect(result.failure).toBeNull();
+    expect(result.parentRunId).toBe('req_parent');
+    expect(result.conversationId).toBe('main');
     // No taskUpdates / needsInput / artifacts wrapper on the result.
     const raw = JSON.stringify(result);
     for (const gone of ['taskUpdates', 'needsInput', 'artifacts', 'evidence']) {
@@ -103,20 +128,26 @@ describe('runMagOne — regular native Mag One from a Markdown prompt, no wrappe
 
   it('returns an honest failure when the run errors — no retry, no fallback', async () => {
     const result = await runMagOne(
-      { projectId: 'project-1', deckId: 'deck_builder', promptMarkdown: 'do it' },
+      { runPacket: packet() },
       deps({ runCard: vi.fn(async () => ({ output: '', status: 'error', error: 'autogen_rails_unavailable' })) as any }),
     );
     expect(result.status).toBe('failed');
     expect(result.failure).toBe('autogen_rails_unavailable');
   });
 
-  it('rejects a run with neither prompt nor jobId, and a missing orchestrator card', async () => {
+  it('rejects a missing/invalid packet, a non-team route, stale participants, and a missing orchestrator', async () => {
     await expect(
-      runMagOne({ projectId: 'project-1', deckId: 'deck_builder', promptMarkdown: '  ' }, deps()),
-    ).rejects.toThrow(/run_mag_one_missing_input/);
+      runMagOne({}, deps()),
+    ).rejects.toThrow(/run_mag_one_invalid_run_packet/);
+    await expect(
+      runMagOne({ runPacket: packet({ route: 'direct' }) as any }, deps()),
+    ).rejects.toThrow(/run_mag_one_route_mismatch/);
+    await expect(
+      runMagOne({ runPacket: packet({ connectedParticipants: ['card_other'] }) }, deps()),
+    ).rejects.toThrow(/run_mag_one_stale_participants/);
     await expect(
       runMagOne(
-        { projectId: 'project-1', deckId: 'deck_builder', promptMarkdown: 'x' },
+        { runPacket: packet() },
         deps({ loadDeck: vi.fn(async () => ({ deck: { id: 'd', name: 'x', nodes: [], edges: [] }, latestRun: null, runs: [], meta: {} })) as any }),
       ),
     ).rejects.toThrow(/run_mag_one_no_orchestrator_card/);
@@ -159,10 +190,10 @@ describe('runMagOne — Coder job-folder handoff (jobId)', () => {
     expect(result.returnStatus).toBe('return_files_created');
   });
 
-  it('jobId wins over promptMarkdown (the on-disk file is the contract)', async () => {
+  it('jobId wins over runPacket (the on-disk file is the contract)', async () => {
     const runCard = vi.fn(async () => ({ output: 'ok', status: 'success' }));
     await runMagOne(
-      { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_x', promptMarkdown: 'ignore me' },
+      { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_x', runPacket: packet() },
       deps({ runCard: runCard as any }),
     );
     expect(runCard.mock.calls[0][2]).toBe('');
@@ -253,7 +284,7 @@ describe('runMagOne — dev telemetry at the dispatch boundary', () => {
       },
     }));
     await runMagOne(
-      { projectId: 'project-1', deckId: 'deck_builder', promptMarkdown: '# job', conversationId: 'main' },
+      { runPacket: packet() },
       deps({ runCard: runCard as any }),
     );
     const events = listAgentEvents().filter((e) => e.stage === 'mag_one_dispatch');
@@ -264,6 +295,7 @@ describe('runMagOne — dev telemetry at the dispatch boundary', () => {
       conversationId: 'main',
       metadata: {
         connectedParticipants: ['card_research'],
+        parentRunId: 'req_parent',
         calledAgents: ['Research Agent'],
       },
     });
@@ -276,7 +308,7 @@ describe('runMagOne — dev telemetry at the dispatch boundary', () => {
     clearAgentEvents();
     await expect(
       runMagOne(
-        { projectId: 'project-1', deckId: 'deck_builder', promptMarkdown: '# job' },
+        { runPacket: packet() },
         deps({ runCard: vi.fn(async () => { throw new Error('rails down'); }) as any }),
       ),
     ).rejects.toThrow('rails down');

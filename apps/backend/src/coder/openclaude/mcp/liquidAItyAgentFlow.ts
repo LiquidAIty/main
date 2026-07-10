@@ -20,6 +20,7 @@ import { recordAgentEvent } from '../../../services/agentTelemetry';
 import { resolveCoderWorkspaceRoot } from '../../workspaceRoot';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { RunPacketSchema, type RunPacket } from '../../../contracts/runtimeContracts';
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value);
@@ -111,23 +112,18 @@ export async function describeConnectedAgents(
 // and returns its own result (its native internal task ledger may exist, but is
 // never forced/exposed/gated here).
 export type RunMagOneInput = {
-  projectId: string;
-  deckId: string;
-  // The Harness-authored Markdown orchestration prompt — objective, relevant
-  // graph/repo/research findings, constraints, available connected agents, and
-  // desired result/proof, exactly as Harness judged relevant. Used verbatim as
-  // the native Mag One task; never translated into a plan or task object.
-  // Optional: supply this OR jobId (the Coder job-folder handoff).
-  promptMarkdown?: string;
+  // Normal Harness path: the ONE Hermes-authored contract returned from the
+  // native inherited-context subagent. No separate intent/context/draft shape.
+  runPacket?: RunPacket;
   // Coder job-folder handoff: the shared job id. When set, the run's task is the
   // EXACT bytes of handoff/<jobId>/prompt.md, the Magnetic One variable context
   // packet for this run, and its return surface is returns/<jobId>/. The workspace
   // root is the server-forced trusted root — never a client path. Takes precedence
-  // over promptMarkdown so the job FILE is always the contract.
+  // over runPacket so the job FILE is always the contract.
   jobId?: string;
-  // The real conversation this run belongs to, when the Harness supplies it.
-  // Transport identity only — consumed by the backend's Hermes postflight hook
-  // for run-memory provenance; this function ignores it.
+  // Job-folder identity only. Normal runs take these values from runPacket.
+  projectId?: string;
+  deckId?: string;
   conversationId?: string;
 };
 
@@ -141,9 +137,12 @@ export type RunMagOneResult = {
   // live deck's magentic_option edges at run time) — the same set Mag One saw.
   // Disconnected cards are structurally absent, never filtered downstream.
   connectedParticipants: string[];
+  parentRunId: string | null;
+  conversationId: string | null;
+  objective: string;
   // Coder job-folder handoff: the assigned return surface + the files the run
   // actually wrote there, so the Coder can read and continue from them. Null /
-  // empty for a normal (promptMarkdown) run.
+  // empty for a normal RunPacket run.
   jobId: string | null;
   returnsDir: string | null;
   returnedFiles: string[];
@@ -186,20 +185,31 @@ export async function runMagOne(
   const loadDeck = deps.loadDeck ?? getDeckDocument;
   const runCard = deps.runCard ?? runCardWithContract;
 
-  const projectId = asString(input?.projectId).trim();
-  const deckId = asString(input?.deckId).trim();
   const jobId = asString(input?.jobId).trim();
-  const promptMarkdown = asString(input?.promptMarkdown).trim();
+  let runPacket: RunPacket | null = null;
+  if (!jobId) {
+    const parsed = RunPacketSchema.safeParse(input?.runPacket);
+    if (!parsed.success) {
+      throw new Error(`run_mag_one_invalid_run_packet: ${parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')}`);
+    }
+    runPacket = parsed.data;
+    if (runPacket.route !== 'mag_one') {
+      throw new Error(`run_mag_one_route_mismatch: expected mag_one, received ${runPacket.route}`);
+    }
+  }
+  const projectId = jobId ? asString(input?.projectId).trim() : runPacket!.projectId;
+  const deckId = jobId ? asString(input?.deckId).trim() : runPacket!.deckId;
+  const conversationId = jobId
+    ? asString(input?.conversationId).trim()
+    : runPacket!.conversationId;
+  const parentRunId = runPacket?.parentRunId || null;
+  const objective = runPacket?.objective || '';
+  const packetJson = runPacket ? JSON.stringify(runPacket) : '';
   const route = 'liquidaity_mcp(run_mag_one) -> cards/runtime -> autogen rails -> magentic-one';
   const runId = `mag_one_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
   if (!projectId || !deckId) {
     throw new Error('run_mag_one_missing_selected_flow: projectId and deckId are required');
-  }
-  // Either a Coder job-folder handoff (jobId) or an inline Markdown prompt is the
-  // task source. jobId wins so the on-disk handoff FILE is always the contract.
-  if (!jobId && !promptMarkdown) {
-    throw new Error('run_mag_one_missing_input: provide jobId (job-folder handoff) or promptMarkdown');
   }
 
   const { deck } = await loadDeck(projectId, deckId);
@@ -216,6 +226,15 @@ export async function runMagOne(
   const connectedParticipants = resolvedMagenticOptions(asString(orchestrator.id), nodes, edges).map(
     (card: any) => asString(card?.id),
   );
+  if (runPacket) {
+    const expected = [...new Set(runPacket.connectedParticipants)].sort();
+    const actual = [...new Set(connectedParticipants)].sort();
+    if (JSON.stringify(expected) !== JSON.stringify(actual)) {
+      throw new Error(
+        `run_mag_one_stale_participants: packet=[${expected.join(',')}] live=[${actual.join(',')}]`,
+      );
+    }
+  }
 
   // The coder workspace root is SERVER-OWNED and trusted — the default owned Coder
   // workspace (<repo-root>/coder-workspace), never a client path; a client-supplied
@@ -235,17 +254,18 @@ export async function runMagOne(
       caller: 'harness',
       projectId,
       deckId,
-      conversationId: asString(input?.conversationId).trim() || null,
+      conversationId: conversationId || null,
       correlationId: runId,
       cardId: asString(orchestrator.id),
       provider: asString(orchestrator.runtimeOptions?.provider).trim() || null,
       model: asString(orchestrator.runtimeOptions?.modelKey).trim() || null,
-      inputSummary: jobId ? `job-folder handoff jobId=${jobId}` : promptMarkdown,
+      inputSummary: jobId ? `job-folder handoff jobId=${jobId}` : objective,
       outputSummary: extra.outputSummary ?? '',
       errorSummary: extra.errorSummary ?? null,
       durationMs: status === 'started' ? null : Date.now() - dispatchStartedMs,
       metadata: {
         connectedParticipants,
+        ...(parentRunId ? { parentRunId } : {}),
         ...(extra.calledAgents ? { calledAgents: extra.calledAgents } : {}),
       },
     });
@@ -254,12 +274,12 @@ export async function runMagOne(
 
   // Regular native Mag One run. For a handoff run the runtime input is empty —
   // the Python rails read handoff/<jobId>/prompt.md as the exact variable context
-  // packet; otherwise the Markdown prompt is the task. Bus eligibility
+  // packet; otherwise the validated RunPacket JSON is the task. Bus eligibility
   // (magentic_option) is enforced inside runCardWithContract, which throws
   // honestly when no worker is connected.
   let result: any;
   try {
-    result = await runCard(orchestrator, {}, jobId ? '' : promptMarkdown, {
+    result = await runCard(orchestrator, {}, jobId ? '' : packetJson, {
       deckId,
       projectId,
       allCards: nodes,
@@ -283,6 +303,9 @@ export async function runMagOne(
           failure,
           provenance: { route },
           connectedParticipants,
+          parentRunId,
+          conversationId: conversationId || null,
+          objective,
           jobId,
           returnsDir: handoff.returnsDir,
           returnedFiles: handoff.returnedFiles,
@@ -296,6 +319,9 @@ export async function runMagOne(
         failure,
         provenance: { route },
         connectedParticipants,
+        parentRunId,
+        conversationId: conversationId || null,
+        objective,
         jobId,
         returnsDir: handoff.returnsDir,
         returnedFiles: [],
@@ -325,6 +351,9 @@ export async function runMagOne(
     failure: failed ? asString(result?.error) || 'run_mag_one_failed' : null,
     provenance: { route },
     connectedParticipants,
+    parentRunId,
+    conversationId: conversationId || null,
+    objective,
     jobId: jobId || null,
     returnsDir: handoff?.returnsDir ?? null,
     returnedFiles: Array.isArray(handoff?.returnedFiles) ? handoff.returnedFiles : [],

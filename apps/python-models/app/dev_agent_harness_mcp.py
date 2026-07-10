@@ -105,10 +105,9 @@ async def list_tools() -> list[Tool]:
             name="probe_frontdoor",
             description=(
                 "Pretend to be the user at the Main Chat front door — dry_run ONLY. Returns the "
-                "RunIntent, what would be called, connected participants, disconnected "
-                "exclusions, and blocked reasons. Set includePreflight=true to also run the REAL "
-                "read-only Hermes preflight (ThinkGraph/KnowGraph availability + Run Packet "
-                "draft). Never runs Mag One and never calls a model."
+                "raw turn probe, native promptless Hermes Agent call that would occur, connected "
+                "participants, disconnected exclusions, and blocked reasons. Never runs Hermes, "
+                "Mag One, or another model."
             ),
             inputSchema={
                 "type": "object",
@@ -116,7 +115,6 @@ async def list_tools() -> list[Tool]:
                     **_PROJECT_DECK,
                     "conversationId": {"type": "string"},
                     "testUserMessage": {"type": "string"},
-                    "includePreflight": {"type": "boolean"},
                 },
                 "required": ["projectId", "testUserMessage"],
             },

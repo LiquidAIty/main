@@ -44,7 +44,6 @@ import {
   listHermesActivity,
   normalizeHermesActivityEntry,
 } from '../coder/hermes/hermesActivity';
-import { hermesPreflightContext } from '../coder/hermes/hermesPreflight';
 import { runCoderSubagent } from '../coder/execution/coderRouter';
 
 const router = Router();
@@ -73,15 +72,14 @@ router.post('/mcp-bridge/describe_connected_agents', async (req, res) => {
 
 router.post('/mcp-bridge/run_mag_one', async (req, res) => {
   try {
-    // Same blank-deckId default as run_configured_card / describe_connected_agents.
-    const deckId = String(req.body?.deckId || BUILDER_DECK_ID);
-    // The real conversation this run belongs to, when the Harness supplies it —
-    // postflight run-memory provenance only; never invented here.
-    const conversationId = String(req.body?.conversationId || '').trim();
-    const promptMarkdown = String(req.body?.promptMarkdown || '');
+    const jobId = String(req.body?.jobId || '').trim();
+    // Only the legacy job-folder handoff carries identity outside RunPacket.
+    // Its blank deckId defaults to the canonical deck; normal runs are entirely
+    // identified by the one validated Hermes packet.
+    const deckId = jobId ? String(req.body?.deckId || BUILDER_DECK_ID) : undefined;
     const result = await runMagOne({
       ...(req.body || {}),
-      deckId,
+      ...(deckId ? { deckId } : {}),
     });
     // Hermes postflight hook: every REAL Mag One run result gets a structural
     // review + a run-memory write attempt (fire-and-forget — the response
@@ -89,15 +87,15 @@ router.post('/mcp-bridge/run_mag_one', async (req, res) => {
     // blocked activity entry). A run that threw before producing a result has
     // no runId and is never reviewed as if it ran.
     void runHermesPostflightAndRecord({
-      projectId: String(req.body?.projectId || ''),
-      deckId,
-      conversationId,
+      projectId: String(req.body?.runPacket?.projectId || req.body?.projectId || ''),
+      deckId: String(req.body?.runPacket?.deckId || deckId || ''),
+      conversationId: result.conversationId || '',
       runId: result.runId,
       status: result.status,
       ...(result.failure ? { failure: result.failure } : {}),
       finalTextPresent: Boolean(result.finalText),
       participants: result.connectedParticipants,
-      objective: packetUserRequest(promptMarkdown),
+      objective: result.objective,
       finalText: result.finalText,
     }).catch(() => null);
     return res.json({ ok: result.status !== 'failed', result });
@@ -121,68 +119,6 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
     return res.status(result.ok ? 200 : 502).json(result);
   } catch (error) {
     return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'run_coder_subagent_failed' });
-  }
-});
-
-// ── Hermes preflight_context (memory read BEFORE a Mag One run) ─────────────
-// The Harness calls this (via the MCP host bridge tool hermes.preflight_context)
-// with its RunIntent. Hermes assembles a ContextPacket from REAL reads
-// (ThinkGraph scope, live deck bus topology, KnowGraph reachability) plus a
-// structural RunPacketDraft the Harness refines. Writes nothing; unavailable
-// graph sources are reported honestly, never faked.
-router.post('/mcp-bridge/hermes_preflight', async (req, res) => {
-  const preflightStartedMs = Date.now();
-  const body = req.body || {};
-  const intent = {
-    projectId: String(body.projectId || ''),
-    deckId: String(body.deckId || BUILDER_DECK_ID),
-    conversationId: String(body.conversationId || ''),
-    userRequest: String(body.userRequest || ''),
-  };
-  // Dev telemetry for the preflight boundary (non-blocking, dev-only).
-  const recordPreflight = (
-    status: 'completed' | 'failed',
-    extra: { outputSummary?: string; errorSummary?: string; metadata?: Record<string, unknown> } = {},
-  ): void => {
-    recordAgentEvent({
-      stage: 'hermes_preflight',
-      status,
-      mode: 'real_model_call',
-      caller: 'harness',
-      projectId: intent.projectId || null,
-      deckId: intent.deckId || null,
-      conversationId: intent.conversationId || null,
-      inputSummary: intent.userRequest,
-      outputSummary: extra.outputSummary ?? '',
-      errorSummary: extra.errorSummary ?? null,
-      durationMs: Date.now() - preflightStartedMs,
-      graphReads: ['thinkgraph_scope', 'knowgraph_reachability'],
-      metadata: extra.metadata ?? {},
-    });
-  };
-  try {
-    const result = await hermesPreflightContext({
-      ...intent,
-      ...(body.needsCodeContext === true ? { needsCodeContext: true } : {}),
-    });
-    if (!result.ok) {
-      recordPreflight('failed', { errorSummary: result.error });
-      const status = result.error.startsWith('preflight_intent_incomplete') ? 400 : 502;
-      return res.status(status).json(result);
-    }
-    recordPreflight('completed', {
-      outputSummary: result.runPacketDraft.hermesContextSummary,
-      metadata: {
-        connectedParticipants: result.runPacketDraft.connectedParticipants,
-        disconnectedExclusions: result.runPacketDraft.disconnectedExclusions,
-        graphContext: result.runPacketDraft.graphContext,
-      },
-    });
-    return res.json(result);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'hermes_preflight_failed';
-    recordPreflight('failed', { errorSummary: message });
-    return res.status(502).json({ ok: false, error: message });
   }
 });
 
@@ -385,9 +321,51 @@ router.post('/openclaude/session/chat', async (req, res) => {
   // a DB failure must never block or break the live SSE stream.
   void appendMessage({ projectId, conversationId, role: 'user', content: message }).catch(() => null);
   let turnFinished = false;
+  const hermesToolUseIds = new Set<string>();
+  const hermesStartedAt = new Map<string, number>();
   try {
     const handle = await startGrpcTurn({ sessionId, message, workingDirectory, mode, traceId: correlationId }, (event) => {
       if (turnFinished) return;
+      if (event.kind === 'tool_start' && event.toolName === 'Agent') {
+        try {
+          const input = JSON.parse(event.argsJson || '{}') as Record<string, unknown>;
+          if (input.subagent_type === 'card_hermes_steward' && !Object.prototype.hasOwnProperty.call(input, 'prompt')) {
+            hermesToolUseIds.add(event.toolUseId);
+            hermesStartedAt.set(event.toolUseId, Date.now());
+            recordAgentEvent({
+              stage: 'hermes_context',
+              status: 'started',
+              mode: 'real_model_call',
+              caller: 'harness',
+              projectId,
+              deckId: BUILDER_DECK_ID,
+              conversationId,
+              correlationId,
+              cardId: 'card_hermes_steward',
+              inputSummary: 'native inherited parent context; prompt omitted',
+              metadata: { toolUseId: event.toolUseId },
+            });
+          }
+        } catch {
+          // The raw tool event still flows; malformed args simply cannot prove Hermes.
+        }
+      } else if (event.kind === 'tool_result' && hermesToolUseIds.has(event.toolUseId)) {
+        recordAgentEvent({
+          stage: 'hermes_context',
+          status: event.isError ? 'failed' : 'completed',
+          mode: 'real_model_call',
+          caller: 'harness',
+          projectId,
+          deckId: BUILDER_DECK_ID,
+          conversationId,
+          correlationId,
+          cardId: 'card_hermes_steward',
+          outputSummary: event.isError ? '' : 'RunPacket returned to principal Harness',
+          errorSummary: event.isError ? 'native Hermes Agent tool failed' : null,
+          durationMs: Date.now() - (hermesStartedAt.get(event.toolUseId) ?? Date.now()),
+          metadata: { toolUseId: event.toolUseId },
+        });
+      }
       // Backend trace of the REAL event (only when it carries lifecycle signal),
       // then the unchanged SSE forward to the browser.
       const traceLine = formatHarnessTrace(event, correlationId);
@@ -653,14 +631,6 @@ async function runHermesReviewAndRecord(
     appendHermesBlocked(message, runId);
     return { ok: false, error: message };
   }
-}
-
-/** The user objective carried by a Run Packet: the Hermes-authored draft (and
- * the Harness's refined packet) keeps it under a '## User request' section.
- * Absent section → empty string; nothing is inferred from other prose. */
-function packetUserRequest(promptMarkdown: string): string {
-  const match = /##\s*User request\s*\n([\s\S]*?)(?=\n##\s|$)/i.exec(promptMarkdown);
-  return match ? match[1].trim() : '';
 }
 
 /** Resolve the saved Hermes card from the live deck (binding, never a title

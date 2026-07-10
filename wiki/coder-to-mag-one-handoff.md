@@ -69,7 +69,7 @@ Harness / packet-builder writes handoff packet:
 
 Coder triggers Mag One:
   run_mag_one({ jobId, projectId, deckId })            [liquidAItyAgentFlow.ts:142]
-    → jobId wins over promptMarkdown (line 159-163)
+    → jobId wins over runPacket
     → resolveCoderWorkspaceRoot()                       [workspaceRoot.ts:22]
       → <repo-root>/coder-workspace (C:/Projects/main/coder-workspace)
     → runCardWithContract(orchestrator, {}, '', {       [runtime.ts:737]
@@ -98,7 +98,7 @@ Return artifacts:
 1. Handoff packet is byte-exact — `write_handoff_prompt` writes utf-8 bytes to
    `handoff/<job-id>/prompt.md`; `read_handoff_prompt` reads them back as exact bytes.
    No wrapping, no LLM-authored rewriting.
-2. jobId wins over promptMarkdown — if both are supplied, `runMagOne` picks jobId
+2. jobId wins over runPacket — if both are supplied, `runMagOne` picks jobId
    (line 159-163). The on-disk file is always the contract.
 3. Coder workspace is server-owned — `resolveCoderWorkspaceRoot` returns
    `<repo-root>/coder-workspace`, never a client path. All handoff/ and returns/ are

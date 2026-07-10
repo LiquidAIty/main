@@ -52,6 +52,7 @@ message AgentDefinitionConfig {
   repeated string allowed_tools = 5;  // saved card's visible tool grants
   bool context_mode_inherit_parent = 6; // true = live inherited-context fork
   string when_to_use = 7;             // parent-facing capability line (backend-authored)
+  optional string model = 8;          // saved card model id; empty = inherit parent
 }
 
 message UserInput {
@@ -75,6 +76,7 @@ message ServerMessage {
     ActionRequired action_required = 4;// Agent requires human intervention
     FinalResponse done = 5;            // Generation successfully completed
     ErrorResponse error = 6;           // A critical error occurred
+    ProgressEvent progress = 7;        // Native tool/subagent progress
   }
 }
 
@@ -119,4 +121,12 @@ message FinalResponse {
 message ErrorResponse {
   string message = 1;
   string code = 2;
+}
+
+// Native QueryEngine progress. data_json is the exact structured progress
+// payload; ids preserve the parent/child tool relationship.
+message ProgressEvent {
+  string tool_use_id = 1;
+  string parent_tool_use_id = 2;
+  string data_json = 3;
 }

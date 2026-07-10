@@ -36,9 +36,10 @@ chat silent = autogen down.
 ### 1. Harness Chat — the front door
 
 The gRPC harness (`localcoder`) over a persistent session. Client → backend
-`/api/coder/openclaude/session/{chat,answer,history}` → harness on :50051. The Harness reads the graphs,
-steers the conversation, and authors the Markdown **prompt** (Run Packet) the Orchestrator runs. It is
-the only component with direct graph access today.
+`/api/coder/openclaude/session/{chat,answer,history}` → harness on :50051. The Harness steers the
+conversation and remains the principal responder. On every turn it invokes the saved Hermes
+card as a native `Agent` with no task prompt. Hermes inherits the complete parent conversation, performs
+the bounded graph/team reads, and returns the one `RunPacket`; no doorway/model wrapper sits in between.
 
 ### 2. The one MCP server — the control surface
 
@@ -51,10 +52,10 @@ There is **no TS MCP server** — TS is only the client. Each tool bridges to a 
 
 ### 3. Orchestrator (Mag One) — the team run
 
-`run_mag_one({projectId, deckId, promptMarkdown})` → backend `/mcp-bridge/run_mag_one` →
-`runCardWithContract(magentic_one card)` → autogen :8003 `MagenticOneGroupChat`. Runs the Harness-authored
-prompt with the bus-connected cards as participants. **No direct graph access** — everything it needs is
-distilled into the prompt (Orchestrator graph access is deferred; see FUTURE.md).
+`run_mag_one({runPacket})` → backend `/mcp-bridge/run_mag_one` → validates the Hermes packet and its
+participant set against the live deck → `runCardWithContract(magentic_one card)` → autogen :8003
+`MagenticOneGroupChat`. Runs the packet JSON with the bus-connected cards as participants. **No direct
+graph access** — everything it needs is carried by the packet (Orchestrator graph access is deferred).
 
 ### 4. Agent cards + the bus
 
@@ -89,8 +90,8 @@ missing model config.
 
 ### 8. Hermes Dev Observatory (dev-only, never production)
 
-Hermes has two roles with the same honest rules. **Product role:** preflight context assembly,
-ThinkGraph run memory, postflight review, the under-chat activity feed. **Developer role:** the
+Hermes has two roles with the same honest rules. **Product role:** native inherited-context RunPacket
+assembly, ThinkGraph run memory, postflight review, the under-chat activity feed. **Developer role:** the
 evidence layer — runtime telemetry, CoderReport claim verification, card/config drift detection.
 Both act only through explicit tools and audited seams; Hermes is never an invisible controller,
 never a backdoor, never the owner of secrets. The observatory is Hermes' developer brain view —
@@ -101,7 +102,7 @@ One state source, two consumers (the developer's eyes and the coding agent's soc
 ```txt
 telemetry     services/agentTelemetry.ts — bounded ring + JSONL mirror under the gitignored
               coder-workspace/dev-telemetry/ (survives watch reloads; events restored from disk
-              are labeled source=durable). Stages: frontdoor → hermes_preflight →
+              are labeled source=durable). Stages: frontdoor → hermes_context →
               mag_one_dispatch → participant_turn (Python spans) → card_call → graph_read/write
               → hermes_postflight. Non-blocking, redacted, dev-only.
 spans         python_models/dev_spans.py — one span per participant turn from OUR run_stream

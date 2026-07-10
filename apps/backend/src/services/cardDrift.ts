@@ -18,7 +18,6 @@ import { RUNTIME_TOOL_SPECS } from '../contracts/runtimeContracts';
 export const MCP_HOST_TOOL_NAMES = [
   'mag_one.describe_connected_agents',
   'run_mag_one',
-  'hermes.preflight_context',
   'write_mag_one_instructions',
   'read_model_results',
   'canvas.inspect',

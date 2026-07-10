@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 import {
   busConnectedCardIds,
   parseProbeArgs,
-  runPacketDraftMissingFields,
   setDifference,
 } from './poc-pipeline-probe';
 
@@ -46,58 +45,14 @@ describe('setDifference', () => {
 });
 
 describe('parseProbeArgs', () => {
-  it('reads flags with defaults and the live gate', () => {
-    const args = parseProbeArgs(['--project', 'p1', '--live-mag-one']);
+  it('reads flags with defaults', () => {
+    const args = parseProbeArgs(['--project', 'p1']);
     expect(args).toMatchObject({
       project: 'p1',
       deck: 'deck_builder',
       conversation: 'main',
       // 127.0.0.1, not localhost — the backend listens on IPv4 only.
       backend: 'http://127.0.0.1:4000',
-      liveMagOne: true,
     });
-  });
-  it('defaults liveMagOne to false', () => {
-    expect(parseProbeArgs(['--project', 'p1']).liveMagOne).toBe(false);
-  });
-});
-
-describe('runPacketDraftMissingFields', () => {
-  const COMPLETE_DRAFT = {
-    userRequest: 'do the thing',
-    projectId: 'p1',
-    deckId: 'deck_builder',
-    conversationId: 'main',
-    connectedParticipants: ['card_research_agent'],
-    disconnectedExclusions: [],
-    hermesContextSummary: 'ThinkGraph: 0 node(s) | KnowGraph reachable | code context not requested',
-    graphContext: { thinkGraph: 'available', knowGraph: 'available', codeGraph: 'not_consulted' },
-    proofRequirements: ['name the worker and its evidence'],
-    expectedVisibleOutput: 'a readable final report',
-    noFallbackRules: ['no solo-answer substitution'],
-    promptMarkdown: '# Run Packet (draft — Hermes preflight)',
-  };
-
-  it('accepts a complete draft', () => {
-    expect(runPacketDraftMissingFields(COMPLETE_DRAFT)).toEqual([]);
-  });
-
-  it('names every missing field on an empty draft', () => {
-    const missing = runPacketDraftMissingFields({});
-    expect(missing).toContain('userRequest');
-    expect(missing).toContain('connectedParticipants');
-    expect(missing).toContain('graphContext.thinkGraph');
-    expect(missing).toContain('noFallbackRules');
-    expect(missing).toContain('promptMarkdown');
-  });
-
-  it('rejects an empty connected-participant list and empty rule lists', () => {
-    const missing = runPacketDraftMissingFields({
-      ...COMPLETE_DRAFT,
-      connectedParticipants: [],
-      proofRequirements: [],
-      noFallbackRules: [],
-    });
-    expect(missing).toEqual(['connectedParticipants', 'proofRequirements', 'noFallbackRules']);
   });
 });

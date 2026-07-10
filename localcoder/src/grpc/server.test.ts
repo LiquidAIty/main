@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import path from 'node:path'
+import * as grpc from '@grpc/grpc-js'
+import * as protoLoader from '@grpc/proto-loader'
 
 import {
   buildAgentDefinitionsFromRequest,
-  missingRequiredThinkGraphTools,
+  missingRequiredHarnessTools,
   resolveCardRunControlCall,
+  serializeProgressEvent,
 } from './server.js'
 import { resolveAgentTools } from '../tools/AgentTool/agentToolUtils.js'
 
@@ -53,29 +57,74 @@ test('buildAgentDefinitionsFromRequest never invents or rewrites a tool name', (
 const REQUIRED_CONTROL_TOOLS = [
   'mcp__liquidaity__card_run_assistant_agent',
   'mcp__liquidaity__thinkgraph_get_graph_slice',
+  'mcp__liquidaity__mag_one_describe_connected_agents',
 ]
 
-test('missingRequiredThinkGraphTools passes only when the real qualified control tools are fetched', () => {
+test('serializeProgressEvent preserves native structured subagent progress and linkage', () => {
+  const progress = serializeProgressEvent({
+    type: 'progress',
+    toolUseID: 'child-tool',
+    parentToolUseID: 'agent-call',
+    data: {
+      type: 'agent_progress',
+      agentId: 'agent-42',
+      message: { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'read_graph' }] } },
+    },
+  })
+
+  assert.equal(progress.tool_use_id, 'child-tool')
+  assert.equal(progress.parent_tool_use_id, 'agent-call')
+  assert.deepEqual(JSON.parse(progress.data_json), {
+    type: 'agent_progress',
+    agentId: 'agent-42',
+    message: { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'read_graph' }] } },
+  })
+})
+
+test('the actual gRPC serializers preserve UTF-8 request and progress bytes', () => {
+  const definition = protoLoader.loadSync(path.resolve(import.meta.dirname, '../proto/openclaude.proto'), {
+    keepCase: true,
+    longs: String,
+    enums: String,
+    defaults: true,
+    oneofs: true,
+  })
+  const service = (grpc.loadPackageDefinition(definition) as any).openclaude.v1.AgentService.service.Chat
+  const text = 'UTF-8 — café 漢字'
+
+  const request = service.requestDeserialize(service.requestSerialize({ request: { message: text } }))
+  assert.equal(request.request.message, text)
+
+  const response = service.responseDeserialize(service.responseSerialize({
+    progress: { tool_use_id: 'child', parent_tool_use_id: 'parent', data_json: JSON.stringify({ text }) },
+  }))
+  assert.deepEqual(JSON.parse(response.progress.data_json), { text })
+})
+
+test('missingRequiredHarnessTools passes only when the real qualified control tools are fetched', () => {
   assert.deepEqual(
-    missingRequiredThinkGraphTools([...REQUIRED_CONTROL_TOOLS, 'mcp__liquidaity__canvas_inspect']),
+    missingRequiredHarnessTools([...REQUIRED_CONTROL_TOOLS, 'mcp__liquidaity__canvas_inspect']),
     [],
   )
 })
 
-test('missingRequiredThinkGraphTools never requires a model-facing graph-write tool', () => {
+test('missingRequiredHarnessTools never requires a model-facing graph-write tool', () => {
   // A pool with only the read + doorway tools (no apply_live_patch anywhere) is
   // complete — the write tool was removed from the model-facing surface.
-  assert.deepEqual(missingRequiredThinkGraphTools(REQUIRED_CONTROL_TOOLS), [])
+  assert.deepEqual(missingRequiredHarnessTools(REQUIRED_CONTROL_TOOLS), [])
 })
 
-test('missingRequiredThinkGraphTools reports each absent tool exactly', () => {
+test('missingRequiredHarnessTools reports each absent tool exactly', () => {
   assert.deepEqual(
-    missingRequiredThinkGraphTools(['mcp__liquidaity__thinkgraph_get_graph_slice']),
-    ['mcp__liquidaity__card_run_assistant_agent'],
+    missingRequiredHarnessTools(['mcp__liquidaity__thinkgraph_get_graph_slice']),
+    [
+      'mcp__liquidaity__card_run_assistant_agent',
+      'mcp__liquidaity__mag_one_describe_connected_agents',
+    ],
   )
   // Old bare names are NOT the real pool names — no alias, no translation.
   assert.deepEqual(
-    missingRequiredThinkGraphTools(['card.run_assistant_agent', 'thinkgraph.get_graph_slice']),
+    missingRequiredHarnessTools(['card.run_assistant_agent', 'thinkgraph.get_graph_slice']),
     REQUIRED_CONTROL_TOOLS,
   )
 })

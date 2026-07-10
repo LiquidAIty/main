@@ -7,15 +7,9 @@ MCP client for the server's lifetime — before any chat work is accepted. No
 env vars, no .env, no per-turn spawn, no fallback host.
 
 Exposes exactly this tool surface:
-  * mag_one.describe_connected_agents (read the connected, bus-eligible Mag One
-                                      Agent Cards + their capabilities before
-                                      writing a run_mag_one prompt)
-  * run_mag_one                      (run regular native Mag One from a
-                                      Harness-authored Markdown orchestration
-                                      prompt — used verbatim, no plan/task/gate)
-  * hermes.preflight_context         (Hermes memory preflight: ContextPacket
-                                      from real graph/deck reads + a draft Run
-                                      Packet; read-only, honest empty states)
+  * mag_one.describe_connected_agents (read connected, bus-eligible Mag One cards)
+  * run_mag_one                      (run native Mag One from the one Hermes
+                                      RunPacket, or a Coder job-folder handoff)
   * thinkgraph.get_graph_slice       (bounded READ-ONLY graph scope)
   * canvas.inspect / card.update_configuration / canvas.upsert_wire /
     card.assign_runtime_skill / card.assign_data_binding /
@@ -142,13 +136,14 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="run_mag_one",
             description=(
-                "Run regular native Mag One. Task source is EITHER promptMarkdown OR a Coder "
+                "Run regular native Mag One. Task source is EITHER the one Hermes-authored RunPacket OR a Coder "
                 "job-folder handoff (jobId). With jobId, the run's task is the EXACT bytes of "
                 "handoff/<jobId>/prompt.md, the Magnetic One variable context packet for this run, and its "
                 "return surface is returns/<jobId>/ under the server-forced trusted workspace root — "
                 "the result reports that returns dir and the files actually written there (honest "
-                "no_return_files_created when none). With promptMarkdown, that string IS Mag One's "
-                "job, used verbatim. jobId takes precedence so the on-disk file is the contract. "
+                "no_return_files_created when none). With runPacket, the backend validates the exact "
+                "Hermes contract and live participant set, then passes its JSON to Mag One. "
+                "jobId takes precedence so the on-disk file is the contract. "
                 "Mag One reasons over the task, selects among connected eligible workers itself, and "
                 "returns its result. No structured plan, no task ledger gate, no approval gate. "
                 "Pass your real conversationId so Hermes postflight records the run's memory with "
@@ -159,36 +154,41 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "runPacket": {
+                        "type": "object",
+                        "properties": {
+                            "version": {"type": "string", "const": "run_packet_v0"},
+                            "preparedBy": {"type": "string", "const": "hermes"},
+                            "parentRunId": {"type": "string"},
+                            "projectId": {"type": "string"},
+                            "deckId": {"type": "string"},
+                            "conversationId": {"type": "string"},
+                            "route": {"type": "string", "enum": ["direct", "mag_one", "coder"]},
+                            "userRequest": {"type": "string"},
+                            "objective": {"type": "string"},
+                            "contextSummary": {"type": "string"},
+                            "graphContext": {"type": "object"},
+                            "connectedParticipants": {"type": "array", "items": {"type": "string"}},
+                            "disconnectedExclusions": {"type": "array", "items": {"type": "string"}},
+                            "proofRequirements": {"type": "array", "items": {"type": "string"}},
+                            "expectedVisibleOutput": {"type": "string"},
+                            "noFallbackRules": {"type": "array", "items": {"type": "string"}},
+                            "coder": {"type": "object"},
+                        },
+                        "required": [
+                            "version", "preparedBy", "parentRunId", "projectId", "deckId",
+                            "conversationId", "route", "userRequest", "objective", "contextSummary",
+                            "graphContext", "connectedParticipants", "disconnectedExclusions",
+                            "proofRequirements", "expectedVisibleOutput", "noFallbackRules",
+                        ],
+                        "additionalProperties": False,
+                    },
                     "projectId": {"type": "string"},
                     "deckId": {"type": "string"},
-                    "promptMarkdown": {"type": "string"},
                     "jobId": {"type": "string"},
                     "conversationId": {"type": "string"},
                 },
-                "required": ["projectId"],
-            },
-        ),
-        Tool(
-            name="hermes.preflight_context",
-            description=(
-                "Hermes memory preflight — call BEFORE writing a run_mag_one prompt. Takes the "
-                "user request (RunIntent) and returns a ContextPacket assembled from REAL reads "
-                "(bounded ThinkGraph scope, the live deck's connected/disconnected worker "
-                "topology, KnowGraph reachability) plus a draft Run Packet in Markdown to refine. "
-                "Read-only: writes nothing, never fakes graph context — an unavailable source is "
-                "reported as unavailable. Pass your real conversationId so run memory keeps its "
-                "provenance. deckId is optional and defaults to the one canonical Agent Canvas deck."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "deckId": {"type": "string"},
-                    "conversationId": {"type": "string"},
-                    "userRequest": {"type": "string"},
-                    "needsCodeContext": {"type": "boolean"},
-                },
-                "required": ["projectId", "userRequest"],
+                "required": [],
             },
         ),
         Tool(
@@ -361,8 +361,7 @@ async def list_tools() -> list[Tool]:
 _ALLOWED_KEYS: dict[str, set[str]] = {
     "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
-    "run_mag_one": {"projectId", "deckId", "promptMarkdown", "jobId", "conversationId"},
-    "hermes.preflight_context": {"projectId", "deckId", "conversationId", "userRequest", "needsCodeContext"},
+    "run_mag_one": {"runPacket", "projectId", "deckId", "jobId", "conversationId"},
     "write_mag_one_instructions": {"instructions", "runId"},
     "read_model_results": {"runId", "path"},
     "canvas.inspect": {"projectId", "deckId"},
@@ -378,7 +377,6 @@ _BRIDGE_PATHS: dict[str, str] = {
     "run_coder_subagent": "run_coder_subagent",
     "mag_one.describe_connected_agents": "describe_connected_agents",
     "run_mag_one": "run_mag_one",
-    "hermes.preflight_context": "hermes_preflight",
 }
 
 # Coder job-folder tools dispatch to the ONE shared Python implementation

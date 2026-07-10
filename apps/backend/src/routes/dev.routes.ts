@@ -28,7 +28,6 @@ import path from 'node:path';
 import { requireDevTestMode } from '../services/devTest';
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { describeConnectedAgents } from '../coder/openclaude/mcp/liquidAItyAgentFlow';
-import { hermesPreflightContext } from '../coder/hermes/hermesPreflight';
 import { resolveCardModelStrict, resolveCardTools, runConfiguredCard } from '../cards/runtime';
 import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
 import {
@@ -65,7 +64,7 @@ const GRAPH_ENDPOINTS = {
 } as const;
 const RUN_STAGES = [
   'frontdoor',
-  'hermes_preflight',
+  'hermes_context',
   'mag_one_dispatch',
   'card_call',
   'graph_read',
@@ -262,14 +261,12 @@ router.post('/agent-harness/probe-frontdoor', async (req, res) => {
         'probe_frontdoor_live_not_supported: use the real Main Chat for a live turn, or POST /api/coder/mcp-bridge/run_mag_one explicitly for a team run',
     });
   }
-  const runIntent = { projectId, deckId, conversationId, userRequest: testUserMessage };
+  const turnProbe = { projectId, deckId, conversationId, userMessage: testUserMessage };
   try {
     const { view, connectedIds, nodes } = await loadDeckAndConnected(projectId, deckId);
     const blockedReasons: string[] = [];
     if (!view.orchestratorCardId) blockedReasons.push('no_orchestrator_card_on_deck');
     if (view.connectedAgents.length === 0) blockedReasons.push('no_bus_connected_participants');
-    // Preflight is a REAL read-only Hermes call — only when explicitly allowed.
-    const preflight = body.includePreflight === true ? await hermesPreflightContext(runIntent) : null;
     const disconnected = nodes
       .filter((node) => asTrimmed(node?.kind || 'agent') === 'agent')
       .map((node) => asTrimmed(node?.id))
@@ -285,21 +282,20 @@ router.post('/agent-harness/probe-frontdoor', async (req, res) => {
       correlationId: `probe_${randomUUID().slice(0, 8)}`,
       inputSummary: testUserMessage,
       outputSummary: `frontdoor dry-run: workers=[${view.connectedAgents.map((a) => a.cardId).join(',')}]`,
-      metadata: { probe: 'frontdoor', blockedReasons, preflightRan: preflight !== null },
+      metadata: { probe: 'frontdoor', blockedReasons },
     });
     return res.json({
       ok: true,
       mode: 'dry_run',
-      runIntent,
+      turnProbe,
       wouldCall: {
-        harness: 'gRPC :50051 session turn (card doorways + mcp tools)',
-        hermesPreflight: 'POST /api/coder/mcp-bridge/hermes_preflight',
-        magOne: 'POST /api/coder/mcp-bridge/run_mag_one (only if the Harness decides a team run is needed)',
+        harness: 'gRPC :50051 session turn (native agents + mcp tools)',
+        hermes: 'Agent(subagent_type=card_hermes_steward, prompt omitted, inherited parent context)',
+        magOne: 'POST /api/coder/mcp-bridge/run_mag_one with one Hermes RunPacket (only for route=mag_one)',
       },
       connectedParticipants: view.connectedAgents,
       disconnectedExclusions: disconnected,
       blockedReasons,
-      preflight,
       telemetryEventId,
     });
   } catch (error) {

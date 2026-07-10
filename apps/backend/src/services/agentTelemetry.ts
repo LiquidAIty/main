@@ -1,6 +1,6 @@
 /**
  * Dev-only agent-call telemetry — a bounded ring of what every agent/card
- * call boundary actually did (frontdoor → Hermes preflight → Mag One →
+ * call boundary actually did (frontdoor → native Hermes context → Mag One →
  * card calls → graph reads/writes → Hermes postflight), plus a bounded
  * dev-only JSONL mirror so evidence survives backend watch reloads.
  *
@@ -27,7 +27,7 @@ import { resolveCoderWorkspaceRoot } from '../coder/workspaceRoot';
 
 export type AgentTelemetryStage =
   | 'frontdoor'
-  | 'hermes_preflight'
+  | 'hermes_context'
   | 'mag_one_dispatch'
   | 'card_call'
   | 'participant_turn'

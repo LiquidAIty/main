@@ -22,6 +22,7 @@ const PROTO_PATH = path.resolve(import.meta.dirname, '../proto/openclaude.proto'
 // happen only inside a real configured ThinkGraph card run (card.run_assistant_agent
 // → Python runConfiguredCard → the card's own scoped apply_thinkgraph_patch tool).
 const THINKGRAPH_READ_TOOL_NAME = 'mcp__liquidaity__thinkgraph_get_graph_slice'
+const MAG_ONE_DESCRIBE_TOOL_NAME = 'mcp__liquidaity__mag_one_describe_connected_agents'
 
 // The one MCP control tool a card doorway child calls to run its bound saved
 // card through the canonical Python executor (card.run_assistant_agent on the
@@ -68,11 +69,12 @@ export type PythonMcpConfig = {
 
 /** Fail-closed startup check: the control-surface tools the card architecture
  * depends on must exist in the actually-fetched Python MCP tool pool — the
- * card-run doorway tool and the bounded READ-ONLY ThinkGraph slice. There is
+ * card-run doorway tool, the bounded READ-ONLY ThinkGraph slice, and the live
+ * Mag One roster read used by native Hermes. There is
  * no model-facing write tool to require. Pure so it is directly testable. */
-export function missingRequiredThinkGraphTools(toolNames: string[]): string[] {
+export function missingRequiredHarnessTools(toolNames: string[]): string[] {
   const pool = new Set(toolNames)
-  return [CARD_RUN_CONTROL_TOOL_NAME, THINKGRAPH_READ_TOOL_NAME].filter(
+  return [CARD_RUN_CONTROL_TOOL_NAME, THINKGRAPH_READ_TOOL_NAME, MAG_ONE_DESCRIBE_TOOL_NAME].filter(
     name => !pool.has(name),
   )
 }
@@ -100,12 +102,27 @@ export function buildAgentDefinitionsFromRequest(req: any): BuiltInAgentDefiniti
         agentType: String(c.agent_type),
         whenToUse,
         ...(allowedTools.length > 0 ? { tools: allowedTools } : {}),
+        ...(String(c.model || '').trim() ? { model: String(c.model) } : {}),
         source: 'built-in',
         baseDir: 'built-in',
         ...(c.context_mode_inherit_parent ? { contextMode: 'inherit_parent' as const } : {}),
         getSystemPrompt: () => systemPrompt,
       }
     })
+}
+
+/** Preserve the native QueryEngine progress union without cloning it into the
+ * gRPC schema. JSON is lossless for the message data QueryEngine emits. */
+export function serializeProgressEvent(message: any): {
+  tool_use_id: string
+  parent_tool_use_id: string
+  data_json: string
+} {
+  return {
+    tool_use_id: String(message?.toolUseID || ''),
+    parent_tool_use_id: String(message?.parentToolUseID || ''),
+    data_json: JSON.stringify(message?.data ?? null),
+  }
 }
 
 // Inverse of grpcChatClient.ts's deriveSessionId ("mag1:{projectId}:{conversationId}"),
@@ -183,10 +200,10 @@ export class GrpcServer {
       )
       process.exit(1)
     }
-    const missing = missingRequiredThinkGraphTools(tools.map(t => t.name))
+    const missing = missingRequiredHarnessTools(tools.map(t => t.name))
     if (missing.length > 0) {
       console.error(
-        `gRPC Server: FATAL — Python MCP host connected but required ThinkGraph tools are missing: ${missing.join(', ')}`,
+        `gRPC Server: FATAL — Python MCP host connected but required Harness tools are missing: ${missing.join(', ')}`,
       )
       process.exit(1)
     }
@@ -358,6 +375,8 @@ export class GrpcServer {
                 })
                 fullText += msg.event.delta.text
               }
+            } else if (msg.type === 'progress') {
+              call.write({ progress: serializeProgressEvent(msg) })
             } else if (msg.type === 'user') {
               // Extract tool results
               const content = msg.message.content

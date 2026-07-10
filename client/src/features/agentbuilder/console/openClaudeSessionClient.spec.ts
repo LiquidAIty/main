@@ -18,6 +18,35 @@ afterEach(() => {
 });
 
 describe('streamSession', () => {
+  it('preserves UTF-8 prompt and response bytes when an em dash is split across stream chunks', async () => {
+    const text = 'Harness — Hermes — café 漢字';
+    const encoded = new TextEncoder().encode(
+      `event: text\ndata: ${JSON.stringify({ text })}\n\nevent: done\ndata: ${JSON.stringify({ fullText: text })}\n\nevent: end\ndata: {}\n\n`,
+    );
+    const dashStart = encoded.findIndex((byte, index) => byte === 0xe2 && encoded[index + 1] === 0x80);
+    const chunks = [encoded.slice(0, dashStart + 1), encoded.slice(dashStart + 1, dashStart + 2), encoded.slice(dashStart + 2)];
+    const onEvent = vi.fn();
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          chunks.forEach((chunk) => controller.enqueue(chunk));
+          controller.close();
+        },
+      });
+      expect(JSON.parse(String(init?.body))).toMatchObject({ message: text });
+      return new Response(stream, { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(streamSession({
+      projectId: 'project-1',
+      conversationId: 'main',
+      message: text,
+      onEvent,
+    })).resolves.toEqual({ finalText: text });
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: 'text', text }));
+  });
+
   it('rejects an SSE error frame with the route and correlation evidence', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
       'event: error\ndata: {"code":"harness_turn_failed","message":"The chat run failed.","correlationId":"req_123","route":"/api/coder/openclaude/session/chat","status":502}\n\n',

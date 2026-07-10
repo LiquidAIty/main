@@ -189,7 +189,7 @@ async function clearAgentEventsOnBackend(): Promise<void> {
 // The intended pipeline order (matches the backend's instrumented stages).
 export const PIPELINE_STAGES = [
   'frontdoor',
-  'hermes_preflight',
+  'hermes_context',
   'mag_one_dispatch',
   'participant_turn',
   'card_call',

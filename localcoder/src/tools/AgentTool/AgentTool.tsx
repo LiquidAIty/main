@@ -81,7 +81,7 @@ function getAutoBackgroundMs(): number {
 // Base input schema without multi-agent parameters
 const baseInputSchema = lazySchema(() => z.object({
   description: z.string().describe('A short (3-5 word) description of the task'),
-  prompt: z.string().describe('The task for the agent to perform'),
+  prompt: z.string().optional().describe("The task for the agent to perform. Omit only for a named agent whose context mode is 'inherit_parent'; that agent reads the live parent conversation instead."),
   subagent_type: z.string().optional().describe('The type of specialized agent to use for this task'),
   model: z.enum(['sonnet', 'opus', 'haiku']).optional().describe("Optional model override for this agent. Takes precedence over the agent definition's model frontmatter. If omitted, uses the agent definition's model, or inherits from the parent."),
   run_in_background: z.boolean().optional().describe('Set to true to run this agent in the background. You will be notified when it completes.')
@@ -193,6 +193,20 @@ import type { AgentToolProgress, ShellProgress } from '../../types/tools.js';
 // AgentTool forwards both its own progress events and shell progress
 // events from the sub-agent so the SDK receives tool_progress updates during bash/powershell runs.
 export type Progress = AgentToolProgress | ShellProgress;
+
+/** Resolve the child task text after the selected agent is known. Named
+ * inherit-parent agents may intentionally receive no task prompt because their
+ * live parent conversation is the task source. Every other Agent invocation
+ * keeps the historical required-prompt contract and fails closed. */
+export function resolveAgentPrompt(
+  requestedPrompt: string | undefined,
+  inheritsParentContext: boolean,
+): string {
+  if (requestedPrompt !== undefined) return requestedPrompt;
+  if (inheritsParentContext) return '';
+  throw new Error("Agent prompt is required unless the selected named agent declares contextMode: 'inherit_parent'.");
+}
+
 export const AgentTool = buildTool({
   async prompt({
     agents,
@@ -237,7 +251,7 @@ export const AgentTool = buildTool({
     return outputSchema();
   },
   async call({
-    prompt,
+    prompt: requestedPrompt,
     subagent_type,
     description,
     model: modelParam,
@@ -282,6 +296,7 @@ export const AgentTool = buildTool({
     // Check if this is a multi-agent spawn request
     // Spawn is triggered when team_name is set (from param or context) and name is provided
     if (teamName && name) {
+      const teamPrompt = resolveAgentPrompt(requestedPrompt, false);
       // Set agent definition color for grouped UI display before spawning
       const agentDef = subagent_type ? toolUseContext.options.agentDefinitions.activeAgents.find(a => a.agentType === subagent_type) : undefined;
       if (agentDef?.color) {
@@ -289,7 +304,7 @@ export const AgentTool = buildTool({
       }
       const result = await spawnTeammate({
         name,
-        prompt,
+        prompt: teamPrompt,
         description,
         team_name: teamName,
         use_splitpane: true,
@@ -305,7 +320,7 @@ export const AgentTool = buildTool({
       // not part of the exported Output union (for dead code elimination purposes).
       const spawnResult: TeammateSpawnedOutput = {
         status: 'teammate_spawned' as const,
-        prompt,
+        prompt: teamPrompt,
         ...result.data
       };
       return {
@@ -361,6 +376,7 @@ export const AgentTool = buildTool({
     // also inherits the parent's exact prompt/tools). Deliberately separate
     // from isForkPath: only context-message construction is affected below.
     const inheritsParentContext = isForkPath || selectedAgent.contextMode === 'inherit_parent';
+    const prompt = resolveAgentPrompt(requestedPrompt, inheritsParentContext);
 
     // Same lifecycle constraint as the run_in_background guard above, but for
     // agent definitions that force background via `background: true`. Checked
@@ -1301,7 +1317,7 @@ export const AgentTool = buildTool({
     const i = input as AgentToolInput;
     const tags = [i.subagent_type, i.mode ? `mode=${i.mode}` : undefined].filter((t): t is string => t !== undefined);
     const prefix = tags.length > 0 ? `(${tags.join(', ')}): ` : ': ';
-    return `${prefix}${i.prompt}`;
+    return `${prefix}${i.prompt ?? ''}`;
   },
   isConcurrencySafe() {
     return true;

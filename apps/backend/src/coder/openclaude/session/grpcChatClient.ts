@@ -23,6 +23,7 @@ export type GrpcSessionEvent =
   | { kind: 'text'; text: string }
   | { kind: 'tool_start'; toolName: string; argsJson: string; toolUseId: string }
   | { kind: 'tool_result'; toolName: string; toolUseId: string; output: string; isError: boolean }
+  | { kind: 'progress'; toolUseId: string; parentToolUseId: string; data: unknown }
   | { kind: 'permission'; promptId: string; question: string; promptType: string }
   | { kind: 'done'; fullText: string }
   | { kind: 'error'; message: string; code?: string };
@@ -87,6 +88,10 @@ function parseSessionId(sessionId: string): { projectId: string; conversationId:
  * runtime's own MCP naming for the 'liquidaity' Python host (dots→underscores).
  * A fixed identity constant, not a mapping. */
 const CARD_RUN_CONTROL_TOOL = 'mcp__liquidaity__card_run_assistant_agent';
+const HERMES_NATIVE_CONTEXT_TOOLS = [
+  'mcp__liquidaity__mag_one_describe_connected_agents',
+  'mcp__liquidaity__thinkgraph_get_graph_slice',
+] as const;
 
 /** The truthful parent-facing capability line for a card doorway, keyed on the
  * saved binding (the same architectural signal runtime.ts uses for write
@@ -115,13 +120,11 @@ export function doorwayWhenToUse(binding: string, title: string): string {
   }
   if (binding === 'hermes_steward') {
     return (
-      'Delegate here when you need project context, run history, blocker patterns, or ' +
-      'CoderReport review. This agent has READ access to ThinkGraph project memory ' +
-      '(past runs, blockers, patterns, feature status, decisions) and can WRITE ' +
-      'structured findings back to ThinkGraph through its scoped card authority. ' +
-      'Ask it: "What do we know about X?" "Review this CoderReport." ' +
-      '"What patterns have emerged?" "What invariants touch this file?" ' +
-      'Do not review a CoderReport yourself or fabricate run history — route it here.'
+      'Invoke this standing Hermes context steward at the start of every user turn. ' +
+      'Omit prompt: Hermes inherits the complete live parent conversation, reads the ' +
+      'real graph/team context it needs, and returns one RunPacket telling the Harness ' +
+      'whether to answer directly, run Mag One, or dispatch the coder. Never summarize ' +
+      'the user into a separate task prompt for Hermes.'
     );
   }
   return `The saved agent card "${title}". Delegate the matching task to it and relay its result.`;
@@ -132,7 +135,7 @@ export function doorwayWhenToUse(binding: string, title: string): string {
  * no data bindings — Python resolves ALL of those from the saved card when
  * runConfiguredCard executes it. The doorway only relays the task and returns
  * the structured result. */
-export function buildCardDoorwayDefinition(card: any): Record<string, unknown> | null {
+export function buildHarnessAgentDefinition(card: any, runtimeContext?: string | null): Record<string, unknown> | null {
   const cardId = String(card?.id || '').trim();
   if (!cardId) return null;
   const title = String(card?.title || cardId).trim();
@@ -140,6 +143,24 @@ export function buildCardDoorwayDefinition(card: any): Record<string, unknown> |
     card?.runtimeOptions?.binding ?? card?.runtimeBinding ?? card?.binding,
     card?.id,
   );
+  if (binding === 'hermes_steward') {
+    const systemPrompt = typeof card?.prompt === 'string' ? card.prompt : '';
+    if (!systemPrompt.trim()) return null;
+    const modelKey = String(card?.runtimeOptions?.modelKey || '').trim();
+    const model = modelKey ? resolveModel(modelKey).id : '';
+    return {
+      agent_type: cardId,
+      card_id: cardId,
+      runtime_binding: binding,
+      when_to_use: doorwayWhenToUse(binding, title),
+      // Hermes IS the native inherited-context agent. Its saved prompt bytes are
+      // the system prompt; there is no card.run_assistant_agent wrapper/model hop.
+      system_prompt: [systemPrompt, runtimeContext].filter(Boolean).join('\n\n'),
+      allowed_tools: [...HERMES_NATIVE_CONTEXT_TOOLS],
+      context_mode_inherit_parent: true,
+      ...(model ? { model } : {}),
+    };
+  }
   return {
     agent_type: cardId,
     card_id: cardId,
@@ -210,7 +231,7 @@ export async function resolveCardDoorwayDefinitions(
     const doc = await getDeckDocument(parsed.projectId, BUILDER_DECK_ID);
     const nodes: any[] = Array.isArray((doc?.deck as any)?.nodes) ? (doc!.deck as any).nodes : [];
     return selectDoorwayCards(nodes, mode)
-      .map(buildCardDoorwayDefinition)
+      .map((node) => buildHarnessAgentDefinition(node))
       .filter((def): def is Record<string, unknown> => Boolean(def));
   } catch {
     return [];
@@ -263,6 +284,7 @@ export async function resolveMainChatSystemPrompt(sessionId: string): Promise<st
 export async function resolveMainChatRuntimeConfig(
   sessionId: string,
   mode: HarnessMode,
+  parentRunId?: string,
 ): Promise<MainChatRuntimeConfig | null> {
   const parsed = parseSessionId(sessionId);
   if (!parsed) return null;
@@ -286,7 +308,7 @@ export async function resolveMainChatRuntimeConfig(
       providerModelId: resolved.id,
       deckRevision: doc?.meta?.deckRevision || null,
       doorwayDefinitions: selectDoorwayCards(nodes, mode)
-        .map(buildCardDoorwayDefinition)
+        .map((node) => buildHarnessAgentDefinition(node, buildHarnessRuntimeContext(sessionId, parentRunId)))
         .filter((def): def is Record<string, unknown> => Boolean(def)),
     };
   } catch {
@@ -372,6 +394,19 @@ export async function startGrpcTurn(
           output: msg.tool_result.output,
           isError: Boolean(msg.tool_result.is_error),
         });
+      } else if (msg.progress) {
+        let data: unknown = null;
+        try {
+          data = JSON.parse(String(msg.progress.data_json || 'null'));
+        } catch {
+          data = { type: 'invalid_progress_json', raw: String(msg.progress.data_json || '') };
+        }
+        safeOnEvent({
+          kind: 'progress',
+          toolUseId: String(msg.progress.tool_use_id || ''),
+          parentToolUseId: String(msg.progress.parent_tool_use_id || ''),
+          data,
+        });
       } else if (msg.action_required) {
         safeOnEvent({
           kind: 'permission',
@@ -404,13 +439,16 @@ export async function startGrpcTurn(
   });
 
   const mode = args.mode === 'canvas' ? 'canvas' : 'chat';
-  const mainChatConfig = await resolveMainChatRuntimeConfig(args.sessionId, mode);
-  const doorwayDefinitions = mainChatConfig?.doorwayDefinitions ?? [];
+  const mainChatConfig = await resolveMainChatRuntimeConfig(args.sessionId, mode, args.traceId);
+  if (!mainChatConfig) {
+    throw new Error('main_chat_runtime_config_unavailable: exactly one configured main_chat card with a valid saved model is required');
+  }
+  const doorwayDefinitions = mainChatConfig.doorwayDefinitions;
   const runtimeContext = buildHarnessRuntimeContext(args.sessionId, args.traceId);
-  const appendSystemPrompt = [mainChatConfig?.prompt, runtimeContext]
+  const appendSystemPrompt = [mainChatConfig.prompt, runtimeContext]
     .filter((section): section is string => Boolean(section))
     .join('\n\n') || null;
-  const resolvedModel = mainChatConfig?.providerModelId || args.model || '';
+  const resolvedModel = mainChatConfig.providerModelId;
   if (args.traceId) {
     logHarnessTrace(
       [

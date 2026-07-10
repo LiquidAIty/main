@@ -8,20 +8,18 @@
  * It plugs into each pipe in order and prints one PASS/FAIL/SKIP line per
  * stage with the real evidence (counts, ids, tools, errors). Nothing here
  * fakes success: every check reads live state and reports exactly what came
- * back. The optional live Mag One team run is OFF by default and only runs
- * with the explicit `--live-mag-one` flag.
+ * back. This probe is read-only; live model proof belongs to the real Main Chat.
  *
- * Stages (the authority chain: Harness RunIntent → Hermes preflight →
+ * Stages (the authority chain: Harness → native inherited-context Hermes →
  * RunPacket → Mag One → Hermes postflight → graph memory):
  *   1  backend-health        GET  /api/health  (chat entry reachable)
  *   2  services-listening    TCP  5173 (frontend) / 8003 (autogen) / 50051 (gRPC = Harness,
- *                            the RunIntent owner)
+ *                            the principal chat owner)
  *   3  deck-topology         GET  /api/projects/:p/decks/:d  (bus edges = authority)
  *   4  mag-one-view          POST /api/coder/mcp-bridge/describe_connected_agents
  *                            (blank deckId → canonical-deck default is part of the check;
  *                            disconnected cards must be structurally absent)
- *   5  hermes-preflight      POST /api/coder/mcp-bridge/hermes_preflight
- *                            (ContextPacket returned + RunPacket draft fields validated)
+ *   5  native-hermes-config  validate the one saved Hermes card used directly by Agent
  *   6  thinkgraph-read       GET  /api/thinkgraph/projection + POST mcp-bridge/thinkgraph_read_scope
  *   7  knowgraph-read        services/knowgraph/hybrid_retrieval_probe.py (read-only, real Neo4j)
  *   8  hermes-activity       GET  /api/coder/hermes/activity (honest empty is a PASS)
@@ -30,7 +28,6 @@
  *                            writing NOTHING (no fake run records, ever)
  *   10 runs-and-history      GET  /api/projects/:p/decks (latest run ids) +
  *                            GET  /api/coder/openclaude/session/history
- *   11 live-mag-one          POST /api/coder/mcp-bridge/run_mag_one  [gated: --live-mag-one]
  *
  * Output ends with a PASS/FAIL summary plus the CARD ROLE MAP read from the
  * live deck. Exit code: 0 when every non-skipped stage passes; 1 otherwise.
@@ -52,7 +49,6 @@ export type ProbeArgs = {
   deck: string;
   conversation: string;
   backend: string;
-  liveMagOne: boolean;
 };
 
 export function parseProbeArgs(argv: string[]): ProbeArgs {
@@ -67,7 +63,6 @@ export function parseProbeArgs(argv: string[]): ProbeArgs {
     // 127.0.0.1, not localhost: Node ≥17 resolves localhost IPv6-first and the
     // backend listens on IPv4 only, so a bare localhost fetch fails.
     backend: get('backend', 'http://127.0.0.1:4000').replace(/\/$/, ''),
-    liveMagOne: argv.includes('--live-mag-one'),
   };
 }
 
@@ -117,26 +112,6 @@ export function busConnectedCardIds(nodes: DeckNode[], edges: DeckEdge[]): strin
 export function setDifference(a: string[], b: string[]): string[] {
   const bs = new Set(b);
   return a.filter((x) => !bs.has(x));
-}
-
-/** Required RunPacket-draft fields (runtimeContracts.RunPacketDraft) — the
- * bounded packet contract stage 5 defends. Returns the missing field names. */
-export function runPacketDraftMissingFields(draft: any): string[] {
-  const missing: string[] = [];
-  const hasText = (key: string) => typeof draft?.[key] === 'string' && draft[key].trim().length > 0;
-  const hasArray = (key: string, nonEmpty: boolean) =>
-    Array.isArray(draft?.[key]) && (!nonEmpty || draft[key].length > 0);
-  for (const key of ['userRequest', 'projectId', 'deckId', 'conversationId', 'hermesContextSummary', 'expectedVisibleOutput', 'promptMarkdown']) {
-    if (!hasText(key)) missing.push(key);
-  }
-  if (!hasArray('connectedParticipants', true)) missing.push('connectedParticipants');
-  if (!hasArray('disconnectedExclusions', false)) missing.push('disconnectedExclusions');
-  if (!hasArray('proofRequirements', true)) missing.push('proofRequirements');
-  if (!hasArray('noFallbackRules', true)) missing.push('noFallbackRules');
-  for (const graph of ['thinkGraph', 'knowGraph', 'codeGraph']) {
-    if (!String(draft?.graphContext?.[graph] || '').trim()) missing.push(`graphContext.${graph}`);
-  }
-  return missing;
 }
 
 // ── stage runner ─────────────────────────────────────────────────────────────
@@ -319,50 +294,16 @@ async function main(): Promise<void> {
     report('mag-one-view', 'FAIL', String(err?.message || err));
   }
 
-  // 5 — Hermes preflight (ContextPacket returned + RunPacket draft validated).
-  //     Read-only by contract: the only side effect is a real activity entry.
-  try {
-    const preflight = await postJson(`${args.backend}/api/coder/mcp-bridge/hermes_preflight`, {
-      projectId: args.project,
-      deckId: args.deck,
-      conversationId: args.conversation,
-      userRequest: 'Pipeline probe preflight check (no run will be started).',
-    });
-    const context = preflight?.contextPacket;
-    const draft = preflight?.runPacketDraft;
-    const missingFields = runPacketDraftMissingFields(draft);
-    const draftConnected: string[] = Array.isArray(draft?.connectedParticipants)
-      ? draft.connectedParticipants
-      : [];
-    const expectedWorkers = EXPECTED_CONNECTED.filter((id) => id !== 'card_main_chat');
-    const missingWorkers = setDifference(expectedWorkers, draftConnected);
-    const leaked = draftConnected.filter((id) => EXPECTED_DISCONNECTED.includes(id));
-    const contextOk =
-      Boolean(context) &&
-      typeof context?.thinkGraph?.available === 'boolean' &&
-      typeof context?.knowGraph?.available === 'boolean' &&
-      typeof context?.codeGraph?.consulted === 'boolean';
-    const ok =
-      preflight?.ok === true &&
-      contextOk &&
-      missingFields.length === 0 &&
-      missingWorkers.length === 0 &&
-      leaked.length === 0;
-    report(
-      'hermes-preflight',
-      ok ? 'PASS' : 'FAIL',
-      `thinkGraph=${context?.thinkGraph?.available ? `available(${context.thinkGraph.nodeCount}n)` : `unavailable:${context?.thinkGraph?.reason || '?'}`} ` +
-        `knowGraph=${context?.knowGraph?.available ? 'available' : `unavailable:${context?.knowGraph?.reason || '?'}`} ` +
-        `codeGraph=${context?.codeGraph?.consulted ? 'consulted' : 'not-consulted'} ` +
-        `runPacketFields=${missingFields.length === 0 ? 'complete' : `MISSING=[${missingFields.join(',')}]`} ` +
-        `workers=[${draftConnected.join(',')}]` +
-        (missingWorkers.length ? ` MISSING_WORKERS=[${missingWorkers.join(',')}]` : '') +
-        (leaked.length ? ` DISCONNECTED_LEAKED=[${leaked.join(',')}]` : '') +
-        ` exclusions=[${(draft?.disconnectedExclusions || []).join(',')}]`,
-    );
-  } catch (err: any) {
-    report('hermes-preflight', 'FAIL', String(err?.message || err));
-  }
+  // 5 — the one saved Hermes card that LocalCoder registers directly as the
+  // native inherited-context Agent (no card-run doorway wrapper).
+  const hermesCards = deckNodes.filter((node) => node.runtimeBinding === 'hermes_steward');
+  const hermes = hermesCards[0];
+  const hermesOk = hermesCards.length === 1 && Boolean(String((hermes as any)?.prompt || '').trim());
+  report(
+    'native-hermes-config',
+    hermesOk ? 'PASS' : 'FAIL',
+    `matches=${hermesCards.length} model=${String(hermes?.runtimeOptions?.modelKey || 'missing')} prompt=${hermesOk ? 'present' : 'missing'}`,
+  );
 
   // 6 — ThinkGraph read (projection route + scoped read tool bridge)
   try {
@@ -479,34 +420,6 @@ async function main(): Promise<void> {
     report('runs-and-history', 'FAIL', String(err?.message || err));
   }
 
-  // 11 — live Mag One team run (explicitly gated; never runs by default)
-  if (!args.liveMagOne) {
-    report('live-mag-one', 'SKIP', 'gated — pass --live-mag-one to run a real team run');
-  } else {
-    try {
-      const run = await postJson(`${args.backend}/api/coder/mcp-bridge/run_mag_one`, {
-        projectId: args.project,
-        deckId: args.deck,
-        conversationId: args.conversation,
-        promptMarkdown: [
-          '# Probe team run',
-          'Confirm the connected team is reachable: each selected worker states its role in one sentence.',
-          'Use graph context only; do not write any graph.',
-        ].join('\n'),
-      });
-      const ok = run?.ok === true && run?.result?.status === 'completed';
-      report(
-        'live-mag-one',
-        ok ? 'PASS' : 'FAIL',
-        `status=${run?.result?.status} runId=${run?.result?.runId} ` +
-          `connectedParticipants=[${(run?.result?.connectedParticipants || []).join(',')}] ` +
-          `finalText=${String(run?.result?.finalText || '').slice(0, 120)}`,
-      );
-    } catch (err: any) {
-      report('live-mag-one', 'FAIL', String(err?.message || err));
-    }
-  }
-
   // ── summary ────────────────────────────────────────────────────────────────
   console.log('');
   const failed = results.filter((r) => r.outcome === 'FAIL');
@@ -538,7 +451,7 @@ async function main(): Promise<void> {
     }
     console.log('');
     console.log(
-      'AUTHORITY CHAIN: Harness(RunIntent, gRPC:50051) → Hermes preflight(ContextPacket+RunPacket draft) → run_mag_one(RunPacket Markdown, connected workers only) → Hermes postflight(ReviewReport → ThinkGraph run memory)',
+      'AUTHORITY CHAIN: principal Harness(gRPC:50051) → native promptless Hermes(inherited context) → one RunPacket → run_mag_one(connected workers only) → Hermes postflight(ReviewReport → ThinkGraph run memory)',
     );
   }
   process.exit(failed.length > 0 ? 1 : 0);

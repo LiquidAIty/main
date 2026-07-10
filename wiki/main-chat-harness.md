@@ -23,7 +23,7 @@ roots:
     - client/src/runtime/agentCardRegistryResolver.ts
   symbols:
     - selectDoorwayCards
-    - buildCardDoorwayDefinition
+    - buildHarnessAgentDefinition
     - resolveMainChatCardFromDeck
     - resolveMainChatRuntimeConfig
     - startGrpcTurn
@@ -44,16 +44,18 @@ roots:
 
 The front door of LiquidAIty. When a user opens the chat panel in the Agent Canvas builder,
 the Harness Controller resolves the persisted Main Chat card from the deck, establishes a
-persistent gRPC session with the native QueryEngine, and surfaces specialist doorways
-(ThinkGraph, Local Coder) for delegation. It also owns the Mag One orchestration entry point.
+persistent gRPC session with the native QueryEngine, surfaces specialist doorways
+(ThinkGraph, Local Coder), and registers Hermes directly as a promptless inherited-context
+native Agent. It also owns the Mag One orchestration entry point.
 
 ## What the user/agent experiences
 
 **Chat**: user types → SSE stream to `POST /openclaude/session/chat` → gRPC Chat turn.
 The chat model receives the saved Main Chat prompt plus specialist doorway definitions.
 
-**Doorways**: the model sees `when_to_use` text + `CARD_RUN_CONTROL_TOOL` per doorway card.
-Chat mode: at most one ThinkGraph + one Local Coder. Canvas mode: all eligible cards.
+**Agents**: ThinkGraph and Local Coder retain the bound `CARD_RUN_CONTROL_TOOL` doorway.
+Hermes is different: its saved prompt/model become the native Agent definition, it inherits
+the full parent conversation, receives no task prompt, and streams native progress events.
 
 **Mag One**: `describe_connected_agents` reads bus-connected (`magentic_option` edge) agent
 cards; `run_mag_one` orchestrates them. Cards without a `magentic_option` edge are invisible.
@@ -64,7 +66,7 @@ cards; `run_mag_one` orchestrates them. Cards without a `magentic_option` edge a
 Browser → SSE POST /openclaude/session/chat  [coder.routes.ts:185]
   → deriveSessionId → startGrpcTurn           [grpcChatClient.ts:308]
     → gRPC AgentService.Chat() stream
-    → forwards text/tool_start/tool_result events verbatim
+    → forwards text/tool_start/tool_result/progress events verbatim
 
 MainChatRuntimeConfig resolved per turn:       [grpcChatClient.ts:235]
   → getDeckDocument → resolveMainChatCardFromDeck [grpcChatClient.ts:206]
@@ -73,9 +75,10 @@ MainChatRuntimeConfig resolved per turn:       [grpcChatClient.ts:235]
   → selectDoorwayCards(nodes, mode)            [grpcChatClient.ts:142]
     → enabled, top-level, kind=agent, runtimeType in [assistant_agent,local_coder],
       binding !== 'main_chat'
-    → chat: ≤1 ThinkGraph + ≤1 Local Coder
-  → buildCardDoorwayDefinition(card)          [grpcChatClient.ts:107]
-    → doorway with when_to_use + CARD_RUN_CONTROL_TOOL
+    → chat: ≤1 ThinkGraph + ≤1 Local Coder + ≤1 Hermes
+  → buildHarnessAgentDefinition(card)
+    → Hermes: saved prompt/model + native read tools + inherit_parent
+    → other cards: doorway with when_to_use + CARD_RUN_CONTROL_TOOL
   → returns { cardId, prompt, modelKey, doorwayDefinitions, ... }
 
 Mag One (separate MCP-bridge endpoints):
@@ -83,7 +86,8 @@ Mag One (separate MCP-bridge endpoints):
     → find orchestrator (magentic_one)
     → resolvedMagenticOptions(orchestrator.id, nodes, edges)
     → returns only magentic_option-connected cards
-  run_mag_one                                 [liquidAItyAgentFlow.ts:142]
+  run_mag_one
+    → validate one Hermes RunPacket + live participant equality
     → find orchestrator → runCardWithContract
     → orchestrateWithAutoGen
 ```
@@ -92,10 +96,12 @@ Mag One (separate MCP-bridge endpoints):
 
 1. Exactly one `main_chat` card — zero or multiple yields honest degrade (no doorways).
 2. Doorway selection is structural (binding, runtimeType, enabled) — never by display name.
-3. Chat mode: at most one ThinkGraph + one Local Coder. Duplicates → omit that doorway.
+3. Chat mode: at most one ThinkGraph + one Local Coder + one Hermes. Duplicates omit only that agent.
 4. `when_to_use` text is keyed on saved binding, not card title.
 5. Mag One only sees cards with `magentic_option` edges from the orchestrator.
 6. Deck is sole authority for card config — no caller overrides.
+7. Hermes is invoked without `prompt`; non-inherited agents still reject missing prompts.
+8. UTF-8 survives gRPC and SSE chunk boundaries exactly.
 
 ## Start in CBM
 
@@ -147,7 +153,7 @@ surface (requires runtime observation).
 
 | File | Why |
 |------|-----|
-| `grpcChatClient.ts` | Harness session, doorway selection, runtime config |
+| `grpcChatClient.ts` | Harness session, native Hermes + doorway selection, runtime config |
 | `coder.routes.ts` (lines 185-255) | Harness chat SSE route |
 | `liquidAItyAgentFlow.ts` | Mag One describe + run |
 | `runtime.ts` (lines 86-112) | resolvedMagenticOptions |
