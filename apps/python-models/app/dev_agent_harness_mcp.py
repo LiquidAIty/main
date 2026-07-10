@@ -216,6 +216,21 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="get_coder_run",
+            description="Get the active Claude Code run identity, approved prompt hash, invocation mode, repository, target card, and status.",
+            inputSchema={"type": "object", "properties": {"runId": {"type": "string"}}, "required": ["runId"]},
+        ),
+        Tool(
+            name="get_coder_context",
+            description="Get only the approved bounded context for one Claude Code run: repository, allowed/denied paths, and proof requirements.",
+            inputSchema={"type": "object", "properties": {"runId": {"type": "string"}}, "required": ["runId"]},
+        ),
+        Tool(
+            name="emit_coder_event",
+            description="Emit one bounded structured progress event for an active Claude Code run.",
+            inputSchema={"type": "object", "properties": {"runId": {"type": "string"}, "type": {"type": "string"}, "text": {"type": "string"}}, "required": ["runId", "type"]},
+        ),
+        Tool(
             name="submit_coder_report",
             description=(
                 "Submit a CoderReport with its claims for DETERMINISTIC evidence verification "
@@ -228,18 +243,13 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "projectId": {"type": "string"},
-                    "deckId": {"type": "string"},
-                    "reportText": {"type": "string"},
-                    "executionMode": {
-                        "type": "string",
-                        "enum": ["external_coder", "mcp_coder", "plugin_coder", "openclaude_api_coder"],
-                    },
+                    "runId": {"type": "string"},
                     "adapter": {"type": "string"},
-                    "jobId": {"type": "string"},
+                    "promptHash": {"type": "string"},
+                    "report": {"type": "object"},
                     "claims": {"type": "object"},
                 },
-                "required": ["projectId", "reportText"],
+                "required": ["runId", "adapter", "promptHash", "report"],
             },
         ),
         Tool(
@@ -308,8 +318,20 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         job_id = str(args.get("jobId") or "").strip()
         payload = {k: v for k, v in args.items() if k != "jobId"}
         return await _post(f"coder-jobs/{job_id}/claim", payload)
+    if name == "get_coder_run":
+        run_id = str(args.get("runId") or "").strip()
+        text = await asyncio.to_thread(_http_sync, "GET", f"{HARNESS_BASE}/coder-runs/{run_id}")
+        return [TextContent(type="text", text=text)]
+    if name == "get_coder_context":
+        run_id = str(args.get("runId") or "").strip()
+        text = await asyncio.to_thread(_http_sync, "GET", f"{HARNESS_BASE}/coder-runs/{run_id}/context")
+        return [TextContent(type="text", text=text)]
+    if name == "emit_coder_event":
+        run_id = str(args.get("runId") or "").strip()
+        return await _post(f"coder-runs/{run_id}/events", {k: v for k, v in args.items() if k != "runId"})
     if name == "submit_coder_report":
-        return await _post("coder-reports", args)
+        run_id = str(args.get("runId") or "").strip()
+        return await _post(f"coder-runs/{run_id}/report", {k: v for k, v in args.items() if k != "runId"})
     if name == "verify_coder_report":
         submission_id = str(args.get("submissionId") or "").strip()
         return await _post(f"coder-reports/{submission_id}/verify", {})

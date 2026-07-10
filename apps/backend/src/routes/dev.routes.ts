@@ -47,6 +47,11 @@ import {
   reverifyCoderReport,
   submitCoderReport,
 } from '../services/coderReportEvidence';
+import {
+  claudeCodeAdapter,
+  createApprovedCoderRun,
+  type CoderRunPacket,
+} from '../coder/execution/coderExecution';
 
 const router = Router();
 
@@ -397,6 +402,101 @@ router.get('/agent-harness/events', (req, res) => {
 router.post('/agent-harness/events/clear', (req, res) => {
   if (!devGuard(res)) return undefined;
   return res.json({ ok: true, cleared: clearAgentEvents() });
+});
+
+// ── Claude Code execution adapter (dev controller; exact approved prompt) ────
+router.get('/agent-harness/coder-adapters/claude_code', (_req, res) => {
+  if (!devGuard(res)) return undefined;
+  return res.json({ ok: true, adapter: 'claude_code', ...claudeCodeAdapter.availability() });
+});
+
+router.post('/agent-harness/coder-runs/prepare', (req, res) => {
+  if (!devGuard(res)) return undefined;
+  try {
+    const body = req.body || {};
+    const packet = createApprovedCoderRun({
+      runId: asTrimmed(body.runId) || undefined,
+      correlationId: asTrimmed(body.correlationId) || undefined,
+      projectId: asTrimmed(body.projectId),
+      deckId: asTrimmed(body.deckId) || BUILDER_DECK_ID,
+      cardId: asTrimmed(body.cardId),
+      invocationMode: asTrimmed(body.invocationMode) as CoderRunPacket['invocationMode'],
+      repositoryRoot: asTrimmed(body.repositoryRoot),
+      allowedPaths: Array.isArray(body.allowedPaths) ? body.allowedPaths : [],
+      deniedPaths: Array.isArray(body.deniedPaths) ? body.deniedPaths : [],
+      rawRequest: String(body.rawRequest || ''),
+      approvedPrompt: String(body.approvedPrompt || ''),
+      promptVersion: Number(body.promptVersion),
+      workspaceGranted: body.workspaceGranted,
+      liveRunApproved: body.liveRunApproved,
+      proofRequirements: Array.isArray(body.proofRequirements) ? body.proofRequirements : [],
+    });
+    const run = claudeCodeAdapter.prepare(packet);
+    return res.status(201).json({ ok: true, run });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'coder_run_prepare_failed' });
+  }
+});
+
+router.post('/agent-harness/coder-runs/:runId/start', (req, res) => {
+  if (!devGuard(res)) return undefined;
+  try { return res.status(202).json({ ok: true, run: claudeCodeAdapter.start(String(req.params.runId || '')) }); }
+  catch (error) { return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : 'coder_run_start_failed' }); }
+});
+
+router.get('/agent-harness/coder-runs/:runId', (req, res) => {
+  if (!devGuard(res)) return undefined;
+  const run = claudeCodeAdapter.inspect(String(req.params.runId || ''));
+  return run ? res.json({ ok: true, run }) : res.status(404).json({ ok: false, error: 'coder_run_not_found' });
+});
+
+router.get('/agent-harness/coder-runs/:runId/context', (req, res) => {
+  if (!devGuard(res)) return undefined;
+  const run = claudeCodeAdapter.inspect(String(req.params.runId || ''));
+  if (!run) return res.status(404).json({ ok: false, error: 'coder_run_not_found' });
+  const { packet } = run;
+  return res.json({ ok: true, context: { runId: packet.runId, promptHash: packet.promptHash, projectId: packet.projectId, repositoryRoot: packet.repositoryRoot, allowedPaths: packet.allowedPaths, deniedPaths: packet.deniedPaths, proofRequirements: packet.proofRequirements } });
+});
+
+router.post('/agent-harness/coder-runs/:runId/events', (req, res) => {
+  if (!devGuard(res)) return undefined;
+  const run = claudeCodeAdapter.inspect(String(req.params.runId || ''));
+  if (!run || run.status !== 'running') return res.status(409).json({ ok: false, error: 'coder_run_not_active' });
+  const text = summarizeForTelemetry(req.body?.text, 1_000);
+  const eventId = recordAgentEvent({ stage: 'card_call', status: 'started', mode: 'real_model_call', caller: 'claude_code', projectId: run.packet.projectId, deckId: run.packet.deckId, cardId: run.packet.cardId, correlationId: run.packet.correlationId, inputSummary: asTrimmed(req.body?.type), outputSummary: text, metadata: { adapter: 'claude_code', runId: run.packet.runId, promptHash: run.packet.promptHash } });
+  return res.status(202).json({ ok: eventId !== null, eventId });
+});
+
+router.post('/agent-harness/coder-runs/:runId/report', (req, res) => {
+  if (!devGuard(res)) return undefined;
+  const run = claudeCodeAdapter.inspect(String(req.params.runId || ''));
+  if (!run || run.status !== 'running') return res.status(409).json({ ok: false, error: 'coder_run_not_active' });
+  if (asTrimmed(req.body?.adapter) !== 'claude_code') return res.status(400).json({ ok: false, error: 'coder_report_adapter_mismatch' });
+  if (asTrimmed(req.body?.promptHash) !== run.packet.promptHash) return res.status(400).json({ ok: false, error: 'coder_report_prompt_hash_mismatch' });
+  const report = req.body?.report;
+  if (!report || typeof report !== 'object' || Array.isArray(report)) return res.status(400).json({ ok: false, error: 'coder_report_object_required' });
+  const reportRecord = report as Record<string, unknown>;
+  if (asTrimmed(reportRecord.runId) !== run.packet.runId) return res.status(400).json({ ok: false, error: 'coder_report_run_id_mismatch' });
+  const paths = [reportRecord.filesRead, reportRecord.filesChanged, reportRecord.filesDeleted]
+    .flatMap((value) => Array.isArray(value) ? value : []);
+  try { for (const value of paths) { const normalized = String(value).replace(/\\/g, '/'); if (!normalized || path.isAbsolute(normalized) || normalized.split('/').includes('..')) throw new Error('coder_report_path_invalid'); } }
+  catch (error) { return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'coder_report_path_invalid' }); }
+  const reportText = JSON.stringify(report);
+  if (Buffer.byteLength(reportText, 'utf8') > 100_000) return res.status(413).json({ ok: false, error: 'coder_report_too_large' });
+  const stored = submitCoderReport({ projectId: run.packet.projectId, deckId: run.packet.deckId, executionMode: 'external_coder', adapter: 'claude_code', jobId: run.packet.runId, reportText, claims: { ...(req.body?.claims || {}), traceIds: [run.packet.correlationId] } });
+  return res.status(201).json(stored);
+});
+
+router.post('/agent-harness/coder-runs/:runId/cancel', (req, res) => {
+  if (!devGuard(res)) return undefined;
+  try { return res.json({ ok: true, run: claudeCodeAdapter.cancel(String(req.params.runId || '')) }); }
+  catch (error) { return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : 'coder_run_cancel_failed' }); }
+});
+
+router.delete('/agent-harness/coder-runs/:runId', (req, res) => {
+  if (!devGuard(res)) return undefined;
+  try { claudeCodeAdapter.dispose(String(req.params.runId || '')); return res.json({ ok: true }); }
+  catch (error) { return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : 'coder_run_dispose_failed' }); }
 });
 
 // ── participant span intake (Python rails → participant_turn events) ─────────
