@@ -6,7 +6,6 @@ type UseAgentBuilderProjectResetArgs = {
   deckSaveAbortRef: MutableRefObject<AbortController | null>;
   layoutAutosaveAbortRef: MutableRefObject<AbortController | null>;
   deckExecutionAbortRef: MutableRefObject<AbortController | null>;
-  setSending: Dispatch<SetStateAction<boolean>>;
   setDeckSaveBusy: Dispatch<SetStateAction<boolean>>;
   setDeckRunBusy: Dispatch<SetStateAction<boolean>>;
   setCardRunBusy: Dispatch<SetStateAction<boolean>>;
@@ -17,7 +16,6 @@ export default function useAgentBuilderProjectReset({
   deckSaveAbortRef,
   layoutAutosaveAbortRef,
   deckExecutionAbortRef,
-  setSending,
   setDeckSaveBusy,
   setDeckRunBusy,
   setCardRunBusy,
@@ -29,7 +27,6 @@ export default function useAgentBuilderProjectReset({
     layoutAutosaveAbortRef.current = null;
     deckExecutionAbortRef.current?.abort();
     deckExecutionAbortRef.current = null;
-    setSending(false);
     setDeckSaveBusy(false);
     setDeckRunBusy(false);
     setCardRunBusy(false);
@@ -41,6 +38,5 @@ export default function useAgentBuilderProjectReset({
     setCardRunBusy,
     setDeckRunBusy,
     setDeckSaveBusy,
-    setSending,
   ]);
 }

@@ -11,8 +11,24 @@ export default [
       '**/dist',
       '**/vite.config.*.timestamp*',
       '**/vitest.config.*.timestamp*',
+      // Vendored / parked / generated trees — not owned active-core code.
+      // The lint gate measures the code we maintain, nothing else.
       'localcoder/**',
       'client/src/vendor/**',
+      'autogen-main/**',
+      'Kronos-main/**',
+      'vendor/**',
+      'worldsignal/**',
+      'coder-workspace/**',
+      'e2e/**',
+      'artifacts/**',
+      'n8n_data/**',
+      'test-results/**',
+      // Python virtualenv ships thousands of JS files in site-packages;
+      // eslint has no default ignore for .venv the way it does node_modules.
+      '**/.venv/**',
+      '**/__pycache__/**',
+      'tmp/**',
     ],
   },
   {

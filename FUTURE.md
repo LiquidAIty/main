@@ -15,6 +15,39 @@ and context compounding.
 
 ---
 
+## Work-In-Progress Inventory (2026-07-09 deep clean)
+
+Every parked or half-done piece, named so it is documented instead of sprawled. Nothing below is
+part of the active research loop until its own pass wires it in.
+
+- **Trading research tool (launch wedge, active WIP)** — `client/src/pages/tradingui.tsx` (TradingView
+  surface), `card_trading_workbench` (parked card), Alpaca read-only rails
+  (`apps/python-models .../market/`: snapshot, bars, paper-account readiness),
+  `Kronos-main` submodule (uninitialized) + `market/model_adapters/kronos_adapter.py` + forecast
+  contract. Kronos/Cronos work resumes later by explicit decision.
+- **WorldSignals (parked signal primitive)** — vendored `worldsignal/` service, `worldsignal.routes.ts`,
+  `card_worldsignals_agent` (disconnected), one Playwright spec in `e2e/`. Not in the research loop.
+- **Coder / LocalCoder / OpenClaude (parked code executor)** — vendored `localcoder/` (gRPC Harness
+  engine), `card_local_coder` (disconnected), Code Console UI, `coder-workspace/` job folders,
+  `.openclaude-profile.json` (consumed by localcoder provider profile). Deferred: Coder terminal
+  canvas, connected-agent rail entries, workspace capability grants, [RENAME.md](./RENAME.md) pass.
+- **CodeGraph view (wired but dormant)** — `client/src/components/codegraph/*` renders through the
+  vendored `client/src/vendor/codebase-memory-ui` server via the vite `/rpc` + `/api/layout` proxies
+  to `127.0.0.1:9749`; that server must be running or the proxies log ECONNREFUSED (harmless).
+  `card_codegraph_agent` stays disconnected until code context joins the loop.
+- **Plan Agent** — parked card; the Plan object vision lives below in this file.
+- **e2e layer (barely started)** — `e2e/playwright/worldsignal.spec.ts` + `playwright.config.ts` +
+  `@playwright/test`. One spec for a parked surface; grow or cut in a dedicated pass.
+- **Auth on Prisma (second DB layer)** — login/signup → `auth/userService` + `auth/sessionStore` →
+  `services/database.ts` (Prisma), while everything else uses the `pg` pool. Works; consolidation to
+  one DB access layer is a future simplification.
+- **Hermes activity durability** — the under-chat feed buffer is RAM-only (wiped on backend restart);
+  move to a store when Hermes history must survive restarts.
+- **Live deck worker models** — `card_magentic` runs `openai/gpt-5.1-chat-latest` (migrated); the
+  connected worker cards still carry their saved `openrouter/z-ai/glm-5.2` config. Deliberate
+  (user-chosen config survives hydration); switch per card if worker quality disappoints.
+- **Deferred maintenance** — dependency security upgrades; eslint warnings on owned code.
+
 ## Product Objects (vision)
 
 ### One Plan

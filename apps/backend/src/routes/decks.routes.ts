@@ -77,9 +77,6 @@ router.get('/:projectId/decks/:deckId', async (req, res) => {
 
 router.put('/:projectId/decks/:deckId', async (req, res) => {
   const { document, expectedRevision } = req.body || {};
-  const integrity = req.body?.integrity && typeof req.body.integrity === 'object'
-    ? req.body.integrity
-    : null;
   if (!document || typeof document !== 'object') {
     return res.status(400).json({ ok: false, error: 'document_required' });
   }
@@ -91,10 +88,6 @@ router.put('/:projectId/decks/:deckId', async (req, res) => {
       document as DeckDocument,
       {
         expectedRevision: typeof expectedRevision === 'string' ? expectedRevision : null,
-        reason: typeof integrity?.reason === 'string' ? integrity.reason : null,
-        removedNodeIds: Array.isArray(integrity?.removedNodeIds)
-          ? (integrity.removedNodeIds as string[])
-          : [],
       },
     );
     return res.json({ ok: true, deck: result.deck, meta: result.meta });

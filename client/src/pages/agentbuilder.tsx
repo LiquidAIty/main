@@ -482,7 +482,6 @@ export default function AgentBuilder(): React.ReactElement {
   const [deckRunInput, setDeckRunInput] = useState('');
   const [showCreateProjectForm, setShowCreateProjectForm] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
-  const [, setSending] = useState(false);
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
     useState<KnowledgeGraphKind>('thinkgraph');
   useEffect(() => {
@@ -846,7 +845,6 @@ export default function AgentBuilder(): React.ReactElement {
     deckSaveAbortRef,
     layoutAutosaveAbortRef,
     deckExecutionAbortRef,
-    setSending,
     setDeckSaveBusy,
     setDeckRunBusy,
     setCardRunBusy,

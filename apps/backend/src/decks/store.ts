@@ -525,8 +525,6 @@ export async function saveDeckDocument(
   document: DeckDocument,
   options?: {
     expectedRevision?: string | null;
-    reason?: string | null;
-    removedNodeIds?: string[];
   },
 ): Promise<{
   deck: DeckDocument;

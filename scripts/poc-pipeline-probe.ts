@@ -187,6 +187,7 @@ const EXPECTED_DISCONNECTED = [
   'card_local_coder',
   'card_plan_agent',
   'card_trading_workbench',
+  'card_worldsignals_agent',
 ];
 
 async function main(): Promise<void> {
