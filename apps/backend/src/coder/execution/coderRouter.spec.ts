@@ -22,6 +22,7 @@ function fakeAdapter(id: CoderAdapterId, hello: string): CoderExecutionAdapter &
     cancel: () => snapshot(adapter.prepared!, 'cancelled'),
     inspect: () => null,
     finalOutput: () => '',
+    inspectLaunch: () => ({ executable: id, args: [], cwd: '.', environmentKeys: [] }),
     dispose: () => undefined,
   };
   return adapter;
@@ -58,6 +59,13 @@ describe('runCoderSubagent', () => {
 
   it('rejects a requested adapter that does not match the resolved adapter (no silent substitution)', async () => {
     await expect(runCoderSubagent({ parentRunId: 'p', projectId: 'p1', deckId: 'd', conversationId: 'c', cardId: 'card', adapter: 'codex', approvedPrompt: 'x' }, fakeAdapter('claude_code', 'X'))).rejects.toThrow('coder_router_adapter_mismatch');
+  });
+
+  it('rejects an unavailable selected adapter without trying another adapter', async () => {
+    const adapter = fakeAdapter('claude_code', 'X');
+    adapter.availability = () => ({ available: false, executable: null, version: null, error: 'not_logged_in' });
+    await expect(runCoderSubagent({ parentRunId: 'p', projectId: 'p1', deckId: 'd', conversationId: 'c', cardId: 'card', adapter: 'claude_code', approvedPrompt: 'x' }, adapter)).rejects.toThrow('coder_router_adapter_unavailable: not_logged_in');
+    expect(adapter.prepared).toBeNull();
   });
 });
 

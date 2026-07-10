@@ -27,6 +27,7 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'hermes.preflight_context',
       'mag_one.describe_connected_agents',
       'read_model_results',
+      'run_coder_subagent',
       'run_mag_one',
       'thinkgraph.get_graph_slice',
       'write_mag_one_instructions',

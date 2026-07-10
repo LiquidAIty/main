@@ -216,19 +216,38 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="get_coder_run",
-            description="Get the active Claude Code run identity, approved prompt hash, invocation mode, repository, target card, and status.",
-            inputSchema={"type": "object", "properties": {"runId": {"type": "string"}}, "required": ["runId"]},
+            name="describe_runtime_test_capabilities",
+            description="Describe the dev-only stand-in reality-test modes, canonical repository grant, and currently available coder adapters.",
+            inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
-            name="get_coder_context",
-            description="Get only the approved bounded context for one Claude Code run: repository, allowed/denied paths, and proof requirements.",
-            inputSchema={"type": "object", "properties": {"runId": {"type": "string"}}, "required": ["runId"]},
+            name="start_agent_runtime_test",
+            description="Start one explicitly activated external-agent reality test through the canonical run_coder_subagent router path.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mode": {"type": "string", "enum": ["single_coder", "mag_one_team"]},
+                    "projectId": {"type": "string"}, "deckId": {"type": "string"},
+                    "parentRunId": {"type": "string"}, "correlationId": {"type": "string"},
+                    "adapter": {"type": "string", "enum": ["claude_code", "codex"]},
+                    "repositoryWorkspaceRef": {"type": "string", "enum": ["repo_root"]},
+                    "cardId": {"type": "string"}, "objective": {"type": "string"},
+                    "permissionGrant": {"type": "string", "enum": ["workspace_write"]},
+                    "expectedOutput": {"type": "object"}, "timeoutMs": {"type": "integer"},
+                    "developerTest": {"type": "boolean"},
+                },
+                "required": ["mode", "projectId", "deckId", "parentRunId", "correlationId", "adapter", "repositoryWorkspaceRef", "cardId", "objective", "permissionGrant", "expectedOutput", "timeoutMs", "developerTest"],
+            },
         ),
         Tool(
-            name="emit_coder_event",
-            description="Emit one bounded structured progress event for an active Claude Code run.",
-            inputSchema={"type": "object", "properties": {"runId": {"type": "string"}, "type": {"type": "string"}, "text": {"type": "string"}}, "required": ["runId", "type"]},
+            name="get_agent_runtime_test",
+            description="Get the current stage, linked coder run, evidence locations, manifest delta, and normalized result for one reality test.",
+            inputSchema={"type": "object", "properties": {"runtimeTestId": {"type": "string"}}, "required": ["runtimeTestId"]},
+        ),
+        Tool(
+            name="cancel_agent_runtime_test",
+            description="Cancel one active reality test and its real coder subprocess. Never starts a replacement.",
+            inputSchema={"type": "object", "properties": {"runtimeTestId": {"type": "string"}}, "required": ["runtimeTestId"]},
         ),
         Tool(
             name="submit_coder_report",
@@ -243,13 +262,15 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "runId": {"type": "string"},
+                    "projectId": {"type": "string"},
+                    "deckId": {"type": "string"},
+                    "reportText": {"type": "string"},
+                    "executionMode": {"type": "string", "enum": ["external_coder", "mcp_coder", "plugin_coder", "openclaude_api_coder"]},
                     "adapter": {"type": "string"},
-                    "promptHash": {"type": "string"},
-                    "report": {"type": "object"},
+                    "jobId": {"type": "string"},
                     "claims": {"type": "object"},
                 },
-                "required": ["runId", "adapter", "promptHash", "report"],
+                "required": ["projectId", "reportText"],
             },
         ),
         Tool(
@@ -318,20 +339,19 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         job_id = str(args.get("jobId") or "").strip()
         payload = {k: v for k, v in args.items() if k != "jobId"}
         return await _post(f"coder-jobs/{job_id}/claim", payload)
-    if name == "get_coder_run":
-        run_id = str(args.get("runId") or "").strip()
-        text = await asyncio.to_thread(_http_sync, "GET", f"{HARNESS_BASE}/coder-runs/{run_id}")
+    if name == "describe_runtime_test_capabilities":
+        return await _get("runtime-tests/capabilities", {})
+    if name == "start_agent_runtime_test":
+        return await _post("runtime-tests", args)
+    if name == "get_agent_runtime_test":
+        runtime_test_id = str(args.get("runtimeTestId") or "").strip()
+        text = await asyncio.to_thread(_http_sync, "GET", f"{HARNESS_BASE}/runtime-tests/{runtime_test_id}")
         return [TextContent(type="text", text=text)]
-    if name == "get_coder_context":
-        run_id = str(args.get("runId") or "").strip()
-        text = await asyncio.to_thread(_http_sync, "GET", f"{HARNESS_BASE}/coder-runs/{run_id}/context")
-        return [TextContent(type="text", text=text)]
-    if name == "emit_coder_event":
-        run_id = str(args.get("runId") or "").strip()
-        return await _post(f"coder-runs/{run_id}/events", {k: v for k, v in args.items() if k != "runId"})
+    if name == "cancel_agent_runtime_test":
+        runtime_test_id = str(args.get("runtimeTestId") or "").strip()
+        return await _post(f"runtime-tests/{runtime_test_id}/cancel", {})
     if name == "submit_coder_report":
-        run_id = str(args.get("runId") or "").strip()
-        return await _post(f"coder-runs/{run_id}/report", {k: v for k, v in args.items() if k != "runId"})
+        return await _post("coder-reports", args)
     if name == "verify_coder_report":
         submission_id = str(args.get("submissionId") or "").strip()
         return await _post(f"coder-reports/{submission_id}/verify", {})

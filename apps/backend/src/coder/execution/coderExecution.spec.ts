@@ -48,7 +48,7 @@ describe('ClaudeCodeAdapter', () => {
   });
 
   it('prepares one strict run-scoped session and rejects duplicate preparation', () => {
-    const adapter = new ClaudeCodeAdapter(process.execPath);
+    const adapter = new ClaudeCodeAdapter(process.execPath, false);
     const approved = packet(fixture(), { runId: 'coder_one' });
     expect(adapter.prepare(approved)).toMatchObject({ status: 'prepared', packet: { runId: 'coder_one' } });
     expect(() => adapter.prepare(approved)).toThrow('coder_run_already_exists');
@@ -62,14 +62,30 @@ describe('ClaudeCodeAdapter', () => {
     [{ approvedPrompt: '' }, 'approved_prompt_size_invalid'],
     [{ allowedPaths: ['../secret'] }, 'allowed_path_invalid'],
   ])('fails closed for invalid configuration %#', (overrides, error) => {
-    const adapter = new ClaudeCodeAdapter(process.execPath);
+    const adapter = new ClaudeCodeAdapter(process.execPath, false);
     expect(() => adapter.prepare(packet(fixture(), overrides))).toThrow(error);
   });
 
   it('reports availability without a model call', () => {
-    const result = new ClaudeCodeAdapter(process.execPath).availability();
+    const result = new ClaudeCodeAdapter(process.execPath, false).availability();
     expect(result.available).toBe(true);
     expect(result.version).toBeTruthy();
+  });
+
+  it('uses the exact repository and prompt without bare mode or injected Claude credentials', () => {
+    const root = fixture();
+    vi.stubEnv('ANTHROPIC_API_KEY', 'must-not-pass');
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'must-not-pass');
+    const adapter = new ClaudeCodeAdapter(process.execPath, false);
+    const approved = packet(root, { runId: 'claude_launch' });
+    adapter.prepare(approved);
+    const launch = adapter.inspectLaunch('claude_launch');
+    expect(launch.cwd).toBe(root);
+    expect(launch.args).not.toContain('--bare');
+    expect(launch.args.at(-1)).toBe(approved.approvedPrompt);
+    expect(launch.environmentKeys).not.toContain('ANTHROPIC_API_KEY');
+    expect(launch.environmentKeys).not.toContain('CLAUDE_CODE_OAUTH_TOKEN');
+    adapter.dispose('claude_launch');
   });
 });
 

@@ -35,9 +35,10 @@ export type CoderRunPacket = {
 export type CoderRunEvent = {
   sequence: number;
   timestamp: string;
-  type: 'session_prepared' | 'process_started' | 'output' | 'report' | 'completed' | 'failed' | 'cancelled';
+  type: 'session_prepared' | 'process_started' | 'structured_stream_initialized' | 'session_identified' | 'tool_invocation' | 'tool_result' | 'output' | 'report' | 'completed' | 'failed' | 'cancelled';
   stream?: 'stdout' | 'stderr';
   text?: string;
+  data?: Record<string, unknown>;
 };
 
 export type CoderRunSnapshot = {
@@ -52,9 +53,12 @@ export type CoderRunSnapshot = {
   report: Record<string, unknown> | null;
 };
 
+export type CoderLaunchDescriptor = { executable: string; args: string[]; cwd: string; environmentKeys: string[] };
+export type CoderAdapterAvailability = { available: boolean; executable: string | null; version: string | null; error: string | null };
+
 export interface CoderExecutionAdapter {
   readonly id: CoderAdapterId;
-  availability(): { available: boolean; executable: string | null; version: string | null; error: string | null };
+  availability(): CoderAdapterAvailability;
   validate(packet: CoderRunPacket): void;
   prepare(packet: CoderRunPacket): CoderRunSnapshot;
   start(runId: string): CoderRunSnapshot;
@@ -63,6 +67,7 @@ export interface CoderExecutionAdapter {
   cancel(runId: string): CoderRunSnapshot;
   inspect(runId: string): CoderRunSnapshot | null;
   finalOutput(runId: string): string;
+  inspectLaunch(runId: string): CoderLaunchDescriptor;
   dispose(runId: string): void;
 }
 
@@ -80,6 +85,9 @@ const CODER_REPORT_SCHEMA = {
     stderr: { type: 'string' },
     exitStatus: { type: 'integer' },
     blockers: { type: 'array', items: { type: 'string' } },
+    exactFilePath: { type: 'string' },
+    fileContent: { type: 'string' },
+    filesChanged: { type: 'array', items: { type: 'string' } },
   },
   required: ['exactCommand', 'stdout', 'stderr', 'exitStatus', 'blockers'],
   additionalProperties: false,
@@ -132,7 +140,7 @@ abstract class CliCoderAdapter implements CoderExecutionAdapter {
 
   constructor(protected readonly executable: string) {}
 
-  availability() {
+  availability(): CoderAdapterAvailability {
     const probe = spawnSync(this.executable, ['--version'], { encoding: 'utf8', windowsHide: true });
     return probe.status === 0
       ? { available: true, executable: this.executable, version: String(probe.stdout).trim(), error: null }
@@ -177,10 +185,11 @@ abstract class CliCoderAdapter implements CoderExecutionAdapter {
     run.status = 'running';
     run.processId = child.pid ?? null;
     this.event(run, { type: 'process_started' });
+    this.event(run, { type: 'structured_stream_initialized' });
     child.stdout.on('data', (chunk) => this.consume(run, 'stdout', chunk));
     child.stderr.on('data', (chunk) => this.consume(run, 'stderr', chunk));
     child.once('error', (error) => { run.error = error.message; run.status = 'failed'; this.event(run, { type: 'failed', text: error.message }); run.resolveCompletion(); });
-    child.once('close', (code) => { this.flushStdout(run); this.onProcessClose(run); run.exitCode = code; run.child = null; if (run.status !== 'cancelled') run.status = code === 0 ? 'completed' : 'failed'; this.event(run, { type: run.status === 'completed' ? 'completed' : 'failed', text: `exit_code=${code}` }); run.resolveCompletion(); });
+    child.once('close', (code) => { this.flushStdout(run); this.onProcessClose(run); run.exitCode = code; run.child = null; if (run.status !== 'cancelled') run.status = code === 0 ? 'completed' : 'failed'; this.event(run, { type: run.status === 'completed' ? 'completed' : 'failed', text: `exit_code=${code}` }); this.persistEvidence(run); run.resolveCompletion(); });
     child.stdin.end();
     return this.public(run);
   }
@@ -208,6 +217,12 @@ abstract class CliCoderAdapter implements CoderExecutionAdapter {
 
   inspect(runId: string): CoderRunSnapshot | null { const run = this.runs.get(runId); return run ? this.public(run) : null; }
   finalOutput(runId: string): string { return this.required(runId).finalOutput; }
+  inspectLaunch(runId: string): CoderLaunchDescriptor {
+    const run = this.required(runId);
+    const env = { ...process.env, LIQUIDAITY_CODER_RUN_ID: runId };
+    this.pruneEnv(env);
+    return { executable: this.executable, args: [...this.buildArgs(run)], cwd: run.packet.repositoryRoot, environmentKeys: Object.keys(env).sort() };
+  }
   dispose(runId: string): void { const run = this.required(runId); if (run.child) throw new Error('coder_run_still_running'); rmSync(run.runtimeDir, { recursive: true, force: true }); this.runs.delete(runId); }
 
   /** Extra run-scoped files this CLI needs (MCP config, output schema, …). */
@@ -220,6 +235,13 @@ abstract class CliCoderAdapter implements CoderExecutionAdapter {
   protected abstract parseStructuredLine(run: InternalRun, line: string): void;
   /** Called after the process closes, before final status is derived. */
   protected onProcessClose(_run: InternalRun): void { /* default: nothing */ }
+
+  private persistEvidence(run: InternalRun): void {
+    try {
+      writeFileSync(path.join(run.runtimeDir, 'events.json'), JSON.stringify(run.events, null, 2), 'utf8');
+      writeFileSync(path.join(run.runtimeDir, 'result.json'), JSON.stringify(this.public(run), null, 2), 'utf8');
+    } catch { /* an evidence write failure cannot rewrite process truth */ }
+  }
 
   private consume(run: InternalRun, stream: 'stdout' | 'stderr', chunk: Buffer): void {
     const text = chunk.toString('utf8').slice(0, MAX_EVENT_TEXT);
@@ -245,7 +267,24 @@ abstract class CliCoderAdapter implements CoderExecutionAdapter {
 export class ClaudeCodeAdapter extends CliCoderAdapter {
   readonly id = 'claude_code' as const;
 
-  constructor(executable = process.env.CLAUDE_CODE_EXECUTABLE || 'claude') { super(executable); }
+  constructor(executable = process.env.CLAUDE_CODE_EXECUTABLE || 'claude', private readonly requireAuthentication = true) { super(executable); }
+
+  authentication() {
+    const probe = spawnSync(this.executable, ['auth', 'status'], { encoding: 'utf8', windowsHide: true });
+    try {
+      const parsed = JSON.parse(String(probe.stdout || '{}'));
+      return { accepted: probe.status === 0 && parsed.loggedIn === true, loggedIn: parsed.loggedIn === true, authMethod: typeof parsed.authMethod === 'string' ? parsed.authMethod : null, apiProvider: typeof parsed.apiProvider === 'string' ? parsed.apiProvider : null, sourceDistinguishable: false };
+    } catch {
+      return { accepted: false, loggedIn: false, authMethod: null, apiProvider: null, sourceDistinguishable: false };
+    }
+  }
+
+  override availability(): CoderAdapterAvailability {
+    const executable = super.availability();
+    if (!executable.available || !this.requireAuthentication) return executable;
+    const auth = this.authentication();
+    return auth.accepted ? executable : { ...executable, available: false, error: 'claude_code_not_authenticated' };
+  }
 
   protected writeAdapterRunFiles(packet: CoderRunPacket, runtimeDir: string): void {
     const mcpConfig = {
@@ -272,7 +311,12 @@ export class ClaudeCodeAdapter extends CliCoderAdapter {
   protected parseStructuredLine(run: InternalRun, line: string): void {
     try {
       const parsed = JSON.parse(line);
-      if (typeof parsed?.session_id === 'string' && parsed.session_id) run.sessionId = parsed.session_id;
+      if (typeof parsed?.session_id === 'string' && parsed.session_id && run.sessionId !== parsed.session_id) { run.sessionId = parsed.session_id; this.event(run, { type: 'session_identified', text: parsed.session_id }); }
+      const content = Array.isArray(parsed?.message?.content) ? parsed.message.content : [];
+      for (const item of content) {
+        if (item?.type === 'tool_use') this.event(run, { type: 'tool_invocation', text: String(item.name || ''), data: { name: String(item.name || ''), input: item.input && typeof item.input === 'object' ? item.input : {} } });
+        if (item?.type === 'tool_result') this.event(run, { type: 'tool_result', text: typeof item.content === 'string' ? item.content.slice(0, MAX_EVENT_TEXT) : JSON.stringify(item.content ?? '').slice(0, MAX_EVENT_TEXT), data: { toolUseId: String(item.tool_use_id || ''), isError: Boolean(item.is_error) } });
+      }
       if (parsed?.type === 'result' && parsed?.structured_output && typeof parsed.structured_output === 'object') { run.report = parsed.structured_output; this.event(run, { type: 'report' }); }
     } catch { /* raw output event already preserves malformed lines */ }
   }
@@ -319,7 +363,7 @@ export class CodexAdapter extends CliCoderAdapter {
     try {
       const parsed = JSON.parse(line);
       const threadId = parsed?.thread_id ?? parsed?.threadId;
-      if (typeof threadId === 'string' && threadId) run.sessionId = threadId;
+      if (typeof threadId === 'string' && threadId && run.sessionId !== threadId) { run.sessionId = threadId; this.event(run, { type: 'session_identified', text: threadId }); }
     } catch { /* raw output event already preserves malformed lines */ }
   }
 

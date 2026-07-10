@@ -150,6 +150,10 @@ describe('production guard', () => {
       ['GET', '/api/dev/agent-harness/events'],
       ['GET', '/api/dev/agent-harness/trace/x'],
       ['POST', '/api/dev/agent-harness/events/clear'],
+      ['GET', '/api/dev/agent-harness/runtime-tests/capabilities'],
+      ['POST', '/api/dev/agent-harness/runtime-tests'],
+      ['GET', '/api/dev/agent-harness/runtime-tests/rtest_x'],
+      ['POST', '/api/dev/agent-harness/runtime-tests/rtest_x/cancel'],
       ['POST', '/api/dev/agent-harness/run-pipeline-probe'],
       ['POST', '/api/dev/agent-harness/span'],
       ['GET', '/api/dev/agent-harness/coder-jobs'],
@@ -352,6 +356,19 @@ describe('telemetry endpoints', () => {
     ).json();
     expect(cleared.cleared).toBe(2);
     expect(listAgentEvents()).toHaveLength(0);
+  });
+});
+
+describe('runtime reality endpoints', () => {
+  it('describes explicit adapters, one repository grant, and honest mode availability', async () => {
+    vi.stubEnv('LIQUIDAITY_GRPC_CWD', tempDir);
+    const res = await fetch(`${baseUrl}/api/dev/agent-harness/runtime-tests/capabilities`);
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.supportedModes).toEqual(['single_coder']);
+    expect(body.unavailableModes).toEqual([{ mode: 'mag_one_team', error: 'runtime_test_mode_unavailable' }]);
+    expect(body.adapters.map((item: any) => item.id)).toEqual(['claude_code', 'codex']);
+    expect(body.repositoryGrant).toMatchObject({ ref: 'repo_root', root: tempDir });
   });
 });
 
