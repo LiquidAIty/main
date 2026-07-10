@@ -32,7 +32,7 @@
       "options": {
         "buildTarget": "backend:build",
         "port": 4000,
-        "watch": true,
+        "watch": false,
         "inspect": false
       },
       "configurations": {
