@@ -12,6 +12,7 @@ vi.mock('../../../decks/store', () => ({
 }));
 
 import {
+  buildHarnessRuntimeContext,
   deriveSessionId,
   doorwayWhenToUse,
   resolveCardDoorwayDefinitions,
@@ -196,6 +197,24 @@ describe('resolveMainChatSystemPrompt', () => {
     deckMocks.getDeckDocument.mockRejectedValueOnce(new Error('project_not_found'));
     const result = await resolveMainChatSystemPrompt(deriveSessionId('missing-project', 'main'));
     expect(result).toBeNull();
+  });
+});
+
+describe('buildHarnessRuntimeContext', () => {
+  it('exposes the exact server-owned project, deck, and conversation identities to the Harness', () => {
+    expect(
+      buildHarnessRuntimeContext(deriveSessionId('project-123', 'conversation-456')),
+    ).toContain('active projectId: project-123');
+    expect(
+      buildHarnessRuntimeContext(deriveSessionId('project-123', 'conversation-456')),
+    ).toContain('active deckId: deck_builder');
+    expect(
+      buildHarnessRuntimeContext(deriveSessionId('project-123', 'conversation-456')),
+    ).toContain('active conversationId: conversation-456');
+  });
+
+  it('does not invent context for a malformed session id', () => {
+    expect(buildHarnessRuntimeContext('not-a-real-session-id')).toBeNull();
   });
 });
 

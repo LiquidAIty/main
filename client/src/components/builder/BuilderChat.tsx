@@ -29,11 +29,14 @@ export default function BuilderChat({
   onSend,
   knowledgeProjectId,
   colors,
+  busy = false,
 }: {
   messages: { role: "assistant" | "user"; text: string }[];
   onSend: (t: string) => void;
   knowledgeProjectId: string;
   colors: BuilderChatColors;
+  /** The real SSE turn is still open; prevent a second send and state it plainly. */
+  busy?: boolean;
 }) {
   const [v, setV] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
@@ -48,7 +51,7 @@ export default function BuilderChat({
 
   const send = () => {
     const trimmed = v.trim();
-    if (!trimmed) return;
+    if (!trimmed || busy) return;
     onSend(trimmed);
     setV("");
   };
@@ -156,10 +159,11 @@ export default function BuilderChat({
           <input
             value={v}
             onChange={(e) => setV(e.target.value)}
+            disabled={busy}
             onKeyDown={(e) => {
               if (e.key === "Enter") send();
             }}
-            placeholder="Type a message…"
+            placeholder={busy ? "Chat is working…" : "Type a message…"}
             className="flex-1"
             style={{
               background: "transparent",
@@ -171,16 +175,33 @@ export default function BuilderChat({
               lineHeight: 1.25,
             }}
           />
+          {busy ? (
+            <span
+              data-testid="builder-chat-working"
+              role="status"
+              aria-live="polite"
+              style={{
+                color: colors.neutral,
+                fontSize: 12,
+                padding: "0 4px",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Working…
+            </span>
+          ) : null}
           <button
             onClick={send}
-            aria-label="Send"
+            disabled={busy}
+            aria-label={busy ? "Chat is working" : "Send"}
             className="rounded-full flex items-center justify-center"
             style={{
               width: 40,
               height: 40,
-              background: colors.primary,
+              background: busy ? colors.neutral : colors.primary,
               border: "1px solid rgba(79,162,173,0.36)",
               boxShadow: "0 8px 18px rgba(79,162,173,0.10), inset 0 1px 0 rgba(255,255,255,0.14)",
+              cursor: busy ? "not-allowed" : "pointer",
             }}
           >
             <svg

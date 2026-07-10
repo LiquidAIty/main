@@ -54,6 +54,23 @@ export function deriveSessionId(projectId: string, conversationId: string): stri
   return `mag1:${projectId}:${conversationId}`;
 }
 
+/** The live identity needed by the saved Harness prompt's MCP instructions.
+ * The vendored QueryEngine receives the session id but does not interpret it as
+ * tool-call arguments, so expose the server-owned values explicitly. This is
+ * typed transport context, not an alternate card prompt or inferred workspace
+ * identity: the persisted Main Chat prompt remains the instruction authority. */
+export function buildHarnessRuntimeContext(sessionId: string): string | null {
+  const parsed = parseSessionId(sessionId);
+  if (!parsed) return null;
+  return [
+    '[LIQUIDAITY_RUNTIME_CONTEXT]',
+    `active projectId: ${parsed.projectId}`,
+    `active deckId: ${BUILDER_DECK_ID}`,
+    `active conversationId: ${parsed.conversationId}`,
+    'Use these exact values for LiquidAIty MCP tool calls. Never derive an id from the working directory, repository name, or session label.',
+  ].join('\n');
+}
+
 /** Inverse of deriveSessionId, owned by this same module. Used only to recover
  * the projectId needed for structural ThinkGraph card resolution below — never
  * exposed outside this file, never used for anything else. */
@@ -223,12 +240,10 @@ function resolveMainChatCardFromDeck(nodes: any[]): { ok: true; card: any } | { 
   return { ok: true, card: matches[0] };
 }
 
-/** The saved OpenClaude Chat parent card's visible prompt content, verbatim —
- * never graph data, conversation text, or backend-invented instructions. Sent
- * as append_system_prompt so it layers on top of the locked vendored base
- * prompt, never replacing it. Zero or multiple main_chat cards yields no
- * prompt to append (honest degrade to the vendored default alone) rather
- * than guessing which card is the parent. */
+/** The saved OpenClaude Chat parent card's visible prompt content, verbatim.
+ * It is sent as append_system_prompt on top of the locked vendored base prompt,
+ * never replacing it. Zero or multiple main_chat cards yields no saved prompt
+ * rather than guessing which card is the parent. */
 export async function resolveMainChatSystemPrompt(sessionId: string): Promise<string | null> {
   const parsed = parseSessionId(sessionId);
   if (!parsed) return null;
@@ -390,7 +405,10 @@ export async function startGrpcTurn(
   const mode = args.mode === 'canvas' ? 'canvas' : 'chat';
   const mainChatConfig = await resolveMainChatRuntimeConfig(args.sessionId, mode);
   const doorwayDefinitions = mainChatConfig?.doorwayDefinitions ?? [];
-  const appendSystemPrompt = mainChatConfig?.prompt ?? null;
+  const runtimeContext = buildHarnessRuntimeContext(args.sessionId);
+  const appendSystemPrompt = [mainChatConfig?.prompt, runtimeContext]
+    .filter((section): section is string => Boolean(section))
+    .join('\n\n') || null;
   const resolvedModel = mainChatConfig?.providerModelId || args.model || '';
   if (args.traceId) {
     logHarnessTrace(
@@ -399,7 +417,8 @@ export async function startGrpcTurn(
         `cardId=${mainChatConfig?.cardId || 'none'}`,
         `provider=${mainChatConfig?.provider || 'none'}`,
         `model=${mainChatConfig?.modelKey || 'none'}`,
-        `prompt=${appendSystemPrompt ? 'present' : 'missing'}`,
+        `prompt=${mainChatConfig?.prompt ? 'present' : 'missing'}`,
+        `runtimeContext=${runtimeContext ? 'present' : 'missing'}`,
         `doorways=${doorwayDefinitions.map((def: any) => def.card_id).join(',') || 'none'}`,
         `deckRevision=${mainChatConfig?.deckRevision || 'none'}`,
       ].join(' '),

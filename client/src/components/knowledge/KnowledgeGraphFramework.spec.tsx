@@ -143,6 +143,9 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     expect(cy.store).toHaveLength(0);
     expect(cy.layouts).toHaveLength(0);
     expect(getByTestId('cytoscape-graph').getAttribute('data-node-count')).toBe('0');
+    expect(getByTestId('knowledge-graph-no-selection').textContent).toContain(
+      'Select a graph node to inspect its real fields.',
+    );
   });
 
   it('creates exactly one element per returned node/edge, preserving raw fields verbatim', async () => {
@@ -316,6 +319,7 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     nodeTap.fn({ target: { closedNeighborhood: () => ({ length: 2 }), data: () => PROJECTION.nodes[0] } });
 
     const inspector = await screen.findByTestId('knowledge-graph-node-inspector');
+    expect(screen.queryByTestId('knowledge-graph-no-selection')).toBeNull();
     expect(inspector.textContent).toContain('AST SpaceMobile');
     expect(inspector.textContent).toContain('Issuer');
     expect(inspector.textContent).toContain('PublicCompany');

@@ -410,6 +410,22 @@ export default function KnowledgeGraphFramework({
       `${majorGridGap}px ${majorGridGap}px`,
     ].join(', '),
   };
+  const graphInspectorStyle: CSSProperties = {
+    position: 'absolute',
+    zIndex: 2,
+    top: 12,
+    right: 12,
+    width: 'min(340px, calc(100% - 24px))',
+    maxHeight: 'calc(100% - 24px)',
+    overflow: 'auto',
+    padding: 12,
+    border: `1px solid ${GRAPH_THEME.accent.primary}`,
+    borderRadius: 10,
+    background: 'rgba(11, 14, 18, 0.96)',
+    color: GRAPH_THEME.surface.text,
+    fontSize: 12,
+    boxShadow: '0 12px 32px rgba(0, 0, 0, 0.35)',
+  };
 
   return (
     <div
@@ -439,22 +455,7 @@ export default function KnowledgeGraphFramework({
         <aside
           data-testid="knowledge-graph-node-inspector"
           aria-label="Selected graph node"
-          style={{
-            position: 'absolute',
-            zIndex: 2,
-            top: 12,
-            right: 12,
-            width: 'min(340px, calc(100% - 24px))',
-            maxHeight: 'calc(100% - 24px)',
-            overflow: 'auto',
-            padding: 12,
-            border: `1px solid ${GRAPH_THEME.accent.primary}`,
-            borderRadius: 10,
-            background: 'rgba(11, 14, 18, 0.96)',
-            color: GRAPH_THEME.surface.text,
-            fontSize: 12,
-            boxShadow: '0 12px 32px rgba(0, 0, 0, 0.35)',
-          }}
+          style={graphInspectorStyle}
         >
           <strong style={{ display: 'block', marginBottom: 8 }}>Selected node</strong>
           <dl style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '5px 10px', margin: 0 }}>
@@ -472,7 +473,18 @@ export default function KnowledgeGraphFramework({
             {JSON.stringify(selectedNode.properties ?? {}, null, 2)}
           </pre>
         </aside>
-      ) : null}
+      ) : (
+        <aside
+          data-testid="knowledge-graph-no-selection"
+          aria-label="Graph node inspector"
+          style={graphInspectorStyle}
+        >
+          <strong style={{ display: 'block', marginBottom: 6 }}>Inspector</strong>
+          <span style={{ color: GRAPH_THEME.surface.mutedText }}>
+            Select a graph node to inspect its real fields.
+          </span>
+        </aside>
+      )}
     </div>
   );
 }

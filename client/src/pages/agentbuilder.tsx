@@ -1943,6 +1943,7 @@ export default function AgentBuilder(): React.ReactElement {
         onSend={handleNativeSend}
         knowledgeProjectId={projectId}
         colors={C}
+        busy={nativeSessionBusy}
       />
     );
     return (
