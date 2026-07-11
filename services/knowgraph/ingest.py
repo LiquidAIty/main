@@ -385,7 +385,7 @@ def _build_prompt_template(
 def _normalize_provider(provider: str | None) -> str:
     normalized = (provider or "").strip().lower()
     if not normalized:
-        return "openai"
+        return "openrouter"
     if normalized in ("openai", "openrouter"):
         return normalized
     raise RuntimeError(f"Unsupported provider: {provider}")
