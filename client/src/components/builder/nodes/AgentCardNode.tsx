@@ -32,6 +32,20 @@ export default function AgentCardNode({
   const subtext = String(data?.subtitle || '').replace(/\s+/g, ' ').trim() || 'Operational agent';
   const compactSubtext =
     subtext.length > 88 ? `${subtext.slice(0, 88).trimEnd()}…` : subtext;
+  const tools = Array.isArray(data?.runtimeOptions?.tools)
+    ? data.runtimeOptions.tools.map((tool) => String(tool).trim()).filter(Boolean)
+    : [];
+  const runtimeBinding = String(data?.runtimeBinding || '').trim();
+  const roleBadge = runtimeBinding === 'main_chat'
+    ? 'Main'
+    : runtimeBinding === 'hermes_steward'
+      ? 'Hermes'
+      : runtimeType === 'magentic_one'
+        ? 'Mag One'
+        : runtimeType === 'local_coder'
+          ? 'Coder'
+          : 'Worker';
+  const graphToolCount = tools.filter((tool) => /thinkgraph|knowgraph|codegraph|hermes\.memory/.test(tool)).length;
 
   return (
     <div
@@ -147,6 +161,25 @@ export default function AgentCardNode({
           }}
         >
           {compactSubtext}
+        </div>
+        <div
+          aria-label={`${roleBadge}; ${tools.length} granted tool${tools.length === 1 ? '' : 's'}`}
+          style={{
+            display: 'flex',
+            gap: 4,
+            alignItems: 'center',
+            marginTop: 2,
+            minWidth: 0,
+            color: GRAPH_THEME.surface.mutedText,
+            fontSize: 9,
+            lineHeight: 1.1,
+          }}
+        >
+          <span style={{ color: runtimeBinding === 'main_chat' ? GRAPH_THEME.accent.solar : GRAPH_THEME.accent.primary }}>
+            {roleBadge}
+          </span>
+          <span>· {tools.length} tool{tools.length === 1 ? '' : 's'}</span>
+          {graphToolCount > 0 ? <span title={`${graphToolCount} graph or memory permission${graphToolCount === 1 ? '' : 's'}`}>· graph</span> : null}
         </div>
       </div>
     </div>

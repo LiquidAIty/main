@@ -1,9 +1,8 @@
-// Read-only ThinkGraph route for the Agent Builder card.
+// Read-only ThinkGraph viewer routes for the Agent Builder.
 //  - /graph-view : direct bounded projection of stored ThinkGraph records (Resources +
 //                  derived CO_OCCURRED_WITH with weight = observation_count + reified
-//                  Statements). ThinkGraph is written ONLY by the Harness calling the
-//                  ThinkGraph agent card (writer not yet wired — card is honestly empty
-//                  until then). No writes here; read failures reported honestly.
+//                  Statements). Hermes writes through the canonical structured
+//                  writer; these routes never write. Read failures are explicit.
 import { Router } from 'express';
 import { getThinkGraphView } from '../services/thinkgraph/thinkGraphStore';
 import { fetchThinkGraphProjection } from '../services/autogen/autogenOrchestratorClient';
