@@ -5,7 +5,9 @@ Magnetic One variable context packet into ``handoff/<job-id>/prompt.md``; one
 existing Mag One run is then given the EXACT bytes of that file as its task and an
 assigned ``returns/<job-id>/`` directory as its return surface.
 
-This module is the single, pure resolver for those two workspace-relative paths.
+This module provides the canonical handoff resolver plus a separate returns-only
+resolver for post-run review. Hermes can use the latter without acquiring the
+handoff task-entrypoint path.
 It never trusts a caller path: the workspace root is the server-forced trusted
 root (resolved in TS and carried in), and the job id must be one opaque path
 segment (no separators, no traversal, no absolute). Resolution is structurally
@@ -36,6 +38,16 @@ class JobFolder:
     handoff_prompt_path: str   # absolute: <root>/handoff/<job-id>/prompt.md
     returns_dir: str           # absolute: <root>/returns/<job-id>
     handoff_rel: str           # "handoff/<job-id>/prompt.md"
+    returns_rel: str           # "returns/<job-id>"
+
+
+@dataclass(frozen=True)
+class ReturnsFolder:
+    """Post-run-only view with no handoff/prompt path."""
+
+    workspace_root: str
+    job_id: str
+    returns_dir: str
     returns_rel: str           # "returns/<job-id>"
 
 
@@ -88,6 +100,25 @@ def resolve_job_folder(workspace_root: str, job_id: str) -> JobFolder:
     )
 
 
+def resolve_returns_folder(workspace_root: str, job_id: str) -> ReturnsFolder:
+    """Resolve only returns/<job-id> for post-run review."""
+    root = os.path.realpath(str(workspace_root or "").strip())
+    if not root or not os.path.isdir(root):
+        raise ValueError(f"returns_workspace_invalid: {workspace_root!r}")
+    if not _valid_job_id(job_id):
+        raise ValueError(f"returns_job_id_invalid: {job_id!r}")
+    jid = job_id.strip()
+    returns_dir = os.path.join(root, "returns", jid)
+    if not _within(root, returns_dir):
+        raise ValueError(f"returns_escapes_workspace: {returns_dir!r}")
+    return ReturnsFolder(
+        workspace_root=root,
+        job_id=jid,
+        returns_dir=returns_dir,
+        returns_rel=f"returns/{jid}",
+    )
+
+
 def new_run_id() -> str:
     """Mint one opaque, path-safe run id for a fresh Coder→Mag One handoff."""
     return f"run_{int(time.time() * 1000)}_{secrets.token_hex(3)}"
@@ -129,7 +160,7 @@ def ensure_returns_dir(folder: JobFolder) -> None:
     os.makedirs(folder.returns_dir, exist_ok=True)
 
 
-def list_return_files(folder: JobFolder) -> list[str]:
+def list_return_files(folder: JobFolder | ReturnsFolder) -> list[str]:
     """Workspace-relative paths of files actually present in returns/<job-id>/.
 
     No files is a valid outcome (empty list) — callers report that honestly and
@@ -258,7 +289,7 @@ def list_return_runs(workspace_root: str) -> list[dict]:
     return runs
 
 
-def read_return_artifact(folder: JobFolder, rel_path: str) -> dict:
+def read_return_artifact(folder: JobFolder | ReturnsFolder, rel_path: str) -> dict:
     """Read ONE artifact beneath returns/<run-id>/.
 
     Text (utf-8-decodable, within the inline cap) returns its actual contents.

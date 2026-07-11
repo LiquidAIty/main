@@ -119,7 +119,9 @@ def hermes_review(req: dict):
 def hermes_review_run(req: dict):
     """Hermes postflight: pure review of ONE Mag One / team run result (no
     model call, no DB, no persistence). Body: {runId, status, failure?,
-    finalTextPresent?, participants?, projectId?, conversationId?}. Returns
+    finalTextPresent?, participants?, projectId?, conversationId?, jobId?,
+    workspaceRoot?, returnFiles?, parentContext?}. Hermes reads only the
+    matching returns folder; prompt.md is not an input to this route. Returns
     the HermesReview plus a ready apply_thinkgraph_patch payload — persistence
     happens ONLY through the card-scoped authority on the backend, never here."""
     from app.python_models.hermes.graph_memory import to_thinkgraph_patch

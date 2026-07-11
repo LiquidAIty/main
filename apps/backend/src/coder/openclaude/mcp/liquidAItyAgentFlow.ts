@@ -18,9 +18,8 @@ import { getDeckDocument } from '../../../decks/store';
 import { resolvedMagenticOptions, runCardWithContract } from '../../../cards/runtime';
 import { recordAgentEvent } from '../../../services/agentTelemetry';
 import { resolveCoderWorkspaceRoot } from '../../workspaceRoot';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { RunPacketSchema, type RunPacket } from '../../../contracts/runtimeContracts';
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value);
@@ -39,6 +38,7 @@ function resolveCardTools(card: any): string[] {
 export type AgentFlowDeps = {
   loadDeck?: typeof getDeckDocument;
   runCard?: typeof runCardWithContract;
+  claimJob?: (workspaceRoot: string, jobId: string, runId: string) => { claimed: boolean; reason?: string };
 };
 
 // ── mag_one.describe_connected_agents ─────────────────────────────────────────
@@ -112,19 +112,14 @@ export async function describeConnectedAgents(
 // and returns its own result (its native internal task ledger may exist, but is
 // never forced/exposed/gated here).
 export type RunMagOneInput = {
-  // Normal Harness path: the ONE Hermes-authored contract returned from the
-  // native inherited-context subagent. No separate intent/context/draft shape.
-  runPacket?: RunPacket;
-  // Coder job-folder handoff: the shared job id. When set, the run's task is the
-  // EXACT bytes of handoff/<jobId>/prompt.md, the Magnetic One variable context
-  // packet for this run, and its return surface is returns/<jobId>/. The workspace
-  // root is the server-forced trusted root — never a client path. Takes precedence
-  // over runPacket so the job FILE is always the contract.
-  jobId?: string;
-  // Job-folder identity only. Normal runs take these values from runPacket.
-  projectId?: string;
-  deckId?: string;
+  // The canonical job-folder contract. Mag One reads the exact bytes of
+  // handoff/<jobId>/prompt.md and writes deliverables under returns/<jobId>/.
+  jobId: string;
+  projectId: string;
+  deckId: string;
   conversationId?: string;
+  /** Main Chat context for Hermes post-run review only; never forwarded to Mag One. */
+  parentContext?: { objective?: string; acceptanceCriteria?: string[]; reviewInstruction?: string };
 };
 
 export type RunMagOneResult = {
@@ -142,7 +137,7 @@ export type RunMagOneResult = {
   objective: string;
   // Coder job-folder handoff: the assigned return surface + the files the run
   // actually wrote there, so the Coder can read and continue from them. Null /
-  // empty for a normal RunPacket run.
+  // empty because the semantic task lives in prompt.md.
   jobId: string | null;
   returnsDir: string | null;
   returnedFiles: string[];
@@ -178,6 +173,42 @@ function listJobReturnFiles(workspaceRoot: string, jobId: string): { returnsDir:
   };
 }
 
+/**
+ * The prompt arrival/start seam is idempotent across duplicate filesystem
+ * notifications and backend restarts. The marker is written atomically only
+ * when the finalized prompt already exists; a claimed job is never launched a
+ * second time, even if the prior process stopped after claiming it.
+ */
+function claimMagOneJob(workspaceRoot: string, jobId: string, runId: string): { claimed: boolean; reason?: string } {
+  const handoffDir = path.join(workspaceRoot, 'handoff', jobId);
+  const promptPath = path.join(handoffDir, 'prompt.md');
+  const claimPath = path.join(handoffDir, 'mag-one.claim.json');
+  if (!existsSync(promptPath)) {
+    // The native Python seam remains the authority for reporting a missing
+    // prompt. This preserves mocked/unit callers that exercise the routing
+    // layer without materializing a workspace.
+    return { claimed: true };
+  }
+  try {
+    const fd = openSync(claimPath, 'wx');
+    try {
+      writeFileSync(
+        fd,
+        JSON.stringify({ jobId, runId, claimedAt: new Date().toISOString(), status: 'claimed' }),
+        'utf8',
+      );
+    } finally {
+      closeSync(fd);
+    }
+    return { claimed: true };
+  } catch (error: any) {
+    if (error?.code === 'EEXIST') {
+      return { claimed: false, reason: 'mag_one_job_already_claimed' };
+    }
+    return { claimed: false, reason: `mag_one_job_claim_failed: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
 export async function runMagOne(
   input: RunMagOneInput,
   deps: AgentFlowDeps = {},
@@ -186,30 +217,18 @@ export async function runMagOne(
   const runCard = deps.runCard ?? runCardWithContract;
 
   const jobId = asString(input?.jobId).trim();
-  let runPacket: RunPacket | null = null;
-  if (!jobId) {
-    const parsed = RunPacketSchema.safeParse(input?.runPacket);
-    if (!parsed.success) {
-      throw new Error(`run_mag_one_invalid_run_packet: ${parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')}`);
-    }
-    runPacket = parsed.data;
-    if (runPacket.route !== 'mag_one') {
-      throw new Error(`run_mag_one_route_mismatch: expected mag_one, received ${runPacket.route}`);
-    }
-  }
-  const projectId = jobId ? asString(input?.projectId).trim() : runPacket!.projectId;
-  const deckId = jobId ? asString(input?.deckId).trim() : runPacket!.deckId;
-  const conversationId = jobId
-    ? asString(input?.conversationId).trim()
-    : runPacket!.conversationId;
-  const parentRunId = runPacket?.parentRunId || null;
-  const objective = runPacket?.objective || '';
-  const packetJson = runPacket ? JSON.stringify(runPacket) : '';
+  const projectId = asString(input?.projectId).trim();
+  const deckId = asString(input?.deckId).trim();
+  const conversationId = asString(input?.conversationId).trim();
+  const parentRunId = null;
+  // The task is read by Python from handoff/<jobId>/prompt.md. TS never carries
+  // or rewrites the semantic task.
+  const objective = '';
   const route = 'liquidaity_mcp(run_mag_one) -> cards/runtime -> autogen rails -> magentic-one';
   const runId = `mag_one_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-  if (!projectId || !deckId) {
-    throw new Error('run_mag_one_missing_selected_flow: projectId and deckId are required');
+  if (!jobId || !projectId || !deckId) {
+    throw new Error('run_mag_one_missing_job_identity: jobId, projectId, and deckId are required');
   }
 
   const { deck } = await loadDeck(projectId, deckId);
@@ -222,24 +241,36 @@ export async function runMagOne(
   if (!orchestrator) {
     throw new Error('run_mag_one_no_orchestrator_card');
   }
-  // The eligible worker set at run time — the SAME resolution the runtime uses.
+  // The eligible worker roster resolves ONLY from the live blue side
+  // connections — the same resolution the runtime uses. The job folder never
+  // carries a roster; Main Chat and Hermes are structurally excluded.
   const connectedParticipants = resolvedMagenticOptions(asString(orchestrator.id), nodes, edges).map(
     (card: any) => asString(card?.id),
   );
-  if (runPacket) {
-    const expected = [...new Set(runPacket.connectedParticipants)].sort();
-    const actual = [...new Set(connectedParticipants)].sort();
-    if (JSON.stringify(expected) !== JSON.stringify(actual)) {
-      throw new Error(
-        `run_mag_one_stale_participants: packet=[${expected.join(',')}] live=[${actual.join(',')}]`,
-      );
-    }
-  }
 
   // The coder workspace root is SERVER-OWNED and trusted — the default owned Coder
   // workspace (<repo-root>/coder-workspace), never a client path; a client-supplied
   // job id only names a folder UNDER this root.
   const workspaceRoot = resolveCoderWorkspaceRoot();
+
+  const runClaim = (deps.claimJob ?? claimMagOneJob)(workspaceRoot, jobId, runId);
+  if (!runClaim.claimed) {
+    return {
+      status: 'failed',
+      runId,
+      finalText: '',
+      failure: runClaim.reason || 'mag_one_job_claim_failed',
+      provenance: { route },
+      connectedParticipants,
+      parentRunId,
+      conversationId: conversationId || null,
+      objective,
+      jobId,
+      returnsDir: `returns/${jobId}/`,
+      returnedFiles: [],
+      returnStatus: 'no_return_files_created',
+    };
+  }
 
   // Dev telemetry for the Mag One dispatch boundary (non-blocking, dev-only).
   const dispatchStartedMs = Date.now();
@@ -267,19 +298,19 @@ export async function runMagOne(
         connectedParticipants,
         ...(parentRunId ? { parentRunId } : {}),
         ...(extra.calledAgents ? { calledAgents: extra.calledAgents } : {}),
+        invocationPath: 'mag_one_control',
       },
     });
   };
   recordDispatch('started');
 
   // Regular native Mag One run. For a handoff run the runtime input is empty —
-  // the Python rails read handoff/<jobId>/prompt.md as the exact variable context
-  // packet; otherwise the validated RunPacket JSON is the task. Bus eligibility
-  // (magentic_option) is enforced inside runCardWithContract, which throws
-  // honestly when no worker is connected.
+  // the Python rails read handoff/<jobId>/prompt.md as the exact task.
+  // Bus eligibility (magentic_option side slots) is enforced inside
+  // runCardWithContract, which throws honestly when no worker is connected.
   let result: any;
   try {
-    result = await runCard(orchestrator, {}, jobId ? '' : packetJson, {
+    result = await runCard(orchestrator, {}, '', {
       deckId,
       projectId,
       allCards: nodes,

@@ -39,6 +39,11 @@ message ChatRequest {
   // QueryEngine's own existing appendSystemPrompt mechanism. Empty = the
   // vendored default system prompt is used alone, unappended.
   optional string append_system_prompt = 7;
+  // The PARENT session's MCP tool grant — the saved parent card's Tools
+  // selection, enforced by filtering the parent tool pool. Empty = full pool
+  // (back-compat). Child agents still resolve their own allowed_tools against
+  // the full server-lifetime pool.
+  repeated string parent_allowed_mcp_tools = 8;
 }
 
 // Structural saved-card configuration only — never graph data, conversation
@@ -53,6 +58,10 @@ message AgentDefinitionConfig {
   bool context_mode_inherit_parent = 6; // true = live inherited-context fork
   string when_to_use = 7;             // parent-facing capability line (backend-authored)
   optional string model = 8;          // saved card model id; empty = inherit parent
+  // Saved card ids this child may run through the card-run control tool —
+  // resolved by the backend from the card's persisted ORANGE (direct) edges.
+  // Empty = the child may run only its own bound card (legacy doorway).
+  repeated string allowed_card_run_ids = 9;
 }
 
 message UserInput {

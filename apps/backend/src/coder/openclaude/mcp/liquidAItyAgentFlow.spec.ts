@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { join as pathJoin } from 'node:path';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import {
   describeConnectedAgents,
@@ -29,28 +29,6 @@ function deps(over: Partial<AgentFlowDeps> = {}): AgentFlowDeps {
   return {
     loadDeck: vi.fn(async () => ({ deck: DECK, latestRun: null, runs: [], meta: {} })) as any,
     runCard: vi.fn() as any,
-    ...over,
-  };
-}
-
-function packet(over: Record<string, unknown> = {}) {
-  return {
-    version: 'run_packet_v0' as const,
-    preparedBy: 'hermes' as const,
-    parentRunId: 'req_parent',
-    projectId: 'project-1',
-    deckId: 'deck_builder',
-    conversationId: 'main',
-    route: 'mag_one' as const,
-    userRequest: 'Do the work — exactly.',
-    objective: 'Do the work — exactly.',
-    contextSummary: 'ThinkGraph was read.',
-    graphContext: { thinkGraph: 'available' as const, knowGraph: 'not_consulted' as const, codeGraph: 'not_consulted' as const },
-    connectedParticipants: ['card_research'],
-    disconnectedExclusions: ['card_lonely'],
-    proofRequirements: ['Return real evidence.'],
-    expectedVisibleOutput: 'A grounded answer.',
-    noFallbackRules: ['Report failures honestly.'],
     ...over,
   };
 }
@@ -96,58 +74,38 @@ describe('describeConnectedAgents (mag_one.describe_connected_agents)', () => {
   });
 });
 
-describe('runMagOne — regular native Mag One from one Hermes RunPacket', () => {
-  it('validates the packet, links the parent run, and passes its UTF-8 JSON to Mag One', async () => {
+describe('runMagOne — canonical job-folder handoff', () => {
+  it('uses job identity and passes no semantic task through TypeScript', async () => {
     const runCard = vi.fn(async () => ({ output: 'Mission complete.', status: 'success' }));
-    const runPacket = packet();
     const result = await runMagOne(
-      { runPacket },
+      { projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main', jobId: 'job_abc' },
       deps({ runCard: runCard as any }),
     );
-
     expect(runCard).toHaveBeenCalledTimes(1);
-    expect(runCard.mock.calls[0][2]).toBe(JSON.stringify(runPacket));
-    expect(runCard.mock.calls[0][2]).toContain('—');
-    // No approval / plan / taskIds thread into the run context.
-    const ctxArg = runCard.mock.calls[0][3] as Record<string, unknown>;
-    expect('runApproved' in ctxArg).toBe(false);
-    expect('plan' in ctxArg).toBe(false);
-    expect('taskIds' in ctxArg).toBe(false);
-
+    expect(runCard.mock.calls[0][2]).toBe('');
+    expect((runCard.mock.calls[0][3] as any).jobHandoff.jobId).toBe('job_abc');
     expect(result.status).toBe('completed');
     expect(result.finalText).toBe('Mission complete.');
-    expect(result.failure).toBeNull();
-    expect(result.parentRunId).toBe('req_parent');
+    expect(result.jobId).toBe('job_abc');
     expect(result.conversationId).toBe('main');
-    // No taskUpdates / needsInput / artifacts wrapper on the result.
-    const raw = JSON.stringify(result);
-    for (const gone of ['taskUpdates', 'needsInput', 'artifacts', 'evidence']) {
-      expect(raw).not.toContain(gone);
-    }
   });
 
-  it('returns an honest failure when the run errors — no retry, no fallback', async () => {
+  it('returns an honest failure when the run errors — no retry or fallback', async () => {
     const result = await runMagOne(
-      { runPacket: packet() },
+      { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_abc' },
       deps({ runCard: vi.fn(async () => ({ output: '', status: 'error', error: 'autogen_rails_unavailable' })) as any }),
     );
     expect(result.status).toBe('failed');
     expect(result.failure).toBe('autogen_rails_unavailable');
   });
 
-  it('rejects a missing/invalid packet, a non-team route, stale participants, and a missing orchestrator', async () => {
-    await expect(
-      runMagOne({}, deps()),
-    ).rejects.toThrow(/run_mag_one_invalid_run_packet/);
-    await expect(
-      runMagOne({ runPacket: packet({ route: 'direct' }) as any }, deps()),
-    ).rejects.toThrow(/run_mag_one_route_mismatch/);
-    await expect(
-      runMagOne({ runPacket: packet({ connectedParticipants: ['card_other'] }) }, deps()),
-    ).rejects.toThrow(/run_mag_one_stale_participants/);
+  it('requires the canonical job identity and rejects a missing orchestrator', async () => {
+    await expect(runMagOne({ projectId: 'project-1', deckId: 'deck_builder', jobId: '' }, deps())).rejects.toThrow(
+      /run_mag_one_missing_job_identity/,
+    );
     await expect(
       runMagOne(
-        { runPacket: packet() },
+        { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_abc' },
         deps({ loadDeck: vi.fn(async () => ({ deck: { id: 'd', name: 'x', nodes: [], edges: [] }, latestRun: null, runs: [], meta: {} })) as any }),
       ),
     ).rejects.toThrow(/run_mag_one_no_orchestrator_card/);
@@ -155,6 +113,35 @@ describe('runMagOne — regular native Mag One from one Hermes RunPacket', () =>
 });
 
 describe('runMagOne — Coder job-folder handoff (jobId)', () => {
+  it('claims a finalized prompt atomically so duplicate arrival events and restarts do not relaunch it', async () => {
+    const root = mkdtempSync(pathJoin(tmpdir(), 'liq-magone-claim-'));
+    const previous = process.env.LIQUIDAITY_GRPC_CWD;
+    process.env.LIQUIDAITY_GRPC_CWD = root;
+    try {
+      const promptDir = pathJoin(root, 'coder-workspace', 'handoff', 'job_once');
+      mkdirSync(promptDir, { recursive: true });
+      writeFileSync(pathJoin(promptDir, 'prompt.md'), 'final Main Chat instruction', 'utf8');
+      const runCard = vi.fn(async () => ({ output: 'done', status: 'success' }));
+      const first = await runMagOne(
+        { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_once' },
+        deps({ runCard: runCard as any }),
+      );
+      const second = await runMagOne(
+        { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_once' },
+        deps({ runCard: runCard as any }),
+      );
+      expect(first.status).toBe('completed');
+      expect(second.status).toBe('failed');
+      expect(second.failure).toBe('mag_one_job_already_claimed');
+      expect(runCard).toHaveBeenCalledTimes(1);
+      expect(existsSync(pathJoin(promptDir, 'mag-one.claim.json'))).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.LIQUIDAITY_GRPC_CWD;
+      else process.env.LIQUIDAITY_GRPC_CWD = previous;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('runs from a jobId with the server-forced workspace root (never a client path) and empty inline task', async () => {
     const runCard = vi.fn(async () => ({
       output: 'done',
@@ -190,10 +177,10 @@ describe('runMagOne — Coder job-folder handoff (jobId)', () => {
     expect(result.returnStatus).toBe('return_files_created');
   });
 
-  it('jobId wins over runPacket (the on-disk file is the contract)', async () => {
+  it('uses the on-disk file as the only semantic contract', async () => {
     const runCard = vi.fn(async () => ({ output: 'ok', status: 'success' }));
     await runMagOne(
-      { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_x', runPacket: packet() },
+      { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_x' },
       deps({ runCard: runCard as any }),
     );
     expect(runCard.mock.calls[0][2]).toBe('');
@@ -284,7 +271,7 @@ describe('runMagOne — dev telemetry at the dispatch boundary', () => {
       },
     }));
     await runMagOne(
-      { runPacket: packet() },
+      { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_telemetry' },
       deps({ runCard: runCard as any }),
     );
     const events = listAgentEvents().filter((e) => e.stage === 'mag_one_dispatch');
@@ -292,10 +279,8 @@ describe('runMagOne — dev telemetry at the dispatch boundary', () => {
     expect(events[1]).toMatchObject({
       mode: 'real_model_call',
       cardId: 'card_magentic',
-      conversationId: 'main',
       metadata: {
         connectedParticipants: ['card_research'],
-        parentRunId: 'req_parent',
         calledAgents: ['Research Agent'],
       },
     });
@@ -306,12 +291,12 @@ describe('runMagOne — dev telemetry at the dispatch boundary', () => {
   it('records a failed dispatch event when the run throws', async () => {
     const { clearAgentEvents, listAgentEvents } = await import('../../../services/agentTelemetry');
     clearAgentEvents();
-    await expect(
-      runMagOne(
-        { runPacket: packet() },
-        deps({ runCard: vi.fn(async () => { throw new Error('rails down'); }) as any }),
-      ),
-    ).rejects.toThrow('rails down');
+    const result = await runMagOne(
+      { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_telemetry' },
+      deps({ runCard: vi.fn(async () => { throw new Error('rails down'); }) as any }),
+    );
+    expect(result.status).toBe('failed');
+    expect(result.failure).toBe('rails down');
     const events = listAgentEvents().filter((e) => e.stage === 'mag_one_dispatch');
     expect(events.map((e) => e.status)).toEqual(['started', 'failed']);
     expect(events[1].errorSummary).toBe('rails down');

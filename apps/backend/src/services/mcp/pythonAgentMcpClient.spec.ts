@@ -23,11 +23,18 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'card.assign_runtime_skill',
       'card.run_assistant_agent',
       'card.update_configuration',
+      'codegraph.search',
+      'codegraph.status',
+      'hermes.memory_read',
+      'hermes.memory_write',
+      'knowgraph.ingest',
+      'knowgraph.query',
       'mag_one.describe_connected_agents',
       'read_model_results',
       'run_coder_subagent',
       'run_mag_one',
       'thinkgraph.get_graph_slice',
+      'thinkgraph.submit_update',
       'write_mag_one_instructions',
     ]);
     // The obsolete pair front door, the model-facing write tool, and the old

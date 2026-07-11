@@ -16,6 +16,7 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { BUILDER_DECK_ID, getDeckDocument } from '../../../decks/store';
 import { resolveRuntimeBinding } from '../../../contracts/runtimeBinding';
+import { resolveDirectSubagents } from '../../../cards/runtime';
 import { resolveModel } from '../../../llm/models.config';
 import { logHarnessTrace } from '../../../services/harnessTrace';
 
@@ -88,10 +89,23 @@ function parseSessionId(sessionId: string): { projectId: string; conversationId:
  * runtime's own MCP naming for the 'liquidaity' Python host (dots→underscores).
  * A fixed identity constant, not a mapping. */
 const CARD_RUN_CONTROL_TOOL = 'mcp__liquidaity__card_run_assistant_agent';
-const HERMES_NATIVE_CONTEXT_TOOLS = [
-  'mcp__liquidaity__mag_one_describe_connected_agents',
-  'mcp__liquidaity__thinkgraph_get_graph_slice',
-] as const;
+
+/** The saved card's Tools selection, filtered to harness MCP tool names — the
+ * REAL per-card MCP grant (enforced as the child's allowed_tools / the
+ * parent's pool filter). No card selection → no MCP tools; never a hidden
+ * default grant. */
+export function cardMcpToolGrants(card: any): string[] {
+  const raw = Array.isArray(card?.runtimeOptions?.tools) ? card.runtimeOptions.tools : [];
+  return raw
+    .map((tool: unknown) => String(tool || '').trim())
+    .filter(Boolean)
+    .map((tool: string) => {
+      const canonical = tool.startsWith('mcp__liquidaity__')
+        ? tool.slice('mcp__liquidaity__'.length)
+        : tool;
+      return `mcp__liquidaity__${canonical.replace(/\./g, '_')}`;
+    });
+}
 
 /** The truthful parent-facing capability line for a card doorway, keyed on the
  * saved binding (the same architectural signal runtime.ts uses for write
@@ -120,11 +134,14 @@ export function doorwayWhenToUse(binding: string, title: string): string {
   }
   if (binding === 'hermes_steward') {
     return (
-      'Invoke this standing Hermes context steward at the start of every user turn. ' +
-      'Omit prompt: Hermes inherits the complete live parent conversation, reads the ' +
-      'real graph/team context it needs, and returns one RunPacket telling the Harness ' +
-      'whether to answer directly, run Mag One, or dispatch the coder. Never summarize ' +
-      'the user into a separate task prompt for Hermes.'
+      'Invoke your background context/planning steward when a turn benefits from ' +
+      'deeper preparation: memory enrichment, research shaping, source ingestion, or ' +
+      'job-folder work. Omit prompt: Hermes inherits the complete live parent ' +
+      'conversation, works its graph/memory tools and its own direct agents, and writes ' +
+      'useful supporting files under handoff/<jobId>/. Hermes never writes the approved ' +
+      'prompt.md, never runs Mag One, and never becomes a worker — Main Chat reviews the ' +
+      'files, writes prompt.md last, and launches by jobId only on an explicit user request. ' +
+      'Model judgment decides when to invoke; no fixed cadence.'
     );
   }
   return `The saved agent card "${title}". Delegate the matching task to it and relay its result.`;
@@ -135,7 +152,16 @@ export function doorwayWhenToUse(binding: string, title: string): string {
  * no data bindings — Python resolves ALL of those from the saved card when
  * runConfiguredCard executes it. The doorway only relays the task and returns
  * the structured result. */
-export function buildHarnessAgentDefinition(card: any, runtimeContext?: string | null): Record<string, unknown> | null {
+export function buildHarnessAgentDefinition(
+  card: any,
+  runtimeContext?: string | null,
+  opts?: {
+    /** ORANGE-edge card-run authority for this child: the saved card ids it may
+     * run through the card-run control tool (backend-resolved from persisted
+     * direct edges — never model-chosen). */
+    allowedCardRunIds?: string[];
+  },
+): Record<string, unknown> | null {
   const cardId = String(card?.id || '').trim();
   if (!cardId) return null;
   const title = String(card?.title || cardId).trim();
@@ -148,6 +174,7 @@ export function buildHarnessAgentDefinition(card: any, runtimeContext?: string |
     if (!systemPrompt.trim()) return null;
     const modelKey = String(card?.runtimeOptions?.modelKey || '').trim();
     const model = modelKey ? resolveModel(modelKey).id : '';
+    const allowedCardRunIds = (opts?.allowedCardRunIds || []).map(String).filter(Boolean);
     return {
       agent_type: cardId,
       card_id: cardId,
@@ -156,8 +183,10 @@ export function buildHarnessAgentDefinition(card: any, runtimeContext?: string |
       // Hermes IS the native inherited-context agent. Its saved prompt bytes are
       // the system prompt; there is no card.run_assistant_agent wrapper/model hop.
       system_prompt: [systemPrompt, runtimeContext].filter(Boolean).join('\n\n'),
-      allowed_tools: [...HERMES_NATIVE_CONTEXT_TOOLS],
+      // The card's Tools selection IS the grant — no hidden defaults.
+      allowed_tools: cardMcpToolGrants(card),
       context_mode_inherit_parent: true,
+      ...(allowedCardRunIds.length > 0 ? { allowed_card_run_ids: allowedCardRunIds } : {}),
       ...(model ? { model } : {}),
     };
   }
@@ -182,40 +211,33 @@ export function buildHarnessAgentDefinition(card: any, runtimeContext?: string |
   };
 }
 
-/** Doorway-eligible saved cards for a Harness surface. Structural filters only:
- * top-level enabled assistant/local-coder cards; the main_chat card is the
- * parent itself, never a runnable doorway. Chat mode exposes at most one
- * ThinkGraph card, at most one Local Coder card, and at most one Hermes
- * steward card (ambiguity → omit that doorway, honest degrade); canvas mode
- * exposes every eligible card for direct Single Assist configure/test work. */
-export function selectDoorwayCards(nodes: any[], mode: HarnessMode): any[] {
-  const eligible = (nodes || []).filter((node) => {
-    if (String(node?.kind || 'agent') !== 'agent') return false;
-    if (String(node?.parentGraphId || '').trim()) return false;
-    if (node?.enabled === false || node?.runtimeOptions?.enabled === false) return false;
-    const runtimeType = String(node?.runtimeType ?? 'assistant_agent');
-    if (runtimeType !== 'assistant_agent' && runtimeType !== 'local_coder') return false;
-    const binding = resolveRuntimeBinding(
-      node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
-      node?.id,
-    );
-    return binding !== 'main_chat';
-  });
-  if (mode === 'canvas') return eligible;
-  const byBinding = (binding: string) =>
-    eligible.filter(
-      (node) =>
+/** The parent's native subagents for a Harness surface.
+ * Chat mode: EXACTLY the cards orange-connected FROM the main_chat card in the
+ * persisted deck (the ORANGE network is the only direct-invocation authority —
+ * never binding lists, never titles). Canvas mode: every eligible top-level
+ * enabled card, for direct Single Assist configure/test work. */
+export function selectDoorwayCards(nodes: any[], edges: any[], mode: HarnessMode): any[] {
+  if (mode === 'canvas') {
+    return (nodes || []).filter((node) => {
+      if (String(node?.kind || 'agent') !== 'agent') return false;
+      if (String(node?.parentGraphId || '').trim()) return false;
+      if (node?.enabled === false || node?.runtimeOptions?.enabled === false) return false;
+      const runtimeType = String(node?.runtimeType ?? 'assistant_agent');
+      if (runtimeType !== 'assistant_agent' && runtimeType !== 'local_coder') return false;
+      const binding = resolveRuntimeBinding(
+        node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
+        node?.id,
+      );
+      return binding !== 'main_chat';
+    });
+  }
+  const mainChat = (nodes || []).find(
+    (node) =>
       resolveRuntimeBinding(node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding, node?.id) ===
-      binding,
-    );
-  const thinkgraph = byBinding('thinkgraph_agent');
-  const localCoder = byBinding('local_coder');
-  const hermes = byBinding('hermes_steward');
-  return [
-    ...(thinkgraph.length === 1 ? thinkgraph : []),
-    ...(localCoder.length === 1 ? localCoder : []),
-    ...(hermes.length === 1 ? hermes : []),
-  ];
+      'main_chat',
+  );
+  if (!mainChat) return [];
+  return resolveDirectSubagents(String(mainChat.id), nodes || [], edges || []);
 }
 
 /** Resolve this turn's native doorway definitions from the persisted deck.
@@ -230,8 +252,15 @@ export async function resolveCardDoorwayDefinitions(
   try {
     const doc = await getDeckDocument(parsed.projectId, BUILDER_DECK_ID);
     const nodes: any[] = Array.isArray((doc?.deck as any)?.nodes) ? (doc!.deck as any).nodes : [];
-    return selectDoorwayCards(nodes, mode)
-      .map((node) => buildHarnessAgentDefinition(node))
+    const edges: any[] = Array.isArray((doc?.deck as any)?.edges) ? (doc!.deck as any).edges : [];
+    return selectDoorwayCards(nodes, edges, mode)
+      .map((node) =>
+        buildHarnessAgentDefinition(node, null, {
+          allowedCardRunIds: resolveDirectSubagents(String(node.id), nodes, edges).map((child: any) =>
+            String(child.id),
+          ),
+        }),
+      )
       .filter((def): def is Record<string, unknown> => Boolean(def));
   } catch {
     return [];
@@ -247,6 +276,9 @@ export type MainChatRuntimeConfig = {
   providerModelId: string;
   deckRevision: string | null;
   doorwayDefinitions: Record<string, unknown>[];
+  /** The main_chat card's Tools selection — the parent session's real MCP
+   * grant, enforced by the gRPC server's parent pool filter. */
+  parentAllowedMcpTools: string[];
 };
 
 /**
@@ -299,6 +331,7 @@ export async function resolveMainChatRuntimeConfig(
     const resolved = resolveModel(modelKey);
     const uiProvider = String(card?.runtimeOptions?.provider || '').trim().toLowerCase();
     if (uiProvider && uiProvider !== resolved.provider) return null;
+    const edges: any[] = Array.isArray((doc?.deck as any)?.edges) ? (doc!.deck as any).edges : [];
     return {
       cardId: String(card?.id || ''),
       title: String(card?.title || card?.id || ''),
@@ -307,9 +340,16 @@ export async function resolveMainChatRuntimeConfig(
       modelKey,
       providerModelId: resolved.id,
       deckRevision: doc?.meta?.deckRevision || null,
-      doorwayDefinitions: selectDoorwayCards(nodes, mode)
-        .map((node) => buildHarnessAgentDefinition(node, buildHarnessRuntimeContext(sessionId, parentRunId)))
+      doorwayDefinitions: selectDoorwayCards(nodes, edges, mode)
+        .map((node) =>
+          buildHarnessAgentDefinition(node, buildHarnessRuntimeContext(sessionId, parentRunId), {
+            allowedCardRunIds: resolveDirectSubagents(String(node.id), nodes, edges).map((child: any) =>
+              String(child.id),
+            ),
+          }),
+        )
         .filter((def): def is Record<string, unknown> => Boolean(def)),
+      parentAllowedMcpTools: cardMcpToolGrants(card),
     };
   } catch {
     return null;
@@ -475,6 +515,11 @@ export async function startGrpcTurn(
       // appendSystemPrompt), never replacing it — the saved card is the only
       // LiquidAIty-specific layer, added on top of the base, not instead of it.
       ...(appendSystemPrompt ? { append_system_prompt: appendSystemPrompt } : {}),
+      // The parent card's Tools selection = the parent session's real MCP
+      // grant (server-enforced pool filter; children keep their own grants).
+      ...(mainChatConfig.parentAllowedMcpTools.length > 0
+        ? { parent_allowed_mcp_tools: mainChatConfig.parentAllowedMcpTools }
+        : {}),
     },
   });
 

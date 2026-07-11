@@ -4,6 +4,9 @@ round-trip, and the offline compounding demo (pattern recurrence across two
 reviews over supplied ThinkGraph memory)."""
 
 import json
+from pathlib import Path
+
+import app.python_models.hermes.review as review_module
 
 from app.python_models.hermes import (
     CODER_REPORT_FIELDS,
@@ -14,6 +17,49 @@ from app.python_models.hermes import (
 )
 
 NOW = "2026-07-08T00:00:00+00:00"
+
+
+def test_run_review_never_reads_prompt_and_only_indexes_matching_returns(tmp_path: Path, monkeypatch):
+    job_id = "job_hermes_review"
+    handoff = tmp_path / "handoff" / job_id
+    returns = tmp_path / "returns" / job_id / "card_research"
+    handoff.mkdir(parents=True)
+    returns.mkdir(parents=True)
+    prompt = "SECRET FINAL MAIN CHAT INSTRUCTION — Hermes must not see this\n"
+    (handoff / "prompt.md").write_bytes(prompt.encode("utf-8"))
+    (returns / "result.md").write_text("raw worker evidence\n", encoding="utf-8")
+    other = tmp_path / "returns" / "other_job" / "card_other"
+    other.mkdir(parents=True)
+    (other / "must_not_be_read.md").write_text("unrelated", encoding="utf-8")
+
+    def prompt_reader_must_not_run(*_args, **_kwargs):
+        raise AssertionError("Hermes review must not read handoff prompt.md")
+
+    monkeypatch.setattr(review_module.jf, "read_handoff_prompt", prompt_reader_must_not_run)
+
+    result = review_run_result(
+        {
+            "runId": "mag_one_run_review",
+            "jobId": job_id,
+            "workspaceRoot": str(tmp_path),
+            "status": "completed",
+            "participants": ["card_research"],
+            "parentContext": {"objective": "Review the returned research against acceptance criteria."},
+            "returnFiles": [f"returns/{job_id}/card_research/result.md", "returns/other_job/card_other/must_not_be_read.md"],
+        },
+        now=NOW,
+    )
+
+    assert result.verdict == "honest"
+    assert "promptBytes" not in result.jobEvidence
+    assert "promptPath" not in result.jobEvidence
+    assert "promptSha256" not in result.jobEvidence
+    assert result.jobEvidence["returnFiles"] == [f"returns/{job_id}/card_research/result.md"]
+    assert result.jobEvidence["returnTextBytes"] > 0
+    assert result.graphMemoryWritePlan.runRecord["objective"] == "Review the returned research against acceptance criteria."
+    serialized = json.dumps(result.to_dict())
+    assert prompt not in serialized
+    assert "raw worker evidence" not in serialized
 
 
 def full_report(**overrides):

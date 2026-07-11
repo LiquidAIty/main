@@ -25,7 +25,10 @@ export type AgentCardRuntimeType =
   | 'graph_flow'
   | 'local_coder';
 
-export type DeckEdgeType = 'magentic_option' | 'flow';
+// flow = ORANGE direct parent→subagent; magentic_option = BLUE side worker
+// slot; magentic_control = BLUE dedicated top control input (submit the
+// finalized prompt to Mag One — never worker membership).
+export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow';
 
 export type DeckEdgeRole =
   | 'graph_execution'

@@ -291,7 +291,7 @@ router.post('/agent-harness/probe-frontdoor', async (req, res) => {
       wouldCall: {
         harness: 'gRPC :50051 session turn (native agents + mcp tools)',
         hermes: 'Agent(subagent_type=card_hermes_steward, prompt omitted, inherited parent context)',
-        magOne: 'POST /api/coder/mcp-bridge/run_mag_one with one Hermes RunPacket (only for route=mag_one)',
+        magOne: 'POST /api/coder/mcp-bridge/run_mag_one with jobId/projectId/deckId; Mag One reads handoff/<jobId>/prompt.md',
       },
       connectedParticipants: view.connectedAgents,
       disconnectedExclusions: disconnected,

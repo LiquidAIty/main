@@ -30,8 +30,6 @@ export default function BuilderChat({
   knowledgeProjectId,
   colors,
   busy = false,
-  conversationId,
-  onNewConversation,
 }: {
   messages: { role: "assistant" | "user"; text: string }[];
   onSend: (t: string) => void;
@@ -39,10 +37,6 @@ export default function BuilderChat({
   colors: BuilderChatColors;
   /** The real SSE turn is still open; prevent a second send and state it plainly. */
   busy?: boolean;
-  /** The real Harness conversation this surface is bound to. */
-  conversationId?: string;
-  /** Mint a fresh conversation in the same project (clean run boundary). */
-  onNewConversation?: () => void;
 }) {
   const [v, setV] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
@@ -147,36 +141,6 @@ export default function BuilderChat({
         </div>
       </div>
       <div className="px-4 pb-4">
-        {onNewConversation ? (
-          <div
-            className="flex items-center justify-end gap-2"
-            style={{ padding: "0 2px 6px" }}
-          >
-            <span
-              data-testid="builder-chat-conversation-id"
-              style={{ color: colors.neutral, fontSize: 11 }}
-            >
-              {conversationId || "main"}
-            </span>
-            <button
-              data-testid="builder-chat-new-conversation"
-              onClick={onNewConversation}
-              disabled={busy}
-              title="Start a new conversation in this project"
-              style={{
-                color: colors.neutral,
-                fontSize: 11,
-                border: `1px solid ${colors.border}`,
-                borderRadius: 999,
-                padding: "2px 10px",
-                background: "transparent",
-                cursor: busy ? "not-allowed" : "pointer",
-              }}
-            >
-              + New chat
-            </button>
-          </div>
-        ) : null}
         <div
           className="flex items-center gap-2"
           style={{

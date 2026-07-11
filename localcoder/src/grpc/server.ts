@@ -41,6 +41,9 @@ export function resolveCardRunControlCall(params: {
   projectId: string
   conversationId: string
   correlationId: string
+  /** Per-child ORANGE-edge authority (backend-resolved): extra saved card ids
+   * this child may run beyond its own bound card. Absent = own card only. */
+  allowedCardRunIdsByAgentType?: Map<string, string[]>
 }): { deny: string } | { updatedInput: Record<string, unknown> } {
   const agentType = String(params.agentType || '')
   const boundCardId = agentType ? params.cardIdByAgentType.get(agentType) : undefined
@@ -48,10 +51,19 @@ export function resolveCardRunControlCall(params: {
   if (!params.projectId || !params.conversationId) {
     return { deny: 'card_run_session_identity_unavailable' }
   }
+  const requestedCardId = String(params.input?.cardId || '').trim()
+  let targetCardId = boundCardId
+  if (requestedCardId && requestedCardId !== boundCardId) {
+    const allowed = params.allowedCardRunIdsByAgentType?.get(agentType) || []
+    if (!allowed.includes(requestedCardId)) {
+      return { deny: 'card_run_target_not_authorized' }
+    }
+    targetCardId = requestedCardId
+  }
   return {
     updatedInput: {
       ...params.input,
-      cardId: boundCardId,
+      cardId: targetCardId,
       projectId: params.projectId,
       conversationId: params.conversationId,
       correlationId: params.correlationId,
@@ -294,11 +306,28 @@ export class GrpcServer {
               .filter((d: any) => String(d?.agent_type || '').trim() && String(d?.card_id || '').trim())
               .map((d: any) => [String(d.agent_type), String(d.card_id)]),
           )
+          // ORANGE-edge card-run authority per child (backend-resolved).
+          const allowedCardRunIdsByAgentType = new Map<string, string[]>(
+            rawAgentDefinitions
+              .filter((d: any) => String(d?.agent_type || '').trim() && Array.isArray(d?.allowed_card_run_ids))
+              .map((d: any) => [String(d.agent_type), d.allowed_card_run_ids.map(String).filter(Boolean)]),
+          )
           const sessionParts = parseSessionIdParts(sessionId)
+
+          // The PARENT session's MCP surface = the saved parent card's Tools
+          // selection (backend-sent). Empty list = full pool (back-compat).
+          // Children still resolve their own allowed_tools from the full
+          // server-lifetime pool via appState.mcp.tools.
+          const parentAllowedMcpTools: string[] = Array.isArray(req.parent_allowed_mcp_tools)
+            ? req.parent_allowed_mcp_tools.map(String).filter(Boolean)
+            : []
+          const parentMcpTools = parentAllowedMcpTools.length > 0
+            ? this.mcpTools.filter(tool => parentAllowedMcpTools.includes(tool.name))
+            : this.mcpTools
 
           engine = new QueryEngine({
             cwd: req.working_directory || process.cwd(),
-            tools: [...getTools(appState.toolPermissionContext), ...this.mcpTools], // base tools + the server-lifetime Python MCP tools
+            tools: [...getTools(appState.toolPermissionContext), ...parentMcpTools], // base tools + the parent's granted MCP tools
             commands: [], // Slash commands
             mcpClients: this.mcpClients,
             agents: buildAgentDefinitionsFromRequest(req),
@@ -334,6 +363,7 @@ export class GrpcServer {
                   projectId: sessionParts?.projectId ?? '',
                   conversationId: sessionParts?.conversationId ?? '',
                   correlationId: randomUUID(),
+                  allowedCardRunIdsByAgentType,
                 })
                 if ('deny' in resolved) {
                   return {

@@ -8,7 +8,7 @@ import { pool } from '../db/pool';
 import { normalizeLocalCoderControllerCard } from '../cards/localCoderController';
 import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
 import {
-  buildMainChatBusEdge,
+  buildMainChatControlEdge,
   buildMainChatControllerCard,
   MAIN_CHAT_CARD_ID,
   MAIN_CHAT_MODEL_KEY,
@@ -77,9 +77,10 @@ function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
 }
 
 function normalizeEdgeType(value: unknown): DeckEdgeType {
-  return String(value || '').trim().toLowerCase() === 'magentic_option'
-    ? 'magentic_option'
-    : 'flow';
+  const type = String(value || '').trim().toLowerCase();
+  if (type === 'magentic_option') return 'magentic_option';
+  if (type === 'magentic_control') return 'magentic_control';
+  return 'flow';
 }
 
 const EDGE_ROLE_VALUES = new Set<DeckEdgeRole>([
@@ -332,14 +333,26 @@ function ensureMainChatControllerCard(deck: DeckDocument): DeckDocument {
             parentGraphId: null,
           }) || node;
         });
-  const hasMainChatBusEdge = deck.edges.some(
+  // Main Chat's bus relationship is CONTROL-only (dedicated top input). A
+  // legacy worker-slot edge (magentic_option into a bus-in-* handle) is
+  // retired stale wiring: drop it so Main Chat can never resolve as a worker,
+  // and ensure exactly one control edge exists.
+  const edges = deck.edges.filter(
     (edge) =>
-      edge.edgeType === 'magentic_option' &&
+      !(
+        edge.edgeType === 'magentic_option' &&
+        ((edge.source === MAIN_CHAT_CARD_ID && edge.target === 'card_magentic') ||
+          (edge.target === MAIN_CHAT_CARD_ID && edge.source === 'card_magentic'))
+      ),
+  );
+  const hasControlEdge = edges.some(
+    (edge) =>
+      edge.edgeType === 'magentic_control' &&
       ((edge.source === MAIN_CHAT_CARD_ID && edge.target === 'card_magentic') ||
         (edge.target === MAIN_CHAT_CARD_ID && edge.source === 'card_magentic')),
   );
-  const edges = hasMainChatBusEdge ? deck.edges : [buildMainChatBusEdge(), ...deck.edges];
-  return { ...deck, promptTemplates, nodes, edges };
+  const finalEdges = hasControlEdge ? edges : [buildMainChatControlEdge(), ...edges];
+  return { ...deck, promptTemplates, nodes, edges: finalEdges };
 }
 
 function normalizeDeckDocument(value: unknown, fallbackId: string): DeckDocument | null {

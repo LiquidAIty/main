@@ -515,6 +515,16 @@ async def run_configured_card(context: ContextPack) -> OrchestratorRunResponse:
             THINKGRAPH_PATCH_EVENTS.reset(patch_events_token)
 
 
+def _read_magentic_handoff_task(context: ContextPack) -> tuple[jf.JobFolder | None, str | None]:
+    """Mag One's sole task-entrypoint reader: exact handoff/prompt.md bytes."""
+    if context.jobHandoff is None:
+        return None, None
+    folder = jf.resolve_job_folder(context.jobHandoff.workspaceRoot, context.jobHandoff.jobId)
+    task = jf.read_handoff_prompt(folder)
+    jf.ensure_returns_dir(folder)
+    return folder, task
+
+
 def _read_max_turns(context: ContextPack) -> int:
     runtime_options = getattr(context.cardRuntime, "runtimeOptions", None) or {}
     raw = runtime_options.get("maxTurns", 12) if isinstance(runtime_options, dict) else 12
@@ -537,11 +547,7 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
     folder: jf.JobFolder | None = None
     if context.jobHandoff is not None:
         try:
-            folder = jf.resolve_job_folder(
-                context.jobHandoff.workspaceRoot, context.jobHandoff.jobId
-            )
-            task = jf.read_handoff_prompt(folder)
-            jf.ensure_returns_dir(folder)
+            folder, task = _read_magentic_handoff_task(context)
         except (ValueError, FileNotFoundError, OSError) as err:
             return OrchestratorRunResponse(
                 ok=False,

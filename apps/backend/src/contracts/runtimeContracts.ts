@@ -172,48 +172,32 @@ export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
   },
 ];
 
-// ── One authority-chain contract (Harness → native Hermes → execution) ─────
-// Hermes reads the inherited live conversation and returns this ONE packet.
-// There is no intent draft, context packet, run-packet draft, context review,
-// or provider-specific Mag One packet. Validation is structural only; models
-// own interpretation and routing decisions.
-export const RunPacketSchema = z.object({
-  version: z.literal('run_packet_v0'),
-  preparedBy: z.literal('hermes'),
-  parentRunId: z.string().min(1),
-  projectId: z.string().min(1),
-  deckId: z.string().min(1),
-  conversationId: z.string().min(1),
-  route: z.enum(['direct', 'mag_one', 'coder']),
-  /** The current user's request copied from inherited context without TS rewriting. */
-  userRequest: z.string().min(1),
-  objective: z.string().min(1),
-  contextSummary: z.string(),
-  graphContext: z.object({
-    thinkGraph: z.enum(['available', 'empty', 'unavailable']),
-    knowGraph: z.enum(['available', 'unavailable', 'not_consulted']),
-    codeGraph: z.enum(['available', 'unavailable', 'not_consulted']),
-  }).strict(),
-  connectedParticipants: z.array(z.string().min(1)),
-  disconnectedExclusions: z.array(z.string().min(1)),
-  proofRequirements: z.array(z.string().min(1)),
-  expectedVisibleOutput: z.string().min(1),
-  noFallbackRules: z.array(z.string().min(1)),
-  coder: z.object({
-    cardId: z.string().min(1),
-    adapter: z.literal('claude_code'),
-    approvedPrompt: z.string().min(1),
-  }).strict().optional(),
-}).strict().superRefine((packet, ctx) => {
-  if (packet.route === 'coder' && !packet.coder) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['coder'], message: 'coder is required for route=coder' });
-  }
-  if (packet.route !== 'coder' && packet.coder) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['coder'], message: 'coder is allowed only for route=coder' });
-  }
-});
-
-export type RunPacket = z.infer<typeof RunPacketSchema>;
+// Harness/MCP bridge tools are transport capabilities, not card-local
+// reasoning. They still need typed registration so saved-card grants can be
+// validated without inventing a second tool registry in TypeScript.
+for (const name of [
+  'thinkgraph.get_graph_slice',
+  'thinkgraph.submit_update',
+  'knowgraph.query',
+  'knowgraph.ingest',
+  'codegraph.status',
+  'codegraph.search',
+  'hermes.memory_read',
+  'hermes.memory_write',
+  'mag_one.describe_connected_agents',
+  'run_mag_one',
+  'run_coder_subagent',
+  'canvas.inspect',
+  'card.run_assistant_agent',
+]) {
+  RUNTIME_TOOL_SPECS.push({
+    name,
+    description: `LiquidAIty MCP bridge capability: ${name}.`,
+    enabled: true,
+    inputSchema: { type: 'object' },
+    outputSchema: { type: 'object' },
+  });
+}
 
 export type HermesReviewReport = {
   runId: string;
@@ -349,7 +333,7 @@ export type RuntimeGraphEdge = {
   id: string;
   source: string;
   target: string;
-  edgeType: 'flow' | 'magentic_option';
+  edgeType: 'flow' | 'magentic_option' | 'magentic_control';
   loop: Record<string, any> | null;
   data: Record<string, any>;
 };

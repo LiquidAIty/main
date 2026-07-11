@@ -745,6 +745,65 @@ router.post('/ingest', knowgraphUploadSingle as any, async (req, res) => {
   }
 });
 
+// Real-source web/document ingestion passthrough to the KnowGraph API's
+// existing Neo/Python pipeline (/ingest_web_results): document loading,
+// chunking, extraction prompts, entity/relationship extraction, provenance,
+// Neo4j writes all stay in the pipeline. Documents must carry REAL source
+// material (text + source metadata) — nothing is fabricated here.
+router.post('/ingest_web', async (req, res) => {
+  try {
+    const projectId = typeof req.body?.project_id === 'string' ? req.body.project_id.trim() : '';
+    const documents = Array.isArray(req.body?.documents) ? req.body.documents : [];
+    if (!projectId || documents.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'project_id and at least one real source document are required' },
+      });
+    }
+    const hasRealSource = documents.every(
+      (doc: any) =>
+        String(doc?.text || doc?.full_text || doc?.snippet || '').trim().length > 0,
+    );
+    if (!hasRealSource) {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'every document must carry real source text (text/full_text/snippet)' },
+      });
+    }
+    const baseUrls = buildKnowgraphBaseUrls();
+    let lastError: any;
+    for (const baseUrl of baseUrls) {
+      try {
+        const response = await axios.post(
+          `${baseUrl}/ingest_web_results`,
+          {
+            project_id: projectId,
+            documents,
+            ...(req.body?.prompt_template ? { prompt_template: req.body.prompt_template } : {}),
+            ...(req.body?.organizing_principle ? { organizing_principle: req.body.organizing_principle } : {}),
+            ...(req.body?.research_focus ? { research_focus: req.body.research_focus } : {}),
+          },
+          { timeout: 300_000, validateStatus: () => true },
+        );
+        return res.status(response.status).json(response.data);
+      } catch (error: any) {
+        lastError = error;
+        const code = String(error?.code || '');
+        if (!(!error?.response && (code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN'))) {
+          break;
+        }
+      }
+    }
+    const message = lastError?.message || 'knowgraph_api_unreachable';
+    return res.status(502).json({ ok: false, error: { message } });
+  } catch (error: any) {
+    return res.status(502).json({
+      ok: false,
+      error: { message: error?.message || 'KnowGraph web ingestion proxy failed' },
+    });
+  }
+});
+
 router.post('/ingest_code', async (req, res) => {
   try {
     const projectId = typeof req.body?.project_id === 'string' ? req.body.project_id.trim() : '';

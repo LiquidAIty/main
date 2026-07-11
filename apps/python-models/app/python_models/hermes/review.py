@@ -25,6 +25,7 @@ from .protocol import (
     ProofQuality,
     RunRecord,
 )
+from app.python_models import job_folder as jf
 
 
 def _now_iso() -> str:
@@ -93,16 +94,57 @@ def review_run_result(
 ) -> HermesReview:
     """Postflight review of ONE Mag One / team run result (pure, structural).
 
-    Input mirrors the REAL RunMagOneResult seam (liquidAItyAgentFlow.ts):
-    ``{runId, status: completed|partial|failed, failure?, finalTextPresent?,
-    participants?: [cardId...], projectId?, conversationId?}``. Verdicts are
-    deterministic over the supplied structure; nothing is inferred from prose.
+    Input mirrors the REAL postflight seam (liquidAItyAgentFlow.ts):
+    ``{runId, jobId?, workspaceRoot?, returnFiles?, parentContext?, status,
+    failure?, finalTextPresent?, participants?}``. Hermes inspects only the
+    matching returns folder; prompt.md is not an input authority here. Verdicts
+    are deterministic over supplied structure; nothing is inferred from prose.
     The returned graphMemoryWritePlan persists only through the card-scoped
     apply_thinkgraph_patch authority, elsewhere.
     """
     data = run_input if isinstance(run_input, dict) else {}
     timestamp = now or _now_iso()
     run_id = str(data.get("runId") or "").strip()
+
+    # Hermes owns bounded post-run result inspection only. The backend passes a
+    # trusted workspace root, opaque job identity, and (when available) the
+    # return manifest. prompt.md is deliberately absent from this path: it is
+    # Main Chat's finalized instruction and Mag One is its sole reader.
+    job_evidence: dict[str, Any] = {}
+    job_id = str(data.get("jobId") or "").strip()
+    workspace_root = str(data.get("workspaceRoot") or "").strip()
+    if job_id and workspace_root:
+        try:
+            folder = jf.resolve_returns_folder(workspace_root, job_id)
+            expected_prefix = f"returns/{job_id}/"
+            supplied_files = data.get("returnFiles")
+            if isinstance(supplied_files, list):
+                return_files = sorted(
+                    {
+                        path
+                        for path in (str(item).strip().replace("\\", "/") for item in supplied_files)
+                        if path.startswith(expected_prefix)
+                    }
+                )[:20]
+            else:
+                return_files = jf.list_return_files(folder)[:20]
+            text_bytes = 0
+            for rel_path in return_files:
+                try:
+                    artifact_rel = rel_path[len(expected_prefix):]
+                    artifact = jf.read_return_artifact(folder, artifact_rel)
+                    if artifact.get("kind") == "text":
+                        text_bytes += len(str(artifact.get("content") or "").encode("utf-8"))
+                except (FileNotFoundError, OSError, ValueError):
+                    continue
+            job_evidence = {
+                "jobId": job_id,
+                "returnFiles": return_files,
+                "returnFileCount": len(return_files),
+                "returnTextBytes": text_bytes,
+            }
+        except (FileNotFoundError, OSError, ValueError) as err:
+            job_evidence = {"jobId": job_id, "error": str(err)}
 
     activity: list[HermesActivityEntry] = []
     entry_count = 0
@@ -132,6 +174,7 @@ def review_run_result(
             ),
             sourceCitations=["runResult"],
             activityEvents=activity,
+            jobEvidence=job_evidence,
         )
 
     add_activity("review_started", f"Reviewing run result for {run_id}")
@@ -140,9 +183,10 @@ def review_run_result(
     failure = str(data.get("failure") or "").strip()
     final_text_present = bool(data.get("finalTextPresent"))
     participants = [str(p) for p in (data.get("participants") or []) if str(p).strip()]
-    # Supplied run-memory structure (bounded): the user objective the run
-    # served and the run's actual final text. Never inferred from prose here.
-    objective = " ".join(str(data.get("objective") or "").split())
+    # Main Chat's inherited parent context is the authority for the objective
+    # Hermes reviews. It is never reconstructed from prompt.md or raw prose.
+    parent_context = data.get("parentContext") if isinstance(data.get("parentContext"), dict) else {}
+    objective = " ".join(str(parent_context.get("objective") or data.get("objective") or "").split())
     final_text = " ".join(str(data.get("finalText") or "").split())
 
     blocker_findings: list[BlockerFinding] = []
@@ -159,11 +203,12 @@ def review_run_result(
             )
         )
 
+    evidence_present = bool(job_evidence.get("returnFileCount")) or final_text_present
     if status == "failed" or blocker_findings:
         verdict = "blocked"
     elif status == "partial":
         verdict = "incomplete"
-    elif status == "completed" and not final_text_present:
+    elif status == "completed" and not evidence_present:
         verdict = "suspicious"
     elif status == "completed":
         verdict = "honest"
@@ -174,6 +219,8 @@ def review_run_result(
         status, "failed"
     )
     citations = ["runResult.status"]
+    if job_evidence.get("returnFiles"):
+        citations.extend(str(path) for path in job_evidence["returnFiles"][:20])
     if failure:
         citations.append("runResult.failure")
     if participants:
@@ -229,9 +276,9 @@ def review_run_result(
             "do not trust the run as delivered; re-run or inspect the transcript."
         )
     elif verdict == "incomplete":
-        recommendation = "Run is partial/unclassified — narrow the next Run Packet to the unfinished work."
+        recommendation = "Run is partial/unclassified — inspect the job-folder evidence and narrow the next job to unfinished work."
     else:
-        recommendation = "Run completed with a real visible result. Safe to record and proceed."
+        recommendation = "Run completed with reviewed job-folder evidence. Safe to record and proceed."
 
     add_activity(
         "review_complete",
@@ -257,6 +304,7 @@ def review_run_result(
         graphMemoryWritePlan=write_plan,
         sourceCitations=citations,
         activityEvents=activity,
+        jobEvidence=job_evidence,
     )
 
 

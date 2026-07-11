@@ -9,7 +9,7 @@ env vars, no .env, no per-turn spawn, no fallback host.
 Exposes exactly this tool surface:
   * mag_one.describe_connected_agents (read connected, bus-eligible Mag One cards)
   * run_mag_one                      (run native Mag One from the one Hermes
-                                      RunPacket, or a Coder job-folder handoff)
+                                      canonical Coder job-folder handoff)
   * thinkgraph.get_graph_slice       (bounded READ-ONLY graph scope)
   * canvas.inspect / card.update_configuration / canvas.upsert_wire /
     card.assign_runtime_skill / card.assign_data_binding /
@@ -136,65 +136,32 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="run_mag_one",
             description=(
-                "Run regular native Mag One. Task source is EITHER the one Hermes-authored RunPacket OR a Coder "
-                "job-folder handoff (jobId). With jobId, the run's task is the EXACT bytes of "
-                "handoff/<jobId>/prompt.md, the Magnetic One variable context packet for this run, and its "
-                "return surface is returns/<jobId>/ under the server-forced trusted workspace root — "
-                "the result reports that returns dir and the files actually written there (honest "
-                "no_return_files_created when none). With runPacket, the backend validates the exact "
-                "Hermes contract and live participant set, then passes its JSON to Mag One. "
-                "jobId takes precedence so the on-disk file is the contract. "
-                "Mag One reasons over the task, selects among connected eligible workers itself, and "
-                "returns its result. No structured plan, no task ledger gate, no approval gate. "
-                "Pass your real conversationId so Hermes postflight records the run's memory with "
-                "correct provenance — without it the run memory write is honestly blocked. "
-                "deckId is optional and defaults to the one canonical Agent Canvas deck; never "
-                "guess a deckId."
+                "Main Chat only: submit an existing finalized job folder through the bus control input. "
+                "The job is identified by jobId/projectId/deckId; Mag One reads the exact bytes of "
+                "handoff/<jobId>/prompt.md and writes real artifacts under returns/<jobId>/. "
+                "Supporting files may accompany prompt.md. The prompt file is the final start signal. "
+                "The backend resolves the live worker roster from blue SIDE connections; never type "
+                "a roster. Execute only on an explicit user request — Hermes never launches Mag One."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "runPacket": {
-                        "type": "object",
-                        "properties": {
-                            "version": {"type": "string", "const": "run_packet_v0"},
-                            "preparedBy": {"type": "string", "const": "hermes"},
-                            "parentRunId": {"type": "string"},
-                            "projectId": {"type": "string"},
-                            "deckId": {"type": "string"},
-                            "conversationId": {"type": "string"},
-                            "route": {"type": "string", "enum": ["direct", "mag_one", "coder"]},
-                            "userRequest": {"type": "string"},
-                            "objective": {"type": "string"},
-                            "contextSummary": {"type": "string"},
-                            "graphContext": {"type": "object"},
-                            "connectedParticipants": {"type": "array", "items": {"type": "string"}},
-                            "disconnectedExclusions": {"type": "array", "items": {"type": "string"}},
-                            "proofRequirements": {"type": "array", "items": {"type": "string"}},
-                            "expectedVisibleOutput": {"type": "string"},
-                            "noFallbackRules": {"type": "array", "items": {"type": "string"}},
-                            "coder": {"type": "object"},
-                        },
-                        "required": [
-                            "version", "preparedBy", "parentRunId", "projectId", "deckId",
-                            "conversationId", "route", "userRequest", "objective", "contextSummary",
-                            "graphContext", "connectedParticipants", "disconnectedExclusions",
-                            "proofRequirements", "expectedVisibleOutput", "noFallbackRules",
-                        ],
-                        "additionalProperties": False,
-                    },
                     "projectId": {"type": "string"},
                     "deckId": {"type": "string"},
                     "jobId": {"type": "string"},
                     "conversationId": {"type": "string"},
+                    "parentContext": {
+                        "type": "object",
+                        "description": "Inherited Main Chat review context for Hermes only; never Mag One task input.",
+                    },
                 },
-                "required": [],
+                "required": ["jobId", "projectId", "deckId"],
             },
         ),
         Tool(
             name="write_mag_one_instructions",
             description=(
-                "Local Coder: write EXACT Mag One variable context packet into handoff/<run-id>/prompt.md "
+                "Local Coder: write the EXACT Mag One task into handoff/<run-id>/prompt.md "
                 "in the trusted active Coder workspace, and assign returns/<run-id>/ as the run's "
                 "result folder. Supply `instructions` (the exact run-specific text Mag One receives — not "
                 "summarized/wrapped/rewritten, and not durable card constants) and optionally `runId` to reuse an existing handoff. "
@@ -329,6 +296,130 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="thinkgraph.submit_update",
+            description=(
+                "Hermes only: submit ONE bounded structured ThinkGraph update (resources / "
+                "relations / statements — decisions, constraints, uncertainty, questions, "
+                "provenance links). The canonical backend writer validates the structure and "
+                "applies it under server-minted Hermes-card authority; there is no raw Cypher "
+                "and no model-supplied authority. Pass your real conversationId for provenance."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "conversationId": {"type": "string"},
+                    "resources": {"type": "array", "items": {"type": "object"}},
+                    "relations": {"type": "array", "items": {"type": "object"}},
+                    "statements": {"type": "array", "items": {"type": "object"}},
+                },
+                "required": ["projectId", "conversationId"],
+            },
+        ),
+        Tool(
+            name="knowgraph.query",
+            description=(
+                "READ-ONLY grounded knowledge retrieval from KnowGraph (Neo4j): sourced claims, "
+                "entities, relationships, conflicts, and provenance via exact + full-text + "
+                "vector retrieval. Returns real stored evidence only; an unreachable graph is an "
+                "honest error, never fabricated context."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "query": {"type": "string"},
+                    "anchors": {"type": "array", "items": {"type": "string"}},
+                    "maxResults": {"type": "integer"},
+                },
+                "required": ["projectId", "query"],
+            },
+        ),
+        Tool(
+            name="knowgraph.ingest",
+            description=(
+                "Hermes only: ingest REAL source material into KnowGraph through the existing "
+                "Neo/Python extraction pipeline (chunking, extraction prompts, entity/relationship "
+                "extraction, provenance, Neo4j writes). Each document must carry real source text "
+                "plus source metadata (source_url/title/fetched_at/document_id). Never invent "
+                "sources; never ingest model speculation."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "documents": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "document_id": {"type": "string"},
+                                "text": {"type": "string"},
+                                "title": {"type": "string"},
+                                "source_url": {"type": "string"},
+                                "fetched_at": {"type": "string"},
+                                "snippet": {"type": "string"},
+                                "metadata": {"type": "object"},
+                            },
+                            "required": ["text"],
+                        },
+                    },
+                    "researchFocus": {"type": "object"},
+                },
+                "required": ["projectId", "documents"],
+            },
+        ),
+        Tool(
+            name="codegraph.status",
+            description=(
+                "READ-ONLY CodeGraph/CBM index freshness and project status. CBM remains the "
+                "only CodeGraph writer/indexer."
+            ),
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="codegraph.search",
+            description=(
+                "READ-ONLY structural code search through the CBM index: symbols, definitions, "
+                "and structure with qualified names usable for deeper tracing. No writes, no "
+                "indexing authority."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="hermes.memory_read",
+            description=(
+                "Hermes only: read your project-scoped SQL memory (private steward continuity — "
+                "prior judgments, patterns, draft state). Omit key to list recent items."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {"projectId": {"type": "string"}, "key": {"type": "string"}},
+                "required": ["projectId"],
+            },
+        ),
+        Tool(
+            name="hermes.memory_write",
+            description=(
+                "Hermes only: upsert one key/value item in your project-scoped SQL memory. "
+                "Separate from ThinkGraph — this is your private continuity, not shared project "
+                "reasoning."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "projectId": {"type": "string"},
+                    "key": {"type": "string"},
+                    "value": {},
+                },
+                "required": ["projectId", "key", "value"],
+            },
+        ),
+        Tool(
             name="card.run_assistant_agent",
             description=(
                 "Run ONE saved, enabled assistant_agent card with its saved prompt/model/tools and "
@@ -361,7 +452,14 @@ async def list_tools() -> list[Tool]:
 _ALLOWED_KEYS: dict[str, set[str]] = {
     "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
-    "run_mag_one": {"runPacket", "projectId", "deckId", "jobId", "conversationId"},
+    "run_mag_one": {"projectId", "deckId", "jobId", "conversationId", "parentContext"},
+    "thinkgraph.submit_update": {"projectId", "conversationId", "resources", "relations", "statements"},
+    "knowgraph.query": {"projectId", "query", "anchors", "maxResults"},
+    "knowgraph.ingest": {"projectId", "documents", "researchFocus"},
+    "codegraph.status": set(),
+    "codegraph.search": {"query", "limit"},
+    "hermes.memory_read": {"projectId", "key"},
+    "hermes.memory_write": {"projectId", "key", "value"},
     "write_mag_one_instructions": {"instructions", "runId"},
     "read_model_results": {"runId", "path"},
     "canvas.inspect": {"projectId", "deckId"},
@@ -377,6 +475,12 @@ _BRIDGE_PATHS: dict[str, str] = {
     "run_coder_subagent": "run_coder_subagent",
     "mag_one.describe_connected_agents": "describe_connected_agents",
     "run_mag_one": "run_mag_one",
+    "thinkgraph.submit_update": "thinkgraph_submit_update",
+    "knowgraph.ingest": "knowgraph_ingest",
+    "codegraph.status": "codegraph_status",
+    "codegraph.search": "codegraph_search",
+    "hermes.memory_read": "hermes_memory_read",
+    "hermes.memory_write": "hermes_memory_write",
 }
 
 # Coder job-folder tools dispatch to the ONE shared Python implementation
@@ -414,6 +518,23 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 text=json.dumps({"ok": False, "error": f"tool_arguments_rejected: {','.join(sorted(extra))}"}),
             )
         ]
+    if name == "knowgraph.query":
+        # Direct in-process reuse of the ONE proven hybrid retrieval
+        # (services/knowgraph via tool_registry) — read-only; honest error when
+        # Neo4j or the embedding backend is unavailable.
+        try:
+            from app.python_models.tool_registry import retrieve_knowgraph_context_tool
+
+            max_results = args.get("maxResults")
+            result = await retrieve_knowgraph_context_tool(
+                project_id=str(args.get("projectId") or ""),
+                query=str(args.get("query") or ""),
+                anchors=[str(a) for a in (args.get("anchors") or []) if str(a).strip()],
+                max_results=max_results if isinstance(max_results, int) and max_results > 0 else 12,
+            )
+            return [TextContent(type="text", text=json.dumps({"ok": True, **result}))]
+        except Exception as err:  # noqa: BLE001 — honest tool-level failure
+            return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"knowgraph_query_failed: {err}"}))]
     handler_name = _CONTROL_HANDLER_NAMES.get(name)
     if handler_name is not None:
         from app import control_plane

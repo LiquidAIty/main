@@ -129,25 +129,23 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     id: 'prompt_main_chat',
     // The Harness driver prompt. This is the ONE LiquidAIty-specific instruction
     // layer appended (never replacing) the vendored base chat prompt — see
-    // grpcChatClient.resolveMainChatSystemPrompt. It teaches the live Harness to
-    // drive the real run_mag_one spine; it does NOT instruct any tool that does
-    // not yet exist (no run-folder writer, no KnowGraph/CodeGraph read tool).
+    // grpcChatClient.resolveMainChatSystemPrompt. Kept in sync with the backend
+    // MAIN_CHAT_PROMPT_TEMPLATE (apps/backend/src/decks/mainChatControllerCard.ts).
     content: [
-      'You are the LiquidAIty Harness — the persistent chat front door for this project.',
-      'You are the principal agent. Hermes is your standing native context subagent; Mag One and the coder remain downstream workers.',
+      'You are Main Chat — the project principal and the only user-facing voice.',
+      'Own the persistent project conversation: reason with the user, ask real clarifying questions, discuss options and tradeoffs, and answer directly. You are never a relay for another agent.',
       '',
-      'At the start of EVERY real user turn, invoke Agent with description "Review live context" and subagent_type "card_hermes_steward". OMIT prompt completely. Hermes inherits the complete live parent conversation and figures out the current request from that context. Never summarize or rewrite the chat into a task prompt for Hermes.',
-      'Hermes returns exactly one RunPacket JSON object. Do not create, refine, replace, or surround it with parallel intent/context/draft artifacts.',
+      'Your working context: read-only graph tools (ThinkGraph project reasoning, KnowGraph grounded knowledge, CodeGraph repository reality), canvas/agent metadata, and the current job folder under coder-workspace/handoff/<jobId>/.',
+      'Your direct subagents are the cards orange-connected to you on the canvas (native Agent invocations). Invoke Hermes — your background context/planning steward — when a turn benefits from deeper preparation: memory enrichment, research shaping, draft work. Invoke the Coder directly only for a bounded coding task the user has agreed to. Model judgment decides; there is no fixed cadence and no required call per turn.',
       '',
-      'Route only from Hermes\'s packet:',
-      '- route=direct: answer the user yourself using the packet and live conversation. Do not call Mag One or the coder.',
-      '- route=mag_one: call mcp__liquidaity__run_mag_one with {runPacket:<the exact Hermes object>}. Do not change any packet field. Report only the real returned result.',
-      '- route=coder: call mcp__liquidaity__run_coder_subagent using the packet identities and coder fields exactly. The adapter must be claude_code; there is no fallback. Report only the real returned result.',
+      'Hermes prepares useful working files under handoff/<jobId>/ (draft.md, context.md, sources.md, screenshots/documents, code notes, and other bounded artifacts). Review, question, edit, remove, or replace those files before execution. The final prompt.md is written last and is the only semantic start signal.',
+      'Execution happens ONLY when the user explicitly asks to run the team in this conversation. Then finalize the job folder, write prompt.md last, and call mcp__liquidaity__run_mag_one with jobId, projectId, and deckId. The backend resolves the live worker roster from blue side edges — never type a roster by hand. Mag One reads prompt.md and referenced files, plans its own team decomposition, and writes results under returns/<jobId>/<cardId>/.',
       '',
       'Hard rules:',
-      '- Never claim a graph write, code change, artifact, or tool execution that a real returned result does not show. No result → say the run failed or is blocked, and why.',
-      '- Keep yourself as the final responder. Hermes returns context/routing; it does not replace the principal chat agent.',
-      '- Preserve exact strings and Unicode bytes carried in the RunPacket and coder approvedPrompt.',
+      '- Never claim a run, graph write, code change, or tool execution that a real returned result does not show. No result → say it failed or is blocked, and why.',
+      '- Never start a team run without an explicit user request in this conversation; Hermes readiness alone is never authority.',
+      '- A missing or unreadable job folder fails closed — never silently convert a failed run into a direct answer.',
+      '- Answering directly is always allowed when discussion serves better than execution.',
     ].join('\n'),
   },
   {
@@ -264,28 +262,32 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     id: 'prompt_hermes_steward',
     content: buildSeedPromptTemplate({
       role: [
-        'You are Hermes — the standing native inherited-context subagent for the LiquidAIty Harness.',
-        'You receive no task prompt. Read the complete live parent conversation you inherited and identify the current user request yourself.',
+        'You are Hermes — Main Chat\'s background context, planning, and memory steward.',
+        'You run as a native inherited-context subagent: you receive the complete live parent conversation instead of a task prompt. You are not the user-facing voice, not the project boss, and never a Mag One worker.',
       ].join('\n'),
       goal: [
-        'Read the real connected Mag One roster with mcp__liquidaity__mag_one_describe_connected_agents and bounded project memory with mcp__liquidaity__thinkgraph_get_graph_slice.',
-        'Decide whether the principal Harness should answer directly, run Mag One, or dispatch the Claude Code coder.',
-        'Return exactly one RunPacket JSON object. Do not execute Mag One or the coder yourself.',
+        'Make the eventual Mag One run worth running, and keep project memory compounding.',
+        'Prepare and continuously improve useful working files under the current handoff/<jobId>/ folder: draft.md, context.md, sources.md, screenshots/documents, code notes, and any other bounded artifact needed for Main Chat review. Do not treat any file as the final task until Main Chat writes prompt.md last.',
+        'Enrich real memory as the work deserves: read ThinkGraph with read_thinkgraph_scope and submit bounded structured updates with apply_thinkgraph_patch; query grounded knowledge with retrieve_knowgraph_context and ingest REAL source material through the canonical KnowGraph path; inspect repository reality through the CodeGraph/CBM tools exposed by the current card grants.',
+        'Keep your own continuity in SQL memory with hermes_memory_read and hermes_memory_write: prior judgments, useful patterns, working-file state, and operating observations.',
+        'Invoke your orange-connected direct agents with card.run_assistant_agent and that card\'s id plus one bounded task when their specialty helps; interpret their returned results yourself.',
+        'Return a concise enrichment report to Main Chat: what you read, which job files you changed, real graph/memory update results, unknowns, questions, and your advisory readiness judgment.',
       ].join('\n'),
       constraints: [
-        'Never ask the parent to send you a prompt and never create another intent/context/draft artifact.',
-        'Copy userRequest from the current inherited user turn without rewriting it. Copy projectId, deckId, conversationId, and parentRunId from LIQUIDAITY_RUNTIME_CONTEXT exactly.',
-        'connectedParticipants must exactly match the real roster tool result. A failed/empty graph read is unavailable/empty, never invented.',
-        'Use route=coder only for a bounded coding job with coder {cardId, adapter:"claude_code", approvedPrompt}; preserve approvedPrompt bytes exactly. Otherwise omit coder.',
-        'No silent fallback: if a required read fails, describe it in contextSummary/noFallbackRules and choose only a route that remains honest.',
+        'You never write the approved prompt.md, never call run_mag_one, and never treat your own readiness as user approval — Main Chat owns review, finalization, and execution.',
+        'Model judgment decides which tools a turn needs; there is no required checklist and no tool you must call every turn.',
+        'Never fabricate graph data, sources, or results. KnowGraph ingestion requires real source material. A failed read or tool call is reported honestly, never papered over.',
+        'Identity (projectId, deckId, conversationId, parentRunId) comes from LIQUIDAITY_RUNTIME_CONTEXT exactly — never invented.',
       ].join('\n'),
       ioSchema: [
-        'Input: inherited live parent conversation; no Agent prompt.',
-        'Output only JSON with: version="run_packet_v0", preparedBy="hermes", parentRunId, projectId, deckId, conversationId, route="direct"|"mag_one"|"coder", userRequest, objective, contextSummary, graphContext {thinkGraph:"available"|"empty"|"unavailable", knowGraph:"available"|"unavailable"|"not_consulted", codeGraph:"available"|"unavailable"|"not_consulted"}, connectedParticipants, disconnectedExclusions, proofRequirements, expectedVisibleOutput, noFallbackRules, and optional coder.',
+        'Input: inherited live parent conversation (no Agent prompt), plus LIQUIDAITY_RUNTIME_CONTEXT identity.',
+        'Output: a concise report — context read, changed job files, graph/memory update ids from real tool results, unknowns, questions, readiness advice. Never a packet object.',
       ].join('\n'),
       memoryPolicy: [
-        'ThinkGraph is project memory evidence, not a substitute for the live conversation.',
-        'Return pointers and concise context; do not copy the whole graph into the packet.',
+        'ThinkGraph = shared evolving project reasoning (objectives, decisions, constraints, uncertainty, questions, provenance links) — write it through structured updates only, and only what deserves to persist.',
+        'KnowGraph = grounded sourced knowledge — enters only through real ingestion of real sources.',
+        'SQL memory = your private continuity, separate from ThinkGraph. The job folder = the project\'s working execution files and final prompt.',
+        'Return pointers and concise context; never copy whole graphs into chat.',
       ].join('\n'),
     }),
   },
@@ -512,9 +514,22 @@ export const INITIAL_DECK: DeckDocument = {
         )?.content || '',
       runtimeBinding: 'main_chat',
       runtimeType: 'assistant_agent',
+      // Main Chat's Tools selection is its REAL harness MCP surface: read-only
+      // graph access, canvas metadata, the current job folder, and Mag One control.
+      // No graph writes, no ingestion, no web search by default.
       runtimeOptions: {
         provider: DEFAULT_CARD_PROVIDER,
         modelKey: DEFAULT_CARD_MODEL_KEY,
+        tools: [
+          'read_thinkgraph_scope',
+          'retrieve_knowgraph_context',
+          'codegraph_search',
+          'codegraph_status',
+          'canvas.inspect',
+          'mag_one.describe_connected_agents',
+          'run_mag_one',
+          'run_coder_subagent',
+        ],
       },
       parentGraphId: null,
       title: 'Main Chat / Harness',
@@ -548,48 +563,6 @@ export const INITIAL_DECK: DeckDocument = {
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
-      id: 'card_thinkgraph_agent',
-      kind: 'agent',
-      templateId: 'template_thinkgraph_agent',
-      prompt:
-        INITIAL_PROMPT_TEMPLATES.find(
-          (template) => template.id === 'prompt_thinkgraph_agent',
-        )?.content || '',
-      runtimeBinding: 'thinkgraph_agent',
-      runtimeType: 'assistant_agent',
-      // Exactly the two scoped ThinkGraph tools — the card's ONLY write authority.
-      // Default model follows the existing default-card convention and stays fully
-      // editable on the card (canvas remains the source of truth).
-      runtimeOptions: {
-        tools: ['read_thinkgraph_scope', 'apply_thinkgraph_patch'],
-        modelKey: 'openai/gpt-5.1-chat',
-        provider: 'openrouter',
-      },
-      parentGraphId: null,
-      title: 'ThinkGraph Agent',
-      subtitle: 'Provisional / planning memory (AGE)',
-      position: { x: 0, y: 140 },
-      status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
-    },
-    {
-      id: 'card_codegraph_agent',
-      kind: 'agent',
-      templateId: 'template_codegraph_agent',
-      prompt:
-        INITIAL_PROMPT_TEMPLATES.find(
-          (template) => template.id === 'prompt_codegraph_agent',
-        )?.content || '',
-      runtimeBinding: 'codegraph_agent',
-      runtimeType: 'assistant_agent',
-      parentGraphId: null,
-      title: 'CodeGraph Agent',
-      subtitle: 'Structural code memory',
-      position: { x: -170, y: 140 },
-      status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
-    },
-    {
       id: 'card_research_agent',
       kind: 'agent',
       templateId: 'template_research_agent',
@@ -599,43 +572,18 @@ export const INITIAL_DECK: DeckDocument = {
         )?.content || '',
       runtimeBinding: 'research_agent',
       runtimeType: 'assistant_agent',
-      // Research is a pure reasoning worker on the bus: it carries NO tools.
-      // Graph evidence comes from the KnowGraph Agent (Mag One coordinates the
-      // two) — research must never claim internet or tool access it lacks.
-      // Same model convention as the ThinkGraph card; fully editable on the card.
+      // Bounded web-research specialist. HONEST TOOLING: the repository has no
+      // real web-search/page-fetch runner tool yet, so this card carries none —
+      // it must never claim internet access it lacks. Real source URLs it
+      // proposes are fetched by Hermes through KnowGraph ingestion.
       runtimeOptions: {
         modelKey: 'openai/gpt-5.1-chat',
         provider: 'openrouter',
       },
       parentGraphId: null,
-      title: 'Research Agent',
-      subtitle: 'Research and analysis worker',
+      title: 'Search Agent',
+      subtitle: 'Web search',
       position: { x: -340, y: 140 },
-      status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
-    },
-    {
-      id: 'card_knowgraph_agent',
-      kind: 'agent',
-      templateId: 'template_knowgraph_agent',
-      prompt:
-        INITIAL_PROMPT_TEMPLATES.find(
-          (template) => template.id === 'prompt_knowgraph_agent',
-        )?.content || '',
-      runtimeBinding: 'knowgraph_agent',
-      runtimeType: 'assistant_agent',
-      // Read-only retrieval only — no KnowGraph write tool is wired yet, and
-      // this card must never pretend one exists. Same model convention as the
-      // ThinkGraph card; fully editable on the card.
-      runtimeOptions: {
-        tools: ['retrieve_knowgraph_context'],
-        modelKey: 'openai/gpt-5.1-chat',
-        provider: 'openrouter',
-      },
-      parentGraphId: null,
-      title: 'KnowGraph Agent',
-      subtitle: 'Grounded / evidence-backed memory (Neo4j)',
-      position: { x: -510, y: 140 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
@@ -671,22 +619,26 @@ export const INITIAL_DECK: DeckDocument = {
         )?.content || '',
       runtimeBinding: 'hermes_steward',
       runtimeType: 'assistant_agent',
-      // The pure review tool plus the two scoped ThinkGraph tools — the same
-      // write-authority class as the ThinkGraph card (server-minted
-      // thinkgraph_card_run authority, one canonical patch path). Same model
-      // convention as the ThinkGraph card; fully editable on the card.
+      // Hermes runs as Main Chat's native inherited-context subagent; its Tools
+      // selection is its REAL harness MCP surface (enforced as the child agent's
+      // allowed_tools). ThinkGraph write and KnowGraph ingestion go through the
+      // canonical backend writers/pipeline under server-minted authority.
       runtimeOptions: {
         tools: [
-          'hermes_review_coder_report',
           'read_thinkgraph_scope',
           'apply_thinkgraph_patch',
+          'retrieve_knowgraph_context',
+          'hermes_review_coder_report',
+          'hermes_memory_read',
+          'hermes_memory_write',
+          'card.run_assistant_agent',
         ],
         modelKey: 'openai/gpt-5.1-chat',
         provider: 'openrouter',
       },
       parentGraphId: null,
       title: 'Hermes',
-      subtitle: 'Knowledge compounding agent',
+      subtitle: 'Context and planning steward',
       position: { x: 260, y: 480 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
@@ -709,23 +661,6 @@ export const INITIAL_DECK: DeckDocument = {
       cloneConfig: { enabled: false, seeds: [] },
     },
     {
-      id: 'card_plan_agent',
-      kind: 'agent',
-      templateId: 'template_plan_agent',
-      prompt:
-        INITIAL_PROMPT_TEMPLATES.find(
-          (template) => template.id === 'prompt_plan_agent',
-        )?.content || '',
-      runtimeBinding: 'plan_agent',
-      runtimeType: 'assistant_agent',
-      parentGraphId: null,
-      title: 'Plan Agent',
-      subtitle: 'Approval and planning surface',
-      position: { x: 0, y: 380 },
-      status: 'ready',
-      cloneConfig: { enabled: false, seeds: [] },
-    },
-    {
       id: 'card_worldsignals_agent',
       kind: 'agent',
       templateId: 'template_worldsignals_agent',
@@ -735,30 +670,45 @@ export const INITIAL_DECK: DeckDocument = {
         )?.content || '',
       runtimeBinding: 'worldsignals_agent',
       runtimeType: 'assistant_agent',
+      // Real configured outside-world data sources only (EDGAR filings + Alpaca
+      // market data — the registered runner tools). Never invented integrations.
+      runtimeOptions: {
+        tools: [
+          'find_recent_sec_filing_signals',
+          'get_market_snapshot',
+          'get_historical_bars',
+        ],
+        modelKey: 'openai/gpt-5.1-chat',
+        provider: 'openrouter',
+      },
       parentGraphId: null,
       title: 'WorldSignals Agent',
-      subtitle: 'Outside-world context surface',
+      subtitle: 'Real time data context',
       position: { x: 0, y: 260 },
       status: 'ready',
       cloneConfig: { enabled: false, seeds: [] },
     },
   ],
+  // The two independent connection networks (explicit type + handle semantics;
+  // color is presentation only):
+  //   flow             ORANGE  source parent → target native subagent
+  //   magentic_option  BLUE    side worker slot on the Mag One bus
+  //   magentic_control BLUE    dedicated top control input (submit final prompt)
   edges: [
+    { id: 'edge_main_chat_hermes', source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
+    { id: 'edge_main_chat_coder', source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' },
+    { id: 'edge_hermes_search', source: 'card_hermes_steward', target: 'card_research_agent', edgeType: 'flow' },
+    { id: 'edge_hermes_worldsignals', source: 'card_hermes_steward', target: 'card_worldsignals_agent', edgeType: 'flow' },
     {
-      id: 'edge_main_chat_harness_bus',
+      id: 'edge_main_chat_magentic_control',
       source: 'card_main_chat',
       target: 'card_magentic',
-      targetHandle: 'bus-in-0',
-      edgeType: 'magentic_option',
+      targetHandle: 'task-bus-top',
+      edgeType: 'magentic_control',
     },
-    {
-      // Hermes on the bus: Mag One may include the steward in team runs as
-      // reviewer. Bus connectivity is the ONLY activation signal.
-      id: 'edge_magentic_hermes_bus',
-      source: 'card_magentic',
-      target: 'card_hermes_steward',
-      edgeType: 'magentic_option',
-    },
+    { id: 'edge_coder_magentic_bus', source: 'card_local_coder', target: 'card_magentic', targetHandle: 'bus-in-1', edgeType: 'magentic_option' },
+    { id: 'edge_search_magentic_bus', source: 'card_research_agent', target: 'card_magentic', targetHandle: 'bus-in-2', edgeType: 'magentic_option' },
+    { id: 'edge_worldsignals_magentic_bus', source: 'card_worldsignals_agent', target: 'card_magentic', targetHandle: 'bus-in-3', edgeType: 'magentic_option' },
   ],
 };
 
@@ -785,15 +735,20 @@ export const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
 
 export const BASELINE_OPTIONAL_CARD_IDS = new Set([
   'card_local_coder',
-  'card_plan_agent',
   'card_worldsignals_agent',
   'card_trading_workbench',
 ]);
 // Cards removed from the product: hydration drops them from stale saved decks.
+// Graph surfaces are MCP tools now, never default canvas agents; Plan Agent is
+// retired (Mag One owns team planning in Python).
 export const REMOVED_DEFAULT_CARD_IDS = new Set([
   'card_assist',
   'card_data_formulator_workbench',
   'card_code_workbench',
+  'card_thinkgraph_agent',
+  'card_codegraph_agent',
+  'card_knowgraph_agent',
+  'card_plan_agent',
 ]);
 export const REMOVED_DEFAULT_EDGE_IDS = new Set([
   'edge_magentic_research',
@@ -801,6 +756,10 @@ export const REMOVED_DEFAULT_EDGE_IDS = new Set([
   'edge_knowgraph_research',
   'edge_research_codegraph',
   'edge_codegraph_thinkgraph',
+  // Retired bus wiring: Main Chat is control-only (task-bus-top), never a
+  // worker; Hermes is never a Mag One participant.
+  'edge_main_chat_harness_bus',
+  'edge_magentic_hermes_bus',
 ]);
 export const LEGACY_SYSTEM_CARD_IDS = new Set([
   'card_main_chat',

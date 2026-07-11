@@ -275,8 +275,11 @@ describe('Hermes review + activity routes', () => {
             projectId: 'project-1',
             conversationId: 'main',
             runId: 'mag_one_run_1',
+            jobId: 'job_1',
             status: 'failed',
             failure: 'rails unreachable',
+            returnFiles: ['returns/job_1/card_research/result.md'],
+            parentContext: { objective: 'Review the approved research objective.' },
           }),
         });
         const payload = await response.json();
@@ -289,6 +292,13 @@ describe('Hermes review + activity routes', () => {
           correlationId: 'hermes_post_mag_one_run_1',
           storedResourceIds: ['run:mag_one_run_1'],
         });
+        expect(hermesTransportMocks.requestHermesRunReview).toHaveBeenCalledWith(
+          expect.objectContaining({
+            jobId: 'job_1',
+            returnFiles: ['returns/job_1/card_research/result.md'],
+            parentContext: { objective: 'Review the approved research objective.' },
+          }),
+        );
         // The write went through the ONE canonical writer with server-minted
         // Hermes-card authority — never model-supplied.
         expect(thinkGraphStoreMocks.applyThinkGraphPatch).toHaveBeenCalledWith(
@@ -322,7 +332,7 @@ describe('Hermes review + activity routes', () => {
         const response = await fetch(`${baseUrl}/hermes/postflight`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId: 'project-1', runId: 'mag_one_run_1', status: 'failed' }),
+          body: JSON.stringify({ projectId: 'project-1', runId: 'mag_one_run_1', jobId: 'job_1', status: 'failed' }),
         });
         const payload = await response.json();
         expect(response.status).toBe(200);
@@ -361,7 +371,7 @@ describe('Hermes review + activity routes', () => {
         const response = await fetch(`${baseUrl}/hermes/postflight`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId: 'project-1', conversationId: 'main', runId: 'run_z', status: 'completed' }),
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'main', runId: 'run_z', jobId: 'job_z', status: 'completed' }),
         });
         expect(response.status).toBe(502);
         const activity = await fetch(`${baseUrl}/hermes/activity`).then((r) => r.json());

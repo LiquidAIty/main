@@ -7,6 +7,7 @@ attached as real AutoGen FunctionTools only when selected (without executing).
 """
 import asyncio
 import sys
+from pathlib import Path
 
 import pytest
 from autogen_core.tools import FunctionTool
@@ -16,6 +17,7 @@ from app.python_models.orchestration_contracts import (
     CardRuntimeConfig,
     CardRuntimeParticipant,
     ContextPack,
+    JobHandoff,
     ProjectSession,
 )
 
@@ -82,6 +84,22 @@ def test_empty_message_is_honest_error_not_a_call():
     assert res.ok is False
     assert res.error == "empty_user_message"
     assert res.finalResponseText == ""
+
+
+def test_mag_one_is_the_only_prompt_entrypoint_reader(tmp_path: Path):
+    workspace = tmp_path / "coder-workspace"
+    handoff = workspace / "handoff" / "job_exact"
+    handoff.mkdir(parents=True)
+    expected = "# finalized Main Chat task\nkeep bytes ✓\n"
+    (handoff / "prompt.md").write_bytes(expected.encode("utf-8"))
+    context = _context_pack("")
+    context.jobHandoff = JobHandoff(workspaceRoot=str(workspace), jobId="job_exact")
+
+    folder, task = mac._read_magentic_handoff_task(context)
+
+    assert folder is not None
+    assert task == expected
+    assert (workspace / "returns" / "job_exact").is_dir()
 
 
 def test_app_authored_scaffold_runtime_is_gone_but_real_task_ledger_artifact_allowed():

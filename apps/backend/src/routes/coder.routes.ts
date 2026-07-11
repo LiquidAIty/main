@@ -32,6 +32,8 @@ import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/ha
 import { recordAgentEvent } from '../services/agentTelemetry';
 // The app's one canonical Agent Canvas deck id, defined once on the deck store.
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
+import { createCodebaseMemoryMcpCaller } from '../services/graphContext/cbmMcpCaller';
+import { pool } from '../db/pool';
 import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
 import type { HermesReviewReport } from '../contracts/runtimeContracts';
 import {
@@ -45,6 +47,7 @@ import {
   normalizeHermesActivityEntry,
 } from '../coder/hermes/hermesActivity';
 import { runCoderSubagent } from '../coder/execution/coderRouter';
+import { resolveCoderWorkspaceRoot } from '../coder/workspaceRoot';
 
 const router = Router();
 export const OPENCLAUDE_HARNESS_ROUTE_PREFIX = '/coder/openclaude';
@@ -73,32 +76,48 @@ router.post('/mcp-bridge/describe_connected_agents', async (req, res) => {
 router.post('/mcp-bridge/run_mag_one', async (req, res) => {
   try {
     const jobId = String(req.body?.jobId || '').trim();
-    // Only the legacy job-folder handoff carries identity outside RunPacket.
-    // Its blank deckId defaults to the canonical deck; normal runs are entirely
-    // identified by the one validated Hermes packet.
-    const deckId = jobId ? String(req.body?.deckId || BUILDER_DECK_ID) : undefined;
+    const deckId = String(req.body?.deckId || BUILDER_DECK_ID);
     const result = await runMagOne({
       ...(req.body || {}),
-      ...(deckId ? { deckId } : {}),
+      jobId,
+      projectId: String(req.body?.projectId || ''),
+      deckId,
     });
-    // Hermes postflight hook: every REAL Mag One run result gets a structural
-    // review + a run-memory write attempt (fire-and-forget — the response
-    // below returns regardless; a postflight failure only records an honest
-    // blocked activity entry). A run that threw before producing a result has
-    // no runId and is never reviewed as if it ran.
-    void runHermesPostflightAndRecord({
-      projectId: String(req.body?.runPacket?.projectId || req.body?.projectId || ''),
-      deckId: String(req.body?.runPacket?.deckId || deckId || ''),
-      conversationId: result.conversationId || '',
+    // Hermes receives the completed job identity first. Main Chat gets only
+    // the compact reviewed outcome; raw worker text and files remain in the
+    // returns folder and can be inspected deliberately through job tools.
+    const hermesReview = await runHermesPostflightAndRecord({
+      projectId: String(req.body?.projectId || ''),
+      deckId,
+      conversationId: result.conversationId || String(req.body?.conversationId || ''),
       runId: result.runId,
+      jobId: result.jobId,
+      workspaceRoot: resolveCoderWorkspaceRoot(),
       status: result.status,
       ...(result.failure ? { failure: result.failure } : {}),
       finalTextPresent: Boolean(result.finalText),
       participants: result.connectedParticipants,
-      objective: result.objective,
-      finalText: result.finalText,
-    }).catch(() => null);
-    return res.json({ ok: result.status !== 'failed', result });
+      returnFiles: result.returnedFiles,
+      ...(req.body?.parentContext && typeof req.body.parentContext === 'object'
+        ? { parentContext: req.body.parentContext }
+        : {}),
+    });
+    return res.json({
+      ok: result.status !== 'failed',
+      result: {
+        status: result.status,
+        runId: result.runId,
+        jobId: result.jobId,
+        conversationId: result.conversationId,
+        connectedParticipants: result.connectedParticipants,
+        returnsDir: result.returnsDir,
+        returnedFiles: result.returnedFiles,
+        returnStatus: result.returnStatus,
+        failure: result.failure,
+      },
+      hermesReview: hermesReview.ok ? hermesReview.report : null,
+      hermesReviewError: hermesReview.ok ? null : hermesReview.error,
+    });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'run_mag_one_failed' });
   }
@@ -119,6 +138,184 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
     return res.status(result.ok ? 200 : 502).json(result);
   } catch (error) {
     return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'run_coder_subagent_failed' });
+  }
+});
+
+// ── Hermes ThinkGraph structured update (canonical writer, minted authority) ─
+// The model supplies ONLY the bounded structured update; the server mints the
+// authority from the live Hermes card + real conversation. Same validation and
+// same one applyThinkGraphPatch writer as the ThinkGraph card path.
+router.post('/mcp-bridge/thinkgraph_submit_update', async (req, res) => {
+  const startedMs = Date.now();
+  const projectId = String(req.body?.projectId || '').trim();
+  const conversationId = String(req.body?.conversationId || '').trim();
+  try {
+    if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
+    if (!conversationId) return res.status(400).json({ ok: false, error: 'conversationId_required' });
+    const hermesCardId = await resolveHermesCardId(projectId, BUILDER_DECK_ID);
+    if (!hermesCardId) return res.status(409).json({ ok: false, error: 'hermes_card_not_found' });
+    const authority: ThinkGraphPatchAuthority = {
+      projectId,
+      cardId: hermesCardId,
+      correlationId: `hermes_update_${Date.now()}_${randomUUID().slice(0, 8)}`,
+      conversationId,
+    };
+    const result = await applyThinkGraphPatch(authority, {
+      resources: Array.isArray(req.body?.resources) ? req.body.resources : [],
+      relations: Array.isArray(req.body?.relations) ? req.body.relations : [],
+      statements: Array.isArray(req.body?.statements) ? req.body.statements : [],
+    });
+    recordAgentEvent({
+      stage: 'graph_write',
+      status: result.ok ? 'completed' : 'failed',
+      mode: 'real_model_call',
+      caller: 'hermes',
+      projectId,
+      deckId: BUILDER_DECK_ID,
+      conversationId,
+      correlationId: authority.correlationId,
+      cardId: hermesCardId,
+      inputSummary: 'hermes thinkgraph_submit_update',
+      outputSummary: result.ok ? `status=${result.status}` : '',
+      errorSummary: result.ok ? null : result.error,
+      durationMs: Date.now() - startedMs,
+      graphWrites: result.ok && result.status === 'applied' ? ['thinkgraph'] : [],
+      metadata: { invocationPath: 'direct_harness' },
+    });
+    return res.status(result.ok ? 200 : 422).json(result);
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'thinkgraph_submit_update_failed' });
+  }
+});
+
+// ── Hermes SQL memory (liq_core.memory_space/memory_item, scope 'hermes') ───
+// Project-scoped private steward continuity — separate from ThinkGraph. The
+// schema pre-exists (01_liq_core_projects_jobs.sql); this is its first wiring.
+async function resolveHermesMemorySpaceId(projectId: string): Promise<number> {
+  const existing = await pool.query(
+    `SELECT memory_space_id FROM liq_core.memory_space
+     WHERE project_id = $1 AND scope = 'hermes' ORDER BY memory_space_id LIMIT 1`,
+    [projectId],
+  );
+  if (existing.rows.length > 0) return Number(existing.rows[0].memory_space_id);
+  const created = await pool.query(
+    `INSERT INTO liq_core.memory_space (project_id, scope, label, tags, config)
+     VALUES ($1, 'hermes', 'Hermes Steward Memory', '{}', '{}') RETURNING memory_space_id`,
+    [projectId],
+  );
+  return Number(created.rows[0].memory_space_id);
+}
+
+router.post('/mcp-bridge/hermes_memory_read', async (req, res) => {
+  try {
+    const projectId = String(req.body?.projectId || '').trim();
+    if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
+    const key = String(req.body?.key || '').trim();
+    const spaceId = await resolveHermesMemorySpaceId(projectId);
+    const { rows } = key
+      ? await pool.query(
+          `SELECT key, value, updated_at FROM liq_core.memory_item
+           WHERE memory_space_id = $1 AND key = $2 ORDER BY updated_at DESC LIMIT 1`,
+          [spaceId, key],
+        )
+      : await pool.query(
+          `SELECT key, value, updated_at FROM liq_core.memory_item
+           WHERE memory_space_id = $1 ORDER BY updated_at DESC LIMIT 50`,
+          [spaceId],
+        );
+    return res.json({
+      ok: true,
+      items: rows.map((row: any) => ({ key: row.key, value: row.value, updatedAt: row.updated_at })),
+    });
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'hermes_memory_read_failed' });
+  }
+});
+
+router.post('/mcp-bridge/hermes_memory_write', async (req, res) => {
+  try {
+    const projectId = String(req.body?.projectId || '').trim();
+    const key = String(req.body?.key || '').trim();
+    if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
+    if (!key) return res.status(400).json({ ok: false, error: 'key_required' });
+    if (req.body?.value === undefined) return res.status(400).json({ ok: false, error: 'value_required' });
+    const valueJson = JSON.stringify(req.body.value).slice(0, 32_000);
+    const spaceId = await resolveHermesMemorySpaceId(projectId);
+    const updated = await pool.query(
+      `UPDATE liq_core.memory_item SET value = $3::jsonb
+       WHERE memory_space_id = $1 AND key = $2 RETURNING memory_item_id`,
+      [spaceId, key, valueJson],
+    );
+    if (updated.rows.length === 0) {
+      await pool.query(
+        `INSERT INTO liq_core.memory_item (memory_space_id, key, value) VALUES ($1, $2, $3::jsonb)`,
+        [spaceId, key, valueJson],
+      );
+    }
+    return res.json({ ok: true, key, stored: true });
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'hermes_memory_write_failed' });
+  }
+});
+
+// ── CodeGraph reads (CBM is the one indexer/writer; these are thin reads) ───
+router.post('/mcp-bridge/codegraph_status', async (_req, res) => {
+  let session: Awaited<ReturnType<typeof createCodebaseMemoryMcpCaller>> | null = null;
+  try {
+    session = await createCodebaseMemoryMcpCaller(process.cwd());
+    const projectList = await session.callTool('list_projects', {});
+    const projects = Array.isArray((projectList as any).projects) ? (projectList as any).projects : [];
+    const cbmProject = String(projects[0]?.name || '').trim();
+    if (!cbmProject) return res.json({ ok: false, error: 'cbm_no_indexed_project' });
+    const status = await session.callTool('index_status', { project: cbmProject });
+    return res.json({ ok: true, cbmProject, status });
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'codegraph_status_failed' });
+  } finally {
+    await session?.close();
+  }
+});
+
+router.post('/mcp-bridge/codegraph_search', async (req, res) => {
+  let session: Awaited<ReturnType<typeof createCodebaseMemoryMcpCaller>> | null = null;
+  try {
+    const query = String(req.body?.query || '').trim();
+    if (!query) return res.status(400).json({ ok: false, error: 'query_required' });
+    const limit = Math.min(Math.max(Number(req.body?.limit) || 15, 1), 50);
+    session = await createCodebaseMemoryMcpCaller(process.cwd());
+    const projectList = await session.callTool('list_projects', {});
+    const projects = Array.isArray((projectList as any).projects) ? (projectList as any).projects : [];
+    const cbmProject = String(projects[0]?.name || '').trim();
+    if (!cbmProject) return res.json({ ok: false, error: 'cbm_no_indexed_project' });
+    const result = await session.callTool('search_graph', { project: cbmProject, query, limit });
+    return res.json({ ok: true, cbmProject, result });
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'codegraph_search_failed' });
+  } finally {
+    await session?.close();
+  }
+});
+
+// ── KnowGraph bridges (query is read-only; ingestion = real sources through
+// the existing Neo/Python pipeline via the canonical gateway) ────────────────
+router.post('/mcp-bridge/knowgraph_ingest', async (req, res) => {
+  try {
+    const projectId = String(req.body?.projectId || '').trim();
+    const documents = Array.isArray(req.body?.documents) ? req.body.documents : [];
+    if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
+    if (documents.length === 0) return res.status(400).json({ ok: false, error: 'real_source_documents_required' });
+    // Same-process call into the canonical gateway logic via HTTP keeps ONE
+    // authority for KNOWGRAPH_URL resolution and pipeline error shaping.
+    const port = Number(process.env.PORT || 4000);
+    const axios = (await import('axios')).default;
+    const response = await axios.post(
+      `http://127.0.0.1:${port}/api/knowgraph/ingest_web`,
+      { project_id: projectId, documents, ...(req.body?.researchFocus ? { research_focus: req.body.researchFocus } : {}) },
+      { timeout: 300_000, validateStatus: () => true },
+    );
+    return res.status(response.status).json(response.data);
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'knowgraph_ingest_failed' });
   }
 });
 
@@ -360,7 +557,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
           conversationId,
           correlationId,
           cardId: 'card_hermes_steward',
-          outputSummary: event.isError ? '' : 'RunPacket returned to principal Harness',
+          outputSummary: event.isError ? '' : 'Mag One job-folder result returned to principal Harness',
           errorSummary: event.isError ? 'native Hermes Agent tool failed' : null,
           durationMs: Date.now() - (hermesStartedAt.get(event.toolUseId) ?? Date.now()),
           metadata: { toolUseId: event.toolUseId },
@@ -655,12 +852,16 @@ async function runHermesPostflightAndRecord(input: {
   deckId: string;
   conversationId: string;
   runId: string;
+  jobId: string | null;
+  workspaceRoot: string;
   status: string;
   failure?: string;
   finalTextPresent?: boolean;
   participants?: string[];
-  // Durable run-memory inputs: the user objective the run served and the
-  // run's real final text. Hermes decides what (if anything) is retained.
+  returnFiles?: string[];
+  parentContext?: { objective?: string; acceptanceCriteria?: string[]; reviewInstruction?: string };
+  // Explicit diagnostic compatibility only. The normal run_mag_one bridge never
+  // forwards raw worker text; Hermes reads bounded return artifacts instead.
   objective?: string;
   finalText?: string;
 }): Promise<{ ok: true; report: HermesReviewReport } | { ok: false; error: string }> {
@@ -690,14 +891,15 @@ async function runHermesPostflightAndRecord(input: {
   try {
     const reviewResult = await requestHermesRunReview({
       runId: input.runId,
+      ...(input.jobId ? { jobId: input.jobId, workspaceRoot: input.workspaceRoot } : {}),
+      ...(input.returnFiles ? { returnFiles: input.returnFiles } : {}),
       status: input.status,
       ...(input.failure ? { failure: input.failure } : {}),
       finalTextPresent: Boolean(input.finalTextPresent),
       ...(input.participants?.length ? { participants: input.participants } : {}),
       ...(input.projectId ? { projectId: input.projectId } : {}),
       ...(input.conversationId ? { conversationId: input.conversationId } : {}),
-      ...(input.objective ? { objective: input.objective } : {}),
-      ...(input.finalText ? { finalText: input.finalText } : {}),
+      ...(input.parentContext ? { parentContext: input.parentContext } : {}),
     });
     if (!reviewResult.ok) {
       appendHermesBlocked(reviewResult.error, input.runId);
@@ -810,13 +1012,20 @@ router.post('/hermes/postflight', async (req, res) => {
   if (!runId) return res.status(400).json({ ok: false, error: 'runId_required' });
   const projectId = String(body.projectId || '').trim();
   if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
+  const jobId = String(body.jobId || '').trim();
+  if (!jobId) return res.status(400).json({ ok: false, error: 'jobId_required' });
   const failure = String(body.failure || '').trim();
   const result = await runHermesPostflightAndRecord({
     projectId,
     deckId: String(body.deckId || BUILDER_DECK_ID),
     conversationId: String(body.conversationId || '').trim(),
     runId,
+    jobId,
+    workspaceRoot: resolveCoderWorkspaceRoot(),
     status: String(body.status || ''),
+    ...(Array.isArray(body.returnFiles)
+      ? { returnFiles: (body.returnFiles as unknown[]).map((p) => String(p)) }
+      : {}),
     ...(failure ? { failure } : {}),
     finalTextPresent: body.finalTextPresent === true,
     ...(Array.isArray(body.participants)
@@ -824,6 +1033,9 @@ router.post('/hermes/postflight', async (req, res) => {
       : {}),
     ...(body.objective ? { objective: String(body.objective) } : {}),
     ...(body.finalText ? { finalText: String(body.finalText) } : {}),
+    ...(body.parentContext && typeof body.parentContext === 'object'
+      ? { parentContext: body.parentContext as { objective?: string; acceptanceCriteria?: string[]; reviewInstruction?: string } }
+      : {}),
   });
   if (!result.ok) return res.status(502).json(result);
   return res.json({ ok: true, report: result.report });

@@ -82,9 +82,10 @@ export function normalizeRuntimeOptions(
 
 
 export function normalizeDeckEdgeType(value: unknown): DeckEdgeType {
-  return safeText(value).trim().toLowerCase() === 'magentic_option'
-    ? 'magentic_option'
-    : 'flow';
+  const type = safeText(value).trim().toLowerCase();
+  if (type === 'magentic_option') return 'magentic_option';
+  if (type === 'magentic_control') return 'magentic_control';
+  return 'flow';
 }
 
 

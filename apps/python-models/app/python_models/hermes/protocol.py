@@ -174,6 +174,9 @@ class HermesReview:
     # CoderReport fields actually used for the judgment, e.g. "coderReport.proofResults".
     sourceCitations: list[str] = field(default_factory=list)
     activityEvents: list[HermesActivityEntry] = field(default_factory=list)
+    # Bounded evidence about the canonical job folder. Raw worker contents stay
+    # in returns/<jobId>/<cardId>/; Main Chat receives this compact index only.
+    jobEvidence: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -246,4 +249,5 @@ class HermesReview:
                 for a in value.get("activityEvents") or []
                 if isinstance(a, dict)
             ],
+            jobEvidence=dict(value.get("jobEvidence") or {}),
         )

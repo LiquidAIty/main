@@ -67,10 +67,38 @@ function summarizeText(value: string | null | undefined, maxLength = 220): strin
   return text.length <= maxLength ? text : `${text.slice(0, maxLength - 3)}...`;
 }
 
+// The two independent canvas networks (persisted explicit type + handle — never
+// inferred from color):
+//   'flow'             ORANGE  direct relationship: source parent may invoke the
+//                              target card as its own native subagent. Never
+//                              affects the Mag One roster.
+//   'magentic_option'  BLUE    side worker slot: Mag One may select the card as
+//                              a worker. Never grants direct invocation.
+//   'magentic_control' BLUE    top control input: the source may submit the
+//                              finalized prompt to Mag One. Never a worker.
+const MAG_ONE_CONTROL_HANDLE = 'task-bus-top';
+
 function normalizeEdgeType(value: unknown): string {
-  return String(value || '').trim().toLowerCase() === 'magentic_option'
-    ? 'magentic_option'
-    : 'flow';
+  const type = String(value || '').trim().toLowerCase();
+  if (type === 'magentic_option') return 'magentic_option';
+  if (type === 'magentic_control') return 'magentic_control';
+  return 'flow';
+}
+
+/** The bus-side handle of an edge touching the Mag One card, whichever end it is. */
+function busSideHandle(edge: any, magenticCardId: string): string {
+  return String(
+    (edge?.source === magenticCardId ? edge?.sourceHandle : edge?.targetHandle) || '',
+  ).trim();
+}
+
+/** True when this edge is a CONTROL connection to the Mag One bus: the explicit
+ * control type, or any bus edge landing on the dedicated top control handle
+ * (defense for un-migrated data). Control never grants worker membership. */
+function isMagenticControlEdge(edge: any, magenticCardId: string): boolean {
+  const type = normalizeEdgeType(edge?.edgeType);
+  if (type === 'magentic_control') return true;
+  return type === 'magentic_option' && busSideHandle(edge, magenticCardId) === MAG_ONE_CONTROL_HANDLE;
 }
 
 function resolveCardRuntimeType(card: any): string {
@@ -109,17 +137,75 @@ export function resolvedMagenticOptions(
       (edge) =>
         (edge.source === magenticCardId || edge.target === magenticCardId) &&
         normalizeEdgeType(edge.edgeType) === 'magentic_option' &&
+        !isMagenticControlEdge(edge, magenticCardId) &&
         edge.source !== edge.target,
     )
     .map((edge) => nodeMap.get(edge.source === magenticCardId ? edge.target : edge.source))
     .filter((node): node is any => Boolean(node && node.kind === 'agent'))
     .filter((node) => !String(node.parentGraphId || '').trim())
+    .filter((node) => node?.enabled !== false && node?.runtimeOptions?.enabled !== false)
     .filter((node) => {
+      // Principal roles are structurally never workers, even against stale edges.
       const binding = resolveCardBinding(node);
-      if (binding === 'main_chat') return false;
+      if (binding === 'main_chat' || binding === 'hermes_steward') return false;
       const runtimeType = resolveCardRuntimeType(node);
       return isAssistLikeRuntimeType(runtimeType) || runtimeType === 'graph_flow';
     })
+    .filter((node) => {
+      if (seen.has(node.id)) return false;
+      seen.add(node.id);
+      return true;
+    });
+}
+
+/** Cards holding a CONTROL connection to the Mag One bus (the dedicated top
+ * input). Control = "may submit the finalized prompt". Disjoint from the
+ * worker roster by construction. */
+export function resolveMagenticControlSources(
+  magenticCardId: string,
+  visibleNodes: any[],
+  visibleEdges: any[],
+): any[] {
+  const nodeMap = new Map(visibleNodes.map((node) => [node.id, node]));
+  const seen = new Set<string>();
+  return visibleEdges
+    .filter(
+      (edge) =>
+        (edge.source === magenticCardId || edge.target === magenticCardId) &&
+        isMagenticControlEdge(edge, magenticCardId) &&
+        edge.source !== edge.target,
+    )
+    .map((edge) => nodeMap.get(edge.source === magenticCardId ? edge.target : edge.source))
+    .filter((node): node is any => Boolean(node && node.kind === 'agent'))
+    .filter((node) => {
+      if (seen.has(node.id)) return false;
+      seen.add(node.id);
+      return true;
+    });
+}
+
+/** ORANGE network resolution: the enabled cards this parent may invoke as its
+ * own native subagents — exactly the persisted directional 'flow' edges from
+ * the parent. Parent-specific by construction; never consults the bus. */
+export function resolveDirectSubagents(
+  parentCardId: string,
+  visibleNodes: any[],
+  visibleEdges: any[],
+): any[] {
+  const nodeMap = new Map(visibleNodes.map((node) => [node.id, node]));
+  const seen = new Set<string>();
+  return visibleEdges
+    .filter(
+      (edge) =>
+        edge.source === parentCardId &&
+        edge.target !== parentCardId &&
+        normalizeEdgeType(edge.edgeType) === 'flow',
+    )
+    .map((edge) => nodeMap.get(edge.target))
+    .filter((node): node is any => Boolean(node && node.kind === 'agent'))
+    .filter((node) => !String(node.parentGraphId || '').trim())
+    .filter((node) => node?.enabled !== false && node?.runtimeOptions?.enabled !== false)
+    .filter((node) => isAssistLikeRuntimeType(resolveCardRuntimeType(node)))
     .filter((node) => {
       if (seen.has(node.id)) return false;
       seen.add(node.id);
@@ -164,7 +250,25 @@ export function resolveCardTools(card: any): string[] {
   // ToolSpecs pass through. No role inference and no auto-injected tools —
   // a card runs exactly the tools its saved configuration selects.
   return raw.map((tool: any) => {
-    const name = String(tool ?? '').trim();
+    const rawName = String(tool ?? '').trim();
+    const legacyAlias = rawName.startsWith('mcp__liquidaity__')
+      ? rawName.slice('mcp__liquidaity__'.length)
+      : rawName;
+    const name = ({
+      thinkgraph_get_graph_slice: 'thinkgraph.get_graph_slice',
+      thinkgraph_submit_update: 'thinkgraph.submit_update',
+      knowgraph_query: 'knowgraph.query',
+      knowgraph_ingest: 'knowgraph.ingest',
+      codegraph_status: 'codegraph.status',
+      codegraph_search: 'codegraph.search',
+      hermes_memory_read: 'hermes.memory_read',
+      hermes_memory_write: 'hermes.memory_write',
+      mag_one_describe_connected_agents: 'mag_one.describe_connected_agents',
+      run_mag_one: 'run_mag_one',
+      run_coder_subagent: 'run_coder_subagent',
+      canvas_inspect: 'canvas.inspect',
+      card_run_assistant_agent: 'card.run_assistant_agent',
+    } as Record<string, string>)[legacyAlias] || rawName;
     if (!name) {
       throw new Error(`card_tool_name_empty: cardId=${card.id}`);
     }
@@ -276,7 +380,7 @@ export function buildRuntimeGraph(
       id: String(edge.id || `${edge.source}->${edge.target}`),
       source: String(edge.source),
       target: String(edge.target),
-      edgeType: normalizeEdgeType(edge.edgeType) as 'flow' | 'magentic_option',
+      edgeType: normalizeEdgeType(edge.edgeType) as 'flow' | 'magentic_option' | 'magentic_control',
       loop:
         edge.loop && typeof edge.loop === 'object'
           ? edge.loop
