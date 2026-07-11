@@ -254,6 +254,20 @@ class TestRunResultReview:
         assert kinds == ["Blocker", "Pattern", "RunRecord"]
         assert any(e.type == "blocked" for e in result.activityEvents)
 
+    def test_partial_run_returns_partial_interpretation_without_auto_next_job(self):
+        result = review_run_result(
+            {
+                "runId": "mag_one_run_partial",
+                "status": "partial",
+                "parentContext": {"objective": "Review the bounded return evidence."},
+                "returnFiles": [],
+            },
+            now=NOW,
+        )
+        assert result.verdict == "incomplete"
+        assert "nextPrompt" not in result.to_dict()
+        assert "launch" not in result.recommendation.lower()
+
     def test_completed_run_without_visible_text_is_suspicious(self):
         result = review_run_result(
             {"runId": "mag_one_run_3", "status": "completed", "finalTextPresent": False},

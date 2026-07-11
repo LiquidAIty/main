@@ -161,10 +161,11 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="write_mag_one_instructions",
             description=(
-                "Local Coder: write the EXACT Mag One task into handoff/<run-id>/prompt.md "
+                "Main Chat finalization / approved Coder handoff: write the EXACT Mag One task into handoff/<run-id>/prompt.md "
                 "in the trusted active Coder workspace, and assign returns/<run-id>/ as the run's "
                 "result folder. Supply `instructions` (the exact run-specific text Mag One receives — not "
                 "summarized/wrapped/rewritten, and not durable card constants) and optionally `runId` to reuse an existing handoff. "
+                "Only Main Chat owns the final prompt.md; Hermes may prepare supporting files but never calls this finalization tool. "
                 "Returns runId + workspace-relative handoff and returns paths. Run run_mag_one with "
                 "that runId as jobId to have Mag One read those exact bytes as its task."
             ),

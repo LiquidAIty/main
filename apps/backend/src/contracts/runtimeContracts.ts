@@ -185,6 +185,7 @@ for (const name of [
   'hermes.memory_read',
   'hermes.memory_write',
   'mag_one.describe_connected_agents',
+  'write_mag_one_instructions',
   'run_mag_one',
   'run_coder_subagent',
   'canvas.inspect',

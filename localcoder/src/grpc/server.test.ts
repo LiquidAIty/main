@@ -134,7 +134,7 @@ test('missingRequiredHarnessTools reports each absent tool exactly', () => {
 // neither pick another card nor forge project/conversation identity.
 test('resolveCardRunControlCall forces the bound card and injects trusted identity', () => {
   const resolved = resolveCardRunControlCall({
-    input: { cardId: 'card_SOMETHING_ELSE', input: 'do the task', projectId: 'forged' },
+    input: { cardId: 'card_thinkgraph_agent', input: 'do the task', projectId: 'forged' },
     agentType: 'card_thinkgraph_agent',
     cardIdByAgentType: new Map([['card_thinkgraph_agent', 'card_thinkgraph_agent']]),
     projectId: 'proj-1',

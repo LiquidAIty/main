@@ -29,6 +29,9 @@ function deps(over: Partial<AgentFlowDeps> = {}): AgentFlowDeps {
   return {
     loadDeck: vi.fn(async () => ({ deck: DECK, latestRun: null, runs: [], meta: {} })) as any,
     runCard: vi.fn() as any,
+    // Most routing tests do not materialize a workspace. Production uses the
+    // default atomic prompt claim; these tests focus on the downstream seam.
+    claimJob: vi.fn(() => ({ claimed: true })),
     ...over,
   };
 }
@@ -113,6 +116,26 @@ describe('runMagOne — canonical job-folder handoff', () => {
 });
 
 describe('runMagOne — Coder job-folder handoff (jobId)', () => {
+  it('fails closed when prompt.md is absent and never dispatches Mag One', async () => {
+    const root = mkdtempSync(pathJoin(tmpdir(), 'liq-magone-no-prompt-'));
+    const previous = process.env.LIQUIDAITY_GRPC_CWD;
+    process.env.LIQUIDAITY_GRPC_CWD = root;
+    const runCard = vi.fn(async () => ({ output: 'should not run', status: 'success' }));
+    try {
+      const result = await runMagOne(
+        { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_missing_prompt' },
+        deps({ runCard: runCard as any, claimJob: undefined }),
+      );
+      expect(result.status).toBe('failed');
+      expect(result.failure).toBe('mag_one_prompt_missing');
+      expect(runCard).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.LIQUIDAITY_GRPC_CWD;
+      else process.env.LIQUIDAITY_GRPC_CWD = previous;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('claims a finalized prompt atomically so duplicate arrival events and restarts do not relaunch it', async () => {
     const root = mkdtempSync(pathJoin(tmpdir(), 'liq-magone-claim-'));
     const previous = process.env.LIQUIDAITY_GRPC_CWD;
@@ -124,11 +147,11 @@ describe('runMagOne — Coder job-folder handoff (jobId)', () => {
       const runCard = vi.fn(async () => ({ output: 'done', status: 'success' }));
       const first = await runMagOne(
         { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_once' },
-        deps({ runCard: runCard as any }),
+        deps({ runCard: runCard as any, claimJob: undefined }),
       );
       const second = await runMagOne(
         { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_once' },
-        deps({ runCard: runCard as any }),
+        deps({ runCard: runCard as any, claimJob: undefined }),
       );
       expect(first.status).toBe('completed');
       expect(second.status).toBe('failed');

@@ -139,8 +139,19 @@ def write_handoff_prompt(folder: JobFolder, instructions: str) -> None:
     """
     os.makedirs(os.path.dirname(folder.handoff_prompt_path), exist_ok=True)
     text = instructions if isinstance(instructions, str) else str(instructions)
-    with open(folder.handoff_prompt_path, "w", encoding="utf-8", newline="") as fh:
-        fh.write(text)
+    # Publish the final command with one atomic rename. A watcher or explicit
+    # runner can never observe a partially written prompt.md; supporting files
+    # may arrive earlier, but the completed rename is the only ready edge.
+    temp_path = f"{folder.handoff_prompt_path}.{secrets.token_hex(6)}.tmp"
+    try:
+        with open(temp_path, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp_path, folder.handoff_prompt_path)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 
 def read_handoff_prompt(folder: JobFolder) -> str:

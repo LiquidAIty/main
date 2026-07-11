@@ -184,10 +184,7 @@ function claimMagOneJob(workspaceRoot: string, jobId: string, runId: string): { 
   const promptPath = path.join(handoffDir, 'prompt.md');
   const claimPath = path.join(handoffDir, 'mag-one.claim.json');
   if (!existsSync(promptPath)) {
-    // The native Python seam remains the authority for reporting a missing
-    // prompt. This preserves mocked/unit callers that exercise the routing
-    // layer without materializing a workspace.
-    return { claimed: true };
+    return { claimed: false, reason: 'mag_one_prompt_missing' };
   }
   try {
     const fd = openSync(claimPath, 'wx');
