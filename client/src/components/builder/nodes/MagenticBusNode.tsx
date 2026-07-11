@@ -66,13 +66,25 @@ export default function MagenticBusNode() {
           pointerEvents: 'none',
         }}
       />
-      {/* Top target handle: the selected task's task_to_bus edge enters the bus here
-          (the task graph sits above the bus). */}
+      <div
+        aria-hidden="true"
+        style={{ position: 'absolute', top: -19, left: '50%', transform: 'translateX(-50%)', color: '#52DCEB', fontSize: 8, letterSpacing: '0.08em', whiteSpace: 'nowrap' }}
+      >
+        CONTROL
+      </div>
+      <div
+        aria-hidden="true"
+        style={{ position: 'absolute', top: 18, right: -34, color: 'rgba(84,221,214,0.78)', fontSize: 8, letterSpacing: '0.08em', writingMode: 'vertical-rl' }}
+      >
+        WORKERS
+      </div>
+      {/* Main Chat's approved magentic_control edge enters here. */}
       <Handle
         id="task-bus-top"
         type="target"
         position={Position.Top}
-        aria-label="task-bus-top"
+        aria-label="Mag One control input — Main Chat submits an approved job"
+        title="Control input: approved Main Chat job"
         style={{
           ...handleBaseStyle,
           width: 16,
@@ -92,6 +104,7 @@ export default function MagenticBusNode() {
           type="target"
           position={Position.Left}
           aria-label={handle.id}
+          title="Mag One worker membership port"
           style={{
             ...leftHandleStyle,
             left: -3,
@@ -106,6 +119,7 @@ export default function MagenticBusNode() {
           type="source"
           position={Position.Right}
           aria-label={handle.id}
+          title="Mag One worker membership port"
           style={{
             ...rightHandleStyle,
             right: -3,

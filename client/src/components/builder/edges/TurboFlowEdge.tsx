@@ -85,14 +85,17 @@ export default function TurboFlowEdge(props: EdgeProps) {
   const opacity = Number(style?.opacity ?? 1);
   const isSelected = Boolean(edgeData.isSelected || selected);
   const isActive = Boolean(edgeData.motion === "active" || edgeData.isActive);
-  const isMagentic = edgeData.edgeType === "magentic_option";
+  const isMagenticWorker = edgeData.edgeType === "magentic_option";
+  const isMagenticControl = edgeData.edgeType === "magentic_control";
   // Turbo shell motion is the primary visual signal. Edges stay secondary.
   const stroke = isSelected
     ? GRAPH_THEME.accent.primary
     : isActive
       ? GRAPH_THEME.accent.solar
-      : isMagentic
-        ? "#22B8C7"
+      : isMagenticControl
+        ? "#52DCEB"
+        : isMagenticWorker
+          ? "#22B8C7"
         : "#E7A18B";
   const edgeOpacity = isSelected
     ? Math.max(0.95, Math.min(1, opacity))
@@ -110,6 +113,7 @@ export default function TurboFlowEdge(props: EdgeProps) {
         opacity: edgeOpacity,
         strokeLinecap: "round",
         strokeLinejoin: "round",
+        strokeDasharray: isMagenticControl ? "7 4" : undefined,
       }}
     />
   );

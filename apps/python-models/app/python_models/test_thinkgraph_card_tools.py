@@ -127,6 +127,13 @@ class TestPythonMcpHost:
             "card.assign_data_binding",
             "card.run_assistant_agent",
             "thinkgraph.get_graph_slice",
+            "thinkgraph.submit_update",
+            "knowgraph.query",
+            "knowgraph.ingest",
+            "codegraph.status",
+            "codegraph.search",
+            "hermes.memory_read",
+            "hermes.memory_write",
         ])
 
     def test_card_run_schema_matches_the_doorway_contract(self):
