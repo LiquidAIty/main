@@ -1,139 +1,83 @@
 import { pool } from '../db/pool';
+import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { resolveModel } from '../llm/models.config';
+import type { AgentCardInstance } from '../types';
 
-type SystemAgentType = 'llm_chat' | 'kg_ingest' | 'knowgraph' | 'neo4j' | 'research_agent';
+// The REAL runtime authority for every agent's provider/model is the saved
+// Agent Canvas deck (project agent_io_schema → v3_state → decks[deck_builder]),
+// resolved per-card from runtimeOptions by cards/runtime.ts. The legacy
+// ag_catalog.project_agents table is a separate seed table (defaulted to
+// openai) that no live chat path consumes — only the dead kg_ingest/neo4j/
+// research_agent resolvers and the knowgraph-ingest config read it, so it must
+// NOT be presented as the agent roster. This boot banner reads the deck so it
+// reflects real routing: graph services (ThinkGraph/KnowGraph/Neo4j) never
+// appear as agents, and each card shows its own saved provider/model.
 
-function systemAgentLabel(agentType: SystemAgentType): string {
-  if (agentType === 'llm_chat') return 'Main Chat';
-  if (agentType === 'kg_ingest') return 'ThinkGraph';
-  if (agentType === 'knowgraph') return 'KnowGraph';
-  if (agentType === 'research_agent') return 'Research Agent';
-  return 'Neo4j';
-}
-
-function resolveProviderModelId(modelKey: string): string {
-  const normalizedModelKey = String(modelKey || '').trim();
-  if (!normalizedModelKey) return '(not set)';
-  if (normalizedModelKey.includes('/')) return normalizedModelKey;
-  try {
-    return resolveModel(normalizedModelKey).id;
-  } catch {
-    return normalizedModelKey;
+function derivePrintableProvider(card: AgentCardInstance): string {
+  const modelKey = String(card.runtimeOptions?.modelKey || '').trim();
+  const savedProvider = String(card.runtimeOptions?.provider || '').trim();
+  if (modelKey) {
+    if (modelKey.includes('/')) return savedProvider || 'openrouter';
+    try {
+      return resolveModel(modelKey).provider;
+    } catch {
+      // Unknown key: trust the card's own saved provider if it set one.
+    }
   }
+  return savedProvider || '(unset)';
 }
 
-function normalizeProvider(value: unknown): 'openai' | 'openrouter' | null {
-  const provider = String(value ?? '').trim().toLowerCase();
-  if (provider === 'openai' || provider === 'openrouter') return provider;
-  return null;
-}
-
-function deriveProviderFromModel(modelKey: string): 'openai' | 'openrouter' | null {
-  const key = String(modelKey || '').trim();
-  if (!key) return null;
-  try {
-    return resolveModel(key).provider;
-  } catch {
-    if (key.includes('/')) return 'openrouter';
-    if (/^gpt-|^o\d|^text-embedding/i.test(key)) return 'openai';
-    return null;
-  }
-}
-
-function scoreRow(row: any): number {
-  const modelKey = String(row?.model_key ?? row?.model ?? '').trim();
-  const provider = normalizeProvider(row?.provider) ?? deriveProviderFromModel(modelKey);
-  const prompt = String(row?.prompt_template ?? '').trim();
-  let score = 0;
-  if (provider) score += 4;
-  if (modelKey) score += 4;
-  if (prompt) score += 2;
-  if (typeof row?.max_tokens === 'number') score += 1;
-  return score;
-}
-
-function rowTimeMs(row: any, key: 'updated_at' | 'created_at'): number {
-  const raw = row?.[key];
-  if (!raw) return 0;
-  const ms = Date.parse(String(raw));
-  return Number.isFinite(ms) ? ms : 0;
-}
-
-function pickCanonicalRow(rows: any[]): any | null {
-  if (!rows.length) return null;
-  const sorted = [...rows].sort((a, b) => {
-    const scoreDiff = scoreRow(b) - scoreRow(a);
-    if (scoreDiff !== 0) return scoreDiff;
-    const updatedDiff = rowTimeMs(b, 'updated_at') - rowTimeMs(a, 'updated_at');
-    if (updatedDiff !== 0) return updatedDiff;
-    const createdDiff = rowTimeMs(b, 'created_at') - rowTimeMs(a, 'created_at');
-    if (createdDiff !== 0) return createdDiff;
-    return String(a?.agent_id ?? '').localeCompare(String(b?.agent_id ?? ''));
-  });
-  return sorted[0];
+function cardRoleTag(card: AgentCardInstance): string {
+  if (card.runtimeType === 'magentic_one') return 'orchestrator';
+  if (card.runtimeType === 'local_coder') return 'local_coder';
+  const binding = String(card.runtimeBinding || '').trim();
+  return binding || 'agent';
 }
 
 export async function logModelConfiguration() {
   console.log('\n╔════════════════════════════════════════════════════════════════╗');
-  console.log('║              AGENT MODELS (from Agent Builder)                 ║');
+  console.log('║        AGENT MODELS (live saved deck — real authority)        ║');
   console.log('╚════════════════════════════════════════════════════════════════╝\n');
 
   try {
     const { rows } = await pool.query(
-      `SELECT project_id,
-              agent_id,
-              agent_type,
-              provider,
-              COALESCE(model_key, model) AS model_key,
-              temperature,
-              max_tokens,
-              prompt_template,
-              updated_at,
-              created_at
-       FROM ag_catalog.project_agents
-       WHERE is_active = true
-         AND agent_type::text IN ('llm_chat', 'kg_ingest', 'knowgraph', 'neo4j', 'research_agent')`,
+      `SELECT id::text AS id, COALESCE(code, '') AS code, COALESCE(name, '') AS name
+         FROM ag_catalog.projects
+        ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST`,
     );
 
-    const byType = new Map<string, any[]>();
-    rows.forEach((row: any) => {
-      const type = String(row.agent_type || '').trim();
-      if (!byType.has(type)) byType.set(type, []);
-      byType.get(type)?.push(row);
-    });
-    const ordered: SystemAgentType[] = ['llm_chat', 'kg_ingest', 'knowgraph', 'neo4j', 'research_agent'];
-    ordered.forEach((agentType) => {
-      const row = pickCanonicalRow(byType.get(agentType) || []);
-      const label = systemAgentLabel(agentType);
-      if (!row) {
-        console.log(`  ${label}:`);
-        console.log('    Provider:    (not configured)');
-        console.log('    Model:       (not configured)');
-        console.log('    Max Tokens:  (not configured)');
-        console.log('');
-        return;
+    let printedAny = false;
+    for (const project of rows) {
+      let deck: Awaited<ReturnType<typeof getDeckDocument>>['deck'] = null;
+      try {
+        ({ deck } = await getDeckDocument(project.id, BUILDER_DECK_ID));
+      } catch {
+        continue; // project without a readable builder deck — skip, never invent one
       }
-      const modelKey = String(row.model_key || '').trim();
-      const effectiveModelKey = modelKey;
-      const derivedProvider = deriveProviderFromModel(effectiveModelKey);
-      const provider =
-        derivedProvider === 'openrouter'
-            ? 'openrouter'
-            : normalizeProvider(row.provider) ?? derivedProvider ?? 'unknown';
-      const providerModelId = resolveProviderModelId(effectiveModelKey);
-      console.log(`  ${label}:`);
-      console.log(`    Provider:    ${provider}`);
-      console.log(`    Model:       ${effectiveModelKey || '(not set)'} (${providerModelId})`);
-      console.log(`    Max Tokens:  ${row.max_tokens ?? 'default'}`);
-      console.log('');
-    });
+      if (!deck || deck.nodes.length === 0) continue;
+      printedAny = true;
 
+      const projectLabel = String(project.name || project.code || project.id).trim();
+      console.log(`  Project ${projectLabel}:`);
+      for (const card of deck.nodes) {
+        const label = String(card.title || card.id).trim();
+        const modelKey = String(card.runtimeOptions?.modelKey || '').trim() || '(unset)';
+        const provider = derivePrintableProvider(card);
+        console.log(`    ${label} [${cardRoleTag(card)}]:`);
+        console.log(`      Provider:  ${provider}`);
+        console.log(`      Model:     ${modelKey}`);
+      }
+      console.log('');
+    }
+
+    if (!printedAny) {
+      console.log('  (no saved Agent Canvas deck found — nothing routes yet)\n');
+    }
     console.log('════════════════════════════════════════════════════════════════\n');
   } catch (err: any) {
     const msg = err?.message || String(err);
     const code = err?.code ? ` (${err.code})` : '';
-    console.error(`  ❌ Failed to load configs${code}: ${msg}`);
+    console.error(`  ❌ Failed to load live deck configs${code}: ${msg}`);
     console.log('');
   }
 }
-

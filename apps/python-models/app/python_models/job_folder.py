@@ -247,7 +247,18 @@ def write_return_file(folder: JobFolder, card_id: str, rel_path: str, content: s
     rejected by ``_safe_return_target``.
     """
     card_dir = _card_return_dir(folder, card_id)
-    target = _safe_return_target(card_dir, rel_path)
+    # The tool contract asks for a path relative to the assigned card folder,
+    # but models sometimes repeat the already-known workspace-relative return
+    # prefix from the job prompt. Canonicalize only that exact current
+    # job/card prefix; reject any other returns/ prefix rather than creating a
+    # misleading nested returns tree.
+    supplied = str(rel_path or "").strip().replace("\\", "/")
+    expected_prefix = f"returns/{folder.job_id}/{str(card_id).strip()}/"
+    if supplied.startswith("returns/"):
+        if not supplied.startswith(expected_prefix):
+            raise ValueError(f"return_path_wrong_job_or_card: {rel_path!r}")
+        supplied = supplied[len(expected_prefix):]
+    target = _safe_return_target(card_dir, supplied)
     os.makedirs(os.path.dirname(target), exist_ok=True)
     text = content if isinstance(content, str) else str(content)
     with open(target, "w", encoding="utf-8", newline="") as fh:

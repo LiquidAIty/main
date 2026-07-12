@@ -22,7 +22,18 @@ import { logHarnessTrace } from '../../../services/harnessTrace';
 
 export type GrpcSessionEvent =
   | { kind: 'text'; text: string }
-  | { kind: 'tool_start'; toolName: string; argsJson: string; toolUseId: string }
+  | {
+      kind: 'tool_start';
+      toolName: string;
+      argsJson: string;
+      toolUseId: string;
+      /** Raw engine-supplied invoker agent_type ('' = parent session). */
+      agentType: string;
+      /** Durable caller identity resolved from real session config: the
+       * doorway child's card id, the parent main_chat card id, or an explicit
+       * 'unknown:<agentType>' — never inferred from timing or stream order. */
+      invokingCardId: string;
+    }
   | { kind: 'tool_result'; toolName: string; toolUseId: string; output: string; isError: boolean }
   | { kind: 'progress'; toolUseId: string; parentToolUseId: string; data: unknown }
   | { kind: 'permission'; promptId: string; question: string; promptType: string }
@@ -50,10 +61,33 @@ export type GrpcTurnHandle = {
   cancel(): void;
   /** Resolves with the final text on `done`; rejects on `error`. */
   done: Promise<{ finalText: string }>;
+  /** The saved main_chat card identity this turn actually ran with — real
+   * event metadata for the frontdoor telemetry, never a re-resolution. */
+  resolved: { cardId: string; provider: string; modelKey: string; providerModelId: string };
 };
 
 export function deriveSessionId(projectId: string, conversationId: string): string {
   return `mag1:${projectId}:${conversationId}`;
+}
+
+/**
+ * Durable caller identity for a tool_start event. Pure so it is directly
+ * unit-testable:
+ *  - '' agent_type            → the parent session's saved main_chat card
+ *  - a known doorway card id  → that child card (doorway defs bind
+ *                               agent_type === card_id by construction)
+ *  - anything else            → explicit 'unknown:<agentType>' — never
+ *                               silently attributed to a card.
+ */
+export function resolveInvokingCardId(
+  agentType: string,
+  doorwayCardIds: readonly string[],
+  parentCardId: string,
+): string {
+  const normalized = String(agentType || '').trim();
+  if (!normalized) return parentCardId;
+  if (doorwayCardIds.includes(normalized)) return normalized;
+  return `unknown:${normalized}`;
 }
 
 /** The live identity needed by the saved Harness prompt's MCP instructions.
@@ -404,6 +438,18 @@ export async function startGrpcTurn(
   let accumulated = '';
   let terminal = false;
 
+  // Caller-identity resolution config. Assigned from the REAL resolved session
+  // below, before call.write — no event can arrive earlier. The pre-assignment
+  // fallback is explicit-unknown, never a silent card attribution.
+  let callerDoorwayCardIds: string[] = [];
+  let callerParentCardId = '';
+  const resolveCaller = (agentType: string): string =>
+    callerParentCardId
+      ? resolveInvokingCardId(agentType, callerDoorwayCardIds, callerParentCardId)
+      : agentType
+        ? `unknown:${agentType}`
+        : 'unknown';
+
   const safeOnEvent = (event: GrpcSessionEvent): void => {
     try {
       onEvent(event);
@@ -420,11 +466,14 @@ export async function startGrpcTurn(
         accumulated += msg.text_chunk.text || '';
         safeOnEvent({ kind: 'text', text: msg.text_chunk.text || '' });
       } else if (msg.tool_start) {
+        const agentType = String(msg.tool_start.agent_type || '');
         safeOnEvent({
           kind: 'tool_start',
           toolName: msg.tool_start.tool_name,
           argsJson: msg.tool_start.arguments_json,
           toolUseId: msg.tool_start.tool_use_id,
+          agentType,
+          invokingCardId: resolveCaller(agentType),
         });
       } else if (msg.tool_result) {
         safeOnEvent({
@@ -484,6 +533,8 @@ export async function startGrpcTurn(
     throw new Error('main_chat_runtime_config_unavailable: exactly one configured main_chat card with a valid saved model is required');
   }
   const doorwayDefinitions = mainChatConfig.doorwayDefinitions;
+  callerDoorwayCardIds = doorwayDefinitions.map((def: any) => String(def?.card_id || '')).filter(Boolean);
+  callerParentCardId = mainChatConfig.cardId;
   const runtimeContext = buildHarnessRuntimeContext(args.sessionId, args.traceId);
   const appendSystemPrompt = [mainChatConfig.prompt, runtimeContext]
     .filter((section): section is string => Boolean(section))
@@ -532,5 +583,11 @@ export async function startGrpcTurn(
       try { call.end(); } catch { /* closed */ }
     },
     done,
+    resolved: {
+      cardId: mainChatConfig.cardId,
+      provider: mainChatConfig.provider,
+      modelKey: mainChatConfig.modelKey,
+      providerModelId: mainChatConfig.providerModelId,
+    },
   };
 }

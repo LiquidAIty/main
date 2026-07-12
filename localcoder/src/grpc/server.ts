@@ -340,12 +340,16 @@ export class GrpcServer {
               if (toolUseID) {
                 toolNameById.set(toolUseID, tool.name)
               }
-              // Notify client of the tool call first
+              // Notify client of the tool call first. agent_type is the REAL
+              // engine-supplied invoker identity (doorway child's agentType;
+              // empty = the parent session) — durable caller attribution for
+              // the backend, never inferred from timing or stream position.
               call.write({
                 tool_start: {
                   tool_name: tool.name,
                   arguments_json: JSON.stringify(input),
-                  tool_use_id: toolUseID
+                  tool_use_id: toolUseID,
+                  agent_type: String(context?.agentType || '')
                 }
               })
 

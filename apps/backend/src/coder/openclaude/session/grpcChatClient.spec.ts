@@ -17,6 +17,7 @@ import {
   deriveSessionId,
   doorwayWhenToUse,
   resolveCardDoorwayDefinitions,
+  resolveInvokingCardId,
   resolveMainChatRuntimeConfig,
   resolveMainChatSystemPrompt,
   selectDoorwayCards,
@@ -24,23 +25,61 @@ import {
 
 const CARD_RUN_CONTROL_TOOL = 'mcp__liquidaity__card_run_assistant_agent';
 
-function deckWith(nodes: any[]) {
-  return { deck: { id: 'deck_builder', name: 'Deck', nodes, edges: [] }, latestRun: null, runs: [], meta: { deckRevision: null, deckSavedAt: null } };
+describe('resolveInvokingCardId — durable caller identity, never inferred', () => {
+  const doorways = ['card_hermes_steward', 'card_local_coder'];
+
+  it('attributes an empty agent_type to the parent main_chat card', () => {
+    expect(resolveInvokingCardId('', doorways, 'card_main_chat')).toBe('card_main_chat');
+    expect(resolveInvokingCardId('   ', doorways, 'card_main_chat')).toBe('card_main_chat');
+  });
+
+  it('attributes a known doorway agent_type to that child card (parent/child distinguishable)', () => {
+    expect(resolveInvokingCardId('card_hermes_steward', doorways, 'card_main_chat')).toBe('card_hermes_steward');
+    expect(resolveInvokingCardId('card_local_coder', doorways, 'card_main_chat')).toBe('card_local_coder');
+  });
+
+  it('reports an unknown agent_type explicitly — never silently attributed to a card', () => {
+    expect(resolveInvokingCardId('card_never_configured', doorways, 'card_main_chat')).toBe(
+      'unknown:card_never_configured',
+    );
+  });
+
+  it('does not misattribute when the doorway list is empty', () => {
+    expect(resolveInvokingCardId('card_hermes_steward', [], 'card_main_chat')).toBe(
+      'unknown:card_hermes_steward',
+    );
+    expect(resolveInvokingCardId('', [], 'card_main_chat')).toBe('card_main_chat');
+  });
+});
+
+// Chat-mode doorways resolve from the persisted ORANGE network (flow edges
+// FROM the main_chat card) — deckWith takes the edges that ARE that authority.
+function deckWith(nodes: any[], edges: any[] = []) {
+  return { deck: { id: 'deck_builder', name: 'Deck', nodes, edges }, latestRun: null, runs: [], meta: { deckRevision: null, deckSavedAt: null } };
 }
 
-const TG_CARD = { id: 'card_thinkgraph_agent', title: 'ThinkGraph Agent', prompt: 'Saved ThinkGraph prompt.', runtimeOptions: { tools: ['read_thinkgraph_scope', 'apply_thinkgraph_patch'] } };
-const RESEARCH_CARD = { id: 'card_research_agent', title: 'Research Agent', prompt: 'Saved research prompt.', runtimeOptions: { tools: ['retrieve_knowgraph_context'] } };
-const LOCAL_CODER_CARD = { id: 'card_local_coder', title: 'Local Coder', runtimeType: 'local_coder', runtimeBinding: 'local_coder', prompt: 'Saved coder prompt.', runtimeOptions: { tools: ['run_local_coder'], provider: 'openai', modelKey: 'gpt-5.1-chat-latest' } };
-const HERMES_CARD = { id: 'card_hermes_steward', title: 'Hermes', runtimeBinding: 'hermes_steward', prompt: 'Saved Hermes prompt — verbatim.', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2' } };
-const MAIN_CHAT_CARD = { id: 'card_main_chat', title: 'OpenClaude Chat', prompt: 'parent prompt' };
+function flow(source: string, target: string) {
+  return { id: `edge_${source}_${target}`, source, target, edgeType: 'flow' };
+}
+
+const TG_CARD = { id: 'card_thinkgraph_agent', kind: 'agent', title: 'ThinkGraph Agent', prompt: 'Saved ThinkGraph prompt.', runtimeOptions: { tools: ['read_thinkgraph_scope', 'apply_thinkgraph_patch'] } };
+const RESEARCH_CARD = { id: 'card_research_agent', kind: 'agent', title: 'Research Agent', prompt: 'Saved research prompt.', runtimeOptions: { tools: ['retrieve_knowgraph_context'] } };
+const LOCAL_CODER_CARD = { id: 'card_local_coder', kind: 'agent', title: 'Local Coder', runtimeType: 'local_coder', runtimeBinding: 'local_coder', prompt: 'Saved coder prompt.', runtimeOptions: { tools: ['run_local_coder'], provider: 'openai', modelKey: 'gpt-5.1-chat-latest' } };
+const HERMES_CARD = { id: 'card_hermes_steward', kind: 'agent', title: 'Hermes', runtimeBinding: 'hermes_steward', prompt: 'Saved Hermes prompt — verbatim.', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['hermes.memory_read', 'read_model_results'] } };
+const MAIN_CHAT_CARD = { id: 'card_main_chat', kind: 'agent', title: 'OpenClaude Chat', runtimeBinding: 'main_chat', prompt: 'parent prompt' };
 
 describe('resolveCardDoorwayDefinitions — thin card-bound doorways, one per saved card', () => {
   beforeEach(() => {
     deckMocks.getDeckDocument.mockClear();
   });
 
-  it('chat mode exposes the structural ThinkGraph and Local Coder doorways with ONLY the generic control tool', async () => {
-    deckMocks.getDeckDocument.mockResolvedValueOnce(deckWith([MAIN_CHAT_CARD, TG_CARD, LOCAL_CODER_CARD, RESEARCH_CARD]));
+  it('chat mode exposes exactly the orange-connected children with ONLY the generic control tool', async () => {
+    deckMocks.getDeckDocument.mockResolvedValueOnce(
+      deckWith(
+        [MAIN_CHAT_CARD, TG_CARD, LOCAL_CODER_CARD, RESEARCH_CARD],
+        [flow('card_main_chat', 'card_thinkgraph_agent'), flow('card_main_chat', 'card_local_coder')],
+      ),
+    );
     const defs = await resolveCardDoorwayDefinitions(deriveSessionId('project-1', 'main'), 'chat');
     expect(defs).toHaveLength(2);
     const byCard = new Map(defs.map((def: any) => [def.card_id, def]));
@@ -56,7 +95,9 @@ describe('resolveCardDoorwayDefinitions — thin card-bound doorways, one per sa
   });
 
   it('the doorway never duplicates card configuration — no card prompt, no card tool grants', async () => {
-    deckMocks.getDeckDocument.mockResolvedValueOnce(deckWith([TG_CARD]));
+    deckMocks.getDeckDocument.mockResolvedValueOnce(
+      deckWith([MAIN_CHAT_CARD, TG_CARD], [flow('card_main_chat', 'card_thinkgraph_agent')]),
+    );
     const [def] = (await resolveCardDoorwayDefinitions(deriveSessionId('project-1', 'main'), 'chat')) as any[];
     expect(def.system_prompt).not.toContain('Saved ThinkGraph prompt.');
     expect(def.allowed_tools).not.toContain('read_thinkgraph_scope');
@@ -70,16 +111,19 @@ describe('resolveCardDoorwayDefinitions — thin card-bound doorways, one per sa
     const definition = buildHarnessAgentDefinition(HERMES_CARD) as any;
     expect(definition.system_prompt).toBe(HERMES_CARD.prompt);
     expect(definition.system_prompt).not.toContain(CARD_RUN_CONTROL_TOOL);
+    // The card's Tools selection IS the MCP grant, mapped to harness names.
     expect(definition.allowed_tools).toEqual([
-      'mcp__liquidaity__mag_one_describe_connected_agents',
-      'mcp__liquidaity__thinkgraph_get_graph_slice',
+      'mcp__liquidaity__hermes_memory_read',
+      'mcp__liquidaity__read_model_results',
     ]);
     expect(definition.context_mode_inherit_parent).toBe(true);
     expect(definition.model).toBe('z-ai/glm-5.2');
   });
 
   it('the ThinkGraph doorway tells the model it can WRITE the real graph (so it delegates, not conceptualizes)', async () => {
-    deckMocks.getDeckDocument.mockResolvedValueOnce(deckWith([TG_CARD]));
+    deckMocks.getDeckDocument.mockResolvedValueOnce(
+      deckWith([MAIN_CHAT_CARD, TG_CARD], [flow('card_main_chat', 'card_thinkgraph_agent')]),
+    );
     const [def] = (await resolveCardDoorwayDefinitions(deriveSessionId('project-1', 'main'), 'chat')) as any[];
     const wtu = String(def.when_to_use || '');
     expect(wtu).toMatch(/write/i);
@@ -94,9 +138,12 @@ describe('resolveCardDoorwayDefinitions — thin card-bound doorways, one per sa
     expect(doorwayWhenToUse('local_coder', 'Local Coder')).toMatch(/coding/i);
     expect(doorwayWhenToUse('local_coder', 'Local Coder')).toMatch(/read-only source audits/i);
     expect(doorwayWhenToUse('local_coder', 'Local Coder')).toMatch(/own file tools/i);
-    expect(doorwayWhenToUse('hermes_steward', 'Hermes Steward')).toMatch(/every user turn/i);
+    // Hermes invocation is model judgment, not a fixed per-turn cadence, and the
+    // steward NEVER owns prompt.md or launches Mag One.
+    expect(doorwayWhenToUse('hermes_steward', 'Hermes Steward')).toMatch(/Model judgment decides/);
     expect(doorwayWhenToUse('hermes_steward', 'Hermes Steward')).toMatch(/Omit prompt/);
-    expect(doorwayWhenToUse('hermes_steward', 'Hermes Steward')).toMatch(/complete live parent conversation/);
+    expect(doorwayWhenToUse('hermes_steward', 'Hermes Steward')).toMatch(/complete live parent/);
+    expect(doorwayWhenToUse('hermes_steward', 'Hermes Steward')).toMatch(/never writes the approved\s+prompt\.md/);
     expect(doorwayWhenToUse('', 'Some Card')).toContain('Some Card');
   });
 
@@ -116,21 +163,30 @@ describe('resolveCardDoorwayDefinitions — thin card-bound doorways, one per sa
     expect(defs.map((d: any) => d.agent_type).sort()).toEqual(['card_local_coder', 'card_research_agent', 'card_thinkgraph_agent']);
   });
 
-  it('chat mode still exposes Local Coder when zero ThinkGraph cards exist', async () => {
-    deckMocks.getDeckDocument.mockResolvedValueOnce(deckWith([MAIN_CHAT_CARD, LOCAL_CODER_CARD, RESEARCH_CARD]));
+  it('chat mode exposes only orange-connected children — an unconnected card is never a doorway', async () => {
+    deckMocks.getDeckDocument.mockResolvedValueOnce(
+      deckWith([MAIN_CHAT_CARD, LOCAL_CODER_CARD, RESEARCH_CARD], [flow('card_main_chat', 'card_local_coder')]),
+    );
     const defs = await resolveCardDoorwayDefinitions(deriveSessionId('project-1', 'main'), 'chat');
     expect(defs.map((d: any) => d.agent_type)).toEqual(['card_local_coder']);
   });
 
-  it('chat mode yields no doorways when neither structural doorway card exists (honest, no guess)', async () => {
-    deckMocks.getDeckDocument.mockResolvedValueOnce(deckWith([MAIN_CHAT_CARD, RESEARCH_CARD]));
+  it('chat mode yields no doorways when the main_chat card has no orange edges (honest, no guess)', async () => {
+    deckMocks.getDeckDocument.mockResolvedValueOnce(deckWith([MAIN_CHAT_CARD, RESEARCH_CARD], []));
     const defs = await resolveCardDoorwayDefinitions(deriveSessionId('project-1', 'main'), 'chat');
     expect(defs).toEqual([]);
   });
 
-  it('chat mode omits only the ambiguous doorway when multiple matching cards exist', async () => {
+  it('chat mode never invents a doorway from an orange edge whose target card is missing, and never duplicates one from duplicate edges', async () => {
     deckMocks.getDeckDocument.mockResolvedValueOnce(
-      deckWith([LOCAL_CODER_CARD, TG_CARD, { ...TG_CARD, id: 'card_tg_2', runtimeOptions: { binding: 'thinkgraph_agent' } }]),
+      deckWith(
+        [MAIN_CHAT_CARD, LOCAL_CODER_CARD],
+        [
+          flow('card_main_chat', 'card_local_coder'),
+          flow('card_main_chat', 'card_local_coder'),
+          flow('card_main_chat', 'card_ghost'),
+        ],
+      ),
     );
     const defs = await resolveCardDoorwayDefinitions(deriveSessionId('project-1', 'main'), 'chat');
     expect(defs.map((d: any) => d.agent_type)).toEqual(['card_local_coder']);
@@ -149,28 +205,29 @@ describe('resolveCardDoorwayDefinitions — thin card-bound doorways, one per sa
   });
 });
 
-describe('selectDoorwayCards — structural mode filters only', () => {
-  it('chat mode selects the single thinkgraph-bound card and the single local-coder card', () => {
-    expect(selectDoorwayCards([MAIN_CHAT_CARD, TG_CARD, LOCAL_CODER_CARD, RESEARCH_CARD], 'chat').map((c) => c.id)).toEqual([
-      'card_thinkgraph_agent',
-      'card_local_coder',
-    ]);
-  });
-
-  it('chat mode also selects the single hermes-steward card; duplicates omit only that doorway', () => {
-    expect(
-      selectDoorwayCards([MAIN_CHAT_CARD, TG_CARD, LOCAL_CODER_CARD, HERMES_CARD], 'chat').map((c) => c.id),
-    ).toEqual(['card_thinkgraph_agent', 'card_local_coder', 'card_hermes_steward']);
+describe('selectDoorwayCards — orange network is the only chat-mode authority', () => {
+  it('chat mode selects exactly the cards orange-connected FROM the main_chat card, in edge order', () => {
     expect(
       selectDoorwayCards(
-        [MAIN_CHAT_CARD, TG_CARD, LOCAL_CODER_CARD, HERMES_CARD, { ...HERMES_CARD, id: 'card_hermes_2' }],
+        [MAIN_CHAT_CARD, TG_CARD, LOCAL_CODER_CARD, RESEARCH_CARD],
+        [flow('card_main_chat', 'card_thinkgraph_agent'), flow('card_main_chat', 'card_local_coder')],
         'chat',
       ).map((c) => c.id),
     ).toEqual(['card_thinkgraph_agent', 'card_local_coder']);
   });
 
-  it('canvas mode excludes the main_chat parent card', () => {
-    const ids = selectDoorwayCards([MAIN_CHAT_CARD, TG_CARD, LOCAL_CODER_CARD, RESEARCH_CARD], 'canvas').map((c) => c.id);
+  it('chat mode selects an orange-connected Hermes; a reverse-direction edge grants nothing', () => {
+    expect(
+      selectDoorwayCards(
+        [MAIN_CHAT_CARD, HERMES_CARD, LOCAL_CODER_CARD],
+        [flow('card_main_chat', 'card_hermes_steward'), flow('card_local_coder', 'card_main_chat')],
+        'chat',
+      ).map((c) => c.id),
+    ).toEqual(['card_hermes_steward']);
+  });
+
+  it('canvas mode excludes the main_chat parent card and needs no edges', () => {
+    const ids = selectDoorwayCards([MAIN_CHAT_CARD, TG_CARD, LOCAL_CODER_CARD, RESEARCH_CARD], [], 'canvas').map((c) => c.id);
     expect(ids).not.toContain('card_main_chat');
     expect(ids).toEqual(['card_thinkgraph_agent', 'card_local_coder', 'card_research_agent']);
   });
@@ -238,17 +295,21 @@ describe('resolveMainChatRuntimeConfig', () => {
 
   it('resolves saved main_chat prompt/model plus real doorways from the persisted deck', async () => {
     deckMocks.getDeckDocument.mockResolvedValueOnce({
-      ...deckWith([
-        {
-          id: 'card_main_chat',
-          runtimeBinding: 'main_chat',
-          prompt: 'Saved parent prompt.',
-          title: 'Main Chat / Harness',
-          runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.1-chat-latest' },
-        },
-        TG_CARD,
-        LOCAL_CODER_CARD,
-      ]),
+      ...deckWith(
+        [
+          {
+            id: 'card_main_chat',
+            kind: 'agent',
+            runtimeBinding: 'main_chat',
+            prompt: 'Saved parent prompt.',
+            title: 'Main Chat / Harness',
+            runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.1-chat-latest' },
+          },
+          TG_CARD,
+          LOCAL_CODER_CARD,
+        ],
+        [flow('card_main_chat', 'card_thinkgraph_agent'), flow('card_main_chat', 'card_local_coder')],
+      ),
       meta: { deckRevision: 'rev-1', deckSavedAt: null },
     });
 

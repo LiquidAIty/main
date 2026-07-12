@@ -99,6 +99,10 @@ message ToolCallStart {
   string tool_name = 1;
   string arguments_json = 2; // Arguments in JSON format
   string tool_use_id = 3;    // Correlation ID matching ToolCallResult
+  // Invoking agent identity: the doorway child's agent_type when a subagent
+  // made the call, empty for the parent session. Real engine context
+  // (canUseTool's context.agentType), never inferred from timing or text.
+  string agent_type = 4;
 }
 
 // Result of tool execution

@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  decideAutogenAction,
   decideGrpcAction,
+  decideKnowgraphAction,
+  isLiquidAItyAutogenListener,
   isLiquidAItyGrpcListener,
+  isLiquidAItyKnowgraphListener,
   isLiquidAItyOwnedDevProcess,
   type PortListener,
 } from './devStack';
@@ -38,6 +42,87 @@ describe('decideGrpcAction — reuse valid, start when free, conflict on unknown
       pid: 999,
       commandLine: 'node some-other-grpc.js',
     });
+  });
+});
+
+describe('isLiquidAItyKnowgraphListener — only the real KnowGraph uvicorn on 8001 is reusable', () => {
+  // The venv python resolves through a uv shim, so BOTH the full-repo-path form
+  // and the uv-store-path form must be recognized by module+port, not repo root.
+  it('accepts the uv-shimmed KnowGraph uvicorn (no repo root in cmdline)', () => {
+    const p: PortListener = {
+      pid: 20, name: 'python.exe',
+      commandLine: '"C:\\Users\\me\\AppData\\Roaming\\uv\\python\\cpython-3.11\\python.exe" -X utf8 -m uvicorn app:app --host 127.0.0.1 --port 8001',
+    };
+    expect(isLiquidAItyKnowgraphListener(p)).toBe(true);
+  });
+  it('accepts the full-repo-path KnowGraph uvicorn', () => {
+    const p: PortListener = {
+      pid: 21, name: 'python.exe',
+      commandLine: 'C:\\Projects\\main\\services\\knowgraph\\.venv\\Scripts\\python.exe -X utf8 -m uvicorn app:app --host 127.0.0.1 --port 8001',
+    };
+    expect(isLiquidAItyKnowgraphListener(p)).toBe(true);
+  });
+  it('rejects the autogen uvicorn (app.main:app on 8003) — never confuse the two Python services', () => {
+    const p: PortListener = {
+      pid: 22, name: 'python.exe',
+      commandLine: '.venv\\Scripts\\python.exe -X utf8 -m uvicorn app.main:app --host 127.0.0.1 --port 8003',
+    };
+    expect(isLiquidAItyKnowgraphListener(p)).toBe(false);
+  });
+  it('rejects a non-python listener even if the cmdline mentions app:app/8001', () => {
+    expect(
+      isLiquidAItyKnowgraphListener({ pid: 23, name: 'node.exe', commandLine: 'node uvicorn app:app 8001' }),
+    ).toBe(false);
+  });
+  it('rejects nothing/null', () => {
+    expect(isLiquidAItyKnowgraphListener(null)).toBe(false);
+  });
+});
+
+describe('decideKnowgraphAction — reuse valid, start when free, conflict on unknown', () => {
+  const kg: PortListener = {
+    pid: 30, name: 'python.exe',
+    commandLine: 'C:\\Projects\\main\\services\\knowgraph\\.venv\\Scripts\\python.exe -X utf8 -m uvicorn app:app --host 127.0.0.1 --port 8001',
+  };
+  it('reuses the valid running KnowGraph (no second launch → no 10048)', () => {
+    expect(decideKnowgraphAction(kg)).toEqual({ action: 'reuse', pid: 30 });
+  });
+  it('starts exactly one when the port is free', () => {
+    expect(decideKnowgraphAction(null)).toEqual({ action: 'start' });
+  });
+  it('fails honestly (conflict) on an unknown listener — never reuse, never a rival', () => {
+    const unknown: PortListener = { pid: 998, name: 'python.exe', commandLine: 'python.exe -m http.server 8001' };
+    expect(decideKnowgraphAction(unknown)).toEqual({
+      action: 'conflict',
+      pid: 998,
+      commandLine: 'python.exe -m http.server 8001',
+    });
+  });
+});
+
+describe('isLiquidAItyAutogenListener / decideAutogenAction — same port-scoped discipline on 8003', () => {
+  it('accepts the uv-shimmed autogen uvicorn (no repo root in cmdline)', () => {
+    const p: PortListener = {
+      pid: 40, name: 'python.exe',
+      commandLine: '"C:\\Users\\me\\AppData\\Roaming\\uv\\python\\cpython-3.11\\python.exe" -X utf8 -m uvicorn app.main:app --host 127.0.0.1 --port 8003',
+    };
+    expect(isLiquidAItyAutogenListener(p)).toBe(true);
+    expect(decideAutogenAction(p)).toEqual({ action: 'reuse', pid: 40 });
+  });
+  it('rejects the KnowGraph uvicorn (app:app on 8001) — the two services never cross-match', () => {
+    const p: PortListener = {
+      pid: 41, name: 'python.exe',
+      commandLine: '.venv\\Scripts\\python.exe -X utf8 -m uvicorn app:app --host 127.0.0.1 --port 8001',
+    };
+    expect(isLiquidAItyAutogenListener(p)).toBe(false);
+    expect(isLiquidAItyKnowgraphListener(p)).toBe(true);
+  });
+  it('conflicts on an unknown 8003 listener', () => {
+    const unknown: PortListener = { pid: 42, name: 'python.exe', commandLine: 'python.exe -m http.server 8003' };
+    expect(decideAutogenAction(unknown)).toEqual({ action: 'conflict', pid: 42, commandLine: 'python.exe -m http.server 8003' });
+  });
+  it('starts when 8003 is free', () => {
+    expect(decideAutogenAction(null)).toEqual({ action: 'start' });
   });
 });
 

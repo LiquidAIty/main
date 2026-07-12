@@ -520,13 +520,60 @@ router.post('/openclaude/session/chat', async (req, res) => {
   let turnFinished = false;
   const hermesToolUseIds = new Set<string>();
   const hermesStartedAt = new Map<string, number>();
+  // Durable caller attribution for LiquidAIty MCP actions: one card_call event
+  // pair (started/completed) per mcp__liquidaity__* invocation, carrying the
+  // engine-supplied invokingCardId from the tool_start event — the record that
+  // proves WHICH card (Main Chat vs a doorway child) performed the action.
+  const liquidaityCallByToolUse = new Map<string, { invokingCardId: string; toolName: string; startedMs: number }>();
   try {
     const handle = await startGrpcTurn({ sessionId, message, workingDirectory, mode, traceId: correlationId }, (event) => {
       if (turnFinished) return;
+      if (event.kind === 'tool_start' && event.toolName.startsWith('mcp__liquidaity__')) {
+        liquidaityCallByToolUse.set(event.toolUseId, {
+          invokingCardId: event.invokingCardId,
+          toolName: event.toolName,
+          startedMs: Date.now(),
+        });
+        recordAgentEvent({
+          stage: 'card_call',
+          status: 'started',
+          mode: 'real_model_call',
+          caller: 'harness',
+          projectId,
+          deckId: BUILDER_DECK_ID,
+          conversationId,
+          correlationId,
+          cardId: event.invokingCardId,
+          inputSummary: `${event.toolName} ${String(event.argsJson || '').slice(0, 200)}`,
+          metadata: { toolUseId: event.toolUseId, toolName: event.toolName, invokingCardId: event.invokingCardId, agentType: event.agentType },
+        });
+      } else if (event.kind === 'tool_result' && liquidaityCallByToolUse.has(event.toolUseId)) {
+        const started = liquidaityCallByToolUse.get(event.toolUseId)!;
+        liquidaityCallByToolUse.delete(event.toolUseId);
+        recordAgentEvent({
+          stage: 'card_call',
+          status: event.isError ? 'failed' : 'completed',
+          mode: 'real_model_call',
+          caller: 'harness',
+          projectId,
+          deckId: BUILDER_DECK_ID,
+          conversationId,
+          correlationId,
+          cardId: started.invokingCardId,
+          outputSummary: String(event.output || '').slice(0, 200),
+          errorSummary: event.isError ? `${started.toolName} failed` : null,
+          durationMs: Date.now() - started.startedMs,
+          metadata: { toolUseId: event.toolUseId, toolName: started.toolName, invokingCardId: started.invokingCardId },
+        });
+      }
       if (event.kind === 'tool_start' && event.toolName === 'Agent') {
         try {
           const input = JSON.parse(event.argsJson || '{}') as Record<string, unknown>;
-          if (input.subagent_type === 'card_hermes_steward' && !Object.prototype.hasOwnProperty.call(input, 'prompt')) {
+          if (input.subagent_type === 'card_hermes_steward') {
+            // Both legitimate invocation forms are recorded: prompt omitted =
+            // full native parent-context inheritance; prompt present = a
+            // scoped task from Main Chat. The form is real event metadata.
+            const inherited = !Object.prototype.hasOwnProperty.call(input, 'prompt');
             hermesToolUseIds.add(event.toolUseId);
             hermesStartedAt.set(event.toolUseId, Date.now());
             recordAgentEvent({
@@ -539,8 +586,10 @@ router.post('/openclaude/session/chat', async (req, res) => {
               conversationId,
               correlationId,
               cardId: 'card_hermes_steward',
-              inputSummary: 'native inherited parent context; prompt omitted',
-              metadata: { toolUseId: event.toolUseId },
+              inputSummary: inherited
+                ? 'native inherited parent context; prompt omitted'
+                : String(input.prompt || '').slice(0, 200),
+              metadata: { toolUseId: event.toolUseId, invocationForm: inherited ? 'inherited_context' : 'scoped_task' },
             });
           }
         } catch {
@@ -586,6 +635,11 @@ router.post('/openclaude/session/chat', async (req, res) => {
       projectId,
       conversationId,
       correlationId,
+      // Real resolved identity of the turn (saved main_chat card), so the
+      // event trail answers "which card/model acted" without log spelunking.
+      cardId: handle.resolved.cardId,
+      provider: handle.resolved.provider,
+      model: handle.resolved.providerModelId,
       outputSummary: String(finalText || ''),
       durationMs: Date.now() - frontdoorStartedMs,
     });

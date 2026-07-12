@@ -63,8 +63,8 @@ function logStartupBanner() {
   // Env default only — every card's saved config is the real model authority.
   const model = process.env.OPENAI_MODEL || "gpt-5.1-chat-latest";
   const baseUrl = process.env.OPENAI_BASE_URL || "(default)";
-  const apiKey = process.env.OPENAI_API_KEY || "";
-  const redactedKey = apiKey.length > 8 ? `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}` : "(not set)";
+  // Never print key material (even truncated) — presence only.
+  const redactedKey = process.env.OPENAI_API_KEY ? "(set)" : "(not set)";
 
   // Parse DATABASE_URL to show connection details
   const dbUrl = process.env.DATABASE_URL || 'postgresql://liquidaity-user:***@localhost:5433/liquidaity';

@@ -12,6 +12,8 @@
 import { spawn } from 'node:child_process';
 
 export const GRPC_PORT = 50051;
+export const KNOWGRAPH_PORT = 8001;
+export const AUTOGEN_PORT = 8003;
 
 export type PortListener = { pid: number; name: string; commandLine: string };
 export type ProcInfo = { pid: number; name: string; commandLine: string };
@@ -48,6 +50,72 @@ export function decideGrpcAction(listener: PortListener | null): GrpcAction {
   if (!listener) return { action: 'start' };
   if (isLiquidAItyGrpcListener(listener)) return { action: 'reuse', pid: listener.pid };
   return { action: 'conflict', pid: listener.pid, commandLine: listener.commandLine };
+}
+
+/**
+ * Is this listener one of OUR python uvicorn services? The venv python is
+ * launched through a uv shim whose resolved command line carries the uv-store
+ * python path, NOT the repo root — so the cmdline enumeration used for
+ * backend/frontend cannot ground it. Instead we identify it by the ONE thing
+ * that is unambiguous on our reserved port: a python `uvicorn <appModule>`
+ * bound to that port. KnowGraph's `app:app` and autogen's `app.main:app` never
+ * match each other. A random uvicorn on some OTHER port is never inspected —
+ * each predicate only ever runs against whatever holds its own reserved port,
+ * exactly as the gRPC guard only inspects 50051.
+ */
+export function isLiquidAItyUvicornListener(
+  listener: PortListener | null,
+  appModule: string,
+  port: number,
+): boolean {
+  if (!listener) return false;
+  const name = norm(listener.name);
+  const cmd = norm(listener.commandLine);
+  const moduleToken = new RegExp(`(^|[\\s"'])${appModule.replace(/\./g, '\\.')}($|[\\s"'])`);
+  return (
+    name.includes('python') &&
+    /\buvicorn\b/.test(cmd) &&
+    moduleToken.test(cmd) &&
+    new RegExp(`\\b${port}\\b`).test(cmd)
+  );
+}
+
+export type UvicornAction =
+  | { action: 'start' }
+  | { action: 'reuse'; pid: number }
+  | { action: 'conflict'; pid: number; commandLine: string };
+export type KnowgraphAction = UvicornAction;
+
+/**
+ * Reuse/start/conflict discipline for a reserved uvicorn port, same as gRPC:
+ *  - no listener        → start the one service
+ *  - our uvicorn        → reuse it (do NOT launch a duplicate that 10048s)
+ *  - unknown listener   → conflict (fail honestly; never kill it, never rival)
+ */
+export function decideUvicornAction(
+  listener: PortListener | null,
+  appModule: string,
+  port: number,
+): UvicornAction {
+  if (!listener) return { action: 'start' };
+  if (isLiquidAItyUvicornListener(listener, appModule, port)) return { action: 'reuse', pid: listener.pid };
+  return { action: 'conflict', pid: listener.pid, commandLine: listener.commandLine };
+}
+
+export function isLiquidAItyKnowgraphListener(listener: PortListener | null): boolean {
+  return isLiquidAItyUvicornListener(listener, 'app:app', KNOWGRAPH_PORT);
+}
+
+export function decideKnowgraphAction(listener: PortListener | null): KnowgraphAction {
+  return decideUvicornAction(listener, 'app:app', KNOWGRAPH_PORT);
+}
+
+export function isLiquidAItyAutogenListener(listener: PortListener | null): boolean {
+  return isLiquidAItyUvicornListener(listener, 'app.main:app', AUTOGEN_PORT);
+}
+
+export function decideAutogenAction(listener: PortListener | null): UvicornAction {
+  return decideUvicornAction(listener, 'app.main:app', AUTOGEN_PORT);
 }
 
 export type OwnedRole = 'grpc' | 'autogen' | 'backend' | 'frontend' | 'supervisor';

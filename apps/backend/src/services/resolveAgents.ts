@@ -142,18 +142,11 @@ export async function resolveAgentConfig(
   };
 }
 
-export async function resolveKgIngestAgent(projectId: string, route = 'unknown') {
-  return resolveAgentConfig(projectId, 'kg_ingest', route);
-}
-
+// The ONE live consumer of this resolver family: KnowGraph ingestion
+// (knowgraph.routes.ts). The old kg_ingest/neo4j/research_agent wrappers had
+// zero callers — the deck's per-card runtimeOptions are the runtime authority
+// for every agent role — and were removed rather than left as phantom
+// authorities.
 export async function resolveKnowgraphAgent(projectId: string, route = 'unknown') {
   return resolveAgentConfig(projectId, 'knowgraph', route);
-}
-
-export async function resolveNeo4jAgent(projectId: string, route = 'unknown') {
-  return resolveAgentConfig(projectId, 'neo4j', route);
-}
-
-export async function resolveResearchAgent(projectId: string, route = 'unknown') {
-  return resolveAgentConfig(projectId, 'research_agent', route);
 }

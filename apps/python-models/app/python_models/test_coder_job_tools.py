@@ -78,6 +78,12 @@ class TestReadModelResults:
         run_id = cjt.write_mag_one_instructions({"instructions": "x"})["runId"]
         folder = jf.resolve_job_folder(workspace, run_id)
         jf.write_return_file(folder, "agent_a", "a.md", "hi")
+        assert jf.write_return_file(
+            folder,
+            "agent_a",
+            f"returns/{run_id}/agent_a/full-path.md",
+            "full path",
+        ) == f"returns/{run_id}/agent_a/full-path.md"
         listed = cjt.read_model_results({})
         assert listed["status"] == "return_runs_listed"
         assert any(r["runId"] == run_id for r in listed["runs"])
@@ -90,6 +96,12 @@ class TestReadModelResults:
         listed = cjt.read_model_results({"runId": run_id})
         assert listed["status"] == "return_files_listed"
         assert listed["files"] == [f"returns/{run_id}/agent_a/proposed/x.patch"]
+
+    def test_rejects_a_workspace_prefix_for_another_job_or_card(self, workspace):
+        run_id = cjt.write_mag_one_instructions({"instructions": "x"})["runId"]
+        folder = jf.resolve_job_folder(workspace, run_id)
+        with pytest.raises(ValueError, match="return_path_wrong_job_or_card"):
+            jf.write_return_file(folder, "agent_a", "returns/other_job/agent_a/x.md", "no")
 
     def test_reads_a_text_artifact(self, workspace):
         run_id = cjt.write_mag_one_instructions({"instructions": "x"})["runId"]
