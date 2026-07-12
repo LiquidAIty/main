@@ -29,7 +29,7 @@ import {
   type ThinkGraphPatchAuthority,
 } from '../services/thinkgraph/thinkGraphStore';
 import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/harnessTrace';
-import { recordAgentEvent } from '../services/agentTelemetry';
+import { flushAgentTelemetry, recordAgentEvent } from '../services/agentTelemetry';
 // The app's one canonical Agent Canvas deck id, defined once on the deck store.
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { createCodebaseMemoryMcpCaller } from '../services/graphContext/cbmMcpCaller';
@@ -657,6 +657,11 @@ router.post('/openclaude/session/chat', async (req, res) => {
       outputSummary: String(finalText || ''),
       durationMs: Date.now() - frontdoorStartedMs,
     });
+    // The telemetry writer is intentionally non-blocking at each event
+    // boundary, but the completed turn must not be reported before its
+    // already-recorded internal events are durable. This also preserves the
+    // trace when the dev stack watcher reloads immediately after a run.
+    await flushAgentTelemetry();
     // Save the assistant reply only when real text was produced — never an empty
     // bubble (mirrors the frontend's "no text → no bubble" contract). Best-effort,
     // same as the user message: a DB failure must never block or break the live
@@ -685,6 +690,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
       errorSummary: reason,
       durationMs: Date.now() - frontdoorStartedMs,
     });
+    await flushAgentTelemetry();
     writeSse('error', {
       code: 'harness_turn_failed',
       message: 'The chat run failed. Check the correlation ID in the backend logs.',
