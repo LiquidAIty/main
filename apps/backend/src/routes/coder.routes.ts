@@ -317,7 +317,7 @@ router.post('/mcp-bridge/knowgraph_ingest', async (req, res) => {
     const projectId = String(req.body?.projectId || '').trim();
     const documents = Array.isArray(req.body?.documents) ? req.body.documents : [];
     if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
-    if (documents.length === 0) return res.status(400).json({ ok: false, error: 'real_source_documents_required' });
+    if (documents.length === 0) return res.status(400).json({ ok: false, error: 'documents_required' });
     // Same-process call into the canonical gateway logic via HTTP keeps ONE
     // authority for KNOWGRAPH_URL resolution and pipeline error shaping.
     const port = Number(process.env.PORT || 4000);

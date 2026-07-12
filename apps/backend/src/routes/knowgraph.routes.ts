@@ -748,8 +748,10 @@ router.post('/ingest', knowgraphUploadSingle as any, async (req, res) => {
 // Real-source web/document ingestion passthrough to the KnowGraph API's
 // existing Neo/Python pipeline (/ingest_web_results): document loading,
 // chunking, extraction prompts, entity/relationship extraction, provenance,
-// Neo4j writes all stay in the pipeline. Documents must carry REAL source
-// material (text + source metadata) — nothing is fabricated here.
+// Neo4j writes all stay in the pipeline. Source-vs-interpretation provenance is
+// carried by each document's own typed source field and enforced through the
+// ingest prompt/tool contract — this proxy forwards inputs, it does NOT classify
+// content or gate on text length.
 router.post('/ingest_web', async (req, res) => {
   try {
     const projectId = typeof req.body?.project_id === 'string' ? req.body.project_id.trim() : '';
@@ -757,17 +759,7 @@ router.post('/ingest_web', async (req, res) => {
     if (!projectId || documents.length === 0) {
       return res.status(400).json({
         ok: false,
-        error: { message: 'project_id and at least one real source document are required' },
-      });
-    }
-    const hasRealSource = documents.every(
-      (doc: any) =>
-        String(doc?.text || doc?.full_text || doc?.snippet || '').trim().length > 0,
-    );
-    if (!hasRealSource) {
-      return res.status(400).json({
-        ok: false,
-        error: { message: 'every document must carry real source text (text/full_text/snippet)' },
+        error: { message: 'project_id and at least one document are required' },
       });
     }
     const baseUrls = buildKnowgraphBaseUrls();
