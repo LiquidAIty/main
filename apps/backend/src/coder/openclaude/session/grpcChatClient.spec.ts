@@ -138,12 +138,16 @@ describe('resolveCardDoorwayDefinitions — thin card-bound doorways, one per sa
     expect(doorwayWhenToUse('local_coder', 'Local Coder')).toMatch(/coding/i);
     expect(doorwayWhenToUse('local_coder', 'Local Coder')).toMatch(/read-only source audits/i);
     expect(doorwayWhenToUse('local_coder', 'Local Coder')).toMatch(/own file tools/i);
-    // Hermes invocation is model judgment, not a fixed per-turn cadence, and the
-    // steward NEVER owns prompt.md or launches Mag One.
+    // Hermes scoped preparation is FOREGROUND with a bounded assignment (not a
+    // background/async steward), invocation is model judgment, and the steward
+    // NEVER owns prompt.md or launches Mag One.
+    expect(doorwayWhenToUse('hermes_steward', 'Hermes Steward')).toMatch(/FOREGROUND/);
+    expect(doorwayWhenToUse('hermes_steward', 'Hermes Steward')).toMatch(/bounded scoped assignment/);
     expect(doorwayWhenToUse('hermes_steward', 'Hermes Steward')).toMatch(/Model judgment decides/);
-    expect(doorwayWhenToUse('hermes_steward', 'Hermes Steward')).toMatch(/Omit prompt/);
     expect(doorwayWhenToUse('hermes_steward', 'Hermes Steward')).toMatch(/complete live parent/);
     expect(doorwayWhenToUse('hermes_steward', 'Hermes Steward')).toMatch(/never writes the approved\s+prompt\.md/);
+    // The overloaded "background" framing for scoped prep is gone.
+    expect(doorwayWhenToUse('hermes_steward', 'Hermes Steward')).not.toMatch(/background/i);
     expect(doorwayWhenToUse('', 'Some Card')).toContain('Some Card');
   });
 

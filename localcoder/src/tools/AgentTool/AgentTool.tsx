@@ -48,7 +48,7 @@ import { setAgentColor } from './agentColorManager.js';
 import { agentToolResultSchema, classifyHandoffIfNeeded, emitTaskProgress, extractPartialResult, finalizeAgentTool, getLastToolUseName, runAsyncAgentLifecycle } from './agentToolUtils.js';
 import { GENERAL_PURPOSE_AGENT } from './built-in/generalPurposeAgent.js';
 import { AGENT_TOOL_NAME, LEGACY_AGENT_TOOL_NAME, ONE_SHOT_BUILTIN_AGENT_TYPES } from './constants.js';
-import { buildForkedMessages, buildWorktreeNotice, FORK_AGENT, isForkSubagentEnabled, isInForkChild } from './forkSubagent.js';
+import { buildForkedMessages, buildNamedInheritedPromptMessages, buildWorktreeNotice, computeShouldRunAsync, FORK_AGENT, forkForcesAsync, isForkSubagentEnabled, isInForkChild } from './forkSubagent.js';
 import type { AgentDefinition } from './loadAgentsDir.js';
 import { filterAgentsByMcpRequirements, hasRequiredMcpServers, isBuiltInAgent } from './loadAgentsDir.js';
 import { getPrompt } from './prompt.js';
@@ -558,17 +558,24 @@ export const AgentTool = buildTool({
       } catch (error) {
         logForDebugging(`Failed to get system prompt for agent ${selectedAgent.agentType}: ${errorMessage(error)}`);
       }
-      // contextMode: 'inherit_parent' still needs buildForkedMessages()'s
-      // placeholder tool_result construction: the parent's pending tool_use
-      // for THIS Agent call has no result yet, and the API rejects a new
-      // user message following an unresolved tool_use. The agent's own
-      // system prompt above (not the parent's) remains the child directive
-      // source — only message construction changes here.
-      promptMessages = selectedAgent.contextMode === 'inherit_parent'
-        ? buildForkedMessages(prompt, assistantMessage)
-        : [createUserMessage({
-            content: prompt
-          })];
+      // A named inherit_parent agent (saved Hermes / ThinkGraph card) receives
+      // the live parent conversation ONLY through forkContextMessages below;
+      // runAgent's filterIncompleteToolCalls() already strips the parent's
+      // still-unresolved tool_use for THIS Agent call, so no placeholder
+      // tool_result is needed and a following user message is API-valid. It is
+      // deliberately NOT routed through buildForkedMessages(): that injects the
+      // generic fork-worker boilerplate (buildChildMessage) and the synthetic
+      // "Fork started — processing in background" tool_result, both of which
+      // would contaminate the saved card's own role. The prompt distinction is
+      // preserved (resolveAgentPrompt collapses omitted→'' for the required-
+      // prompt guard, but message construction reads the RAW requestedPrompt):
+      //   omitted  → no additional child message (pure inheritance)
+      //   explicit → exactly one ordinary user message (bounded assignment),
+      //              including an explicitly-empty string.
+      promptMessages =
+        selectedAgent.contextMode === 'inherit_parent'
+          ? buildNamedInheritedPromptMessages(requestedPrompt)
+          : [createUserMessage({ content: prompt })];
     }
     const metadata = {
       prompt,
@@ -583,9 +590,13 @@ export const AgentTool = buildTool({
     // dependency issues during test module loading.
     const isCoordinator = feature('COORDINATOR_MODE') ? isEnvTruthy(process.env.CLAUDE_CODE_COORDINATOR_MODE) : false;
 
-    // Fork subagent experiment: force ALL spawns async for a unified
-    // <task-notification> interaction model (not just fork spawns — all of them).
-    const forceAsync = isForkSubagentEnabled();
+    // Fork subagent experiment: force the GENUINE fork path async for a unified
+    // <task-notification> interaction model. Scoped ONLY to isForkPath — a
+    // build-time fork feature flag must never silently detach a NAMED saved
+    // agent (e.g. Main Chat → Hermes scoped preparation, which must run
+    // foreground and return a bounded result). Named agents still opt into
+    // async explicitly via run_in_background or a saved background:true card.
+    const forceAsync = forkForcesAsync(isForkPath, isForkSubagentEnabled());
 
     // Assistant mode: force all agents async. Synchronous subagents hold the
     // main loop's turn open until they complete — the daemon's inputQueue
@@ -595,7 +606,15 @@ export const AgentTool = buildTool({
     // <task-notification> re-entry there is handled by the else branch
     // below (registerAsyncAgentTask + notifyOnCompletion).
     const assistantForceAsync = feature('KAIROS') ? appState.kairosEnabled : false;
-    const shouldRunAsync = (run_in_background === true || selectedAgent.background === true || isCoordinator || forceAsync || assistantForceAsync || (proactiveModule?.isProactiveActive() ?? false)) && !isBackgroundTasksDisabled;
+    const shouldRunAsync = computeShouldRunAsync({
+      runInBackground: run_in_background === true,
+      agentBackground: selectedAgent.background === true,
+      isCoordinator,
+      forceAsync,
+      assistantForceAsync,
+      proactiveActive: proactiveModule?.isProactiveActive() ?? false,
+      backgroundTasksDisabled: isBackgroundTasksDisabled,
+    });
     // Assemble the worker's tool pool independently of the parent's.
     // Workers always get their tools from assembleToolPool with their own
     // permission mode, so they aren't affected by the parent's tool
@@ -863,6 +882,15 @@ export const AgentTool = buildTool({
         }> | undefined;
         let cancelAutoBackground: (() => void) | undefined;
         if (!isBackgroundTasksDisabled) {
+          // A named inherit_parent agent (scoped foreground preparation, e.g.
+          // Main Chat → Hermes) must return a terminal result to its caller and
+          // must NEVER silently auto-detach mid-turn. Auto-background stays
+          // available for generic forks and ordinary isolated agents (when the
+          // operator opts in via env/flag); it is simply not applied here.
+          const autoBackgroundMs =
+            selectedAgent.contextMode === 'inherit_parent'
+              ? undefined
+              : getAutoBackgroundMs() || undefined;
           const registration = registerAgentForeground({
             agentId: syncAgentId,
             description,
@@ -870,7 +898,7 @@ export const AgentTool = buildTool({
             selectedAgent,
             setAppState: rootSetAppState,
             toolUseId: toolUseContext.toolUseId,
-            autoBackgroundMs: getAutoBackgroundMs() || undefined
+            autoBackgroundMs
           });
           foregroundTaskId = registration.taskId;
           backgroundPromise = registration.backgroundSignal.then(() => ({

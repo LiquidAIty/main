@@ -58,6 +58,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 BACKEND = os.environ.get("LIQUIDAITY_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
+KNOWGRAPH_QUERY_TIMEOUT_S = float(os.environ.get("KNOWGRAPH_QUERY_TIMEOUT_S", "10"))
 
 server = Server("liquidaity")
 
@@ -322,8 +323,9 @@ async def list_tools() -> list[Tool]:
             description=(
                 "READ-ONLY grounded knowledge retrieval from KnowGraph (Neo4j): sourced claims, "
                 "entities, relationships, conflicts, and provenance via exact + full-text + "
-                "vector retrieval. Returns real stored evidence only; an unreachable graph is an "
-                "honest error, never fabricated context."
+                "vector retrieval. Returns real stored evidence only. An empty/unseeded graph "
+                "returns assertions/evidence empty; an unreachable or timed-out graph returns an "
+                "honest error, never fabricated context. Do not retry a terminal empty/error result."
             ),
             inputSchema={
                 "type": "object",
@@ -527,13 +529,18 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             from app.python_models.tool_registry import retrieve_knowgraph_context_tool
 
             max_results = args.get("maxResults")
-            result = await retrieve_knowgraph_context_tool(
-                project_id=str(args.get("projectId") or ""),
-                query=str(args.get("query") or ""),
-                anchors=[str(a) for a in (args.get("anchors") or []) if str(a).strip()],
-                max_results=max_results if isinstance(max_results, int) and max_results > 0 else 12,
+            result = await asyncio.wait_for(
+                retrieve_knowgraph_context_tool(
+                    project_id=str(args.get("projectId") or ""),
+                    query=str(args.get("query") or ""),
+                    anchors=[str(a) for a in (args.get("anchors") or []) if str(a).strip()],
+                    max_results=max_results if isinstance(max_results, int) and max_results > 0 else 12,
+                ),
+                timeout=KNOWGRAPH_QUERY_TIMEOUT_S,
             )
             return [TextContent(type="text", text=json.dumps({"ok": True, **result}))]
+        except asyncio.TimeoutError:
+            return [TextContent(type="text", text=json.dumps({"ok": False, "error": "knowgraph_query_timeout"}))]
         except Exception as err:  # noqa: BLE001 — honest tool-level failure
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"knowgraph_query_failed: {err}"}))]
     handler_name = _CONTROL_HANDLER_NAMES.get(name)

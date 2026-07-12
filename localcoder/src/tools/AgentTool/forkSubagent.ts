@@ -168,6 +168,70 @@ export function buildForkedMessages(
   return [fullAssistantMessage, toolResultMessage]
 }
 
+/**
+ * Child promptMessages for a NAMED inherit_parent agent (a saved Hermes /
+ * ThinkGraph card), NOT a generic fork.
+ *
+ * The live parent conversation is delivered separately via runAgent's
+ * forkContextMessages, where filterIncompleteToolCalls() already strips the
+ * parent's still-unresolved tool_use for THIS Agent call. So — unlike
+ * buildForkedMessages() — there is deliberately NO cloned parent assistant
+ * message, NO placeholder tool_result, NO "Fork started" string, and NO
+ * fork-worker boilerplate: the named card's own saved system prompt is its
+ * role, and the inherited conversation is its context.
+ *
+ * The prompt distinction is preserved from the raw tool input (NOT the
+ * resolveAgentPrompt-collapsed value):
+ *   - omitted (undefined) → [] (pure inheritance; no directive message)
+ *   - explicit (incl. '')  → exactly one ordinary user message
+ */
+export function buildNamedInheritedPromptMessages(
+  requestedPrompt: string | undefined,
+): MessageType[] {
+  return requestedPrompt === undefined
+    ? []
+    : [createUserMessage({ content: requestedPrompt })]
+}
+
+/**
+ * Whether the fork experiment should force THIS spawn async. Restricted to the
+ * genuine fork path: a build-time fork flag must never silently detach a named
+ * saved agent (e.g. Main Chat → Hermes scoped preparation, which must stay
+ * foreground and return a bounded result). Pure for testing.
+ */
+export function forkForcesAsync(
+  isForkPath: boolean,
+  forkExperimentEnabled: boolean,
+): boolean {
+  return isForkPath && forkExperimentEnabled
+}
+
+/**
+ * The spawn-async decision, extracted pure so every source of async (explicit
+ * run_in_background, a saved background:true card, coordinator/assistant modes,
+ * the fork experiment, proactive mode) is independently testable and the hard
+ * disable always wins. Mirrors the inline OR-chain in the Agent tool exactly.
+ */
+export function computeShouldRunAsync(inputs: {
+  runInBackground: boolean
+  agentBackground: boolean
+  isCoordinator: boolean
+  forceAsync: boolean
+  assistantForceAsync: boolean
+  proactiveActive: boolean
+  backgroundTasksDisabled: boolean
+}): boolean {
+  return (
+    (inputs.runInBackground ||
+      inputs.agentBackground ||
+      inputs.isCoordinator ||
+      inputs.forceAsync ||
+      inputs.assistantForceAsync ||
+      inputs.proactiveActive) &&
+    !inputs.backgroundTasksDisabled
+  )
+}
+
 export function buildChildMessage(directive: string): string {
   return `<${FORK_BOILERPLATE_TAG}>
 STOP. READ THIS FIRST.

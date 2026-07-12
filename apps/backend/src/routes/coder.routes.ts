@@ -620,8 +620,12 @@ router.post('/openclaude/session/chat', async (req, res) => {
           conversationId,
           correlationId,
           cardId: 'card_hermes_steward',
-          outputSummary: event.isError ? '' : 'Mag One job-folder result returned to principal Harness',
-          errorSummary: event.isError ? 'native Hermes Agent tool failed' : null,
+          // The REAL terminal result of the foreground Hermes child (the Agent
+          // tool_result), bounded — never a hardcoded "Mag One job-folder
+          // result" string (Hermes preparation is not a Mag One job) and never
+          // Mag One wording on the Hermes path.
+          outputSummary: event.isError ? '' : String(event.output || '').slice(0, 200),
+          errorSummary: event.isError ? 'named Hermes agent turn failed' : null,
           durationMs: Date.now() - (hermesStartedAt.get(event.toolUseId) ?? Date.now()),
           metadata: { toolUseId: event.toolUseId },
         });

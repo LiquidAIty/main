@@ -168,14 +168,18 @@ export function doorwayWhenToUse(binding: string, title: string): string {
   }
   if (binding === 'hermes_steward') {
     return (
-      'Invoke your background context/planning steward when a turn benefits from ' +
-      'deeper preparation: memory enrichment, research shaping, source ingestion, or ' +
-      'job-folder work. Omit prompt: Hermes inherits the complete live parent ' +
-      'conversation, works its graph/memory tools and its own direct agents, and writes ' +
-      'useful supporting files under handoff/<jobId>/. Hermes never writes the approved ' +
-      'prompt.md, never runs Mag One, and never becomes a worker — Main Chat reviews the ' +
-      'files, writes prompt.md last, and launches by jobId only on an explicit user request. ' +
-      'Model judgment decides when to invoke; no fixed cadence.'
+      'Invoke your context and planning steward when a turn benefits from deeper ' +
+      'preparation: memory enrichment, research shaping, source ingestion, or ' +
+      'job-folder work. This runs FOREGROUND and returns one terminal result — ' +
+      'when you need a result before continuing, pass a bounded scoped assignment ' +
+      'as the prompt (what to prepare, which evidence, the stop condition) and ' +
+      'wait for it; omit the prompt only for pure inherited-context preparation. ' +
+      'Either way Hermes inherits the complete live parent conversation, works its ' +
+      'graph/memory tools and its own direct agents, and writes supporting files ' +
+      'under handoff/<jobId>/. Hermes never writes the approved prompt.md, never ' +
+      'runs Mag One, and never becomes a worker — Main Chat reviews the files, ' +
+      'writes prompt.md last, and launches by jobId only on an explicit user ' +
+      'request. Model judgment decides when to invoke; no fixed cadence.'
     );
   }
   return `The saved agent card "${title}". Delegate the matching task to it and relay its result.`;
