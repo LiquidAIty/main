@@ -190,18 +190,32 @@ router.post('/mcp-bridge/thinkgraph_submit_update', async (req, res) => {
 
 // ── Hermes SQL memory (liq_core.memory_space/memory_item, scope 'hermes') ───
 // Project-scoped private steward continuity — separate from ThinkGraph. The
-// schema pre-exists (01_liq_core_projects_jobs.sql); this is its first wiring.
+// runtime project authority is ag_catalog.projects, the same table used by
+// deck/conversation resolution. The old liq_core.project table is legacy data
+// only; never silently mirror or guess an identity from it.
+export async function resolveHermesProjectId(projectId: string): Promise<string> {
+  const normalized = String(projectId || '').trim();
+  if (!normalized) throw new Error('hermes_project_id_required');
+  const { rows } = await pool.query(
+    `SELECT id::text AS id FROM ag_catalog.projects WHERE id::text = $1 LIMIT 1`,
+    [normalized],
+  );
+  if (rows.length === 0) throw new Error(`hermes_project_not_found: ${normalized}`);
+  return String(rows[0].id);
+}
+
 async function resolveHermesMemorySpaceId(projectId: string): Promise<number> {
+  const canonicalProjectId = await resolveHermesProjectId(projectId);
   const existing = await pool.query(
     `SELECT memory_space_id FROM liq_core.memory_space
      WHERE project_id = $1 AND scope = 'hermes' ORDER BY memory_space_id LIMIT 1`,
-    [projectId],
+    [canonicalProjectId],
   );
   if (existing.rows.length > 0) return Number(existing.rows[0].memory_space_id);
   const created = await pool.query(
     `INSERT INTO liq_core.memory_space (project_id, scope, label, tags, config)
      VALUES ($1, 'hermes', 'Hermes Steward Memory', '{}', '{}') RETURNING memory_space_id`,
-    [projectId],
+    [canonicalProjectId],
   );
   return Number(created.rows[0].memory_space_id);
 }

@@ -51,12 +51,22 @@ const chatSessionMocks = vi.hoisted(() => {
     done: Promise.resolve({ finalText: 'Real assistant reply.' }),
     cancel: mocks.lastCancel,
     answer: vi.fn(),
+    resolved: {
+      cardId: 'card_main_chat',
+      provider: 'openai',
+      modelKey: 'gpt-5.1-chat-latest',
+      providerModelId: 'gpt-5.1-chat-latest',
+    },
   }));
   return mocks;
 });
 
 const mcpClientMocks = vi.hoisted(() => ({
   callPythonAgentMcpTool: vi.fn(async () => ({ ok: true })),
+}));
+
+const dbMocks = vi.hoisted(() => ({
+  query: vi.fn(),
 }));
 
 vi.mock('../services/graphContext/cbmScopeGate', () => ({
@@ -79,6 +89,10 @@ vi.mock('../coder/openclaude/session/grpcChatClient', () => ({
 
 vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
   callPythonAgentMcpTool: mcpClientMocks.callPythonAgentMcpTool,
+}));
+
+vi.mock('../db/pool', () => ({
+  pool: { query: dbMocks.query },
 }));
 
 async function createApiServer(): Promise<{ server: Server; baseUrl: string }> {
@@ -251,6 +265,12 @@ describe('coder routes', () => {
           done,
           cancel: chatSessionMocks.lastCancel,
           answer: vi.fn(),
+          resolved: {
+            cardId: 'card_main_chat',
+            provider: 'openai',
+            modelKey: 'gpt-5.1-chat-latest',
+            providerModelId: 'gpt-5.1-chat-latest',
+          },
         };
       });
       const { server, baseUrl } = await createApiServer();
@@ -293,5 +313,25 @@ describe('coder routes', () => {
         await closeServer(server);
       }
     });
+  });
+});
+
+describe('Hermes memory project authority', () => {
+  it('accepts the real ag_catalog project id and returns that exact identity', async () => {
+    const projectId = '20ac92da-01fd-4cf6-97cc-0672421e751a';
+    dbMocks.query.mockResolvedValueOnce({ rows: [{ id: projectId }] });
+    const { resolveHermesProjectId } = await import('./coder.routes');
+    await expect(resolveHermesProjectId(projectId)).resolves.toBe(projectId);
+    expect(dbMocks.query).toHaveBeenLastCalledWith(
+      expect.stringContaining('FROM ag_catalog.projects'),
+      [projectId],
+    );
+  });
+
+  it('fails visibly for an unknown project and never guesses a legacy identity', async () => {
+    const unknown = '00000000-0000-0000-0000-000000000404';
+    dbMocks.query.mockResolvedValueOnce({ rows: [] });
+    const { resolveHermesProjectId } = await import('./coder.routes');
+    await expect(resolveHermesProjectId(unknown)).rejects.toThrow(`hermes_project_not_found: ${unknown}`);
   });
 });
