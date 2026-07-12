@@ -37,6 +37,9 @@ function toProjection(
     nodes: nodes.map((node) => ({
       id: node.id,
       label: node.label || node.id,
+      title: node.label || node.id,
+      type: node.type,
+      labels: node.type ? [node.type] : undefined,
       mentionCount: degree.get(node.id) || 1,
       properties: node.properties,
     })),

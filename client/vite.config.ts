@@ -15,6 +15,11 @@ export default defineConfig(() => {
         'react',
         'react-dom',
         'scheduler',
+        // zustand's ESM traditional entry imports the selector shim as a default
+        // export. This package is CommonJS, so it must be optimized before the
+        // Agent Builder module graph evaluates; otherwise the graph workspace
+        // fails before any of its authority-specific surfaces can mount.
+        'use-sync-external-store/shim/with-selector',
         // @react-three/* is a raw-ESM exclude (below); its CJS leaf deps must still be
         // pre-bundled, or the raw drei/fiber default imports fail in dev and the
         // ThinkGraph/KnowGraph/CodeGraph scene blanks. Each is a standalone CJS leaf

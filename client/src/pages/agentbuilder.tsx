@@ -79,10 +79,7 @@ import {
   resolveProjectDeckLoadResult,
 } from '../features/agentbuilder/deck/deckDocument';
 import {
-  deriveConnectedGraphStreams,
   deriveVisibleRailItems,
-  getConnectedKnowledgeGraphKinds,
-  getDefaultConnectedKnowledgeGraphKind,
   isHermesConnectedToMainChat,
   resolveWorkbenchDescriptor,
 } from '../features/agentbuilder/rail/railVisibility';
@@ -210,6 +207,28 @@ const AGENTS_CANVAS_MIN_WIDTH = 520;
 const WORKSPACE_COMPANION_MIN_WIDTH = 360;
 const WORKSPACE_COLLAPSE_EDGE_PX = 28;
 const AGENT_EDITOR_DEFAULT_WIDTH = 420;
+// Hermes owns one project-intelligence canvas. Its three tabs are authorities,
+// not agent-card capabilities: card/bus wiring must never hide project
+// reasoning, external evidence, or repository reality from that canvas.
+const HERMES_GRAPH_AUTHORITIES: readonly KnowledgeGraphKind[] = [
+  'thinkgraph',
+  'knowgraph',
+  'codegraph',
+];
+const GRAPH_AUTHORITY_COPY: Record<KnowledgeGraphKind, { title: string; detail: string }> = {
+  thinkgraph: {
+    title: 'ThinkGraph',
+    detail: 'Project reasoning, decisions, runs, blockers, and patterns.',
+  },
+  knowgraph: {
+    title: 'KnowGraph',
+    detail: 'Source-backed external evidence, provenance, entities, and assertions.',
+  },
+  codegraph: {
+    title: 'CodeGraph',
+    detail: 'Repository structure and dependencies from Codebase Memory.',
+  },
+};
 type WorkspaceTestingEventDraft = Omit<
   WorkspaceTestingEventInput,
   'projectId'
@@ -454,17 +473,9 @@ export default function AgentBuilder(): React.ReactElement {
       }),
     [deck, workspaceView],
   );
-  const connectedGraphStreams = useMemo(
-    () => deriveConnectedGraphStreams(deck),
-    [deck],
-  );
   const hermesConnectedToMainChat = useMemo(
     () => isHermesConnectedToMainChat(deck.nodes, deck.edges),
     [deck],
-  );
-  const connectedKnowledgeGraphKinds = useMemo(
-    () => getConnectedKnowledgeGraphKinds(connectedGraphStreams),
-    [connectedGraphStreams],
   );
   const {
     objectDrawerOpen,
@@ -489,17 +500,6 @@ export default function AgentBuilder(): React.ReactElement {
   const [newProjectName, setNewProjectName] = useState('');
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
     useState<KnowledgeGraphKind>('thinkgraph');
-  useEffect(() => {
-    if (connectedKnowledgeGraphKinds.length === 0) return;
-    if (connectedKnowledgeGraphKinds.includes(knowledgeGraphKind)) return;
-    setKnowledgeGraphKind(
-      getDefaultConnectedKnowledgeGraphKind(connectedGraphStreams),
-    );
-  }, [
-    connectedGraphStreams,
-    connectedKnowledgeGraphKinds,
-    knowledgeGraphKind,
-  ]);
   const thinkGraphProjection = useAgentBuilderThinkGraphProjection({
     activeProject,
     knowledgeGraphKind,
@@ -2007,15 +2007,21 @@ export default function AgentBuilder(): React.ReactElement {
   }: {
     minHeight?: number;
     surfaceRole?: 'large' | 'companion';
-  }) => (
-    <div
+  }) => {
+    const authority = GRAPH_AUTHORITY_COPY[knowledgeGraphKind];
+    return (
+      <div
       data-testid={`${surfaceRole}-surface-knowledge`}
       style={getSurfaceShellStyle(minHeight <= 320)}
     >
       <div className="h-full flex flex-col" style={{ position: 'relative' }}>
-        {connectedKnowledgeGraphKinds.length > 0 ? (
-          <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 6, display: 'flex', gap: 6 }}>
-            {connectedKnowledgeGraphKinds.map((k) => {
+        {HERMES_GRAPH_AUTHORITIES.length > 0 ? (
+          <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 6 }}>
+            <div style={{ color: '#d9f6f1', fontSize: 12, fontWeight: 700, marginBottom: 5 }}>
+              Hermes project intelligence
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+            {HERMES_GRAPH_AUTHORITIES.map((k) => {
               const active = k === knowledgeGraphKind;
               const label =
                 k === 'codegraph'
@@ -2045,6 +2051,10 @@ export default function AgentBuilder(): React.ReactElement {
                 </button>
               );
             })}
+            </div>
+            <div style={{ color: '#89a9b9', fontSize: 11, marginTop: 6, maxWidth: 480 }}>
+              <strong style={{ color: '#bde9e1' }}>{authority.title}</strong> · {authority.detail}
+            </div>
           </div>
         ) : null}
         <div
@@ -2219,7 +2229,8 @@ export default function AgentBuilder(): React.ReactElement {
         ) : null}
       </div>
     </div>
-  );
+    );
+  };
 
   const showCanvasWorkspace = useCallback(() => {
     closeObjectDrawer();
@@ -2239,9 +2250,7 @@ export default function AgentBuilder(): React.ReactElement {
   const showKnowledgeWorkspace = useCallback(() => {
     closeObjectDrawer();
     setWorkspaceView('knowledge');
-    setKnowledgeGraphKind(
-      getDefaultConnectedKnowledgeGraphKind(connectedGraphStreams),
-    );
+    setKnowledgeGraphKind('thinkgraph');
     const params = new URLSearchParams(window.location.search);
     params.set('workspace', 'knowledge');
     window.history.replaceState(
@@ -2249,7 +2258,7 @@ export default function AgentBuilder(): React.ReactElement {
       '',
       `${window.location.pathname}?${params.toString()}`,
     );
-  }, [closeObjectDrawer, connectedGraphStreams]);
+  }, [closeObjectDrawer]);
 
   const previousHermesConnectionRef = useRef(false);
   useEffect(() => {
@@ -2260,9 +2269,7 @@ export default function AgentBuilder(): React.ReactElement {
 
     closeObjectDrawer();
     setWorkspaceView('knowledge');
-    setKnowledgeGraphKind(
-      getDefaultConnectedKnowledgeGraphKind(connectedGraphStreams),
-    );
+    setKnowledgeGraphKind('thinkgraph');
     const params = new URLSearchParams(window.location.search);
     params.set('workspace', 'knowledge');
     window.history.replaceState(
@@ -2272,7 +2279,6 @@ export default function AgentBuilder(): React.ReactElement {
     );
   }, [
     closeObjectDrawer,
-    connectedGraphStreams,
     hermesConnectedToMainChat,
   ]);
 
