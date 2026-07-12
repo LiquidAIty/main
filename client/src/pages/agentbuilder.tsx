@@ -215,20 +215,6 @@ const HERMES_GRAPH_AUTHORITIES: readonly KnowledgeGraphKind[] = [
   'knowgraph',
   'codegraph',
 ];
-const GRAPH_AUTHORITY_COPY: Record<KnowledgeGraphKind, { title: string; detail: string }> = {
-  thinkgraph: {
-    title: 'ThinkGraph',
-    detail: 'Project reasoning, decisions, runs, blockers, and patterns.',
-  },
-  knowgraph: {
-    title: 'KnowGraph',
-    detail: 'Source-backed external evidence, provenance, entities, and assertions.',
-  },
-  codegraph: {
-    title: 'CodeGraph',
-    detail: 'Repository structure and dependencies from Codebase Memory.',
-  },
-};
 type WorkspaceTestingEventDraft = Omit<
   WorkspaceTestingEventInput,
   'projectId'
@@ -2008,7 +1994,6 @@ export default function AgentBuilder(): React.ReactElement {
     minHeight?: number;
     surfaceRole?: 'large' | 'companion';
   }) => {
-    const authority = GRAPH_AUTHORITY_COPY[knowledgeGraphKind];
     return (
       <div
       data-testid={`${surfaceRole}-surface-knowledge`}
@@ -2017,9 +2002,6 @@ export default function AgentBuilder(): React.ReactElement {
       <div className="h-full flex flex-col" style={{ position: 'relative' }}>
         {HERMES_GRAPH_AUTHORITIES.length > 0 ? (
           <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 6 }}>
-            <div style={{ color: '#d9f6f1', fontSize: 12, fontWeight: 700, marginBottom: 5 }}>
-              Hermes project intelligence
-            </div>
             <div style={{ display: 'flex', gap: 6 }}>
             {HERMES_GRAPH_AUTHORITIES.map((k) => {
               const active = k === knowledgeGraphKind;
@@ -2051,9 +2033,6 @@ export default function AgentBuilder(): React.ReactElement {
                 </button>
               );
             })}
-            </div>
-            <div style={{ color: '#89a9b9', fontSize: 11, marginTop: 6, maxWidth: 480 }}>
-              <strong style={{ color: '#bde9e1' }}>{authority.title}</strong> · {authority.detail}
             </div>
           </div>
         ) : null}

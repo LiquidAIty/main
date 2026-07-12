@@ -168,6 +168,27 @@ export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
     },
     outputSchema: { type: 'object', description: 'authoritative CoderReport JSON' },
   },
+  {
+    // Transport-validation mirror only. The real tool lives in the Python Mag One
+    // registry (tool_registry.py web_search -> Tavily search API). Read-only real
+    // web search; the model selects sources, knowgraph.ingest persists them with
+    // provenance. This entry lets a card's Tools selection validate the id.
+    name: 'web_search',
+    description:
+      'Real web search via Tavily. Returns real result pages (url, title, domain, content ' +
+      'excerpt, published date) for the agent to read and select. Read-only; never fabricates. ' +
+      'Pair with knowgraph.ingest to persist selected real sources with provenance.',
+    enabled: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+        max_results: { type: 'integer', default: 5 },
+      },
+      required: ['query'],
+    },
+    outputSchema: { type: 'string', description: 'JSON { ok, query, result_count, results[] } with source metadata' },
+  },
 ];
 
 // Harness/MCP bridge tools are transport capabilities, not card-local

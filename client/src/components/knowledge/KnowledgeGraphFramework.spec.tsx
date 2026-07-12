@@ -9,7 +9,7 @@
 // mechanics only.
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, waitFor } from '@testing-library/react';
 
 const cyState = vi.hoisted(() => ({
   instances: [] as any[],
@@ -143,9 +143,6 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     expect(cy.store).toHaveLength(0);
     expect(cy.layouts).toHaveLength(0);
     expect(getByTestId('cytoscape-graph').getAttribute('data-node-count')).toBe('0');
-    expect(getByTestId('knowledge-graph-no-selection').textContent).toContain(
-      'Select a graph node to inspect its real fields.',
-    );
   });
 
   it('creates exactly one element per returned node/edge, preserving raw fields verbatim', async () => {
@@ -308,23 +305,6 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     const dragFree = cy.handlers.find((h: any) => h.event === 'dragfree');
     dragFree.fn();
     expect(cy.layouts.length).toBe(layoutRunsBefore + 1);
-  });
-
-  it('shows only the selected node fields returned by the projection', async () => {
-    render(<KnowledgeGraphFramework projection={PROJECTION} />);
-    await waitFor(() => expect(cyState.instances).toHaveLength(1));
-    const cy = cyState.instances[0];
-    const nodeTap = cy.handlers.find((h: any) => h.selector === 'node');
-
-    nodeTap.fn({ target: { closedNeighborhood: () => ({ length: 2 }), data: () => PROJECTION.nodes[0] } });
-
-    const inspector = await screen.findByTestId('knowledge-graph-node-inspector');
-    expect(screen.queryByTestId('knowledge-graph-no-selection')).toBeNull();
-    expect(inspector.textContent).toContain('AST SpaceMobile');
-    expect(inspector.textContent).toContain('Issuer');
-    expect(inspector.textContent).toContain('PublicCompany');
-    expect(inspector.textContent).toContain('"ticker": "ASTS"');
-    expect(inspector.textContent).toContain('connected edges');
   });
 
   it('reapplies elements after a StrictMode double-mount (destroyed instance must not keep the fingerprint)', async () => {

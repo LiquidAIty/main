@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from autogen_core.tools import FunctionTool
@@ -654,6 +655,66 @@ class ToolRegistry:
         return [self.resolve_one(name) for name in (selected_names or [])]
 
 
+def _tavily_search_sync(query: str, max_results: int) -> str:
+    """Thin real Tavily web search over the same stdlib urllib transport the
+    backend bridge helper uses. Tavily is a search API (not a model), so this is
+    not a parallel model client. Returns real result pages with source metadata;
+    never fabricates results and reports an honest error on failure."""
+    api_key = os.environ.get("TAVILY_API_KEY", "").strip()
+    if not api_key:
+        return json.dumps({"ok": False, "error": "tavily_api_key_missing"})
+    body = json.dumps(
+        {
+            "api_key": api_key,
+            "query": query,
+            "max_results": max(1, min(int(max_results or 5), 10)),
+            "search_depth": "basic",
+        }
+    ).encode("utf-8")
+    request = Request(
+        "https://api.tavily.com/search",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=30) as response:  # noqa: S310 — Tavily search API
+            raw = json.loads(response.read().decode("utf-8"))
+    except HTTPError as err:
+        return json.dumps({"ok": False, "error": f"tavily_http_{err.code}"})
+    except URLError as err:
+        return json.dumps({"ok": False, "error": f"tavily_unreachable: {err.reason}"})
+    except (ValueError, OSError) as err:
+        return json.dumps({"ok": False, "error": f"tavily_failed: {err}"})
+    results = []
+    for item in raw.get("results") or []:
+        url = str(item.get("url") or "")
+        results.append(
+            {
+                "url": url,
+                "title": str(item.get("title") or ""),
+                "domain": urlparse(url).netloc,
+                "content": str(item.get("content") or ""),
+                "published_date": item.get("published_date"),
+                "score": item.get("score"),
+            }
+        )
+    return json.dumps(
+        {"ok": True, "query": query, "result_count": len(results), "results": results}
+    )
+
+
+async def web_search(query: str, max_results: int = 5) -> str:
+    """Real web search via Tavily for an agent to read and select real sources.
+    Read-only; returns url/title/domain/content/published_date per result. Pair
+    with knowgraph.ingest to persist selected real sources with provenance — this
+    tool never ingests and never fabricates results."""
+    cleaned = str(query or "").strip()
+    if not cleaned:
+        return json.dumps({"ok": False, "error": "query_required"})
+    return await asyncio.to_thread(_tavily_search_sync, cleaned, max_results)
+
+
 def build_default_tool_registry() -> ToolRegistry:
     """The canonical runtime registry."""
     registry = ToolRegistry()
@@ -846,6 +907,32 @@ def build_default_tool_registry() -> ToolRegistry:
             },
         ),
         retrieve_knowgraph_context_tool,
+    )
+    registry.register(
+        ToolSpec(
+            name="web_search",
+            description=(
+                "Real web search via Tavily. Returns real result pages (url, title, domain, "
+                "content excerpt, published date) for the agent to read and select. Read-only "
+                "and never fabricates results; pair with knowgraph.ingest to persist selected "
+                "real sources with provenance. Does not run automatically — the agent decides "
+                "when a task needs external web sources."
+            ),
+            enabled=True,
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "max_results": {"type": "integer", "default": 5},
+                },
+                "required": ["query"],
+            },
+            outputSchema={
+                "type": "string",
+                "description": "JSON { ok, query, result_count, results[] } with per-result source metadata",
+            },
+        ),
+        web_search,
     )
     registry.register(
         ToolSpec(

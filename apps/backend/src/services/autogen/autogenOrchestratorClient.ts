@@ -109,13 +109,17 @@ function isRetryableSidecarError(error: any): boolean {
 }
 
 function readTimeoutMs(): number {
-  // A real multi-agent Magentic-One planning run (orchestrator + several agents
-  // collaborating to completion) can take well over 90s. Cap raised to 300s so
-  // planning requests finish instead of aborting at the old 90s ceiling. Simple
-  // requests still return in seconds; this only bounds the worst case.
-  const raw = Number(process.env.AUTOGEN_ORCHESTRATOR_TIMEOUT_MS ?? 120_000);
-  if (!Number.isFinite(raw)) return 120_000;
-  return Math.max(2_000, Math.min(300_000, Math.floor(raw)));
+  // A real multi-agent Magentic-One run — and especially a coder-bearing run that
+  // nests a LocalCoder CLI call (its own DEFAULT_LOCALCODER_RUN_TIMEOUT_MS is 300s)
+  // plus participant/model overhead — can run past 300s. The old 120s default /
+  // 300s ceiling (and the env override of 180s) aborted the outer fetch to the
+  // Python rails while the Python run kept going and wrote its artifact, so the run
+  // reported "This operation was aborted" despite completing the work. Default and
+  // ceiling now exceed the nested LocalCoder budget so coder runs finish instead of
+  // aborting; simple requests still return in seconds — this only bounds the worst case.
+  const raw = Number(process.env.AUTOGEN_ORCHESTRATOR_TIMEOUT_MS ?? 360_000);
+  if (!Number.isFinite(raw)) return 360_000;
+  return Math.max(2_000, Math.min(600_000, Math.floor(raw)));
 }
 
 export async function orchestrateWithAutoGen(

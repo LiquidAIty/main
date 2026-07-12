@@ -66,18 +66,6 @@ export default function MagenticBusNode() {
           pointerEvents: 'none',
         }}
       />
-      <div
-        aria-hidden="true"
-        style={{ position: 'absolute', top: -19, left: '50%', transform: 'translateX(-50%)', color: '#52DCEB', fontSize: 8, letterSpacing: '0.08em', whiteSpace: 'nowrap' }}
-      >
-        CONTROL
-      </div>
-      <div
-        aria-hidden="true"
-        style={{ position: 'absolute', top: 18, right: -34, color: 'rgba(84,221,214,0.78)', fontSize: 8, letterSpacing: '0.08em', writingMode: 'vertical-rl' }}
-      >
-        WORKERS
-      </div>
       {/* Main Chat's approved magentic_control edge enters here. */}
       <Handle
         id="task-bus-top"
