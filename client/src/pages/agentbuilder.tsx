@@ -83,6 +83,7 @@ import {
   deriveVisibleRailItems,
   getConnectedKnowledgeGraphKinds,
   getDefaultConnectedKnowledgeGraphKind,
+  isHermesConnectedToMainChat,
   resolveWorkbenchDescriptor,
 } from '../features/agentbuilder/rail/railVisibility';
 import {
@@ -374,11 +375,11 @@ export default function AgentBuilder(): React.ReactElement {
     | 'trading'
     | 'code'
     | 'worldsignal'
-  >(() =>
-    new URLSearchParams(window.location.search).get('projectId')
-      ? 'canvas'
-      : 'chat',
-  );
+  >(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('workspace') === 'knowledge') return 'knowledge';
+    return params.get('projectId') ? 'canvas' : 'chat';
+  });
   // Left-rail camera focus: carries a requested pan/zoom-to-fit to BuilderCanvas;
   // bumping nonce re-triggers the camera fit without swapping node sets.
   const [canvasFocusZone, setCanvasFocusZone] = useState<
@@ -455,6 +456,10 @@ export default function AgentBuilder(): React.ReactElement {
   );
   const connectedGraphStreams = useMemo(
     () => deriveConnectedGraphStreams(deck),
+    [deck],
+  );
+  const hermesConnectedToMainChat = useMemo(
+    () => isHermesConnectedToMainChat(deck.nodes, deck.edges),
     [deck],
   );
   const connectedKnowledgeGraphKinds = useMemo(
@@ -2219,6 +2224,14 @@ export default function AgentBuilder(): React.ReactElement {
   const showCanvasWorkspace = useCallback(() => {
     closeObjectDrawer();
     setWorkspaceView('canvas');
+    const params = new URLSearchParams(window.location.search);
+    params.delete('workspace');
+    const nextQuery = params.toString();
+    window.history.replaceState(
+      {},
+      '',
+      nextQuery ? `${window.location.pathname}?${nextQuery}` : window.location.pathname,
+    );
     // Camera focus only — pan to the agent/bus zone on the same scene.
     setCanvasFocusZone({ zone: 'agents', nonce: Date.now() });
   }, [closeObjectDrawer]);
@@ -2229,7 +2242,39 @@ export default function AgentBuilder(): React.ReactElement {
     setKnowledgeGraphKind(
       getDefaultConnectedKnowledgeGraphKind(connectedGraphStreams),
     );
+    const params = new URLSearchParams(window.location.search);
+    params.set('workspace', 'knowledge');
+    window.history.replaceState(
+      {},
+      '',
+      `${window.location.pathname}?${params.toString()}`,
+    );
   }, [closeObjectDrawer, connectedGraphStreams]);
+
+  const previousHermesConnectionRef = useRef(false);
+  useEffect(() => {
+    const becameConnected =
+      hermesConnectedToMainChat && !previousHermesConnectionRef.current;
+    previousHermesConnectionRef.current = hermesConnectedToMainChat;
+    if (!becameConnected) return;
+
+    closeObjectDrawer();
+    setWorkspaceView('knowledge');
+    setKnowledgeGraphKind(
+      getDefaultConnectedKnowledgeGraphKind(connectedGraphStreams),
+    );
+    const params = new URLSearchParams(window.location.search);
+    params.set('workspace', 'knowledge');
+    window.history.replaceState(
+      {},
+      '',
+      `${window.location.pathname}?${params.toString()}`,
+    );
+  }, [
+    closeObjectDrawer,
+    connectedGraphStreams,
+    hermesConnectedToMainChat,
+  ]);
 
   const showWorkbenchWorkspace = useCallback((surface: 'trading') => {
     closeObjectDrawer();

@@ -8,7 +8,7 @@ import AgentBuilderRail from './AgentBuilderRail';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const baseVisibility = {
-  showKnowledge: false,
+  showKnowledge: true,
   showWorldsignal: false,
   showTrading: false,
 };
@@ -44,6 +44,16 @@ function render(node: React.ReactElement) {
 }
 
 describe('AgentBuilderRail OpenClaude console icon', () => {
+  it('shows the graph launcher with the stable rail treatment', () => {
+    const host = render(
+      <AgentBuilderRail {...baseProps} visibleRailItems={baseVisibility} />,
+    );
+    const button = host.querySelector('[data-testid="rail-graphs-button"]') as HTMLButtonElement;
+    expect(button).not.toBeNull();
+    expect(button.getAttribute('aria-label')).toBe('Graphs');
+    expect(button.getAttribute('title')).toBe('Graphs');
+  });
+
   it('shows the terminal icon when the console is visible', () => {
     const host = render(
       <AgentBuilderRail

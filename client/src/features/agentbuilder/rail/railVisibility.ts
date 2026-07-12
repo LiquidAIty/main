@@ -224,6 +224,29 @@ export function deriveConnectedGraphStreams(deck: Pick<DeckDocument, 'nodes' | '
   };
 }
 
+export function isHermesConnectedToMainChat(
+  nodes: readonly AgentCardInstance[],
+  edges: readonly DeckEdge[],
+): boolean {
+  const mainChatIds = new Set(
+    nodes
+      .filter((node) => safeText(node.runtimeBinding).trim().toLowerCase() === 'main_chat')
+      .map((node) => node.id),
+  );
+  const hermesIds = new Set(
+    nodes
+      .filter((node) => safeText(node.runtimeBinding).trim().toLowerCase() === 'hermes_steward')
+      .map((node) => node.id),
+  );
+  if (mainChatIds.size === 0 || hermesIds.size === 0) return false;
+  return edges.some(
+    (edge) =>
+      normalizeDeckEdgeType(edge.edgeType) === 'flow' &&
+      ((mainChatIds.has(edge.source) && hermesIds.has(edge.target)) ||
+        (hermesIds.has(edge.source) && mainChatIds.has(edge.target))),
+  );
+}
+
 export function getDefaultConnectedKnowledgeGraphKind(
   streams: ConnectedGraphStreams,
 ): KnowledgeGraphKind {
@@ -301,9 +324,11 @@ export function deriveVisibleRailItems({
   deck: Pick<DeckDocument, 'nodes' | 'edges'>;
   workspaceView: string;
 }): ProgressiveRailVisibility {
-  const connectedGraphStreams = deriveConnectedGraphStreams(deck);
+  const hermesConnectedToMainChat = isHermesConnectedToMainChat(deck.nodes, deck.edges);
   return {
-    showKnowledge: connectedGraphStreams.anyGraph,
+    // Graphs are Hermes's canvas. The launcher is present only while Hermes is
+    // actually connected to Main Chat; graph data may still be empty/unseeded.
+    showKnowledge: hermesConnectedToMainChat,
     showWorldsignal:
       workspaceView === 'worldsignal' ||
       isWorldSignalsAgentActive(deck.nodes, deck.edges),
@@ -321,4 +346,3 @@ export function deriveVisibleRailItems({
 // over user text) was dead plumbing: its detector had zero callers, its state
 // was only ever reset to null, and deriveVisibleRailItems ignored it. Removed
 // whole — banned pattern (regex intent-routing) with zero live function.
-

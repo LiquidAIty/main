@@ -8,6 +8,7 @@ import {
   deriveConnectedGraphStreams,
   deriveVisibleRailItems,
   getConnectedKnowledgeGraphKinds,
+  isHermesConnectedToMainChat,
   isKnowledgeChainActive,
   isTradingWorkbenchActive,
   isWorldSignalsAgentActive,
@@ -110,6 +111,37 @@ function connectToBus(
 }
 
 describe('agentbuilder progressive activation startup', () => {
+  it('treats the Main Chat to Hermes flow as the graph-canvas primitive', () => {
+    const connectedDeck = {
+      ...INITIAL_DECK,
+      nodes: INITIAL_DECK.nodes.filter((node) =>
+        ['card_main_chat', 'card_hermes_steward'].includes(node.id),
+      ),
+      edges: [
+        {
+          id: 'edge_main_chat_hermes_test',
+          source: 'card_main_chat',
+          target: 'card_hermes_steward',
+          edgeType: 'flow' as const,
+        },
+      ],
+    };
+
+    expect(isHermesConnectedToMainChat(connectedDeck.nodes, connectedDeck.edges)).toBe(true);
+    expect(
+      deriveVisibleRailItems({ deck: connectedDeck, workspaceView: 'chat' }).showKnowledge,
+    ).toBe(true);
+
+    const disconnectedDeck = {
+      ...connectedDeck,
+      edges: [],
+    };
+    expect(isHermesConnectedToMainChat(disconnectedDeck.nodes, disconnectedDeck.edges)).toBe(false);
+    expect(
+      deriveVisibleRailItems({ deck: disconnectedDeck, workspaceView: 'chat' }).showKnowledge,
+    ).toBe(false);
+  });
+
   it('keeps the Stage 0 research cluster active and future helpers parked on the board', () => {
     const byId = new Map(ADMIN_STAGE0_DECK.nodes.map((node) => [node.id, node]));
     const bus = byId.get('card_magentic');
@@ -268,7 +300,7 @@ describe('agentbuilder progressive activation startup', () => {
     ]);
   });
 
-  it('hides the graph rail when no graph-capable agents are connected', () => {
+  it('keeps the graph rail hidden when Hermes is not connected to Main Chat', () => {
     const noGraphDeck = {
       ...INITIAL_DECK,
       nodes: INITIAL_DECK.nodes.filter(
