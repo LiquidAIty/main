@@ -35,7 +35,6 @@ import {
   normalizeRuntimeOptions,
   normalizeRuntimeType,
   safeText,
-  STALE_LOCAL_CODER_MODEL_KEYS,
   uid,
 } from './deckPrimitives';
 import {
@@ -59,29 +58,18 @@ export function isLocalCoderControllerCard(card: AgentCardInstance | null | unde
   );
 }
 
-export function isStaleLocalCoderModel(modelKey: string | null): boolean {
-  return Boolean(modelKey && STALE_LOCAL_CODER_MODEL_KEYS.has(modelKey));
-}
-
 export function normalizeLocalCoderControllerCard(card: AgentCardInstance): AgentCardInstance {
   if (!isLocalCoderControllerCard(card)) return card;
   const runtimeOptions = normalizeRuntimeOptions(card.runtimeOptions) ?? {};
-  const modelKey = cleanOptionalText(runtimeOptions.modelKey);
-  const provider = cleanOptionalText(runtimeOptions.provider);
-  const shouldUseControllerDefault = !modelKey || isStaleLocalCoderModel(modelKey);
+  // Provider/model are the saved card's authority — no hardcoded default and no
+  // model blacklist. Only identity (binding/type) and the run_local_coder tool
+  // are normalized here; the card selects its own engine and model.
   return {
     ...card,
     runtimeBinding: 'local_coder',
     runtimeType: 'local_coder',
     runtimeOptions: {
       ...runtimeOptions,
-      provider:
-        shouldUseControllerDefault || !provider
-          ? LOCAL_CODER_CONTROLLER_PROVIDER
-          : runtimeOptions.provider,
-      modelKey: shouldUseControllerDefault
-        ? LOCAL_CODER_CONTROLLER_MODEL_KEY
-        : runtimeOptions.modelKey,
       tools: Array.from(new Set([
         ...LOCAL_CODER_CONTROLLER_TOOLS,
         ...(Array.isArray(runtimeOptions.tools)
@@ -128,19 +116,17 @@ export function resolveLocalCoderControllerConsoleConfig(
     INITIAL_AGENT_TEMPLATES.find((candidate) => candidate.id === card?.templateId) ||
     INITIAL_AGENT_TEMPLATES.find((candidate) => candidate.id === 'template_local_coder') ||
     null;
-  const rawModel =
-    cleanOptionalText(runtimeOptions.modelKey) ||
-    cleanOptionalText(template?.model) ||
-    LOCAL_CODER_CONTROLLER_MODEL_KEY;
-  const shouldUseControllerDefault = isStaleLocalCoderModel(rawModel);
+  // Resolve from the saved card, then the template, then the seed default — no
+  // blacklist, no forced override.
   return {
     provider:
-      shouldUseControllerDefault
-        ? LOCAL_CODER_CONTROLLER_PROVIDER
-        : cleanOptionalText(runtimeOptions.provider) ||
-          cleanOptionalText(template?.provider) ||
-          LOCAL_CODER_CONTROLLER_PROVIDER,
-    model: shouldUseControllerDefault ? LOCAL_CODER_CONTROLLER_MODEL_KEY : rawModel,
+      cleanOptionalText(runtimeOptions.provider) ||
+      cleanOptionalText(template?.provider) ||
+      LOCAL_CODER_CONTROLLER_PROVIDER,
+    model:
+      cleanOptionalText(runtimeOptions.modelKey) ||
+      cleanOptionalText(template?.model) ||
+      LOCAL_CODER_CONTROLLER_MODEL_KEY,
   };
 }
 

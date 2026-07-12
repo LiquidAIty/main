@@ -34,17 +34,12 @@ export const DEFAULT_CARD_MODEL_KEY = 'gpt-5.1-chat-latest';
 export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
 export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = 'openai/gpt-5.1-chat';
 export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openrouter';
-export const LOCAL_CODER_CONTROLLER_MODEL_KEY = DEFAULT_CARD_MODEL_KEY;
-export const LOCAL_CODER_CONTROLLER_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = DEFAULT_CARD_PROVIDER;
+// Seed default ONLY for a fresh Coder card (and the console-config fallback). NOT
+// a runtime override: once a card has a saved provider/model, that saved value is
+// authoritative. Low-cost OpenRouter default; there is no model blacklist.
+export const LOCAL_CODER_CONTROLLER_MODEL_KEY = 'z-ai/glm-5.2';
+export const LOCAL_CODER_CONTROLLER_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openrouter';
 export const LOCAL_CODER_CONTROLLER_TOOLS = ['run_local_coder'] as const;
-export const STALE_LOCAL_CODER_MODEL_KEYS = new Set([
-  'z-ai/glm-5.2',
-  'gpt-5-mini',
-  'or-openai-gpt-5-mini',
-  'kimi-k2-thinking',
-  'moonshotai/kimi-k2-thinking',
-  'moonshotai/kimi-k2:free',
-]);
 
 export function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   const normalized = safeText(value).trim().toLowerCase();

@@ -168,7 +168,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(payload.cardRuntime.privateParticipants[0].prompt).toBe('You are the Local Coder controller.');
   });
 
-  it('upgrades the broken mini Local Coder controller model before dispatch', async () => {
+  it('preserves the card-selected Local Coder model before dispatch — no forced upgrade, no blacklist', async () => {
     mockGetDeck.mockResolvedValue(deckWith([STALE_LOCAL_CODER_CARD]));
     mockRunCard.mockResolvedValue({ ok: true, finalResponseText: '{"status":"succeeded"}' });
 
@@ -180,10 +180,12 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
 
     expect(result.status).toBe('completed');
     const payload = mockRunCard.mock.calls[0][0];
-    expect(payload.session.modelKey).toBe('gpt-5.1-chat-latest');
-    expect(payload.session.providerModelId).toBe('gpt-5.1-chat-latest');
-    expect(payload.cardRuntime.participants[0].providerModelId).toBe('gpt-5.1-chat-latest');
-    expect(payload.cardRuntime.privateParticipants[0].providerModelId).toBe('gpt-5.1-chat-latest');
+    // The card is the authority: whatever model it saved is what dispatches,
+    // never a controller-forced replacement.
+    expect(payload.session.modelKey).toBe('gpt-5-mini');
+    expect(payload.session.providerModelId).toBe('gpt-5-mini');
+    expect(payload.cardRuntime.participants[0].providerModelId).toBe('gpt-5-mini');
+    expect(payload.cardRuntime.privateParticipants[0].providerModelId).toBe('gpt-5-mini');
   });
 
   it('assigns a standalone run a returns folder under the default coder-workspace, and threads returned files back', async () => {

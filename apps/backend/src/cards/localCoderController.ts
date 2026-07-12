@@ -1,18 +1,6 @@
-import type { AgentCardInstance, AgentCardRuntimeOptions } from '../types';
+import type { AgentCardInstance } from '../types';
 
-export const LOCAL_CODER_CONTROLLER_MODEL_KEY = 'gpt-5.1-chat-latest';
-export const LOCAL_CODER_CONTROLLER_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> =
-  'openai';
 export const LOCAL_CODER_CONTROLLER_TOOLS = ['run_local_coder'] as const;
-
-const STALE_LOCAL_CODER_MODEL_KEYS = new Set([
-  'z-ai/glm-5.2',
-  'gpt-5-mini',
-  'or-openai-gpt-5-mini',
-  'kimi-k2-thinking',
-  'moonshotai/kimi-k2-thinking',
-  'moonshotai/kimi-k2:free',
-]);
 
 type CardLike = Partial<
   Pick<
@@ -37,19 +25,19 @@ export function isLocalCoderControllerCard(card: CardLike | null | undefined): b
   );
 }
 
-function isStaleLocalCoderModel(modelKey: string | null): boolean {
-  return Boolean(modelKey && STALE_LOCAL_CODER_MODEL_KEYS.has(modelKey));
-}
-
+/**
+ * Normalize ONLY the coder controller card's identity: its runtime binding/type
+ * and the presence of its run_local_coder tool. Provider and model are the saved
+ * card's authority — there is no hardcoded default and no model blacklist here.
+ * The card selects its own engine (an OpenRouter/OpenAI model, or a BYOC coder
+ * CLI); this normalizer never overrides that choice.
+ */
 export function normalizeLocalCoderControllerCard<T extends CardLike>(card: T): T {
   if (!isLocalCoderControllerCard(card)) return card;
   const runtimeOptions =
     card.runtimeOptions && typeof card.runtimeOptions === 'object' && !Array.isArray(card.runtimeOptions)
       ? { ...(card.runtimeOptions as Record<string, unknown>) }
       : {};
-  const modelKey = cleanOptionalText(runtimeOptions.modelKey);
-  const provider = cleanOptionalText(runtimeOptions.provider);
-  const shouldUseControllerDefault = !modelKey || isStaleLocalCoderModel(modelKey);
   const rawTools = Array.isArray(runtimeOptions.tools)
     ? runtimeOptions.tools
         .map((tool) => cleanOptionalText(tool))
@@ -62,13 +50,6 @@ export function normalizeLocalCoderControllerCard<T extends CardLike>(card: T): 
     runtimeType: 'local_coder',
     runtimeOptions: {
       ...runtimeOptions,
-      provider:
-        shouldUseControllerDefault || !provider
-          ? LOCAL_CODER_CONTROLLER_PROVIDER
-          : runtimeOptions.provider,
-      modelKey: shouldUseControllerDefault
-        ? LOCAL_CODER_CONTROLLER_MODEL_KEY
-        : runtimeOptions.modelKey,
       tools: Array.from(new Set([...LOCAL_CODER_CONTROLLER_TOOLS, ...rawTools])),
     },
   };
