@@ -141,7 +141,7 @@ export default function AgentBuilderRail({
             color: workspaceView === 'knowledge' ? colors.primary : colors.text,
           }}
         >
-          <Icon d="M6 5h4l2 7 2-7h4M6 19h4l2-7 2 7h4M6 5v14M18 5v14" />
+          <Icon d="M12 1v3M12 20v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M1 12h3M20 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" />
         </button>
       ) : null}
       {visibleRailItems.showTrading ? (
