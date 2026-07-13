@@ -140,6 +140,8 @@ function parseSessionId(sessionId: string): { projectId: string; conversationId:
  * A fixed identity constant, not a mapping. */
 const CARD_RUN_CONTROL_TOOL = 'mcp__liquidaity__card_run_assistant_agent';
 const HARNESS_TURN_TIMEOUT_MS = 120_000;
+const HERMES_REPORT_COMPLETION_GRACE_MS = 30_000;
+const HERMES_REPORT_WRITER_TOOL = 'mcp__liquidaity__hermes_write_report';
 
 /** The saved card's Tools selection, filtered to harness MCP tool names — the
  * REAL per-card MCP grant (enforced as the child's allowed_tools / the
@@ -498,6 +500,19 @@ export async function startGrpcTurn(
     }
   };
 
+  const armTimeout = (timeoutMs: number): void => {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    timeoutHandle = setTimeout(() => {
+      if (terminal) return;
+      terminal = true;
+      const error = new Error(`harness_turn_timeout:${timeoutMs}`);
+      safeOnEvent({ kind: 'error', message: error.message, code: 'harness_turn_timeout' });
+      try { call.write({ cancel: { reason: 'harness_turn_timeout' } }); } catch { /* closed */ }
+      try { call.end(); } catch { /* closed */ }
+      rejectDone?.(error);
+    }, timeoutMs);
+  };
+
   const done = new Promise<{ finalText: string }>((resolve, reject) => {
     rejectDone = reject;
     call.on('data', (msg: any) => {
@@ -516,6 +531,15 @@ export async function startGrpcTurn(
           invokingCardId: resolveCaller(agentType),
         });
       } else if (msg.tool_result) {
+        // A durable Hermes report is already written. The native child still
+        // needs a short window to return its metadata to Main; do not cancel
+        // that handoff merely because the full parent budget is expiring.
+        if (
+          msg.tool_result.tool_name === HERMES_REPORT_WRITER_TOOL &&
+          !Boolean(msg.tool_result.is_error)
+        ) {
+          armTimeout(HERMES_REPORT_COMPLETION_GRACE_MS);
+        }
         safeOnEvent({
           kind: 'tool_result',
           toolName: msg.tool_result.tool_name,
@@ -583,7 +607,7 @@ export async function startGrpcTurn(
   const doorwayDefinitions = mainChatConfig.doorwayDefinitions;
   callerDoorwayCardIds = doorwayDefinitions.map((def: any) => String(def?.card_id || '')).filter(Boolean);
   callerParentCardId = mainChatConfig.cardId;
-  const runtimeContext = buildHarnessRuntimeContext(args.sessionId, args.traceId);
+  const runtimeContext = buildHarnessRuntimeContext(args.sessionId, args.traceId, args.investigationContext);
   const appendSystemPrompt = [mainChatConfig.prompt, runtimeContext]
     .filter((section): section is string => Boolean(section))
     .join('\n\n') || null;
@@ -622,15 +646,7 @@ export async function startGrpcTurn(
     },
   });
 
-  if (!terminal) timeoutHandle = setTimeout(() => {
-    if (terminal) return;
-    terminal = true;
-    const error = new Error(`harness_turn_timeout:${HARNESS_TURN_TIMEOUT_MS}`);
-    safeOnEvent({ kind: 'error', message: error.message, code: 'harness_turn_timeout' });
-    try { call.write({ cancel: { reason: 'harness_turn_timeout' } }); } catch { /* closed */ }
-    try { call.end(); } catch { /* closed */ }
-    rejectDone?.(error);
-  }, HARNESS_TURN_TIMEOUT_MS);
+  if (!terminal) armTimeout(HARNESS_TURN_TIMEOUT_MS);
 
   return {
     answer: (promptId: string, reply: string) => {

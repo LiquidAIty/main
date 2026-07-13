@@ -19,7 +19,11 @@ import {
   type GrpcTurnHandle,
 } from '../coder/openclaude/session/grpcChatClient';
 import {
-  writeHermesReportArtifact,
+  beginHermesInvestigation,
+  endHermesInvestigation,
+  parseHermesInvestigationContext,
+  readLatestHermesReport,
+  writeActiveHermesReport,
   type HermesInvestigationContext,
 } from '../coder/hermes/hermesReportArtifact';
 import {
@@ -461,57 +465,25 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
 // SSE stream of the REAL QueryEngine event stream, verbatim. One stable session
 // id per (projectId, conversationId). The browser never touches gRPC.
 const activeGrpcTurns = new Map<string, GrpcTurnHandle>();
-type ActiveHermesInvestigation = {
-  context: HermesInvestigationContext;
-  reportId: string | null;
-};
-const activeHermesInvestigations = new Map<string, ActiveHermesInvestigation>();
-
-function normalizeInvestigationContext(
-  value: unknown,
-  projectId: string,
-  conversationId: string,
-): HermesInvestigationContext {
-  if (value !== undefined && (value === null || typeof value !== 'object' || Array.isArray(value))) {
-    throw new Error('investigation_context_object_required');
-  }
-  const candidate = (value || {}) as Record<string, unknown>;
-  const rawAnchors = candidate.anchorNodeIds === undefined ? [] : candidate.anchorNodeIds;
-  if (!Array.isArray(rawAnchors)) throw new Error('investigation_anchor_node_ids_array_required');
-  if (rawAnchors.length > 64) throw new Error('investigation_anchor_node_ids_too_many');
-  const anchorNodeIds = [...new Set(rawAnchors.map((anchor) => {
-    if (typeof anchor !== 'string' || !anchor.trim() || anchor.trim().length > 512) {
-      throw new Error('investigation_anchor_node_id_invalid');
-    }
-    return anchor.trim();
-  }))];
-  const requestedOutcome = candidate.requestedOutcome === undefined
-    ? 'Investigate the bounded assignment delegated by Main Chat.'
-    : String(candidate.requestedOutcome || '').trim();
-  if (!requestedOutcome) throw new Error('investigation_requested_outcome_required');
-  if (requestedOutcome.length > 2_000) throw new Error('investigation_requested_outcome_too_long');
-  return { projectId, conversationId, anchorNodeIds, requestedOutcome };
-}
 
 router.post('/mcp-bridge/hermes_write_report', (req, res) => {
-  const parentRunId = String(req.body?.parentRunId || '').trim();
-  const active = activeHermesInvestigations.get(parentRunId);
-  if (!active) {
-    return res.status(409).json({ ok: false, error: 'hermes_investigation_context_not_active' });
-  }
-  if (active.reportId) {
-    return res.status(409).json({ ok: false, error: 'hermes_report_already_written' });
-  }
   try {
-    const completion = writeHermesReportArtifact(active.context, req.body || {});
-    active.reportId = completion.reportId;
+    const completion = writeActiveHermesReport(req.body || {});
     return res.json({ ok: true, ...completion });
   } catch (error) {
-    return res.status(400).json({
+    const reason = error instanceof Error ? error.message : 'hermes_report_write_failed';
+    return res.status(reason === 'hermes_investigation_context_not_active' || reason === 'hermes_report_already_written' ? 409 : 400).json({
       ok: false,
-      error: error instanceof Error ? error.message : 'hermes_report_write_failed',
+      error: reason,
     });
   }
+});
+
+router.get('/hermes/report', (req, res) => {
+  const projectId = String(req.query?.projectId || '').trim();
+  const conversationId = String(req.query?.conversationId || 'main').trim();
+  if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
+  return res.json({ ok: true, report: readLatestHermesReport(projectId, conversationId) });
 });
 
 router.post('/openclaude/session/chat', async (req, res) => {
@@ -528,9 +500,9 @@ router.post('/openclaude/session/chat', async (req, res) => {
   if (!projectId || !message) {
     return res.status(400).json({ ok: false, error: 'projectId_and_message_required' });
   }
-  let investigationContext: HermesInvestigationContext;
+  let investigationContext: HermesInvestigationContext | null;
   try {
-    investigationContext = normalizeInvestigationContext(
+    investigationContext = parseHermesInvestigationContext(
       req.body?.investigationContext,
       projectId,
       conversationId,
@@ -546,7 +518,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
   // the SSE stream or browser behavior — it only makes the real Harness events
   // (already flowing to the browser) legible in the backend dev terminal.
   const correlationId = `req_${randomUUID().slice(0, 8)}`;
-  activeHermesInvestigations.set(correlationId, { context: investigationContext, reportId: null });
+  if (investigationContext) beginHermesInvestigation(correlationId, investigationContext);
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -597,7 +569,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
       workingDirectory,
       mode,
       traceId: correlationId,
-      investigationContext,
+      investigationContext: investigationContext ?? undefined,
     }, (event) => {
       if (turnFinished) return;
       if (event.kind === 'tool_start' && event.toolName.startsWith('mcp__liquidaity__')) {
@@ -763,7 +735,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
   } finally {
     turnFinished = true;
     activeGrpcTurns.delete(sessionId);
-    activeHermesInvestigations.delete(correlationId);
+    endHermesInvestigation(correlationId);
     writeSse('end', {});
     if (!res.destroyed && !res.writableEnded) res.end();
   }

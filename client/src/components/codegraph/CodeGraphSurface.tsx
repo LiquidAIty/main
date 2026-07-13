@@ -16,6 +16,8 @@ import {
 type CodeGraphSurfaceProps = {
   projectId?: string | null;
   viewContract?: CodeGraphViewContract | null;
+  /** Stable CodeGraph record reference selected from a Hermes report. */
+  focusReference?: string | null;
   onViewContractChange?: (contract: CodeGraphViewContract) => void;
   onRefreshRequest?: (projectId: string) => Promise<CodeGraphData | void> | CodeGraphData | void;
 };
@@ -33,6 +35,7 @@ async function fetchLayout(project: string, maxNodes = 50000): Promise<CodeGraph
 export function CodeGraphSurface({
   projectId = null,
   viewContract = null,
+  focusReference = null,
   onViewContractChange,
   onRefreshRequest,
 }: CodeGraphSurfaceProps): React.ReactElement {
@@ -138,6 +141,21 @@ export function CodeGraphSurface({
       setRefreshing(false);
     }
   };
+
+  useEffect(() => {
+    if (!focusReference || !graphData) return;
+    const node = graphData.nodes.find((candidate) =>
+      candidate.name === focusReference || candidate.file_path === focusReference,
+    );
+    if (!node) return;
+    setSelectedNode(node);
+    const connected = new Set([node.id]);
+    for (const edge of graphData.edges) {
+      if (edge.source === node.id) connected.add(edge.target);
+      if (edge.target === node.id) connected.add(edge.source);
+    }
+    setHighlightedIds(connected);
+  }, [focusReference, graphData]);
 
   if (!projectId) {
     return (

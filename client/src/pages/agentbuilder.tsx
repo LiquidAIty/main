@@ -37,6 +37,7 @@ import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgent
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import useAgentBuilderThinkGraphProjection from '../features/agentbuilder/state/useAgentBuilderThinkGraphProjection';
 import useAgentBuilderKnowGraphProjection from '../features/agentbuilder/state/useAgentBuilderKnowGraphProjection';
+import useAgentBuilderHermesReport from '../features/agentbuilder/state/useAgentBuilderHermesReport';
 import TradingCanvasSurface from '../features/trading/TradingCanvasSurface';
 import type { LinkRef } from '../components/builder/deckContinuityTypes';
 import { resolveDeckWorkspaceRoot } from '../features/agentbuilder/state/deckWorkspaceRoot';
@@ -486,6 +487,9 @@ export default function AgentBuilder(): React.ReactElement {
   const [newProjectName, setNewProjectName] = useState('');
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
     useState<KnowledgeGraphKind>('thinkgraph');
+  const [thinkGraphAnchorIds, setThinkGraphAnchorIds] = useState<string[]>([]);
+  const [focusedGraphNodeId, setFocusedGraphNodeId] = useState<string | null>(null);
+  const [focusedCodeGraphRef, setFocusedCodeGraphRef] = useState<string | null>(null);
   const thinkGraphProjection = useAgentBuilderThinkGraphProjection({
     activeProject,
     knowledgeGraphKind,
@@ -494,6 +498,11 @@ export default function AgentBuilder(): React.ReactElement {
   const knowGraphProjection = useAgentBuilderKnowGraphProjection({
     activeProject,
     knowledgeGraphKind,
+    workspaceView,
+  });
+  const hermesReport = useAgentBuilderHermesReport({
+    projectId: activeProject,
+    conversationId: 'main',
     workspaceView,
   });
 
@@ -1887,6 +1896,14 @@ export default function AgentBuilder(): React.ReactElement {
         // chat = chat mode: only the ThinkGraph doorway. Explicit surface state,
         // never inferred from message content.
         mode: workspaceView === 'canvas' ? 'canvas' : 'chat',
+        ...(thinkGraphAnchorIds.length > 0 && trimmed.length <= 2_000
+          ? {
+              investigationContext: {
+                anchorNodeIds: thinkGraphAnchorIds,
+                requestedOutcome: trimmed,
+              },
+            }
+          : {}),
         onEvent: (event) => {
           if (event.kind === 'text') {
             // Real model text streams into the chat — creates the assistant bubble on
@@ -1915,7 +1932,7 @@ export default function AgentBuilder(): React.ReactElement {
           appendAssistantText('Chat request failed before the stream opened. Route: /api/coder/openclaude/session/chat.');
         });
     },
-    [canvasProjectId, nativeSessionBusy, workspaceView],
+    [canvasProjectId, nativeSessionBusy, thinkGraphAnchorIds, workspaceView],
   );
 
   const renderChatSurface = (
@@ -2065,6 +2082,7 @@ export default function AgentBuilder(): React.ReactElement {
               {knowledgeGraphKind === 'codegraph' ? (
                 <CodeGraphSurface
                   projectId={codeGraphProjectName}
+                  focusReference={focusedCodeGraphRef}
                   viewContract={{
                     projectId: codeGraphProjectName,
                     nodeLabelAllowlist: graphViewContract?.nodeLabelAllowlist,
@@ -2099,6 +2117,23 @@ export default function AgentBuilder(): React.ReactElement {
                         : undefined
                   }
                   minHeight={minHeight}
+                  activeHermesReport={hermesReport.report}
+                  focusedNodeId={focusedGraphNodeId}
+                  onNodeSelectionChange={(nodeId) => {
+                    if (knowledgeGraphKind === 'thinkgraph') {
+                      setThinkGraphAnchorIds(nodeId ? [nodeId] : []);
+                    }
+                  }}
+                  onHermesReportReference={({ authority, id }) => {
+                    setKnowledgeGraphKind(authority);
+                    if (authority === 'codegraph') {
+                      setFocusedCodeGraphRef(id);
+                      setFocusedGraphNodeId(null);
+                    } else {
+                      setFocusedGraphNodeId(id);
+                      setFocusedCodeGraphRef(null);
+                    }
+                  }}
                 />
               )}
             </Suspense>

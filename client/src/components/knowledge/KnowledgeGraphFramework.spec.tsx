@@ -330,6 +330,34 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     );
   });
 
+  it('uses the existing drawer for the active Hermes report when no graph node is selected', async () => {
+    const onReference = vi.fn();
+    render(
+      <KnowledgeGraphFramework
+        projection={PROJECTION}
+        activeHermesReport={{
+          reportId: 'hermes:req_1234abcd',
+          status: 'completed',
+          summary: 'Investigated the selected run.',
+          reportMarkdown: '# Hermes report\n\nThe run is ready for review.',
+          parentRunId: 'req_1234abcd',
+          anchorNodeIds: ['run:42'],
+          requestedOutcome: 'Inspect the selected run.',
+          createdAt: '2026-07-13T00:00:00.000Z',
+          linkedThinkGraphNodeIds: ['asts'],
+          linkedKnowGraphRefs: [],
+          linkedCodeGraphRefs: ['client/src/components/knowledge/KnowledgeGraphFramework.tsx'],
+        }}
+        onHermesReportReference={onReference}
+      />,
+    );
+    const drawer = await screen.findByTestId('knowledge-graph-node-drawer');
+    expect(drawer.getAttribute('data-open')).toBe('true');
+    expect(within(drawer).getByTestId('knowledge-graph-hermes-report').textContent).toContain('The run is ready for review.');
+    fireEvent.click(within(drawer).getByTestId('hermes-report-reference-thinkgraph-asts'));
+    expect(onReference).toHaveBeenCalledWith({ authority: 'thinkgraph', id: 'asts' });
+  });
+
   it('renders compact graph nav controls (zoom in/out, fit, center)', async () => {
     render(<KnowledgeGraphFramework projection={PROJECTION} />);
     await waitFor(() => expect(cyState.instances).toHaveLength(1));

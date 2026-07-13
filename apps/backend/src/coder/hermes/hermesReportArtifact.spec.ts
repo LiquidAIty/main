@@ -2,7 +2,11 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { describe, expect, it } from 'vitest';
-import { writeHermesReportArtifact } from './hermesReportArtifact';
+import {
+  parseHermesInvestigationContext,
+  readLatestHermesReport,
+  writeHermesReportArtifact,
+} from './hermesReportArtifact';
 
 describe('writeHermesReportArtifact', () => {
   it('writes one durable Hermes report beneath the existing returns authority', () => {
@@ -41,6 +45,11 @@ describe('writeHermesReportArtifact', () => {
       expect(report).toContain('liquidaity-hermes-report:');
       expect(report).toContain('"projectId":"project-1"');
       expect(report).toContain('# Investigation');
+      expect(readLatestHermesReport('project-1', 'main', workspaceRoot)).toMatchObject({
+        reportId: 'hermes:req_1234abcd',
+        anchorNodeIds: ['run:42'],
+        reportMarkdown: '# Investigation\n\nThe source record is complete.',
+      });
     } finally {
       rmSync(workspaceRoot, { recursive: true, force: true });
     }
@@ -52,5 +61,14 @@ describe('writeHermesReportArtifact', () => {
       { parentRunId: '../escape', reportMarkdown: '# Report', summary: 'Summary' },
       'C:/tmp/hermes-report-test',
     )).toThrow('hermes_report_parent_run_id_invalid');
+  });
+
+  it('requires at least one real ThinkGraph anchor for a substantive investigation context', () => {
+    expect(() => parseHermesInvestigationContext(
+      { anchorNodeIds: [], requestedOutcome: 'Inspect.' },
+      'project-1',
+      'main',
+    )).toThrow('investigation_anchor_node_ids_required');
+    expect(parseHermesInvestigationContext(undefined, 'project-1', 'main')).toBeNull();
   });
 });

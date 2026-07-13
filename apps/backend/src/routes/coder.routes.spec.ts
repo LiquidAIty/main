@@ -255,12 +255,7 @@ describe('coder routes', () => {
 
         // Real chat turn still runs and both messages are still persisted.
         expect(chatSessionMocks.startGrpcTurn).toHaveBeenCalledTimes(1);
-        expect((chatSessionMocks.startGrpcTurn.mock.calls[0][0] as any).investigationContext).toEqual({
-          projectId: 'project-1',
-          conversationId: 'main',
-          anchorNodeIds: [],
-          requestedOutcome: 'Investigate the bounded assignment delegated by Main Chat.',
-        });
+        expect((chatSessionMocks.startGrpcTurn.mock.calls[0][0] as any).investigationContext).toBeUndefined();
         const appendedRoles = chatSessionMocks.appendMessage.mock.calls.map((call) => (call[0] as any).role);
         expect(appendedRoles).toContain('user');
         expect(appendedRoles).toContain('assistant');
@@ -337,6 +332,29 @@ describe('coder routes', () => {
         await closeServer(server);
       }
     });
+  });
+
+  it('rejects an empty ThinkGraph anchor context rather than manufacturing a fallback', async () => {
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          conversationId: 'main',
+          message: 'Investigate.',
+          investigationContext: { anchorNodeIds: [], requestedOutcome: 'Investigate.' },
+        }),
+      });
+      await expect(response.json()).resolves.toEqual({
+        ok: false,
+        error: 'investigation_anchor_node_ids_required',
+      });
+      expect(response.status).toBe(400);
+    } finally {
+      await closeServer(server);
+    }
   });
 });
 

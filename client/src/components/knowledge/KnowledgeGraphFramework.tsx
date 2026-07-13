@@ -15,6 +15,7 @@ import {
 } from '../graph/graphWorkspaceContract';
 import { GRAPH_THEME } from '../graph/graphVisualTokens';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
+import type { HermesReportReference, HermesReportView } from './hermesReportView';
 
 // Cytoscape fit padding is PIXELS (the shared nav token is a fraction for
 // other renderers), and fit alone has no zoom ceiling — small graphs blow up.
@@ -73,6 +74,11 @@ export type GraphProjectionV1 = {
 type KnowledgeGraphFrameworkProps = {
   projection?: GraphProjectionV1;
   minHeight?: number;
+  /** Existing Inspector default content when no graph node is selected. */
+  activeHermesReport?: HermesReportView | null;
+  focusedNodeId?: string | null;
+  onNodeSelectionChange?: (nodeId: string | null) => void;
+  onHermesReportReference?: (reference: HermesReportReference) => void;
 };
 
 type SkippedEdge = { id: string; source: string; target: string; reason: string };
@@ -249,10 +255,15 @@ function readableNodeSummary(node: GraphProjectionV1['nodes'][number]): Array<[s
 export default function KnowledgeGraphFramework({
   projection,
   minHeight = 360,
+  activeHermesReport = null,
+  focusedNodeId = null,
+  onNodeSelectionChange,
+  onHermesReportReference,
 }: KnowledgeGraphFrameworkProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [reportDismissed, setReportDismissed] = useState(false);
   const [hoveredNav, setHoveredNav] = useState<string | null>(null);
   // Fingerprint of the last applied element content: an identical projection
   // (even as a new object) must never rerun layout or churn elements.
@@ -272,6 +283,26 @@ export default function KnowledgeGraphFramework({
         : 0,
     [projection, selectedNode],
   );
+  const reportVisible = Boolean(activeHermesReport && !selectedNode && !reportDismissed);
+
+  useEffect(() => {
+    setReportDismissed(false);
+  }, [activeHermesReport?.reportId]);
+
+  useEffect(() => {
+    if (!focusedNodeId || !projection?.nodes.some((node) => node.id === focusedNodeId)) return;
+    setSelectedNodeId(focusedNodeId);
+    setReportDismissed(false);
+    onNodeSelectionChange?.(focusedNodeId);
+    const cy = cyRef.current;
+    const node = cy?.getElementById(focusedNodeId);
+    if (!cy || !node || node.length === 0) return;
+    const neighborhood = node.closedNeighborhood();
+    cy.batch(() => {
+      cy.elements().removeClass('kgf-dim');
+      cy.elements().difference(neighborhood).addClass('kgf-dim');
+    });
+  }, [focusedNodeId, onNodeSelectionChange, projection]);
   useEffect(() => {
     ensureFcoseRegistered();
   }, []);
@@ -297,7 +328,10 @@ export default function KnowledgeGraphFramework({
       cyInstance.on('tap', 'node', (event) => {
         const neighborhood = event.target.closedNeighborhood();
         const data = event.target.data() as { id?: unknown };
-        setSelectedNodeId(typeof data.id === 'string' ? data.id : null);
+        const nodeId = typeof data.id === 'string' ? data.id : null;
+        setSelectedNodeId(nodeId);
+        setReportDismissed(false);
+        onNodeSelectionChange?.(nodeId);
         cyInstance.batch(() => {
           cyInstance.elements().removeClass('kgf-dim');
           cyInstance.elements().difference(neighborhood).addClass('kgf-dim');
@@ -313,6 +347,7 @@ export default function KnowledgeGraphFramework({
       cyInstance.on('tap', (event) => {
         if (event.target !== cyInstance) return;
         setSelectedNodeId(null);
+        onNodeSelectionChange?.(null);
         cyInstance.batch(() => cyInstance.elements().removeClass('kgf-dim'));
       });
       // Force-directed feel on interaction: releasing a dragged node re-runs an
@@ -388,7 +423,7 @@ export default function KnowledgeGraphFramework({
       stop: settle,
     } as LayoutOptions;
     cy.layout(layout).run();
-  }, [elements, skippedEdges]);
+  }, [elements, onNodeSelectionChange, skippedEdges]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -518,10 +553,15 @@ export default function KnowledgeGraphFramework({
         ))}
       </div>
       <RightGlassDrawer
-        isOpen={!!selectedNode}
-        title={selectedNode ? selectedNode.title || selectedNode.label || 'Node' : 'Node'}
+        isOpen={Boolean(selectedNode || reportVisible)}
+        title={selectedNode ? selectedNode.title || selectedNode.label || 'Node' : 'Hermes report'}
         onClose={() => {
-          setSelectedNodeId(null);
+          if (selectedNode) {
+            setSelectedNodeId(null);
+            onNodeSelectionChange?.(null);
+          } else {
+            setReportDismissed(true);
+          }
           const cy = cyRef.current;
           if (cy) cy.batch(() => cy.elements().removeClass('kgf-dim'));
         }}
@@ -566,6 +606,46 @@ export default function KnowledgeGraphFramework({
                 {selectedNode.correlationId ? <span style={{ overflowWrap: 'anywhere' }}>{selectedNode.correlationId}</span> : null}
               </div>
             </details>
+          </div>
+        ) : reportVisible && activeHermesReport ? (
+          <div data-testid="knowledge-graph-hermes-report" style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 12 }}>
+            <div>
+              <div style={{ color: GRAPH_THEME.surface.text, fontWeight: 700, fontSize: 13, marginBottom: 3 }}>
+                {activeHermesReport.summary}
+              </div>
+              <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 11 }}>
+                {activeHermesReport.reportId} · {activeHermesReport.createdAt}
+              </div>
+            </div>
+            <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: GRAPH_THEME.surface.text, fontFamily: 'inherit', lineHeight: 1.5 }}>
+              {activeHermesReport.reportMarkdown}
+            </pre>
+            <div style={{ borderTop: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`, paddingTop: 10 }}>
+              <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 11, marginBottom: 6 }}>Linked graph context</div>
+              {([
+                ['thinkgraph', activeHermesReport.linkedThinkGraphNodeIds],
+                ['knowgraph', activeHermesReport.linkedKnowGraphRefs],
+                ['codegraph', activeHermesReport.linkedCodeGraphRefs],
+              ] as const).map(([authority, references]) => references.length > 0 ? (
+                <div key={authority} style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+                  <span style={{ color: GRAPH_THEME.accent.primary, fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{authority}</span>
+                  {references.map((id) => (
+                    <button
+                      key={`${authority}:${id}`}
+                      type="button"
+                      data-testid={`hermes-report-reference-${authority}-${id}`}
+                      onClick={() => onHermesReportReference?.({ authority, id })}
+                      style={{ textAlign: 'left', border: 0, background: 'transparent', padding: 0, color: GRAPH_THEME.surface.text, cursor: 'pointer', overflowWrap: 'anywhere' }}
+                    >
+                      {id}
+                    </button>
+                  ))}
+                </div>
+              ) : null)}
+              {activeHermesReport.linkedThinkGraphNodeIds.length === 0 && activeHermesReport.linkedKnowGraphRefs.length === 0 && activeHermesReport.linkedCodeGraphRefs.length === 0 ? (
+                <span style={{ color: GRAPH_THEME.surface.mutedText }}>No linked graph records were returned.</span>
+              ) : null}
+            </div>
           </div>
         ) : null}
       </RightGlassDrawer>
