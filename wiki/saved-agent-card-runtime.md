@@ -89,8 +89,8 @@ POST /api/coder/mcp-bridge/run_configured_card    [coder.routes.ts:159]
 7. Hooks/runtime gates enforce invariants: no commit/push unless explicitly allowed,
    no Local Coder unless selected, no Magnetic One graph write authority, CodeGraph
    measurement-only, required packet exists before run, CBM dirty-overlay warnings,
-   exact-byte packet readback, card-owned tool calls only, and graph writes only by
-   the owning graph agent/card. Hooks must not become phrase-based workflow routers,
+   exact-byte packet readback, card-owned tool calls only, and graph writes only through
+   the owning graph authority. Hooks must not become phrase-based workflow routers,
    deterministic user-intent classifiers, or hidden model/tool fallback.
 
 ## Start in CBM

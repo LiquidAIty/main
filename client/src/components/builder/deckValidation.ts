@@ -121,7 +121,9 @@ export function sanitizeDeckEdges(value: unknown): DeckEdge[] {
   const normalizeEdgeType = (edgeType: unknown): DeckEdge['edgeType'] =>
     String(edgeType || '').trim().toLowerCase() === 'magentic_option'
       ? 'magentic_option'
-      : 'flow';
+      : String(edgeType || '').trim().toLowerCase() === 'magentic_control'
+        ? 'magentic_control'
+        : 'flow';
 
   return value
     .filter(
@@ -154,9 +156,12 @@ function isRunnableNode(node: AgentCardInstance | undefined | null): boolean {
 }
 
 function normalizeEdgeType(value: unknown): DeckEdgeType {
-  return String(value || '').trim().toLowerCase() === 'magentic_option'
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'magentic_option'
     ? 'magentic_option'
-    : 'flow';
+    : normalized === 'magentic_control'
+      ? 'magentic_control'
+      : 'flow';
 }
 
 export function buildDeckEdgeIdentityKey(

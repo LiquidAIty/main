@@ -9,7 +9,7 @@
 // mechanics only.
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 const cyState = vi.hoisted(() => ({
   instances: [] as any[],
@@ -305,6 +305,38 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     const dragFree = cy.handlers.find((h: any) => h.event === 'dragfree');
     dragFree.fn();
     expect(cy.layouts.length).toBe(layoutRunsBefore + 1);
+  });
+
+  it('tapping a node opens the canonical RightGlassDrawer with a useful summary; closing clears it', async () => {
+    render(<KnowledgeGraphFramework projection={PROJECTION} />);
+    await waitFor(() => expect(cyState.instances).toHaveLength(1));
+    const cy = cyState.instances[0];
+
+    // the deleted overlay inspector must never return; canonical drawer starts closed
+    expect(screen.queryByTestId('knowledge-graph-node-inspector')).toBeNull();
+    expect(screen.getByTestId('knowledge-graph-node-drawer').getAttribute('data-open')).toBe('false');
+
+    const nodeTap = cy.handlers.find((h: any) => h.selector === 'node');
+    nodeTap.fn({ target: { closedNeighborhood: () => ({ length: 2 }), data: () => PROJECTION.nodes[0] } });
+
+    const drawer = await screen.findByTestId('knowledge-graph-node-drawer');
+    expect(drawer.getAttribute('data-open')).toBe('true');
+    const lead = PROJECTION.nodes[0].title || PROJECTION.nodes[0].label;
+    expect(drawer.textContent).toContain(lead);
+
+    fireEvent.click(within(drawer).getByLabelText('Close drawer'));
+    await waitFor(() =>
+      expect(screen.getByTestId('knowledge-graph-node-drawer').getAttribute('data-open')).toBe('false'),
+    );
+  });
+
+  it('renders compact graph nav controls (zoom in/out, fit, center)', async () => {
+    render(<KnowledgeGraphFramework projection={PROJECTION} />);
+    await waitFor(() => expect(cyState.instances).toHaveLength(1));
+    const controls = screen.getByTestId('knowledge-graph-nav-controls');
+    for (const label of ['Zoom in', 'Zoom out', 'Fit graph to view', 'Center view']) {
+      expect(within(controls).getByLabelText(label)).toBeTruthy();
+    }
   });
 
   it('reapplies elements after a StrictMode double-mount (destroyed instance must not keep the fingerprint)', async () => {

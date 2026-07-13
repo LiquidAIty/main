@@ -11,6 +11,7 @@ Exposes exactly this tool surface:
   * run_mag_one                      (run native Mag One from the one Hermes
                                       canonical Coder job-folder handoff)
   * thinkgraph.get_graph_slice       (bounded READ-ONLY graph scope)
+  * web_search                       (real Tavily search; Search Agent only by grant)
   * canvas.inspect / card.update_configuration / canvas.upsert_wire /
     card.assign_runtime_skill / card.assign_data_binding /
     card.run_assistant_agent         (user-directed Harness control surface;
@@ -23,13 +24,10 @@ to Python handlers (app/control_plane.py) which own validation/policy and use th
 existing backend deck routes + the Python runtime-assignment store. No semantics,
 no fallback lives in this host.
 
-There is NO model-facing graph-write tool on this host. Live ThinkGraph writes
-happen ONLY inside a real configured ThinkGraph card run: the thin native
-doorway calls card.run_assistant_agent, Python runConfiguredCard runs the
-ThinkGraph card, and that card's own scoped read_thinkgraph_scope /
-apply_thinkgraph_patch tools (authority injected from the trusted card-run
-context, never the model) perform the transaction. The obsolete post-chat pair
-front door and the model-facing apply_live_patch tool were removed.
+ThinkGraph and KnowGraph mutations are explicit Hermes-only grants. The host
+transports structured updates to the canonical writers; graph authorities never
+appear as cards or conversational agents. The obsolete post-chat pair front door
+and apply_live_patch path remain deleted.
 """
 
 from __future__ import annotations
@@ -423,6 +421,21 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="web_search",
+            description=(
+                "Search the live web through Tavily and return real URLs, titles, domains, "
+                "content excerpts, and available dates. Read-only; never fabricates sources."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "max_results": {"type": "integer", "default": 5},
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
             name="card.run_assistant_agent",
             description=(
                 "Run ONE saved, enabled assistant_agent card with its saved prompt/model/tools and "
@@ -472,6 +485,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "card.assign_data_binding": {"projectId", "deckId", "cardId", "bindingType", "bindingRef", "op"},
     "card.run_assistant_agent": {"projectId", "deckId", "cardId", "correlationId", "conversationId", "input"},
     "thinkgraph.get_graph_slice": {"projectId", "limit"},
+    "web_search": {"query", "max_results"},
 }
 
 _BRIDGE_PATHS: dict[str, str] = {
@@ -543,6 +557,14 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": "knowgraph_query_timeout"}))]
         except Exception as err:  # noqa: BLE001 — honest tool-level failure
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"knowgraph_query_failed: {err}"}))]
+    if name == "web_search":
+        from app.python_models.web_search import web_search
+
+        result = await web_search(
+            query=str(args.get("query") or ""),
+            max_results=int(args.get("max_results") or 5),
+        )
+        return [TextContent(type="text", text=result)]
     handler_name = _CONTROL_HANDLER_NAMES.get(name)
     if handler_name is not None:
         from app import control_plane

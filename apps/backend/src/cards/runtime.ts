@@ -5,7 +5,7 @@ import {
   DeckExecutionOutput,
   JobHandoffRunResult,
   PythonAutoGenPayloadShape,
-  RUNTIME_TOOL_SPECS,
+  AUTOGEN_CARD_TOOL_SPECS,
   RuntimeGraph,
   RuntimeGraphEdge,
   RuntimeGraphNode,
@@ -272,10 +272,10 @@ export function resolveCardTools(card: any): string[] {
     if (!name) {
       throw new Error(`card_tool_name_empty: cardId=${card.id}`);
     }
-    const spec = RUNTIME_TOOL_SPECS.find((candidate) => candidate.name === name);
+    const spec = AUTOGEN_CARD_TOOL_SPECS.find((candidate) => candidate.name === name);
     if (!spec) {
       throw new Error(
-        `card_tool_unknown: ${name} (cardId=${card.id}, known: ${RUNTIME_TOOL_SPECS.map((s) => s.name).join(',')})`,
+        `autogen_card_tool_unknown: ${name} (cardId=${card.id}, known: ${AUTOGEN_CARD_TOOL_SPECS.map((s) => s.name).join(',')})`,
       );
     }
     if (!spec.enabled) {
@@ -738,18 +738,9 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
     return done({ status: 'failed', runtimeType, error: String(error?.message || 'card_resolution_failed') });
   }
 
-  // Card-specific authority lives in this ONE executor (merge SPEC: "apply
-  // card-specific authority where needed"). A thinkgraph-bound card run that
-  // belongs to a REAL conversation gets the server-authored scoped authority its
-  // Python tools require; a run with no conversation (e.g. a Task-tab test) gets
-  // none — its graph tools then honestly report thinkgraph_authority_missing.
-  // Nothing is fabricated to pretend a conversation exists. An explicit caller
-  // runAuthority (the completed-pair path) always wins untouched.
-  const conversationId = String(args?.conversationId || '').trim();
-  // Resolve the binding the SAME way the Harness doorway does (by binding field OR
-  // cardId), so a card exposed as the ThinkGraph doorway (card_thinkgraph_agent)
-  // actually gets its scoped write authority — otherwise apply_thinkgraph_patch
-  // reports thinkgraph_authority_missing and the card cannot write.
+  // Explicit trusted caller authority is transported unchanged. Native Hermes
+  // writes ThinkGraph through the Harness MCP tool; configured AutoGen cards do
+  // not gain graph authority from a binding or card id.
   const resolvedBinding = resolveRuntimeBinding(
     effectiveCard?.runtimeOptions?.binding ?? effectiveCard?.runtimeBinding ?? effectiveCard?.binding,
     effectiveCard?.id,
@@ -758,22 +749,7 @@ export async function runConfiguredCard(args: ConfiguredCardRunArgs): Promise<Co
   const runAuthority =
     args.runAuthority && Object.keys(args.runAuthority).length > 0
       ? args.runAuthority
-      : (resolvedBinding === 'thinkgraph_agent' || resolvedBinding === 'hermes_steward') &&
-          conversationId
-        ? {
-            // Direct configured-card-run authority — describes what it actually
-            // is (a live ThinkGraph card run), never a user/assistant pair. Only
-            // trusted runtime values; no message-pair identity exists. The Hermes
-            // steward carries the same scoped authority: it persists RunRecord/
-            // Blocker/Pattern findings through the SAME canonical
-            // apply_thinkgraph_patch path (never a second write path).
-            kind: 'thinkgraph_card_run',
-            projectId,
-            cardId,
-            correlationId,
-            conversationId,
-          }
-        : undefined;
+      : undefined;
 
   const payload = {
     session: {

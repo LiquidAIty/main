@@ -7,7 +7,7 @@ import axios from 'axios';
 import { Router } from 'express';
 import multer from 'multer';
 import { pool } from '../db/pool';
-import { resolveKnowgraphAgent } from '../services/resolveAgents';
+import { resolveKnowgraphPipelineConfig } from '../services/resolveAgents';
 import { isDevTestModeEnabled } from '../services/devTest';
 
 const router = Router();
@@ -634,13 +634,13 @@ export async function proxyKnowgraphPdfIngest(input: {
     };
   }
 
-  const resolved = await resolveKnowgraphAgent(projectId, route);
+  const resolved = await resolveKnowgraphPipelineConfig(projectId, route);
   if (!resolved) {
     return {
       status: 409,
       data: {
         ok: false,
-        error: { message: 'knowgraph_agent_not_configured' },
+        error: { message: 'knowgraph_pipeline_not_configured' },
       },
     };
   }
@@ -811,11 +811,11 @@ router.post('/ingest_code', async (req, res) => {
       });
     }
 
-    const resolved = await resolveKnowgraphAgent(projectId, '/api/knowgraph/ingest_code');
+    const resolved = await resolveKnowgraphPipelineConfig(projectId, '/api/knowgraph/ingest_code');
     if (!resolved) {
       return res.status(409).json({
         ok: false,
-        error: { message: 'knowgraph_agent_not_configured' },
+        error: { message: 'knowgraph_pipeline_not_configured' },
       });
     }
 

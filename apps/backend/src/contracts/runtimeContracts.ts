@@ -13,7 +13,7 @@ export type ToolSpec = {
   outputSchema: Record<string, unknown>;
 };
 
-export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
+export const AUTOGEN_CARD_TOOL_SPECS: ToolSpec[] = [
   {
     name: 'read_thinkgraph_scope',
     description:
@@ -194,6 +194,7 @@ export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
 // Harness/MCP bridge tools are transport capabilities, not card-local
 // reasoning. They still need typed registration so saved-card grants can be
 // validated without inventing a second tool registry in TypeScript.
+export const HARNESS_MCP_TOOL_SPECS: ToolSpec[] = [];
 for (const name of [
   'thinkgraph.get_graph_slice',
   'thinkgraph.submit_update',
@@ -202,15 +203,17 @@ for (const name of [
   'codegraph.status',
   'codegraph.search',
   'hermes.memory_read',
-  'hermes.memory_write',
+  'hermes.memory.write',
   'mag_one.describe_connected_agents',
   'write_mag_one_instructions',
+  'read_model_results',
   'run_mag_one',
   'run_coder_subagent',
   'canvas.inspect',
   'card.run_assistant_agent',
+  'web_search',
 ]) {
-  RUNTIME_TOOL_SPECS.push({
+  HARNESS_MCP_TOOL_SPECS.push({
     name,
     description: `LiquidAIty MCP bridge capability: ${name}.`,
     enabled: true,
@@ -218,6 +221,11 @@ for (const name of [
     outputSchema: { type: 'object' },
   });
 }
+
+export const RUNTIME_TOOL_SPECS: ToolSpec[] = [
+  ...AUTOGEN_CARD_TOOL_SPECS,
+  ...HARNESS_MCP_TOOL_SPECS,
+];
 
 export type HermesReviewReport = {
   runId: string;

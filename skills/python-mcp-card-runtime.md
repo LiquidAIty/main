@@ -1,7 +1,8 @@
 # Python MCP Card Runtime — the one pattern for card-backed capabilities
 
 The canonical way a canvas Agent Card becomes a runnable, tool-authorized capability.
-Established 2026-07-02 by the ThinkGraph front door. Reuse this pattern; never build a
+Established for configured AutoGen cards. Native Harness agents use the separate
+MCP-host manifest and must never select these AutoGen-only tools. Reuse the appropriate pattern; never build a
 parallel runtime, second host, second registry, or direct-DB side path.
 
 ## The chain (every link exists and is tested)
@@ -32,13 +33,15 @@ canvas card (deck_builder)            ← identity, prompt, model, enabled, tool
   `mcp` SDK) bridging to `/api/coder/mcp-bridge/*`. No product logic in the host;
   structural argument allow-lists reject smuggled prompts/models/patches.
 
-## ThinkGraph specifics
+## Runtime split
 
-- Write authority: ONLY `apply_thinkgraph_patch`, callable only inside the deck-bound
-  ThinkGraph card run (`deck.thinkGraphCardId`, validated server-side: enabled +
-  assistant_agent + real model + exactly the two tools).
-- The card's canvas prompt owns all semantics, including whether to call
-  `apply_thinkgraph_patch` at all — there is no separate structured output
-  contract or judgment grammar; not calling the tool is a valid, ordinary turn.
-- Every stored record carries: project, conversation, both source message ids, card id,
-  correlation id, timestamps — exposed directly by `/graph-view`.
+- Native Main, Hermes, and Search grants come only from `HARNESS_MCP_TOOL_SPECS`
+  and the live `mcp_host.py` manifest. Native names include
+  `thinkgraph.get_graph_slice`, `thinkgraph.submit_update`, `knowgraph.query`,
+  `knowgraph.ingest`, `codegraph.search`, and `web_search`.
+- AutoGen/Mag One cards resolve only `AUTOGEN_CARD_TOOL_SPECS`; names such as
+  `read_thinkgraph_scope`, `apply_thinkgraph_patch`, and
+  `retrieve_knowgraph_context` never belong on native Harness cards.
+- ThinkGraph, KnowGraph, and CodeGraph are authorities, never agent cards.
+- Unknown names fail with a runtime-specific error; no aliases or cross-runtime
+  fallback are allowed.

@@ -52,7 +52,7 @@ message ChatRequest {
 message AgentDefinitionConfig {
   string agent_type = 1;              // subagent_type value that selects this card
   string card_id = 2;                 // saved card id, for diagnostics only
-  string runtime_binding = 3;         // e.g. "thinkgraph_agent"
+  string runtime_binding = 3;         // e.g. "hermes_steward"
   string system_prompt = 4;           // saved card's visible prompt, verbatim
   repeated string allowed_tools = 5;  // saved card's visible tool grants
   bool context_mode_inherit_parent = 6; // true = live inherited-context fork

@@ -245,22 +245,12 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(result.error).toContain('PYTHON_AUTOGEN_RAILS_UNAVAILABLE');
   });
 
-  it('mints truthful thinkgraph_card_run authority in the ONE executor for a thinkgraph-bound card with a real conversation', async () => {
+  it('never mints graph authority from a configured-card binding or conversation', async () => {
     mockGetDeck.mockResolvedValue(deckWith([AGENT_CARD]));
     mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'ok' });
     await runConfiguredCard({ ...ARGS, conversationId: 'conv-7' });
     const payload = mockRunCard.mock.calls[0][0];
-    // Exactly the four trusted runtime values — no deckId, no message-pair identity.
-    expect(payload.cardRuntime.runtimeScope).toEqual({
-      kind: 'thinkgraph_card_run',
-      projectId: 'proj-1',
-      cardId: 'card_thinkgraph_agent',
-      correlationId: 'corr-123',
-      conversationId: 'conv-7',
-    });
-    // No fake message-pair identity is ever fabricated for a live run.
-    expect(payload.cardRuntime.runtimeScope.userMessageId).toBeUndefined();
-    expect(payload.cardRuntime.runtimeScope.assistantMessageId).toBeUndefined();
+    expect(payload.cardRuntime.runtimeScope).toBeUndefined();
   });
 
   it('mints NO authority without a real conversation — a Task-tab test run fabricates nothing', async () => {
@@ -271,7 +261,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     expect(payload.cardRuntime.runtimeScope).toBeUndefined();
   });
 
-  it('mints the same scoped authority for the Hermes steward card — same canonical write path, never a second one', async () => {
+  it('does not give a configured Hermes card native Harness graph authority', async () => {
     const HERMES_CARD = {
       ...AGENT_CARD,
       id: 'card_hermes_steward',
@@ -282,13 +272,7 @@ describe('runConfiguredCard — server-trusted single-card runtime', () => {
     mockRunCard.mockResolvedValue({ ok: true, finalResponseText: 'ok' });
     await runConfiguredCard({ ...ARGS, cardId: 'card_hermes_steward', conversationId: 'conv-7' });
     const payload = mockRunCard.mock.calls[0][0];
-    expect(payload.cardRuntime.runtimeScope).toEqual({
-      kind: 'thinkgraph_card_run',
-      projectId: 'proj-1',
-      cardId: 'card_hermes_steward',
-      correlationId: 'corr-123',
-      conversationId: 'conv-7',
-    });
+    expect(payload.cardRuntime.runtimeScope).toBeUndefined();
   });
 
   it('never mints thinkgraph authority for a non-thinkgraph card, conversation or not', async () => {

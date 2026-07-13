@@ -173,6 +173,22 @@ test('resolveCardRunControlCall denies callers that are not a doorway child of t
   assert.deepEqual(unknownChild, { deny: 'card_run_requires_card_doorway_child' })
 })
 
+test('resolveCardRunControlCall permits only the persisted orange child target', () => {
+  const base = {
+    agentType: 'card_hermes_steward',
+    cardIdByAgentType: new Map([['card_hermes_steward', 'card_hermes_steward']]),
+    projectId: 'proj-1',
+    conversationId: 'conv-main',
+    correlationId: 'corr-42',
+    allowedCardRunIdsByAgentType: new Map([['card_hermes_steward', ['card_research_agent']]]),
+  }
+  const allowed = resolveCardRunControlCall({ ...base, input: { cardId: 'card_research_agent', input: 'research' } })
+  assert.ok('updatedInput' in allowed)
+  assert.equal((allowed as any).updatedInput.cardId, 'card_research_agent')
+  const rejected = resolveCardRunControlCall({ ...base, input: { cardId: 'card_local_coder', input: 'run' } })
+  assert.deepEqual(rejected, { deny: 'card_run_target_not_authorized' })
+})
+
 test('resolveCardRunControlCall denies when the session identity is unavailable', () => {
   const resolved = resolveCardRunControlCall({
     input: { input: 'task' },

@@ -143,7 +143,7 @@ def _private_prompt_by_card_id(context: ContextPack) -> dict[str, str]:
 def _safe_agent_name(raw: str, index: int, used: set[str]) -> str:
     """AutoGen requires AssistantAgent ``name`` to be a valid Python identifier.
 
-    Turns a display title like "ThinkGraph Agent" into "ThinkGraph_Agent" and
+    Turns a display title like "Search Agent" into "Search_Agent" and
     guarantees uniqueness. The original title is preserved separately for display.
     """
     name = re.sub(r"[^0-9A-Za-z_]", "_", raw or "")

@@ -111,7 +111,7 @@ The items below are the major deletion events. Every one "worked" before it was 
     `MAGONE_CODER_CONSOLE_BLOCKED` gate; the client Run-Task/mission UI.
   - **TS→Neo4j graph writes** — `semanticLanguage.ts` validator, `neoSafeProperties.ts`,
     `buildSemanticSeedRecords`, `runKnowGraphSemanticSeed` (`MERGE :SemanticRecord`), the EDGAR TS→Neo4j
-    bridge. (Graph writes are Python + the KnowGraph card ONLY — rule 9.)
+    bridge. (KnowGraph writes are Python pipeline operations only — rule 9.)
   - **Dead TS-brain** — `evoselector.ts`, `embedding.ts`, `ontology.ts`, `modelCascadePlan.ts`,
     `contractMaker.ts`, `timeseries.ts`, `knowGraphEvidenceRetrieval.ts`, `agentCardRegistry.ts`
     (orphaned card catalog/classifier), and Python `autogen_research.py` (banned-AgentChat stub).

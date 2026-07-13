@@ -95,13 +95,7 @@ export function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
   if (normalized === 'assist') return 'assist';
   if (normalized === 'local_coder') return 'local_coder';
   if (normalized === 'main_chat') return 'main_chat';
-  if (normalized === 'kg_ingest') return 'kg_ingest';
   if (normalized === 'research_agent') return 'research_agent';
-  if (normalized === 'knowgraph') return 'knowgraph';
-  if (normalized === 'neo4j') return 'neo4j';
-  if (normalized === 'thinkgraph_agent') return 'thinkgraph_agent';
-  if (normalized === 'codegraph_agent') return 'codegraph_agent';
-  if (normalized === 'knowgraph_agent') return 'knowgraph_agent';
   if (normalized === 'plan_agent') return 'plan_agent';
   if (normalized === 'worldsignals_agent') return 'worldsignals_agent';
   if (normalized === 'trading_agent') return 'trading_agent';

@@ -14,6 +14,7 @@ import {
   GRAPH_WORKSPACE,
 } from '../graph/graphWorkspaceContract';
 import { GRAPH_THEME } from '../graph/graphVisualTokens';
+import RightGlassDrawer from '../graph/RightGlassDrawer';
 
 // Cytoscape fit padding is PIXELS (the shared nav token is a fraction for
 // other renderers), and fit alone has no zoom ceiling — small graphs blow up.
@@ -228,18 +229,48 @@ const cytoscapeStyle: StylesheetJson = [
   },
 ];
 
+// Human-readable summary rows for the node drawer: real stored properties only,
+// short strings/numbers, skipping raw identity keys. Leads with meaning, not ids.
+function readableNodeSummary(node: GraphProjectionV1['nodes'][number]): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  const props = (node.properties ?? {}) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(props)) {
+    if (key === 'id' || key === 'project_id' || key === 'projectId') continue;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed) out.push([key, trimmed.length > 320 ? `${trimmed.slice(0, 317)}…` : trimmed]);
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+      out.push([key, String(value)]);
+    }
+  }
+  return out.slice(0, 8);
+}
+
 export default function KnowledgeGraphFramework({
   projection,
   minHeight = 360,
 }: KnowledgeGraphFrameworkProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [hoveredNav, setHoveredNav] = useState<string | null>(null);
   // Fingerprint of the last applied element content: an identical projection
   // (even as a new object) must never rerun layout or churn elements.
   const appliedFingerprintRef = useRef<string | null>(null);
   const { elements, skippedEdges } = useMemo(
     () => projectionToElements(projection),
     [projection],
+  );
+  const selectedNode = useMemo(
+    () => projection?.nodes.find((node) => node.id === selectedNodeId) ?? null,
+    [projection, selectedNodeId],
+  );
+  const selectedNodeEdgeCount = useMemo(
+    () =>
+      selectedNode
+        ? projection?.edges.filter((e) => e.source === selectedNode.id || e.target === selectedNode.id).length ?? 0
+        : 0,
+    [projection, selectedNode],
   );
   useEffect(() => {
     ensureFcoseRegistered();
@@ -265,6 +296,8 @@ export default function KnowledgeGraphFramework({
       // computation, no data mutation, no panels.
       cyInstance.on('tap', 'node', (event) => {
         const neighborhood = event.target.closedNeighborhood();
+        const data = event.target.data() as { id?: unknown };
+        setSelectedNodeId(typeof data.id === 'string' ? data.id : null);
         cyInstance.batch(() => {
           cyInstance.elements().removeClass('kgf-dim');
           cyInstance.elements().difference(neighborhood).addClass('kgf-dim');
@@ -279,6 +312,7 @@ export default function KnowledgeGraphFramework({
       });
       cyInstance.on('tap', (event) => {
         if (event.target !== cyInstance) return;
+        setSelectedNodeId(null);
         cyInstance.batch(() => cyInstance.elements().removeClass('kgf-dim'));
       });
       // Force-directed feel on interaction: releasing a dragged node re-runs an
@@ -403,6 +437,43 @@ export default function KnowledgeGraphFramework({
       `${majorGridGap}px ${majorGridGap}px`,
     ].join(', '),
   };
+  const zoomBy = (factor: number) => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    const level = Math.max(cy.minZoom(), Math.min(cy.maxZoom(), cy.zoom() * factor));
+    cy.zoom({ level, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
+  };
+  const fitGraph = () => {
+    const cy = cyRef.current;
+    if (cy && cy.elements().length > 0) cy.fit(undefined, 42);
+  };
+  const centerGraph = () => {
+    const cy = cyRef.current;
+    if (cy) cy.center();
+  };
+  const navButtons: Array<{ key: string; glyph: string; title: string; onClick: () => void }> = [
+    { key: 'in', glyph: '+', title: 'Zoom in', onClick: () => zoomBy(1.2) },
+    { key: 'out', glyph: '−', title: 'Zoom out', onClick: () => zoomBy(1 / 1.2) },
+    { key: 'fit', glyph: '⤢', title: 'Fit graph to view', onClick: fitGraph },
+    { key: 'center', glyph: '◉', title: 'Center view', onClick: centerGraph },
+  ];
+  const navButtonStyle = (active: boolean): CSSProperties => ({
+    width: 26,
+    height: 26,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 7,
+    border: `1px solid ${active ? GRAPH_THEME.accent.primary : GRAPH_THEME.drawer.sectionBorder}`,
+    background: active ? 'rgba(45, 212, 191, 0.12)' : 'rgba(11, 14, 18, 0.72)',
+    color: active ? GRAPH_THEME.accent.primary : GRAPH_THEME.surface.mutedText,
+    fontSize: 14,
+    lineHeight: 1,
+    cursor: 'pointer',
+    backdropFilter: 'blur(8px)',
+    WebkitBackdropFilter: 'blur(8px)',
+    transition: 'border-color 120ms ease, color 120ms ease, background 120ms ease',
+  });
   return (
     <div
       data-testid="knowledge-graph-framework"
@@ -427,6 +498,77 @@ export default function KnowledgeGraphFramework({
           zIndex: 1,
         }}
       />
+      <div
+        data-testid="knowledge-graph-nav-controls"
+        style={{ position: 'absolute', left: 12, bottom: 12, zIndex: 4, display: 'flex', flexDirection: 'column', gap: 4 }}
+      >
+        {navButtons.map((b) => (
+          <button
+            key={b.key}
+            type="button"
+            aria-label={b.title}
+            title={b.title}
+            onClick={b.onClick}
+            onMouseEnter={() => setHoveredNav(b.key)}
+            onMouseLeave={() => setHoveredNav((k) => (k === b.key ? null : k))}
+            style={navButtonStyle(hoveredNav === b.key)}
+          >
+            {b.glyph}
+          </button>
+        ))}
+      </div>
+      <RightGlassDrawer
+        isOpen={!!selectedNode}
+        title={selectedNode ? selectedNode.title || selectedNode.label || 'Node' : 'Node'}
+        onClose={() => {
+          setSelectedNodeId(null);
+          const cy = cyRef.current;
+          if (cy) cy.batch(() => cy.elements().removeClass('kgf-dim'));
+        }}
+        dataTestId="knowledge-graph-node-drawer"
+        storageKey="liquidaity.drawer.knowledge-node.width"
+        defaultWidth={340}
+        minWidth={280}
+        maxWidth={520}
+        top={44}
+      >
+        {selectedNode ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 12 }}>
+            <div>
+              <div style={{ color: GRAPH_THEME.surface.text, fontWeight: 700, fontSize: 13, marginBottom: 2 }}>
+                {selectedNode.title || selectedNode.label}
+              </div>
+              {selectedNode.type || (selectedNode.labels?.length ?? 0) > 0 ? (
+                <div style={{ color: GRAPH_THEME.accent.primary, fontSize: 11, letterSpacing: '0.04em' }}>
+                  {selectedNode.type || (selectedNode.labels ?? []).join(', ')}
+                </div>
+              ) : null}
+            </div>
+            {readableNodeSummary(selectedNode).map(([k, v]) => (
+              <div key={k} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 10 }}>
+                <span style={{ color: GRAPH_THEME.surface.mutedText }}>{k}</span>
+                <span style={{ color: GRAPH_THEME.surface.text, overflowWrap: 'anywhere' }}>{v}</span>
+              </div>
+            ))}
+            <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 11 }}>
+              {selectedNodeEdgeCount} connected {selectedNodeEdgeCount === 1 ? 'edge' : 'edges'}
+            </div>
+            <details>
+              <summary style={{ cursor: 'pointer', color: GRAPH_THEME.surface.mutedText, fontSize: 11 }}>
+                Technical details
+              </summary>
+              <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '3px 8px', margin: '6px 0 0', fontSize: 11, color: GRAPH_THEME.surface.mutedText }}>
+                <span>id</span>
+                <span style={{ overflowWrap: 'anywhere' }}>{selectedNode.id}</span>
+                {selectedNode.cardId ? <span>written by</span> : null}
+                {selectedNode.cardId ? <span style={{ overflowWrap: 'anywhere' }}>{selectedNode.cardId}</span> : null}
+                {selectedNode.correlationId ? <span>run</span> : null}
+                {selectedNode.correlationId ? <span style={{ overflowWrap: 'anywhere' }}>{selectedNode.correlationId}</span> : null}
+              </div>
+            </details>
+          </div>
+        ) : null}
+      </RightGlassDrawer>
     </div>
   );
 }

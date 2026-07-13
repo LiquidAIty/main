@@ -147,6 +147,6 @@ export async function resolveAgentConfig(
 // zero callers — the deck's per-card runtimeOptions are the runtime authority
 // for every agent role — and were removed rather than left as phantom
 // authorities.
-export async function resolveKnowgraphAgent(projectId: string, route = 'unknown') {
+export async function resolveKnowgraphPipelineConfig(projectId: string, route = 'unknown') {
   return resolveAgentConfig(projectId, 'knowgraph', route);
 }

@@ -6,7 +6,6 @@ import type {
   AgentCardInstance,
   DeckDocument,
   DeckEdge,
-  KnowledgeGraphKind,
 } from '../../../types/agentgraph';
 import { shouldShowOpenClaudeConsoleRail } from '../console/consoleVisibility';
 import {
@@ -68,50 +67,11 @@ export function isWorldSignalsAgentCard(
   );
 }
 
-export function isThinkGraphSystemCard(
-  card: AgentCardInstance | null | undefined,
-): boolean {
-  if (!card) return false;
-  return (
-    safeText(card.id).trim().toLowerCase() === 'card_thinkgraph_agent' ||
-    safeText(card.runtimeBinding).trim().toLowerCase() === 'thinkgraph_agent'
-  );
-}
-
-export function isKnowGraphSystemCard(
-  card: AgentCardInstance | null | undefined,
-): boolean {
-  if (!card) return false;
-  const binding = safeText(card.runtimeBinding).trim().toLowerCase();
-  return (
-    safeText(card.id).trim().toLowerCase() === 'card_knowgraph_agent' ||
-    binding === 'knowgraph_agent' ||
-    binding === 'knowgraph'
-  );
-}
-
-export function isCodeGraphSystemCard(
-  card: AgentCardInstance | null | undefined,
-): boolean {
-  if (!card) return false;
-  return (
-    safeText(card.id).trim().toLowerCase() === 'card_codegraph_agent' ||
-    safeText(card.runtimeBinding).trim().toLowerCase() === 'codegraph_agent'
-  );
-}
-
 export type ProgressiveRailVisibility = {
   showKnowledge: boolean;
   showWorldsignal: boolean;
   showTrading: boolean;
   showOpenClaudeConsole: boolean;
-};
-
-export type ConnectedGraphStreams = {
-  thinkGraph: boolean;
-  knowGraph: boolean;
-  codeGraph: boolean;
-  anyGraph: boolean;
 };
 
 export function buildBusConnectedCardIds(
@@ -153,77 +113,6 @@ export function buildBusConnectedCardIds(
   return connected;
 }
 
-export function buildFlowAdjacency(edges: readonly DeckEdge[]): Map<string, string[]> {
-  const adjacency = new Map<string, string[]>();
-  const connect = (left: string, right: string) => {
-    const neighbors = adjacency.get(left) || [];
-    neighbors.push(right);
-    adjacency.set(left, neighbors);
-  };
-
-  for (const edge of edges) {
-    if (normalizeDeckEdgeType(edge.edgeType) !== 'flow') continue;
-    connect(edge.source, edge.target);
-    connect(edge.target, edge.source);
-  }
-
-  return adjacency;
-}
-
-export function areCardsInSameFlowComponent(
-  adjacency: Map<string, string[]>,
-  cardIds: readonly string[],
-): boolean {
-  const [head, ...tail] = cardIds.filter(Boolean);
-  if (!head || tail.length === 0) return false;
-  const visited = new Set<string>();
-  const queue = [head];
-
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    if (visited.has(current)) continue;
-    visited.add(current);
-    for (const neighbor of adjacency.get(current) || []) {
-      if (!visited.has(neighbor)) queue.push(neighbor);
-    }
-  }
-
-  return tail.every((cardId) => visited.has(cardId));
-}
-
-export function resolveFirstMatchingCardId(
-  nodes: readonly AgentCardInstance[],
-  predicate: (card: AgentCardInstance) => boolean,
-): string | null {
-  return nodes.find(predicate)?.id ?? null;
-}
-
-export function isKnowledgeChainActive(
-  nodes: readonly AgentCardInstance[],
-  edges: readonly DeckEdge[],
-): boolean {
-  return deriveConnectedGraphStreams({ nodes: nodes as any, edges: edges as any }).anyGraph;
-}
-
-export function deriveConnectedGraphStreams(deck: Pick<DeckDocument, 'nodes' | 'edges'>): ConnectedGraphStreams {
-  const busConnected = buildBusConnectedCardIds(deck.nodes, deck.edges);
-  const thinkGraph = deck.nodes.some(
-    (node) => busConnected.has(node.id) && isThinkGraphSystemCard(node),
-  );
-  const knowGraph = deck.nodes.some(
-    (node) => busConnected.has(node.id) && isKnowGraphSystemCard(node),
-  );
-  const codeGraph = deck.nodes.some(
-    (node) => busConnected.has(node.id) && isCodeGraphSystemCard(node),
-  );
-  return {
-    thinkGraph,
-    knowGraph,
-    codeGraph,
-    anyGraph: thinkGraph || knowGraph || codeGraph,
-  };
-}
-
 export function isHermesConnectedToMainChat(
   nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
@@ -245,48 +134,6 @@ export function isHermesConnectedToMainChat(
       ((mainChatIds.has(edge.source) && hermesIds.has(edge.target)) ||
         (hermesIds.has(edge.source) && mainChatIds.has(edge.target))),
   );
-}
-
-export function getDefaultConnectedKnowledgeGraphKind(
-  streams: ConnectedGraphStreams,
-): KnowledgeGraphKind {
-  if (streams.thinkGraph) return 'thinkgraph';
-  return 'codegraph';
-}
-
-export function getConnectedKnowledgeGraphKinds(
-  streams: ConnectedGraphStreams,
-): KnowledgeGraphKind[] {
-  const kinds: KnowledgeGraphKind[] = [];
-  if (streams.thinkGraph) kinds.push('thinkgraph');
-  if (streams.knowGraph) kinds.push('knowgraph');
-  if (streams.codeGraph) kinds.push('codegraph');
-  return kinds;
-}
-
-export function isLegacyKnowledgeChainFullyConnected(
-  nodes: readonly AgentCardInstance[],
-  edges: readonly DeckEdge[],
-): boolean {
-  const thinkGraphId = resolveFirstMatchingCardId(nodes, isThinkGraphSystemCard);
-  const knowGraphId = resolveFirstMatchingCardId(nodes, isKnowGraphSystemCard);
-  const codeGraphId = resolveFirstMatchingCardId(nodes, isCodeGraphSystemCard);
-  if (!thinkGraphId || !knowGraphId || !codeGraphId) return false;
-
-  const busConnected = buildBusConnectedCardIds(nodes, edges);
-  if (
-    !busConnected.has(thinkGraphId) ||
-    !busConnected.has(knowGraphId) ||
-    !busConnected.has(codeGraphId)
-  ) {
-    return false;
-  }
-
-  return areCardsInSameFlowComponent(buildFlowAdjacency(edges), [
-    thinkGraphId,
-    knowGraphId,
-    codeGraphId,
-  ]);
 }
 
 export function isWorldSignalsAgentActive(

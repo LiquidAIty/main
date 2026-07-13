@@ -57,11 +57,8 @@ class TestBackendHarnessMcpClientWall:
             assert forbidden not in source, f"mcp client gained direct capability: {forbidden}"
 
     def test_chat_route_never_reintroduces_the_obsolete_pair_processor(self):
-        # The user/assistant pair architecture was DELETED. Live ThinkGraph writes
-        # happen only inside a real configured ThinkGraph card run reached through
-        # the native doorway (card.run_assistant_agent -> runConfiguredCard). No
-        # pair processor, no pair front door, no direct pair bypass may reappear
-        # anywhere in the chat route.
+        # The user/assistant pair architecture was deleted. Hermes performs only
+        # explicit bounded foreground updates through the native MCP surface.
         source = _read("apps/backend/src/routes/coder.routes.ts")
         for forbidden in (
             "processThinkGraphPair",
@@ -85,16 +82,16 @@ class TestPythonMcpHostIsThin:
         for forbidden in ("import psycopg", "import neo4j", "from psycopg", "from neo4j", "ag_catalog"):
             assert forbidden not in source, f"mcp host gained direct dependency: {forbidden}"
 
-    def test_host_never_exposes_a_model_facing_graph_write_or_pair_tool(self):
-        # There is NO model-facing graph-write tool and NO pair front door on the
-        # host. Live writes happen only inside a configured ThinkGraph card run
-        # via the card's own scoped apply_thinkgraph_patch (not a host tool).
+    def test_host_never_exposes_graph_agent_or_pair_tools(self):
         source = _read("apps/python-models/app/mcp_host.py")
         for forbidden in (
             'name="thinkgraph.apply_live_patch"',
             'name="apply_thinkgraph_patch"',
             'name="read_thinkgraph_scope"',
             'name="thinkgraph.process_conversation_pair"',
+            'name="thinkgraph_agent"',
+            'name="codegraph_agent"',
+            'name="knowgraph_agent"',
             "thinkgraph_live_agent_turn",
             "_validate_live_authority",
             "_apply_live_patch",
@@ -102,12 +99,15 @@ class TestPythonMcpHostIsThin:
         ):
             assert forbidden not in source, f"host regressed: {forbidden}"
 
-    def test_host_exposes_the_control_and_read_surface_only(self):
-        # The model-facing surface is the card-run doorway + the bounded
-        # READ-ONLY graph slice. The write tool is gone.
+    def test_host_exposes_the_native_authority_surface(self):
         source = _read("apps/python-models/app/mcp_host.py")
         assert 'name="card.run_assistant_agent"' in source
         assert 'name="thinkgraph.get_graph_slice"' in source
+        assert 'name="thinkgraph.submit_update"' in source
+        assert 'name="knowgraph.query"' in source
+        assert 'name="knowgraph.ingest"' in source
+        assert 'name="codegraph.search"' in source
+        assert 'name="web_search"' in source
 
 
 class TestNoMarkdownRuntimeSkills:

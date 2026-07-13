@@ -181,14 +181,10 @@ describe('agentbuilder authoring flow', () => {
     expect(INITIAL_DECK.nodes.map((node) => node.title)).toEqual([
       'Main Chat / Harness',
       'Magentic-One',
-      'ThinkGraph Agent',
-      'CodeGraph Agent',
-      'Research Agent',
-      'KnowGraph Agent',
+      'Search Agent',
       'Coder',
       'Hermes',
       'Trading Agent',
-      'Plan Agent',
       'WorldSignals Agent',
     ]);
 
@@ -196,27 +192,19 @@ describe('agentbuilder authoring flow', () => {
     expect(INITIAL_DECK.nodes.map((node) => node.runtimeBinding)).toEqual([
       'main_chat',
       null,
-      'thinkgraph_agent',
-      'codegraph_agent',
       'research_agent',
-      'knowgraph_agent',
       'local_coder',
       'hermes_steward',
       'trading_agent',
-      'plan_agent',
       'worldsignals_agent',
     ]);
     expect(INITIAL_DECK.nodes.map((node) => node.templateId)).toEqual([
       'template_main_chat',
       'template_magentic',
-      'template_thinkgraph_agent',
-      'template_codegraph_agent',
       'template_research_agent',
-      'template_knowgraph_agent',
       'template_local_coder',
       'template_hermes_steward',
       'template_trading_workbench',
-      'template_plan_agent',
       'template_worldsignals_agent',
     ]);
 
@@ -225,14 +213,28 @@ describe('agentbuilder authoring flow', () => {
       target: edge.target,
       edgeType: edge.edgeType,
     }))).toEqual([
+      { source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
+      { source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' },
+      { source: 'card_hermes_steward', target: 'card_research_agent', edgeType: 'flow' },
+      { source: 'card_hermes_steward', target: 'card_worldsignals_agent', edgeType: 'flow' },
       {
         source: 'card_main_chat',
+        target: 'card_magentic',
+        edgeType: 'magentic_control',
+      },
+      {
+        source: 'card_local_coder',
         target: 'card_magentic',
         edgeType: 'magentic_option',
       },
       {
-        source: 'card_magentic',
-        target: 'card_hermes_steward',
+        source: 'card_research_agent',
+        target: 'card_magentic',
+        edgeType: 'magentic_option',
+      },
+      {
+        source: 'card_worldsignals_agent',
+        target: 'card_magentic',
         edgeType: 'magentic_option',
       },
     ]);
@@ -243,7 +245,7 @@ describe('agentbuilder authoring flow', () => {
       id: 'deck_builder',
       name: 'Saved Deck',
       promptTemplates: [],
-      version: 2,
+      version: INITIAL_DECK.version,
       nodes: [
         createCard('card_saved_a', 'assistant_agent', {
           templateId: 'template_main_chat',
@@ -469,14 +471,10 @@ describe('agentbuilder authoring flow', () => {
     expect(hydrated.nodes.map((node) => node.id)).toEqual([
       'card_main_chat',
       'card_magentic',
-      'card_thinkgraph_agent',
-      'card_codegraph_agent',
       'card_research_agent',
-      'card_knowgraph_agent',
       'card_local_coder',
       'card_hermes_steward',
       'card_trading_workbench',
-      'card_plan_agent',
       'card_worldsignals_agent',
     ]);
     expect(hydrated.edges).toEqual([]);

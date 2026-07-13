@@ -1,5 +1,10 @@
 # Agent Stand-In Testing — substitute an external coding agent at any position
 
+@skill id=agent-stand-in-testing
+@type Skill
+@status active
+@related_to python-mcp-card-runtime
+
 ## When to use
 
 An agent chain (chat → orchestrator → cards → coder) fails or behaves oddly and reading

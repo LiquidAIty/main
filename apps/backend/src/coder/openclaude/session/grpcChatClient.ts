@@ -18,6 +18,7 @@ import { BUILDER_DECK_ID, getDeckDocument } from '../../../decks/store';
 import { resolveRuntimeBinding } from '../../../contracts/runtimeBinding';
 import { resolveDirectSubagents } from '../../../cards/runtime';
 import { resolveModel } from '../../../llm/models.config';
+import { HARNESS_MCP_TOOL_SPECS } from '../../../contracts/runtimeContracts';
 import { logHarnessTrace } from '../../../services/harnessTrace';
 
 export type GrpcSessionEvent =
@@ -123,6 +124,7 @@ function parseSessionId(sessionId: string): { projectId: string; conversationId:
  * runtime's own MCP naming for the 'liquidaity' Python host (dots→underscores).
  * A fixed identity constant, not a mapping. */
 const CARD_RUN_CONTROL_TOOL = 'mcp__liquidaity__card_run_assistant_agent';
+const HARNESS_TURN_TIMEOUT_MS = 120_000;
 
 /** The saved card's Tools selection, filtered to harness MCP tool names — the
  * REAL per-card MCP grant (enforced as the child's allowed_tools / the
@@ -130,6 +132,7 @@ const CARD_RUN_CONTROL_TOOL = 'mcp__liquidaity__card_run_assistant_agent';
  * default grant. */
 export function cardMcpToolGrants(card: any): string[] {
   const raw = Array.isArray(card?.runtimeOptions?.tools) ? card.runtimeOptions.tools : [];
+  const known = new Set(HARNESS_MCP_TOOL_SPECS.map((spec) => spec.name));
   return raw
     .map((tool: unknown) => String(tool || '').trim())
     .filter(Boolean)
@@ -137,7 +140,12 @@ export function cardMcpToolGrants(card: any): string[] {
       const canonical = tool.startsWith('mcp__liquidaity__')
         ? tool.slice('mcp__liquidaity__'.length)
         : tool;
-      return `mcp__liquidaity__${canonical.replace(/\./g, '_')}`;
+      const bare = canonical.replace(/_/g, '.');
+      const exact = known.has(canonical) ? canonical : known.has(bare) ? bare : null;
+      if (!exact) {
+        throw new Error(`harness_mcp_tool_unknown:${canonical}`);
+      }
+      return `mcp__liquidaity__${exact.replace(/\./g, '_')}`;
     });
 }
 
@@ -147,16 +155,6 @@ export function cardMcpToolGrants(card: any): string[] {
  * it must state the sub-agent's REAL capability so the model routes the work here
  * instead of substituting a conceptual answer. Not a prompt copy; one honest line. */
 export function doorwayWhenToUse(binding: string, title: string): string {
-  if (binding === 'thinkgraph_agent') {
-    return (
-      'Delegate here to READ and WRITE the project\'s real ThinkGraph. This agent has ' +
-      'the scoped graph-read plus a server-authorized graph-write internally (it creates/' +
-      'updates actual ThinkGraph nodes and relationships) — you do not need a write tool ' +
-      'yourself. Route EVERY request to build, update, record, or map anything into the ' +
-      'ThinkGraph to this sub-agent; never answer such a request with a conceptual or ' +
-      'text-only graph, and never claim no write tool exists.'
-    );
-  }
   if (binding === 'local_coder') {
     return (
       'Delegate here to run real coding work in the Coder workspace: read-only source ' +
@@ -180,6 +178,13 @@ export function doorwayWhenToUse(binding: string, title: string): string {
       'runs Mag One, and never becomes a worker — Main Chat reviews the files, ' +
       'writes prompt.md last, and launches by jobId only on an explicit user ' +
       'request. Model judgment decides when to invoke; no fixed cadence.'
+    );
+  }
+  if (binding === 'research_agent') {
+    return (
+      'Invoke this bounded Search Agent when Hermes needs external evidence. It uses real ' +
+      'web search and returns URLs, titles, domains, excerpts, available dates, and relevance ' +
+      'notes. It does not write ThinkGraph or KnowGraph and never invents citations.'
     );
   }
   return `The saved agent card "${title}". Delegate the matching task to it and relay its result.`;
@@ -207,7 +212,7 @@ export function buildHarnessAgentDefinition(
     card?.runtimeOptions?.binding ?? card?.runtimeBinding ?? card?.binding,
     card?.id,
   );
-  if (binding === 'hermes_steward') {
+  if (binding === 'hermes_steward' || binding === 'research_agent') {
     const systemPrompt = typeof card?.prompt === 'string' ? card.prompt : '';
     if (!systemPrompt.trim()) return null;
     const modelKey = String(card?.runtimeOptions?.modelKey || '').trim();
@@ -218,8 +223,8 @@ export function buildHarnessAgentDefinition(
       card_id: cardId,
       runtime_binding: binding,
       when_to_use: doorwayWhenToUse(binding, title),
-      // Hermes IS the native inherited-context agent. Its saved prompt bytes are
-      // the system prompt; there is no card.run_assistant_agent wrapper/model hop.
+      // Hermes and Search are native inherited-context agents. Their saved prompt
+      // bytes and exact MCP grants execute directly in the Harness.
       system_prompt: [systemPrompt, runtimeContext].filter(Boolean).join('\n\n'),
       // The card's Tools selection IS the grant — no hidden defaults.
       allowed_tools: cardMcpToolGrants(card),
@@ -346,8 +351,8 @@ export async function resolveMainChatSystemPrompt(sessionId: string): Promise<st
     if (!resolution.ok) return null;
     const prompt = String(resolution.card?.prompt || '').trim();
     return prompt || null;
-  } catch {
-    return null;
+  } catch (error: any) {
+    throw new Error(`main_chat_runtime_config_failed:${String(error?.message || error)}`);
   }
 }
 
@@ -441,6 +446,8 @@ export async function startGrpcTurn(
   const call = client.Chat();
   let accumulated = '';
   let terminal = false;
+  let timeoutHandle: NodeJS.Timeout | null = null;
+  let rejectDone: ((reason?: unknown) => void) | null = null;
 
   // Caller-identity resolution config. Assigned from the REAL resolved session
   // below, before call.write — no event can arrive earlier. The pre-assignment
@@ -464,6 +471,7 @@ export async function startGrpcTurn(
   };
 
   const done = new Promise<{ finalText: string }>((resolve, reject) => {
+    rejectDone = reject;
     call.on('data', (msg: any) => {
       if (terminal) return;
       if (msg.text_chunk) {
@@ -509,12 +517,14 @@ export async function startGrpcTurn(
         });
       } else if (msg.done) {
         terminal = true;
+        if (timeoutHandle) clearTimeout(timeoutHandle);
         const finalText = msg.done.full_text || accumulated;
         safeOnEvent({ kind: 'done', fullText: finalText });
         resolve({ finalText });
         try { call.end(); } catch { /* already closed */ }
       } else if (msg.error) {
         terminal = true;
+        if (timeoutHandle) clearTimeout(timeoutHandle);
         safeOnEvent({ kind: 'error', message: msg.error.message, code: msg.error.code });
         reject(new Error(msg.error.message || 'grpc_chat_error'));
         try { call.end(); } catch { /* already closed */ }
@@ -526,6 +536,7 @@ export async function startGrpcTurn(
         return;
       }
       terminal = true;
+      if (timeoutHandle) clearTimeout(timeoutHandle);
       safeOnEvent({ kind: 'error', message: err.message });
       reject(err);
     });
@@ -578,11 +589,23 @@ export async function startGrpcTurn(
     },
   });
 
+  if (!terminal) timeoutHandle = setTimeout(() => {
+    if (terminal) return;
+    terminal = true;
+    const error = new Error(`harness_turn_timeout:${HARNESS_TURN_TIMEOUT_MS}`);
+    safeOnEvent({ kind: 'error', message: error.message, code: 'harness_turn_timeout' });
+    try { call.write({ cancel: { reason: 'harness_turn_timeout' } }); } catch { /* closed */ }
+    try { call.end(); } catch { /* closed */ }
+    rejectDone?.(error);
+  }, HARNESS_TURN_TIMEOUT_MS);
+
   return {
     answer: (promptId: string, reply: string) => {
       try { call.write({ input: { prompt_id: promptId, reply } }); } catch { /* closed */ }
     },
     cancel: () => {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      terminal = true;
       try { call.write({ cancel: { reason: 'client_cancel' } }); } catch { /* closed */ }
       try { call.end(); } catch { /* closed */ }
     },

@@ -205,7 +205,7 @@ Hermes runs as a Python module in `apps/python-models/app/python_models/hermes/`
 surfaced in the UI: the seeded `card_hermes_steward` agent card, plus the Hermes activity
 console under chat (HermesConsole → `GET /api/coder/hermes/activity` — real activity only,
 honest empty state). The CoderReport review protocol (pure Python, `POST /hermes/review`)
-and the ThinkGraph card-authority write path are the core. No new MCP host. No new graph
+and Hermes's bounded native ThinkGraph update path are the core. No new MCP host. No new graph
 writer. No TS brain.
 
 ### Feature Context Resolver (deferred to Fable 6+)
