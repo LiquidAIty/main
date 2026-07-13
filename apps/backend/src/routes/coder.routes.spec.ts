@@ -131,6 +131,24 @@ describe('coder routes', () => {
     }
   }
 
+  it('keeps the Hermes report bridge closed outside an active native investigation', async () => {
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/hermes_write_report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parentRunId: 'req_not_active', reportMarkdown: '# Report', summary: 'No active turn.' }),
+      });
+      await expect(response.json()).resolves.toEqual({
+        ok: false,
+        error: 'hermes_investigation_context_not_active',
+      });
+      expect(response.status).toBe(409);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it('returns 424 with an exact blocker from the LocalCoder status route when nothing runnable', async () => {
     await withBrokenRuntime(async () => {
       const { server, baseUrl } = await createApiServer();
@@ -237,6 +255,12 @@ describe('coder routes', () => {
 
         // Real chat turn still runs and both messages are still persisted.
         expect(chatSessionMocks.startGrpcTurn).toHaveBeenCalledTimes(1);
+        expect((chatSessionMocks.startGrpcTurn.mock.calls[0][0] as any).investigationContext).toEqual({
+          projectId: 'project-1',
+          conversationId: 'main',
+          anchorNodeIds: [],
+          requestedOutcome: 'Investigate the bounded assignment delegated by Main Chat.',
+        });
         const appendedRoles = chatSessionMocks.appendMessage.mock.calls.map((call) => (call[0] as any).role);
         expect(appendedRoles).toContain('user');
         expect(appendedRoles).toContain('assistant');

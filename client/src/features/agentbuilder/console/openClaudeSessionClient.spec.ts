@@ -67,6 +67,29 @@ describe('streamSession', () => {
     } satisfies Partial<SessionStreamError>);
   });
 
+  it('carries an optional compact ThinkGraph anchor context without minting identity client-side', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        projectId: 'project-1',
+        conversationId: 'main',
+        investigationContext: {
+          anchorNodeIds: ['run:42'],
+          requestedOutcome: 'Inspect the selected run.',
+        },
+      });
+      return sseResponse(['event: done\ndata: {"fullText":"done"}\n\nevent: end\ndata: {}\n\n']);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(streamSession({
+      projectId: 'project-1',
+      conversationId: 'main',
+      message: 'Inspect it.',
+      investigationContext: { anchorNodeIds: ['run:42'], requestedOutcome: 'Inspect the selected run.' },
+      onEvent: vi.fn(),
+    })).resolves.toEqual({ finalText: 'done' });
+  });
+
   it('rejects a transport stream that ends without the required end event', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
       'event: text\ndata: {"text":"partial"}\n\n',

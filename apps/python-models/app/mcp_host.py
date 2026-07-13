@@ -432,6 +432,28 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="hermes.write_report",
+            description=(
+                "Hermes only: write the one durable human-readable investigation report for "
+                "the active Main Chat turn. The server resolves project and conversation "
+                "identity from parentRunId; never supply them. Include only real stable "
+                "ThinkGraph node ids, KnowGraph refs, and CodeGraph refs. On success, return "
+                "the completion metadata exactly; do not repeat the report body to Main Chat."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "parentRunId": {"type": "string"},
+                    "reportMarkdown": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "thinkGraphNodeIds": {"type": "array", "items": {"type": "string"}},
+                    "knowGraphRefs": {"type": "array", "items": {"type": "string"}},
+                    "codeGraphRefs": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["parentRunId", "reportMarkdown", "summary"],
+            },
+        ),
+        Tool(
             name="web_search",
             description=(
                 "Search the live web through Tavily and return real URLs, titles, domains, "
@@ -487,6 +509,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "codegraph.search": {"query", "limit"},
     "hermes.memory_read": {"projectId", "key"},
     "hermes.memory_write": {"projectId", "key", "value"},
+    "hermes.write_report": {"parentRunId", "reportMarkdown", "summary", "thinkGraphNodeIds", "knowGraphRefs", "codeGraphRefs"},
     "write_mag_one_instructions": {"instructions", "runId"},
     "read_model_results": {"runId", "path"},
     "canvas.inspect": {"projectId", "deckId"},
@@ -509,6 +532,7 @@ _BRIDGE_PATHS: dict[str, str] = {
     "codegraph.search": "codegraph_search",
     "hermes.memory_read": "hermes_memory_read",
     "hermes.memory_write": "hermes_memory_write",
+    "hermes.write_report": "hermes_write_report",
 }
 
 # Coder job-folder tools dispatch to the ONE shared Python implementation

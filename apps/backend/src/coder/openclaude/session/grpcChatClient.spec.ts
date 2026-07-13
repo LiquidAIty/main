@@ -8,6 +8,7 @@ vi.mock('../../../decks/store', () => ({
 
 import {
   buildHarnessAgentDefinition,
+  buildHarnessRuntimeContext,
   deriveSessionId,
   resolveCardDoorwayDefinitions,
   resolveMainChatRuntimeConfig,
@@ -20,7 +21,7 @@ const main = {
 };
 const hermes = {
   id: 'card_hermes_steward', kind: 'agent', runtimeBinding: 'hermes_steward', runtimeType: 'assistant_agent',
-  prompt: 'Hermes prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'knowgraph.query', 'knowgraph.ingest', 'codegraph.search', 'hermes.memory_write', 'card.run_assistant_agent'] },
+  prompt: 'Hermes prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'knowgraph.query', 'knowgraph.ingest', 'codegraph.search', 'hermes.memory_write', 'hermes.write_report', 'card.run_assistant_agent'] },
 };
 const search = {
   id: 'card_research_agent', kind: 'agent', runtimeBinding: 'research_agent', runtimeType: 'assistant_agent',
@@ -47,6 +48,7 @@ describe('native Main / Hermes / Search doorways', () => {
     expect(definition.allowed_tools).not.toContain('mcp__liquidaity__thinkgraph_submit_update');
     expect(definition.allowed_tools).toContain('mcp__liquidaity__knowgraph_ingest');
     expect(definition.allowed_tools).toContain('mcp__liquidaity__hermes_memory_write');
+    expect(definition.allowed_tools).toContain('mcp__liquidaity__hermes_write_report');
     expect(definition.allowed_card_run_ids).toEqual([search.id]);
   });
 
@@ -74,6 +76,23 @@ describe('native Main / Hermes / Search doorways', () => {
       'mcp__liquidaity__codegraph_search',
     ]);
     expect(config?.doorwayDefinitions.map((entry: any) => entry.card_id)).toEqual([hermes.id]);
+  });
+
+  it('adds the compact server-minted investigation context to Hermes only', async () => {
+    deckMocks.getDeckDocument.mockResolvedValue(doc([main, hermes, search], [flow(main.id, hermes.id), flow(hermes.id, search.id)]));
+    const context = {
+      projectId: 'p1',
+      conversationId: 'c1',
+      anchorNodeIds: ['run:42'],
+      requestedOutcome: 'Inspect the selected run.',
+    };
+    const config = await resolveMainChatRuntimeConfig(deriveSessionId('p1', 'c1'), 'chat', 'req_1234abcd', context);
+    const [definition] = config!.doorwayDefinitions as any[];
+    expect(definition.system_prompt).toContain('[LIQUIDAITY_INVESTIGATION_CONTEXT]');
+    expect(definition.system_prompt).toContain(JSON.stringify(context));
+    expect(buildHarnessRuntimeContext(deriveSessionId('p1', 'c1'), 'req_1234abcd')).not.toContain(
+      '[LIQUIDAITY_INVESTIGATION_CONTEXT]',
+    );
   });
 
   it('resolves Hermes to Search through the persisted second orange edge', async () => {

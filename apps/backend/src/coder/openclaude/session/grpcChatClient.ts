@@ -20,6 +20,7 @@ import { resolveDirectSubagents } from '../../../cards/runtime';
 import { resolveModel } from '../../../llm/models.config';
 import { HARNESS_MCP_TOOL_SPECS } from '../../../contracts/runtimeContracts';
 import { logHarnessTrace } from '../../../services/harnessTrace';
+import type { HermesInvestigationContext } from '../../hermes/hermesReportArtifact';
 
 export type GrpcSessionEvent =
   | { kind: 'text'; text: string }
@@ -52,6 +53,8 @@ export type GrpcTurnArgs = {
    * state from the client — never inferred from message content. */
   mode?: HarnessMode;
   traceId?: string;
+  /** Server-minted context passed only to the native Hermes doorway. */
+  investigationContext?: HermesInvestigationContext;
 };
 
 export type HarnessMode = 'chat' | 'canvas';
@@ -96,7 +99,11 @@ export function resolveInvokingCardId(
  * tool-call arguments, so expose the server-owned values explicitly. This is
  * typed transport context, not an alternate card prompt or inferred workspace
  * identity: the persisted Main Chat prompt remains the instruction authority. */
-export function buildHarnessRuntimeContext(sessionId: string, parentRunId?: string): string | null {
+export function buildHarnessRuntimeContext(
+  sessionId: string,
+  parentRunId?: string,
+  investigationContext?: HermesInvestigationContext,
+): string | null {
   const parsed = parseSessionId(sessionId);
   if (!parsed) return null;
   return [
@@ -106,6 +113,14 @@ export function buildHarnessRuntimeContext(sessionId: string, parentRunId?: stri
     `active conversationId: ${parsed.conversationId}`,
     ...(parentRunId ? [`active parentRunId: ${parentRunId}`] : []),
     'Use these exact values for LiquidAIty MCP tool calls. Never derive an id from the working directory, repository name, or session label.',
+    ...(investigationContext
+      ? [
+          '',
+          '[LIQUIDAITY_INVESTIGATION_CONTEXT]',
+          JSON.stringify(investigationContext),
+          'This compact context is server-minted for Hermes. Preserve its graph anchor ids and requested outcome; do not invent or replace its project or conversation identity.',
+        ]
+      : []),
   ].join('\n');
 }
 
@@ -360,6 +375,7 @@ export async function resolveMainChatRuntimeConfig(
   sessionId: string,
   mode: HarnessMode,
   parentRunId?: string,
+  investigationContext?: HermesInvestigationContext,
 ): Promise<MainChatRuntimeConfig | null> {
   const parsed = parseSessionId(sessionId);
   if (!parsed) return null;
@@ -384,13 +400,25 @@ export async function resolveMainChatRuntimeConfig(
       providerModelId: resolved.id,
       deckRevision: doc?.meta?.deckRevision || null,
       doorwayDefinitions: selectDoorwayCards(nodes, edges, mode)
-        .map((node) =>
-          buildHarnessAgentDefinition(node, buildHarnessRuntimeContext(sessionId, parentRunId), {
-            allowedCardRunIds: resolveDirectSubagents(String(node.id), nodes, edges).map((child: any) =>
-              String(child.id),
+        .map((node) => {
+          const binding = resolveRuntimeBinding(
+            node?.runtimeOptions?.binding ?? node?.runtimeBinding ?? node?.binding,
+            node?.id,
+          );
+          return buildHarnessAgentDefinition(
+            node,
+            buildHarnessRuntimeContext(
+              sessionId,
+              parentRunId,
+              binding === 'hermes_steward' ? investigationContext : undefined,
             ),
-          }),
-        )
+            {
+              allowedCardRunIds: resolveDirectSubagents(String(node.id), nodes, edges).map((child: any) =>
+                String(child.id),
+              ),
+            },
+          );
+        })
         .filter((def): def is Record<string, unknown> => Boolean(def)),
       parentAllowedMcpTools: cardMcpToolGrants(card),
     };
@@ -543,7 +571,12 @@ export async function startGrpcTurn(
   });
 
   const mode = args.mode === 'canvas' ? 'canvas' : 'chat';
-  const mainChatConfig = await resolveMainChatRuntimeConfig(args.sessionId, mode, args.traceId);
+  const mainChatConfig = await resolveMainChatRuntimeConfig(
+    args.sessionId,
+    mode,
+    args.traceId,
+    args.investigationContext,
+  );
   if (!mainChatConfig) {
     throw new Error('main_chat_runtime_config_unavailable: exactly one configured main_chat card with a valid saved model is required');
   }
