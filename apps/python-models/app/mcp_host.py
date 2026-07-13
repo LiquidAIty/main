@@ -298,20 +298,28 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="thinkgraph.submit_update",
             description=(
-                "Hermes only: submit ONE bounded structured ThinkGraph update (resources / "
-                "relations / statements — decisions, constraints, uncertainty, questions, "
-                "provenance links). The canonical backend writer validates the structure and "
-                "applies it under server-minted Hermes-card authority; there is no raw Cypher "
-                "and no model-supplied authority. Pass your real conversationId for provenance."
+                "Hermes only: submit ONE bounded structured ThinkGraph update. Required shape: "
+                "each resource is {id, label, kind?, properties?}; each relation is {a, b, tag?}; "
+                "each statement is {id, subject, predicateTerm, object, rationale?, review?, tag?, properties?}. "
+                "Statement subject and object MUST be resource ids in this update or existing project resources; "
+                "labels and ids must be short, stable, and never paragraph text. Minimal valid example: "
+                "resources:[{id:'investigation:dup-entity',label:'Duplicate entity handling',kind:'question'},"
+                "{id:'system:knowgraph',label:'KnowGraph',kind:'system'}], "
+                "statements:[{id:'statement:dup-entity-question',subject:'investigation:dup-entity',"
+                "predicateTerm:'term:questions',object:'system:knowgraph',rationale:'Verify entity identity merge behavior.',"
+                "review:'provisional'}]. To update an investigation, reuse its stable resource id and add only compact "
+                "resources/statements. An empty resources/relations/statements payload is an explicit no-op. "
+                "Pass real projectId and conversationId; authority/correlation are server-minted. If validation fails, "
+                "return that one error and finish—never retry by guessing another shape."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "projectId": {"type": "string"},
                     "conversationId": {"type": "string"},
-                    "resources": {"type": "array", "items": {"type": "object"}},
-                    "relations": {"type": "array", "items": {"type": "object"}},
-                    "statements": {"type": "array", "items": {"type": "object"}},
+                    "resources": {"type": "array", "items": {"type": "object", "required": ["id", "label"], "properties": {"id": {"type": "string"}, "label": {"type": "string"}, "kind": {"type": "string"}, "properties": {"type": "object"}}}},
+                    "relations": {"type": "array", "items": {"type": "object", "required": ["a", "b"], "properties": {"a": {"type": "string"}, "b": {"type": "string"}, "tag": {"type": "string"}}}},
+                    "statements": {"type": "array", "items": {"type": "object", "required": ["id", "subject", "predicateTerm", "object"], "properties": {"id": {"type": "string"}, "subject": {"type": "string"}, "predicateTerm": {"type": "string"}, "object": {"type": "string"}, "rationale": {"type": "string"}, "review": {"type": "string"}, "tag": {"type": "string"}, "properties": {"type": "object"}}}},
                 },
                 "required": ["projectId", "conversationId"],
             },

@@ -134,6 +134,7 @@ class TestPythonMcpHost:
             "codegraph.search",
             "hermes.memory_read",
             "hermes.memory_write",
+            "web_search",
         ])
 
     def test_card_run_schema_matches_the_doorway_contract(self):
@@ -143,6 +144,21 @@ class TestPythonMcpHost:
         card_run = next(t for t in tools if t.name == "card.run_assistant_agent")
         required = set((card_run.inputSchema or {}).get("required") or [])
         assert required == {"cardId", "input"}
+
+    def test_native_thinkgraph_update_schema_exposes_the_required_structural_patch_fields(self):
+        from app import mcp_host
+
+        tools = asyncio.run(mcp_host.list_tools())
+        update = next(t for t in tools if t.name == "thinkgraph.submit_update")
+        schema = update.inputSchema or {}
+        assert set(schema.get("required") or []) == {"projectId", "conversationId"}
+        properties = schema["properties"]
+        assert set(properties["resources"]["items"]["required"]) == {"id", "label"}
+        assert set(properties["relations"]["items"]["required"]) == {"a", "b"}
+        assert set(properties["statements"]["items"]["required"]) == {
+            "id", "subject", "predicateTerm", "object"
+        }
+        assert "Minimal valid example" in update.description
 
     def test_host_never_exposes_a_write_tool_or_pair_front_door(self):
         from app import mcp_host
