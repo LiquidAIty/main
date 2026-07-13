@@ -1,18 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const deckMocks = vi.hoisted(() => ({ getDeckDocument: vi.fn() }));
-const reportMocks = vi.hoisted(() => ({ readLatestHermesReport: vi.fn(() => null) }));
 vi.mock('../../../decks/store', () => ({
   BUILDER_DECK_ID: 'deck_builder',
   getDeckDocument: deckMocks.getDeckDocument,
-}));
-vi.mock('../../hermes/hermesReportArtifact', () => ({
-  readLatestHermesReport: reportMocks.readLatestHermesReport,
 }));
 
 import {
   buildHarnessAgentDefinition,
   buildHarnessRuntimeContext,
+  decodeGrpcProgressEvent,
   deriveSessionId,
   resolveCardDoorwayDefinitions,
   resolveHarnessTimeoutDeadline,
@@ -26,7 +23,7 @@ const main = {
 };
 const hermes = {
   id: 'card_hermes_steward', kind: 'agent', runtimeBinding: 'hermes_steward', runtimeType: 'assistant_agent',
-  prompt: 'Hermes prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'knowgraph.query', 'knowgraph.ingest', 'codegraph.search', 'hermes.memory_write', 'hermes.read_report', 'hermes.write_report', 'write_mag_one_instructions', 'card.run_assistant_agent'] },
+  prompt: 'Hermes prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'knowgraph.query', 'knowgraph.ingest', 'codegraph.search', 'hermes.memory_write', 'write_mag_one_instructions', 'card.run_assistant_agent'] },
 };
 const search = {
   id: 'card_research_agent', kind: 'agent', runtimeBinding: 'research_agent', runtimeType: 'assistant_agent',
@@ -42,15 +39,26 @@ const doc = (nodes: any[], edges: any[]) => ({ deck: { id: 'deck_builder', nodes
 describe('native Main / Hermes / Search doorways', () => {
   beforeEach(() => {
     deckMocks.getDeckDocument.mockReset();
-    reportMocks.readLatestHermesReport.mockReset();
-    reportMocks.readLatestHermesReport.mockReturnValue(null);
   });
 
   it('uses the orange network as the only Main child authority', () => {
     expect(selectDoorwayCards([main, hermes, search], [flow(main.id, hermes.id)], 'chat')).toEqual([hermes]);
   });
 
-  it('post-report completion grace extends an expiring turn but never shortens its parent deadline', () => {
+  it('decodes opaque gRPC Agent text progress with its exact parent linkage', () => {
+    expect(decodeGrpcProgressEvent({
+      tool_use_id: 'child-delta-1',
+      parent_tool_use_id: 'hermes-agent-call',
+      data_json: JSON.stringify({
+        type: 'agent_text_delta', agentId: 'agent-42', agentType: 'card_hermes_steward', text: 'live prose',
+      }),
+    })).toEqual({
+      kind: 'progress', toolUseId: 'child-delta-1', parentToolUseId: 'hermes-agent-call',
+      data: { type: 'agent_text_delta', agentId: 'agent-42', agentType: 'card_hermes_steward', text: 'live prose' },
+    });
+  });
+
+  it('an extend-only bounded deadline never shortens its parent deadline', () => {
     expect(resolveHarnessTimeoutDeadline(120_000, 50_000, 30_000, true)).toBe(120_000);
     expect(resolveHarnessTimeoutDeadline(120_000, 110_000, 30_000, true)).toBe(140_000);
   });
@@ -62,8 +70,8 @@ describe('native Main / Hermes / Search doorways', () => {
     expect(definition.allowed_tools).not.toContain('mcp__liquidaity__thinkgraph_submit_update');
     expect(definition.allowed_tools).toContain('mcp__liquidaity__knowgraph_ingest');
     expect(definition.allowed_tools).toContain('mcp__liquidaity__hermes_memory_write');
-    expect(definition.allowed_tools).toContain('mcp__liquidaity__hermes_read_report');
-    expect(definition.allowed_tools).toContain('mcp__liquidaity__hermes_write_report');
+    expect(definition.allowed_tools).not.toContain('mcp__liquidaity__hermes_read_report');
+    expect(definition.allowed_tools).not.toContain('mcp__liquidaity__hermes_write_report');
     expect(definition.allowed_tools).toContain('mcp__liquidaity__write_mag_one_instructions');
     expect(definition.allowed_card_run_ids).toEqual([search.id]);
   });
@@ -111,27 +119,15 @@ describe('native Main / Hermes / Search doorways', () => {
     );
   });
 
-  it('injects the bounded active report context into both Main and Hermes without copying its body', async () => {
+  it('does not inject the obsolete active-report channel into Main or Hermes', async () => {
     deckMocks.getDeckDocument.mockResolvedValue(doc([main, hermes, search], [flow(main.id, hermes.id), flow(hermes.id, search.id)]));
-    reportMocks.readLatestHermesReport.mockReturnValue({
-      reportId: 'hermes:req_old', status: 'updated', summary: 'Identity question remains open.',
-      projectId: 'p1', conversationId: 'c1', parentRunId: 'req_old', artifactRunId: 'req_old',
-      focusNodeIds: [], requestedOutcome: null, createdAt: '2026-07-13T00:00:00.000Z',
-      updatedAt: '2026-07-13T00:01:00.000Z', revision: 2, reportMarkdown: '# Long body',
-      linkedThinkGraphNodeIds: ['question:identity'], linkedKnowGraphRefs: [], linkedCodeGraphRefs: ['apps/backend/src/routes/coder.routes.ts'],
-    });
     const config = await resolveMainChatRuntimeConfig(deriveSessionId('p1', 'c1'), 'chat', 'req_new', {
       projectId: 'p1', conversationId: 'c1', focusNodeIds: [], requestedOutcome: null,
     });
     const hermesDefinition = config!.doorwayDefinitions[0] as any;
-    expect(hermesDefinition.system_prompt).toContain('[LIQUIDAITY_HERMES_ACTIVE_REPORT]');
-    expect(hermesDefinition.system_prompt).not.toContain('# Long body');
-    const mainContext = buildHarnessRuntimeContext(deriveSessionId('p1', 'c1'), 'req_new', {
-      activeHermesReport: config!.activeHermesReport,
-    });
-    expect(mainContext).toContain('[LIQUIDAITY_HERMES_ACTIVE_REPORT]');
-    expect(mainContext).toContain('question:identity');
-    expect(mainContext).not.toContain('# Long body');
+    expect(hermesDefinition.system_prompt).not.toContain('[LIQUIDAITY_HERMES_ACTIVE_REPORT]');
+    const mainContext = buildHarnessRuntimeContext(deriveSessionId('p1', 'c1'), 'req_new');
+    expect(mainContext).not.toContain('[LIQUIDAITY_HERMES_ACTIVE_REPORT]');
   });
 
   it('resolves Hermes to Search through the persisted second orange edge', async () => {

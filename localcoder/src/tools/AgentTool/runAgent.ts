@@ -269,6 +269,7 @@ export async function* runAgent({
   description,
   transcriptSubdir,
   onQueryProgress,
+  onStreamEvent,
   agentName,
 }: {
   agentDefinition: AgentDefinition
@@ -329,6 +330,10 @@ export async function* runAgent({
    * during long single-block streams (e.g. thinking) where no assistant
    * message is yielded for >60s. */
   onQueryProgress?: () => void
+  /** Optional foreground display callback. Stream events remain excluded from
+   * the recorded child-message generator; callers may forward only the opaque
+   * display deltas they explicitly understand. */
+  onStreamEvent?: (message: StreamEvent) => void
   /** Agent name (team member name) for routing resolution */
   agentName?: string
 }): AsyncGenerator<Message, void> {
@@ -770,6 +775,9 @@ export async function* runAgent({
       maxTurns: maxTurns ?? agentDefinition.maxTurns,
     })) {
       onQueryProgress?.()
+      if (message.type === 'stream_event') {
+        onStreamEvent?.(message)
+      }
       // Forward subagent API request starts to parent's metrics display
       // so TTFT/OTPS update during subagent execution.
       if (

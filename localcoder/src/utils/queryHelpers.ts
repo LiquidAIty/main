@@ -118,6 +118,14 @@ export function* normalizeMessage(message: Message): Generator<SDKMessage> {
       }
       return
     case 'progress':
+      // LiquidAIty's native foreground Agent prose is already an opaque,
+      // parent-linked progress message. Preserve only this exact internal
+      // progress shape so the gRPC bridge can serialize it through data_json;
+      // every other progress type keeps the vendored SDK normalization below.
+      if (message.data.type === 'agent_text_delta') {
+        yield message as unknown as SDKMessage
+        break
+      }
       if (
         message.data.type === 'agent_progress' ||
         message.data.type === 'skill_progress'

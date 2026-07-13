@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionStreamError, streamSession } from './openClaudeSessionClient';
+import { EMPTY_HERMES_TERMINAL_STATE, reduceHermesTerminalEvent } from '../../../components/hermes/HermesConsole';
 
 function sseResponse(frames: string[]): Response {
   const encoder = new TextEncoder();
@@ -18,6 +19,21 @@ afterEach(() => {
 });
 
 describe('streamSession', () => {
+  it('routes SSE Agent text progress into the structurally matched hidden Hermes terminal', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
+      `event: tool_start\ndata: ${JSON.stringify({ toolName: 'Agent', toolUseId: 'hermes-agent-call', argsJson: JSON.stringify({ subagent_type: 'card_hermes_steward', prompt: 'Read ThinkGraph only.' }) })}\n\n`,
+      `event: progress\ndata: ${JSON.stringify({ toolUseId: 'child-delta-1', parentToolUseId: 'hermes-agent-call', data: { type: 'agent_text_delta', agentId: 'agent-42', agentType: 'card_hermes_steward', text: 'First live ' } })}\n\n`,
+      `event: progress\ndata: ${JSON.stringify({ toolUseId: 'child-delta-2', parentToolUseId: 'hermes-agent-call', data: { type: 'agent_text_delta', agentId: 'agent-42', agentType: 'card_hermes_steward', text: 'Hermes prose.' } })}\n\n`,
+      `event: tool_result\ndata: ${JSON.stringify({ toolName: 'Agent', toolUseId: 'hermes-agent-call', output: 'First live Hermes prose.', isError: false })}\n\n`,
+      'event: done\ndata: {"fullText":"Main final."}\n\nevent: end\ndata: {}\n\n',
+    ])));
+    let terminal = EMPTY_HERMES_TERMINAL_STATE;
+    await expect(streamSession({ projectId: 'project-1', conversationId: 'main', message: 'run Hermes', onEvent: (event) => {
+      terminal = reduceHermesTerminalEvent(terminal, event);
+    } })).resolves.toEqual({ finalText: 'Main final.' });
+    expect(terminal).toMatchObject({ invocationId: 'hermes-agent-call', status: 'completed', responseText: 'First live Hermes prose.', error: null });
+  });
+
   it('preserves UTF-8 prompt and response bytes when an em dash is split across stream chunks', async () => {
     const text = 'Harness — Hermes — café 漢字';
     const encoded = new TextEncoder().encode(

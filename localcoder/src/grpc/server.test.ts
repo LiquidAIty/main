@@ -6,11 +6,15 @@ import * as protoLoader from '@grpc/proto-loader'
 
 import {
   buildAgentDefinitionsFromRequest,
+  concurrentRequestError,
+  interruptActiveRequest,
   missingRequiredHarnessTools,
   resolveCardRunControlCall,
   serializeProgressEvent,
 } from './server.js'
 import { resolveAgentTools } from '../tools/AgentTool/agentToolUtils.js'
+import { agentTextDeltaProgress } from '../tools/AgentTool/AgentTool.js'
+import { normalizeMessage } from '../utils/queryHelpers.js'
 
 // No Node .mjs host, no mcp__liquidaity__ bare-to-qualified mapping, no aliases.
 // A card doorway definition grants exactly the one card-run control tool — this
@@ -79,6 +83,51 @@ test('serializeProgressEvent preserves native structured subagent progress and l
     agentId: 'agent-42',
     message: { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'read_graph' }] } },
   })
+})
+
+test('serializeProgressEvent preserves ordered Hermes text deltas without a proto change', () => {
+  const deltas = ['one ', 'two ', 'three'].map((text, index) => serializeProgressEvent({
+    type: 'progress',
+    toolUseID: `child-delta-${index}`,
+    parentToolUseID: 'hermes-agent-call',
+    data: {
+      type: 'agent_text_delta',
+      agentId: 'agent-42',
+      agentType: 'card_hermes_steward',
+      text,
+    },
+  }))
+
+  assert.equal(deltas.map(delta => JSON.parse(delta.data_json).text).join(''), 'one two three')
+  assert.ok(deltas.every(delta => delta.parent_tool_use_id === 'hermes-agent-call'))
+})
+
+test('child model text crosses Agent progress normalization and gRPC JSON locally', () => {
+  const data = agentTextDeltaProgress({ type: 'stream_event', event: {
+    type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hermes live prose.' },
+  } } as any, 'agent-42', 'card_hermes_steward')
+  assert.ok(data)
+  const progress = { type: 'progress', toolUseID: 'child-delta-1', parentToolUseID: 'hermes-agent-call', uuid: 'progress-1', data }
+  assert.deepEqual([...normalizeMessage(progress as any)], [progress])
+  const serialized = serializeProgressEvent(progress as any)
+  assert.equal(serialized.parent_tool_use_id, 'hermes-agent-call')
+  assert.deepEqual(JSON.parse(serialized.data_json), data)
+})
+
+test('a second request on the same stream is rejected while the native turn is active', () => {
+  assert.deepEqual(concurrentRequestError(true), {
+    message: 'A request is already in progress on this stream',
+    code: 'ALREADY_EXISTS',
+  })
+  assert.equal(concurrentRequestError(false), null)
+})
+
+test('stream cancellation interrupts the active native QueryEngine exactly once', () => {
+  let interruptCount = 0
+  assert.equal(interruptActiveRequest({ interrupt: () => { interruptCount += 1 } }), true)
+  assert.equal(interruptCount, 1)
+  assert.equal(interruptActiveRequest(null), false)
+  assert.equal(interruptCount, 1)
 })
 
 test('the actual gRPC serializers preserve UTF-8 request and progress bytes', () => {

@@ -1,14 +1,13 @@
 // @vitest-environment jsdom
-// Hermes console: honest empty state, real activity rows, blocked-entry
-// emphasis, and an honest unreachable-backend state. No invented activity —
-// everything rendered comes from the injected (test) fetch result.
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import HermesConsole, {
-  type HermesActivityEntry,
-  type HermesActivityFetchResult,
+  EMPTY_HERMES_TERMINAL_STATE,
+  reduceHermesTerminalEvent,
+  type HermesTerminalState,
+  type HermesStreamEvent,
 } from './HermesConsole';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -20,109 +19,160 @@ async function render(node: React.ReactElement): Promise<HTMLElement> {
   document.body.appendChild(container);
   containers.push(container);
   const root = createRoot(container);
-  await act(async () => {
-    root.render(node);
-  });
+  await act(async () => root.render(node));
   return container;
 }
 
 afterEach(() => {
-  for (const container of containers.splice(0)) {
-    container.remove();
-  }
+  for (const container of containers.splice(0)) container.remove();
 });
 
-function fetcher(result: HermesActivityFetchResult) {
-  return vi.fn(async () => result);
+function reduce(events: HermesStreamEvent[]): HermesTerminalState {
+  return events.reduce(reduceHermesTerminalEvent, EMPTY_HERMES_TERMINAL_STATE);
 }
 
-const ENTRIES: HermesActivityEntry[] = [
-  {
-    id: 'hermes:run_47:1',
-    timestamp: '2026-07-08T14:23:00+00:00',
-    type: 'review_complete',
-    summary: 'Run run_47: verdict=blocked — 3/4 proven, blocker: empty_graph',
-    runId: 'run_47',
-  },
-  {
-    id: 'hermes:run_47:2',
-    timestamp: '2026-07-08T14:23:00+00:00',
-    type: 'thinkgraph_write_planned',
-    summary: 'ThinkGraph write plan ready: 3 node(s), 3 edge(s)',
-    runId: 'run_47',
-  },
-  {
-    id: 'hermes:run_47:3',
-    timestamp: '2026-07-08T14:24:00+00:00',
-    type: 'pattern_detected',
-    summary: 'Pattern graph_readback_gate: 2 occurrence(s)',
-    detail: 'graph readback returned 0 nodes',
-    runId: 'run_47',
-  },
-];
+const START: HermesStreamEvent = {
+  kind: 'tool_start',
+  toolName: 'Agent',
+  toolUseId: 'agent-call-1',
+  argsJson: JSON.stringify({
+    subagent_type: 'card_hermes_steward',
+    description: 'Find project gaps',
+    prompt: 'Read ThinkGraph and identify three gaps.',
+  }),
+};
 
-async function expand(host: HTMLElement): Promise<void> {
-  const toggle = host.querySelector('[data-testid="hermes-console-toggle"]') as HTMLButtonElement;
-  await act(async () => {
-    toggle.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-  });
-}
+describe('Hermes native child terminal', () => {
+  it('accepts only the matching Hermes invocation and retains text delta order', () => {
+    const state = reduce([
+      {
+        kind: 'tool_start',
+        toolName: 'Agent',
+        toolUseId: 'other-agent',
+        argsJson: JSON.stringify({ subagent_type: 'card_local_coder', prompt: 'code' }),
+      },
+      START,
+      {
+        kind: 'progress',
+        parentToolUseId: 'other-agent',
+        data: { type: 'agent_text_delta', agentType: 'card_hermes_steward', text: 'wrong' },
+      },
+      {
+        kind: 'progress',
+        parentToolUseId: 'agent-call-1',
+        data: { type: 'agent_text_delta', agentType: 'card_hermes_steward', text: 'First ' },
+      },
+      {
+        kind: 'progress',
+        parentToolUseId: 'agent-call-1',
+        data: { type: 'agent_text_delta', agentType: 'card_hermes_steward', text: 'second.' },
+      },
+    ]);
 
-describe('HermesConsole', () => {
-  it('renders the honest empty state collapsed and expanded', async () => {
-    const host = await render(<HermesConsole fetchActivity={fetcher({ ok: true, activity: [] })} />);
-    expect(host.querySelector('[data-testid="hermes-console-latest"]')?.textContent).toBe(
-      'Hermes has not reviewed a run yet.',
-    );
-    await expand(host);
-    expect(host.querySelector('[data-testid="hermes-console-empty"]')?.textContent).toBe(
-      'Hermes has not reviewed a run yet.',
-    );
-    expect(host.querySelectorAll('[data-testid="hermes-console-row"]')).toHaveLength(0);
+    expect(state.invocationId).toBe('agent-call-1');
+    expect(state.objective).toBe('Read ThinkGraph and identify three gaps.');
+    expect(state.responseText).toBe('First second.');
   });
 
-  it('collapses to the latest real entry and expands to the full feed with detail', async () => {
-    const host = await render(
-      <HermesConsole fetchActivity={fetcher({ ok: true, activity: ENTRIES })} />,
-    );
-    const latest = host.querySelector('[data-testid="hermes-console-latest"]');
-    expect(latest?.textContent).toContain('[14:24] Pattern graph_readback_gate: 2 occurrence(s)');
+  it('keeps child tool events intact and structurally scoped to Hermes', () => {
+    const state = reduce([
+      START,
+      {
+        kind: 'tool_start',
+        toolName: 'mcp__liquidaity__thinkgraph_get_graph_slice',
+        toolUseId: 'graph-read',
+        invokingCardId: 'card_hermes_steward',
+      },
+      {
+        kind: 'tool_start',
+        toolName: 'mcp__liquidaity__codegraph_search',
+        toolUseId: 'not-hermes',
+        invokingCardId: 'card_main_chat',
+      },
+      {
+        kind: 'tool_result',
+        toolName: 'mcp__liquidaity__thinkgraph_get_graph_slice',
+        toolUseId: 'graph-read',
+        output: '{"ok":true}',
+        isError: false,
+      },
+    ]);
 
-    await expand(host);
-    const rows = Array.from(host.querySelectorAll('[data-testid="hermes-console-row"]'));
-    expect(rows).toHaveLength(3);
-    expect(rows[0].textContent).toContain('verdict=blocked — 3/4 proven');
-    expect(rows[1].textContent).toContain('ThinkGraph write plan ready');
-    expect(rows[2].textContent).toContain('graph readback returned 0 nodes'); // detail line
+    expect(state.childToolUseIds).toEqual(['graph-read']);
+    expect(state.activity.map((entry) => entry.text)).toEqual([
+      'mcp__liquidaity__thinkgraph_get_graph_slice started',
+      'mcp__liquidaity__thinkgraph_get_graph_slice completed',
+    ]);
   });
 
-  it('renders a blocked review entry with the blocked emphasis', async () => {
-    const blocked: HermesActivityEntry = {
-      id: 'hermes:blocked:1',
-      timestamp: '2026-07-08T14:30:00+00:00',
-      type: 'blocked',
-      summary: 'Hermes review blocked: PYTHON_AUTOGEN_RAILS_UNAVAILABLE',
-    };
-    const host = await render(
-      <HermesConsole fetchActivity={fetcher({ ok: true, activity: [blocked] })} />,
-    );
-    await expand(host);
-    const row = host.querySelector('[data-testid="hermes-console-row"]');
-    expect(row?.textContent).toContain('Hermes review blocked: PYTHON_AUTOGEN_RAILS_UNAVAILABLE');
-    expect(row?.getAttribute('data-entry-type')).toBe('blocked');
+  it('reconciles the final Agent result once instead of duplicating streamed prose', () => {
+    const state = reduce([
+      START,
+      {
+        kind: 'progress',
+        parentToolUseId: 'agent-call-1',
+        data: { type: 'agent_text_delta', agentType: 'card_hermes_steward', text: 'Three gaps.' },
+      },
+      {
+        kind: 'tool_result',
+        toolName: 'Agent',
+        toolUseId: 'agent-call-1',
+        output: 'Three gaps.\n<usage>tool_uses: 1</usage>',
+        isError: false,
+      },
+    ]);
+
+    expect(state.status).toBe('completed');
+    expect(state.responseText.match(/Three gaps\./g)).toHaveLength(1);
+    expect(state.responseText).toContain('<usage>tool_uses: 1</usage>');
   });
 
-  it('reports an unreachable activity backend honestly instead of inventing a feed', async () => {
-    const host = await render(
-      <HermesConsole fetchActivity={fetcher({ ok: false, error: 'hermes_activity_unreachable' })} />,
+  it('shows failure honestly and resets on the next Hermes invocation', () => {
+    const failed = reduce([
+      START,
+      { kind: 'error', code: 'harness_turn_timeout', message: 'harness_turn_timeout:120000' },
+    ]);
+    expect(failed.status).toBe('error');
+    expect(failed.error).toBe('harness_turn_timeout:120000');
+
+    const reset = reduceHermesTerminalEvent(failed, {
+      ...START,
+      toolUseId: 'agent-call-2',
+      argsJson: JSON.stringify({ subagent_type: 'card_hermes_steward', prompt: 'Try again.' }),
+    });
+    expect(reset).toMatchObject({
+      invocationId: 'agent-call-2',
+      objective: 'Try again.',
+      status: 'running',
+      responseText: '',
+      error: null,
+    });
+  });
+
+  it('renders the live objective, activity, and response without polling', async () => {
+    const terminal = reduce([
+      START,
+      {
+        kind: 'tool_start',
+        toolName: 'mcp__liquidaity__thinkgraph_get_graph_slice',
+        toolUseId: 'graph-read',
+        invokingCardId: 'card_hermes_steward',
+      },
+      {
+        kind: 'progress',
+        parentToolUseId: 'agent-call-1',
+        data: { type: 'agent_text_delta', agentType: 'card_hermes_steward', text: 'Gap one.' },
+      },
+    ]);
+    const host = await render(<HermesConsole terminal={terminal} />);
+
+    expect(host.querySelector('[data-testid="hermes-terminal-status"]')?.textContent).toBe('running');
+    expect(host.querySelector('[data-testid="hermes-terminal-objective"]')?.textContent).toContain(
+      'Read ThinkGraph and identify three gaps.',
     );
-    expect(host.querySelector('[data-testid="hermes-console-latest"]')?.textContent).toBe(
-      'Hermes activity unavailable: hermes_activity_unreachable',
+    expect(host.querySelector('[data-testid="hermes-terminal-activity"]')?.textContent).toContain(
+      'thinkgraph_get_graph_slice started',
     );
-    await expand(host);
-    expect(host.querySelector('[data-testid="hermes-console-error"]')?.textContent).toBe(
-      'Hermes activity unavailable: hermes_activity_unreachable',
-    );
-    expect(host.querySelectorAll('[data-testid="hermes-console-row"]')).toHaveLength(0);
+    expect(host.querySelector('[data-testid="hermes-terminal-response"]')?.textContent).toBe('Gap one.');
   });
 });

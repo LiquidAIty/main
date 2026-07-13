@@ -23,7 +23,11 @@ import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWor
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
 import OpenClaudeConsolePanel from '../features/agentbuilder/console/OpenClaudeConsolePanel';
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
-import HermesConsole from '../components/hermes/HermesConsole';
+import HermesConsole, {
+  EMPTY_HERMES_TERMINAL_STATE,
+  reduceHermesTerminalEvent,
+  type HermesTerminalState,
+} from '../components/hermes/HermesConsole';
 import {
   SessionStreamError,
   streamSession,
@@ -373,6 +377,9 @@ export default function AgentBuilder(): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
   const largeSurface = 'chat' as const;
   const [nativeSessionBusy, setNativeSessionBusy] = useState(false);
+  const [hermesTerminal, setHermesTerminal] = useState<HermesTerminalState>(
+    EMPTY_HERMES_TERMINAL_STATE,
+  );
   const [workspaceView, setWorkspaceView] = useState<
     | 'chat'
     | 'canvas'
@@ -543,8 +550,10 @@ export default function AgentBuilder(): React.ReactElement {
     const pid = canvasProjectId;
     if (!pid) {
       setMessages([]);
+      setHermesTerminal(EMPTY_HERMES_TERMINAL_STATE);
       return;
     }
+    setHermesTerminal(EMPTY_HERMES_TERMINAL_STATE);
     const ctrl = new AbortController();
     let cancelled = false;
     void loadSessionHistory({ projectId: pid, conversationId: 'main', signal: ctrl.signal })
@@ -1905,6 +1914,7 @@ export default function AgentBuilder(): React.ReactElement {
             }
           : {}),
         onEvent: (event) => {
+          setHermesTerminal((current) => reduceHermesTerminalEvent(current, event));
           if (event.kind === 'text') {
             // Real model text streams into the chat — creates the assistant bubble on
             // the first token, appends to it afterward. Nothing renders before this.
@@ -1924,6 +1934,10 @@ export default function AgentBuilder(): React.ReactElement {
         })
         .catch((error: unknown) => {
           setNativeSessionBusy(false);
+          setHermesTerminal((current) => reduceHermesTerminalEvent(current, {
+            kind: 'error',
+            message: error instanceof Error ? error.message : 'Hermes stream cancelled.',
+          }));
           if (error instanceof SessionStreamError) {
             const correlation = error.correlationId ? ` Correlation: ${error.correlationId}.` : '';
             appendAssistantText(`Chat failed (${error.code}).${correlation}`);
@@ -1943,8 +1957,8 @@ export default function AgentBuilder(): React.ReactElement {
     // Normal chat is the primary interaction surface: BuilderChat speaking to the
     // persistent Harness session, with compact real per-turn work shown inline
     // beneath the active assistant message (HarnessWork). The primary (non-compact)
-    // surface keeps a near-invisible pull-tab that reveals the Hermes review/memory
-    // feed beneath chat; the separate Code Console remains its own developer tool.
+    // surface keeps a near-invisible pull-tab that reveals the active native
+    // Hermes child stream beneath chat; the Code Console remains separate.
     const chat = (
       <BuilderChat
         messages={messages}
@@ -1964,9 +1978,7 @@ export default function AgentBuilder(): React.ReactElement {
         ) : (
           <HarnessChatPanel
             chat={chat}
-            // The pull-up under-chat surface IS Hermes (one surface; real
-            // activity only). Terminal work = Code Console via the rail.
-            hermes={<HermesConsole defaultExpanded />}
+            hermes={<HermesConsole terminal={hermesTerminal} />}
           />
         )}
       </div>

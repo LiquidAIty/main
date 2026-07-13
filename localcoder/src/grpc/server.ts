@@ -29,6 +29,23 @@ const MAG_ONE_DESCRIBE_TOOL_NAME = 'mcp__liquidaity__mag_one_describe_connected_
 // official Python MCP host, qualified per the runtime's own MCP naming).
 const CARD_RUN_CONTROL_TOOL_NAME = 'mcp__liquidaity__card_run_assistant_agent'
 
+export const CONCURRENT_REQUEST_ERROR = {
+  message: 'A request is already in progress on this stream',
+  code: 'ALREADY_EXISTS',
+} as const
+
+/** Preserve one active native turn per gRPC stream. */
+export function concurrentRequestError(engineActive: boolean): typeof CONCURRENT_REQUEST_ERROR | null {
+  return engineActive ? CONCURRENT_REQUEST_ERROR : null
+}
+
+/** Cancellation always reaches the active QueryEngine when one exists. */
+export function interruptActiveRequest(engine: Pick<QueryEngine, 'interrupt'> | null): boolean {
+  if (!engine) return false
+  engine.interrupt()
+  return true
+}
+
 /** Trusted identity resolution for a doorway child's card-run control call.
  * The model supplies only { cardId, input }; this forces the child's BOUND
  * card id and injects the real session identity — the model can neither pick
@@ -276,13 +293,9 @@ export class GrpcServer {
     call.on('data', async (clientMessage) => {
       try {
         if (clientMessage.request) {
-          if (engine) {
-            call.write({
-              error: {
-                message: 'A request is already in progress on this stream',
-                code: 'ALREADY_EXISTS'
-              }
-            })
+          const duplicateError = concurrentRequestError(Boolean(engine))
+          if (duplicateError) {
+            call.write({ error: duplicateError })
             return
           }
           interrupted = false
@@ -479,9 +492,7 @@ export class GrpcServer {
           }
         } else if (clientMessage.cancel) {
           interrupted = true
-          if (engine) {
-            engine.interrupt()
-          }
+          interruptActiveRequest(engine)
           call.end()
         }
       } catch (err: any) {
@@ -502,9 +513,7 @@ export class GrpcServer {
       for (const resolve of pendingRequests.values()) {
         resolve('no')
       }
-      if (engine) {
-        engine.interrupt()
-      }
+      interruptActiveRequest(engine)
       engine = null
       pendingRequests.clear()
     })

@@ -1,7 +1,7 @@
 import { feature } from 'bun:bundle';
 import * as React from 'react';
 import { buildTool, type ToolDef, toolMatchesName } from 'src/Tool.js';
-import type { Message as MessageType, NormalizedUserMessage } from 'src/types/message.js';
+import type { Message as MessageType, NormalizedUserMessage, StreamEvent } from 'src/types/message.js';
 import { getQuerySourceForAgent } from 'src/utils/promptCategory.js';
 import { z } from 'zod/v4';
 import { clearInvokedSkillsForAgent, getSdkAgentProgressSummariesEnabled } from '../../bootstrap/state.js';
@@ -190,9 +190,29 @@ export type RemoteLaunchedOutput = {
 };
 type InternalOutput = Output | TeammateSpawnedOutput | RemoteLaunchedOutput;
 import type { AgentToolProgress, ShellProgress } from '../../types/tools.js';
+export type AgentTextDeltaProgress = {
+  type: 'agent_text_delta';
+  agentId: string;
+  agentType: string;
+  text: string;
+};
 // AgentTool forwards both its own progress events and shell progress
 // events from the sub-agent so the SDK receives tool_progress updates during bash/powershell runs.
-export type Progress = AgentToolProgress | ShellProgress;
+export type Progress = AgentToolProgress | ShellProgress | AgentTextDeltaProgress;
+
+/** Extract only visible child prose. Tool calls/results and protocol events
+ * keep their existing progress paths and are never duplicated here. */
+export function agentTextDeltaProgress(
+  message: StreamEvent,
+  agentId: string,
+  agentType: string,
+): AgentTextDeltaProgress | null {
+  if (message.event.type !== 'content_block_delta') return null;
+  if (message.event.delta.type !== 'text_delta') return null;
+  const text = message.event.delta.text;
+  if (!text) return null;
+  return { type: 'agent_text_delta', agentId, agentType, text };
+}
 
 /** Resolve the child task text after the selected agent is known. Named
  * inherit-parent agents may intentionally receive no task prompt because their
@@ -923,6 +943,15 @@ export const AgentTool = buildTool({
           override: {
             ...runAgentParams.override,
             agentId: syncAgentId
+          },
+          onStreamEvent: message => {
+            if (!onProgress) return;
+            const data = agentTextDeltaProgress(message, syncAgentId, selectedAgent.agentType);
+            if (!data) return;
+            onProgress({
+              toolUseID: `agent_${assistantMessage.message.id}`,
+              data
+            });
           },
           onCacheSafeParams: summaryTaskId && getSdkAgentProgressSummariesEnabled() ? (params: CacheSafeParams) => {
             const {

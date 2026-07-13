@@ -19,8 +19,6 @@ import {
   type GrpcTurnHandle,
 } from '../coder/openclaude/session/grpcChatClient';
 import {
-  beginHermesInvestigation,
-  endHermesInvestigation,
   parseHermesInvestigationContext,
   readLatestHermesReport,
   readActiveHermesReport,
@@ -528,10 +526,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
   // the SSE stream or browser behavior — it only makes the real Harness events
   // (already flowing to the browser) legible in the backend dev terminal.
   const correlationId = `req_${randomUUID().slice(0, 8)}`;
-  // Hermes is available for every native Main turn. Selected graph records, if
-  // supplied, are only focus hints; the real shared assignment is the project
-  // ThinkGraph plus the inherited live conversation.
-  beginHermesInvestigation(correlationId, investigationContext);
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -748,7 +742,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
   } finally {
     turnFinished = true;
     activeGrpcTurns.delete(sessionId);
-    endHermesInvestigation(correlationId);
     writeSse('end', {});
     if (!res.destroyed && !res.writableEnded) res.end();
   }

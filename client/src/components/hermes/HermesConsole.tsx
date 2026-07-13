@@ -1,183 +1,228 @@
-import { useCallback, useEffect, useState } from 'react';
-
 /**
- * Hermes console — the under-chat review/memory surface.
- *
- * Renders the REAL Hermes activity feed from the backend buffer
- * (`GET /api/coder/hermes/activity`): review verdicts, planned ThinkGraph
- * writes, detected patterns, and honest blocked markers. It never invents
- * activity and never fakes graph writes — an empty feed says so plainly.
- *
- * This is NOT the Code Console and NOT the Local Coder terminal: those live on
- * the rail Terminal icon (the Code Console), never under chat. Collapsed
- * by default to a single latest-activity line; click to expand the feed.
+ * The hidden under-chat terminal for Main's one native Hermes Agent child.
+ * It consumes the current Harness SSE stream only: no polling, second session,
+ * report artifact, or inferred agent identity.
  */
 
-export type HermesActivityEntry = {
+export type HermesTerminalStatus = 'idle' | 'running' | 'completed' | 'error';
+
+export type HermesTerminalActivity = {
   id: string;
-  timestamp: string;
-  type:
-    | 'review_started'
-    | 'review_complete'
-    | 'thinkgraph_write_planned'
-    | 'thinkgraph_write_complete'
-    | 'pattern_detected'
-    | 'context_query'
-    | 'blocked'
-    | 'idle';
-  summary: string;
-  detail?: string | null;
-  runId?: string | null;
-  featureId?: string | null;
+  text: string;
+  failed: boolean;
 };
 
-export type HermesActivityFetchResult =
-  | { ok: true; activity: HermesActivityEntry[] }
-  | { ok: false; error: string };
+export type HermesTerminalState = {
+  invocationId: string | null;
+  objective: string;
+  status: HermesTerminalStatus;
+  responseText: string;
+  error: string | null;
+  childToolUseIds: string[];
+  activity: HermesTerminalActivity[];
+};
 
-async function fetchHermesActivityFromBackend(): Promise<HermesActivityFetchResult> {
+export type HermesStreamEvent = {
+  kind: string;
+  toolName?: unknown;
+  toolUseId?: unknown;
+  invokingCardId?: unknown;
+  argsJson?: unknown;
+  output?: unknown;
+  isError?: unknown;
+  parentToolUseId?: unknown;
+  data?: unknown;
+  message?: unknown;
+  code?: unknown;
+};
+
+export const EMPTY_HERMES_TERMINAL_STATE: HermesTerminalState = {
+  invocationId: null,
+  objective: '',
+  status: 'idle',
+  responseText: '',
+  error: null,
+  childToolUseIds: [],
+  activity: [],
+};
+
+const HERMES_CARD_ID = 'card_hermes_steward';
+
+function text(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function parseHermesObjective(argsJson: unknown): string | null {
   try {
-    const response = await fetch('/api/coder/hermes/activity?limit=100');
-    const payload = await response.json();
-    if (!response.ok || payload?.ok !== true || !Array.isArray(payload.activity)) {
-      return { ok: false, error: String(payload?.error || `http_${response.status}`) };
-    }
-    return { ok: true, activity: payload.activity as HermesActivityEntry[] };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'hermes_activity_unreachable' };
+    const input = JSON.parse(text(argsJson) || '{}') as Record<string, unknown>;
+    if (input.subagent_type !== HERMES_CARD_ID) return null;
+    return text(input.prompt).trim() || text(input.description).trim() || 'Inherited Main conversation';
+  } catch {
+    return null;
   }
 }
 
-const EMPTY_STATE_TEXT = 'Hermes has not reviewed a run yet.';
+function appendActivity(
+  state: HermesTerminalState,
+  entry: HermesTerminalActivity,
+): HermesTerminalState {
+  if (state.activity.some((candidate) => candidate.id === entry.id)) return state;
+  return { ...state, activity: [...state.activity, entry] };
+}
 
-function entryTimeLabel(entry: HermesActivityEntry): string {
-  const match = /T(\d{2}:\d{2})/.exec(entry.timestamp || '');
-  return match ? match[1] : '';
+/** Pure event reducer. The active Agent tool-use id and engine-supplied card
+ * identity are the only routing signals; prose and tool names never select an
+ * agent. The final Agent result replaces the accumulated deltas, reconciling
+ * the authoritative terminal value without rendering the prose twice. */
+export function reduceHermesTerminalEvent(
+  state: HermesTerminalState,
+  event: HermesStreamEvent,
+): HermesTerminalState {
+  if (event.kind === 'tool_start' && event.toolName === 'Agent') {
+    const objective = parseHermesObjective(event.argsJson);
+    if (objective === null) return state;
+    return {
+      invocationId: text(event.toolUseId),
+      objective,
+      status: 'running',
+      responseText: '',
+      error: null,
+      childToolUseIds: [],
+      activity: [],
+    };
+  }
+
+  if (!state.invocationId) return state;
+
+  if (event.kind === 'tool_start' && event.invokingCardId === HERMES_CARD_ID) {
+    const toolUseId = text(event.toolUseId);
+    const toolName = text(event.toolName) || 'tool';
+    const next = appendActivity(state, {
+      id: `start:${toolUseId}`,
+      text: `${toolName} started`,
+      failed: false,
+    });
+    return next.childToolUseIds.includes(toolUseId)
+      ? next
+      : { ...next, childToolUseIds: [...next.childToolUseIds, toolUseId] };
+  }
+
+  if (event.kind === 'progress' && event.parentToolUseId === state.invocationId) {
+    const data = event.data && typeof event.data === 'object'
+      ? event.data as Record<string, unknown>
+      : null;
+    if (data?.type !== 'agent_text_delta' || data.agentType !== HERMES_CARD_ID) return state;
+    const delta = text(data.text);
+    return delta ? { ...state, responseText: state.responseText + delta } : state;
+  }
+
+  if (event.kind === 'tool_result') {
+    const toolUseId = text(event.toolUseId);
+    if (toolUseId === state.invocationId) {
+      const output = text(event.output);
+      const failed = Boolean(event.isError);
+      return {
+        ...state,
+        status: failed ? 'error' : 'completed',
+        responseText: output || state.responseText,
+        error: failed ? output || 'Hermes child failed.' : null,
+      };
+    }
+    if (state.childToolUseIds.includes(toolUseId)) {
+      const failed = Boolean(event.isError);
+      return appendActivity(state, {
+        id: `result:${toolUseId}`,
+        text: `${text(event.toolName) || 'tool'} ${failed ? 'failed' : 'completed'}`,
+        failed,
+      });
+    }
+  }
+
+  if (event.kind === 'error' && state.status === 'running') {
+    const reason = text(event.message) || text(event.code) || 'Hermes stream failed.';
+    return { ...state, status: 'error', error: reason };
+  }
+
+  return state;
 }
 
 export type HermesConsoleProps = {
-  /** Injectable for tests; defaults to the real backend activity endpoint. */
-  fetchActivity?: () => Promise<HermesActivityFetchResult>;
-  /** Start with the feed open — used when Hermes IS the pull-up surface. */
-  defaultExpanded?: boolean;
+  terminal: HermesTerminalState;
 };
 
-export default function HermesConsole({
-  fetchActivity = fetchHermesActivityFromBackend,
-  defaultExpanded = false,
-}: HermesConsoleProps) {
-  const [entries, setEntries] = useState<HermesActivityEntry[]>([]);
-  const [fetchError, setFetchError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(defaultExpanded);
-
-  const refresh = useCallback(async () => {
-    const result = await fetchActivity();
-    if (result.ok) {
-      setEntries(result.activity);
-      setFetchError(null);
-    } else {
-      setFetchError(result.error);
-    }
-  }, [fetchActivity]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  const latest = entries.length ? entries[entries.length - 1] : null;
-  const collapsedLine = fetchError
-    ? `Hermes activity unavailable: ${fetchError}`
-    : latest
-      ? `[${entryTimeLabel(latest)}] ${latest.summary}`
-      : EMPTY_STATE_TEXT;
+export default function HermesConsole({ terminal }: HermesConsoleProps) {
+  const statusLabel = terminal.status === 'running'
+    ? 'running'
+    : terminal.status === 'completed'
+      ? 'complete'
+      : terminal.status;
 
   return (
     <div
       data-testid="hermes-console"
+      data-status={terminal.status}
       style={{
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
         minHeight: 0,
+        color: 'rgba(214,222,235,0.86)',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
         fontSize: 12,
-        color: 'rgba(214,222,235,0.82)',
       }}
     >
-      <button
-        type="button"
-        data-testid="hermes-console-toggle"
-        aria-expanded={expanded}
-        onClick={() => {
-          const next = !expanded;
-          setExpanded(next);
-          if (next) void refresh();
-        }}
+      <div
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 8,
-          width: '100%',
-          padding: '6px 14px',
-          background: 'transparent',
-          border: 'none',
-          color: 'inherit',
-          cursor: 'pointer',
-          textAlign: 'left',
+          padding: '7px 12px',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
         }}
       >
-        <span style={{ opacity: 0.65, fontWeight: 600, letterSpacing: 0.4 }}>Hermes</span>
-        {!expanded ? (
-          <span
-            data-testid="hermes-console-latest"
-            style={{
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              opacity: latest || fetchError ? 0.9 : 0.55,
-            }}
-          >
-            {collapsedLine}
-          </span>
+        <span style={{ color: 'rgba(77,211,210,0.92)', fontWeight: 700 }}>Hermes</span>
+        <span data-testid="hermes-terminal-status" style={{ opacity: 0.55 }}>{statusLabel}</span>
+        {terminal.status === 'running' ? (
+          <span aria-hidden="true" style={{ marginLeft: 'auto', color: 'rgba(77,211,210,0.8)' }}>●</span>
         ) : null}
-        <span style={{ marginLeft: 'auto', opacity: 0.5 }}>{expanded ? '▾' : '▴'}</span>
-      </button>
+      </div>
 
-      {expanded ? (
-        <div
-          data-testid="hermes-console-feed"
-          style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 14px 10px' }}
-        >
-          {fetchError ? (
-            <div data-testid="hermes-console-error" style={{ opacity: 0.8 }}>
-              Hermes activity unavailable: {fetchError}
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '9px 12px 12px' }}>
+        {terminal.status === 'idle' ? (
+          <div data-testid="hermes-terminal-empty" style={{ opacity: 0.5 }}>
+            Hermes is ready beneath Main Chat.
+          </div>
+        ) : (
+          <>
+            <div data-testid="hermes-terminal-objective" style={{ opacity: 0.62, marginBottom: 8 }}>
+              objective: {terminal.objective}
             </div>
-          ) : entries.length === 0 ? (
-            <div data-testid="hermes-console-empty" style={{ opacity: 0.6 }}>
-              {EMPTY_STATE_TEXT}
-            </div>
-          ) : (
-            entries.map((entry) => (
+            {terminal.activity.map((entry) => (
               <div
                 key={entry.id}
-                data-testid="hermes-console-row"
-                data-entry-type={entry.type}
-                style={{
-                  padding: '3px 0',
-                  borderBottom: '1px solid rgba(255,255,255,0.04)',
-                  opacity: entry.type === 'blocked' ? 1 : 0.85,
-                  color: entry.type === 'blocked' ? 'rgba(255,176,158,0.95)' : 'inherit',
-                }}
+                data-testid="hermes-terminal-activity"
+                data-failed={entry.failed ? 'true' : 'false'}
+                style={{ color: entry.failed ? 'rgba(248,113,113,0.9)' : 'rgba(148,163,184,0.75)' }}
               >
-                <span style={{ opacity: 0.5, marginRight: 8 }}>[{entryTimeLabel(entry)}]</span>
-                {entry.summary}
-                {entry.detail ? (
-                  <div style={{ opacity: 0.55, paddingLeft: 44 }}>{entry.detail}</div>
-                ) : null}
+                {entry.failed ? '×' : '·'} {entry.text}
               </div>
-            ))
-          )}
-        </div>
-      ) : null}
+            ))}
+            {terminal.responseText ? (
+              <div
+                data-testid="hermes-terminal-response"
+                style={{ whiteSpace: 'pre-wrap', lineHeight: 1.48, marginTop: 9 }}
+              >
+                {terminal.responseText}
+              </div>
+            ) : null}
+            {terminal.error ? (
+              <div data-testid="hermes-terminal-error" style={{ color: 'rgba(248,113,113,0.9)', marginTop: 8 }}>
+                {terminal.error}
+              </div>
+            ) : null}
+          </>
+        )}
+      </div>
     </div>
   );
 }

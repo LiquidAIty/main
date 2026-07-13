@@ -20,11 +20,7 @@ import { resolveDirectSubagents } from '../../../cards/runtime';
 import { resolveModel } from '../../../llm/models.config';
 import { HARNESS_MCP_TOOL_SPECS } from '../../../contracts/runtimeContracts';
 import { logHarnessTrace } from '../../../services/harnessTrace';
-import {
-  readLatestHermesReport,
-  type HermesInvestigationContext,
-  type HermesReportArtifact,
-} from '../../hermes/hermesReportArtifact';
+import type { HermesInvestigationContext } from '../../hermes/hermesReportArtifact';
 
 export type GrpcSessionEvent =
   | { kind: 'text'; text: string }
@@ -45,6 +41,24 @@ export type GrpcSessionEvent =
   | { kind: 'permission'; promptId: string; question: string; promptType: string }
   | { kind: 'done'; fullText: string }
   | { kind: 'error'; message: string; code?: string };
+
+/** Decode the generic gRPC progress envelope without interpreting child
+ * content. The parent tool-use link and opaque data_json are preserved exactly
+ * for the browser's structurally scoped Hermes reducer. */
+export function decodeGrpcProgressEvent(progress: any): Extract<GrpcSessionEvent, { kind: 'progress' }> {
+  let data: unknown = null;
+  try {
+    data = JSON.parse(String(progress?.data_json || 'null'));
+  } catch {
+    data = { type: 'invalid_progress_json', raw: String(progress?.data_json || '') };
+  }
+  return {
+    kind: 'progress',
+    toolUseId: String(progress?.tool_use_id || ''),
+    parentToolUseId: String(progress?.parent_tool_use_id || ''),
+    data,
+  };
+}
 
 export type GrpcTurnArgs = {
   sessionId: string;
@@ -108,7 +122,6 @@ export function buildHarnessRuntimeContext(
   parentRunId?: string,
   options: {
     investigationContext?: HermesInvestigationContext;
-    activeHermesReport?: HermesReportArtifact | null;
   } = {},
 ): string | null {
   const parsed = parseSessionId(sessionId);
@@ -120,22 +133,6 @@ export function buildHarnessRuntimeContext(
     `active conversationId: ${parsed.conversationId}`,
     ...(parentRunId ? [`active parentRunId: ${parentRunId}`] : []),
     'Use these exact values for LiquidAIty MCP tool calls. Never derive an id from the working directory, repository name, or session label.',
-    ...(options.activeHermesReport
-      ? [
-          '',
-          '[LIQUIDAITY_HERMES_ACTIVE_REPORT]',
-          JSON.stringify({
-            reportId: options.activeHermesReport.reportId,
-            summary: options.activeHermesReport.summary,
-            updatedAt: options.activeHermesReport.updatedAt,
-            revision: options.activeHermesReport.revision,
-            linkedThinkGraphNodeIds: options.activeHermesReport.linkedThinkGraphNodeIds.slice(0, 32),
-            linkedKnowGraphRefs: options.activeHermesReport.linkedKnowGraphRefs.slice(0, 32),
-            linkedCodeGraphRefs: options.activeHermesReport.linkedCodeGraphRefs.slice(0, 32),
-          }),
-          'This is a bounded view of the current durable Hermes report. Use it as project context; the report artifact remains authoritative and its long-form body is not chat output.',
-        ]
-      : []),
     ...(options.investigationContext
       ? [
           '',
@@ -163,8 +160,6 @@ function parseSessionId(sessionId: string): { projectId: string; conversationId:
  * A fixed identity constant, not a mapping. */
 const CARD_RUN_CONTROL_TOOL = 'mcp__liquidaity__card_run_assistant_agent';
 const HARNESS_TURN_TIMEOUT_MS = 120_000;
-const HERMES_REPORT_COMPLETION_GRACE_MS = 30_000;
-const HERMES_REPORT_WRITER_TOOL = 'mcp__liquidaity__hermes_write_report';
 
 export function resolveHarnessTimeoutDeadline(
   currentDeadlineMs: number,
@@ -223,10 +218,10 @@ export function doorwayWhenToUse(binding: string, title: string): string {
       'when you need a result before continuing, pass a bounded scoped assignment ' +
       'as the prompt (desired analysis/report outcome and stop condition, under 80 words). ' +
       'Never copy project graph contents into the prompt or ask Hermes to mutate ThinkGraph; ' +
-      'it reads the graph itself and recommends changes in its report for Main to apply. ' +
+      'it reads the graph itself and returns recommendations in its normal response for Main to apply. ' +
       'wait for it; omit the prompt only for pure inherited-context preparation. ' +
       'Either way Hermes inherits the complete live parent conversation, works its ' +
-      'graph/memory tools and its own direct agents, and revises its Inspector report. ' +
+      'graph/memory tools and its own direct agents, then returns its normal useful response. ' +
       'Only when explicitly asked for a Run Plan, Hermes writes the existing ' +
       'handoff/<jobId>/prompt.md and returns its path/job metadata for Main to present. ' +
       'Hermes never runs Mag One and never becomes a worker; Main launches the reviewed ' +
@@ -376,7 +371,6 @@ export type MainChatRuntimeConfig = {
   /** The main_chat card's Tools selection — the parent session's real MCP
    * grant, enforced by the gRPC server's parent pool filter. */
   parentAllowedMcpTools: string[];
-  activeHermesReport: HermesReportArtifact | null;
 };
 
 /**
@@ -431,7 +425,6 @@ export async function resolveMainChatRuntimeConfig(
     const uiProvider = String(card?.runtimeOptions?.provider || '').trim().toLowerCase();
     if (uiProvider && uiProvider !== resolved.provider) return null;
     const edges: any[] = Array.isArray((doc?.deck as any)?.edges) ? (doc!.deck as any).edges : [];
-    const activeHermesReport = readLatestHermesReport(parsed.projectId, parsed.conversationId);
     return {
       cardId: String(card?.id || ''),
       title: String(card?.title || card?.id || ''),
@@ -452,7 +445,7 @@ export async function resolveMainChatRuntimeConfig(
               sessionId,
               parentRunId,
               binding === 'hermes_steward'
-                ? { investigationContext, activeHermesReport }
+                ? { investigationContext }
                 : {},
             ),
             {
@@ -464,7 +457,6 @@ export async function resolveMainChatRuntimeConfig(
         })
         .filter((def): def is Record<string, unknown> => Boolean(def)),
       parentAllowedMcpTools: cardMcpToolGrants(card),
-      activeHermesReport,
     };
   } catch {
     return null;
@@ -578,17 +570,6 @@ export async function startGrpcTurn(
           invokingCardId: resolveCaller(agentType),
         });
       } else if (msg.tool_result) {
-        // A durable Hermes report is already written. The native child still
-        // needs a short window to return its metadata to Main; do not cancel
-        // that handoff merely because the full parent budget is expiring.
-        if (
-          msg.tool_result.tool_name === HERMES_REPORT_WRITER_TOOL &&
-          !Boolean(msg.tool_result.is_error)
-        ) {
-          // Ensure at least this much completion time remains, but never shorten
-          // the original parent-turn budget after a successful durable write.
-          armTimeout(HERMES_REPORT_COMPLETION_GRACE_MS, true);
-        }
         safeOnEvent({
           kind: 'tool_result',
           toolName: msg.tool_result.tool_name,
@@ -597,18 +578,7 @@ export async function startGrpcTurn(
           isError: Boolean(msg.tool_result.is_error),
         });
       } else if (msg.progress) {
-        let data: unknown = null;
-        try {
-          data = JSON.parse(String(msg.progress.data_json || 'null'));
-        } catch {
-          data = { type: 'invalid_progress_json', raw: String(msg.progress.data_json || '') };
-        }
-        safeOnEvent({
-          kind: 'progress',
-          toolUseId: String(msg.progress.tool_use_id || ''),
-          parentToolUseId: String(msg.progress.parent_tool_use_id || ''),
-          data,
-        });
+        safeOnEvent(decodeGrpcProgressEvent(msg.progress));
       } else if (msg.action_required) {
         safeOnEvent({
           kind: 'permission',
@@ -656,9 +626,7 @@ export async function startGrpcTurn(
   const doorwayDefinitions = mainChatConfig.doorwayDefinitions;
   callerDoorwayCardIds = doorwayDefinitions.map((def: any) => String(def?.card_id || '')).filter(Boolean);
   callerParentCardId = mainChatConfig.cardId;
-  const runtimeContext = buildHarnessRuntimeContext(args.sessionId, args.traceId, {
-    activeHermesReport: mainChatConfig.activeHermesReport,
-  });
+  const runtimeContext = buildHarnessRuntimeContext(args.sessionId, args.traceId);
   const appendSystemPrompt = [mainChatConfig.prompt, runtimeContext]
     .filter((section): section is string => Boolean(section))
     .join('\n\n') || null;
