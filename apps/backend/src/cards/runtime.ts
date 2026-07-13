@@ -101,6 +101,33 @@ function isMagenticControlEdge(edge: any, magenticCardId: string): boolean {
   return type === 'magentic_option' && busSideHandle(edge, magenticCardId) === MAG_ONE_CONTROL_HANDLE;
 }
 
+/** Resolve the enabled top-level cards structurally authorized to submit to
+ * this Mag One card. Control edges never make these cards workers. */
+export function resolvedMagenticControllers(
+  magenticCardId: string,
+  visibleNodes: any[],
+  visibleEdges: any[],
+): any[] {
+  const nodeMap = new Map(visibleNodes.map((node) => [node.id, node]));
+  const seen = new Set<string>();
+  return visibleEdges
+    .filter(
+      (edge) =>
+        (edge.source === magenticCardId || edge.target === magenticCardId) &&
+        isMagenticControlEdge(edge, magenticCardId) &&
+        edge.source !== edge.target,
+    )
+    .map((edge) => nodeMap.get(edge.source === magenticCardId ? edge.target : edge.source))
+    .filter((node): node is any => Boolean(node && node.kind === 'agent'))
+    .filter((node) => !String(node.parentGraphId || '').trim())
+    .filter((node) => node?.enabled !== false && node?.runtimeOptions?.enabled !== false)
+    .filter((node) => {
+      if (seen.has(node.id)) return false;
+      seen.add(node.id);
+      return true;
+    });
+}
+
 function resolveCardRuntimeType(card: any): string {
   return card.kind === 'agent'
     ? (card.runtimeType || 'assistant_agent')

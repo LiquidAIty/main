@@ -204,6 +204,7 @@ for (const name of [
   'codegraph.search',
   'hermes.memory_read',
   'hermes.memory_write',
+  'hermes.read_report',
   'hermes.write_report',
   'mag_one.describe_connected_agents',
   'write_mag_one_instructions',

@@ -5,9 +5,9 @@
 // Handlers behind the LiquidAIty-owned MCP boundary that sits BELOW the OpenClaude
 // QueryEngine session:
 //   - describe_connected_agents : read the connected, bus-eligible (magentic_option)
-//                                 Mag One Agent Cards + their capabilities, so the
-//                                 Harness can write a run_mag_one prompt
-//   - run_mag_one               : run regular native Mag One from a Harness-authored
+//                                 Mag One Agent Cards + their capabilities for Run Plan review
+//   - run_mag_one               : run regular native Mag One from a Hermes-prepared,
+//                                 Main-presented, user-accepted
 //                                 Markdown orchestration prompt (used verbatim — no
 //                                 plan, no task object, no approval/visible-flow gate)
 //
@@ -15,7 +15,8 @@
 // write graph memory, and never fabricate agents/tools/outputs.
 
 import { getDeckDocument } from '../../../decks/store';
-import { resolvedMagenticOptions, runCardWithContract } from '../../../cards/runtime';
+import { resolvedMagenticControllers, resolvedMagenticOptions, runCardWithContract } from '../../../cards/runtime';
+import { resolveRuntimeBinding } from '../../../contracts/runtimeBinding';
 import { recordAgentEvent } from '../../../services/agentTelemetry';
 import { resolveCoderWorkspaceRoot } from '../../workspaceRoot';
 import { closeSync, existsSync, openSync, readdirSync, statSync, writeFileSync } from 'node:fs';
@@ -42,8 +43,8 @@ export type AgentFlowDeps = {
 };
 
 // ── mag_one.describe_connected_agents ─────────────────────────────────────────
-// The ONE read tool Harness uses to see the Mag One team before writing the
-// run_mag_one prompt: the currently connected, bus-eligible (magentic_option)
+// The ONE read tool used to see the Mag One team while preparing/reviewing the
+// Run Plan: the currently connected, bus-eligible (magentic_option)
 // Agent Cards and their actual capabilities. Read-only, deck-authentic — no
 // visible-flow fields, no plan/task/approval/mission wording, nothing invented.
 export type ConnectedAgent = {
@@ -104,7 +105,7 @@ export async function describeConnectedAgents(
 }
 
 // ── run_mag_one ───────────────────────────────────────────────────────────────
-// The ONE Mag One entrypoint: a Harness-authored Markdown orchestration prompt
+// The ONE Mag One entrypoint: a Hermes-prepared, Main-presented, user-accepted Markdown prompt
 // runs regular native Mag One. No structured plan, no plan.objective, no
 // prompt-to-plan adapter, no task ledger gate, no approval gate, no visible-flow
 // task-by-task wrapper. The Markdown string IS Mag One's job; Mag One reasons
@@ -237,6 +238,16 @@ export async function runMagOne(
   const orchestrator = nodes.find(isMagenticCard);
   if (!orchestrator) {
     throw new Error('run_mag_one_no_orchestrator_card');
+  }
+  const mainControllers = resolvedMagenticControllers(asString(orchestrator.id), nodes, edges).filter(
+    (card) =>
+      resolveRuntimeBinding(
+        card?.runtimeOptions?.binding ?? card?.runtimeBinding ?? card?.binding,
+        card?.id,
+      ) === 'main_chat',
+  );
+  if (mainControllers.length !== 1) {
+    throw new Error('run_mag_one_main_control_not_authorized: exactly one live main_chat magentic_control edge is required');
   }
   // The eligible worker roster resolves ONLY from the live blue side
   // connections — the same resolution the runtime uses. The job folder never

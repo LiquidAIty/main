@@ -13,6 +13,7 @@ const DECK = {
   name: 'Builder Deck',
   nodes: [
     { id: 'card_magentic', kind: 'agent', runtimeType: 'magentic_one', title: 'Mag One' },
+    { id: 'card_main_chat', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'main_chat', title: 'Main' },
     {
       id: 'card_research',
       kind: 'agent',
@@ -22,7 +23,10 @@ const DECK = {
     },
     { id: 'card_lonely', kind: 'agent', runtimeType: 'assistant_agent', title: 'Disconnected' },
   ],
-  edges: [{ id: 'e1', source: 'card_magentic', target: 'card_research', edgeType: 'magentic_option' }],
+  edges: [
+    { id: 'control', source: 'card_main_chat', target: 'card_magentic', targetHandle: 'task-bus-top', edgeType: 'magentic_control' },
+    { id: 'e1', source: 'card_magentic', target: 'card_research', edgeType: 'magentic_option' },
+  ],
 };
 
 function deps(over: Partial<AgentFlowDeps> = {}): AgentFlowDeps {
@@ -112,6 +116,14 @@ describe('runMagOne — canonical job-folder handoff', () => {
         deps({ loadDeck: vi.fn(async () => ({ deck: { id: 'd', name: 'x', nodes: [], edges: [] }, latestRun: null, runs: [], meta: {} })) as any }),
       ),
     ).rejects.toThrow(/run_mag_one_no_orchestrator_card/);
+  });
+
+  it('fails closed without exactly one live Main magentic_control edge', async () => {
+    const deckWithoutControl = { ...DECK, edges: DECK.edges.filter((edge) => edge.edgeType !== 'magentic_control') };
+    await expect(runMagOne(
+      { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_abc' },
+      deps({ loadDeck: vi.fn(async () => ({ deck: deckWithoutControl, latestRun: null, runs: [], meta: {} })) as any }),
+    )).rejects.toThrow(/run_mag_one_main_control_not_authorized/);
   });
 });
 

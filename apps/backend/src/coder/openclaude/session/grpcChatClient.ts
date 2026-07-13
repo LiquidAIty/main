@@ -166,6 +166,16 @@ const HARNESS_TURN_TIMEOUT_MS = 120_000;
 const HERMES_REPORT_COMPLETION_GRACE_MS = 30_000;
 const HERMES_REPORT_WRITER_TOOL = 'mcp__liquidaity__hermes_write_report';
 
+export function resolveHarnessTimeoutDeadline(
+  currentDeadlineMs: number,
+  nowMs: number,
+  timeoutMs: number,
+  extendOnly = false,
+): number {
+  const candidate = nowMs + timeoutMs;
+  return extendOnly ? Math.max(currentDeadlineMs, candidate) : candidate;
+}
+
 /** The saved card's Tools selection, filtered to harness MCP tool names — the
  * REAL per-card MCP grant (enforced as the child's allowed_tools / the
  * parent's pool filter). No card selection → no MCP tools; never a hidden
@@ -207,17 +217,19 @@ export function doorwayWhenToUse(binding: string, title: string): string {
   if (binding === 'hermes_steward') {
     return (
       'Invoke your context and planning steward when a turn benefits from deeper ' +
-      'preparation: memory enrichment, research shaping, source ingestion, or ' +
-      'job-folder work. This runs FOREGROUND and returns one terminal result — ' +
+      'preparation: project-graph investigation, research shaping, source ingestion, ' +
+      'CodeGraph inspection, or an explicitly requested Run Plan. This runs FOREGROUND ' +
+      'and returns one terminal result — ' +
       'when you need a result before continuing, pass a bounded scoped assignment ' +
       'as the prompt (what to prepare, which evidence, the stop condition) and ' +
       'wait for it; omit the prompt only for pure inherited-context preparation. ' +
       'Either way Hermes inherits the complete live parent conversation, works its ' +
-      'graph/memory tools and its own direct agents, and writes supporting files ' +
-      'under handoff/<jobId>/. Hermes never writes the approved prompt.md, never ' +
-      'runs Mag One, and never becomes a worker — Main Chat reviews the files, ' +
-      'writes prompt.md last, and launches by jobId only on an explicit user ' +
-      'request. Model judgment decides when to invoke; no fixed cadence.'
+      'graph/memory tools and its own direct agents, and revises its Inspector report. ' +
+      'Only when explicitly asked for a Run Plan, Hermes writes the existing ' +
+      'handoff/<jobId>/prompt.md and returns its path/job metadata for Main to present. ' +
+      'Hermes never runs Mag One and never becomes a worker; Main launches the reviewed ' +
+      'job only after explicit user acceptance. Model judgment decides when to invoke; ' +
+      'no fixed cadence.'
     );
   }
   if (binding === 'research_agent') {
@@ -505,6 +517,7 @@ export async function startGrpcTurn(
   let accumulated = '';
   let terminal = false;
   let timeoutHandle: NodeJS.Timeout | null = null;
+  let timeoutDeadlineMs = 0;
   let rejectDone: ((reason?: unknown) => void) | null = null;
 
   // Caller-identity resolution config. Assigned from the REAL resolved session
@@ -528,8 +541,12 @@ export async function startGrpcTurn(
     }
   };
 
-  const armTimeout = (timeoutMs: number): void => {
+  const armTimeout = (timeoutMs: number, extendOnly = false): void => {
+    const nowMs = Date.now();
+    const nextDeadlineMs = resolveHarnessTimeoutDeadline(timeoutDeadlineMs, nowMs, timeoutMs, extendOnly);
+    if (extendOnly && timeoutHandle && nextDeadlineMs === timeoutDeadlineMs) return;
     if (timeoutHandle) clearTimeout(timeoutHandle);
+    timeoutDeadlineMs = nextDeadlineMs;
     timeoutHandle = setTimeout(() => {
       if (terminal) return;
       terminal = true;
@@ -538,7 +555,7 @@ export async function startGrpcTurn(
       try { call.write({ cancel: { reason: 'harness_turn_timeout' } }); } catch { /* closed */ }
       try { call.end(); } catch { /* closed */ }
       rejectDone?.(error);
-    }, timeoutMs);
+    }, Math.max(1, nextDeadlineMs - nowMs));
   };
 
   const done = new Promise<{ finalText: string }>((resolve, reject) => {
@@ -566,7 +583,9 @@ export async function startGrpcTurn(
           msg.tool_result.tool_name === HERMES_REPORT_WRITER_TOOL &&
           !Boolean(msg.tool_result.is_error)
         ) {
-          armTimeout(HERMES_REPORT_COMPLETION_GRACE_MS);
+          // Ensure at least this much completion time remains, but never shorten
+          // the original parent-turn budget after a successful durable write.
+          armTimeout(HERMES_REPORT_COMPLETION_GRACE_MS, true);
         }
         safeOnEvent({
           kind: 'tool_result',

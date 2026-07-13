@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { describe, expect, it } from 'vitest';
@@ -48,6 +48,8 @@ describe('writeHermesReportArtifact', () => {
         focusNodeIds: ['run:42'],
         reportMarkdown: '# Investigation\n\nThe source record is complete.',
       });
+      expect(readdirSync(path.join(workspaceRoot, 'returns', 'req_1234abcd', 'card_hermes_steward')))
+        .toEqual(['hermes-report.md']);
     } finally {
       rmSync(workspaceRoot, { recursive: true, force: true });
     }

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { RUNTIME_TOOL_SPECS } from '../contracts/runtimeContracts';
 import {
   resolvedMagenticOptions,
+  resolvedMagenticControllers,
   buildPythonAutoGenCardRuntimePayload,
   runCardWithContract,
 } from './runtime';
@@ -88,6 +89,18 @@ describe('Canonical Cards Runtime', () => {
 
     const resolved = resolvedMagenticOptions(cardM.id, [cardM, mainChat, think], edges);
     expect(resolved.map((node) => node.id)).toEqual(['card_thinkgraph_agent']);
+  });
+
+  it('resolves magentic_control separately from worker options', () => {
+    const mag = { id: 'mag', kind: 'agent', runtimeType: 'magentic_one' };
+    const main = { id: 'main', kind: 'agent', runtimeType: 'assistant_agent', runtimeBinding: 'main_chat' };
+    const worker = { id: 'worker', kind: 'agent', runtimeType: 'assistant_agent' };
+    const edges = [
+      { id: 'control', source: main.id, target: mag.id, targetHandle: 'task-bus-top', edgeType: 'magentic_control' },
+      { id: 'option', source: mag.id, target: worker.id, edgeType: 'magentic_option' },
+    ];
+    expect(resolvedMagenticControllers(mag.id, [mag, main, worker], edges).map((node) => node.id)).toEqual(['main']);
+    expect(resolvedMagenticOptions(mag.id, [mag, main, worker], edges).map((node) => node.id)).toEqual(['worker']);
   });
 
   it('flow-only edge does not imply Magentic option', () => {

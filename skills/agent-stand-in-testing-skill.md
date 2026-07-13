@@ -23,7 +23,7 @@ Walk top-down. At each rung the external agent *is* that position; everything be
 | # | Position stood in for | Doorway (all on :4000 unless noted) |
 |---|----------------------|--------------------------------------|
 | 1 | **User** | `POST /api/coder/openclaude/session/chat` (+ `answer`, `history`) — a real front-door turn through the gRPC Harness. Say in the message that it is a developer test. |
-| 2 | **Main Chat / Harness calling a tool** | `POST /api/coder/mcp-bridge/<tool>` directly — e.g. `run_coder_subagent` (body: parentRunId, projectId, deckId, conversationId, cardId, adapter `claude_code`, approvedPrompt) or `run_mag_one` with the one Hermes `runPacket`. Native Hermes itself must be exercised through real Main Chat because it inherits parent context and receives no prompt. |
+| 2 | **Main Chat / Harness calling a tool** | `POST /api/coder/mcp-bridge/<tool>` directly for transport diagnosis. `run_mag_one` consumes an existing `jobId` prompt and still requires the saved Main `magentic_control` edge; direct transport testing is not user approval. Native Hermes itself must be exercised through real Main Chat because it inherits parent context and server-minted investigation identity. |
 | 3 | **Orchestrator instructing one card** | `POST /api/dev/agent-harness/probe_card` — live single-card run, double-gated, through the canonical executor. Dry-run first: `probe_frontdoor`. |
 | 4 | **Coder** | Claim a job folder (`/api/dev/agent-harness/coder-jobs`, canonical `handoff/<id>/prompt.md` → `returns/<id>/`) and do the work yourself; or run the coder through the runtime-reality layer (below). |
 

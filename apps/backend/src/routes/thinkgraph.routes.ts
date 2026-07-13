@@ -1,7 +1,7 @@
 // Read-only ThinkGraph viewer routes for the Agent Builder.
 //  - /graph-view : direct bounded projection of stored ThinkGraph records (Resources +
 //                  derived CO_OCCURRED_WITH with weight = observation_count + reified
-//                  Statements). Hermes writes through the canonical structured
+//                  Statements). Main Chat writes through the canonical structured
 //                  writer; these routes never write. Read failures are explicit.
 import { Router } from 'express';
 import { getThinkGraphView } from '../services/thinkgraph/thinkGraphStore';

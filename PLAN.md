@@ -36,10 +36,12 @@ chat silent = autogen down.
 ### 1. Harness Chat — the front door
 
 The gRPC harness (`localcoder`) over a persistent session. Client → backend
-`/api/coder/openclaude/session/{chat,answer,history}` → harness on :50051. The Harness steers the
-conversation and remains the principal responder. On every turn it invokes the saved Hermes
-card as a native `Agent` with no task prompt. Hermes inherits the complete parent conversation, performs
-the bounded graph/team reads, and returns the one `RunPacket`; no doorway/model wrapper sits in between.
+`/api/coder/openclaude/session/{chat,answer,history}` → harness on :50051. Main Chat steers the
+conversation, reads and writes the project ThinkGraph, receives a bounded active-report summary, and
+remains the principal responder. When deeper work is useful, Main invokes the orange-connected saved
+Hermes card as a native inherited-context `Agent`. Hermes reads ThinkGraph itself, conditionally uses
+Search/KnowGraph/CodeGraph, and creates or revises one Inspector report. It returns only completion
+metadata, never a competing long-form Main response.
 
 ### 2. The one MCP server — the control surface
 
@@ -52,10 +54,11 @@ There is **no TS MCP server** — TS is only the client. Each tool bridges to a 
 
 ### 3. Orchestrator (Mag One) — the team run
 
-`run_mag_one({runPacket})` → backend `/mcp-bridge/run_mag_one` → validates the Hermes packet and its
-participant set against the live deck → `runCardWithContract(magentic_one card)` → autogen :8003
-`MagenticOneGroupChat`. Runs the packet JSON with the bus-connected cards as participants. **No direct
-graph access** — everything it needs is carried by the packet (Orchestrator graph access is deferred).
+After Main explicitly asks for a Run Plan, Hermes writes the existing
+`coder-workspace/handoff/<jobId>/prompt.md`. Main presents that exact plan. Only after explicit user
+acceptance may Main call `run_mag_one({jobId, projectId, deckId})`. The backend requires exactly one
+live Main→Mag One `magentic_control` edge, then resolves workers only from live `magentic_option` side
+edges and runs `MagenticOneGroupChat`. Main and Hermes are structurally excluded from worker eligibility.
 
 ### 4. Agent cards + the bus
 
@@ -90,8 +93,9 @@ missing model config.
 
 ### 8. Hermes Dev Observatory (dev-only, never production)
 
-Hermes has two roles with the same honest rules. **Product role:** native inherited-context RunPacket
-assembly, ThinkGraph run memory, postflight review, the under-chat activity feed. **Developer role:** the
+Hermes has two roles with the same honest rules. **Product role:** native inherited-context project
+investigation, one evolving Inspector report, explicit Run Plan preparation, postflight review, and the
+under-chat activity feed. Main alone writes ThinkGraph. **Developer role:** the
 evidence layer — runtime telemetry, CoderReport claim verification, card/config drift detection.
 Both act only through explicit tools and audited seams; Hermes is never an invisible controller,
 never a backdoor, never the owner of secrets. The observatory is Hermes' developer brain view —
@@ -193,20 +197,21 @@ and product vision live in FUTURE.md.
 The loop is incomplete. Launch has discovery (Harness), handoff (prompt.md, doorways), and
 execution (Local Coder, Mag One). Missing: verification, persistence, and context compounding.
 
-Hermes fills this gap as the knowledge compounding agent:
+Hermes fills this gap as Main's knowledge-compounding investigation agent:
 
 - reviews CoderReports skeptically (separate evaluator, not the coder);
 - classifies blockers into patterns;
-- writes structured findings to ThinkGraph through authorized card path;
-- reads ThinkGraph/CodeGraph for context;
-- prepares context for the next run.
+- reads ThinkGraph and CodeGraph for context;
+- researches and qualifies sourced evidence into KnowGraph when needed;
+- revises one project/conversation Inspector report while Main decides what enters ThinkGraph;
+- prepares the existing `prompt.md` only when Main requests a Run Plan.
 
 Hermes runs as a Python module in `apps/python-models/app/python_models/hermes/` and is
 surfaced in the UI: the seeded `card_hermes_steward` agent card, plus the Hermes activity
 console under chat (HermesConsole → `GET /api/coder/hermes/activity` — real activity only,
 honest empty state). The CoderReport review protocol (pure Python, `POST /hermes/review`)
-and Hermes's bounded native ThinkGraph update path are the core. No new MCP host. No new graph
-writer. No TS brain.
+and Hermes's bounded native report path are the core. No new MCP host. Main remains the one
+ThinkGraph writer. No TS brain.
 
 ### Feature Context Resolver (deferred to Fable 6+)
 

@@ -15,6 +15,7 @@ import {
   buildHarnessRuntimeContext,
   deriveSessionId,
   resolveCardDoorwayDefinitions,
+  resolveHarnessTimeoutDeadline,
   resolveMainChatRuntimeConfig,
   selectDoorwayCards,
 } from './grpcChatClient';
@@ -25,7 +26,7 @@ const main = {
 };
 const hermes = {
   id: 'card_hermes_steward', kind: 'agent', runtimeBinding: 'hermes_steward', runtimeType: 'assistant_agent',
-  prompt: 'Hermes prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'knowgraph.query', 'knowgraph.ingest', 'codegraph.search', 'hermes.memory_write', 'hermes.write_report', 'write_mag_one_instructions', 'card.run_assistant_agent'] },
+  prompt: 'Hermes prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'knowgraph.query', 'knowgraph.ingest', 'codegraph.search', 'hermes.memory_write', 'hermes.read_report', 'hermes.write_report', 'write_mag_one_instructions', 'card.run_assistant_agent'] },
 };
 const search = {
   id: 'card_research_agent', kind: 'agent', runtimeBinding: 'research_agent', runtimeType: 'assistant_agent',
@@ -49,6 +50,11 @@ describe('native Main / Hermes / Search doorways', () => {
     expect(selectDoorwayCards([main, hermes, search], [flow(main.id, hermes.id)], 'chat')).toEqual([hermes]);
   });
 
+  it('post-report completion grace extends an expiring turn but never shortens its parent deadline', () => {
+    expect(resolveHarnessTimeoutDeadline(120_000, 50_000, 30_000, true)).toBe(120_000);
+    expect(resolveHarnessTimeoutDeadline(120_000, 110_000, 30_000, true)).toBe(140_000);
+  });
+
   it('registers Hermes as a native inherited-context agent with exact MCP grants', () => {
     const definition = buildHarnessAgentDefinition(hermes, null, { allowedCardRunIds: [search.id] }) as any;
     expect(definition.system_prompt).toBe('Hermes prompt');
@@ -56,6 +62,7 @@ describe('native Main / Hermes / Search doorways', () => {
     expect(definition.allowed_tools).not.toContain('mcp__liquidaity__thinkgraph_submit_update');
     expect(definition.allowed_tools).toContain('mcp__liquidaity__knowgraph_ingest');
     expect(definition.allowed_tools).toContain('mcp__liquidaity__hermes_memory_write');
+    expect(definition.allowed_tools).toContain('mcp__liquidaity__hermes_read_report');
     expect(definition.allowed_tools).toContain('mcp__liquidaity__hermes_write_report');
     expect(definition.allowed_tools).toContain('mcp__liquidaity__write_mag_one_instructions');
     expect(definition.allowed_card_run_ids).toEqual([search.id]);

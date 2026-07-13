@@ -123,7 +123,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       'When a meaningful turn changes project state, apply one coherent ThinkGraph update before your final response. It may include multiple entities, questions, corrections, requirements, relationships, decisions, investigations, and planned actions. Preserve compact labels; never store transcripts, raw tool output, hidden reasoning, or unchanged summaries.',
       '',
       'When the project is mature enough and the user asks to prepare a team run, ask Hermes to prepare the existing Mag One prompt.md from the project graph, active report, and linked evidence. Review that returned prompt with the user; only Main may seek run approval.',
-      'Execution happens ONLY when the user explicitly asks to run the team in this conversation. Then use write_mag_one_instructions to create the final prompt.md last, and call mcp__liquidaity__run_mag_one with jobId, projectId, and deckId. The backend resolves the live worker roster from blue side edges — never type a roster by hand. Mag One reads prompt.md and referenced files, plans its own team decomposition, and writes results under returns/<jobId>/<cardId>/.',
+      'Execution happens ONLY when the user explicitly accepts the prepared Run Plan in this conversation. Then call mcp__liquidaity__run_mag_one with its existing jobId, projectId, and deckId. Do not rewrite prompt.md: Hermes prepared the exact reviewed plan. The backend requires your live magentic_control connection and resolves the worker roster from blue side edges — never type a roster by hand. Mag One reads prompt.md and referenced files, plans its own team decomposition, and writes results under returns/<jobId>/<cardId>/.',
       '',
       'Hard rules:',
       '- Never claim a run, graph write, code change, or tool execution that a real returned result does not show. No result → say it failed or is blocked, and why.',
@@ -191,9 +191,9 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       goal: [
         'Use the inherited server-minted LIQUIDAITY_INVESTIGATION_CONTEXT for project, conversation, and parent-run identity. Read the current project ThinkGraph yourself, following focused relationships as useful. focusNodeIds are optional hints, never a prerequisite or your entire assignment.',
-        'Read and revise the current durable Hermes report when it exists. Inspect CodeGraph only when repository facts matter. Query KnowGraph only for a question that actually needs external evidence; never query merely to discover whether it is seeded. An empty KnowGraph is terminal evidence absence, not an error; state it briefly and continue from project memory or CodeGraph when sufficient.',
+        'Read the current durable Hermes report with hermes.read_report before revising it when one exists. Inspect CodeGraph only when repository facts matter. Query KnowGraph only for a question that actually needs external evidence; never query merely to discover whether it is seeded. An empty KnowGraph is terminal evidence absence, not an error; state it briefly and continue from project memory or CodeGraph when sufficient.',
         'Write or revise the one active human-readable investigation report with real ThinkGraph node IDs, KnowGraph references, CodeGraph references, findings, uncertainty, risks, alternatives, recommendation, and proposed next action. Call hermes.write_report whenever the report needs the current result.',
-        'After a successful report write, return only its completion metadata to Main Chat. Never return the long-form report body as a chat response. Recommend project-state changes to Main Chat, but never construct or apply the final ThinkGraph patch.',
+        'After a successful report write, return only its completion metadata to Main Chat. Never return the long-form report body as a chat response. For an explicitly requested Run Plan, return only concise prompt preparation metadata (jobId, path, status, summary) after writing it. Recommend project-state changes to Main Chat, but never construct or apply the final ThinkGraph patch.',
         'Keep private continuity in SQL memory through the exact attached Hermes memory tools.',
         'Your native Hermes runtime is already active: never call card.run_assistant_agent with card_hermes_steward. For external research, invoke only your orange-connected Search child card_research_agent once with one bounded task; interpret its returned sources yourself.',
       ].join('\n'),
@@ -205,7 +205,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       ioSchema: [
         'Input: inherited live parent conversation plus LIQUIDAITY_RUNTIME_CONTEXT and LIQUIDAITY_INVESTIGATION_CONTEXT.',
-        'Output: the hermes.write_report completion metadata only. The durable report body is the Inspector-owned artifact, never a second Main Chat answer.',
+        'Output: report completion metadata for investigation turns, or concise prompt preparation metadata for an explicit Run Plan request. The durable report body is the Inspector-owned artifact, never a second Main Chat answer.',
       ].join('\n'),
       memoryPolicy: [
         'ThinkGraph = shared evolving project reasoning (objectives, decisions, constraints, uncertainty, questions, provenance links) — read it for context; Main Chat alone decides and writes what persists.',
@@ -410,7 +410,8 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeType: 'assistant_agent',
       // Main Chat's Tools selection is its REAL harness MCP surface: ThinkGraph
       // read/write, read-only evidence/repository access, canvas metadata, the
-      // current job folder, and Mag One control. No ingestion or web search.
+      // Mag One roster read/submission control. Hermes alone prepares prompt.md.
+      // No ingestion or web search.
       runtimeOptions: {
         provider: DEFAULT_CARD_PROVIDER,
         modelKey: DEFAULT_CARD_MODEL_KEY,
@@ -421,7 +422,6 @@ export const INITIAL_DECK: DeckDocument = {
           'codegraph.search',
           'codegraph.status',
           'canvas.inspect',
-          'write_mag_one_instructions',
           'mag_one.describe_connected_agents',
           'run_mag_one',
           'run_coder_subagent',
@@ -529,6 +529,7 @@ export const INITIAL_DECK: DeckDocument = {
           'codegraph.search',
           'hermes.memory_read',
           'hermes.memory_write',
+          'hermes.read_report',
           'hermes.write_report',
           'write_mag_one_instructions',
           'card.run_assistant_agent',

@@ -8,8 +8,8 @@ env vars, no .env, no per-turn spawn, no fallback host.
 
 Exposes exactly this tool surface:
   * mag_one.describe_connected_agents (read connected, bus-eligible Mag One cards)
-  * run_mag_one                      (run native Mag One from the one Hermes
-                                      canonical Coder job-folder handoff)
+  * run_mag_one                      (Main-only approved submission of an existing
+                                      canonical prompt.md through magentic_control)
   * thinkgraph.get_graph_slice       (bounded READ-ONLY graph scope)
   * web_search                       (real Tavily search; Search Agent only by grant)
   * canvas.inspect / card.update_configuration / canvas.upsert_wire /
@@ -161,11 +161,11 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="write_mag_one_instructions",
             description=(
-                "Main Chat finalization / approved Coder handoff: write the EXACT Mag One task into handoff/<run-id>/prompt.md "
+                "Hermes Run Plan preparation: write the EXACT proposed Mag One task into handoff/<run-id>/prompt.md "
                 "in the trusted active Coder workspace, and assign returns/<run-id>/ as the run's "
                 "result folder. Supply `instructions` (the exact run-specific text Mag One receives — not "
                 "summarized/wrapped/rewritten, and not durable card constants) and optionally `runId` to reuse an existing handoff. "
-                "Main Chat owns review and run approval. Hermes may call this tool only when Main explicitly asks it to prepare the existing prompt; writing prompt.md never starts Mag One. "
+                "Hermes may call this tool only when Main explicitly asks it to prepare the existing prompt. Main Chat owns presentation, review, and run approval; writing prompt.md never starts Mag One. "
                 "Returns runId + workspace-relative handoff and returns paths. Run run_mag_one with "
                 "that runId as jobId to have Mag One read those exact bytes as its task."
             ),
@@ -432,6 +432,19 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="hermes.read_report",
+            description=(
+                "Hermes only: read the current full durable investigation report for the active native "
+                "parentRunId before revising it. The server resolves project and conversation identity; "
+                "Main Chat receives only the separate bounded report context."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {"parentRunId": {"type": "string"}},
+                "required": ["parentRunId"],
+            },
+        ),
+        Tool(
             name="hermes.write_report",
             description=(
                 "Hermes only: create or revise the one durable human-readable investigation report for "
@@ -509,6 +522,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "codegraph.search": {"query", "limit"},
     "hermes.memory_read": {"projectId", "key"},
     "hermes.memory_write": {"projectId", "key", "value"},
+    "hermes.read_report": {"parentRunId"},
     "hermes.write_report": {"parentRunId", "reportMarkdown", "summary", "thinkGraphNodeIds", "knowGraphRefs", "codeGraphRefs"},
     "write_mag_one_instructions": {"instructions", "runId"},
     "read_model_results": {"runId", "path"},
@@ -532,6 +546,7 @@ _BRIDGE_PATHS: dict[str, str] = {
     "codegraph.search": "codegraph_search",
     "hermes.memory_read": "hermes_memory_read",
     "hermes.memory_write": "hermes_memory_write",
+    "hermes.read_report": "hermes_read_report",
     "hermes.write_report": "hermes_write_report",
 }
 

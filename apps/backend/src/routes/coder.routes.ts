@@ -23,6 +23,7 @@ import {
   endHermesInvestigation,
   parseHermesInvestigationContext,
   readLatestHermesReport,
+  readActiveHermesReport,
   writeActiveHermesReport,
   type HermesInvestigationContext,
 } from '../coder/hermes/hermesReportArtifact';
@@ -476,6 +477,15 @@ router.post('/mcp-bridge/hermes_write_report', (req, res) => {
       ok: false,
       error: reason,
     });
+  }
+});
+
+router.post('/mcp-bridge/hermes_read_report', (req, res) => {
+  try {
+    return res.json({ ok: true, report: readActiveHermesReport(String(req.body?.parentRunId || '')) });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'hermes_report_read_failed';
+    return res.status(reason === 'hermes_investigation_context_not_active' ? 409 : 400).json({ ok: false, error: reason });
   }
 });
 

@@ -45,20 +45,23 @@ roots:
 The front door of LiquidAIty. When a user opens the chat panel in the Agent Canvas builder,
 the Harness Controller resolves the persisted Main Chat card from the deck, establishes a
 persistent gRPC session with the native QueryEngine, surfaces specialist doorways
-(ThinkGraph, Local Coder), and registers Hermes directly as a promptless inherited-context
-native Agent. It also owns the Mag One orchestration entry point.
+  (Local Coder), and registers Hermes directly as an inherited-context native Agent. Main reads
+and writes ThinkGraph directly; Hermes reads it itself and owns one evolving Inspector report.
+Main also owns the user-approved Mag One submission entry point.
 
 ## What the user/agent experiences
 
 **Chat**: user types → SSE stream to `POST /openclaude/session/chat` → gRPC Chat turn.
 The chat model receives the saved Main Chat prompt plus specialist doorway definitions.
 
-**Agents**: ThinkGraph and Local Coder retain the bound `CARD_RUN_CONTROL_TOOL` doorway.
-Hermes is different: its saved prompt/model become the native Agent definition, it inherits
-the full parent conversation, receives no task prompt, and streams native progress events.
+**Agents**: Local Coder retains the bound `CARD_RUN_CONTROL_TOOL` doorway. Hermes is different:
+its saved prompt/model/tools become the native Agent definition, it inherits the full parent
+conversation, and may receive a short scoped outcome. It reads ThinkGraph, conditionally uses its
+Search child/KnowGraph/CodeGraph, and revises the active report without user approval.
 
-**Mag One**: `describe_connected_agents` reads bus-connected (`magentic_option` edge) agent
-cards; `run_mag_one` orchestrates them. Cards without a `magentic_option` edge are invisible.
+**Mag One**: Hermes prepares `prompt.md` only when Main requests a Run Plan. Main presents it;
+`run_mag_one` is allowed only after user acceptance and requires Main's live `magentic_control`
+edge. Workers resolve solely from `magentic_option` side edges.
 
 ## How it works
 
@@ -75,7 +78,7 @@ MainChatRuntimeConfig resolved per turn:       [grpcChatClient.ts:235]
   → selectDoorwayCards(nodes, mode)            [grpcChatClient.ts:142]
     → enabled, top-level, kind=agent, runtimeType in [assistant_agent,local_coder],
       binding !== 'main_chat'
-    → chat: ≤1 ThinkGraph + ≤1 Local Coder + ≤1 Hermes
+    → chat: ≤1 Local Coder + ≤1 Hermes
   → buildHarnessAgentDefinition(card)
     → Hermes: saved prompt/model + native read tools + inherit_parent
     → other cards: doorway with when_to_use + CARD_RUN_CONTROL_TOOL
@@ -87,8 +90,9 @@ Mag One (separate MCP-bridge endpoints):
     → resolvedMagenticOptions(orchestrator.id, nodes, edges)
     → returns only magentic_option-connected cards
   run_mag_one
-    → validate one Hermes RunPacket + live participant equality
-    → find orchestrator → runCardWithContract
+    → require exactly one live Main magentic_control edge
+    → read the existing handoff/<jobId>/prompt.md
+    → resolve live worker options → runCardWithContract
     → orchestrateWithAutoGen
 ```
 
@@ -96,11 +100,13 @@ Mag One (separate MCP-bridge endpoints):
 
 1. Exactly one `main_chat` card — zero or multiple yields honest degrade (no doorways).
 2. Doorway selection is structural (binding, runtimeType, enabled) — never by display name.
-3. Chat mode: at most one ThinkGraph + one Local Coder + one Hermes. Duplicates omit only that agent.
+3. Chat mode: at most one Local Coder + one Hermes. Main owns ThinkGraph reads/writes directly.
 4. `when_to_use` text is keyed on saved binding, not card title.
 5. Mag One only sees cards with `magentic_option` edges from the orchestrator.
 6. Deck is sole authority for card config — no caller overrides.
-7. Hermes is invoked without `prompt`; non-inherited agents still reject missing prompts.
+7. Hermes always inherits parent context; an optional short prompt scopes an outcome but is never a mandatory node-anchor packet.
+8. Hermes may research, ingest qualified evidence, inspect code, revise its report, and prepare a requested Run Plan without user approval.
+9. Only Mag One/Coder execution is user-gated; `run_mag_one` additionally requires Main's `magentic_control` edge.
 8. UTF-8 survives gRPC and SSE chunk boundaries exactly.
 
 ## Start in CBM

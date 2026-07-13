@@ -144,6 +144,16 @@ describe('coder routes', () => {
         error: 'hermes_investigation_context_not_active',
       });
       expect(response.status).toBe(409);
+      const readResponse = await fetch(`${baseUrl}/mcp-bridge/hermes_read_report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parentRunId: 'req_not_active' }),
+      });
+      await expect(readResponse.json()).resolves.toEqual({
+        ok: false,
+        error: 'hermes_investigation_context_not_active',
+      });
+      expect(readResponse.status).toBe(409);
     } finally {
       await closeServer(server);
     }

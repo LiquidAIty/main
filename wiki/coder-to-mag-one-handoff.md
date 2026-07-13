@@ -38,8 +38,8 @@ roots:
 
 ## What this is
 
-When the Coder needs work done that requires the Mag One team (orchestrator + connected
-workers), Harness / the packet-builder writes a Magnetic One variable context packet
+When Main decides a project is ready for a proposed team run, it asks Hermes to prepare a Run Plan.
+Hermes writes the exact Mag One variable context packet
 into `C:/Projects/main/coder-workspace/handoff/<jobId>/prompt.md`, then calls
 `run_mag_one` with the shared `jobId`. The Python rails read the exact bytes from
 that file as the run task — no wrapping, no rewriting. Return artifacts land in
@@ -61,13 +61,13 @@ runtime facts, and relevant wiki/skill/file anchors.
 ## How it works
 
 ```
-Harness / packet-builder writes handoff packet:
-  model uses the native file writer or write_mag_one_instructions tool
+Hermes prepares the handoff packet after an explicit request from Main:
+  Hermes uses write_mag_one_instructions
     → jf.write_handoff_prompt(folder, instructions)   [job_folder.py:96]
       → writes to: coder-workspace/handoff/<jobId>/prompt.md (utf-8, exact bytes)
     → also creates: coder-workspace/returns/<jobId>/ directory
 
-Coder triggers Mag One:
+After Main presents the plan and the user accepts Run Agents, Main submits through magentic_control:
   run_mag_one({ jobId, projectId, deckId })            [liquidAItyAgentFlow.ts:142]
     → jobId wins over runPacket
     → resolveCoderWorkspaceRoot()                       [workspaceRoot.ts:22]
@@ -98,8 +98,7 @@ Return artifacts:
 1. Handoff packet is byte-exact — `write_handoff_prompt` writes utf-8 bytes to
    `handoff/<job-id>/prompt.md`; `read_handoff_prompt` reads them back as exact bytes.
    No wrapping, no LLM-authored rewriting.
-2. jobId wins over runPacket — if both are supplied, `runMagOne` picks jobId
-   (line 159-163). The on-disk file is always the contract.
+2. `jobId` identifies the one on-disk contract. No RunPacket or chat text is an alternate task source.
 3. Coder workspace is server-owned — `resolveCoderWorkspaceRoot` returns
    `<repo-root>/coder-workspace`, never a client path. All handoff/ and returns/ are
    contained inside it.
@@ -121,6 +120,9 @@ Return artifacts:
 10. Tools are bound to saved cards and runtime validation, never granted by
     `prompt.md` or inferred from user wording. Hooks may deny invalid calls, but must
     not become phrase-based routers or deterministic intent classifiers.
+11. Hermes may prepare or revise `prompt.md` without user approval, but cannot run Mag One.
+    Main can submit only after explicit user acceptance and only through a live
+    `magentic_control` connection. Main and Hermes are never worker options.
 
 ## Start in CBM
 

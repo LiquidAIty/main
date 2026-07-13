@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveCoderWorkspaceRoot } from '../workspaceRoot';
 
@@ -116,6 +116,15 @@ export function endHermesInvestigation(parentRunId: string): void {
   activeInvestigations.delete(parentRunId);
 }
 
+/** Reads the current full report only for an in-flight native Hermes turn.
+ * Main receives the separate bounded context projection instead. */
+export function readActiveHermesReport(parentRunId: string): HermesReportArtifact | null {
+  const normalized = requiredText(parentRunId, 'parentRunId', 128);
+  const active = activeInvestigations.get(normalized);
+  if (!active) throw new Error('hermes_investigation_context_not_active');
+  return readLatestHermesReport(active.context.projectId, active.context.conversationId);
+}
+
 /** Reuses the existing returns/ artifact authority; the metadata header is for
  * the later Inspector pass and the untouched Markdown body is Hermes's report. */
 export function writeHermesReportArtifact(
@@ -156,11 +165,18 @@ export function writeHermesReportArtifact(
   const encodedMetadata = JSON.stringify(metadata).replace(/</g, '\\u003c');
   const targetDirectory = reportDirectory(workspaceRoot, artifactRunId);
   mkdirSync(targetDirectory, { recursive: true });
-  writeFileSync(
-    path.join(targetDirectory, 'hermes-report.md'),
-    `<!-- liquidaity-hermes-report:${encodedMetadata} -->\n\n${reportMarkdown}\n`,
-    'utf8',
-  );
+  const targetPath = path.join(targetDirectory, 'hermes-report.md');
+  const temporaryPath = path.join(targetDirectory, `.hermes-report.${parentRunId}.tmp`);
+  try {
+    writeFileSync(
+      temporaryPath,
+      `<!-- liquidaity-hermes-report:${encodedMetadata} -->\n\n${reportMarkdown}\n`,
+      'utf8',
+    );
+    renameSync(temporaryPath, targetPath);
+  } finally {
+    if (existsSync(temporaryPath)) rmSync(temporaryPath, { force: true });
+  }
   return completion;
 }
 
@@ -169,7 +185,10 @@ export function writeActiveHermesReport(input: HermesReportWriteInput): HermesRe
   const parentRunId = requiredText(input.parentRunId, 'parentRunId', 128);
   const active = activeInvestigations.get(parentRunId);
   if (!active) throw new Error('hermes_investigation_context_not_active');
-  const completion = writeHermesReportArtifact(active.context, input, resolveCoderWorkspaceRoot(), active.report);
+  // Resolve immediately before the synchronous atomic replacement. Concurrent
+  // parent turns cannot revise from a stale begin-turn snapshot in this process.
+  const latest = readLatestHermesReport(active.context.projectId, active.context.conversationId);
+  const completion = writeHermesReportArtifact(active.context, input, resolveCoderWorkspaceRoot(), latest);
   active.report = readLatestHermesReport(active.context.projectId, active.context.conversationId);
   return completion;
 }

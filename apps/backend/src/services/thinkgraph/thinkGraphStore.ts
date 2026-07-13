@@ -3,9 +3,9 @@
 // @graph relates_to: ThinkGraph card graph-view
 // @graph depends_on: Apache AGE, Postgres
 //
-// READ-ONLY projection of ThinkGraph records for the existing ThinkGraph card.
-// ThinkGraph is written ONLY by the Harness calling the ThinkGraph agent card
-// (the canonical server-side writer — not yet wired; see graph-write-authority).
+// READ projection of ThinkGraph records shared by Main, Hermes, and the graph UI.
+// Main Chat alone submits structured updates through the canonical server-side
+// writer below. Hermes reads this projection and never receives that write grant.
 // Until real records exist the card is honestly empty. No semantics are invented
 // here: this returns exactly what is stored.
 //
@@ -190,14 +190,14 @@ export async function getThinkGraphView(args: { projectId: string; limit?: numbe
   return { nodes, edges };
 }
 
-/** Bounded read scope for the ThinkGraph card run — same projection the view uses. */
+/** Bounded project read scope — the same stored projection Main, Hermes, and the view use. */
 export async function readThinkGraphScope(args: { projectId: string; limit?: number }): Promise<ThinkGraphView> {
   return getThinkGraphView({ projectId: args.projectId, limit: Math.min(Math.trunc(args.limit ?? 300) || 300, 500) });
 }
 
 // ── THE one ThinkGraph writer: card-authorized transactional patch ───────────────────────
-// Callable only through the ThinkGraph card's apply_thinkgraph_patch tool authority
-// (the bridge injects trusted run context; the model supplies only the patch body).
+// Main's thinkgraph.submit_update bridge mints trusted project/card/run authority;
+// the model supplies only the bounded patch body.
 // Persistence enforces ONLY: project scope, card authority presence, schema shape
 // (labels fixed by construction: Resource / Statement / CO_OCCURRED_WITH), record
 // identity, complete source-pair provenance, idempotency, size limits, and one AGE

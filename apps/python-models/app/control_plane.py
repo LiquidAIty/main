@@ -342,8 +342,8 @@ async def card_assign_data_binding(args: dict[str, Any]) -> dict[str, Any]:
 
 # ---------------------------------------------------------------------------
 # thinkgraph.get_graph_slice — bounded READ of stored project reasoning.
-# Harness may read ThinkGraph through MCP (pointers + bounded slices); write
-# authority stays card-scoped and is never exposed here.
+# Main and Hermes read the same project projection through MCP. Main's separate
+# submit tool owns writes; Hermes never receives that grant.
 # ---------------------------------------------------------------------------
 
 
