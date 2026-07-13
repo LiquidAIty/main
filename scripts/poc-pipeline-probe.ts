@@ -11,7 +11,7 @@
  * back. This probe is read-only; live model proof belongs to the real Main Chat.
  *
  * Stages (the authority chain: Harness → native inherited-context Hermes →
- * RunPacket → Mag One → Hermes postflight → graph memory):
+ * RunPacket → Mag One → returns folder → graph memory):
  *   1  backend-health        GET  /api/health  (chat entry reachable)
  *   2  services-listening    TCP  5173 (frontend) / 8003 (autogen) / 50051 (gRPC = Harness,
  *                            the principal chat owner)
@@ -22,11 +22,7 @@
  *   5  native-hermes-config  validate the one saved Hermes card used directly by Agent
  *   6  thinkgraph-read       GET  /api/thinkgraph/projection + POST mcp-bridge/thinkgraph_read_scope
  *   7  knowgraph-read        services/knowgraph/hybrid_retrieval_probe.py (read-only, real Neo4j)
- *   8  hermes-activity       GET  /api/coder/hermes/activity (honest empty is a PASS)
- *   9  hermes-postflight     POST /api/coder/hermes/postflight with an empty body — the
- *                            expected 400 runId_required proves the path exists while
- *                            writing NOTHING (no fake run records, ever)
- *   10 runs-and-history      GET  /api/projects/:p/decks (latest run ids) +
+ *   8  runs-and-history      GET  /api/projects/:p/decks (latest run ids) +
  *                            GET  /api/coder/openclaude/session/history
  *
  * Output ends with a PASS/FAIL summary plus the CARD ROLE MAP read from the
@@ -368,41 +364,7 @@ async function main(): Promise<void> {
     report('knowgraph-read', kg.code === 0 ? 'PASS' : 'FAIL', `${resultLine} (exit=${kg.code})`);
   }
 
-  // 8 — Hermes activity (an honest empty feed passes; a transport error fails)
-  try {
-    const hermes = await getJson(`${args.backend}/api/coder/hermes/activity?limit=20`);
-    report(
-      'hermes-activity',
-      hermes?.ok === true ? 'PASS' : 'FAIL',
-      `entries=${hermes?.activity?.length ?? '?'}${(hermes?.activity?.length ?? 0) === 0 ? ' (honestly empty — no reviews yet)' : ''}`,
-    );
-  } catch (err: any) {
-    report('hermes-activity', 'FAIL', String(err?.message || err));
-  }
-
-  // 9 — Hermes postflight path present. Proven WITHOUT writing anything: an
-  //     empty body must be rejected 400 runId_required — a real route that
-  //     refuses to fabricate a run review is exactly the honest contract.
-  try {
-    const res = await fetch(`${args.backend}/api/coder/hermes/postflight`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    const body = await res.json().catch(() => null);
-    const ok = res.status === 400 && body?.error === 'runId_required';
-    report(
-      'hermes-postflight',
-      ok ? 'PASS' : 'FAIL',
-      ok
-        ? 'path present — empty body rejected with runId_required, nothing written'
-        : `unexpected response status=${res.status} body=${JSON.stringify(body)?.slice(0, 160)}`,
-    );
-  } catch (err: any) {
-    report('hermes-postflight', 'FAIL', String(err?.message || err));
-  }
-
-  // 10 — run/conversation mapping (which runs exist for which decks + chat depth)
+  // 8 — run/conversation mapping (which runs exist for which decks + chat depth)
   try {
     const decks = await getJson(`${args.backend}/api/projects/${args.project}/decks`);
     const history = await getJson(
@@ -451,7 +413,7 @@ async function main(): Promise<void> {
     }
     console.log('');
     console.log(
-      'AUTHORITY CHAIN: principal Harness(gRPC:50051) → native promptless Hermes(inherited context) → one RunPacket → run_mag_one(connected workers only) → Hermes postflight(ReviewReport → ThinkGraph run memory)',
+      'AUTHORITY CHAIN: principal Harness(gRPC:50051) → native promptless Hermes(inherited context) → one RunPacket → run_mag_one(connected workers only) → returns folder → completed-job review (one MCP tool, scaffold — not yet connected)',
     );
   }
   process.exit(failed.length > 0 ? 1 : 0);

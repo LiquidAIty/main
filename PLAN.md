@@ -207,11 +207,16 @@ Hermes fills this gap as Main's knowledge-compounding investigation agent:
 - prepares the existing `prompt.md` only when Main requests a Run Plan.
 
 Hermes runs as a Python module in `apps/python-models/app/python_models/hermes/` and is
-surfaced in the UI: the seeded `card_hermes_steward` agent card, plus the Hermes activity
-console under chat (HermesConsole → `GET /api/coder/hermes/activity` — real activity only,
-honest empty state). The CoderReport review protocol (pure Python, `POST /hermes/review`)
-and Hermes's bounded native report path are the core. No new MCP host. Main remains the one
-ThinkGraph writer. No TS brain.
+surfaced in the UI as the seeded `card_hermes_steward` agent card; under Chat the hidden
+terminal (HermesConsole) shows the native Hermes turn's live SSE stream (no polling).
+Completed-job review — Coder or Mag One results land in a job folder → Hermes reviews it →
+Main decides the next iteration — is reduced to ONE scaffold: `review_completed_job(job_folder)`
+plus one MCP tool `hermes_review_completed_job`. It is **scaffolded, not connected yet**: the
+review runtime, the Coder and Mag One completion triggers, and the card grant are all TODO,
+and the first end-to-end review test has not happened. (The earlier twelve fragmented review
+attempts — separate Coder/Mag One review functions, `POST /hermes/review` + `/hermes/review_run`
+routes, the RAM activity feed, and their DTOs/probes/tests — were removed.) No new MCP host.
+Main remains the one ThinkGraph writer. No TS brain.
 
 ### Feature Context Resolver (deferred to Fable 6+)
 

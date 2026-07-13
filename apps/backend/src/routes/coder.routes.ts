@@ -41,15 +41,6 @@ import { flushAgentTelemetry, recordAgentEvent } from '../services/agentTelemetr
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { createCodebaseMemoryMcpCaller } from '../services/graphContext/cbmMcpCaller';
 import { pool } from '../db/pool';
-import {
-  requestHermesReview,
-} from '../services/autogen/autogenOrchestratorClient';
-import {
-  appendHermesActivity,
-  appendHermesBlocked,
-  listHermesActivity,
-  normalizeHermesActivityEntry,
-} from '../coder/hermes/hermesActivity';
 import { runCoderSubagent } from '../coder/execution/coderRouter';
 
 const router = Router();
@@ -904,43 +895,6 @@ router.post('/openclaude/console/sessions/:id/stop', (req, res) => {
 });
 
 
-// ── Hermes steward: explicit review and activity seam ───────────────────────
-// Reviews are pure Python rails calls. This route is only an explicit review
-// surface; it never writes ThinkGraph and never runs automatically after chat,
-// Mag One, or Coder execution.
-
-/** Run the Hermes review for one real CoderReport and record honest activity.
- * Never throws: a failed review becomes a blocked activity entry, so the
- * CoderReport path that triggered it is never disturbed. */
-async function runHermesReviewAndRecord(
-  payload: Record<string, unknown>,
-  runId: string | null,
-): Promise<
-  | { ok: true; review: Record<string, unknown>; thinkgraphPatch: Record<string, unknown> }
-  | { ok: false; error: string }
-> {
-  try {
-    const result = await requestHermesReview(payload);
-    if (!result.ok) {
-      appendHermesBlocked(result.error, runId);
-      return result;
-    }
-    const events = Array.isArray((result.review as any)?.activityEvents)
-      ? ((result.review as any).activityEvents as unknown[])
-      : [];
-    appendHermesActivity(
-      events
-        .map(normalizeHermesActivityEntry)
-        .filter((entry): entry is NonNullable<typeof entry> => entry !== null),
-    );
-    return result;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'hermes_review_failed';
-    appendHermesBlocked(message, runId);
-    return { ok: false, error: message };
-  }
-}
-
 /** Resolve the saved Main Chat card from the live deck (binding, never a title
  * match) so the canonical ThinkGraph writer has truthful provenance. */
 async function resolveMainChatCardId(projectId: string, deckId: string): Promise<string | null> {
@@ -951,39 +905,6 @@ async function resolveMainChatCardId(projectId: string, deckId: string): Promise
   );
   return card ? String(card.id) : null;
 }
-
-router.get('/hermes/activity', (req, res) => {
-  const limit = Number(req.query?.limit);
-  return res.json({ ok: true, activity: listHermesActivity(Number.isFinite(limit) ? limit : 50) });
-});
-
-router.post('/hermes/review', async (req, res) => {
-  const body = (req.body || {}) as Record<string, unknown>;
-  const coderReport = body.coderReport;
-  if (!coderReport || typeof coderReport !== 'object') {
-    return res.status(400).json({ ok: false, error: 'coderReport_object_required' });
-  }
-  const runId = String((coderReport as any)?.coderPacketId || body.runId || '') || null;
-  const result = await runHermesReviewAndRecord(
-    {
-      coderReport,
-      featureId: String(body.featureId || ''),
-      ...(body.runId ? { runId: String(body.runId) } : {}),
-      ...(body.projectId ? { projectId: String(body.projectId) } : {}),
-      ...(body.thinkGraphContext && typeof body.thinkGraphContext === 'object'
-        ? { thinkGraphContext: body.thinkGraphContext }
-        : {}),
-      ...(body.codeGraphStatus && typeof body.codeGraphStatus === 'object'
-        ? { codeGraphStatus: body.codeGraphStatus }
-        : {}),
-    },
-    runId,
-  );
-  if (!result.ok) {
-    return res.status(502).json(result);
-  }
-  return res.json(result);
-});
 
 router.get('/localcoder/status', async (req, res) => {
   const repoPath = typeof req.query.repoPath === 'string' ? req.query.repoPath : undefined;

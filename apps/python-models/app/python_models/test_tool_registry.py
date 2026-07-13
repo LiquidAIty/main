@@ -77,67 +77,30 @@ def test_manifest_exposes_thinkgraph_tools_for_assistant_agent_cards():
         assert entry["description"]
 
 
-def test_hermes_review_tool_registered_resolves_and_reviews():
+def test_hermes_review_completed_job_tool_registered_and_scaffolded():
     registry = build_default_tool_registry()
-    assert "hermes_review_coder_report" in registry.known_names()
-    tool = registry.resolve_one("hermes_review_coder_report")
+    assert "hermes_review_completed_job" in registry.known_names()
+    tool = registry.resolve_one("hermes_review_completed_job")
     assert isinstance(tool, FunctionTool)
 
-    from app.python_models.tool_registry import hermes_review_coder_report_tool
+    from app.python_models.tool_registry import hermes_review_completed_job_tool
 
-    report = {
-        "coderPacketId": "packet_x",
-        "status": "blocked",
-        "summary": "s",
-        "specComparison": [],
-        "filesChanged": [],
-        "proofCommands": [],
-        "proofResults": [],
-        "failedCommands": [],
-        "blockers": ["graph readback returned 0 nodes"],
-        "assumptions": [],
-        "outOfScopeFindings": [],
-        "nextRecommendedTask": "",
-        "rawOutput": "...",
-    }
-    result = json.loads(
-        asyncio.run(
-            hermes_review_coder_report_tool(
-                coder_report_json=json.dumps(report), feature_id="feature.x"
-            )
-        )
-    )
-    assert result["ok"] is True
-    assert result["review"]["verdict"] == "blocked"
-    # The returned patch is ready for apply_thinkgraph_patch (the ONLY write path).
-    assert {r["kind"] for r in result["thinkgraphPatch"]["resources"]} == {
-        "RunRecord",
-        "Blocker",
-        "Pattern",
-    }
-
-
-def test_hermes_review_tool_rejects_non_json_honestly():
-    from app.python_models.tool_registry import hermes_review_coder_report_tool
-
-    result = json.loads(
-        asyncio.run(
-            hermes_review_coder_report_tool(
-                coder_report_json="not json at all {", feature_id="feature.x"
-            )
-        )
-    )
+    # Scaffold only: the one tool dispatches to review_completed_job, which is not
+    # implemented yet. It must fail honestly — never a fabricated review, never a
+    # ThinkGraph or memory write.
+    result = json.loads(asyncio.run(hermes_review_completed_job_tool(job_id="job_x")))
     assert result["ok"] is False
-    assert "hermes_argument_not_json" in result["error"]
+    assert "not yet connected" in result["error"]
+    assert "review" not in result
+    assert "thinkgraphPatch" not in result
 
 
-def test_manifest_exposes_hermes_review_for_assistant_agent_cards():
+def test_manifest_exposes_hermes_review_completed_job():
     manifest = tool_manifest()
-    entry = next((m for m in manifest if m["id"] == "hermes_review_coder_report"), None)
+    entry = next((m for m in manifest if m["id"] == "hermes_review_completed_job"), None)
     assert entry is not None
-    assert entry["displayName"] == "Hermes CoderReport Review"
+    assert entry["displayName"] == "Hermes Completed-Job Review"
     assert entry["agentCompatibility"] == ["assistant_agent"]
-    assert "coder_report_json" in entry["inputSchemaSummary"]
 
 
 def test_manifest_is_registry_backed_no_duplicate_entries():

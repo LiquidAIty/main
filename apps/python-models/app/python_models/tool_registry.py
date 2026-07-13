@@ -30,11 +30,9 @@ from urllib.request import Request, urlopen
 from autogen_core.tools import FunctionTool
 
 from app.python_models import job_folder as jf
-from app.python_models.hermes.graph_memory import to_thinkgraph_patch
-from app.python_models.hermes.protocol import HermesReviewInput
 from app.python_models.web_search import web_search
-from app.python_models.hermes.review import review_coder_report
 from app.python_models.orchestration_contracts import ContextPack, ToolSpec
+from app.python_models.hermes.review_completed_job import review_completed_job
 from app.python_models.sec_filing_signals import (
     IssuerRef,
     SecFilingQuery,
@@ -366,70 +364,31 @@ async def apply_thinkgraph_patch_tool(
 
 
 # ---------------------------------------------------------------------------
-# Hermes review tool (pure — no authority needed, no persistence).
+# Hermes completed-job review — the ONE MCP tool over the single review scaffold.
 #
-# Computes a HermesReview + ThinkGraph write PLAN from a CoderReport. The
-# returned thinkgraphPatch is ready for apply_thinkgraph_patch, which is the
-# ONLY persistence path and carries its own trusted card-run authority.
+# Intended invocation boundary: an authorized agent calls this one tool, which
+# dispatches to review_completed_job (the single scaffold). The review runtime is
+# NOT built yet, so it honestly reports not-implemented and never fabricates a
+# review. Takes one trusted opaque job id — never an arbitrary filesystem path;
+# server-owned folder resolution is a TODO for when the review is implemented.
+# There is exactly one review tool (it will later review both Coder and Mag One
+# completed-job folders — never producer-specific tools).
 # ---------------------------------------------------------------------------
 
 
-def _parse_tool_json_object(raw: str, field: str) -> dict[str, Any]:
-    """Parse a JSON-object argument. AutoGen FunctionTool is known to relay
-    dict arguments as their Python str() repr, so a literal_eval of that exact
-    encoding is accepted too; anything else fails honestly."""
-    text = str(raw or "").strip()
-    if not text:
-        return {}
+async def hermes_review_completed_job_tool(job_id: str) -> str:
+    """One MCP entrypoint for the future Hermes completed-job review. Scaffold
+    only: dispatches to review_completed_job, which is not implemented yet."""
+    jid = str(job_id or "").strip()
+    if not jid:
+        return json.dumps({"ok": False, "error": "job_id_required"})
     try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        try:
-            parsed = ast.literal_eval(text)
-        except (ValueError, SyntaxError) as err:
-            raise ValueError(f"hermes_argument_not_json: {field} ({err})") from err
-    if not isinstance(parsed, dict):
-        raise ValueError(f"hermes_argument_not_object: {field}")
-    return parsed
-
-
-async def hermes_review_coder_report_tool(
-    coder_report_json: str,
-    feature_id: str,
-    run_id: str | None = None,
-    project_id: str | None = None,
-    thinkgraph_context_json: str | None = None,
-    codegraph_status_json: str | None = None,
-) -> str:
-    """Hermes card tool: skeptically review one CoderReport (pure logic)."""
-    try:
-        review_input = HermesReviewInput(
-            coderReport=_parse_tool_json_object(coder_report_json, "coder_report_json"),
-            featureId=str(feature_id or "").strip(),
-            projectId=str(project_id).strip() if project_id else None,
-            runId=str(run_id).strip() if run_id else None,
-            thinkGraphContext=(
-                _parse_tool_json_object(thinkgraph_context_json, "thinkgraph_context_json")
-                if thinkgraph_context_json
-                else None
-            ),
-            codeGraphStatus=(
-                _parse_tool_json_object(codegraph_status_json, "codegraph_status_json")
-                if codegraph_status_json
-                else None
-            ),
-        )
-    except ValueError as err:
+        # No evaluation logic lives here — the scaffold owns the (future) review.
+        review_completed_job(jid)
+    except NotImplementedError as err:
         return json.dumps({"ok": False, "error": str(err)})
-    review = await asyncio.to_thread(review_coder_report, review_input)
-    return json.dumps(
-        {
-            "ok": True,
-            "review": review.to_dict(),
-            # Ready for apply_thinkgraph_patch (the card's scoped write path).
-            "thinkgraphPatch": to_thinkgraph_patch(review.graphMemoryWritePlan),
-        }
-    )
+    # TODO: when review_completed_job returns a ReviewResult, serialize it here.
+    return json.dumps({"ok": False, "error": "review_completed_job_not_implemented"})
 
 
 # ---------------------------------------------------------------------------
@@ -707,37 +666,26 @@ def build_default_tool_registry() -> ToolRegistry:
     )
     registry.register(
         ToolSpec(
-            name="hermes_review_coder_report",
+            name="hermes_review_completed_job",
             description=(
-                "Hermes steward: skeptically review ONE CoderReport (pure logic, no "
-                "persistence). Input: coder_report_json = the full CoderReport JSON; "
-                "feature_id; optional run_id/project_id; optional thinkgraph_context_json "
-                "(prior {runs, blockers, patterns} read from ThinkGraph); optional "
-                "codegraph_status_json (CBM freshness). Returns {ok, review, thinkgraphPatch}: "
-                "the HermesReview (verdict honest|incomplete|suspicious|blocked|empty, proof "
-                "accounting, blocker findings, pattern recurrence) plus a ready "
-                "apply_thinkgraph_patch payload. Persistence happens ONLY via "
-                "apply_thinkgraph_patch under the card's trusted run authority."
+                "Hermes: review ONE completed job folder (Coder or Mag One) and return a "
+                "single ReviewResult. SCAFFOLD ONLY — the review runtime is not built yet, "
+                "so this honestly reports not-implemented and never fabricates a review. "
+                "Input: job_id = one trusted opaque job identifier; the server resolves the "
+                "completed-job folder (never an arbitrary filesystem path)."
             ),
             enabled=True,
             inputSchema={
                 "type": "object",
-                "properties": {
-                    "coder_report_json": {"type": "string"},
-                    "feature_id": {"type": "string"},
-                    "run_id": {"type": "string"},
-                    "project_id": {"type": "string"},
-                    "thinkgraph_context_json": {"type": "string"},
-                    "codegraph_status_json": {"type": "string"},
-                },
-                "required": ["coder_report_json", "feature_id"],
+                "properties": {"job_id": {"type": "string"}},
+                "required": ["job_id"],
             },
             outputSchema={
                 "type": "string",
-                "description": "JSON {ok, review: HermesReview, thinkgraphPatch} or honest error",
+                "description": "JSON {ok:false, error} — scaffold reports not-implemented (ReviewResult is a TODO)",
             },
         ),
-        hermes_review_coder_report_tool,
+        hermes_review_completed_job_tool,
     )
     registry.register(
         ToolSpec(
@@ -1045,8 +993,8 @@ _TOOL_DISPLAY_METADATA: dict[str, dict[str, Any]] = {
         "displayName": "ThinkGraph Patch (authorized write)",
         "agentCompatibility": ["assistant_agent"],
     },
-    "hermes_review_coder_report": {
-        "displayName": "Hermes CoderReport Review",
+    "hermes_review_completed_job": {
+        "displayName": "Hermes Completed-Job Review",
         "agentCompatibility": ["assistant_agent"],
     },
     "run_local_coder": {
