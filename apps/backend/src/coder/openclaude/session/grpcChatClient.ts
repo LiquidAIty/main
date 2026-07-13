@@ -221,7 +221,9 @@ export function doorwayWhenToUse(binding: string, title: string): string {
       'CodeGraph inspection, or an explicitly requested Run Plan. This runs FOREGROUND ' +
       'and returns one terminal result — ' +
       'when you need a result before continuing, pass a bounded scoped assignment ' +
-      'as the prompt (what to prepare, which evidence, the stop condition) and ' +
+      'as the prompt (desired analysis/report outcome and stop condition, under 80 words). ' +
+      'Never copy project graph contents into the prompt or ask Hermes to mutate ThinkGraph; ' +
+      'it reads the graph itself and recommends changes in its report for Main to apply. ' +
       'wait for it; omit the prompt only for pure inherited-context preparation. ' +
       'Either way Hermes inherits the complete live parent conversation, works its ' +
       'graph/memory tools and its own direct agents, and revises its Inspector report. ' +
