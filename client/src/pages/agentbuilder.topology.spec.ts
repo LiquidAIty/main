@@ -36,15 +36,15 @@ describe('Main / Hermes / graph authority topology', () => {
     ]));
   });
 
-  it('grants Main read-only graph tools, Hermes graph stewardship, and Search web only', () => {
+  it('grants Main ThinkGraph write authority, Hermes investigation tools, and Search web only', () => {
     const byId = new Map(INITIAL_DECK.nodes.map((node) => [node.id, node]));
     const mainTools = byId.get('card_main_chat')?.runtimeOptions?.tools ?? [];
     const hermesTools = byId.get('card_hermes_steward')?.runtimeOptions?.tools ?? [];
     const searchTools = byId.get('card_research_agent')?.runtimeOptions?.tools ?? [];
-    expect(mainTools).toEqual(expect.arrayContaining(['thinkgraph.get_graph_slice', 'knowgraph.query', 'codegraph.search']));
-    expect(mainTools).not.toEqual(expect.arrayContaining(['thinkgraph.submit_update', 'knowgraph.ingest', 'web_search']));
-    expect(hermesTools).toEqual(expect.arrayContaining(['thinkgraph.submit_update', 'knowgraph.ingest', 'card.run_assistant_agent']));
-    expect(hermesTools).not.toContain('web_search');
+    expect(mainTools).toEqual(expect.arrayContaining(['thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'knowgraph.query', 'codegraph.search']));
+    expect(mainTools).not.toEqual(expect.arrayContaining(['knowgraph.ingest', 'web_search']));
+    expect(hermesTools).toEqual(expect.arrayContaining(['thinkgraph.get_graph_slice', 'knowgraph.ingest', 'card.run_assistant_agent']));
+    expect(hermesTools).not.toEqual(expect.arrayContaining(['thinkgraph.submit_update', 'web_search', 'run_mag_one', 'run_coder_subagent']));
     expect(searchTools).toEqual(['web_search']);
   });
 });

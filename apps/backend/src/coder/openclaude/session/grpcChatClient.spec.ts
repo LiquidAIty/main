@@ -16,11 +16,11 @@ import {
 
 const main = {
   id: 'card_main_chat', kind: 'agent', runtimeBinding: 'main_chat', runtimeType: 'assistant_agent',
-  prompt: 'Main prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'knowgraph.query', 'codegraph.search'] },
+  prompt: 'Main prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'knowgraph.query', 'codegraph.search'] },
 };
 const hermes = {
   id: 'card_hermes_steward', kind: 'agent', runtimeBinding: 'hermes_steward', runtimeType: 'assistant_agent',
-  prompt: 'Hermes prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'knowgraph.query', 'knowgraph.ingest', 'codegraph.search', 'hermes.memory.write', 'card.run_assistant_agent'] },
+  prompt: 'Hermes prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'knowgraph.query', 'knowgraph.ingest', 'codegraph.search', 'hermes.memory_write', 'card.run_assistant_agent'] },
 };
 const search = {
   id: 'card_research_agent', kind: 'agent', runtimeBinding: 'research_agent', runtimeType: 'assistant_agent',
@@ -44,7 +44,7 @@ describe('native Main / Hermes / Search doorways', () => {
     const definition = buildHarnessAgentDefinition(hermes, null, { allowedCardRunIds: [search.id] }) as any;
     expect(definition.system_prompt).toBe('Hermes prompt');
     expect(definition.context_mode_inherit_parent).toBe(true);
-    expect(definition.allowed_tools).toContain('mcp__liquidaity__thinkgraph_submit_update');
+    expect(definition.allowed_tools).not.toContain('mcp__liquidaity__thinkgraph_submit_update');
     expect(definition.allowed_tools).toContain('mcp__liquidaity__knowgraph_ingest');
     expect(definition.allowed_tools).toContain('mcp__liquidaity__hermes_memory_write');
     expect(definition.allowed_card_run_ids).toEqual([search.id]);
@@ -69,6 +69,7 @@ describe('native Main / Hermes / Search doorways', () => {
     expect(config?.cardId).toBe(main.id);
     expect(config?.parentAllowedMcpTools).toEqual([
       'mcp__liquidaity__thinkgraph_get_graph_slice',
+      'mcp__liquidaity__thinkgraph_submit_update',
       'mcp__liquidaity__knowgraph_query',
       'mcp__liquidaity__codegraph_search',
     ]);

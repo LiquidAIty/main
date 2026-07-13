@@ -24,7 +24,8 @@ to Python handlers (app/control_plane.py) which own validation/policy and use th
 existing backend deck routes + the Python runtime-assignment store. No semantics,
 no fallback lives in this host.
 
-ThinkGraph and KnowGraph mutations are explicit Hermes-only grants. The host
+ThinkGraph mutation is an explicit Main Chat grant; KnowGraph ingestion remains
+an explicit Hermes-only grant. The host
 transports structured updates to the canonical writers; graph authorities never
 appear as cards or conversational agents. The obsolete post-chat pair front door
 and apply_live_patch path remain deleted.
@@ -298,7 +299,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="thinkgraph.submit_update",
             description=(
-                "Hermes only: submit ONE bounded structured ThinkGraph update. Required shape: "
+                "Main Chat only: submit zero or ONE bounded structured ThinkGraph update after "
+                "reviewing the turn or Hermes findings. Required shape: "
                 "each resource is {id, label, kind?, properties?}; each relation is {a, b, tag?}; "
                 "each statement is {id, subject, predicateTerm, object, rationale?, review?, tag?, properties?}. "
                 "Statement subject and object MUST be resource ids in this update or existing project resources; "
@@ -309,7 +311,8 @@ async def list_tools() -> list[Tool]:
                 "predicateTerm:'term:questions',object:'system:knowgraph',rationale:'Verify entity identity merge behavior.',"
                 "review:'provisional'}]. To update an investigation, reuse its stable resource id and add only compact "
                 "resources/statements. An empty resources/relations/statements payload is an explicit no-op. "
-                "Pass real projectId and conversationId; authority/correlation are server-minted. If validation fails, "
+                "Pass real projectId and conversationId; authority/correlation are server-minted. Never store a transcript, "
+                "raw tool output, hidden reasoning, or an unchanged generic summary. If validation fails, "
                 "return that one error and finish—never retry by guessing another shape."
             ),
             inputSchema={

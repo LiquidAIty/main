@@ -34,11 +34,8 @@ import { flushAgentTelemetry, recordAgentEvent } from '../services/agentTelemetr
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { createCodebaseMemoryMcpCaller } from '../services/graphContext/cbmMcpCaller';
 import { pool } from '../db/pool';
-import { resolveRuntimeBinding } from '../contracts/runtimeBinding';
-import type { HermesReviewReport } from '../contracts/runtimeContracts';
 import {
   requestHermesReview,
-  requestHermesRunReview,
 } from '../services/autogen/autogenOrchestratorClient';
 import {
   appendHermesActivity,
@@ -47,7 +44,6 @@ import {
   normalizeHermesActivityEntry,
 } from '../coder/hermes/hermesActivity';
 import { runCoderSubagent } from '../coder/execution/coderRouter';
-import { resolveCoderWorkspaceRoot } from '../coder/workspaceRoot';
 
 const router = Router();
 export const OPENCLAUDE_HARNESS_ROUTE_PREFIX = '/coder/openclaude';
@@ -83,25 +79,6 @@ router.post('/mcp-bridge/run_mag_one', async (req, res) => {
       projectId: String(req.body?.projectId || ''),
       deckId,
     });
-    // Hermes receives the completed job identity first. Main Chat gets only
-    // the compact reviewed outcome; raw worker text and files remain in the
-    // returns folder and can be inspected deliberately through job tools.
-    const hermesReview = await runHermesPostflightAndRecord({
-      projectId: String(req.body?.projectId || ''),
-      deckId,
-      conversationId: result.conversationId || String(req.body?.conversationId || ''),
-      runId: result.runId,
-      jobId: result.jobId,
-      workspaceRoot: resolveCoderWorkspaceRoot(),
-      status: result.status,
-      ...(result.failure ? { failure: result.failure } : {}),
-      finalTextPresent: Boolean(result.finalText),
-      participants: result.connectedParticipants,
-      returnFiles: result.returnedFiles,
-      ...(req.body?.parentContext && typeof req.body.parentContext === 'object'
-        ? { parentContext: req.body.parentContext }
-        : {}),
-    });
     return res.json({
       ok: result.status !== 'failed',
       result: {
@@ -115,8 +92,6 @@ router.post('/mcp-bridge/run_mag_one', async (req, res) => {
         returnStatus: result.returnStatus,
         failure: result.failure,
       },
-      hermesReview: hermesReview.ok ? hermesReview.report : null,
-      hermesReviewError: hermesReview.ok ? null : hermesReview.error,
     });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'run_mag_one_failed' });
@@ -141,9 +116,9 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
   }
 });
 
-// ── Hermes ThinkGraph structured update (canonical writer, minted authority) ─
+// ── Main Chat ThinkGraph structured update (canonical writer, minted authority) ─
 // The model supplies ONLY the bounded structured update; the server mints the
-// authority from the live Hermes card + real conversation. Same validation and
+// authority from the live Main Chat card + real conversation. Same validation and
 // same one applyThinkGraphPatch writer as the ThinkGraph card path.
 router.post('/mcp-bridge/thinkgraph_submit_update', async (req, res) => {
   const startedMs = Date.now();
@@ -152,12 +127,12 @@ router.post('/mcp-bridge/thinkgraph_submit_update', async (req, res) => {
   try {
     if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
     if (!conversationId) return res.status(400).json({ ok: false, error: 'conversationId_required' });
-    const hermesCardId = await resolveHermesCardId(projectId, BUILDER_DECK_ID);
-    if (!hermesCardId) return res.status(409).json({ ok: false, error: 'hermes_card_not_found' });
+    const mainCardId = await resolveMainChatCardId(projectId, BUILDER_DECK_ID);
+    if (!mainCardId) return res.status(409).json({ ok: false, error: 'main_chat_card_not_found' });
     const authority: ThinkGraphPatchAuthority = {
       projectId,
-      cardId: hermesCardId,
-      correlationId: `hermes_update_${Date.now()}_${randomUUID().slice(0, 8)}`,
+      cardId: mainCardId,
+      correlationId: `main_update_${Date.now()}_${randomUUID().slice(0, 8)}`,
       conversationId,
     };
     const result = await applyThinkGraphPatch(authority, {
@@ -169,13 +144,13 @@ router.post('/mcp-bridge/thinkgraph_submit_update', async (req, res) => {
       stage: 'graph_write',
       status: result.ok ? 'completed' : 'failed',
       mode: 'real_model_call',
-      caller: 'hermes',
+      caller: 'main_chat',
       projectId,
       deckId: BUILDER_DECK_ID,
       conversationId,
       correlationId: authority.correlationId,
-      cardId: hermesCardId,
-      inputSummary: 'hermes thinkgraph_submit_update',
+      cardId: mainCardId,
+      inputSummary: 'main_chat thinkgraph_submit_update',
       outputSummary: result.ok ? `status=${result.status}` : '',
       errorSummary: result.ok ? null : result.error,
       durationMs: Date.now() - startedMs,
@@ -324,7 +299,13 @@ router.post('/mcp-bridge/knowgraph_ingest', async (req, res) => {
     const axios = (await import('axios')).default;
     const response = await axios.post(
       `http://127.0.0.1:${port}/api/knowgraph/ingest_web`,
-      { project_id: projectId, documents, ...(req.body?.researchFocus ? { research_focus: req.body.researchFocus } : {}) },
+      {
+        project_id: projectId,
+        // Project identity is trusted transport scope, not source content. The
+        // canonical web-ingest request validates it on every selected document.
+        documents: documents.map((document) => ({ ...document, project_id: projectId })),
+        ...(req.body?.researchFocus ? { research_focus: req.body.researchFocus } : {}),
+      },
       { timeout: 300_000, validateStatus: () => true },
     );
     return res.status(response.status).json(response.data);
@@ -867,14 +848,10 @@ router.post('/openclaude/console/sessions/:id/stop', (req, res) => {
 });
 
 
-// ── Hermes steward: preflight / review / postflight / activity seams ────────
-// The reviews themselves are PURE Python on the rails (/hermes/review,
-// /hermes/review_run — no model call, no DB). This backend layer is transport,
-// the transient activity buffer the Hermes console reads, and the postflight
-// run-memory write: ThinkGraph persistence goes through the ONE canonical
-// applyThinkGraphPatch writer under server-minted Hermes-card authority
-// (projectId / hermes cardId / correlationId / conversationId) — the model
-// never mints authority, and no second write path exists.
+// ── Hermes steward: explicit review and activity seam ───────────────────────
+// Reviews are pure Python rails calls. This route is only an explicit review
+// surface; it never writes ThinkGraph and never runs automatically after chat,
+// Mag One, or Coder execution.
 
 /** Run the Hermes review for one real CoderReport and record honest activity.
  * Never throws: a failed review becomes a blocked activity entry, so the
@@ -908,215 +885,20 @@ async function runHermesReviewAndRecord(
   }
 }
 
-/** Resolve the saved Hermes card from the live deck (binding, never a title
- * match) so postflight write provenance names the real card. */
-async function resolveHermesCardId(projectId: string, deckId: string): Promise<string | null> {
+/** Resolve the saved Main Chat card from the live deck (binding, never a title
+ * match) so the canonical ThinkGraph writer has truthful provenance. */
+async function resolveMainChatCardId(projectId: string, deckId: string): Promise<string | null> {
   const { deck } = await getDeckDocument(projectId, deckId);
   const card = (deck?.nodes || []).find(
     (node: any) =>
-      resolveRuntimeBinding((node?.runtimeOptions as any)?.binding ?? node?.runtimeBinding, node?.id) ===
-      'hermes_steward',
+      String((node?.runtimeOptions as any)?.binding ?? node?.runtimeBinding ?? '') === 'main_chat',
   );
   return card ? String(card.id) : null;
-}
-
-/** Hermes postflight for one REAL Mag One run result: pure Python review,
- * honest activity, and the run-memory write through the canonical
- * applyThinkGraphPatch writer under server-minted Hermes-card authority.
- * A missing conversation or Hermes card blocks the write honestly — the
- * review/activity still land. Never throws. */
-async function runHermesPostflightAndRecord(input: {
-  projectId: string;
-  deckId: string;
-  conversationId: string;
-  runId: string;
-  jobId: string | null;
-  workspaceRoot: string;
-  status: string;
-  failure?: string;
-  finalTextPresent?: boolean;
-  participants?: string[];
-  returnFiles?: string[];
-  parentContext?: { objective?: string; acceptanceCriteria?: string[]; reviewInstruction?: string };
-  // Explicit diagnostic compatibility only. The normal run_mag_one bridge never
-  // forwards raw worker text; Hermes reads bounded return artifacts instead.
-  objective?: string;
-  finalText?: string;
-}): Promise<{ ok: true; report: HermesReviewReport } | { ok: false; error: string }> {
-  const postflightStartedMs = Date.now();
-  // Dev telemetry for the postflight boundary (non-blocking, dev-only).
-  const recordPostflight = (
-    status: 'completed' | 'failed',
-    extra: { outputSummary?: string; errorSummary?: string; graphWrites?: string[]; metadata?: Record<string, unknown> } = {},
-  ): void => {
-    recordAgentEvent({
-      stage: 'hermes_postflight',
-      status,
-      mode: 'real_model_call',
-      caller: 'hermes',
-      projectId: input.projectId || null,
-      deckId: input.deckId || null,
-      conversationId: input.conversationId || null,
-      correlationId: input.runId,
-      inputSummary: `run ${input.runId} status=${input.status}`,
-      outputSummary: extra.outputSummary ?? '',
-      errorSummary: extra.errorSummary ?? null,
-      durationMs: Date.now() - postflightStartedMs,
-      graphWrites: extra.graphWrites ?? [],
-      metadata: extra.metadata ?? {},
-    });
-  };
-  try {
-    const reviewResult = await requestHermesRunReview({
-      runId: input.runId,
-      ...(input.jobId ? { jobId: input.jobId, workspaceRoot: input.workspaceRoot } : {}),
-      ...(input.returnFiles ? { returnFiles: input.returnFiles } : {}),
-      status: input.status,
-      ...(input.failure ? { failure: input.failure } : {}),
-      finalTextPresent: Boolean(input.finalTextPresent),
-      ...(input.participants?.length ? { participants: input.participants } : {}),
-      ...(input.projectId ? { projectId: input.projectId } : {}),
-      ...(input.conversationId ? { conversationId: input.conversationId } : {}),
-      ...(input.parentContext ? { parentContext: input.parentContext } : {}),
-    });
-    if (!reviewResult.ok) {
-      appendHermesBlocked(reviewResult.error, input.runId);
-      recordPostflight('failed', { errorSummary: reviewResult.error });
-      return reviewResult;
-    }
-    const events = Array.isArray((reviewResult.review as any)?.activityEvents)
-      ? ((reviewResult.review as any).activityEvents as unknown[])
-      : [];
-    const normalized = events
-      .map(normalizeHermesActivityEntry)
-      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
-    appendHermesActivity(normalized);
-
-    const patch = (reviewResult.thinkgraphPatch || {}) as {
-      resources?: unknown[];
-      statements?: unknown[];
-    };
-    const hasWrites =
-      (Array.isArray(patch.resources) && patch.resources.length > 0) ||
-      (Array.isArray(patch.statements) && patch.statements.length > 0);
-    const correlationId = `hermes_post_${input.runId}`;
-
-    let thinkGraphWrite: HermesReviewReport['thinkGraphWrite'];
-    if (!hasWrites) {
-      thinkGraphWrite = {
-        status: 'empty',
-        correlationId,
-        storedResourceIds: [],
-        storedStatementIds: [],
-      };
-    } else if (!input.conversationId) {
-      thinkGraphWrite = {
-        status: 'blocked',
-        reason: 'conversationId_missing: run-memory provenance requires the real conversation identity',
-      };
-      appendHermesBlocked('postflight ThinkGraph write blocked: conversationId missing', input.runId);
-    } else {
-      const hermesCardId = await resolveHermesCardId(input.projectId, input.deckId).catch(() => null);
-      if (!hermesCardId) {
-        thinkGraphWrite = { status: 'blocked', reason: 'hermes_card_not_found' };
-        appendHermesBlocked('postflight ThinkGraph write blocked: Hermes card not found on deck', input.runId);
-      } else {
-        const applied = await applyThinkGraphPatch(
-          { projectId: input.projectId, cardId: hermesCardId, correlationId, conversationId: input.conversationId },
-          patch as any,
-        );
-        if (applied.ok) {
-          thinkGraphWrite = {
-            status: applied.status,
-            correlationId: applied.correlationId,
-            storedResourceIds: applied.storedResourceIds,
-            storedStatementIds: applied.storedStatementIds,
-          };
-          if (applied.status === 'applied') {
-            appendHermesActivity([
-              {
-                id: `hermes:write:${input.runId}`,
-                timestamp: new Date().toISOString(),
-                type: 'thinkgraph_write_complete',
-                summary:
-                  `ThinkGraph run memory written for ${input.runId}: ` +
-                  `${applied.storedResourceIds.length} node(s), ${applied.storedStatementIds.length} statement(s)`,
-                runId: input.runId,
-              },
-            ]);
-          }
-        } else {
-          thinkGraphWrite = { status: 'blocked', reason: applied.error };
-          appendHermesBlocked(`postflight ThinkGraph write failed: ${applied.error}`, input.runId);
-        }
-      }
-    }
-
-    recordPostflight('completed', {
-      outputSummary: `verdict=${String((reviewResult.review as any)?.verdict || 'empty')} write=${thinkGraphWrite.status}`,
-      graphWrites: thinkGraphWrite.status === 'applied' ? ['thinkgraph'] : [],
-      metadata: { thinkGraphWrite },
-    });
-    return {
-      ok: true,
-      report: {
-        runId: input.runId,
-        verdict: String((reviewResult.review as any)?.verdict || 'empty'),
-        recommendation: String((reviewResult.review as any)?.recommendation || ''),
-        thinkGraphWrite,
-        activityCount: normalized.length,
-      },
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'hermes_postflight_failed';
-    appendHermesBlocked(message, input.runId);
-    recordPostflight('failed', { errorSummary: message });
-    return { ok: false, error: message };
-  }
 }
 
 router.get('/hermes/activity', (req, res) => {
   const limit = Number(req.query?.limit);
   return res.json({ ok: true, activity: listHermesActivity(Number.isFinite(limit) ? limit : 50) });
-});
-
-// Hermes postflight_review for a Mag One / team run result. Normally invoked
-// automatically by the run_mag_one bridge above; this route is the explicit
-// callable seam (Harness or diagnostics). Requires a real runId — nothing is
-// reviewed or written for a run that never produced a result.
-router.post('/hermes/postflight', async (req, res) => {
-  const body = (req.body || {}) as Record<string, unknown>;
-  const runId = String(body.runId || '').trim();
-  if (!runId) return res.status(400).json({ ok: false, error: 'runId_required' });
-  const projectId = String(body.projectId || '').trim();
-  if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
-  const jobId = String(body.jobId || '').trim();
-  if (!jobId) return res.status(400).json({ ok: false, error: 'jobId_required' });
-  const failure = String(body.failure || '').trim();
-  const result = await runHermesPostflightAndRecord({
-    projectId,
-    deckId: String(body.deckId || BUILDER_DECK_ID),
-    conversationId: String(body.conversationId || '').trim(),
-    runId,
-    jobId,
-    workspaceRoot: resolveCoderWorkspaceRoot(),
-    status: String(body.status || ''),
-    ...(Array.isArray(body.returnFiles)
-      ? { returnFiles: (body.returnFiles as unknown[]).map((p) => String(p)) }
-      : {}),
-    ...(failure ? { failure } : {}),
-    finalTextPresent: body.finalTextPresent === true,
-    ...(Array.isArray(body.participants)
-      ? { participants: (body.participants as unknown[]).map((p) => String(p)) }
-      : {}),
-    ...(body.objective ? { objective: String(body.objective) } : {}),
-    ...(body.finalText ? { finalText: String(body.finalText) } : {}),
-    ...(body.parentContext && typeof body.parentContext === 'object'
-      ? { parentContext: body.parentContext as { objective?: string; acceptanceCriteria?: string[]; reviewInstruction?: string } }
-      : {}),
-  });
-  if (!result.ok) return res.status(502).json(result);
-  return res.json({ ok: true, report: result.report });
 });
 
 router.post('/hermes/review', async (req, res) => {
@@ -1179,20 +961,6 @@ router.post('/localcoder/run', async (req, res) => {
         : result.report.status === 'failed'
           ? 502
           : 200;
-    // Hermes postflight: every REAL CoderReport gets a pure review after the
-    // fact (fire-and-forget — the report below returns regardless; a review
-    // failure only records an honest blocked activity entry, never touches
-    // this response). featureId is honestly absent until packets carry one.
-    void runHermesReviewAndRecord(
-      {
-        coderReport: result.report,
-        featureId: '',
-        ...(typeof incoming.projectId === 'string' && incoming.projectId
-          ? { projectId: incoming.projectId }
-          : {}),
-      },
-      String(result.report.coderPacketId || '') || null,
-    );
     return res.status(statusCode).json({
       ok: reportOk,
       ...result,

@@ -115,10 +115,12 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       'You are Main Chat — the project principal and the only user-facing voice.',
       'Own the persistent project conversation: reason with the user, ask real clarifying questions, discuss options and tradeoffs, and answer directly. You are never a relay for another agent.',
       '',
-      'Your working context: read-only graph tools (ThinkGraph project reasoning, KnowGraph grounded knowledge, CodeGraph repository reality), canvas/agent metadata, and the current job folder under coder-workspace/handoff/<jobId>/.',
+      'Your working context: ThinkGraph project reasoning (read and one compact update when meaningful), KnowGraph grounded knowledge, CodeGraph repository reality, canvas/agent metadata, and the current job folder under coder-workspace/handoff/<jobId>/.',
       'Your direct subagents are the cards orange-connected to you on the canvas. Invoke Hermes as a bounded foreground investigation when deeper work is useful. Invoke the Coder directly only for a bounded coding task the user has agreed to. Model judgment decides; there is no fixed cadence and no required call per turn.',
       'When invoking Hermes, pass the user request plus only the desired result, relevant existing graph context, and a concise boundary. Do not pre-plan Hermes tool calls, create a multi-step worker specification, or request handoff files unless the user explicitly asks for them.',
       'For an explicit “Use Hermes” request, pass the user wording unchanged except for a short “return one concise terminal result” boundary. After Hermes returns, present at most three short bullets; do not restate its report or continue investigating.',
+      'Never expand a bounded Hermes request into a research plan, candidate list, tool checklist, or worker specification. Preserve the requested count and stop condition exactly.',
+      'When a meaningful turn changes project state, you may apply zero or one compact ThinkGraph update before your final response. Preserve decisions, questions, corrections, evidence pointers, and code references; never store transcripts, raw tool output, hidden reasoning, or unchanged summaries.',
       '',
       'Hermes prepares useful working files under handoff/<jobId>/ (draft.md, context.md, sources.md, screenshots/documents, code notes, and other bounded artifacts). Review, question, edit, remove, or replace those files before execution. The final prompt.md is written last and is the only semantic start signal.',
       'Execution happens ONLY when the user explicitly asks to run the team in this conversation. Then use write_mag_one_instructions to create the final prompt.md last, and call mcp__liquidaity__run_mag_one with jobId, projectId, and deckId. The backend resolves the live worker roster from blue side edges — never type a roster by hand. Mag One reads prompt.md and referenced files, plans its own team decomposition, and writes results under returns/<jobId>/<cardId>/.',
@@ -190,15 +192,15 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       goal: [
         'Make the eventual Mag One run worth running, and keep project memory compounding.',
         'Prepare and continuously improve useful working files under the current handoff/<jobId>/ folder: draft.md, context.md, sources.md, screenshots/documents, code notes, and any other bounded artifact needed for Main Chat review. Do not treat any file as the final task until Main Chat writes prompt.md last.',
-        'Read CodeGraph and ThinkGraph, apply compact meaningful ThinkGraph updates, query KnowGraph, and ingest only selected real source material through the canonical model-backed KnowGraph pipeline.',
-        'For thinkgraph.submit_update, make at most one call per investigation. Supply resources with stable id and compact label, then a statement with stable id, subject and object equal to resource ids, predicateTerm, rationale, and provisional review. If that one call fails, report its exact error and finish; never retry by guessing another patch shape.',
-        'For a short graph investigation: read ThinkGraph once, use at most two focused CodeGraph searches, submit one ThinkGraph update, then return one terminal response. Do not create handoff files unless explicitly requested.',
+        'Read relevant ThinkGraph state, inspect CodeGraph only when repository facts matter, query KnowGraph, and ingest only selected real source material through the canonical model-backed KnowGraph pipeline.',
+        'Return findings, evidence references, code references, remaining unknowns, alternatives, risks, one recommendation, and one proposed next action. Recommend project-state changes to Main Chat, but never construct or apply the final ThinkGraph patch.',
+        'For a short repository investigation: read ThinkGraph once, use at most two focused CodeGraph searches, then return one terminal response. Do not create handoff files unless explicitly requested.',
         'Keep private continuity in SQL memory through the exact attached Hermes memory tools.',
-        'Invoke your orange-connected direct agents with card.run_assistant_agent and that card\'s id plus one bounded task when their specialty helps; interpret their returned results yourself.',
-        'Return a concise enrichment report to Main Chat: what you read, which job files you changed, real graph/memory update results, unknowns, questions, and your advisory readiness judgment.',
+        'Your native Hermes runtime is already active: never call card.run_assistant_agent with card_hermes_steward. For external research, invoke only your orange-connected Search child card_research_agent once with one bounded task; interpret its returned sources yourself.',
+        'Return one concise structured investigation result to Main Chat: summary, findings, evidence/code references, unknowns, alternatives, risks, recommendation, and proposed next action.',
       ].join('\n'),
       constraints: [
-        'You never write the approved prompt.md, never call run_mag_one, and never treat your own readiness as user approval — Main Chat owns review, finalization, and execution.',
+        'You never call thinkgraph.submit_update, never write the approved prompt.md, never call run_mag_one, and never treat your own readiness as user approval — Main Chat owns project-state writes, review, finalization, and execution.',
         'Model judgment decides which tools a turn needs; there is no required checklist and no tool you must call every turn.',
         'Never fabricate graph data, sources, or results. KnowGraph ingestion requires real source material. A failed read or tool call is reported honestly, never papered over.',
         'Identity (projectId, deckId, conversationId, parentRunId) comes from LIQUIDAITY_RUNTIME_CONTEXT exactly — never invented.',
@@ -208,7 +210,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Output: a concise report — context read, changed job files, graph/memory update ids from real tool results, unknowns, questions, readiness advice. Never a packet object.',
       ].join('\n'),
       memoryPolicy: [
-        'ThinkGraph = shared evolving project reasoning (objectives, decisions, constraints, uncertainty, questions, provenance links) — write it through structured updates only, and only what deserves to persist.',
+        'ThinkGraph = shared evolving project reasoning (objectives, decisions, constraints, uncertainty, questions, provenance links) — read it for context; Main Chat alone decides and writes what persists.',
         'KnowGraph = grounded sourced knowledge — enters only through real ingestion of real sources.',
         'SQL memory = your private continuity, separate from ThinkGraph. The job folder = the project\'s working execution files and final prompt.',
         'Return pointers and concise context; never copy whole graphs into chat.',
@@ -408,14 +410,15 @@ export const INITIAL_DECK: DeckDocument = {
         )?.content || '',
       runtimeBinding: 'main_chat',
       runtimeType: 'assistant_agent',
-      // Main Chat's Tools selection is its REAL harness MCP surface: read-only
-      // graph access, canvas metadata, the current job folder, and Mag One control.
-      // No graph writes, no ingestion, no web search by default.
+      // Main Chat's Tools selection is its REAL harness MCP surface: ThinkGraph
+      // read/write, read-only evidence/repository access, canvas metadata, the
+      // current job folder, and Mag One control. No ingestion or web search.
       runtimeOptions: {
         provider: DEFAULT_CARD_PROVIDER,
         modelKey: DEFAULT_CARD_MODEL_KEY,
         tools: [
           'thinkgraph.get_graph_slice',
+          'thinkgraph.submit_update',
           'knowgraph.query',
           'codegraph.search',
           'codegraph.status',
@@ -517,12 +520,11 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeType: 'assistant_agent',
       // Hermes runs as Main Chat's native inherited-context subagent; its Tools
       // selection is its REAL harness MCP surface (enforced as the child agent's
-      // allowed_tools). ThinkGraph write and KnowGraph ingestion go through the
-      // canonical backend writers/pipeline under server-minted authority.
+      // allowed_tools). Hermes reads ThinkGraph; Main writes it. KnowGraph
+      // ingestion remains Hermes-only through the canonical pipeline.
       runtimeOptions: {
         tools: [
           'thinkgraph.get_graph_slice',
-          'thinkgraph.submit_update',
           'knowgraph.query',
           'knowgraph.ingest',
           'codegraph.status',
