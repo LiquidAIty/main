@@ -165,7 +165,7 @@ async def list_tools() -> list[Tool]:
                 "in the trusted active Coder workspace, and assign returns/<run-id>/ as the run's "
                 "result folder. Supply `instructions` (the exact run-specific text Mag One receives — not "
                 "summarized/wrapped/rewritten, and not durable card constants) and optionally `runId` to reuse an existing handoff. "
-                "Only Main Chat owns the final prompt.md; Hermes may prepare supporting files but never calls this finalization tool. "
+                "Main Chat owns review and run approval. Hermes may call this tool only when Main explicitly asks it to prepare the existing prompt; writing prompt.md never starts Mag One. "
                 "Returns runId + workspace-relative handoff and returns paths. Run run_mag_one with "
                 "that runId as jobId to have Mag One read those exact bytes as its task."
             ),
@@ -434,8 +434,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="hermes.write_report",
             description=(
-                "Hermes only: write the one durable human-readable investigation report for "
-                "the active Main Chat turn. The server resolves project and conversation "
+                "Hermes only: create or revise the one durable human-readable investigation report for "
+                "the active project conversation. The server resolves project and conversation "
                 "identity from parentRunId; never supply them. Include only real stable "
                 "ThinkGraph node ids, KnowGraph refs, and CodeGraph refs. On success, return "
                 "the completion metadata exactly; do not repeat the report body to Main Chat."

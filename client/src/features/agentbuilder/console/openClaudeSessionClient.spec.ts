@@ -67,13 +67,13 @@ describe('streamSession', () => {
     } satisfies Partial<SessionStreamError>);
   });
 
-  it('carries an optional compact ThinkGraph anchor context without minting identity client-side', async () => {
+  it('carries optional ThinkGraph focus hints without minting identity client-side', async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       expect(JSON.parse(String(init?.body))).toMatchObject({
         projectId: 'project-1',
         conversationId: 'main',
         investigationContext: {
-          anchorNodeIds: ['run:42'],
+          focusNodeIds: ['run:42'],
           requestedOutcome: 'Inspect the selected run.',
         },
       });
@@ -85,7 +85,7 @@ describe('streamSession', () => {
       projectId: 'project-1',
       conversationId: 'main',
       message: 'Inspect it.',
-      investigationContext: { anchorNodeIds: ['run:42'], requestedOutcome: 'Inspect the selected run.' },
+      investigationContext: { focusNodeIds: ['run:42'], requestedOutcome: 'Inspect the selected run.' },
       onEvent: vi.fn(),
     })).resolves.toEqual({ finalText: 'done' });
   });

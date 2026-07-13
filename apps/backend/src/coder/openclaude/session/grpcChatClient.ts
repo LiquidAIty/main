@@ -20,7 +20,11 @@ import { resolveDirectSubagents } from '../../../cards/runtime';
 import { resolveModel } from '../../../llm/models.config';
 import { HARNESS_MCP_TOOL_SPECS } from '../../../contracts/runtimeContracts';
 import { logHarnessTrace } from '../../../services/harnessTrace';
-import type { HermesInvestigationContext } from '../../hermes/hermesReportArtifact';
+import {
+  readLatestHermesReport,
+  type HermesInvestigationContext,
+  type HermesReportArtifact,
+} from '../../hermes/hermesReportArtifact';
 
 export type GrpcSessionEvent =
   | { kind: 'text'; text: string }
@@ -102,7 +106,10 @@ export function resolveInvokingCardId(
 export function buildHarnessRuntimeContext(
   sessionId: string,
   parentRunId?: string,
-  investigationContext?: HermesInvestigationContext,
+  options: {
+    investigationContext?: HermesInvestigationContext;
+    activeHermesReport?: HermesReportArtifact | null;
+  } = {},
 ): string | null {
   const parsed = parseSessionId(sessionId);
   if (!parsed) return null;
@@ -113,12 +120,28 @@ export function buildHarnessRuntimeContext(
     `active conversationId: ${parsed.conversationId}`,
     ...(parentRunId ? [`active parentRunId: ${parentRunId}`] : []),
     'Use these exact values for LiquidAIty MCP tool calls. Never derive an id from the working directory, repository name, or session label.',
-    ...(investigationContext
+    ...(options.activeHermesReport
+      ? [
+          '',
+          '[LIQUIDAITY_HERMES_ACTIVE_REPORT]',
+          JSON.stringify({
+            reportId: options.activeHermesReport.reportId,
+            summary: options.activeHermesReport.summary,
+            updatedAt: options.activeHermesReport.updatedAt,
+            revision: options.activeHermesReport.revision,
+            linkedThinkGraphNodeIds: options.activeHermesReport.linkedThinkGraphNodeIds.slice(0, 32),
+            linkedKnowGraphRefs: options.activeHermesReport.linkedKnowGraphRefs.slice(0, 32),
+            linkedCodeGraphRefs: options.activeHermesReport.linkedCodeGraphRefs.slice(0, 32),
+          }),
+          'This is a bounded view of the current durable Hermes report. Use it as project context; the report artifact remains authoritative and its long-form body is not chat output.',
+        ]
+      : []),
+    ...(options.investigationContext
       ? [
           '',
           '[LIQUIDAITY_INVESTIGATION_CONTEXT]',
-          JSON.stringify(investigationContext),
-          'This compact context is server-minted for Hermes. Preserve its graph anchor ids and requested outcome; do not invent or replace its project or conversation identity.',
+          JSON.stringify(options.investigationContext),
+          'This compact context is server-minted for Hermes. Read the current project ThinkGraph yourself; focusNodeIds are optional hints, never the complete assignment.',
         ]
       : []),
   ].join('\n');
@@ -339,6 +362,7 @@ export type MainChatRuntimeConfig = {
   /** The main_chat card's Tools selection — the parent session's real MCP
    * grant, enforced by the gRPC server's parent pool filter. */
   parentAllowedMcpTools: string[];
+  activeHermesReport: HermesReportArtifact | null;
 };
 
 /**
@@ -393,6 +417,7 @@ export async function resolveMainChatRuntimeConfig(
     const uiProvider = String(card?.runtimeOptions?.provider || '').trim().toLowerCase();
     if (uiProvider && uiProvider !== resolved.provider) return null;
     const edges: any[] = Array.isArray((doc?.deck as any)?.edges) ? (doc!.deck as any).edges : [];
+    const activeHermesReport = readLatestHermesReport(parsed.projectId, parsed.conversationId);
     return {
       cardId: String(card?.id || ''),
       title: String(card?.title || card?.id || ''),
@@ -412,7 +437,9 @@ export async function resolveMainChatRuntimeConfig(
             buildHarnessRuntimeContext(
               sessionId,
               parentRunId,
-              binding === 'hermes_steward' ? investigationContext : undefined,
+              binding === 'hermes_steward'
+                ? { investigationContext, activeHermesReport }
+                : {},
             ),
             {
               allowedCardRunIds: resolveDirectSubagents(String(node.id), nodes, edges).map((child: any) =>
@@ -423,6 +450,7 @@ export async function resolveMainChatRuntimeConfig(
         })
         .filter((def): def is Record<string, unknown> => Boolean(def)),
       parentAllowedMcpTools: cardMcpToolGrants(card),
+      activeHermesReport,
     };
   } catch {
     return null;
@@ -607,7 +635,9 @@ export async function startGrpcTurn(
   const doorwayDefinitions = mainChatConfig.doorwayDefinitions;
   callerDoorwayCardIds = doorwayDefinitions.map((def: any) => String(def?.card_id || '')).filter(Boolean);
   callerParentCardId = mainChatConfig.cardId;
-  const runtimeContext = buildHarnessRuntimeContext(args.sessionId, args.traceId, args.investigationContext);
+  const runtimeContext = buildHarnessRuntimeContext(args.sessionId, args.traceId, {
+    activeHermesReport: mainChatConfig.activeHermesReport,
+  });
   const appendSystemPrompt = [mainChatConfig.prompt, runtimeContext]
     .filter((section): section is string => Boolean(section))
     .join('\n\n') || null;

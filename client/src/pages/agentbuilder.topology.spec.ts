@@ -43,7 +43,7 @@ describe('Main / Hermes / graph authority topology', () => {
     const searchTools = byId.get('card_research_agent')?.runtimeOptions?.tools ?? [];
     expect(mainTools).toEqual(expect.arrayContaining(['thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'knowgraph.query', 'codegraph.search']));
     expect(mainTools).not.toEqual(expect.arrayContaining(['knowgraph.ingest', 'web_search']));
-    expect(hermesTools).toEqual(expect.arrayContaining(['thinkgraph.get_graph_slice', 'knowgraph.ingest', 'card.run_assistant_agent']));
+    expect(hermesTools).toEqual(expect.arrayContaining(['thinkgraph.get_graph_slice', 'knowgraph.ingest', 'write_mag_one_instructions', 'card.run_assistant_agent']));
     expect(hermesTools).not.toEqual(expect.arrayContaining(['thinkgraph.submit_update', 'web_search', 'run_mag_one', 'run_coder_subagent']));
     expect(searchTools).toEqual(['web_search']);
   });

@@ -337,13 +337,16 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
         projection={PROJECTION}
         activeHermesReport={{
           reportId: 'hermes:req_1234abcd',
-          status: 'completed',
+          status: 'updated',
           summary: 'Investigated the selected run.',
           reportMarkdown: '# Hermes report\n\nThe run is ready for review.',
           parentRunId: 'req_1234abcd',
-          anchorNodeIds: ['run:42'],
+          artifactRunId: 'req_1234abcd',
+          focusNodeIds: ['run:42'],
           requestedOutcome: 'Inspect the selected run.',
           createdAt: '2026-07-13T00:00:00.000Z',
+          updatedAt: '2026-07-13T00:01:00.000Z',
+          revision: 2,
           linkedThinkGraphNodeIds: ['asts'],
           linkedKnowGraphRefs: [],
           linkedCodeGraphRefs: ['client/src/components/knowledge/KnowledgeGraphFramework.tsx'],

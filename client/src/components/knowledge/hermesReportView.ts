@@ -2,13 +2,16 @@ export type HermesGraphAuthority = 'thinkgraph' | 'knowgraph' | 'codegraph';
 
 export type HermesReportView = {
   reportId: string;
-  status: 'completed';
+  status: 'created' | 'updated';
   summary: string;
   reportMarkdown: string;
   parentRunId: string;
-  anchorNodeIds: string[];
-  requestedOutcome: string;
+  artifactRunId: string;
+  focusNodeIds: string[];
+  requestedOutcome: string | null;
   createdAt: string;
+  updatedAt: string;
+  revision: number;
   linkedThinkGraphNodeIds: string[];
   linkedKnowGraphRefs: string[];
   linkedCodeGraphRefs: string[];

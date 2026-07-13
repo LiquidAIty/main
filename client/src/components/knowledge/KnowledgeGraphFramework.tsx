@@ -614,7 +614,7 @@ export default function KnowledgeGraphFramework({
                 {activeHermesReport.summary}
               </div>
               <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 11 }}>
-                {activeHermesReport.reportId} · {activeHermesReport.createdAt}
+                {activeHermesReport.reportId} · revision {activeHermesReport.revision} · {activeHermesReport.updatedAt}
               </div>
             </div>
             <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: GRAPH_THEME.surface.text, fontFamily: 'inherit', lineHeight: 1.5 }}>

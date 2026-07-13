@@ -472,7 +472,7 @@ router.post('/mcp-bridge/hermes_write_report', (req, res) => {
     return res.json({ ok: true, ...completion });
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'hermes_report_write_failed';
-    return res.status(reason === 'hermes_investigation_context_not_active' || reason === 'hermes_report_already_written' ? 409 : 400).json({
+    return res.status(reason === 'hermes_investigation_context_not_active' ? 409 : 400).json({
       ok: false,
       error: reason,
     });
@@ -500,7 +500,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
   if (!projectId || !message) {
     return res.status(400).json({ ok: false, error: 'projectId_and_message_required' });
   }
-  let investigationContext: HermesInvestigationContext | null;
+  let investigationContext: HermesInvestigationContext;
   try {
     investigationContext = parseHermesInvestigationContext(
       req.body?.investigationContext,
@@ -518,7 +518,10 @@ router.post('/openclaude/session/chat', async (req, res) => {
   // the SSE stream or browser behavior — it only makes the real Harness events
   // (already flowing to the browser) legible in the backend dev terminal.
   const correlationId = `req_${randomUUID().slice(0, 8)}`;
-  if (investigationContext) beginHermesInvestigation(correlationId, investigationContext);
+  // Hermes is available for every native Main turn. Selected graph records, if
+  // supplied, are only focus hints; the real shared assignment is the project
+  // ThinkGraph plus the inherited live conversation.
+  beginHermesInvestigation(correlationId, investigationContext);
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -569,7 +572,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
       workingDirectory,
       mode,
       traceId: correlationId,
-      investigationContext: investigationContext ?? undefined,
+      investigationContext,
     }, (event) => {
       if (turnFinished) return;
       if (event.kind === 'tool_start' && event.toolName.startsWith('mcp__liquidaity__')) {

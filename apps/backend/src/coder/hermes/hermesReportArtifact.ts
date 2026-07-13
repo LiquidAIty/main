@@ -5,8 +5,9 @@ import { resolveCoderWorkspaceRoot } from '../workspaceRoot';
 export type HermesInvestigationContext = {
   projectId: string;
   conversationId: string;
-  anchorNodeIds: string[];
-  requestedOutcome: string;
+  /** Optional user-selected focus only. Hermes always reads the project graph itself. */
+  focusNodeIds: string[];
+  requestedOutcome: string | null;
 };
 
 export type HermesReportWriteInput = {
@@ -20,26 +21,31 @@ export type HermesReportWriteInput = {
 
 export type HermesReportCompletion = {
   reportId: string;
-  status: 'completed';
-  linkedThinkGraphNodeIds: string[];
-  linkedKnowGraphRefs: string[];
-  linkedCodeGraphRefs: string[];
+  status: 'created' | 'updated';
   summary: string;
+  updatedAt: string;
 };
 
 export type HermesReportArtifact = HermesReportCompletion & {
   projectId: string;
   conversationId: string;
+  /** The current native turn that last revised the report. */
   parentRunId: string;
-  anchorNodeIds: string[];
-  requestedOutcome: string;
+  /** The returns/ directory that owns this one durable report. */
+  artifactRunId: string;
+  focusNodeIds: string[];
+  requestedOutcome: string | null;
   createdAt: string;
+  revision: number;
   reportMarkdown: string;
+  linkedThinkGraphNodeIds: string[];
+  linkedKnowGraphRefs: string[];
+  linkedCodeGraphRefs: string[];
 };
 
 const HERMES_CARD_ID = 'card_hermes_steward';
 const PARENT_RUN_ID = /^req_[a-z0-9-]+$/i;
-type ActiveHermesInvestigation = { context: HermesInvestigationContext; reportId: string | null };
+type ActiveHermesInvestigation = { context: HermesInvestigationContext; report: HermesReportArtifact | null };
 const activeInvestigations = new Map<string, ActiveHermesInvestigation>();
 
 function requiredText(value: unknown, field: string, maxLength: number): string {
@@ -57,11 +63,16 @@ function stableRefs(value: unknown, field: string): string[] {
   return [...new Set(value.map((entry) => requiredText(entry, field, 512)))];
 }
 
-function stableAnchorIds(value: unknown): string[] {
-  if (!Array.isArray(value)) throw new Error('investigation_anchor_node_ids_array_required');
-  if (value.length === 0) throw new Error('investigation_anchor_node_ids_required');
-  if (value.length > 64) throw new Error('investigation_anchor_node_ids_too_many');
-  return [...new Set(value.map((entry) => requiredText(entry, 'investigation_anchor_node_id', 512)))];
+function optionalRefs(value: unknown, field: string, limit = 64): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error(`${field}_array_required`);
+  if (value.length > limit) throw new Error(`${field}_too_many`);
+  return [...new Set(value.map((entry) => requiredText(entry, field, 512)))];
+}
+
+function optionalText(value: unknown, field: string, maxLength: number): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  return requiredText(value, field, maxLength);
 }
 
 function reportDirectory(workspaceRoot: string, parentRunId: string): string {
@@ -74,14 +85,16 @@ function reportDirectory(workspaceRoot: string, parentRunId: string): string {
   return target;
 }
 
-/** A substantive Hermes investigation must be explicitly rooted in real
- * ThinkGraph ids. Undefined means this is an ordinary Main-only chat turn. */
+/** Server-minted project identity is always present for the native Hermes
+ * doorway. A UI selection is an optional focus hint, never an invocation gate. */
 export function parseHermesInvestigationContext(
   value: unknown,
   projectId: string,
   conversationId: string,
-): HermesInvestigationContext | null {
-  if (value === undefined) return null;
+): HermesInvestigationContext {
+  if (value === undefined) {
+    return { projectId, conversationId, focusNodeIds: [], requestedOutcome: null };
+  }
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('investigation_context_object_required');
   }
@@ -89,14 +102,14 @@ export function parseHermesInvestigationContext(
   return {
     projectId,
     conversationId,
-    anchorNodeIds: stableAnchorIds(candidate.anchorNodeIds),
-    requestedOutcome: requiredText(candidate.requestedOutcome, 'investigation_requested_outcome', 2_000),
+    focusNodeIds: optionalRefs(candidate.focusNodeIds, 'investigation_focus_node_ids'),
+    requestedOutcome: optionalText(candidate.requestedOutcome, 'investigation_requested_outcome', 2_000),
   };
 }
 
 export function beginHermesInvestigation(parentRunId: string, context: HermesInvestigationContext): void {
   if (!PARENT_RUN_ID.test(parentRunId)) throw new Error('hermes_report_parent_run_id_invalid');
-  activeInvestigations.set(parentRunId, { context, reportId: null });
+  activeInvestigations.set(parentRunId, { context, report: readLatestHermesReport(context.projectId, context.conversationId) });
 }
 
 export function endHermesInvestigation(parentRunId: string): void {
@@ -109,6 +122,7 @@ export function writeHermesReportArtifact(
   context: HermesInvestigationContext,
   input: HermesReportWriteInput,
   workspaceRoot = resolveCoderWorkspaceRoot(),
+  existingReport: HermesReportArtifact | null = null,
 ): HermesReportCompletion {
   const parentRunId = requiredText(input.parentRunId, 'parentRunId', 128);
   const reportMarkdown = requiredText(input.reportMarkdown, 'reportMarkdown', 120_000);
@@ -116,26 +130,31 @@ export function writeHermesReportArtifact(
   const linkedThinkGraphNodeIds = stableRefs(input.thinkGraphNodeIds, 'thinkGraphNodeIds');
   const linkedKnowGraphRefs = stableRefs(input.knowGraphRefs, 'knowGraphRefs');
   const linkedCodeGraphRefs = stableRefs(input.codeGraphRefs, 'codeGraphRefs');
+  const updatedAt = new Date().toISOString();
+  const artifactRunId = existingReport?.artifactRunId ?? parentRunId;
   const completion: HermesReportCompletion = {
-    reportId: `hermes:${parentRunId}`,
-    status: 'completed',
-    linkedThinkGraphNodeIds,
-    linkedKnowGraphRefs,
-    linkedCodeGraphRefs,
+    reportId: existingReport?.reportId ?? `hermes:${artifactRunId}`,
+    status: existingReport ? 'updated' : 'created',
     summary,
+    updatedAt,
   };
   const metadata = {
-    version: 1,
+    version: 2,
     ...completion,
     projectId: context.projectId,
     conversationId: context.conversationId,
     parentRunId,
-    anchorNodeIds: context.anchorNodeIds,
+    artifactRunId,
+    focusNodeIds: context.focusNodeIds,
     requestedOutcome: context.requestedOutcome,
-    createdAt: new Date().toISOString(),
+    createdAt: existingReport?.createdAt ?? updatedAt,
+    revision: (existingReport?.revision ?? 0) + 1,
+    linkedThinkGraphNodeIds,
+    linkedKnowGraphRefs,
+    linkedCodeGraphRefs,
   };
   const encodedMetadata = JSON.stringify(metadata).replace(/</g, '\\u003c');
-  const targetDirectory = reportDirectory(workspaceRoot, parentRunId);
+  const targetDirectory = reportDirectory(workspaceRoot, artifactRunId);
   mkdirSync(targetDirectory, { recursive: true });
   writeFileSync(
     path.join(targetDirectory, 'hermes-report.md'),
@@ -150,9 +169,8 @@ export function writeActiveHermesReport(input: HermesReportWriteInput): HermesRe
   const parentRunId = requiredText(input.parentRunId, 'parentRunId', 128);
   const active = activeInvestigations.get(parentRunId);
   if (!active) throw new Error('hermes_investigation_context_not_active');
-  if (active.reportId) throw new Error('hermes_report_already_written');
-  const completion = writeHermesReportArtifact(active.context, input);
-  active.reportId = completion.reportId;
+  const completion = writeHermesReportArtifact(active.context, input, resolveCoderWorkspaceRoot(), active.report);
+  active.report = readLatestHermesReport(active.context.projectId, active.context.conversationId);
   return completion;
 }
 
@@ -167,10 +185,12 @@ function parseStoredReport(raw: string): HermesReportArtifact | null {
     const parentRunId = requiredText(metadata.parentRunId, 'parentRunId', 128);
     if (!PARENT_RUN_ID.test(parentRunId)) return null;
     const createdAt = requiredText(metadata.createdAt, 'createdAt', 128);
-    if (metadata.status !== 'completed') return null;
+    const updatedAt = requiredText(metadata.updatedAt ?? metadata.createdAt, 'updatedAt', 128);
+    const status = metadata.status;
+    if (status !== 'created' && status !== 'updated' && status !== 'completed') return null;
     return {
       reportId,
-      status: 'completed',
+      status: status === 'completed' ? 'created' : status,
       linkedThinkGraphNodeIds: stableRefs(metadata.linkedThinkGraphNodeIds, 'linkedThinkGraphNodeIds'),
       linkedKnowGraphRefs: stableRefs(metadata.linkedKnowGraphRefs, 'linkedKnowGraphRefs'),
       linkedCodeGraphRefs: stableRefs(metadata.linkedCodeGraphRefs, 'linkedCodeGraphRefs'),
@@ -178,9 +198,14 @@ function parseStoredReport(raw: string): HermesReportArtifact | null {
       projectId,
       conversationId,
       parentRunId,
-      anchorNodeIds: stableAnchorIds(metadata.anchorNodeIds),
-      requestedOutcome: requiredText(metadata.requestedOutcome, 'requestedOutcome', 2_000),
+      artifactRunId: requiredText(metadata.artifactRunId ?? parentRunId, 'artifactRunId', 128),
+      focusNodeIds: optionalRefs(metadata.focusNodeIds, 'focusNodeIds'),
+      requestedOutcome: optionalText(metadata.requestedOutcome, 'requestedOutcome', 2_000),
       createdAt,
+      updatedAt,
+      revision: typeof metadata.revision === 'number' && Number.isInteger(metadata.revision) && metadata.revision > 0
+        ? metadata.revision
+        : 1,
       reportMarkdown: raw.slice(match[0].length).trim(),
     };
   } catch {
@@ -211,6 +236,6 @@ export function readLatestHermesReport(
       // A malformed or unreadable report is not an active report. Never invent one.
     }
   }
-  reports.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  reports.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return reports[0] ?? null;
 }

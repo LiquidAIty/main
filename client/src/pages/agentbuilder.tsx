@@ -487,7 +487,7 @@ export default function AgentBuilder(): React.ReactElement {
   const [newProjectName, setNewProjectName] = useState('');
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
     useState<KnowledgeGraphKind>('thinkgraph');
-  const [thinkGraphAnchorIds, setThinkGraphAnchorIds] = useState<string[]>([]);
+  const [thinkGraphFocusIds, setThinkGraphFocusIds] = useState<string[]>([]);
   const [focusedGraphNodeId, setFocusedGraphNodeId] = useState<string | null>(null);
   const [focusedCodeGraphRef, setFocusedCodeGraphRef] = useState<string | null>(null);
   const thinkGraphProjection = useAgentBuilderThinkGraphProjection({
@@ -1896,10 +1896,10 @@ export default function AgentBuilder(): React.ReactElement {
         // chat = chat mode: only the ThinkGraph doorway. Explicit surface state,
         // never inferred from message content.
         mode: workspaceView === 'canvas' ? 'canvas' : 'chat',
-        ...(thinkGraphAnchorIds.length > 0 && trimmed.length <= 2_000
+        ...(thinkGraphFocusIds.length > 0 && trimmed.length <= 2_000
           ? {
               investigationContext: {
-                anchorNodeIds: thinkGraphAnchorIds,
+                focusNodeIds: thinkGraphFocusIds,
                 requestedOutcome: trimmed,
               },
             }
@@ -1932,7 +1932,7 @@ export default function AgentBuilder(): React.ReactElement {
           appendAssistantText('Chat request failed before the stream opened. Route: /api/coder/openclaude/session/chat.');
         });
     },
-    [canvasProjectId, nativeSessionBusy, thinkGraphAnchorIds, workspaceView],
+    [canvasProjectId, nativeSessionBusy, thinkGraphFocusIds, workspaceView],
   );
 
   const renderChatSurface = (
@@ -2121,7 +2121,7 @@ export default function AgentBuilder(): React.ReactElement {
                   focusedNodeId={focusedGraphNodeId}
                   onNodeSelectionChange={(nodeId) => {
                     if (knowledgeGraphKind === 'thinkgraph') {
-                      setThinkGraphAnchorIds(nodeId ? [nodeId] : []);
+                      setThinkGraphFocusIds(nodeId ? [nodeId] : []);
                     }
                   }}
                   onHermesReportReference={({ authority, id }) => {
