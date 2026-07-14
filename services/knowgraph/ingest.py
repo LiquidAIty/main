@@ -735,6 +735,31 @@ def _merge_ingested_graph(
     )
 
 
+def _apply_inspection_embedding_override(runtime: RuntimeModelConfig) -> RuntimeModelConfig:
+    """Inspection mode (dev/admin stand-in) must NEVER use paid embeddings.
+
+    The backend PDF route can resolve the KnowGraph agent's provider to OpenAI, which
+    selects OpenAI embeddings — and on a 429 insufficient_quota the vendored rate-limit
+    handler retries indefinitely, hanging the import. When inspection mode is on we force
+    local sentence-transformers regardless of provider, so the stand-in path can never
+    silently fall back to a paid embedding backend. Observable via the runtime log line.
+    Product mode (inspection disabled) is unchanged.
+    """
+    if not inspection_mode_enabled():
+        return runtime
+    from dataclasses import replace
+
+    local_model = _optional_env("KNOWGRAPH_SENTENCE_TRANSFORMERS_MODEL") or "all-MiniLM-L6-v2"
+    local_dim = _optional_int_env("KNOWGRAPH_SENTENCE_TRANSFORMERS_DIM") or 384
+    return replace(
+        runtime,
+        embedding_backend="sentence_transformers",
+        embedding_model=local_model,
+        embedding_dimensions=local_dim,
+        embedding_client_kwargs={},
+    )
+
+
 def _create_runtime_pipeline(
     *,
     project_id: str,
@@ -756,6 +781,7 @@ def _create_runtime_pipeline(
         model_key=model_key,
         model_id=model_id,
     )
+    runtime = _apply_inspection_embedding_override(runtime)
     print(
         f"[KNOWGRAPH_RUNTIME] project_id={project_id} document_id={document_id} provider={runtime.provider} "
         f"model={runtime.model_id} embedding_backend={runtime.embedding_backend} "
