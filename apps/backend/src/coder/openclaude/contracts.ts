@@ -4,20 +4,6 @@ export type OpenClaudeState = 'idle' | 'running' | 'error';
 
 export type OpenClaudeProvider = 'openai' | 'openrouter';
 
-export type OpenClaudeStatus = {
-  installed: boolean;
-  headlessAvailable: boolean;
-  terminalAvailable: boolean;
-  repoConnected: boolean;
-  mode: OpenClaudeMode;
-  access: OpenClaudeAccess;
-  state: OpenClaudeState;
-  modelKey: string;
-  provider: OpenClaudeProvider | null;
-  providerModelId: string;
-  configurationError?: string;
-};
-
 export type OpenClaudeRunRequest = {
   task: string;
   mode?: OpenClaudeMode;

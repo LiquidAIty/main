@@ -895,18 +895,6 @@ function parseConsoleMode(value: unknown): ConsoleMode {
   return CONSOLE_MODES.includes(value as ConsoleMode) ? (value as ConsoleMode) : 'interactive';
 }
 
-router.get('/openclaude/status', (req, res) => {
-  const status = openClaudeRuntimeService.getStatus({
-    mode: typeof req.query.mode === 'string' ? (req.query.mode as OpenClaudeRunRequest['mode']) : undefined,
-    access: typeof req.query.access === 'string' ? (req.query.access as OpenClaudeRunRequest['access']) : undefined,
-    modelKey: typeof req.query.modelKey === 'string' ? req.query.modelKey : undefined,
-    provider: typeof req.query.provider === 'string' ? (req.query.provider as OpenClaudeRunRequest['provider']) : undefined,
-    providerModelId:
-      typeof req.query.providerModelId === 'string' ? req.query.providerModelId : undefined,
-  });
-  return res.json({ ok: true, status });
-});
-
 router.get('/openclaude/terminal/launch', (req, res) => {
   const launch = openClaudeRuntimeService.getTerminalLaunch({
     mode: 'terminal',

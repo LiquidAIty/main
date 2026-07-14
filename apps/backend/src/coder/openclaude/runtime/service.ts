@@ -4,8 +4,6 @@ import type {
   OpenClaudeMode,
   OpenClaudeRunRequest,
   OpenClaudeRunResult,
-  OpenClaudeState,
-  OpenClaudeStatus,
   OpenClaudeTerminalLaunchResult,
 } from '../contracts';
 import { resolveOpenClaudeProviderTarget } from '../provider/openai53';
@@ -16,42 +14,7 @@ const DEFAULT_MODE: OpenClaudeMode = 'headless';
 const DEFAULT_ACCESS: OpenClaudeAccess = 'patch';
 
 export class OpenClaudeRuntimeService {
-  private state: OpenClaudeState = 'idle';
-
   constructor(private readonly adapter = new OpenClaudeAdapter()) {}
-
-  getStatus(request: Partial<OpenClaudeRunRequest> = {}): OpenClaudeStatus {
-    const install = this.adapter.getInstallInfo();
-    let target: ReturnType<typeof resolveOpenClaudeProviderTarget> | null = null;
-    let configurationError: string | undefined;
-    try {
-      target = resolveOpenClaudeProviderTarget({
-        task: '',
-        mode: request.mode,
-        access: request.access,
-        modelKey: request.modelKey,
-        provider: request.provider,
-        providerModelId: request.providerModelId,
-      });
-    } catch (error) {
-      configurationError =
-        error instanceof Error ? error.message : 'openclaude_configuration_invalid';
-    }
-
-    return {
-      installed: install.installed,
-      headlessAvailable: install.headlessEntrypoint !== null,
-      terminalAvailable: install.terminalEntrypoint !== null,
-      repoConnected: this.adapter.isRepoConnected(),
-      mode: request.mode || DEFAULT_MODE,
-      access: request.access || DEFAULT_ACCESS,
-      state: this.state,
-      modelKey: target?.modelKey || '',
-      provider: target?.provider || null,
-      providerModelId: target?.providerModelId || '',
-      ...(configurationError ? { configurationError } : {}),
-    };
-  }
 
   getTerminalLaunch(
     request: Partial<OpenClaudeRunRequest> = {},
@@ -162,17 +125,14 @@ export class OpenClaudeRuntimeService {
       };
     }
 
-    this.state = 'running';
     try {
       const mode = request.mode || DEFAULT_MODE;
       const result =
         mode === 'terminal'
           ? await runOpenClaudeTerminal(this.adapter, request)
           : await runOpenClaudeHeadless(request);
-      this.state = 'idle';
       return result;
     } catch (err: unknown) {
-      this.state = 'error';
       return {
         ok: false,
         mode: request.mode || DEFAULT_MODE,
