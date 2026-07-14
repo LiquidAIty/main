@@ -8,7 +8,7 @@ import {
   openClaudeConsoleSessionManager,
   type ConsoleMode,
 } from '../coder/openclaude/console/consoleSession';
-import { runConfiguredCard } from '../cards/runtime';
+import { runConfiguredCard, resolveCardModelStrict } from '../cards/runtime';
 import {
   describeConnectedAgents,
   runMagOne,
@@ -42,6 +42,8 @@ import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { createCodebaseMemoryMcpCaller } from '../services/graphContext/cbmMcpCaller';
 import { pool } from '../db/pool';
 import { runCoderSubagent } from '../coder/execution/coderRouter';
+import { setLatestCoderAuditView, getLatestCoderAuditView } from '../coder/execution/coderAuditView';
+import type { CodeGraphViewContractResult } from '../contracts/coderContracts';
 
 const router = Router();
 export const OPENCLAUDE_HARNESS_ROUTE_PREFIX = '/coder/openclaude';
@@ -99,15 +101,54 @@ router.post('/mcp-bridge/run_mag_one', async (req, res) => {
 router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
   try {
     const body = req.body || {};
+    const projectId = String(body.projectId || '');
+    const deckId = String(body.deckId || BUILDER_DECK_ID);
+    const cardId = String(body.cardId || '');
+    const conversationId = String(body.conversationId || '');
+    // Resolve the saved Coder card's provider/model EXACTLY as the runtime does
+    // (no hardcoded model, no deckSeed edit). Missing/mismatched config throws.
+    const { deck } = await getDeckDocument(projectId, deckId);
+    const nodes: unknown[] = Array.isArray((deck as { nodes?: unknown[] } | null)?.nodes)
+      ? ((deck as { nodes: unknown[] }).nodes)
+      : [];
+    const card = nodes.find((node) => String((node as { id?: unknown })?.id || '') === cardId);
+    if (!card) return res.status(404).json({ ok: false, error: `coder_card_not_found: ${cardId}` });
+    const model = resolveCardModelStrict(card);
+    const authority =
+      body.authority === 'mag_one_execution' || body.authority === 'direct_main_audit'
+        ? body.authority
+        : undefined;
     const result = await runCoderSubagent({
       parentRunId: String(body.parentRunId || ''),
-      projectId: String(body.projectId || ''),
-      deckId: String(body.deckId || BUILDER_DECK_ID),
-      conversationId: String(body.conversationId || ''),
-      cardId: String(body.cardId || ''),
+      projectId,
+      deckId,
+      conversationId,
+      cardId,
       adapter: String(body.adapter || ''),
       approvedPrompt: String(body.approvedPrompt || ''),
+      authority,
+      model: model.providerModelId,
+      provider: model.provider,
     });
+    // A successful read-only audit publishes its filtered CodeGraph view for the
+    // frontend to focus the existing CodeGraphSurface on the audited branch.
+    if (result.ok && result.resultKind === 'audit' && result.report) {
+      const audit = result.report as Record<string, unknown>;
+      setLatestCoderAuditView({
+        projectId,
+        conversationId,
+        childRunId: result.childRunId,
+        correlationId: result.correlationId,
+        conclusion: String(audit.conclusion ?? ''),
+        repositoryIdentity: String(audit.repositoryIdentity ?? ''),
+        revision: String(audit.revision ?? ''),
+        freshness: String(audit.freshness ?? ''),
+        codeGraphQuery: String(audit.codeGraphQuery ?? ''),
+        codeGraphNodeRefs: Array.isArray(audit.codeGraphNodeRefs) ? audit.codeGraphNodeRefs.map(String) : [],
+        viewContract: (audit.viewContract ?? {}) as CodeGraphViewContractResult,
+        transcriptArtifact: result.transcriptArtifact ?? null,
+      });
+    }
     return res.status(result.ok ? 200 : 502).json(result);
   } catch (error) {
     return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'run_coder_subagent_failed' });
@@ -483,6 +524,15 @@ router.get('/hermes/report', (req, res) => {
   const conversationId = String(req.query?.conversationId || 'main').trim();
   if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
   return res.json({ ok: true, report: readLatestHermesReport(projectId, conversationId) });
+});
+
+// Latest filtered CodeGraph view from a direct_main_audit run, for the frontend
+// to focus the existing CodeGraphSurface on the audited branch.
+router.get('/coder-audit-view', (req, res) => {
+  const projectId = String(req.query?.projectId || '').trim();
+  const conversationId = String(req.query?.conversationId || 'main').trim();
+  if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
+  return res.json({ ok: true, view: getLatestCoderAuditView(projectId, conversationId) });
 });
 
 router.post('/openclaude/session/chat', async (req, res) => {

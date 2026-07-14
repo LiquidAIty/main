@@ -103,6 +103,7 @@ export type StartConsoleSessionRequest = {
 
 const DEFAULT_MAX_BUFFER_CHARS = 200_000;
 const MAX_CHUNK_CHARS = 16_000;
+const MAX_RAW_RESULT_CHARS = 500_000;
 const KILL_FALLBACK_MS = 5_000;
 
 const SECRET_PATTERNS: RegExp[] = [
@@ -308,6 +309,9 @@ export class OpenClaudeConsoleSession {
   private seq = 0;
   private child: ConsoleChild | null = null;
   private killFallback: NodeJS.Timeout | null = null;
+  // Raw (unredacted) stdout kept for structured-result parsing by the Console
+  // subagent bridge. Bounded; separate from the redacted display transcript.
+  private rawStdout = '';
 
   readonly info: ConsoleSessionInfo;
 
@@ -322,7 +326,12 @@ export class OpenClaudeConsoleSession {
 
   /** Push a bounded, redacted chunk into the buffer and notify subscribers. */
   emitOutput(stream: ConsoleStreamName, raw: string): void {
-    const data = redactConsoleSecrets(String(raw)).slice(0, MAX_CHUNK_CHARS);
+    const rawStr = String(raw);
+    // Keep raw stdout for the structured-result parser (display stays redacted).
+    if (stream === 'stdout') {
+      this.rawStdout = (this.rawStdout + rawStr).slice(-MAX_RAW_RESULT_CHARS);
+    }
+    const data = redactConsoleSecrets(rawStr).slice(0, MAX_CHUNK_CHARS);
     if (!data) return;
     const chunk: ConsoleOutputChunk = {
       seq: ++this.seq,
@@ -450,6 +459,15 @@ export class OpenClaudeConsoleSession {
 
   transcriptText(): string {
     return this.buffer.map((chunk) => chunk.data).join('');
+  }
+
+  /**
+   * Raw (unredacted) stdout accumulation, for structured-result parsing by the
+   * Console subagent bridge (OpenClaude `--output-format json` emits its envelope
+   * on stdout). The display transcript stays redacted; this is never shown.
+   */
+  rawResultText(): string {
+    return this.rawStdout;
   }
 }
 

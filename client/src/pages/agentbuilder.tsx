@@ -42,6 +42,7 @@ import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBui
 import useAgentBuilderThinkGraphProjection from '../features/agentbuilder/state/useAgentBuilderThinkGraphProjection';
 import useAgentBuilderKnowGraphProjection from '../features/agentbuilder/state/useAgentBuilderKnowGraphProjection';
 import useAgentBuilderHermesReport from '../features/agentbuilder/state/useAgentBuilderHermesReport';
+import useAgentBuilderCoderAuditView from '../features/agentbuilder/state/useAgentBuilderCoderAuditView';
 import TradingCanvasSurface from '../features/trading/TradingCanvasSurface';
 import type { LinkRef } from '../components/builder/deckContinuityTypes';
 import { resolveDeckWorkspaceRoot } from '../features/agentbuilder/state/deckWorkspaceRoot';
@@ -512,6 +513,10 @@ export default function AgentBuilder(): React.ReactElement {
     conversationId: 'main',
     workspaceView,
   });
+  const coderAuditView = useAgentBuilderCoderAuditView({
+    projectId: activeProject,
+    conversationId: 'main',
+  });
 
   const [graphViewContract, setGraphViewContract] =
     useState<CodeGraphViewContract | null>(null);
@@ -531,13 +536,32 @@ export default function AgentBuilder(): React.ReactElement {
       cancelled = true;
     };
   }, []);
+  // Focus the existing CodeGraphSurface on a completed read-only audit's filtered
+  // view. Applied once per audit run; stale/wrong-project views are ignored. The
+  // view is focus/filter only — canonical CodeGraph facts are never rewritten.
+  const appliedAuditRunRef = useRef<string | null>(null);
+  useEffect(() => {
+    const view = coderAuditView.view;
+    if (!view || view.projectId !== activeProject) return;
+    if (appliedAuditRunRef.current === view.childRunId) return;
+    appliedAuditRunRef.current = view.childRunId;
+    setGraphViewContract((prev) => ({
+      projectId: codeGraphProjectName || prev?.projectId || null,
+      nodeLabelAllowlist: view.viewContract.nodeLabelAllowlist ?? prev?.nodeLabelAllowlist,
+      edgeTypeAllowlist: view.viewContract.edgeTypeAllowlist ?? prev?.edgeTypeAllowlist,
+      showLabels:
+        typeof view.viewContract.showLabels === 'boolean'
+          ? view.viewContract.showLabels
+          : (prev?.showLabels ?? true),
+      maxNodes: view.viewContract.maxNodes ?? prev?.maxNodes,
+      focusPaths: view.viewContract.focusPaths ?? prev?.focusPaths,
+      focusSymbols: view.viewContract.focusSymbols ?? prev?.focusSymbols,
+    }));
+  }, [coderAuditView.view, activeProject, codeGraphProjectName]);
   // chat state must be declared before callbacks/effects that write to it.
   const [messages, setMessages] = useState<
     { role: 'assistant' | 'user'; text: string }[]
   >(() => loadProjectState().messages);
-  const [, setLinks] = useState<LinkRef[]>(
-    () => loadProjectState().links,
-  );
   const [stateLoaded, setStateLoaded] = useState(false);
 
   // Restore the durable project-scoped Harness transcript on open / project
@@ -570,16 +594,7 @@ export default function AgentBuilder(): React.ReactElement {
     };
   }, [canvasProjectId]);
 
-  const lastLargeSurfaceTelemetryRef = useRef<WorkspaceTestingSurface | null>(
-    null,
-  );
   const lastCompanionSurfaceTelemetryRef = useRef<string | null>(null);
-  const chatLoopTelemetryRef = useRef<{
-    interactionId: string;
-    sendStartedAt: number;
-    responseReceivedAt: number | null;
-    refreshRecorded: boolean;
-  } | null>(null);
   const pendingPanelOpenTelemetryRef = useRef<{
     objectType: WorkspaceTestingObjectType;
     objectId: string;
@@ -602,24 +617,6 @@ export default function AgentBuilder(): React.ReactElement {
       });
     },
     [activeProject],
-  );
-
-  const recordPostResponseRefreshIfPending = useCallback(
-    (
-      refreshKind: string,
-      completedAt: number,
-    ) => {
-      const activeLoop = chatLoopTelemetryRef.current;
-      if (!activeLoop?.responseReceivedAt || activeLoop.refreshRecorded) return;
-      activeLoop.refreshRecorded = true;
-      emitWorkspaceTestingEvent({
-        event: 'post_response_refresh_completed',
-        interactionId: activeLoop.interactionId,
-        durationMs: Math.max(0, completedAt - activeLoop.responseReceivedAt),
-        metadata: { refreshKind },
-      });
-    },
-    [emitWorkspaceTestingEvent],
   );
 
   const queueWorkspacePanelTelemetry = useCallback(
@@ -654,26 +651,12 @@ export default function AgentBuilder(): React.ReactElement {
   );
 
   useEffect(() => {
-    const previousSurface = lastLargeSurfaceTelemetryRef.current;
     emitWorkspaceTestingEvent({
       event: 'surface_opened',
       surface: largeSurface,
       surfaceRole: 'large',
       metadata: { workspaceView },
     });
-    if (
-      largeSurface === 'chat' &&
-      previousSurface &&
-      previousSurface !== 'chat'
-    ) {
-      emitWorkspaceTestingEvent({
-        event: 'return_to_chat',
-        surface: 'chat',
-        surfaceRole: 'large',
-        metadata: { fromSurface: previousSurface },
-      });
-    }
-    lastLargeSurfaceTelemetryRef.current = largeSurface;
   }, [emitWorkspaceTestingEvent, largeSurface, workspaceView]);
 
   useEffect(() => {
@@ -836,7 +819,6 @@ export default function AgentBuilder(): React.ReactElement {
     lastPersistedBoardFingerprintRef,
     lastPersistedBoardSnapshotRef,
     emitWorkspaceTestingEvent: emitWorkspaceTestingEvent as any,
-    recordPostResponseRefreshIfPending,
     setDeck,
     setDeckRevision,
     setDeckLoadBusy,
@@ -845,7 +827,6 @@ export default function AgentBuilder(): React.ReactElement {
     setLatestCardRun,
     setLiveDeckEvents,
     setMessages,
-    setLinks,
     setStateLoaded,
     setDeckStatusMessage,
   });

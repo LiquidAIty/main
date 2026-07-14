@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -110,5 +110,58 @@ describe('CodexAdapter', () => {
     const result = new CodexAdapter(process.execPath).availability();
     expect(result.available).toBe(true);
     expect(result.version).toBeTruthy();
+  });
+});
+
+describe('ClaudeCodeAdapter caller authority (dossier §3.3)', () => {
+  function prepared(root: string, overrides: Record<string, unknown>, runId: string) {
+    const adapter = new ClaudeCodeAdapter(process.execPath, false);
+    adapter.prepare(packet(root, { ...overrides, runId }));
+    return adapter;
+  }
+
+  function readMcp(root: string, runId: string) {
+    return JSON.parse(readFileSync(path.join(root, 'coder-workspace', 'runs', runId, 'mcp.json'), 'utf8'));
+  }
+
+  it('with no authority set, produces the exact legacy args + dev-harness-only MCP (behavior-preserving)', () => {
+    const root = fixture();
+    const adapter = prepared(root, {}, 'coder_legacy');
+    const args = adapter.inspectLaunch('coder_legacy').args;
+    expect(args[args.indexOf('--allowedTools') + 1]).toBe('Bash,PowerShell');
+    expect(args[args.indexOf('--disallowedTools') + 1]).toBe('WebFetch,WebSearch,Write,Edit,NotebookEdit');
+    expect(args[args.indexOf('--permission-mode') + 1]).toBe('dontAsk');
+    expect(Object.keys(readMcp(root, 'coder_legacy').mcpServers)).toEqual(['liquid_aity_coder']);
+    adapter.dispose('coder_legacy');
+  });
+
+  it('with direct_main_audit, is read-only (Read/Grep/Glob, no shell, denies Edit) and composes the CodeGraph MCP host', () => {
+    const root = fixture();
+    const adapter = prepared(root, { authority: 'direct_main_audit' }, 'coder_audit');
+    const args = adapter.inspectLaunch('coder_audit').args;
+    const allowed = args[args.indexOf('--allowedTools') + 1];
+    expect(allowed).toContain('Read');
+    expect(allowed).toContain('Grep');
+    expect(allowed).toContain('Glob');
+    expect(allowed).not.toContain('Bash');
+    expect(allowed).not.toContain('PowerShell');
+    expect(args[args.indexOf('--disallowedTools') + 1]).toContain('Edit');
+    const mcp = readMcp(root, 'coder_audit');
+    expect(Object.keys(mcp.mcpServers).sort()).toEqual(['liquid_aity_codegraph', 'liquid_aity_coder'].sort());
+    expect(String(mcp.mcpServers.liquid_aity_codegraph.args[0]).replace(/\\/g, '/')).toMatch(/codegraph_doorway_mcp\.py$/);
+    adapter.dispose('coder_audit');
+  });
+
+  it('with mag_one_execution, grants Edit/Write/Bash and keeps dev-harness-only MCP', () => {
+    const root = fixture();
+    const adapter = prepared(root, { authority: 'mag_one_execution' }, 'coder_exec');
+    const allowed = adapter.inspectLaunch('coder_exec').args[
+      adapter.inspectLaunch('coder_exec').args.indexOf('--allowedTools') + 1
+    ];
+    expect(allowed).toContain('Edit');
+    expect(allowed).toContain('Write');
+    expect(allowed).toContain('Bash');
+    expect(Object.keys(readMcp(root, 'coder_exec').mcpServers)).toEqual(['liquid_aity_coder']);
+    adapter.dispose('coder_exec');
   });
 });

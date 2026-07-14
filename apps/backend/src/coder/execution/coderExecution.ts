@@ -3,6 +3,12 @@ import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:chil
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveRepoRoot } from '../workspaceRoot';
+import {
+  buildCoderMcpServers,
+  resolveCoderToolPolicy,
+  LEGACY_HARNESS_TOOL_POLICY,
+  type CoderAuthorityMode,
+} from './coderRuntimeContract';
 
 export const CODER_ADAPTER_IDS = ['claude_code', 'codex'] as const;
 export type CoderAdapterId = (typeof CODER_ADAPTER_IDS)[number];
@@ -19,6 +25,12 @@ export type CoderRunPacket = {
   cardId: string;
   adapter: CoderAdapterId;
   invocationMode: CoderInvocationMode;
+  /**
+   * Caller-supplied Coder authority (dossier §3.3). Optional: when unset, the
+   * run keeps the legacy harness_subagent tool policy + dev-harness MCP (exactly
+   * today's behavior). Set explicitly to opt into read-only audit or execution.
+   */
+  authority?: CoderAuthorityMode;
   repositoryRoot: string;
   allowedPaths: string[];
   deniedPaths: string[];
@@ -287,25 +299,25 @@ export class ClaudeCodeAdapter extends CliCoderAdapter {
   }
 
   protected writeAdapterRunFiles(packet: CoderRunPacket, runtimeDir: string): void {
+    // Composed MCP config (dossier §3 / blocker B): dev-harness MCP always;
+    // the CodeGraph host (mcp_host.py) is added only for read-only audit runs.
+    // No authority set = dev-harness only, byte-identical to before.
     const mcpConfig = {
-      mcpServers: {
-        liquid_aity_coder: {
-          type: 'stdio',
-          command: process.env.LIQUIDAITY_PYTHON || path.join(resolveRepoRoot(), 'apps', 'python-models', '.venv', 'Scripts', 'python.exe'),
-          args: [path.join(resolveRepoRoot(), 'apps', 'python-models', 'app', 'dev_agent_harness_mcp.py')],
-          env: { LIQUIDAITY_CODER_RUN_ID: packet.runId },
-        },
-      },
+      mcpServers: buildCoderMcpServers({
+        runId: packet.runId,
+        includeCodeGraph: packet.authority === 'direct_main_audit',
+      }),
     };
     writeFileSync(path.join(runtimeDir, 'mcp.json'), JSON.stringify(mcpConfig), { encoding: 'utf8', flag: 'wx' });
   }
 
   protected buildArgs(run: InternalRun): string[] {
-    // dontAsk AUTO-DENIES anything not pre-approved (docs: permission modes) —
-    // shell must be explicitly allowed or the coder has no hands; everything
-    // else stays auto-denied on top of the explicit disallow list.
-    // --verbose is REQUIRED by the CLI whenever --print uses stream-json output.
-    return ['--print', '--output-format', 'stream-json', '--verbose', '--include-hook-events', '--input-format', 'text', '--session-id', run.sessionId, '--mcp-config', path.join(run.runtimeDir, 'mcp.json'), '--strict-mcp-config', '--permission-mode', 'dontAsk', '--allowedTools', 'Bash,PowerShell', '--disallowedTools', 'WebFetch,WebSearch,Write,Edit,NotebookEdit', '--json-schema', JSON.stringify(CODER_REPORT_SCHEMA), run.packet.approvedPrompt];
+    // Caller authority selects the tool/permission policy (dossier §3.3); unset
+    // keeps the legacy shell-capable harness policy (byte-identical to before).
+    // dontAsk AUTO-DENIES anything not in --allowedTools; --verbose is REQUIRED
+    // by the CLI whenever --print uses stream-json output.
+    const policy = run.packet.authority ? resolveCoderToolPolicy(run.packet.authority) : LEGACY_HARNESS_TOOL_POLICY;
+    return ['--print', '--output-format', 'stream-json', '--verbose', '--include-hook-events', '--input-format', 'text', '--session-id', run.sessionId, '--mcp-config', path.join(run.runtimeDir, 'mcp.json'), '--strict-mcp-config', '--permission-mode', policy.permissionMode, '--allowedTools', policy.allowedTools.join(','), '--disallowedTools', policy.disallowedTools.join(','), '--json-schema', JSON.stringify(CODER_REPORT_SCHEMA), run.packet.approvedPrompt];
   }
 
   protected pruneEnv(env: NodeJS.ProcessEnv): void {

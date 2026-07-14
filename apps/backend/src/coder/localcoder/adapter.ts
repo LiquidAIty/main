@@ -4,10 +4,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   coderReportJsonSchema,
-  coderReportSchema,
   type CoderPacket,
   type CoderReport,
 } from '../../contracts/coderContracts';
+import {
+  buildOpenClaudeSubagentArgs,
+  parseOpenClaudeCoderReport,
+} from '../execution/coderRuntimeContract';
 
 export type ProcessResult = {
   started: boolean;
@@ -493,48 +496,8 @@ function parseLocalCoderOutput(
   jsonParseStarted: boolean;
   coderReportValidationStarted: boolean;
 } {
-  let coderReportValidationStarted = false;
-  try {
-    const envelope = JSON.parse(stdout) as Record<string, unknown>;
-    const candidates = [
-      envelope.structured_output,
-      envelope.result,
-      envelope.output,
-      envelope,
-    ];
-    for (const candidate of candidates) {
-      const parsedCandidate =
-        typeof candidate === 'string'
-          ? (() => {
-              try {
-                return JSON.parse(candidate);
-              } catch {
-                return null;
-              }
-            })()
-          : candidate;
-      coderReportValidationStarted = true;
-      const parsed = coderReportSchema.safeParse(parsedCandidate);
-      if (parsed.success && parsed.data.coderPacketId === packetId) {
-        return {
-          report: { ...parsed.data, rawOutput: stdout },
-          jsonParseStarted: true,
-          coderReportValidationStarted,
-        };
-      }
-    }
-  } catch {
-    return {
-      report: null,
-      jsonParseStarted: true,
-      coderReportValidationStarted,
-    };
-  }
-  return {
-    report: null,
-    jsonParseStarted: true,
-    coderReportValidationStarted,
-  };
+  // One parser for both OpenClaude surfaces: the headless job pins its packet id.
+  return parseOpenClaudeCoderReport(stdout, { requirePacketId: packetId });
 }
 
 function createRuntimeDiagnostics(
@@ -910,26 +873,15 @@ export class LocalCoderAdapter {
   }
 
   private jobArgs(packet: CoderPacket, mcpFlags: string[], prompt: string): string[] {
-    const model = String(packet.providerModelId || this.env.OPENAI_MODEL);
-    const args = [
-      '--print',
+    // One argv shape for both OpenClaude surfaces (headless job + streamed Console
+    // subagent) — see buildOpenClaudeSubagentArgs.
+    return buildOpenClaudeSubagentArgs({
       prompt,
-      '--output-format',
-      'json',
-      '--json-schema',
-      JSON.stringify(coderReportJsonSchema),
-    ];
-    args.push(...mcpFlags);
-    args.push(
-      '--permission-mode',
-      deriveLocalCoderPermissionMode(packet),
-      '--model',
-      model,
-      '--provider',
-      'openai',
-      '--no-session-persistence',
-    );
-    return args;
+      model: String(packet.providerModelId || this.env.OPENAI_MODEL),
+      permissionMode: deriveLocalCoderPermissionMode(packet),
+      jsonSchema: coderReportJsonSchema,
+      mcpFlags,
+    });
   }
 
   /**

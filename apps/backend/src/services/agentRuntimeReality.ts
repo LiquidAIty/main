@@ -1,7 +1,24 @@
+/**
+ * agentRuntimeReality — ADMIN-ONLY external coding-agent inspection socket.
+ *
+ * A controlled dev/admin entry point where an OUTSIDE coding agent (Claude,
+ * Codex, or similar) deliberately plugs into the running LiquidAIty stack to
+ * exercise real agent endpoints, inspect pipeline flow from inside, and return
+ * diagnostic evidence while developing the system. Gated by isDevTestModeEnabled
+ * (403 in production) and driven only through the dev harness routes.
+ *
+ * It is explicitly NOT: the Harness, the product Coder runtime, a Main subagent,
+ * a Mag One worker, a Coder fallback, a user-facing feature, or a substitute for
+ * Pipeline Diagnostics. Product Coder uses ONLY the canonical OpenClaude Console
+ * PTY runtime; Main and Mag One never route through here. Its isolated BYOC
+ * adapters (`runHeadlessCoderReality`) exist only to let the outside agent probe
+ * the live stack. Preserve this socket and its diagnostic records — do not
+ * migrate it into the PTY runtime and do not remove it as "duplicate Coder code".
+ */
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { cancelCoderRun, describeCoderAdapters, runCoderSubagent, type RunCoderSubagentResult } from '../coder/execution/coderRouter';
+import { cancelCoderRun, describeCoderAdapters, runHeadlessCoderReality, type RunCoderSubagentResult } from '../coder/execution/coderRouter';
 import { claudeCodeAdapter, type CoderAdapterId } from '../coder/execution/coderExecution';
 import { resolveCoderWorkspaceRoot, resolveRepoRoot } from '../coder/workspaceRoot';
 import { isDevTestModeEnabled } from './devTest';
@@ -54,7 +71,9 @@ const MAX_MANIFEST_FILES = 25_000;
 
 type Manifest = Map<string, string>;
 type RuntimeRealityDeps = {
-  runCoder: typeof runCoderSubagent;
+  // DEV-ONLY reality test drives the ISOLATED headless BYOC adapters directly —
+  // never the canonical console `run_coder_subagent` path.
+  runCoder: typeof runHeadlessCoderReality;
   cancelCoder: typeof cancelCoderRun;
   capture: (root: string) => Manifest;
 };
@@ -132,7 +151,7 @@ function observe(record: RuntimeTestRecord, stage: string, detail: Record<string
 
 export function startAgentRuntimeTest(
   input: RuntimeTestInput,
-  deps: RuntimeRealityDeps = { runCoder: runCoderSubagent, cancelCoder: cancelCoderRun, capture: captureManifest },
+  deps: RuntimeRealityDeps = { runCoder: runHeadlessCoderReality, cancelCoder: cancelCoderRun, capture: captureManifest },
 ): RuntimeTestRecord {
   validate(input);
   const activeKey = `${input.parentRunId}:${input.adapter}`;

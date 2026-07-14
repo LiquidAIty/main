@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { resetCoderReportsForTest } from '../../services/coderReportEvidence';
-import { runCoderSubagent } from './coderRouter';
+import { runHeadlessCoderReality } from './coderRouter';
 import type { CoderAdapterId, CoderExecutionAdapter, CoderRunPacket, CoderRunSnapshot } from './coderExecution';
 
 const temp = mkdtempSync(path.join(tmpdir(), 'coder-router-'));
@@ -34,11 +34,13 @@ function snapshot(packet: CoderRunPacket, status: CoderRunSnapshot['status']): C
 
 afterEach(() => resetCoderReportsForTest(temp));
 
-describe('runCoderSubagent', () => {
+// Dev-only reality-test path for the ISOLATED headless BYOC adapters. This is
+// NOT the canonical `run_coder_subagent` runtime (that is Console PTY only).
+describe('runHeadlessCoderReality (dev-only, isolated)', () => {
   it('routes explicitly to Claude Code and links parent/child runs without rewriting prompt bytes', async () => {
     const adapter = fakeAdapter('claude_code', 'HELLO_FROM_CLAUDE_CODE');
     const approvedPrompt = 'Run exactly: node -e "console.log(\'HELLO_FROM_CLAUDE_CODE\')"\nDo not modify files.\n';
-    const result = await runCoderSubagent({ parentRunId: 'req_parent', projectId: 'p1', deckId: 'deck_builder', conversationId: 'c1', cardId: 'card_local_coder', adapter: 'claude_code', approvedPrompt }, adapter);
+    const result = await runHeadlessCoderReality({ parentRunId: 'req_parent', projectId: 'p1', deckId: 'deck_builder', conversationId: 'c1', cardId: 'card_local_coder', adapter: 'claude_code', approvedPrompt }, adapter);
     expect(result).toMatchObject({ ok: true, adapter: 'claude_code', parentRunId: 'req_parent', sessionId: 'claude_code_session_1', exactCommand: 'node -e "console.log(\'HELLO_FROM_CLAUDE_CODE\')"', stdout: 'HELLO_FROM_CLAUDE_CODE\n', commandExitStatus: 0 });
     expect(result.childRunId).toMatch(/^coder_/);
     expect(adapter.prepared?.approvedPrompt).toBe(approvedPrompt);
@@ -48,23 +50,23 @@ describe('runCoderSubagent', () => {
 
   it('routes explicitly to Codex with the same contract and linked identity', async () => {
     const adapter = fakeAdapter('codex', 'HELLO_FROM_CODEX');
-    const result = await runCoderSubagent({ parentRunId: 'req_parent_2', projectId: 'p1', deckId: 'deck_builder', conversationId: 'c1', cardId: 'card_local_coder', adapter: 'codex', approvedPrompt: 'Create helloworld.md.\n' }, adapter);
+    const result = await runHeadlessCoderReality({ parentRunId: 'req_parent_2', projectId: 'p1', deckId: 'deck_builder', conversationId: 'c1', cardId: 'card_local_coder', adapter: 'codex', approvedPrompt: 'Create helloworld.md.\n' }, adapter);
     expect(result).toMatchObject({ ok: true, adapter: 'codex', parentRunId: 'req_parent_2', sessionId: 'codex_session_1', stdout: 'HELLO_FROM_CODEX\n', commandExitStatus: 0 });
     expect(adapter.prepared?.adapter).toBe('codex');
   });
 
   it('rejects unknown adapters without fallback', async () => {
-    await expect(runCoderSubagent({ parentRunId: 'p', projectId: 'p1', deckId: 'd', conversationId: 'c', cardId: 'card', adapter: 'cursor', approvedPrompt: 'x' })).rejects.toThrow('coder_router_adapter_unsupported');
+    await expect(runHeadlessCoderReality({ parentRunId: 'p', projectId: 'p1', deckId: 'd', conversationId: 'c', cardId: 'card', adapter: 'cursor', approvedPrompt: 'x' })).rejects.toThrow('coder_router_adapter_unsupported');
   });
 
   it('rejects a requested adapter that does not match the resolved adapter (no silent substitution)', async () => {
-    await expect(runCoderSubagent({ parentRunId: 'p', projectId: 'p1', deckId: 'd', conversationId: 'c', cardId: 'card', adapter: 'codex', approvedPrompt: 'x' }, fakeAdapter('claude_code', 'X'))).rejects.toThrow('coder_router_adapter_mismatch');
+    await expect(runHeadlessCoderReality({ parentRunId: 'p', projectId: 'p1', deckId: 'd', conversationId: 'c', cardId: 'card', adapter: 'codex', approvedPrompt: 'x' }, fakeAdapter('claude_code', 'X'))).rejects.toThrow('coder_router_adapter_mismatch');
   });
 
   it('rejects an unavailable selected adapter without trying another adapter', async () => {
     const adapter = fakeAdapter('claude_code', 'X');
     adapter.availability = () => ({ available: false, executable: null, version: null, error: 'not_logged_in' });
-    await expect(runCoderSubagent({ parentRunId: 'p', projectId: 'p1', deckId: 'd', conversationId: 'c', cardId: 'card', adapter: 'claude_code', approvedPrompt: 'x' }, adapter)).rejects.toThrow('coder_router_adapter_unavailable: not_logged_in');
+    await expect(runHeadlessCoderReality({ parentRunId: 'p', projectId: 'p1', deckId: 'd', conversationId: 'c', cardId: 'card', adapter: 'claude_code', approvedPrompt: 'x' }, adapter)).rejects.toThrow('coder_router_adapter_unavailable: not_logged_in');
     expect(adapter.prepared).toBeNull();
   });
 });

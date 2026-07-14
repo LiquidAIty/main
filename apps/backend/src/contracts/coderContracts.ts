@@ -67,6 +67,84 @@ export const coderReportSchema = z.object({
 export type CoderPacket = z.infer<typeof coderPacketSchema>;
 export type CoderReport = z.infer<typeof coderReportSchema>;
 
+// ── direct_main_audit structured result ──────────────────────────────────────
+// A read-only audit returns a concise conclusion + a FILTERED CodeGraph view
+// (CodeGraphViewContract fields mirrored from client/src/components/codegraph/types.ts)
+// + evidence — NOT a CoderReport. The view only references canonical CodeGraph node
+// IDs / files / symbols; Coder annotations stay in the audit body, never rewriting facts.
+export const codeGraphViewContractSchema = z.object({
+  projectId: z.string().nullable().optional(),
+  focusPaths: z.array(z.string()).optional(),
+  focusSymbols: z.array(z.string()).optional(),
+  nodeLabelAllowlist: z.array(z.string()).optional(),
+  edgeTypeAllowlist: z.array(z.string()).optional(),
+  showLabels: z.boolean().optional(),
+  maxNodes: z.number().optional(),
+}).strict();
+
+export const coderAuditResultSchema = z.object({
+  conclusion: nonEmptyText,
+  repositoryRoot: z.string(),
+  repositoryIdentity: z.string(),
+  revision: z.string(),
+  freshness: z.string(),
+  codeGraphQuery: z.string(),
+  codeGraphNodeRefs: z.array(z.string()),
+  files: z.array(z.string()),
+  symbols: z.array(z.string()),
+  findings: z.array(z.string()),
+  unresolvedQuestions: z.array(z.string()),
+  risks: z.array(z.string()),
+  implementationBoundaries: z.array(z.string()),
+  requiredTests: z.array(z.string()),
+  viewContract: codeGraphViewContractSchema,
+  artifactRefs: z.array(z.string()),
+}).strict();
+
+export type CodeGraphViewContractResult = z.infer<typeof codeGraphViewContractSchema>;
+export type CoderAuditResult = z.infer<typeof coderAuditResultSchema>;
+
+export const coderAuditResultJsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'conclusion', 'repositoryRoot', 'repositoryIdentity', 'revision', 'freshness',
+    'codeGraphQuery', 'codeGraphNodeRefs', 'files', 'symbols', 'findings',
+    'unresolvedQuestions', 'risks', 'implementationBoundaries', 'requiredTests',
+    'viewContract', 'artifactRefs',
+  ],
+  properties: {
+    conclusion: { type: 'string', minLength: 1 },
+    repositoryRoot: { type: 'string' },
+    repositoryIdentity: { type: 'string' },
+    revision: { type: 'string' },
+    freshness: { type: 'string' },
+    codeGraphQuery: { type: 'string' },
+    codeGraphNodeRefs: { type: 'array', items: { type: 'string' } },
+    files: { type: 'array', items: { type: 'string' } },
+    symbols: { type: 'array', items: { type: 'string' } },
+    findings: { type: 'array', items: { type: 'string' } },
+    unresolvedQuestions: { type: 'array', items: { type: 'string' } },
+    risks: { type: 'array', items: { type: 'string' } },
+    implementationBoundaries: { type: 'array', items: { type: 'string' } },
+    requiredTests: { type: 'array', items: { type: 'string' } },
+    viewContract: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        projectId: { type: ['string', 'null'] },
+        focusPaths: { type: 'array', items: { type: 'string' } },
+        focusSymbols: { type: 'array', items: { type: 'string' } },
+        nodeLabelAllowlist: { type: 'array', items: { type: 'string' } },
+        edgeTypeAllowlist: { type: 'array', items: { type: 'string' } },
+        showLabels: { type: 'boolean' },
+        maxNodes: { type: 'number' },
+      },
+    },
+    artifactRefs: { type: 'array', items: { type: 'string' } },
+  },
+} as const;
+
 export const codingRunStatusSchema = z.enum([
   'requested',
   'planned',

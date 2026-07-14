@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 
-import { buildReloadStateFromDeckRuns } from '../../../components/builder/deckRunState';
 import { guardedRequest, safeJson } from '../../../components/builder/requestGuards';
 import type { LatestCardRunRecord } from '../../../components/builder/useBuilderDeckRuntimeActions';
 import type { LinkRef } from '../../../components/builder/deckContinuityTypes';
@@ -51,10 +50,6 @@ type UseAgentBuilderDeckLoadArgs = {
     durationMs?: number;
     metadata?: Record<string, unknown>;
   }) => void;
-  recordPostResponseRefreshIfPending: (
-    surface: string,
-    completedAt: number,
-  ) => void;
   setDeck: Dispatch<SetStateAction<DeckDocument>>;
   setDeckRevision: Dispatch<SetStateAction<string | null>>;
   setDeckLoadBusy: Dispatch<SetStateAction<boolean>>;
@@ -63,7 +58,6 @@ type UseAgentBuilderDeckLoadArgs = {
   setLatestCardRun: Dispatch<SetStateAction<LatestCardRunRecord | null>>;
   setLiveDeckEvents: Dispatch<SetStateAction<DeckRuntimeEvent[]>>;
   setMessages: Dispatch<SetStateAction<BuilderChatMessage[]>>;
-  setLinks: Dispatch<SetStateAction<LinkRef[]>>;
   setStateLoaded: Dispatch<SetStateAction<boolean>>;
   setDeckStatusMessage: Dispatch<SetStateAction<string | null>>;
 };
@@ -83,7 +77,6 @@ export default function useAgentBuilderDeckLoad({
   lastPersistedBoardFingerprintRef,
   lastPersistedBoardSnapshotRef,
   emitWorkspaceTestingEvent,
-  recordPostResponseRefreshIfPending,
   setDeck,
   setDeckRevision,
   setDeckLoadBusy,
@@ -92,7 +85,6 @@ export default function useAgentBuilderDeckLoad({
   setLatestCardRun,
   setLiveDeckEvents,
   setMessages,
-  setLinks,
   setStateLoaded,
   setDeckStatusMessage,
 }: UseAgentBuilderDeckLoadArgs) {
@@ -106,7 +98,6 @@ export default function useAgentBuilderDeckLoad({
       setLatestCardRun(null);
       setLiveDeckEvents([]);
       setMessages([...emptyProjectState.messages]);
-      setLinks([...emptyProjectState.links]);
       setStateLoaded(false);
       setDeckStatusMessage(null);
       return;
@@ -165,21 +156,12 @@ export default function useAgentBuilderDeckLoad({
           payload.data?.latestRun && typeof payload.data.latestRun === 'object'
             ? (payload.data.latestRun as DeckRun)
             : null;
-        const persistedRuns = Array.isArray(payload.data?.runs)
-          ? (payload.data.runs as DeckRun[])
-          : [];
-        const continuity = buildReloadStateFromDeckRuns(
-          persistedRuns,
-          persistedLatestRun,
-        );
         setLatestDeckRun(persistedLatestRun);
         setLatestCardRun(null);
         setLiveDeckEvents([]);
         // The normal chat transcript is the live conversation only — it is NOT
-        // re-painted from saved deck runs. Re-injecting deck-run output here
-        // clobbered the live user message and rendered old run text as fake chat
-        // bubbles. Deck runs still drive the plan/links below; not the chat.
-        setLinks(continuity.links);
+        // re-painted from saved deck runs (that clobbered the live user message
+        // and rendered old run text as fake chat bubbles).
         setStateLoaded(true);
         setDeckLoadError(null);
         setDeckStatusMessage(
@@ -206,7 +188,6 @@ export default function useAgentBuilderDeckLoad({
         setLiveDeckEvents([]);
         setDeckRevision(null);
         setMessages([...next.messages]);
-        setLinks([...next.links]);
         setStateLoaded(true);
         const errorMessage =
           typeof err === 'object' && err !== null && 'message' in err
@@ -229,7 +210,6 @@ export default function useAgentBuilderDeckLoad({
               source: 'deck_load',
             },
           });
-          recordPostResponseRefreshIfPending('agent_graph', completedAt);
           setDeckLoadBusy(false);
         }
       }
@@ -244,7 +224,6 @@ export default function useAgentBuilderDeckLoad({
     canvasProjectId,
     currentDeckRef,
     emitWorkspaceTestingEvent,
-    emptyProjectState.links,
     emptyProjectState.messages,
     formatBuilderStatusMessage,
     lastPersistedBoardFingerprintRef,
@@ -252,7 +231,6 @@ export default function useAgentBuilderDeckLoad({
     loadProjectState,
     projectsApi,
     recordDeckWriteReason,
-    recordPostResponseRefreshIfPending,
     resolveProjectDeckLoadResult,
     setDeck,
     setDeckLoadBusy,
@@ -261,7 +239,6 @@ export default function useAgentBuilderDeckLoad({
     setDeckStatusMessage,
     setLatestCardRun,
     setLatestDeckRun,
-    setLinks,
     setLiveDeckEvents,
     setMessages,
     setStateLoaded,

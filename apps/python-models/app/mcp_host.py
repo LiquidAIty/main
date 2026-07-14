@@ -512,7 +512,7 @@ async def list_tools() -> list[Tool]:
 # Structural allow-list per tool: unexpected keys are rejected honestly, never
 # silently forwarded (prevents smuggling prompts/models/patches through the host).
 _ALLOWED_KEYS: dict[str, set[str]] = {
-    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt"},
+    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt", "authority"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "jobId", "conversationId", "parentContext"},
     "thinkgraph.submit_update": {"projectId", "conversationId", "resources", "relations", "statements"},
