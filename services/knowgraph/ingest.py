@@ -32,6 +32,10 @@ from neo4j_graphrag.llm.openai_llm import OpenAILLM
 
 from neo4j_index import ensure_vector_index
 from schema import KNOWGRAPH_SCHEMA
+from inspection_extraction_provider import (
+    build_inspection_extraction_llm_from_env,
+    inspection_mode_enabled,
+)
 
 load_dotenv()
 
@@ -758,11 +762,22 @@ def _create_runtime_pipeline(
         f"embedding_model={runtime.embedding_model} embedding_dim={runtime.embedding_dimensions} "
         f"agent_id={agent_id or 'n/a'}"
     )
-    llm = OpenAILLM(
-        model_name=runtime.model_id,
-        model_params={"temperature": 0},
-        **runtime.llm_client_kwargs,
-    )
+    if inspection_mode_enabled():
+        # Dev/admin external-agent inspection socket ONLY: an outside coding agent
+        # stands in at the single paid extraction boundary with no model spend.
+        # Never auto-selected (env unset in production), never a fallback
+        # (build_* raises if the plan is missing rather than billing the real model).
+        llm = build_inspection_extraction_llm_from_env()
+        print(
+            "[KNOWGRAPH_RUNTIME] extraction boundary = inspection_extraction_provider "
+            "(dev/admin stand-in; no paid model call)"
+        )
+    else:
+        llm = OpenAILLM(
+            model_name=runtime.model_id,
+            model_params={"temperature": 0},
+            **runtime.llm_client_kwargs,
+        )
     if runtime.embedding_backend == "sentence_transformers":
         embedder = SentenceTransformerEmbeddings(model=runtime.embedding_model)
     elif runtime.embedding_backend == "openai_compatible":
@@ -819,6 +834,45 @@ def _create_runtime_pipeline(
     return runtime, driver, neo4j_database, pipeline
 
 
+def _build_document_metadata(**fields: str | None) -> dict[str, str]:
+    """Assemble neo4j_graphrag document metadata (values must be strings).
+
+    `DocumentInfo.metadata` is typed `Optional[Dict[str, str]]`, so every value
+    must be a string. Optional source fields (source_url, fetched_at, snippet,
+    metadata_json) are None when a caller omits them, which raises a pydantic
+    ValidationError before extraction even runs — drop None-valued keys instead
+    of storing empty-string provenance.
+    """
+    return {key: value for key, value in fields.items() if value is not None}
+
+
+def _delete_prior_document(
+    driver: Driver, database: str | None, project_id: str, document_id: str
+) -> int:
+    """Idempotent upsert: remove any prior version of this document before re-ingesting.
+
+    The neo4j_graphrag lexical builder creates a fresh Document (and Chunk) node on
+    every run and nothing enforces uniqueness on (project_id, document_id), so repeat
+    ingestion would otherwise duplicate the Document/Chunk lexical graph. Delete the
+    existing Document + its Chunks (and their relationships) first; shared Concept
+    entities are preserved — they merge via entity resolution and are re-linked to the
+    new chunks. Returns the number of nodes removed.
+    """
+    _records, summary, _keys = driver.execute_query(
+        """
+        MATCH (d:Document {project_id: $project_id, document_id: $document_id})
+        OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
+        WITH collect(DISTINCT d) + collect(DISTINCT c) AS nodes
+        UNWIND nodes AS n
+        DETACH DELETE n
+        """,
+        project_id=project_id,
+        document_id=document_id,
+        database_=database,
+    )
+    return summary.counters.nodes_deleted
+
+
 async def ingest_pdf(
     file_path: str,
     project_id: str,
@@ -854,14 +908,15 @@ async def ingest_pdf(
         prompt_template=prompt_template,
     )
     try:
+        _delete_prior_document(driver, neo4j_database, project_id, document_id)
         result = await pipeline.run_async(
             file_path=str(source),
-            document_metadata={
-                "project_id": project_id,
-                "document_id": document_id,
-                "source_path": str(source.resolve()),
-                "source_name": source.name,
-            },
+            document_metadata=_build_document_metadata(
+                project_id=project_id,
+                document_id=document_id,
+                source_path=str(source.resolve()),
+                source_name=source.name,
+            ),
         )
 
         _merge_ingested_graph(
@@ -950,19 +1005,20 @@ async def ingest_text_document(
     metadata_json = _serialize_metadata_json(metadata)
 
     try:
+        _delete_prior_document(driver, neo4j_database, project_id, document_id)
         result = await pipeline.run_async(
             text=normalized_text,
-            document_metadata={
-                "project_id": project_id,
-                "document_id": document_id,
-                "source_path": source_path,
-                "source_name": source_name,
-                "source_url": source_url,
-                "fetched_at": fetched_at,
-                "snippet": snippet,
-                "metadata_json": metadata_json,
-                "source_type": source_type,
-            },
+            document_metadata=_build_document_metadata(
+                project_id=project_id,
+                document_id=document_id,
+                source_path=source_path,
+                source_name=source_name,
+                source_url=source_url,
+                fetched_at=fetched_at,
+                snippet=snippet,
+                metadata_json=metadata_json,
+                source_type=source_type,
+            ),
         )
 
         _merge_ingested_graph(

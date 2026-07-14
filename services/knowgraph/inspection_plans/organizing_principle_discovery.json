@@ -1,0 +1,107 @@
+[
+  {
+    "match": ["barrasa", "webber", "o'reilly", "o’reilly", "practitioner", "jesús"],
+    "nodes": [
+      {"id": "kg", "label": "Concept", "properties": {"name": "Knowledge Graph", "claim": "An interlinked set of facts describing entities and their relationships in a human- and machine-understandable form.", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_authors": "Jesús Barrasa; Jim Webber", "source_pages": "Chapter 1", "source_verified": true, "standin_label": "external_agent_standin"}},
+      {"id": "au_barrasa", "label": "Person", "properties": {"name": "Jesús Barrasa", "role": "author", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Title page", "source_verified": true, "standin_label": "external_agent_standin"}},
+      {"id": "au_webber", "label": "Person", "properties": {"name": "Jim Webber", "role": "author", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Title page", "source_verified": true, "standin_label": "external_agent_standin"}},
+      {"id": "org_oreilly", "label": "Organization", "properties": {"name": "O'Reilly Media / Neo4j", "role": "publisher", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Title page", "source_verified": true, "standin_label": "external_agent_standin"}}
+    ],
+    "relationships": [
+      {"type": "EVIDENCE_FOR", "start_node_id": "au_barrasa", "end_node_id": "kg", "properties": {}},
+      {"type": "EVIDENCE_FOR", "start_node_id": "au_webber", "end_node_id": "kg", "properties": {}},
+      {"type": "RELATED_TO", "start_node_id": "au_barrasa", "end_node_id": "org_oreilly", "properties": {}},
+      {"type": "RELATED_TO", "start_node_id": "au_webber", "end_node_id": "org_oreilly", "properties": {}}
+    ]
+  },
+  {
+    "match": ["organizing principle", "organising principle"],
+    "nodes": [
+      {"id": "op", "label": "Concept", "properties": {"name": "Organizing Principle", "claim": "A knowledge graph needs an organizing principle that supplies context and acts as a contract between graph data and its human or software consumers.", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapters 1-2", "source_verified": true, "standin_label": "external_agent_standin"}},
+      {"id": "kg", "label": "Concept", "properties": {"name": "Knowledge Graph", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapter 1", "source_verified": true, "standin_label": "external_agent_standin"}}
+    ],
+    "relationships": [
+      {"type": "RELATED_TO", "start_node_id": "op", "end_node_id": "kg", "properties": {"note": "organizing principle structures the knowledge graph"}}
+    ]
+  },
+  {
+    "match": ["labeled property graph", "labelled property graph", "property graph", "typed directed relationship", "labels and properties"],
+    "nodes": [
+      {"id": "lpg", "label": "Concept", "properties": {"name": "Labeled Property Graph", "claim": "Labeled property graphs provide labeled nodes, typed directed relationships, and properties as a practical base.", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapters 1-2", "source_verified": true, "standin_label": "external_agent_standin"}},
+      {"id": "op", "label": "Concept", "properties": {"name": "Organizing Principle", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapters 1-2", "source_verified": true, "standin_label": "external_agent_standin"}}
+    ],
+    "relationships": [
+      {"type": "RELATED_TO", "start_node_id": "lpg", "end_node_id": "op", "properties": {"note": "property graph realizes the organizing principle"}}
+    ]
+  },
+  {
+    "match": ["just-enough", "just enough semantics", "semantic richness", "enough semantics", "intended use", "overly ambitious"],
+    "nodes": [
+      {"id": "jes", "label": "Concept", "properties": {"name": "Just-Enough Semantics", "claim": "Semantic richness should be driven by intended use; avoid building an overly ambitious metamodel before the use case requires it.", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapter 2", "source_verified": true, "standin_label": "external_agent_standin"}},
+      {"id": "op", "label": "Concept", "properties": {"name": "Organizing Principle", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapters 1-2", "source_verified": true, "standin_label": "external_agent_standin"}}
+    ],
+    "relationships": [
+      {"type": "RELATED_TO", "start_node_id": "jes", "end_node_id": "op", "properties": {"note": "semantics grow incrementally within the organizing principle"}}
+    ]
+  },
+  {
+    "match": ["duplicate", "uniqueness constraint", "stable identity", " merge", "upsert", "node key"],
+    "nodes": [
+      {"id": "sid", "label": "Concept", "properties": {"name": "Stable Identity", "claim": "Duplicate prevention requires stable identity, constraints, and careful decomposition of node and relationship upserts.", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapter 3", "source_verified": true, "standin_label": "external_agent_standin"}},
+      {"id": "op", "label": "Concept", "properties": {"name": "Organizing Principle", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapters 1-2", "source_verified": true, "standin_label": "external_agent_standin"}}
+    ],
+    "relationships": [
+      {"type": "RELATED_TO", "start_node_id": "sid", "end_node_id": "op", "properties": {"note": "identity is part of the contract"}}
+    ]
+  },
+  {
+    "match": ["relationship type", "explicit relationship", "query plan", "interpretab"],
+    "nodes": [
+      {"id": "ert", "label": "Concept", "properties": {"name": "Explicit Relationship Types", "claim": "Explicit labels and relationship types improve interpretability and query planning.", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapter 3", "source_verified": true, "standin_label": "external_agent_standin"}},
+      {"id": "sid", "label": "Concept", "properties": {"name": "Stable Identity", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapter 3", "source_verified": true, "standin_label": "external_agent_standin"}}
+    ],
+    "relationships": [
+      {"type": "RELATED_TO", "start_node_id": "ert", "end_node_id": "sid", "properties": {}}
+    ]
+  },
+  {
+    "match": ["metadata graph", "metadata knowledge graph", "lineage", "impact analysis", "provenance"],
+    "nodes": [
+      {"id": "mkg", "label": "Concept", "properties": {"name": "Metadata Knowledge Graph", "claim": "A metadata graph maps tasks, datasets, platforms, consumers, owners, lineage and impact; relationships connect data and metadata so consumers can answer a domain question and also understand source and governance provenance.", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapter 8", "source_verified": true, "standin_label": "external_agent_standin"}},
+      {"id": "prov", "label": "Concept", "properties": {"name": "Provenance", "claim": "Provenance links let a graph record where each fact came from and how it flows.", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapter 8", "source_verified": true, "standin_label": "external_agent_standin"}}
+    ],
+    "relationships": [
+      {"type": "RELATED_TO", "start_node_id": "mkg", "end_node_id": "prov", "properties": {}}
+    ]
+  },
+  {
+    "match": ["dependency graph", "dependencies", "cycle detection", "root-cause", "root cause", "impact propagation", "single point of failure"],
+    "nodes": [
+      {"id": "dep", "label": "Concept", "properties": {"name": "Dependency Graph", "claim": "Dependency graphs support impact propagation, validation, cycle detection, and root-cause analysis.", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapter 11", "source_verified": true, "standin_label": "external_agent_standin"}},
+      {"id": "prov", "label": "Concept", "properties": {"name": "Provenance", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapter 8", "source_verified": true, "standin_label": "external_agent_standin"}}
+    ],
+    "relationships": [
+      {"type": "RELATED_TO", "start_node_id": "dep", "end_node_id": "prov", "properties": {"note": "dependency + provenance enable diagnostics"}}
+    ]
+  },
+  {
+    "match": ["things, not strings", "things not strings", "semantic search", "disambiguat", "annotation", "entities rather than"],
+    "nodes": [
+      {"id": "tns", "label": "Concept", "properties": {"name": "Things Not Strings", "claim": "Semantic search improves when unstructured text is connected to stable concepts rather than matched only as ambiguous strings.", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapter 12", "source_verified": true, "standin_label": "external_agent_standin"}},
+      {"id": "op", "label": "Concept", "properties": {"name": "Organizing Principle", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapters 1-2", "source_verified": true, "standin_label": "external_agent_standin"}}
+    ],
+    "relationships": [
+      {"type": "RELATED_TO", "start_node_id": "tns", "end_node_id": "op", "properties": {}}
+    ]
+  },
+  {
+    "match": ["natural language", "question answering", "talking to the", "graph-grounded", "grounded generation"],
+    "nodes": [
+      {"id": "nlq", "label": "Concept", "properties": {"name": "Natural Language Graph Interface", "claim": "Natural-language questions and generated answers can be grounded in the graph's organizing principle.", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapter 13", "source_verified": true, "standin_label": "external_agent_standin"}},
+      {"id": "tns", "label": "Concept", "properties": {"name": "Things Not Strings", "source": "Building Knowledge Graphs: A Practitioner's Guide", "source_pages": "Chapter 12", "source_verified": true, "standin_label": "external_agent_standin"}}
+    ],
+    "relationships": [
+      {"type": "RELATED_TO", "start_node_id": "nlq", "end_node_id": "tns", "properties": {}}
+    ]
+  }
+]
