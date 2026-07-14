@@ -20,6 +20,8 @@ import {
 } from '../coder/openclaude/session/grpcChatClient';
 import {
   parseHermesInvestigationContext,
+  beginHermesInvestigation,
+  endHermesInvestigation,
   readLatestHermesReport,
   readActiveHermesReport,
   writeActiveHermesReport,
@@ -567,6 +569,16 @@ router.post('/openclaude/session/chat', async (req, res) => {
   // the SSE stream or browser behavior — it only makes the real Harness events
   // (already flowing to the browser) legible in the backend dev terminal.
   const correlationId = `req_${randomUUID().slice(0, 8)}`;
+  // Bind this turn's Hermes report lifecycle to the run (parentRunId = correlationId)
+  // so a mid-turn hermes.write_report attaches to THIS focused branch — the 0-caller
+  // lifecycle is now driven. Best-effort: a lifecycle hiccup never breaks the stream.
+  try {
+    beginHermesInvestigation(correlationId, investigationContext);
+  } catch (error) {
+    logHarnessTrace(
+      `[harness] hermes investigation begin skipped corr=${correlationId} reason=${redactTrace(error instanceof Error ? error.message : String(error))}`,
+    );
+  }
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -783,6 +795,11 @@ router.post('/openclaude/session/chat', async (req, res) => {
   } finally {
     turnFinished = true;
     activeGrpcTurns.delete(sessionId);
+    try {
+      endHermesInvestigation(correlationId);
+    } catch {
+      /* investigation already cleared — never block turn teardown */
+    }
     writeSse('end', {});
     if (!res.destroyed && !res.writableEnded) res.end();
   }

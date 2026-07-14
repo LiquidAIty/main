@@ -8,6 +8,14 @@ export type HermesInvestigationContext = {
   /** Optional user-selected focus only. Hermes always reads the project graph itself. */
   focusNodeIds: string[];
   requestedOutcome: string | null;
+  // Focused-branch input (Main supplies; Hermes NEVER inspects the repository itself
+  // — the Coder-verified CodeGraph references arrive HERE, not from Hermes reading
+  // code). Present only when Main focused the turn on a reasoning branch.
+  goalId?: string;
+  goalText?: string;
+  thinkGraphBranch?: string[];
+  codeGraphRefs?: string[];
+  knowGraphRefs?: string[];
 };
 
 export type HermesReportWriteInput = {
@@ -99,12 +107,26 @@ export function parseHermesInvestigationContext(
     throw new Error('investigation_context_object_required');
   }
   const candidate = value as Record<string, unknown>;
-  return {
+  const context: HermesInvestigationContext = {
     projectId,
     conversationId,
     focusNodeIds: optionalRefs(candidate.focusNodeIds, 'investigation_focus_node_ids'),
     requestedOutcome: optionalText(candidate.requestedOutcome, 'investigation_requested_outcome', 2_000),
   };
+  // Focused-branch input — added ONLY when supplied, so an unfocused turn keeps
+  // the original context shape. Hermes still never inspects the repository: the
+  // CodeGraph references here come from the Coder-verified audit, not from Hermes.
+  const goalId = optionalText(candidate.goalId, 'investigation_goal_id', 256);
+  if (goalId) context.goalId = goalId;
+  const goalText = optionalText(candidate.goalText, 'investigation_goal_text', 2_000);
+  if (goalText) context.goalText = goalText;
+  const thinkGraphBranch = optionalRefs(candidate.thinkGraphBranch, 'investigation_thinkgraph_branch');
+  if (thinkGraphBranch.length) context.thinkGraphBranch = thinkGraphBranch;
+  const codeGraphRefs = optionalRefs(candidate.codeGraphRefs, 'investigation_codegraph_refs');
+  if (codeGraphRefs.length) context.codeGraphRefs = codeGraphRefs;
+  const knowGraphRefs = optionalRefs(candidate.knowGraphRefs, 'investigation_knowgraph_refs');
+  if (knowGraphRefs.length) context.knowGraphRefs = knowGraphRefs;
+  return context;
 }
 
 export function beginHermesInvestigation(parentRunId: string, context: HermesInvestigationContext): void {
