@@ -18,7 +18,7 @@ afterAll(() => {
 /**
  * A fake Console session/manager: no PTY, no process, no model. It proves the
  * WIRING (identity, per-authority structured parse, transcript artifact, honest
- * failure, NO headless fallback). Live PTY behavior is Sol's proof.
+ * failure, NO headless fallback). Live PTY behavior is proven only by a real model-backed run.
  */
 class FakeSession {
   info: { id: string; state: string; exitCode: number | null; error: string | null };

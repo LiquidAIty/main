@@ -46,6 +46,13 @@ import { pool } from '../db/pool';
 import { runCoderSubagent } from '../coder/execution/coderRouter';
 import { setLatestCoderAuditView, getLatestCoderAuditView } from '../coder/execution/coderAuditView';
 import type { CodeGraphViewContractResult } from '../contracts/coderContracts';
+import {
+  createPromptDraft,
+  approvePromptDraft,
+  publishApprovedPrompt,
+  getPromptDraft,
+  type PromptSource,
+} from '../services/prompt/promptLifecycle';
 
 const router = Router();
 export const OPENCLAUDE_HARNESS_ROUTE_PREFIX = '/coder/openclaude';
@@ -535,6 +542,50 @@ router.get('/coder-audit-view', (req, res) => {
   const conversationId = String(req.query?.conversationId || 'main').trim();
   if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
   return res.json({ ok: true, view: getLatestCoderAuditView(projectId, conversationId) });
+});
+
+// ── Editable prompt lifecycle: draft → revise → approve → publish prompt.md ────
+// Main Chat owns the approved prompt; an unapproved prompt never reaches the
+// handoff artifact. Prompt BODY stays in the Markdown file; lineage goes to
+// ThinkGraph via the episode contract.
+const PROMPT_SOURCES: readonly PromptSource[] = ['main_chat', 'coder', 'hermes'];
+router.post('/prompt-draft', (req, res) => {
+  try {
+    const body = req.body || {};
+    const draft = createPromptDraft({
+      jobId: String(body.jobId || ''),
+      projectId: String(body.projectId || ''),
+      conversationId: String(body.conversationId || 'main'),
+      markdown: String(body.markdown || ''),
+      source: PROMPT_SOURCES.includes(body.source) ? (body.source as PromptSource) : undefined,
+      goalId: typeof body.goalId === 'string' ? body.goalId : null,
+      codeGraphRefs: Array.isArray(body.codeGraphRefs) ? body.codeGraphRefs.map(String) : undefined,
+      knowGraphRefs: Array.isArray(body.knowGraphRefs) ? body.knowGraphRefs.map(String) : undefined,
+      thinkGraphRefs: Array.isArray(body.thinkGraphRefs) ? body.thinkGraphRefs.map(String) : undefined,
+    });
+    return res.json({ ok: true, draft });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'prompt_draft_failed' });
+  }
+});
+router.post('/prompt-draft/:jobId/approve', (req, res) => {
+  try {
+    return res.json({ ok: true, draft: approvePromptDraft(String(req.params.jobId)) });
+  } catch (error) {
+    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : 'prompt_approve_failed' });
+  }
+});
+router.post('/prompt-draft/:jobId/publish', (req, res) => {
+  try {
+    return res.json({ ok: true, draft: publishApprovedPrompt(String(req.params.jobId)) });
+  } catch (error) {
+    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : 'prompt_publish_failed' });
+  }
+});
+router.get('/prompt-draft/:jobId', (req, res) => {
+  const draft = getPromptDraft(String(req.params.jobId));
+  if (!draft) return res.status(404).json({ ok: false, error: `prompt_draft_not_found: ${req.params.jobId}` });
+  return res.json({ ok: true, draft });
 });
 
 router.post('/openclaude/session/chat', async (req, res) => {

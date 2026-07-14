@@ -99,15 +99,13 @@ function resolvePythonExecutable(): string {
 
 /**
  * Compose the Coder CLI's MCP servers. The dev-harness MCP (Observatory/job
- * tools) is always present — that is today's exact config. When `includeCodeGraph`
- * is set (direct_main_audit), the product MCP host (`mcp_host.py`, which exposes
- * `codegraph.status`/`codegraph.search`) is added as a second stdio server; the
- * audit `--allowedTools` allowlist (CODEGRAPH_MCP_TOOLS) is what bounds it to
- * read-only CodeGraph and denies its write tools.
- *
- * ponytail: mcp_host is the ONE existing CodeGraph server — no new `.mjs`, no
- * second CodeGraph service. Whether it boots correctly as a per-run Coder
- * subprocess is a live-proof item for Sol (default stays includeCodeGraph=false).
+ * tools) is included by default (`includeDevHarness`). When `includeCodeGraph`
+ * is set (direct_main_audit), the RESTRICTED codegraph doorway
+ * (`codegraph_doorway_mcp.py`, exposing ONLY `codegraph.status`/`codegraph.search`)
+ * is added; a read-only audit sets `includeDevHarness=false` so it gets the
+ * doorway alone. The doorway is a scoped surface over the existing backend
+ * CodeGraph handlers — not a second CodeGraph service and not a `.mjs` host.
+ * Live subprocess boot of the doorway is a live-validation item.
  */
 export function buildCoderMcpServers(opts: {
   runId: string;

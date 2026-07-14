@@ -36,7 +36,7 @@ export const EPISODE_NODE_KINDS = [
 ] as const;
 export type EpisodeNodeKind = (typeof EPISODE_NODE_KINDS)[number];
 
-export type EpisodeSource = 'real_run' | 'synthetic_seed';
+export type EpisodeSource = 'real_run' | 'synthetic_seed' | 'external_agent_standin';
 export type UserJudgmentLabel = 'accepted' | 'corrected' | 'rejected' | 'unjudged';
 export type TrainingEligibility =
   | 'eligible'
@@ -56,10 +56,16 @@ export type EpisodeProvenance = {
   provider?: string;
   model?: string;
   authorityMode?: 'direct_main_audit' | 'mag_one_execution';
-  /** The generator that produced a SYNTHETIC seed (never the same as a real run). */
+  /** The generator (synthetic seed) or the stand-in (external_agent_standin) that
+   * produced this episode's model outputs — never the same as a real run. */
   generatorProvider?: string;
   generatorModel?: string;
   generationPromptVersion?: string;
+  /** external_agent_standin: the run's surrounding mechanisms are real, but a
+   * stand-in agent acted at the model boundaries — so it proves plumbing, not
+   * that the configured models make good decisions. */
+  modelQualityProof?: boolean;
+  pipeTest?: boolean;
   privacyExcluded?: boolean;
   secretsExcluded?: boolean;
   licenseExcluded?: boolean;
@@ -141,6 +147,30 @@ export function syntheticSeedProvenance(
   };
 }
 
+/** Mandatory external-agent stand-in provenance (Phase 4 labels). The surrounding
+ * mechanisms are real, but a stand-in agent acted at the model boundaries — so
+ * this proves plumbing, never that the configured models make good decisions. */
+export function externalAgentStandInProvenance(
+  standIn: { provider: string; model: string },
+  overrides: Partial<EpisodeProvenance> = {},
+): EpisodeProvenance {
+  return {
+    // `verified` defaults false but is overridable — a stand-in run's evidence
+    // (tests, artifacts) may be genuinely verified even though the model was a stand-in.
+    verified: false,
+    trainingEligibility: 'needs_review',
+    generatorProvider: standIn.provider,
+    generatorModel: standIn.model,
+    ...overrides,
+    // Locked AFTER overrides: a stand-in run is a pipe test, not product or
+    // model-quality proof.
+    source: 'external_agent_standin',
+    productProof: false,
+    modelQualityProof: false,
+    pipeTest: true,
+  };
+}
+
 /** Structural validation of an episode input (never a model call). */
 export function validateEpisodeInput(input: EpisodeInput): string | null {
   if (!input || typeof input !== 'object') return 'episode_input_required';
@@ -150,10 +180,16 @@ export function validateEpisodeInput(input: EpisodeInput): string | null {
   if (!String(input.goalText ?? '').trim()) return 'episode_goal_text_required';
   const p = input.provenance;
   if (!p || typeof p !== 'object') return 'episode_provenance_required';
-  if (p.source !== 'real_run' && p.source !== 'synthetic_seed') return 'episode_provenance_source_invalid';
+  if (p.source !== 'real_run' && p.source !== 'synthetic_seed' && p.source !== 'external_agent_standin') {
+    return 'episode_provenance_source_invalid';
+  }
   if (typeof p.verified !== 'boolean' || typeof p.productProof !== 'boolean') return 'episode_provenance_flags_required';
   if (p.source === 'synthetic_seed' && (p.verified || p.productProof)) {
     return 'synthetic_seed_cannot_be_verified_or_product_proof';
+  }
+  // A stand-in run proves plumbing, never product/model quality.
+  if (p.source === 'external_agent_standin' && (p.productProof || p.modelQualityProof)) {
+    return 'external_agent_standin_cannot_be_product_or_model_quality_proof';
   }
   if (input.nodes) {
     for (const kind of Object.keys(input.nodes)) {
@@ -196,6 +232,8 @@ export function buildEpisodePatch(input: EpisodeInput): ThinkGraphPatch {
   if (p.generatorProvider) episodeProps.generator_provider = compact(p.generatorProvider);
   if (p.generatorModel) episodeProps.generator_model = compact(p.generatorModel);
   if (p.generationPromptVersion) episodeProps.generation_prompt_version = compact(p.generationPromptVersion);
+  if (typeof p.modelQualityProof === 'boolean') episodeProps.model_quality_proof = p.modelQualityProof;
+  if (typeof p.pipeTest === 'boolean') episodeProps.pipe_test = p.pipeTest;
   const exclusions: string[] = [];
   if (p.privacyExcluded) exclusions.push('private');
   if (p.secretsExcluded) exclusions.push('secrets');

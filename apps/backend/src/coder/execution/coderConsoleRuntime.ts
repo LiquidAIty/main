@@ -38,7 +38,7 @@ import type { CoderRunPacket } from './coderExecution';
  * This is the ONLY `run_coder_subagent` execution path — there is no headless
  * fallback. If the Console runtime cannot run (no model, runtime unavailable,
  * non-zero exit, or no valid result), the result is an honest failure. The live
- * equivalence proof (a real model run yielding a validated result) is Sol's.
+ * equivalence proof (a real model run yielding a validated result) is deferred to live validation.
  */
 export type ConsoleCoderDeps = {
   /** Injectable for tests; defaults to the process-wide Console manager. */

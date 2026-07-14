@@ -3,6 +3,7 @@ import {
   buildEpisodePatch,
   validateEpisodeInput,
   syntheticSeedProvenance,
+  externalAgentStandInProvenance,
   EPISODE_NODE_KINDS,
   type EpisodeInput,
 } from './episodeContract';
@@ -162,5 +163,35 @@ describe('syntheticSeedProvenance', () => {
     const prov = syntheticSeedProvenance({ provider: 'x', model: 'y', promptVersion: 'v1' });
     expect(validateEpisodeInput(fullEpisode({ provenance: prov }))).toBeNull();
     expect(prov.trainingEligibility).toBe('needs_review');
+  });
+});
+
+describe('externalAgentStandInProvenance', () => {
+  it('locks the stand-in labels: source=external_agent_standin, product/model-quality proof false, pipe_test true', () => {
+    const prov = externalAgentStandInProvenance(
+      { provider: 'anthropic', model: 'claude' },
+      // a caller cannot relax the locked flags:
+      { productProof: true, modelQualityProof: true, pipeTest: false, source: 'real_run' as never, verified: true },
+    );
+    expect(prov.source).toBe('external_agent_standin');
+    expect(prov.productProof).toBe(false);
+    expect(prov.modelQualityProof).toBe(false);
+    expect(prov.pipeTest).toBe(true);
+    expect(prov.generatorModel).toBe('claude');
+  });
+
+  it('a stand-in episode validates and stamps its labels onto the Episode root', () => {
+    const prov = externalAgentStandInProvenance({ provider: 'anthropic', model: 'claude' }, { verified: false });
+    const input = fullEpisode({ provenance: prov });
+    expect(validateEpisodeInput(input)).toBeNull();
+    const episode = (buildEpisodePatch(input).resources ?? []).find((r) => r.id === 'ep_1');
+    expect(episode?.properties).toMatchObject({ source: 'external_agent_standin', product_proof: false, model_quality_proof: false, pipe_test: true });
+  });
+
+  it('rejects a stand-in that claims product or model-quality proof', () => {
+    const bad = fullEpisode({
+      provenance: { source: 'external_agent_standin', verified: false, productProof: true, trainingEligibility: 'needs_review' },
+    });
+    expect(validateEpisodeInput(bad)).toBe('external_agent_standin_cannot_be_product_or_model_quality_proof');
   });
 });
