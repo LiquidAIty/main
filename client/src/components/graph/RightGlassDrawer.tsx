@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-import { GRAPH_THEME, graphCompanionPanelStyle, graphDrawerButtonStyle } from "./graphVisualTokens";
+import { GRAPH_THEME, graphDrawerButtonStyle, graphInspectorPanelStyle } from "./graphVisualTokens";
 
 type RightGlassDrawerProps = {
   isOpen: boolean;
@@ -145,7 +145,7 @@ export default function RightGlassDrawer({
         data-testid={dataTestId}
         data-open={isOpen ? "true" : "false"}
         className="absolute transition-[width,opacity,transform] duration-180 ease-out"
-          style={graphCompanionPanelStyle({
+          style={graphInspectorPanelStyle({
           top,
           right,
           bottom,
@@ -156,12 +156,8 @@ export default function RightGlassDrawer({
           pointerEvents: isOpen ? "auto" : "none",
           opacity: isOpen ? 1 : 0,
           transform: isOpen ? "translateX(0)" : "translateX(12px)",
-            borderRadius: 12,
-            border: `1px solid ${GRAPH_THEME.drawer.panelBorder}`,
-            boxShadow: `${GRAPH_THEME.drawer.panelShadow}, ${GRAPH_THEME.drawer.panelInset}`,
+            borderRadius: 18,
             overflow: "hidden",
-            backdropFilter: "blur(14px) saturate(120%)",
-            WebkitBackdropFilter: "blur(14px) saturate(120%)",
           })}
         >
         <div
@@ -192,12 +188,13 @@ export default function RightGlassDrawer({
           }}
         />
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
+          <div aria-hidden="true" style={{ height: 1, flex: '0 0 auto', background: 'linear-gradient(90deg, transparent, rgba(126,232,226,.72), rgba(130,116,220,.42), transparent)', boxShadow: '0 0 18px rgba(55,173,170,.35)' }} />
           <div
             className="flex items-center justify-between gap-2"
             style={{
               padding: "10px 12px 10px 16px",
-              borderBottom: `1px solid ${GRAPH_THEME.drawer.tabRailBorder}`,
-              background: GRAPH_THEME.drawer.tabRailBackground,
+              borderBottom: '1px solid rgba(126,232,226,.12)',
+              background: 'linear-gradient(110deg, rgba(55,173,170,.10), rgba(110,95,174,.04), transparent 68%)',
             }}
           >
             <div
@@ -225,7 +222,7 @@ export default function RightGlassDrawer({
             </button>
           </div>
           <div
-            className="min-h-0 flex-1 overflow-auto"
+            className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
             style={{
               padding: "12px",
               color: GRAPH_THEME.drawer.inputMuted,

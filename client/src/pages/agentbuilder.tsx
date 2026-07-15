@@ -2409,7 +2409,7 @@ export default function AgentBuilder(): React.ReactElement {
       >
         {objectDrawerRole === 'agent' && activeTabs.length > 0 ? (
           <div
-            className="flex min-w-0 overflow-x-auto"
+            className="flex min-w-0 flex-wrap"
             style={graphCompanionTabGroupStyle({
               gap: 6,
               marginBottom: 10,

@@ -1,8 +1,5 @@
-// Read-only ThinkGraph viewer routes for the Agent Builder.
-//  - /graph-view : direct bounded projection of stored ThinkGraph records (Resources +
-//                  derived CO_OCCURRED_WITH with weight = observation_count + reified
-//                  Statements). Main Chat writes through the canonical structured
-//                  writer; these routes never write. Read failures are explicit.
+// Read-only ThinkGraph viewer routes. Python/Engraphis owns both projections;
+// these routes validate scope and transport the active authority unchanged.
 import { Router } from 'express';
 import { getThinkGraphView } from '../services/thinkgraph/thinkGraphStore';
 import { fetchThinkGraphProjection } from '../services/autogen/autogenOrchestratorClient';
@@ -38,7 +35,7 @@ router.get('/graph-view', async (req, res) => {
   const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 500, 1), 2000);
 
   if (!projectId) {
-    res.json({ ok: true, source: 'thinkgraph-db', projectId: '', nodes: [], edges: [], counts: { nodes: 0, edges: 0, records: 0 }, reason: 'no_project_id' });
+    res.json({ ok: true, source: 'engraphis-v2', projectId: '', nodes: [], edges: [], counts: { nodes: 0, edges: 0, records: 0 }, reason: 'no_project_id' });
     return;
   }
 
@@ -63,7 +60,7 @@ router.get('/graph-view', async (req, res) => {
     const isEmpty = nodes.length === 0 && edges.length === 0;
     res.json({
       ok: true,
-      source: 'thinkgraph-db',
+      source: 'engraphis-v2',
       projectId,
       nodes,
       edges,

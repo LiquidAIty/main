@@ -775,6 +775,13 @@ export function AgentManager({
       outline: none !important;
       transition: border-color 160ms ease, background-color 160ms ease;
     }
+    .${formScopeClassName} textarea {
+      scrollbar-width: none;
+      overscroll-behavior: contain;
+    }
+    .${formScopeClassName} textarea::-webkit-scrollbar {
+      display: none;
+    }
     .${formScopeClassName} input::placeholder,
     .${formScopeClassName} textarea::placeholder {
       color: rgba(255,255,255,0.28);

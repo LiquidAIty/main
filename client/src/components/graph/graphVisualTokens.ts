@@ -378,10 +378,10 @@ export function graphDrawerSectionStyle(
   overrides?: CSSProperties,
 ): CSSProperties {
   return {
-    borderRadius: 8,
-    border: `1px solid ${GRAPH_THEME.drawer.sectionBorder}`,
-    background: GRAPH_THEME.drawer.sectionBackground,
-    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.02)',
+    borderRadius: 10,
+    border: '1px solid rgba(126, 232, 226, 0.13)',
+    background: 'linear-gradient(145deg, rgba(29, 43, 52, 0.46), rgba(12, 19, 25, 0.24))',
+    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.07), 0 8px 22px rgba(0,0,0,0.10)',
     ...overrides,
   };
 }
@@ -393,10 +393,10 @@ export function graphDrawerInputStyle(
     width: '100%',
     padding: '5px 7px',
     borderRadius: 6,
-    border: `1px solid ${GRAPH_THEME.drawer.inputBorder}`,
-    background: GRAPH_THEME.drawer.inputBackground,
+    border: '1px solid rgba(126, 232, 226, 0.16)',
+    background: 'linear-gradient(180deg, rgba(29,43,52,0.42), rgba(12,19,25,0.28))',
     color: GRAPH_THEME.drawer.inputText,
-    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.02)',
+    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.055)',
     fontSize: 11,
     lineHeight: 1.4,
     ...overrides,

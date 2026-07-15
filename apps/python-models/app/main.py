@@ -75,21 +75,87 @@ async def autogen_orchestrate(req: ContextPack):
 
 
 @app.get("/thinkgraph/projection")
-def thinkgraph_projection(projectId: str, limit: int | None = None):
-    """thinkgraph.projection.v1: Python-owned read-only projection of the
-    ACTUAL persisted ThinkGraph records for one project — ordinary items and
-    their direct relationships only, bounded by limit and recency (real IDs,
-    labels, optional model-authored kinds/tags, provenance). The backend
-    forwards this response unchanged; no other layer shapes graph data."""
-    from app.python_models.thinkgraph_projection import read_projection
+def thinkgraph_projection(
+    projectId: str,
+    limit: int | None = None,
+    includeHistorical: bool = False,
+    memoryType: str | None = None,
+):
+    """Engraphis-v2-backed canonical ThinkGraph projection."""
+    from app.python_models.thinkgraph_engraphis import get_thinkgraph
 
     cleaned = str(projectId or "").strip()
     if not cleaned:
         raise HTTPException(status_code=400, detail="projectId required")
     try:
-        return read_projection(cleaned, limit)
+        return get_thinkgraph().projection(
+            cleaned,
+            limit=limit or 500,
+            include_historical=includeHistorical,
+            memory_type=memoryType,
+        )
     except Exception as err:  # honest read failure — no fallback projection
         raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.get("/thinkgraph/health")
+def thinkgraph_health():
+    """Load and report the real local embedding engine; never a fallback."""
+    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+    try:
+        return {"status": "ok", **get_thinkgraph().model_info}
+    except Exception as err:
+        raise HTTPException(status_code=503, detail=str(err)) from err
+
+
+@app.post("/thinkgraph/apply-patch")
+def thinkgraph_apply_patch(payload: dict):
+    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+    try:
+        return get_thinkgraph().apply_patch(payload.get("authority") or {}, payload.get("patch") or {})
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.get("/thinkgraph/scope")
+def thinkgraph_scope(projectId: str, limit: int | None = None):
+    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+    try:
+        projection = get_thinkgraph().projection(projectId, limit=limit or 300)
+        return {"nodes": projection["nodes"], "edges": projection["edges"]}
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.get("/thinkgraph/record/{canonical_id:path}")
+def thinkgraph_record(canonical_id: str, projectId: str):
+    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+    record = get_thinkgraph().get_record(projectId, canonical_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="thinkgraph_record_not_found")
+    return record
+
+
+@app.get("/thinkgraph/neighborhood/{canonical_id:path}")
+def thinkgraph_neighborhood(canonical_id: str, projectId: str):
+    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+    return get_thinkgraph().neighborhood(projectId, canonical_id)
+
+
+@app.post("/thinkgraph/recall")
+def thinkgraph_recall(payload: dict):
+    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+    project_id = str(payload.get("projectId") or "").strip()
+    query = str(payload.get("query") or "").strip()
+    if not project_id or not query:
+        raise HTTPException(status_code=400, detail="projectId and query required")
+    return get_thinkgraph().recall(
+        project_id,
+        query,
+        k=int(payload.get("limit") or 8),
+        memory_type=payload.get("memoryType"),
+        include_historical=bool(payload.get("includeHistorical")),
+    )
 
 
 @app.post("/autogen/run_card")

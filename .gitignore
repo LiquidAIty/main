@@ -14,6 +14,7 @@ coder-workspace/returns/
 tmp_*.json
 tmp_*.log
 handoff/
+db/thinkgraph-engraphis-v2.sqlite*
 
 # Dependency folders
 node_modules/

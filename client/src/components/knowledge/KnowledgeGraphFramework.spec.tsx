@@ -76,6 +76,10 @@ vi.mock('cytoscape', () => {
         instance.layouts.push(layoutOptions);
         return { run: vi.fn() };
       },
+      style: vi.fn((next: any) => {
+        if (next) instance.options.style = next;
+        return instance;
+      }),
       batch: (cb: () => void) => cb(),
       resize: vi.fn(),
       fit: vi.fn(),
@@ -145,9 +149,9 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     expect(getByTestId('cytoscape-graph').getAttribute('data-node-count')).toBe('0');
   });
 
-  it('creates exactly one element per returned node/edge, preserving raw fields verbatim', async () => {
+  it('defaults to connected current records and preserves their raw fields verbatim', async () => {
     render(<KnowledgeGraphFramework projection={PROJECTION} />);
-    await waitFor(() => expect(cyState.instances[0]?.store.length).toBe(4));
+    await waitFor(() => expect(cyState.instances[0]?.store.length).toBe(3));
     const cy = cyState.instances[0];
     const defs = cy.store.map((el: any) => el.def);
 
@@ -175,7 +179,7 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
 
   it('uses NO visual-class vocabulary at all: no classes on any element, one uniform stylesheet', async () => {
     render(<KnowledgeGraphFramework projection={PROJECTION} />);
-    await waitFor(() => expect(cyState.instances[0]?.store.length).toBe(4));
+    await waitFor(() => expect(cyState.instances[0]?.store.length).toBe(3));
     const cy = cyState.instances[0];
     for (const def of cy.store.map((el: any) => el.def)) {
       expect(def.classes).toBeUndefined();
@@ -188,6 +192,7 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
 
   it('sizes nodes with a capped logarithmic mapping over real mentionCount only', async () => {
     render(<KnowledgeGraphFramework projection={PROJECTION} />);
+    fireEvent.click(screen.getByLabelText('Hide unconnected'));
     await waitFor(() => expect(cyState.instances[0]?.store.length).toBe(4));
     const cy = cyState.instances[0];
     const asts = cy.store.find((el: any) => el.id() === 'asts');
@@ -200,7 +205,7 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     render(<KnowledgeGraphFramework projection={{
       ...PROJECTION,
       nodes: [{ id: 'huge', label: 'Huge', mentionCount: 100_000, provenanceCount: 100_000 }],
-      edges: [],
+      edges: [{ id: 'huge_self', source: 'huge', target: 'huge', predicate: 'references itself', mentionCount: 1 }],
     }} />);
     await waitFor(() => expect(cyState.instances.length).toBeGreaterThanOrEqual(1));
     const huge = cyState.instances[cyState.instances.length - 1].store.find((el: any) => el.id() === 'huge');
@@ -212,6 +217,9 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     await waitFor(() => expect(cyState.instances).toHaveLength(1));
     const cy = cyState.instances[0];
     expect(styleFor(cy, 'edge')?.['target-arrow-shape']).toBe('triangle');
+    expect(styleFor(cy, 'edge')?.label).toBe('');
+    fireEvent.click(screen.getByLabelText('Show relationship labels'));
+    await waitFor(() => expect(styleFor(cy, 'edge')?.label).toBe('data(predicate)'));
     expect(styleFor(cy, 'edge')?.label).toBe('data(predicate)');
     expect(styleFor(cy, 'edge')?.['text-rotation']).toBe('none');
     expect(styleFor(cy, 'edge')?.['text-background-opacity']).toBeGreaterThan(0);
@@ -241,6 +249,7 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     const grown: GraphProjectionV1 = {
       ...PROJECTION,
       nodes: [...PROJECTION.nodes, { id: 'rdw', label: 'RDW', mentionCount: 1, provenanceCount: 1 }],
+      edges: [...PROJECTION.edges, { id: 'rdw_supports_asts', source: 'rdw', target: 'asts', predicate: 'supports', mentionCount: 1 }],
     };
     rerender(<KnowledgeGraphFramework projection={grown} />);
     await waitFor(() => expect(cy.store.length).toBe(5));
@@ -252,6 +261,7 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
 
   it('removes elements that left the projection without inventing replacements', async () => {
     const { rerender } = render(<KnowledgeGraphFramework projection={PROJECTION} />);
+    fireEvent.click(screen.getByLabelText('Hide unconnected'));
     await waitFor(() => expect(cyState.instances[0]?.store.length).toBe(4));
     const cy = cyState.instances[0];
 
@@ -264,8 +274,7 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     expect(cy.store.map((el: any) => el.id())).not.toContain('unreferenced');
   });
 
-  it('skips an edge only when its endpoint is missing from the same projection, with an exact reason', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  it('skips an edge whose endpoint is missing without inventing a replacement node', async () => {
     const withGhostEdge: GraphProjectionV1 = {
       ...PROJECTION,
       edges: [
@@ -274,15 +283,10 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
       ],
     };
     render(<KnowledgeGraphFramework projection={withGhostEdge} />);
+    fireEvent.click(screen.getByLabelText('Hide unconnected'));
     await waitFor(() => expect(cyState.instances[0]?.store.length).toBe(4)); // ghost edge NOT added
     expect(cyState.instances[0].store.map((el: any) => el.id())).not.toContain('ghost_edge');
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('skipped'),
-      expect.arrayContaining([
-        expect.objectContaining({ id: 'ghost_edge', reason: expect.stringContaining('not_in_projection') }),
-      ]),
-    );
-    warn.mockRestore();
+    expect(cyState.instances[0].store.map((el: any) => el.id())).not.toContain('not_in_projection');
   });
 
   it('selection handlers only toggle display classes; only dragfree reruns layout', async () => {
@@ -300,21 +304,23 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     blankTap.fn({ target: cy });
 
     expect(cy.layouts.length).toBe(layoutRunsBefore); // selection is never a layout trigger
-    expect(cy.store.length).toBe(4); // and never a data change
+    expect(cy.store.length).toBe(3); // and never a data change
 
     const dragFree = cy.handlers.find((h: any) => h.event === 'dragfree');
     dragFree.fn();
     expect(cy.layouts.length).toBe(layoutRunsBefore + 1);
   });
 
-  it('tapping a node opens the canonical RightGlassDrawer with a useful summary; closing clears it', async () => {
+  it('keeps the inspector docked beside the canvas and switches from overview to the selected record', async () => {
     render(<KnowledgeGraphFramework projection={PROJECTION} />);
     await waitFor(() => expect(cyState.instances).toHaveLength(1));
     const cy = cyState.instances[0];
 
-    // the deleted overlay inspector must never return; canonical drawer starts closed
+    // The inspector is a sibling panel, never an overlay or transient drawer.
     expect(screen.queryByTestId('knowledge-graph-node-inspector')).toBeNull();
-    expect(screen.getByTestId('knowledge-graph-node-drawer').getAttribute('data-open')).toBe('false');
+    const overview = screen.getByTestId('knowledge-graph-node-drawer');
+    expect(overview.getAttribute('data-open')).toBe('true');
+    expect(overview.textContent).toContain('ThinkGraph overview');
 
     const nodeTap = cy.handlers.find((h: any) => h.selector === 'node');
     nodeTap.fn({ target: { closedNeighborhood: () => ({ length: 2 }), data: () => PROJECTION.nodes[0] } });
@@ -323,14 +329,11 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     expect(drawer.getAttribute('data-open')).toBe('true');
     const lead = PROJECTION.nodes[0].title || PROJECTION.nodes[0].label;
     expect(drawer.textContent).toContain(lead);
-
-    fireEvent.click(within(drawer).getByLabelText('Close drawer'));
-    await waitFor(() =>
-      expect(screen.getByTestId('knowledge-graph-node-drawer').getAttribute('data-open')).toBe('false'),
-    );
+    expect(drawer.textContent).toContain('Canonical ID');
+    expect(within(drawer).queryByLabelText('Close drawer')).toBeNull();
   });
 
-  it('uses the existing drawer for the active Hermes report when no graph node is selected', async () => {
+  it('shows only a compact linked-run provenance section for a selected, explicitly linked node', async () => {
     const onReference = vi.fn();
     render(
       <KnowledgeGraphFramework
@@ -356,9 +359,17 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     );
     const drawer = await screen.findByTestId('knowledge-graph-node-drawer');
     expect(drawer.getAttribute('data-open')).toBe('true');
-    expect(within(drawer).getByTestId('knowledge-graph-hermes-report').textContent).toContain('The run is ready for review.');
-    fireEvent.click(within(drawer).getByTestId('hermes-report-reference-thinkgraph-asts'));
-    expect(onReference).toHaveBeenCalledWith({ authority: 'thinkgraph', id: 'asts' });
+    expect(within(drawer).queryByTestId('knowledge-graph-hermes-context')).toBeNull();
+    const cy = cyState.instances[0];
+    const nodeTap = cy.handlers.find((handler: any) => handler.selector === 'node');
+    nodeTap.fn({ target: { closedNeighborhood: () => ({ length: 2 }), data: () => PROJECTION.nodes[0] } });
+    const context = await within(drawer).findByTestId('knowledge-graph-hermes-context');
+    expect(context.textContent).toContain('Linked run provenance');
+    expect(context.textContent).not.toContain('Investigated the selected run.');
+    fireEvent.click(within(context).getByRole('button', { name: /Linked run provenance/i }));
+    expect(context.textContent).toContain('hermes:req_1234abcd');
+    fireEvent.click(within(context).getByText('client/src/components/knowledge/KnowledgeGraphFramework.tsx'));
+    expect(onReference).toHaveBeenCalledWith({ authority: 'codegraph', id: 'client/src/components/knowledge/KnowledgeGraphFramework.tsx' });
   });
 
   it('renders compact graph nav controls (zoom in/out, fit, center)', async () => {
@@ -378,7 +389,7 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     );
     await waitFor(() => expect(cyState.instances.length).toBeGreaterThanOrEqual(2));
     const lastCy = cyState.instances[cyState.instances.length - 1];
-    await waitFor(() => expect(lastCy.store.length).toBe(4));
+    await waitFor(() => expect(lastCy.store.length).toBe(3));
     expect(cyState.instances[0].destroy).toHaveBeenCalled();
   });
 

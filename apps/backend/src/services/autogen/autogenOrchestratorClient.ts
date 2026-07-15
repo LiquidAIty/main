@@ -267,31 +267,23 @@ export async function fetchToolManifest(): Promise<ToolCapabilityManifestEntry[]
 
 const THINKGRAPH_PROJECTION_ENDPOINT = '/thinkgraph/projection';
 
-/**
- * Transport-only: fetch ThinkGraphProjectionV1 from the Python graph authority
- * and return the body UNCHANGED. No AGE query, no shaping, no labels, no visual
- * classes here — Python owns the projection; a failure throws honestly.
- */
-export async function fetchThinkGraphProjection(
-  projectId: string,
-  limit?: number,
+async function requestThinkGraphJson(
+  endpointPath: string,
+  init: RequestInit,
 ): Promise<unknown> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
+  const timeout = setTimeout(() => controller.abort(), 120_000);
   try {
     const baseUrls = buildSidecarBaseUrls();
     let lastError: any = null;
     for (const baseUrl of baseUrls) {
-      const query = new URLSearchParams({ projectId });
-      if (Number.isFinite(limit)) query.set('limit', String(limit));
-      const endpoint = `${baseUrl}${THINKGRAPH_PROJECTION_ENDPOINT}?${query.toString()}`;
       try {
-        const response = await fetch(endpoint, { method: 'GET', signal: controller.signal });
+        const response = await fetch(`${baseUrl}${endpointPath}`, { ...init, signal: controller.signal });
         const text = await response.text();
         const data = text ? JSON.parse(text) : null;
         if (!response.ok) {
-          const message = String((data as any)?.detail || response.statusText || 'thinkgraph_projection_http_error').trim();
-          throw new Error(`thinkgraph_projection_http_${response.status}:${message}`);
+          const message = String((data as any)?.detail || response.statusText || 'thinkgraph_http_error').trim();
+          throw new Error(`thinkgraph_http_${response.status}:${message}`);
         }
         return data;
       } catch (error: any) {
@@ -303,4 +295,32 @@ export async function fetchThinkGraphProjection(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * Transport-only: fetch ThinkGraphProjectionV1 from the Python graph authority
+ * and return the body UNCHANGED. No AGE query, no shaping, no labels, no visual
+ * classes here — Python owns the projection; a failure throws honestly.
+ */
+export async function fetchThinkGraphProjection(
+  projectId: string,
+  limit?: number,
+): Promise<unknown> {
+  const query = new URLSearchParams({ projectId });
+  if (Number.isFinite(limit)) query.set('limit', String(limit));
+  return requestThinkGraphJson(`${THINKGRAPH_PROJECTION_ENDPOINT}?${query.toString()}`, { method: 'GET' });
+}
+
+export async function fetchThinkGraphScope(projectId: string, limit?: number): Promise<unknown> {
+  const query = new URLSearchParams({ projectId });
+  if (Number.isFinite(limit)) query.set('limit', String(limit));
+  return requestThinkGraphJson(`/thinkgraph/scope?${query.toString()}`, { method: 'GET' });
+}
+
+export async function applyThinkGraphPatchOnPython(authority: unknown, patch: unknown): Promise<unknown> {
+  return requestThinkGraphJson('/thinkgraph/apply-patch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ authority, patch }),
+  });
 }

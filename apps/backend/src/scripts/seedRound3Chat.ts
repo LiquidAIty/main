@@ -39,7 +39,7 @@ async function main() {
     visibleActivities: [
       { kind: 'thinkgraph', label: 'Merged project 1b1a6958 → ADMIN', status: 'complete', detail: '37 nodes / 38 edges, 3 conversations', ref: 'coder-workspace/thinkgraph-merge-1b1a6958-to-admin.json' },
       { kind: 'knowgraph', label: 'Attached 2 research scopes to ADMIN', status: 'complete', detail: 'union 510 → 530 nodes' },
-      { kind: 'code', label: 'Projection now emits node type from kind', status: 'complete', detail: '65/67 typed', ref: 'apps/python-models/app/python_models/thinkgraph_projection.py' },
+      { kind: 'code', label: 'Projection now emits node type from kind', status: 'complete', detail: 'Canonical Engraphis records retain their stored kinds', ref: 'apps/python-models/app/python_models/thinkgraph_engraphis.py' },
       { kind: 'goal', label: 'Opened Goal: one visible ADMIN project + typed ThinkGraph', status: 'complete' },
     ],
   });
