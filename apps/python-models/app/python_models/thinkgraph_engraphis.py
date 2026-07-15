@@ -132,6 +132,42 @@ class ThinkGraphEngraphis:
         repo_id = self.store.get_or_create_repo(workspace_id, "thinkgraph")
         return workspace_id, repo_id
 
+    def _records_for_canonical(
+        self,
+        workspace_id: str,
+        repo_id: str,
+        canonical_id: str,
+    ) -> list[MemoryRecord]:
+        records = self.store.list_memories(
+            SearchFilter(workspace_id=workspace_id, repo_id=repo_id),
+            include_invalid=True,
+            limit=10000,
+        )
+        return sorted(
+            (
+                record
+                for record in records
+                if _text((record.metadata or {}).get("canonicalId") or record.id) == canonical_id
+            ),
+            key=lambda record: (record.valid_from or 0, record.ingested_at or 0),
+            reverse=True,
+        )
+
+    def _active_record(
+        self,
+        workspace_id: str,
+        repo_id: str,
+        canonical_id: str,
+    ) -> MemoryRecord | None:
+        return next(
+            (
+                record
+                for record in self._records_for_canonical(workspace_id, repo_id, canonical_id)
+                if record.valid_to is None
+            ),
+            None,
+        )
+
     def _write_memory(
         self,
         *,
@@ -147,19 +183,43 @@ class ThinkGraphEngraphis:
         valid_from: float | None = None,
         valid_to: float | None = None,
         ingested_at: float | None = None,
-    ) -> None:
-        existing = self.store.get_memory(canonical_id)
-        existing_meta = dict(existing.metadata) if existing else {}
+    ) -> tuple[str, bool]:
+        existing = self._active_record(workspace_id, repo_id, canonical_id)
+        existing_meta = dict(existing.metadata or {}) if existing else {}
+        if existing:
+            existing_props = dict(existing_meta.get("properties") or {})
+            existing_kind = _text(existing_meta.get("recordKind") or existing.title)
+            if existing.content == label and existing_kind == kind and existing_props == properties:
+                return existing.id, False
+
+        prior_versions = self._records_for_canonical(workspace_id, repo_id, canonical_id)
+        version_ordinal = max(
+            (int((record.metadata or {}).get("versionOrdinal") or 1) for record in prior_versions),
+            default=0,
+        ) + 1
+        globally_claimed = self.store.get_memory(canonical_id)
+        if not prior_versions and globally_claimed is None:
+            physical_id = canonical_id
+        elif not prior_versions:
+            physical_id = f"{canonical_id}::scope:{workspace_id}:{time.time_ns()}"
+        else:
+            physical_id = f"{canonical_id}::v{version_ordinal}:{time.time_ns()}"
+        if existing:
+            self.store.conn.execute(
+                "UPDATE memories SET valid_to=? WHERE id=? AND valid_to IS NULL",
+                (now, existing.id),
+            )
+
         correlations = list(existing_meta.get("mentionedCorrelationIds") or [])
         correlation_id = _text(authority.get("correlationId"))
         if correlation_id and correlation_id not in correlations:
             correlations.append(correlation_id)
-        mention_count = max(int(existing_meta.get("mentionCount") or 0), int(properties.get("mention_count") or 0))
-        if not existing or correlation_id not in list(existing_meta.get("mentionedCorrelationIds") or []):
-            mention_count += 1
+        mention_count = max(int(existing_meta.get("mentionCount") or 0), int(properties.get("mention_count") or 0)) + 1
         metadata = {
-            **existing_meta,
             "canonicalId": canonical_id,
+            "versionId": physical_id,
+            "versionOrdinal": version_ordinal,
+            "supersedesVersionId": existing.id if existing else "",
             "recordKind": kind,
             "properties": properties,
             "authority": "thinkgraph",
@@ -187,7 +247,7 @@ class ThinkGraphEngraphis:
         memory_type = _mtype(kind, properties)
         vector = self.embedder.embed([f"{kind}\n{label}"])[0]
         record = MemoryRecord(
-            id=canonical_id,
+            id=physical_id,
             content=label,
             title=kind or canonical_id,
             mtype=memory_type,
@@ -199,7 +259,7 @@ class ThinkGraphEngraphis:
             metadata=metadata,
             importance=float(properties.get("importance") or (existing.importance if existing else 0.5)),
             valid_from=valid_from if valid_from is not None else created_at or now,
-            valid_to=valid_to,
+            valid_to=None,
             ingested_at=ingested_at if ingested_at is not None else created_at or now,
             last_access=existing.last_access if existing else now,
             access_count=existing.access_count if existing else 0,
@@ -220,17 +280,7 @@ class ThinkGraphEngraphis:
                 keywords, metadata, importance, surprise, stability, access_count, last_access,
                 valid_from, valid_to, ingested_at, expired_at, pinned, sensitivity, provenance)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-               ON CONFLICT(id) DO UPDATE SET
-                workspace_id=excluded.workspace_id, repo_id=excluded.repo_id,
-                session_id=excluded.session_id, scope=excluded.scope, mtype=excluded.mtype,
-                title=excluded.title, content=excluded.content, summary=excluded.summary,
-                keywords=excluded.keywords, metadata=excluded.metadata,
-                importance=excluded.importance, surprise=excluded.surprise,
-                stability=excluded.stability, access_count=excluded.access_count,
-                last_access=excluded.last_access, valid_from=excluded.valid_from,
-                valid_to=excluded.valid_to, ingested_at=excluded.ingested_at,
-                expired_at=excluded.expired_at, pinned=excluded.pinned,
-                sensitivity=excluded.sensitivity, provenance=excluded.provenance""",
+               """,
             (
                 record.id, record.workspace_id, record.repo_id, record.session_id,
                 record.scope.value, record.mtype.value, record.title, record.content,
@@ -241,7 +291,6 @@ class ThinkGraphEngraphis:
                 _json(record.provenance),
             ),
         )
-        self.store.conn.execute("DELETE FROM mem_fts WHERE id=?", (record.id,))
         self.store.conn.execute(
             "INSERT INTO mem_fts(id, title, content, keywords) VALUES(?,?,?,?)",
             (record.id, record.title, record.content, " ".join(record.keywords)),
@@ -250,10 +299,21 @@ class ThinkGraphEngraphis:
         self.store.conn.execute(
             """INSERT INTO entities(id, workspace_id, repo_id, name, etype, canonical_id, created_at)
                VALUES(?,?,?,?,?,?,?)
-               ON CONFLICT(id) DO UPDATE SET name=excluded.name, etype=excluded.etype,
-                 canonical_id=excluded.canonical_id""",
-            (canonical_id, workspace_id, repo_id, label, kind, canonical_id, created_at or now),
+               """,
+            (physical_id, workspace_id, repo_id, label, kind, canonical_id, created_at or now),
         )
+        if existing:
+            self._upsert_edge(
+                f"supersedes:{physical_id}",
+                physical_id,
+                existing.id,
+                "SUPERSEDES",
+                workspace_id,
+                repo_id,
+                now,
+                {"authority": "thinkgraph", "canonicalId": canonical_id},
+            )
+        return physical_id, True
 
     def apply_patch(self, authority: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
         project_id = _text(authority.get("projectId"))
@@ -271,7 +331,13 @@ class ThinkGraphEngraphis:
             ).fetchone()
             if receipt:
                 return self._result("duplicate", correlation_id, [], [], 0)
-            known = {item.id for item in self.store.list_memories(SearchFilter(workspace_id=workspace_id, repo_id=repo_id), include_invalid=True)}
+            known = {
+                _text((item.metadata or {}).get("canonicalId") or item.id)
+                for item in self.store.list_memories(
+                    SearchFilter(workspace_id=workspace_id, repo_id=repo_id),
+                    include_invalid=True,
+                )
+            }
             declared = {_text(item.get("id")) for item in resources}
             for statement in statements:
                 for endpoint_name in ("subject", "object"):
@@ -297,16 +363,26 @@ class ThinkGraphEngraphis:
                     stored_resources.append(canonical_id)
                 for relation in relations:
                     a, b = _text(relation.get("a")), _text(relation.get("b"))
+                    active_a = self._active_record(workspace_id, repo_id, a)
+                    active_b = self._active_record(workspace_id, repo_id, b)
+                    if not active_a or not active_b:
+                        raise RuntimeError(f"patch_relation_endpoint_unresolved: {a} -> {b}")
                     edge_id = f"co:{min(a, b)}:{max(a, b)}"
-                    self._upsert_edge(edge_id, a, b, "RELATED", workspace_id, repo_id, now, {"correlationId": correlation_id})
+                    self._upsert_edge(edge_id, active_a.id, active_b.id, "RELATED", workspace_id, repo_id, now, {"correlationId": correlation_id})
                 for statement in statements:
                     statement_id = _text(statement.get("id"))
+                    subject = _text(statement.get("subject"))
+                    object_id = _text(statement.get("object"))
+                    active_subject = self._active_record(workspace_id, repo_id, subject)
+                    active_object = self._active_record(workspace_id, repo_id, object_id)
+                    if not active_subject or not active_object:
+                        raise RuntimeError(f"patch_statement_endpoint_unresolved: {statement_id}")
                     props = _scalar_properties(statement.get("properties"))
                     props.update({key: _text(statement.get(key)) for key in ("rationale", "review", "tag") if statement.get(key)})
                     self._upsert_edge(
                         statement_id,
-                        _text(statement.get("subject")),
-                        _text(statement.get("object")),
+                        active_subject.id,
+                        active_object.id,
                         _text(statement.get("predicateTerm")) or "RELATED",
                         workspace_id,
                         repo_id,
@@ -326,13 +402,26 @@ class ThinkGraphEngraphis:
 
     def _upsert_edge(self, edge_id: str, source: str, target: str, relation: str,
                      workspace_id: str, repo_id: str, now: float, provenance: dict[str, Any]) -> None:
+        existing = self.store.conn.execute(
+            """SELECT id, src, dst, relation, provenance FROM edges
+               WHERE workspace_id=? AND repo_id=? AND (id=? OR id LIKE ?) AND valid_to IS NULL
+               ORDER BY valid_from DESC LIMIT 1""",
+            (workspace_id, repo_id, edge_id, f"{edge_id}::v%"),
+        ).fetchone()
+        encoded_provenance = _json(provenance)
+        if existing and existing[1] == source and existing[2] == target and existing[3] == relation and existing[4] == encoded_provenance:
+            return
+        globally_claimed = self.store.conn.execute("SELECT 1 FROM edges WHERE id=?", (edge_id,)).fetchone()
+        physical_id = edge_id if globally_claimed is None else f"{edge_id}::scope:{workspace_id}:{time.time_ns()}"
+        if existing:
+            self.store.conn.execute("UPDATE edges SET valid_to=? WHERE id=?", (now, existing[0]))
+            physical_id = f"{edge_id}::v{time.time_ns()}"
         self.store.conn.execute(
             """INSERT INTO edges(id, workspace_id, repo_id, src, dst, relation, weight,
                  valid_from, valid_to, ingested_at, expired_at, provenance)
                VALUES(?,?,?,?,?, ?,1.0,?,NULL,?,NULL,?)
-               ON CONFLICT(id) DO UPDATE SET src=excluded.src, dst=excluded.dst,
-                 relation=excluded.relation, provenance=excluded.provenance""",
-            (edge_id, workspace_id, repo_id, source, target, relation, now, now, _json(provenance)),
+               """,
+            (physical_id, workspace_id, repo_id, source, target, relation, now, now, encoded_provenance),
         )
 
     @staticmethod
@@ -378,7 +467,10 @@ class ThinkGraphEngraphis:
         props = dict(metadata.get("properties") or {})
         return {
             "id": record.id,
-            "canonicalId": record.id,
+            "canonicalId": metadata.get("canonicalId") or record.id,
+            "versionId": metadata.get("versionId") or record.id,
+            "versionOrdinal": int(metadata.get("versionOrdinal") or 1),
+            "supersedesVersionId": metadata.get("supersedesVersionId") or None,
             "label": record.content,
             "title": record.title,
             "type": metadata.get("recordKind") or record.title,
@@ -438,17 +530,24 @@ class ThinkGraphEngraphis:
 
     def get_record(self, project_id: str, canonical_id: str) -> dict[str, Any] | None:
         projection = self.projection(project_id, limit=2000, include_historical=True)
-        return next((node for node in projection["nodes"] if node["id"] == canonical_id), None)
+        matches = [node for node in projection["nodes"] if node["canonicalId"] == canonical_id]
+        return next((node for node in matches if node["validTo"] is None), matches[0] if matches else None)
 
     def neighborhood(self, project_id: str, canonical_id: str) -> dict[str, Any]:
         projection = self.projection(project_id, limit=2000, include_historical=True)
-        edges = [edge for edge in projection["edges"] if canonical_id in {edge["source"], edge["target"]}]
-        node_ids = {canonical_id}
+        center = next(
+            (node for node in projection["nodes"] if node["canonicalId"] == canonical_id and node["validTo"] is None),
+            None,
+        )
+        center_id = center["id"] if center else canonical_id
+        edges = [edge for edge in projection["edges"] if center_id in {edge["source"], edge["target"]}]
+        node_ids = {center_id}
         for edge in edges:
             node_ids.update((edge["source"], edge["target"]))
         return {
             **{key: projection[key] for key in ("schemaVersion", "authority", "projectId", "revision")},
-            "centerId": canonical_id,
+            "centerId": center_id,
+            "canonicalId": canonical_id,
             "nodes": [node for node in projection["nodes"] if node["id"] in node_ids],
             "edges": edges,
         }
@@ -466,7 +565,8 @@ class ThinkGraphEngraphis:
                     continue
                 chunks.append({
                     **chunk,
-                    "canonicalId": record.id,
+                    "canonicalId": record.metadata.get("canonicalId") or record.id,
+                    "versionId": record.id,
                     "recordKind": record.metadata.get("recordKind"),
                     "projectId": project_id,
                     "conversationId": record.metadata.get("conversationId") or record.session_id,

@@ -8,6 +8,20 @@ export type CodeGraphNode = {
   file_path?: string;
   size: number;
   color: string;
+  authority?: 'codegraph' | 'thinkgraph' | 'knowgraph';
+  source_id?: string;
+  properties?: Record<string, unknown>;
+  provenance?: Record<string, unknown>;
+  project_id?: string;
+  conversation_id?: string;
+  goal_id?: string;
+  episode_id?: string;
+  job_id?: string;
+  run_id?: string;
+  status?: string;
+  trust?: string;
+  quality?: string;
+  retrieval_reason?: string;
 };
 
 export type CodeGraphEdge = {

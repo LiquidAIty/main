@@ -22,7 +22,7 @@ type CodeGraphSurfaceProps = {
   onRefreshRequest?: (projectId: string) => Promise<CodeGraphData | void> | CodeGraphData | void;
 };
 
-async function fetchLayout(project: string, maxNodes = 50000): Promise<CodeGraphData> {
+export async function fetchLayout(project: string, maxNodes = 50000): Promise<CodeGraphData> {
   const params = new URLSearchParams({ project, max_nodes: String(maxNodes) });
   const response = await fetch(`/api/layout?${params.toString()}`);
   if (!response.ok) {

@@ -30,6 +30,7 @@ import {
 import {
   appendMessage,
   getConversationMessages,
+  listConversations,
 } from '../conversations/store';
 import { callPythonAgentMcpTool } from '../services/mcp/pythonAgentMcpClient';
 import {
@@ -886,6 +887,25 @@ router.get('/openclaude/session/history', async (req, res) => {
     return res.json({ ok: true, messages });
   } catch {
     return res.json({ ok: true, messages: [] });
+  }
+});
+
+router.get('/openclaude/session/conversations', async (req, res) => {
+  const projectId = String(req.query?.projectId || '');
+  if (!projectId) {
+    return res.status(400).json({ ok: false, error: 'projectId_required', conversations: [] });
+  }
+  try {
+    const conversations = (await listConversations(projectId))
+      .filter((conversation) => !conversation.archivedAt)
+      .map((conversation) => ({
+        conversationId: conversation.conversationId,
+        title: conversation.title || conversation.conversationId,
+        updatedAt: conversation.updatedAt,
+      }));
+    return res.json({ ok: true, conversations });
+  } catch {
+    return res.json({ ok: true, conversations: [] });
   }
 });
 

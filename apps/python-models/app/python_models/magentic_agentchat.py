@@ -535,6 +535,20 @@ def _read_max_turns(context: ContextPack) -> int:
     return max(1, min(value, 64))
 
 
+def _magentic_completion_status(
+    final_response_text: str,
+    *,
+    durable_output_required: bool,
+    returned_files: list[str],
+) -> tuple[bool, str | None]:
+    """Derive success from model output plus the declared durable contract."""
+    if not _as_text(final_response_text):
+        return False, "no_model_output"
+    if durable_output_required and not returned_files:
+        return False, "declared_durable_output_missing"
+    return True, None
+
+
 async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunResponse:
     if context.cardRuntime is None:
         raise RuntimeError("card_runtime_missing")
@@ -691,7 +705,11 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
                 "return_files_created" if returned_files else "no_return_files_created"
             )
 
-        ok = bool(final_response_text)
+        ok, completion_error = _magentic_completion_status(
+            final_response_text,
+            durable_output_required=folder is not None,
+            returned_files=returned_files,
+        )
         return OrchestratorRunResponse(
             ok=ok,
             session=context.session,
@@ -714,12 +732,12 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
             returnsDir=returns_rel,
             returnedFiles=returned_files,
             returnStatus=return_status,
-            error=None if ok else "no_model_output",
+            error=completion_error,
             plan=context.plan,
             thinkGraph=context.thinkGraph,
             knowGraph=KnowGraphUpdateReport(
                 sourceAgent="magentic_one",
-                summary="run_complete" if ok else "run_empty",
+                summary="run_complete" if ok else completion_error or "run_failed",
             ),
             transcript=[],
             metrics=OrchestratorMetrics(

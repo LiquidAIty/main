@@ -17,9 +17,6 @@ from typing import Any
 from dotenv import load_dotenv
 from neo4j import Driver, GraphDatabase
 from neo4j_graphrag.embeddings.openai import OpenAIEmbeddings
-from neo4j_graphrag.embeddings.sentence_transformers import (
-    SentenceTransformerEmbeddings,
-)
 from neo4j_graphrag.experimental.components.text_splitters.base import TextSplitter
 from neo4j_graphrag.experimental.components.types import (
     LexicalGraphConfig,
@@ -30,7 +27,10 @@ from neo4j_graphrag.experimental.pipeline.kg_builder import SimpleKGPipeline
 from neo4j_graphrag.generation.prompts import ERExtractionTemplate
 from neo4j_graphrag.llm.openai_llm import OpenAILLM
 
-from neo4j_index import ensure_vector_index
+from neo4j_index import (
+    ensure_knowledge_assertion_fulltext_index,
+    ensure_vector_index,
+)
 from schema import KNOWGRAPH_SCHEMA
 from inspection_extraction_provider import (
     build_inspection_extraction_llm_from_env,
@@ -250,6 +250,38 @@ def _serialize_metadata_json(value: Any) -> str | None:
         return str(normalized)
 
 
+def _metadata_source_position(metadata: Any) -> tuple[str | None, int | None, str | None, int | None, str | None]:
+    """Read source structure only when the caller supplied it; never infer chapters."""
+    normalized = _normalize_optional_json_value(metadata)
+    if not isinstance(normalized, dict):
+        return None, None, None, None, None
+
+    def text_value(name: str) -> str | None:
+        value = normalized.get(name)
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned or None
+
+    def ordinal_value(name: str) -> int | None:
+        value = normalized.get(name)
+        if isinstance(value, bool) or value is None:
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed >= 0 else None
+
+    return (
+        text_value("chapter"),
+        ordinal_value("chapter_ordinal"),
+        text_value("section"),
+        ordinal_value("section_ordinal"),
+        text_value("pages"),
+    )
+
+
 def _dedupe_strings(values: list[str]) -> tuple[str, ...]:
     deduped: list[str] = []
     seen: set[str] = set()
@@ -417,7 +449,12 @@ def _resolve_openrouter_openai_base_url() -> str:
 
 
 def _build_openrouter_client_kwargs(api_key: str, base_url: str) -> dict[str, Any]:
-    kwargs: dict[str, Any] = {"api_key": api_key, "base_url": base_url}
+    kwargs: dict[str, Any] = {
+        "api_key": api_key,
+        "base_url": base_url,
+        "max_retries": 2,
+        "timeout": 30.0,
+    }
     default_headers: dict[str, str] = {}
     referer = _optional_env("OPENROUTER_HTTP_REFERER")
     title = _optional_env("OPENROUTER_X_TITLE") or _optional_env("OPENROUTER_APP_TITLE")
@@ -436,8 +473,6 @@ def _normalize_embedding_backend(value: str | None, *, default: str) -> str:
         return default
     if normalized in ("openai", "openai_compatible", "openai-compatible"):
         return "openai_compatible"
-    if normalized in ("sentence_transformers", "sentence-transformers", "sentence"):
-        return "sentence_transformers"
     raise RuntimeError(f"Unsupported embedding backend: {value}")
 
 
@@ -481,9 +516,6 @@ def _resolve_runtime_model_config(
         )
         if openai_embedding_backend == "openai_compatible":
             embedding_kwargs = {"api_key": api_key}
-        elif openai_embedding_backend == "sentence_transformers":
-            # local embedding model; no API key/base URL required
-            embedding_kwargs = {}
         if base_url:
             llm_kwargs["base_url"] = base_url
             if openai_embedding_backend == "openai_compatible":
@@ -504,20 +536,22 @@ def _resolve_runtime_model_config(
         base_url = _resolve_openrouter_openai_base_url()
         openrouter_embedding_backend = _normalize_embedding_backend(
             _optional_env("KNOWGRAPH_OPENROUTER_EMBEDDING_BACKEND"),
-            default="sentence_transformers",
+            default="openai_compatible",
         )
         openrouter_embedding_model = (
             _optional_env("KNOWGRAPH_OPENROUTER_EMBEDDING_MODEL")
-            or _optional_env("KNOWGRAPH_SENTENCE_TRANSFORMERS_MODEL")
-            or ("all-MiniLM-L6-v2" if openrouter_embedding_backend == "sentence_transformers" else global_embedding_model)
+            or "openai/text-embedding-3-large"
         )
         openrouter_embedding_dim = (
             _optional_int_env("KNOWGRAPH_OPENROUTER_EMBEDDING_DIM")
-            or _optional_int_env("KNOWGRAPH_SENTENCE_TRANSFORMERS_DIM")
-            or (384 if openrouter_embedding_backend == "sentence_transformers" else global_embedding_dim)
+            or 3072
         )
         client_kwargs = _build_openrouter_client_kwargs(api_key, base_url)
-        embedding_kwargs = dict(client_kwargs) if openrouter_embedding_backend == "openai_compatible" else {}
+        if openrouter_embedding_backend != "openai_compatible":
+            raise RuntimeError(
+                "OpenRouter KnowGraph ingestion requires openai_compatible embeddings"
+            )
+        embedding_kwargs = dict(client_kwargs)
         return RuntimeModelConfig(
             provider=normalized_provider,
             model_key=requested_model_key,
@@ -546,6 +580,12 @@ def _merge_ingested_graph(
     snippet: str | None = None,
     metadata_json: str | None = None,
     graph_metadata: GraphMetadata | None = None,
+    chapter: str | None = None,
+    chapter_ordinal: int | None = None,
+    section: str | None = None,
+    section_ordinal: int | None = None,
+    pages: str | None = None,
+    extraction_run: str | None = None,
 ) -> None:
     merge_cypher = """
     MERGE (doc:Document {project_id: $project_id, document_id: $document_id})
@@ -580,6 +620,31 @@ def _merge_ingested_graph(
         chunk.project_id = $project_id,
         chunk.document_id = $document_id
     MERGE (doc)-[:HAS_CHUNK]->(chunk)
+    FOREACH (_ IN CASE WHEN $chapter_ordinal IS NOT NULL AND $section_ordinal IS NOT NULL THEN [1] ELSE [] END |
+        MERGE (chapter:Chapter {
+            project_id: $project_id,
+            document_id: $document_id,
+            ordinal: $chapter_ordinal
+        })
+        ON CREATE SET chapter.created_at = datetime()
+        SET chapter.title = $chapter
+        MERGE (doc)-[:HAS_CHAPTER]->(chapter)
+        MERGE (section:Section {
+            project_id: $project_id,
+            document_id: $document_id,
+            ordinal: $section_ordinal
+        })
+        ON CREATE SET section.created_at = datetime()
+        SET section.title = $section,
+            section.chapter_ordinal = $chapter_ordinal
+        MERGE (chapter)-[:HAS_SECTION]->(section)
+        MERGE (section)-[:HAS_CHUNK]->(chunk)
+        SET chunk.chapter = $chapter,
+            chunk.chapter_ordinal = $chapter_ordinal,
+            chunk.section = $section,
+            chunk.section_ordinal = $section_ordinal,
+            chunk.pages = $pages
+    )
     """
     driver.execute_query(
         merge_cypher,
@@ -592,6 +657,11 @@ def _merge_ingested_graph(
         fetched_at=fetched_at,
         snippet=snippet,
         metadata_json=metadata_json,
+        chapter=chapter,
+        chapter_ordinal=chapter_ordinal,
+        section=section,
+        section_ordinal=section_ordinal,
+        pages=pages,
         database_=database,
     )
 
@@ -650,6 +720,40 @@ def _merge_ingested_graph(
         source_type=source_type,
         source_url=source_url,
         fetched_at=fetched_at,
+        database_=database,
+    )
+
+    driver.execute_query(
+        """
+        MATCH (chunk:Chunk {project_id: $project_id, document_id: $document_id})
+              -[:MENTIONS]->(assertion)
+        WHERE (assertion:Claim OR assertion:SourceBackedAssertion)
+          AND coalesce(assertion.assertion_id, assertion.claim_id) IS NOT NULL
+          AND assertion.text IS NOT NULL
+        WITH assertion, collect(DISTINCT chunk.chunk_id) AS chunk_refs
+        SET assertion:KnowledgeAssertion,
+            assertion.assertion_id = coalesce(assertion.assertion_id, assertion.claim_id),
+            assertion.assertion_kind = CASE
+                WHEN assertion:Claim THEN 'claim'
+                ELSE 'source_backed_assertion'
+            END,
+            assertion.project_id = $project_id,
+            assertion.document_id = $document_id,
+            assertion.chapter = $chapter,
+            assertion.section = $section,
+            assertion.pages = coalesce(assertion.pages, $pages),
+            assertion.chunk_refs = chunk_refs,
+            assertion.trusted = true,
+            assertion.status = 'active',
+            assertion.created_at = coalesce(assertion.created_at, datetime()),
+            assertion.extraction_run = $extraction_run
+        """,
+        project_id=project_id,
+        document_id=document_id,
+        chapter=chapter,
+        section=section,
+        pages=pages,
+        extraction_run=extraction_run,
         database_=database,
     )
 
@@ -735,31 +839,6 @@ def _merge_ingested_graph(
     )
 
 
-def _apply_inspection_embedding_override(runtime: RuntimeModelConfig) -> RuntimeModelConfig:
-    """Inspection mode (dev/admin stand-in) must NEVER use paid embeddings.
-
-    The backend PDF route can resolve the KnowGraph agent's provider to OpenAI, which
-    selects OpenAI embeddings — and on a 429 insufficient_quota the vendored rate-limit
-    handler retries indefinitely, hanging the import. When inspection mode is on we force
-    local sentence-transformers regardless of provider, so the stand-in path can never
-    silently fall back to a paid embedding backend. Observable via the runtime log line.
-    Product mode (inspection disabled) is unchanged.
-    """
-    if not inspection_mode_enabled():
-        return runtime
-    from dataclasses import replace
-
-    local_model = _optional_env("KNOWGRAPH_SENTENCE_TRANSFORMERS_MODEL") or "all-MiniLM-L6-v2"
-    local_dim = _optional_int_env("KNOWGRAPH_SENTENCE_TRANSFORMERS_DIM") or 384
-    return replace(
-        runtime,
-        embedding_backend="sentence_transformers",
-        embedding_model=local_model,
-        embedding_dimensions=local_dim,
-        embedding_client_kwargs={},
-    )
-
-
 def _create_runtime_pipeline(
     *,
     project_id: str,
@@ -781,7 +860,6 @@ def _create_runtime_pipeline(
         model_key=model_key,
         model_id=model_id,
     )
-    runtime = _apply_inspection_embedding_override(runtime)
     print(
         f"[KNOWGRAPH_RUNTIME] project_id={project_id} document_id={document_id} provider={runtime.provider} "
         f"model={runtime.model_id} embedding_backend={runtime.embedding_backend} "
@@ -804,9 +882,7 @@ def _create_runtime_pipeline(
             model_params={"temperature": 0},
             **runtime.llm_client_kwargs,
         )
-    if runtime.embedding_backend == "sentence_transformers":
-        embedder = SentenceTransformerEmbeddings(model=runtime.embedding_model)
-    elif runtime.embedding_backend == "openai_compatible":
+    if runtime.embedding_backend == "openai_compatible":
         embedder = OpenAIEmbeddings(
             model=runtime.embedding_model,
             **runtime.embedding_client_kwargs,
@@ -888,7 +964,11 @@ def _delete_prior_document(
         """
         MATCH (d:Document {project_id: $project_id, document_id: $document_id})
         OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
-        WITH collect(DISTINCT d) + collect(DISTINCT c) AS nodes
+        OPTIONAL MATCH (a:KnowledgeAssertion {project_id: $project_id, document_id: $document_id})
+        OPTIONAL MATCH (chapter:Chapter {project_id: $project_id, document_id: $document_id})
+        OPTIONAL MATCH (section:Section {project_id: $project_id, document_id: $document_id})
+        WITH collect(DISTINCT d) + collect(DISTINCT c) + collect(DISTINCT a)
+             + collect(DISTINCT chapter) + collect(DISTINCT section) AS nodes
         UNWIND nodes AS n
         DETACH DELETE n
         """,
@@ -1029,6 +1109,7 @@ async def ingest_text_document(
         metadata=metadata,
     )
     metadata_json = _serialize_metadata_json(metadata)
+    chapter, chapter_ordinal, section, section_ordinal, pages = _metadata_source_position(metadata)
 
     try:
         _delete_prior_document(driver, neo4j_database, project_id, document_id)
@@ -1054,18 +1135,25 @@ async def ingest_text_document(
             document_id=document_id,
             source_path=source_path,
             source_name=source_name,
-            source_type="web_research",
+            source_type=source_type,
             source_url=source_url,
             fetched_at=fetched_at,
             snippet=snippet,
             metadata_json=metadata_json,
             graph_metadata=graph_metadata,
+            chapter=chapter,
+            chapter_ordinal=chapter_ordinal,
+            section=section,
+            section_ordinal=section_ordinal,
+            pages=pages,
+            extraction_run=result.run_id,
         )
         ensure_vector_index(
             driver,
             neo4j_database,
             dimensions=runtime.embedding_dimensions,
         )
+        ensure_knowledge_assertion_fulltext_index(driver, neo4j_database)
 
         return {
             "run_id": result.run_id,

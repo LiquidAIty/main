@@ -138,3 +138,23 @@ def test_building_participants_attaches_without_executing_retrieval():
     sys.modules.pop("hybrid_retrieval", None)
     mac._build_participants(_tools_context(["retrieve_knowgraph_context"]), _FakeToolClient())
     assert "hybrid_retrieval" not in sys.modules
+
+
+def test_magentic_success_requires_declared_durable_output():
+    ok, error = mac._magentic_completion_status(
+        "The work is complete.",
+        durable_output_required=True,
+        returned_files=[],
+    )
+    assert ok is False
+    assert error == "declared_durable_output_missing"
+
+
+def test_magentic_success_accepts_real_return_file():
+    ok, error = mac._magentic_completion_status(
+        "The work is complete.",
+        durable_output_required=True,
+        returned_files=["coder-report.json"],
+    )
+    assert ok is True
+    assert error is None

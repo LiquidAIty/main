@@ -1,53 +1,45 @@
-"""Blocker repair: inspection mode must force LOCAL embeddings, never paid OpenAI.
-
-Run: services/knowgraph/.venv/Scripts/python.exe -m unittest test_embedding_backend -v
-"""
+"""OpenRouter is the single KnowGraph embedding backend; no local substitution."""
 
 from __future__ import annotations
 
 import os
 import unittest
+from unittest import mock
 
-from dotenv import load_dotenv
-load_dotenv()
-
-from ingest import RuntimeModelConfig, _apply_inspection_embedding_override
-import inspection_extraction_provider as prov
+from ingest import _resolve_runtime_model_config
 
 
-def _openai_cfg() -> RuntimeModelConfig:
-    return RuntimeModelConfig(
-        provider="openai", model_key=None, model_id="gpt-4o-mini",
-        llm_client_kwargs={"api_key": "x"}, embedding_backend="openai_compatible",
-        embedding_model="text-embedding-3-large", embedding_dimensions=3072,
-        embedding_client_kwargs={"api_key": "x"},
-    )
+class EmbeddingBackendTest(unittest.TestCase):
+    def test_openrouter_routes_llm_and_embeddings_to_same_compatible_api(self):
+        env = {
+            "OPENROUTER_API_KEY": "test-key",
+            "OPENROUTER_OPENAI_BASE_URL": "https://openrouter.ai/api/v1",
+            "KNOWGRAPH_LLM_MODEL": "openai/gpt-4o-mini",
+            "KNOWGRAPH_OPENROUTER_EMBEDDING_BACKEND": "openai_compatible",
+            "KNOWGRAPH_OPENROUTER_EMBEDDING_MODEL": "openai/text-embedding-3-large",
+            "KNOWGRAPH_OPENROUTER_EMBEDDING_DIM": "3072",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            config = _resolve_runtime_model_config(provider="openrouter", model_key=None, model_id=None)
+        self.assertEqual(config.model_id, "openai/gpt-4o-mini")
+        self.assertEqual(config.embedding_backend, "openai_compatible")
+        self.assertEqual(config.embedding_model, "openai/text-embedding-3-large")
+        self.assertEqual(config.embedding_dimensions, 3072)
+        self.assertEqual(config.embedding_client_kwargs["base_url"], "https://openrouter.ai/api/v1")
+        self.assertEqual(config.embedding_client_kwargs["max_retries"], 2)
+        self.assertEqual(config.embedding_client_kwargs["timeout"], 30.0)
 
-
-class EmbeddingOverrideTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self._prev = os.environ.get(prov.INSPECTION_MODE_ENV)
-
-    def tearDown(self) -> None:
-        if self._prev is None:
-            os.environ.pop(prov.INSPECTION_MODE_ENV, None)
-        else:
-            os.environ[prov.INSPECTION_MODE_ENV] = self._prev
-
-    def test_inspection_mode_forces_local_embeddings(self) -> None:
-        os.environ[prov.INSPECTION_MODE_ENV] = "1"
-        c = _apply_inspection_embedding_override(_openai_cfg())
-        self.assertEqual(c.embedding_backend, "sentence_transformers")
-        self.assertEqual(c.embedding_dimensions, 384)
-        self.assertEqual(c.embedding_client_kwargs, {})
-        self.assertNotIn("text-embedding", c.embedding_model)  # not an OpenAI embed model
-
-    def test_product_mode_unchanged(self) -> None:
-        os.environ[prov.INSPECTION_MODE_ENV] = "0"
-        c = _apply_inspection_embedding_override(_openai_cfg())
-        self.assertEqual(c.embedding_backend, "openai_compatible")
-        self.assertEqual(c.embedding_dimensions, 3072)
-        self.assertEqual(c.embedding_client_kwargs, {"api_key": "x"})
+    def test_local_embedding_backend_fails_closed(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "OPENROUTER_API_KEY": "test-key",
+                "KNOWGRAPH_OPENROUTER_EMBEDDING_BACKEND": "sentence_transformers",
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Unsupported embedding backend"):
+                _resolve_runtime_model_config(provider="openrouter", model_key=None, model_id=None)
 
 
 if __name__ == "__main__":

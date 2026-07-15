@@ -32,6 +32,8 @@ import {
   SessionStreamError,
   streamSession,
   loadSessionHistory,
+  listSessionConversations,
+  type SessionConversation,
 } from '../features/agentbuilder/console/openClaudeSessionClient';
 import useAgentBuilderAutosave from '../features/agentbuilder/state/useAgentBuilderAutosave';
 import useAgentBuilderDeck from '../features/agentbuilder/state/useAgentBuilderDeck';
@@ -131,6 +133,9 @@ const AgentManager = lazy(async () => {
 const KnowledgeGraphFramework = lazy(
   () => import('../components/knowledge/KnowledgeGraphFramework'),
 );
+const UnifiedGraphSurface = lazy(
+  () => import('../components/knowledge/UnifiedGraphSurface'),
+);
 // CodeGraph renders through its OWN CBM-backed surface (CodeGraphSurface → /api/layout → CBM →
 // CodeGraphScene), never the generic shared graph shell. Restored to its pre-b32e5cdd direct mount.
 const CodeGraphSurface = lazy(() =>
@@ -212,11 +217,13 @@ const AGENTS_CHAT_MIN_WIDTH = 280;
 const AGENTS_CANVAS_MIN_WIDTH = 520;
 const WORKSPACE_COMPANION_MIN_WIDTH = 360;
 const WORKSPACE_COLLAPSE_EDGE_PX = 28;
-const AGENT_EDITOR_DEFAULT_WIDTH = 420;
+const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // Hermes owns one project-intelligence canvas. Its three tabs are authorities,
 // not agent-card capabilities: card/bus wiring must never hide project
 // reasoning, external evidence, or repository reality from that canvas.
-const HERMES_GRAPH_AUTHORITIES: readonly KnowledgeGraphKind[] = [
+type KnowledgeSurfaceKind = KnowledgeGraphKind | 'unified';
+const HERMES_GRAPH_AUTHORITIES: readonly KnowledgeSurfaceKind[] = [
+  'unified',
   'thinkgraph',
   'knowgraph',
   'codegraph',
@@ -494,7 +501,9 @@ export default function AgentBuilder(): React.ReactElement {
   const [showCreateProjectForm, setShowCreateProjectForm] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
-    useState<KnowledgeGraphKind>('thinkgraph');
+    useState<KnowledgeSurfaceKind>('unified');
+  const [conversationId, setConversationId] = useState('main');
+  const [conversations, setConversations] = useState<SessionConversation[]>([]);
   const [thinkGraphFocusIds, setThinkGraphFocusIds] = useState<string[]>([]);
   const [focusedGraphNodeId, setFocusedGraphNodeId] = useState<string | null>(null);
   const [focusedCodeGraphRef, setFocusedCodeGraphRef] = useState<string | null>(null);
@@ -510,12 +519,12 @@ export default function AgentBuilder(): React.ReactElement {
   });
   const hermesReport = useAgentBuilderHermesReport({
     projectId: activeProject,
-    conversationId: 'main',
+    conversationId,
     workspaceView,
   });
   const coderAuditView = useAgentBuilderCoderAuditView({
     projectId: activeProject,
-    conversationId: 'main',
+    conversationId,
   });
 
   const [graphViewContract, setGraphViewContract] =
@@ -565,8 +574,7 @@ export default function AgentBuilder(): React.ReactElement {
   const [stateLoaded, setStateLoaded] = useState(false);
 
   // Restore the durable project-scoped Harness transcript on open / project
-  // switch, so a reload shows the same conversation (persisted server-side in
-  // conversations/store.ts, conversationId 'main'). This load is read-only and
+  // switch, so a reload shows the selected named conversation. This load is read-only and
   // best-effort: a fresh project or a read failure leaves chat empty, never
   // errors. A late response for a project the user already switched away from is
   // discarded (guarded by the captured projectId).
@@ -580,7 +588,18 @@ export default function AgentBuilder(): React.ReactElement {
     setHermesTerminal(EMPTY_HERMES_TERMINAL_STATE);
     const ctrl = new AbortController();
     let cancelled = false;
-    void loadSessionHistory({ projectId: pid, conversationId: 'main', signal: ctrl.signal })
+    void listSessionConversations({ projectId: pid, signal: ctrl.signal })
+      .then((items) => {
+        if (cancelled) return;
+        setConversations(items);
+        if (items.length > 0 && !items.some((item) => item.conversationId === conversationId)) {
+          setConversationId(items[0].conversationId);
+        }
+      })
+      .catch(() => {
+        /* named-conversation navigation is best-effort */
+      });
+    void loadSessionHistory({ projectId: pid, conversationId, signal: ctrl.signal })
       .then((history) => {
         if (cancelled) return;
         setMessages(history);
@@ -592,7 +611,7 @@ export default function AgentBuilder(): React.ReactElement {
       cancelled = true;
       ctrl.abort();
     };
-  }, [canvasProjectId]);
+  }, [canvasProjectId, conversationId]);
 
   const lastCompanionSurfaceTelemetryRef = useRef<string | null>(null);
   const pendingPanelOpenTelemetryRef = useRef<{
@@ -1663,7 +1682,7 @@ export default function AgentBuilder(): React.ReactElement {
   }, [selectedCard, workspaceView]);
   const isObjectDrawerVisible = objectDrawerOpen && objectDrawerRole !== null;
   const objectDrawerDefaultWidth = AGENT_EDITOR_DEFAULT_WIDTH;
-  const objectDrawerStorageKey = 'liquidaity.drawer.object.agent.width';
+  const objectDrawerStorageKey = 'liquidaity.drawer.object.agent.v2.width';
 
   const closeObjectDrawer = useCallback(() => {
     setObjectDrawerOpen(false);
@@ -1854,7 +1873,6 @@ export default function AgentBuilder(): React.ReactElement {
         return;
       }
       if (nativeSessionBusy) return;
-      const conversationId = 'main';
       // Only the REAL user message is added on send. No empty assistant placeholder —
       // the assistant bubble is created lazily on the FIRST real text token (below),
       // never before. If the model emits no text, no assistant bubble is created.
@@ -1927,7 +1945,7 @@ export default function AgentBuilder(): React.ReactElement {
           appendAssistantText('Chat request failed before the stream opened. Route: /api/coder/openclaude/session/chat.');
         });
     },
-    [canvasProjectId, nativeSessionBusy, thinkGraphFocusIds, workspaceView],
+    [canvasProjectId, conversationId, nativeSessionBusy, thinkGraphFocusIds, workspaceView],
   );
 
   const renderChatSurface = (
@@ -1941,13 +1959,31 @@ export default function AgentBuilder(): React.ReactElement {
     // surface keeps a near-invisible pull-tab that reveals the active native
     // Hermes child stream beneath chat; the Code Console remains separate.
     const chat = (
-      <BuilderChat
-        messages={messages}
-        onSend={handleNativeSend}
-        knowledgeProjectId={projectId}
-        colors={C}
-        busy={nativeSessionBusy}
-      />
+      <div style={{ height: '100%', minHeight: 0, display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px 0' }}>
+          <span style={{ color: C.textMuted, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>Conversation</span>
+          <select
+            aria-label="Selected conversation"
+            value={conversationId}
+            onChange={(event) => setConversationId(event.target.value)}
+            style={graphDrawerInputStyle({ minWidth: 150, height: 28, padding: '0 8px', fontSize: 11 })}
+          >
+            {conversations.length === 0 ? <option value={conversationId}>{conversationId}</option> : null}
+            {conversations.map((conversation) => (
+              <option key={conversation.conversationId} value={conversation.conversationId}>
+                {conversation.title}
+              </option>
+            ))}
+          </select>
+        </div>
+        <BuilderChat
+          messages={messages}
+          onSend={handleNativeSend}
+          knowledgeProjectId={projectId}
+          colors={C}
+          busy={nativeSessionBusy}
+        />
+      </div>
     );
     return (
       <div
@@ -2016,7 +2052,9 @@ export default function AgentBuilder(): React.ReactElement {
             {HERMES_GRAPH_AUTHORITIES.map((k) => {
               const active = k === knowledgeGraphKind;
               const label =
-                k === 'codegraph'
+                k === 'unified'
+                  ? 'Unified'
+                  : k === 'codegraph'
                   ? 'CodeGraph'
                   : k === 'thinkgraph'
                     ? 'ThinkGraph'
@@ -2072,7 +2110,16 @@ export default function AgentBuilder(): React.ReactElement {
                 </div>
               }
             >
-              {knowledgeGraphKind === 'codegraph' ? (
+              {knowledgeGraphKind === 'unified' ? (
+                <UnifiedGraphSurface
+                  projectId={activeProject}
+                  codeGraphProject={codeGraphProjectName}
+                  thinkProjection={thinkGraphProjection.projection ?? undefined}
+                  knowProjection={knowGraphProjection.projection ?? undefined}
+                  activeHermesReport={hermesReport.report}
+                  focusedThinkIds={thinkGraphFocusIds}
+                />
+              ) : knowledgeGraphKind === 'codegraph' ? (
                 <CodeGraphSurface
                   projectId={codeGraphProjectName}
                   focusReference={focusedCodeGraphRef}
@@ -2257,7 +2304,7 @@ export default function AgentBuilder(): React.ReactElement {
   const showKnowledgeWorkspace = useCallback(() => {
     closeObjectDrawer();
     setWorkspaceView('knowledge');
-    setKnowledgeGraphKind('thinkgraph');
+    setKnowledgeGraphKind('unified');
     const params = new URLSearchParams(window.location.search);
     params.set('workspace', 'knowledge');
     window.history.replaceState(
@@ -2399,9 +2446,10 @@ export default function AgentBuilder(): React.ReactElement {
         isOpen={isObjectDrawerVisible}
         title={safeText(selectedCard?.title || 'Agent')}
         onClose={closeObjectDrawer}
+        movable
         defaultWidth={objectDrawerDefaultWidth}
-        minWidth={360}
-        maxWidth={760}
+        minWidth={300}
+        maxWidth={560}
         storageKey={objectDrawerStorageKey}
         dataTestId="workspace-object-drawer"
         right={12}

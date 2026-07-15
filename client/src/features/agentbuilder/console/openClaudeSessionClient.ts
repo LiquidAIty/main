@@ -170,6 +170,46 @@ export async function loadSessionHistory(args: {
   }
 }
 
+export type SessionConversation = {
+  conversationId: string;
+  title: string;
+  updatedAt?: string;
+};
+
+export async function listSessionConversations(args: {
+  projectId: string;
+  signal?: AbortSignal;
+}): Promise<SessionConversation[]> {
+  try {
+    const params = new URLSearchParams({ projectId: args.projectId });
+    const res = await fetch(`${BASE}/conversations?${params.toString()}`, {
+      method: 'GET',
+      credentials: 'include',
+      signal: args.signal,
+    });
+    if (!res.ok) return [];
+    const payload = (await res.json().catch(() => ({}))) as {
+      conversations?: Array<Partial<SessionConversation>>;
+    };
+    if (!Array.isArray(payload.conversations)) return [];
+    return payload.conversations.flatMap((conversation) => {
+      const conversationId = typeof conversation.conversationId === 'string'
+        ? conversation.conversationId.trim()
+        : '';
+      if (!conversationId) return [];
+      return [{
+        conversationId,
+        title: typeof conversation.title === 'string' && conversation.title.trim()
+          ? conversation.title.trim()
+          : conversationId,
+        updatedAt: typeof conversation.updatedAt === 'string' ? conversation.updatedAt : undefined,
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
 export async function answerSession(args: {
   projectId: string;
   conversationId: string;

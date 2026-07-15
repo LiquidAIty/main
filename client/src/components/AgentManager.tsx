@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import KnowledgeGraphFramework from './knowledge/KnowledgeGraphFramework';
 import KnowledgeGraphErrorBoundary from './knowledge/KnowledgeGraphErrorBoundary';
+import GlassInspectorSection from './graph/GlassInspectorSection';
 
 import type {
   AgentCardRuntimeOptions,
@@ -994,44 +995,52 @@ export function AgentManager({
     return (
       <div className={formScopeClassName} style={{ display: 'grid', gap: 8 }}>
         <style>{scopedFocusStyles}</style>
-        {renderCardHeaderFields()}
-        <Field label="Role">
-          <textarea value={role} onChange={(event) => updatePromptFields('role', event.target.value)} rows={4} style={{ ...inputStyle, resize: 'vertical' }} />
-        </Field>
-        <Field label="Goal">
-          <textarea value={goal} onChange={(event) => updatePromptFields('goal', event.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
-        </Field>
-        <Field label="Constraints">
-          <textarea value={constraints} onChange={(event) => updatePromptFields('constraints', event.target.value)} rows={4} style={{ ...inputStyle, resize: 'vertical' }} />
-        </Field>
-        <Field label="IO Schema">
-          <textarea value={ioSchema} onChange={(event) => updatePromptFields('ioSchema', event.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
-        </Field>
-        <Field label="Memory Policy">
-          <textarea value={memoryPolicy} onChange={(event) => updatePromptFields('memoryPolicy', event.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
-        </Field>
-        <Field label="Prompt Test Input">
-          <textarea
-            value={String(promptTestInput || '')}
-            onChange={(event) => onChangePromptTestInput?.(event.target.value)}
-            rows={4}
-            style={{ ...inputStyle, resize: 'vertical' }}
-          />
-        </Field>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          {renderSaveCardButton()}
-          <button
-            type="button"
-            onClick={() => onRunPromptTest?.()}
-            disabled={promptTestDisabled}
-            style={graphDrawerButtonStyle({
-              opacity: promptTestDisabled ? 0.52 : 1,
-              cursor: promptTestDisabled ? 'not-allowed' : 'pointer',
-            })}
-          >
-            {promptTestBusy ? 'Running...' : 'Run Card'}
-          </button>
-        </div>
+        {showCardHeaderFields ? (
+          <GlassInspectorSection title="Card identity">
+            {renderCardHeaderFields()}
+          </GlassInspectorSection>
+        ) : null}
+        <GlassInspectorSection title="Instructions" signal="model context">
+          <Field label="Role">
+            <textarea value={role} onChange={(event) => updatePromptFields('role', event.target.value)} rows={4} style={{ ...inputStyle, resize: 'vertical' }} />
+          </Field>
+          <Field label="Goal">
+            <textarea value={goal} onChange={(event) => updatePromptFields('goal', event.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
+          </Field>
+          <Field label="Constraints">
+            <textarea value={constraints} onChange={(event) => updatePromptFields('constraints', event.target.value)} rows={4} style={{ ...inputStyle, resize: 'vertical' }} />
+          </Field>
+          <Field label="IO Schema">
+            <textarea value={ioSchema} onChange={(event) => updatePromptFields('ioSchema', event.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
+          </Field>
+          <Field label="Memory Policy">
+            <textarea value={memoryPolicy} onChange={(event) => updatePromptFields('memoryPolicy', event.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
+          </Field>
+        </GlassInspectorSection>
+        <GlassInspectorSection title="Test & save">
+          <Field label="Prompt Test Input">
+            <textarea
+              value={String(promptTestInput || '')}
+              onChange={(event) => onChangePromptTestInput?.(event.target.value)}
+              rows={4}
+              style={{ ...inputStyle, resize: 'vertical' }}
+            />
+          </Field>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            {renderSaveCardButton()}
+            <button
+              type="button"
+              onClick={() => onRunPromptTest?.()}
+              disabled={promptTestDisabled}
+              style={graphDrawerButtonStyle({
+                opacity: promptTestDisabled ? 0.52 : 1,
+                cursor: promptTestDisabled ? 'not-allowed' : 'pointer',
+              })}
+            >
+              {promptTestBusy ? 'Running...' : 'Run Card'}
+            </button>
+          </div>
+        </GlassInspectorSection>
         {renderSaveCardFeedback()}
       </div>
     );
@@ -1060,7 +1069,7 @@ export function AgentManager({
               </div>
             }
           >
-            <KnowledgeGraphFramework projection={undefined} minHeight={260} />
+            <KnowledgeGraphFramework projection={undefined} minHeight={260} showInspector={false} />
           </KnowledgeGraphErrorBoundary>
         </div>
 

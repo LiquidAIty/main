@@ -200,7 +200,18 @@ function NodeCloud({
       }}
     >
       <sphereGeometry args={[1, 32, 24]} />
-      <meshBasicMaterial vertexColors toneMapped={false} />
+      <meshPhysicalMaterial
+        vertexColors
+        transparent
+        opacity={0.82}
+        roughness={0.2}
+        metalness={0.08}
+        transmission={0.28}
+        thickness={0.8}
+        clearcoat={0.72}
+        clearcoatRoughness={0.2}
+        toneMapped={false}
+      />
       <instancedBufferAttribute attach="geometry-attributes-color" args={[colors, 3]} />
     </instancedMesh>
   );
@@ -438,7 +449,7 @@ export function CodeGraphScene({
     >
       <ambientLight intensity={0.5} />
       <pointLight position={[500, 500, 500]} intensity={0.6} />
-      <pointLight position={[-300, -200, -300]} intensity={0.4} color="#6040ff" />
+      <pointLight position={[-300, -200, -300]} intensity={0.4} color="#37adaa" />
 
       <AmbientDust nodes={data.nodes} highlightedIds={highlightedIds} />
       <EdgeLines nodes={data.nodes} edges={data.edges} highlightedIds={highlightedIds} />

@@ -67,10 +67,16 @@ def _knowgraph_count() -> int:
     kg = str(repo_root / "services" / "knowgraph")
     if kg not in sys.path:
         sys.path.insert(0, kg)
-    import assertion_vectors as av
-    driver, config = av._connect_live()
+    import skill_ingest
+    config = skill_ingest.load_neo4j_config(repo_root)
+    driver = skill_ingest._connect(config)
     try:
-        return av.count_assertions(driver, PROJECT, database=config["database"])
+        records, _, _ = driver.execute_query(
+            "MATCH (a:KnowledgeAssertion {project_id:$project_id}) RETURN count(a) AS n",
+            project_id=PROJECT,
+            database_=config["database"],
+        )
+        return int(records[0]["n"])
     finally:
         driver.close()
 

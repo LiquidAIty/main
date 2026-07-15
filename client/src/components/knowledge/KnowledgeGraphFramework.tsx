@@ -10,6 +10,7 @@ import {
   graphInspectorPanelStyle,
 } from '../graph/graphVisualTokens';
 import type { HermesReportReference, HermesReportView } from './hermesReportView';
+import GlassInspectorSection from '../graph/GlassInspectorSection';
 
 const FIT_PADDING_PX = 48;
 const SETTLE_MAX_ZOOM = 1;
@@ -93,6 +94,7 @@ type KnowledgeGraphFrameworkProps = {
   focusedNodeId?: string | null;
   onNodeSelectionChange?: (nodeId: string | null) => void;
   onHermesReportReference?: (reference: HermesReportReference) => void;
+  showInspector?: boolean;
 };
 
 type SkippedEdge = { id: string; source: string; target: string; reason: string };
@@ -217,66 +219,7 @@ function buildCytoscapeStyle(args: {
   ];
 }
 
-function InspectorSection({
-  title,
-  signal,
-  defaultOpen = true,
-  testId,
-  children,
-}: {
-  title: string;
-  signal?: string;
-  defaultOpen?: boolean;
-  testId?: string;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <section
-      data-testid={testId}
-      style={{
-        border: '1px solid rgba(126, 232, 226, 0.13)',
-        borderRadius: 12,
-        background: 'linear-gradient(145deg, rgba(29, 43, 52, 0.48), rgba(12, 19, 25, 0.24))',
-        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.075), 0 8px 24px rgba(0,0,0,0.12)',
-        overflow: 'hidden',
-        flex: '0 0 auto',
-      }}
-    >
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-        style={{
-          width: '100%',
-          minHeight: 38,
-          border: 0,
-          borderBottom: open ? '1px solid rgba(126, 232, 226, 0.10)' : 0,
-          background: open
-            ? 'linear-gradient(90deg, rgba(55,173,170,0.12), rgba(110,95,174,0.045), transparent)'
-            : 'transparent',
-          color: GRAPH_THEME.surface.text,
-          padding: '9px 11px',
-          display: 'grid',
-          gridTemplateColumns: '1fr auto auto',
-          gap: 8,
-          alignItems: 'center',
-          cursor: 'pointer',
-          textAlign: 'left',
-        }}
-      >
-        <span style={{ fontSize: 11, fontWeight: 760, letterSpacing: '0.055em', textTransform: 'uppercase' }}>{title}</span>
-        {signal ? <span style={{ color: GRAPH_THEME.accent.primary, fontSize: 10 }}>{signal}</span> : null}
-        <span aria-hidden="true" style={{ color: GRAPH_THEME.accent.primary, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 160ms ease' }}>⌃</span>
-      </button>
-      {open ? (
-        <div style={{ padding: '11px', display: 'flex', flexDirection: 'column', gap: 7 }}>
-          {children}
-        </div>
-      ) : null}
-    </section>
-  );
-}
+const InspectorSection = GlassInspectorSection;
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   if (children === undefined || children === null || children === '') return null;
@@ -334,6 +277,7 @@ export default function KnowledgeGraphFramework({
   focusedNodeId = null,
   onNodeSelectionChange,
   onHermesReportReference,
+  showInspector = true,
 }: KnowledgeGraphFrameworkProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
@@ -634,7 +578,7 @@ export default function KnowledgeGraphFramework({
         </div>
       </div>
 
-      <aside
+      {showInspector ? <aside
         data-testid="knowledge-graph-node-drawer"
         data-open="true"
         aria-label="ThinkGraph Inspector"
@@ -654,7 +598,7 @@ export default function KnowledgeGraphFramework({
           isolation: 'isolate',
         }}
       >
-        <div aria-hidden="true" style={{ height: 1, background: 'linear-gradient(90deg, transparent, rgba(126,232,226,.72), rgba(130,116,220,.42), transparent)', boxShadow: '0 0 18px rgba(55,173,170,.35)' }} />
+        <div aria-hidden="true" style={{ height: 1, background: 'linear-gradient(90deg, transparent, rgba(126,232,226,.76), rgba(255,255,255,.24), transparent)', boxShadow: '0 0 18px rgba(55,173,170,.35)' }} />
         <div style={{ padding: '14px 15px 12px', borderBottom: '1px solid rgba(126,232,226,.12)', background: 'linear-gradient(110deg, rgba(55,173,170,.09), transparent 58%)' }}>
           <div style={{ color: GRAPH_THEME.surface.text, fontWeight: 750, fontSize: 13 }}>
             {selectedNode ? selectedNode.title || selectedNode.label : 'ThinkGraph overview'}
@@ -824,7 +768,7 @@ export default function KnowledgeGraphFramework({
             </>
           )}
         </div>
-      </aside>
+      </aside> : null}
     </div>
   );
 }

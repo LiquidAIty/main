@@ -52,7 +52,7 @@ export default function useAgentBuilderThinkGraphProjection({
   // rendered graph never re-lays-out ("dances") on identical data.
   const thinkGraphProjectionJsonRef = useRef<string | null>(null);
   useEffect(() => {
-    if (workspaceView !== 'knowledge' || knowledgeGraphKind !== 'thinkgraph') return;
+    if (workspaceView !== 'knowledge' || !['thinkgraph', 'unified'].includes(knowledgeGraphKind)) return;
     const projectId = activeProject;
     if (!projectId) {
       thinkGraphProjectionJsonRef.current = null;

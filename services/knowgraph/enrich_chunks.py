@@ -43,26 +43,10 @@ _APOC_REL = (
 
 
 def _merge_concept_relationship(session, *, project_id, start, end, rtype, extraction_run, pages) -> int:
-    """Merge a genuine concept->concept relationship via apoc.merge.relationship.
-
-    APOC is the intended path (installed + proven, dynamic type). Native interpolated
-    Cypher is a PROVEN fallback used only if the live APOC procedure actually fails —
-    rtype is already validated against the schema allowlist, so interpolation is safe.
-    """
+    """Merge one schema-validated relationship through the canonical APOC path."""
     params = dict(project_id=project_id, start=start, end=end, rtype=rtype, extraction_run=extraction_run, pages=pages)
-    try:
-        rec = session.run(_APOC_REL, **params).single()
-        return rec["n"] if rec else 0
-    except Exception:
-        cypher = (
-            "MATCH (a:Concept {project_id:$project_id, name:$start, extraction_mode:'genuine'}) "
-            "MATCH (b:Concept {project_id:$project_id, name:$end, extraction_mode:'genuine'}) "
-            f"MERGE (a)-[rel:{rtype} {{extraction_mode:'genuine'}}]->(b) "
-            "SET rel.project_id=$project_id, rel.extraction_run=$extraction_run, rel.pages=$pages, rel.trusted=true "
-            "RETURN count(rel) AS n"
-        )
-        rec = session.run(cypher, project_id=project_id, start=start, end=end, extraction_run=extraction_run, pages=pages).single()
-        return rec["n"] if rec else 0
+    rec = session.run(_APOC_REL, **params).single()
+    return rec["n"] if rec else 0
 
 
 def _driver() -> Driver:
@@ -127,15 +111,33 @@ def enrich_existing_chunks(
                 )
             # Claims — source-specific, keyed by claim id; linked to their own chunk provenance.
             for cl in claims:
+                claim_chunk_ids = cl.get("chunk_ids") or chunk_ids
                 s.run(
-                    """MERGE (q:Claim {project_id:$project_id, claim_id:$cid})
+                    """MERGE (q:Claim:KnowledgeAssertion {project_id:$project_id, assertion_id:$cid})
                        ON CREATE SET q.created_at = datetime()
-                       SET q += $prov, q.text=$text, q.claim_type=$ctype, q.pages=coalesce($pages,$dpages)
+                       SET q += $prov,
+                           q.claim_id=$cid,
+                           q.text=$text,
+                           q.claim_type=$ctype,
+                           q.assertion_kind='claim',
+                           q.document_id=$document_id,
+                           q.chapter=$chapter,
+                           q.section=$section,
+                           q.pages=coalesce($pages,$dpages),
+                           q.chunk_refs=$cids,
+                           q.trusted=true,
+                           q.status='active',
+                           q.extraction_run=$extraction_run
                        WITH q
                        MATCH (ch:Chunk {project_id:$project_id}) WHERE ch.chunk_id IN $cids
-                       MERGE (ch)-[m:MENTIONS {extraction_mode:'genuine'}]->(q)""",
+                       MERGE (ch)-[m:MENTIONS {extraction_mode:'genuine'}]->(q)
+                       SET m.project_id=$project_id,
+                           m.document_id=$document_id,
+                           m.extraction_run=$extraction_run""",
                     project_id=project_id, cid=cl["id"], text=cl["text"], ctype=cl.get("claim_type", "observation"),
-                    pages=cl.get("pages"), dpages=pages, prov=prov, cids=cl.get("chunk_ids") or chunk_ids,
+                    pages=cl.get("pages"), dpages=pages, prov=prov, cids=claim_chunk_ids,
+                    document_id=document_id, chapter=chapter, section=section,
+                    extraction_run=extraction_run,
                 )
             # Precise relationships between genuine concepts — validated against the
             # KNOWGRAPH_SCHEMA allowlist, then merged via apoc.merge.relationship.

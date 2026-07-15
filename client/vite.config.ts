@@ -19,7 +19,10 @@ export default defineConfig(() => {
         // export. This package is CommonJS, so it must be optimized before the
         // Agent Builder module graph evaluates; otherwise the graph workspace
         // fails before any of its authority-specific surfaces can mount.
-        'use-sync-external-store/shim/with-selector',
+        // Zustand imports the package's explicit `.js` export path. Vite keys
+        // optimized dependencies by the exact specifier, so keep the extension
+        // here as well; the extensionless entry leaves that live import raw.
+        'use-sync-external-store/shim/with-selector.js',
         // @react-three/* is a raw-ESM exclude (below); its CJS leaf deps must still be
         // pre-bundled, or the raw drei/fiber default imports fail in dev and the
         // ThinkGraph/KnowGraph/CodeGraph scene blanks. Each is a standalone CJS leaf

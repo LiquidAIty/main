@@ -104,3 +104,43 @@ def test_current_and_historical_projection(tmp_path):
     historical_decision = next(node for node in historical["nodes"] if node["id"] == "dec:kg01")
     assert historical_decision["currentState"] == "historical"
     assert historical_decision["validTo"]
+
+
+def test_changed_record_creates_immutable_version_and_supersedes_lineage(tmp_path):
+    graph = adapter(tmp_path)
+    graph.apply_patch(authority(correlation="turn-1"), patch())
+    revised = patch()
+    revised["resources"][1]["label"] = "Use authority-specific graphs joined by explicit references."
+    graph.apply_patch(authority(correlation="turn-2"), revised)
+
+    current = graph.projection("ADMIN")
+    historical = graph.projection("ADMIN", include_historical=True)
+    current_decision = next(node for node in current["nodes"] if node["canonicalId"] == "dec:kg01")
+    versions = [node for node in historical["nodes"] if node["canonicalId"] == "dec:kg01"]
+
+    assert current_decision["label"] == revised["resources"][1]["label"]
+    assert current_decision["versionOrdinal"] == 2
+    assert len(versions) == 2
+    assert len({node["versionId"] for node in versions}) == 2
+    assert sum(node["validTo"] is None for node in versions) == 1
+    assert any(
+        edge["predicate"] == "SUPERSEDES"
+        and edge["source"] == current_decision["versionId"]
+        and edge["target"] == current_decision["supersedesVersionId"]
+        for edge in historical["edges"]
+    )
+
+
+def test_same_canonical_id_is_isolated_across_projects_and_conversations(tmp_path):
+    graph = adapter(tmp_path)
+    graph.apply_patch(authority(project="ADMIN", correlation="admin-1"), patch())
+    other_authority = authority(project="OTHER", correlation="other-1")
+    other_authority["conversationId"] = "other-conversation"
+    graph.apply_patch(other_authority, patch())
+
+    admin = graph.get_record("ADMIN", "goal:kg01")
+    other = graph.get_record("OTHER", "goal:kg01")
+    assert admin and other
+    assert admin["id"] != other["id"]
+    assert admin["conversationId"] == "kg-self-01"
+    assert other["conversationId"] == "other-conversation"

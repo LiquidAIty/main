@@ -65,6 +65,21 @@ class EnrichTest(unittest.TestCase):
         d.close()
         return n
 
+    def _assertion(self):
+        d = _drv()
+        with d.session() as s:
+            row = s.run(
+                """MATCH (q:Claim:KnowledgeAssertion {project_id:$p, assertion_id:'cl1'})
+                   RETURN q.assertion_id AS assertion_id, q.assertion_kind AS assertion_kind,
+                          q.document_id AS document_id, q.chapter AS chapter,
+                          q.section AS section, q.pages AS pages, q.chunk_refs AS chunk_refs,
+                          q.trusted AS trusted, q.status AS status,
+                          q.extraction_run AS extraction_run""",
+                p=P,
+            ).single()
+        d.close()
+        return dict(row) if row else None
+
     def test_enrich_writes_genuine_and_is_idempotent(self):
         r1 = enrich_chunks.enrich_existing_chunks(**self._args())  # exercises apoc.merge.relationship
         self.assertEqual(r1["chunks_grounded"], 1)
@@ -73,6 +88,15 @@ class EnrichTest(unittest.TestCase):
         self.assertEqual((c1, cl1), (2, 1))
         self.assertGreaterEqual(m1, 1)
         self.assertEqual(self._rel_count(), 1)
+        self.assertEqual(
+            self._assertion(),
+            {
+                "assertion_id": "cl1", "assertion_kind": "claim", "document_id": "d1",
+                "chapter": "8", "section": "intro", "pages": "127",
+                "chunk_refs": ["c1"], "trusted": True, "status": "active",
+                "extraction_run": "run-test",
+            },
+        )
         enrich_chunks.enrich_existing_chunks(**self._args())  # replay
         c2, m2, cl2 = self._counts()
         self.assertEqual((c2, cl2), (2, 1), "idempotent replay must not duplicate")

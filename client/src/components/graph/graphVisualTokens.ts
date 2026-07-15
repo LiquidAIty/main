@@ -144,22 +144,23 @@ export const GRAPH_THEME = {
   inspector: {
     // Dark-but-not-dead fill (~0.84) with a top-right teal lift (light source).
     fill:
-      'radial-gradient(circle at 80% 8%, rgba(55,173,170,0.10), transparent 46%), ' +
-      'linear-gradient(180deg, rgba(18,24,31,0.84), rgba(11,14,18,0.86))',
+      'radial-gradient(circle at 82% 7%, rgba(126,232,226,.16), transparent 42%), ' +
+      'radial-gradient(circle at 10% 88%, rgba(55,173,170,.08), transparent 48%), ' +
+      'linear-gradient(155deg, rgba(24,36,44,.70), rgba(9,15,21,.66))',
     // Directional edge: bright at top-right, dark at bottom-left.
     edge:
-      'linear-gradient(215deg, rgba(255,255,255,0.30), rgba(55,173,170,0.16) 34%, ' +
-      'rgba(167,176,186,0.08) 66%, rgba(0,0,0,0.20))',
+      'linear-gradient(215deg, rgba(255,255,255,.38), rgba(126,232,226,.22) 34%, ' +
+      'rgba(167,176,186,.09) 66%, rgba(0,0,0,.18))',
     // Layered inner shadows give glass thickness (dialed DOWN for a dark UI so it
     // never blows out to milky white).
     inset:
-      'inset 0 1px 0 rgba(255,255,255,0.14), ' +
-      'inset 0 16px 28px rgba(255,255,255,0.05), ' +
-      'inset 0 -18px 26px rgba(0,0,0,0.24), ' +
-      'inset 0 0 0 1px rgba(55,173,170,0.05)',
+      'inset 0 1px 0 rgba(255,255,255,.19), ' +
+      'inset 14px 0 30px rgba(126,232,226,.035), ' +
+      'inset 0 -18px 26px rgba(0,0,0,.20), ' +
+      'inset 0 0 0 1px rgba(55,173,170,.07)',
     // Tinted floating drop shadow (carries the bg hue, not pure black).
-    drop: '0 22px 50px rgba(4,8,12,0.48)',
-    blur: 'blur(18px) saturate(150%)',
+    drop: '0 24px 56px rgba(2,9,14,.42), 0 0 28px rgba(55,173,170,.07)',
+    blur: 'blur(24px) saturate(165%)',
   },
   drawer: {
     panelBackground: 'rgba(11,14,18,0.92)',

@@ -9,6 +9,20 @@ from neo4j import Driver
 
 
 VECTOR_INDEX_NAME = "chunk_embedding_idx"
+KNOWLEDGE_ASSERTION_FULLTEXT_INDEX_NAME = "knowledge_assertion_fulltext_idx"
+
+CANONICAL_CONSTRAINTS = (
+    "CREATE CONSTRAINT knowgraph_document_identity IF NOT EXISTS "
+    "FOR (d:Document) REQUIRE (d.project_id, d.document_id) IS UNIQUE",
+    "CREATE CONSTRAINT knowgraph_chunk_identity IF NOT EXISTS "
+    "FOR (c:Chunk) REQUIRE (c.project_id, c.document_id, c.chunk_id) IS UNIQUE",
+    "CREATE CONSTRAINT knowgraph_assertion_identity IF NOT EXISTS "
+    "FOR (a:KnowledgeAssertion) REQUIRE (a.project_id, a.assertion_id) IS UNIQUE",
+    "CREATE CONSTRAINT knowgraph_chapter_identity IF NOT EXISTS "
+    "FOR (c:Chapter) REQUIRE (c.project_id, c.document_id, c.ordinal) IS UNIQUE",
+    "CREATE CONSTRAINT knowgraph_section_identity IF NOT EXISTS "
+    "FOR (s:Section) REQUIRE (s.project_id, s.document_id, s.ordinal) IS UNIQUE",
+)
 
 
 def _as_int(value: object) -> int | None:
@@ -101,3 +115,28 @@ def ensure_vector_index(
             )
 
     driver.execute_query(_vector_index_cypher(safe_dimensions), database_=database)
+
+
+def ensure_knowledge_assertion_fulltext_index(
+    driver: Driver,
+    database: Optional[str] = None,
+) -> None:
+    """Create the canonical text index shared by every assertion subtype."""
+    driver.execute_query(
+        f"""
+CREATE FULLTEXT INDEX {KNOWLEDGE_ASSERTION_FULLTEXT_INDEX_NAME} IF NOT EXISTS
+FOR (a:KnowledgeAssertion) ON EACH [a.text]
+""",
+        database_=database,
+    )
+
+
+def ensure_canonical_indexes(
+    driver: Driver,
+    database: Optional[str] = None,
+    dimensions: int = 3072,
+) -> None:
+    for statement in CANONICAL_CONSTRAINTS:
+        driver.execute_query(statement, database_=database)
+    ensure_vector_index(driver, database, dimensions)
+    ensure_knowledge_assertion_fulltext_index(driver, database)
