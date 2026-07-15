@@ -6,6 +6,7 @@
  * `streamSession` forwards the RAW native event stream (verbatim) to `onEvent`
  * and resolves with `done.full_text`. No transformation, no curation.
  */
+import type { GraphView } from '../../../components/knowledge/graphView';
 
 export type NativeSessionEvent = {
   kind: 'session' | 'text' | 'tool_start' | 'tool_result' | 'permission' | 'done' | 'error' | 'end' | string;
@@ -56,6 +57,7 @@ export async function streamSession(args: {
   message: string;
   mode?: HarnessMode;
   investigationContext?: InvestigationContextInput;
+  graphViews?: GraphView[];
   onEvent: (event: NativeSessionEvent) => void;
   signal?: AbortSignal;
 }): Promise<{ finalText: string }> {
@@ -70,6 +72,7 @@ export async function streamSession(args: {
       // Default 'chat' when omitted (backend also defaults to chat).
       mode: args.mode === 'canvas' ? 'canvas' : 'chat',
       ...(args.investigationContext ? { investigationContext: args.investigationContext } : {}),
+      ...(args.graphViews?.length ? { graphViews: args.graphViews } : {}),
     }),
     signal: args.signal,
   });

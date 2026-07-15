@@ -76,9 +76,25 @@ def test_status_and_search_call_the_real_backend_endpoints(monkeypatch):
 
     monkeypatch.setattr(doorway, "_bridge_sync", fake_bridge)
     asyncio.run(doorway._dispatch("codegraph.status", {}))
-    asyncio.run(doorway._dispatch("codegraph.search", {"query": "runCoderSubagent", "limit": 5}))
+    asyncio.run(doorway._dispatch("codegraph.search", {
+        "query": "runCoderSubagent",
+        "limit": 5,
+        "projectId": "project-1",
+        "conversationId": "conversation-1",
+    }))
     assert calls[0] == ("codegraph_status", {})
-    assert calls[1] == ("codegraph_search", {"query": "runCoderSubagent", "limit": 5})
+    assert calls[1] == ("codegraph_search", {
+        "query": "runCoderSubagent",
+        "limit": 5,
+        "projectId": "project-1",
+            "conversationId": "conversation-1",
+            "requestingRole": None,
+            "producingRole": None,
+            "receivingRole": None,
+            "parentViewId": None,
+            "note": None,
+            "hopDepth": None,
+        })
 
 
 def test_unknown_tool_fails_honestly():

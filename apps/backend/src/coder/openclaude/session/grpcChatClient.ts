@@ -21,6 +21,10 @@ import { resolveModel } from '../../../llm/models.config';
 import { HARNESS_MCP_TOOL_SPECS } from '../../../contracts/runtimeContracts';
 import { logHarnessTrace } from '../../../services/harnessTrace';
 import type { HermesInvestigationContext } from '../../hermes/hermesReportArtifact';
+import {
+  attachGraphViewsToRuntime,
+  type GraphView,
+} from '../../../contracts/graphView';
 
 export type GrpcSessionEvent =
   | { kind: 'text'; text: string }
@@ -73,6 +77,8 @@ export type GrpcTurnArgs = {
   traceId?: string;
   /** Server-minted context passed only to the native Hermes doorway. */
   investigationContext?: HermesInvestigationContext;
+  /** Canonical-reference candidates validated by the HTTP boundary. */
+  graphViews?: GraphView[];
 };
 
 export type HarnessMode = 'chat' | 'canvas';
@@ -86,6 +92,8 @@ export type GrpcTurnHandle = {
   /** The saved main_chat card identity this turn actually ran with — real
    * event metadata for the frontdoor telemetry, never a re-resolution. */
   resolved: { cardId: string; provider: string; modelKey: string; providerModelId: string };
+  /** Exact Graph Views attached to the saved Main card invocation. */
+  runtimeGraphViews: GraphView[];
 };
 
 export function deriveSessionId(projectId: string, conversationId: string): string {
@@ -122,6 +130,7 @@ export function buildHarnessRuntimeContext(
   parentRunId?: string,
   options: {
     investigationContext?: HermesInvestigationContext;
+    graphViews?: GraphView[];
   } = {},
 ): string | null {
   const parsed = parseSessionId(sessionId);
@@ -139,6 +148,14 @@ export function buildHarnessRuntimeContext(
           '[LIQUIDAITY_INVESTIGATION_CONTEXT]',
           JSON.stringify(options.investigationContext),
           'This compact context is server-minted for Hermes. Read the current project ThinkGraph yourself; focusNodeIds are optional hints, never the complete assignment.',
+        ]
+      : []),
+    ...(options.graphViews?.length
+      ? [
+          '',
+          '[LIQUIDAITY_GRAPH_VIEWS]',
+          JSON.stringify(options.graphViews),
+          'These compact canonical references are the exact filtered graph views supplied to this Main invocation. They do not contain complete source records and do not transfer graph authority.',
         ]
       : []),
   ].join('\n');
@@ -626,7 +643,15 @@ export async function startGrpcTurn(
   const doorwayDefinitions = mainChatConfig.doorwayDefinitions;
   callerDoorwayCardIds = doorwayDefinitions.map((def: any) => String(def?.card_id || '')).filter(Boolean);
   callerParentCardId = mainChatConfig.cardId;
-  const runtimeContext = buildHarnessRuntimeContext(args.sessionId, args.traceId);
+  const runtimeGraphViews = attachGraphViewsToRuntime(args.graphViews || [], {
+    provider: mainChatConfig.provider,
+    model: mainChatConfig.providerModelId,
+    role: 'main_chat',
+    invocationId: args.traceId || args.sessionId,
+  });
+  const runtimeContext = buildHarnessRuntimeContext(args.sessionId, args.traceId, {
+    graphViews: runtimeGraphViews,
+  });
   const appendSystemPrompt = [mainChatConfig.prompt, runtimeContext]
     .filter((section): section is string => Boolean(section))
     .join('\n\n') || null;
@@ -684,5 +709,6 @@ export async function startGrpcTurn(
       modelKey: mainChatConfig.modelKey,
       providerModelId: mainChatConfig.providerModelId,
     },
+    runtimeGraphViews,
   };
 }

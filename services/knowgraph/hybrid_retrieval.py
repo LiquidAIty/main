@@ -61,6 +61,7 @@ class KnowGraphRetrievalResult:
     next_anchor_suggestions: list[str]
     excluded_as_seen: list[str]
     retrieval_notes: list[str]
+    omitted_neighbor_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -76,6 +77,7 @@ class KnowGraphRetrievalResult:
             "next_anchor_suggestions": self.next_anchor_suggestions,
             "excluded_as_seen": self.excluded_as_seen,
             "retrieval_notes": self.retrieval_notes,
+            "omitted_neighbor_count": self.omitted_neighbor_count,
         }
 
 
@@ -462,4 +464,5 @@ def retrieve_knowgraph_context(
         next_anchor_suggestions=next_anchors[:8],
         excluded_as_seen=list(request.prior_assertion_ids or []) + list(request.prior_source_refs or []),
         retrieval_notes=notes,
+        omitted_neighbor_count=max(0, len(fused) - len(assertions)),
     )

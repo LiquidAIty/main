@@ -144,3 +144,46 @@ def test_same_canonical_id_is_isolated_across_projects_and_conversations(tmp_pat
     assert admin["id"] != other["id"]
     assert admin["conversationId"] == "kg-self-01"
     assert other["conversationId"] == "other-conversation"
+
+
+def test_graph_views_are_durable_versioned_and_keep_lineage(tmp_path):
+    graph = adapter(tmp_path)
+    candidate = {
+        "schemaVersion": "graph-view.v1",
+        "viewId": "think:view-1",
+        "authority": "thinkgraph",
+        "status": "candidate",
+        "projectId": "ADMIN",
+        "conversationId": "kg-self-01",
+        "producingRole": "user",
+        "receivingRole": "coder",
+        "rootCanonicalNodeIds": ["goal:kg01"],
+        "includedCanonicalNodeIds": ["goal:kg01", "dec:kg01"],
+        "includedRelationships": [{"id": "st:goal-dec", "source": "goal:kg01", "target": "dec:kg01", "type": "RESULTED_IN"}],
+        "records": [],
+        "query": "selected goal neighborhood",
+        "filter": {"nodeTypes": ["Goal", "Decision"], "trustStates": []},
+        "hopDepth": 1,
+        "provenanceRefs": [],
+        "note": "Inspect the implementation seam.",
+        "omittedNeighborCount": 0,
+        "createdAt": "2026-07-15T00:00:00Z",
+        "updatedAt": "2026-07-15T00:00:00Z",
+    }
+    graph.persist_graph_view(candidate)
+    active = {**candidate, "status": "active", "invocationId": "req-1", "updatedAt": "2026-07-15T00:00:30Z"}
+    graph.persist_graph_view(active)
+    consumed = {**active, "status": "consumed", "updatedAt": "2026-07-15T00:01:00Z"}
+    graph.persist_graph_view(consumed)
+    returned = {**candidate, "viewId": "code:return-1", "authority": "codegraph", "status": "returned", "producingRole": "coder", "receivingRole": "main_chat", "parentViewId": "think:view-1", "invocationId": "req-1", "updatedAt": "2026-07-15T00:01:05Z"}
+    graph.persist_graph_view(returned)
+
+    views = graph.graph_views("ADMIN", "kg-self-01")["views"]
+    assert {view["viewId"] for view in views} == {"think:view-1", "code:return-1"}
+    current_input = next(view for view in views if view["viewId"] == "think:view-1")
+    assert current_input["status"] == "consumed"
+    assert current_input["includedCanonicalNodeIds"] == ["goal:kg01", "dec:kg01"]
+    assert next(view for view in views if view["viewId"] == "code:return-1")["parentViewId"] == "think:view-1"
+    projection = graph.projection("ADMIN", include_historical=True)
+    assert any(edge["predicate"] == "DERIVED_FROM" for edge in projection["edges"])
+    assert any(edge["predicate"] == "SUPERSEDES" for edge in projection["edges"])

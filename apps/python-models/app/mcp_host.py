@@ -110,6 +110,8 @@ async def list_tools() -> list[Tool]:
                     "cardId": {"type": "string"},
                     "adapter": {"type": "string", "enum": ["claude_code", "codex"]},
                     "approvedPrompt": {"type": "string"},
+                    "authority": {"type": "string", "enum": ["direct_main_audit", "mag_one_execution"]},
+                    "graphViews": {"type": "array", "items": {"type": "object"}},
                 },
                 "required": ["parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt"],
             },
@@ -340,11 +342,13 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "projectId": {"type": "string"},
+                    "conversationId": {"type": "string"},
                     "query": {"type": "string"},
                     "anchors": {"type": "array", "items": {"type": "string"}},
                     "maxResults": {"type": "integer"},
+                    "parentViewId": {"type": "string"},
                 },
-                "required": ["projectId", "query"],
+                "required": ["projectId", "conversationId", "query"],
             },
         ),
         Tool(
@@ -512,11 +516,11 @@ async def list_tools() -> list[Tool]:
 # Structural allow-list per tool: unexpected keys are rejected honestly, never
 # silently forwarded (prevents smuggling prompts/models/patches through the host).
 _ALLOWED_KEYS: dict[str, set[str]] = {
-    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt", "authority"},
+    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt", "authority", "graphViews"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "jobId", "conversationId", "parentContext"},
     "thinkgraph.submit_update": {"projectId", "conversationId", "resources", "relations", "statements"},
-    "knowgraph.query": {"projectId", "query", "anchors", "maxResults"},
+    "knowgraph.query": {"projectId", "conversationId", "query", "anchors", "maxResults", "parentViewId"},
     "knowgraph.ingest": {"projectId", "documents", "researchFocus"},
     "codegraph.status": set(),
     "codegraph.search": {"query", "limit"},
@@ -596,9 +600,11 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = await asyncio.wait_for(
                 retrieve_knowgraph_context_tool(
                     project_id=str(args.get("projectId") or ""),
+                    conversation_id=str(args.get("conversationId") or ""),
                     query=str(args.get("query") or ""),
                     anchors=[str(a) for a in (args.get("anchors") or []) if str(a).strip()],
                     max_results=max_results if isinstance(max_results, int) and max_results > 0 else 12,
+                    parent_view_id=str(args.get("parentViewId") or "") or None,
                 ),
                 timeout=KNOWGRAPH_QUERY_TIMEOUT_S,
             )

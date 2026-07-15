@@ -117,6 +117,24 @@ def thinkgraph_apply_patch(payload: dict):
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
+@app.post("/thinkgraph/graph-views")
+def thinkgraph_persist_graph_view(payload: dict):
+    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+    try:
+        return get_thinkgraph().persist_graph_view(payload.get("view") or {})
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.get("/thinkgraph/graph-views")
+def thinkgraph_graph_views(projectId: str, conversationId: str | None = None):
+    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+    try:
+        return get_thinkgraph().graph_views(projectId, conversationId)
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
 @app.get("/thinkgraph/scope")
 def thinkgraph_scope(projectId: str, limit: int | None = None):
     from app.python_models.thinkgraph_engraphis import get_thinkgraph

@@ -73,8 +73,16 @@ def _tools() -> list[Tool]:
                 "properties": {
                     "query": {"type": "string"},
                     "limit": {"type": "integer"},
+                    "projectId": {"type": "string"},
+                    "conversationId": {"type": "string"},
+                    "requestingRole": {"type": "string"},
+                    "producingRole": {"type": "string"},
+                    "receivingRole": {"type": "string"},
+                    "parentViewId": {"type": "string"},
+                    "note": {"type": "string"},
+                    "hopDepth": {"type": "integer"},
                 },
-                "required": ["query"],
+                "required": ["query", "projectId", "conversationId"],
             },
         ),
     ]
@@ -86,7 +94,18 @@ async def _dispatch(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         text = await asyncio.to_thread(_bridge_sync, "codegraph_status", {})
         return [TextContent(type="text", text=text)]
     if name == "codegraph.search":
-        payload = {"query": args.get("query"), "limit": args.get("limit")}
+        payload = {
+            "query": args.get("query"),
+            "limit": args.get("limit"),
+            "projectId": args.get("projectId"),
+            "conversationId": args.get("conversationId"),
+            "requestingRole": args.get("requestingRole"),
+            "producingRole": args.get("producingRole"),
+            "receivingRole": args.get("receivingRole"),
+            "parentViewId": args.get("parentViewId"),
+            "note": args.get("note"),
+            "hopDepth": args.get("hopDepth"),
+        }
         text = await asyncio.to_thread(_bridge_sync, "codegraph_search", payload)
         return [TextContent(type="text", text=text)]
     return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"unknown_tool: {name}"}))]

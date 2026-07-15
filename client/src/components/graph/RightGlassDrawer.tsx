@@ -16,6 +16,7 @@ type RightGlassDrawerProps = {
   top?: number;
   right?: number;
   bottom?: number;
+  dockedHeight?: number | string;
   zIndex?: number;
   collapsedLabel?: string | null;
   openAriaLabel?: string;
@@ -36,6 +37,7 @@ export default function RightGlassDrawer({
   top = 48,
   right = 12,
   bottom = 12,
+  dockedHeight,
   zIndex = 30,
   collapsedLabel,
   openAriaLabel,
@@ -192,11 +194,11 @@ export default function RightGlassDrawer({
         data-open={isOpen ? "true" : "false"}
         className="absolute transition-[width,opacity,transform] duration-180 ease-out"
         style={graphInspectorPanelStyle({
-          top: docked ? top : floatPosition.top,
+          top: docked ? (dockedHeight ? "auto" : top) : floatPosition.top,
           right: docked ? right : "auto",
           bottom: docked ? bottom : "auto",
           left: docked ? "auto" : floatPosition.left,
-          height: docked ? "auto" : "min(68vh, 620px)",
+          height: docked ? (dockedHeight ?? "auto") : "min(68vh, 620px)",
           width: isOpen ? clampedWidth : 0,
           minWidth: 0,
           zIndex,
@@ -236,7 +238,7 @@ export default function RightGlassDrawer({
           }}
         />
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
-          <div aria-hidden="true" style={{ height: 1, flex: '0 0 auto', background: 'linear-gradient(90deg, transparent, rgba(126,232,226,.76), rgba(255,255,255,.24), transparent)', boxShadow: '0 0 18px rgba(55,173,170,.35)' }} />
+          <div aria-hidden="true" style={{ height: 1, flex: '0 0 auto', background: 'linear-gradient(90deg, transparent, rgba(255,255,255,.42), rgba(255,255,255,.12), transparent)', boxShadow: '0 0 14px rgba(255,255,255,.08)' }} />
           <div
             className="flex items-center justify-between gap-2"
             onMouseDown={(event) => {
@@ -246,7 +248,7 @@ export default function RightGlassDrawer({
             style={{
               padding: "10px 12px 10px 16px",
               borderBottom: '1px solid rgba(126,232,226,.12)',
-              background: 'linear-gradient(110deg, rgba(55,173,170,.12), rgba(255,255,255,.025), transparent 68%)',
+              background: 'linear-gradient(110deg, rgba(255,255,255,.055), rgba(255,255,255,.018), transparent 68%)',
               cursor: movable && !docked ? 'move' : 'default',
             }}
           >
@@ -289,6 +291,8 @@ export default function RightGlassDrawer({
               padding: "12px",
               color: GRAPH_THEME.drawer.inputMuted,
               background: "transparent",
+              scrollbarWidth: "thin",
+              scrollbarColor: "rgba(126,232,226,.28) transparent",
             }}
           >
             {children}

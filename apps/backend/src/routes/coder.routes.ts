@@ -47,6 +47,8 @@ import { pool } from '../db/pool';
 import { runCoderSubagent } from '../coder/execution/coderRouter';
 import { setLatestCoderAuditView, getLatestCoderAuditView } from '../coder/execution/coderAuditView';
 import type { CodeGraphViewContractResult } from '../contracts/coderContracts';
+import { completeGraphViews, parseCandidateGraphViews, parseGraphViews, type GraphView } from '../contracts/graphView';
+import { fetchGraphViewsFromPython, persistGraphViewOnPython } from '../services/autogen/autogenOrchestratorClient';
 import {
   createPromptDraft,
   approvePromptDraft,
@@ -128,6 +130,21 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
       body.authority === 'mag_one_execution' || body.authority === 'direct_main_audit'
         ? body.authority
         : undefined;
+    const attachedViews = parseGraphViews(body.graphViews, { projectId, conversationId })
+      .filter((view) => view.receivingRole === 'coder' || view.receivingRole === 'main_chat');
+    if (authority === 'direct_main_audit' && !attachedViews.some((view) => view.receivingRole === 'coder')) {
+      return res.status(400).json({ ok: false, error: 'coder_targeted_graph_view_required' });
+    }
+    await Promise.all(attachedViews.map((view) => persistGraphViewOnPython({
+      ...view,
+      status: 'active',
+      invocationId: String(body.parentRunId || ''),
+      updatedAt: new Date().toISOString(),
+    })));
+    const approvedPrompt = [
+      String(body.approvedPrompt || ''),
+      attachedViews.length ? `[LIQUIDAITY_GRAPH_VIEWS]\n${JSON.stringify(attachedViews)}` : '',
+    ].filter(Boolean).join('\n\n');
     const result = await runCoderSubagent({
       parentRunId: String(body.parentRunId || ''),
       projectId,
@@ -135,11 +152,21 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
       conversationId,
       cardId,
       adapter: String(body.adapter || ''),
-      approvedPrompt: String(body.approvedPrompt || ''),
+      approvedPrompt,
       authority,
       model: model.providerModelId,
       provider: model.provider,
     });
+    if (attachedViews.length) {
+      const completedAt = new Date().toISOString();
+      await Promise.all(attachedViews.map((view) => persistGraphViewOnPython({
+        ...view,
+        status: result.ok ? 'consumed' : 'failed',
+        invocationId: result.correlationId,
+        updatedAt: completedAt,
+      })));
+    }
+    let returnedGraphView: GraphView | null = null;
     // A successful read-only audit publishes its filtered CodeGraph view for the
     // frontend to focus the existing CodeGraphSurface on the audited branch.
     if (result.ok && result.resultKind === 'audit' && result.report) {
@@ -158,8 +185,44 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
         viewContract: (audit.viewContract ?? {}) as CodeGraphViewContractResult,
         transcriptArtifact: result.transcriptArtifact ?? null,
       });
+      const includedCanonicalNodeIds = Array.isArray(audit.codeGraphNodeRefs) ? audit.codeGraphNodeRefs.map(String).filter(Boolean) : [];
+      const now = new Date().toISOString();
+      [returnedGraphView] = parseGraphViews([{
+        schemaVersion: 'graph-view.v1',
+        viewId: `codegraph:return:${result.childRunId}`,
+        authority: 'codegraph',
+        status: 'returned',
+        projectId,
+        conversationId,
+        jobId: result.childRunId,
+        invocationId: result.correlationId,
+        producingRole: 'coder',
+        receivingRole: 'main_chat',
+        rootCanonicalNodeIds: includedCanonicalNodeIds.slice(0, 3),
+        includedCanonicalNodeIds,
+        includedRelationships: [],
+        records: includedCanonicalNodeIds.map((canonicalId) => ({
+          canonicalId,
+          summary: `${canonicalId} was selected by the live Coder CodeGraph audit.`,
+          selectionReason: String(audit.codeGraphQuery || 'Selected by Coder inspection'),
+          provenanceRefs: Array.isArray(audit.files) ? audit.files.map(String).slice(0, 12) : [],
+        })),
+        query: String(audit.codeGraphQuery || ''),
+        filter: {
+          nodeTypes: Array.isArray((audit.viewContract as any)?.nodeLabelAllowlist) ? (audit.viewContract as any).nodeLabelAllowlist : [],
+          trustStates: [],
+        },
+        hopDepth: 0,
+        provenanceRefs: [result.transcriptArtifact, ...(Array.isArray(audit.files) ? audit.files.map(String) : [])].filter((value): value is string => Boolean(value)).slice(0, 40),
+        note: String(audit.conclusion || ''),
+        parentViewId: attachedViews[0]?.viewId,
+        omittedNeighborCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      }], { projectId, conversationId }, 'returned');
+      await persistGraphViewOnPython(returnedGraphView);
     }
-    return res.status(result.ok ? 200 : 502).json(result);
+    return res.status(result.ok ? 200 : 502).json({ ...result, graphView: returnedGraphView });
   } catch (error) {
     return res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'run_coder_subagent_failed' });
   }
@@ -318,7 +381,10 @@ router.post('/mcp-bridge/codegraph_search', async (req, res) => {
   let session: Awaited<ReturnType<typeof createCodebaseMemoryMcpCaller>> | null = null;
   try {
     const query = String(req.body?.query || '').trim();
+    const projectId = String(req.body?.projectId || '').trim();
+    const conversationId = String(req.body?.conversationId || '').trim();
     if (!query) return res.status(400).json({ ok: false, error: 'query_required' });
+    if (!projectId || !conversationId) return res.status(400).json({ ok: false, error: 'projectId_and_conversationId_required' });
     const limit = Math.min(Math.max(Number(req.body?.limit) || 15, 1), 50);
     session = await createCodebaseMemoryMcpCaller(process.cwd());
     const projectList = await session.callTool('list_projects', {});
@@ -326,7 +392,37 @@ router.post('/mcp-bridge/codegraph_search', async (req, res) => {
     const cbmProject = String(projects[0]?.name || '').trim();
     if (!cbmProject) return res.json({ ok: false, error: 'cbm_no_indexed_project' });
     const result = await session.callTool('search_graph', { project: cbmProject, query, limit });
-    return res.json({ ok: true, cbmProject, result });
+    const matches = Array.isArray((result as any)?.results) ? (result as any).results : [];
+    const includedCanonicalNodeIds = matches.map((match: any) => String(match?.qualified_name || match?.name || '')).filter(Boolean);
+    const now = new Date().toISOString();
+    const [graphView] = parseGraphViews([{
+      schemaVersion: 'graph-view.v1',
+      authority: 'codegraph',
+      viewId: `codegraph:${randomUUID()}`,
+      status: 'returned',
+      producingRole: String(req.body?.producingRole || 'coder'),
+      receivingRole: String(req.body?.receivingRole || 'main_chat'),
+      rootCanonicalNodeIds: includedCanonicalNodeIds.slice(0, 3),
+      includedCanonicalNodeIds,
+      includedRelationships: [],
+      query,
+      filter: { nodeTypes: [], trustStates: [] },
+      hopDepth: Math.min(6, Math.max(0, Number(req.body?.hopDepth) || 0)),
+      provenanceRefs: [...new Set(matches.map((match: any) => String(match?.file_path || '')).filter(Boolean))],
+      note: String(req.body?.note || '').trim(),
+      parentViewId: String(req.body?.parentViewId || '').trim(),
+      records: matches.map((match: any) => ({
+        canonicalId: String(match?.qualified_name || match?.name || ''),
+        summary: [String(match?.name || ''), String(match?.label || ''), String(match?.file_path || '')].filter(Boolean).join(' · '),
+        selectionReason: `Matched CodeGraph inspection query: ${query}`,
+        ...(Number.isFinite(match?.rank) ? { relevance: Number(match.rank) } : {}),
+        provenanceRefs: [String(match?.file_path || '')].filter(Boolean),
+      })),
+      omittedNeighborCount: Math.max(0, Number((result as any)?.total || matches.length) - matches.length),
+      createdAt: now,
+      updatedAt: now,
+    }], { projectId, conversationId }, 'returned');
+    return res.json({ ok: true, cbmProject, result, graphView });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'codegraph_search_failed' });
   } finally {
@@ -589,6 +685,17 @@ router.get('/prompt-draft/:jobId', (req, res) => {
   return res.json({ ok: true, draft });
 });
 
+router.get('/graph-views', async (req, res) => {
+  const projectId = String(req.query?.projectId || '').trim();
+  const conversationId = String(req.query?.conversationId || '').trim();
+  if (!projectId || !conversationId) return res.status(400).json({ ok: false, error: 'projectId_and_conversationId_required' });
+  try {
+    return res.json(await fetchGraphViewsFromPython(projectId, conversationId));
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'graph_views_unavailable' });
+  }
+});
+
 router.post('/openclaude/session/chat', async (req, res) => {
   const projectId = String(req.body?.projectId || '');
   const conversationId = String(req.body?.conversationId || 'default');
@@ -604,16 +711,18 @@ router.post('/openclaude/session/chat', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'projectId_and_message_required' });
   }
   let investigationContext: HermesInvestigationContext;
+  let graphViews;
   try {
     investigationContext = parseHermesInvestigationContext(
       req.body?.investigationContext,
       projectId,
       conversationId,
     );
+    graphViews = parseCandidateGraphViews(req.body?.graphViews, { projectId, conversationId });
   } catch (error) {
     return res.status(400).json({
       ok: false,
-      error: error instanceof Error ? error.message : 'investigation_context_invalid',
+      error: error instanceof Error ? error.message : 'turn_context_invalid',
     });
   }
   const sessionId = deriveSessionId(projectId, conversationId);
@@ -621,6 +730,11 @@ router.post('/openclaude/session/chat', async (req, res) => {
   // the SSE stream or browser behavior — it only makes the real Harness events
   // (already flowing to the browser) legible in the backend dev terminal.
   const correlationId = `req_${randomUUID().slice(0, 8)}`;
+  try {
+    await Promise.all((graphViews as GraphView[]).map((view) => persistGraphViewOnPython(view)));
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'candidate_graph_view_persistence_failed' });
+  }
   // Bind this turn's Hermes report lifecycle to the run (parentRunId = correlationId)
   // so a mid-turn hermes.write_report attaches to THIS focused branch — the 0-caller
   // lifecycle is now driven. Best-effort: a lifecycle hiccup never breaks the stream.
@@ -667,6 +781,8 @@ router.post('/openclaude/session/chat', async (req, res) => {
   // a DB failure must never block or break the live SSE stream.
   void appendMessage({ projectId, conversationId, role: 'user', content: message }).catch(() => null);
   let turnFinished = false;
+  let activeRuntimeViews: GraphView[] = [];
+  const pendingGraphViewWrites: Promise<void>[] = [];
   const hermesToolUseIds = new Set<string>();
   const hermesStartedAt = new Map<string, number>();
   // Durable caller attribution for LiquidAIty MCP actions: one card_call event
@@ -682,6 +798,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
       mode,
       traceId: correlationId,
       investigationContext,
+      graphViews,
     }, (event) => {
       if (turnFinished) return;
       if (event.kind === 'tool_start' && event.toolName.startsWith('mcp__liquidaity__')) {
@@ -721,6 +838,21 @@ router.post('/openclaude/session/chat', async (req, res) => {
           durationMs: Date.now() - started.startedMs,
           metadata: { toolUseId: event.toolUseId, toolName: started.toolName, invokingCardId: started.invokingCardId },
         });
+        if (!event.isError) {
+          try {
+            const payload = JSON.parse(String(event.output || '{}')) as Record<string, unknown>;
+            const rawView = payload.graphView;
+            if (rawView) {
+              const returned = parseGraphViews([rawView], { projectId, conversationId }, 'returned')[0];
+              const write = persistGraphViewOnPython(returned).then(() => {
+                writeSse('graph_view', { views: [returned] });
+              });
+              pendingGraphViewWrites.push(write);
+            }
+          } catch {
+            // A normal tool result may be prose or a non-view JSON payload.
+          }
+        }
       }
       if (event.kind === 'tool_start' && event.toolName === 'Agent') {
         try {
@@ -778,6 +910,11 @@ router.post('/openclaude/session/chat', async (req, res) => {
       if (traceLine) logHarnessTrace(traceLine);
       writeSse(event.kind, event);
     });
+    if (handle.runtimeGraphViews.length > 0) {
+      activeRuntimeViews = handle.runtimeGraphViews;
+      await Promise.all(activeRuntimeViews.map((view) => persistGraphViewOnPython(view)));
+      writeSse('graph_view', { views: handle.runtimeGraphViews });
+    }
     activeGrpcTurns.set(sessionId, handle);
     req.on('close', () => {
       if (turnFinished) return;
@@ -785,6 +922,12 @@ router.post('/openclaude/session/chat', async (req, res) => {
       activeGrpcTurns.delete(sessionId);
     });
     const { finalText } = await handle.done;
+    await Promise.all(pendingGraphViewWrites);
+    if (activeRuntimeViews.length > 0) {
+      const consumedViews = completeGraphViews(activeRuntimeViews);
+      await Promise.all(consumedViews.map((view) => persistGraphViewOnPython(view)));
+      writeSse('graph_view', { views: consumedViews });
+    }
     turnFinished = true;
     logHarnessTrace(`[harness] request completed corr=${correlationId}`);
     recordAgentEvent({

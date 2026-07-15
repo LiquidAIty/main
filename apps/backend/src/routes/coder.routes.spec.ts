@@ -57,12 +57,18 @@ const chatSessionMocks = vi.hoisted(() => {
       modelKey: 'gpt-5.1-chat-latest',
       providerModelId: 'gpt-5.1-chat-latest',
     },
+    runtimeGraphViews: [],
   }));
   return mocks;
 });
 
 const mcpClientMocks = vi.hoisted(() => ({
   callPythonAgentMcpTool: vi.fn(async () => ({ ok: true })),
+}));
+
+const graphViewMocks = vi.hoisted(() => ({
+  persistGraphViewOnPython: vi.fn(async (view: unknown) => ({ ok: true, view })),
+  fetchGraphViewsFromPython: vi.fn(async () => ({ ok: true, views: [] })),
 }));
 
 const dbMocks = vi.hoisted(() => ({
@@ -90,6 +96,8 @@ vi.mock('../coder/openclaude/session/grpcChatClient', () => ({
 vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
   callPythonAgentMcpTool: mcpClientMocks.callPythonAgentMcpTool,
 }));
+
+vi.mock('../services/autogen/autogenOrchestratorClient', () => graphViewMocks);
 
 vi.mock('../db/pool', () => ({
   pool: { query: dbMocks.query },
@@ -247,6 +255,39 @@ describe('coder routes', () => {
   });
 
   describe('/openclaude/session/chat', () => {
+    it('validates, persists, activates, and consumes the exact Graph View', async () => {
+      const runtimeHandback = {
+        schemaVersion: 'graph-view.v1', viewId: 'candidate-1:active:req-1', authority: 'codegraph', status: 'active',
+        projectId: 'project-1', conversationId: 'main', producingRole: 'user', receivingRole: 'main_chat',
+        rootCanonicalNodeIds: ['symbol:one'], includedCanonicalNodeIds: ['symbol:one'], includedRelationships: [], query: 'selected code', filter: { nodeTypes: [], trustStates: [] }, hopDepth: 0, provenanceRefs: [], parentViewId: 'candidate-1',
+        records: [{ canonicalId: 'symbol:one', summary: 'Selected symbol', selectionReason: 'User selected', provenanceRefs: [], estimatedCharacters: 15, estimatedTokens: 4 }],
+        omittedNeighborCount: 2, createdAt: '2026-07-15T00:00:00Z', updatedAt: '2026-07-15T01:00:00Z', invocationId: 'req-1',
+        runtime: { provider: 'openai', model: 'gpt-5.1-chat-latest', role: 'main_chat', invocationId: 'req-1', attachedAt: '2026-07-15T01:00:00Z', includedRecords: 1, excludedRecords: 2, contextCharacters: 500, estimatedTokens: 125 },
+      };
+      chatSessionMocks.startGrpcTurn.mockImplementationOnce(async () => ({
+        done: Promise.resolve({ finalText: 'Used bounded context.' }), cancel: vi.fn(), answer: vi.fn(),
+        resolved: { cardId: 'card_main_chat', provider: 'openai', modelKey: 'gpt-5.1-chat-latest', providerModelId: 'gpt-5.1-chat-latest' },
+        runtimeGraphViews: [runtimeHandback],
+      }));
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'main', message: 'Use this.',
+            graphViews: [{ ...runtimeHandback, viewId: 'candidate-1', status: 'candidate', projectId: 'spoofed', conversationId: 'spoofed', parentViewId: undefined, invocationId: undefined, runtime: undefined }],
+          }),
+        });
+        const body = await response.text();
+        const supplied = (chatSessionMocks.startGrpcTurn.mock.calls.at(-1)?.[0] as any).graphViews[0];
+        expect(supplied).toMatchObject({ viewId: 'candidate-1', projectId: 'project-1', conversationId: 'main', status: 'candidate' });
+        expect(body).toContain('event: graph_view');
+        expect(body).toContain('"status":"consumed"');
+      } finally {
+        await closeServer(server);
+      }
+    });
+
     it('persists the user and assistant messages and never dispatches the old post-chat ThinkGraph pair handoff', async () => {
       chatSessionMocks.appendMessage.mockClear();
       chatSessionMocks.startGrpcTurn.mockClear();
@@ -302,6 +343,7 @@ describe('coder routes', () => {
             modelKey: 'gpt-5.1-chat-latest',
             providerModelId: 'gpt-5.1-chat-latest',
           },
+          runtimeGraphViews: [],
         };
       });
       const { server, baseUrl } = await createApiServer();

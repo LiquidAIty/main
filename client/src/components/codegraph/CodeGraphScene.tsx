@@ -21,6 +21,11 @@ type CodeGraphSceneProps = {
   autoRotate?: boolean;
   cameraAction?: "zoom_in" | "zoom_out" | "fit_view" | null;
   cameraActionToken?: number;
+  focusNode?: CodeGraphNode | null;
+  authorityBands?: Array<{ id: string; label: string; z: number; color: string }>;
+  cameraPosition?: [number, number, number];
+  maxLabels?: number;
+  panMode?: boolean;
 };
 
 function CameraCommandBridge({
@@ -30,6 +35,7 @@ function CameraCommandBridge({
   cameraAction,
   cameraActionToken,
   nodes,
+  focusNode,
 }: {
   controlsRef: MutableRefObject<any>;
   interactionLocked: boolean;
@@ -37,6 +43,7 @@ function CameraCommandBridge({
   cameraAction: "zoom_in" | "zoom_out" | "fit_view" | null;
   cameraActionToken: number;
   nodes: CodeGraphNode[];
+  focusNode?: CodeGraphNode | null;
 }) {
   const { camera } = useThree();
   const lastAutoFitSignatureRef = useRef<string>("");
@@ -45,31 +52,25 @@ function CameraCommandBridge({
     const controls = controlsRef.current;
     if (!controls || nodes.length === 0) return;
 
-    let minX = Number.POSITIVE_INFINITY;
-    let minY = Number.POSITIVE_INFINITY;
-    let minZ = Number.POSITIVE_INFINITY;
-    let maxX = Number.NEGATIVE_INFINITY;
-    let maxY = Number.NEGATIVE_INFINITY;
-    let maxZ = Number.NEGATIVE_INFINITY;
-
-    for (const node of nodes) {
-      minX = Math.min(minX, node.x);
-      minY = Math.min(minY, node.y);
-      minZ = Math.min(minZ, node.z);
-      maxX = Math.max(maxX, node.x);
-      maxY = Math.max(maxY, node.y);
-      maxZ = Math.max(maxZ, node.z);
-    }
+    const bounds = (values: number[]) => {
+      const sorted = [...values].sort((a, b) => a - b);
+      const inset = sorted.length >= 20 ? Math.floor(sorted.length * 0.04) : 0;
+      return [sorted[inset], sorted[sorted.length - 1 - inset]] as const;
+    };
+    const [minX, maxX] = bounds(nodes.map((node) => node.x));
+    const [minY, maxY] = bounds(nodes.map((node) => node.y));
+    const [minZ, maxZ] = bounds(nodes.map((node) => node.z));
 
     const center = new THREE.Vector3(
       (minX + maxX) / 2,
       (minY + maxY) / 2,
       (minZ + maxZ) / 2,
     );
-    const span = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1);
     const perspectiveCamera = camera as THREE.PerspectiveCamera;
     const fovRadians = ((perspectiveCamera.fov || 50) * Math.PI) / 180;
-    const distance = (span / Math.max(Math.tan(fovRadians / 2), 0.01)) * 0.72;
+    const aspect = Math.max(perspectiveCamera.aspect || 1, 0.35);
+    const span = Math.max(maxY - minY, (maxX - minX) / aspect, (maxZ - minZ) * 0.72, 1);
+    const distance = (span / Math.max(Math.tan(fovRadians / 2), 0.01)) * 0.7;
 
     const direction = new THREE.Vector3()
       .subVectors(camera.position, controls.target)
@@ -124,6 +125,24 @@ function CameraCommandBridge({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [nodes]);
+
+  useEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls || !focusNode) return;
+    const start = controls.target.clone();
+    const target = new THREE.Vector3(focusNode.x, focusNode.y, focusNode.z);
+    let frame = 0;
+    let request = 0;
+    const move = () => {
+      frame += 1;
+      const progress = 1 - Math.pow(1 - Math.min(1, frame / 22), 3);
+      controls.target.lerpVectors(start, target, progress);
+      controls.update();
+      if (frame < 22) request = window.requestAnimationFrame(move);
+    };
+    request = window.requestAnimationFrame(move);
+    return () => window.cancelAnimationFrame(request);
+  }, [controlsRef, focusNode]);
 
   return null;
 }
@@ -251,9 +270,9 @@ function EdgeLines({
       if (hasHighlight && !sourceHighlighted && !targetHighlighted) continue;
 
       const sameCluster = getClusterKey(source.file_path) === getClusterKey(target.file_path);
-      let intensity = sameCluster ? 0.25 : 0.06;
+      let intensity = edge.cross_authority ? 0.46 : sameCluster ? 0.25 : 0.06;
       if (hasHighlight) intensity = sourceHighlighted && targetHighlighted ? 0.5 : 0.04;
-      const color = new THREE.Color(colorForCodeGraphEdgeType(edge.type));
+      const color = new THREE.Color(edge.cross_authority ? '#A7F3EE' : colorForCodeGraphEdgeType(edge.type));
       const offset = validCount * 6;
       positions[offset] = source.x;
       positions[offset + 1] = source.y;
@@ -317,7 +336,7 @@ function AmbientDust({
       if (highlightedIds?.size && !highlightedIds.has(node.id)) {
         color.multiplyScalar(0.22);
       } else {
-        color.lerp(new THREE.Color("#f3b17a"), 0.18);
+        color.lerp(new THREE.Color("#e7f9ff"), 0.12);
       }
       colors[index * 3] = color.r;
       colors[index * 3 + 1] = color.g;
@@ -434,6 +453,11 @@ export function CodeGraphScene({
   autoRotate,
   cameraAction = null,
   cameraActionToken = 0,
+  focusNode = null,
+  authorityBands = [],
+  cameraPosition = [0, 0, 800],
+  maxLabels = 80,
+  panMode = false,
 }: CodeGraphSceneProps): React.ReactElement {
   const [hoveredNode, setHoveredNode] = useState<CodeGraphNode | null>(null);
   const controlsRef = useRef<any>(null);
@@ -441,7 +465,7 @@ export function CodeGraphScene({
 
   return (
     <Canvas
-      camera={{ position: [0, 0, 800], fov: 50, near: 0.1, far: 100000 }}
+      camera={{ position: cameraPosition, fov: 50, near: 0.1, far: 100000 }}
       style={{ background: "transparent" }}
       dpr={[1, 2]}
       gl={{ antialias: true, alpha: true }}
@@ -451,6 +475,16 @@ export function CodeGraphScene({
       <pointLight position={[500, 500, 500]} intensity={0.6} />
       <pointLight position={[-300, -200, -300]} intensity={0.4} color="#37adaa" />
 
+      {authorityBands.map((band) => (
+        <group key={band.id} position={[0, 0, band.z]}>
+          <Billboard position={[-300, 245, 5]}>
+            <Text fontSize={12} color={band.color} fillOpacity={0.58} anchorX="left" anchorY="middle">
+              {band.label}
+            </Text>
+          </Billboard>
+        </group>
+      ))}
+
       <AmbientDust nodes={data.nodes} highlightedIds={highlightedIds} />
       <EdgeLines nodes={data.nodes} edges={data.edges} highlightedIds={highlightedIds} />
       <NodeCloud
@@ -459,7 +493,7 @@ export function CodeGraphScene({
         onHover={setHoveredNode}
         onClick={onNodeClick}
       />
-      {showLabels ? <NodeLabels nodes={data.nodes} highlightedIds={highlightedIds} /> : null}
+      {showLabels ? <NodeLabels nodes={data.nodes} highlightedIds={highlightedIds} maxLabels={maxLabels} /> : null}
       <NodeTooltip node={hoveredNode} />
       <CameraCommandBridge
         controlsRef={controlsRef}
@@ -468,6 +502,7 @@ export function CodeGraphScene({
         cameraAction={cameraAction}
         cameraActionToken={cameraActionToken}
         nodes={data.nodes}
+        focusNode={focusNode}
       />
 
       {data.linked_projects?.map((linked) => {
@@ -508,6 +543,11 @@ export function CodeGraphScene({
         enablePan={!interactionLocked}
         enableZoom={!interactionLocked}
         autoRotateSpeed={0.22}
+        mouseButtons={{
+          LEFT: panMode ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE,
+          MIDDLE: THREE.MOUSE.DOLLY,
+          RIGHT: panMode ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN,
+        }}
       />
     </Canvas>
   );

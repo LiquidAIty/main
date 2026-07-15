@@ -142,25 +142,24 @@ export const GRAPH_THEME = {
   // shells; intentionally distinct from `card.glass*` (agent cards / world / energy
   // / media keep the lighter card glass).
   inspector: {
-    // Dark-but-not-dead fill (~0.84) with a top-right teal lift (light source).
+    // Neutral smoked glass. Authority color belongs to content and interaction,
+    // never to the material itself.
     fill:
-      'radial-gradient(circle at 82% 7%, rgba(126,232,226,.16), transparent 42%), ' +
-      'radial-gradient(circle at 10% 88%, rgba(55,173,170,.08), transparent 48%), ' +
-      'linear-gradient(155deg, rgba(24,36,44,.70), rgba(9,15,21,.66))',
-    // Directional edge: bright at top-right, dark at bottom-left.
+      'radial-gradient(circle at 78% 4%, rgba(255,255,255,.075), transparent 42%), ' +
+      'linear-gradient(155deg, rgba(24,25,28,.3), rgba(8,9,11,.22))',
+    // Directional neutral edge: a white catch light fading into shadow.
     edge:
-      'linear-gradient(215deg, rgba(255,255,255,.38), rgba(126,232,226,.22) 34%, ' +
-      'rgba(167,176,186,.09) 66%, rgba(0,0,0,.18))',
+      'linear-gradient(215deg, rgba(255,255,255,.34), rgba(255,255,255,.11) 38%, ' +
+      'rgba(167,176,186,.07) 66%, rgba(0,0,0,.2))',
     // Layered inner shadows give glass thickness (dialed DOWN for a dark UI so it
     // never blows out to milky white).
     inset:
       'inset 0 1px 0 rgba(255,255,255,.19), ' +
-      'inset 14px 0 30px rgba(126,232,226,.035), ' +
+      'inset 14px 0 30px rgba(255,255,255,.018), ' +
       'inset 0 -18px 26px rgba(0,0,0,.20), ' +
-      'inset 0 0 0 1px rgba(55,173,170,.07)',
-    // Tinted floating drop shadow (carries the bg hue, not pure black).
-    drop: '0 24px 56px rgba(2,9,14,.42), 0 0 28px rgba(55,173,170,.07)',
-    blur: 'blur(24px) saturate(165%)',
+      'inset 0 0 0 1px rgba(255,255,255,.035)',
+    drop: '0 24px 56px rgba(0,0,0,.46), 0 0 22px rgba(255,255,255,.025)',
+    blur: 'blur(20px) saturate(100%)',
   },
   drawer: {
     panelBackground: 'rgba(11,14,18,0.92)',

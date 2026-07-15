@@ -324,3 +324,16 @@ export async function applyThinkGraphPatchOnPython(authority: unknown, patch: un
     body: JSON.stringify({ authority, patch }),
   });
 }
+
+export async function persistGraphViewOnPython(view: unknown): Promise<unknown> {
+  return requestThinkGraphJson('/thinkgraph/graph-views', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ view }),
+  });
+}
+
+export async function fetchGraphViewsFromPython(projectId: string, conversationId: string): Promise<unknown> {
+  const query = new URLSearchParams({ projectId, conversationId });
+  return requestThinkGraphJson(`/thinkgraph/graph-views?${query.toString()}`, { method: 'GET' });
+}

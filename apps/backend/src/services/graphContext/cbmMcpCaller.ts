@@ -88,6 +88,9 @@ export async function createCodebaseMemoryMcpCaller(
       }
       return normalizeMcpToolResult(result);
     },
-    close: () => transport.close().catch(() => undefined),
+    close: async () => {
+      await client.close().catch(() => undefined);
+      await transport.close().catch(() => undefined);
+    },
   };
 }

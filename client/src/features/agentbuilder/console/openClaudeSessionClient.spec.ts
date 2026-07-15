@@ -92,6 +92,7 @@ describe('streamSession', () => {
           focusNodeIds: ['run:42'],
           requestedOutcome: 'Inspect the selected run.',
         },
+        graphViews: [expect.objectContaining({ viewId: 'candidate-1', status: 'candidate' })],
       });
       return sseResponse(['event: done\ndata: {"fullText":"done"}\n\nevent: end\ndata: {}\n\n']);
     });
@@ -102,6 +103,27 @@ describe('streamSession', () => {
       conversationId: 'main',
       message: 'Inspect it.',
       investigationContext: { focusNodeIds: ['run:42'], requestedOutcome: 'Inspect the selected run.' },
+      graphViews: [{
+        schemaVersion: 'graph-view.v1',
+        viewId: 'candidate-1',
+        authority: 'thinkgraph',
+        status: 'candidate',
+        projectId: 'project-1',
+        conversationId: 'main',
+        producingRole: 'user',
+        receivingRole: 'main_chat',
+        rootCanonicalNodeIds: ['run:42'],
+        includedCanonicalNodeIds: ['run:42'],
+        includedRelationships: [],
+        query: 'Selected focus',
+        filter: { nodeTypes: [], trustStates: [] },
+        hopDepth: 0,
+        provenanceRefs: [],
+        records: [{ canonicalId: 'run:42', summary: 'Selected run', selectionReason: 'User selected', provenanceRefs: [], estimatedCharacters: 12, estimatedTokens: 3 }],
+        omittedNeighborCount: 0,
+        createdAt: '2026-07-15T00:00:00Z',
+        updatedAt: '2026-07-15T00:00:00Z',
+      }],
       onEvent: vi.fn(),
     })).resolves.toEqual({ finalText: 'done' });
   });

@@ -32,8 +32,6 @@ import {
   SessionStreamError,
   streamSession,
   loadSessionHistory,
-  listSessionConversations,
-  type SessionConversation,
 } from '../features/agentbuilder/console/openClaudeSessionClient';
 import useAgentBuilderAutosave from '../features/agentbuilder/state/useAgentBuilderAutosave';
 import useAgentBuilderDeck from '../features/agentbuilder/state/useAgentBuilderDeck';
@@ -44,7 +42,6 @@ import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBui
 import useAgentBuilderThinkGraphProjection from '../features/agentbuilder/state/useAgentBuilderThinkGraphProjection';
 import useAgentBuilderKnowGraphProjection from '../features/agentbuilder/state/useAgentBuilderKnowGraphProjection';
 import useAgentBuilderHermesReport from '../features/agentbuilder/state/useAgentBuilderHermesReport';
-import useAgentBuilderCoderAuditView from '../features/agentbuilder/state/useAgentBuilderCoderAuditView';
 import TradingCanvasSurface from '../features/trading/TradingCanvasSurface';
 import type { LinkRef } from '../components/builder/deckContinuityTypes';
 import { resolveDeckWorkspaceRoot } from '../features/agentbuilder/state/deckWorkspaceRoot';
@@ -60,6 +57,7 @@ import {
   graphGlassPillStyle,
 } from '../components/graph/graphVisualTokens';
 import RightGlassDrawer from '../components/graph/RightGlassDrawer';
+import type { GraphView } from '../components/knowledge/graphView';
 // Decomposed Agent Builder modules (2026-07-08): the page is composition only;
 // deck primitives/seed/document logic and rail derivation live in the feature.
 import {
@@ -117,7 +115,6 @@ import type {
   DeckWorkspaceContext,
   WorkspaceObjectContext,
 } from '../types/agentgraph';
-import type { CodeGraphViewContract } from '../components/codegraph/types';
 import {
   createWorkspaceTestingInteractionId,
   recordWorkspaceTestingEvent,
@@ -130,16 +127,8 @@ const AgentManager = lazy(async () => {
   const mod = await import('../components/AgentManager');
   return { default: mod.AgentManager };
 });
-const KnowledgeGraphFramework = lazy(
-  () => import('../components/knowledge/KnowledgeGraphFramework'),
-);
 const UnifiedGraphSurface = lazy(
   () => import('../components/knowledge/UnifiedGraphSurface'),
-);
-// CodeGraph renders through its OWN CBM-backed surface (CodeGraphSurface → /api/layout → CBM →
-// CodeGraphScene), never the generic shared graph shell. Restored to its pre-b32e5cdd direct mount.
-const CodeGraphSurface = lazy(() =>
-  import('../components/codegraph/CodeGraphSurface').then((mod) => ({ default: mod.CodeGraphSurface })),
 );
 import { resolveCbmProjectName } from '../components/codegraph/resolveCodeGraphProjectIdentity';
 
@@ -502,11 +491,47 @@ export default function AgentBuilder(): React.ReactElement {
   const [newProjectName, setNewProjectName] = useState('');
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
     useState<KnowledgeSurfaceKind>('unified');
-  const [conversationId, setConversationId] = useState('main');
-  const [conversations, setConversations] = useState<SessionConversation[]>([]);
+  const conversationId = 'main';
   const [thinkGraphFocusIds, setThinkGraphFocusIds] = useState<string[]>([]);
-  const [focusedGraphNodeId, setFocusedGraphNodeId] = useState<string | null>(null);
-  const [focusedCodeGraphRef, setFocusedCodeGraphRef] = useState<string | null>(null);
+  const [candidateGraphViews, setCandidateGraphViews] = useState<GraphView[]>([]);
+  const handleCandidateGraphViewsChange = useCallback((next: GraphView[]) => {
+    setCandidateGraphViews((current) => {
+      const semantic = (handbacks: GraphView[]) => JSON.stringify(
+        handbacks.map(({ createdAt: _createdAt, ...handback }) => handback),
+      );
+      return semantic(current) === semantic(next) ? current : next;
+    });
+  }, []);
+  const [runtimeGraphViews, setRuntimeGraphViews] = useState<GraphView[]>([]);
+  const mergeGraphViews = useCallback((current: GraphView[], incoming: GraphView[]) => {
+    const merged = new Map(current.map((view) => [view.viewId, view]));
+    incoming.forEach((view) => merged.set(view.viewId, view));
+    return [...merged.values()].sort((a, b) => String(a.updatedAt).localeCompare(String(b.updatedAt)));
+  }, []);
+  useEffect(() => {
+    setCandidateGraphViews([]);
+    setRuntimeGraphViews([]);
+  }, [conversationId]);
+  useEffect(() => {
+    if (!canvasProjectId) return;
+    const controller = new AbortController();
+    const loadViews = () => {
+      void fetch(`/api/coder/graph-views?projectId=${encodeURIComponent(canvasProjectId)}&conversationId=${encodeURIComponent(conversationId)}`, { signal: controller.signal })
+        .then(async (response) => response.ok ? response.json() : null)
+        .then((payload) => {
+          if (!controller.signal.aborted && Array.isArray(payload?.views)) {
+            setRuntimeGraphViews((current) => mergeGraphViews(current, payload.views as GraphView[]));
+          }
+        })
+        .catch(() => null);
+    };
+    loadViews();
+    window.addEventListener('knowledge:refresh', loadViews);
+    return () => {
+      controller.abort();
+      window.removeEventListener('knowledge:refresh', loadViews);
+    };
+  }, [canvasProjectId, conversationId, mergeGraphViews]);
   const thinkGraphProjection = useAgentBuilderThinkGraphProjection({
     activeProject,
     knowledgeGraphKind,
@@ -522,13 +547,7 @@ export default function AgentBuilder(): React.ReactElement {
     conversationId,
     workspaceView,
   });
-  const coderAuditView = useAgentBuilderCoderAuditView({
-    projectId: activeProject,
-    conversationId,
-  });
 
-  const [graphViewContract, setGraphViewContract] =
-    useState<CodeGraphViewContract | null>(null);
   // CodeGraph repository identity is resolved from the authoritative CBM index — the
   // indexed project whose root_path is this repo — never a hardcoded project name.
   const [codeGraphProjectName, setCodeGraphProjectName] = useState<string>('');
@@ -545,36 +564,14 @@ export default function AgentBuilder(): React.ReactElement {
       cancelled = true;
     };
   }, []);
-  // Focus the existing CodeGraphSurface on a completed read-only audit's filtered
-  // view. Applied once per audit run; stale/wrong-project views are ignored. The
-  // view is focus/filter only — canonical CodeGraph facts are never rewritten.
-  const appliedAuditRunRef = useRef<string | null>(null);
-  useEffect(() => {
-    const view = coderAuditView.view;
-    if (!view || view.projectId !== activeProject) return;
-    if (appliedAuditRunRef.current === view.childRunId) return;
-    appliedAuditRunRef.current = view.childRunId;
-    setGraphViewContract((prev) => ({
-      projectId: codeGraphProjectName || prev?.projectId || null,
-      nodeLabelAllowlist: view.viewContract.nodeLabelAllowlist ?? prev?.nodeLabelAllowlist,
-      edgeTypeAllowlist: view.viewContract.edgeTypeAllowlist ?? prev?.edgeTypeAllowlist,
-      showLabels:
-        typeof view.viewContract.showLabels === 'boolean'
-          ? view.viewContract.showLabels
-          : (prev?.showLabels ?? true),
-      maxNodes: view.viewContract.maxNodes ?? prev?.maxNodes,
-      focusPaths: view.viewContract.focusPaths ?? prev?.focusPaths,
-      focusSymbols: view.viewContract.focusSymbols ?? prev?.focusSymbols,
-    }));
-  }, [coderAuditView.view, activeProject, codeGraphProjectName]);
   // chat state must be declared before callbacks/effects that write to it.
   const [messages, setMessages] = useState<
     { role: 'assistant' | 'user'; text: string }[]
   >(() => loadProjectState().messages);
   const [stateLoaded, setStateLoaded] = useState(false);
 
-  // Restore the durable project-scoped Harness transcript on open / project
-  // switch, so a reload shows the selected named conversation. This load is read-only and
+  // Restore the durable project-scoped Main transcript on open / project
+  // switch. This load is read-only and
   // best-effort: a fresh project or a read failure leaves chat empty, never
   // errors. A late response for a project the user already switched away from is
   // discarded (guarded by the captured projectId).
@@ -588,17 +585,6 @@ export default function AgentBuilder(): React.ReactElement {
     setHermesTerminal(EMPTY_HERMES_TERMINAL_STATE);
     const ctrl = new AbortController();
     let cancelled = false;
-    void listSessionConversations({ projectId: pid, signal: ctrl.signal })
-      .then((items) => {
-        if (cancelled) return;
-        setConversations(items);
-        if (items.length > 0 && !items.some((item) => item.conversationId === conversationId)) {
-          setConversationId(items[0].conversationId);
-        }
-      })
-      .catch(() => {
-        /* named-conversation navigation is best-effort */
-      });
     void loadSessionHistory({ projectId: pid, conversationId, signal: ctrl.signal })
       .then((history) => {
         if (cancelled) return;
@@ -1904,6 +1890,7 @@ export default function AgentBuilder(): React.ReactElement {
         // chat = chat mode: only the ThinkGraph doorway. Explicit surface state,
         // never inferred from message content.
         mode: workspaceView === 'canvas' ? 'canvas' : 'chat',
+        graphViews: candidateGraphViews,
         ...(thinkGraphFocusIds.length > 0 && trimmed.length <= 2_000
           ? {
               investigationContext: {
@@ -1919,6 +1906,9 @@ export default function AgentBuilder(): React.ReactElement {
             // the first token, appends to it afterward. Nothing renders before this.
             appendAssistantText(String((event as { text?: unknown }).text || ''));
             return;
+          }
+          if (event.kind === 'graph_view' && Array.isArray(event.views)) {
+            setRuntimeGraphViews((current) => mergeGraphViews(current, event.views as GraphView[]));
           }
         },
       })
@@ -1945,7 +1935,7 @@ export default function AgentBuilder(): React.ReactElement {
           appendAssistantText('Chat request failed before the stream opened. Route: /api/coder/openclaude/session/chat.');
         });
     },
-    [canvasProjectId, conversationId, nativeSessionBusy, thinkGraphFocusIds, workspaceView],
+    [candidateGraphViews, canvasProjectId, conversationId, mergeGraphViews, nativeSessionBusy, thinkGraphFocusIds, workspaceView],
   );
 
   const renderChatSurface = (
@@ -1959,23 +1949,7 @@ export default function AgentBuilder(): React.ReactElement {
     // surface keeps a near-invisible pull-tab that reveals the active native
     // Hermes child stream beneath chat; the Code Console remains separate.
     const chat = (
-      <div style={{ height: '100%', minHeight: 0, display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px 0' }}>
-          <span style={{ color: C.textMuted, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>Conversation</span>
-          <select
-            aria-label="Selected conversation"
-            value={conversationId}
-            onChange={(event) => setConversationId(event.target.value)}
-            style={graphDrawerInputStyle({ minWidth: 150, height: 28, padding: '0 8px', fontSize: 11 })}
-          >
-            {conversations.length === 0 ? <option value={conversationId}>{conversationId}</option> : null}
-            {conversations.map((conversation) => (
-              <option key={conversation.conversationId} value={conversation.conversationId}>
-                {conversation.title}
-              </option>
-            ))}
-          </select>
-        </div>
+      <div style={{ height: '100%', minHeight: 0 }}>
         <BuilderChat
           messages={messages}
           onSend={handleNativeSend}
@@ -2110,72 +2084,17 @@ export default function AgentBuilder(): React.ReactElement {
                 </div>
               }
             >
-              {knowledgeGraphKind === 'unified' ? (
-                <UnifiedGraphSurface
-                  projectId={activeProject}
-                  codeGraphProject={codeGraphProjectName}
-                  thinkProjection={thinkGraphProjection.projection ?? undefined}
-                  knowProjection={knowGraphProjection.projection ?? undefined}
-                  activeHermesReport={hermesReport.report}
-                  focusedThinkIds={thinkGraphFocusIds}
-                />
-              ) : knowledgeGraphKind === 'codegraph' ? (
-                <CodeGraphSurface
-                  projectId={codeGraphProjectName}
-                  focusReference={focusedCodeGraphRef}
-                  viewContract={{
-                    projectId: codeGraphProjectName,
-                    nodeLabelAllowlist: graphViewContract?.nodeLabelAllowlist,
-                    edgeTypeAllowlist: graphViewContract?.edgeTypeAllowlist,
-                    showLabels: graphViewContract?.showLabels,
-                    maxNodes: graphViewContract?.maxNodes,
-                    focusPaths: graphViewContract?.focusPaths,
-                    focusSymbols: graphViewContract?.focusSymbols,
-                  }}
-                  onViewContractChange={(nextContract) =>
-                    setGraphViewContract((prev) => ({
-                      projectId: codeGraphProjectName,
-                      nodeLabelAllowlist: nextContract.nodeLabelAllowlist,
-                      edgeTypeAllowlist: nextContract.edgeTypeAllowlist,
-                      showLabels:
-                        typeof nextContract.showLabels === 'boolean'
-                          ? nextContract.showLabels
-                          : (prev?.showLabels ?? true),
-                      maxNodes: nextContract.maxNodes ?? prev?.maxNodes,
-                      focusPaths: nextContract.focusPaths ?? prev?.focusPaths,
-                      focusSymbols: nextContract.focusSymbols ?? prev?.focusSymbols,
-                    }))
-                  }
-                />
-              ) : (
-                <KnowledgeGraphFramework
-                  projection={
-                    knowledgeGraphKind === 'thinkgraph'
-                      ? (thinkGraphProjection.projection ?? undefined)
-                      : knowledgeGraphKind === 'knowgraph'
-                        ? (knowGraphProjection.projection ?? undefined)
-                        : undefined
-                  }
-                  minHeight={minHeight}
-                  activeHermesReport={hermesReport.report}
-                  focusedNodeId={focusedGraphNodeId}
-                  onNodeSelectionChange={(nodeId) => {
-                    if (knowledgeGraphKind === 'thinkgraph') {
-                      setThinkGraphFocusIds(nodeId ? [nodeId] : []);
-                    }
-                  }}
-                  onHermesReportReference={({ authority, id }) => {
-                    setKnowledgeGraphKind(authority);
-                    if (authority === 'codegraph') {
-                      setFocusedCodeGraphRef(id);
-                      setFocusedGraphNodeId(null);
-                    } else {
-                      setFocusedGraphNodeId(id);
-                      setFocusedCodeGraphRef(null);
-                    }
-                  }}
-                />
-              )}
+              <UnifiedGraphSurface
+                projectId={activeProject}
+                codeGraphProject={codeGraphProjectName}
+                thinkProjection={thinkGraphProjection.projection ?? undefined}
+                knowProjection={knowGraphProjection.projection ?? undefined}
+                focusedThinkIds={thinkGraphFocusIds}
+                conversationId={conversationId}
+                authorityFocus={knowledgeGraphKind}
+                runtimeHandbacks={runtimeGraphViews}
+                onCandidateHandbacksChange={handleCandidateGraphViewsChange}
+              />
             </Suspense>
           </KnowledgeSurfaceErrorBoundary>
         </div>
@@ -2313,28 +2232,6 @@ export default function AgentBuilder(): React.ReactElement {
       `${window.location.pathname}?${params.toString()}`,
     );
   }, [closeObjectDrawer]);
-
-  const previousHermesConnectionRef = useRef(false);
-  useEffect(() => {
-    const becameConnected =
-      hermesConnectedToMainChat && !previousHermesConnectionRef.current;
-    previousHermesConnectionRef.current = hermesConnectedToMainChat;
-    if (!becameConnected) return;
-
-    closeObjectDrawer();
-    setWorkspaceView('knowledge');
-    setKnowledgeGraphKind('thinkgraph');
-    const params = new URLSearchParams(window.location.search);
-    params.set('workspace', 'knowledge');
-    window.history.replaceState(
-      {},
-      '',
-      `${window.location.pathname}?${params.toString()}`,
-    );
-  }, [
-    closeObjectDrawer,
-    hermesConnectedToMainChat,
-  ]);
 
   const showWorkbenchWorkspace = useCallback((surface: 'trading') => {
     closeObjectDrawer();

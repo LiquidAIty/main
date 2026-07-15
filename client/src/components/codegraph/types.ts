@@ -22,12 +22,16 @@ export type CodeGraphNode = {
   trust?: string;
   quality?: string;
   retrieval_reason?: string;
+  graph_view_id?: string;
+  graph_view_status?: 'candidate' | 'attached' | 'active' | 'consumed' | 'returned' | 'superseded' | 'failed';
 };
 
 export type CodeGraphEdge = {
+  id?: string;
   source: number;
   target: number;
   type: string;
+  cross_authority?: boolean;
 };
 
 export type CodeGraphData = {

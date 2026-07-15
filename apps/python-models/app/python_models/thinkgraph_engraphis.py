@@ -533,6 +533,117 @@ class ThinkGraphEngraphis:
         matches = [node for node in projection["nodes"] if node["canonicalId"] == canonical_id]
         return next((node for node in matches if node["validTo"] is None), matches[0] if matches else None)
 
+    def persist_graph_view(self, view: dict[str, Any]) -> dict[str, Any]:
+        project_id = _text(view.get("projectId"))
+        conversation_id = _text(view.get("conversationId"))
+        view_id = _text(view.get("viewId"))
+        if not project_id or not conversation_id or not view_id:
+            raise ValueError("graph_view_project_conversation_and_view_id_required")
+        now = time.time()
+        authority = {
+            "projectId": project_id,
+            "conversationId": conversation_id,
+            "cardId": _text(view.get("producingRole")),
+            "correlationId": _text(view.get("invocationId")) or view_id,
+        }
+        encoded = {
+            "view_id": view_id,
+            "view_authority": _text(view.get("authority")),
+            "status": _text(view.get("status")) or "candidate",
+            "producing_role": _text(view.get("producingRole")),
+            "receiving_role": _text(view.get("receivingRole")),
+            "goal_id": _text(view.get("goalId")),
+            "job_id": _text(view.get("jobId")),
+            "run_id": _text(view.get("runId")),
+            "invocation_id": _text(view.get("invocationId")),
+            "parent_view_id": _text(view.get("parentViewId")),
+            "root_node_ids_json": _json(list(view.get("rootCanonicalNodeIds") or [])),
+            "included_node_ids_json": _json(list(view.get("includedCanonicalNodeIds") or [])),
+            "relationships_json": _json(list(view.get("includedRelationships") or [])),
+            "records_json": _json(list(view.get("records") or [])),
+            "filter_json": _json(dict(view.get("filter") or {})),
+            "hop_depth": int(view.get("hopDepth") or 0),
+            "query": _text(view.get("query")),
+            "note": _text(view.get("note")),
+            "provenance_refs_json": _json(list(view.get("provenanceRefs") or [])),
+            "omitted_neighbor_count": int(view.get("omittedNeighborCount") or 0),
+            "created_at": _text(view.get("createdAt")),
+            "updated_at": _text(view.get("updatedAt")),
+            "runtime_json": _json(dict(view.get("runtime") or {})),
+            "production_path": "graph_view_exchange",
+        }
+        with self.lock:
+            workspace_id, repo_id = self._scope(project_id)
+            physical_id, _ = self._write_memory(
+                canonical_id=f"graph-view:{view_id}",
+                label=f"Graph View {view_id} [{encoded['status']}] {encoded['updated_at']}",
+                kind="GraphView",
+                properties=encoded,
+                authority=authority,
+                workspace_id=workspace_id,
+                repo_id=repo_id,
+                now=now,
+            )
+            parent_view_id = encoded["parent_view_id"]
+            if parent_view_id:
+                parent = self._active_record(workspace_id, repo_id, f"graph-view:{parent_view_id}")
+                if parent:
+                    self._upsert_edge(
+                        f"graph-view-derived:{view_id}:{parent_view_id}",
+                        physical_id,
+                        parent.id,
+                        "DERIVED_FROM",
+                        workspace_id,
+                        repo_id,
+                        now,
+                        {"authority": "thinkgraph", "viewId": view_id, "parentViewId": parent_view_id},
+                    )
+            self.store.conn.commit()
+        return {"ok": True, "view": view, "physicalId": physical_id}
+
+    def graph_views(self, project_id: str, conversation_id: str | None = None) -> dict[str, Any]:
+        projection = self.projection(project_id, limit=2000, include_historical=False)
+        nodes = [node for node in projection["nodes"] if node.get("type") == "GraphView"]
+        if conversation_id:
+            nodes = [node for node in nodes if node.get("conversationId") == conversation_id]
+        views = []
+        for node in nodes:
+            props = dict(node.get("properties") or {})
+            def decoded(key: str, fallback: Any):
+                try:
+                    return json.loads(props.get(key) or "")
+                except (TypeError, ValueError):
+                    return fallback
+            views.append({
+                "schemaVersion": "graph-view.v1",
+                "viewId": props.get("view_id"),
+                "authority": props.get("view_authority"),
+                "status": props.get("status"),
+                "projectId": project_id,
+                "conversationId": node.get("conversationId"),
+                "goalId": props.get("goal_id") or None,
+                "jobId": props.get("job_id") or None,
+                "runId": props.get("run_id") or None,
+                "invocationId": props.get("invocation_id") or None,
+                "producingRole": props.get("producing_role"),
+                "receivingRole": props.get("receiving_role"),
+                "rootCanonicalNodeIds": decoded("root_node_ids_json", []),
+                "includedCanonicalNodeIds": decoded("included_node_ids_json", []),
+                "includedRelationships": decoded("relationships_json", []),
+                "records": decoded("records_json", []),
+                "filter": decoded("filter_json", {"nodeTypes": [], "trustStates": []}),
+                "hopDepth": int(props.get("hop_depth") or 0),
+                "query": props.get("query") or "",
+                "note": props.get("note") or None,
+                "provenanceRefs": decoded("provenance_refs_json", []),
+                "parentViewId": props.get("parent_view_id") or None,
+                "omittedNeighborCount": int(props.get("omitted_neighbor_count") or 0),
+                "createdAt": props.get("created_at") or node.get("createdAt"),
+                "updatedAt": props.get("updated_at") or node.get("updatedAt"),
+                "runtime": decoded("runtime_json", None),
+            })
+        return {"ok": True, "projectId": project_id, "conversationId": conversation_id, "views": views}
+
     def neighborhood(self, project_id: str, canonical_id: str) -> dict[str, Any]:
         projection = self.projection(project_id, limit=2000, include_historical=True)
         center = next(
