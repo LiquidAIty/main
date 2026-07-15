@@ -63,6 +63,25 @@ RELATIONSHIP_TYPES: list[dict[str, object]] = [
     {"label": "IMPORTS", "description": "Code file imports another."},
     {"label": "DEFINES", "description": "File defines function/class."},
     {"label": "CALLS", "description": "Function calls another function."},
+    # General source-grounded semantic relationship types (just-enough semantics).
+    # Used by the existing-chunk enrichment writer for genuine extraction; every type a
+    # genuine relationship uses is validated against THIS allowlist before it is written
+    # (via apoc.merge.relationship). General, not source-specific — avoids ontology bloat.
+    {"label": "DESCRIBES", "description": "A describes or characterizes B."},
+    {"label": "RECOMMENDS", "description": "Source recommends B."},
+    {"label": "WARNS_AGAINST", "description": "Source warns against B."},
+    {"label": "ENABLES", "description": "A enables B."},
+    {"label": "REQUIRES", "description": "A requires B."},
+    {"label": "SUPPORTS", "description": "A supports B."},
+    {"label": "DEPENDS_ON", "description": "A depends on B."},
+    {"label": "REPRESENTS", "description": "A represents/maps B."},
+    {"label": "OWNED_BY", "description": "A is owned or stewarded by B."},
+    {"label": "SOURCED_FROM", "description": "A is sourced from B."},
+    {"label": "CONSUMES", "description": "A consumes B."},
+    {"label": "APPLIES_TO", "description": "A applies to B."},
+    {"label": "DERIVED_FROM", "description": "A is derived from B."},
+    {"label": "TRACKS", "description": "A tracks or records B."},
+    {"label": "DISCUSSED_IN", "description": "A is discussed in B."},
 ]
 
 PATTERNS: list[tuple[str, str, str]] = [

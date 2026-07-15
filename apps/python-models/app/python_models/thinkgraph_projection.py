@@ -8,11 +8,15 @@ project: real stable IDs, real labels, real predicates, real attached
 properties, and mechanical mention/provenance counters. Every Statement is a
 direct subject -> object edge between two real Resources.
 
-There is exactly one graph model: nouns and verb phrases. No lifecycle, no
-frame, no active-focus wrapper, no kind/tag/class vocabulary in the returned
-shape — mention counting is the only signal this projection carries beyond
-raw content, and it comes from the writer's provenance-gated counters
-(mechanical, never model-reported).
+One graph model: nouns and verb phrases. No lifecycle, no frame, no
+active-focus wrapper. A resource's stored ``kind`` (model-authored, free-form:
+Goal / Question / Decision / …) IS surfaced — as the shared-projection ``type``
+(+ ``labels``) so the graph renderer can color and label nodes by type.
+Product decision 2026-07-14 (overrides the earlier nouns-and-verbs-only stance
+for the returned shape); ``type`` is stored data, never invented or inferred
+from label text, and is simply omitted when a node has no stored kind. Mention
+counting remains the only other signal, from the writer's provenance-gated
+counters (mechanical, never model-reported).
 
 Co-occurrence (``:CO_OCCURRED_WITH``) is not a verb phrase — it stays stored
 but is not part of this projection's returned edges.
@@ -73,10 +77,15 @@ def assemble_projection(
         if not node_id:
             continue
         mention_count = _int(row.get("mention_count"))
+        kind = _s(row.get("kind")).strip()
         nodes.append(
             {
                 "id": node_id,
                 "label": _s(row.get("label")) or node_id,
+                # Stored resource kind → shared-projection type (+labels) so the
+                # renderer colors/labels by type. Stored data, never invented;
+                # omitted entirely when a node has no stored kind.
+                **({"type": kind, "labels": [kind]} if kind else {}),
                 "mentionCount": mention_count,
                 **({"lastMentionedAt": row["last_mentioned_at"]} if row.get("last_mentioned_at") else {}),
                 "properties": _properties(row.get("properties")),
@@ -165,7 +174,7 @@ def read_projection(project_id: str, limit: int | None = None) -> dict[str, Any]
                 cur,
                 f"""
                 MATCH (n:Resource {{project_id: $projectId}})
-                RETURN {{ id: n.id, label: n.label, mention_count: n.mention_count,
+                RETURN {{ id: n.id, label: n.label, kind: n.kind, mention_count: n.mention_count,
                           last_mentioned_at: n.last_mentioned_at, properties: n.properties,
                           conversation_id: n.conversation_id, card_id: n.card_id,
                           correlation_id: n.correlation_id }} AS row

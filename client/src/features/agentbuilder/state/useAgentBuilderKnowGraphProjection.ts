@@ -22,8 +22,20 @@ function toProjection(
   projectId: string,
   payload: { nodes?: KnowGraphNodeDto[]; relationships?: KnowGraphRelationshipDto[] },
 ): GraphProjectionV1 {
-  const nodes = Array.isArray(payload.nodes) ? payload.nodes : [];
-  const relationships = Array.isArray(payload.relationships) ? payload.relationships : [];
+  const allNodes = Array.isArray(payload.nodes) ? payload.nodes : [];
+  const allRels = Array.isArray(payload.relationships) ? payload.relationships : [];
+  // Layered trusted default view: hide raw Chunk nodes and untrusted anchor pipe-test
+  // records so the graph shows genuine Concepts/Claims + precise relationships instead of a
+  // chunk hairball. Nothing is deleted — evidence/chunks stay in Neo4j, expandable later.
+  const isTrusted = (p?: Record<string, unknown>): boolean => {
+    if (!p) return true;
+    if (p.trusted === false || p.trusted === 'false') return false;
+    if (p.extraction_mode === 'anchor_pipe_test') return false;
+    return true;
+  };
+  const nodes = allNodes.filter((n) => n.type !== 'Chunk' && isTrusted(n.properties));
+  const keptIds = new Set(nodes.map((n) => n.id));
+  const relationships = allRels.filter((r) => keptIds.has(r.from) && keptIds.has(r.to));
   // Mechanical degree count drives bubble size — a real returned integer,
   // same contract mentionCount carries for ThinkGraph.
   const degree = new Map<string, number>();
@@ -90,7 +102,11 @@ export default function useAgentBuilderKnowGraphProjection({
   const lastJsonRef = useRef<string | null>(null);
   useEffect(() => {
     if (workspaceView !== 'knowledge' || knowledgeGraphKind !== 'knowgraph') return;
-    const projectId = activeProject;
+    // Optional explicit KnowGraph scope override (?kgScope=…) lets the view open ANY real
+    // KnowGraph scope directly (e.g. an imported book under its own canonical scope) without
+    // moving data. Defaults to the selected LiquidAIty project.
+    const scopeOverride = new URLSearchParams(window.location.search).get('kgScope');
+    const projectId = (scopeOverride && scopeOverride.trim()) || activeProject;
     if (!projectId) {
       lastJsonRef.current = null;
       setState({ status: 'idle', projection: null, error: null });

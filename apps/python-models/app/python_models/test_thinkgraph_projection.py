@@ -42,9 +42,25 @@ def test_schema_and_project_id():
     assert projection["projectId"] == "proj-1"
 
 
-def test_no_lifecycle_kind_or_class_vocabulary_anywhere():
-    projection = build()
-    for banned in ("kind", "tag", "activeFrame", "frame", "presentation", "visual", "nodeClass", "edgeClass", "directed"):
+def test_stored_kind_surfaces_as_type_and_labels_only_when_present():
+    # Product decision 2026-07-14 (overrides earlier nouns-and-verbs-only stance):
+    # a resource's stored `kind` is surfaced as the shared-projection `type`
+    # (+ `labels`) so the renderer can color/label by type. Stored data only —
+    # never invented, and omitted entirely when a node has no stored kind.
+    projection = assemble_projection(
+        "p",
+        [
+            {"id": "g1", "label": "Reach the ADMIN goal", "kind": "Goal"},
+            {"id": "n2", "label": "No kind on this one"},
+        ],
+        [],
+    )
+    by_id = {n["id"]: n for n in projection["nodes"]}
+    assert by_id["g1"]["type"] == "Goal"
+    assert by_id["g1"]["labels"] == ["Goal"]
+    assert "type" not in by_id["n2"] and "labels" not in by_id["n2"]
+    # Still nothing invented beyond the stored kind.
+    for banned in ("tag", "activeFrame", "frame", "lifecycle", "presentation", "nodeClass", "edgeClass"):
         assert banned not in json_keys(projection)
 
 

@@ -153,6 +153,27 @@ async function resolveKnowGraphProjectScopeIds(projectId: string): Promise<strin
     console.warn('[KNOWGRAPH][SCOPE] project alias resolution failed:', error?.message || error);
   }
 
+  // Attached knowledge scopes (project-context): a selected LiquidAIty project may ATTACH
+  // additional KnowGraph scopes (e.g. an imported book kept under its own canonical scope)
+  // WITHOUT moving or copying any records. This is the ATTACHES_KNOWLEDGE_SCOPE contract.
+  try {
+    await pool.query(
+      `CREATE TABLE IF NOT EXISTS liq_core.knowgraph_scope_attachment (
+         project_id text NOT NULL, scope text NOT NULL, label text,
+         attached_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (project_id, scope))`,
+    );
+    const attach = await pool.query(
+      `SELECT scope FROM liq_core.knowgraph_scope_attachment WHERE project_id = ANY($1::text[])`,
+      [Array.from(scopeIds)],
+    );
+    for (const r of attach.rows as Array<{ scope?: string }>) {
+      const v = String(r.scope || '').trim();
+      if (v) scopeIds.add(v);
+    }
+  } catch (error: any) {
+    console.warn('[KNOWGRAPH][SCOPE] attachment resolution failed:', error?.message || error);
+  }
+
   return Array.from(scopeIds);
 }
 
@@ -164,6 +185,51 @@ async function resolveKnowGraphProjectScopeIds(projectId: string): Promise<strin
 const SKILL_GRAPH_LABELS = ['Skill', 'SkillAttempt', 'FailedAttempt', 'Decision', 'Guardrail', 'QueryPattern', 'SkillSection'] as const;
 function notSkillNode(varName: string): string {
   return `NOT (${SKILL_GRAPH_LABELS.map((label) => `${varName}:${label}`).join(' OR ')})`;
+}
+
+function _neoInt(v: any): number {
+  return Number(v?.toNumber?.() ?? v ?? 0);
+}
+
+// List the distinct KnowGraph scopes (project_id values) present in Neo4j, with a
+// human label + counts, so the UI can open ANY real KnowGraph scope directly — e.g.
+// an imported book under its own canonical scope — without moving or re-keying data.
+export async function listKnowGraphScopes(): Promise<
+  Array<{ scope: string; label: string; nodes: number; concepts: number; documents: number }>
+> {
+  const uri = String(process.env.NEO4J_URI || '').trim();
+  const user = String(process.env.NEO4J_USER || '').trim();
+  const password = String(process.env.NEO4J_PASSWORD || '').trim();
+  if (!uri || !user || !password) throw new Error('NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD are required');
+  const neo4jModule: any = await import('neo4j-driver');
+  const neo4j: any = neo4jModule?.default ?? neo4jModule;
+  const driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
+  const database = String(process.env.NEO4J_DATABASE || '').trim();
+  const session = driver.session(database ? { database } : undefined);
+  try {
+    const r = await session.run(
+      `
+        MATCH (n) WHERE n.project_id IS NOT NULL AND ${notSkillNode('n')}
+        WITH toString(n.project_id) AS scope, collect(n) AS ns
+        RETURN scope,
+          size(ns) AS nodes,
+          size([x IN ns WHERE 'Concept' IN labels(x)]) AS concepts,
+          size([x IN ns WHERE 'Document' IN labels(x)]) AS documents,
+          head([x IN ns WHERE 'Document' IN labels(x) | coalesce(x.source_name, x.document_id)]) AS label
+        ORDER BY nodes DESC
+      `,
+    );
+    return r.records.map((rec: any) => ({
+      scope: String(rec.get('scope')),
+      label: String(rec.get('label') || rec.get('scope')),
+      nodes: _neoInt(rec.get('nodes')),
+      concepts: _neoInt(rec.get('concepts')),
+      documents: _neoInt(rec.get('documents')),
+    }));
+  } finally {
+    await session.close();
+    await driver.close();
+  }
 }
 
 export async function queryKnowGraphProject(projectId: string): Promise<{
@@ -487,6 +553,60 @@ router.get('/graph', async (req, res) => {
   } catch (error: any) {
     const message = error?.message || 'Failed to fetch KnowGraph graph';
     return res.status(500).json({ ok: false, error: { message } });
+  }
+});
+
+// List available KnowGraph scopes so the UI can open any real scope directly
+// (the book graph keeps its canonical scope; nothing is moved or re-keyed).
+router.get('/scopes', async (_req, res) => {
+  try {
+    return res.json({ ok: true, scopes: await listKnowGraphScopes() });
+  } catch (error: any) {
+    return res.status(500).json({ ok: false, error: { message: error?.message || 'Failed to list KnowGraph scopes' } });
+  }
+});
+
+// Project-context: attach / list KnowGraph scopes for a selected LiquidAIty project.
+// No records are moved — the project simply references the scope so its KnowGraph view
+// can include it. resolveKnowGraphProjectScopeIds reads these attachments.
+router.get('/scope-attachment', async (req, res) => {
+  try {
+    const projectId = String(req.query?.projectId || '').trim();
+    if (!projectId) return res.status(400).json({ ok: false, error: { message: 'projectId required' } });
+    await pool.query(
+      `CREATE TABLE IF NOT EXISTS liq_core.knowgraph_scope_attachment (
+         project_id text NOT NULL, scope text NOT NULL, label text,
+         attached_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (project_id, scope))`,
+    );
+    const r = await pool.query(
+      `SELECT scope, label FROM liq_core.knowgraph_scope_attachment WHERE project_id = $1 ORDER BY attached_at`,
+      [projectId],
+    );
+    return res.json({ ok: true, projectId, attachments: r.rows });
+  } catch (error: any) {
+    return res.status(500).json({ ok: false, error: { message: error?.message || 'scope attachment read failed' } });
+  }
+});
+
+router.post('/scope-attachment', async (req, res) => {
+  try {
+    const projectId = String(req.body?.projectId || '').trim();
+    const scope = String(req.body?.scope || '').trim();
+    const label = String(req.body?.label || '').trim() || null;
+    if (!projectId || !scope) return res.status(400).json({ ok: false, error: { message: 'projectId and scope required' } });
+    await pool.query(
+      `CREATE TABLE IF NOT EXISTS liq_core.knowgraph_scope_attachment (
+         project_id text NOT NULL, scope text NOT NULL, label text,
+         attached_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (project_id, scope))`,
+    );
+    await pool.query(
+      `INSERT INTO liq_core.knowgraph_scope_attachment (project_id, scope, label) VALUES ($1, $2, $3)
+       ON CONFLICT (project_id, scope) DO UPDATE SET label = EXCLUDED.label`,
+      [projectId, scope, label],
+    );
+    return res.json({ ok: true, projectId, scope, label });
+  } catch (error: any) {
+    return res.status(500).json({ ok: false, error: { message: error?.message || 'scope attachment write failed' } });
   }
 });
 
