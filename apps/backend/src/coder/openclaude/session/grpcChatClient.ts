@@ -176,7 +176,8 @@ function parseSessionId(sessionId: string): { projectId: string; conversationId:
  * runtime's own MCP naming for the 'liquidaity' Python host (dots→underscores).
  * A fixed identity constant, not a mapping. */
 const CARD_RUN_CONTROL_TOOL = 'mcp__liquidaity__card_run_assistant_agent';
-const HARNESS_TURN_TIMEOUT_MS = 120_000;
+// Default 120s; a dev/integration run may RAISE it via env (never lower it).
+const HARNESS_TURN_TIMEOUT_MS = Math.max(120_000, Number(process.env.LIQUIDAITY_HARNESS_TURN_TIMEOUT_MS) || 0);
 
 export function resolveHarnessTimeoutDeadline(
   currentDeadlineMs: number,

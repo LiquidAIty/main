@@ -2,68 +2,17 @@
 
 from __future__ import annotations
 
+# EXTRACTION SCHEMA = SEMANTIC DOMAIN ENTITIES ONLY (2026-07-15 baseline law).
+# Structural/provenance records (Document, Chunk, Chapter, Section) are owned by the
+# upstream lexical pipeline or a later deterministic provenance stage — NEVER the
+# extraction model. Assertions (Claim / SourceBackedAssertion / KnowledgeAssertion) are
+# owned by the chunk-grounded enrichment writer (enrich_chunks.py), which alone sets
+# canonical identity, trust, and status. Exposing any of them here makes the extraction
+# LLM fabricate them from source text (proven twice on 2026-07-15: an LLM-invented
+# Chapter{proj-001,doc-001,1} hit the knowgraph_chapter_identity constraint and rolled
+# back an entire ingest; a later run fabricated 12 Document and 11 Chunk entities,
+# including doc-001 and ids copied from the research-focus prompt).
 NODE_TYPES: list[dict[str, object]] = [
-    {
-        "label": "Document",
-        "description": "An ingested source document.",
-        "properties": [{"name": "document_id", "type": "STRING"}],
-        "additional_properties": True,
-    },
-    {
-        "label": "Chunk",
-        "description": "A text chunk from a document.",
-        "properties": [{"name": "chunk_id", "type": "STRING"}],
-        "additional_properties": True,
-    },
-    {
-        "label": "Chapter",
-        "description": "A source chapter, ordered within one document.",
-        "properties": [
-            {"name": "project_id", "type": "STRING"},
-            {"name": "document_id", "type": "STRING"},
-            {"name": "ordinal", "type": "INTEGER"},
-        ],
-        "additional_properties": True,
-    },
-    {
-        "label": "Section",
-        "description": "A source section, ordered within one document chapter.",
-        "properties": [
-            {"name": "project_id", "type": "STRING"},
-            {"name": "document_id", "type": "STRING"},
-            {"name": "ordinal", "type": "INTEGER"},
-        ],
-        "additional_properties": True,
-    },
-    {
-        "label": "Claim",
-        "description": "A source-grounded claim extracted from one or more chunks.",
-        "properties": [
-            {"name": "claim_id", "type": "STRING"},
-            {"name": "text", "type": "STRING"},
-        ],
-        "additional_properties": True,
-    },
-    {
-        "label": "SourceBackedAssertion",
-        "description": "A source-backed assertion domain subtype retained for non-Claim producers.",
-        "properties": [
-            {"name": "assertion_id", "type": "STRING"},
-            {"name": "text", "type": "STRING"},
-        ],
-        "additional_properties": True,
-    },
-    {
-        "label": "KnowledgeAssertion",
-        "description": "Shared retrieval contract for trusted, source-grounded assertions.",
-        "properties": [
-            {"name": "assertion_id", "type": "STRING"},
-            {"name": "text", "type": "STRING"},
-            {"name": "project_id", "type": "STRING"},
-            {"name": "assertion_kind", "type": "STRING"},
-        ],
-        "additional_properties": True,
-    },
     {
         "label": "Concept",
         "description": "A domain concept or idea.",
@@ -103,10 +52,9 @@ NODE_TYPES: list[dict[str, object]] = [
 ]
 
 RELATIONSHIP_TYPES: list[dict[str, object]] = [
-    {"label": "HAS_CHAPTER", "description": "Document to ordered chapter containment."},
-    {"label": "HAS_SECTION", "description": "Chapter to ordered section containment."},
-    {"label": "HAS_CHUNK", "description": "Document to chunk containment."},
-    {"label": "MENTIONS", "description": "Chunk-to-entity provenance mention."},
+    # Structural/lexical relationships (HAS_CHUNK, MENTIONS, HAS_CHAPTER, HAS_SECTION)
+    # are owned by the lexical pipeline config and deterministic writers — see the
+    # NODE_TYPES note. Only SEMANTIC relationship types belong here.
     {"label": "RELATED_TO", "description": "General semantic association."},
     {"label": "USES", "description": "Dependency or usage relationship."},
     {"label": "PART_OF", "description": "Part-whole relationship."},
@@ -136,19 +84,6 @@ RELATIONSHIP_TYPES: list[dict[str, object]] = [
 ]
 
 PATTERNS: list[tuple[str, str, str]] = [
-    ("Document", "HAS_CHAPTER", "Chapter"),
-    ("Chapter", "HAS_SECTION", "Section"),
-    ("Section", "HAS_CHUNK", "Chunk"),
-    ("Document", "HAS_CHUNK", "Chunk"),
-    ("Chunk", "MENTIONS", "Concept"),
-    ("Chunk", "MENTIONS", "Person"),
-    ("Chunk", "MENTIONS", "Organization"),
-    ("Chunk", "MENTIONS", "Technology"),
-    ("Chunk", "MENTIONS", "Material"),
-    ("Chunk", "MENTIONS", "Process"),
-    ("Chunk", "MENTIONS", "Claim"),
-    ("Chunk", "MENTIONS", "SourceBackedAssertion"),
-    ("Chunk", "MENTIONS", "KnowledgeAssertion"),
     ("Technology", "USES", "Material"),
     ("Process", "USES", "Technology"),
     ("Process", "PART_OF", "Process"),

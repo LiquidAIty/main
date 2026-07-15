@@ -250,38 +250,6 @@ def _serialize_metadata_json(value: Any) -> str | None:
         return str(normalized)
 
 
-def _metadata_source_position(metadata: Any) -> tuple[str | None, int | None, str | None, int | None, str | None]:
-    """Read source structure only when the caller supplied it; never infer chapters."""
-    normalized = _normalize_optional_json_value(metadata)
-    if not isinstance(normalized, dict):
-        return None, None, None, None, None
-
-    def text_value(name: str) -> str | None:
-        value = normalized.get(name)
-        if value is None:
-            return None
-        cleaned = str(value).strip()
-        return cleaned or None
-
-    def ordinal_value(name: str) -> int | None:
-        value = normalized.get(name)
-        if isinstance(value, bool) or value is None:
-            return None
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            return None
-        return parsed if parsed >= 0 else None
-
-    return (
-        text_value("chapter"),
-        ordinal_value("chapter_ordinal"),
-        text_value("section"),
-        ordinal_value("section_ordinal"),
-        text_value("pages"),
-    )
-
-
 def _dedupe_strings(values: list[str]) -> tuple[str, ...]:
     deduped: list[str] = []
     seen: set[str] = set()
@@ -566,277 +534,73 @@ def _resolve_runtime_model_config(
     raise RuntimeError(f"Unsupported provider: {provider}")
 
 
-def _merge_ingested_graph(
-    driver: Driver,
-    *,
-    database: str | None,
-    project_id: str,
-    document_id: str,
-    source_path: str,
-    source_name: str,
-    source_type: str,
-    source_url: str | None = None,
-    fetched_at: str | None = None,
-    snippet: str | None = None,
-    metadata_json: str | None = None,
-    graph_metadata: GraphMetadata | None = None,
-    chapter: str | None = None,
-    chapter_ordinal: int | None = None,
-    section: str | None = None,
-    section_ordinal: int | None = None,
-    pages: str | None = None,
-    extraction_run: str | None = None,
-) -> None:
-    merge_cypher = """
-    MERGE (doc:Document {project_id: $project_id, document_id: $document_id})
-    ON CREATE SET doc.created_at = datetime()
-    SET doc.path = $source_path,
-        doc.source_name = $source_name,
-        doc.source_type = $source_type,
-        doc.source_url = coalesce($source_url, doc.source_url),
-        doc.fetched_at = coalesce($fetched_at, doc.fetched_at),
-        doc.snippet = coalesce($snippet, doc.snippet),
-        doc.metadata_json = coalesce($metadata_json, doc.metadata_json),
-        doc.ingested_at = datetime(),
-        doc.project_id = $project_id,
-        doc.document_id = $document_id
-    WITH doc
-    MATCH (raw_doc:Document {project_id: $project_id, document_id: $document_id})
-    MATCH (raw_chunk:Chunk)-[:HAS_CHUNK]->(raw_doc)
-    WITH doc, raw_chunk, coalesce(raw_chunk.chunk_id, raw_chunk.id) AS chunk_key
-    WHERE chunk_key IS NOT NULL
-    MERGE (chunk:Chunk {project_id: $project_id, document_id: $document_id, chunk_id: chunk_key})
-    SET chunk.text = coalesce(raw_chunk.text, chunk.text),
-        chunk.chunk_index = coalesce(raw_chunk.chunk_index, raw_chunk.index, chunk.chunk_index),
-        chunk.start_char = coalesce(raw_chunk.start_char, chunk.start_char),
-        chunk.end_char = coalesce(raw_chunk.end_char, chunk.end_char),
-        chunk.text_hash = coalesce(raw_chunk.text_hash, chunk.text_hash),
-        chunk.embedding = coalesce(raw_chunk.embedding, chunk.embedding),
-        chunk.source_name = $source_name,
-        chunk.source_type = $source_type,
-        chunk.source_url = coalesce($source_url, chunk.source_url),
-        chunk.fetched_at = coalesce($fetched_at, chunk.fetched_at),
-        chunk.metadata_json = coalesce($metadata_json, chunk.metadata_json),
-        chunk.project_id = $project_id,
-        chunk.document_id = $document_id
-    MERGE (doc)-[:HAS_CHUNK]->(chunk)
-    FOREACH (_ IN CASE WHEN $chapter_ordinal IS NOT NULL AND $section_ordinal IS NOT NULL THEN [1] ELSE [] END |
-        MERGE (chapter:Chapter {
-            project_id: $project_id,
-            document_id: $document_id,
-            ordinal: $chapter_ordinal
-        })
-        ON CREATE SET chapter.created_at = datetime()
-        SET chapter.title = $chapter
-        MERGE (doc)-[:HAS_CHAPTER]->(chapter)
-        MERGE (section:Section {
-            project_id: $project_id,
-            document_id: $document_id,
-            ordinal: $section_ordinal
-        })
-        ON CREATE SET section.created_at = datetime()
-        SET section.title = $section,
-            section.chapter_ordinal = $chapter_ordinal
-        MERGE (chapter)-[:HAS_SECTION]->(section)
-        MERGE (section)-[:HAS_CHUNK]->(chunk)
-        SET chunk.chapter = $chapter,
-            chunk.chapter_ordinal = $chapter_ordinal,
-            chunk.section = $section,
-            chunk.section_ordinal = $section_ordinal,
-            chunk.pages = $pages
-    )
-    """
-    driver.execute_query(
-        merge_cypher,
-        project_id=project_id,
-        document_id=document_id,
-        source_path=source_path,
-        source_name=source_name,
-        source_type=source_type,
-        source_url=source_url,
-        fetched_at=fetched_at,
-        snippet=snippet,
-        metadata_json=metadata_json,
-        chapter=chapter,
-        chapter_ordinal=chapter_ordinal,
-        section=section,
-        section_ordinal=section_ordinal,
-        pages=pages,
-        database_=database,
-    )
-
-    provenance_cypher = """
-    MATCH (raw_doc:Document {project_id: $project_id, document_id: $document_id})
-    MATCH (raw_chunk:Chunk)-[:HAS_CHUNK]->(raw_doc)
-    WITH raw_chunk, coalesce(raw_chunk.chunk_id, raw_chunk.id) AS chunk_key
-    WHERE chunk_key IS NOT NULL
-    MATCH (chunk:Chunk {project_id: $project_id, document_id: $document_id, chunk_id: chunk_key})
-    MATCH (entity)-[:MENTIONS]->(raw_chunk)
-    WHERE NOT entity:Chunk AND NOT entity:Document
-    SET entity.project_id = $project_id,
-        entity.document_id = $document_id,
-        entity.source_name = $source_name,
-        entity.source_type = $source_type,
-        entity.source_url = coalesce($source_url, entity.source_url),
-        entity.fetched_at = coalesce($fetched_at, entity.fetched_at)
-    MERGE (chunk)-[m:MENTIONS]->(entity)
-    SET m.project_id = $project_id,
-        m.document_id = $document_id,
-        m.chunk_id = chunk.chunk_id,
-        m.source_name = $source_name,
-        m.source_type = $source_type,
-        m.source_url = coalesce($source_url, m.source_url),
-        m.fetched_at = coalesce($fetched_at, m.fetched_at)
-    """
-    driver.execute_query(
-        provenance_cypher,
-        project_id=project_id,
-        document_id=document_id,
-        source_name=source_name,
-        source_type=source_type,
-        source_url=source_url,
-        fetched_at=fetched_at,
-        database_=database,
-    )
-
-    relationship_provenance_cypher = """
-    MATCH (chunk:Chunk {project_id: $project_id, document_id: $document_id})-[:MENTIONS]->(entity)
-    MATCH (entity)-[rel]->(target)
-    WHERE type(rel) <> 'MENTIONS'
-      AND NOT target:Chunk
-      AND NOT target:Document
-    SET rel.project_id = $project_id,
-        rel.document_id = $document_id,
-        rel.source_name = $source_name,
-        rel.source_type = $source_type,
-        rel.source_url = coalesce($source_url, rel.source_url),
-        rel.fetched_at = coalesce($fetched_at, rel.fetched_at)
-    """
-    driver.execute_query(
-        relationship_provenance_cypher,
-        project_id=project_id,
-        document_id=document_id,
-        source_name=source_name,
-        source_type=source_type,
-        source_url=source_url,
-        fetched_at=fetched_at,
-        database_=database,
-    )
-
-    driver.execute_query(
+def _count_committed_document(
+    driver: Driver, database: str | None, project_id: str, document_id: str
+) -> dict[str, int]:
+    """Count the COMMITTED native lexical graph for one document identity."""
+    result = driver.execute_query(
         """
-        MATCH (chunk:Chunk {project_id: $project_id, document_id: $document_id})
-              -[:MENTIONS]->(assertion)
-        WHERE (assertion:Claim OR assertion:SourceBackedAssertion)
-          AND coalesce(assertion.assertion_id, assertion.claim_id) IS NOT NULL
-          AND assertion.text IS NOT NULL
-        WITH assertion, collect(DISTINCT chunk.chunk_id) AS chunk_refs
-        SET assertion:KnowledgeAssertion,
-            assertion.assertion_id = coalesce(assertion.assertion_id, assertion.claim_id),
-            assertion.assertion_kind = CASE
-                WHEN assertion:Claim THEN 'claim'
-                ELSE 'source_backed_assertion'
-            END,
-            assertion.project_id = $project_id,
-            assertion.document_id = $document_id,
-            assertion.chapter = $chapter,
-            assertion.section = $section,
-            assertion.pages = coalesce(assertion.pages, $pages),
-            assertion.chunk_refs = chunk_refs,
-            assertion.trusted = true,
-            assertion.status = 'active',
-            assertion.created_at = coalesce(assertion.created_at, datetime()),
-            assertion.extraction_run = $extraction_run
+        MATCH (d:Document {project_id: $project_id, document_id: $document_id})
+        WITH count(d) AS documents
+        OPTIONAL MATCH (c:Chunk {project_id: $project_id, document_id: $document_id})
+        RETURN documents, count(c) AS chunks,
+               sum(CASE WHEN c.embedding IS NOT NULL THEN 1 ELSE 0 END) AS embedded_chunks
         """,
         project_id=project_id,
         document_id=document_id,
-        chapter=chapter,
-        section=section,
-        pages=pages,
-        extraction_run=extraction_run,
         database_=database,
     )
+    records = getattr(result, "records", None) or []
+    return {
+        "documents": int(records[0]["documents"]) if records else 0,
+        "chunks": int(records[0]["chunks"]) if records else 0,
+        "embedded_chunks": int(records[0]["embedded_chunks"] or 0) if records else 0,
+    }
 
-    if not graph_metadata or not graph_metadata.entity:
-        return
 
-    semantic_metadata_cypher = """
-    MATCH (doc:Document {project_id: $project_id, document_id: $document_id})
-    SET doc.graph_entity = $graph_entity,
-        doc.graph_role = $graph_role,
-        doc.graph_relates_to = $graph_relates_to,
-        doc.graph_depends_on = $graph_depends_on,
-        doc.graph_feeds_to = $graph_feeds_to
-    MERGE (entity:Entity {project_id: $project_id, name: $graph_entity})
-    ON CREATE SET entity.created_at = datetime()
-    SET entity.role = coalesce($graph_role, entity.role),
-        entity.source_path = $source_path,
-        entity.updated_at = datetime()
-    MERGE (doc)-[doc_rel:RELATES_TO]->(entity)
-    SET doc_rel.project_id = $project_id,
-        doc_rel.document_id = $document_id,
-        doc_rel.source_name = $source_name,
-        doc_rel.source_type = $source_type,
-        doc_rel.source_url = coalesce($source_url, doc_rel.source_url),
-        doc_rel.fetched_at = coalesce($fetched_at, doc_rel.fetched_at),
-        doc_rel.graph_anchor = 'entity',
-        doc_rel.updated_at = datetime()
-    FOREACH (dependency_name IN $graph_depends_on |
-        MERGE (dependency:Entity {project_id: $project_id, name: dependency_name})
-        ON CREATE SET dependency.created_at = datetime()
-        SET dependency.updated_at = datetime()
-        MERGE (entity)-[depends_rel:DEPENDS_ON]->(dependency)
-        SET depends_rel.project_id = $project_id,
-            depends_rel.document_id = $document_id,
-            depends_rel.source_name = $source_name,
-            depends_rel.source_type = $source_type,
-            depends_rel.source_url = coalesce($source_url, depends_rel.source_url),
-            depends_rel.fetched_at = coalesce($fetched_at, depends_rel.fetched_at),
-            depends_rel.updated_at = datetime()
-    )
-    FOREACH (related_entity_name IN $graph_relates_to |
-        MERGE (related:Entity {project_id: $project_id, name: related_entity_name})
-        ON CREATE SET related.created_at = datetime()
-        SET related.updated_at = datetime()
-        MERGE (entity)-[related_rel:RELATES_TO]->(related)
-        SET related_rel.project_id = $project_id,
-            related_rel.document_id = $document_id,
-            related_rel.source_name = $source_name,
-            related_rel.source_type = $source_type,
-            related_rel.source_url = coalesce($source_url, related_rel.source_url),
-            related_rel.fetched_at = coalesce($fetched_at, related_rel.fetched_at),
-            related_rel.updated_at = datetime()
-    )
-    FOREACH (fed_entity_name IN $graph_feeds_to |
-        MERGE (fed:Entity {project_id: $project_id, name: fed_entity_name})
-        ON CREATE SET fed.created_at = datetime()
-        SET fed.updated_at = datetime()
-        MERGE (entity)-[feeds_rel:FEEDS_TO]->(fed)
-        SET feeds_rel.project_id = $project_id,
-            feeds_rel.document_id = $document_id,
-            feeds_rel.source_name = $source_name,
-            feeds_rel.source_type = $source_type,
-            feeds_rel.source_url = coalesce($source_url, feeds_rel.source_url),
-            feeds_rel.fetched_at = coalesce($fetched_at, feeds_rel.fetched_at),
-            feeds_rel.updated_at = datetime()
-    )
+def _existing_document_counts(project_id: str, document_id: str) -> dict[str, int] | None:
+    """Repeat-ingest semantics: committed counts when this document already exists.
+
+    Runs BEFORE any pipeline/model-client construction so a repeat ingest costs no
+    extraction and no embedding spend. Uses its own short-lived driver.
     """
-    driver.execute_query(
-        semantic_metadata_cypher,
-        project_id=project_id,
-        document_id=document_id,
-        source_path=source_path,
-        source_name=source_name,
-        source_type=source_type,
-        source_url=source_url,
-        fetched_at=fetched_at,
-        graph_entity=graph_metadata.entity,
-        graph_role=graph_metadata.role,
-        graph_relates_to=list(graph_metadata.relates_to),
-        graph_depends_on=list(graph_metadata.depends_on),
-        graph_feeds_to=list(graph_metadata.feeds_to),
-        database_=database,
+    driver = GraphDatabase.driver(
+        _required_env("NEO4J_URI"),
+        auth=(_required_env("NEO4J_USER"), _required_env("NEO4J_PASSWORD")),
     )
+    try:
+        counts = _count_committed_document(
+            driver, os.getenv("NEO4J_DATABASE") or None, project_id, document_id
+        )
+    finally:
+        driver.close()
+    return counts if counts["documents"] > 0 and counts["chunks"] > 0 else None
+
+
+def _verify_native_ingest(
+    driver: Driver,
+    database: str | None,
+    project_id: str,
+    document_id: str,
+    run_id: str,
+) -> dict[str, int]:
+    """Verify the upstream pipeline actually COMMITTED graph output (baseline law).
+
+    The upstream kg_writer catches Neo4j ClientError and returns
+    KGWriterModel(status="FAILURE") instead of raising, so a run_id alone is NEVER
+    success. Identity rides the library's own native mechanisms: document_metadata
+    becomes Document properties; the deterministic splitter's chunk metadata becomes
+    Chunk properties (project_id, document_id, chunk_id). No re-keying, no copies.
+    """
+    counts = _count_committed_document(driver, database, project_id, document_id)
+    if counts["documents"] == 0 or counts["chunks"] == 0:
+        raise RuntimeError(
+            f"ingest_write_not_committed: document {document_id} (run {run_id}) finished "
+            f"with documents={counts['documents']} chunks={counts['chunks']} - the upstream "
+            "writer failed or rolled back (it reports FAILURE without raising); refusing to "
+            "report success over an empty graph"
+        )
+    return counts
 
 
 def _create_runtime_pipeline(
@@ -948,37 +712,6 @@ def _build_document_metadata(**fields: str | None) -> dict[str, str]:
     return {key: value for key, value in fields.items() if value is not None}
 
 
-def _delete_prior_document(
-    driver: Driver, database: str | None, project_id: str, document_id: str
-) -> int:
-    """Idempotent upsert: remove any prior version of this document before re-ingesting.
-
-    The neo4j_graphrag lexical builder creates a fresh Document (and Chunk) node on
-    every run and nothing enforces uniqueness on (project_id, document_id), so repeat
-    ingestion would otherwise duplicate the Document/Chunk lexical graph. Delete the
-    existing Document + its Chunks (and their relationships) first; shared Concept
-    entities are preserved — they merge via entity resolution and are re-linked to the
-    new chunks. Returns the number of nodes removed.
-    """
-    _records, summary, _keys = driver.execute_query(
-        """
-        MATCH (d:Document {project_id: $project_id, document_id: $document_id})
-        OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)
-        OPTIONAL MATCH (a:KnowledgeAssertion {project_id: $project_id, document_id: $document_id})
-        OPTIONAL MATCH (chapter:Chapter {project_id: $project_id, document_id: $document_id})
-        OPTIONAL MATCH (section:Section {project_id: $project_id, document_id: $document_id})
-        WITH collect(DISTINCT d) + collect(DISTINCT c) + collect(DISTINCT a)
-             + collect(DISTINCT chapter) + collect(DISTINCT section) AS nodes
-        UNWIND nodes AS n
-        DETACH DELETE n
-        """,
-        project_id=project_id,
-        document_id=document_id,
-        database_=database,
-    )
-    return summary.counters.nodes_deleted
-
-
 async def ingest_pdf(
     file_path: str,
     project_id: str,
@@ -1014,7 +747,6 @@ async def ingest_pdf(
         prompt_template=prompt_template,
     )
     try:
-        _delete_prior_document(driver, neo4j_database, project_id, document_id)
         result = await pipeline.run_async(
             file_path=str(source),
             document_metadata=_build_document_metadata(
@@ -1022,17 +754,11 @@ async def ingest_pdf(
                 document_id=document_id,
                 source_path=str(source.resolve()),
                 source_name=source.name,
+                source_type="pdf_upload",
             ),
         )
-
-        _merge_ingested_graph(
-            driver,
-            database=neo4j_database,
-            project_id=project_id,
-            document_id=document_id,
-            source_path=str(source.resolve()),
-            source_name=source.name,
-            source_type="pdf_upload",
+        counts = _verify_native_ingest(
+            driver, neo4j_database, project_id, document_id, result.run_id
         )
         ensure_vector_index(
             driver,
@@ -1048,6 +774,7 @@ async def ingest_pdf(
             "model_key": runtime.model_key,
             "model": runtime.model_id,
             "agent_id": agent_id,
+            **counts,
         }
     finally:
         driver.close()
@@ -1109,10 +836,8 @@ async def ingest_text_document(
         metadata=metadata,
     )
     metadata_json = _serialize_metadata_json(metadata)
-    chapter, chapter_ordinal, section, section_ordinal, pages = _metadata_source_position(metadata)
 
     try:
-        _delete_prior_document(driver, neo4j_database, project_id, document_id)
         result = await pipeline.run_async(
             text=normalized_text,
             document_metadata=_build_document_metadata(
@@ -1128,25 +853,8 @@ async def ingest_text_document(
             ),
         )
 
-        _merge_ingested_graph(
-            driver,
-            database=neo4j_database,
-            project_id=project_id,
-            document_id=document_id,
-            source_path=source_path,
-            source_name=source_name,
-            source_type=source_type,
-            source_url=source_url,
-            fetched_at=fetched_at,
-            snippet=snippet,
-            metadata_json=metadata_json,
-            graph_metadata=graph_metadata,
-            chapter=chapter,
-            chapter_ordinal=chapter_ordinal,
-            section=section,
-            section_ordinal=section_ordinal,
-            pages=pages,
-            extraction_run=result.run_id,
+        counts = _verify_native_ingest(
+            driver, neo4j_database, project_id, document_id, result.run_id
         )
         ensure_vector_index(
             driver,
@@ -1165,6 +873,7 @@ async def ingest_text_document(
             "agent_id": agent_id,
             "source_url": source_url,
             "source_name": source_name,
+            **counts,
             "graph_metadata": (
                 {
                     "entity": graph_metadata.entity,
