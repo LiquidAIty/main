@@ -805,6 +805,24 @@ async def ingest_text_document(
     normalized_text = text.strip()
     if not normalized_text:
         raise ValueError("text is required")
+    # Repeat-ingest semantics: an already-committed document short-circuits BEFORE any
+    # pipeline/model-client construction — no extraction, no embedding, no spend.
+    existing = _existing_document_counts(project_id, document_id)
+    if existing:
+        return {
+            "status": "already_ingested",
+            "run_id": None,
+            "project_id": project_id,
+            "document_id": document_id,
+            "provider": None,
+            "model_key": None,
+            "model": None,
+            "agent_id": agent_id,
+            "source_url": source_url,
+            "source_name": (title or source_url or f"{document_id}.txt").strip() or f"{document_id}.txt",
+            **existing,
+            "graph_metadata": None,
+        }
     graph_metadata: GraphMetadata | None = None
     if source_type == "code_file":
         graph_metadata, stripped_text = _parse_graph_metadata(normalized_text)
@@ -864,6 +882,7 @@ async def ingest_text_document(
         ensure_knowledge_assertion_fulltext_index(driver, neo4j_database)
 
         return {
+            "status": "ingested",
             "run_id": result.run_id,
             "project_id": project_id,
             "document_id": document_id,
