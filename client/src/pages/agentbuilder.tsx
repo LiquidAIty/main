@@ -56,7 +56,6 @@ import {
   graphGlassPillStyle,
 } from '../components/graph/graphVisualTokens';
 import RightGlassDrawer from '../components/graph/RightGlassDrawer';
-import type { GraphView } from '../components/knowledge/graphView';
 import type { UnifiedProjectionIdentity } from '../components/knowledge/UnifiedGraphSurface';
 // Decomposed Agent Builder modules (2026-07-08): the page is composition only;
 // deck primitives/seed/document logic and rail derivation live in the feature.
@@ -508,36 +507,9 @@ export default function AgentBuilder(): React.ReactElement {
   const handleProjectionChange = useCallback((next: UnifiedProjectionIdentity | null) => {
     setActiveProjection((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
   }, []);
-  const [runtimeGraphViews, setRuntimeGraphViews] = useState<GraphView[]>([]);
-  const mergeGraphViews = useCallback((current: GraphView[], incoming: GraphView[]) => {
-    const merged = new Map(current.map((view) => [view.viewId, view]));
-    incoming.forEach((view) => merged.set(view.viewId, view));
-    return [...merged.values()].sort((a, b) => String(a.updatedAt).localeCompare(String(b.updatedAt)));
-  }, []);
   useEffect(() => {
     setActiveProjection(null);
-    setRuntimeGraphViews([]);
   }, [conversationId]);
-  useEffect(() => {
-    if (!canvasProjectId) return;
-    const controller = new AbortController();
-    const loadViews = () => {
-      void fetch(`/api/coder/graph-views?projectId=${encodeURIComponent(canvasProjectId)}&conversationId=${encodeURIComponent(conversationId)}`, { signal: controller.signal })
-        .then(async (response) => response.ok ? response.json() : null)
-        .then((payload) => {
-          if (!controller.signal.aborted && Array.isArray(payload?.views)) {
-            setRuntimeGraphViews((current) => mergeGraphViews(current, payload.views as GraphView[]));
-          }
-        })
-        .catch(() => null);
-    };
-    loadViews();
-    window.addEventListener('knowledge:refresh', loadViews);
-    return () => {
-      controller.abort();
-      window.removeEventListener('knowledge:refresh', loadViews);
-    };
-  }, [canvasProjectId, conversationId, mergeGraphViews]);
   const thinkGraphProjection = useAgentBuilderThinkGraphProjection({
     activeProject,
     knowledgeGraphKind,
@@ -1917,9 +1889,6 @@ export default function AgentBuilder(): React.ReactElement {
             appendAssistantText(String((event as { text?: unknown }).text || ''));
             return;
           }
-          if (event.kind === 'graph_view' && Array.isArray(event.views)) {
-            setRuntimeGraphViews((current) => mergeGraphViews(current, event.views as GraphView[]));
-          }
         },
       })
         .then(({ finalText }) => {
@@ -1945,7 +1914,7 @@ export default function AgentBuilder(): React.ReactElement {
           appendAssistantText('Chat request failed before the stream opened. Route: /api/coder/openclaude/session/chat.');
         });
     },
-    [activeProjection, canvasProjectId, conversationId, mergeGraphViews, nativeSessionBusy, thinkGraphFocusIds, workspaceView],
+    [activeProjection, canvasProjectId, conversationId, nativeSessionBusy, thinkGraphFocusIds, workspaceView],
   );
 
   const renderChatSurface = (
@@ -2110,7 +2079,6 @@ export default function AgentBuilder(): React.ReactElement {
                 <UnifiedGraphSurface
                   projectId={activeProject}
                   conversationId={conversationId}
-                  runtimeHandbacks={runtimeGraphViews}
                   onProjectionChange={handleProjectionChange}
                   onOpenAuthority={(authority) => setKnowledgeGraphKind(authority)}
                 />

@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation } from 'd3-force';
+import type { SimulationLinkDatum, SimulationNodeDatum } from 'd3-force';
 
 import { CodeGraphScene } from '../codegraph/CodeGraphScene';
 import type { CodeGraphData, CodeGraphNode } from '../codegraph/types';
@@ -35,11 +37,7 @@ const LAYERS: Array<{ id: Layer; label: string }> = [
   { id: 'knowgraph', label: 'KnowGraph' },
 ];
 
-const LAYER_STYLE: Record<Layer, { color: string; material: string; shape: 'dot' | 'circle' | 'diamond' }> = {
-  codegraph: { color: '#9DE9E6', material: 'glass constellation', shape: 'dot' },
-  thinkgraph: { color: '#36CFBD', material: 'soft round', shape: 'circle' },
-  knowgraph: { color: '#E39A5B', material: 'faceted evidence', shape: 'diamond' },
-};
+const UNIFIED_LAYOUT_REVISION = 2;
 
 function displayLabel(node: CodeGraphNode): string {
   const props = node.properties || {};
@@ -47,7 +45,10 @@ function displayLabel(node: CodeGraphNode): string {
   return String(value || 'Record').trim();
 }
 
-function placeAuthorityLayers(nodes: CodeGraphNode[]): CodeGraphNode[] {
+type ForceNode = SimulationNodeDatum & { id: number; sourceNode: CodeGraphNode };
+type ForceLink = SimulationLinkDatum<ForceNode>;
+
+function placeAuthorityLayers(nodes: CodeGraphNode[], edges: CodeGraphData['edges']): CodeGraphNode[] {
   const code = nodes.filter((node) => node.authority === 'codegraph');
   const codeCenter = code.length ? {
     x: code.reduce((sum, node) => sum + node.x, 0) / code.length,
@@ -56,26 +57,41 @@ function placeAuthorityLayers(nodes: CodeGraphNode[]): CodeGraphNode[] {
   } : { x: 0, y: 0, z: 0 };
   const codeSpan = Math.max(500, ...code.flatMap((node) => [Math.abs(node.x - codeCenter.x), Math.abs(node.y - codeCenter.y), Math.abs(node.z - codeCenter.z)])) * 2;
   const targets: Record<'thinkgraph' | 'knowgraph', { x: number; y: number; z: number }> = {
-    thinkgraph: { x: codeCenter.x - codeSpan * 0.34, y: codeCenter.y + codeSpan * 0.24, z: codeCenter.z + codeSpan * 0.24 },
-    knowgraph: { x: codeCenter.x + codeSpan * 0.34, y: codeCenter.y + codeSpan * 0.2, z: codeCenter.z + codeSpan * 0.18 },
+    thinkgraph: { x: codeCenter.x - codeSpan * 0.13, y: codeCenter.y + codeSpan * 0.08, z: codeCenter.z + codeSpan * 0.2 },
+    knowgraph: { x: codeCenter.x + codeSpan * 0.19, y: codeCenter.y + codeSpan * 0.02, z: codeCenter.z + codeSpan * 0.16 },
   };
   const compact = (authority: 'thinkgraph' | 'knowgraph') => {
     const layer = nodes.filter((node) => node.authority === authority);
     if (!layer.length) return new Map<number, CodeGraphNode>();
-    const center = {
-      x: layer.reduce((sum, node) => sum + node.x, 0) / layer.length,
-      y: layer.reduce((sum, node) => sum + node.y, 0) / layer.length,
-      z: layer.reduce((sum, node) => sum + node.z, 0) / layer.length,
-    };
-    const span = Math.max(1, ...layer.flatMap((node) => [Math.abs(node.x - center.x), Math.abs(node.y - center.y), Math.abs(node.z - center.z)])) * 2;
-    const scale = Math.min(1.2, (codeSpan * (authority === 'thinkgraph' ? 0.25 : 0.28)) / span);
+    const layerIds = new Set(layer.map((node) => node.id));
+    const forceNodes: ForceNode[] = layer.map((node) => ({ id: node.id, sourceNode: node, x: node.x, y: node.y }));
+    const sourceZCenter = layer.reduce((sum, node) => sum + node.z, 0) / layer.length;
+    const sourceZSpan = Math.max(1, ...layer.map((node) => Math.abs(node.z - sourceZCenter))) * 2;
+    const layerEdges = edges.filter((edge) => layerIds.has(edge.source) && layerIds.has(edge.target));
+    const degree = new Map<number, number>();
+    layerEdges.forEach((edge) => {
+      degree.set(edge.source, (degree.get(edge.source) || 0) + 1);
+      degree.set(edge.target, (degree.get(edge.target) || 0) + 1);
+    });
+    const forceLinks: ForceLink[] = layerEdges.map((edge) => ({ source: edge.source, target: edge.target }));
+    const simulation = forceSimulation(forceNodes)
+      .force('link', forceLink<ForceNode, ForceLink>(forceLinks).id((node) => node.id).distance(authority === 'thinkgraph' ? 42 : 28).strength(0.48))
+      .force('charge', forceManyBody<ForceNode>().strength(authority === 'thinkgraph' ? -110 : -54))
+      .force('collision', forceCollide<ForceNode>().radius(authority === 'thinkgraph' ? 12 : 8.5).strength(0.9))
+      .force('center', forceCenter<ForceNode>(0, 0))
+      .stop();
+    for (let tick = 0; tick < 180; tick += 1) simulation.tick();
+    const forceSpan = Math.max(1, ...forceNodes.flatMap((node) => [Math.abs(node.x || 0), Math.abs(node.y || 0)])) * 2;
+    const scale = (codeSpan * (authority === 'thinkgraph' ? 0.52 : 0.42)) / forceSpan;
     const target = targets[authority];
-    return new Map(layer.map((node) => [node.id, {
-      ...node,
-      x: target.x + (node.x - center.x) * scale,
-      y: target.y + (node.y - center.y) * scale,
-      z: target.z + (node.z - center.z) * scale,
-      size: authority === 'thinkgraph' ? Math.max(7, node.size * 1.15) : Math.max(6, node.size),
+    return new Map(forceNodes.map((forceNode) => [forceNode.id, {
+      ...forceNode.sourceNode,
+      x: target.x + (forceNode.x || 0) * scale,
+      y: target.y + (forceNode.y || 0) * scale,
+      z: target.z + ((forceNode.sourceNode.z - sourceZCenter) / sourceZSpan) * codeSpan * 0.035,
+      size: authority === 'thinkgraph'
+        ? Math.min(72, (3.2 + Math.sqrt((degree.get(forceNode.id) || 0) + 1) * 2.5) * 4.8)
+        : Math.min(62, (2.8 + Math.sqrt((degree.get(forceNode.id) || 0) + 1) * 2.1) * 4.8),
     }]));
   };
   const think = compact('thinkgraph');
@@ -91,7 +107,6 @@ export default function UnifiedGraphSurface({
 }: {
   projectId: string;
   conversationId: string;
-  runtimeHandbacks?: unknown[];
   onProjectionChange?: (projection: UnifiedProjectionIdentity | null) => void;
   onOpenAuthority?: (authority: Layer) => void;
 }) {
@@ -140,7 +155,10 @@ export default function UnifiedGraphSurface({
     return () => controller.abort();
   }, [conversationId, onProjectionChange, projectId, refresh]);
 
-  const placedNodes = useMemo(() => placeAuthorityLayers(payload?.nodes || []), [payload]);
+  const placedNodes = useMemo(
+    () => placeAuthorityLayers(payload?.nodes || [], payload?.edges || []),
+    [payload, UNIFIED_LAYOUT_REVISION],
+  );
   const sceneData = useMemo<CodeGraphData>(() => {
     if (!payload) return { nodes: [], edges: [], total_nodes: 0 };
     const nodes = placedNodes.filter((node) => enabledLayers.has((node.authority || 'codegraph') as Layer));
@@ -188,24 +206,14 @@ export default function UnifiedGraphSurface({
           curveCrossAuthority
           preserveDimmedEdges
           visualProfile="unified"
+          fitDistanceScale={0.52}
         />
       </div> : null}
       {loading && !payload ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#91A9B8' }}>Loading full graph authorities…</div> : null}
       {error && !payload ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#FFB0A6', textAlign: 'center' }}><div>{error}<br /><button type="button" onClick={() => setRefresh((value) => value + 1)} style={graphDrawerButtonStyle({ marginTop: 10 })}>Retry</button></div></div> : null}
       {payload && payload.nodes.length === 0 ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#91A9B8' }}>No graph data is available for Unified.</div> : null}
       <GraphNavigationControls onZoomIn={() => setCameraCommand({ action: 'zoom_in', token: Date.now() })} onZoomOut={() => setCameraCommand({ action: 'zoom_out', token: Date.now() })} onFit={() => setCameraCommand({ action: 'fit_view', token: Date.now() })} />
-      {payload ? <div aria-label="Unified layer controls" style={graphGlassPillStyle({ position: 'absolute', right: 62, top: 54, zIndex: 5, display: 'flex', gap: 4, padding: 4 })}>
-        {LAYERS.map((layer) => <button key={layer.id} type="button" aria-pressed={enabledLayers.has(layer.id)} onClick={() => toggleLayer(layer.id)} style={graphDrawerButtonStyle({ padding: '4px 7px', color: enabledLayers.has(layer.id) ? LAYER_STYLE[layer.id].color : GRAPH_THEME.surface.mutedText })}>{layer.label.replace('Graph', '')}</button>)}
-        <button type="button" aria-pressed={showRelationships} onClick={() => setShowRelationships((value) => !value)} style={graphDrawerButtonStyle({ padding: '4px 7px' })}>Edges</button>
-        <button type="button" aria-pressed={showLabels} onClick={() => setShowLabels((value) => !value)} style={graphDrawerButtonStyle({ padding: '4px 7px' })}>Labels</button>
-        <button type="button" onClick={() => setCameraCommand({ action: 'fit_view', token: Date.now() })} style={graphDrawerButtonStyle({ padding: '4px 7px' })}>Fit all</button>
-      </div> : null}
-      {payload ? <div aria-label="Unified legend" style={graphGlassPillStyle({ position: 'absolute', left: 12, bottom: 12, zIndex: 5, display: 'flex', gap: 12, padding: '6px 9px' })}>
-        {LAYERS.map((layer) => <div key={layer.id} style={{ display: 'flex', alignItems: 'center', gap: 5, color: GRAPH_THEME.surface.mutedText, fontSize: 10 }}>
-          <span style={{ width: layer.id === 'codegraph' ? 6 : 10, height: layer.id === 'codegraph' ? 6 : 10, background: LAYER_STYLE[layer.id].color, borderRadius: layer.id === 'knowgraph' ? 1 : '50%', clipPath: layer.id === 'knowgraph' ? 'polygon(50% 0, 100% 50%, 50% 100%, 0 50%)' : undefined, opacity: layer.id === 'codegraph' ? .55 : .95 }} />
-          {layer.label} · {payload.counts.selected[layer.id].toLocaleString()} · {LAYER_STYLE[layer.id].material}
-        </div>)}
-      </div> : null}
+      <style>{`button[aria-label="Open Unified Inspector"]{top:auto!important;bottom:88px!important;transform:none!important;opacity:.58!important}`}</style>
       <RightGlassDrawer isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} onOpen={() => setDrawerOpen(true)} collapsedLabel={null} openAriaLabel="Open Unified Inspector" title="Unified Inspector" defaultWidth={360} minWidth={320} maxWidth={520} storageKey="liquidaity.drawer.unified.width" top={48} right={12} bottom={12} zIndex={7}>
         {selected ? <section style={{ marginBottom: 18 }}>
           <h3 style={{ margin: '0 0 8px', color: GRAPH_THEME.surface.text }}>{displayLabel(selected)}</h3>

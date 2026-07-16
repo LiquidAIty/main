@@ -31,9 +31,10 @@ type CodeGraphSceneProps = {
   preserveDimmedEdges?: boolean;
   onNodeHover?: (node: CodeGraphNode | null) => void;
   visualProfile?: "default" | "unified";
+  fitDistanceScale?: number;
 };
 
-type NodeMaterialProfile = "default" | "codeglass" | "thinkgraph" | "knowgraph";
+type NodeMaterialProfile = "default" | "thinkgraph" | "knowgraph";
 
 function CameraCommandBridge({
   controlsRef,
@@ -43,6 +44,7 @@ function CameraCommandBridge({
   cameraActionToken,
   nodes,
   focusNode,
+  fitDistanceScale,
 }: {
   controlsRef: MutableRefObject<any>;
   interactionLocked: boolean;
@@ -51,6 +53,7 @@ function CameraCommandBridge({
   cameraActionToken: number;
   nodes: CodeGraphNode[];
   focusNode?: CodeGraphNode | null;
+  fitDistanceScale: number;
 }) {
   const { camera } = useThree();
   const lastAutoFitSignatureRef = useRef<string>("");
@@ -77,7 +80,7 @@ function CameraCommandBridge({
     const fovRadians = ((perspectiveCamera.fov || 50) * Math.PI) / 180;
     const aspect = Math.max(perspectiveCamera.aspect || 1, 0.35);
     const span = Math.max(maxY - minY, (maxX - minX) / aspect, (maxZ - minZ) * 0.72, 1);
-    const distance = (span / Math.max(Math.tan(fovRadians / 2), 0.01)) * 0.7;
+    const distance = (span / Math.max(Math.tan(fovRadians / 2), 0.01)) * fitDistanceScale;
 
     const direction = new THREE.Vector3()
       .subVectors(camera.position, controls.target)
@@ -176,14 +179,13 @@ function NodeCloud({
 
     for (let i = 0; i < nodes.length; i++) {
       tempColor.set(nodes[i].color);
-      if (materialProfile === "codeglass") tempColor.lerp(new THREE.Color("#9DE9E6"), 0.72);
-      if (materialProfile === "thinkgraph") tempColor.lerp(new THREE.Color("#36CFBD"), 0.68);
-      if (materialProfile === "knowgraph") tempColor.lerp(new THREE.Color("#E39A5B"), 0.62);
+      if (materialProfile === "thinkgraph") tempColor.set("#2DD4BF");
+      if (materialProfile === "knowgraph") tempColor.set("#F59E0B");
       if (hasHighlight && !highlightedIds.has(nodes[i].id)) {
         tempColor.multiplyScalar(0.15);
-      } else {
+      } else if (materialProfile !== "thinkgraph" && materialProfile !== "knowgraph") {
         const brightness = (tempColor.r + tempColor.g + tempColor.b) / 3;
-        const boost = materialProfile === "codeglass" ? 0.72 : 1.08 + brightness * 0.38;
+        const boost = 1.08 + brightness * 0.38;
         tempColor.multiplyScalar(boost);
       }
       arr[i * 3] = tempColor.r;
@@ -191,7 +193,7 @@ function NodeCloud({
       arr[i * 3 + 2] = tempColor.b;
     }
     return arr;
-  }, [nodes, highlightedIds, tempColor]);
+  }, [nodes, highlightedIds, materialProfile, tempColor]);
 
   useEffect(() => {
     const mesh = meshRef.current;
@@ -202,7 +204,7 @@ function NodeCloud({
       const node = nodes[i];
       tempObj.position.set(node.x, node.y, node.z);
       const highlighted = !hasHighlight || highlightedIds.has(node.id);
-      const profileScale = materialProfile === "codeglass" ? 0.24 : materialProfile === "thinkgraph" ? 0.72 : materialProfile === "knowgraph" ? 0.64 : 0.5;
+      const profileScale = materialProfile === "thinkgraph" ? 0.72 : materialProfile === "knowgraph" ? 0.64 : 0.5;
       const scale = node.size * (highlighted ? profileScale : profileScale * 0.38);
       tempObj.scale.set(scale, scale, scale);
       tempObj.updateMatrix();
@@ -210,7 +212,7 @@ function NodeCloud({
     }
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
-  }, [highlightedIds, nodes, tempObj]);
+  }, [highlightedIds, materialProfile, nodes, tempObj]);
 
   return (
     <instancedMesh
@@ -231,18 +233,22 @@ function NodeCloud({
         }
       }}
     >
-      {materialProfile === "knowgraph" ? <octahedronGeometry args={[1, 1]} /> : <sphereGeometry args={[1, materialProfile === "codeglass" ? 12 : 28, materialProfile === "codeglass" ? 8 : 20]} />}
+      {materialProfile === "knowgraph" ? <octahedronGeometry args={[1, 1]} /> : <sphereGeometry args={[1, 28, 20]} />}
       <meshPhysicalMaterial
         vertexColors
         transparent
-        opacity={materialProfile === "codeglass" ? 0.34 : materialProfile === "thinkgraph" ? 0.9 : materialProfile === "knowgraph" ? 0.86 : 0.82}
-        roughness={materialProfile === "knowgraph" ? 0.34 : materialProfile === "codeglass" ? 0.14 : 0.2}
-        metalness={materialProfile === "knowgraph" ? 0.14 : 0.05}
-        transmission={materialProfile === "codeglass" ? 0.62 : materialProfile === "thinkgraph" ? 0.16 : materialProfile === "knowgraph" ? 0.08 : 0.28}
-        thickness={materialProfile === "codeglass" ? 0.35 : 0.8}
-        clearcoat={materialProfile === "codeglass" ? 0.42 : 0.72}
-        clearcoatRoughness={materialProfile === "codeglass" ? 0.12 : 0.2}
-        depthWrite={materialProfile !== "codeglass"}
+        opacity={materialProfile === "thinkgraph" || materialProfile === "knowgraph" ? 1 : 0.82}
+        roughness={materialProfile === "thinkgraph" || materialProfile === "knowgraph" ? 0.22 : 0.2}
+        metalness={materialProfile === "thinkgraph" || materialProfile === "knowgraph" ? 0.14 : 0.05}
+        transmission={materialProfile === "thinkgraph" || materialProfile === "knowgraph" ? 0 : 0.28}
+        thickness={0.8}
+        clearcoat={materialProfile === "thinkgraph" || materialProfile === "knowgraph" ? 0.9 : 0.72}
+        clearcoatRoughness={materialProfile === "thinkgraph" || materialProfile === "knowgraph" ? 0.12 : 0.2}
+        emissive={materialProfile === "thinkgraph" ? "#063D37" : materialProfile === "knowgraph" ? "#4A2200" : "#000000"}
+        emissiveIntensity={materialProfile === "thinkgraph" || materialProfile === "knowgraph" ? 0.9 : 0}
+        specularIntensity={materialProfile === "thinkgraph" || materialProfile === "knowgraph" ? 1 : 0.5}
+        specularColor={materialProfile === "thinkgraph" ? "#B8FFF7" : materialProfile === "knowgraph" ? "#FFE0A3" : "#FFFFFF"}
+        ior={1.5}
         toneMapped={false}
       />
       <instancedBufferAttribute attach="geometry-attributes-color" args={[colors, 3]} />
@@ -290,8 +296,12 @@ function EdgeLines({
 
       const sameCluster = getClusterKey(source.file_path) === getClusterKey(target.file_path);
       let intensity = edge.cross_authority ? 0.16 : sameCluster ? 0.18 : 0.035;
-      if (visualProfile === "unified" && !edge.cross_authority) {
-        intensity = source.authority === "codegraph" ? 0.012 : source.authority === "thinkgraph" ? 0.17 : 0.11;
+      if (visualProfile === "unified") {
+        intensity = edge.cross_authority
+          ? 0.5
+          : source.authority === "codegraph"
+            ? (sameCluster ? 0.055 : 0.014)
+            : source.authority === "thinkgraph" ? 0.42 : 0.36;
       }
       if (hasHighlight) {
         intensity = sourceHighlighted && targetHighlighted
@@ -300,8 +310,11 @@ function EdgeLines({
             ? 0.12
             : 0.012;
       }
+      const unifiedAuthorityColor = source.authority === "thinkgraph" ? '#2DD4BF' : source.authority === "knowgraph" ? '#F59E0B' : '#78D8D5';
       const color = new THREE.Color(
-        edge.cross_authority && hasHighlight && sourceHighlighted && targetHighlighted
+        visualProfile === "unified" && !edge.cross_authority && source.authority !== "codegraph"
+          ? unifiedAuthorityColor
+          : edge.cross_authority && hasHighlight && sourceHighlighted && targetHighlighted
           ? '#F2A64A'
           : edge.cross_authority
             ? '#7EE8E2'
@@ -345,7 +358,7 @@ function EdgeLines({
         vertexColors
         transparent
         opacity={1}
-        blending={visualProfile === "unified" ? THREE.NormalBlending : THREE.AdditiveBlending}
+        blending={THREE.AdditiveBlending}
         depthWrite={false}
         toneMapped={false}
       />
@@ -501,6 +514,7 @@ export function CodeGraphScene({
   preserveDimmedEdges = false,
   onNodeHover,
   visualProfile = "default",
+  fitDistanceScale = 0.7,
 }: CodeGraphSceneProps): React.ReactElement {
   const [hoveredNode, setHoveredNode] = useState<CodeGraphNode | null>(null);
   const controlsRef = useRef<any>(null);
@@ -538,7 +552,7 @@ export function CodeGraphScene({
         highlightedIds={highlightedIds}
         onHover={(node) => { setHoveredNode(node); onNodeHover?.(node); }}
         onClick={onNodeClick}
-        materialProfile={visualProfile === "unified" ? "codeglass" : "default"}
+        materialProfile="default"
       />
       {visualProfile === "unified" ? <>
         <NodeCloud nodes={thinkNodes} highlightedIds={highlightedIds} onHover={(node) => { setHoveredNode(node); onNodeHover?.(node); }} onClick={onNodeClick} materialProfile="thinkgraph" />
@@ -558,6 +572,7 @@ export function CodeGraphScene({
         cameraActionToken={cameraActionToken}
         nodes={data.nodes}
         focusNode={focusNode}
+        fitDistanceScale={fitDistanceScale}
       />
 
       {data.linked_projects?.map((linked) => {
@@ -577,9 +592,9 @@ export function CodeGraphScene({
 
       <EffectComposer>
         <Bloom
-          luminanceThreshold={visualProfile === "unified" ? 0.82 : 0.64}
+          luminanceThreshold={visualProfile === "unified" ? 0.58 : 0.64}
           luminanceSmoothing={0.7}
-          intensity={visualProfile === "unified" ? 0.18 : 0.42}
+          intensity={visualProfile === "unified" ? 0.52 : 0.42}
           mipmapBlur
           radius={0.3}
         />

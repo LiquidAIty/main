@@ -4,7 +4,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import UnifiedGraphSurface from './UnifiedGraphSurface';
 
 vi.mock('../codegraph/CodeGraphScene', () => ({
-  CodeGraphScene: ({ data, visualProfile }: { data: { nodes: unknown[]; edges: unknown[] }; visualProfile?: string }) => <div data-testid="scene" data-profile={visualProfile}>{data.nodes.length} nodes / {data.edges.length} edges</div>,
+  CodeGraphScene: ({ data, visualProfile }: { data: { nodes: Array<{ authority?: string; size: number }>; edges: Array<{ cross_authority?: boolean }> }; visualProfile?: string }) => <div
+    data-testid="scene"
+    data-profile={visualProfile}
+    data-think-size={Math.max(0, ...data.nodes.filter((node) => node.authority === 'thinkgraph').map((node) => node.size))}
+    data-know-size={Math.max(0, ...data.nodes.filter((node) => node.authority === 'knowgraph').map((node) => node.size))}
+    data-cross-edges={data.edges.filter((edge) => edge.cross_authority).length}
+  >{data.nodes.length} nodes / {data.edges.length} edges</div>,
 }));
 
 const payload = {
@@ -38,8 +44,11 @@ describe('UnifiedGraphSurface', () => {
     render(<UnifiedGraphSurface projectId="project" conversationId="main" onProjectionChange={onProjectionChange} />);
     expect((await screen.findByTestId('scene')).textContent).toContain('7 nodes / 3 edges');
     expect(screen.getByTestId('scene').getAttribute('data-profile')).toBe('unified');
+    expect(Number(screen.getByTestId('scene').getAttribute('data-think-size'))).toBeGreaterThan(16);
+    expect(Number(screen.getByTestId('scene').getAttribute('data-know-size'))).toBeGreaterThan(16);
+    expect(screen.getByTestId('scene').getAttribute('data-cross-edges')).toBe('0');
     expect(screen.getByText(/Code 3 · Think 2 · Know 2/)).toBeTruthy();
-    expect(screen.getByLabelText('Unified legend').textContent).toContain('faceted evidence');
+    expect(screen.queryByLabelText('Unified legend')).toBeNull();
     await waitFor(() => expect(onProjectionChange).toHaveBeenCalledWith(expect.objectContaining({ projectionId: 'unified:full' })));
   });
 
@@ -48,7 +57,8 @@ describe('UnifiedGraphSurface', () => {
     vi.stubGlobal('fetch', fetchMock);
     render(<UnifiedGraphSurface projectId="project" conversationId="main" />);
     expect((await screen.findByTestId('scene')).textContent).toContain('7 nodes / 3 edges');
-    fireEvent.click(screen.getByRole('button', { name: 'Think' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Unified Inspector' }));
+    fireEvent.click(screen.getByLabelText(/ThinkGraph/));
     expect(screen.getByTestId('scene').textContent).toContain('5 nodes / 2 edges');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(screen.getAllByRole('button', { name: 'Solo' })).toHaveLength(3);
