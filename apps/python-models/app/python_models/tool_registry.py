@@ -636,6 +636,15 @@ def build_local_coder_tool(model_provider: str, provider_model_id: str) -> Funct
 # ToolRegistry.
 # ---------------------------------------------------------------------------
 
+# Canonical capability id (stored on cards, exposed by the harness MCP surface)
+# → this runtime's registered implementation. One explicit table, never a
+# rename sweep and never a duplicate registration.
+CANONICAL_TOOL_ALIASES: dict[str, str] = {
+    "thinkgraph.get_graph_slice": "read_thinkgraph_scope",
+    "thinkgraph.submit_update": "apply_thinkgraph_patch",
+    "knowgraph.query": "retrieve_knowgraph_context",
+}
+
 
 class ToolRegistry:
     """Resolves selected card tools to real FunctionTools, loudly or not at all."""
@@ -664,6 +673,14 @@ class ToolRegistry:
         cleaned = str(name or "").strip()
         if not cleaned:
             raise RuntimeError("card_tool_name_empty")
+        # Canonical capability ids (the names cards store, shared with the
+        # harness MCP surface) resolve to this runtime's own implementation.
+        # Only proven same-capability pairs are aliased — knowgraph.query IS
+        # retrieve_knowgraph_context (mcp_host.py calls it directly), and the
+        # thinkgraph pair is this runtime's read/write of the same authority.
+        # Anything else stays loudly unknown: a capability without an adapter
+        # in THIS runtime must fail here, never silently degrade.
+        cleaned = CANONICAL_TOOL_ALIASES.get(cleaned, cleaned)
         spec = self._specs.get(cleaned)
         if spec is None:
             raise RuntimeError(

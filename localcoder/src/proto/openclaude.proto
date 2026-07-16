@@ -69,6 +69,12 @@ message AgentDefinitionConfig {
   // resolved by the backend from the card's persisted ORANGE (direct) edges.
   // Empty = the child may run only its own bound card (legacy doorway).
   repeated string allowed_card_run_ids = 9;
+  // Explicit execution authority: true ONLY for template doorway children
+  // whose entire job is running their bound card through the AutoGen card
+  // runtime. Native inherited-context agents (e.g. Hermes) are false — they
+  // already ARE their card and may never re-execute themselves through a
+  // second runtime.
+  bool self_card_run = 10;
 }
 
 message UserInput {

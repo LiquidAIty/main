@@ -322,6 +322,9 @@ export function buildHarnessAgentDefinition(
       context_mode_inherit_parent: true,
       ...(allowedCardRunIds.length > 0 ? { allowed_card_run_ids: allowedCardRunIds } : {}),
       ...(model ? { model } : {}),
+      // Native inherited-context agent: it already IS its card. It may run
+      // authorized child cards, never itself through the AutoGen runtime.
+      self_card_run: false,
     };
   }
   return {
@@ -342,6 +345,9 @@ export function buildHarnessAgentDefinition(
     ].join('\n'),
     allowed_tools: [CARD_RUN_CONTROL_TOOL],
     context_mode_inherit_parent: true,
+    // Template doorway: its entire job IS running its bound card through the
+    // AutoGen card runtime.
+    self_card_run: true,
   };
 }
 

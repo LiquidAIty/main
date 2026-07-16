@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { filterParentNativeTools, normalizeTurnUsage } from './server.js'
+import { filterParentNativeTools, normalizeTurnUsage, resolveCardRunControlCall } from './server.js'
 
 const pool = [
   { name: 'Agent' },
@@ -67,5 +67,50 @@ describe('normalizeTurnUsage', () => {
     expect(normalizeTurnUsage({ input_tokens: 0, output_tokens: 17 }, {}, 0)).toEqual({
       inputTokens: 0, outputTokens: 17, totalCostUsd: null, usageAvailable: true, usageSource: 'result_usage',
     })
+  })
+})
+
+describe('resolveCardRunControlCall execution authority', () => {
+  const base = {
+    cardIdByAgentType: new Map([
+      ['card_hermes_steward', 'card_hermes_steward'],
+      ['card_thinkgraph_agent', 'card_thinkgraph_agent'],
+    ]),
+    projectId: 'p1',
+    conversationId: 'main',
+    correlationId: 'corr-1',
+    allowedCardRunIdsByAgentType: new Map([['card_hermes_steward', ['card_research_agent']]]),
+    selfCardRunByAgentType: new Map([
+      ['card_hermes_steward', false],
+      ['card_thinkgraph_agent', true],
+    ]),
+  }
+
+  it('a native agent may never re-run itself through the card runtime', () => {
+    const denied = resolveCardRunControlCall({ ...base, input: {}, agentType: 'card_hermes_steward' })
+    expect('deny' in denied && denied.deny).toContain('card_run_self_invocation_denied')
+    const explicit = resolveCardRunControlCall({
+      ...base, input: { cardId: 'card_hermes_steward' }, agentType: 'card_hermes_steward',
+    })
+    expect('deny' in explicit && explicit.deny).toContain('card_run_self_invocation_denied')
+  })
+
+  it('a native agent may still run its authorized child cards', () => {
+    const allowed = resolveCardRunControlCall({
+      ...base, input: { cardId: 'card_research_agent', input: 'find x' }, agentType: 'card_hermes_steward',
+    })
+    expect('updatedInput' in allowed && allowed.updatedInput.cardId).toBe('card_research_agent')
+  })
+
+  it('a template doorway child still runs its own bound card', () => {
+    const allowed = resolveCardRunControlCall({ ...base, input: {}, agentType: 'card_thinkgraph_agent' })
+    expect('updatedInput' in allowed && allowed.updatedInput.cardId).toBe('card_thinkgraph_agent')
+  })
+
+  it('unauthorized targets stay denied regardless of execution authority', () => {
+    const denied = resolveCardRunControlCall({
+      ...base, input: { cardId: 'card_local_coder' }, agentType: 'card_hermes_steward',
+    })
+    expect('deny' in denied && denied.deny).toBe('card_run_target_not_authorized')
   })
 })

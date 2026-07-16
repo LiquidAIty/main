@@ -62,6 +62,11 @@ export function resolveCardRunControlCall(params: {
   /** Per-child ORANGE-edge authority (backend-resolved): extra saved card ids
    * this child may run beyond its own bound card. Absent = own card only. */
   allowedCardRunIdsByAgentType?: Map<string, string[]>
+  /** Explicit execution authority per child (backend-declared): true only for
+   * template doorway children whose job IS running their bound card. A native
+   * inherited-context agent (false) already executes its own card and may
+   * never re-run itself through the AutoGen runtime. Absent = legacy true. */
+  selfCardRunByAgentType?: Map<string, boolean>
 }): { deny: string } | { updatedInput: Record<string, unknown> } {
   const agentType = String(params.agentType || '')
   const boundCardId = agentType ? params.cardIdByAgentType.get(agentType) : undefined
@@ -77,6 +82,13 @@ export function resolveCardRunControlCall(params: {
       return { deny: 'card_run_target_not_authorized' }
     }
     targetCardId = requestedCardId
+  }
+  if (targetCardId === boundCardId && params.selfCardRunByAgentType?.get(agentType) === false) {
+    return {
+      deny:
+        'card_run_self_invocation_denied: you are this agent already — do the work directly with your own tools, '
+        + 'or target one of your authorized child cards.',
+    }
   }
   return {
     updatedInput: {
@@ -396,6 +408,15 @@ export class GrpcServer {
               .filter((d: any) => String(d?.agent_type || '').trim() && Array.isArray(d?.allowed_card_run_ids))
               .map((d: any) => [String(d.agent_type), d.allowed_card_run_ids.map(String).filter(Boolean)]),
           )
+          // Explicit execution authority per child, declared by the backend on
+          // every definition (template doorway = true, native agent = false).
+          // The backend is this server's only client and sets it in the same
+          // contract change, so the declaration is always present.
+          const selfCardRunByAgentType = new Map<string, boolean>(
+            rawAgentDefinitions
+              .filter((d: any) => String(d?.agent_type || '').trim())
+              .map((d: any) => [String(d.agent_type), Boolean(d.self_card_run)]),
+          )
           const sessionParts = parseSessionIdParts(sessionId)
 
           // The PARENT session's MCP surface = the saved parent card's Tools
@@ -470,6 +491,7 @@ export class GrpcServer {
                   conversationId: sessionParts?.conversationId ?? '',
                   correlationId: randomUUID(),
                   allowedCardRunIdsByAgentType,
+                  selfCardRunByAgentType,
                 })
                 if ('deny' in resolved) {
                   return {
