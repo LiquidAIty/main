@@ -15,6 +15,41 @@ export type ToolSpec = {
 
 export const AUTOGEN_CARD_TOOL_SPECS: ToolSpec[] = [
   {
+    name: 'worldsignals.capabilities',
+    description: 'Read the live WorldSignals capability and command manifests.',
+    enabled: true,
+    inputSchema: { type: 'object', properties: {}, required: [] },
+    outputSchema: { type: 'object' },
+  },
+  {
+    name: 'worldsignals.command',
+    description: 'Run one real command from the live WorldSignals command manifest.',
+    enabled: true,
+    inputSchema: { type: 'object', properties: { command: { type: 'string' }, arguments: { type: 'object' } }, required: ['command'] },
+    outputSchema: { type: 'object' },
+  },
+  {
+    name: 'worldsignals.batch',
+    description: 'Run up to twenty real WorldSignals commands through its batch channel.',
+    enabled: true,
+    inputSchema: { type: 'object', properties: { commands: { type: 'array', items: { type: 'object' }, maxItems: 20 } }, required: ['commands'] },
+    outputSchema: { type: 'object' },
+  },
+  {
+    name: 'worldsignals.poll',
+    description: 'Poll completed command results and pending WorldSignals tasks.',
+    enabled: true,
+    inputSchema: { type: 'object', properties: {}, required: [] },
+    outputSchema: { type: 'object' },
+  },
+  {
+    name: 'worldsignals.stream_events',
+    description: 'Read a bounded set of real-time events from the WorldSignals SSE channel.',
+    enabled: true,
+    inputSchema: { type: 'object', properties: { max_events: { type: 'integer', default: 1 }, timeout_seconds: { type: 'integer', default: 15 } }, required: [] },
+    outputSchema: { type: 'object' },
+  },
+  {
     name: 'read_thinkgraph_scope',
     description:
       'ThinkGraph card only: read the bounded active-project ThinkGraph scope (record ids, labels, kinds, provenance) so patches avoid duplicates. Read-only; project scope comes from the trusted card-run authority, never from the model.',
@@ -185,6 +220,11 @@ for (const name of [
   'canvas.inspect',
   'card.run_assistant_agent',
   'web_search',
+  'worldsignals.capabilities',
+  'worldsignals.command',
+  'worldsignals.batch',
+  'worldsignals.poll',
+  'worldsignals.stream_events',
 ]) {
   HARNESS_MCP_TOOL_SPECS.push({
     name,

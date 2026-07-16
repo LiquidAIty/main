@@ -1,0 +1,42 @@
+# Auto-loaded by `docker compose`. LiquidAIty policy: the backend runs from the
+# PROVEN, PINNED image — not `latest`, not an auto-pull, not a default local
+# build. The checked-in source under this folder stays the FUTURE modification
+# and build source; when a task actually edits backend code, build deliberately
+# with `docker compose -f docker-compose.yml -f docker-compose.build.yml build`.
+#
+# Pinned identities (the images proven working on 2026-07-16):
+#   backend  ghcr.io/bigbodycobain/shadowbroker-backend@sha256:563b4867cfe153635b0d51b87075831d8d34c544c2655f9c82cbbecfa4f15c61
+#   frontend ghcr.io/bigbodycobain/shadowbroker-frontend@sha256:094eab0d6e9dfe75951f68114fc058a58c3369115adc4af7e49e622553a880d4
+#
+# pull_policy: never — never reach upstream during normal startup; fail honestly
+# if the pinned image is absent (rather than silently pulling a newer one).
+services:
+  backend:
+    image: ghcr.io/bigbodycobain/shadowbroker-backend@sha256:563b4867cfe153635b0d51b87075831d8d34c544c2655f9c82cbbecfa4f15c61
+    pull_policy: never
+    environment:
+      # Private Infonet swarm: only the seed onion is required in config.
+      # Other participants (e.g. Pete) are discovered via signed manifest pull.
+      MESH_ARTI_ENABLED: "true"
+      MESH_ARTI_SOCKS_PORT: "9050"
+      MESH_SYNC_TIMEOUT_S: "45"
+      MESH_RELAY_PUSH_TIMEOUT_S: "45"
+      MESH_SYNC_MAX_PEERS_PER_CYCLE: "5"
+      MESH_INFONET_ALLOW_CLEARNET_SYNC: "false"
+      MESH_PUBLIC_PEER_URL: ""
+      # Empty means: use the sb-testnet fleet seed list from code/config.
+      # Operators can rotate/add public fleet seeds with MESH_FLEET_SEED_PEERS.
+      MESH_BOOTSTRAP_SEED_PEERS: ""
+      MESH_FLEET_SEED_PEERS: "${MESH_FLEET_SEED_PEERS:-}"
+      MESH_RELAY_PEERS: ""
+      MESH_DEFAULT_SYNC_PEERS: ""
+      MESH_BOOTSTRAP_SIGNER_PUBLIC_KEY: "ul1d0kj/ODPIp0OhHzX8eLAVXzJ3CVvzW1vn2IC6q3I="
+      MESH_SWARM_MANIFEST_PULL_INTERVAL_S: "300"
+      # Fleet testnet HMAC — overrides stale per-node .env so announce/push auth matches seed.
+      MESH_PEER_PUSH_SECRET: "b7GoqsvoUD9MV7tyt0ZOzMptLA84QG6KCfaV9nDqz5Y"
+      # Dev fleet: allow wormhole child agent to start without release attestation.
+      PRIVACY_CORE_DEV_OVERRIDE: "true"
+
+  frontend:
+    image: ghcr.io/bigbodycobain/shadowbroker-frontend@sha256:094eab0d6e9dfe75951f68114fc058a58c3369115adc4af7e49e622553a880d4
+    pull_policy: never

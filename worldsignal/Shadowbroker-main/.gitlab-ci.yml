@@ -1,0 +1,151 @@
+# GitLab CI/CD for Shadowbroker
+#
+# Mirror of .github/workflows/docker-publish.yml — keeps the GitLab install
+# path (image registry + source) at parity with GitHub so users who prefer
+# GitLab get the same experience.
+#
+# What this does on every push to main:
+#   1. Builds multi-arch (amd64 + arm64) Docker images for the backend and
+#      frontend, pushes them to the project's GitLab Container Registry:
+#        registry.gitlab.com/bigbodycobain/shadowbroker/backend:latest
+#        registry.gitlab.com/bigbodycobain/shadowbroker/frontend:latest
+#      Both also get a :$CI_COMMIT_SHORT_SHA tag for traceability.
+#   2. Reverse-mirrors main back to GitHub (only if commits land directly
+#      on GitLab) so the two sources stay in sync.
+#
+# Pipelines on this repo were instant-failing for free-tier accounts until
+# identity verification was added — the May 2026 bump in this comment is
+# the marker commit that confirms runner allocation after verification.
+#
+# Auth notes:
+#   - The image build/push uses $CI_JOB_TOKEN, which GitLab provides
+#     automatically. No credentials need to be configured.
+#   - The reverse mirror authenticates to GitHub via a per-repo SSH
+#     deploy key. The private half is stored as the File-type GitLab
+#     CI/CD variable GITHUB_MIRROR_SSH_KEY (Protected). The matching
+#     public key is added to github.com/BigBodyCobain/Shadowbroker/
+#     settings/keys with write access. This is a tighter-scoped
+#     replacement for a personal access token: it can ONLY push to
+#     Shadowbroker, never expires, and rotating it is a one-click
+#     delete on GitHub's deploy-keys page. If the variable isn't set,
+#     the mirror job is skipped — image builds still run.
+
+stages:
+  - build
+  - mirror
+
+variables:
+  # Use the dind service for buildx multi-arch builds.
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_DRIVER: overlay2
+  # QEMU is what lets a single x86 runner build arm64 images. dind doesn't
+  # install it by default; we install via tonistiigi/binfmt below.
+  BUILDX_VERSION: "v0.14.1"
+  # Repository-relative paths.
+  BACKEND_IMAGE: $CI_REGISTRY_IMAGE/backend
+  FRONTEND_IMAGE: $CI_REGISTRY_IMAGE/frontend
+
+# Shared template: bootstraps buildx + QEMU on the dind service so a single
+# runner can produce both amd64 and arm64 manifests in one push.
+.buildx-setup: &buildx-setup
+  image: docker:24
+  services:
+    - name: docker:24-dind
+      command: ["--tls=true"]
+  before_script:
+    - docker info
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_JOB_TOKEN" "$CI_REGISTRY"
+    - docker run --privileged --rm tonistiigi/binfmt --install all
+    # buildx --driver docker-container can't read TLS from the env vars
+    # the GitLab dind service exports. Wrap them in a docker context and
+    # bind buildx to it. See https://docs.gitlab.com/ee/ci/docker/using_docker_build.html#use-docker-buildx
+    - docker context create tls-env
+    - docker buildx create --use --name multiarch --driver docker-container tls-env
+
+# ── Backend image ────────────────────────────────────────────────────────
+build-backend:
+  <<: *buildx-setup
+  stage: build
+  script:
+    - >
+      docker buildx build
+      --platform linux/amd64,linux/arm64
+      --file backend/Dockerfile
+      --tag $BACKEND_IMAGE:latest
+      --tag $BACKEND_IMAGE:$CI_COMMIT_SHORT_SHA
+      --push
+      .
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - backend/**/*
+        - .gitlab-ci.yml
+
+# ── Frontend image ───────────────────────────────────────────────────────
+build-frontend:
+  <<: *buildx-setup
+  stage: build
+  script:
+    - cd frontend
+    - >
+      docker buildx build
+      --platform linux/amd64,linux/arm64
+      --tag $FRONTEND_IMAGE:latest
+      --tag $FRONTEND_IMAGE:$CI_COMMIT_SHORT_SHA
+      --push
+      .
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - frontend/**/*
+        - .gitlab-ci.yml
+
+# ── Reverse mirror to GitHub ─────────────────────────────────────────────
+# Pushes refs/heads/main to github.com/BigBodyCobain/Shadowbroker via SSH
+# using a per-repo deploy key. Fast-forward-only by default — if GitLab
+# main and GitHub main have diverged, the push fails loudly rather than
+# silently overwriting either side.
+#
+# Only runs if GITHUB_MIRROR_SSH_KEY is set as a File-type CI/CD variable.
+# See the header comment of this file for setup instructions.
+mirror-to-github:
+  stage: mirror
+  image: alpine:3.20
+  needs: []
+  before_script:
+    - apk add --no-cache git openssh-client ca-certificates
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    # Install the deploy key. File-type CI variable exposes the path; copy
+    # to ~/.ssh/id_ed25519 with restrictive perms so ssh accepts it.
+    - cp "$GITHUB_MIRROR_SSH_KEY" ~/.ssh/id_ed25519
+    - chmod 600 ~/.ssh/id_ed25519
+    # Pin github.com's current host keys so we never trust a man-in-the-
+    # middle. Sourced from https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
+    # (rotated 2023-03-24 after the previous RSA key leak).
+    - |
+      cat > ~/.ssh/known_hosts <<'EOF'
+      github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+      github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
+      github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=
+      EOF
+    - chmod 644 ~/.ssh/known_hosts
+  script:
+    - git config --global user.email "ci-mirror@gitlab.com"
+    - git config --global user.name "GitLab CI Mirror"
+    - >
+      git clone --depth=50 --branch main
+      "https://oauth2:${CI_JOB_TOKEN}@gitlab.com/${CI_PROJECT_PATH}.git"
+      repo
+    - cd repo
+    - >
+      git push
+      "git@github.com:BigBodyCobain/Shadowbroker.git"
+      "${CI_COMMIT_SHA}:refs/heads/main"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" && $GITHUB_MIRROR_SSH_KEY

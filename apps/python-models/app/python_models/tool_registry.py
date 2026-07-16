@@ -45,6 +45,13 @@ from app.python_models.alpaca_market_data import (
     get_market_snapshot,
     get_paper_account_readiness,
 )
+from app.python_models.worldsignals_client import (
+    worldsignals_batch,
+    worldsignals_capabilities,
+    worldsignals_command,
+    worldsignals_poll,
+    worldsignals_stream_events,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -706,6 +713,14 @@ class ToolRegistry:
 def build_default_tool_registry() -> ToolRegistry:
     """The canonical runtime registry."""
     registry = ToolRegistry()
+    for spec, adapter in [
+        (ToolSpec(name="worldsignals.capabilities", description="Read the live WorldSignals capability and command manifests.", enabled=True, inputSchema={"type": "object", "properties": {}, "required": []}, outputSchema={"type": "object"}), worldsignals_capabilities),
+        (ToolSpec(name="worldsignals.command", description="Run one real command from the WorldSignals command manifest.", enabled=True, inputSchema={"type": "object", "properties": {"command": {"type": "string"}, "arguments": {"type": "object"}}, "required": ["command"]}, outputSchema={"type": "object"}), worldsignals_command),
+        (ToolSpec(name="worldsignals.batch", description="Run up to twenty real WorldSignals commands through its batch channel.", enabled=True, inputSchema={"type": "object", "properties": {"commands": {"type": "array", "items": {"type": "object"}, "maxItems": 20}}, "required": ["commands"]}, outputSchema={"type": "object"}), worldsignals_batch),
+        (ToolSpec(name="worldsignals.poll", description="Poll completed command results and pending WorldSignals tasks.", enabled=True, inputSchema={"type": "object", "properties": {}, "required": []}, outputSchema={"type": "object"}), worldsignals_poll),
+        (ToolSpec(name="worldsignals.stream_events", description="Read a bounded set of real-time events from the WorldSignals SSE channel.", enabled=True, inputSchema={"type": "object", "properties": {"max_events": {"type": "integer", "default": 1}, "timeout_seconds": {"type": "integer", "default": 15}}, "required": []}, outputSchema={"type": "object"}), worldsignals_stream_events),
+    ]:
+        registry.register(spec, adapter)
     registry.register(
         ToolSpec(
             name="read_thinkgraph_scope",

@@ -70,3 +70,9 @@ apps/backend/env
 
 
 autogen-main/
+
+# WorldSignals embed bundle - built from worldsignal/Shadowbroker-main/frontend (npm run build:embed)
+client/public/worldsignals/
+
+# Upstream LFS model was not distributed with the source archive
+/worldsignal/Shadowbroker-main/backend/data/drishx/rf_model.pickle

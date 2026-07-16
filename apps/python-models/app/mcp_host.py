@@ -560,6 +560,43 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="worldsignals.capabilities",
+            description="Read the live WorldSignals capability and command manifests.",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="worldsignals.command",
+            description="Run one real command from the live WorldSignals command manifest.",
+            inputSchema={
+                "type": "object",
+                "properties": {"command": {"type": "string"}, "arguments": {"type": "object"}},
+                "required": ["command"],
+            },
+        ),
+        Tool(
+            name="worldsignals.batch",
+            description="Run up to twenty real WorldSignals commands through its batch channel.",
+            inputSchema={
+                "type": "object",
+                "properties": {"commands": {"type": "array", "items": {"type": "object"}, "maxItems": 20}},
+                "required": ["commands"],
+            },
+        ),
+        Tool(
+            name="worldsignals.poll",
+            description="Poll completed command results and pending WorldSignals tasks.",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="worldsignals.stream_events",
+            description="Read a bounded set of real-time events from the WorldSignals SSE channel.",
+            inputSchema={
+                "type": "object",
+                "properties": {"max_events": {"type": "integer", "default": 1}, "timeout_seconds": {"type": "integer", "default": 15}},
+                "required": [],
+            },
+        ),
+        Tool(
             name="card.run_assistant_agent",
             description=(
                 "Run ONE saved, enabled assistant_agent card with its saved prompt/model/tools and "
@@ -619,6 +656,11 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "card.run_assistant_agent": {"projectId", "deckId", "cardId", "correlationId", "conversationId", "input"},
     "thinkgraph.get_graph_slice": {"projectId", "limit"},
     "web_search": {"query", "max_results"},
+    "worldsignals.capabilities": set(),
+    "worldsignals.command": {"command", "arguments"},
+    "worldsignals.batch": {"commands"},
+    "worldsignals.poll": set(),
+    "worldsignals.stream_events": {"max_events", "timeout_seconds"},
 }
 
 _BRIDGE_PATHS: dict[str, str] = {
@@ -709,6 +751,25 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             max_results=int(args.get("max_results") or 5),
         )
         return [TextContent(type="text", text=result)]
+    if name.startswith("worldsignals."):
+        from app.python_models.worldsignals_client import WorldSignalsClient, WorldSignalsError
+
+        client = WorldSignalsClient()
+        try:
+            if name == "worldsignals.capabilities":
+                result = {"capabilities": client.capabilities(), "tools": client.tools()}
+            elif name == "worldsignals.command":
+                result = client.command(str(args.get("command") or ""), args.get("arguments") or {})
+            elif name == "worldsignals.batch":
+                result = client.batch(list(args.get("commands") or []))
+            else:
+                result = client.stream_events(
+                    int(args.get("max_events") or 1),
+                    int(args.get("timeout_seconds") or 15),
+                ) if name == "worldsignals.stream_events" else client.poll()
+            return [TextContent(type="text", text=json.dumps({"ok": True, "result": result}))]
+        except WorldSignalsError as err:
+            return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
     handler_name = _CONTROL_HANDLER_NAMES.get(name)
     if handler_name is not None:
         from app import control_plane

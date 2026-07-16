@@ -1,0 +1,665 @@
+{
+  "_meta": {
+    "issue": "#239",
+    "note": "Snapshot of currently-tolerated duplicate route registrations. The test in test_no_new_duplicate_routes.py fails if any NEW (method, path) duplicate appears outside this list. Removing entries (by actually deduping) is fine and the test stays green. New entries here require explicit, reviewed updates.",
+    "generated_with": "python -c 'see tests/test_no_new_duplicate_routes.py'"
+  },
+  "duplicates": {
+    "DELETE /api/mesh/peers": [
+      "main",
+      "routers.mesh_operator",
+      "routers.mesh_public"
+    ],
+    "DELETE /api/wormhole/dm/contact/{peer_id}": [
+      "main",
+      "routers.wormhole"
+    ],
+    "DELETE /api/wormhole/dm/invite/handles/{handle}": [
+      "main",
+      "routers.wormhole"
+    ],
+    "GET /api/cctv/media": [
+      "main",
+      "routers.cctv"
+    ],
+    "GET /api/debug-latest": [
+      "main",
+      "routers.health"
+    ],
+    "GET /api/geocode/reverse": [
+      "main",
+      "routers.tools"
+    ],
+    "GET /api/geocode/search": [
+      "main",
+      "routers.tools"
+    ],
+    "GET /api/health": [
+      "main",
+      "routers.health"
+    ],
+    "GET /api/mesh/channels": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/dm/count": [
+      "main",
+      "routers.mesh_dm"
+    ],
+    "GET /api/mesh/dm/poll": [
+      "main",
+      "routers.mesh_dm"
+    ],
+    "GET /api/mesh/dm/prekey-bundle": [
+      "main",
+      "routers.mesh_dm"
+    ],
+    "GET /api/mesh/dm/pubkey": [
+      "main",
+      "routers.mesh_dm"
+    ],
+    "GET /api/mesh/dm/witness": [
+      "main",
+      "routers.mesh_dm"
+    ],
+    "GET /api/mesh/gate/list": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/gate/{gate_id}": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/gate/{gate_id}/messages": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/infonet/event/{event_id}": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/infonet/events": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/infonet/locator": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/infonet/merkle": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/infonet/messages": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/infonet/messages/wait": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/infonet/node/{node_id}": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/infonet/status": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/infonet/sync": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/log": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/messages": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/metrics": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/oracle/consensus": [
+      "main",
+      "routers.mesh_oracle"
+    ],
+    "GET /api/mesh/oracle/markets": [
+      "main",
+      "routers.mesh_oracle"
+    ],
+    "GET /api/mesh/oracle/markets/more": [
+      "main",
+      "routers.mesh_oracle"
+    ],
+    "GET /api/mesh/oracle/predictions": [
+      "main",
+      "routers.mesh_oracle"
+    ],
+    "GET /api/mesh/oracle/profile": [
+      "main",
+      "routers.mesh_oracle"
+    ],
+    "GET /api/mesh/oracle/search": [
+      "main",
+      "routers.mesh_oracle"
+    ],
+    "GET /api/mesh/oracle/stakes/{message_id}": [
+      "main",
+      "routers.mesh_oracle"
+    ],
+    "GET /api/mesh/peers": [
+      "main",
+      "routers.mesh_operator",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/reputation": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/reputation/all": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/reputation/batch": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/rns/status": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/signals": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/status": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "GET /api/mesh/trust/vouches": [
+      "main",
+      "routers.mesh_dm"
+    ],
+    "GET /api/oracle/region-intel": [
+      "main",
+      "routers.sigint"
+    ],
+    "GET /api/radio/nearest": [
+      "main",
+      "routers.radio"
+    ],
+    "GET /api/radio/nearest-list": [
+      "main",
+      "routers.radio"
+    ],
+    "GET /api/radio/openmhz/audio": [
+      "main",
+      "routers.radio"
+    ],
+    "GET /api/radio/openmhz/calls/{sys_name}": [
+      "main",
+      "routers.radio"
+    ],
+    "GET /api/radio/openmhz/systems": [
+      "main",
+      "routers.radio"
+    ],
+    "GET /api/radio/top": [
+      "main",
+      "routers.radio"
+    ],
+    "GET /api/refresh": [
+      "main",
+      "routers.data"
+    ],
+    "GET /api/region-dossier": [
+      "main",
+      "routers.tools"
+    ],
+    "GET /api/route/{callsign}": [
+      "main",
+      "routers.radio"
+    ],
+    "GET /api/sentinel2/search": [
+      "main",
+      "routers.tools"
+    ],
+    "GET /api/settings/api-keys": [
+      "main",
+      "routers.admin"
+    ],
+    "GET /api/settings/api-keys/meta": [
+      "main",
+      "routers.admin"
+    ],
+    "GET /api/settings/news-feeds": [
+      "main",
+      "routers.admin"
+    ],
+    "GET /api/settings/node": [
+      "main",
+      "routers.admin"
+    ],
+    "GET /api/settings/privacy-profile": [
+      "main",
+      "routers.wormhole"
+    ],
+    "GET /api/settings/wormhole": [
+      "main",
+      "routers.wormhole"
+    ],
+    "GET /api/settings/wormhole-status": [
+      "main",
+      "routers.wormhole"
+    ],
+    "GET /api/sigint/nearest-sdr": [
+      "main",
+      "routers.sigint"
+    ],
+    "GET /api/thermal/verify": [
+      "main",
+      "routers.sigint"
+    ],
+    "GET /api/tools/shodan/status": [
+      "main",
+      "routers.tools"
+    ],
+    "GET /api/tools/uw/status": [
+      "main",
+      "routers.tools"
+    ],
+    "GET /api/wormhole/dm/contacts": [
+      "main",
+      "routers.wormhole"
+    ],
+    "GET /api/wormhole/dm/identity": [
+      "main",
+      "routers.wormhole"
+    ],
+    "GET /api/wormhole/dm/invite": [
+      "main",
+      "routers.wormhole"
+    ],
+    "GET /api/wormhole/dm/invite/handles": [
+      "main",
+      "routers.wormhole"
+    ],
+    "GET /api/wormhole/gate/{gate_id}/identity": [
+      "main",
+      "routers.wormhole"
+    ],
+    "GET /api/wormhole/gate/{gate_id}/key": [
+      "main",
+      "routers.wormhole"
+    ],
+    "GET /api/wormhole/gate/{gate_id}/personas": [
+      "main",
+      "routers.wormhole"
+    ],
+    "GET /api/wormhole/health": [
+      "main",
+      "routers.wormhole"
+    ],
+    "GET /api/wormhole/identity": [
+      "main",
+      "routers.wormhole"
+    ],
+    "GET /api/wormhole/status": [
+      "main",
+      "routers.wormhole"
+    ],
+    "PATCH /api/mesh/peers": [
+      "main",
+      "routers.mesh_operator",
+      "routers.mesh_public"
+    ],
+    "POST /api/ais/feed": [
+      "main",
+      "routers.data"
+    ],
+    "POST /api/layers": [
+      "main",
+      "routers.data"
+    ],
+    "POST /api/mesh/dm/block": [
+      "main",
+      "routers.mesh_dm"
+    ],
+    "POST /api/mesh/dm/count": [
+      "main",
+      "routers.mesh_dm"
+    ],
+    "POST /api/mesh/dm/poll": [
+      "main",
+      "routers.mesh_dm"
+    ],
+    "POST /api/mesh/dm/register": [
+      "main",
+      "routers.mesh_dm"
+    ],
+    "POST /api/mesh/dm/send": [
+      "main",
+      "routers.mesh_dm"
+    ],
+    "POST /api/mesh/dm/witness": [
+      "main",
+      "routers.mesh_dm"
+    ],
+    "POST /api/mesh/gate/create": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "POST /api/mesh/gate/peer-pull": [
+      "main",
+      "routers.mesh_peer_sync"
+    ],
+    "POST /api/mesh/gate/peer-push": [
+      "main",
+      "routers.mesh_peer_sync"
+    ],
+    "POST /api/mesh/gate/{gate_id}/message": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "POST /api/mesh/identity/revoke": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "POST /api/mesh/identity/rotate": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "POST /api/mesh/infonet/ingest": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "POST /api/mesh/infonet/peer-push": [
+      "main",
+      "routers.mesh_peer_sync"
+    ],
+    "POST /api/mesh/infonet/sync": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "POST /api/mesh/oracle/predict": [
+      "main",
+      "routers.mesh_oracle"
+    ],
+    "POST /api/mesh/oracle/resolve": [
+      "main",
+      "routers.mesh_oracle"
+    ],
+    "POST /api/mesh/oracle/resolve-stakes": [
+      "main",
+      "routers.mesh_oracle"
+    ],
+    "POST /api/mesh/oracle/stake": [
+      "main",
+      "routers.mesh_oracle"
+    ],
+    "POST /api/mesh/peers": [
+      "main",
+      "routers.mesh_operator",
+      "routers.mesh_public"
+    ],
+    "POST /api/mesh/report": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "POST /api/mesh/send": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "POST /api/mesh/trust/vouch": [
+      "main",
+      "routers.mesh_dm"
+    ],
+    "POST /api/mesh/vote": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "POST /api/sentinel/tile": [
+      "main",
+      "routers.tools"
+    ],
+    "POST /api/sentinel/token": [
+      "main",
+      "routers.tools"
+    ],
+    "POST /api/settings/news-feeds/reset": [
+      "main",
+      "routers.admin"
+    ],
+    "POST /api/sigint/transmit": [
+      "main",
+      "routers.sigint"
+    ],
+    "POST /api/system/update": [
+      "main",
+      "routers.admin"
+    ],
+    "POST /api/tools/shodan/count": [
+      "main",
+      "routers.tools"
+    ],
+    "POST /api/tools/shodan/host": [
+      "main",
+      "routers.tools"
+    ],
+    "POST /api/tools/shodan/search": [
+      "main",
+      "routers.tools"
+    ],
+    "POST /api/tools/uw/congress": [
+      "main",
+      "routers.tools"
+    ],
+    "POST /api/tools/uw/darkpool": [
+      "main",
+      "routers.tools"
+    ],
+    "POST /api/tools/uw/flow": [
+      "main",
+      "routers.tools"
+    ],
+    "POST /api/viewport": [
+      "main",
+      "routers.data"
+    ],
+    "POST /api/wormhole/connect": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/disconnect": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/dm/bootstrap-decrypt": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/dm/bootstrap-encrypt": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/dm/build-seal": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/dm/compose": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/dm/dead-drop-token": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/dm/dead-drop-tokens": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/dm/decrypt": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/dm/encrypt": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/dm/invite/import": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/dm/open-seal": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/dm/pairwise-alias": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/dm/pairwise-alias/rotate": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/dm/prekey/register": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/dm/register-key": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/dm/reset": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/dm/sas": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/dm/sender-token": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/gate/enter": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/gate/key/grant": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/gate/key/rotate": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/gate/leave": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/gate/message/compose": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/gate/message/decrypt": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/gate/message/post": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/gate/message/post-encrypted": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/gate/message/sign-encrypted": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/gate/messages/decrypt": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/gate/persona/activate": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/gate/persona/clear": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/gate/persona/create": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/gate/persona/retire": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/gate/proof": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/gate/state/export": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/identity/bootstrap": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/join": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/leave": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/restart": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/sign": [
+      "main",
+      "routers.wormhole"
+    ],
+    "POST /api/wormhole/sign-raw": [
+      "main",
+      "routers.wormhole"
+    ],
+    "PUT /api/mesh/gate/{gate_id}/envelope_policy": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "PUT /api/mesh/gate/{gate_id}/legacy_envelope_fallback": [
+      "main",
+      "routers.mesh_public"
+    ],
+    "PUT /api/settings/news-feeds": [
+      "main",
+      "routers.admin"
+    ],
+    "PUT /api/settings/node": [
+      "main",
+      "routers.admin"
+    ],
+    "PUT /api/settings/privacy-profile": [
+      "main",
+      "routers.wormhole"
+    ],
+    "PUT /api/settings/wormhole": [
+      "main",
+      "routers.wormhole"
+    ],
+    "PUT /api/wormhole/dm/contact": [
+      "main",
+      "routers.wormhole"
+    ]
+  }
+}

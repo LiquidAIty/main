@@ -121,6 +121,18 @@ export default defineConfig(() => {
           changeOrigin: true,
           secure: false,
         },
+        // WorldSignals (vendored app, own FastAPI backend on :8000). Its client
+        // calls `${API_BASE}/api/...`; the embed mount sets API_BASE to this
+        // prefix, so its traffic lands here instead of on LiquidAIty's own /api
+        // below. Proxying keeps it same-origin — no CORS grant on the vendor
+        // backend, and no second origin in the page.
+        // Must precede '/api' — Vite matches proxy keys in insertion order.
+        '/worldsignals-api': {
+          target: 'http://127.0.0.1:8000',
+          changeOrigin: true,
+          secure: false,
+          rewrite: (p) => p.replace(/^\/worldsignals-api/, ''),
+        },
         // App backend API
         '/api': {
           target: 'http://127.0.0.1:4000',

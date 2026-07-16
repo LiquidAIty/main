@@ -1,0 +1,305 @@
+# shadowbroker .gitignore
+# ----------------------
+
+# Dependencies
+node_modules/
+venv/
+env/
+.venv/
+backend/.venv-dir
+backend/venv-repair*/
+backend/.venv-repair*/
+
+# Environment Variables & Secrets
+.env
+.envrc
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.npmrc
+.pypirc
+.netrc
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+known_hosts
+authorized_keys
+
+# Python caches & compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.hypothesis/
+.tox/
+
+# Next.js build output
+.next/
+out/
+build/
+*.tsbuildinfo
+
+# Deprecated standalone Infonet Terminal skeleton (migrated into frontend/src/components/InfonetTerminal/)
+frontend/infonet-terminal/
+
+# Rust build artifacts (privacy-core)
+target/
+target-test/
+
+# ========================
+# LOCAL-ONLY: extra/ folder
+# ========================
+# All internal docs, planning files, raw data, backups, and dev scratch
+# live here. NEVER commit this folder.
+extra/
+
+# ========================
+# Application caches & runtime DBs (regenerate on startup)
+# ========================
+backend/ais_cache.json
+backend/carrier_cache.json
+backend/cctv.db
+cctv.db
+*.db
+*.sqlite
+*.sqlite3
+
+# ========================
+# backend/data/ — blanket ignore, whitelist static reference files
+# ========================
+# Everything in data/ is runtime-generated state (encrypted keys,
+# MLS bindings, relay spools, caches) and MUST NOT be committed.
+# Only static reference datasets that ship with the repo are whitelisted.
+backend/data/*
+!backend/data/datacenters.json
+!backend/data/datacenters_geocoded.json
+!backend/data/military_bases.json
+!backend/data/plan_ccg_vessels.json
+!backend/data/plane_alert_db.json
+!backend/data/power_plants.json
+!backend/data/tracked_names.json
+!backend/data/yacht_alert_db.json
+# Issue #206: bundled KiwiSDR receiver directory used as last-resort
+# fallback when rx.linkfanel.net (HTTP-only upstream) is unreachable
+# or returns content that fails our integrity validation.
+!backend/data/kiwisdr_directory.json
+# Issue #201: pinned SHA-256 digests for known Tor Expert Bundle URLs.
+# Used as a second verification source when upstream .sha256sum fails.
+!backend/data/tor_bundle_digests.json
+# Issue #258: SPKI pins for stream.aisstream.io so we can survive upstream
+# Let's Encrypt renewal failures without disabling TLS validation entirely.
+!backend/data/aisstream_spki_pins.json
+# Issue #231: pinned SHA-256 digests for known release archives. Used by
+# the self-updater as a second-line integrity check when the release's
+# SHA256SUMS.txt asset can't be fetched.
+!backend/data/release_digests.json
+# Issue #244/#245/#246: one-shot carrier-position seed shipped with each
+# release. Used ONLY on first-ever startup to bootstrap carrier_cache.json;
+# after that the cache reflects this install's own GDELT observations.
+!backend/data/carrier_seed.json
+# DrishX RF model weights (MIT — see backend/third_party/drishx/NOTICE.md)
+!backend/data/drishx/
+!backend/data/drishx/rf_model.pickle
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Vercel / Deployment
+.vercel
+
+# ========================
+# Temp / scratch / debug files
+# ========================
+tmp/
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+out.txt
+out_sys.txt
+rss_output.txt
+merged.txt
+tmp_fast.json
+diff.txt
+local_diff.txt
+map_diff.txt
+TERMINAL
+
+# Debug dumps & release artifacts
+backend/dump.json
+backend/debug_fast.json
+backend/nyc_sample.json
+backend/nyc_full.json
+backend/liveua_test.html
+backend/out_liveua.json
+backend/out.json
+backend/temp.json
+backend/seattle_sample.json
+backend/sgp_sample.json
+backend/wsdot_sample.json
+backend/xlsx_analysis.txt
+frontend/server_logs*.txt
+frontend/cctv.db
+frontend/eslint-report.json
+*.zip
+*.tar.gz
+*.xlsx
+
+# Old backups & repo clones
+.git_backup/
+local-artifacts/
+release-secrets/
+release-staging/
+.tmp-release-inspect/
+shadowbroker_repo/
+frontend/src/components.bak/
+frontend/src/components/map/icons/backups/
+
+# Coverage
+coverage/
+.coverage
+.coverage.*
+dist/
+
+# Test scratch files (not in tests/ folder)
+backend/test_*.py
+backend/services/test_*.py
+
+# Local analysis & dev tools
+backend/analyze_xlsx.py
+backend/services/ais_cache.json
+graphify/
+graphify-out/
+
+# ========================
+# Internal docs & brainstorming (never commit)
+# ========================
+docs/*
+!docs/OUTBOUND_DATA.md
+!docs/production-hardening.md
+!docs/contributor-map.md
+!docs/mesh/
+docs/mesh/*
+!docs/mesh/threat-model.md
+!docs/mesh/claims-reconciliation.md
+!docs/mesh/mesh-canonical-fixtures.json
+!docs/mesh/mesh-merkle-fixtures.json
+!docs/mesh/wormhole-dm-root-operations-runbook.md
+.local-docs/
+infonet-economy/
+updatestuff.md
+ROADMAP.md
+UPDATEPROTOCOL.md
+CLAUDE.md
+DOCKER_SECRETS.md
+
+# Misc dev artifacts
+clean_zip.py
+zip_repo.py
+refactor_cesium.py
+jobs.json
+
+# Claude / AI
+.claude
+.mise.local.toml
+.codex-tmp/
+prototype/
+.runtime/
+
+# ========================
+# Runtime state & operator-local data (never commit)
+# ========================
+# TimeMachine snapshot cache — regenerated at runtime, can be 100 MB+
+backend/timemachine/
+# Operator witness keys, identity material, transparency ledgers (machine-local)
+ops/
+# Runtime DM relay state
+dm_relay.json
+# Dev scratch notes
+improvements.txt
+
+# ========================
+# Custody verification temp dirs (runtime test artifacts with private keys!)
+# ========================
+backend/sb-custody-verify-*/
+
+# Python egg-info (build artifact, regenerated by pip install -e)
+*.egg-info/
+
+# Privacy-core debug build (Windows DLL, 3.6 MB, not shipped)
+privacy-core/debug/
+
+# Desktop-shell export stash dirs (empty temp dirs from Tauri build)
+frontend/.desktop-export-stash-*/
+
+# Wormhole logs (can be 30 MB+ each, runtime-generated)
+backend/data/wormhole_stderr.log
+backend/data/wormhole_stdout.log
+
+# Hermes Agent (operator-local runtime install — not project source)
+.hermes/
+**/.hermes/
+hermes-agent/
+
+# Runtime caches that already slip through the backend/data/* blanket
+# (these are caught by the wildcard but listing for clarity)
+
+# Compressed snapshot archives (can be 100 MB+)
+*.json.gz
+
+# ──────────────────────────────────────────────────────────────────────
+# AI assistant / coding-agent scratch
+# ──────────────────────────────────────────────────────────────────────
+# Per-tool config + scratch directories. These are private to whichever
+# coding agent the operator happens to be using and have no business in
+# the repo. If a tool's instructions need to be canonical for the project,
+# we'll put them in docs/ explicitly — not let the agent dump them at the
+# repo root.
+
+# OpenAI Codex CLI
+.codex/
+.codex-app-schema/
+.codex-app-ts/
+
+# Per-agent instruction files dropped at repo root by various tools.
+# These are operator-side preferences, not part of the project contract.
+AGENTS.md
+GEMINI.md
+CLAUDE.md
+.github/copilot-instructions.md
+
+# Stale AI-generated test file that referenced fields that don't exist in
+# the current `_parse_carrier_positions_from_news` implementation. Kept
+# ignored so it doesn't accidentally get committed if it shows up again
+# from a tool that's working off an out-of-date understanding of the
+# module. If a real test for that function is needed, write it under a
+# meaningful name in tests/test_carrier_tracker_quality.py.
+backend/tests/test_carrier_tracker_region_centers.py
