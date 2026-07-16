@@ -130,6 +130,64 @@ def unified_context(
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
+@app.get("/unified/model-context")
+def unified_model_context(
+    projectionId: str,
+    projectId: str,
+    conversationId: str,
+    role: str = "main_chat",
+    activeGraphViewId: str | None = None,
+    knowgraphScope: str | None = None,
+    thinkLimit: int = 120,
+    knowLimit: int = 120,
+    codeLimit: int = 90,
+    expansionDepth: int = 0,
+):
+    """Compact model representation resolved through the persistent authorities:
+    deterministic rebuild + content-hash equality with the id the client saw."""
+    from app.python_models.unified_context import UnifiedContextRequest, build_model_context
+    try:
+        return build_model_context(projectionId, UnifiedContextRequest(
+            project_id=projectId,
+            conversation_id=conversationId,
+            role=role,
+            active_view_id=activeGraphViewId,
+            knowgraph_scope=knowgraphScope,
+            think_limit=thinkLimit,
+            know_limit=knowLimit,
+            code_limit=codeLimit,
+            expansion_depth=expansionDepth,
+        ))
+    except ValueError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.get("/unified/doorway-context")
+def unified_doorway_context(projectId: str, conversationId: str, viewIds: str):
+    """Compact rendering of persisted Graph View records for a child doorway —
+    resolved by id from the persistent store, never from caller-supplied JSON."""
+    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+    from app.python_models.unified_context import render_graph_views
+    requested = [view_id for view_id in (part.strip() for part in viewIds.split(",")) if view_id]
+    if not requested:
+        raise HTTPException(status_code=400, detail="view_ids_required")
+    try:
+        persisted = get_thinkgraph().graph_views(projectId, conversationId).get("views") or []
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+    by_id = {str(view.get("viewId")): view for view in persisted}
+    missing = [view_id for view_id in requested if view_id not in by_id]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"graph_view_unknown: {', '.join(missing)}")
+    views = [by_id[view_id] for view_id in requested]
+    rendered = render_graph_views(views)
+    return {"ok": True, "projectId": projectId, "conversationId": conversationId,
+            "viewIds": requested, "views": views,
+            "modelContext": rendered["text"], "measurements": rendered["measurements"]}
+
+
 @app.get("/thinkgraph/context-view")
 def thinkgraph_context_view(projectId: str, conversationId: str, role: str = "main_chat", activeGraphViewId: str | None = None, limit: int = 80, expansionDepth: int = 0):
     from app.python_models.thinkgraph_context import resolve_thinkgraph_context

@@ -2,7 +2,15 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
 
-from app.python_models.unified_context import UnifiedContextRequest, build_unified_context
+import pytest
+
+from app.python_models.unified_context import (
+    UnifiedContextRequest,
+    build_model_context,
+    build_unified_context,
+    render_graph_views,
+    render_model_context,
+)
 
 
 class FakeThinkGraph:
@@ -93,6 +101,79 @@ def test_missing_authority_is_explicit_warning_not_fake_data():
     result = build_unified_context(UnifiedContextRequest("project-1", "main"), graph=FakeThinkGraph(), read_json=failed_read, post_json=fake_post)
     assert result["counts"]["selected"]["knowgraph"] == 0
     assert {warning["code"] for warning in result["warnings"]} == {"authority_unavailable", "empty_authority_view", "referenced_record_not_in_projection", "missing_authority_mapping"}
+
+
+def test_model_context_resolves_by_persistent_identity_and_is_faithful():
+    request = UnifiedContextRequest("compact-project", "main")
+    built = build_unified_context(request, graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
+    first = build_model_context(built["projectionId"], request, graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
+    second = build_model_context(built["projectionId"], request, graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
+    assert first["modelContext"] == second["modelContext"]
+    text = first["modelContext"]
+    assert built["projectionId"] in text
+    assert "REASONING STATE" in text and "- Goal: Goal" in text
+    assert "RETRIEVAL:" in text and "read_thinkgraph_scope" in text
+    # FAITHFUL: every selected record of every authority view appears in the text.
+    for view in built["graphViews"]:
+        for record in view["records"]:
+            assert str(record["canonicalId"]) in text
+    # Every projection relationship (including cross-authority) is rendered.
+    rendered = render_model_context(built)
+    assert rendered["measurements"]["relationships"] == len({
+        (edge["source"], edge["target"], edge["type"]) for edge in built["edges"]
+    })
+    # None of the display/telemetry fields leak into the model text.
+    for excluded in ('"x":', "estimatedTokens", "selectionReason", "includedCanonicalNodeIds", "#4AE2DF"):
+        assert excluded not in text
+    measurements = first["measurements"]
+    assert measurements["characters"] == len(text)
+    assert set(measurements["sections"]) == {"header", "reasoning_state", "records", "relationships", "provenance", "warnings", "retrieval"}
+    assert set(measurements["authorities"]) == {"thinkgraph", "knowgraph", "codegraph"}
+    # The compact delivery is materially smaller than the full projection JSON.
+    import json as _json
+    assert len(text) < len(_json.dumps(built)) / 5
+
+
+def test_model_context_rejects_superseded_or_mismatched_projection_id():
+    request = UnifiedContextRequest("scope-project", "main")
+    built = build_unified_context(request, graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
+    # Unknown/stale id for this configuration — honest failure, no silent regeneration.
+    with pytest.raises(ValueError, match="projection_superseded"):
+        build_model_context("unified:not-the-current-hash", request, graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
+    # A different configuration (wrong scope, role, or expansion) produces a
+    # different content hash, so a swapped id also fails honestly.
+    other = UnifiedContextRequest("scope-project", "main", expansion_depth=1)
+    with pytest.raises(ValueError, match="projection_superseded"):
+        build_model_context(built["projectionId"], other, graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
+    current = build_model_context(built["projectionId"], request, graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
+    assert current["ok"] is True
+    assert current["graphViews"] == built["graphViews"]
+
+
+def test_render_model_context_reports_projection_side_omissions():
+    built = build_unified_context(
+        UnifiedContextRequest("omission-project", "main", think_limit=1, expansion_depth=1),
+        graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post,
+    )
+    rendered = render_model_context(built)
+    think = rendered["measurements"]["authorities"]["thinkgraph"]
+    assert think["availableBeyondView"] >= 1
+    assert "more available beyond this view" in rendered["text"]
+
+
+def test_render_graph_views_is_faithful_and_compact():
+    views = [_view("thinkgraph", ["t:goal", "t:decision"]), _view("codegraph", ["c:fn"])]
+    views[0]["includedRelationships"] = [{"id": "e1", "source": "t:goal", "target": "t:decision", "type": "RESULTED_IN"}]
+    rendered = render_graph_views(views)
+    text = rendered["text"]
+    for canonical in ("t:goal", "t:decision", "c:fn"):
+        assert canonical in text
+    assert "t:goal -RESULTED_IN-> t:decision" in text
+    assert rendered["measurements"]["records"] == 3
+    assert rendered["measurements"]["relationships"] == 1
+    assert "selectionReason" not in text and "estimatedTokens" not in text
+    import json as _json
+    assert len(text) < len(_json.dumps(views))
 
 
 def test_identical_concurrent_requests_resolve_authorities_once():

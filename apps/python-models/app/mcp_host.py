@@ -111,7 +111,11 @@ async def list_tools() -> list[Tool]:
                     "adapter": {"type": "string", "enum": ["claude_code", "codex"]},
                     "approvedPrompt": {"type": "string"},
                     "authority": {"type": "string", "enum": ["direct_main_audit", "mag_one_execution"]},
-                    "graphViews": {"type": "array", "items": {"type": "object"}},
+                    "graphViewIds": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Persisted Graph View ids (canonical, e.g. codegraph:…) to attach. IDs only — the server resolves the persisted views and renders their compact context; never paste view content.",
+                    },
                 },
                 "required": ["parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt"],
             },
@@ -586,7 +590,7 @@ async def list_tools() -> list[Tool]:
 # Structural allow-list per tool: unexpected keys are rejected honestly, never
 # silently forwarded (prevents smuggling prompts/models/patches through the host).
 _ALLOWED_KEYS: dict[str, set[str]] = {
-    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt", "authority", "graphViews"},
+    "run_coder_subagent": {"parentRunId", "projectId", "deckId", "conversationId", "cardId", "adapter", "approvedPrompt", "authority", "graphViewIds"},
     "mag_one.describe_connected_agents": {"projectId", "deckId"},
     "run_mag_one": {"projectId", "deckId", "jobId", "conversationId", "parentContext"},
     "thinkgraph.submit_update": {"projectId", "conversationId", "resources", "relations", "statements"},

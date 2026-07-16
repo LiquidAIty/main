@@ -43,8 +43,20 @@ export type GrpcSessionEvent =
   | { kind: 'tool_result'; toolName: string; toolUseId: string; output: string; isError: boolean }
   | { kind: 'progress'; toolUseId: string; parentToolUseId: string; data: unknown }
   | { kind: 'permission'; promptId: string; question: string; promptType: string }
-  | { kind: 'done'; fullText: string }
+  | { kind: 'done'; fullText: string; usage: GrpcTurnUsage }
   | { kind: 'error'; message: string; code?: string };
+
+/** Provider-reported usage + engine-truth context accounting for one turn.
+ * Values come from the engine's own result/usage records — never estimated
+ * here; zeros/empty mean the engine did not report, not a fabricated count. */
+export type GrpcTurnUsage = {
+  promptTokens: number;
+  completionTokens: number;
+  /** Compact JSON from the engine's analyzeContextUsage (per-component context
+   * breakdown: system prompt sections, tool schemas, MCP tools, agents,
+   * messages). Empty string when the engine could not produce it. */
+  contextBreakdownJson: string;
+};
 
 /** Decode the generic gRPC progress envelope without interpreting child
  * content. The parent tool-use link and opaque data_json are preserved exactly
@@ -77,8 +89,12 @@ export type GrpcTurnArgs = {
   traceId?: string;
   /** Server-minted context passed only to the native Hermes doorway. */
   investigationContext?: HermesInvestigationContext;
-  /** Canonical-reference candidates validated by the HTTP boundary. */
+  /** Server-resolved delivery views for LIFECYCLE recording only — their JSON
+   * never enters the model prompt. */
   graphViews?: GraphView[];
+  /** The compact model representation derived server-side from the same
+   * projection the human saw — the ONLY graph text the model receives. */
+  graphContext?: string;
 };
 
 export type HarnessMode = 'chat' | 'canvas';
@@ -87,8 +103,8 @@ export type GrpcTurnHandle = {
   /** Answer an action_required permission prompt mid-turn. */
   answer(promptId: string, reply: string): void;
   cancel(): void;
-  /** Resolves with the final text on `done`; rejects on `error`. */
-  done: Promise<{ finalText: string }>;
+  /** Resolves with the final text and real usage on `done`; rejects on `error`. */
+  done: Promise<{ finalText: string; usage: GrpcTurnUsage }>;
   /** The saved main_chat card identity this turn actually ran with — real
    * event metadata for the frontdoor telemetry, never a re-resolution. */
   resolved: { cardId: string; provider: string; modelKey: string; providerModelId: string };
@@ -130,7 +146,10 @@ export function buildHarnessRuntimeContext(
   parentRunId?: string,
   options: {
     investigationContext?: HermesInvestigationContext;
-    graphViews?: GraphView[];
+    /** Compact server-rendered graph context text (already carries its own
+     * [LIQUIDAITY_GRAPH_CONTEXT] header). Full Graph View JSON is never
+     * serialized into the prompt. */
+    graphContext?: string;
   } = {},
 ): string | null {
   const parsed = parseSessionId(sessionId);
@@ -150,12 +169,11 @@ export function buildHarnessRuntimeContext(
           'This compact context is server-minted for Hermes. Read the current project ThinkGraph yourself; focusNodeIds are optional hints, never the complete assignment.',
         ]
       : []),
-    ...(options.graphViews?.length
+    ...(options.graphContext?.trim()
       ? [
           '',
-          '[LIQUIDAITY_GRAPH_VIEWS]',
-          JSON.stringify(options.graphViews),
-          'These compact canonical references are the exact filtered graph views supplied to this Main invocation. They do not contain complete source records and do not transfer graph authority.',
+          options.graphContext.trim(),
+          'This compact graph context is the exact server projection supplied to this invocation. It does not transfer graph authority.',
         ]
       : []),
   ].join('\n');
@@ -570,7 +588,7 @@ export async function startGrpcTurn(
     }, Math.max(1, nextDeadlineMs - nowMs));
   };
 
-  const done = new Promise<{ finalText: string }>((resolve, reject) => {
+  const done = new Promise<{ finalText: string; usage: GrpcTurnUsage }>((resolve, reject) => {
     rejectDone = reject;
     call.on('data', (msg: any) => {
       if (terminal) return;
@@ -608,8 +626,13 @@ export async function startGrpcTurn(
         terminal = true;
         if (timeoutHandle) clearTimeout(timeoutHandle);
         const finalText = msg.done.full_text || accumulated;
-        safeOnEvent({ kind: 'done', fullText: finalText });
-        resolve({ finalText });
+        const usage: GrpcTurnUsage = {
+          promptTokens: Number(msg.done.prompt_tokens) || 0,
+          completionTokens: Number(msg.done.completion_tokens) || 0,
+          contextBreakdownJson: String(msg.done.context_breakdown_json || ''),
+        };
+        safeOnEvent({ kind: 'done', fullText: finalText, usage });
+        resolve({ finalText, usage });
         try { call.end(); } catch { /* already closed */ }
       } else if (msg.error) {
         terminal = true;
@@ -644,14 +667,20 @@ export async function startGrpcTurn(
   const doorwayDefinitions = mainChatConfig.doorwayDefinitions;
   callerDoorwayCardIds = doorwayDefinitions.map((def: any) => String(def?.card_id || '')).filter(Boolean);
   callerParentCardId = mainChatConfig.cardId;
-  const runtimeGraphViews = attachGraphViewsToRuntime(args.graphViews || [], {
-    provider: mainChatConfig.provider,
-    model: mainChatConfig.providerModelId,
-    role: 'main_chat',
-    invocationId: args.traceId || args.sessionId,
-  });
+  const runtimeGraphViews = attachGraphViewsToRuntime(
+    args.graphViews || [],
+    {
+      provider: mainChatConfig.provider,
+      model: mainChatConfig.providerModelId,
+      role: 'main_chat',
+      invocationId: args.traceId || args.sessionId,
+    },
+    // Honest delivered size: what the model actually received is the compact
+    // graph context text, not each view's own JSON weight.
+    { contextCharacters: (args.graphContext || '').length },
+  );
   const runtimeContext = buildHarnessRuntimeContext(args.sessionId, args.traceId, {
-    graphViews: runtimeGraphViews,
+    graphContext: args.graphContext,
   });
   const appendSystemPrompt = [mainChatConfig.prompt, runtimeContext]
     .filter((section): section is string => Boolean(section))

@@ -436,3 +436,271 @@ def build_unified_context(
         with _INFLIGHT_LOCK:
             if _INFLIGHT.get(key) is state:
                 _INFLIGHT.pop(key, None)
+
+
+# ---------------------------------------------------------------------------
+# Compact model representation: the text a model invocation consumes, derived
+# deterministically from the SAME projection the Unified surface renders.
+# The projection decides membership; this layer only renders that membership
+# efficiently — every selected record and relationship is preserved, and only
+# transport/UI overhead is removed (coordinates, renderer metadata, repeated
+# canonical ids, membership arrays, per-record telemetry, selection
+# boilerplate, styling). Token COUNTING, never token enforcement.
+# ---------------------------------------------------------------------------
+_REASONING_STATE_TYPES = ("Goal", "Task", "Decision", "Question", "RunRecord", "Finding")
+
+
+def _flat(text: Any) -> str:
+    return " ".join(str(text or "").split())
+
+
+def _dedup_title(name: str, summary: str) -> str:
+    # View summaries are often "Title: description" — drop only the duplicated
+    # title prefix; the description itself is content and stays whole.
+    if summary.startswith(f"{name}: "):
+        return summary[len(name) + 2 :]
+    return summary
+
+
+def _estimated_tokens(text: str) -> int:
+    return max(1, math.ceil(len(text) / 4)) if text else 0
+
+
+def render_model_context(projection: dict[str, Any]) -> dict[str, Any]:
+    """Deterministic faithful compact text + per-section/per-authority token counts."""
+    views: dict[str, dict[str, Any]] = {}
+    for view in projection.get("graphViews") or []:
+        views[str(view.get("authority"))] = view
+    nodes = list(projection.get("nodes") or [])
+    by_numeric = {node.get("id"): node for node in nodes}
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for node in nodes:
+        by_key[(str(node.get("authority")), str(node.get("source_id")))] = node
+
+    def lookup(authority: str, canonical: str) -> dict[str, Any] | None:
+        return by_key.get((authority, canonical)) or by_key.get((authority, canonical.removeprefix("code:")))
+
+    sections: dict[str, list[str]] = {}
+
+    active_view = projection.get("activeGraphViewId") or "none"
+    view_lines = []
+    counts = projection.get("counts") or {}
+    selected_counts = counts.get("selected") or {}
+    for authority in AUTHORITY:
+        view = views.get(authority)
+        if not view:
+            view_lines.append(f"{authority}: unavailable")
+            continue
+        omitted = int(view.get("omittedNeighborCount") or 0)
+        view_lines.append(
+            f"{authority}: {view.get('viewId')} ({int(selected_counts.get(authority) or 0)} records"
+            + (f", {omitted} more available beyond this view" if omitted else "")
+            + ")"
+        )
+    sections["header"] = [
+        "[LIQUIDAITY_GRAPH_CONTEXT]",
+        f"projection: {projection.get('projectionId')} | project: {projection.get('projectId')} | conversation: {projection.get('conversationId')} | role: {projection.get('receivingRole')}",
+        f"active view: {active_view}",
+        *view_lines,
+    ]
+
+    rendered_ids: set[tuple[str, str]] = set()
+    reasoning_lines: list[str] = []
+    reasoning_order = {name: index for index, name in enumerate(_REASONING_STATE_TYPES)}
+    reasoning_nodes = sorted(
+        (node for node in nodes if node.get("authority") == "thinkgraph" and str(node.get("label")) in reasoning_order),
+        key=lambda node: (reasoning_order[str(node.get("label"))], str(node.get("name"))),
+    )
+    for node in reasoning_nodes:
+        props = node.get("properties") or {}
+        name = _flat(node.get("name"))
+        description = _flat(props.get("description") or "")
+        status = str(node.get("status") or "").strip()
+        line = f"- {node.get('label')}: {name}"
+        if description and description != name:
+            line += f" — {description}"
+        if status:
+            line += f" [{status}]"
+        line += f" ({node.get('source_id')})"
+        reasoning_lines.append(line)
+        rendered_ids.add(("thinkgraph", str(node.get("source_id"))))
+    sections["reasoning_state"] = (["REASONING STATE (ThinkGraph):"] + reasoning_lines) if reasoning_lines else []
+
+    authority_tokens: dict[str, dict[str, int]] = {}
+    record_lines: list[str] = ["SELECTED RECORDS:"]
+    for authority in AUTHORITY:
+        view = views.get(authority)
+        records = list((view or {}).get("records") or [])
+        lines: list[str] = []
+        for record in records:
+            canonical = str(record.get("canonicalId") or "")
+            if (authority, canonical) in rendered_ids:
+                continue
+            node = lookup(authority, canonical)
+            name = _flat((node or {}).get("name") or canonical)
+            kind = str((node or {}).get("label") or "Record")
+            summary = _dedup_title(name, _flat(record.get("summary") or ""))
+            if authority == "codegraph":
+                pointer = str(((node or {}).get("properties") or {}).get("file_path") or "")
+                lines.append(f"- [{kind}] {name}" + (f" — {pointer}" if pointer else "") + f" ({canonical})")
+            else:
+                lines.append(f"- [{kind}] {name}" + (f" — {summary}" if summary and summary != name else "") + f" ({canonical})")
+            rendered_ids.add((authority, canonical))
+        if lines:
+            label = AUTHORITY[authority]["label"]
+            record_lines.append(f"{label} ({len(lines)}):")
+            record_lines.extend(lines)
+        authority_tokens[authority] = {
+            "records": len(lines),
+            "recordTokens": _estimated_tokens("\n".join(lines)),
+        }
+    sections["records"] = record_lines if len(record_lines) > 1 else []
+
+    relationship_lines: list[str] = []
+    seen_relationships: set[tuple[Any, Any, str]] = set()
+    for edge in projection.get("edges") or []:
+        source = by_numeric.get(edge.get("source"))
+        target = by_numeric.get(edge.get("target"))
+        if not source or not target:
+            continue
+        dedup_key = (edge.get("source"), edge.get("target"), str(edge.get("type")))
+        if dedup_key in seen_relationships:
+            continue
+        seen_relationships.add(dedup_key)
+        line = f"- {_flat(source.get('name'))} -{edge.get('type')}-> {_flat(target.get('name'))}"
+        if edge.get("cross_authority"):
+            line += f" [{source.get('authority')}→{target.get('authority')}]"
+        relationship_lines.append(line)
+    sections["relationships"] = (
+        [f"RELATIONSHIPS ({len(relationship_lines)}):"] + relationship_lines
+    ) if relationship_lines else []
+
+    provenance_refs = sorted({
+        _flat(ref)
+        for view in views.values()
+        for ref in (view.get("provenanceRefs") or [])
+        if _flat(ref)
+    })
+    sections["provenance"] = (
+        [f"PROVENANCE ({len(provenance_refs)}): " + "; ".join(provenance_refs)] if provenance_refs else []
+    )
+
+    warning_codes = sorted({str(warning.get("code")) for warning in projection.get("warnings") or []})
+    sections["warnings"] = (
+        [f"WARNINGS: {len(projection.get('warnings') or [])} ({', '.join(warning_codes)})"] if warning_codes else []
+    )
+
+    sections["retrieval"] = [
+        "RETRIEVAL: full records and anything beyond this view are available through the bounded tools — "
+        "read_thinkgraph_scope (reasoning records), retrieve_knowgraph_context (evidence and sources), "
+        "and the Coder doorway's codegraph_search (repository symbols). "
+        "Reference records by the canonical ids shown above.",
+    ]
+
+    ordered = ["header", "reasoning_state", "records", "relationships", "provenance", "warnings", "retrieval"]
+    text = "\n".join(line for key in ordered for line in sections[key] if sections[key])
+    section_measurements = {
+        key: {"characters": len("\n".join(sections[key])), "estimatedTokens": _estimated_tokens("\n".join(sections[key]))}
+        for key in ordered
+    }
+    measurements = {
+        "characters": len(text),
+        "estimatedTokens": _estimated_tokens(text),
+        "sections": section_measurements,
+        "authorities": {
+            authority: {
+                **authority_tokens.get(authority, {"records": 0, "recordTokens": 0}),
+                "selected": int(selected_counts.get(authority) or 0),
+                "availableBeyondView": int((views.get(authority) or {}).get("omittedNeighborCount") or 0),
+            }
+            for authority in AUTHORITY
+        },
+        "relationships": len(relationship_lines),
+        "reasoningStateRecords": len(reasoning_lines),
+    }
+    return {"text": text, "measurements": measurements}
+
+
+def render_graph_views(views: list[dict[str, Any]]) -> dict[str, Any]:
+    """Faithful compact rendering of persisted Graph View records (doorway
+    delivery). Every record and relationship in the views is preserved; only
+    transport/UI overhead is removed. Shares the one serialization style."""
+    lines: list[str] = ["[LIQUIDAITY_GRAPH_CONTEXT]"]
+    total_records = 0
+    total_relationships = 0
+    per_view: dict[str, dict[str, int]] = {}
+    for view in views:
+        view_id = str(view.get("viewId"))
+        omitted = int(view.get("omittedNeighborCount") or 0)
+        records = list(view.get("records") or [])
+        relationships = list(view.get("includedRelationships") or [])
+        lines.append(
+            f"view: {view_id} | authority: {view.get('authority')} | project: {view.get('projectId')} | "
+            f"conversation: {view.get('conversationId')} | records: {len(records)}"
+            + (f" ({omitted} more available beyond this view)" if omitted else "")
+        )
+        if _flat(view.get("query")):
+            lines.append(f"query: {_flat(view.get('query'))}")
+        for record in records:
+            canonical = str(record.get("canonicalId") or "")
+            summary = _flat(record.get("summary") or "")
+            lines.append(f"- {summary} ({canonical})" if summary else f"- ({canonical})")
+        for relationship in relationships:
+            lines.append(
+                f"- {relationship.get('source')} -{relationship.get('type') or 'RELATED_TO'}-> {relationship.get('target')}"
+            )
+        refs = sorted({_flat(ref) for ref in (view.get("provenanceRefs") or []) if _flat(ref)})
+        if refs:
+            lines.append(f"provenance: {'; '.join(refs)}")
+        total_records += len(records)
+        total_relationships += len(relationships)
+        per_view[view_id] = {
+            "records": len(records),
+            "relationships": len(relationships),
+            "estimatedTokens": _estimated_tokens("\n".join(lines)),
+        }
+    lines.append(
+        "These compact canonical references are the exact filtered graph views supplied to this invocation. "
+        "Reference records by the canonical ids above; retrieve full records through the bounded graph tools."
+    )
+    text = "\n".join(lines)
+    return {
+        "text": text,
+        "measurements": {
+            "characters": len(text),
+            "estimatedTokens": _estimated_tokens(text),
+            "views": per_view,
+            "records": total_records,
+            "relationships": total_relationships,
+        },
+    }
+
+
+def build_model_context(
+    projection_id: str,
+    request: UnifiedContextRequest,
+    *,
+    graph: ThinkGraphEngraphis | None = None,
+    read_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _get_json,
+    post_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _post_json,
+) -> dict[str, Any]:
+    """Resolve the projection through its persistent authorities: rebuild
+    deterministically from the same configuration and require content-hash
+    equality with the id the client saw. The graphs are the store — a service
+    restart cannot orphan a valid projection, and a mismatch means the graphs
+    moved since the human looked, which fails honestly (never a silent
+    regeneration of different context)."""
+    rebuilt = build_unified_context(request, graph=graph, read_json=read_json, post_json=post_json)
+    if str(rebuilt.get("projectionId")) != str(projection_id):
+        raise ValueError(f"projection_superseded: current is {rebuilt.get('projectionId')}")
+    rendered = render_model_context(rebuilt)
+    return {
+        "ok": True,
+        "projectionId": str(projection_id),
+        "identity": rebuilt.get("identity") or {},
+        "activeGraphViewId": rebuilt.get("activeGraphViewId"),
+        "modelContext": rendered["text"],
+        "measurements": rendered["measurements"],
+        "graphViews": rebuilt.get("graphViews") or [],
+        "warnings": rebuilt.get("warnings") or [],
+    }

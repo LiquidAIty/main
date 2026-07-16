@@ -11,6 +11,7 @@ import { getDefaultAppState } from '../state/AppStateStore.js'
 import { AppState } from '../state/AppState.js'
 import { FileStateCache, READ_FILE_STATE_CACHE_SIZE } from '../utils/fileStateCache.js'
 import type { BuiltInAgentDefinition } from '../tools/AgentTool/loadAgentsDir.js'
+import { collectContextData } from '../commands/context/context-noninteractive.js'
 
 const PROTO_PATH = path.resolve(import.meta.dirname, '../proto/openclaude.proto')
 
@@ -338,9 +339,14 @@ export class GrpcServer {
             ? this.mcpTools.filter(tool => parentAllowedMcpTools.includes(tool.name))
             : this.mcpTools
 
+          // The parent session's exact tool pool for this turn — also the input
+          // to the post-turn context accounting, so measurement reflects what
+          // the model actually saw.
+          const turnTools = [...getTools(appState.toolPermissionContext), ...parentMcpTools]
+
           engine = new QueryEngine({
             cwd: req.working_directory || process.cwd(),
-            tools: [...getTools(appState.toolPermissionContext), ...parentMcpTools], // base tools + the parent's granted MCP tools
+            tools: turnTools, // base tools + the parent's granted MCP tools
             commands: [], // Slash commands
             mcpClients: this.mcpClients,
             agents: buildAgentDefinitionsFromRequest(req),
@@ -472,11 +478,39 @@ export class GrpcServer {
               this.sessions.set(sessionId, previousMessages)
             }
 
+            // Engine-truth context accounting for this turn: the engine's own
+            // analyzeContextUsage over the exact messages/tools/agents/prompt
+            // the turn ran with. Measurement only — a failure here yields an
+            // empty field and a stderr line, never a fabricated breakdown and
+            // never a broken turn.
+            let contextBreakdownJson = ''
+            try {
+              const contextData = await collectContextData({
+                messages: previousMessages,
+                getAppState: () => appState,
+                options: {
+                  mainLoopModel: appState.mainLoopModel || req.model || '',
+                  tools: turnTools,
+                  agentDefinitions: appState.agentDefinitions,
+                  appendSystemPrompt:
+                    typeof req.append_system_prompt === 'string' && req.append_system_prompt.trim()
+                      ? req.append_system_prompt
+                      : undefined,
+                },
+              })
+              contextBreakdownJson = JSON.stringify(contextData)
+            } catch (err) {
+              console.error(
+                `gRPC Server: context accounting unavailable for this turn: ${err instanceof Error ? err.message : err}`,
+              )
+            }
+
             call.write({
               done: {
                 full_text: fullText,
                 prompt_tokens: promptTokens,
-                completion_tokens: completionTokens
+                completion_tokens: completionTokens,
+                context_breakdown_json: contextBreakdownJson
               }
             })
           }

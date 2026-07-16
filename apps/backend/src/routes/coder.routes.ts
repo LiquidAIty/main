@@ -47,8 +47,13 @@ import { pool } from '../db/pool';
 import { runCoderSubagent } from '../coder/execution/coderRouter';
 import { setLatestCoderAuditView, getLatestCoderAuditView } from '../coder/execution/coderAuditView';
 import type { CodeGraphViewContractResult } from '../contracts/coderContracts';
-import { completeGraphViews, parseCandidateGraphViews, parseGraphViews, type GraphView } from '../contracts/graphView';
-import { fetchGraphViewsFromPython, persistGraphViewOnPython } from '../services/autogen/autogenOrchestratorClient';
+import { completeGraphViews, parseGraphViews, type GraphView } from '../contracts/graphView';
+import {
+  fetchDoorwayContext,
+  fetchGraphViewsFromPython,
+  fetchUnifiedModelContext,
+  persistGraphViewOnPython,
+} from '../services/autogen/autogenOrchestratorClient';
 import {
   createPromptDraft,
   approvePromptDraft,
@@ -130,8 +135,37 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
       body.authority === 'mag_one_execution' || body.authority === 'direct_main_audit'
         ? body.authority
         : undefined;
-    const attachedViews = parseGraphViews(body.graphViews, { projectId, conversationId })
-      .filter((view) => view.receivingRole === 'coder' || view.receivingRole === 'main_chat');
+    // The caller (Main's tool call) supplies persisted Graph View IDS only —
+    // never view content. The server resolves the persisted records and
+    // renders the one compact representation; a request still carrying full
+    // view JSON is rejected, no fallback.
+    if (body.graphViews !== undefined) {
+      return res.status(400).json({ ok: false, error: 'caller_graph_views_removed: pass graphViewIds — the server resolves persisted views' });
+    }
+    const graphViewIds = (Array.isArray(body.graphViewIds) ? body.graphViewIds : [])
+      .map((id: unknown) => String(id || '').trim())
+      .filter(Boolean);
+    let attachedViews: GraphView[] = [];
+    let doorwayGraphContext = '';
+    if (graphViewIds.length > 0) {
+      const doorway = (await fetchDoorwayContext(projectId, conversationId, graphViewIds)) as {
+        views?: unknown;
+        modelContext?: unknown;
+      };
+      attachedViews = parseGraphViews(doorway?.views, { projectId, conversationId });
+      // Honest role check: a view aimed at another role is an explicit error,
+      // never silently dropped (the rendered text must match the attached set).
+      const misdirected = attachedViews.filter(
+        (view) => view.receivingRole !== 'coder' && view.receivingRole !== 'main_chat',
+      );
+      if (misdirected.length > 0) {
+        return res.status(400).json({
+          ok: false,
+          error: `graph_view_not_for_coder: ${misdirected.map((view) => view.viewId).join(', ')}`,
+        });
+      }
+      doorwayGraphContext = String(doorway?.modelContext || '');
+    }
     if (authority === 'direct_main_audit' && !attachedViews.some((view) => view.receivingRole === 'coder')) {
       return res.status(400).json({ ok: false, error: 'coder_targeted_graph_view_required' });
     }
@@ -143,7 +177,7 @@ router.post('/mcp-bridge/run_coder_subagent', async (req, res) => {
     })));
     const approvedPrompt = [
       String(body.approvedPrompt || ''),
-      attachedViews.length ? `[LIQUIDAITY_GRAPH_VIEWS]\n${JSON.stringify(attachedViews)}` : '',
+      attachedViews.length ? doorwayGraphContext : '',
     ].filter(Boolean).join('\n\n');
     const result = await runCoderSubagent({
       parentRunId: String(body.parentRunId || ''),
@@ -805,29 +839,64 @@ router.post('/openclaude/session/chat', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'projectId_and_message_required' });
   }
   let investigationContext: HermesInvestigationContext;
-  let graphViews;
   try {
     investigationContext = parseHermesInvestigationContext(
       req.body?.investigationContext,
       projectId,
       conversationId,
     );
-    graphViews = parseCandidateGraphViews(req.body?.graphViews, { projectId, conversationId });
   } catch (error) {
     return res.status(400).json({
       ok: false,
       error: error instanceof Error ? error.message : 'turn_context_invalid',
     });
   }
+  // Graph context: the browser is a renderer, never the transport for graph
+  // membership. The chat request carries projection IDENTITY only; the server
+  // resolves the persisted projection and derives the compact model
+  // representation. A request still carrying view content is rejected — no
+  // silent browser-payload fallback.
+  if (req.body?.graphViews !== undefined) {
+    return res.status(400).json({
+      ok: false,
+      error: 'browser_graph_views_removed: send projectionId (+activeGraphViewId/expansionDepth) — the server resolves graph context',
+    });
+  }
+  const projectionId = String(req.body?.projectionId || '').trim();
+  const activeGraphViewId = String(req.body?.activeGraphViewId || '').trim();
+  const knowgraphScope = String(req.body?.knowgraphScope || '').trim();
+  const expansionDepth = Number(req.body?.expansionDepth) || 0;
   const sessionId = deriveSessionId(projectId, conversationId);
   // One correlation id per turn for the concise backend trace. This does NOT change
   // the SSE stream or browser behavior — it only makes the real Harness events
   // (already flowing to the browser) legible in the backend dev terminal.
   const correlationId = `req_${randomUUID().slice(0, 8)}`;
-  try {
-    await Promise.all((graphViews as GraphView[]).map((view) => persistGraphViewOnPython(view)));
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'candidate_graph_view_persistence_failed' });
+  let graphViews: GraphView[] = [];
+  let graphContext = '';
+  let graphContextMeasurements: unknown = null;
+  if (projectionId) {
+    try {
+      const resolved = (await fetchUnifiedModelContext({
+        projectionId,
+        projectId,
+        conversationId,
+        role: 'main_chat',
+        activeGraphViewId: activeGraphViewId || undefined,
+        knowgraphScope: knowgraphScope || undefined,
+        expansionDepth,
+      })) as { graphViews?: unknown; modelContext?: unknown; measurements?: unknown };
+      graphViews = parseGraphViews(resolved?.graphViews, { projectId, conversationId });
+      graphContext = String(resolved?.modelContext || '');
+      graphContextMeasurements = resolved?.measurements ?? null;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'projection_resolution_failed';
+      // 409 = the persistent graphs moved since the human looked (superseded) —
+      // the client refetches Unified and resends. Anything else is a real
+      // resolution failure. Never proceed with different context silently.
+      return res
+        .status(reason.includes('thinkgraph_http_409') ? 409 : 502)
+        .json({ ok: false, error: reason, projectionId });
+    }
   }
   // Bind this turn's Hermes report lifecycle to the run (parentRunId = correlationId)
   // so a mid-turn hermes.write_report attaches to THIS focused branch — the 0-caller
@@ -869,8 +938,22 @@ router.post('/openclaude/session/chat', async (req, res) => {
     conversationId,
     correlationId,
     inputSummary: message,
-    metadata: { surfaceMode: mode, sessionId },
+    metadata: {
+      surfaceMode: mode,
+      sessionId,
+      ...(projectionId ? { projectionId } : {}),
+      ...(graphContextMeasurements ? { graphContextMeasurements } : {}),
+    },
   });
+  if (projectionId) {
+    // The exact measured graph-context cost of THIS turn, visible to the
+    // browser before the model even answers — counting, not enforcement.
+    writeSse('context_measurement', {
+      projectionId,
+      characters: graphContext.length,
+      measurements: graphContextMeasurements,
+    });
+  }
   // Durable project-scoped transcript persistence (conversations/store.ts). Best-effort:
   // a DB failure must never block or break the live SSE stream.
   void appendMessage({ projectId, conversationId, role: 'user', content: message }).catch(() => null);
@@ -893,6 +976,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
       traceId: correlationId,
       investigationContext,
       graphViews,
+      graphContext,
     }, (event) => {
       if (turnFinished) return;
       if (event.kind === 'tool_start' && event.toolName.startsWith('mcp__liquidaity__')) {
@@ -1015,7 +1099,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
       handle.cancel();
       activeGrpcTurns.delete(sessionId);
     });
-    const { finalText } = await handle.done;
+    const { finalText, usage } = await handle.done;
     await Promise.all(pendingGraphViewWrites);
     if (activeRuntimeViews.length > 0) {
       const consumedViews = completeGraphViews(activeRuntimeViews);
@@ -1023,7 +1107,9 @@ router.post('/openclaude/session/chat', async (req, res) => {
       writeSse('graph_view', { views: consumedViews });
     }
     turnFinished = true;
-    logHarnessTrace(`[harness] request completed corr=${correlationId}`);
+    logHarnessTrace(
+      `[harness] request completed corr=${correlationId} inputTokens=${usage.promptTokens} outputTokens=${usage.completionTokens} contextBreakdown=${usage.contextBreakdownJson ? 'present' : 'unavailable'}`,
+    );
     recordAgentEvent({
       stage: 'frontdoor',
       status: 'completed',
@@ -1039,6 +1125,12 @@ router.post('/openclaude/session/chat', async (req, res) => {
       model: handle.resolved.providerModelId,
       outputSummary: String(finalText || ''),
       durationMs: Date.now() - frontdoorStartedMs,
+      // Provider-reported usage + the engine's own per-component context
+      // accounting — real measurement from the turn, never estimated here.
+      metadata: {
+        providerUsage: { inputTokens: usage.promptTokens, outputTokens: usage.completionTokens },
+        ...(usage.contextBreakdownJson ? { contextBreakdownJson: usage.contextBreakdownJson } : {}),
+      },
     });
     // The telemetry writer is intentionally non-blocking at each event
     // boundary, but the completed turn must not be reported before its

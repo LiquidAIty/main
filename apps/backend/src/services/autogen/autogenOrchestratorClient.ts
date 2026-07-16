@@ -362,3 +362,39 @@ export async function fetchGraphViewsFromPython(projectId: string, conversationI
   const query = new URLSearchParams({ projectId, conversationId });
   return requestThinkGraphJson(`/thinkgraph/graph-views?${query.toString()}`, { method: 'GET' });
 }
+
+/** Resolve the compact model representation for a projection the user saw.
+ * Python rebuilds deterministically from the persistent authorities and
+ * requires content-hash equality with projectionId — an honest 409 when the
+ * graphs moved, never a silently different context. Transport only. */
+export async function fetchUnifiedModelContext(params: {
+  projectionId: string;
+  projectId: string;
+  conversationId: string;
+  role: string;
+  activeGraphViewId?: string;
+  knowgraphScope?: string;
+  expansionDepth?: number;
+}): Promise<unknown> {
+  const query = new URLSearchParams({
+    projectionId: params.projectionId,
+    projectId: params.projectId,
+    conversationId: params.conversationId,
+    role: params.role,
+  });
+  if (params.activeGraphViewId) query.set('activeGraphViewId', params.activeGraphViewId);
+  if (params.knowgraphScope) query.set('knowgraphScope', params.knowgraphScope);
+  if (Number.isFinite(params.expansionDepth)) query.set('expansionDepth', String(params.expansionDepth));
+  return requestThinkGraphJson(`/unified/model-context?${query.toString()}`, { method: 'GET' });
+}
+
+/** Resolve persisted Graph Views by id and get their compact doorway
+ * rendering — the callers never supply view content, only identity. */
+export async function fetchDoorwayContext(
+  projectId: string,
+  conversationId: string,
+  viewIds: string[],
+): Promise<unknown> {
+  const query = new URLSearchParams({ projectId, conversationId, viewIds: viewIds.join(',') });
+  return requestThinkGraphJson(`/unified/doorway-context?${query.toString()}`, { method: 'GET' });
+}

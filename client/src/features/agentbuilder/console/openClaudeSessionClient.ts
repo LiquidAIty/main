@@ -57,7 +57,12 @@ export async function streamSession(args: {
   message: string;
   mode?: HarnessMode;
   investigationContext?: InvestigationContextInput;
-  graphViews?: GraphView[];
+  /** Projection IDENTITY only — the server resolves the persisted projection
+   * and derives the model context. The browser never carries graph membership. */
+  projectionId?: string;
+  activeGraphViewId?: string;
+  expansionDepth?: number;
+  knowgraphScope?: string;
   onEvent: (event: NativeSessionEvent) => void;
   signal?: AbortSignal;
 }): Promise<{ finalText: string }> {
@@ -72,7 +77,10 @@ export async function streamSession(args: {
       // Default 'chat' when omitted (backend also defaults to chat).
       mode: args.mode === 'canvas' ? 'canvas' : 'chat',
       ...(args.investigationContext ? { investigationContext: args.investigationContext } : {}),
-      ...(args.graphViews?.length ? { graphViews: args.graphViews } : {}),
+      ...(args.projectionId ? { projectionId: args.projectionId } : {}),
+      ...(args.activeGraphViewId ? { activeGraphViewId: args.activeGraphViewId } : {}),
+      ...(args.expansionDepth ? { expansionDepth: args.expansionDepth } : {}),
+      ...(args.knowgraphScope ? { knowgraphScope: args.knowgraphScope } : {}),
     }),
     signal: args.signal,
   });

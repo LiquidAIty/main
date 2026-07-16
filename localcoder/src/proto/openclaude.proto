@@ -129,6 +129,11 @@ message FinalResponse {
   string full_text = 1;     // The entire generated text
   int32 prompt_tokens = 2;
   int32 completion_tokens = 3;
+  // Engine-truth per-component context accounting for this turn (compact JSON
+  // from the engine's own analyzeContextUsage: system prompt sections, per-tool
+  // schemas, MCP tools, agents, message breakdown). Empty when unavailable —
+  // never fabricated.
+  string context_breakdown_json = 4;
 }
 
 message ErrorResponse {

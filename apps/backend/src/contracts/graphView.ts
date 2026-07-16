@@ -152,30 +152,32 @@ export const parseCandidateGraphViews = (value: unknown, trusted: { projectId: s
 export function attachGraphViewsToRuntime(
   candidates: GraphView[],
   runtime: { provider: string; model: string; role: string; invocationId: string; attachedAt?: string },
+  delivered?: {
+    /** Characters of the compact server-rendered context the model actually
+     * received for these views. The views' own JSON never enters the prompt,
+     * so measuring JSON.stringify(view) here would be dishonest. */
+    contextCharacters: number;
+  },
 ): GraphView[] {
   const attachedAt = runtime.attachedAt || new Date().toISOString();
-  return candidates.map((candidate) => {
-    const active: GraphView = {
-      ...candidate,
-      status: 'active',
+  const contextCharacters = Math.max(0, Math.trunc(delivered?.contextCharacters ?? 0));
+  return candidates.map((candidate) => ({
+    ...candidate,
+    status: 'active',
+    invocationId: runtime.invocationId,
+    updatedAt: attachedAt,
+    runtime: {
+      provider: runtime.provider,
+      model: runtime.model,
+      role: runtime.role,
       invocationId: runtime.invocationId,
-      updatedAt: attachedAt,
-      runtime: {
-        provider: runtime.provider,
-        model: runtime.model,
-        role: runtime.role,
-        invocationId: runtime.invocationId,
-        attachedAt,
-        includedRecords: candidate.records.length,
-        excludedRecords: candidate.omittedNeighborCount,
-        contextCharacters: 0,
-        estimatedTokens: 0,
-      },
-    };
-    const measured = JSON.stringify(active).length;
-    active.runtime = { ...active.runtime!, contextCharacters: measured, estimatedTokens: Math.max(1, Math.ceil(measured / 4)) };
-    return active;
-  });
+      attachedAt,
+      includedRecords: candidate.records.length,
+      excludedRecords: candidate.omittedNeighborCount,
+      contextCharacters,
+      estimatedTokens: contextCharacters > 0 ? Math.max(1, Math.ceil(contextCharacters / 4)) : 0,
+    },
+  }));
 }
 
 export function completeGraphViews(active: GraphView[], failed = false): GraphView[] {

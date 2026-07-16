@@ -39,6 +39,7 @@ const cbmScopeMocks = vi.hoisted(() => ({
 }));
 
 const chatSessionMocks = vi.hoisted(() => {
+  const usage = { promptTokens: 0, completionTokens: 0, contextBreakdownJson: '' };
   const mocks = {
     appendMessage: vi.fn(async (msg: { role: string }) => ({
       messageId: `${msg.role}-msg-1`,
@@ -46,9 +47,10 @@ const chatSessionMocks = vi.hoisted(() => {
     getConversationMessages: vi.fn(async () => []),
     lastCancel: vi.fn(),
     startGrpcTurn: vi.fn(),
+    usage,
   };
   mocks.startGrpcTurn.mockImplementation(async (_params: unknown, _onEvent: (event: any) => void) => ({
-    done: Promise.resolve({ finalText: 'Real assistant reply.' }),
+    done: Promise.resolve({ finalText: 'Real assistant reply.', usage }),
     cancel: mocks.lastCancel,
     answer: vi.fn(),
     resolved: {
@@ -69,6 +71,8 @@ const mcpClientMocks = vi.hoisted(() => ({
 const graphViewMocks = vi.hoisted(() => ({
   persistGraphViewOnPython: vi.fn(async (view: unknown) => ({ ok: true, view })),
   fetchGraphViewsFromPython: vi.fn(async () => ({ ok: true, views: [] })),
+  fetchUnifiedModelContext: vi.fn(async () => ({ ok: true, graphViews: [], modelContext: '', measurements: null })),
+  fetchDoorwayContext: vi.fn(async () => ({ ok: true, views: [], modelContext: '' })),
 }));
 
 const dbMocks = vi.hoisted(() => ({
@@ -255,34 +259,82 @@ describe('coder routes', () => {
   });
 
   describe('/openclaude/session/chat', () => {
-    it('validates, persists, activates, and consumes the exact Graph View', async () => {
-      const runtimeHandback = {
-        schemaVersion: 'graph-view.v1', viewId: 'candidate-1:active:req-1', authority: 'codegraph', status: 'active',
-        projectId: 'project-1', conversationId: 'main', producingRole: 'user', receivingRole: 'main_chat',
-        rootCanonicalNodeIds: ['symbol:one'], includedCanonicalNodeIds: ['symbol:one'], includedRelationships: [], query: 'selected code', filter: { nodeTypes: [], trustStates: [] }, hopDepth: 0, provenanceRefs: [], parentViewId: 'candidate-1',
-        records: [{ canonicalId: 'symbol:one', summary: 'Selected symbol', selectionReason: 'User selected', provenanceRefs: [], estimatedCharacters: 15, estimatedTokens: 4 }],
-        omittedNeighborCount: 2, createdAt: '2026-07-15T00:00:00Z', updatedAt: '2026-07-15T01:00:00Z', invocationId: 'req-1',
-        runtime: { provider: 'openai', model: 'gpt-5.1-chat-latest', role: 'main_chat', invocationId: 'req-1', attachedAt: '2026-07-15T01:00:00Z', includedRecords: 1, excludedRecords: 2, contextCharacters: 500, estimatedTokens: 125 },
-      };
-      chatSessionMocks.startGrpcTurn.mockImplementationOnce(async () => ({
-        done: Promise.resolve({ finalText: 'Used bounded context.' }), cancel: vi.fn(), answer: vi.fn(),
-        resolved: { cardId: 'card_main_chat', provider: 'openai', modelKey: 'gpt-5.1-chat-latest', providerModelId: 'gpt-5.1-chat-latest' },
-        runtimeGraphViews: [runtimeHandback],
-      }));
+    it('rejects browser-supplied Graph View content — the browser is never the membership authority', async () => {
       const { server, baseUrl } = await createApiServer();
       try {
         const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             projectId: 'project-1', conversationId: 'main', message: 'Use this.',
-            graphViews: [{ ...runtimeHandback, viewId: 'candidate-1', status: 'candidate', projectId: 'spoofed', conversationId: 'spoofed', parentViewId: undefined, invocationId: undefined, runtime: undefined }],
+            graphViews: [{ viewId: 'spoofed-view', authority: 'codegraph' }],
           }),
         });
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({ ok: false, error: expect.stringContaining('browser_graph_views_removed') });
+        expect(chatSessionMocks.startGrpcTurn).not.toHaveBeenCalledWith(expect.objectContaining({ message: 'Use this.' }), expect.anything());
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('resolves the projection server-side by id and delivers compact context, activating and consuming the same views', async () => {
+      const serverView = {
+        schemaVersion: 'graph-view.v1', viewId: 'codegraph:server-1', authority: 'codegraph', status: 'candidate',
+        projectId: 'project-1', conversationId: 'main', producingRole: 'codegraph', receivingRole: 'main_chat',
+        rootCanonicalNodeIds: ['symbol:one'], includedCanonicalNodeIds: ['symbol:one'], includedRelationships: [], query: 'selected code', filter: { nodeTypes: [], trustStates: [] }, hopDepth: 0, provenanceRefs: [],
+        records: [{ canonicalId: 'symbol:one', summary: 'Selected symbol', selectionReason: 'Projection membership', provenanceRefs: [], estimatedCharacters: 15, estimatedTokens: 4 }],
+        omittedNeighborCount: 2, createdAt: '2026-07-15T00:00:00Z', updatedAt: '2026-07-15T01:00:00Z',
+      };
+      const compact = '[LIQUIDAITY_GRAPH_CONTEXT]\nprojection: unified:abc123 | project: project-1 | conversation: main | role: main_chat\n- [Function] one (symbol:one)';
+      graphViewMocks.fetchUnifiedModelContext.mockResolvedValueOnce({
+        ok: true, projectionId: 'unified:abc123', graphViews: [serverView], modelContext: compact,
+        measurements: { characters: compact.length, estimatedTokens: 40 },
+      });
+      const activeView = { ...serverView, status: 'active', invocationId: 'req-1', runtime: { provider: 'openai', model: 'gpt-5.1-chat-latest', role: 'main_chat', invocationId: 'req-1', attachedAt: '2026-07-15T01:00:00Z', includedRecords: 1, excludedRecords: 2, contextCharacters: compact.length, estimatedTokens: 40 } };
+      chatSessionMocks.startGrpcTurn.mockImplementationOnce(async () => ({
+        done: Promise.resolve({ finalText: 'Used bounded context.', usage: chatSessionMocks.usage }), cancel: vi.fn(), answer: vi.fn(),
+        resolved: { cardId: 'card_main_chat', provider: 'openai', modelKey: 'gpt-5.1-chat-latest', providerModelId: 'gpt-5.1-chat-latest' },
+        runtimeGraphViews: [activeView],
+      }));
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'main', message: 'Use this.', projectionId: 'unified:abc123' }),
+        });
         const body = await response.text();
-        const supplied = (chatSessionMocks.startGrpcTurn.mock.calls.at(-1)?.[0] as any).graphViews[0];
-        expect(supplied).toMatchObject({ viewId: 'candidate-1', projectId: 'project-1', conversationId: 'main', status: 'candidate' });
+        expect(graphViewMocks.fetchUnifiedModelContext).toHaveBeenCalledWith(expect.objectContaining({
+          projectionId: 'unified:abc123', projectId: 'project-1', conversationId: 'main', role: 'main_chat',
+        }));
+        const supplied = chatSessionMocks.startGrpcTurn.mock.calls.at(-1)?.[0] as any;
+        // The turn receives the compact text + the server-resolved views (server scope preserved).
+        expect(supplied.graphContext).toBe(compact);
+        expect(supplied.graphViews[0]).toMatchObject({ viewId: 'codegraph:server-1', projectId: 'project-1', conversationId: 'main', status: 'candidate' });
+        // Measured context cost is surfaced to the browser before the answer.
+        expect(body).toContain('event: context_measurement');
+        expect(body).toContain('unified:abc123');
+        // Lifecycle unchanged: active views consumed at turn end.
         expect(body).toContain('event: graph_view');
         expect(body).toContain('"status":"consumed"');
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('fails honestly when the projection cannot be resolved — never a silent contextless fallback', async () => {
+      graphViewMocks.fetchUnifiedModelContext.mockRejectedValueOnce(new Error('thinkgraph_http_409:projection_superseded: current is unified:def456'));
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/openclaude/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'main', message: 'Use this.', projectionId: 'unified:stale' }),
+        });
+        expect(response.status).toBe(409);
+        await expect(response.json()).resolves.toMatchObject({
+          ok: false,
+          error: expect.stringContaining('projection_superseded'),
+          projectionId: 'unified:stale',
+        });
       } finally {
         await closeServer(server);
       }
@@ -329,7 +381,7 @@ describe('coder routes', () => {
       chatSessionMocks.appendMessage.mockClear();
       chatSessionMocks.lastCancel.mockClear();
       chatSessionMocks.startGrpcTurn.mockImplementationOnce(async (_params: unknown, onEvent: (event: any) => void) => {
-        const done = Promise.resolve({ finalText: 'Finished before late event.' });
+        const done = Promise.resolve({ finalText: 'Finished before late event.', usage: chatSessionMocks.usage });
         void done.then(() => {
           setTimeout(() => onEvent({ kind: 'error', message: 'late grpc reset' }), 0);
         });

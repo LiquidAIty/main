@@ -130,19 +130,25 @@ describe('native Main / Hermes / Search doorways', () => {
     expect(mainContext).not.toContain('[LIQUIDAITY_HERMES_ACTIVE_REPORT]');
   });
 
-  it('renders only runtime-stamped canonical Graph Views into Main context', () => {
+  it('renders the compact server graph context into Main context, never view JSON', () => {
+    const compact = [
+      '[LIQUIDAITY_GRAPH_CONTEXT]',
+      'projection: unified:abc123 | project: p1 | conversation: c1 | role: main_chat',
+      'SELECTED RECORDS:',
+      'CodeGraph (1):',
+      '- [Function] one — one.ts (symbol:one)',
+    ].join('\n');
     const context = buildHarnessRuntimeContext(deriveSessionId('p1', 'c1'), 'req_handback', {
-      graphViews: [{
-        schemaVersion: 'graph-view.v1', viewId: 'view-1:active:req_handback', authority: 'codegraph', status: 'active', projectId: 'p1', conversationId: 'c1',
-        producingRole: 'user', receivingRole: 'main_chat', rootCanonicalNodeIds: ['symbol:one'], includedCanonicalNodeIds: ['symbol:one'], includedRelationships: [], query: 'selected code', filter: { nodeTypes: [], trustStates: [] }, hopDepth: 0, provenanceRefs: ['one.ts'], parentViewId: 'view-1',
-        records: [{ canonicalId: 'symbol:one', summary: 'Selected symbol', selectionReason: 'Matched query', provenanceRefs: ['one.ts'], estimatedCharacters: 15, estimatedTokens: 4 }],
-        omittedNeighborCount: 2, createdAt: '2026-07-15T00:00:00Z', updatedAt: '2026-07-15T01:00:00Z', invocationId: 'req_handback',
-        runtime: { provider: 'openai', model: 'gpt-5.3', role: 'main_chat', invocationId: 'req_handback', attachedAt: '2026-07-15T01:00:00Z', includedRecords: 1, excludedRecords: 2, contextCharacters: 500, estimatedTokens: 125 },
-      }],
+      graphContext: compact,
     });
-    expect(context).toContain('[LIQUIDAITY_GRAPH_VIEWS]');
+    expect(context).toContain('[LIQUIDAITY_GRAPH_CONTEXT]');
     expect(context).toContain('symbol:one');
-    expect(context).toContain('do not contain complete source records');
+    expect(context).toContain('does not transfer graph authority');
+    // The old full-JSON block is gone for good.
+    expect(context).not.toContain('[LIQUIDAITY_GRAPH_VIEWS]');
+    expect(context).not.toContain('"records"');
+    // No graph context → no graph block at all, never an empty header.
+    expect(buildHarnessRuntimeContext(deriveSessionId('p1', 'c1'), 'req_handback')).not.toContain('[LIQUIDAITY_GRAPH_CONTEXT]');
   });
 
   it('resolves Hermes to Search through the persisted second orange edge', async () => {

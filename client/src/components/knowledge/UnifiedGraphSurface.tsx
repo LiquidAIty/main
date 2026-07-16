@@ -41,6 +41,17 @@ type UnifiedPayload = {
 
 const EMPTY_COUNTS: Record<Layer, number> = { thinkgraph: 0, knowgraph: 0, codegraph: 0 };
 
+/** Projection IDENTITY the chat request may carry — the request configuration
+ * plus the server-minted projectionId. Never view content: the server resolves
+ * the persisted projection itself and derives the model context. */
+export type UnifiedProjectionIdentity = {
+  projectionId: string;
+  role: Role;
+  activeGraphViewId: string | null;
+  expansionDepth: number;
+  knowgraphScope: string | null;
+};
+
 function textValue(value: unknown): string | null {
   if (typeof value === 'string' && value.trim()) return value.trim();
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
@@ -59,13 +70,13 @@ export default function UnifiedGraphSurface({
   projectId,
   conversationId,
   runtimeHandbacks = [],
-  onCandidateHandbacksChange,
+  onProjectionChange,
   onOpenAuthority,
 }: {
   projectId: string;
   conversationId: string;
   runtimeHandbacks?: GraphView[];
-  onCandidateHandbacksChange?: (handbacks: GraphView[]) => void;
+  onProjectionChange?: (projection: UnifiedProjectionIdentity | null) => void;
   onOpenAuthority?: (authority: Layer) => void;
 }) {
   const [payload, setPayload] = useState<UnifiedPayload | null>(null);
@@ -84,10 +95,18 @@ export default function UnifiedGraphSurface({
   const [collapsedClusters, setCollapsedClusters] = useState<Set<string>>(new Set());
   const [labels, setLabels] = useState(false);
   const [cameraCommand, setCameraCommand] = useState<{ action: 'zoom_in' | 'zoom_out' | 'fit_view'; token: number }>({ action: 'fit_view', token: 0 });
+  // Read once per mount: the optional KnowGraph scope override rides the URL.
+  const knowgraphScope = useMemo(() => new URLSearchParams(window.location.search).get('kgScope'), []);
+  // The identity of the projection currently on screen — stamped atomically
+  // with its payload from the exact request configuration that produced it,
+  // never recombined from later config state (a mismatched pair would fail
+  // server-side hash verification).
+  const [projectionIdentity, setProjectionIdentity] = useState<UnifiedProjectionIdentity | null>(null);
 
   useEffect(() => {
     if (!projectId) {
       setPayload(null);
+      setProjectionIdentity(null);
       setError('Unified context requires a selected project.');
       return;
     }
@@ -97,7 +116,7 @@ export default function UnifiedGraphSurface({
     const params = new URLSearchParams({ projectId, conversationId, role });
     params.set('expansionDepth', String(expansionDepth));
     if (activeViewId) params.set('activeGraphViewId', activeViewId);
-    const scope = new URLSearchParams(window.location.search).get('kgScope');
+    const scope = knowgraphScope;
     if (scope) params.set('knowgraphScope', scope);
     setError(null);
     setLoading(true);
@@ -110,6 +129,13 @@ export default function UnifiedGraphSurface({
       .then((next) => {
         if (controller.signal.aborted || requestGeneration.current !== generation) return;
         setPayload(next);
+        setProjectionIdentity({
+          projectionId: next.projectionId,
+          role,
+          activeGraphViewId: activeViewId || null,
+          expansionDepth,
+          knowgraphScope,
+        });
         setLoading(false);
       })
       .catch((reason) => {
@@ -122,8 +148,10 @@ export default function UnifiedGraphSurface({
   }, [activeViewId, conversationId, expansionDepth, projectId, role]);
 
   useEffect(() => {
-    onCandidateHandbacksChange?.(payload?.graphViews || []);
-  }, [onCandidateHandbacksChange, payload?.graphViews]);
+    // Hand back projection IDENTITY only — the chat request never carries
+    // view content; the server resolves the persisted projection itself.
+    onProjectionChange?.(projectionIdentity);
+  }, [onProjectionChange, projectionIdentity]);
 
   const nodeTypes = useMemo(() => [...new Set((payload?.nodes || []).map((node) => node.label))].sort(), [payload?.nodes]);
   const clusters = useMemo(() => [...new Set((payload?.nodes || []).map((node) => String(node.cluster || 'records')))].sort(), [payload?.nodes]);
@@ -228,7 +256,7 @@ export default function UnifiedGraphSurface({
             <InspectorRow label="Epistemic level" value={String((selected as any).epistemic_level || '')} />
             <InspectorRow label="Cluster" value={String((selected as any).cluster || '')} />
             <InspectorRow label="Selection" value={String((selected as any).selection_state || 'available')} />
-            <p style={{ color: GRAPH_THEME.drawer.text, fontSize: 12, lineHeight: 1.55 }}>{nodeLead(selected)}</p>
+            <p style={{ color: GRAPH_THEME.drawer.inputText, fontSize: 12, lineHeight: 1.55 }}>{nodeLead(selected)}</p>
           </GlassInspectorSection>
           <GlassInspectorSection title="Graph View lifecycle">
             <InspectorRow label="View" value={selected.graph_view_id || 'available only'} />
@@ -247,5 +275,5 @@ export default function UnifiedGraphSurface({
 }
 
 function InspectorRow({ label, value }: { label: string; value: string }) {
-  return <div style={{ display: 'grid', gridTemplateColumns: '108px 1fr', gap: 8, fontSize: 11, marginBottom: 7 }}><span style={{ color: GRAPH_THEME.drawer.inputMuted }}>{label}</span><span style={{ color: GRAPH_THEME.drawer.text, overflowWrap: 'anywhere' }}>{value || '—'}</span></div>;
+  return <div style={{ display: 'grid', gridTemplateColumns: '108px 1fr', gap: 8, fontSize: 11, marginBottom: 7 }}><span style={{ color: GRAPH_THEME.drawer.inputMuted }}>{label}</span><span style={{ color: GRAPH_THEME.drawer.inputText, overflowWrap: 'anywhere' }}>{value || '—'}</span></div>;
 }

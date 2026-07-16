@@ -57,6 +57,7 @@ import {
 } from '../components/graph/graphVisualTokens';
 import RightGlassDrawer from '../components/graph/RightGlassDrawer';
 import type { GraphView } from '../components/knowledge/graphView';
+import type { UnifiedProjectionIdentity } from '../components/knowledge/UnifiedGraphSurface';
 // Decomposed Agent Builder modules (2026-07-08): the page is composition only;
 // deck primitives/seed/document logic and rail derivation live in the feature.
 import {
@@ -503,14 +504,9 @@ export default function AgentBuilder(): React.ReactElement {
     useState<KnowledgeSurfaceKind>('unified');
   const conversationId = 'main';
   const [thinkGraphFocusIds, setThinkGraphFocusIds] = useState<string[]>([]);
-  const [candidateGraphViews, setCandidateGraphViews] = useState<GraphView[]>([]);
-  const handleCandidateGraphViewsChange = useCallback((next: GraphView[]) => {
-    setCandidateGraphViews((current) => {
-      const semantic = (handbacks: GraphView[]) => JSON.stringify(
-        handbacks.map(({ createdAt: _createdAt, ...handback }) => handback),
-      );
-      return semantic(current) === semantic(next) ? current : next;
-    });
+  const [activeProjection, setActiveProjection] = useState<UnifiedProjectionIdentity | null>(null);
+  const handleProjectionChange = useCallback((next: UnifiedProjectionIdentity | null) => {
+    setActiveProjection((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
   }, []);
   const [runtimeGraphViews, setRuntimeGraphViews] = useState<GraphView[]>([]);
   const mergeGraphViews = useCallback((current: GraphView[], incoming: GraphView[]) => {
@@ -519,7 +515,7 @@ export default function AgentBuilder(): React.ReactElement {
     return [...merged.values()].sort((a, b) => String(a.updatedAt).localeCompare(String(b.updatedAt)));
   }, []);
   useEffect(() => {
-    setCandidateGraphViews([]);
+    setActiveProjection(null);
     setRuntimeGraphViews([]);
   }, [conversationId]);
   useEffect(() => {
@@ -1895,7 +1891,17 @@ export default function AgentBuilder(): React.ReactElement {
         // chat = chat mode: only the ThinkGraph doorway. Explicit surface state,
         // never inferred from message content.
         mode: workspaceView === 'canvas' ? 'canvas' : 'chat',
-        graphViews: candidateGraphViews,
+        // Projection identity only — Main's context is resolved server-side
+        // from the persisted projection the user is looking at. A projection
+        // viewed under another role is exploration, not Main's context.
+        ...(activeProjection && activeProjection.role === 'main_chat'
+          ? {
+              projectionId: activeProjection.projectionId,
+              ...(activeProjection.activeGraphViewId ? { activeGraphViewId: activeProjection.activeGraphViewId } : {}),
+              ...(activeProjection.expansionDepth ? { expansionDepth: activeProjection.expansionDepth } : {}),
+              ...(activeProjection.knowgraphScope ? { knowgraphScope: activeProjection.knowgraphScope } : {}),
+            }
+          : {}),
         ...(thinkGraphFocusIds.length > 0 && trimmed.length <= 2_000
           ? {
               investigationContext: {
@@ -1940,7 +1946,7 @@ export default function AgentBuilder(): React.ReactElement {
           appendAssistantText('Chat request failed before the stream opened. Route: /api/coder/openclaude/session/chat.');
         });
     },
-    [candidateGraphViews, canvasProjectId, conversationId, mergeGraphViews, nativeSessionBusy, thinkGraphFocusIds, workspaceView],
+    [activeProjection, canvasProjectId, conversationId, mergeGraphViews, nativeSessionBusy, thinkGraphFocusIds, workspaceView],
   );
 
   const renderChatSurface = (
@@ -2104,7 +2110,7 @@ export default function AgentBuilder(): React.ReactElement {
                   projectId={activeProject}
                   conversationId={conversationId}
                   runtimeHandbacks={runtimeGraphViews}
-                  onCandidateHandbacksChange={handleCandidateGraphViewsChange}
+                  onProjectionChange={handleProjectionChange}
                   onOpenAuthority={(authority) => setKnowledgeGraphKind(authority)}
                 />
               )}

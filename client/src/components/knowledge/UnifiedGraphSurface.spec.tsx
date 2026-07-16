@@ -38,13 +38,20 @@ describe('UnifiedGraphSurface', () => {
     vi.unstubAllGlobals();
   });
 
-  it('renders the Python projection and forwards its exact selected Graph View', async () => {
+  it('renders the Python projection and hands back projection identity only', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => payload })));
     const onChange = vi.fn();
     const onOpenAuthority = vi.fn();
-    render(<UnifiedGraphSurface projectId="project-1" conversationId="conversation-1" onCandidateHandbacksChange={onChange} onOpenAuthority={onOpenAuthority} />);
+    render(<UnifiedGraphSurface projectId="project-1" conversationId="conversation-1" onProjectionChange={onChange} onOpenAuthority={onOpenAuthority} />);
     await waitFor(() => expect(screen.getByTestId('scene-node-count').textContent).toBe('3'));
-    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith([graphView]));
+    // Identity only — never Graph View content through the browser.
+    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith({
+      projectionId: 'unified:abc',
+      role: 'main_chat',
+      activeGraphViewId: null,
+      expansionDepth: 0,
+      knowgraphScope: null,
+    }));
     fireEvent.change(screen.getByRole('combobox', { name: 'Visual authority' }), { target: { value: 'knowgraph' } });
     expect(screen.getByTestId('scene-node-count').textContent).toBe('1');
     fireEvent.click(screen.getByRole('button', { name: 'Select Book' }));
@@ -58,7 +65,7 @@ describe('UnifiedGraphSurface', () => {
     const pending: Array<(value: { ok: boolean; json: () => Promise<unknown> }) => void> = [];
     vi.stubGlobal('fetch', vi.fn(() => new Promise((resolve) => pending.push(resolve))));
     const onChange = vi.fn();
-    render(<UnifiedGraphSurface projectId="project-1" conversationId="conversation-1" onCandidateHandbacksChange={onChange} />);
+    render(<UnifiedGraphSurface projectId="project-1" conversationId="conversation-1" onProjectionChange={onChange} />);
     await waitFor(() => expect(pending).toHaveLength(1));
 
     fireEvent.change(screen.getByRole('combobox', { name: 'Receiving role' }), { target: { value: 'coder' } });
@@ -72,6 +79,10 @@ describe('UnifiedGraphSurface', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(screen.getAllByText('unified:coder').length).toBeGreaterThan(0);
     expect(screen.queryByText('unified:abc')).toBeNull();
-    expect(onChange).toHaveBeenLastCalledWith([coderView]);
+    // Identity of the WINNING (newer-config) projection — never the stale one.
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      projectionId: 'unified:coder',
+      role: 'coder',
+    }));
   });
 });
