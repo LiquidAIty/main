@@ -44,6 +44,13 @@ message ChatRequest {
   // (back-compat). Child agents still resolve their own allowed_tools against
   // the full server-lifetime pool.
   repeated string parent_allowed_mcp_tools = 8;
+  // The PARENT session's NATIVE tool grant — the saved parent card's assigned
+  // native tools, filtered BEFORE provider schema serialization so the parent
+  // model never pays tokens for tool schemas it may not use. Empty = full
+  // native pool (back-compat for callers whose cards declare no native list).
+  // Named child agents are unaffected: they assemble their own pool from the
+  // full registry and their own allowed_tools (AgentTool.tsx workerTools).
+  repeated string parent_allowed_native_tools = 9;
 }
 
 // Structural saved-card configuration only — never graph data, conversation
@@ -134,6 +141,13 @@ message FinalResponse {
   // schemas, MCP tools, agents, message breakdown). Empty when unavailable —
   // never fabricated.
   string context_breakdown_json = 4;
+  // Honest usage semantics: prompt_tokens/completion_tokens are provider-real
+  // ONLY when usage_available is true. usage_source names where they came from
+  // ('result_usage' | 'model_usage' | 'unavailable'). total_cost_usd is
+  // reported only when positive; 0 = unavailable.
+  bool usage_available = 5;
+  string usage_source = 6;
+  double total_cost_usd = 7;
 }
 
 message ErrorResponse {

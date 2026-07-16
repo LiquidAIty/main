@@ -61,7 +61,6 @@ export async function streamSession(args: {
    * and derives the model context. The browser never carries graph membership. */
   projectionId?: string;
   activeGraphViewId?: string;
-  expansionDepth?: number;
   knowgraphScope?: string;
   onEvent: (event: NativeSessionEvent) => void;
   signal?: AbortSignal;
@@ -79,7 +78,6 @@ export async function streamSession(args: {
       ...(args.investigationContext ? { investigationContext: args.investigationContext } : {}),
       ...(args.projectionId ? { projectionId: args.projectionId } : {}),
       ...(args.activeGraphViewId ? { activeGraphViewId: args.activeGraphViewId } : {}),
-      ...(args.expansionDepth ? { expansionDepth: args.expansionDepth } : {}),
       ...(args.knowgraphScope ? { knowgraphScope: args.knowgraphScope } : {}),
     }),
     signal: args.signal,

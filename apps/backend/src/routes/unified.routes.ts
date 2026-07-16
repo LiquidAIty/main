@@ -18,7 +18,6 @@ router.get('/context', async (req, res) => {
       thinkLimit: Number(req.query.thinkLimit) || undefined,
       knowLimit: Number(req.query.knowLimit) || undefined,
       codeLimit: Number(req.query.codeLimit) || undefined,
-      expansionDepth: Number(req.query.expansionDepth) || 0,
     }));
   } catch (error: any) {
     return res.status(502).json({ error: String(error?.message || 'unified_context_unavailable') });

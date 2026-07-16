@@ -625,25 +625,6 @@ router.get('/analysis/source-preview', async (req, res) => {
   }
 });
 
-router.get('/analysis/context-projection', async (req, res) => {
-  try {
-    const projectId = String(req.query?.projectId || req.query?.project_id || '').trim();
-    if (!projectId) return res.status(400).json({ ok: false, error: { message: 'projectId is required' } });
-    const resolvedProjectId = await resolvePreferredKnowGraphScope(projectId);
-    const refs = Array.isArray(req.query?.refs) ? req.query.refs : req.query?.refs ? [req.query.refs] : [];
-    const response = await proxyKnowgraphGetJson('/analysis/context-projection', {
-      project_id: resolvedProjectId,
-      refs: refs.map((value) => String(value)),
-      limit: String(clampInt(req.query?.limit, 1, 300, 120)),
-      conversation_id: String(req.query?.conversationId || 'main'),
-      role: String(req.query?.role || 'main_chat'),
-    });
-    return res.status(response.status).json({ ...response.data, resolved_project_id: resolvedProjectId });
-  } catch (error: any) {
-    return res.status(502).json({ ok: false, error: { message: error?.message || 'context projection unavailable' } });
-  }
-});
-
 router.post('/analysis/analyze', async (req, res) => {
   try {
     const requestedProjectId = String(req.body?.project_id || '').trim();

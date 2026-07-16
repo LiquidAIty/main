@@ -19,7 +19,7 @@ import {
 
 const main = {
   id: 'card_main_chat', kind: 'agent', runtimeBinding: 'main_chat', runtimeType: 'assistant_agent',
-  prompt: 'Main prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'knowgraph.query', 'codegraph.search'] },
+  prompt: 'Main prompt', runtimeOptions: { provider: 'openrouter', modelKey: 'z-ai/glm-5.2', tools: ['thinkgraph.get_graph_slice', 'thinkgraph.submit_update', 'knowgraph.query', 'codegraph.search'], nativeTools: ['Agent'] },
 };
 const hermes = {
   id: 'card_hermes_steward', kind: 'agent', runtimeBinding: 'hermes_steward', runtimeType: 'assistant_agent',
@@ -99,6 +99,9 @@ describe('native Main / Hermes / Search doorways', () => {
       'mcp__liquidaity__knowgraph_query',
       'mcp__liquidaity__codegraph_search',
     ]);
+    // The card's assigned native tools travel verbatim — the engine filters
+    // the parent's native schemas before serialization.
+    expect(config?.parentAllowedNativeTools).toEqual(['Agent']);
     expect(config?.doorwayDefinitions.map((entry: any) => entry.card_id)).toEqual([hermes.id]);
   });
 

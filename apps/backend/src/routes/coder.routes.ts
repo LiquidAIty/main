@@ -50,7 +50,6 @@ import type { CodeGraphViewContractResult } from '../contracts/coderContracts';
 import { completeGraphViews, parseGraphViews, type GraphView } from '../contracts/graphView';
 import {
   fetchDoorwayContext,
-  fetchGraphViewsFromPython,
   fetchUnifiedModelContext,
   persistGraphViewOnPython,
 } from '../services/autogen/autogenOrchestratorClient';
@@ -813,17 +812,6 @@ router.get('/prompt-draft/:jobId', (req, res) => {
   return res.json({ ok: true, draft });
 });
 
-router.get('/graph-views', async (req, res) => {
-  const projectId = String(req.query?.projectId || '').trim();
-  const conversationId = String(req.query?.conversationId || '').trim();
-  if (!projectId || !conversationId) return res.status(400).json({ ok: false, error: 'projectId_and_conversationId_required' });
-  try {
-    return res.json(await fetchGraphViewsFromPython(projectId, conversationId));
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'graph_views_unavailable' });
-  }
-});
-
 router.post('/openclaude/session/chat', async (req, res) => {
   const projectId = String(req.body?.projectId || '');
   const conversationId = String(req.body?.conversationId || 'default');
@@ -859,13 +847,12 @@ router.post('/openclaude/session/chat', async (req, res) => {
   if (req.body?.graphViews !== undefined) {
     return res.status(400).json({
       ok: false,
-      error: 'browser_graph_views_removed: send projectionId (+activeGraphViewId/expansionDepth) — the server resolves graph context',
+      error: 'browser_graph_views_removed: send projectionId (+activeGraphViewId) — the server resolves graph context',
     });
   }
   const projectionId = String(req.body?.projectionId || '').trim();
   const activeGraphViewId = String(req.body?.activeGraphViewId || '').trim();
   const knowgraphScope = String(req.body?.knowgraphScope || '').trim();
-  const expansionDepth = Number(req.body?.expansionDepth) || 0;
   const sessionId = deriveSessionId(projectId, conversationId);
   // One correlation id per turn for the concise backend trace. This does NOT change
   // the SSE stream or browser behavior — it only makes the real Harness events
@@ -883,7 +870,6 @@ router.post('/openclaude/session/chat', async (req, res) => {
         role: 'main_chat',
         activeGraphViewId: activeGraphViewId || undefined,
         knowgraphScope: knowgraphScope || undefined,
-        expansionDepth,
       })) as { graphViews?: unknown; modelContext?: unknown; measurements?: unknown };
       graphViews = parseGraphViews(resolved?.graphViews, { projectId, conversationId });
       graphContext = String(resolved?.modelContext || '');
@@ -898,6 +884,20 @@ router.post('/openclaude/session/chat', async (req, res) => {
         .json({ ok: false, error: reason, projectionId });
     }
   }
+  // Compact Graph View lifecycle announcements for the browser: identity and
+  // status ONLY — the UI discovers contents by refetching its server-owned
+  // projection, never from event payloads (browser is not a membership carrier).
+  const compactGraphViewEvent = (views: GraphView[]) => ({
+    views: views.map((view) => ({
+      viewId: view.viewId,
+      status: view.status,
+      authority: view.authority,
+      producingRole: view.producingRole,
+      receivingRole: view.receivingRole,
+      ...(view.invocationId ? { invocationId: view.invocationId } : {}),
+      ...(view.parentViewId ? { parentViewId: view.parentViewId } : {}),
+    })),
+  });
   // Bind this turn's Hermes report lifecycle to the run (parentRunId = correlationId)
   // so a mid-turn hermes.write_report attaches to THIS focused branch — the 0-caller
   // lifecycle is now driven. Best-effort: a lifecycle hiccup never breaks the stream.
@@ -1023,7 +1023,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
             if (rawView) {
               const returned = parseGraphViews([rawView], { projectId, conversationId }, 'returned')[0];
               const write = persistGraphViewOnPython(returned).then(() => {
-                writeSse('graph_view', { views: [returned] });
+                writeSse('graph_view', compactGraphViewEvent([returned]));
               });
               pendingGraphViewWrites.push(write);
             }
@@ -1091,7 +1091,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
     if (handle.runtimeGraphViews.length > 0) {
       activeRuntimeViews = handle.runtimeGraphViews;
       await Promise.all(activeRuntimeViews.map((view) => persistGraphViewOnPython(view)));
-      writeSse('graph_view', { views: handle.runtimeGraphViews });
+      writeSse('graph_view', compactGraphViewEvent(handle.runtimeGraphViews));
     }
     activeGrpcTurns.set(sessionId, handle);
     req.on('close', () => {
@@ -1104,11 +1104,11 @@ router.post('/openclaude/session/chat', async (req, res) => {
     if (activeRuntimeViews.length > 0) {
       const consumedViews = completeGraphViews(activeRuntimeViews);
       await Promise.all(consumedViews.map((view) => persistGraphViewOnPython(view)));
-      writeSse('graph_view', { views: consumedViews });
+      writeSse('graph_view', compactGraphViewEvent(consumedViews));
     }
     turnFinished = true;
     logHarnessTrace(
-      `[harness] request completed corr=${correlationId} inputTokens=${usage.promptTokens} outputTokens=${usage.completionTokens} contextBreakdown=${usage.contextBreakdownJson ? 'present' : 'unavailable'}`,
+      `[harness] request completed corr=${correlationId} providerUsage=${usage.usageAvailable ? `${usage.providerInputTokens}in/${usage.providerOutputTokens}out (${usage.usageSource})` : 'unavailable'} cost=${usage.totalCostUsd ?? 'unavailable'} contextBreakdown=${usage.contextBreakdownJson ? 'present' : 'unavailable'}`,
     );
     recordAgentEvent({
       stage: 'frontdoor',
@@ -1125,10 +1125,16 @@ router.post('/openclaude/session/chat', async (req, res) => {
       model: handle.resolved.providerModelId,
       outputSummary: String(finalText || ''),
       durationMs: Date.now() - frontdoorStartedMs,
-      // Provider-reported usage + the engine's own per-component context
-      // accounting — real measurement from the turn, never estimated here.
+      // Provider-reported usage (null = provider did not report — never a
+      // fake zero) + the engine's own per-component context ESTIMATES.
       metadata: {
-        providerUsage: { inputTokens: usage.promptTokens, outputTokens: usage.completionTokens },
+        providerUsage: {
+          inputTokens: usage.providerInputTokens,
+          outputTokens: usage.providerOutputTokens,
+          totalCostUsd: usage.totalCostUsd,
+          usageAvailable: usage.usageAvailable,
+          usageSource: usage.usageSource,
+        },
         ...(usage.contextBreakdownJson ? { contextBreakdownJson: usage.contextBreakdownJson } : {}),
       },
     });

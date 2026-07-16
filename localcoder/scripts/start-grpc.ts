@@ -106,6 +106,22 @@ async function main() {
   applyOpenRouterCompatibleEnv()
   await validateProviderEnvOrExit()
 
+  // ROLE-AWARE SESSION CONTEXT BOUNDARY: every session this server hosts is a
+  // PRODUCT chat session (Main and its doorway children such as Hermes) —
+  // never a repository coding session. Excluding user/project/local setting
+  // sources keeps repository instruction/memory files (AGENTS.md, CLAUDE.md,
+  // .claude/rules/*, user memory) out of product prompts entirely; policy and
+  // flag sources remain always-on by engine design. The Coder terminal runs as
+  // its own CLI process and keeps native repository instruction loading.
+  // Applied AFTER config/provider bootstrap (which legitimately reads user
+  // config) and BEFORE the server accepts any session.
+  const { setAllowedSettingSources } = await import('../src/bootstrap/state.js')
+  setAllowedSettingSources([])
+  console.log(
+    'gRPC Server: product-session boundary active — settingSources=[] '
+    + '(repository/user memory files excluded from every hosted session; Coder PTY unaffected)',
+  )
+
   const port = process.env.GRPC_PORT ? parseInt(process.env.GRPC_PORT, 10) : 50051
   const host = process.env.GRPC_HOST || 'localhost'
   const server = new GrpcServer(resolveOfficialPythonMcp())

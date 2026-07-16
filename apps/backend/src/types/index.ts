@@ -79,6 +79,10 @@ export type AgentCardRuntimeOptions = {
   localCoderAccess?: 'read' | 'patch' | 'test' | null;
   role?: string | null;
   tools?: string[] | null;
+  /** Card-assigned NATIVE tool names for this agent's own session (e.g.
+   * ['Agent'] for Main's doorway-only surface). Filtered by the engine BEFORE
+   * provider schema serialization; null = no declaration (legacy full pool). */
+  nativeTools?: string[] | null;
 };
 
 export type DeckNodeKind = 'agent';

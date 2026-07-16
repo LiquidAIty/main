@@ -378,57 +378,59 @@ def _flat(text: Any) -> str:
     return " ".join(str(text or "").split())
 
 
-def _dedup_title(name: str, summary: str) -> str:
-    # View summaries are often "Title: description" — drop only the duplicated
-    # title prefix; the description itself is content and stays whole.
-    if summary.startswith(f"{name}: "):
-        return summary[len(name) + 2 :]
-    return summary
-
-
 def _estimated_tokens(text: str) -> int:
     return max(1, math.ceil(len(text) / 4)) if text else 0
 
 
-def render_model_context(projection: dict[str, Any]) -> dict[str, Any]:
-    """Deterministic faithful compact text + per-section/per-authority token counts."""
-    views: dict[str, dict[str, Any]] = {}
-    for view in projection.get("graphViews") or []:
-        views[str(view.get("authority"))] = view
+def _render_view_lines(view: dict[str, Any]) -> list[str]:
+    """Compact per-view lines — the ONE serialization of a persisted Graph View
+    for model delivery, shared by the doorway and model-context renderers."""
+    lines: list[str] = []
+    omitted = int(view.get("omittedNeighborCount") or 0)
+    records = list(view.get("records") or [])
+    relationships = list(view.get("includedRelationships") or [])
+    lines.append(
+        f"view: {view.get('viewId')} | authority: {view.get('authority')} | project: {view.get('projectId')} | "
+        f"conversation: {view.get('conversationId')} | status: {view.get('status')} | records: {len(records)}"
+        + (f" ({omitted} more available beyond this view)" if omitted else "")
+    )
+    if _flat(view.get("query")):
+        lines.append(f"query: {_flat(view.get('query'))}")
+    for record in records:
+        canonical = str(record.get("canonicalId") or "")
+        summary = _flat(record.get("summary") or "")
+        lines.append(f"- {summary} ({canonical})" if summary else f"- ({canonical})")
+    for relationship in relationships:
+        lines.append(
+            f"- {relationship.get('source')} -{relationship.get('type') or 'RELATED_TO'}-> {relationship.get('target')}"
+        )
+    refs = sorted({_flat(ref) for ref in (view.get("provenanceRefs") or []) if _flat(ref)})
+    if refs:
+        lines.append(f"provenance: {'; '.join(refs)}")
+    return lines
+
+
+def render_model_context(projection: dict[str, Any], role_views: list[dict[str, Any]]) -> dict[str, Any]:
+    """Bounded, target-specific model text + per-section token counts.
+
+    Membership comes from persisted structures only: the ThinkGraph reasoning
+    state (structural record types) and the persisted Graph Views addressed to
+    this role. The broad display projection is referenced by identity and
+    counts — its node/edge dump NEVER enters a prompt (a full CBM layout is
+    ~180k tokens of relationship lines). Everything beyond this bounded context
+    is reachable through the bounded retrieval tools."""
     nodes = list(projection.get("nodes") or [])
-    by_numeric = {node.get("id"): node for node in nodes}
-    by_key: dict[tuple[str, str], dict[str, Any]] = {}
-    for node in nodes:
-        by_key[(str(node.get("authority")), str(node.get("source_id")))] = node
-
-    def lookup(authority: str, canonical: str) -> dict[str, Any] | None:
-        return by_key.get((authority, canonical)) or by_key.get((authority, canonical.removeprefix("code:")))
-
-    sections: dict[str, list[str]] = {}
-
-    active_view = projection.get("activeGraphViewId") or "none"
-    view_lines = []
     counts = projection.get("counts") or {}
     selected_counts = counts.get("selected") or {}
-    for authority in AUTHORITY:
-        view = views.get(authority)
-        if not view:
-            view_lines.append(f"{authority}: unavailable")
-            continue
-        omitted = int(view.get("omittedNeighborCount") or 0)
-        view_lines.append(
-            f"{authority}: {view.get('viewId')} ({int(selected_counts.get(authority) or 0)} records"
-            + (f", {omitted} more available beyond this view" if omitted else "")
-            + ")"
-        )
+    sections: dict[str, list[str]] = {}
+
     sections["header"] = [
         "[LIQUIDAITY_GRAPH_CONTEXT]",
         f"projection: {projection.get('projectionId')} | project: {projection.get('projectId')} | conversation: {projection.get('conversationId')} | role: {projection.get('receivingRole')}",
-        f"active view: {active_view}",
-        *view_lines,
+        "records visible in Unified (retrieve via tools, never assumed loaded): "
+        + ", ".join(f"{authority}={int(selected_counts.get(authority) or 0)}" for authority in AUTHORITY),
     ]
 
-    rendered_ids: set[tuple[str, str]] = set()
     reasoning_lines: list[str] = []
     reasoning_order = {name: index for index, name in enumerate(_REASONING_STATE_TYPES)}
     reasoning_nodes = sorted(
@@ -447,66 +449,23 @@ def render_model_context(projection: dict[str, Any]) -> dict[str, Any]:
             line += f" [{status}]"
         line += f" ({node.get('source_id')})"
         reasoning_lines.append(line)
-        rendered_ids.add(("thinkgraph", str(node.get("source_id"))))
     sections["reasoning_state"] = (["REASONING STATE (ThinkGraph):"] + reasoning_lines) if reasoning_lines else []
 
-    authority_tokens: dict[str, dict[str, int]] = {}
-    record_lines: list[str] = ["SELECTED RECORDS:"]
-    for authority in AUTHORITY:
-        view = views.get(authority)
-        records = list((view or {}).get("records") or [])
-        lines: list[str] = []
-        for record in records:
-            canonical = str(record.get("canonicalId") or "")
-            if (authority, canonical) in rendered_ids:
-                continue
-            node = lookup(authority, canonical)
-            name = _flat((node or {}).get("name") or canonical)
-            kind = str((node or {}).get("label") or "Record")
-            summary = _dedup_title(name, _flat(record.get("summary") or ""))
-            if authority == "codegraph":
-                pointer = str(((node or {}).get("properties") or {}).get("file_path") or "")
-                lines.append(f"- [{kind}] {name}" + (f" — {pointer}" if pointer else "") + f" ({canonical})")
-            else:
-                lines.append(f"- [{kind}] {name}" + (f" — {summary}" if summary and summary != name else "") + f" ({canonical})")
-            rendered_ids.add((authority, canonical))
-        if lines:
-            label = AUTHORITY[authority]["label"]
-            record_lines.append(f"{label} ({len(lines)}):")
-            record_lines.extend(lines)
-        authority_tokens[authority] = {
-            "records": len(lines),
-            "recordTokens": _estimated_tokens("\n".join(lines)),
+    view_measurements: dict[str, dict[str, int]] = {}
+    view_lines: list[str] = []
+    for view in role_views:
+        lines = _render_view_lines(view)
+        view_lines.extend(lines)
+        view_measurements[str(view.get("viewId"))] = {
+            "records": len(view.get("records") or []),
+            "relationships": len(view.get("includedRelationships") or []),
+            "characters": len("\n".join(lines)),
+            "estimatedTokens": _estimated_tokens("\n".join(lines)),
         }
-    sections["records"] = record_lines if len(record_lines) > 1 else []
-
-    relationship_lines: list[str] = []
-    seen_relationships: set[tuple[Any, Any, str]] = set()
-    for edge in projection.get("edges") or []:
-        source = by_numeric.get(edge.get("source"))
-        target = by_numeric.get(edge.get("target"))
-        if not source or not target:
-            continue
-        dedup_key = (edge.get("source"), edge.get("target"), str(edge.get("type")))
-        if dedup_key in seen_relationships:
-            continue
-        seen_relationships.add(dedup_key)
-        line = f"- {_flat(source.get('name'))} -{edge.get('type')}-> {_flat(target.get('name'))}"
-        if edge.get("cross_authority"):
-            line += f" [{source.get('authority')}→{target.get('authority')}]"
-        relationship_lines.append(line)
-    sections["relationships"] = (
-        [f"RELATIONSHIPS ({len(relationship_lines)}):"] + relationship_lines
-    ) if relationship_lines else []
-
-    provenance_refs = sorted({
-        _flat(ref)
-        for view in views.values()
-        for ref in (view.get("provenanceRefs") or [])
-        if _flat(ref)
-    })
-    sections["provenance"] = (
-        [f"PROVENANCE ({len(provenance_refs)}): " + "; ".join(provenance_refs)] if provenance_refs else []
+    sections["graph_views"] = (
+        [f"ROLE GRAPH VIEWS ({len(role_views)}):"] + view_lines
+        if role_views
+        else ["ROLE GRAPH VIEWS: none persisted for this role — use the retrieval tools for records beyond the reasoning state."]
     )
 
     warning_codes = sorted({str(warning.get("code")) for warning in projection.get("warnings") or []})
@@ -521,7 +480,7 @@ def render_model_context(projection: dict[str, Any]) -> dict[str, Any]:
         "Reference records by the canonical ids shown above.",
     ]
 
-    ordered = ["header", "reasoning_state", "records", "relationships", "provenance", "warnings", "retrieval"]
+    ordered = ["header", "reasoning_state", "graph_views", "warnings", "retrieval"]
     text = "\n".join(line for key in ordered for line in sections[key] if sections[key])
     section_measurements = {
         key: {"characters": len("\n".join(sections[key])), "estimatedTokens": _estimated_tokens("\n".join(sections[key]))}
@@ -531,15 +490,8 @@ def render_model_context(projection: dict[str, Any]) -> dict[str, Any]:
         "characters": len(text),
         "estimatedTokens": _estimated_tokens(text),
         "sections": section_measurements,
-        "authorities": {
-            authority: {
-                **authority_tokens.get(authority, {"records": 0, "recordTokens": 0}),
-                "selected": int(selected_counts.get(authority) or 0),
-                "availableBeyondView": int((views.get(authority) or {}).get("omittedNeighborCount") or 0),
-            }
-            for authority in AUTHORITY
-        },
-        "relationships": len(relationship_lines),
+        "views": view_measurements,
+        "projectionCounts": {authority: int(selected_counts.get(authority) or 0) for authority in AUTHORITY},
         "reasoningStateRecords": len(reasoning_lines),
     }
     return {"text": text, "measurements": measurements}
@@ -548,40 +500,20 @@ def render_model_context(projection: dict[str, Any]) -> dict[str, Any]:
 def render_graph_views(views: list[dict[str, Any]]) -> dict[str, Any]:
     """Faithful compact rendering of persisted Graph View records (doorway
     delivery). Every record and relationship in the views is preserved; only
-    transport/UI overhead is removed. Shares the one serialization style."""
+    transport/UI overhead is removed. Shares the one per-view serializer."""
     lines: list[str] = ["[LIQUIDAITY_GRAPH_CONTEXT]"]
     total_records = 0
     total_relationships = 0
     per_view: dict[str, dict[str, int]] = {}
     for view in views:
-        view_id = str(view.get("viewId"))
-        omitted = int(view.get("omittedNeighborCount") or 0)
-        records = list(view.get("records") or [])
-        relationships = list(view.get("includedRelationships") or [])
-        lines.append(
-            f"view: {view_id} | authority: {view.get('authority')} | project: {view.get('projectId')} | "
-            f"conversation: {view.get('conversationId')} | records: {len(records)}"
-            + (f" ({omitted} more available beyond this view)" if omitted else "")
-        )
-        if _flat(view.get("query")):
-            lines.append(f"query: {_flat(view.get('query'))}")
-        for record in records:
-            canonical = str(record.get("canonicalId") or "")
-            summary = _flat(record.get("summary") or "")
-            lines.append(f"- {summary} ({canonical})" if summary else f"- ({canonical})")
-        for relationship in relationships:
-            lines.append(
-                f"- {relationship.get('source')} -{relationship.get('type') or 'RELATED_TO'}-> {relationship.get('target')}"
-            )
-        refs = sorted({_flat(ref) for ref in (view.get("provenanceRefs") or []) if _flat(ref)})
-        if refs:
-            lines.append(f"provenance: {'; '.join(refs)}")
-        total_records += len(records)
-        total_relationships += len(relationships)
-        per_view[view_id] = {
-            "records": len(records),
-            "relationships": len(relationships),
-            "estimatedTokens": _estimated_tokens("\n".join(lines)),
+        view_lines = _render_view_lines(view)
+        lines.extend(view_lines)
+        total_records += len(view.get("records") or [])
+        total_relationships += len(view.get("includedRelationships") or [])
+        per_view[str(view.get("viewId"))] = {
+            "records": len(view.get("records") or []),
+            "relationships": len(view.get("includedRelationships") or []),
+            "estimatedTokens": _estimated_tokens("\n".join(view_lines)),
         }
     lines.append(
         "These compact canonical references are the exact filtered graph views supplied to this invocation. "
@@ -611,14 +543,24 @@ def build_model_context(
 ) -> dict[str, Any]:
     """Resolve the projection through its persistent authorities: rebuild
     deterministically from the same configuration and require content-hash
-    equality with the id the client saw. The graphs are the store — a service
-    restart cannot orphan a valid projection, and a mismatch means the graphs
-    moved since the human looked, which fails honestly (never a silent
-    regeneration of different context)."""
+    equality with the id the client saw (display integrity). The model context
+    itself is bounded and target-specific — persisted role-addressed Graph
+    Views plus the ThinkGraph reasoning state — never the display projection's
+    node/edge dump. The graphs are the store; a mismatch means they moved
+    since the human looked, which fails honestly."""
     rebuilt = build_unified_context(request, graph=graph, read_json=read_json, read_codegraph_json=read_codegraph_json, post_json=post_json)
     if str(rebuilt.get("projectionId")) != str(projection_id):
         raise ValueError(f"projection_superseded: current is {rebuilt.get('projectionId')}")
-    rendered = render_model_context(rebuilt)
+    resolved_graph = graph or get_thinkgraph()
+    persisted = resolved_graph.graph_views(request.project_id, request.conversation_id).get("views") or []
+    # Structural role addressing only: this role's live-lifecycle views. No
+    # relevance ranking, no classification — persisted membership decides.
+    role_views = [
+        view for view in persisted
+        if str(view.get("receivingRole")) == request.role
+        and str(view.get("status")) in {"candidate", "attached", "active", "returned"}
+    ]
+    rendered = render_model_context(rebuilt, role_views)
     return {
         "ok": True,
         "projectionId": str(projection_id),
@@ -626,6 +568,6 @@ def build_model_context(
         "activeGraphViewId": rebuilt.get("activeGraphViewId"),
         "modelContext": rendered["text"],
         "measurements": rendered["measurements"],
-        "graphViews": rebuilt.get("graphViews") or [],
+        "graphViews": role_views,
         "warnings": rebuilt.get("warnings") or [],
     }

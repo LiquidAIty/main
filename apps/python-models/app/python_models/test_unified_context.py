@@ -18,6 +18,18 @@ class FakeThinkGraph:
             "edges": [{"id": "think-edge", "source": "think:one", "target": "think:two", "predicate": "RELATES_TO"}],
         }
 
+    def graph_views(self, project_id: str, conversation_id: str | None = None):
+        base = {"schemaVersion": "graph-view.v1", "projectId": project_id, "conversationId": conversation_id or "main", "producingRole": "thinkgraph", "provenanceRefs": [], "omittedNeighborCount": 0, "query": ""}
+        return {"ok": True, "views": [
+            {**base, "viewId": "thinkgraph:role-view", "authority": "thinkgraph", "status": "attached", "receivingRole": "main_chat",
+             "records": [{"canonicalId": "think:two", "summary": "Decision Think two"}],
+             "includedRelationships": [{"id": "vr", "source": "think:one", "target": "think:two", "type": "RELATES_TO"}]},
+            {**base, "viewId": "codegraph:coder-only", "authority": "codegraph", "status": "attached", "receivingRole": "coder",
+             "records": [{"canonicalId": "pkg.one", "summary": "coder-only record"}], "includedRelationships": []},
+            {**base, "viewId": "thinkgraph:spent", "authority": "thinkgraph", "status": "consumed", "receivingRole": "main_chat",
+             "records": [{"canonicalId": "think:one", "summary": "already consumed"}], "includedRelationships": []},
+        ]}
+
 
 def fake_read(path, params):
     if path == "/api/knowgraph/analysis/latest":
@@ -95,15 +107,41 @@ def test_model_context_uses_the_same_projection_identity():
     built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
     delivered = build_model_context(built["projectionId"], request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
     assert delivered["projectionId"] == built["projectionId"]
-    assert "pkg.one" in delivered["modelContext"]
     with pytest.raises(ValueError, match="projection_superseded"):
         build_model_context("unified:wrong", request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
 
 
-def test_rendered_relationship_count_matches_projection():
+def test_model_context_is_bounded_to_role_views_never_the_projection_dump():
     built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
-    rendered = render_model_context(built)
-    assert rendered["measurements"]["relationships"] == 3
+    delivered = build_model_context(built["projectionId"], request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    text = delivered["modelContext"]
+    # Reasoning state (structural ThinkGraph types) + this role's persisted views.
+    assert "REASONING STATE" in text and "- Decision: Think two" in text
+    assert "thinkgraph:role-view" in text and "Decision Think two (think:two)" in text
+    assert "think:one -RELATES_TO-> think:two" in text
+    # Other-role and spent-lifecycle views never leak in.
+    assert "codegraph:coder-only" not in text and "coder-only record" not in text
+    assert "thinkgraph:spent" not in text
+    # The display projection's node/edge dump NEVER enters the prompt — it is
+    # referenced by identity and counts only.
+    assert "pkg.one" not in text and "pkg.two" not in text and "-CALLS->" not in text
+    assert "know:one" not in text
+    assert "thinkgraph=2, knowgraph=2, codegraph=3" in text
+    # Lifecycle views returned for runtime stamping are exactly the role views.
+    assert [view["viewId"] for view in delivered["graphViews"]] == ["thinkgraph:role-view"]
+    measurements = delivered["measurements"]
+    assert set(measurements["sections"]) == {"header", "reasoning_state", "graph_views", "warnings", "retrieval"}
+    assert measurements["views"]["thinkgraph:role-view"]["relationships"] == 1
+    # Bounded means bounded: the whole context stays tiny even though the
+    # projection carries every authority record.
+    assert measurements["estimatedTokens"] < 400
+
+
+def test_render_model_context_with_no_role_views_is_honest_not_a_fallback_dump():
+    built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    rendered = render_model_context(built, [])
+    assert "ROLE GRAPH VIEWS: none persisted for this role" in rendered["text"]
+    assert "-CALLS->" not in rendered["text"] and "pkg.one" not in rendered["text"]
 
 
 def test_identical_concurrent_requests_join_one_full_authority_read():

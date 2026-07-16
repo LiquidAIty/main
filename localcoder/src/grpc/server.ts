@@ -109,6 +109,76 @@ export function missingRequiredHarnessTools(toolNames: string[]): string[] {
   )
 }
 
+export type NormalizedTurnUsage = {
+  inputTokens: number | null
+  outputTokens: number | null
+  totalCostUsd: number | null
+  usageAvailable: boolean
+  usageSource: 'result_usage' | 'model_usage' | 'unavailable'
+}
+
+/** Honest provider-usage normalization for one turn. Pure so it is directly
+ * testable. The engine zero-initializes its stream-accumulated result usage,
+ * so an all-zero result is indistinguishable from "never populated" — it is
+ * treated as a real report only when any component is > 0. The per-model
+ * usage store (populated by the API client independently of stream events) is
+ * the fallback source. When neither carries real numbers, usage is reported
+ * UNAVAILABLE with null tokens — never a fabricated zero. */
+export function normalizeTurnUsage(
+  resultUsage: { input_tokens?: unknown; output_tokens?: unknown } | null | undefined,
+  modelUsage: Record<string, { inputTokens?: unknown; outputTokens?: unknown }> | null | undefined,
+  totalCostUsd?: unknown,
+): NormalizedTurnUsage {
+  const num = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null
+  // Cost shares the zero-init ambiguity: report it only when positive.
+  const cost = (num(totalCostUsd) ?? 0) > 0 ? (num(totalCostUsd) as number) : null
+  const input = num(resultUsage?.input_tokens)
+  const output = num(resultUsage?.output_tokens)
+  if ((input ?? 0) > 0 || (output ?? 0) > 0) {
+    return { inputTokens: input ?? 0, outputTokens: output ?? 0, totalCostUsd: cost, usageAvailable: true, usageSource: 'result_usage' }
+  }
+  let sumInput = 0
+  let sumOutput = 0
+  let sawEntry = false
+  for (const entry of Object.values(modelUsage ?? {})) {
+    const entryInput = num(entry?.inputTokens)
+    const entryOutput = num(entry?.outputTokens)
+    if (entryInput !== null || entryOutput !== null) {
+      sawEntry = true
+      sumInput += entryInput ?? 0
+      sumOutput += entryOutput ?? 0
+    }
+  }
+  if (sawEntry && (sumInput > 0 || sumOutput > 0)) {
+    return { inputTokens: sumInput, outputTokens: sumOutput, totalCostUsd: cost, usageAvailable: true, usageSource: 'model_usage' }
+  }
+  return { inputTokens: null, outputTokens: null, totalCostUsd: cost, usageAvailable: false, usageSource: 'unavailable' }
+}
+
+/** The parent card's native-tool grant applied to the native pool. Pure so it
+ * is directly testable. Empty grant = full pool (legacy callers whose cards
+ * declare no native list). When this turn carries agent definitions, the
+ * Agent tool is canvas-granted by construction — the persisted doorway edges
+ * ARE the authority to invoke children — so it always survives the filter.
+ * A granted name missing from the pool is reported, never silently dropped. */
+export function filterParentNativeTools<T extends { name: string }>(
+  nativePool: readonly T[],
+  allowedNativeTools: readonly string[],
+  hasAgentDefinitions: boolean,
+): T[] {
+  if (allowedNativeTools.length === 0) return [...nativePool]
+  const allowed = new Set(allowedNativeTools)
+  if (hasAgentDefinitions) allowed.add('Agent')
+  const filtered = nativePool.filter(tool => allowed.has(tool.name))
+  const poolNames = new Set(nativePool.map(tool => tool.name))
+  const missing = [...allowed].filter(name => !poolNames.has(name))
+  if (missing.length > 0) {
+    console.error(`gRPC Server: parent native tool grant names not in the installed pool: ${missing.join(', ')}`)
+  }
+  return filtered
+}
+
 // Structural bridge only: turns the request's AgentDefinitionConfig entries
 // (saved card id/prompt/tool-grants, carried verbatim over the wire — see
 // openclaude.proto) into real native AgentDefinitions for this turn's
@@ -339,10 +409,23 @@ export class GrpcServer {
             ? this.mcpTools.filter(tool => parentAllowedMcpTools.includes(tool.name))
             : this.mcpTools
 
+          // The PARENT session's native tool grant (the saved card's assigned
+          // native tools), applied BEFORE provider schema serialization —
+          // permission-time filtering would be too late because the model
+          // already paid for every serialized schema. Named children are
+          // unaffected (they assemble their own pool in AgentTool).
+          const parentNativeTools = filterParentNativeTools(
+            getTools(appState.toolPermissionContext),
+            Array.isArray(req.parent_allowed_native_tools)
+              ? req.parent_allowed_native_tools.map(String).filter(Boolean)
+              : [],
+            rawAgentDefinitions.length > 0,
+          )
+
           // The parent session's exact tool pool for this turn — also the input
           // to the post-turn context accounting, so measurement reflects what
           // the model actually saw.
-          const turnTools = [...getTools(appState.toolPermissionContext), ...parentMcpTools]
+          const turnTools = [...parentNativeTools, ...parentMcpTools]
 
           engine = new QueryEngine({
             cwd: req.working_directory || process.cwd(),
@@ -413,8 +496,13 @@ export class GrpcServer {
 
           // Track accumulated response data for FinalResponse
           let fullText = ''
-          let promptTokens = 0
-          let completionTokens = 0
+          let turnUsage: NormalizedTurnUsage = {
+            inputTokens: null,
+            outputTokens: null,
+            totalCostUsd: null,
+            usageAvailable: false,
+            usageSource: 'unavailable',
+          }
 
           const generator = engine.submitMessage(req.message)
 
@@ -454,13 +542,14 @@ export class GrpcServer {
                 }
               }
             } else if (msg.type === 'result') {
-              // Extract real token counts and final text from the result
+              // Extract final text + HONEST usage from the result: stream-
+              // accumulated usage first, the API client's per-model usage
+              // store second, explicit unavailable state otherwise.
               if (msg.subtype === 'success') {
                 if (msg.result) {
                   fullText = msg.result
                 }
-                promptTokens = msg.usage?.input_tokens ?? 0
-                completionTokens = msg.usage?.output_tokens ?? 0
+                turnUsage = normalizeTurnUsage(msg.usage, (msg as any).modelUsage, (msg as any).total_cost_usd)
               }
             }
           }
@@ -508,9 +597,14 @@ export class GrpcServer {
             call.write({
               done: {
                 full_text: fullText,
-                prompt_tokens: promptTokens,
-                completion_tokens: completionTokens,
-                context_breakdown_json: contextBreakdownJson
+                // Raw ints are meaningful ONLY when usage_available is true —
+                // missing usage is never converted into a real zero.
+                prompt_tokens: turnUsage.inputTokens ?? 0,
+                completion_tokens: turnUsage.outputTokens ?? 0,
+                context_breakdown_json: contextBreakdownJson,
+                usage_available: turnUsage.usageAvailable,
+                usage_source: turnUsage.usageSource,
+                total_cost_usd: turnUsage.totalCostUsd ?? 0
               }
             })
           }

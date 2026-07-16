@@ -146,9 +146,6 @@ export function parseGraphViews(
   });
 }
 
-export const parseCandidateGraphViews = (value: unknown, trusted: { projectId: string; conversationId: string }) =>
-  parseGraphViews(value, trusted, 'candidate');
-
 export function attachGraphViewsToRuntime(
   candidates: GraphView[],
   runtime: { provider: string; model: string; role: string; invocationId: string; attachedAt?: string },

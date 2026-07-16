@@ -114,6 +114,14 @@ export default function UnifiedGraphSurface({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  // Compact discovery of returned Graph Views: a completed turn dispatches
+  // knowledge:refresh (openClaudeSessionClient) and Unified refetches its
+  // server-owned projection — the browser never receives view membership.
+  useEffect(() => {
+    const onKnowledgeRefresh = () => setRefresh((value) => value + 1);
+    window.addEventListener('knowledge:refresh', onKnowledgeRefresh);
+    return () => window.removeEventListener('knowledge:refresh', onKnowledgeRefresh);
+  }, []);
   const [enabledLayers, setEnabledLayers] = useState<Set<Layer>>(new Set(LAYERS.map((layer) => layer.id)));
   const [showRelationships, setShowRelationships] = useState(true);
   const [showCrossAuthority, setShowCrossAuthority] = useState(true);

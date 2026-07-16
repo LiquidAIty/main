@@ -39,7 +39,14 @@ const cbmScopeMocks = vi.hoisted(() => ({
 }));
 
 const chatSessionMocks = vi.hoisted(() => {
-  const usage = { promptTokens: 0, completionTokens: 0, contextBreakdownJson: '' };
+  const usage = {
+    providerInputTokens: null,
+    providerOutputTokens: null,
+    totalCostUsd: null,
+    usageAvailable: false,
+    usageSource: 'unavailable',
+    contextBreakdownJson: '',
+  };
   const mocks = {
     appendMessage: vi.fn(async (msg: { role: string }) => ({
       messageId: `${msg.role}-msg-1`,

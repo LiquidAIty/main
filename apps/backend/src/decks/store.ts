@@ -232,6 +232,7 @@ export function normalizeRuntimeOptions(value: unknown): AgentCardRuntimeOptions
             : null,
     role: cleanOptionalText(raw.role),
     tools: cleanToolNames(raw.tools),
+    nativeTools: cleanToolNames(raw.nativeTools),
   };
   return normalized;
 }

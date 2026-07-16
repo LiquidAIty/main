@@ -320,7 +320,6 @@ export async function fetchUnifiedContext(params: {
   thinkLimit?: number;
   knowLimit?: number;
   codeLimit?: number;
-  expansionDepth?: number;
 }): Promise<unknown> {
   const query = new URLSearchParams({
     projectId: params.projectId,
@@ -332,7 +331,6 @@ export async function fetchUnifiedContext(params: {
   if (Number.isFinite(params.thinkLimit)) query.set('thinkLimit', String(params.thinkLimit));
   if (Number.isFinite(params.knowLimit)) query.set('knowLimit', String(params.knowLimit));
   if (Number.isFinite(params.codeLimit)) query.set('codeLimit', String(params.codeLimit));
-  if (Number.isFinite(params.expansionDepth)) query.set('expansionDepth', String(params.expansionDepth));
   return requestThinkGraphJson(`/unified/context?${query.toString()}`, { method: 'GET' });
 }
 
@@ -358,11 +356,6 @@ export async function persistGraphViewOnPython(view: unknown): Promise<unknown> 
   });
 }
 
-export async function fetchGraphViewsFromPython(projectId: string, conversationId: string): Promise<unknown> {
-  const query = new URLSearchParams({ projectId, conversationId });
-  return requestThinkGraphJson(`/thinkgraph/graph-views?${query.toString()}`, { method: 'GET' });
-}
-
 /** Resolve the compact model representation for a projection the user saw.
  * Python rebuilds deterministically from the persistent authorities and
  * requires content-hash equality with projectionId — an honest 409 when the
@@ -374,7 +367,6 @@ export async function fetchUnifiedModelContext(params: {
   role: string;
   activeGraphViewId?: string;
   knowgraphScope?: string;
-  expansionDepth?: number;
 }): Promise<unknown> {
   const query = new URLSearchParams({
     projectionId: params.projectionId,
@@ -384,7 +376,6 @@ export async function fetchUnifiedModelContext(params: {
   });
   if (params.activeGraphViewId) query.set('activeGraphViewId', params.activeGraphViewId);
   if (params.knowgraphScope) query.set('knowgraphScope', params.knowgraphScope);
-  if (Number.isFinite(params.expansionDepth)) query.set('expansionDepth', String(params.expansionDepth));
   return requestThinkGraphJson(`/unified/model-context?${query.toString()}`, { method: 'GET' });
 }
 

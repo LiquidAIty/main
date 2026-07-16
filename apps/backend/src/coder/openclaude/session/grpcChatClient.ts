@@ -47,14 +47,20 @@ export type GrpcSessionEvent =
   | { kind: 'error'; message: string; code?: string };
 
 /** Provider-reported usage + engine-truth context accounting for one turn.
- * Values come from the engine's own result/usage records — never estimated
- * here; zeros/empty mean the engine did not report, not a fabricated count. */
+ * Honest semantics: provider token fields are null when the provider did not
+ * report usage (usageAvailable=false) — missing usage is NEVER a fake zero.
+ * Estimates live separately in contextBreakdownJson. */
 export type GrpcTurnUsage = {
-  promptTokens: number;
-  completionTokens: number;
+  providerInputTokens: number | null;
+  providerOutputTokens: number | null;
+  totalCostUsd: number | null;
+  usageAvailable: boolean;
+  /** 'result_usage' | 'model_usage' | 'unavailable' — where the numbers came from. */
+  usageSource: string;
   /** Compact JSON from the engine's analyzeContextUsage (per-component context
    * breakdown: system prompt sections, tool schemas, MCP tools, agents,
-   * messages). Empty string when the engine could not produce it. */
+   * messages). ESTIMATES, kept separate from provider-reported usage. Empty
+   * string when the engine could not produce it. */
   contextBreakdownJson: string;
 };
 
@@ -407,7 +413,19 @@ export type MainChatRuntimeConfig = {
   /** The main_chat card's Tools selection — the parent session's real MCP
    * grant, enforced by the gRPC server's parent pool filter. */
   parentAllowedMcpTools: string[];
+  /** The main_chat card's assigned NATIVE tools — filtered by the engine
+   * BEFORE provider schema serialization. Transport-verbatim strings from the
+   * saved card; empty = the card declares no native list (legacy full pool). */
+  parentAllowedNativeTools: string[];
 };
+
+/** The saved card's assigned native tools (runtimeOptions.nativeTools).
+ * Pure transport: verbatim strings, no name validation here — the engine owns
+ * its native registry and reports grant names missing from the pool. */
+export function cardNativeToolGrants(card: any): string[] {
+  const raw = Array.isArray(card?.runtimeOptions?.nativeTools) ? card.runtimeOptions.nativeTools : [];
+  return raw.map((tool: unknown) => String(tool || '').trim()).filter(Boolean);
+}
 
 /**
  * Structural resolution from persisted deck nodes: exactly ONE card whose
@@ -493,6 +511,7 @@ export async function resolveMainChatRuntimeConfig(
         })
         .filter((def): def is Record<string, unknown> => Boolean(def)),
       parentAllowedMcpTools: cardMcpToolGrants(card),
+      parentAllowedNativeTools: cardNativeToolGrants(card),
     };
   } catch {
     return null;
@@ -626,9 +645,13 @@ export async function startGrpcTurn(
         terminal = true;
         if (timeoutHandle) clearTimeout(timeoutHandle);
         const finalText = msg.done.full_text || accumulated;
+        const usageAvailable = Boolean(msg.done.usage_available);
         const usage: GrpcTurnUsage = {
-          promptTokens: Number(msg.done.prompt_tokens) || 0,
-          completionTokens: Number(msg.done.completion_tokens) || 0,
+          providerInputTokens: usageAvailable ? Number(msg.done.prompt_tokens) || 0 : null,
+          providerOutputTokens: usageAvailable ? Number(msg.done.completion_tokens) || 0 : null,
+          totalCostUsd: Number(msg.done.total_cost_usd) > 0 ? Number(msg.done.total_cost_usd) : null,
+          usageAvailable,
+          usageSource: String(msg.done.usage_source || 'unavailable'),
           contextBreakdownJson: String(msg.done.context_breakdown_json || ''),
         };
         safeOnEvent({ kind: 'done', fullText: finalText, usage });
@@ -716,6 +739,11 @@ export async function startGrpcTurn(
       // grant (server-enforced pool filter; children keep their own grants).
       ...(mainChatConfig.parentAllowedMcpTools.length > 0
         ? { parent_allowed_mcp_tools: mainChatConfig.parentAllowedMcpTools }
+        : {}),
+      // The card's assigned native tools — the engine filters the parent's
+      // native pool BEFORE schema serialization (children unaffected).
+      ...(mainChatConfig.parentAllowedNativeTools.length > 0
+        ? { parent_allowed_native_tools: mainChatConfig.parentAllowedNativeTools }
         : {}),
     },
   });

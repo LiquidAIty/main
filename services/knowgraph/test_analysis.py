@@ -12,9 +12,10 @@ from analysis import (
     AnalysisStatement,
     SourceScope,
     _persist_result,
+    analyze,
     analyze_infranodus,
     analyze_local,
-    context_projection,
+    local_configuration_hash,
     normalize_infranodus_result,
 )
 
@@ -111,6 +112,103 @@ def test_gap_candidate_references_separated_communities() -> None:
     assert all(gap.path_length >= 2 and len(gap.path) >= 3 for gap in result.content_gap_candidates)
 
 
+def test_empty_scope_raises_instead_of_returning_a_fake_analysis() -> None:
+    with pytest.raises(ValueError, match="no canonical statements"):
+        analyze_local(request(), [])
+
+
+def test_single_token_graph_is_one_isolated_node_with_honest_metrics() -> None:
+    result = analyze_local(request(), [statement("s1", "singleton")])
+    assert result.node_count == 1 and result.edge_count == 0
+    assert result.modularity is None
+    assert result.content_gap_candidates == []
+    assert len(result.communities) == 1 and result.communities[0].top_concepts == ["singleton"]
+    assert result.nodes[0].influence == 0.0 and result.nodes[0].bridge_importance == 0.0
+
+
+def test_repeated_single_token_never_creates_a_self_loop() -> None:
+    result = analyze_local(request(window=4), [statement("s1", "echo echo echo echo")])
+    assert result.node_count == 1 and result.edge_count == 0
+
+
+def test_disconnected_components_have_distinct_communities_and_no_gaps() -> None:
+    statements = [
+        statement("s1", "alpha beta alpha beta"),
+        statement("s2", "gamma delta gamma delta"),
+    ]
+    result = analyze_local(request(window=2), statements)
+    communities = {node.community_id for node in result.nodes}
+    assert len(communities) == 2
+    # No path between components — a gap candidate requires a real connecting path.
+    assert result.content_gap_candidates == []
+    assert result.modularity is not None
+
+
+def test_two_communities_with_one_bridge_rank_the_bridge_as_top_gateway() -> None:
+    statements = [
+        statement("s1", "alpha beta alpha beta alpha beta"),
+        statement("s2", "gamma delta gamma delta gamma delta"),
+        statement("s3", "beta bridge gamma bridge beta bridge gamma"),
+    ]
+    result = analyze_local(request(window=2), statements)
+    by_bridge = sorted(result.nodes, key=lambda node: -node.bridge_importance)
+    assert by_bridge[0].label == "bridge"
+    assert result.conceptual_gateways and result.conceptual_gateways[0] == "bridge"
+    # Gap candidates span the two dense communities through the bridge.
+    assert any(gap.source_community != gap.target_community for gap in result.content_gap_candidates)
+
+
+def test_inverse_distance_weighting_prefers_adjacent_pairs() -> None:
+    flat = analyze_local(request(window=3), [statement("s1", "near mid far near mid far")])
+    req = request(window=3)
+    req.options = req.options.model_copy(update={"distance_weighting": "inverse"})
+    inverse = analyze_local(req, [statement("s1", "near mid far near mid far")])
+    flat_adjacent = edge_by_labels(flat, "near", "mid").weight
+    flat_skip = edge_by_labels(flat, "near", "far").weight
+    inverse_adjacent = edge_by_labels(inverse, "near", "mid").weight
+    inverse_skip = edge_by_labels(inverse, "near", "far").weight
+    assert flat_adjacent == flat_skip
+    assert inverse_adjacent > inverse_skip
+
+
+def test_configuration_hash_changes_with_content_and_options_but_not_request_id() -> None:
+    statements = [statement("s1", "alpha beta")]
+    base = local_configuration_hash(request(window=3), statements)
+    assert base == local_configuration_hash(request(window=3), statements)
+    other_request = AnalysisRequest(**{**request(window=3).model_dump(), "request_id": "different-request"})
+    assert base == local_configuration_hash(other_request, statements)
+    assert base != local_configuration_hash(request(window=2), statements)
+    assert base != local_configuration_hash(request(window=3), [statement("s1", "alpha beta gamma")])
+
+
+class ReuseDriver:
+    """Returns a persisted result for the reuse lookup; fails on any write."""
+
+    def __init__(self, stored_json: str) -> None:
+        self.stored_json = stored_json
+        self.queries: list[str] = []
+
+    def execute_query(self, query: str, **parameters):
+        self.queries.append(query)
+        if "configuration_hash: $configuration_hash" in query:
+            return ([{"result_json": self.stored_json}], None, None)
+        raise AssertionError(f"unexpected write during reuse: {query}")
+
+    def close(self) -> None:
+        raise AssertionError("borrowed driver must not be closed")
+
+
+def test_identical_persisted_request_is_reused_without_recomputing() -> None:
+    statements = [statement("s1", "alpha beta alpha beta")]
+    req = AnalysisRequest(**{**request(window=3).model_dump(), "persist": True, "statements": [s.model_dump() for s in statements]})
+    stored = analyze_local(request(window=3), statements)
+    driver = ReuseDriver(stored.model_dump_json())
+    with patch("analysis.analyze_local", side_effect=AssertionError("must not recompute")):
+        reused = asyncio.run(analyze(req, driver))
+    assert reused.reused is True
+    assert reused.analysis_id == stored.analysis_id
+
+
 def test_external_result_normalizes_to_the_same_contract() -> None:
     req = request()
     req.requested_provider = "infranodus_mcp"
@@ -168,41 +266,3 @@ def test_analysis_persistence_never_overwrites_canonical_graph() -> None:
     assert "SET doc" not in query
     assert "MERGE (chunk" not in query
     assert driver.calls[0][1]["statement_ids"] == ["s1"]
-
-
-class ContextDriver:
-    def execute_query(self, query: str, **parameters):
-        if "knowgraph_context_anchors" in query:
-            return ([{
-                "element_id": "chunk-element", "canonical_id": "know:chunk:chunk-1",
-                "labels": ["Chunk"], "label": "Book chunk", "properties": {"description": "Canonical book evidence."},
-            }], None, None)
-        if "knowgraph_context_neighbors" in query:
-            return ([
-                {"element_id": "doc-element", "canonical_id": "know:document:book", "labels": ["Document"], "label": "Book", "properties": {}},
-                {"element_id": "entity-element", "canonical_id": "entity:graph", "labels": ["Entity"], "label": "knowledge graph", "properties": {}},
-                {"element_id": "analysis-element", "canonical_id": "analysis:local", "labels": ["KnowGraphAnalysisRun"], "label": "Local analysis", "properties": {"analysis_id": "analysis:local"}},
-            ], None, None)
-        if "MATCH (a)-[r]->(b)" in query:
-            return ([
-                {"id": "has-chunk", "source": "doc-element", "target": "chunk-element", "type": "HAS_CHUNK"},
-                {"id": "mentions", "source": "chunk-element", "target": "entity-element", "type": "MENTIONS"},
-            ], None, None)
-        raise AssertionError(query)
-
-    def close(self):
-        raise AssertionError("borrowed driver must not be closed")
-
-
-def test_context_projection_expands_only_a_bounded_direct_evidence_neighborhood() -> None:
-    result = context_projection(
-        "fixture-project", ["know:chunk:chunk-1"], limit=3, driver=ContextDriver(),
-        conversation_id="fixture-conversation", receiving_role="hermes",
-    )
-    assert [node["id"] for node in result["nodes"]] == ["know:chunk:chunk-1", "know:document:book", "entity:graph"]
-    assert result["view"]["hopDepth"] == 1
-    assert result["view"]["omittedNeighborCount"] == 1
-    assert result["view"]["receivingRole"] == "hermes"
-    assert result["view"]["includedCanonicalNodeIds"] == [node["id"] for node in result["nodes"]]
-    assert {edge["type"] for edge in result["relationships"]} == {"HAS_CHUNK", "MENTIONS"}
-    assert {warning["code"] for warning in result["warnings"]} == {"authority_view_limit_reached", "authority_view_truncated"}

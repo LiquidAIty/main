@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { attachGraphViewsToRuntime, completeGraphViews, parseCandidateGraphViews } from './graphView';
+import { attachGraphViewsToRuntime, completeGraphViews, parseGraphViews } from './graphView';
 
 const candidate = {
   schemaVersion: 'graph-view.v1',
@@ -31,14 +31,14 @@ const candidate = {
 
 describe('Graph View contract', () => {
   it('mints trusted scope and preserves the exact candidate membership', () => {
-    const [parsed] = parseCandidateGraphViews([candidate], { projectId: 'project-1', conversationId: 'conversation-1' });
+    const [parsed] = parseGraphViews([candidate], { projectId: 'project-1', conversationId: 'conversation-1' }, 'candidate');
     expect(parsed).toMatchObject({ projectId: 'project-1', conversationId: 'conversation-1', status: 'candidate' });
     expect(parsed.includedCanonicalNodeIds).toEqual(['symbol:one']);
     expect(parsed.records[0].estimatedCharacters).toBe(parsed.records[0].summary.length);
   });
 
   it('derives an active runtime view and completes that same invocation view', () => {
-    const parsed = parseCandidateGraphViews([candidate], { projectId: 'project-1', conversationId: 'conversation-1' });
+    const parsed = parseGraphViews([candidate], { projectId: 'project-1', conversationId: 'conversation-1' }, 'candidate');
     const [active] = attachGraphViewsToRuntime(parsed, {
       provider: 'openai', model: 'gpt-5.3', role: 'main_chat', invocationId: 'req-1', attachedAt: '2026-07-15T01:00:00.000Z',
     });
@@ -48,7 +48,7 @@ describe('Graph View contract', () => {
   });
 
   it('rejects records outside included canonical references', () => {
-    expect(() => parseCandidateGraphViews([{ ...candidate, includedCanonicalNodeIds: [] }], {
+    expect(() => parseGraphViews([{ ...candidate, includedCanonicalNodeIds: [] }], {
       projectId: 'project-1', conversationId: 'conversation-1',
     })).toThrow('record_not_included');
   });
