@@ -280,6 +280,172 @@ def source_preview(scope: SourceScope, driver: Any | None = None) -> dict[str, A
     }
 
 
+def context_projection(project_id: str, canonical_refs: list[str], limit: int = 120, driver: Any | None = None, *, conversation_id: str = "main", receiving_role: str = "main_chat") -> dict[str, Any]:
+    """Bounded Neo4j read for a cross-authority Graph View; never a second store."""
+    project_id = str(project_id or "").strip()
+    if not project_id:
+        raise ValueError("project_id_required")
+    refs = sorted({str(ref).strip() for ref in canonical_refs if str(ref).strip()})[:80]
+    limit = max(1, min(int(limit), 300))
+    owned_driver = driver is None
+    driver = driver or _driver_from_env()
+    database = os.environ.get("NEO4J_DATABASE", "").strip() or None
+    try:
+        node_result = driver.execute_query(
+            """
+            // knowgraph_context_anchors
+            MATCH (n)
+            WHERE (toString(n.project_id) = $project_id OR size($refs) > 0)
+              AND NOT (n:Skill OR n:SkillAttempt OR n:FailedAttempt OR n:Guardrail OR n:QueryPattern OR n:SkillSection)
+            WITH n,
+              CASE
+                WHEN n:Document AND n.document_id IS NOT NULL THEN 'know:document:' + toString(n.document_id)
+                WHEN n:Chunk AND n.chunk_id IS NOT NULL THEN 'know:chunk:' + toString(n.chunk_id)
+                WHEN n.analysis_id IS NOT NULL THEN toString(n.analysis_id)
+                WHEN n.topic_id IS NOT NULL THEN toString(n.topic_id)
+                WHEN n.gap_id IS NOT NULL THEN toString(n.gap_id)
+                WHEN n.community_id IS NOT NULL THEN toString(n.community_id)
+                WHEN n.id IS NOT NULL THEN toString(n.id)
+                ELSE elementId(n)
+              END AS canonical_id
+            WITH n, canonical_id
+            WHERE size($refs) = 0 OR canonical_id IN $refs
+            WITH n, canonical_id, CASE WHEN canonical_id IN $refs THEN 0 ELSE 1 END AS priority
+            RETURN elementId(n) AS element_id, canonical_id, labels(n) AS labels,
+                   coalesce(n.name, n.title, n.label, n.document_id, n.chunk_id, canonical_id) AS label,
+                   {description: coalesce(n.description, substring(toString(n.text), 0, 520), ''),
+                    status: n.status, provider: n.provider, run_id: n.run_id,
+                    analysis_id: n.analysis_id, document_id: n.document_id, chunk_id: n.chunk_id,
+                    source_url: n.source_url, project_id: n.project_id} AS properties,
+                   priority
+            ORDER BY priority, canonical_id
+            LIMIT $limit
+            """,
+            project_id=project_id,
+            refs=refs,
+            limit=limit,
+            database_=database,
+        )
+        node_records = list(_records(node_result))
+        anchor_element_ids = [str(record.get("element_id") or "") for record in node_records if record.get("element_id")]
+        omitted_neighbors = 0
+        if refs and anchor_element_ids and len(node_records) < limit:
+            remaining = limit - len(node_records)
+            neighbor_result = driver.execute_query(
+                """
+                // knowgraph_context_neighbors
+                MATCH (anchor)-[r]-(n)
+                WHERE elementId(anchor) IN $anchor_element_ids
+                  AND type(r) IN ['HAS_CHUNK', 'MENTIONS', 'DERIVED_FROM', 'VIEWS_ANALYSIS',
+                                  'ASSERTS', 'SUPPORTED_BY', 'HAS_ENTITY', 'HAS_CONCEPT']
+                  AND NOT (n:Skill OR n:SkillAttempt OR n:FailedAttempt OR n:Guardrail OR n:QueryPattern OR n:SkillSection)
+                  AND (n.project_id IS NULL OR anchor.project_id IS NULL OR
+                       toString(n.project_id) = toString(anchor.project_id) OR
+                       toString(n.project_id) = $project_id)
+                WITH DISTINCT n
+                WITH n,
+                  CASE
+                    WHEN n:Document AND n.document_id IS NOT NULL THEN 'know:document:' + toString(n.document_id)
+                    WHEN n:Chunk AND n.chunk_id IS NOT NULL THEN 'know:chunk:' + toString(n.chunk_id)
+                    WHEN n.analysis_id IS NOT NULL THEN toString(n.analysis_id)
+                    WHEN n.topic_id IS NOT NULL THEN toString(n.topic_id)
+                    WHEN n.gap_id IS NOT NULL THEN toString(n.gap_id)
+                    WHEN n.community_id IS NOT NULL THEN toString(n.community_id)
+                    WHEN n.id IS NOT NULL THEN toString(n.id)
+                    ELSE elementId(n)
+                  END AS canonical_id
+                RETURN elementId(n) AS element_id, canonical_id, labels(n) AS labels,
+                       coalesce(n.name, n.title, n.label, n.document_id, n.chunk_id, canonical_id) AS label,
+                       {description: coalesce(n.description, substring(toString(n.text), 0, 520), ''),
+                        status: n.status, provider: n.provider, run_id: n.run_id,
+                        analysis_id: n.analysis_id, document_id: n.document_id, chunk_id: n.chunk_id,
+                        source_url: n.source_url, project_id: n.project_id} AS properties,
+                       1 AS priority
+                ORDER BY canonical_id
+                LIMIT $neighbor_limit
+                """,
+                anchor_element_ids=anchor_element_ids,
+                project_id=project_id,
+                neighbor_limit=remaining + 1,
+                database_=database,
+            )
+            neighbor_records = [record for record in _records(neighbor_result) if str(record.get("element_id") or "") not in set(anchor_element_ids)]
+            if len(neighbor_records) > remaining:
+                omitted_neighbors = len(neighbor_records) - remaining
+                neighbor_records = neighbor_records[:remaining]
+            node_records.extend(neighbor_records)
+        nodes = []
+        element_ids = []
+        canonical_by_element = {}
+        for record in node_records:
+            element_id = str(record.get("element_id") or "")
+            canonical_id = str(record.get("canonical_id") or element_id)
+            labels = [str(value) for value in (record.get("labels") or [])]
+            element_ids.append(element_id)
+            canonical_by_element[element_id] = canonical_id
+            nodes.append({
+                "id": canonical_id,
+                "label": str(record.get("label") or canonical_id),
+                "type": labels[0] if labels else "NeoEntity",
+                "properties": dict(record.get("properties") or {}),
+                "provenance": {"neo4jElementId": element_id, "projectId": project_id},
+            })
+        relationship_result = driver.execute_query(
+            """
+            MATCH (a)-[r]->(b)
+            WHERE elementId(a) IN $element_ids AND elementId(b) IN $element_ids
+            RETURN elementId(r) AS id, elementId(a) AS source, elementId(b) AS target, type(r) AS type
+            LIMIT $relationship_limit
+            """,
+            element_ids=element_ids,
+            relationship_limit=limit * 3,
+            database_=database,
+        )
+        relationships = [{
+            "id": str(record.get("id") or ""),
+            "source": canonical_by_element.get(str(record.get("source") or ""), ""),
+            "target": canonical_by_element.get(str(record.get("target") or ""), ""),
+            "type": str(record.get("type") or "RELATED_TO"),
+        } for record in _records(relationship_result)]
+        resolved = {node["id"] for node in nodes}
+        missing = sorted(set(refs) - resolved)
+        warnings = [{"authority": "knowgraph", "code": "referenced_record_not_found", "detail": ref} for ref in missing]
+        if len(nodes) == limit:
+            warnings.append({"authority": "knowgraph", "code": "authority_view_limit_reached", "detail": f"KnowGraph returned the configured limit of {limit} records."})
+        if omitted_neighbors:
+            warnings.append({"authority": "knowgraph", "code": "authority_view_truncated", "detail": f"At least {omitted_neighbors} direct evidence neighbor was omitted by limit {limit}."})
+        identity = {"projectId": project_id, "refs": refs, "limit": limit, "nodes": sorted(resolved), "relationships": sorted((item["source"], item["type"], item["target"]) for item in relationships)}
+        view_id = f"knowgraph:{hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:24]}"
+        records = []
+        for rank, node in enumerate(nodes, start=1):
+            description = str((node.get("properties") or {}).get("description") or node["label"])
+            summary = f"{node['label']}: {description}"[:480]
+            provenance_refs = [str(value) for value in (node.get("provenance") or {}).values() if isinstance(value, str) and value][:12]
+            records.append({"canonicalId": node["id"], "summary": summary, "selectionReason": "Selected by the KnowGraph bounded evidence/analysis view", "rank": rank, "provenanceRefs": provenance_refs, "estimatedCharacters": len(summary), "estimatedTokens": max(1, (len(summary) + 3) // 4)})
+        view = {
+            "schemaVersion": "graph-view.v1", "viewId": view_id, "authority": "knowgraph", "status": "candidate",
+            "projectId": project_id, "conversationId": conversation_id, "producingRole": "knowgraph", "receivingRole": receiving_role,
+            "rootCanonicalNodeIds": refs[:20], "includedCanonicalNodeIds": [record["canonicalId"] for record in records], "records": records,
+            "includedRelationships": relationships, "query": "Canonical references and bounded evidence/analysis neighborhood", "filter": {"nodeTypes": [], "trustStates": ["source_backed", "derived_analysis"]},
+            "hopDepth": 1 if refs and len(nodes) > len(anchor_element_ids) else 0, "provenanceRefs": sorted({ref for record in records for ref in record["provenanceRefs"]})[:40], "omittedNeighborCount": omitted_neighbors,
+            "createdAt": "1970-01-01T00:00:00Z", "updatedAt": "1970-01-01T00:00:00Z",
+        }
+        return {
+            "schemaVersion": "knowgraph.context.v1",
+            "authority": "knowgraph-neo4j",
+            "projectId": project_id,
+            "nodes": nodes,
+            "relationships": relationships,
+            "view": view,
+            "warnings": warnings,
+            "missingCanonicalRefs": missing,
+            "counts": {"nodes": len(nodes), "relationships": len(relationships)},
+        }
+    finally:
+        if owned_driver:
+            driver.close()
+
+
 def _normalized_tokens(statement: AnalysisStatement, options: AnalysisOptions) -> list[str]:
     text = statement.text.casefold() if options.lowercase else statement.text
     aliases = {

@@ -40,7 +40,6 @@ import useAgentBuilderProject from '../features/agentbuilder/state/useAgentBuild
 import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgentBuilderProjectReset';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import useAgentBuilderThinkGraphProjection from '../features/agentbuilder/state/useAgentBuilderThinkGraphProjection';
-import useAgentBuilderKnowGraphProjection from '../features/agentbuilder/state/useAgentBuilderKnowGraphProjection';
 import useAgentBuilderHermesReport from '../features/agentbuilder/state/useAgentBuilderHermesReport';
 import TradingCanvasSurface from '../features/trading/TradingCanvasSurface';
 import type { LinkRef } from '../components/builder/deckContinuityTypes';
@@ -544,11 +543,6 @@ export default function AgentBuilder(): React.ReactElement {
     };
   }, [canvasProjectId, conversationId, mergeGraphViews]);
   const thinkGraphProjection = useAgentBuilderThinkGraphProjection({
-    activeProject,
-    knowledgeGraphKind,
-    workspaceView,
-  });
-  const knowGraphProjection = useAgentBuilderKnowGraphProjection({
     activeProject,
     knowledgeGraphKind,
     workspaceView,
@@ -2108,14 +2102,10 @@ export default function AgentBuilder(): React.ReactElement {
               ) : (
                 <UnifiedGraphSurface
                   projectId={activeProject}
-                  codeGraphProject={codeGraphProjectName}
-                  thinkProjection={thinkGraphProjection.projection ?? undefined}
-                  knowProjection={knowGraphProjection.projection ?? undefined}
-                  focusedThinkIds={thinkGraphFocusIds}
                   conversationId={conversationId}
-                  authorityFocus={knowledgeGraphKind}
                   runtimeHandbacks={runtimeGraphViews}
                   onCandidateHandbacksChange={handleCandidateGraphViewsChange}
+                  onOpenAuthority={(authority) => setKnowledgeGraphKind(authority)}
                 />
               )}
             </Suspense>

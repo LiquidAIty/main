@@ -31,6 +31,7 @@ from analysis import (
     infranodus_capabilities,
     local_capabilities,
     source_preview,
+    context_projection,
 )
 
 load_dotenv()
@@ -69,6 +70,11 @@ class AnalysisViewRequest(BaseModel):
     project_id: str
     producing_invocation: str
     parent_view_id: str | None = None
+
+
+@app.get("/analysis/context-projection")
+async def analysis_context_projection(project_id: str, refs: list[str] = Query(default=[]), limit: int = 120, conversation_id: str = "main", role: str = "main_chat"):
+    return context_projection(project_id, refs, limit, conversation_id=conversation_id, receiving_role=role)
 
 
 def _model_dump(model: BaseModel) -> dict[str, Any]:

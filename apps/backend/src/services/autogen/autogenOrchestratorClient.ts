@@ -311,6 +311,31 @@ export async function fetchThinkGraphProjection(
   return requestThinkGraphJson(`${THINKGRAPH_PROJECTION_ENDPOINT}?${query.toString()}`, { method: 'GET' });
 }
 
+export async function fetchUnifiedContext(params: {
+  projectId: string;
+  conversationId: string;
+  role?: string;
+  activeGraphViewId?: string;
+  knowgraphScope?: string;
+  thinkLimit?: number;
+  knowLimit?: number;
+  codeLimit?: number;
+  expansionDepth?: number;
+}): Promise<unknown> {
+  const query = new URLSearchParams({
+    projectId: params.projectId,
+    conversationId: params.conversationId,
+    role: params.role || 'main_chat',
+  });
+  if (params.activeGraphViewId) query.set('activeGraphViewId', params.activeGraphViewId);
+  if (params.knowgraphScope) query.set('knowgraphScope', params.knowgraphScope);
+  if (Number.isFinite(params.thinkLimit)) query.set('thinkLimit', String(params.thinkLimit));
+  if (Number.isFinite(params.knowLimit)) query.set('knowLimit', String(params.knowLimit));
+  if (Number.isFinite(params.codeLimit)) query.set('codeLimit', String(params.codeLimit));
+  if (Number.isFinite(params.expansionDepth)) query.set('expansionDepth', String(params.expansionDepth));
+  return requestThinkGraphJson(`/unified/context?${query.toString()}`, { method: 'GET' });
+}
+
 export async function fetchThinkGraphScope(projectId: string, limit?: number): Promise<unknown> {
   const query = new URLSearchParams({ projectId });
   if (Number.isFinite(limit)) query.set('limit', String(limit));

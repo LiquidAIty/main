@@ -98,6 +98,48 @@ def thinkgraph_projection(
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
+@app.get("/unified/context")
+def unified_context(
+    projectId: str,
+    conversationId: str,
+    role: str = "main_chat",
+    activeGraphViewId: str | None = None,
+    knowgraphScope: str | None = None,
+    thinkLimit: int = 120,
+    knowLimit: int = 120,
+    codeLimit: int = 90,
+    expansionDepth: int = 0,
+):
+    """One bounded context payload shared by the Unified scene and agent delivery."""
+    from app.python_models.unified_context import UnifiedContextRequest, build_unified_context
+    try:
+        return build_unified_context(UnifiedContextRequest(
+            project_id=projectId,
+            conversation_id=conversationId,
+            role=role,
+            active_view_id=activeGraphViewId,
+            knowgraph_scope=knowgraphScope,
+            think_limit=thinkLimit,
+            know_limit=knowLimit,
+            code_limit=codeLimit,
+            expansion_depth=expansionDepth,
+        ))
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.get("/thinkgraph/context-view")
+def thinkgraph_context_view(projectId: str, conversationId: str, role: str = "main_chat", activeGraphViewId: str | None = None, limit: int = 80, expansionDepth: int = 0):
+    from app.python_models.thinkgraph_context import resolve_thinkgraph_context
+    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+    try:
+        return resolve_thinkgraph_context(get_thinkgraph(), project_id=projectId, conversation_id=conversationId, receiving_role=role, active_view_id=activeGraphViewId, limit=limit, extra_hops=expansionDepth)
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
 @app.get("/thinkgraph/health")
 def thinkgraph_health():
     """Load and report the real local embedding engine; never a fallback."""

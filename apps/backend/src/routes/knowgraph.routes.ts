@@ -489,7 +489,7 @@ function buildKnowgraphBaseUrls(): string[] {
   return Array.from(new Set(urls));
 }
 
-async function proxyKnowgraphGetJson(pathname: string, query?: Record<string, string>): Promise<{
+async function proxyKnowgraphGetJson(pathname: string, query?: Record<string, string | string[]>): Promise<{
   status: number;
   data: any;
 }> {
@@ -498,7 +498,10 @@ async function proxyKnowgraphGetJson(pathname: string, query?: Record<string, st
 
   for (const baseUrl of baseUrls) {
     try {
-      const search = new URLSearchParams(query || {});
+      const search = new URLSearchParams();
+      Object.entries(query || {}).forEach(([key, value]) => {
+        (Array.isArray(value) ? value : [value]).forEach((item) => search.append(key, item));
+      });
       const url = `${baseUrl}${pathname}${search.toString() ? `?${search.toString()}` : ''}`;
       const response = await axios.get(url, {
         timeout: 8000,
@@ -601,6 +604,24 @@ router.get('/analysis/source-preview', async (req, res) => {
     return res.status(response.status).json(response.data);
   } catch (error: any) {
     return res.status(502).json({ ok: false, error: { message: error?.message || 'source preview unavailable' } });
+  }
+});
+
+router.get('/analysis/context-projection', async (req, res) => {
+  try {
+    const projectId = String(req.query?.projectId || req.query?.project_id || '').trim();
+    if (!projectId) return res.status(400).json({ ok: false, error: { message: 'projectId is required' } });
+    const refs = Array.isArray(req.query?.refs) ? req.query.refs : req.query?.refs ? [req.query.refs] : [];
+    const response = await proxyKnowgraphGetJson('/analysis/context-projection', {
+      project_id: projectId,
+      refs: refs.map((value) => String(value)),
+      limit: String(clampInt(req.query?.limit, 1, 300, 120)),
+      conversation_id: String(req.query?.conversationId || 'main'),
+      role: String(req.query?.role || 'main_chat'),
+    });
+    return res.status(response.status).json(response.data);
+  } catch (error: any) {
+    return res.status(502).json({ ok: false, error: { message: error?.message || 'context projection unavailable' } });
   }
 });
 

@@ -14,6 +14,7 @@ from analysis import (
     _persist_result,
     analyze_infranodus,
     analyze_local,
+    context_projection,
     normalize_infranodus_result,
 )
 
@@ -167,3 +168,41 @@ def test_analysis_persistence_never_overwrites_canonical_graph() -> None:
     assert "SET doc" not in query
     assert "MERGE (chunk" not in query
     assert driver.calls[0][1]["statement_ids"] == ["s1"]
+
+
+class ContextDriver:
+    def execute_query(self, query: str, **parameters):
+        if "knowgraph_context_anchors" in query:
+            return ([{
+                "element_id": "chunk-element", "canonical_id": "know:chunk:chunk-1",
+                "labels": ["Chunk"], "label": "Book chunk", "properties": {"description": "Canonical book evidence."},
+            }], None, None)
+        if "knowgraph_context_neighbors" in query:
+            return ([
+                {"element_id": "doc-element", "canonical_id": "know:document:book", "labels": ["Document"], "label": "Book", "properties": {}},
+                {"element_id": "entity-element", "canonical_id": "entity:graph", "labels": ["Entity"], "label": "knowledge graph", "properties": {}},
+                {"element_id": "analysis-element", "canonical_id": "analysis:local", "labels": ["KnowGraphAnalysisRun"], "label": "Local analysis", "properties": {"analysis_id": "analysis:local"}},
+            ], None, None)
+        if "MATCH (a)-[r]->(b)" in query:
+            return ([
+                {"id": "has-chunk", "source": "doc-element", "target": "chunk-element", "type": "HAS_CHUNK"},
+                {"id": "mentions", "source": "chunk-element", "target": "entity-element", "type": "MENTIONS"},
+            ], None, None)
+        raise AssertionError(query)
+
+    def close(self):
+        raise AssertionError("borrowed driver must not be closed")
+
+
+def test_context_projection_expands_only_a_bounded_direct_evidence_neighborhood() -> None:
+    result = context_projection(
+        "fixture-project", ["know:chunk:chunk-1"], limit=3, driver=ContextDriver(),
+        conversation_id="fixture-conversation", receiving_role="hermes",
+    )
+    assert [node["id"] for node in result["nodes"]] == ["know:chunk:chunk-1", "know:document:book", "entity:graph"]
+    assert result["view"]["hopDepth"] == 1
+    assert result["view"]["omittedNeighborCount"] == 1
+    assert result["view"]["receivingRole"] == "hermes"
+    assert result["view"]["includedCanonicalNodeIds"] == [node["id"] for node in result["nodes"]]
+    assert {edge["type"] for edge in result["relationships"]} == {"HAS_CHUNK", "MENTIONS"}
+    assert {warning["code"] for warning in result["warnings"]} == {"authority_view_limit_reached", "authority_view_truncated"}

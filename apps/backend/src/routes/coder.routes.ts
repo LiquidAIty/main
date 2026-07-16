@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { ZodError } from 'zod';
 import type { OpenClaudeRunRequest } from '../coder/openclaude/contracts';
 import { openClaudeRuntimeService } from '../coder/openclaude/runtime/service';
@@ -381,6 +381,11 @@ router.post('/mcp-bridge/codegraph_search', async (req, res) => {
   let session: Awaited<ReturnType<typeof createCodebaseMemoryMcpCaller>> | null = null;
   try {
     const query = String(req.body?.query || '').trim();
+    const canonicalRefs = [...new Set<string>(
+      (Array.isArray(req.body?.canonicalRefs) ? req.body.canonicalRefs : [])
+        .map((value: unknown): string => String(value || '').trim().replace(/^code:/, ''))
+        .filter((value: string) => Boolean(value)),
+    )].slice(0, 20);
     const projectId = String(req.body?.projectId || '').trim();
     const conversationId = String(req.body?.conversationId || '').trim();
     if (!query) return res.status(400).json({ ok: false, error: 'query_required' });
@@ -391,14 +396,26 @@ router.post('/mcp-bridge/codegraph_search', async (req, res) => {
     const projects = Array.isArray((projectList as any).projects) ? (projectList as any).projects : [];
     const cbmProject = String(projects[0]?.name || '').trim();
     if (!cbmProject) return res.json({ ok: false, error: 'cbm_no_indexed_project' });
-    const result = await session.callTool('search_graph', { project: cbmProject, query, limit });
+    const exactQualifiedNames = canonicalRefs.length > 0
+      ? `^(?:${canonicalRefs.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})$`
+      : null;
+    const result = await session.callTool('search_graph', exactQualifiedNames
+      ? { project: cbmProject, qn_pattern: exactQualifiedNames, limit }
+      : { project: cbmProject, query, limit });
     const matches = Array.isArray((result as any)?.results) ? (result as any).results : [];
     const includedCanonicalNodeIds = matches.map((match: any) => String(match?.qualified_name || match?.name || '')).filter(Boolean);
     const now = new Date().toISOString();
+    const viewIdentity = createHash('sha256').update(JSON.stringify({
+      projectId,
+      conversationId,
+      receivingRole: String(req.body?.receivingRole || 'main_chat'),
+      parentViewId: String(req.body?.parentViewId || '').trim(),
+      includedCanonicalNodeIds,
+    })).digest('hex').slice(0, 24);
     const [graphView] = parseGraphViews([{
       schemaVersion: 'graph-view.v1',
       authority: 'codegraph',
-      viewId: `codegraph:${randomUUID()}`,
+      viewId: `codegraph:${viewIdentity}`,
       status: 'returned',
       producingRole: String(req.body?.producingRole || 'coder'),
       receivingRole: String(req.body?.receivingRole || 'main_chat'),

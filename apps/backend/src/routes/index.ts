@@ -19,6 +19,7 @@ import kgRoutes from './kg.routes';
 import devRoutes from './dev.routes';
 import worldsignalRoutes from './worldsignal.routes';
 import knowledgeSeedRoutes from './knowledgeSeed.routes';
+import unifiedRoutes from './unified.routes';
 
 const router = Router();
 
@@ -39,6 +40,7 @@ router.use('/coder', authMiddleware, coder);
 router.use('/knowgraph', authMiddleware, knowgraphRoutes);
 router.use('/thinkgraph', authMiddleware, thinkgraphRoutes);
 router.use('/codegraph', authMiddleware, codegraphRoutes);
+router.use('/unified', authMiddleware, unifiedRoutes);
 router.use('/dev', authMiddleware, devRoutes);
 router.use('/worldsignal', authMiddleware, worldsignalRoutes);
 router.use('/projects', authMiddleware, projectsRoutes);
