@@ -30,6 +30,8 @@ export default function BuilderChat({
   knowledgeProjectId,
   colors,
   busy = false,
+  composerFocusRequest = 0,
+  graphObjectPlaceholder,
 }: {
   messages: { role: "assistant" | "user"; text: string }[];
   onSend: (t: string) => void;
@@ -37,9 +39,14 @@ export default function BuilderChat({
   colors: BuilderChatColors;
   /** The real SSE turn is still open; prevent a second send and state it plainly. */
   busy?: boolean;
+  /** Incremented only when an inspector's quiet Ask Main action is used. */
+  composerFocusRequest?: number;
+  /** Temporary placeholder only; the selected object stays visually owned by its graph. */
+  graphObjectPlaceholder?: string;
 }) {
   const [v, setV] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Keep the latest message (and the active turn's inline work) in view — scroll
   // on new messages and as the active assistant reply streams in.
@@ -48,6 +55,10 @@ export default function BuilderChat({
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length, lastTextLen]);
+
+  useEffect(() => {
+    if (composerFocusRequest > 0) inputRef.current?.focus();
+  }, [composerFocusRequest]);
 
   const send = () => {
     const trimmed = v.trim();
@@ -157,13 +168,14 @@ export default function BuilderChat({
             appearance="chat-inline"
           />
           <input
+            ref={inputRef}
             value={v}
             onChange={(e) => setV(e.target.value)}
             disabled={busy}
             onKeyDown={(e) => {
               if (e.key === "Enter") send();
             }}
-            placeholder={busy ? "Chat is working…" : "Type a message…"}
+            placeholder={busy ? "Chat is working…" : graphObjectPlaceholder ? `Ask about ${graphObjectPlaceholder}…` : "Type a message…"}
             className="flex-1"
             style={{
               background: "transparent",

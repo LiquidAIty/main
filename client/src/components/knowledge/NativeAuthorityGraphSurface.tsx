@@ -6,12 +6,31 @@ import { GraphTab as CbmGraphTab } from '../../vendor/codebase-memory-ui/src/com
 import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import type { GraphProjectionV1 } from './KnowledgeGraphFramework';
+import { AskMainAction, type GraphObjectRef } from './GraphObjectContext';
 import './nativeAuthorityGraphSurface.css';
 
-export function NativeCodeGraphSurface({ project }: { project: string | null }) {
+export function NativeCodeGraphSurface({
+  project,
+  onAskMain,
+  onSelectedObjectChange,
+}: {
+  project: string | null;
+  onAskMain?: (reference: GraphObjectRef) => void;
+  onSelectedObjectChange?: (reference: GraphObjectRef | null) => void;
+}) {
+  const asReference = (node: { name: string }): GraphObjectRef => ({
+    authority: 'codegraph',
+    canonicalId: node.name,
+    selectedThrough: 'codegraph',
+    displayLabel: node.name,
+  });
   return (
     <div data-testid="native-codegraph-surface" className="cbm-native-surface h-full w-full min-h-0 bg-background text-foreground">
-      <CbmGraphTab project={project} />
+      <CbmGraphTab
+        project={project}
+        onAskMainNode={(node) => onAskMain?.(asReference(node))}
+        onSelectedNodeChange={(node) => onSelectedObjectChange?.(node ? asReference(node) : null)}
+      />
     </div>
   );
 }
@@ -60,10 +79,14 @@ export function NativeThinkGraphSurface({
   projection,
   status,
   error,
+  onAskMain,
+  onSelectedObjectChange,
 }: {
   projection: GraphProjectionV1 | null;
   status: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
+  onAskMain?: (reference: GraphObjectRef) => void;
+  onSelectedObjectChange?: (reference: GraphObjectRef | null) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
@@ -84,6 +107,15 @@ export function NativeThinkGraphSurface({
     linkDistance: 30,
     gravity: 14,
   });
+
+  useEffect(() => {
+    onSelectedObjectChange?.(selected ? {
+      authority: 'thinkgraph',
+      canonicalId: selected.id,
+      selectedThrough: 'thinkgraph',
+      displayLabel: selected.fullLabel,
+    } : null);
+  }, [onSelectedObjectChange, selected]);
   selectedRef.current = selected?.id || null;
 
   const nativeData = useMemo(() => {
@@ -303,6 +335,7 @@ export function NativeThinkGraphSurface({
         zIndex={6}
       >
       <div className="engraphis-native-controls">
+        {selected ? <section data-testid="thinkgraph-node-inspector"><h3>Identity</h3><h4>{selected.fullLabel}</h4><p>{selected.label} · {selected.etype} · {selected.degree} connections</p><AskMainAction reference={{ authority: 'thinkgraph', canonicalId: selected.id, selectedThrough: 'thinkgraph', displayLabel: selected.fullLabel }} onAskMain={onAskMain} /></section> : null}
         <section>
           <h3>Controls</h3>
           <div className="engraphis-native-actions">
@@ -333,7 +366,7 @@ export function NativeThinkGraphSurface({
           <h3>Graph stats</h3>
           <dl className="engraphis-native-stats"><div><dt>Entities</dt><dd>{allNodes}</dd></div><div><dt>Relations</dt><dd>{allEdges}</dd></div><div><dt>Connected</dt><dd>{connectedCount}</dd></div><div><dt>Isolated</dt><dd>{Math.max(0, allNodes - connectedCount)}</dd></div></dl>
         </section>
-        {selected ? <section data-testid="thinkgraph-node-inspector"><h3>Entity</h3><h4>{selected.fullLabel}</h4><p>{selected.label} · {selected.etype} · {selected.degree} connections</p><pre>{JSON.stringify(selected.properties, null, 2)}</pre></section> : null}
+        {selected ? <section><h3>Technical details</h3><pre>{JSON.stringify(selected.properties, null, 2)}</pre></section> : null}
       </div>
       </RightGlassDrawer>
     </div>

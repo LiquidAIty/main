@@ -158,6 +158,10 @@ def _build_unified_context(
         for source in chosen[authority]:
             canonical = str(source.get("source_id") or source.get("canonicalId") or (source.get("properties") or {}).get("qualified_name") or source.get("name") or source.get("id") or "")
             props = dict(source.get("properties") or {})
+            if authority == "knowgraph":
+                for field in ("community_id", "frequency", "influence", "bridge_importance", "supporting_statement_ids", "source_document_refs"):
+                    if source.get(field) is not None:
+                        props.setdefault(field, source.get(field))
             cluster = str(props.get("cluster") or source.get("type") or source.get("label") or "records")
             numeric = len(nodes) + 1
             numeric_by_key[(authority, canonical)] = numeric
@@ -179,6 +183,7 @@ def _build_unified_context(
                 "color": str(source.get("color") or AUTHORITY[authority]["color"]),
                 "authority": authority,
                 "source_id": canonical,
+                "file_path": source.get("file_path"),
                 "properties": props,
                 "provenance": source.get("provenance") or {},
                 "project_id": source.get("projectId") or request.project_id,
@@ -360,6 +365,125 @@ def build_unified_context(
         with _INFLIGHT_LOCK:
             if _INFLIGHT.get(key) is state:
                 _INFLIGHT.pop(key, None)
+
+
+def build_graph_object_context(
+    project_id: str,
+    conversation_id: str,
+    references: list[dict[str, Any]],
+    *,
+    graph: ThinkGraphEngraphis | None = None,
+    read_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _get_json,
+    read_codegraph_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _get_codegraph_json,
+    post_json: Callable[[str, dict[str, Any]], dict[str, Any]] = _post_json,
+) -> dict[str, Any]:
+    """Resolve compact object identities against the current project authorities.
+
+    The caller supplies identity only. Membership, properties, relationships,
+    provenance, and stale-state checks are resolved from the canonical projection.
+    """
+    if not project_id.strip() or not conversation_id.strip():
+        raise ValueError("project_id_and_conversation_id_required")
+    if not references or len(references) > 5:
+        raise ValueError("selected_graph_object_refs_must_contain_1_to_5_items")
+    projection = build_unified_context(
+        UnifiedContextRequest(project_id=project_id, conversation_id=conversation_id, role="main_chat"),
+        graph=graph,
+        read_json=read_json,
+        read_codegraph_json=read_codegraph_json,
+        post_json=post_json,
+    )
+    nodes_by_identity = {
+        (str(node.get("authority")), str(node.get("source_id"))): node
+        for node in projection.get("nodes") or []
+    }
+    nodes_by_id = {int(node["id"]): node for node in projection.get("nodes") or []}
+    edges = list(projection.get("edges") or [])
+    seen: set[tuple[str, str]] = set()
+    resolved: list[dict[str, Any]] = []
+    sections: list[str] = ["[LIQUIDAITY_SELECTED_PROJECT_OBJECTS]"]
+    for reference in references:
+        authority = str(reference.get("authority") or "").strip()
+        canonical_id = str(reference.get("canonicalId") or "").strip()
+        selected_through = str(reference.get("selectedThrough") or "").strip()
+        source_authority = str(reference.get("sourceAuthority") or "").strip()
+        projection_id = str(reference.get("projectionId") or "").strip()
+        if authority not in AUTHORITY or selected_through not in {*AUTHORITY, "unified"} or not canonical_id:
+            raise ValueError("selected_graph_object_ref_invalid")
+        if selected_through == "unified" and source_authority != authority:
+            raise ValueError("unified_source_authority_required")
+        if projection_id and projection_id != projection.get("projectionId"):
+            raise ValueError(f"graph_object_projection_superseded:{projection_id}")
+        identity = (authority, canonical_id)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        node = nodes_by_identity.get(identity)
+        if node is None:
+            raise ValueError(f"graph_object_not_visible:{authority}:{canonical_id}")
+        direct_edges = [edge for edge in edges if edge.get("source") == node["id"] or edge.get("target") == node["id"]][:8]
+        relationships: list[dict[str, str]] = []
+        for edge in direct_edges:
+            other_id = int(edge["target"] if edge.get("source") == node["id"] else edge["source"])
+            other = nodes_by_id.get(other_id)
+            if not other:
+                continue
+            relationships.append({
+                "type": str(edge.get("type") or "RELATED_TO"),
+                "authority": str(other.get("authority") or ""),
+                "canonicalId": str(other.get("source_id") or ""),
+                "label": _flat(other.get("name")),
+            })
+        provenance = node.get("provenance") if isinstance(node.get("provenance"), dict) else {}
+        properties = node.get("properties") if isinstance(node.get("properties"), dict) else {}
+        provenance_refs = []
+        for value in [
+            *provenance.values(),
+            properties.get("source_document_refs"),
+            properties.get("supporting_statement_ids"),
+            node.get("file_path"),
+        ]:
+            for ref in _refs(value):
+                if ref not in provenance_refs:
+                    provenance_refs.append(ref)
+        record = {
+            "authority": authority,
+            "canonicalId": canonical_id,
+            "type": str(node.get("label") or "Record"),
+            "label": _flat(node.get("name")),
+            "status": node.get("status"),
+            "trust": node.get("trust"),
+            "relationships": relationships,
+            "provenanceRefs": provenance_refs[:8],
+        }
+        resolved.append(record)
+        sections.append(f"{AUTHORITY[authority]['label']} {record['type']} — {canonical_id}")
+        sections.append(f"- label: {record['label']}")
+        if record["status"]:
+            sections.append(f"- status: {_flat(record['status'])}")
+        if record["trust"]:
+            sections.append(f"- trust: {_flat(record['trust'])}")
+        for relationship in relationships:
+            sections.append(
+                f"- {relationship['type']} -> {relationship['label']} "
+                f"({relationship['authority']}:{relationship['canonicalId']})"
+            )
+        if provenance_refs:
+            sections.append(f"- provenance: {', '.join(provenance_refs[:8])}")
+    text = "\n".join(sections)
+    return {
+        "schemaVersion": "graph-object-context.v1",
+        "projectId": project_id,
+        "conversationId": conversation_id,
+        "modelContext": text,
+        "resolved": resolved,
+        "measurements": {
+            "objects": len(resolved),
+            "relationships": sum(len(record["relationships"]) for record in resolved),
+            "characters": len(text),
+            "estimatedTokens": max(1, math.ceil(len(text) / 4)),
+        },
+    }
 
 
 # ---------------------------------------------------------------------------

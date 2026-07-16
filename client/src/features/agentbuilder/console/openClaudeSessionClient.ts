@@ -6,7 +6,7 @@
  * `streamSession` forwards the RAW native event stream (verbatim) to `onEvent`
  * and resolves with `done.full_text`. No transformation, no curation.
  */
-import type { GraphView } from '../../../components/knowledge/graphView';
+import type { GraphObjectRef } from '../../../components/knowledge/GraphObjectContext';
 
 export type NativeSessionEvent = {
   kind: 'session' | 'text' | 'tool_start' | 'tool_result' | 'permission' | 'done' | 'error' | 'end' | string;
@@ -62,6 +62,7 @@ export async function streamSession(args: {
   projectionId?: string;
   activeGraphViewId?: string;
   knowgraphScope?: string;
+  selectedGraphObjectRefs?: GraphObjectRef[];
   onEvent: (event: NativeSessionEvent) => void;
   signal?: AbortSignal;
 }): Promise<{ finalText: string }> {
@@ -79,6 +80,7 @@ export async function streamSession(args: {
       ...(args.projectionId ? { projectionId: args.projectionId } : {}),
       ...(args.activeGraphViewId ? { activeGraphViewId: args.activeGraphViewId } : {}),
       ...(args.knowgraphScope ? { knowgraphScope: args.knowgraphScope } : {}),
+      ...(args.selectedGraphObjectRefs?.length ? { selectedGraphObjectRefs: args.selectedGraphObjectRefs } : {}),
     }),
     signal: args.signal,
   });

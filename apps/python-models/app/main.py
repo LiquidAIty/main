@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from typing import Any
 
 from app.python_models.alpaca_market_data import (
     AlpacaInstrumentRef,
@@ -154,6 +155,22 @@ def unified_model_context(
             know_limit=knowLimit,
             code_limit=codeLimit,
         ))
+    except ValueError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+@app.post("/unified/object-context")
+def unified_object_context(payload: dict[str, Any]):
+    """Resolve identity-only selected graph objects into bounded Main context."""
+    from app.python_models.unified_context import build_graph_object_context
+    try:
+        return build_graph_object_context(
+            str(payload.get("projectId") or ""),
+            str(payload.get("conversationId") or ""),
+            list(payload.get("references") or []),
+        )
     except ValueError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
     except Exception as err:

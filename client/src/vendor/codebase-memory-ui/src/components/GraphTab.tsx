@@ -19,9 +19,11 @@ import { GraphNavigationControls, GraphPaperBackground } from "../../../../compo
 
 interface GraphTabProps {
   project: string | null;
+  onAskMainNode?: (node: GraphNode) => void;
+  onSelectedNodeChange?: (node: GraphNode | null) => void;
 }
 
-export function GraphTab({ project }: GraphTabProps) {
+export function GraphTab({ project, onAskMainNode, onSelectedNodeChange }: GraphTabProps) {
   const { data, loading, error, fetchOverview } = useGraphData();
   const [highlightedIds, setHighlightedIds] = useState<Set<number> | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -36,6 +38,10 @@ export function GraphTab({ project }: GraphTabProps) {
   /* Filter state — all enabled by default */
   const [enabledLabels, setEnabledLabels] = useState<Set<string>>(new Set());
   const [enabledEdgeTypes, setEnabledEdgeTypes] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    onSelectedNodeChange?.(selectedNode);
+  }, [onSelectedNodeChange, selectedNode]);
 
   /* Initialize filters when data loads */
   useEffect(() => {
@@ -286,17 +292,20 @@ export function GraphTab({ project }: GraphTabProps) {
       >
         <GlassInspectorSection title="Selection" signal={selectedNode?.label || "none"}>
           {selectedNode ? (
-            <NodeDetailPanel
-              node={selectedNode}
-              allNodes={filteredData.nodes}
-              allEdges={filteredData.edges}
-              onClose={() => {
-                setSelectedNode(null);
-                setHighlightedIds(null);
-                setSelectedPath(null);
-              }}
-              onNavigate={handleNavigateToNode}
-            />
+            <>
+              <NodeDetailPanel
+                node={selectedNode}
+                allNodes={filteredData.nodes}
+                allEdges={filteredData.edges}
+                onClose={() => {
+                  setSelectedNode(null);
+                  setHighlightedIds(null);
+                  setSelectedPath(null);
+                }}
+                onNavigate={handleNavigateToNode}
+              />
+              {onAskMainNode ? <Button variant="outline" size="sm" className="mt-3 w-full" onClick={() => onAskMainNode(selectedNode)}>Ask Main</Button> : null}
+            </>
           ) : <div className="text-[11px] text-white/35">Select a repository node to inspect its identity and relationships.</div>}
           <Button variant="outline" size="sm" className="mt-3 w-full" onClick={() => fetchOverview(project)} disabled={loading}>{loading ? "Refreshing…" : "Refresh graph"}</Button>
         </GlassInspectorSection>

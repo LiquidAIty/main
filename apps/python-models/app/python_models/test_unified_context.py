@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from app.python_models.unified_context import UnifiedContextRequest, build_model_context, build_unified_context, render_model_context
+from app.python_models.unified_context import UnifiedContextRequest, build_graph_object_context, build_model_context, build_unified_context, render_model_context
 
 
 class FakeThinkGraph:
@@ -109,6 +109,52 @@ def test_model_context_uses_the_same_projection_identity():
     assert delivered["projectionId"] == built["projectionId"]
     with pytest.raises(ValueError, match="projection_superseded"):
         build_model_context("unified:wrong", request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+
+
+def test_selected_objects_resolve_by_authority_with_bounded_relationships():
+    context = build_graph_object_context(
+        "project-1",
+        "main",
+        [
+            {"authority": "thinkgraph", "canonicalId": "think:one", "selectedThrough": "thinkgraph"},
+            {"authority": "knowgraph", "canonicalId": "know:one", "selectedThrough": "knowgraph"},
+            {"authority": "codegraph", "canonicalId": "pkg.one", "selectedThrough": "codegraph"},
+        ],
+        graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post,
+    )
+    assert [record["authority"] for record in context["resolved"]] == ["thinkgraph", "knowgraph", "codegraph"]
+    assert "ThinkGraph Finding — think:one" in context["modelContext"]
+    assert "RELATES_TO -> Think two" in context["modelContext"]
+    assert context["measurements"]["objects"] == 3
+    assert context["measurements"]["relationships"] <= 24
+
+
+def test_unified_object_selection_preserves_source_authority_and_rejects_stale_or_missing_identity():
+    built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    resolved = build_graph_object_context(
+        "project-1", "main",
+        [{"authority": "thinkgraph", "canonicalId": "think:two", "selectedThrough": "unified", "sourceAuthority": "thinkgraph", "projectionId": built["projectionId"]}],
+        graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post,
+    )
+    assert resolved["resolved"][0]["authority"] == "thinkgraph"
+    with pytest.raises(ValueError, match="projection_superseded"):
+        build_graph_object_context(
+            "project-1", "main",
+            [{"authority": "thinkgraph", "canonicalId": "think:two", "selectedThrough": "unified", "sourceAuthority": "thinkgraph", "projectionId": "unified:stale"}],
+            graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post,
+        )
+    class ProjectIsolatedThinkGraph(FakeThinkGraph):
+        def projection(self, project_id: str, limit: int = 5000):
+            if project_id != "project-1":
+                return {"revision": "other", "nodes": [], "edges": []}
+            return super().projection(project_id, limit)
+
+    with pytest.raises(ValueError, match="not_visible"):
+        build_graph_object_context(
+            "another-project", "main",
+            [{"authority": "thinkgraph", "canonicalId": "think:two", "selectedThrough": "thinkgraph"}],
+            graph=ProjectIsolatedThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post,
+        )
 
 
 def test_model_context_is_bounded_to_role_views_never_the_projection_dump():

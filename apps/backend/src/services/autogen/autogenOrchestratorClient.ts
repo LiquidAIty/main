@@ -379,6 +379,22 @@ export async function fetchUnifiedModelContext(params: {
   return requestThinkGraphJson(`/unified/model-context?${query.toString()}`, { method: 'GET' });
 }
 
+export async function fetchGraphObjectContext(params: {
+  projectId: string;
+  conversationId: string;
+  references: unknown[];
+}): Promise<unknown> {
+  return requestThinkGraphJson('/unified/object-context', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      projectId: params.projectId,
+      conversationId: params.conversationId,
+      references: params.references,
+    }),
+  });
+}
+
 /** Resolve persisted Graph Views by id and get their compact doorway
  * rendering — the callers never supply view content, only identity. */
 export async function fetchDoorwayContext(

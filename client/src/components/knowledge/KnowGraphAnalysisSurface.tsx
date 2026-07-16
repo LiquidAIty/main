@@ -7,6 +7,7 @@ import GlassInspectorSection from '../graph/GlassInspectorSection';
 import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GRAPH_THEME, graphGlassCardStyle, graphGlassPillStyle } from '../graph/graphVisualTokens';
+import { AskMainAction, type GraphObjectRef } from './GraphObjectContext';
 
 let fcoseRegistered = false;
 if (!fcoseRegistered) {
@@ -139,7 +140,15 @@ function Metric({ label, value }: { label: string; value: unknown }) {
   );
 }
 
-export default function KnowGraphAnalysisSurface({ projectId }: { projectId: string }) {
+export default function KnowGraphAnalysisSurface({
+  projectId,
+  onAskMain,
+  onSelectedObjectChange,
+}: {
+  projectId: string;
+  onAskMain?: (reference: GraphObjectRef) => void;
+  onSelectedObjectChange?: (reference: GraphObjectRef | null) => void;
+}) {
   const scopeOverride = new URLSearchParams(window.location.search).get('kgScope')?.trim();
   const scopeProjectId = scopeOverride || projectId;
   const graphRef = useRef<HTMLDivElement | null>(null);
@@ -158,6 +167,15 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
   const [selectedEdge, setSelectedEdge] = useState<AnalysisEdge | null>(null);
   const [selectedGap, setSelectedGap] = useState<Gap | null>(null);
   const [evidence, setEvidence] = useState<EvidenceRecord[]>([]);
+
+  useEffect(() => {
+    onSelectedObjectChange?.(selectedNode ? {
+      authority: 'knowgraph',
+      canonicalId: selectedNode.id,
+      selectedThrough: 'knowgraph',
+      displayLabel: selectedNode.label,
+    } : null);
+  }, [onSelectedObjectChange, selectedNode]);
   const [viewStatus, setViewStatus] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
 
@@ -492,6 +510,7 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
 
             {selectedNode ? (
               <GlassInspectorSection title={selectedNode.label} signal={selectedNode.community_id}>
+                <AskMainAction reference={{ authority: 'knowgraph', canonicalId: selectedNode.id, selectedThrough: 'knowgraph', displayLabel: selectedNode.label }} onAskMain={onAskMain} style={{ marginBottom: 8 }} />
                 <Metric label="Frequency" value={selectedNode.frequency} />
                 <Metric label="Influence" value={selectedNode.influence.toFixed(6)} />
                 <Metric label="Bridge" value={selectedNode.bridge_importance.toFixed(6)} />

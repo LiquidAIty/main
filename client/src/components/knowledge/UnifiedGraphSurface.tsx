@@ -7,6 +7,7 @@ import type { CodeGraphData, CodeGraphNode } from '../codegraph/types';
 import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GRAPH_THEME, graphDrawerButtonStyle, graphGlassPillStyle } from '../graph/graphVisualTokens';
+import { AskMainAction, type GraphAuthority, type GraphObjectRef } from './GraphObjectContext';
 
 type Layer = 'thinkgraph' | 'knowgraph' | 'codegraph';
 
@@ -104,16 +105,21 @@ export default function UnifiedGraphSurface({
   conversationId,
   onProjectionChange,
   onOpenAuthority,
+  onAskMain,
+  onSelectedObjectChange,
 }: {
   projectId: string;
   conversationId: string;
   onProjectionChange?: (projection: UnifiedProjectionIdentity | null) => void;
   onOpenAuthority?: (authority: Layer) => void;
+  onAskMain?: (reference: GraphObjectRef) => void;
+  onSelectedObjectChange?: (reference: GraphObjectRef | null) => void;
 }) {
   const [payload, setPayload] = useState<UnifiedPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [refresh, setRefresh] = useState(0);
+
   // Compact discovery of returned Graph Views: a completed turn dispatches
   // knowledge:refresh (openClaudeSessionClient) and Unified refetches its
   // server-owned projection — the browser never receives view membership.
@@ -130,6 +136,17 @@ export default function UnifiedGraphSurface({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const requestGeneration = useRef(0);
   const [cameraCommand, setCameraCommand] = useState<{ action: 'zoom_in' | 'zoom_out' | 'fit_view'; token: number }>({ action: 'fit_view', token: 0 });
+
+  useEffect(() => {
+    onSelectedObjectChange?.(selected ? {
+      authority: selected.authority as GraphAuthority,
+      canonicalId: selected.source_id,
+      selectedThrough: 'unified',
+      sourceAuthority: selected.authority as GraphAuthority,
+      projectionId: payload?.projectionId,
+      displayLabel: displayLabel(selected),
+    } : null);
+  }, [onSelectedObjectChange, payload?.projectionId, selected]);
 
   useEffect(() => {
     if (!projectId) {
@@ -227,6 +244,7 @@ export default function UnifiedGraphSurface({
           <h3 style={{ margin: '0 0 8px', color: GRAPH_THEME.surface.text }}>{displayLabel(selected)}</h3>
           <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 11 }}>{selected.authority} · {selected.label}</div>
           <div style={{ color: GRAPH_THEME.surface.mutedText, fontFamily: 'monospace', fontSize: 10, marginTop: 6, overflowWrap: 'anywhere' }}>{selected.source_id}</div>
+          <AskMainAction reference={{ authority: selected.authority as GraphAuthority, canonicalId: selected.source_id, selectedThrough: 'unified', sourceAuthority: selected.authority as GraphAuthority, projectionId: payload?.projectionId, displayLabel: displayLabel(selected) }} onAskMain={onAskMain} />
           {onOpenAuthority && selected.authority ? <button type="button" onClick={() => onOpenAuthority(selected.authority as Layer)} style={graphDrawerButtonStyle({ width: '100%', marginTop: 10 })}>Open {selected.authority}</button> : null}
         </section> : null}
         <section>

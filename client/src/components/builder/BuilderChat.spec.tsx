@@ -15,6 +15,14 @@ const colors = {
 };
 
 describe('BuilderChat', () => {
+  it('focuses the normal composer with only a temporary selected-object placeholder', () => {
+    const { rerender } = render(<BuilderChat messages={[]} onSend={vi.fn()} knowledgeProjectId="project-1" colors={colors} />);
+    rerender(<BuilderChat messages={[]} onSend={vi.fn()} knowledgeProjectId="project-1" colors={colors} composerFocusRequest={1} graphObjectPlaceholder="Knowledge graphs" />);
+    const input = screen.getByPlaceholderText('Ask about Knowledge graphs…');
+    expect(document.activeElement).toBe(input);
+    expect(screen.queryByTestId('graph-context-chips')).toBeNull();
+  });
+
   it('states and enforces the real in-flight chat state', () => {
     const onSend = vi.fn();
     render(

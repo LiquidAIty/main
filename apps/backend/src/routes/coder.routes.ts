@@ -54,6 +54,10 @@ import {
   persistGraphViewOnPython,
 } from '../services/autogen/autogenOrchestratorClient';
 import {
+  parseGraphObjectRefs,
+  resolveSelectedGraphObjectContext,
+} from '../coder/openclaude/session/graphObjectContext';
+import {
   createPromptDraft,
   approvePromptDraft,
   publishApprovedPrompt,
@@ -861,6 +865,16 @@ router.post('/openclaude/session/chat', async (req, res) => {
   let graphViews: GraphView[] = [];
   let graphContext = '';
   let graphContextMeasurements: unknown = null;
+  let selectedGraphObjectRefs: ReturnType<typeof parseGraphObjectRefs>;
+  try {
+    selectedGraphObjectRefs = parseGraphObjectRefs(req.body?.selectedGraphObjectRefs);
+    if (selectedGraphObjectRefs.length) await getDeckDocument(projectId, BUILDER_DECK_ID);
+  } catch (error) {
+    return res.status(400).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'selected_graph_object_refs_invalid',
+    });
+  }
   if (projectionId) {
     try {
       const resolved = (await fetchUnifiedModelContext({
@@ -882,6 +896,27 @@ router.post('/openclaude/session/chat', async (req, res) => {
       return res
         .status(reason.includes('thinkgraph_http_409') ? 409 : 502)
         .json({ ok: false, error: reason, projectionId });
+    }
+  }
+  if (selectedGraphObjectRefs.length) {
+    try {
+      const objectContext = await resolveSelectedGraphObjectContext({
+        projectId,
+        conversationId,
+        references: selectedGraphObjectRefs,
+      });
+      if (objectContext) {
+        graphContext = [graphContext, objectContext.modelContext].filter(Boolean).join('\n\n');
+        graphContextMeasurements = graphContextMeasurements
+          ? { projection: graphContextMeasurements, selectedObjects: objectContext.measurements }
+          : { selectedObjects: objectContext.measurements };
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'graph_object_resolution_failed';
+      return res.status(reason.includes('http_409') || reason.includes('not_visible') ? 409 : 502).json({
+        ok: false,
+        error: reason,
+      });
     }
   }
   // Compact Graph View lifecycle announcements for the browser: identity and
@@ -942,14 +977,15 @@ router.post('/openclaude/session/chat', async (req, res) => {
       surfaceMode: mode,
       sessionId,
       ...(projectionId ? { projectionId } : {}),
+      ...(selectedGraphObjectRefs.length ? { selectedGraphObjectCount: selectedGraphObjectRefs.length } : {}),
       ...(graphContextMeasurements ? { graphContextMeasurements } : {}),
     },
   });
-  if (projectionId) {
+  if (graphContext) {
     // The exact measured graph-context cost of THIS turn, visible to the
     // browser before the model even answers — counting, not enforcement.
     writeSse('context_measurement', {
-      projectionId,
+      projectionId: projectionId || null,
       characters: graphContext.length,
       measurements: graphContextMeasurements,
     });

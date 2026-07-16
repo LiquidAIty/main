@@ -57,6 +57,10 @@ import {
 } from '../components/graph/graphVisualTokens';
 import RightGlassDrawer from '../components/graph/RightGlassDrawer';
 import type { UnifiedProjectionIdentity } from '../components/knowledge/UnifiedGraphSurface';
+import {
+  graphObjectRefKey,
+  type GraphObjectRef,
+} from '../components/knowledge/GraphObjectContext';
 // Decomposed Agent Builder modules (2026-07-08): the page is composition only;
 // deck primitives/seed/document logic and rail derivation live in the feature.
 import {
@@ -504,12 +508,26 @@ export default function AgentBuilder(): React.ReactElement {
   const conversationId = 'main';
   const [thinkGraphFocusIds, setThinkGraphFocusIds] = useState<string[]>([]);
   const [activeProjection, setActiveProjection] = useState<UnifiedProjectionIdentity | null>(null);
+  const [pendingGraphObjectRef, setPendingGraphObjectRef] = useState<GraphObjectRef | null>(null);
+  const [composerFocusRequest, setComposerFocusRequest] = useState(0);
+  const handleAskMain = useCallback((reference: GraphObjectRef) => {
+    setPendingGraphObjectRef(reference);
+    setComposerFocusRequest((current) => current + 1);
+  }, []);
+  const handleGraphSelectionChange = useCallback((reference: GraphObjectRef | null) => {
+    setPendingGraphObjectRef((current) => {
+      if (!current) return current;
+      if (!reference) return null;
+      return graphObjectRefKey(current) === graphObjectRefKey(reference) ? current : reference;
+    });
+  }, []);
   const handleProjectionChange = useCallback((next: UnifiedProjectionIdentity | null) => {
     setActiveProjection((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
   }, []);
   useEffect(() => {
     setActiveProjection(null);
-  }, [conversationId]);
+    setPendingGraphObjectRef(null);
+  }, [activeProject, conversationId]);
   const thinkGraphProjection = useAgentBuilderThinkGraphProjection({
     activeProject,
     knowledgeGraphKind,
@@ -1832,6 +1850,7 @@ export default function AgentBuilder(): React.ReactElement {
         return;
       }
       if (nativeSessionBusy) return;
+      const sentGraphObjectRef = pendingGraphObjectRef;
       // Only the REAL user message is added on send. No empty assistant placeholder —
       // the assistant bubble is created lazily on the FIRST real text token (below),
       // never before. If the model emits no text, no assistant bubble is created.
@@ -1881,6 +1900,7 @@ export default function AgentBuilder(): React.ReactElement {
               },
             }
           : {}),
+        ...(sentGraphObjectRef ? { selectedGraphObjectRefs: [sentGraphObjectRef] } : {}),
         onEvent: (event) => {
           setHermesTerminal((current) => reduceHermesTerminalEvent(current, event));
           if (event.kind === 'text') {
@@ -1893,6 +1913,9 @@ export default function AgentBuilder(): React.ReactElement {
       })
         .then(({ finalText }) => {
           setNativeSessionBusy(false);
+          if (sentGraphObjectRef) {
+            setPendingGraphObjectRef((current) => current && graphObjectRefKey(current) === graphObjectRefKey(sentGraphObjectRef) ? null : current);
+          }
           const completedText = finalText.trim();
           if (!assistantStarted && completedText) {
             appendAssistantText(completedText);
@@ -1914,7 +1937,7 @@ export default function AgentBuilder(): React.ReactElement {
           appendAssistantText('Chat request failed before the stream opened. Route: /api/coder/openclaude/session/chat.');
         });
     },
-    [activeProjection, canvasProjectId, conversationId, nativeSessionBusy, thinkGraphFocusIds, workspaceView],
+    [activeProjection, canvasProjectId, conversationId, nativeSessionBusy, pendingGraphObjectRef, thinkGraphFocusIds, workspaceView],
   );
 
   const renderChatSurface = (
@@ -1935,6 +1958,8 @@ export default function AgentBuilder(): React.ReactElement {
           knowledgeProjectId={projectId}
           colors={C}
           busy={nativeSessionBusy}
+          composerFocusRequest={composerFocusRequest}
+          graphObjectPlaceholder={pendingGraphObjectRef?.displayLabel}
         />
       </div>
     );
@@ -2066,21 +2091,25 @@ export default function AgentBuilder(): React.ReactElement {
               }
             >
               {knowledgeGraphKind === 'codegraph' ? (
-                <NativeCodeGraphSurface project={codeGraphProjectName || null} />
+                <NativeCodeGraphSurface project={codeGraphProjectName || null} onAskMain={handleAskMain} onSelectedObjectChange={handleGraphSelectionChange} />
               ) : knowledgeGraphKind === 'thinkgraph' ? (
                 <NativeThinkGraphSurface
                   projection={thinkGraphProjection.projection}
                   status={thinkGraphProjection.status}
                   error={thinkGraphProjection.error}
+                  onAskMain={handleAskMain}
+                  onSelectedObjectChange={handleGraphSelectionChange}
                 />
               ) : knowledgeGraphKind === 'knowgraph' ? (
-                <KnowGraphAnalysisSurface projectId={activeProject} />
+                <KnowGraphAnalysisSurface projectId={activeProject} onAskMain={handleAskMain} onSelectedObjectChange={handleGraphSelectionChange} />
               ) : (
                 <UnifiedGraphSurface
                   projectId={activeProject}
                   conversationId={conversationId}
                   onProjectionChange={handleProjectionChange}
                   onOpenAuthority={(authority) => setKnowledgeGraphKind(authority)}
+                  onAskMain={handleAskMain}
+                  onSelectedObjectChange={handleGraphSelectionChange}
                 />
               )}
             </Suspense>
