@@ -170,11 +170,10 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     expect(edge.data.mentionCount).toBe(2);
     expect(edge.data.properties).toEqual({ source: 'working project reasoning' });
 
-    // Exactly one fCoSE run — the only layout this renderer knows. It animates
-    // and settles via the layout's stop callback (fit/center on stop).
+    // Exactly one stable fCoSE run; automatic projection layout does not animate.
     expect(cy.layouts).toHaveLength(1);
     expect(cy.layouts[0].name).toBe('fcose');
-    expect(cy.layouts[0].animate).toBe(true);
+    expect(cy.layouts[0].animate).toBe(false);
   });
 
   it('uses NO visual-class vocabulary at all: no classes on any element, one uniform stylesheet', async () => {
@@ -289,11 +288,11 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     expect(cyState.instances[0].store.map((el: any) => el.id())).not.toContain('not_in_projection');
   });
 
-  it('selection handlers only toggle display classes; only dragfree reruns layout', async () => {
+  it('selection and node dragging do not restart the settled layout', async () => {
     render(<KnowledgeGraphFramework projection={PROJECTION} />);
     await waitFor(() => expect(cyState.instances).toHaveLength(1));
     const cy = cyState.instances[0];
-    expect(cy.handlers.map((h: any) => h.event)).toEqual(['tap', 'tap', 'tap', 'dragfree']);
+    expect(cy.handlers.map((h: any) => h.event)).toEqual(['tap', 'tap', 'tap']);
     const layoutRunsBefore = cy.layouts.length;
 
     const nodeTap = cy.handlers.find((h: any) => h.selector === 'node');
@@ -306,9 +305,8 @@ describe('KnowledgeGraphFramework — thin mechanical renderer, one noun-and-ver
     expect(cy.layouts.length).toBe(layoutRunsBefore); // selection is never a layout trigger
     expect(cy.store.length).toBe(3); // and never a data change
 
-    const dragFree = cy.handlers.find((h: any) => h.event === 'dragfree');
-    dragFree.fn();
-    expect(cy.layouts.length).toBe(layoutRunsBefore + 1);
+    expect(cy.handlers.find((h: any) => h.event === 'dragfree')).toBeUndefined();
+    expect(cy.layouts.length).toBe(layoutRunsBefore);
   });
 
   it('keeps the inspector docked beside the canvas and switches from overview to the selected record', async () => {

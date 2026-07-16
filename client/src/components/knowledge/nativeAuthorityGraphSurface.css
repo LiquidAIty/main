@@ -11,11 +11,11 @@
 }
 
 .cbm-native-surface { overflow: hidden; }
-.engraphis-native-graph { display:flex; width:100%; height:100%; min-height:0; gap:12px; padding:64px 18px 18px; color:#d8d8e2; background:#0a0a0f; font-family:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+.engraphis-native-graph { position:relative; display:flex; width:100%; height:100%; min-height:0; padding:64px 18px 18px; color:#d8d8e2; background:#0a0a0f; font-family:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
 .engraphis-native-canvas { flex:1; min-width:0; position:relative; overflow:hidden; border:1px solid #2a2a38; border-radius:6px; background:#12121a; }
 .engraphis-native-network { position:absolute; inset:0; }
 .engraphis-native-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:20px; color:#7a7a8c; pointer-events:none; }
-.engraphis-native-controls { width:268px; flex:0 0 268px; overflow:auto; display:flex; flex-direction:column; gap:12px; }
+.engraphis-native-controls { width:100%; min-width:0; overflow:auto; display:flex; flex-direction:column; gap:12px; }
 .engraphis-native-controls section { padding:14px; border:1px solid #2a2a38; border-radius:6px; background:#12121a; }
 .engraphis-native-controls h3 { margin:0 0 12px; color:#7a7a8c; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.8px; }
 .engraphis-native-controls h3 span { float:right; color:#5f5f70; font-weight:400; }

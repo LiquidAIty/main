@@ -190,9 +190,10 @@ def _build_unified_context(
             } for item in results if item.get("qualified_name")],
             "edges": list((code_response.get("graphView") or {}).get("includedRelationships") or []),
             "graphView": code_response.get("graphView"),
+            "projectId": code_response.get("cbmProject"),
         }
     except Exception as error:
-        code = {"nodes": [], "edges": []}
+        code = {"nodes": [], "edges": [], "projectId": None}
         warnings.append({"authority": "codegraph", "code": "authority_unavailable", "detail": str(error)})
     code_ms = (time.perf_counter() - code_started) * 1000
 
@@ -307,6 +308,21 @@ def _build_unified_context(
     }
     content_hash = hashlib.sha256(json.dumps(content_identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     projection_id = f"unified:{content_hash[:24]}"
+    knowgraph_scope_id = str(know.get("resolved_project_id") or request.knowgraph_scope or "").strip() or None
+    codegraph_project_id = str(code.get("projectId") or "").strip() or None
+    identity = {
+        "applicationProjectId": request.project_id,
+        "thinkGraphWorkspaceId": request.project_id,
+        "knowGraphScopeId": knowgraph_scope_id,
+        "codeGraphProjectId": codegraph_project_id,
+        "conversationId": request.conversation_id,
+        "activeGraphViewId": selected_view_id,
+        "receivingRole": request.role,
+        "projectionId": projection_id,
+    }
+    for mapping, value in identity.items():
+        if value is None:
+            warnings.append({"authority": "identity", "code": "missing_authority_mapping", "detail": mapping})
     delivery_views = []
     for authority in AUTHORITY:
         authority_view = authority_views[authority]
@@ -335,6 +351,7 @@ def _build_unified_context(
         "conversationId": request.conversation_id,
         "receivingRole": request.role,
         "projectionId": projection_id,
+        "identity": identity,
         "configurationHash": configuration_hash,
         "contentHash": content_hash,
         "activeGraphViewId": selected_view_id,

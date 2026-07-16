@@ -2012,7 +2012,7 @@ export default function AgentBuilder(): React.ReactElement {
     );
   };
 
-  const KnowledgeGraphSurface = ({
+  const renderKnowledgeGraphSurface = ({
     minHeight = 280,
     surfaceRole = minHeight > 320 ? 'large' : 'companion',
   }: {
@@ -2231,16 +2231,16 @@ export default function AgentBuilder(): React.ReactElement {
       hasActiveUaSurface={false}
       knowledgeSelectionSurface={null}
       knowledgeSurface={
-        <KnowledgeGraphSurface
-          minHeight={420}
-          surfaceRole="companion"
-        />
+        renderKnowledgeGraphSurface({
+          minHeight: 420,
+          surfaceRole: 'companion',
+        })
       }
       codegraphSurface={
-        <KnowledgeGraphSurface
-          minHeight={420}
-          surfaceRole="companion"
-        />
+        renderKnowledgeGraphSurface({
+          minHeight: 420,
+          surfaceRole: 'companion',
+        })
       }
       tradingSurface={<TradingCanvasSurface />}
       uaSurface={null}

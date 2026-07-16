@@ -66,11 +66,11 @@ describe('UnifiedGraphSurface', () => {
     const coderView = { ...graphView, viewId: 'coder-view', receivingRole: 'coder' };
     const coderPayload = { ...payload, receivingRole: 'coder', projectionId: 'unified:coder', graphViews: [coderView] };
     pending[1]({ ok: true, json: async () => coderPayload });
-    await waitFor(() => expect(screen.getByText('unified:coder')).toBeTruthy());
+    await waitFor(() => expect(screen.getAllByText('unified:coder').length).toBeGreaterThan(0));
 
     pending[0]({ ok: true, json: async () => payload });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(screen.getByText('unified:coder')).toBeTruthy();
+    expect(screen.getAllByText('unified:coder').length).toBeGreaterThan(0);
     expect(screen.queryByText('unified:abc')).toBeNull();
     expect(onChange).toHaveBeenLastCalledWith([coderView]);
   });

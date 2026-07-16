@@ -404,7 +404,7 @@ export default function KnowledgeGraphFramework({
 
   const layoutOptions = (randomize: boolean): LayoutOptions => ({
     name: 'fcose',
-    animate: true,
+    animate: randomize,
     randomize,
     fit: !randomize,
     padding: FIT_PADDING_PX,
@@ -453,9 +453,6 @@ export default function KnowledgeGraphFramework({
         onNodeSelectionChange?.(null);
         cy.batch(() => cy.elements().removeClass('kgf-dim'));
       });
-      cy.on('dragfree', 'node', () => {
-        if (cy.elements().length > 0) cy.layout(layoutOptions(false)).run();
-      });
       cyRef.current = cy;
     }
     const cy = cyRef.current;
@@ -487,7 +484,6 @@ export default function KnowledgeGraphFramework({
       return;
     }
     (cy as any).style(buildCytoscapeStyle({ showLinkLabels, textSize, labelDensity, nodeScale, linkWidth }));
-    if (cy.elements().length > 0) cy.layout(layoutOptions(false)).run();
   }, [centerGravity, labelDensity, linkDistance, linkWidth, nodeScale, repelForce, showLinkLabels, textSize]);
 
   useEffect(() => {
@@ -496,7 +492,6 @@ export default function KnowledgeGraphFramework({
     if (!container || !cy) return;
     const observer = new ResizeObserver(() => {
       cy.resize();
-      if (cy.elements().length > 0) cy.fit(undefined, FIT_PADDING_PX);
     });
     observer.observe(container);
     return () => observer.disconnect();

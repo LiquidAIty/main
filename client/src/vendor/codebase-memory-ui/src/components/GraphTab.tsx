@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { Button } from "./ui/button";
 import { useGraphData } from "../hooks/useGraphData";
 import {
@@ -9,21 +9,10 @@ import {
 import { Sidebar } from "./Sidebar";
 import { FilterPanel } from "./FilterPanel";
 import { NodeDetailPanel } from "./NodeDetailPanel";
-import { ResizeHandle } from "./ResizeHandle";
 import { ErrorBoundary } from "./ErrorBoundary";
 import type { GraphNode, GraphData } from "../lib/types";
-
-/* Persist panel widths */
-function loadWidth(key: string, fallback: number): number {
-  try {
-    const v = localStorage.getItem(key);
-    if (v) return Math.max(150, Math.min(600, parseInt(v, 10)));
-  } catch { /* ignore */ }
-  return fallback;
-}
-function saveWidth(key: string, value: number) {
-  try { localStorage.setItem(key, String(Math.round(value))); } catch { /* ignore */ }
-}
+import RightGlassDrawer from "../../../../components/graph/RightGlassDrawer";
+import GlassInspectorSection from "../../../../components/graph/GlassInspectorSection";
 
 interface GraphTabProps {
   project: string | null;
@@ -35,9 +24,10 @@ export function GraphTab({ project }: GraphTabProps) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [cameraTarget, setCameraTarget] = useState<CameraTarget | null>(null);
-  const [showLabels, setShowLabels] = useState(true);
-  const [leftWidth, setLeftWidth] = useState(() => loadWidth("cbm-left-w", 260));
-  const [rightWidth, setRightWidth] = useState(() => loadWidth("cbm-right-w", 280));
+  const [showLabels, setShowLabels] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const initiallyFittedProject = useRef<string | null>(null);
+  const graphHostRef = useRef<HTMLDivElement | null>(null);
 
   /* Filter state — all enabled by default */
   const [enabledLabels, setEnabledLabels] = useState<Set<string>>(new Set());
@@ -67,6 +57,26 @@ export function GraphTab({ project }: GraphTabProps) {
 
     return { nodes, edges, total_nodes: data.total_nodes };
   }, [data, enabledLabels, enabledEdgeTypes]);
+
+  useEffect(() => {
+    if (!project || !data?.nodes.length || initiallyFittedProject.current === project) return;
+    let frame = 0;
+    let attempts = 0;
+    const fitWhenReady = () => {
+      const canvas = graphHostRef.current?.querySelector('canvas');
+      const bounds = canvas?.getBoundingClientRect();
+      const layoutReady = data.nodes.every((node) => Number.isFinite(node.x) && Number.isFinite(node.y) && Number.isFinite(node.z));
+      if (bounds && bounds.width > 0 && bounds.height > 0 && layoutReady) {
+        setCameraTarget(computeCameraTarget(data.nodes, new Set(data.nodes.map((node) => node.id))));
+        initiallyFittedProject.current = project;
+        return;
+      }
+      attempts += 1;
+      if (attempts < 120) frame = window.requestAnimationFrame(fitWhenReady);
+    };
+    frame = window.requestAnimationFrame(fitWhenReady);
+    return () => window.cancelAnimationFrame(frame);
+  }, [data, project]);
 
   useEffect(() => {
     if (project) {
@@ -105,6 +115,7 @@ export function GraphTab({ project }: GraphTabProps) {
       setHighlightedIds(connectedIds);
       setSelectedPath(node.file_path ?? null);
       setCameraTarget(computeCameraTarget(filteredData.nodes, connectedIds));
+      setInspectorOpen(true);
     },
     [filteredData],
   );
@@ -143,6 +154,18 @@ export function GraphTab({ project }: GraphTabProps) {
   const disableAll = useCallback(() => {
     setEnabledLabels(new Set());
     setEnabledEdgeTypes(new Set());
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setHighlightedIds(null);
+      setSelectedPath(null);
+      setSelectedNode(null);
+      setCameraTarget(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
   if (!project) {
@@ -199,42 +222,8 @@ export function GraphTab({ project }: GraphTabProps) {
   }
 
   return (
-    <div className="h-full flex">
-      {/* Left sidebar — resizable */}
-      <div
-        className="border-r border-border/30 flex flex-col h-full bg-[#0b1920]/90 backdrop-blur-md shrink-0"
-        style={{ width: leftWidth }}
-      >
-        <FilterPanel
-          data={data}
-          enabledLabels={enabledLabels}
-          enabledEdgeTypes={enabledEdgeTypes}
-          showLabels={showLabels}
-          onToggleLabel={toggleLabel}
-          onToggleEdgeType={toggleEdgeType}
-          onToggleShowLabels={() => setShowLabels((v) => !v)}
-          onEnableAll={enableAll}
-          onDisableAll={disableAll}
-        />
-        <Sidebar
-          nodes={filteredData.nodes}
-          onSelectPath={handleSelectPath}
-          selectedPath={selectedPath}
-        />
-      </div>
-      <ResizeHandle
-        side="left"
-        onResize={(d) => {
-          setLeftWidth((w) => {
-            const nw = Math.max(150, Math.min(500, w + d));
-            saveWidth("cbm-left-w", nw);
-            return nw;
-          });
-        }}
-      />
-
-      {/* Graph area */}
-      <div className="flex-1 relative overflow-hidden">
+    <div ref={graphHostRef} className="h-full relative overflow-hidden">
+      <div className="absolute inset-0 overflow-hidden">
         <ErrorBoundary>
           <GraphScene
             data={filteredData}
@@ -264,6 +253,17 @@ export function GraphTab({ project }: GraphTabProps) {
         </div>
 
         <div className="absolute top-4 right-4 flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => setInspectorOpen(true)}>Inspector</Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setCameraTarget(computeCameraTarget(filteredData.nodes, new Set(filteredData.nodes.map((node) => node.id))))}
+          >
+            Fit all
+          </Button>
+          {highlightedIds ? (
+            <Button variant="outline" size="sm" onClick={() => setCameraTarget(computeCameraTarget(filteredData.nodes, highlightedIds))}>Fit selection</Button>
+          ) : null}
           {highlightedIds && (
             <Button
               size="sm"
@@ -291,25 +291,29 @@ export function GraphTab({ project }: GraphTabProps) {
             Refresh
           </Button>
         </div>
+        <div className="absolute bottom-4 left-4 text-[10px] text-white/35 pointer-events-none font-mono">
+          Drag to orbit · right-drag to pan · wheel to zoom · Esc clears focus
+        </div>
       </div>
 
-      {/* Right detail panel — resizable */}
-      {selectedNode && filteredData && (
-        <>
-          <ResizeHandle
-            side="right"
-            onResize={(d) => {
-              setRightWidth((w) => {
-                const nw = Math.max(200, Math.min(500, w + d));
-                saveWidth("cbm-right-w", nw);
-                return nw;
-              });
-            }}
-          />
-          <div
-            className="border-l border-border shrink-0 h-full overflow-hidden"
-            style={{ width: rightWidth, maxHeight: "100%" }}
-          >
+      <RightGlassDrawer
+        isOpen={inspectorOpen}
+        title="CodeGraph Inspector"
+        onClose={() => setInspectorOpen(false)}
+        onOpen={() => setInspectorOpen(true)}
+        collapsedLabel={null}
+        openAriaLabel="Open CodeGraph Inspector"
+        defaultWidth={360}
+        minWidth={320}
+        maxWidth={560}
+        storageKey="liquidaity.drawer.codegraph-native.width"
+        top={48}
+        right={12}
+        bottom={12}
+        zIndex={6}
+      >
+        <GlassInspectorSection title="Selection" signal={selectedNode?.label || "none"}>
+          {selectedNode ? (
             <NodeDetailPanel
               node={selectedNode}
               allNodes={filteredData.nodes}
@@ -321,9 +325,25 @@ export function GraphTab({ project }: GraphTabProps) {
               }}
               onNavigate={handleNavigateToNode}
             />
-          </div>
-        </>
-      )}
+          ) : <div className="text-[11px] text-white/35">Select a repository node to inspect its identity and relationships.</div>}
+        </GlassInspectorSection>
+        <GlassInspectorSection title="Node, edge & display filters" signal={`${filteredData.nodes.length.toLocaleString()} nodes`}>
+          <FilterPanel
+            data={data}
+            enabledLabels={enabledLabels}
+            enabledEdgeTypes={enabledEdgeTypes}
+            showLabels={showLabels}
+            onToggleLabel={toggleLabel}
+            onToggleEdgeType={toggleEdgeType}
+            onToggleShowLabels={() => setShowLabels((v) => !v)}
+            onEnableAll={enableAll}
+            onDisableAll={disableAll}
+          />
+        </GlassInspectorSection>
+        <GlassInspectorSection title="Repository tree" defaultOpen={false}>
+          <Sidebar nodes={filteredData.nodes} onSelectPath={handleSelectPath} selectedPath={selectedPath} />
+        </GlassInspectorSection>
+      </RightGlassDrawer>
     </div>
   );
 }

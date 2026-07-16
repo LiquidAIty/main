@@ -548,6 +548,7 @@ class ThinkGraphEngraphis:
         }
         encoded = {
             "view_id": view_id,
+            "display_label": _text(view.get("displayLabel")) or view_id.rsplit(":", 1)[-1],
             "view_authority": _text(view.get("authority")),
             "status": _text(view.get("status")) or "candidate",
             "producing_role": _text(view.get("producingRole")),

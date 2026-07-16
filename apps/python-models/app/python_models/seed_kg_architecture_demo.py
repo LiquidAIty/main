@@ -17,12 +17,13 @@ from engraphis.service import MemoryService
 from app.python_models.thinkgraph_engraphis import ThinkGraphEngraphis, get_thinkgraph
 
 
-DEMO_PROJECT_ID = "7c624bf5-838a-4c33-99e1-083001bb1e90"
+DEMO_PROJECT_ID = "20ac92da-01fd-4cf6-97cc-0672421e751a"
+LEGACY_DEMO_PROJECT_ID = "7c624bf5-838a-4c33-99e1-083001bb1e90"
 DEMO_PROJECT_CODE = "kg-architecture-demo-v1"
 DEMO_WORKSPACE_LABEL = "Knowledge Graph Architecture — Demo Reasoning"
-DEMO_CONVERSATION_ID = "demo:kg-architecture:v1"
+DEMO_CONVERSATION_ID = "main"
 SEED_VERSION = 1
-SEED_REVISION = 2
+SEED_REVISION = 4
 SEED_TIME = "2026-07-16T00:00:00Z"
 
 BOOK_DOCUMENT_REF = "know:document:building-knowledge-graphs-full-book"
@@ -62,6 +63,7 @@ def _resource(
             "seed_version": SEED_VERSION,
             "cluster": cluster,
             "description": description,
+            "display_label": " ".join(label.split()[:4]),
             "status": status,
             **properties,
         },
@@ -221,6 +223,7 @@ def demo_graph_views() -> list[dict[str, Any]]:
         {
             **base,
             "viewId": "kgdemo:v1:view:knowgraph-organizing-principle",
+            "displayLabel": "KnowGraph Evidence",
             "authority": "knowgraph",
             "status": "candidate",
             "rootCanonicalNodeIds": [BOOK_DOCUMENT_REF],
@@ -235,6 +238,7 @@ def demo_graph_views() -> list[dict[str, Any]]:
         {
             **base,
             "viewId": "kgdemo:v1:view:codegraph-knowgraph-implementation",
+            "displayLabel": "CodeGraph Implementation",
             "authority": "codegraph",
             "status": "candidate",
             "rootCanonicalNodeIds": [CODE_INGEST_REF],
@@ -249,6 +253,7 @@ def demo_graph_views() -> list[dict[str, Any]]:
         {
             **base,
             "viewId": "kgdemo:v1:view:architecture-decision-context",
+            "displayLabel": "Architecture Context",
             "authority": "thinkgraph",
             "status": "attached",
             "rootCanonicalNodeIds": ["kgdemo:v1:goal"],
@@ -263,6 +268,7 @@ def demo_graph_views() -> list[dict[str, Any]]:
         {
             **base,
             "viewId": "kgdemo:v1:view:next-runtime-proof",
+            "displayLabel": "Runtime Proof",
             "authority": "thinkgraph",
             "status": "attached",
             "parentViewId": "kgdemo:v1:view:architecture-decision-context",
@@ -278,6 +284,7 @@ def demo_graph_views() -> list[dict[str, Any]]:
         {
             **base,
             "viewId": "kgdemo:v1:view:main-testing-context",
+            "displayLabel": "Main Context",
             "authority": "thinkgraph",
             "status": "candidate",
             "receivingRole": "main_chat",
@@ -299,6 +306,7 @@ def demo_graph_views() -> list[dict[str, Any]]:
         {
             **base,
             "viewId": "kgdemo:v1:view:hermes-testing-context",
+            "displayLabel": "Hermes Context",
             "authority": "thinkgraph",
             "status": "candidate",
             "receivingRole": "hermes",
@@ -320,6 +328,7 @@ def demo_graph_views() -> list[dict[str, Any]]:
         {
             **base,
             "viewId": "kgdemo:v1:view:coder-testing-context",
+            "displayLabel": "Coder Context",
             "authority": "thinkgraph",
             "status": "candidate",
             "receivingRole": "coder",
@@ -421,9 +430,11 @@ def seed_demo(graph: ThinkGraphEngraphis) -> dict[str, Any]:
     }
 
 
-def remove_demo(graph: ThinkGraphEngraphis, *, confirm: str) -> dict[str, Any]:
+def remove_demo(graph: ThinkGraphEngraphis, *, confirm: str, allow_shared_workspace: bool = False) -> dict[str, Any]:
     if confirm != DEMO_PROJECT_ID:
         raise ValueError(f"removal confirmation must equal {DEMO_PROJECT_ID}")
+    if not allow_shared_workspace:
+        raise ValueError("shared_active_workspace_removal_forbidden")
     service = MemoryService(graph.engine)
     known = {item["name"] for item in service.list_workspaces()["workspaces"]}
     if DEMO_PROJECT_ID not in known:

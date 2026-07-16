@@ -67,7 +67,9 @@ def test_seed_is_idempotent_and_retrievable(tmp_path):
     recall = graph.recall(DEMO_PROJECT_ID, "Why is network analysis derived rather than canonical?", k=8)
     assert recall["count"] > 0
     assert any(chunk["recordKind"] in {"Decision", "Finding", "Evidence"} for chunk in recall["chunks"])
-    assert len(graph.graph_views(DEMO_PROJECT_ID, "demo:kg-architecture:v1")["views"]) == 7
+    assert len(graph.graph_views(DEMO_PROJECT_ID, "main")["views"]) == 7
+    assert all(1 <= len(str(item["properties"]["display_label"]).split()) <= 4 for item in demo_resources())
+    assert {view["displayLabel"] for view in demo_graph_views()} == {"KnowGraph Evidence", "CodeGraph Implementation", "Architecture Context", "Runtime Proof", "Main Context", "Hermes Context", "Coder Context"}
 
 
 def test_removal_is_exact_and_allows_clean_reseed(tmp_path):
@@ -78,7 +80,7 @@ def test_removal_is_exact_and_allows_clean_reseed(tmp_path):
         raise AssertionError("wrong confirmation must fail")
     except ValueError:
         pass
-    removed = remove_demo(graph, confirm=DEMO_PROJECT_ID)
+    removed = remove_demo(graph, confirm=DEMO_PROJECT_ID, allow_shared_workspace=True)
     assert removed["status"] == "removed"
     assert DEMO_PROJECT_ID not in {item["name"] for item in __import__("engraphis.service", fromlist=["MemoryService"]).MemoryService(graph.engine).list_workspaces()["workspaces"]}
     reseeded = seed_demo(graph)

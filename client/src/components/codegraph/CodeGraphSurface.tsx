@@ -239,6 +239,7 @@ export function CodeGraphSurface({
           cameraActionToken={cameraCommand?.token || 0}
           onNodeClick={(node) => {
             setSelectedNode(node);
+            setFilterDrawerOpen(true);
             const connected = new Set([node.id]);
             for (const edge of filteredData.edges) {
               if (edge.source === node.id) connected.add(edge.target);
@@ -276,7 +277,7 @@ export function CodeGraphSurface({
 
       <RightGlassDrawer
         isOpen={filterDrawerOpen}
-        title="Filters"
+        title="CodeGraph Inspector"
         onClose={() => setFilterDrawerOpen(false)}
         onOpen={() => setFilterDrawerOpen(true)}
         defaultWidth={340}
@@ -289,6 +290,13 @@ export function CodeGraphSurface({
         bottom={12}
         zIndex={6}
       >
+        {selectedNode ? (
+          <div style={{ marginBottom: 12, paddingBottom: 12, borderBottom: `1px solid ${GRAPH_THEME.surface.border}` }}>
+            <div style={{ color: GRAPH_THEME.surface.text, fontWeight: 700, marginBottom: 4 }}>{selectedNode.name}</div>
+            <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 11, marginBottom: 3 }}>{selectedNode.label}</div>
+            {selectedNode.file_path ? <div style={{ color: GRAPH_THEME.surface.mutedText, fontFamily: 'monospace', fontSize: 10, overflowWrap: 'anywhere' }}>{selectedNode.file_path}</div> : null}
+          </div>
+        ) : null}
         <CodeGraphFilterPanel
           data={graphData}
           enabledLabels={enabledLabels}
@@ -412,28 +420,6 @@ export function CodeGraphSurface({
         {filteredData.nodes.length.toLocaleString()} nodes / {filteredData.edges.length.toLocaleString()} edges
       </div>
 
-      {selectedNode ? (
-        <div
-          style={graphGlassPillStyle({
-            position: "absolute",
-            left: 56,
-            bottom: 44,
-            zIndex: 4,
-            maxWidth: 360,
-            fontSize: 12,
-            padding: "8px 10px",
-            lineHeight: 1.35,
-          })}
-        >
-          <div style={{ color: GRAPH_THEME.surface.text, fontWeight: 700, marginBottom: 4 }}>{selectedNode.name}</div>
-          <div style={{ color: GRAPH_THEME.surface.mutedText, marginBottom: 2 }}>{selectedNode.label}</div>
-          {selectedNode.file_path ? (
-            <div style={{ color: "rgba(255,255,255,0.45)", fontFamily: "monospace", fontSize: 11 }}>
-              {selectedNode.file_path}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   );
 }

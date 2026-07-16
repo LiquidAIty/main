@@ -16,6 +16,16 @@ type UnifiedPayload = {
   conversationId: string;
   receivingRole: string;
   projectionId: string;
+  identity: {
+    applicationProjectId: string;
+    thinkGraphWorkspaceId: string;
+    knowGraphScopeId: string | null;
+    codeGraphProjectId: string | null;
+    conversationId: string;
+    activeGraphViewId: string | null;
+    receivingRole: string;
+    projectionId: string;
+  };
   configurationHash: string;
   contentHash: string;
   activeGraphViewId?: string | null;
@@ -165,43 +175,51 @@ export default function UnifiedGraphSurface({
         {payload?.regions.map((region) => <span key={region.id} style={graphGlassPillStyle({ color: region.color, pointerEvents: 'auto' })}>{region.label} {counts[region.id]}/{payload.counts.available[region.id]}</span>)}
         <span style={graphGlassPillStyle({ color: '#9FB2C1', pointerEvents: 'auto' })}>refs {payload?.counts.crossAuthorityEdges || 0}</span>
         {payload ? <span style={graphGlassPillStyle({ color: '#8298A8', pointerEvents: 'auto' })}>{payload.projectionId}</span> : null}
-        <select aria-label="Graph View" value={activeViewId} onChange={(event) => setActiveViewId(event.target.value)} style={graphDrawerInputStyle({ width: 250, pointerEvents: 'auto' })}>
-          <option value="">Automatic Graph View</option>
-          {payload?.availableGraphViews.map((view) => <option key={view.viewId} value={view.viewId}>{view.status} · {view.viewId}</option>)}
-        </select>
-        <select aria-label="Receiving role" value={role} onChange={(event) => setRole(event.target.value as Role)} style={graphDrawerInputStyle({ width: 130, pointerEvents: 'auto' })}>
-          <option value="main_chat">Main chat</option><option value="hermes">Hermes</option><option value="coder">Coder</option>
-        </select>
       </div>
 
-      <div style={{ position: 'absolute', left: 12, top: 62, bottom: 12, zIndex: 5, width: 220, padding: 12, overflow: 'auto', color: '#DCE8EF', background: 'rgba(5,12,18,.82)', border: '1px solid rgba(150,200,230,.16)', borderRadius: 12, backdropFilter: 'blur(14px)' }}>
-        <div style={{ fontSize: 11, letterSpacing: 1.2, color: '#8298A8', marginBottom: 10 }}>CONTEXT CONTROLS</div>
-        <input aria-label="Search context" placeholder="Search canonical context" value={search} onChange={(event) => setSearch(event.target.value)} style={graphDrawerInputStyle({ width: '100%', boxSizing: 'border-box' })} />
-        <select aria-label="Visual authority" value={authority} onChange={(event) => setAuthority(event.target.value as Layer | 'all')} style={graphDrawerInputStyle({ width: '100%', marginTop: 8 })}>
-          <option value="all">All authorities</option><option value="thinkgraph">ThinkGraph</option><option value="knowgraph">KnowGraph</option><option value="codegraph">CodeGraph</option>
-        </select>
-        <select aria-label="Node type" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} style={graphDrawerInputStyle({ width: '100%', marginTop: 8 })}>
-          <option value="all">All record types</option>{nodeTypes.map((type) => <option key={type}>{type}</option>)}
-        </select>
-        <label style={{ display: 'block', fontSize: 11, color: '#8CA1B0', marginTop: 13 }}>Neighborhood · {hopDepth} hop</label>
-        <input aria-label="Neighborhood depth" type="range" min={1} max={3} value={hopDepth} onChange={(event) => setHopDepth(Number(event.target.value))} style={{ width: '100%' }} />
-        <button type="button" style={graphDrawerButtonStyle({ width: '100%', marginTop: 6 })} onClick={() => { setSelected(null); setSearch(''); setAuthority('all'); setTypeFilter('all'); }}>Show full projection</button>
-        <button type="button" style={graphDrawerButtonStyle({ width: '100%', marginTop: 6 })} onClick={() => setExpansionDepth((value) => Math.min(3, value + 1))}>Request reasoning expansion · {expansionDepth}</button>
-        <button type="button" style={graphDrawerButtonStyle({ width: '100%', marginTop: 6 })} onClick={() => setLabels((value) => !value)}>{labels ? 'Hide labels' : 'Show labels'}</button>
-        <div style={{ fontSize: 11, letterSpacing: 1.1, color: '#8298A8', margin: '16px 0 8px' }}>CLUSTER LOD</div>
-        {clusters.map((cluster) => <label key={cluster} style={{ display: 'flex', gap: 7, alignItems: 'center', fontSize: 11, margin: '6px 0', color: '#AFC0CB' }}><input type="checkbox" checked={!collapsedClusters.has(cluster)} onChange={() => setCollapsedClusters((current) => { const next = new Set(current); next.has(cluster) ? next.delete(cluster) : next.add(cluster); return next; })} />{cluster}</label>)}
-      </div>
-
-      {error ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#FFB0A6' }}>{error}</div> : null}
-      {!error && loading ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#91A9B8', pointerEvents: 'none' }}>Resolving bounded context…</div> : null}
+      {error && !payload ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#FFB0A6' }}>Unified context failed: {error}</div> : null}
+      {!payload && loading ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#91A9B8', pointerEvents: 'none' }}>Resolving bounded context…</div> : null}
+      {payload && payload.nodes.length === 0 ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#91A9B8', padding: 30, textAlign: 'center' }}>The server returned an empty bounded projection for {payload.projectId} · {payload.receivingRole}. Open the inspector for authority counts and warnings.</div> : null}
       {payload ? <CodeGraphScene data={sceneData} showLabels={labels || Boolean(selected)} highlightedIds={selected ? new Set([selected.id]) : null} onNodeClick={(node) => { setSelected(node); setDrawerOpen(true); }} autoRotate={false} cameraAction={cameraCommand.action} cameraActionToken={cameraCommand.token} focusNode={selected} cameraPosition={[0, -30, 520]} maxLabels={labels ? 18 : 1} /> : null}
 
       <div style={{ position: 'absolute', right: 12, bottom: 12, zIndex: 6, display: 'flex', gap: 6 }}>
         {(['zoom_in', 'zoom_out', 'fit_view'] as const).map((action) => <button key={action} type="button" style={graphDrawerButtonStyle()} onClick={() => setCameraCommand({ action, token: Date.now() })}>{action.replace('_', ' ')}</button>)}
       </div>
       {payload?.warnings.length ? <div title={payload.warnings.map((warning) => `${warning.authority}: ${warning.detail}`).join('\n')} style={graphGlassPillStyle({ position: 'absolute', left: 244, bottom: 12, zIndex: 6, color: '#F0C674' })}>{payload.warnings.length} warning{payload.warnings.length === 1 ? '' : 's'} · {payload.warnings[0].code}</div> : null}
+      {payload && loading ? <div style={graphGlassPillStyle({ position: 'absolute', left: 12, bottom: 46, zIndex: 6, color: '#91A9B8' })}>Updating · showing {payload.projectionId}</div> : null}
+      {payload && error ? <div style={graphGlassPillStyle({ position: 'absolute', left: 12, bottom: 46, zIndex: 6, color: '#FFB0A6' })}>Update failed · unchanged {payload.projectionId} · {error}</div> : null}
 
-      <RightGlassDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} title={selected?.name || 'Context record'} subtitle={selected ? `${selected.authority} · ${selected.label}` : undefined}>
+      <RightGlassDrawer isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} onOpen={() => setDrawerOpen(true)} collapsedLabel={null} openAriaLabel="Open Unified Inspector" title="Unified Inspector" defaultWidth={380} minWidth={340} maxWidth={600} storageKey="liquidaity.drawer.unified.width" top={48} right={12} bottom={12} zIndex={7}>
+        <GlassInspectorSection title="Agent context" signal={role}>
+          <select aria-label="Receiving role" value={role} onChange={(event) => setRole(event.target.value as Role)} style={graphDrawerInputStyle({ width: '100%' })}>
+            <option value="main_chat">Main chat</option><option value="hermes">Hermes</option><option value="coder">Coder</option>
+          </select>
+          <select aria-label="Graph View" value={activeViewId} onChange={(event) => setActiveViewId(event.target.value)} style={graphDrawerInputStyle({ width: '100%', marginTop: 7 })}>
+            <option value="">Automatic Graph View</option>
+            {payload?.availableGraphViews.map((view) => <option key={view.viewId} value={view.viewId}>{view.status} · {view.viewId}</option>)}
+          </select>
+          <InspectorRow label="Projection" value={payload?.projectionId || 'resolving'} />
+          <InspectorRow label="App project" value={payload?.identity?.applicationProjectId || projectId} />
+          <InspectorRow label="Think workspace" value={payload?.identity?.thinkGraphWorkspaceId || projectId} />
+          <InspectorRow label="Know scope" value={payload?.identity?.knowGraphScopeId || 'missing'} />
+          <InspectorRow label="Code project" value={payload?.identity?.codeGraphProjectId || 'missing'} />
+          <InspectorRow label="Think / Know / Code" value={`${counts.thinkgraph} / ${counts.knowgraph} / ${counts.codegraph}`} />
+        </GlassInspectorSection>
+        <GlassInspectorSection title="Visual filters">
+          <input aria-label="Search context" placeholder="Search canonical context" value={search} onChange={(event) => setSearch(event.target.value)} style={graphDrawerInputStyle({ width: '100%', boxSizing: 'border-box' })} />
+          <select aria-label="Visual authority" value={authority} onChange={(event) => setAuthority(event.target.value as Layer | 'all')} style={graphDrawerInputStyle({ width: '100%', marginTop: 7 })}>
+            <option value="all">All authorities</option><option value="thinkgraph">ThinkGraph</option><option value="knowgraph">KnowGraph</option><option value="codegraph">CodeGraph</option>
+          </select>
+          <select aria-label="Node type" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} style={graphDrawerInputStyle({ width: '100%', marginTop: 7 })}>
+            <option value="all">All record types</option>{nodeTypes.map((type) => <option key={type}>{type}</option>)}
+          </select>
+          <label style={{ display: 'block', fontSize: 11, color: '#8CA1B0', marginTop: 10 }}>Neighborhood · {hopDepth} hop</label>
+          <input aria-label="Neighborhood depth" type="range" min={1} max={3} value={hopDepth} onChange={(event) => setHopDepth(Number(event.target.value))} style={{ width: '100%' }} />
+          <button type="button" style={graphDrawerButtonStyle({ width: '100%', marginTop: 6 })} onClick={() => { setSelected(null); setSearch(''); setAuthority('all'); setTypeFilter('all'); }}>Show full projection</button>
+          <button type="button" style={graphDrawerButtonStyle({ width: '100%', marginTop: 6 })} onClick={() => setExpansionDepth((value) => Math.min(3, value + 1))}>Request reasoning expansion · {expansionDepth}</button>
+          <button type="button" style={graphDrawerButtonStyle({ width: '100%', marginTop: 6 })} onClick={() => setLabels((value) => !value)}>{labels ? 'Hide labels' : 'Show labels'}</button>
+          {clusters.map((cluster) => <label key={cluster} style={{ display: 'flex', gap: 7, alignItems: 'center', fontSize: 11, margin: '6px 0', color: '#AFC0CB' }}><input type="checkbox" checked={!collapsedClusters.has(cluster)} onChange={() => setCollapsedClusters((current) => { const next = new Set(current); next.has(cluster) ? next.delete(cluster) : next.add(cluster); return next; })} />{cluster}</label>)}
+        </GlassInspectorSection>
         {selected ? <>
           <GlassInspectorSection title="Canonical record">
             <InspectorRow label="Canonical ref" value={selected.source_id || String(selected.id)} />

@@ -4,6 +4,7 @@ import type { Core, EdgeSingular, NodeSingular } from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 
 import GlassInspectorSection from '../graph/GlassInspectorSection';
+import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GRAPH_THEME, graphGlassCardStyle, graphGlassPillStyle } from '../graph/graphVisualTokens';
 
 let fcoseRegistered = false;
@@ -12,7 +13,6 @@ if (!fcoseRegistered) {
   fcoseRegistered = true;
 }
 
-type ProviderMode = 'local_cleanroom' | 'infranodus_mcp' | 'compare';
 type AnalysisNode = {
   id: string;
   label: string;
@@ -61,21 +61,6 @@ type Analysis = {
   estimated_cost?: number | null;
   reused: boolean;
 };
-type Comparison = {
-  comparison_id: string;
-  local_analysis_id: string;
-  external_analysis_id: string;
-  topic_overlap: number | null;
-  local_gateways: string[];
-  external_gateways: string[];
-  local_gap_count: number;
-  external_gap_count: number;
-  provenance_coverage: { local: number; external: number };
-  runtime_ms: { local: number; external: number };
-  estimated_cost: { local: number | null; external: number | null };
-  human_usefulness: null;
-  limitations: string[];
-};
 type EvidenceRecord = {
   chunk_id: string;
   text: string;
@@ -108,7 +93,7 @@ async function jsonRequest(url: string, init?: RequestInit) {
   return payload;
 }
 
-function requestBody(projectId: string, provider: Exclude<ProviderMode, 'compare'>, externalPermission: boolean) {
+function requestBody(projectId: string) {
   return {
     schema_version: 'knowgraph.analysis.request.v1',
     request_id: crypto.randomUUID(),
@@ -116,10 +101,10 @@ function requestBody(projectId: string, provider: Exclude<ProviderMode, 'compare
     source_scope: { project_id: projectId, document_ids: [], chunk_ids: [] },
     statements: [],
     language: 'en',
-    requested_provider: provider,
+    requested_provider: 'local_cleanroom',
     include_graph: true,
     persist: true,
-    external_provider_permission: externalPermission,
+    external_provider_permission: false,
     options: {
       window_size: 4,
       distance_weighting: 'inverse',
@@ -158,17 +143,10 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
   const scopeProjectId = scopeOverride || projectId;
   const graphRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
-  const [mode, setMode] = useState<ProviderMode>('local_cleanroom');
-  const [compareLayer, setCompareLayer] = useState<'local' | 'external'>('local');
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
-  const [localAnalysis, setLocalAnalysis] = useState<Analysis | null>(null);
-  const [externalAnalysis, setExternalAnalysis] = useState<Analysis | null>(null);
-  const [comparison, setComparison] = useState<Comparison | null>(null);
   const [preview, setPreview] = useState<{ statement_count: number; character_count: number; document_refs: string[] } | null>(null);
-  const [capabilities, setCapabilities] = useState<any[]>([]);
   const [status, setStatus] = useState<'loading' | 'ready' | 'empty' | 'running' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
-  const [externalPermission, setExternalPermission] = useState(false);
   const [query, setQuery] = useState('');
   const [community, setCommunity] = useState('all');
   const [documentRef, setDocumentRef] = useState('all');
@@ -180,17 +158,14 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
   const [selectedGap, setSelectedGap] = useState<Gap | null>(null);
   const [evidence, setEvidence] = useState<EvidenceRecord[]>([]);
   const [viewStatus, setViewStatus] = useState<string | null>(null);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
 
   useEffect(() => {
     if (!scopeProjectId) return;
     const controller = new AbortController();
-    void Promise.all([
-      jsonRequest(`/api/knowgraph/analysis/source-preview?projectId=${encodeURIComponent(scopeProjectId)}`, { signal: controller.signal }),
-      jsonRequest('/api/knowgraph/analysis/capabilities', { signal: controller.signal }),
-    ]).then(([previewPayload, capabilityPayload]) => {
+    void jsonRequest(`/api/knowgraph/analysis/source-preview?projectId=${encodeURIComponent(scopeProjectId)}`, { signal: controller.signal }).then((previewPayload) => {
       if (controller.signal.aborted) return;
       setPreview(previewPayload);
-      setCapabilities(Array.isArray(capabilityPayload.providers) ? capabilityPayload.providers : []);
     }).catch((nextError) => {
       if (!controller.signal.aborted) setError(String(nextError?.message || nextError));
     });
@@ -205,29 +180,10 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
     setSelectedEdge(null);
     setEvidence([]);
     try {
-      if (mode === 'compare') {
-        const comparisonPayload = await jsonRequest(
-          `/api/knowgraph/analysis/comparison/latest?projectId=${encodeURIComponent(scopeProjectId)}`,
-        );
-        const nextComparison = comparisonPayload.comparison as Comparison;
-        const [localPayload, externalPayload] = await Promise.all([
-          jsonRequest(`/api/knowgraph/analysis/${encodeURIComponent(nextComparison.local_analysis_id)}`),
-          jsonRequest(`/api/knowgraph/analysis/${encodeURIComponent(nextComparison.external_analysis_id)}`),
-        ]);
-        setComparison(nextComparison);
-        setLocalAnalysis(localPayload.analysis);
-        setExternalAnalysis(externalPayload.analysis);
-        setAnalysis(compareLayer === 'local' ? localPayload.analysis : externalPayload.analysis);
-        setStatus('ready');
-        return;
-      }
       const payload = await jsonRequest(
-        `/api/knowgraph/analysis/latest?projectId=${encodeURIComponent(scopeProjectId)}&provider=${mode}`,
+        `/api/knowgraph/analysis/latest?projectId=${encodeURIComponent(scopeProjectId)}&provider=local_cleanroom`,
       );
       setAnalysis(payload.analysis);
-      if (mode === 'local_cleanroom') setLocalAnalysis(payload.analysis);
-      else setExternalAnalysis(payload.analysis);
-      setComparison(null);
       setStatus('ready');
     } catch (nextError: any) {
       if (String(nextError?.message || nextError).includes('not found')) {
@@ -238,44 +194,21 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
         setError(String(nextError?.message || nextError));
       }
     }
-  }, [compareLayer, mode, scopeProjectId]);
+  }, [scopeProjectId]);
 
   useEffect(() => { void loadLatest(); }, [loadLatest]);
 
-  useEffect(() => {
-    if (mode !== 'compare') return;
-    setAnalysis(compareLayer === 'local' ? localAnalysis : externalAnalysis);
-  }, [compareLayer, externalAnalysis, localAnalysis, mode]);
-
   const runAnalysis = async () => {
-    if (!scopeProjectId || (mode !== 'local_cleanroom' && !externalPermission)) return;
+    if (!scopeProjectId) return;
     setStatus('running');
     setError(null);
     try {
-      if (mode === 'compare') {
-        const payload = await jsonRequest('/api/knowgraph/analysis/compare', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            request: requestBody(scopeProjectId, 'local_cleanroom', false),
-            external_provider_permission: true,
-            persist: true,
-          }),
-        });
-        setComparison(payload.comparison);
-        setLocalAnalysis(payload.local);
-        setExternalAnalysis(payload.infranodus);
-        setAnalysis(compareLayer === 'local' ? payload.local : payload.infranodus);
-      } else {
-        const payload = await jsonRequest('/api/knowgraph/analysis/analyze', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody(scopeProjectId, mode, externalPermission)),
-        });
-        setAnalysis(payload.analysis);
-        if (mode === 'local_cleanroom') setLocalAnalysis(payload.analysis);
-        else setExternalAnalysis(payload.analysis);
-      }
+      const payload = await jsonRequest('/api/knowgraph/analysis/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody(scopeProjectId)),
+      });
+      setAnalysis(payload.analysis);
       setStatus('ready');
     } catch (nextError: any) {
       setStatus('error');
@@ -297,6 +230,12 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
   useEffect(() => {
     if (!graphRef.current || !analysis) return;
     cyRef.current?.destroy();
+    const importantLabels = new Set(
+      [...analysis.nodes]
+        .sort((a, b) => b.influence - a.influence)
+        .slice(0, 18)
+        .map((node) => node.id),
+    );
     const cy = cytoscape({
       container: graphRef.current,
       elements: [
@@ -304,6 +243,7 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
           group: 'nodes' as const,
           data: {
             ...node,
+            displayLabel: importantLabels.has(node.id) || gatewayLabels.has(node.label) ? node.label : '',
             color: communityColor.get(node.community_id) || GRAPH_THEME.accent.primary,
             displaySize: 18 + Math.min(38, Math.sqrt(Math.max(0, node.influence)) * 140),
             gateway: gatewayLabels.has(node.label) ? 1 : 0,
@@ -319,7 +259,7 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
             'background-color': 'data(color)',
             width: 'data(displaySize)',
             height: 'data(displaySize)',
-            label: 'data(label)',
+            label: 'data(displayLabel)',
             color: '#E8F4F4',
             'font-size': 10,
             'font-weight': 600,
@@ -349,7 +289,8 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
             'curve-style': 'haystack',
           },
         },
-        { selector: ':selected', style: { 'border-color': '#FFFFFF', 'border-width': 3, 'line-color': '#FFFFFF', opacity: 1 } },
+        { selector: 'node:selected', style: { 'border-color': '#FFFFFF', 'border-width': 3, opacity: 1, label: 'data(label)' } },
+        { selector: 'edge:selected', style: { 'line-color': '#FFFFFF', opacity: 1 } },
         { selector: '.dimmed', style: { opacity: 0.08, 'text-opacity': 0.03 } },
         { selector: '.gap-path', style: { 'border-color': '#FF6B9A', 'border-width': 4, 'line-color': '#FF6B9A', opacity: 1 } },
       ] as any,
@@ -374,12 +315,16 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
       setSelectedEdge(null);
       setEvidence([]);
       setFocusNeighborhood(false);
+      setInspectorOpen(true);
     });
+    cy.on('mouseover', 'node', (event) => (event.target as NodeSingular).style('label', 'data(label)'));
+    cy.on('mouseout', 'node', (event) => (event.target as NodeSingular).removeStyle('label'));
     cy.on('tap', 'edge', (event) => {
       const id = String((event.target as EdgeSingular).id());
       setSelectedEdge(analysis.edges.find((edge) => edge.id === id) || null);
       setSelectedNode(null);
       setEvidence([]);
+      setInspectorOpen(true);
     });
     cy.on('tap', (event) => {
       if (event.target === cy) {
@@ -465,39 +410,36 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
     }
   };
 
-  const externalCapability = capabilities.find((item) => item.provider === 'infranodus_mcp');
-  const runDisabled = !scopeProjectId || status === 'running' || (mode !== 'local_cleanroom' && !externalPermission);
+  const runDisabled = !scopeProjectId || status === 'running';
 
   return (
     <div data-testid="knowgraph-analysis-surface" style={{ width: '100%', height: '100%', minHeight: 620, position: 'relative', background: '#071014', overflow: 'hidden' }}>
       <div ref={graphRef} style={{ position: 'absolute', inset: 0 }} />
 
-      <div style={{ position: 'absolute', top: 54, left: 12, zIndex: 4, width: 288, display: 'grid', gap: 8 }}>
+      <RightGlassDrawer
+        isOpen={inspectorOpen}
+        title="KnowGraph Inspector"
+        onClose={() => setInspectorOpen(false)}
+        onOpen={() => setInspectorOpen(true)}
+        collapsedLabel={null}
+        openAriaLabel="Open KnowGraph Inspector"
+        defaultWidth={360}
+        minWidth={320}
+        maxWidth={560}
+        storageKey="liquidaity.drawer.knowgraph.width"
+        top={48}
+        right={12}
+        bottom={12}
+        zIndex={6}
+      >
+      <div style={{ display: 'grid', gap: 8 }}>
         <div style={panelStyle}>
-          <div style={{ display: 'flex', gap: 5, marginBottom: 9 }}>
-            {(['local_cleanroom', 'infranodus_mcp', 'compare'] as ProviderMode[]).map((provider) => (
-              <button key={provider} type="button" onClick={() => setMode(provider)} style={{ ...buttonStyle, flex: 1, borderColor: mode === provider ? GRAPH_THEME.accent.primary : GRAPH_THEME.surface.border, color: mode === provider ? '#A9ECE8' : GRAPH_THEME.surface.mutedText }}>
-                {provider === 'local_cleanroom' ? 'Local' : provider === 'infranodus_mcp' ? 'InfraNodus' : 'Compare'}
-              </button>
-            ))}
-          </div>
-          {mode === 'compare' ? (
-            <div style={{ display: 'flex', gap: 5, marginBottom: 8 }}>
-              <button type="button" onClick={() => setCompareLayer('local')} style={{ ...buttonStyle, flex: 1, opacity: compareLayer === 'local' ? 1 : 0.55 }}>Local graph</button>
-              <button type="button" onClick={() => setCompareLayer('external')} style={{ ...buttonStyle, flex: 1, opacity: compareLayer === 'external' ? 1 : 0.55 }}>InfraNodus graph</button>
-            </div>
-          ) : null}
+          <div style={{ color: '#A9ECE8', fontSize: 11, marginBottom: 8 }}>Local network analysis over canonical Neo4j</div>
           <Metric label="Scope statements" value={preview?.statement_count} />
           <Metric label="Scope characters" value={preview?.character_count?.toLocaleString()} />
-          <Metric label="Provider available" value={mode === 'local_cleanroom' ? 'yes' : externalCapability?.available ? 'yes' : 'no'} />
-          {mode !== 'local_cleanroom' ? (
-            <label style={{ display: 'flex', gap: 8, marginTop: 9, color: GRAPH_THEME.surface.mutedText, fontSize: 10, lineHeight: 1.35 }}>
-              <input type="checkbox" checked={externalPermission} onChange={(event) => setExternalPermission(event.target.checked)} />
-              Allow this exact scope to be transmitted to InfraNodus. Provider attribution and errors remain visible.
-            </label>
-          ) : null}
+          <Metric label="Canonical source" value="Neo4j chunks and concepts" />
           <button type="button" disabled={runDisabled} onClick={() => void runAnalysis()} style={{ ...buttonStyle, width: '100%', marginTop: 9, background: runDisabled ? 'rgba(20,30,36,.55)' : 'rgba(55,173,170,.17)', cursor: runDisabled ? 'not-allowed' : 'pointer' }}>
-            {status === 'running' ? 'Analyzing canonical KnowGraph…' : mode === 'compare' ? 'Run provider comparison' : `Run ${mode === 'local_cleanroom' ? 'local' : 'InfraNodus'} analysis`}
+            {status === 'running' ? 'Analyzing canonical KnowGraph…' : 'Run local analysis'}
           </button>
         </div>
 
@@ -517,22 +459,16 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
               <button type="button" onClick={() => setGapsOnly((value) => !value)} style={{ ...buttonStyle, opacity: gapsOnly ? 1 : 0.58 }}>Gap regions</button>
               <button type="button" disabled={!selectedNode} onClick={() => setFocusNeighborhood((value) => !value)} style={{ ...buttonStyle, opacity: focusNeighborhood ? 1 : 0.58 }}>Neighborhood</button>
               <button type="button" onClick={() => cyRef.current?.fit(undefined, 70)} style={buttonStyle}>Fit graph</button>
+              <button type="button" onClick={() => cyRef.current?.zoom((cyRef.current?.zoom() || 1) * 1.2)} style={buttonStyle}>Zoom in</button>
+              <button type="button" onClick={() => cyRef.current?.zoom((cyRef.current?.zoom() || 1) / 1.2)} style={buttonStyle}>Zoom out</button>
+              <button type="button" onClick={() => cyRef.current?.center()} style={buttonStyle}>Center</button>
             </div>
           </div>
         ) : null}
 
-        {comparison ? (
-          <div style={panelStyle}>
-            <div style={{ color: '#A9ECE8', fontSize: 11, marginBottom: 6 }}>Provider comparison</div>
-            <Metric label="Topic overlap" value={comparison.topic_overlap == null ? 'not available' : `${Math.round(comparison.topic_overlap * 100)}%`} />
-            <Metric label="Local / external gaps" value={`${comparison.local_gap_count} / ${comparison.external_gap_count}`} />
-            <Metric label="Runtime ms" value={`${comparison.runtime_ms.local} / ${comparison.runtime_ms.external}`} />
-            <Metric label="Human usefulness" value="awaiting review" />
-          </div>
-        ) : null}
       </div>
 
-      <aside style={{ position: 'absolute', top: 54, right: 12, bottom: 12, zIndex: 4, width: 340, overflow: 'auto', ...panelStyle }}>
+      <div style={panelStyle}>
         {analysis ? (
           <>
             <GlassInspectorSection title="Derived analysis" signal={analysis.provider}>
@@ -597,7 +533,8 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
             </div>
           </GlassInspectorSection>
         )}
-      </aside>
+      </div>
+      </RightGlassDrawer>
 
       {error ? <div data-testid="knowgraph-analysis-error" style={{ position: 'absolute', left: 312, bottom: 12, zIndex: 6, ...graphGlassPillStyle({ color: '#FF9AAB', fontSize: 11, padding: '6px 10px' }) }}>{error}</div> : null}
     </div>

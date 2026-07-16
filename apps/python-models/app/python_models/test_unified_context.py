@@ -27,7 +27,7 @@ class FakeThinkGraph:
 
 def fake_read(path, _params):
     if "knowgraph" in path:
-        return {"nodes": [{"id": "k:book", "label": "Book", "type": "Document", "properties": {}}], "relationships": [], "view": _view("knowgraph", ["k:book"])}
+        return {"resolved_project_id": "book-scope", "nodes": [{"id": "k:book", "label": "Book", "type": "Document", "properties": {}}], "relationships": [], "view": _view("knowgraph", ["k:book"])}
     return {"ok": True, "nodes": [{"id": "c:fn", "label": "fn", "type": "Function"}], "edges": []}
 
 
@@ -54,6 +54,16 @@ def test_projection_is_bounded_stable_and_carries_exact_selected_view():
     assert first["counts"]["nodes"] == 3
     assert first["counts"]["crossAuthorityEdges"] == 1
     assert {node["authority"] for node in first["nodes"]} == {"thinkgraph", "knowgraph", "codegraph"}
+    assert first["identity"] == {
+        "applicationProjectId": "project-1",
+        "thinkGraphWorkspaceId": "project-1",
+        "knowGraphScopeId": "book-scope",
+        "codeGraphProjectId": "repo",
+        "conversationId": "main",
+        "activeGraphViewId": "view-1",
+        "receivingRole": "coder",
+        "projectionId": first["projectionId"],
+    }
 
 
 def test_roles_produce_distinct_server_side_projection_hashes():
@@ -82,7 +92,7 @@ def test_missing_authority_is_explicit_warning_not_fake_data():
         return fake_read(path, params)
     result = build_unified_context(UnifiedContextRequest("project-1", "main"), graph=FakeThinkGraph(), read_json=failed_read, post_json=fake_post)
     assert result["counts"]["selected"]["knowgraph"] == 0
-    assert {warning["code"] for warning in result["warnings"]} == {"authority_unavailable", "empty_authority_view", "referenced_record_not_in_projection"}
+    assert {warning["code"] for warning in result["warnings"]} == {"authority_unavailable", "empty_authority_view", "referenced_record_not_in_projection", "missing_authority_mapping"}
 
 
 def test_identical_concurrent_requests_resolve_authorities_once():

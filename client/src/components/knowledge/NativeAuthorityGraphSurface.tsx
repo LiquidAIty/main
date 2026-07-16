@@ -3,6 +3,7 @@ import ForceGraph from 'force-graph';
 import { forceCollide, forceX, forceY } from 'd3-force';
 
 import { GraphTab as CbmGraphTab } from '../../vendor/codebase-memory-ui/src/components/GraphTab';
+import RightGlassDrawer from '../graph/RightGlassDrawer';
 import type { GraphProjectionV1 } from './KnowledgeGraphFramework';
 import './nativeAuthorityGraphSurface.css';
 
@@ -17,6 +18,7 @@ export function NativeCodeGraphSurface({ project }: { project: string | null }) 
 type NativeNode = {
   id: string;
   label: string;
+  fullLabel: string;
   etype: string;
   degree: number;
   val: number;
@@ -45,6 +47,12 @@ function endpointId(value: string | NativeNode): string {
   return typeof value === 'string' ? value : value.id;
 }
 
+function shortNodeLabel(node: GraphProjectionV1['nodes'][number]): string {
+  const properties = node.properties || {};
+  const semantic = String(properties.display_label || node.label || node.title || node.type || 'record').trim();
+  return semantic.split(/\s+/).slice(0, 4).join(' ');
+}
+
 export function NativeThinkGraphSurface({
   projection,
   status,
@@ -62,9 +70,10 @@ export function NativeThinkGraphSurface({
   const [showLinkLabels, setShowLinkLabels] = useState(false);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<NativeNode | null>(null);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [settings, setSettings] = useState({
-    font: 13,
-    labelDensity: 40,
+    font: 10,
+    labelDensity: 14,
     size: 5,
     linkWidth: 1,
     repel: 120,
@@ -83,7 +92,8 @@ export function NativeThinkGraphSurface({
     const visibleNodes: NativeNode[] = nodes
       .map((node) => ({
         id: node.id,
-        label: node.label || node.title || node.id,
+        label: shortNodeLabel(node),
+        fullLabel: String(node.label || node.title || node.id),
         etype: node.type || 'person_or_concept',
         degree: degree.get(node.id) || 0,
         val: 1 + (degree.get(node.id) || 0),
@@ -120,7 +130,10 @@ export function NativeThinkGraphSurface({
         .warmupTicks(40)
         .nodeRelSize(1)
         .autoPauseRedraw(false)
-        .onNodeClick((node) => setSelected(node as NativeNode))
+        .onNodeClick((node) => {
+          setSelected(node as NativeNode);
+          setInspectorOpen(true);
+        })
         .onNodeHover((node) => {
           hoveredRef.current = node ? String(node.id) : null;
           if (hostRef.current) hostRef.current.style.cursor = node ? 'pointer' : 'grab';
@@ -255,7 +268,23 @@ export function NativeThinkGraphSurface({
         {status === 'error' ? <div className="engraphis-native-empty">Graph failed: {error}</div> : null}
         {status === 'ready' && allNodes === 0 ? <div className="engraphis-native-empty">No entities in this project yet.</div> : null}
       </div>
-      <aside className="engraphis-native-controls">
+      <RightGlassDrawer
+        isOpen={inspectorOpen}
+        title="ThinkGraph Inspector"
+        onClose={() => setInspectorOpen(false)}
+        onOpen={() => setInspectorOpen(true)}
+        collapsedLabel={null}
+        openAriaLabel="Open ThinkGraph Inspector"
+        defaultWidth={340}
+        minWidth={320}
+        maxWidth={520}
+        storageKey="liquidaity.drawer.thinkgraph.width"
+        top={48}
+        right={12}
+        bottom={12}
+        zIndex={6}
+      >
+      <div className="engraphis-native-controls">
         <section>
           <h3>Controls</h3>
           <div className="engraphis-native-actions">
@@ -287,8 +316,9 @@ export function NativeThinkGraphSurface({
           <h3>Graph stats</h3>
           <dl className="engraphis-native-stats"><div><dt>Entities</dt><dd>{allNodes}</dd></div><div><dt>Relations</dt><dd>{allEdges}</dd></div><div><dt>Connected</dt><dd>{connectedCount}</dd></div><div><dt>Isolated</dt><dd>{Math.max(0, allNodes - connectedCount)}</dd></div></dl>
         </section>
-        {selected ? <section data-testid="thinkgraph-node-inspector"><h3>Entity</h3><h4>{selected.label}</h4><p>{selected.etype} · {selected.degree} connections</p><pre>{JSON.stringify(selected.properties, null, 2)}</pre></section> : null}
-      </aside>
+        {selected ? <section data-testid="thinkgraph-node-inspector"><h3>Entity</h3><h4>{selected.fullLabel}</h4><p>{selected.label} · {selected.etype} · {selected.degree} connections</p><pre>{JSON.stringify(selected.properties, null, 2)}</pre></section> : null}
+      </div>
+      </RightGlassDrawer>
     </div>
   );
 }
