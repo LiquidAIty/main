@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-# EXTRACTION SCHEMA = SEMANTIC DOMAIN ENTITIES ONLY (2026-07-15 baseline law).
-# Structural/provenance records (Document, Chunk, Chapter, Section) are owned by the
-# upstream lexical pipeline or a later deterministic provenance stage — NEVER the
-# extraction model. Assertions (Claim / SourceBackedAssertion / KnowledgeAssertion) are
-# owned by the chunk-grounded enrichment writer (enrich_chunks.py), which alone sets
-# canonical identity, trust, and status. Exposing any of them here makes the extraction
-# LLM fabricate them from source text (proven twice on 2026-07-15: an LLM-invented
-# Chapter{proj-001,doc-001,1} hit the knowgraph_chapter_identity constraint and rolled
-# back an entire ingest; a later run fabricated 12 Document and 11 Chunk entities,
-# including doc-001 and ids copied from the research-focus prompt).
+# EXTRACTION SCHEMA = SEMANTIC DOMAIN ENTITIES ONLY (owning-layer fabrication fix).
+# Structural/provenance records (Document, Chunk, Chapter, Section) belong to the
+# lexical pipeline and deterministic writers; assertions (Claim / SourceBackedAssertion /
+# KnowledgeAssertion) belong to the chunk-grounded enrichment writer. None of them may be
+# LLM-extractable: exposing them made the extraction model fabricate structure from book
+# text (proven live: invented Chapter{proj-001,doc-001,1} and 12 phantom Documents).
 NODE_TYPES: list[dict[str, object]] = [
     {
         "label": "Concept",
@@ -52,9 +48,8 @@ NODE_TYPES: list[dict[str, object]] = [
 ]
 
 RELATIONSHIP_TYPES: list[dict[str, object]] = [
-    # Structural/lexical relationships (HAS_CHUNK, MENTIONS, HAS_CHAPTER, HAS_SECTION)
-    # are owned by the lexical pipeline config and deterministic writers — see the
-    # NODE_TYPES note. Only SEMANTIC relationship types belong here.
+    # Structural/lexical relationships (HAS_CHAPTER/HAS_SECTION/HAS_CHUNK/MENTIONS) are
+    # owned by the lexical pipeline config and deterministic writers — never extraction.
     {"label": "RELATED_TO", "description": "General semantic association."},
     {"label": "USES", "description": "Dependency or usage relationship."},
     {"label": "PART_OF", "description": "Part-whole relationship."},
