@@ -130,6 +130,9 @@ const AgentManager = lazy(async () => {
 const UnifiedGraphSurface = lazy(
   () => import('../components/knowledge/UnifiedGraphSurface'),
 );
+const KnowGraphAnalysisSurface = lazy(
+  () => import('../components/knowledge/KnowGraphAnalysisSurface'),
+);
 const NativeCodeGraphSurface = lazy(async () => {
   const mod = await import('../components/knowledge/NativeAuthorityGraphSurface');
   return { default: mod.NativeCodeGraphSurface };
@@ -2100,6 +2103,8 @@ export default function AgentBuilder(): React.ReactElement {
                   status={thinkGraphProjection.status}
                   error={thinkGraphProjection.error}
                 />
+              ) : knowledgeGraphKind === 'knowgraph' ? (
+                <KnowGraphAnalysisSurface projectId={activeProject} />
               ) : (
                 <UnifiedGraphSurface
                   projectId={activeProject}
@@ -2116,59 +2121,6 @@ export default function AgentBuilder(): React.ReactElement {
             </Suspense>
           </KnowledgeSurfaceErrorBoundary>
         </div>
-        {/* Honest KnowGraph states: the tab now renders the REAL project-scoped
-            Neo4j browse projection (GET /api/knowgraph/graph). Loading, error,
-            and empty are each stated plainly; agent writes still go through the
-            Python rails only — this view is read-only. */}
-        {knowledgeGraphKind === 'knowgraph' &&
-        knowGraphProjection.status === 'loading' &&
-        !knowGraphProjection.projection ? (
-          <div
-            data-testid="knowgraph-loading-message"
-            style={{
-              position: 'absolute',
-              bottom: 12,
-              left: 12,
-              zIndex: 5,
-              ...graphGlassPillStyle({ fontSize: 11, padding: '5px 10px' }),
-            }}
-          >
-            Loading KnowGraph projection…
-          </div>
-        ) : null}
-        {knowledgeGraphKind === 'knowgraph' &&
-        knowGraphProjection.status === 'ready' &&
-        (knowGraphProjection.projection?.nodes?.length ?? 0) === 0 ? (
-          <div
-            data-testid="knowgraph-empty-message"
-            style={{
-              position: 'absolute',
-              bottom: 12,
-              left: 12,
-              zIndex: 5,
-              maxWidth: 560,
-              ...graphGlassPillStyle({ fontSize: 11, padding: '5px 10px' }),
-            }}
-          >
-            No KnowGraph evidence exists for this project yet. This view is
-            read-only; research runs write evidence through the Python rails.
-          </div>
-        ) : null}
-        {knowledgeGraphKind === 'knowgraph' && knowGraphProjection.status === 'error' ? (
-          <div
-            data-testid="knowgraph-projection-error"
-            style={{
-              position: 'absolute',
-              bottom: 12,
-              left: 12,
-              zIndex: 5,
-              maxWidth: 560,
-              ...graphGlassPillStyle({ fontSize: 11, padding: '5px 10px' }),
-            }}
-          >
-            KnowGraph projection unavailable: {knowGraphProjection.error}
-          </div>
-        ) : null}
       </div>
     </div>
     );

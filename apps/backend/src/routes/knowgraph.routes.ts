@@ -519,6 +519,32 @@ async function proxyKnowgraphGetJson(pathname: string, query?: Record<string, st
   throw lastError;
 }
 
+async function proxyKnowgraphPostJson(pathname: string, body: unknown): Promise<{
+  status: number;
+  data: any;
+}> {
+  const baseUrls = buildKnowgraphBaseUrls();
+  let lastError: any;
+
+  for (const baseUrl of baseUrls) {
+    try {
+      const response = await axios.post(`${baseUrl}${pathname}`, body, {
+        timeout: 300_000,
+        validateStatus: () => true,
+      });
+      return { status: response.status, data: response.data };
+    } catch (error: any) {
+      lastError = error;
+      const code = String(error?.code || '');
+      const canRetryNetworkLookup =
+        !error?.response && (code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN');
+      if (!canRetryNetworkLookup) break;
+    }
+  }
+
+  throw lastError;
+}
+
 router.get('/health', async (_req, res) => {
   try {
     const response = await proxyKnowgraphGetJson('/health');
@@ -553,6 +579,111 @@ router.get('/graph', async (req, res) => {
   } catch (error: any) {
     const message = error?.message || 'Failed to fetch KnowGraph graph';
     return res.status(500).json({ ok: false, error: { message } });
+  }
+});
+
+// Derived network analysis lives in the existing Python KnowGraph service and
+// persists back into the same Neo4j. These routes are transport only.
+router.get('/analysis/capabilities', async (_req, res) => {
+  try {
+    const response = await proxyKnowgraphGetJson('/analysis/capabilities');
+    return res.status(response.status).json(response.data);
+  } catch (error: any) {
+    return res.status(502).json({ ok: false, error: { message: error?.message || 'analysis capabilities unavailable' } });
+  }
+});
+
+router.get('/analysis/source-preview', async (req, res) => {
+  try {
+    const projectId = String(req.query?.projectId || req.query?.project_id || '').trim();
+    if (!projectId) return res.status(400).json({ ok: false, error: { message: 'projectId is required' } });
+    const response = await proxyKnowgraphGetJson('/analysis/source-preview', { project_id: projectId });
+    return res.status(response.status).json(response.data);
+  } catch (error: any) {
+    return res.status(502).json({ ok: false, error: { message: error?.message || 'source preview unavailable' } });
+  }
+});
+
+router.post('/analysis/analyze', async (req, res) => {
+  try {
+    const response = await proxyKnowgraphPostJson('/analysis/analyze', req.body);
+    return res.status(response.status).json(response.data);
+  } catch (error: any) {
+    return res.status(502).json({ ok: false, error: { message: error?.message || 'analysis failed' } });
+  }
+});
+
+router.post('/analysis/compare', async (req, res) => {
+  try {
+    const response = await proxyKnowgraphPostJson('/analysis/compare', req.body);
+    return res.status(response.status).json(response.data);
+  } catch (error: any) {
+    return res.status(502).json({ ok: false, error: { message: error?.message || 'provider comparison failed' } });
+  }
+});
+
+router.get('/analysis/latest', async (req, res) => {
+  try {
+    const projectId = String(req.query?.projectId || req.query?.project_id || '').trim();
+    const provider = String(req.query?.provider || 'local_cleanroom').trim();
+    if (!projectId) return res.status(400).json({ ok: false, error: { message: 'projectId is required' } });
+    const response = await proxyKnowgraphGetJson('/analysis/latest', { project_id: projectId, provider });
+    return res.status(response.status).json(response.data);
+  } catch (error: any) {
+    return res.status(502).json({ ok: false, error: { message: error?.message || 'analysis unavailable' } });
+  }
+});
+
+router.get('/analysis/comparison/latest', async (req, res) => {
+  try {
+    const projectId = String(req.query?.projectId || req.query?.project_id || '').trim();
+    if (!projectId) return res.status(400).json({ ok: false, error: { message: 'projectId is required' } });
+    const response = await proxyKnowgraphGetJson('/analysis/comparison/latest', { project_id: projectId });
+    return res.status(response.status).json(response.data);
+  } catch (error: any) {
+    return res.status(502).json({ ok: false, error: { message: error?.message || 'comparison unavailable' } });
+  }
+});
+
+router.get('/analysis/:analysisId/evidence/:topicId', async (req, res) => {
+  try {
+    const response = await proxyKnowgraphGetJson(
+      `/analysis/${encodeURIComponent(req.params.analysisId)}/evidence/${encodeURIComponent(req.params.topicId)}`,
+    );
+    return res.status(response.status).json(response.data);
+  } catch (error: any) {
+    return res.status(502).json({ ok: false, error: { message: error?.message || 'analysis evidence unavailable' } });
+  }
+});
+
+for (const detail of ['topics', 'gateways', 'gaps'] as const) {
+  router.get(`/analysis/:analysisId/${detail}`, async (req, res) => {
+    try {
+      const response = await proxyKnowgraphGetJson(
+        `/analysis/${encodeURIComponent(req.params.analysisId)}/${detail}`,
+      );
+      return res.status(response.status).json(response.data);
+    } catch (error: any) {
+      return res.status(502).json({ ok: false, error: { message: error?.message || `analysis ${detail} unavailable` } });
+    }
+  });
+}
+
+router.get('/analysis/:analysisId', async (req, res) => {
+  try {
+    const response = await proxyKnowgraphGetJson(`/analysis/${encodeURIComponent(req.params.analysisId)}`);
+    return res.status(response.status).json(response.data);
+  } catch (error: any) {
+    return res.status(502).json({ ok: false, error: { message: error?.message || 'analysis unavailable' } });
+  }
+});
+
+router.post('/analysis-view', async (req, res) => {
+  try {
+    const response = await proxyKnowgraphPostJson('/analysis-view', req.body);
+    return res.status(response.status).json(response.data);
+  } catch (error: any) {
+    return res.status(502).json({ ok: false, error: { message: error?.message || 'analysis view creation failed' } });
   }
 });
 

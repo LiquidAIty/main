@@ -459,6 +459,83 @@ router.post('/mcp-bridge/knowgraph_ingest', async (req, res) => {
   }
 });
 
+async function forwardKnowGraphAnalysis(
+  method: 'get' | 'post',
+  pathname: string,
+  body?: unknown,
+): Promise<{ status: number; data: unknown }> {
+  const port = Number(process.env.PORT || 4000);
+  const axios = (await import('axios')).default;
+  const response = await axios.request({
+    method,
+    url: `http://127.0.0.1:${port}/api/knowgraph${pathname}`,
+    data: body,
+    timeout: 300_000,
+    validateStatus: () => true,
+  });
+  return { status: response.status, data: response.data };
+}
+
+router.post('/mcp-bridge/knowgraph_analyze_scope', async (req, res) => {
+  try {
+    const response = await forwardKnowGraphAnalysis('post', '/analysis/analyze', req.body?.request);
+    return res.status(response.status).json(response.data);
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'knowgraph_analysis_failed' });
+  }
+});
+
+router.post('/mcp-bridge/knowgraph_get_analysis', async (req, res) => {
+  try {
+    const analysisId = String(req.body?.analysisId || '').trim();
+    if (!analysisId) return res.status(400).json({ ok: false, error: 'analysisId_required' });
+    const response = await forwardKnowGraphAnalysis('get', `/analysis/${encodeURIComponent(analysisId)}`);
+    return res.status(response.status).json(response.data);
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'knowgraph_analysis_read_failed' });
+  }
+});
+
+router.post('/mcp-bridge/knowgraph_compare_providers', async (req, res) => {
+  try {
+    const response = await forwardKnowGraphAnalysis('post', '/analysis/compare', {
+      request: req.body?.request,
+      external_provider_permission: req.body?.externalProviderPermission === true,
+      persist: req.body?.persist !== false,
+    });
+    return res.status(response.status).json(response.data);
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'knowgraph_provider_comparison_failed' });
+  }
+});
+
+for (const detail of ['topics', 'gateways', 'gaps'] as const) {
+  router.post(`/mcp-bridge/knowgraph_get_${detail}`, async (req, res) => {
+    try {
+      const analysisId = String(req.body?.analysisId || '').trim();
+      if (!analysisId) return res.status(400).json({ ok: false, error: 'analysisId_required' });
+      const response = await forwardKnowGraphAnalysis('get', `/analysis/${encodeURIComponent(analysisId)}/${detail}`);
+      return res.status(response.status).json(response.data);
+    } catch (error) {
+      return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : `knowgraph_${detail}_read_failed` });
+    }
+  });
+}
+
+router.post('/mcp-bridge/knowgraph_create_analysis_view', async (req, res) => {
+  try {
+    const response = await forwardKnowGraphAnalysis('post', '/analysis-view', {
+      analysis_id: req.body?.analysisId,
+      project_id: req.body?.projectId,
+      producing_invocation: req.body?.producingInvocation,
+      parent_view_id: req.body?.parentViewId || null,
+    });
+    return res.status(response.status).json(response.data);
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'knowgraph_analysis_view_failed' });
+  }
+});
+
 // Card-scoped internal tools (called by the Python ThinkGraph card run; authority
 // comes from the trusted run context the backend itself authored — never the model).
 router.post('/mcp-bridge/thinkgraph_read_scope', async (req, res) => {

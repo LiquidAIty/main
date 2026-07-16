@@ -4,3 +4,5 @@ fastapi
 uvicorn
 python-multipart
 python-dotenv
+networkx>=3.3,<4
+mcp>=1.0,<2

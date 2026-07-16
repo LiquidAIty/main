@@ -101,7 +101,9 @@ export default function useAgentBuilderKnowGraphProjection({
   }, []);
   const lastJsonRef = useRef<string | null>(null);
   useEffect(() => {
-    if (workspaceView !== 'knowledge' || !['knowgraph', 'unified'].includes(knowledgeGraphKind)) return;
+    // The native KnowGraph tab owns its derived-analysis fetch. This canonical browse
+    // projection is retained only for the cross-authority Unified view.
+    if (workspaceView !== 'knowledge' || knowledgeGraphKind !== 'unified') return;
     // Optional explicit KnowGraph scope override (?kgScope=…) lets the view open ANY real
     // KnowGraph scope directly (e.g. an imported book under its own canonical scope) without
     // moving data. Defaults to the selected LiquidAIty project.
