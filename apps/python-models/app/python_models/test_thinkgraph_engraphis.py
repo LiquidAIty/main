@@ -126,6 +126,12 @@ def test_changed_record_creates_immutable_version_and_supersedes_lineage(tmp_pat
     assert len({node["versionId"] for node in versions}) == 2
     assert sum(node["validTo"] is None for node in versions) == 1
     assert any(
+        edge["predicate"] == "RESULTED_IN"
+        and edge["source"] == "goal:kg01"
+        and edge["target"] == "dec:kg01"
+        for edge in current["edges"]
+    )
+    assert any(
         edge["predicate"] == "SUPERSEDES"
         and edge["source"] == current_decision["versionId"]
         and edge["target"] == current_decision["supersedesVersionId"]

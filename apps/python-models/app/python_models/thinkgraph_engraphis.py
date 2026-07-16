@@ -443,17 +443,41 @@ class ThinkGraphEngraphis:
                 limit=max(1, min(int(limit), 2000)),
             )
             ids = {record.id for record in records}
+            identity_records = records if include_historical else self.store.list_memories(
+                SearchFilter(workspace_id=workspace_id, repo_id=repo_id, mtypes=mtypes),
+                include_invalid=True,
+                limit=2000,
+            )
             canonical_by_id = {
                 record.id: _text((record.metadata or {}).get("canonicalId") or record.id)
-                for record in records
+                for record in identity_records
             }
-            edges = [edge for edge in self.store.edges_in_scope(SearchFilter(workspace_id=workspace_id, repo_id=repo_id)) if edge.src in ids and edge.dst in ids]
-            degree: dict[str, int] = {record_id: 0 for record_id in ids}
-            for edge in edges:
-                degree[edge.src] += 1
-                degree[edge.dst] += 1
-            nodes = [self._project_record(record, project_id, degree.get(record.id, 0)) for record in records]
+            scoped_edges = self.store.edges_in_scope(SearchFilter(workspace_id=workspace_id, repo_id=repo_id))
+            if include_historical:
+                edges = [edge for edge in scoped_edges if edge.src in ids and edge.dst in ids]
+            else:
+                current_canonical_ids = {canonical_by_id[record.id] for record in records}
+                canonical_edges: dict[tuple[str, str, str], Any] = {}
+                for edge in scoped_edges:
+                    source = canonical_by_id.get(edge.src)
+                    target = canonical_by_id.get(edge.dst)
+                    if edge.relation == "SUPERSEDES" or source not in current_canonical_ids or target not in current_canonical_ids:
+                        continue
+                    canonical_edges.setdefault((source, edge.relation, target), edge)
+                edges = list(canonical_edges.values())
             projected_edges = [self._project_edge(edge, canonical_by_id) for edge in edges]
+            degree: dict[str, int] = {}
+            for edge in projected_edges:
+                degree[edge["source"]] = degree.get(edge["source"], 0) + 1
+                degree[edge["target"]] = degree.get(edge["target"], 0) + 1
+            nodes = [
+                self._project_record(
+                    record,
+                    project_id,
+                    degree.get(record.id, degree.get(canonical_by_id[record.id], 0)),
+                )
+                for record in records
+            ]
             latest = max((record.ingested_at or 0 for record in records), default=0)
             return {
                 "schemaVersion": "thinkgraph.engraphis.v2",

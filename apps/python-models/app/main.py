@@ -105,10 +105,9 @@ def unified_context(
     role: str = "main_chat",
     activeGraphViewId: str | None = None,
     knowgraphScope: str | None = None,
-    thinkLimit: int = 120,
-    knowLimit: int = 120,
-    codeLimit: int = 90,
-    expansionDepth: int = 0,
+    thinkLimit: int = 5000,
+    knowLimit: int = 50000,
+    codeLimit: int = 50000,
 ):
     """One bounded context payload shared by the Unified scene and agent delivery."""
     from app.python_models.unified_context import UnifiedContextRequest, build_unified_context
@@ -122,7 +121,6 @@ def unified_context(
             think_limit=thinkLimit,
             know_limit=knowLimit,
             code_limit=codeLimit,
-            expansion_depth=expansionDepth,
         ))
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
@@ -138,10 +136,9 @@ def unified_model_context(
     role: str = "main_chat",
     activeGraphViewId: str | None = None,
     knowgraphScope: str | None = None,
-    thinkLimit: int = 120,
-    knowLimit: int = 120,
-    codeLimit: int = 90,
-    expansionDepth: int = 0,
+    thinkLimit: int = 5000,
+    knowLimit: int = 50000,
+    codeLimit: int = 50000,
 ):
     """Compact model representation resolved through the persistent authorities:
     deterministic rebuild + content-hash equality with the id the client saw."""
@@ -156,7 +153,6 @@ def unified_model_context(
             think_limit=thinkLimit,
             know_limit=knowLimit,
             code_limit=codeLimit,
-            expansion_depth=expansionDepth,
         ))
     except ValueError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err

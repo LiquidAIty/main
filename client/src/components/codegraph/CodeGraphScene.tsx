@@ -303,8 +303,8 @@ function EdgeLines({
       const end = new THREE.Vector3(target.x, target.y, target.z);
       if (curveCrossAuthority && edge.cross_authority) {
         const midpoint = start.clone().lerp(end, 0.5);
-        midpoint.y += Math.min(90, start.distanceTo(end) * 0.18);
-        midpoint.z += source.authority === target.authority ? 0 : 54;
+        midpoint.y += Math.min(45, start.distanceTo(end) * 0.1);
+        midpoint.z += source.authority === target.authority ? 0 : 30;
         const points = new THREE.QuadraticBezierCurve3(start, midpoint, end).getPoints(12);
         for (let index = 0; index < points.length - 1; index += 1) appendSegment(points[index], points[index + 1]);
       } else {

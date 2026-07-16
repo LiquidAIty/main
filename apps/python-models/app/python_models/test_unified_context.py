@@ -4,203 +4,126 @@ import time
 
 import pytest
 
-from app.python_models.unified_context import (
-    UnifiedContextRequest,
-    build_model_context,
-    build_unified_context,
-    render_graph_views,
-    render_model_context,
-)
+from app.python_models.unified_context import UnifiedContextRequest, build_model_context, build_unified_context, render_model_context
 
 
 class FakeThinkGraph:
-    def projection(self, project_id: str, limit: int = 500):
+    def projection(self, project_id: str, limit: int = 5000):
         return {
+            "revision": "think-revision-1",
             "nodes": [
-                {"id": "t:goal", "canonicalId": "t:goal", "title": "Goal", "type": "Goal", "degree": 2,
-                 "projectId": project_id, "knowGraphRef": "k:book",
-                 "properties": {"cluster": "decision", "knowgraph_ref": "k:book"}},
-                {"id": "t:decision", "canonicalId": "t:decision", "title": "Decision", "type": "Decision", "degree": 1,
-                 "projectId": project_id, "properties": {"cluster": "decision"}},
-                {"id": "graph-view:view-1", "canonicalId": "graph-view:view-1", "type": "GraphView", "projectId": project_id,
-                 "conversationId": "main", "properties": {
-                    "view_id": "view-1", "view_authority": "thinkgraph", "status": "attached",
-                    "included_node_ids_json": '["t:goal"]', "root_node_ids_json": '["t:goal"]',
-                    "records_json": "[]", "relationships_json": "[]", "filter_json": "{}",
-                    "provenance_refs_json": "[]", "producing_role": "user", "receiving_role": "main_chat",
-                 }},
-            ],
-            "edges": [{"id": "te:1", "source": "t:goal", "target": "t:decision", "predicate": "RESULTED_IN"}],
+                {"id": "think:one", "canonicalId": "think:one", "title": "Think one", "type": "Finding", "projectId": project_id, "properties": {}},
+                {"id": "think:two", "canonicalId": "think:two", "title": "Think two", "type": "Decision", "projectId": project_id, "properties": {}},
+            ][:limit],
+            "edges": [{"id": "think-edge", "source": "think:one", "target": "think:two", "predicate": "RELATES_TO"}],
         }
 
 
-def fake_read(path, _params):
-    if "knowgraph" in path:
-        return {"resolved_project_id": "book-scope", "nodes": [{"id": "k:book", "label": "Book", "type": "Document", "properties": {}}], "relationships": [], "view": _view("knowgraph", ["k:book"])}
-    return {"ok": True, "nodes": [{"id": "c:fn", "label": "fn", "type": "Function"}], "edges": []}
+def fake_read(path, params):
+    if path == "/api/knowgraph/analysis/latest":
+        return {"analysis": {
+            "nodes": [
+                {"id": "know:one", "label": "Know one", "type": "Concept", "properties": {}},
+                {"id": "know:two", "label": "Know two", "type": "Document", "properties": {}},
+            ],
+            "edges": [{"id": "know-edge", "source": "know:one", "target": "know:two", "type": "SUPPORTED_BY"}],
+        }}
+    if path == "/api/layout":
+        assert params["project"] == "repo"
+        return {
+            "nodes": [
+                {"id": 10, "x": 1, "y": 2, "z": 3, "label": "Function", "name": "pkg.one", "size": 4, "color": "#fff"},
+                {"id": 11, "x": 4, "y": 5, "z": 6, "label": "Class", "name": "pkg.two", "size": 5, "color": "#fff"},
+                {"id": 12, "x": 7, "y": 8, "z": 9, "label": "File", "name": "pkg.file", "size": 3, "color": "#fff"},
+            ],
+            "edges": [{"id": "code-edge", "source": 10, "target": 11, "type": "CALLS"}],
+            "total_nodes": 3,
+        }
+    raise AssertionError(path)
 
 
-def fake_post(_path, _payload):
-    return {"ok": True, "cbmProject": "repo", "result": {"results": [{"qualified_name": "c:fn", "name": "fn", "label": "Function", "file_path": "fn.py"}]}, "graphView": _view("codegraph", ["c:fn"])}
+def fake_post(path, payload):
+    assert path == "/api/coder/mcp-bridge/codegraph_status"
+    assert payload == {}
+    return {"ok": True, "cbmProject": "repo"}
 
 
-def _view(authority, ids):
-    return {"schemaVersion": "graph-view.v1", "viewId": f"{authority}:view", "authority": authority, "status": "candidate", "projectId": "project-1", "conversationId": "main", "producingRole": authority, "receivingRole": "main_chat", "rootCanonicalNodeIds": ids[:1], "includedCanonicalNodeIds": ids, "records": [{"canonicalId": item, "summary": item, "selectionReason": "test", "provenanceRefs": [], "estimatedCharacters": len(item), "estimatedTokens": 1} for item in ids], "includedRelationships": [], "query": "test", "filter": {"nodeTypes": [], "trustStates": []}, "hopDepth": 0, "provenanceRefs": [], "omittedNeighborCount": 0, "createdAt": "2026-01-01", "updatedAt": "2026-01-01"}
+def request(**overrides):
+    values = {"project_id": "project-1", "conversation_id": "main"}
+    values.update(overrides)
+    return UnifiedContextRequest(**values)
 
 
-def test_projection_is_bounded_stable_and_carries_exact_selected_view():
-    request = UnifiedContextRequest("project-1", "main", role="coder", active_view_id="view-1", think_limit=2)
-    first = build_unified_context(request, graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
-    second = build_unified_context(request, graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
-    assert {key: value for key, value in first.items() if key not in {"timingsMs", "cache"}} == {key: value for key, value in second.items() if key not in {"timingsMs", "cache"}}
-    assert first["schemaVersion"] == "unified.context.v1"
-    assert len(first["graphViews"]) == 3
-    assert {view["authority"] for view in first["graphViews"]} == {"thinkgraph", "knowgraph", "codegraph"}
-    assert first["graphViews"][0]["parentViewId"] == "view-1"
-    assert all(view["status"] == "candidate" for view in first["graphViews"])
-    assert all(view["receivingRole"] == "coder" for view in first["graphViews"])
-    assert first["lifecycle"]["selected"] == [view["viewId"] for view in first["graphViews"]]
-    assert first["counts"]["nodes"] == 3
-    assert first["counts"]["crossAuthorityEdges"] == 1
-    assert len([edge for edge in first["edges"] if edge["cross_authority"]]) == 1
-    assert {node["authority"] for node in first["nodes"]} == {"thinkgraph", "knowgraph", "codegraph"}
-    assert first["identity"] == {
-        "applicationProjectId": "project-1",
-        "thinkGraphWorkspaceId": "project-1",
-        "knowGraphScopeId": "book-scope",
-        "codeGraphProjectId": "repo",
-        "conversationId": "main",
-        "activeGraphViewId": "view-1",
-        "receivingRole": "coder",
-        "projectionId": first["projectionId"],
-    }
+def test_full_authority_data_passes_through_without_classifier_membership():
+    result = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    assert result["counts"]["selected"] == {"thinkgraph": 2, "knowgraph": 2, "codegraph": 3}
+    assert result["counts"]["nodes"] == 7
+    assert result["counts"]["edges"] == 3
+    assert {node["source_id"] for node in result["nodes"]} == {"think:one", "think:two", "know:one", "know:two", "pkg.one", "pkg.two", "pkg.file"}
+    assert {(edge["type"], edge["cross_authority"]) for edge in result["edges"]} == {("RELATES_TO", False), ("SUPPORTED_BY", False), ("CALLS", False)}
+    forbidden = {"activeAnchor", "context_role", "reason_for_inclusion", "story_state", "connected_to_anchor", "distance_to_anchor", "path_to_anchor"}
+    assert forbidden.isdisjoint(result)
+    assert all(forbidden.isdisjoint(node) for node in result["nodes"])
 
 
-def test_roles_produce_distinct_server_side_projection_hashes():
-    projections = [build_unified_context(
-        UnifiedContextRequest("project-1", "main", role=role, think_limit=80, know_limit=80, code_limit=80),
-        graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post,
-    ) for role in ("main_chat", "hermes", "coder")]
-    assert len({item["configurationHash"] for item in projections}) == 3
-    assert len({item["projectionId"] for item in projections}) == 3
-    assert projections[1]["limits"]["codegraph"] == 20
-    assert projections[2]["limits"]["knowgraph"] == 20
+def test_codegraph_coordinates_and_full_membership_are_preserved():
+    result = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    code = next(node for node in result["nodes"] if node["source_id"] == "pkg.one")
+    assert (code["x"], code["y"], code["z"], code["size"]) == (1.0, 2.0, 3.0, 4.0)
+    assert result["identity"]["codeGraphProjectId"] == "repo"
 
 
-def test_expansion_is_a_new_server_view_not_a_browser_only_hide_show():
-    base = build_unified_context(UnifiedContextRequest("project-1", "main", active_view_id="view-1"), graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
-    expanded = build_unified_context(UnifiedContextRequest("project-1", "main", active_view_id="view-1", expansion_depth=1), graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
-    assert base["projectionId"] != expanded["projectionId"]
-    assert next(view for view in base["graphViews"] if view["authority"] == "thinkgraph")["viewId"] != next(view for view in expanded["graphViews"] if view["authority"] == "thinkgraph")["viewId"]
-    assert expanded["counts"]["selected"]["thinkgraph"] > base["counts"]["selected"]["thinkgraph"]
+def test_projection_identity_is_stable_and_changes_with_source_identity():
+    first = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    second = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    assert first["projectionId"] == second["projectionId"]
+    other = build_unified_context(request(conversation_id="other"), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    assert other["projectionId"] != first["projectionId"]
 
 
-def test_missing_authority_is_explicit_warning_not_fake_data():
-    def failed_read(path, params):
-        if "knowgraph" in path:
+def test_partial_authority_failure_is_honest_and_does_not_backfill():
+    def partial_read(path, params):
+        if path == "/api/knowgraph/analysis/latest":
             raise RuntimeError("neo4j_down")
         return fake_read(path, params)
-    result = build_unified_context(UnifiedContextRequest("project-1", "main"), graph=FakeThinkGraph(), read_json=failed_read, post_json=fake_post)
-    assert result["counts"]["selected"]["knowgraph"] == 0
-    assert {warning["code"] for warning in result["warnings"]} == {"authority_unavailable", "empty_authority_view", "referenced_record_not_in_projection", "missing_authority_mapping"}
+    result = build_unified_context(request(), graph=FakeThinkGraph(), read_json=partial_read, read_codegraph_json=fake_read, post_json=fake_post)
+    assert result["counts"]["selected"] == {"thinkgraph": 2, "knowgraph": 0, "codegraph": 3}
+    assert {warning["code"] for warning in result["warnings"]} >= {"authority_unavailable", "empty_authority_view"}
 
 
-def test_model_context_resolves_by_persistent_identity_and_is_faithful():
-    request = UnifiedContextRequest("compact-project", "main")
-    built = build_unified_context(request, graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
-    first = build_model_context(built["projectionId"], request, graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
-    second = build_model_context(built["projectionId"], request, graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
-    assert first["modelContext"] == second["modelContext"]
-    text = first["modelContext"]
-    assert built["projectionId"] in text
-    assert "REASONING STATE" in text and "- Goal: Goal" in text
-    assert "RETRIEVAL:" in text and "read_thinkgraph_scope" in text
-    # FAITHFUL: every selected record of every authority view appears in the text.
-    for view in built["graphViews"]:
-        for record in view["records"]:
-            assert str(record["canonicalId"]) in text
-    # Every projection relationship (including cross-authority) is rendered.
-    rendered = render_model_context(built)
-    assert rendered["measurements"]["relationships"] == len({
-        (edge["source"], edge["target"], edge["type"]) for edge in built["edges"]
-    })
-    # None of the display/telemetry fields leak into the model text.
-    for excluded in ('"x":', "estimatedTokens", "selectionReason", "includedCanonicalNodeIds", "#4AE2DF"):
-        assert excluded not in text
-    measurements = first["measurements"]
-    assert measurements["characters"] == len(text)
-    assert set(measurements["sections"]) == {"header", "reasoning_state", "records", "relationships", "provenance", "warnings", "retrieval"}
-    assert set(measurements["authorities"]) == {"thinkgraph", "knowgraph", "codegraph"}
-    # The compact delivery is materially smaller than the full projection JSON.
-    import json as _json
-    assert len(text) < len(_json.dumps(built)) / 5
-
-
-def test_model_context_rejects_superseded_or_mismatched_projection_id():
-    request = UnifiedContextRequest("scope-project", "main")
-    built = build_unified_context(request, graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
-    # Unknown/stale id for this configuration — honest failure, no silent regeneration.
+def test_model_context_uses_the_same_projection_identity():
+    built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    delivered = build_model_context(built["projectionId"], request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
+    assert delivered["projectionId"] == built["projectionId"]
+    assert "pkg.one" in delivered["modelContext"]
     with pytest.raises(ValueError, match="projection_superseded"):
-        build_model_context("unified:not-the-current-hash", request, graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
-    # A different configuration (wrong scope, role, or expansion) produces a
-    # different content hash, so a swapped id also fails honestly.
-    other = UnifiedContextRequest("scope-project", "main", expansion_depth=1)
-    with pytest.raises(ValueError, match="projection_superseded"):
-        build_model_context(built["projectionId"], other, graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
-    current = build_model_context(built["projectionId"], request, graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post)
-    assert current["ok"] is True
-    assert current["graphViews"] == built["graphViews"]
+        build_model_context("unified:wrong", request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
 
 
-def test_render_model_context_reports_projection_side_omissions():
-    built = build_unified_context(
-        UnifiedContextRequest("omission-project", "main", think_limit=1, expansion_depth=1),
-        graph=FakeThinkGraph(), read_json=fake_read, post_json=fake_post,
-    )
+def test_rendered_relationship_count_matches_projection():
+    built = build_unified_context(request(), graph=FakeThinkGraph(), read_json=fake_read, read_codegraph_json=fake_read, post_json=fake_post)
     rendered = render_model_context(built)
-    think = rendered["measurements"]["authorities"]["thinkgraph"]
-    assert think["availableBeyondView"] >= 1
-    assert "more available beyond this view" in rendered["text"]
+    assert rendered["measurements"]["relationships"] == 3
 
 
-def test_render_graph_views_is_faithful_and_compact():
-    views = [_view("thinkgraph", ["t:goal", "t:decision"]), _view("codegraph", ["c:fn"])]
-    views[0]["includedRelationships"] = [{"id": "e1", "source": "t:goal", "target": "t:decision", "type": "RESULTED_IN"}]
-    rendered = render_graph_views(views)
-    text = rendered["text"]
-    for canonical in ("t:goal", "t:decision", "c:fn"):
-        assert canonical in text
-    assert "t:goal -RESULTED_IN-> t:decision" in text
-    assert rendered["measurements"]["records"] == 3
-    assert rendered["measurements"]["relationships"] == 1
-    assert "selectionReason" not in text and "estimatedTokens" not in text
-    import json as _json
-    assert len(text) < len(_json.dumps(views))
-
-
-def test_identical_concurrent_requests_resolve_authorities_once():
+def test_identical_concurrent_requests_join_one_full_authority_read():
     barrier = threading.Barrier(2)
-    calls = {"codegraph": 0}
-    calls_lock = threading.Lock()
+    calls = 0
+    lock = threading.Lock()
 
-    def slow_post(path, payload):
-        with calls_lock:
-            calls["codegraph"] += 1
-        time.sleep(0.08)
-        return fake_post(path, payload)
-
-    request = UnifiedContextRequest("singleflight-project", "singleflight-conversation", active_view_id="view-1")
+    def slow_read(path, params):
+        nonlocal calls
+        if path == "/api/layout":
+            with lock:
+                calls += 1
+            time.sleep(0.08)
+        return fake_read(path, params)
 
     def resolve():
         barrier.wait(timeout=2)
-        return build_unified_context(request, graph=FakeThinkGraph(), read_json=fake_read, post_json=slow_post)
+        return build_unified_context(request(project_id="concurrent"), graph=FakeThinkGraph(), read_json=slow_read, read_codegraph_json=slow_read, post_json=fake_post)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         first, second = [future.result(timeout=3) for future in [pool.submit(resolve), pool.submit(resolve)]]
-
-    assert calls["codegraph"] == 1
+    assert calls == 1
     assert first["projectionId"] == second["projectionId"]
-    assert {first["cache"]["freshness"], second["cache"]["freshness"]} == {
-        "resolved_from_authorities",
-        "joined_inflight",
-    }

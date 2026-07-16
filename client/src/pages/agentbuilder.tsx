@@ -1898,7 +1898,6 @@ export default function AgentBuilder(): React.ReactElement {
           ? {
               projectionId: activeProjection.projectionId,
               ...(activeProjection.activeGraphViewId ? { activeGraphViewId: activeProjection.activeGraphViewId } : {}),
-              ...(activeProjection.expansionDepth ? { expansionDepth: activeProjection.expansionDepth } : {}),
               ...(activeProjection.knowgraphScope ? { knowgraphScope: activeProjection.knowgraphScope } : {}),
             }
           : {}),

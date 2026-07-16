@@ -92,3 +92,4 @@ def resolve_thinkgraph_context(
     if len(candidates) > len(nodes):
         warnings.append({"authority": "thinkgraph", "code": "authority_view_truncated", "detail": f"{len(candidates) - len(nodes)} records omitted by limit {limit}."})
     return {"schemaVersion": "thinkgraph.context.v1", "authority": "thinkgraph", "projectId": project_id, "revision": projection.get("revision"), "view": view, "availableViews": persisted_views, "nodes": nodes, "edges": edges, "warnings": warnings, "counts": {"available": len(candidates), "selected": len(nodes), "edges": len(edges)}}
+
