@@ -4,6 +4,7 @@ import { forceCollide, forceX, forceY } from 'd3-force';
 
 import { GraphTab as CbmGraphTab } from '../../vendor/codebase-memory-ui/src/components/GraphTab';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
+import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import type { GraphProjectionV1 } from './KnowledgeGraphFramework';
 import './nativeAuthorityGraphSurface.css';
 
@@ -34,14 +35,16 @@ type NativeLink = {
 };
 
 const TYPE_COLORS: Record<string, string> = {
-  Goal: '#7c6bf5',
-  Question: '#22d3ee',
-  Decision: '#fbbf24',
-  GraphView: '#60a5fa',
-  Finding: '#4ade80',
-  CodeInspectionNeed: '#a78bfa',
-  ResearchNeed: '#f87171',
+  Goal: '#37ADAA',
+  Question: '#62B0E8',
+  Decision: '#7BC8C4',
+  GraphView: '#6FA8B8',
+  Finding: '#91C4B3',
+  CodeInspectionNeed: '#8FA9B3',
+  ResearchNeed: '#6D8F99',
+  Risk: '#8798A0',
 };
+const DEFAULT_TYPE_COLOR = '#A7B0BA';
 
 function endpointId(value: string | NativeNode): string {
   return typeof value === 'string' ? value : value.id;
@@ -129,7 +132,7 @@ export function NativeThinkGraphSurface({
         .cooldownTime(4000)
         .warmupTicks(40)
         .nodeRelSize(1)
-        .autoPauseRedraw(false)
+        .autoPauseRedraw(true)
         .onNodeClick((node) => {
           setSelected(node as NativeNode);
           setInspectorOpen(true);
@@ -155,7 +158,7 @@ export function NativeThinkGraphSurface({
         context.globalAlpha = isNeighbor ? 1 : 0.12;
         context.beginPath();
         context.arc(node.x || 0, node.y || 0, radius, 0, Math.PI * 2);
-        context.fillStyle = TYPE_COLORS[node.etype] || '#a78bfa';
+        context.fillStyle = TYPE_COLORS[node.etype] || DEFAULT_TYPE_COLOR;
         context.fill();
         if (connectedFocus && node.id === hovered) {
           context.lineWidth = 1.6;
@@ -263,7 +266,19 @@ export function NativeThinkGraphSurface({
   return (
     <div data-testid="native-thinkgraph-surface" className="engraphis-native-graph">
       <div className="engraphis-native-canvas">
+        <GraphPaperBackground />
         <div ref={hostRef} className="engraphis-native-network" />
+        <GraphNavigationControls
+          onZoomIn={() => {
+            const graph = graphRef.current;
+            if (graph) graph.zoom(graph.zoom() * 1.2, 220);
+          }}
+          onZoomOut={() => {
+            const graph = graphRef.current;
+            if (graph) graph.zoom(graph.zoom() / 1.2, 220);
+          }}
+          onFit={() => graphRef.current?.zoomToFit(320, 60)}
+        />
         {status === 'loading' && !projection ? <div className="engraphis-native-empty">Loading graph…</div> : null}
         {status === 'error' ? <div className="engraphis-native-empty">Graph failed: {error}</div> : null}
         {status === 'ready' && allNodes === 0 ? <div className="engraphis-native-empty">No entities in this project yet.</div> : null}
@@ -290,7 +305,6 @@ export function NativeThinkGraphSurface({
           <div className="engraphis-native-actions">
             <button onClick={() => window.dispatchEvent(new Event('knowledge:refresh'))}>Refresh</button>
             <button onClick={() => graphRef.current?.d3ReheatSimulation()}>Reheat</button>
-            <button onClick={() => graphRef.current?.zoomToFit(600, 60)}>Fit</button>
           </div>
           <label><input type="checkbox" checked={hideIsolated} onChange={(event) => setHideIsolated(event.target.checked)} /> Hide unconnected entities</label>
           <label><input type="checkbox" checked={showLinkLabels} onChange={(event) => setShowLinkLabels(event.target.checked)} /> Show link labels</label>
@@ -306,11 +320,11 @@ export function NativeThinkGraphSurface({
         </section>
         <section>
           <h3>Top connected</h3>
-          {topConnected.map((node, index) => <button className="engraphis-native-rank" key={node.id} onClick={() => { setSearch(node.label); focusNode(node); }}><span>{index + 1}</span><i style={{ background: TYPE_COLORS[node.etype] || '#a78bfa' }} /> <b>{node.label}</b><em>{node.degree}</em></button>)}
+          {topConnected.map((node, index) => <button className="engraphis-native-rank" key={node.id} onClick={() => { setSearch(node.label); focusNode(node); }}><span>{index + 1}</span><i style={{ background: TYPE_COLORS[node.etype] || DEFAULT_TYPE_COLOR }} /> <b>{node.label}</b><em>{node.degree}</em></button>)}
         </section>
         <section>
           <h3>Entity types <span>{typeCounts.length}</span></h3>
-          {typeCounts.map(([type, count]) => <div className="engraphis-native-type" key={type}><i style={{ background: TYPE_COLORS[type] || '#a78bfa' }} /><span>{type}</span><b>{count}</b></div>)}
+          {typeCounts.map(([type, count]) => <div className="engraphis-native-type" key={type}><i style={{ background: TYPE_COLORS[type] || DEFAULT_TYPE_COLOR }} /><span>{type}</span><b>{count}</b></div>)}
         </section>
         <section>
           <h3>Graph stats</h3>

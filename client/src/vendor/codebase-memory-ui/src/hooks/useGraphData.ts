@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { GraphData } from "../lib/types";
 
 interface UseGraphDataResult {
@@ -28,32 +28,37 @@ export function useGraphData(): UseGraphDataResult {
   const [data, setData] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestGeneration = useRef(0);
 
   const fetchOverview = useCallback(async (project: string) => {
+    const generation = requestGeneration.current + 1;
+    requestGeneration.current = generation;
     setLoading(true);
     setError(null);
     try {
       const result = await fetchLayout(project, 50000);
-      setData(result);
+      if (requestGeneration.current === generation) setData(result);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to fetch layout");
+      if (requestGeneration.current === generation) setError(e instanceof Error ? e.message : "Failed to fetch layout");
     } finally {
-      setLoading(false);
+      if (requestGeneration.current === generation) setLoading(false);
     }
   }, []);
 
   const fetchDetail = useCallback(
     async (project: string, _centerNode: string) => {
+      const generation = requestGeneration.current + 1;
+      requestGeneration.current = generation;
       setLoading(true);
       setError(null);
       try {
         /* TODO: detail level with center_node filtering */
         const result = await fetchLayout(project, 50000);
-        setData(result);
+        if (requestGeneration.current === generation) setData(result);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to fetch layout");
+        if (requestGeneration.current === generation) setError(e instanceof Error ? e.message : "Failed to fetch layout");
       } finally {
-        setLoading(false);
+        if (requestGeneration.current === generation) setLoading(false);
       }
     },
     [],

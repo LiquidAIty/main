@@ -2060,6 +2060,8 @@ export default function AgentBuilder(): React.ReactElement {
                     border: `1px solid ${active ? '#2dd4bf' : '#26313f'}`,
                     background: active ? 'rgba(45,212,191,0.12)' : 'rgba(13,18,32,0.7)',
                     color: active ? '#a9ecdf' : '#8fb3c8',
+                    outline: 'none',
+                    boxShadow: active ? '0 0 0 1px rgba(55,173,170,.18)' : 'none',
                   }}
                 >
                   {label}

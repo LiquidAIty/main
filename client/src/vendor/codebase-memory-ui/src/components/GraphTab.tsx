@@ -4,6 +4,7 @@ import { useGraphData } from "../hooks/useGraphData";
 import {
   GraphScene,
   computeCameraTarget,
+  type CameraCommand,
   type CameraTarget,
 } from "./GraphScene";
 import { Sidebar } from "./Sidebar";
@@ -11,8 +12,10 @@ import { FilterPanel } from "./FilterPanel";
 import { NodeDetailPanel } from "./NodeDetailPanel";
 import { ErrorBoundary } from "./ErrorBoundary";
 import type { GraphNode, GraphData } from "../lib/types";
+import { colorForLabel } from "../lib/colors";
 import RightGlassDrawer from "../../../../components/graph/RightGlassDrawer";
 import GlassInspectorSection from "../../../../components/graph/GlassInspectorSection";
+import { GraphNavigationControls, GraphPaperBackground } from "../../../../components/graph/GraphCanvasChrome";
 
 interface GraphTabProps {
   project: string | null;
@@ -24,6 +27,7 @@ export function GraphTab({ project }: GraphTabProps) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [cameraTarget, setCameraTarget] = useState<CameraTarget | null>(null);
+  const [cameraCommand, setCameraCommand] = useState<CameraCommand>(null);
   const [showLabels, setShowLabels] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const initiallyFittedProject = useRef<string | null>(null);
@@ -46,7 +50,9 @@ export function GraphTab({ project }: GraphTabProps) {
   const filteredData: GraphData | null = useMemo(() => {
     if (!data) return null;
 
-    const nodes = data.nodes.filter((n) => enabledLabels.has(n.label));
+    const nodes = data.nodes
+      .filter((n) => enabledLabels.has(n.label))
+      .map((n) => ({ ...n, color: colorForLabel(n.label) }));
     const nodeIds = new Set(nodes.map((n) => n.id));
     const edges = data.edges.filter(
       (e) =>
@@ -114,7 +120,6 @@ export function GraphTab({ project }: GraphTabProps) {
       }
       setHighlightedIds(connectedIds);
       setSelectedPath(node.file_path ?? null);
-      setCameraTarget(computeCameraTarget(filteredData.nodes, connectedIds));
       setInspectorOpen(true);
     },
     [filteredData],
@@ -178,7 +183,7 @@ export function GraphTab({ project }: GraphTabProps) {
     );
   }
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center">
@@ -189,7 +194,7 @@ export function GraphTab({ project }: GraphTabProps) {
     );
   }
 
-  if (error) {
+  if (error && !data) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center p-8">
@@ -223,19 +228,21 @@ export function GraphTab({ project }: GraphTabProps) {
 
   return (
     <div ref={graphHostRef} className="h-full relative overflow-hidden">
-      <div className="absolute inset-0 overflow-hidden">
+      <GraphPaperBackground />
+      <div className="absolute inset-0 overflow-hidden" style={{ zIndex: 1 }}>
         <ErrorBoundary>
           <GraphScene
             data={filteredData}
             highlightedIds={highlightedIds}
             cameraTarget={cameraTarget}
+            cameraCommand={cameraCommand}
             showLabels={showLabels}
             onNodeClick={handleNodeClick}
           />
         </ErrorBoundary>
 
         {/* HUD */}
-        <div className="absolute top-4 left-4 text-[11px] text-white/30 pointer-events-none font-mono">
+        <div className="absolute text-[11px] text-white/40 pointer-events-none font-mono" style={{ top: 56, left: 12 }}>
           <p>
             {filteredData.nodes.length.toLocaleString()} nodes /{" "}
             {filteredData.edges.length.toLocaleString()} edges
@@ -252,48 +259,13 @@ export function GraphTab({ project }: GraphTabProps) {
           )}
         </div>
 
-        <div className="absolute top-4 right-4 flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setInspectorOpen(true)}>Inspector</Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setCameraTarget(computeCameraTarget(filteredData.nodes, new Set(filteredData.nodes.map((node) => node.id))))}
-          >
-            Fit all
-          </Button>
-          {highlightedIds ? (
-            <Button variant="outline" size="sm" onClick={() => setCameraTarget(computeCameraTarget(filteredData.nodes, highlightedIds))}>Fit selection</Button>
-          ) : null}
-          {highlightedIds && (
-            <Button
-              size="sm"
-              onClick={() => {
-                setHighlightedIds(null);
-                setSelectedPath(null);
-                setSelectedNode(null);
-                setCameraTarget(null);
-              }}
-            >
-              Clear
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setHighlightedIds(null);
-              setSelectedPath(null);
-              setSelectedNode(null);
-              setCameraTarget(null);
-              fetchOverview(project);
-            }}
-          >
-            Refresh
-          </Button>
-        </div>
-        <div className="absolute bottom-4 left-4 text-[10px] text-white/35 pointer-events-none font-mono">
-          Drag to orbit · right-drag to pan · wheel to zoom · Esc clears focus
-        </div>
+        <GraphNavigationControls
+          onZoomIn={() => setCameraCommand({ action: "zoom_in", token: Date.now() })}
+          onZoomOut={() => setCameraCommand({ action: "zoom_out", token: Date.now() })}
+          onFit={() => setCameraTarget(computeCameraTarget(filteredData.nodes, new Set(filteredData.nodes.map((node) => node.id))))}
+        />
+        {loading ? <div className="absolute bottom-4 left-32 text-[10px] text-white/45">Refreshing…</div> : null}
+        {error ? <div className="absolute bottom-4 left-32 text-[10px] text-red-300">Refresh failed · current graph retained</div> : null}
       </div>
 
       <RightGlassDrawer
@@ -326,8 +298,9 @@ export function GraphTab({ project }: GraphTabProps) {
               onNavigate={handleNavigateToNode}
             />
           ) : <div className="text-[11px] text-white/35">Select a repository node to inspect its identity and relationships.</div>}
+          <Button variant="outline" size="sm" className="mt-3 w-full" onClick={() => fetchOverview(project)} disabled={loading}>{loading ? "Refreshing…" : "Refresh graph"}</Button>
         </GlassInspectorSection>
-        <GlassInspectorSection title="Node, edge & display filters" signal={`${filteredData.nodes.length.toLocaleString()} nodes`}>
+        <GlassInspectorSection title="Node, edge & display filters" signal={`${filteredData.nodes.length.toLocaleString()} nodes`} defaultOpen={false}>
           <FilterPanel
             data={data}
             enabledLabels={enabledLabels}

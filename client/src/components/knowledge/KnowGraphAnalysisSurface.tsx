@@ -4,6 +4,7 @@ import type { Core, EdgeSingular, NodeSingular } from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 
 import GlassInspectorSection from '../graph/GlassInspectorSection';
+import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GRAPH_THEME, graphGlassCardStyle, graphGlassPillStyle } from '../graph/graphVisualTokens';
 
@@ -70,7 +71,7 @@ type EvidenceRecord = {
   section?: string;
 };
 
-const COMMUNITY_COLORS = ['#37ADAA', '#F4A261', '#8E7CFF', '#E76F8A', '#62B0E8', '#91C46C', '#D8A7E8', '#E9C46A'];
+const COMMUNITY_COLORS = ['#37ADAA', '#62B0E8', '#7BC8C4', '#91C4B3', '#A7B0BA', '#4E8F9A', '#76A9B8', '#5E7C8A'];
 const panelStyle = graphGlassCardStyle({ padding: 12, borderRadius: 12 });
 const buttonStyle = {
   border: `1px solid ${GRAPH_THEME.surface.border}`,
@@ -274,11 +275,11 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
         },
         {
           selector: 'node[gateway = 1]',
-          style: { 'border-color': '#FFE08A', 'border-width': 3, 'underlay-color': '#FFE08A', 'underlay-opacity': 0.15, 'underlay-padding': 7 },
+          style: { 'border-color': '#A9ECE8', 'border-width': 3, 'underlay-color': '#37ADAA', 'underlay-opacity': 0.15, 'underlay-padding': 7 },
         },
         {
           selector: 'node[gap = 1]',
-          style: { 'shape': 'diamond', 'underlay-color': '#E76F8A', 'underlay-opacity': 0.1, 'underlay-padding': 5 },
+          style: { 'shape': 'diamond', 'underlay-color': '#7BC8C4', 'underlay-opacity': 0.12, 'underlay-padding': 5 },
         },
         {
           selector: 'edge',
@@ -292,7 +293,7 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
         { selector: 'node:selected', style: { 'border-color': '#FFFFFF', 'border-width': 3, opacity: 1, label: 'data(label)' } },
         { selector: 'edge:selected', style: { 'line-color': '#FFFFFF', opacity: 1 } },
         { selector: '.dimmed', style: { opacity: 0.08, 'text-opacity': 0.03 } },
-        { selector: '.gap-path', style: { 'border-color': '#FF6B9A', 'border-width': 4, 'line-color': '#FF6B9A', opacity: 1 } },
+        { selector: '.gap-path', style: { 'border-color': '#7BC8C4', 'border-width': 4, 'line-color': '#7BC8C4', opacity: 1 } },
       ] as any,
       layout: {
         name: 'fcose',
@@ -413,8 +414,14 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
   const runDisabled = !scopeProjectId || status === 'running';
 
   return (
-    <div data-testid="knowgraph-analysis-surface" style={{ width: '100%', height: '100%', minHeight: 620, position: 'relative', background: '#071014', overflow: 'hidden' }}>
-      <div ref={graphRef} style={{ position: 'absolute', inset: 0 }} />
+    <div data-testid="knowgraph-analysis-surface" style={{ width: '100%', height: '100%', minHeight: 620, position: 'relative', background: GRAPH_THEME.background.knowledgeSurface, overflow: 'hidden' }}>
+      <GraphPaperBackground />
+      <div ref={graphRef} style={{ position: 'absolute', inset: 0, zIndex: 1 }} />
+      <GraphNavigationControls
+        onZoomIn={() => cyRef.current?.zoom((cyRef.current?.zoom() || 1) * 1.2)}
+        onZoomOut={() => cyRef.current?.zoom((cyRef.current?.zoom() || 1) / 1.2)}
+        onFit={() => cyRef.current?.fit(undefined, 70)}
+      />
 
       <RightGlassDrawer
         isOpen={inspectorOpen}
@@ -434,13 +441,13 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
       >
       <div style={{ display: 'grid', gap: 8 }}>
         <div style={panelStyle}>
-          <div style={{ color: '#A9ECE8', fontSize: 11, marginBottom: 8 }}>Local network analysis over canonical Neo4j</div>
+          <div style={{ color: '#A9ECE8', fontSize: 11, marginBottom: 8 }}>Canonical Neo4j analysis</div>
           <Metric label="Scope statements" value={preview?.statement_count} />
           <Metric label="Scope characters" value={preview?.character_count?.toLocaleString()} />
           <Metric label="Canonical source" value="Neo4j chunks and concepts" />
-          <button type="button" disabled={runDisabled} onClick={() => void runAnalysis()} style={{ ...buttonStyle, width: '100%', marginTop: 9, background: runDisabled ? 'rgba(20,30,36,.55)' : 'rgba(55,173,170,.17)', cursor: runDisabled ? 'not-allowed' : 'pointer' }}>
-            {status === 'running' ? 'Analyzing canonical KnowGraph…' : 'Run local analysis'}
-          </button>
+          {!analysis ? <button type="button" disabled={runDisabled} onClick={() => void runAnalysis()} style={{ ...buttonStyle, width: '100%', marginTop: 9, background: runDisabled ? 'rgba(20,30,36,.55)' : 'rgba(55,173,170,.17)', cursor: runDisabled ? 'not-allowed' : 'pointer' }}>
+            {status === 'running' ? 'Analyzing…' : 'Build analysis'}
+          </button> : null}
         </div>
 
         {analysis ? (
@@ -458,10 +465,6 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
               <button type="button" onClick={() => setGatewaysOnly((value) => !value)} style={{ ...buttonStyle, opacity: gatewaysOnly ? 1 : 0.58 }}>Gateways</button>
               <button type="button" onClick={() => setGapsOnly((value) => !value)} style={{ ...buttonStyle, opacity: gapsOnly ? 1 : 0.58 }}>Gap regions</button>
               <button type="button" disabled={!selectedNode} onClick={() => setFocusNeighborhood((value) => !value)} style={{ ...buttonStyle, opacity: focusNeighborhood ? 1 : 0.58 }}>Neighborhood</button>
-              <button type="button" onClick={() => cyRef.current?.fit(undefined, 70)} style={buttonStyle}>Fit graph</button>
-              <button type="button" onClick={() => cyRef.current?.zoom((cyRef.current?.zoom() || 1) * 1.2)} style={buttonStyle}>Zoom in</button>
-              <button type="button" onClick={() => cyRef.current?.zoom((cyRef.current?.zoom() || 1) / 1.2)} style={buttonStyle}>Zoom out</button>
-              <button type="button" onClick={() => cyRef.current?.center()} style={buttonStyle}>Center</button>
             </div>
           </div>
         ) : null}
@@ -471,7 +474,7 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
       <div style={panelStyle}>
         {analysis ? (
           <>
-            <GlassInspectorSection title="Derived analysis" signal={analysis.provider}>
+            <GlassInspectorSection title="Analysis details" signal={analysis.provider} defaultOpen={false}>
               <Metric label="Analysis" value={analysis.analysis_id} />
               <Metric label="Algorithm" value={analysis.algorithm_version} />
               <Metric label="Nodes / edges" value={`${analysis.node_count} / ${analysis.edge_count}`} />
@@ -480,6 +483,7 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
               <Metric label="Runtime" value={`${analysis.runtime_ms} ms`} />
               <Metric label="Reused" value={analysis.reused ? 'yes' : 'no'} />
               <div style={{ fontSize: 10, color: GRAPH_THEME.surface.mutedText, overflowWrap: 'anywhere' }}>Config {analysis.configuration_hash}</div>
+              <button type="button" disabled={runDisabled} onClick={() => void runAnalysis()} style={{ ...buttonStyle, marginTop: 7, width: '100%' }}>{status === 'running' ? 'Refreshing…' : 'Refresh analysis'}</button>
               <button type="button" onClick={() => void createView()} style={{ ...buttonStyle, marginTop: 7, width: '100%' }}>Create candidate Graph View</button>
               {viewStatus ? <div style={{ marginTop: 6, fontSize: 10, color: GRAPH_THEME.surface.mutedText, overflowWrap: 'anywhere' }}>{viewStatus}</div> : null}
             </GlassInspectorSection>
@@ -507,7 +511,7 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
                 <Metric label="Occurrences" value={selectedEdge.occurrences} />
               </GlassInspectorSection>
             ) : (
-              <GlassInspectorSection title="Main concepts" signal={`${analysis.main_concepts.length}`}>
+              <GlassInspectorSection title="Main concepts" signal={`${analysis.main_concepts.length}`} defaultOpen={false}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                   {analysis.main_concepts.map((concept) => <span key={concept} style={graphGlassPillStyle({ fontSize: 10, padding: '4px 7px' })}>{concept}</span>)}
                 </div>
@@ -516,7 +520,7 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
 
             <GlassInspectorSection title="Structural gaps" signal={`${analysis.content_gap_candidates.length}`} defaultOpen={false}>
               {analysis.content_gap_candidates.map((gap) => (
-                <button key={gap.id} type="button" onClick={() => setSelectedGap(gap)} style={{ ...buttonStyle, width: '100%', textAlign: 'left', marginBottom: 5, borderColor: selectedGap?.id === gap.id ? '#E76F8A' : GRAPH_THEME.surface.border }}>
+                <button key={gap.id} type="button" onClick={() => setSelectedGap(gap)} style={{ ...buttonStyle, width: '100%', textAlign: 'left', marginBottom: 5, borderColor: selectedGap?.id === gap.id ? '#7BC8C4' : GRAPH_THEME.surface.border }}>
                   {gap.source_community} ↔ {gap.target_community} · path {gap.path_length}
                 </button>
               ))}

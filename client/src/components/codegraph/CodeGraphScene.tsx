@@ -522,11 +522,11 @@ export function CodeGraphScene({
 
       <EffectComposer>
         <Bloom
-          luminanceThreshold={0.34}
+          luminanceThreshold={0.64}
           luminanceSmoothing={0.7}
-          intensity={0.95}
+          intensity={0.42}
           mipmapBlur
-          radius={0.5}
+          radius={0.3}
         />
       </EffectComposer>
 

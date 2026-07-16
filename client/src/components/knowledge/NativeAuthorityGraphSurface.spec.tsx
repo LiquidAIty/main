@@ -32,5 +32,7 @@ describe('native authority graph surfaces', () => {
   it('renders Engraphis honest empty state without sample data', () => {
     render(<NativeThinkGraphSurface projection={{ schemaVersion: 'v1', projectId: 'p', nodes: [], edges: [] }} status="ready" error={null} />);
     expect(screen.getByText('No entities in this project yet.')).toBeTruthy();
+    expect(screen.getByTestId('graph-navigation-controls')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open ThinkGraph Inspector' })).toBeTruthy();
   });
 });

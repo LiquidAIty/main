@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { CodeGraphScene } from '../codegraph/CodeGraphScene';
 import type { CodeGraphData, CodeGraphNode } from '../codegraph/types';
 import GlassInspectorSection from '../graph/GlassInspectorSection';
+import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GRAPH_THEME, graphDrawerButtonStyle, graphDrawerInputStyle, graphGlassPillStyle } from '../graph/graphVisualTokens';
 import type { GraphView } from './graphView';
@@ -197,28 +198,30 @@ export default function UnifiedGraphSurface({
   const counts = payload?.counts.selected || EMPTY_COUNTS;
 
   return (
-    <div style={{ height: '100%', minHeight: 0, position: 'relative', overflow: 'hidden', background: 'radial-gradient(circle at 50% 45%, #102131 0%, #071019 50%, #03070b 100%)' }}>
-      <div style={{ position: 'absolute', inset: '12px 12px auto 12px', zIndex: 6, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', pointerEvents: 'none' }}>
-        <span style={graphGlassPillStyle({ pointerEvents: 'auto' })}>Unified context · {sceneData.nodes.length}/{payload?.counts.nodes || 0}</span>
-        {payload?.regions.map((region) => <span key={region.id} style={graphGlassPillStyle({ color: region.color, pointerEvents: 'auto' })}>{region.label} {counts[region.id]}/{payload.counts.available[region.id]}</span>)}
-        <span style={graphGlassPillStyle({ color: '#9FB2C1', pointerEvents: 'auto' })}>refs {payload?.counts.crossAuthorityEdges || 0}</span>
-        {payload ? <span style={graphGlassPillStyle({ color: '#8298A8', pointerEvents: 'auto' })}>{payload.projectionId}</span> : null}
+    <div style={{ height: '100%', minHeight: 0, position: 'relative', overflow: 'hidden', background: GRAPH_THEME.background.knowledgeSurface }}>
+      <GraphPaperBackground />
+      <div style={{ position: 'absolute', inset: '52px 12px auto 12px', zIndex: 6, display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap', pointerEvents: 'none' }}>
+        <span style={graphGlassPillStyle({ color: '#A9ECE8' })}>Main · {sceneData.nodes.length} records</span>
+        <span style={graphGlassPillStyle()}>Think {counts.thinkgraph} · Know {counts.knowgraph} · Code {counts.codegraph} · {payload?.counts.crossAuthorityEdges || 0} refs</span>
+        {payload ? <span title={payload.projectionId} style={graphGlassPillStyle({ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace' })}>{payload.projectionId}</span> : null}
       </div>
 
       {error && !payload ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#FFB0A6' }}>Unified context failed: {error}</div> : null}
       {!payload && loading ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#91A9B8', pointerEvents: 'none' }}>Resolving bounded context…</div> : null}
       {payload && payload.nodes.length === 0 ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#91A9B8', padding: 30, textAlign: 'center' }}>The server returned an empty bounded projection for {payload.projectId} · {payload.receivingRole}. Open the inspector for authority counts and warnings.</div> : null}
-      {payload ? <CodeGraphScene data={sceneData} showLabels={labels || Boolean(selected)} highlightedIds={selected ? new Set([selected.id]) : null} onNodeClick={(node) => { setSelected(node); setDrawerOpen(true); }} autoRotate={false} cameraAction={cameraCommand.action} cameraActionToken={cameraCommand.token} focusNode={selected} cameraPosition={[0, -30, 520]} maxLabels={labels ? 18 : 1} /> : null}
+      {payload ? <div style={{ position: 'absolute', inset: 0, zIndex: 1 }}><CodeGraphScene data={sceneData} showLabels={labels || Boolean(selected)} highlightedIds={selected ? new Set([selected.id]) : null} onNodeClick={(node) => { setSelected(node); setDrawerOpen(true); }} autoRotate={false} cameraAction={cameraCommand.action} cameraActionToken={cameraCommand.token} focusNode={selected} cameraPosition={[0, -30, 520]} maxLabels={labels ? 18 : 1} /></div> : null}
 
-      <div style={{ position: 'absolute', right: 12, bottom: 12, zIndex: 6, display: 'flex', gap: 6 }}>
-        {(['zoom_in', 'zoom_out', 'fit_view'] as const).map((action) => <button key={action} type="button" style={graphDrawerButtonStyle()} onClick={() => setCameraCommand({ action, token: Date.now() })}>{action.replace('_', ' ')}</button>)}
-      </div>
+      <GraphNavigationControls
+        onZoomIn={() => setCameraCommand({ action: 'zoom_in', token: Date.now() })}
+        onZoomOut={() => setCameraCommand({ action: 'zoom_out', token: Date.now() })}
+        onFit={() => setCameraCommand({ action: 'fit_view', token: Date.now() })}
+      />
       {payload?.warnings.length ? <div title={payload.warnings.map((warning) => `${warning.authority}: ${warning.detail}`).join('\n')} style={graphGlassPillStyle({ position: 'absolute', left: 244, bottom: 12, zIndex: 6, color: '#F0C674' })}>{payload.warnings.length} warning{payload.warnings.length === 1 ? '' : 's'} · {payload.warnings[0].code}</div> : null}
       {payload && loading ? <div style={graphGlassPillStyle({ position: 'absolute', left: 12, bottom: 46, zIndex: 6, color: '#91A9B8' })}>Updating · showing {payload.projectionId}</div> : null}
       {payload && error ? <div style={graphGlassPillStyle({ position: 'absolute', left: 12, bottom: 46, zIndex: 6, color: '#FFB0A6' })}>Update failed · unchanged {payload.projectionId} · {error}</div> : null}
 
       <RightGlassDrawer isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} onOpen={() => setDrawerOpen(true)} collapsedLabel={null} openAriaLabel="Open Unified Inspector" title="Unified Inspector" defaultWidth={380} minWidth={340} maxWidth={600} storageKey="liquidaity.drawer.unified.width" top={48} right={12} bottom={12} zIndex={7}>
-        <GlassInspectorSection title="Agent context" signal={role}>
+        <GlassInspectorSection title="Agent context" signal={role} defaultOpen={!selected}>
           <select aria-label="Receiving role" value={role} onChange={(event) => setRole(event.target.value as Role)} style={graphDrawerInputStyle({ width: '100%' })}>
             <option value="main_chat">Main chat</option><option value="hermes">Hermes</option><option value="coder">Coder</option>
           </select>
@@ -233,7 +236,7 @@ export default function UnifiedGraphSurface({
           <InspectorRow label="Code project" value={payload?.identity?.codeGraphProjectId || 'missing'} />
           <InspectorRow label="Think / Know / Code" value={`${counts.thinkgraph} / ${counts.knowgraph} / ${counts.codegraph}`} />
         </GlassInspectorSection>
-        <GlassInspectorSection title="Visual filters">
+        <GlassInspectorSection title="Visual filters" defaultOpen={false}>
           <input aria-label="Search context" placeholder="Search canonical context" value={search} onChange={(event) => setSearch(event.target.value)} style={graphDrawerInputStyle({ width: '100%', boxSizing: 'border-box' })} />
           <select aria-label="Visual authority" value={authority} onChange={(event) => setAuthority(event.target.value as Layer | 'all')} style={graphDrawerInputStyle({ width: '100%', marginTop: 7 })}>
             <option value="all">All authorities</option><option value="thinkgraph">ThinkGraph</option><option value="knowgraph">KnowGraph</option><option value="codegraph">CodeGraph</option>

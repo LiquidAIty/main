@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-import { Canvas, useThree, useFrame } from "@react-three/fiber";
+import { useState, useRef, useEffect } from "react";
+import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
@@ -17,68 +17,37 @@ interface CameraTarget {
   lookAt: THREE.Vector3;
 }
 
-function CameraAnimator({ target }: { target: CameraTarget | null }) {
+function CameraAnimator({
+  target,
+  controlsRef,
+}: {
+  target: CameraTarget | null;
+  controlsRef: React.RefObject<OrbitControlsImpl | null>;
+}) {
   const { camera } = useThree();
-  const targetRef = useRef<CameraTarget | null>(null);
-  const progress = useRef(1);
-
   useEffect(() => {
-    if (target) {
-      targetRef.current = target;
-      progress.current = 0;
-    }
-  }, [target]);
-
-  useFrame(() => {
-    if (!targetRef.current || progress.current >= 1) return;
-
-    progress.current = Math.min(1, progress.current + 0.02);
-    const t = 1 - Math.pow(1 - progress.current, 3); /* ease-out cubic */
-
-    camera.position.lerp(targetRef.current.position, t * 0.08);
-    camera.lookAt(targetRef.current.lookAt);
-  });
+    const controls = controlsRef.current;
+    if (!target || !controls) return;
+    camera.position.copy(target.position);
+    controls.target.copy(target.lookAt);
+    controls.update();
+  }, [camera, controlsRef, target]);
 
   return null;
 }
 
-/* ── Idle auto-rotation ──────────────────────────────────── */
+export type CameraCommand = { action: "zoom_in" | "zoom_out"; token: number } | null;
 
-const IDLE_TIMEOUT_MS = 60_000;
-
-function IdleAutoRotate({
-  controlsRef,
-}: {
-  controlsRef: React.RefObject<OrbitControlsImpl | null>;
-}) {
-  const lastInteraction = useRef(Date.now());
-
-  /* Reset timer on any pointer/wheel event */
-  const resetTimer = useCallback(() => {
-    lastInteraction.current = Date.now();
-    if (controlsRef.current) {
-      controlsRef.current.autoRotate = false;
-    }
-  }, [controlsRef]);
-
+function CameraCommandBridge({ command, controlsRef }: { command: CameraCommand; controlsRef: React.RefObject<OrbitControlsImpl | null> }) {
+  const { camera } = useThree();
   useEffect(() => {
-    const canvas = document.querySelector("canvas");
-    if (!canvas) return;
-
-    canvas.addEventListener("pointerdown", resetTimer);
-    canvas.addEventListener("wheel", resetTimer);
-    return () => {
-      canvas.removeEventListener("pointerdown", resetTimer);
-      canvas.removeEventListener("wheel", resetTimer);
-    };
-  }, [resetTimer]);
-
-  useFrame(() => {
-    if (!controlsRef.current) return;
-    const idle = Date.now() - lastInteraction.current > IDLE_TIMEOUT_MS;
-    controlsRef.current.autoRotate = idle;
-  });
-
+    const controls = controlsRef.current;
+    if (!command || !controls) return;
+    const offset = camera.position.clone().sub(controls.target);
+    offset.multiplyScalar(command.action === "zoom_in" ? 0.82 : 1.22);
+    camera.position.copy(controls.target.clone().add(offset));
+    controls.update();
+  }, [camera, command, controlsRef]);
   return null;
 }
 
@@ -88,6 +57,7 @@ interface GraphSceneProps {
   data: GraphData;
   highlightedIds: Set<number> | null;
   cameraTarget: CameraTarget | null;
+  cameraCommand: CameraCommand;
   showLabels: boolean;
   onNodeClick: (node: GraphNode) => void;
 }
@@ -98,6 +68,7 @@ export function GraphScene({
   data,
   highlightedIds,
   cameraTarget,
+  cameraCommand,
   showLabels,
   onNodeClick,
 }: GraphSceneProps) {
@@ -107,17 +78,16 @@ export function GraphScene({
   return (
     <Canvas
       camera={{ position: [0, 0, 800], fov: 50, near: 0.1, far: 100000 }}
-      style={{ background: "#06090f" }}
+      style={{ background: "transparent" }}
       dpr={[1, 2]}
-      gl={{ antialias: true, alpha: false }}
+      gl={{ antialias: true, alpha: true }}
     >
-      <color attach="background" args={["#06090f"]} />
       <ambientLight intensity={0.5} />
       <pointLight position={[500, 500, 500]} intensity={0.6} />
       <pointLight
         position={[-300, -200, -300]}
         intensity={0.4}
-        color="#6040ff"
+        color="#37ADAA"
       />
 
       <EdgeLines
@@ -162,16 +132,16 @@ export function GraphScene({
 
       {hovered && <NodeTooltip node={hovered} />}
 
-      <CameraAnimator target={cameraTarget} />
-      <IdleAutoRotate controlsRef={controlsRef} />
+      <CameraAnimator target={cameraTarget} controlsRef={controlsRef} />
+      <CameraCommandBridge command={cameraCommand} controlsRef={controlsRef} />
 
       <EffectComposer>
         <Bloom
-          luminanceThreshold={0.3}
+          luminanceThreshold={0.72}
           luminanceSmoothing={0.7}
-          intensity={1.2}
+          intensity={0.32}
           mipmapBlur
-          radius={0.6}
+          radius={0.28}
         />
       </EffectComposer>
 
