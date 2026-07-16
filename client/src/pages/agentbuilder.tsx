@@ -130,6 +130,14 @@ const AgentManager = lazy(async () => {
 const UnifiedGraphSurface = lazy(
   () => import('../components/knowledge/UnifiedGraphSurface'),
 );
+const NativeCodeGraphSurface = lazy(async () => {
+  const mod = await import('../components/knowledge/NativeAuthorityGraphSurface');
+  return { default: mod.NativeCodeGraphSurface };
+});
+const NativeThinkGraphSurface = lazy(async () => {
+  const mod = await import('../components/knowledge/NativeAuthorityGraphSurface');
+  return { default: mod.NativeThinkGraphSurface };
+});
 import { resolveCbmProjectName } from '../components/codegraph/resolveCodeGraphProjectIdentity';
 
 // AgentPage (MVP): left icon rail + main chat + right tabs (Plan, Links, Knowledge, Dashboard)
@@ -2084,69 +2092,30 @@ export default function AgentBuilder(): React.ReactElement {
                 </div>
               }
             >
-              <UnifiedGraphSurface
-                projectId={activeProject}
-                codeGraphProject={codeGraphProjectName}
-                thinkProjection={thinkGraphProjection.projection ?? undefined}
-                knowProjection={knowGraphProjection.projection ?? undefined}
-                focusedThinkIds={thinkGraphFocusIds}
-                conversationId={conversationId}
-                authorityFocus={knowledgeGraphKind}
-                runtimeHandbacks={runtimeGraphViews}
-                onCandidateHandbacksChange={handleCandidateGraphViewsChange}
-              />
+              {knowledgeGraphKind === 'codegraph' ? (
+                <NativeCodeGraphSurface project={codeGraphProjectName || null} />
+              ) : knowledgeGraphKind === 'thinkgraph' ? (
+                <NativeThinkGraphSurface
+                  projection={thinkGraphProjection.projection}
+                  status={thinkGraphProjection.status}
+                  error={thinkGraphProjection.error}
+                />
+              ) : (
+                <UnifiedGraphSurface
+                  projectId={activeProject}
+                  codeGraphProject={codeGraphProjectName}
+                  thinkProjection={thinkGraphProjection.projection ?? undefined}
+                  knowProjection={knowGraphProjection.projection ?? undefined}
+                  focusedThinkIds={thinkGraphFocusIds}
+                  conversationId={conversationId}
+                  authorityFocus={knowledgeGraphKind}
+                  runtimeHandbacks={runtimeGraphViews}
+                  onCandidateHandbacksChange={handleCandidateGraphViewsChange}
+                />
+              )}
             </Suspense>
           </KnowledgeSurfaceErrorBoundary>
         </div>
-        {/* Honest ThinkGraph status OUTSIDE the graph canvas: real empty state or
-            the actual transport error. Never fake nodes, never fallback data. */}
-        {knowledgeGraphKind === 'thinkgraph' &&
-        thinkGraphProjection.status === 'loading' &&
-        !thinkGraphProjection.projection ? (
-          <div
-            data-testid="thinkgraph-loading-message"
-            style={{
-              position: 'absolute',
-              bottom: 12,
-              left: 12,
-              zIndex: 5,
-              ...graphGlassPillStyle({ fontSize: 11, padding: '5px 10px' }),
-            }}
-          >
-            Loading ThinkGraph projection…
-          </div>
-        ) : null}
-        {knowledgeGraphKind === 'thinkgraph' &&
-        thinkGraphProjection.status === 'ready' &&
-        (thinkGraphProjection.projection?.nodes?.length ?? 0) === 0 ? (
-          <div
-            data-testid="thinkgraph-empty-message"
-            style={{
-              position: 'absolute',
-              bottom: 12,
-              left: 12,
-              zIndex: 5,
-              ...graphGlassPillStyle({ fontSize: 11, padding: '5px 10px' }),
-            }}
-          >
-            No ThinkGraph records exist for this project yet.
-          </div>
-        ) : null}
-        {knowledgeGraphKind === 'thinkgraph' && thinkGraphProjection.status === 'error' ? (
-          <div
-            data-testid="thinkgraph-projection-error"
-            style={{
-              position: 'absolute',
-              bottom: 12,
-              left: 12,
-              zIndex: 5,
-              maxWidth: 520,
-              ...graphGlassPillStyle({ fontSize: 11, padding: '5px 10px' }),
-            }}
-          >
-            ThinkGraph projection unavailable: {thinkGraphProjection.error}
-          </div>
-        ) : null}
         {/* Honest KnowGraph states: the tab now renders the REAL project-scoped
             Neo4j browse projection (GET /api/knowgraph/graph). Loading, error,
             and empty are each stated plainly; agent writes still go through the

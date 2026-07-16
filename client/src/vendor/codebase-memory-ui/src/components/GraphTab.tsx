@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "./ui/button";
 import { useGraphData } from "../hooks/useGraphData";
 import {
   GraphScene,
