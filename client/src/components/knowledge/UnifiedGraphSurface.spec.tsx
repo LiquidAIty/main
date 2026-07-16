@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import UnifiedGraphSurface from './UnifiedGraphSurface';
 
 vi.mock('../codegraph/CodeGraphScene', () => ({
-  CodeGraphScene: ({ data, onNodeClick }: { data: { nodes: Array<{ name: string }> }; onNodeClick: (node: unknown) => void }) => (
-    <div><span data-testid="scene-node-count">{data.nodes.length}</span>{data.nodes.map((node, index) => <button key={node.name} onClick={() => onNodeClick(data.nodes[index])}>Select {node.name}</button>)}</div>
+  CodeGraphScene: ({ data, highlightedIds, onNodeClick }: { data: { nodes: Array<{ id: number; name: string }> }; highlightedIds: Set<number> | null; onNodeClick: (node: unknown) => void }) => (
+    <div><span data-testid="scene-node-count">{data.nodes.length}</span><span data-testid="highlighted-ids">{[...(highlightedIds || [])].join(',')}</span>{data.nodes.map((node, index) => <button key={node.id} onClick={() => onNodeClick(data.nodes[index])}>Select {node.name}</button>)}</div>
   ),
 }));
 
@@ -52,6 +52,7 @@ describe('UnifiedGraphSurface', () => {
       expansionDepth: 0,
       knowgraphScope: null,
     }));
+    fireEvent.click(screen.getByRole('button', { name: 'Visual filters' }));
     fireEvent.change(screen.getByRole('combobox', { name: 'Visual authority' }), { target: { value: 'knowgraph' } });
     expect(screen.getByTestId('scene-node-count').textContent).toBe('1');
     fireEvent.click(screen.getByRole('button', { name: 'Select Book' }));
@@ -84,5 +85,29 @@ describe('UnifiedGraphSurface', () => {
       projectionId: 'unified:coder',
       role: 'coder',
     }));
+  });
+
+  it('uses semantic fields and explains only the persisted selected neighborhood', async () => {
+    const semanticPayload = {
+      ...payload,
+      nodes: [
+        { ...payload.nodes[0], name: 'Goal', properties: { display_label: 'Are we following knowledge graph best practices?', description: 'Evaluate the repository against sourced graph guidance.' } },
+        { ...payload.nodes[1], label: 'Chunk', name: 'building-knowledge-graphs-full-book', properties: { description: 'Contextualized data creates usable knowledge from source material.' } },
+        payload.nodes[2],
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => semanticPayload })));
+    render(<UnifiedGraphSurface projectId="project-1" conversationId="conversation-1" />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /Select Are we following knowledge graph best/ })).toBeTruthy());
+    expect(screen.getByRole('button', { name: /Select Contextualized data creates usable knowledge/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /Select Are we following knowledge graph best/ }));
+    expect(screen.getByTestId('scene-node-count').textContent).toBe('3');
+    expect(screen.getByTestId('highlighted-ids').textContent).toBe('1,2');
+    expect(screen.getByText('Evaluate the repository against sourced graph guidance.')).toBeTruthy();
+    expect(screen.getAllByText(/Contextualized data creates usable knowledge/).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset focus' }));
+    expect(screen.getByTestId('highlighted-ids').textContent).toBe('');
   });
 });

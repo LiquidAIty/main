@@ -18,7 +18,8 @@ class FakeThinkGraph:
         return {
             "nodes": [
                 {"id": "t:goal", "canonicalId": "t:goal", "title": "Goal", "type": "Goal", "degree": 2,
-                 "projectId": project_id, "properties": {"cluster": "decision", "knowgraph_ref": "k:book"}},
+                 "projectId": project_id, "knowGraphRef": "k:book",
+                 "properties": {"cluster": "decision", "knowgraph_ref": "k:book"}},
                 {"id": "t:decision", "canonicalId": "t:decision", "title": "Decision", "type": "Decision", "degree": 1,
                  "projectId": project_id, "properties": {"cluster": "decision"}},
                 {"id": "graph-view:view-1", "canonicalId": "graph-view:view-1", "type": "GraphView", "projectId": project_id,
@@ -61,6 +62,7 @@ def test_projection_is_bounded_stable_and_carries_exact_selected_view():
     assert first["lifecycle"]["selected"] == [view["viewId"] for view in first["graphViews"]]
     assert first["counts"]["nodes"] == 3
     assert first["counts"]["crossAuthorityEdges"] == 1
+    assert len([edge for edge in first["edges"] if edge["cross_authority"]]) == 1
     assert {node["authority"] for node in first["nodes"]} == {"thinkgraph", "knowgraph", "codegraph"}
     assert first["identity"] == {
         "applicationProjectId": "project-1",

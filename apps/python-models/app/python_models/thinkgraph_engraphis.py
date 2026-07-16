@@ -443,13 +443,17 @@ class ThinkGraphEngraphis:
                 limit=max(1, min(int(limit), 2000)),
             )
             ids = {record.id for record in records}
+            canonical_by_id = {
+                record.id: _text((record.metadata or {}).get("canonicalId") or record.id)
+                for record in records
+            }
             edges = [edge for edge in self.store.edges_in_scope(SearchFilter(workspace_id=workspace_id, repo_id=repo_id)) if edge.src in ids and edge.dst in ids]
             degree: dict[str, int] = {record_id: 0 for record_id in ids}
             for edge in edges:
                 degree[edge.src] += 1
                 degree[edge.dst] += 1
             nodes = [self._project_record(record, project_id, degree.get(record.id, 0)) for record in records]
-            projected_edges = [self._project_edge(edge) for edge in edges]
+            projected_edges = [self._project_edge(edge, canonical_by_id) for edge in edges]
             latest = max((record.ingested_at or 0 for record in records), default=0)
             return {
                 "schemaVersion": "thinkgraph.engraphis.v2",
@@ -510,15 +514,16 @@ class ThinkGraphEngraphis:
         }
 
     @staticmethod
-    def _project_edge(edge: Any) -> dict[str, Any]:
+    def _project_edge(edge: Any, canonical_by_id: dict[str, str]) -> dict[str, Any]:
         try:
             provenance = dict(edge.provenance or {})
         except (TypeError, ValueError):
             provenance = {}
+        preserve_version_identity = edge.relation == "SUPERSEDES"
         return {
             "id": edge.id,
-            "source": edge.src,
-            "target": edge.dst,
+            "source": edge.src if preserve_version_identity else canonical_by_id.get(edge.src, edge.src),
+            "target": edge.dst if preserve_version_identity else canonical_by_id.get(edge.dst, edge.dst),
             "predicate": edge.relation,
             "mentionCount": 1,
             "provenanceCount": 1,

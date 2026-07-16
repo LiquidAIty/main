@@ -26,6 +26,10 @@ type CodeGraphSceneProps = {
   cameraPosition?: [number, number, number];
   maxLabels?: number;
   panMode?: boolean;
+  showAmbientDust?: boolean;
+  curveCrossAuthority?: boolean;
+  preserveDimmedEdges?: boolean;
+  onNodeHover?: (node: CodeGraphNode | null) => void;
 };
 
 function CameraCommandBridge({
@@ -114,7 +118,7 @@ function CameraCommandBridge({
   }, [cameraAction, cameraActionToken, controlsRef]);
 
   useEffect(() => {
-    if (nodes.length === 0) return;
+    if (nodes.length === 0 || lastAutoFitSignatureRef.current) return;
     const signature = `${nodes.length}:${nodes[0]?.id ?? ""}:${
       nodes[nodes.length - 1]?.id ?? ""
     }`;
@@ -181,7 +185,7 @@ function NodeCloud({
     return arr;
   }, [nodes, highlightedIds, tempColor]);
 
-  useFrame(() => {
+  useEffect(() => {
     const mesh = meshRef.current;
     if (!mesh) return;
     const hasHighlight = highlightedIds && highlightedIds.size > 0;
@@ -197,7 +201,7 @@ function NodeCloud({
     }
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
-  });
+  }, [highlightedIds, nodes, tempObj]);
 
   return (
     <instancedMesh
@@ -246,18 +250,21 @@ function EdgeLines({
   nodes,
   edges,
   highlightedIds,
+  curveCrossAuthority,
+  preserveDimmedEdges,
 }: {
   nodes: CodeGraphNode[];
   edges: CodeGraphEdge[];
   highlightedIds: Set<number> | null;
+  curveCrossAuthority: boolean;
+  preserveDimmedEdges: boolean;
 }) {
   const geometry = useMemo(() => {
     const idMap = new Map<number, number>();
     for (let i = 0; i < nodes.length; i++) idMap.set(nodes[i].id, i);
     const hasHighlight = highlightedIds && highlightedIds.size > 0;
-    const positions = new Float32Array(edges.length * 6);
-    const colors = new Float32Array(edges.length * 6);
-    let validCount = 0;
+    const positions: number[] = [];
+    const colors: number[] = [];
 
     for (const edge of edges) {
       const sourceIndex = idMap.get(edge.source);
@@ -267,39 +274,55 @@ function EdgeLines({
       const target = nodes[targetIndex];
       const sourceHighlighted = !hasHighlight || highlightedIds.has(source.id);
       const targetHighlighted = !hasHighlight || highlightedIds.has(target.id);
-      if (hasHighlight && !sourceHighlighted && !targetHighlighted) continue;
+      if (hasHighlight && !sourceHighlighted && !targetHighlighted && !preserveDimmedEdges) continue;
 
       const sameCluster = getClusterKey(source.file_path) === getClusterKey(target.file_path);
-      let intensity = edge.cross_authority ? 0.46 : sameCluster ? 0.25 : 0.06;
-      if (hasHighlight) intensity = sourceHighlighted && targetHighlighted ? 0.5 : 0.04;
-      const color = new THREE.Color(edge.cross_authority ? '#A7F3EE' : colorForCodeGraphEdgeType(edge.type));
-      const offset = validCount * 6;
-      positions[offset] = source.x;
-      positions[offset + 1] = source.y;
-      positions[offset + 2] = source.z;
-      positions[offset + 3] = target.x;
-      positions[offset + 4] = target.y;
-      positions[offset + 5] = target.z;
-      colors[offset] = color.r * intensity;
-      colors[offset + 1] = color.g * intensity;
-      colors[offset + 2] = color.b * intensity;
-      colors[offset + 3] = color.r * intensity;
-      colors[offset + 4] = color.g * intensity;
-      colors[offset + 5] = color.b * intensity;
-      validCount += 1;
+      let intensity = edge.cross_authority ? 0.16 : sameCluster ? 0.18 : 0.035;
+      if (hasHighlight) {
+        intensity = sourceHighlighted && targetHighlighted
+          ? (edge.cross_authority ? 0.74 : 0.42)
+          : sourceHighlighted || targetHighlighted
+            ? 0.12
+            : 0.012;
+      }
+      const color = new THREE.Color(
+        edge.cross_authority && hasHighlight && sourceHighlighted && targetHighlighted
+          ? '#F2A64A'
+          : edge.cross_authority
+            ? '#7EE8E2'
+            : colorForCodeGraphEdgeType(edge.type),
+      );
+      const appendSegment = (start: THREE.Vector3, end: THREE.Vector3) => {
+        positions.push(start.x, start.y, start.z, end.x, end.y, end.z);
+        colors.push(
+          color.r * intensity, color.g * intensity, color.b * intensity,
+          color.r * intensity, color.g * intensity, color.b * intensity,
+        );
+      };
+      const start = new THREE.Vector3(source.x, source.y, source.z);
+      const end = new THREE.Vector3(target.x, target.y, target.z);
+      if (curveCrossAuthority && edge.cross_authority) {
+        const midpoint = start.clone().lerp(end, 0.5);
+        midpoint.y += Math.min(90, start.distanceTo(end) * 0.18);
+        midpoint.z += source.authority === target.authority ? 0 : 54;
+        const points = new THREE.QuadraticBezierCurve3(start, midpoint, end).getPoints(12);
+        for (let index = 0; index < points.length - 1; index += 1) appendSegment(points[index], points[index + 1]);
+      } else {
+        appendSegment(start, end);
+      }
     }
 
     const nextGeometry = new THREE.BufferGeometry();
     nextGeometry.setAttribute(
       "position",
-      new THREE.BufferAttribute(positions.slice(0, validCount * 6), 3),
+      new THREE.Float32BufferAttribute(positions, 3),
     );
     nextGeometry.setAttribute(
       "color",
-      new THREE.BufferAttribute(colors.slice(0, validCount * 6), 3),
+      new THREE.Float32BufferAttribute(colors, 3),
     );
     return nextGeometry;
-  }, [nodes, edges, highlightedIds]);
+  }, [curveCrossAuthority, edges, highlightedIds, nodes, preserveDimmedEdges]);
 
   return (
     <lineSegments geometry={geometry}>
@@ -458,6 +481,10 @@ export function CodeGraphScene({
   cameraPosition = [0, 0, 800],
   maxLabels = 80,
   panMode = false,
+  showAmbientDust = true,
+  curveCrossAuthority = false,
+  preserveDimmedEdges = false,
+  onNodeHover,
 }: CodeGraphSceneProps): React.ReactElement {
   const [hoveredNode, setHoveredNode] = useState<CodeGraphNode | null>(null);
   const controlsRef = useRef<any>(null);
@@ -466,7 +493,7 @@ export function CodeGraphScene({
   return (
     <Canvas
       camera={{ position: cameraPosition, fov: 50, near: 0.1, far: 100000 }}
-      style={{ background: "transparent" }}
+      style={{ background: "transparent", width: "100%", height: "100%", display: "block" }}
       dpr={[1, 2]}
       gl={{ antialias: true, alpha: true }}
       onPointerMissed={onBackgroundClick ? () => onBackgroundClick() : undefined}
@@ -485,12 +512,12 @@ export function CodeGraphScene({
         </group>
       ))}
 
-      <AmbientDust nodes={data.nodes} highlightedIds={highlightedIds} />
-      <EdgeLines nodes={data.nodes} edges={data.edges} highlightedIds={highlightedIds} />
+      {showAmbientDust ? <AmbientDust nodes={data.nodes} highlightedIds={highlightedIds} /> : null}
+      <EdgeLines nodes={data.nodes} edges={data.edges} highlightedIds={highlightedIds} curveCrossAuthority={curveCrossAuthority} preserveDimmedEdges={preserveDimmedEdges} />
       <NodeCloud
         nodes={data.nodes}
         highlightedIds={highlightedIds}
-        onHover={setHoveredNode}
+        onHover={(node) => { setHoveredNode(node); onNodeHover?.(node); }}
         onClick={onNodeClick}
       />
       {showLabels ? <NodeLabels nodes={data.nodes} highlightedIds={highlightedIds} maxLabels={maxLabels} /> : null}
@@ -514,7 +541,7 @@ export function CodeGraphScene({
         }));
         return (
           <group key={linked.project}>
-            <EdgeLines nodes={offsetNodes} edges={linked.edges} highlightedIds={null} />
+            <EdgeLines nodes={offsetNodes} edges={linked.edges} highlightedIds={null} curveCrossAuthority={false} preserveDimmedEdges={false} />
             <NodeCloud nodes={offsetNodes} highlightedIds={null} onHover={setHoveredNode} onClick={onNodeClick} />
           </group>
         );

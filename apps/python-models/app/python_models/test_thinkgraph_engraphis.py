@@ -70,6 +70,8 @@ def test_patch_preserves_ids_and_is_idempotent(tmp_path):
     projection = graph.projection("ADMIN")
     assert {node["id"] for node in projection["nodes"]} == {"goal:kg01", "dec:kg01"}
     assert [edge["id"] for edge in projection["edges"]] == ["st:goal-dec"]
+    canonical_ids = {node["canonicalId"] for node in projection["nodes"]}
+    assert all(edge["source"] in canonical_ids and edge["target"] in canonical_ids for edge in projection["edges"])
     assert projection["authority"] == "engraphis-v2"
 
 

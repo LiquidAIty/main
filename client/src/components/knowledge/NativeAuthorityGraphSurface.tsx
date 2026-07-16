@@ -53,7 +53,7 @@ function endpointId(value: string | NativeNode): string {
 function shortNodeLabel(node: GraphProjectionV1['nodes'][number]): string {
   const properties = node.properties || {};
   const semantic = String(properties.display_label || node.label || node.title || node.type || 'record').trim();
-  return semantic.split(/\s+/).slice(0, 4).join(' ');
+  return semantic.split(/\s+/).slice(0, 3).join(' ');
 }
 
 export function NativeThinkGraphSurface({
@@ -68,6 +68,7 @@ export function NativeThinkGraphSurface({
   const hostRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
   const hoveredRef = useRef<string | null>(null);
+  const selectedRef = useRef<string | null>(null);
   const adjacencyRef = useRef(new Map<string, Set<string>>());
   const [hideIsolated, setHideIsolated] = useState(true);
   const [showLinkLabels, setShowLinkLabels] = useState(false);
@@ -76,13 +77,14 @@ export function NativeThinkGraphSurface({
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [settings, setSettings] = useState({
     font: 10,
-    labelDensity: 14,
+    labelDensity: 8,
     size: 5,
     linkWidth: 1,
     repel: 120,
     linkDistance: 30,
     gravity: 14,
   });
+  selectedRef.current = selected?.id || null;
 
   const nativeData = useMemo(() => {
     const nodes = projection?.nodes ?? [];
@@ -150,19 +152,19 @@ export function NativeThinkGraphSurface({
     );
     graph
       .nodeCanvasObject((node: NativeNode, context: CanvasRenderingContext2D) => {
-        const hovered = hoveredRef.current;
-        const neighbors = hovered ? adjacencyRef.current.get(hovered) : null;
-        const connectedFocus = Boolean(hovered && neighbors && neighbors.size > 1);
-        const isNeighbor = !connectedFocus || node.id === hovered || neighbors?.has(node.id);
+        const focused = hoveredRef.current || selectedRef.current;
+        const neighbors = focused ? adjacencyRef.current.get(focused) : null;
+        const connectedFocus = Boolean(focused && neighbors && neighbors.size > 1);
+        const isNeighbor = !connectedFocus || node.id === focused || neighbors?.has(node.id);
         const radius = Math.max(1.2, settings.size * Math.sqrt(node.val) * 0.45);
         context.globalAlpha = isNeighbor ? 1 : 0.12;
         context.beginPath();
         context.arc(node.x || 0, node.y || 0, radius, 0, Math.PI * 2);
         context.fillStyle = TYPE_COLORS[node.etype] || DEFAULT_TYPE_COLOR;
         context.fill();
-        if (connectedFocus && node.id === hovered) {
+        if (connectedFocus && node.id === focused) {
           context.lineWidth = 1.6;
-          context.strokeStyle = '#d8d8e2';
+          context.strokeStyle = '#A9ECE8';
           context.stroke();
         }
         context.globalAlpha = 1;
@@ -175,14 +177,14 @@ export function NativeThinkGraphSurface({
         context.fill();
       })
       .linkColor((link: NativeLink) => {
-        const hovered = hoveredRef.current;
-        const connected = hovered && (endpointId(link.source) === hovered || endpointId(link.target) === hovered);
-        const alpha = hovered ? (connected ? 0.92 : 0.05) : Math.min(0.9, 0.2 + 0.22 * settings.linkWidth);
-        return `rgba(140,142,170,${alpha})`;
+        const focused = hoveredRef.current || selectedRef.current;
+        const connected = focused && (endpointId(link.source) === focused || endpointId(link.target) === focused);
+        const alpha = focused ? (connected ? 0.92 : 0.05) : Math.min(0.72, 0.16 + 0.18 * settings.linkWidth);
+        return `rgba(112,154,160,${alpha})`;
       })
       .linkWidth((link: NativeLink) => {
-        const hovered = hoveredRef.current;
-        return (hovered && (endpointId(link.source) === hovered || endpointId(link.target) === hovered) ? 1.8 : 0.85) * settings.linkWidth;
+        const focused = hoveredRef.current || selectedRef.current;
+        return (focused && (endpointId(link.source) === focused || endpointId(link.target) === focused) ? 1.8 : 0.75) * settings.linkWidth;
       })
       .linkDirectionalArrowLength(2)
       .linkDirectionalArrowRelPos(1)
@@ -203,8 +205,9 @@ export function NativeThinkGraphSurface({
         context.textBaseline = 'top';
         context.lineJoin = 'round';
         for (const node of graph.graphData().nodes as NativeNode[]) {
-          if (node.x == null || (labelRank.get(node.id) ?? Number.MAX_SAFE_INTEGER) >= cap) continue;
           const hovered = hoveredRef.current;
+          const emphasized = node.id === hovered || node.id === selectedRef.current;
+          if (node.x == null || (!emphasized && (labelRank.get(node.id) ?? Number.MAX_SAFE_INTEGER) >= cap)) continue;
           const neighbors = hovered ? adjacencyRef.current.get(hovered) : null;
           const connectedFocus = Boolean(hovered && neighbors && neighbors.size > 1);
           const isNeighbor = !connectedFocus || node.id === hovered || neighbors?.has(node.id);

@@ -13,7 +13,7 @@ describe('shared graph canvas chrome', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }));
     fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Fit all' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Fit view' }));
 
     expect(onZoomIn).toHaveBeenCalledOnce();
     expect(onZoomOut).toHaveBeenCalledOnce();

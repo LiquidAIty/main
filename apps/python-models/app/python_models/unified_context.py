@@ -223,7 +223,7 @@ def _build_unified_context(
 
     nodes: list[dict[str, Any]] = []
     numeric_by_key: dict[tuple[str, str], int] = {}
-    pending_refs: list[tuple[int, str, str]] = []
+    pending_refs: dict[tuple[int, str, str], None] = {}
     for authority in AUTHORITY:
         for source in chosen[authority]:
             canonical = str(source.get("canonicalId") or source.get("id") or "")
@@ -235,7 +235,7 @@ def _build_unified_context(
                 numeric_by_key[(authority, f"code:{canonical}")] = numeric
             for key, target_authority in (("knowgraph_ref", "knowgraph"), ("knowGraphRef", "knowgraph"), ("codegraph_ref", "codegraph"), ("codeGraphRef", "codegraph"), ("secondary_ref", "codegraph")):
                 for ref in _refs(props.get(key) if key in props else source.get(key)):
-                    pending_refs.append((numeric, target_authority, ref))
+                    pending_refs.setdefault((numeric, target_authority, ref), None)
             derived_types = {"DerivedAnalysis", "Topic", "Gap", "Community", "Gateway", "AnalysisTopic", "AnalysisGap"}
             epistemic = str(props.get("epistemic_level") or (
                 "reasoning" if authority == "thinkgraph"

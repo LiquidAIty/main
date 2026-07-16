@@ -231,16 +231,18 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
   useEffect(() => {
     if (!graphRef.current || !analysis) return;
     cyRef.current?.destroy();
+    const connectedNodeIds = new Set(analysis.edges.flatMap((edge) => [edge.source, edge.target]));
+    const displayNodes = analysis.nodes.filter((node) => connectedNodeIds.has(node.id));
     const importantLabels = new Set(
-      [...analysis.nodes]
+      [...displayNodes]
         .sort((a, b) => b.influence - a.influence)
-        .slice(0, 18)
+        .slice(0, 12)
         .map((node) => node.id),
     );
     const cy = cytoscape({
       container: graphRef.current,
       elements: [
-        ...analysis.nodes.map((node) => ({
+        ...displayNodes.map((node) => ({
           group: 'nodes' as const,
           data: {
             ...node,
@@ -284,9 +286,9 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
         {
           selector: 'edge',
           style: {
-            width: 'mapData(weight, 0, 12, 0.6, 6)',
+            width: 'mapData(weight, 0, 12, 0.45, 3.2)',
             'line-color': 'rgba(116, 161, 170, 0.48)',
-            opacity: 0.72,
+            opacity: 0.42,
             'curve-style': 'haystack',
           },
         },
@@ -300,10 +302,10 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
         animate: false,
         randomize: true,
         quality: 'default',
-        nodeRepulsion: 7800,
-        idealEdgeLength: 72,
+        nodeRepulsion: 11200,
+        idealEdgeLength: 90,
         edgeElasticity: 0.42,
-        gravity: 0.28,
+        gravity: 0.14,
         fit: true,
         padding: 70,
       } as any,
@@ -430,9 +432,9 @@ export default function KnowGraphAnalysisSurface({ projectId }: { projectId: str
         onOpen={() => setInspectorOpen(true)}
         collapsedLabel={null}
         openAriaLabel="Open KnowGraph Inspector"
-        defaultWidth={360}
-        minWidth={320}
-        maxWidth={560}
+        defaultWidth={320}
+        minWidth={300}
+        maxWidth={440}
         storageKey="liquidaity.drawer.knowgraph.width"
         top={48}
         right={12}
