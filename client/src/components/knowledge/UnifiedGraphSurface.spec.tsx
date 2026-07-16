@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import UnifiedGraphSurface from './UnifiedGraphSurface';
 
 vi.mock('../codegraph/CodeGraphScene', () => ({
-  CodeGraphScene: ({ data }: { data: { nodes: unknown[]; edges: unknown[] } }) => <div data-testid="scene">{data.nodes.length} nodes / {data.edges.length} edges</div>,
+  CodeGraphScene: ({ data, visualProfile }: { data: { nodes: unknown[]; edges: unknown[] }; visualProfile?: string }) => <div data-testid="scene" data-profile={visualProfile}>{data.nodes.length} nodes / {data.edges.length} edges</div>,
 }));
 
 const payload = {
@@ -37,7 +37,9 @@ describe('UnifiedGraphSurface', () => {
     const onProjectionChange = vi.fn();
     render(<UnifiedGraphSurface projectId="project" conversationId="main" onProjectionChange={onProjectionChange} />);
     expect((await screen.findByTestId('scene')).textContent).toContain('7 nodes / 3 edges');
+    expect(screen.getByTestId('scene').getAttribute('data-profile')).toBe('unified');
     expect(screen.getByText(/Code 3 · Think 2 · Know 2/)).toBeTruthy();
+    expect(screen.getByLabelText('Unified legend').textContent).toContain('faceted evidence');
     await waitFor(() => expect(onProjectionChange).toHaveBeenCalledWith(expect.objectContaining({ projectionId: 'unified:full' })));
   });
 
@@ -46,10 +48,10 @@ describe('UnifiedGraphSurface', () => {
     vi.stubGlobal('fetch', fetchMock);
     render(<UnifiedGraphSurface projectId="project" conversationId="main" />);
     expect((await screen.findByTestId('scene')).textContent).toContain('7 nodes / 3 edges');
-    fireEvent.click(screen.getByRole('button', { name: 'Layers' }));
-    fireEvent.click(screen.getByLabelText(/ThinkGraph/));
+    fireEvent.click(screen.getByRole('button', { name: 'Think' }));
     expect(screen.getByTestId('scene').textContent).toContain('5 nodes / 2 edges');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByRole('button', { name: 'Solo' })).toHaveLength(3);
   });
 
   it('fails honestly when the Unified project is unresolved', () => {
