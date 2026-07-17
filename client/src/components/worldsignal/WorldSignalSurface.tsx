@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 
+import { readLayerPrefs, writeLayerPrefs } from './worldSignalLayerPrefs';
+
 type WorldSignalsHealth = {
   enabled: boolean;
   status: 'ok' | 'offline' | 'error';
@@ -21,7 +23,48 @@ const WORLDSIGNALS_API_BASE = '/worldsignals-api';
 
 type WorldSignalsSelectionRef = { id: string; type: string; label: string | null };
 
-type WorldSignalsMountHandle = {
+export type WorldSignalsInspectorSection =
+  | 'overview'
+  | 'selection'
+  | 'markets'
+  | 'layers'
+  | 'research'
+  | 'watches'
+  | 'timeline'
+  | 'knowgraph';
+
+export type WorldSignalsLayerDescriptor = {
+  id: string;
+  label: string;
+  group: string;
+  specialist: boolean;
+  available: boolean;
+};
+
+export type WorldSignalsLayerState = {
+  profileId: string;
+  profileVersion: number;
+  layers: WorldSignalsLayerDescriptor[];
+  enabledLayerIds: string[];
+};
+
+export type WorldSignalsMarketsSnapshot = {
+  status: 'ok' | 'empty' | 'backend_offline';
+  provider: string | null;
+  degraded: boolean;
+  quotes: { symbol: string; price: number; changePercent: number }[];
+  lastUpdated: string | null;
+};
+
+/** Narrow adapter the canonical Inspector drives the mounted app through. */
+export type WorldSignalsInspectorBridge = {
+  getLayerState(): WorldSignalsLayerState;
+  setLayerEnabled(layerId: string, enabled: boolean): void;
+  resetLayersToWorldIntelligenceDefaults(): void;
+  getMarketsSnapshot(): WorldSignalsMarketsSnapshot;
+};
+
+type WorldSignalsMountHandle = WorldSignalsInspectorBridge & {
   flyTo(input: { lat: number; lng: number; zoom?: number }): void;
   unmount(): void;
 };
@@ -33,8 +76,11 @@ type WorldSignalsEmbedModule = {
       apiBaseUrl: string;
       assetBaseUrl?: string;
       projectId?: string;
+      initialEnabledLayerIds?: string[];
       onReady?: () => void;
       onSelectionChange?: (selection: WorldSignalsSelectionRef | null) => void;
+      onInspectorSectionRequest?: (section: WorldSignalsInspectorSection) => void;
+      onLayerStateChange?: (state: WorldSignalsLayerState) => void;
       onError?: (error: { code: string; message: string }) => void;
     },
   ): WorldSignalsMountHandle;
@@ -71,11 +117,35 @@ function loadEmbedModule(): Promise<WorldSignalsEmbedModule> {
   return embedModulePromise;
 }
 
-export default function WorldSignalSurface(): React.ReactElement {
+type WorldSignalSurfaceProps = {
+  /** Identity for the temporary per-project/per-card layer persistence. */
+  projectId: string | null;
+  cardId: string | null;
+  /** A vendor control (Markets, Layers) asked for a canonical Inspector section. */
+  onInspectorSectionRequest?: (section: WorldSignalsInspectorSection) => void;
+  /** Live layer state, fired on mount and on every change. */
+  onLayerStateChange?: (state: WorldSignalsLayerState | null) => void;
+  /** The mounted app's control adapter; null while unmounted. */
+  onBridgeChange?: (bridge: WorldSignalsInspectorBridge | null) => void;
+};
+
+export default function WorldSignalSurface({
+  projectId,
+  cardId,
+  onInspectorSectionRequest,
+  onLayerStateChange,
+  onBridgeChange,
+}: WorldSignalSurfaceProps): React.ReactElement {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<WorldSignalsMountHandle | null>(null);
   const [health, setHealth] = useState<WorldSignalsHealth | null>(null);
   const [mountError, setMountError] = useState<string | null>(null);
+
+  // Latest-callback refs keep the mount effect stable across host re-renders.
+  const callbacksRef = useRef({ onInspectorSectionRequest, onLayerStateChange, onBridgeChange });
+  useEffect(() => {
+    callbacksRef.current = { onInspectorSectionRequest, onLayerStateChange, onBridgeChange };
+  });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -102,20 +172,53 @@ export default function WorldSignalSurface(): React.ReactElement {
     if (!backendReachable || !containerRef.current || handleRef.current) return;
     let disposed = false;
     const container = containerRef.current;
+    const canPersist = Boolean(projectId && cardId);
+    const saved = canPersist ? readLayerPrefs(projectId as string, cardId as string) : null;
+    // Guard so a stale profile version triggers at most one reset.
+    let resetForNewProfile = false;
 
     (async () => {
       try {
         const module = await loadEmbedModule();
         if (disposed) return;
-        handleRef.current = module.mountWorldSignals(container, {
+        const handle = module.mountWorldSignals(container, {
           apiBaseUrl: WORLDSIGNALS_API_BASE,
           assetBaseUrl: EMBED_BASE,
+          initialEnabledLayerIds: saved?.enabledLayerIds,
           onSelectionChange: (selection) => {
             window.dispatchEvent(
               new CustomEvent('worldsignals:selected-object', { detail: selection }),
             );
           },
+          onInspectorSectionRequest: (section) => {
+            callbacksRef.current.onInspectorSectionRequest?.(section);
+          },
+          onLayerStateChange: (state) => {
+            // A saved set from an older profile version is discarded: reset to
+            // the current World Intelligence defaults, which re-fires this
+            // handler with a matching version and persists it.
+            if (saved && saved.profileVersion !== state.profileVersion && !resetForNewProfile) {
+              resetForNewProfile = true;
+              handle.resetLayersToWorldIntelligenceDefaults();
+              return;
+            }
+            if (canPersist) {
+              writeLayerPrefs(projectId as string, cardId as string, {
+                profileVersion: state.profileVersion,
+                enabledLayerIds: state.enabledLayerIds,
+              });
+            }
+            callbacksRef.current.onLayerStateChange?.(state);
+          },
           onError: (error) => setMountError(`${error.code}: ${error.message}`),
+        });
+        handleRef.current = handle;
+        callbacksRef.current.onBridgeChange?.({
+          getLayerState: () => handle.getLayerState(),
+          setLayerEnabled: (layerId, enabled) => handle.setLayerEnabled(layerId, enabled),
+          resetLayersToWorldIntelligenceDefaults: () =>
+            handle.resetLayersToWorldIntelligenceDefaults(),
+          getMarketsSnapshot: () => handle.getMarketsSnapshot(),
         });
       } catch (error) {
         if (disposed) return;
@@ -125,10 +228,12 @@ export default function WorldSignalSurface(): React.ReactElement {
 
     return () => {
       disposed = true;
+      callbacksRef.current.onBridgeChange?.(null);
+      callbacksRef.current.onLayerStateChange?.(null);
       handleRef.current?.unmount();
       handleRef.current = null;
     };
-  }, [backendReachable]);
+  }, [backendReachable, projectId, cardId]);
 
   if (mountError) {
     return <Unavailable title="WorldSignals failed to load" detail={mountError} />;

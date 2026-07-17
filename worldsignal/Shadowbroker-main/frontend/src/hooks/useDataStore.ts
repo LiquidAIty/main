@@ -54,6 +54,16 @@ export function setBackendStatus(next: BackendStatus) {
   for (const fn of statusListeners) fn();
 }
 
+// ── Imperative reads (host bridge commands — no subscription) ────────────
+
+export function readDataKey<K extends keyof DashboardData>(key: K): DashboardData[K] {
+  return store[key as string] as DashboardData[K];
+}
+
+export function getBackendStatus(): BackendStatus {
+  return backendStatus;
+}
+
 // ── Read API (hooks) ─────────────────────────────────────────────────────
 
 /** Subscribe to a single data key.  Component only re-renders when that key's

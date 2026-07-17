@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { IS_EMBEDDED } from '@/lib/api';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X,
@@ -108,6 +109,9 @@ const CONTRIBUTORS: ChangelogContributor[] = [
 export function useChangelog() {
   const [show, setShow] = useState(false);
   useEffect(() => {
+    // Embedded in a host (LiquidAIty): no standalone release-notes popup. The
+    // host surface must open map-first with no automatic overlays.
+    if (IS_EMBEDDED) return;
     const seen = localStorage.getItem(STORAGE_KEY);
     if (!seen) setShow(true);
   }, []);

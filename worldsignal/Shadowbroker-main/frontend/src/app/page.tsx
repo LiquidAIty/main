@@ -34,7 +34,7 @@ import type { ActiveLayers, KiwiSDR, Scanner, SelectedEntity } from '@/types/das
 import type { ShodanSearchMatch } from '@/types/shodan';
 import { API_BASE } from '@/lib/api';
 import { useDataPolling, LAYER_TOGGLE_EVENT } from '@/hooks/useDataPolling';
-import { useBackendStatus, useDataKey, useDataKeys } from '@/hooks/useDataStore';
+import { getBackendStatus, readDataKey, useBackendStatus, useDataKey, useDataKeys } from '@/hooks/useDataStore';
 import { useReverseGeocode } from '@/hooks/useReverseGeocode';
 import { useRegionDossier } from '@/hooks/useRegionDossier';
 import { useGtDossier } from '@/hooks/useGtDossier';
@@ -59,40 +59,97 @@ import {
 } from '@/lib/sentinelHub';
 import { useTranslation } from '@/i18n';
 import { IS_EMBEDDED } from '@/lib/api';
-import { emitReady, emitSelectionChange, registerAppCommand } from '@/embed/hostBridge';
+import {
+  emitInspectorSectionRequest,
+  emitLayerStateChange,
+  emitReady,
+  emitSelectionChange,
+  getInitialEnabledLayerIds,
+  registerAppCommand,
+  type WorldSignalsLayerStateRef,
+} from '@/embed/hostBridge';
+// world_intelligence_default_v1 (the mainstream embedded profile) and the one
+// layer catalog both live in embed/layerCatalog.ts — the single authority for
+// layer identity, labels, grouping and the specialist classification.
+import {
+  WORLDSIGNALS_LAYER_CATALOG,
+  WORLD_INTELLIGENCE_PROFILE_ID,
+  WORLD_INTELLIGENCE_PROFILE_VERSION,
+  worldIntelligenceDefaults,
+} from '@/embed/layerCatalog';
 import { LocateBar } from './LocateBar';
-
-// world_intelligence_default_v1 — the mainstream embedded default profile.
-// When WorldSignals is embedded in LiquidAIty it must open as a live-world
-// intelligence surface (aviation, maritime, satellites, weather, environment,
-// infrastructure, energy, news, markets), NOT a conflict/recon console. These
-// specialist layers stay fully implemented and available in standalone mode;
-// they are simply OFF in the embedded default and can be turned on deliberately.
-const WORLD_INTELLIGENCE_DEFAULT_V1_SPECIALIST_OFF: Partial<ActiveLayers> = {
-  military: false,
-  military_bases: false,
-  ships_military: false,
-  gps_jamming: false,
-  ukraine_alerts: false,
-  ukraine_frontline: false,
-  global_incidents: false,
-  telegram_osint: false,
-  kiwisdr: false,
-  psk_reporter: false,
-  satnogs: false,
-  tinygs: false,
-  scanners: false,
-  sigint_meshtastic: false,
-  sigint_aprs: false,
-  shodan_overlay: false,
-  cyber_threats: false,
-  malware_c2: false,
-  crowdthreat: false,
-  gt_risk: false,
-  ai_intel: false,
-};
 import { SentinelInfoModal } from './SentinelInfoModal';
 import SarAoiEditorModal from '@/components/SarAoiEditorModal';
+
+// The app's original standalone first-load layer profile.
+const STANDALONE_DEFAULT_LAYERS: ActiveLayers = {
+  // Aircraft — all ON
+  flights: true,
+  private: true,
+  jets: true,
+  military: true,
+  tracked: true,
+  gps_jamming: true,
+  // Maritime — all ON
+  ships_military: true,
+  ships_cargo: true,
+  ships_civilian: true,
+  ships_passenger: true,
+  ships_tracked_yachts: true,
+  fishing_activity: true,
+  // Space — only satellites
+  satellites: true,
+  gibs_imagery: false,
+  highres_satellite: false,
+  sentinel_hub: false,
+  viirs_nightlights: false,
+  road_corridor_trends: false,
+  malware_c2: false,
+  submarine_cables: false,
+  scm_suppliers: false,
+  cyber_threats: false,
+  telegram_osint: true,
+  // Hazards — no fire, rest ON
+  earthquakes: true,
+  firms: false,
+  ukraine_alerts: true,
+  weather_alerts: true,
+  volcanoes: true,
+  air_quality: true,
+  // Infrastructure — military bases + internet outages only
+  cctv: false,
+  datacenters: false,
+  internet_outages: true,
+  power_plants: false,
+  military_bases: true,
+  trains: false,
+  // SIGINT — all ON except HF digital spots
+  kiwisdr: true,
+  psk_reporter: false,
+  satnogs: true,
+  tinygs: true,
+  scanners: true,
+  sigint_meshtastic: true,
+  sigint_aprs: true,
+  // Overlays
+  ukraine_frontline: true,
+  global_incidents: true,
+  day_night: true,
+  correlations: true,
+  contradictions: true,
+  uap_sightings: true,
+  // Biosurveillance
+  wastewater: true,
+  // CrowdThreat is operator opt-in only.
+  crowdthreat: false,
+  gt_risk: false,
+  // Shodan
+  shodan_overlay: false,
+  // AI Intel
+  ai_intel: true,
+  // SAR (Synthetic Aperture Radar)
+  sar: true,
+};
 
 // Use dynamic loads for Maplibre to avoid SSR window is not defined errors
 const MaplibreViewer = dynamic(() => import('@/components/MaplibreViewer'), { ssr: false });
@@ -225,78 +282,18 @@ export default function Dashboard() {
   }, []);
 
   const [activeLayers, setActiveLayers] = useState<ActiveLayers>(() => {
-    const base: ActiveLayers = {
-    // Aircraft — all ON
-    flights: true,
-    private: true,
-    jets: true,
-    military: true,
-    tracked: true,
-    gps_jamming: true,
-    // Maritime — all ON
-    ships_military: true,
-    ships_cargo: true,
-    ships_civilian: true,
-    ships_passenger: true,
-    ships_tracked_yachts: true,
-    fishing_activity: true,
-    // Space — only satellites
-    satellites: true,
-    gibs_imagery: false,
-    highres_satellite: false,
-    sentinel_hub: false,
-    viirs_nightlights: false,
-    road_corridor_trends: false,
-    malware_c2: false,
-    submarine_cables: false,
-    scm_suppliers: false,
-    cyber_threats: false,
-    telegram_osint: true,
-    // Hazards — no fire, rest ON
-    earthquakes: true,
-    firms: false,
-    ukraine_alerts: true,
-    weather_alerts: true,
-    volcanoes: true,
-    air_quality: true,
-    // Infrastructure — military bases + internet outages only
-    cctv: false,
-    datacenters: false,
-    internet_outages: true,
-    power_plants: false,
-    military_bases: true,
-    trains: false,
-    // SIGINT — all ON except HF digital spots
-    kiwisdr: true,
-    psk_reporter: false,
-    satnogs: true,
-    tinygs: true,
-    scanners: true,
-    sigint_meshtastic: true,
-    sigint_aprs: true,
-    // Overlays
-    ukraine_frontline: true,
-    global_incidents: true,
-    day_night: true,
-    correlations: true,
-    contradictions: true,
-    uap_sightings: true,
-    // Biosurveillance
-    wastewater: true,
-    // CrowdThreat is operator opt-in only.
-    crowdthreat: false,
-    gt_risk: false,
-    // Shodan
-    shodan_overlay: false,
-    // AI Intel
-    ai_intel: true,
-    // SAR (Synthetic Aperture Radar)
-    sar: true,
-    };
-    // Embedded (LiquidAIty): apply the mainstream world_intelligence_default_v1
-    // profile — specialist conflict/recon/SIGINT layers off. Standalone keeps the
-    // full default above.
-    return IS_EMBEDDED ? { ...base, ...WORLD_INTELLIGENCE_DEFAULT_V1_SPECIALIST_OFF } : base;
+    if (!IS_EMBEDDED) return { ...STANDALONE_DEFAULT_LAYERS };
+    // Embedded (LiquidAIty): the mainstream world_intelligence_default_v1
+    // profile — specialist conflict/recon/SIGINT layers off — then the host's
+    // persisted per-project layer choices when it supplied any. Unknown or
+    // removed ids in the saved set are ignored safely.
+    const defaults = worldIntelligenceDefaults(STANDALONE_DEFAULT_LAYERS);
+    const saved = getInitialEnabledLayerIds();
+    if (!saved) return defaults;
+    const enabled = new Set(saved);
+    const next = { ...defaults };
+    for (const entry of WORLDSIGNALS_LAYER_CATALOG) next[entry.id] = enabled.has(entry.id);
+    return next;
   });
   const regionLat =
     selectedEntity?.type === 'region_dossier' ? selectedEntity.extra?.lat : undefined;
@@ -506,6 +503,72 @@ export default function Dashboard() {
     [handleFlyTo],
   );
 
+  // Host contract: layer state. Descriptors are projected from the one layer
+  // catalog; labels resolve through the same i18n dictionary the standalone
+  // panel renders with.
+  const buildLayerStateRef = useCallback(
+    (layers: ActiveLayers): WorldSignalsLayerStateRef => ({
+      profileId: WORLD_INTELLIGENCE_PROFILE_ID,
+      profileVersion: WORLD_INTELLIGENCE_PROFILE_VERSION,
+      layers: WORLDSIGNALS_LAYER_CATALOG.map((entry) => ({
+        id: entry.id,
+        label: t(entry.labelKey),
+        group: t(entry.groupKey).toUpperCase(),
+        specialist: entry.specialist,
+        available: true,
+      })),
+      enabledLayerIds: (Object.keys(layers) as Array<keyof ActiveLayers>).filter(
+        (key) => layers[key],
+      ),
+    }),
+    [t],
+  );
+
+  // Re-register the getter with the current state so a host read is never
+  // stale; the emit hands the host its initial state without a call.
+  useEffect(() => {
+    const dispose = registerAppCommand('getLayerState', () => buildLayerStateRef(activeLayers));
+    emitLayerStateChange(buildLayerStateRef(activeLayers));
+    return dispose;
+  }, [activeLayers, buildLayerStateRef]);
+
+  useEffect(() => {
+    const disposers = [
+      registerAppCommand('setLayerEnabled', (layerId, enabled) => {
+        setActiveLayers((prev) =>
+          layerId in prev ? { ...prev, [layerId]: enabled } : prev,
+        );
+      }),
+      registerAppCommand('resetLayersToWorldIntelligenceDefaults', () => {
+        setActiveLayers(worldIntelligenceDefaults(STANDALONE_DEFAULT_LAYERS));
+      }),
+      // Bounded projection of the app's own market feed (what GlobalTicker
+      // renders) — never the full telemetry store.
+      registerAppCommand('getMarketsSnapshot', () => {
+        const stocks = readDataKey('stocks') ?? {};
+        const provider = readDataKey('financial_source') ?? null;
+        const quotes = Object.entries(stocks).map(([symbol, info]) => ({
+          symbol,
+          price: Number(info?.price ?? 0),
+          changePercent: Number(info?.change_percent ?? 0),
+        }));
+        return {
+          status:
+            getBackendStatus() === 'disconnected'
+              ? ('backend_offline' as const)
+              : quotes.length === 0
+                ? ('empty' as const)
+                : ('ok' as const),
+          provider,
+          degraded: provider === 'yfinance',
+          quotes,
+          lastUpdated: readDataKey('last_updated') ?? null,
+        };
+      }),
+    ];
+    return () => disposers.forEach((dispose) => dispose());
+  }, []);
+
   const handleMeasureClick = useCallback(
     (pt: { lat: number; lng: number }) => {
       setMeasurePoints((prev) => (prev.length >= 3 ? prev : [...prev, pt]));
@@ -609,7 +672,10 @@ export default function Dashboard() {
 
         {uiVisible && (
           <>
-            {/* WORLDVIEW HEADER */}
+            {/* WORLDVIEW HEADER — standalone masthead. The embedded surface is
+                map-first; the host frame already names it. */}
+            {!IS_EMBEDDED && (
+            <>
             <motion.div
               initial={{ opacity: 0, y: -20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -641,10 +707,15 @@ export default function Dashboard() {
             <div className="absolute top-2 left-6 text-[11px] font-mono tracking-widest text-cyan-500/50 z-[200] pointer-events-none hud-zone">
               {t('brand.systemMetrics')}
             </div>
+            </>
+            )}
 
             {/* SYSTEM METRICS TOP RIGHT — removed, label moved into TimelineScrubber */}
 
-            {/* LEFT HUD CONTAINER — mirrors right side: one scroll container, scrollbar on LEFT edge */}
+            {/* LEFT HUD CONTAINER — mirrors right side: one scroll container, scrollbar on LEFT edge.
+                Embedded: the whole floating stack stays off; Layers live in the
+                host's canonical Inspector instead. */}
+            {!IS_EMBEDDED && (
             <motion.div
               className="absolute left-6 top-24 bottom-9 w-80 flex flex-col gap-3 z-[200] pointer-events-auto overflow-y-auto styled-scrollbar pl-2 pr-2 hud-zone"
               style={{ direction: 'rtl' }}
@@ -746,18 +817,28 @@ export default function Dashboard() {
                 </div>
               )}
             </motion.div>
+            )}
 
             {/* LEFT SIDEBAR TOGGLE TAB — aligns with Data Layers section */}
             <motion.div
               className="absolute left-0 top-[12.5rem] z-[201] pointer-events-auto hud-zone"
-              animate={{ x: leftOpen ? 344 : 0 }}
+              animate={{ x: IS_EMBEDDED ? 0 : leftOpen ? 344 : 0 }}
               transition={{ type: 'spring', damping: 30, stiffness: 250 }}
             >
               <button
-                onClick={() => setLeftOpen(!leftOpen)}
+                onClick={() => {
+                  // Embedded: the Layers control routes to the host's canonical
+                  // Inspector instead of the floating HUD stack.
+                  if (IS_EMBEDDED) {
+                    emitInspectorSectionRequest('layers');
+                    return;
+                  }
+                  setLeftOpen(!leftOpen);
+                }}
+                data-testid="worldsignals-layers-control"
                 className="flex flex-col items-center gap-1.5 py-5 px-1.5 bg-cyan-950/40 border border-cyan-800/50 border-l-0 rounded-r text-cyan-700 hover:text-cyan-400 hover:bg-cyan-950/60 hover:border-cyan-500/40 transition-colors"
               >
-                {leftOpen ? <ChevronLeft size={10} /> : <ChevronRight size={10} />}
+                {IS_EMBEDDED ? <ChevronRight size={10} /> : leftOpen ? <ChevronLeft size={10} /> : <ChevronRight size={10} />}
                 <span
                   className="text-[7px] font-mono tracking-[0.2em] font-bold"
                   style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
@@ -767,7 +848,11 @@ export default function Dashboard() {
               </button>
             </motion.div>
 
-            {/* RIGHT SIDEBAR TOGGLE TAB */}
+            {/* RIGHT SIDEBAR TOGGLE TAB + RIGHT HUD — standalone only. Embedded is
+                map-first: no floating intel stack; search/locate stays available
+                through the bottom-center LocateBar. */}
+            {!IS_EMBEDDED && (
+            <>
             <motion.div
               className="absolute right-0 top-[12.5rem] z-[201] pointer-events-auto hud-zone"
               animate={{ x: rightOpen ? -424 : 0 }}
@@ -866,6 +951,8 @@ export default function Dashboard() {
                 </ErrorBoundary>
               </div>
             </motion.div>
+            </>
+            )}
 
             {/* BOTTOM CENTER COORDINATE / LOCATION BAR — hidden when fullscreen overlays are open */}
             {!(selectedEntity?.type === 'region_dossier' && regionDossier?.sentinel2) && selectedEntity?.type !== 'cctv' && selectedEntity?.type !== 'news' && (
@@ -998,7 +1085,10 @@ export default function Dashboard() {
         </div>
         )}
 
-        {/* STATIC CRT VIGNETTE */}
+        {/* STATIC CRT VIGNETTE + SCANLINES — standalone console theater only;
+            the embedded surface is a clean map. */}
+        {!IS_EMBEDDED && (
+        <>
         <div
           className="absolute inset-0 pointer-events-none z-[2]"
           style={{
@@ -1019,6 +1109,8 @@ export default function Dashboard() {
           onClear={clearWatchlist}
           onFlyTo={handleFlyTo}
         />
+        </>
+        )}
 
 
         {/* SETTINGS PANEL */}
@@ -1123,7 +1215,16 @@ export default function Dashboard() {
            transition={{ type: 'spring', damping: 30, stiffness: 250 }}
         >
           <button
-            onClick={() => setTickerOpen(!tickerOpen)}
+            onClick={() => {
+              // Embedded: the Markets control routes to the host's canonical
+              // Inspector; the compact bottom ticker stays where it is.
+              if (IS_EMBEDDED) {
+                emitInspectorSectionRequest('markets');
+                return;
+              }
+              setTickerOpen(!tickerOpen);
+            }}
+            data-testid="worldsignals-markets-control"
             className="flex items-center gap-2 px-3 py-1 bg-cyan-950/40 border border-cyan-800/50 border-b-0 rounded-t text-cyan-700 hover:text-cyan-400 hover:bg-cyan-950/60 hover:border-cyan-500/40 transition-colors"
           >
             <div className="text-[7.5px] font-mono tracking-[0.25em] font-bold uppercase">

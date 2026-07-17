@@ -18,6 +18,12 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
 //   npm run build:embed
 export default defineConfig({
   root: dirname,
+  // Relative base: the bundle is served under the host's /worldsignals/ prefix,
+  // so emitted asset URLs (module worker chunks especially) must resolve against
+  // import.meta.url, not the host origin root. Without this the dynamic map
+  // layer workers 404 to the host SPA fallback and every worker-built layer
+  // (aircraft, ships, SIGINT) stays silently empty when embedded.
+  base: './',
   plugins: [react()],
   resolve: {
     alias: [

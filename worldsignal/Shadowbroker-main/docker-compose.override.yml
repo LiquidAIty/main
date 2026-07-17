@@ -36,6 +36,10 @@ services:
       MESH_PEER_PUSH_SECRET: "b7GoqsvoUD9MV7tyt0ZOzMptLA84QG6KCfaV9nDqz5Y"
       # Dev fleet: allow wormhole child agent to start without release attestation.
       PRIVACY_CORE_DEV_OVERRIDE: "true"
+      # Markets feed opt-in (vendor default is off to avoid silent outbound
+      # calls): keyless yfinance path. Supply FINNHUB_API_KEY instead for the
+      # full-rate provider. Required for the LiquidAIty Inspector Markets view.
+      FINANCIAL_ENABLED: "true"
 
   frontend:
     image: ghcr.io/bigbodycobain/shadowbroker-frontend@sha256:094eab0d6e9dfe75951f68114fc058a58c3369115adc4af7e49e622553a880d4

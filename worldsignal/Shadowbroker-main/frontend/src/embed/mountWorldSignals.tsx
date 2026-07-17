@@ -19,13 +19,23 @@ import {
   emitReady,
   invokeAppCommand,
   registerHostListeners,
+  setInitialEnabledLayerIds,
   type WorldSignalsFlyToInput,
+  type WorldSignalsInspectorSection,
+  type WorldSignalsLayerStateRef,
+  type WorldSignalsMarketsSnapshot,
   type WorldSignalsSelectionRef,
 } from '@/embed/hostBridge';
 import Dashboard from '@/app/page';
 import '@/app/globals.css';
 
-export type { WorldSignalsFlyToInput, WorldSignalsSelectionRef };
+export type {
+  WorldSignalsFlyToInput,
+  WorldSignalsInspectorSection,
+  WorldSignalsLayerStateRef,
+  WorldSignalsMarketsSnapshot,
+  WorldSignalsSelectionRef,
+};
 
 export interface WorldSignalsHostError {
   code: string;
@@ -38,13 +48,26 @@ export interface WorldSignalsMountOptions {
   /** Where the host serves this bundle's own static files (public/). */
   assetBaseUrl?: string;
   projectId?: string;
+  /**
+   * Complete enabled-layer set to restore (host-persisted embedded choices).
+   * Applied over the world-intelligence defaults; unknown ids are ignored.
+   */
+  initialEnabledLayerIds?: string[];
   onReady?: () => void;
   onSelectionChange?: (selection: WorldSignalsSelectionRef | null) => void;
+  /** A vendor control (Markets, Layers) asks the host to open an Inspector section. */
+  onInspectorSectionRequest?: (section: WorldSignalsInspectorSection) => void;
+  /** Layer enable/disable changed — fires once on mount with the initial state. */
+  onLayerStateChange?: (state: WorldSignalsLayerStateRef) => void;
   onError?: (error: WorldSignalsHostError) => void;
 }
 
 export interface WorldSignalsMountHandle {
   flyTo(input: WorldSignalsFlyToInput): void;
+  getLayerState(): WorldSignalsLayerStateRef;
+  setLayerEnabled(layerId: string, enabled: boolean): void;
+  resetLayersToWorldIntelligenceDefaults(): void;
+  getMarketsSnapshot(): WorldSignalsMarketsSnapshot;
   unmount(): void;
 }
 
@@ -55,10 +78,13 @@ export function mountWorldSignals(
   setApiBase(options.apiBaseUrl);
   setAssetBase(options.assetBaseUrl ?? '');
   setEmbedded(true);
+  setInitialEnabledLayerIds(options.initialEnabledLayerIds ?? null);
 
   const releaseHost = registerHostListeners({
     onReady: options.onReady,
     onSelectionChange: options.onSelectionChange,
+    onInspectorSectionRequest: options.onInspectorSectionRequest,
+    onLayerStateChange: options.onLayerStateChange,
   });
 
   let root: Root | null = createRoot(container, {
@@ -84,8 +110,21 @@ export function mountWorldSignals(
     flyTo(input) {
       invokeAppCommand('flyTo', input);
     },
+    getLayerState() {
+      return invokeAppCommand('getLayerState');
+    },
+    setLayerEnabled(layerId, enabled) {
+      invokeAppCommand('setLayerEnabled', layerId, enabled);
+    },
+    resetLayersToWorldIntelligenceDefaults() {
+      invokeAppCommand('resetLayersToWorldIntelligenceDefaults');
+    },
+    getMarketsSnapshot() {
+      return invokeAppCommand('getMarketsSnapshot');
+    },
     unmount() {
       releaseHost();
+      setInitialEnabledLayerIds(null);
       root?.unmount();
       root = null;
     },

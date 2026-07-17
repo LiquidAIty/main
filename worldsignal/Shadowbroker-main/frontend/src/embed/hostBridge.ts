@@ -31,11 +31,38 @@ export type WorldSignalsInspectorSection =
   | 'timeline'
   | 'knowgraph';
 
+/** Bounded descriptor projected from the one layer catalog (embed/layerCatalog.ts). */
+export type WorldSignalsLayerDescriptor = {
+  id: string;
+  label: string;
+  group: string;
+  specialist: boolean;
+  available: boolean;
+};
+
 export type WorldSignalsLayerStateRef = {
   profileId: string;
   profileVersion: number;
+  layers: WorldSignalsLayerDescriptor[];
   enabledLayerIds: string[];
-  availableLayerIds: string[];
+};
+
+export type WorldSignalsMarketQuote = {
+  symbol: string;
+  price: number;
+  changePercent: number;
+};
+
+/** Bounded projection of the app's own market feed — never the full telemetry store. */
+export type WorldSignalsMarketsSnapshot = {
+  status: 'ok' | 'empty' | 'backend_offline';
+  /** Upstream provider as reported by the backend (e.g. 'finnhub', 'yfinance'). */
+  provider: string | null;
+  /** true when the backend is running on its limited fallback provider. */
+  degraded: boolean;
+  quotes: WorldSignalsMarketQuote[];
+  /** Backend-reported last data refresh, when available. */
+  lastUpdated: string | null;
 };
 
 type HostListeners = {
@@ -49,10 +76,26 @@ type AppCommands = {
   flyTo?: (input: WorldSignalsFlyToInput) => void;
   getLayerState?: () => WorldSignalsLayerStateRef;
   setLayerEnabled?: (layerId: string, enabled: boolean) => void;
+  resetLayersToWorldIntelligenceDefaults?: () => void;
+  getMarketsSnapshot?: () => WorldSignalsMarketsSnapshot;
 };
 
 const listeners: HostListeners = {};
 const commands: AppCommands = {};
+
+// Host-persisted enabled-layer set to restore on mount, applied by the app's
+// layer-state initializer. Unknown/removed ids are ignored there. null = none.
+let initialEnabledLayerIds: string[] | null = null;
+
+/** Host side: set before render; cleared on unmount. */
+export function setInitialEnabledLayerIds(ids: string[] | null): void {
+  initialEnabledLayerIds = ids ? [...ids] : null;
+}
+
+/** App side: read once by the layer-state initializer. */
+export function getInitialEnabledLayerIds(): string[] | null {
+  return initialEnabledLayerIds;
+}
 
 /** Host side: called by mountWorldSignals before the app renders. */
 export function registerHostListeners(next: HostListeners): () => void {

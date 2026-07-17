@@ -12,7 +12,12 @@ import type { AgentManagerLocalConfig } from '../components/AgentManager';
 import BuilderChat from '../components/builder/BuilderChat';
 import FrontendCrashBoundary from '../components/diagnostics/FrontendCrashBoundary';
 import BuilderDrawer from '../components/builder/BuilderDrawer';
-import WorldSignalSurface from '../components/worldsignal/WorldSignalSurface';
+import WorldSignalSurface, {
+  type WorldSignalsInspectorBridge,
+  type WorldSignalsInspectorSection,
+  type WorldSignalsLayerState,
+} from '../components/worldsignal/WorldSignalSurface';
+import WorldSignalsInspectorPanel from '../components/worldsignal/WorldSignalsInspectorPanel';
 import AgentCanvasPane from '../features/agentbuilder/canvas/AgentCanvasPane';
 import AgentBuilderCanvasRegion from '../features/agentbuilder/core/AgentBuilderCanvasRegion';
 import AgentBuilderChatPane from '../features/agentbuilder/core/AgentBuilderChatPane';
@@ -90,6 +95,7 @@ import {
 import {
   deriveVisibleRailItems,
   isHermesConnectedToMainChat,
+  isWorldSignalsAgentCard,
   resolveWorkbenchDescriptor,
 } from '../features/agentbuilder/rail/railVisibility';
 import {
@@ -499,6 +505,29 @@ export default function AgentBuilder(): React.ReactElement {
   });
   const workspacePanelAlreadyOpen = Boolean(
     objectDrawerOpen && selectedCardId,
+  );
+  // WorldSignals → canonical Inspector: the companion surface requests a
+  // section and provides state adapters; the ONE workspace drawer below
+  // renders it. No second inspector, no drawer inside the map region.
+  const [worldSignalInspectorSection, setWorldSignalInspectorSection] = useState<
+    'markets' | 'layers' | null
+  >(null);
+  const [worldSignalLayerState, setWorldSignalLayerState] =
+    useState<WorldSignalsLayerState | null>(null);
+  const [worldSignalBridge, setWorldSignalBridge] =
+    useState<WorldSignalsInspectorBridge | null>(null);
+  const handleWorldSignalInspectorRequest = useCallback(
+    (section: WorldSignalsInspectorSection) => {
+      // Only sections with a real canonical destination open today.
+      if (section === 'markets' || section === 'layers') {
+        setWorldSignalInspectorSection(section);
+      }
+    },
+    [],
+  );
+  const worldSignalsCardId = useMemo(
+    () => deck.nodes.find((node) => isWorldSignalsAgentCard(node))?.id ?? null,
+    [deck.nodes],
   );
   const [deckRunInput, setDeckRunInput] = useState('');
   const [showCreateProjectForm, setShowCreateProjectForm] = useState(false);
@@ -1653,11 +1682,17 @@ export default function AgentBuilder(): React.ReactElement {
     }
   }, [activeProject]);
 
-  const objectDrawerRole = useMemo<'agent' | null>(() => {
+  const objectDrawerRole = useMemo<'agent' | 'worldsignal' | null>(() => {
     if (workspaceView === 'canvas' && selectedCard) return 'agent';
+    // The canonical Inspector also serves the WorldSignals companion surface —
+    // same drawer, same renderer, section requested by the vendor controls.
+    if (workspaceView === 'worldsignal' && worldSignalInspectorSection) return 'worldsignal';
     return null;
-  }, [selectedCard, workspaceView]);
-  const isObjectDrawerVisible = objectDrawerOpen && objectDrawerRole !== null;
+  }, [selectedCard, workspaceView, worldSignalInspectorSection]);
+  const isObjectDrawerVisible =
+    objectDrawerRole === 'worldsignal'
+      ? true
+      : objectDrawerOpen && objectDrawerRole !== null;
   const objectDrawerDefaultWidth = AGENT_EDITOR_DEFAULT_WIDTH;
   const objectDrawerStorageKey = 'liquidaity.drawer.object.agent.v2.width';
 
@@ -1671,6 +1706,10 @@ export default function AgentBuilder(): React.ReactElement {
       cardId: null,
       nonce: (current?.nonce || 0) + 1,
     }));
+  }, []);
+
+  const closeWorldSignalInspector = useCallback(() => {
+    setWorldSignalInspectorSection(null);
   }, []);
 
   const handleCreateProject = async (e?: React.FormEvent) => {
@@ -2248,25 +2287,80 @@ export default function AgentBuilder(): React.ReactElement {
       }
       tradingSurface={<TradingCanvasSurface />}
       uaSurface={null}
-      worldsignalSurface={<WorldSignalSurface />}
+      worldsignalSurface={
+        <WorldSignalSurface
+          projectId={
+            typeof activeProject === 'string' && activeProject ? activeProject : null
+          }
+          cardId={worldSignalsCardId}
+          onInspectorSectionRequest={handleWorldSignalInspectorRequest}
+          onLayerStateChange={setWorldSignalLayerState}
+          onBridgeChange={setWorldSignalBridge}
+        />
+      }
     />
   );
 
   const workspaceDrawer =
-    workspaceView === 'canvas' ? (
+    objectDrawerRole !== null ? (
       <RightGlassDrawer
         isOpen={isObjectDrawerVisible}
-        title={safeText(selectedCard?.title || 'Agent')}
-        onClose={closeObjectDrawer}
+        title={
+          objectDrawerRole === 'worldsignal'
+            ? 'WorldSignals'
+            : safeText(selectedCard?.title || 'Agent')
+        }
+        onClose={
+          objectDrawerRole === 'worldsignal' ? closeWorldSignalInspector : closeObjectDrawer
+        }
         movable
         defaultWidth={objectDrawerDefaultWidth}
         minWidth={300}
         maxWidth={560}
-        storageKey={objectDrawerStorageKey}
+        storageKey={
+          objectDrawerRole === 'worldsignal'
+            ? 'liquidaity.drawer.object.worldsignal.v1.width'
+            : objectDrawerStorageKey
+        }
         dataTestId="workspace-object-drawer"
         right={12}
         top={48}
       >
+        {objectDrawerRole === 'worldsignal' && worldSignalInspectorSection ? (
+          <div
+            className="flex min-w-0 flex-wrap"
+            style={graphCompanionTabGroupStyle({
+              gap: 6,
+              marginBottom: 10,
+            })}
+          >
+            {(['markets', 'layers'] as const).map((section) => {
+              const selected = worldSignalInspectorSection === section;
+              return (
+                <button
+                  key={section}
+                  data-testid={`worldsignals-inspector-tab-${section}`}
+                  aria-pressed={selected}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setWorldSignalInspectorSection(section);
+                  }}
+                  className="whitespace-nowrap transition-colors duration-150 ease-out"
+                  style={graphCompanionTabButtonStyle(selected)}
+                >
+                  {section === 'markets' ? 'Markets' : 'Layers'}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        {objectDrawerRole === 'worldsignal' && worldSignalInspectorSection ? (
+          <WorldSignalsInspectorPanel
+            section={worldSignalInspectorSection}
+            bridge={worldSignalBridge}
+            layerState={worldSignalLayerState}
+          />
+        ) : null}
         {objectDrawerRole === 'agent' && activeTabs.length > 0 ? (
           <div
             className="flex min-w-0 flex-wrap"
@@ -2295,15 +2389,17 @@ export default function AgentBuilder(): React.ReactElement {
             })}
           </div>
         ) : null}
-        <div
-          data-testid="companion-surface-editor"
-          style={{
-            display: 'grid',
-            gap: 8,
-          }}
-        >
-          {renderAgentBuilderPanel()}
-        </div>
+        {objectDrawerRole === 'agent' ? (
+          <div
+            data-testid="companion-surface-editor"
+            style={{
+              display: 'grid',
+              gap: 8,
+            }}
+          >
+            {renderAgentBuilderPanel()}
+          </div>
+        ) : null}
       </RightGlassDrawer>
     ) : null;
 
