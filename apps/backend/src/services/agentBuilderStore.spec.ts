@@ -10,7 +10,7 @@ vi.mock('../db/pool', () => ({
   pool: poolHarness,
 }));
 
-type AgentBuilderStoreModule = typeof import('./agentBuilderStore');
+type AgentBuilderStoreModule = typeof import('./agentBuilderStore.js');
 
 describe('listAgentCards', () => {
   let listAgentCards: AgentBuilderStoreModule['listAgentCards'];
@@ -20,7 +20,7 @@ describe('listAgentCards', () => {
     poolHarness.query.mockReset();
     poolHarness.connect.mockReset();
     poolHarness.end.mockReset();
-    ({ listAgentCards } = await import('./agentBuilderStore'));
+    ({ listAgentCards } = await import('./agentBuilderStore.js'));
   });
 
   it('returns a stable list when optional project columns are missing', async () => {

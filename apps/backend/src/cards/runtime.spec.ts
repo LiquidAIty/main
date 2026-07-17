@@ -115,11 +115,15 @@ describe('Canonical Cards Runtime', () => {
       mag, {}, 'fix the code', { projectId: 'admin', deckId: 'deck', allCards, allEdges }, {}, callable, '2026',
     );
 
-    // No TypeScript coder packet is ever attached to a planning turn.
-    expect(payload.codingWorkflowPacket).toBeUndefined();
+    // No TypeScript coder packet is ever attached to a planning turn. Retired
+    // fields have no type-level home anymore, so assert their absence on the
+    // untyped payload shape rather than a property that no longer compiles.
+    const untypedPayload = payload as unknown as Record<string, unknown>;
+    expect(untypedPayload.codingWorkflowPacket).toBeUndefined();
     // The capability manifest carries no intent/workflow classifier at all.
-    expect((payload.routingManifest as any)?.intent).toBeUndefined();
-    expect((payload.cardRuntime.runtimeScope?.routingDiagnostics as any)?.workflowType).toBeUndefined();
+    expect((untypedPayload.routingManifest as any)?.intent).toBeUndefined();
+    const runtimeScope = payload.cardRuntime.runtimeScope as unknown as Record<string, unknown> | undefined;
+    expect((runtimeScope?.routingDiagnostics as any)?.workflowType).toBeUndefined();
     // Native team: every bus-connected agent participates, including the Local Coder
     // (no project-specific participant filtering). Execution is the Run route only.
     expect(payload.cardRuntime.participants.map((p) => p.cardId)).toContain('coder');

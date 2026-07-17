@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'crypto';
 import { pool } from '../db/pool';
-import type { AgentCard, AgentConfig } from '../types/agentBuilder';
+import type { AgentCard } from '../types/agentBuilder';
 
 export type ProjectState = {
   messages: Array<{ role: 'assistant' | 'user'; text: string }>;
@@ -140,24 +140,6 @@ function normalizeJson<TDefault>(value: unknown, fallback: TDefault): TDefault {
     return value as TDefault;
   }
   return fallback;
-}
-
-function normalizeTools(value: unknown): string[] {
-  if (typeof value === 'string') {
-    try {
-      const parsed = JSON.parse(value);
-      return normalizeTools(parsed);
-    } catch {
-      return [];
-    }
-  }
-  if (Array.isArray(value)) {
-    return value
-      .filter((item) => typeof item === 'string')
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-  return [];
 }
 
 function projectLookup(projectId: string): { clause: string; params: any[] } {
@@ -421,39 +403,6 @@ export async function listAgentCards(userId?: string | null, projectType?: 'assi
   }
 }
 
-export async function getAgentConfig(projectId: string): Promise<AgentConfig | null> {
-  const trimmed = projectId?.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const { clause, params } = projectLookup(trimmed);
-  const { rows } = await pool.query(
-    `SELECT id, name, agent_model, agent_prompt_template, agent_tools, agent_io_schema,
-            agent_temperature, agent_max_tokens, agent_permissions
-     FROM ${PROJECTS_TABLE} WHERE ${clause} LIMIT 1`,
-    params
-  );
-
-  if (!rows.length) return null;
-  const row = rows[0];
-  if (!hasConfig(row)) {
-    return null;
-  }
-
-  return {
-    id: trimmed,
-    name: row.name,
-    agent_model: row.agent_model ?? null,
-    agent_prompt_template: row.agent_prompt_template ?? null,
-    agent_tools: normalizeTools(row.agent_tools),
-    agent_io_schema: normalizeJson(row.agent_io_schema, {} as Record<string, unknown>),
-    agent_temperature: row.agent_temperature ?? null,
-    agent_max_tokens: row.agent_max_tokens ?? null,
-    agent_permissions: normalizeJson(row.agent_permissions, {} as Record<string, unknown>),
-  };
-}
-
 function isInternalProjectValue(...values: unknown[]): boolean {
   return values.some((value) => normalizeProjectKey(value) === 'admin');
 }
@@ -478,142 +427,11 @@ export async function getProjectCard(projectId: string): Promise<ProjectCard | n
   };
 }
 
-export async function ensureInternalAdminProject(): Promise<ProjectCard> {
-  const existing = await getProjectCard('admin');
-  if (existing) return existing;
-
-  const created = await createProject('Admin', 'admin', 'assist');
-  return {
-    ...created,
-    isInternal: true,
-  };
-}
-
-export async function saveAgentConfig(config: AgentConfig): Promise<AgentConfig> {
-  if (!config.id) {
-    throw new Error('agent config id required');
-  }
-
-  const trimmedId = config.id.trim();
-  if (!trimmedId) {
-    throw new Error('agent config id required');
-  }
-
-  const agentModel = config.agent_model?.trim() || null;
-  const promptTemplate = config.agent_prompt_template?.trim() || null;
-  const tools = normalizeTools(config.agent_tools);
-  const ioSchema = normalizeJson(config.agent_io_schema, {} as Record<string, unknown>);
-  const permissions = normalizeJson(config.agent_permissions, {} as Record<string, unknown>);
-
-  const { clause, params } = projectLookup(trimmedId);
-  const { rows } = await pool.query(
-    `UPDATE ${PROJECTS_TABLE}
-     SET agent_model = $2,
-         agent_prompt_template = $3,
-         agent_tools = $4,
-         agent_io_schema = $5,
-         agent_temperature = $6,
-         agent_max_tokens = $7,
-         agent_permissions = $8,
-         updated_at = NOW()
-     WHERE ${clause}
-     RETURNING id, name, agent_model, agent_prompt_template, agent_tools, agent_io_schema,
-               agent_temperature, agent_max_tokens, agent_permissions`,
-    [
-      ...params,
-      agentModel,
-      promptTemplate,
-      JSON.stringify(tools),
-      JSON.stringify(ioSchema),
-      config.agent_temperature ?? null,
-      config.agent_max_tokens ?? null,
-      JSON.stringify(permissions),
-    ]
-  );
-
-  if (!rows.length) {
-    // Create a project row on the fly when one does not exist yet
-    const columns = await getProjectColumns();
-    const hasOwnerColumn = columns.has('owner_user_id');
-    const ownerNullable = columns.get('owner_user_id') ?? true;
-    const ownerId = pickOwnerId() ?? (ownerNullable ? null : NIL_UUID);
-    const projectId = UUID_REGEX.test(trimmedId) ? trimmedId : randomUUID();
-    const projectCode = UUID_REGEX.test(trimmedId) ? config.name?.trim() || trimmedId : trimmedId;
-    const projectName = config.name?.trim() || projectCode || projectId;
-
-    const insertParams = [
-      projectId,
-      projectName,
-      projectCode,
-      'active',
-      agentModel,
-      promptTemplate,
-      JSON.stringify(tools),
-      JSON.stringify(ioSchema),
-      config.agent_temperature ?? null,
-      config.agent_max_tokens ?? null,
-      JSON.stringify(permissions),
-      ...(hasOwnerColumn ? [ownerId] : []),
-    ];
-
-    const insertSql = `
-      INSERT INTO ${PROJECTS_TABLE} (
-        id, name, code, status,
-        agent_model, agent_prompt_template, agent_tools, agent_io_schema,
-        agent_temperature, agent_max_tokens, agent_permissions${hasOwnerColumn ? ', owner_user_id' : ''}
-      )
-      VALUES (
-        $1, $2, $3, $4,
-        $5, $6, $7, $8,
-        $9, $10, $11${hasOwnerColumn ? ', $12' : ''}
-      )
-      ON CONFLICT (id) DO UPDATE SET
-        name = EXCLUDED.name,
-        code = EXCLUDED.code,
-        status = EXCLUDED.status,
-        agent_model = EXCLUDED.agent_model,
-        agent_prompt_template = EXCLUDED.agent_prompt_template,
-        agent_tools = EXCLUDED.agent_tools,
-        agent_io_schema = EXCLUDED.agent_io_schema,
-        agent_temperature = EXCLUDED.agent_temperature,
-        agent_max_tokens = EXCLUDED.agent_max_tokens,
-        agent_permissions = EXCLUDED.agent_permissions${hasOwnerColumn ? ', owner_user_id = EXCLUDED.owner_user_id' : ''}
-      RETURNING id, name, agent_model, agent_prompt_template, agent_tools, agent_io_schema,
-                agent_temperature, agent_max_tokens, agent_permissions
-    `;
-
-    const inserted = await pool.query(insertSql, insertParams);
-    if (!inserted.rows.length) {
-      throw new Error('agent not found');
-    }
-    rows.push(inserted.rows[0]);
-  }
-
-  const row = rows[0];
-
-  return {
-    id: row.id,
-    name: row.name,
-    agent_model: row.agent_model ?? null,
-    agent_prompt_template: row.agent_prompt_template ?? null,
-    agent_tools: normalizeTools(row.agent_tools),
-    agent_io_schema: normalizeJson(row.agent_io_schema, {} as Record<string, unknown>),
-    agent_temperature: row.agent_temperature ?? null,
-    agent_max_tokens: row.agent_max_tokens ?? null,
-    agent_permissions: normalizeJson(row.agent_permissions, {} as Record<string, unknown>),
-  };
-}
-
 export async function getProjectStateSnapshot(projectId: string): Promise<ProjectStateSnapshot> {
   const { ioSchema } = await loadProjectSchema(projectId);
   const state = normalizeState((ioSchema as any)[BUILDER_STATE_KEY]);
   const meta = normalizeProjectStateMeta((ioSchema as any)[BUILDER_STATE_META_KEY], state);
   return { state, meta };
-}
-
-export async function getProjectState(projectId: string): Promise<ProjectState> {
-  const snapshot = await getProjectStateSnapshot(projectId);
-  return snapshot.state;
 }
 
 export async function saveProjectState(

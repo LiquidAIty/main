@@ -1,22 +1,8 @@
-// @graph entity: ThinkGraph
-// @graph role: provisional-graph-state
-// @graph relates_to: Magentic-One Runtime
-// @graph depends_on: Apache AGE, Postgres
+// Generic scoped Cypher-over-AGE runner. ThinkGraph moved to the Engraphis-v2
+// Python authority (thinkGraphStore.ts never reads/writes AGE); the sole live
+// caller of this file is kg.routes.ts's project-scoped KnowGraph canvas-read
+// path (runKgQuery enforces `$projectId` scoping before calling in).
 import { pool } from '../db/pool';
-
-// ============================================================================
-// THINKGRAPH SERVICE (AGE / Postgres)
-// ============================================================================
-// This service manages ThinkGraph: the provisional conversation/planning graph.
-// ThinkGraph stores:
-// - Provisional entities and relationships extracted from conversation
-// - Hypotheses, questions, gaps, and next actions
-// - Planning structure and reasoning state
-// - Candidate structure before grounding
-//
-// ThinkGraph is NOT the source-backed truth graph.
-// For grounded, evidence-linked knowledge, see KnowGraph (Neo4j).
-// ============================================================================
 
 async function ensureAgeExtension() {
   await pool.query('CREATE EXTENSION IF NOT EXISTS age');
@@ -38,26 +24,6 @@ export async function ensureGraph(graphName: string): Promise<void> {
   } catch (err: any) {
     const msg = (err?.message || '').toLowerCase();
     if (msg.includes('already exists')) {
-      return;
-    }
-    throw err;
-  }
-}
-
-/**
- * Ensure a vertex label exists so a first-use MATCH on it does not throw
- * `label "X" does not exist`. Same AGE init shape as ensureGraph (idempotent,
- * tolerates already-exists). Lets callers distinguish setup from real failure.
- */
-export async function ensureVertexLabel(graphName: string, label: string): Promise<void> {
-  if (!/^[A-Za-z0-9_]+$/.test(label)) {
-    throw new Error('invalid label');
-  }
-  await ensureGraph(graphName);
-  try {
-    await pool.query(`SELECT ag_catalog.create_vlabel('${graphName}', '${label}')`);
-  } catch (err: any) {
-    if ((err?.message || '').toLowerCase().includes('already exists')) {
       return;
     }
     throw err;
@@ -102,54 +68,3 @@ export async function runCypherOnGraph(
   );
   return res.rows.map((r) => r.row);
 }
-
-// Backward-compatible helper (some routes import runCypher)
-export async function runCypher(
-  graphName: string,
-  cypher: string,
-  params?: Record<string, unknown>
-): Promise<unknown[]> {
-  return runCypherOnGraph(graphName, cypher, params);
-}
-
-export async function addDocNode(projectId: string, id: string, title: string) {
-  if (!id?.trim()) {
-    throw new Error('id is required');
-  }
-  if (!title?.trim()) {
-    throw new Error('title is required');
-  }
-
-  const cypher = `
-    CREATE (d:Doc {id: $id, title: $title})
-    RETURN d
-  `;
-  const params = { id, title };
-  const [row] = await runCypherOnGraph(projectId, cypher, params);
-  return row;
-}
-
-export async function addRelation(
-  projectId: string,
-  fromId: string,
-  toId: string,
-  relType: string
-) {
-  if (!fromId?.trim() || !toId?.trim()) {
-    throw new Error('fromId and toId are required');
-  }
-
-  const safeRel = (relType || 'REL')
-    .toUpperCase()
-    .replace(/[^A-Z0-9_]/g, '') || 'REL';
-
-  const cypher = `
-    MATCH (a {id: $fromId}), (b {id: $toId})
-    CREATE (a)-[r:${safeRel}]->(b)
-    RETURN r
-  `;
-  const params = { fromId, toId };
-  const [row] = await runCypherOnGraph(projectId, cypher, params);
-  return row;
-}
-

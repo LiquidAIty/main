@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 
-import type { AgentCardInstance, DeckDocument, DeckRun, DeckRuntimeEvent } from '../types/agentgraph';
+import type { AgentCardInstance, DeckDocument, DeckRun, DeckRuntimeEvent, RuntimeBinding } from '../types/agentgraph';
 // Deck logic moved out of the page in the 2026-07-08 decomposition; the spec
 // tests the real modules directly.
 import { INITIAL_DECK } from '../features/agentbuilder/deck/deckSeed';
@@ -310,9 +310,12 @@ describe('agentbuilder authoring flow', () => {
           runtimeBinding: 'main_chat',
           title: 'Main Chat',
         }),
+        // Retired bindings: valid when this deck was saved, no longer in the
+        // RuntimeBinding union. Persisted data can still carry them, which is
+        // exactly what the upgrade path must drop — so they're cast, not typed.
         createCard('card_kg_ingest', 'assistant_agent', {
           templateId: 'template_kg_ingest',
-          runtimeBinding: 'kg_ingest',
+          runtimeBinding: 'kg_ingest' as RuntimeBinding,
           title: 'KG Ingest / ThinkGraph',
         }),
         createCard('card_research', 'assistant_agent', {
@@ -322,12 +325,12 @@ describe('agentbuilder authoring flow', () => {
         }),
         createCard('card_knowgraph', 'assistant_agent', {
           templateId: 'template_knowgraph',
-          runtimeBinding: 'knowgraph',
+          runtimeBinding: 'knowgraph' as RuntimeBinding,
           title: 'KnowGraph',
         }),
         createCard('card_neo4j', 'assistant_agent', {
           templateId: 'template_neo4j',
-          runtimeBinding: 'neo4j',
+          runtimeBinding: 'neo4j' as RuntimeBinding,
           title: 'Neo4j',
         }),
       ],

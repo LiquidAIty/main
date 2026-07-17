@@ -3,8 +3,6 @@ import health from './health.routes';
 import artifacts from './artifacts.routes';
 import auth from './auth.routes';
 import ragSearch from './ragsearch.routes';
-import kg from '../api/kg/agent-kg';
-import graph from './graph.routes';
 import { authMiddleware } from '../middleware/auth';
 import { diagnosticRoutes } from './diagnostic.routes';
 import receipts from './receipts.routes';
@@ -31,9 +29,7 @@ router.use('/health', health);
 router.use('/diagnostic', diagnosticRoutes);
 
 router.use('/artifacts', authMiddleware, artifacts);
-router.use('/graph', authMiddleware, graph);
 router.use('/rag', authMiddleware, ragSearch);
-router.use('/kg', authMiddleware, kg);
 router.use('/receipts', authMiddleware, receipts);
 router.use('/config', authMiddleware, config);
 router.use('/coder', authMiddleware, coder);

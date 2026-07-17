@@ -18,7 +18,7 @@
       "@nx/react/typings/image.d.ts"
     ],
     "jsx": "react-jsx",
-    "lib": ["dom"],
+    "lib": ["es2022", "dom", "dom.iterable"],
     // base sets composite:true which demands every transitively-imported app
     // source be listed here (TS6307 ×70). Specs import app sources freely;
     // this is a check-only config, never a build project — so the base's

@@ -119,13 +119,6 @@ import type {
   DeckWorkspaceContext,
   WorkspaceObjectContext,
 } from '../types/agentgraph';
-import {
-  createWorkspaceTestingInteractionId,
-  recordWorkspaceTestingEvent,
-  type WorkspaceTestingEventInput,
-  type WorkspaceTestingObjectType,
-  type WorkspaceTestingSurface,
-} from '../lib/workspaceTestingTelemetry';
 
 const AgentManager = lazy(async () => {
   const mod = await import('../components/AgentManager');
@@ -232,30 +225,6 @@ const HERMES_GRAPH_AUTHORITIES: readonly KnowledgeSurfaceKind[] = [
   'knowgraph',
   'codegraph',
 ];
-type WorkspaceTestingEventDraft = Omit<
-  WorkspaceTestingEventInput,
-  'projectId'
-> & {
-  projectId?: string | null;
-};
-
-function normalizeWorkspaceSurface(
-  value: string,
-): WorkspaceTestingSurface | null {
-  const normalized = safeText(value).trim().toLowerCase();
-  if (
-    normalized === 'chat' ||
-    normalized === 'canvas' ||
-    normalized === 'knowledge' ||
-    normalized === 'codegraph' ||
-    normalized === 'worldsignal' ||
-    normalized === 'trading'
-  ) {
-    return normalized as WorkspaceTestingSurface;
-  }
-  return null;
-}
-
 // ---- utils ----
 function clamp(x: number, a: number, b: number) {
   return Math.min(b, Math.max(a, x));
@@ -498,9 +467,6 @@ export default function AgentBuilder(): React.ReactElement {
   } = useAgentBuilderSelection({
     deck,
   });
-  const workspacePanelAlreadyOpen = Boolean(
-    objectDrawerOpen && selectedCardId,
-  );
   // WorldSignals → canonical Inspector: the companion surface requests a
   // section and provides state adapters; the ONE workspace drawer below
   // renders it. No second inspector, no drawer inside the map region.
@@ -607,106 +573,6 @@ export default function AgentBuilder(): React.ReactElement {
       ctrl.abort();
     };
   }, [canvasProjectId, conversationId]);
-
-  const lastCompanionSurfaceTelemetryRef = useRef<string | null>(null);
-  const pendingPanelOpenTelemetryRef = useRef<{
-    objectType: WorkspaceTestingObjectType;
-    objectId: string;
-    graphType: 'agent' | 'knowledge';
-    interactionId: string;
-    startedAt: number;
-  } | null>(null);
-
-  const emitWorkspaceTestingEvent = useCallback(
-    (payload: WorkspaceTestingEventDraft) => {
-      const metadata = {
-        activeProjectId: activeProject || null,
-        ...(payload.metadata || {}),
-      };
-      recordWorkspaceTestingEvent({
-        ...payload,
-        projectId:
-          payload.projectId ?? cleanOptionalText(activeProject) ?? null,
-        metadata,
-      });
-    },
-    [activeProject],
-  );
-
-  const queueWorkspacePanelTelemetry = useCallback(
-    (
-      graphType: 'agent' | 'knowledge',
-      objectType: WorkspaceTestingObjectType,
-      objectId: string,
-      interactionId: string,
-    ) => {
-      const startedAt = Date.now();
-      if (workspacePanelAlreadyOpen) {
-        emitWorkspaceTestingEvent({
-          event: 'workspace_panel_opened_from_graph_selection',
-          objectType,
-          objectId,
-          interactionId,
-          durationMs: 0,
-          metadata: { graphType, panelAlreadyOpen: true },
-        });
-        pendingPanelOpenTelemetryRef.current = null;
-        return;
-      }
-      pendingPanelOpenTelemetryRef.current = {
-        objectType,
-        objectId,
-        graphType,
-        interactionId,
-        startedAt,
-      };
-    },
-    [emitWorkspaceTestingEvent, workspacePanelAlreadyOpen],
-  );
-
-  useEffect(() => {
-    emitWorkspaceTestingEvent({
-      event: 'surface_opened',
-      surface: largeSurface,
-      surfaceRole: 'large',
-      metadata: { workspaceView },
-    });
-  }, [emitWorkspaceTestingEvent, largeSurface, workspaceView]);
-
-  useEffect(() => {
-    if (workspaceView === 'canvas') {
-      lastCompanionSurfaceTelemetryRef.current = null;
-      return;
-    }
-    const companionSurface = normalizeWorkspaceSurface(workspaceView);
-    if (!companionSurface) {
-      lastCompanionSurfaceTelemetryRef.current = null;
-      return;
-    }
-    const nextKey = `${workspaceView}:${companionSurface}`;
-    if (lastCompanionSurfaceTelemetryRef.current === nextKey) return;
-    emitWorkspaceTestingEvent({
-      event: 'surface_opened',
-      surface: companionSurface,
-      surfaceRole: 'companion',
-      metadata: { workspaceView },
-    });
-    lastCompanionSurfaceTelemetryRef.current = nextKey;
-  }, [emitWorkspaceTestingEvent, workspaceView]);
-
-  useEffect(() => {
-    const pending = pendingPanelOpenTelemetryRef.current;
-    if (!workspacePanelAlreadyOpen || !pending) return;
-    emitWorkspaceTestingEvent({
-      event: 'workspace_panel_opened_from_graph_selection',
-      objectType: pending.objectType,
-      objectId: pending.objectId,
-      interactionId: pending.interactionId,
-      durationMs: Math.max(0, Date.now() - pending.startedAt),
-      metadata: { graphType: pending.graphType, panelAlreadyOpen: false },
-    });
-    pendingPanelOpenTelemetryRef.current = null;
-  }, [emitWorkspaceTestingEvent, workspacePanelAlreadyOpen]);
 
   useEffect(() => {
     const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
@@ -832,7 +698,6 @@ export default function AgentBuilder(): React.ReactElement {
     snapshotDeckBoard,
     lastPersistedBoardFingerprintRef,
     lastPersistedBoardSnapshotRef,
-    emitWorkspaceTestingEvent: emitWorkspaceTestingEvent as any,
     setDeck,
     setDeckRevision,
     setDeckLoadBusy,
@@ -1095,24 +960,6 @@ export default function AgentBuilder(): React.ReactElement {
   const handleSelectCard = useCallback(
     (cardId: string | null) => {
       recordUiOnlyAction('node-selection');
-      if (!cardId) {
-        pendingPanelOpenTelemetryRef.current = null;
-      } else {
-        const interactionId = createWorkspaceTestingInteractionId('agent-node');
-        emitWorkspaceTestingEvent({
-          event: 'agent_graph_node_selected',
-          objectType: 'agent_node',
-          objectId: cardId,
-          interactionId,
-          metadata: { workspaceView: 'canvas' },
-        });
-        queueWorkspacePanelTelemetry(
-          'agent',
-          'agent_node',
-          cardId,
-          interactionId,
-        );
-      }
       setSelectedCardId(cardId);
       const selectedNode = cardId
         ? deck.nodes.find((node) => node.id === cardId) || null
@@ -1141,29 +988,12 @@ export default function AgentBuilder(): React.ReactElement {
         }));
       }
     },
-    [
-      deck.nodes,
-      emitWorkspaceTestingEvent,
-      queueWorkspacePanelTelemetry,
-      recordUiOnlyAction,
-      tab,
-    ],
+    [deck.nodes, recordUiOnlyAction, tab],
   );
 
   const handleSelectEdge = useCallback(
     (edgeId: string | null) => {
       recordUiOnlyAction('edge-selection');
-      if (edgeId) {
-        const interactionId = createWorkspaceTestingInteractionId('agent-edge');
-        emitWorkspaceTestingEvent({
-          event: 'agent_graph_edge_selected',
-          objectType: 'agent_edge',
-          objectId: edgeId,
-          interactionId,
-          metadata: { workspaceView: 'canvas' },
-        });
-      }
-      pendingPanelOpenTelemetryRef.current = null;
       setObjectDrawerOpen(false);
       setBuilderCanvasFocusRequest((current) => ({
         kind: 'deck',
@@ -1175,7 +1005,7 @@ export default function AgentBuilder(): React.ReactElement {
         setSelectedCardId(null);
       }
     },
-    [emitWorkspaceTestingEvent, recordUiOnlyAction],
+    [recordUiOnlyAction],
   );
 
   const handleDeleteSelectedEdge = useCallback(() => {
@@ -1650,7 +1480,6 @@ export default function AgentBuilder(): React.ReactElement {
 
   const closeObjectDrawer = useCallback(() => {
     setObjectDrawerOpen(false);
-    pendingPanelOpenTelemetryRef.current = null;
     setSelectedCardId(null);
     setSelectedEdgeId(null);
     setBuilderCanvasFocusRequest((current) => ({

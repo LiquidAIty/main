@@ -6,6 +6,8 @@
     "build": "nx build backend",
     "serve": "nx serve backend",
     "start": "node dist/src/main.js",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
+    "typecheck:spec": "tsc -p tsconfig.spec.json --noEmit",
     "audit:unused": "knip"
   },
   "dependencies": {

@@ -45,11 +45,6 @@ type UseAgentBuilderDeckLoadArgs = {
   snapshotDeckBoard: (deck: DeckDocument) => unknown;
   lastPersistedBoardFingerprintRef: MutableRefObject<string | null>;
   lastPersistedBoardSnapshotRef: MutableRefObject<unknown>;
-  emitWorkspaceTestingEvent: (input: {
-    event: string;
-    durationMs?: number;
-    metadata?: Record<string, unknown>;
-  }) => void;
   setDeck: Dispatch<SetStateAction<DeckDocument>>;
   setDeckRevision: Dispatch<SetStateAction<string | null>>;
   setDeckLoadBusy: Dispatch<SetStateAction<boolean>>;
@@ -76,7 +71,6 @@ export default function useAgentBuilderDeckLoad({
   snapshotDeckBoard,
   lastPersistedBoardFingerprintRef,
   lastPersistedBoardSnapshotRef,
-  emitWorkspaceTestingEvent,
   setDeck,
   setDeckRevision,
   setDeckLoadBusy,
@@ -104,7 +98,6 @@ export default function useAgentBuilderDeckLoad({
     }
 
     const controller = new AbortController();
-    const deckRefreshStartedAt = Date.now();
     setDeckLoadBusy(true);
     setDeckLoadError(null);
     setStateLoaded(false);
@@ -201,15 +194,6 @@ export default function useAgentBuilderDeckLoad({
         setDeckStatusMessage(loadErrorMessage);
       } finally {
         if (!controller.signal.aborted) {
-          const completedAt = Date.now();
-          emitWorkspaceTestingEvent({
-            event: 'graph_refresh_completed',
-            durationMs: Math.max(0, completedAt - deckRefreshStartedAt),
-            metadata: {
-              graphType: 'agent',
-              source: 'deck_load',
-            },
-          });
           setDeckLoadBusy(false);
         }
       }
@@ -223,7 +207,6 @@ export default function useAgentBuilderDeckLoad({
     builderDeckId,
     canvasProjectId,
     currentDeckRef,
-    emitWorkspaceTestingEvent,
     emptyProjectState.messages,
     formatBuilderStatusMessage,
     lastPersistedBoardFingerprintRef,

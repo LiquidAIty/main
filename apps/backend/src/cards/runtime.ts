@@ -189,32 +189,6 @@ export function resolvedMagenticOptions(
     });
 }
 
-/** Cards holding a CONTROL connection to the Mag One bus (the dedicated top
- * input). Control = "may submit the finalized prompt". Disjoint from the
- * worker roster by construction. */
-export function resolveMagenticControlSources(
-  magenticCardId: string,
-  visibleNodes: any[],
-  visibleEdges: any[],
-): any[] {
-  const nodeMap = new Map(visibleNodes.map((node) => [node.id, node]));
-  const seen = new Set<string>();
-  return visibleEdges
-    .filter(
-      (edge) =>
-        (edge.source === magenticCardId || edge.target === magenticCardId) &&
-        isMagenticControlEdge(edge, magenticCardId) &&
-        edge.source !== edge.target,
-    )
-    .map((edge) => nodeMap.get(edge.source === magenticCardId ? edge.target : edge.source))
-    .filter((node): node is any => Boolean(node && node.kind === 'agent'))
-    .filter((node) => {
-      if (seen.has(node.id)) return false;
-      seen.add(node.id);
-      return true;
-    });
-}
-
 /** ORANGE network resolution: the enabled cards this parent may invoke as its
  * own native subagents — exactly the persisted directional 'flow' edges from
  * the parent. Parent-specific by construction; never consults the bus. */

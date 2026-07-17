@@ -1,0 +1,18 @@
+{
+  // Spec typecheck for the backend. tsconfig.app.json EXCLUDES *.spec.ts, so
+  // without this config nothing type-checks the backend tests — vitest (esbuild)
+  // runs them but never type-checks. Check-only: no emit, no project reference
+  // (a reference would demand built dist/*.d.ts the app never emits — TS6305).
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "emitDeclarationOnly": false,
+    "noEmit": true,
+    "types": ["node", "vitest/globals"],
+    "outDir": "../../dist/out-tsc/apps/backend-spec"
+  },
+  "include": ["src/**/*.ts", "src/**/*.json"],
+  "exclude": ["out-tsc", "dist"]
+}
