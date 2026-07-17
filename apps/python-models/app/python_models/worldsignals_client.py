@@ -161,10 +161,71 @@ class WorldSignalsClient:
             raise WorldSignalsError(f"worldsignals_sse_failed: {err}") from err
 
 
+# The raw upstream manifest is ~74,300 chars (~18.5k tokens) per call: 27.9k of
+# capabilities + 46.4k of tool schemas. Almost none of it can change a decision.
+# The model never performs transport — worldsignals_command() does — so auth,
+# sse/websocket/rest endpoint blocks and per-tool `returns` samples are pure
+# context weight. Project the manifest down to what actually selects a command.
+_CAPABILITY_DECISION_KEYS = ("ok", "version", "routing")
+_TOOLS_DECISION_KEYS = ("ok", "version", "access_tier")
+_TOOL_DESCRIPTION_MAX = 240
+
+
+def _project_tool(entry: dict[str, Any]) -> dict[str, Any]:
+    description = str(entry.get("description") or "").strip()
+    if len(description) > _TOOL_DESCRIPTION_MAX:
+        description = f"{description[: _TOOL_DESCRIPTION_MAX - 1]}…"
+    projected: dict[str, Any] = {
+        "name": entry.get("name"),
+        "type": entry.get("type"),
+        "description": description,
+    }
+    # `parameters` is kept: the model needs it to call correctly. `returns` is
+    # dropped — the real result teaches that better than a sample ever could.
+    if entry.get("parameters"):
+        projected["parameters"] = entry["parameters"]
+    return projected
+
+
 def worldsignals_capabilities() -> dict[str, Any]:
-    """Return the live WorldSignals agent-channel capabilities and command manifest."""
+    """Return a BOUNDED view of the live WorldSignals capabilities + command manifest.
+
+    Commands the profile guard would refuse are omitted rather than advertised:
+    listing a tool that `_guard_command` rejects costs context to read and then
+    burns a whole turn on a refusal the manifest could have prevented. The guard
+    itself remains the enforcement point — this only stops offering what it will
+    not allow, so the manifest tells the truth about the active profile.
+    """
     client = WorldSignalsClient()
-    return {"capabilities": client.capabilities(), "tools": client.tools()}
+    raw_capabilities = client.capabilities()
+    raw_tools = client.tools()
+
+    capabilities = {k: raw_capabilities[k] for k in _CAPABILITY_DECISION_KEYS if k in raw_capabilities}
+    tools: dict[str, Any] = {k: raw_tools[k] for k in _TOOLS_DECISION_KEYS if k in raw_tools}
+
+    entries = raw_tools.get("tools")
+    allowed = [
+        _project_tool(entry)
+        for entry in (entries if isinstance(entries, list) else [])
+        if isinstance(entry, dict)
+        and not (
+            str(entry.get("name") or "") in WORLDSIGNALS_RESTRICTED_COMMANDS
+            and not _extended_profile_enabled()
+        )
+    ]
+    tools["tools"] = allowed
+    available = raw_tools.get("available_commands")
+    if isinstance(available, list):
+        tools["available_commands"] = [
+            name
+            for name in available
+            if not (str(name) in WORLDSIGNALS_RESTRICTED_COMMANDS and not _extended_profile_enabled())
+        ]
+    tools["profile"] = "extended" if _extended_profile_enabled() else "mainstream"
+    tools["omitted_restricted_commands"] = 0 if _extended_profile_enabled() else len(
+        WORLDSIGNALS_RESTRICTED_COMMANDS
+    )
+    return {"capabilities": capabilities, "tools": tools}
 
 
 def worldsignals_command(command: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
