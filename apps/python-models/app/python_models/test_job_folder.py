@@ -135,6 +135,25 @@ class TestReturnWriter:
         assert open(on_disk, encoding="utf-8").read() == "--- a\n+++ b\n"
         assert jf.list_return_files(folder) == ["returns/job_abc/agent_a/proposed/example.patch"]
 
+    def test_nonempty_return_files_excludes_zero_byte_writes(self, tmp_path):
+        # PL-1: an empty file is a failed write, not a durable deliverable.
+        folder = jf.resolve_job_folder(_workspace(tmp_path), "job_abc")
+        jf.ensure_returns_dir(folder)
+        jf.write_return_file(folder, CARD, "real.md", "actual content")
+        jf.write_return_file(folder, CARD, "empty.md", "")
+        # list_return_files sees both; nonempty_return_files keeps only the real one.
+        assert len(jf.list_return_files(folder)) == 2
+        nonempty = jf.nonempty_return_files(folder)
+        assert nonempty == ["returns/job_abc/agent_a/real.md"]
+
+    def test_nonempty_return_files_empty_when_all_writes_are_empty(self, tmp_path):
+        folder = jf.resolve_job_folder(_workspace(tmp_path), "job_abc")
+        jf.ensure_returns_dir(folder)
+        jf.write_return_file(folder, CARD, "a.md", "")
+        jf.write_return_file(folder, CARD, "b.md", "")
+        assert jf.list_return_files(folder)  # files exist
+        assert jf.nonempty_return_files(folder) == []  # but none are durable
+
     def test_agent_cannot_write_into_another_agents_folder(self, tmp_path):
         folder = jf.resolve_job_folder(_workspace(tmp_path), "job_abc")
         jf.ensure_returns_dir(folder)

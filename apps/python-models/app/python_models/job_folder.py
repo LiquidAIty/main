@@ -188,6 +188,24 @@ def list_return_files(folder: JobFolder | ReturnsFolder) -> list[str]:
     return sorted(out)
 
 
+def nonempty_return_files(folder: JobFolder | ReturnsFolder) -> list[str]:
+    """Return files that carry actual content (> 0 bytes).
+
+    A 0-byte file is a failed or truncated write, not a durable deliverable. Job
+    completion is judged on THESE, not on mere file presence — otherwise an empty
+    write would read as success (the PL-1 "success without durable output" hole).
+    """
+    kept: list[str] = []
+    for rel in list_return_files(folder):
+        abs_p = os.path.join(folder.workspace_root, rel.replace("/", os.sep))
+        try:
+            if os.path.getsize(abs_p) > 0:
+                kept.append(rel)
+        except OSError:
+            continue
+    return kept
+
+
 def _safe_return_target(returns_dir: str, rel_path: str) -> str:
     """Resolve rel_path to an absolute path strictly inside returns_dir.
 

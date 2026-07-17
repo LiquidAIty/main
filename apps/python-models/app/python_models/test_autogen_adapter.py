@@ -158,3 +158,40 @@ def test_magentic_success_accepts_real_return_file():
     )
     assert ok is True
     assert error is None
+
+
+def test_magentic_success_rejects_only_empty_return_files():
+    # PL-1: a file exists but has 0 bytes (failed write). Not durable output.
+    ok, error = mac._magentic_completion_status(
+        "The work is complete.",
+        durable_output_required=True,
+        returned_files=["coder-report.json"],
+        nonempty_returned_files=[],
+    )
+    assert ok is False
+    assert error == "declared_durable_output_empty"
+
+
+def test_magentic_success_on_partial_real_output():
+    # Some workers wrote real files, some wrote empty ones: the real ones satisfy
+    # the durable contract; the empty ones are surfaced via return_status, not ok.
+    ok, error = mac._magentic_completion_status(
+        "The work is complete.",
+        durable_output_required=True,
+        returned_files=["a/real.json", "b/empty.txt"],
+        nonempty_returned_files=["a/real.json"],
+    )
+    assert ok is True
+    assert error is None
+
+
+def test_magentic_no_durable_contract_succeeds_on_text():
+    # A chat-driven run (no job folder) has no durable contract — the response
+    # text IS the deliverable.
+    ok, error = mac._magentic_completion_status(
+        "Here is the answer.",
+        durable_output_required=False,
+        returned_files=[],
+    )
+    assert ok is True
+    assert error is None

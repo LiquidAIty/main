@@ -540,12 +540,25 @@ def _magentic_completion_status(
     *,
     durable_output_required: bool,
     returned_files: list[str],
+    nonempty_returned_files: list[str] | None = None,
 ) -> tuple[bool, str | None]:
-    """Derive success from model output plus the declared durable contract."""
+    """Derive success from model output plus the declared durable contract.
+
+    A job that declared a durable contract (a return folder) is NOT successful on
+    model text alone: it must have produced real, non-empty deliverables. A file
+    that exists but is empty is a failed write, not durable output — counting it
+    would re-open the PL-1 "success without durable output" hole.
+    """
     if not _as_text(final_response_text):
         return False, "no_model_output"
-    if durable_output_required and not returned_files:
-        return False, "declared_durable_output_missing"
+    if durable_output_required:
+        durable = returned_files if nonempty_returned_files is None else nonempty_returned_files
+        if not durable:
+            # Distinguish "wrote nothing" from "wrote only empty files" so the
+            # failure is actionable rather than a bare "missing".
+            if returned_files:
+                return False, "declared_durable_output_empty"
+            return False, "declared_durable_output_missing"
     return True, None
 
 
@@ -697,18 +710,26 @@ async def run_native_magentic_mission(context: ContextPack) -> OrchestratorRunRe
         # normal final text is preserved as text and no result file is fabricated.
         returns_rel: str | None = None
         returned_files: list[str] = []
+        nonempty_files: list[str] = []
         return_status: str | None = None
         if folder is not None:
             returned_files = jf.list_return_files(folder)
+            nonempty_files = jf.nonempty_return_files(folder)
             returns_rel = f"{folder.returns_rel}/"
-            return_status = (
-                "return_files_created" if returned_files else "no_return_files_created"
-            )
+            if not returned_files:
+                return_status = "no_return_files_created"
+            elif not nonempty_files:
+                return_status = "return_files_empty"  # written but 0 bytes = failed write
+            elif len(nonempty_files) < len(returned_files):
+                return_status = "return_files_partial"  # some real, some empty
+            else:
+                return_status = "return_files_created"
 
         ok, completion_error = _magentic_completion_status(
             final_response_text,
             durable_output_required=folder is not None,
             returned_files=returned_files,
+            nonempty_returned_files=nonempty_files,
         )
         return OrchestratorRunResponse(
             ok=ok,

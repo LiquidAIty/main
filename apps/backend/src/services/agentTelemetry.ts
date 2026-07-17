@@ -71,6 +71,10 @@ export type AgentTelemetryEvent = {
   status: AgentTelemetryStatus;
   errorSummary: string | null;
   durationMs: number | null;
+  /** Pre-redaction character count of the context assembled for this boundary.
+   * inputSummary is capped at 300 chars, which destroys size, so this is the
+   * one number that lets Double Agent see input pressure. Never the content. */
+  contextChars: number | null;
   tools: string[];
   graphReads: string[];
   graphWrites: string[];
@@ -189,6 +193,7 @@ export function recordAgentEvent(input: AgentTelemetryInput): string | null {
       status: input.status,
       errorSummary: input.errorSummary ? summarizeForTelemetry(input.errorSummary) : null,
       durationMs: Number.isFinite(input.durationMs as number) ? (input.durationMs as number) : null,
+      contextChars: Number.isFinite(input.contextChars as number) ? (input.contextChars as number) : null,
       tools: Array.isArray(input.tools) ? input.tools.map(String) : [],
       graphReads: Array.isArray(input.graphReads) ? input.graphReads.map(String) : [],
       graphWrites: Array.isArray(input.graphWrites) ? input.graphWrites.map(String) : [],
@@ -239,4 +244,109 @@ export function resetAgentTelemetryForTest(dir: string | null): void {
   seeded = false;
   appendsSinceSizeCheck = 0;
   events.length = 0;
+}
+
+// ── Double Agent pathology detection ─────────────────────────────────────────
+// Pure analysis over one run's telemetry events (share a correlationId). This is
+// how the stand-in methodology detects the failures the user actually cares about
+// — runaway tokens, tool loops, work with nowhere to land — WITHOUT a second
+// dashboard: it reads the events already recorded. Bounded, deterministic, no I/O.
+
+export type RunPathologies = {
+  /** A (cardId, tool-signature) that fired more than once — a tool loop. */
+  repeatedToolSignatures: Array<{ cardId: string; signature: string; count: number }>;
+  /** A boundary invoked again after it already failed non-retryably. */
+  retriesAfterFailure: string[];
+  /** The same card dispatched more than once in the run (duplicate dispatch). */
+  duplicateDispatch: string[];
+  /** Boundaries that 'started' but never reached a terminal state. */
+  unresolvedChildren: string[];
+  /** More than one frontdoor 'started' in one run — an automatic second run. */
+  secondRunDetected: boolean;
+  /** Largest single context contribution seen (chars), for input-pressure triage. */
+  maxContextChars: number | null;
+};
+
+/** A stable identity for one card boundary within a run. */
+function boundaryKey(event: AgentTelemetryEvent): string {
+  return `${event.stage}:${event.cardId ?? 'none'}`;
+}
+
+/** Non-retryable errors must not be re-driven; a call after one is a loop. */
+function isNonRetryableError(errorSummary: string | null): boolean {
+  if (!errorSummary) return false;
+  const e = errorSummary.toLowerCase();
+  // corpus_unprepared / retryable=false family, plus hard config/auth failures.
+  return (
+    e.includes('unprepared') ||
+    e.includes('not_retryable') ||
+    e.includes('retryable=false') ||
+    e.includes('unauthorized') ||
+    e.includes('forbidden') ||
+    e.includes('_missing') ||
+    e.includes('not_found')
+  );
+}
+
+export function detectRunPathologies(runEvents: AgentTelemetryEvent[]): RunPathologies {
+  const ordered = [...runEvents].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+  const signatureCounts = new Map<string, { cardId: string; signature: string; count: number }>();
+  const dispatchCounts = new Map<string, number>();
+  const startedByKey = new Map<string, number>();
+  const terminalByKey = new Map<string, number>();
+  const failedNonRetryable = new Set<string>();
+  const retriesAfterFailure = new Set<string>();
+  let frontdoorStarts = 0;
+  let maxContextChars: number | null = null;
+
+  for (const event of ordered) {
+    if (Number.isFinite(event.contextChars as number)) {
+      maxContextChars = Math.max(maxContextChars ?? 0, event.contextChars as number);
+    }
+
+    const key = boundaryKey(event);
+
+    if (event.stage === 'frontdoor' && event.status === 'started') frontdoorStarts += 1;
+
+    // A boundary invoked after it already failed non-retryably = a retry loop.
+    if (failedNonRetryable.has(key) && event.status === 'started') {
+      retriesAfterFailure.add(key);
+    }
+    if (event.status === 'started') startedByKey.set(key, (startedByKey.get(key) ?? 0) + 1);
+    if (event.status === 'completed' || event.status === 'failed' || event.status === 'blocked') {
+      terminalByKey.set(key, (terminalByKey.get(key) ?? 0) + 1);
+    }
+    if (event.status === 'failed' && isNonRetryableError(event.errorSummary)) {
+      failedNonRetryable.add(key);
+    }
+
+    // Tool loop: the same card firing the same tool signature repeatedly.
+    if (event.tools.length > 0 && event.cardId) {
+      const signature = [...event.tools].sort().join('+');
+      const sigKey = `${event.cardId}::${signature}`;
+      const existing = signatureCounts.get(sigKey);
+      if (existing) existing.count += 1;
+      else signatureCounts.set(sigKey, { cardId: event.cardId, signature, count: 1 });
+    }
+
+    // Duplicate dispatch: the orchestrator dispatching the same card twice.
+    if (event.stage === 'mag_one_dispatch' && event.cardId) {
+      dispatchCounts.set(event.cardId, (dispatchCounts.get(event.cardId) ?? 0) + 1);
+    }
+  }
+
+  const unresolvedChildren: string[] = [];
+  for (const [key, starts] of startedByKey) {
+    if (starts > (terminalByKey.get(key) ?? 0)) unresolvedChildren.push(key);
+  }
+
+  return {
+    repeatedToolSignatures: [...signatureCounts.values()].filter((s) => s.count > 1),
+    retriesAfterFailure: [...retriesAfterFailure],
+    duplicateDispatch: [...dispatchCounts.entries()].filter(([, n]) => n > 1).map(([id]) => id),
+    unresolvedChildren,
+    secondRunDetected: frontdoorStarts > 1,
+    maxContextChars,
+  };
 }

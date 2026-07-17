@@ -1,4 +1,4 @@
-"""Unit proof for the canonical Chunk -> KnowledgeAssertion reader."""
+"""Unit proof for the canonical :Chunk evidence reader (Path B)."""
 
 from __future__ import annotations
 
@@ -8,37 +8,38 @@ from types import SimpleNamespace
 import hybrid_retrieval as hr
 
 PROJECT = "stagea-unit"
+# Explicit scopes so unit tests never touch Postgres scope resolution.
+SCOPES = [PROJECT]
 
 
 def _result(rows):
     return SimpleNamespace(records=list(rows), summary=None)
 
 
-def _assertion(assertion_id="claim-1", **overrides):
+def _chunk(chunk_id="chunk-1", **overrides):
+    """A row shaped exactly as the Path B channels RETURN it (chunk = evidence)."""
     row = {
-        "assertion_id": assertion_id,
-        "text": "Stable identities prevent duplicate graph assertions.",
-        "assertion_kind": "claim",
+        "assertion_id": chunk_id,  # RETURN aliases chunk.chunk_id AS assertion_id
+        "text": "A knowledge graph organizes entities and their relationships.",
+        "assertion_kind": "source_chunk",
         "document_id": "doc-1",
-        "chapter": "Foundations",
-        "section": "Identity",
-        "pages": "1",
-        "chunk_refs": ["chunk-1"],
-        "trusted": True,
-        "status": "active",
+        "chapter": None,
+        "section": None,
+        "pages": "chars 0-1400",
+        "chunk_refs": [chunk_id],
+        "epistemic_level": "source_text",
         "created_at": "2026-07-15T00:00:00Z",
-        "extraction_run": "run-1",
-        "source_title": "Stage A pilot",
-        "source_url": "https://example.test/stage-a",
-        "related_entities": [{"name": "Stable identity", "labels": ["Concept"]}],
+        "source_title": "Building Knowledge Graphs",
+        "source_url": "file:///corpus/book.pdf",
+        "related_entities": [{"name": "Knowledge Graph", "labels": ["Concept"]}],
     }
     row.update(overrides)
     return row
 
 
 class FakeDriver:
-    # corpus_size defaults non-zero: every pre-existing test describes a PREPARED
-    # corpus, so the readiness probe must be transparent to them.
+    # corpus_size defaults non-zero: a test describes a PREPARED corpus unless it
+    # says otherwise, so the readiness probe is transparent to channel tests.
     def __init__(self, *, vector=None, fulltext=None, exact=None, fail=False, corpus_size=7):
         self.vector = vector or []
         self.fulltext = fulltext or []
@@ -51,8 +52,6 @@ class FakeDriver:
         params = dict(parameters_ or {})
         params.update(kwargs)
         self.calls.append((cypher, params))
-        # Answered before `fail`: a channel-level outage must still reach the
-        # channel, which is exactly what the runtime-failure test asserts.
         if "corpus_size" in cypher:
             return _result([{"corpus_size": self.corpus_size}])
         if self.fail:
@@ -74,35 +73,61 @@ def fake_embed(texts):
 
 
 def _request(**overrides):
-    values = dict(project_id=PROJECT, query="stable graph identity", anchors=["identity"])
+    values = dict(
+        project_id=PROJECT,
+        query="knowledge graph organizing principle",
+        anchors=["knowledge graph"],
+        project_scopes=list(SCOPES),
+    )
     values.update(overrides)
     return hr.KnowGraphRetrievalRequest(**values)
 
 
 class ContractTests(unittest.TestCase):
-    def test_queries_are_read_only_and_apply_shared_trust_filter(self):
+    def test_queries_are_read_only_and_target_the_chunk_corpus(self):
         hr.assert_all_read_only()
         blob = "\n".join(hr.all_cyphers())
         self.assertIn("chunk_embedding_idx", blob)
-        self.assertIn("KnowledgeAssertion", blob)
-        self.assertIn("ka.trusted = true", blob)
-        self.assertIn("status, 'active') <> 'superseded'", blob)
-        self.assertIn("extraction_mode, '') <> 'anchor'", blob)
+        self.assertIn("chunk_text_fulltext_idx", blob)
+        self.assertIn("chunk.project_id IN $projectScopes", blob)
+        # Path B: the dead assertion corpus and its invented trust flags are gone.
+        self.assertNotIn("KnowledgeAssertion", blob)
         self.assertNotIn("SourceBackedAssertion", blob)
-        self.assertNotIn("kg_assertion_embedding_idx", blob)
+        self.assertNotIn("ka.trusted", blob)
+        self.assertNotIn("knowledge_assertion_fulltext_idx", blob)
 
-    def test_claim_reached_through_chunk_vector_hop_with_provenance(self):
-        driver = FakeDriver(vector=[_assertion()])
+    def test_chunk_evidence_carries_real_provenance(self):
+        driver = FakeDriver(vector=[_chunk()])
         result = hr.retrieve_knowgraph_context(_request(anchors=[]), driver=driver, embed_fn=fake_embed)
         self.assertEqual(result.retrieval_state, "evidence")
-        self.assertEqual(result.assertions[0]["assertion_kind"], "claim")
-        self.assertEqual(result.assertions[0]["chunk_refs"], ["chunk-1"])
-        self.assertEqual(result.evidence[0]["chapter"], "Foundations")
-        vector_query = next(c for c, _ in driver.calls if "db.index.vector.queryNodes" in c)
-        self.assertIn("(chunk)-[:MENTIONS]->(ka:KnowledgeAssertion)", vector_query)
+        self.assertEqual(result.assertions[0]["assertion_kind"], "source_chunk")
+        self.assertEqual(result.assertions[0]["epistemic_level"], "source_text")
+        self.assertEqual(result.evidence[0]["document_id"], "doc-1")
+        self.assertEqual(result.evidence[0]["pages"], "chars 0-1400")
+        self.assertEqual(result.evidence[0]["chunk_refs"], ["chunk-1"])
+        # Mentioned entities become relations + next anchors, never the evidence.
+        self.assertEqual(result.relations[0]["target"], "Knowledge Graph")
 
-    def test_fulltext_and_anchor_channels_fuse_and_dedupe_by_assertion_id(self):
-        same = _assertion()
+    def test_vector_channel_applies_a_similarity_floor(self):
+        driver = FakeDriver(vector=[_chunk()])
+        hr.retrieve_knowgraph_context(_request(), driver=driver, embed_fn=fake_embed)
+        vector_query, vector_params = next(
+            (c, p) for c, p in driver.calls if "db.index.vector.queryNodes" in c
+        )
+        self.assertIn("score >= $scoreFloor", vector_query)
+        self.assertEqual(vector_params["scoreFloor"], hr.VECTOR_SCORE_FLOOR)
+
+    def test_fulltext_channel_applies_a_bm25_floor(self):
+        driver = FakeDriver(fulltext=[_chunk()])
+        hr.retrieve_knowgraph_context(_request(), driver=driver, embed_fn=fake_embed)
+        ft_query, ft_params = next(
+            (c, p) for c, p in driver.calls if "db.index.fulltext.queryNodes" in c
+        )
+        self.assertIn("score >= $ftFloor", ft_query)
+        self.assertEqual(ft_params["ftFloor"], hr.FULLTEXT_SCORE_FLOOR)
+
+    def test_channels_fuse_and_dedupe_by_chunk_id(self):
+        same = _chunk()
         driver = FakeDriver(vector=[same], fulltext=[same], exact=[same])
         result = hr.retrieve_knowgraph_context(_request(), driver=driver, embed_fn=fake_embed)
         self.assertEqual(len(result.assertions), 1)
@@ -116,9 +141,21 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(result.retrieval_state, "empty")
         self.assertEqual(result.assertions, [])
         self.assertIn("no evidence found", result.retrieval_notes)
-        # A prepared corpus that simply did not match stays retryable.
         self.assertTrue(result.retryable)
 
+    def test_missing_fulltext_index_does_not_erase_vector_evidence(self):
+        class NoFulltextDriver(FakeDriver):
+            def execute_query(self, cypher, parameters_=None, database_=None, **kwargs):
+                if "db.index.fulltext.queryNodes" in cypher:
+                    self.calls.append((cypher, dict(parameters_ or {})))
+                    raise RuntimeError(f"NoSuchIndexException: {hr.CHUNK_FULLTEXT_INDEX}")
+                return super().execute_query(cypher, parameters_, database_, **kwargs)
+
+        driver = NoFulltextDriver(vector=[_chunk()])
+        result = hr.retrieve_knowgraph_context(_request(), driver=driver, embed_fn=fake_embed)
+        self.assertEqual(result.retrieval_state, "evidence")
+        self.assertFalse(result.retrieval_modes["fulltext"])
+        self.assertTrue(any("fulltext channel unavailable" in n for n in result.retrieval_notes))
 
     def test_runtime_failure_is_not_returned_as_empty(self):
         with self.assertRaisesRegex(hr.HybridRetrievalError, "retrieval query failed"):
@@ -131,16 +168,14 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(hr.HybridRetrievalError, "query embedding failed"):
             hr.retrieve_knowgraph_context(_request(), driver=FakeDriver(), embed_fn=fail)
 
-    def test_project_scope_and_prior_ids_reach_every_channel(self):
+    def test_scopes_and_prior_ids_reach_every_channel(self):
         driver = FakeDriver()
         request = _request(prior_assertion_ids=["seen"], prior_source_refs=["doc-seen"])
         hr.retrieve_knowgraph_context(request, driver=driver, embed_fn=fake_embed)
-        # The readiness probe is a scope COUNT, not a retrieval channel, so it
-        # carries projectId only. Every actual channel still gets the full scope.
         channels = [(c, p) for c, p in driver.calls if "corpus_size" not in c]
         self.assertTrue(channels)
         for _cypher, params in channels:
-            self.assertEqual(params["projectId"], PROJECT)
+            self.assertEqual(params["projectScopes"], SCOPES)
             self.assertEqual(params["priorIds"], ["seen"])
             self.assertEqual(params["priorRefs"], ["doc-seen"])
 
@@ -151,10 +186,32 @@ class ContractTests(unittest.TestCase):
             )
 
 
-class CorpusReadinessTests(unittest.TestCase):
-    """PL-7: an unpopulated assertion corpus is UNAVAILABLE, not 'no evidence'."""
+class ScopeResolutionTests(unittest.TestCase):
+    def test_explicit_scopes_bypass_postgres(self):
+        # project_scopes set => resolve_project_scopes is never called (no DB).
+        driver = FakeDriver(vector=[_chunk()])
+        hr.retrieve_knowgraph_context(
+            _request(project_id="app-uuid", project_scopes=["canonical-scope"]),
+            driver=driver,
+            embed_fn=fake_embed,
+        )
+        _cypher, params = next((c, p) for c, p in driver.calls if "queryNodes" in c)
+        self.assertEqual(params["projectScopes"], ["canonical-scope"])
 
-    def test_zero_assertion_nodes_returns_typed_unavailable_not_empty(self):
+    def test_readiness_counts_chunks_across_all_scopes(self):
+        driver = FakeDriver(corpus_size=0)
+        hr.retrieve_knowgraph_context(
+            _request(project_scopes=["s1", "s2"]), driver=driver, embed_fn=fake_embed
+        )
+        _cypher, params = driver.calls[0]
+        self.assertIn("corpus_size", _cypher)
+        self.assertEqual(params["projectScopes"], ["s1", "s2"])
+
+
+class CorpusReadinessTests(unittest.TestCase):
+    """An unpopulated scope is UNAVAILABLE, not 'no evidence'."""
+
+    def test_zero_chunks_returns_typed_unavailable_not_empty(self):
         result = hr.retrieve_knowgraph_context(
             _request(), driver=FakeDriver(corpus_size=0), embed_fn=fake_embed
         )
@@ -174,7 +231,6 @@ class CorpusReadinessTests(unittest.TestCase):
     def test_unprepared_corpus_runs_no_retrieval_channel(self):
         driver = FakeDriver(corpus_size=0)
         hr.retrieve_knowgraph_context(_request(), driver=driver, embed_fn=fake_embed)
-        # Exactly one query: the readiness COUNT. No vector/fulltext/exact channel.
         self.assertEqual(len(driver.calls), 1)
         self.assertIn("corpus_size", driver.calls[0][0])
         self.assertFalse(any("queryNodes" in cypher for cypher, _ in driver.calls))
@@ -198,19 +254,10 @@ class CorpusReadinessTests(unittest.TestCase):
         self.assertIn("matching_nodes=0", notes)
         self.assertIn(PROJECT, notes)
         self.assertIn("remediation", notes)
-        # Bounded: a diagnosis, not a schema dump into the model's context.
         self.assertLess(len(notes), 600)
 
-    def test_readiness_probe_is_scoped_to_the_requested_project(self):
-        driver = FakeDriver(corpus_size=0)
-        hr.retrieve_knowgraph_context(_request(), driver=driver, embed_fn=fake_embed)
-        _cypher, params = driver.calls[0]
-        self.assertEqual(params["projectId"], PROJECT)
-
     def test_readiness_probe_is_not_trust_filtered(self):
-        # A corpus whose rows are all untrusted/superseded is PREPARED; that is a
-        # real "empty" answer, so readiness must not apply the trust filter.
-        self.assertNotIn("ka.trusted", hr._CORPUS_READINESS_CYPHER)
+        self.assertNotIn("trusted", hr._CORPUS_READINESS_CYPHER)
         self.assertNotIn("superseded", hr._CORPUS_READINESS_CYPHER)
 
 
@@ -219,6 +266,15 @@ class LuceneTests(unittest.TestCase):
         query = hr.build_lucene_query(["A (B)"], "C+D")
         self.assertIn("\\(", query)
         self.assertIn("\\+", query)
+
+    def test_stopwords_are_dropped_but_anchors_are_kept(self):
+        # "off"/"the"/"of" carry no signal; the anchor phrase always survives.
+        query = hr.build_lucene_query(["submarine cable"], "cable off the coast of Peru")
+        self.assertIn('"submarine cable"', query)
+        self.assertNotIn("OR off", query)
+        self.assertNotIn("OR the", query)
+        self.assertIn("coast", query)
+        self.assertIn("Peru", query)
 
 
 if __name__ == "__main__":
