@@ -187,6 +187,12 @@ async def retrieve_knowgraph_context_tool(
             "estimatedCharacters": len(summary),
             "estimatedTokens": max(1, (len(summary) + 3) // 4),
         })
+    # An unavailable corpus produced no evidence, so there is no view to return.
+    # Minting a graphView with status="returned" here would hand the caller a
+    # success-shaped object for work that never happened — the exact failure the
+    # readiness check exists to prevent. The typed state + notes are the answer.
+    if result.retrieval_state == module.CORPUS_UNPREPARED_STATE:
+        return payload
     now = datetime.now(timezone.utc).isoformat()
     included_relationships = []
     selected_set = set(selected_ids)
@@ -217,7 +223,9 @@ async def retrieve_knowgraph_context_tool(
         "includedCanonicalNodeIds": selected_ids,
         "includedRelationships": included_relationships,
         "query": str(query or "").strip(),
-        "filter": {"nodeTypes": ["SourceBackedAssertion"], "trustStates": []},
+        # Must name the label the channels actually match; advertising the
+        # retired SourceBackedAssertion here is how PL-7 stayed invisible.
+        "filter": {"nodeTypes": [module.ASSERTION_LABEL], "trustStates": []},
         "hopDepth": max(0, int(max_hops or 0)),
         "provenanceRefs": list(dict.fromkeys(ref for record in records for ref in record["provenanceRefs"]))[:40],
         "note": "Filtered KnowGraph evidence returned by Hermes retrieval",

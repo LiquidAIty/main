@@ -78,11 +78,15 @@ function summarizeText(value: string | null | undefined, maxLength = 220): strin
 //                              finalized prompt to Mag One. Never a worker.
 const MAG_ONE_CONTROL_HANDLE = 'task-bus-top';
 
+//   'invalid'          an unrecognised/malformed type. Grants nothing. It is a
+//                      classification, not a default: only an explicit 'flow'
+//                      may authorise invocation.
 function normalizeEdgeType(value: unknown): string {
   const type = String(value || '').trim().toLowerCase();
   if (type === 'magentic_option') return 'magentic_option';
   if (type === 'magentic_control') return 'magentic_control';
-  return 'flow';
+  if (type === 'flow') return 'flow';
+  return 'invalid';
 }
 
 /** The bus-side handle of an edge touching the Mag One card, whichever end it is. */
@@ -401,13 +405,18 @@ export function buildRuntimeGraph(
   const edges: RuntimeGraphEdge[] = (allEdges || [])
     .filter(
       (edge: any) =>
-        includedIds.has(String(edge.source)) && includedIds.has(String(edge.target)),
+        includedIds.has(String(edge.source)) &&
+        includedIds.has(String(edge.target)) &&
+        // An unrecognised edge authorises nothing, so it must not reach the
+        // runtime graph the orchestrator reasons over.
+        normalizeEdgeType(edge.edgeType) !== 'invalid',
     )
     .map((edge: any) => ({
       id: String(edge.id || `${edge.source}->${edge.target}`),
       source: String(edge.source),
       target: String(edge.target),
-      edgeType: normalizeEdgeType(edge.edgeType) as 'flow' | 'magentic_option' | 'magentic_control',
+      // Safe: the filter above already dropped every 'invalid' edge.
+      edgeType: normalizeEdgeType(edge.edgeType) as RuntimeGraphEdge['edgeType'],
       loop:
         edge.loop && typeof edge.loop === 'object'
           ? edge.loop

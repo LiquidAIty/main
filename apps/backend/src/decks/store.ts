@@ -76,11 +76,16 @@ function normalizeRuntimeType(value: unknown): AgentCardRuntimeType | null {
   return null;
 }
 
+/** Recognise ONLY the three real edge types. Anything else is classified
+ * 'invalid' and persisted as such: it stays on the deck (we never silently drop
+ * a user's edge) but no resolver will honour it. The previous default returned
+ * 'flow' — invocation authority — for typos, legacy rows and corrupt data. */
 function normalizeEdgeType(value: unknown): DeckEdgeType {
   const type = String(value || '').trim().toLowerCase();
   if (type === 'magentic_option') return 'magentic_option';
   if (type === 'magentic_control') return 'magentic_control';
-  return 'flow';
+  if (type === 'flow') return 'flow';
+  return 'invalid';
 }
 
 const EDGE_ROLE_VALUES = new Set<DeckEdgeRole>([

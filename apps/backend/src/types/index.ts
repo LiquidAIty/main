@@ -22,7 +22,10 @@ export type AgentCardRuntimeType =
 // flow = ORANGE direct parent→subagent; magentic_option = BLUE side worker
 // slot; magentic_control = BLUE dedicated top control input (submit the
 // finalized prompt to Mag One — never worker membership).
-export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow';
+// 'invalid' is a real persisted classification, not an error case: an edge whose
+// type we do not recognise must stay visible and inert. Folding it into 'flow'
+// (the old default) silently handed invocation authority to malformed data.
+export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'invalid';
 
 export type DeckEdgeRole =
   | 'graph_execution'

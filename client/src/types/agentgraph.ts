@@ -22,7 +22,9 @@ export type AgentCardRuntimeType =
 // flow = ORANGE direct parent→subagent; magentic_option = BLUE side worker
 // slot; magentic_control = BLUE dedicated top control input (submit the
 // finalized prompt to Mag One — never worker membership).
-export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow';
+// Mirrors the backend contract: an unrecognised edge is classified 'invalid' and
+// stays inert/visible, never silently promoted to a directional Call.
+export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'invalid';
 
 export type DeckEdgeRole =
   | 'graph_execution'

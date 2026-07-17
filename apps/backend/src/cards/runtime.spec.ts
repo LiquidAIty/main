@@ -3,9 +3,84 @@ import { RUNTIME_TOOL_SPECS } from '../contracts/runtimeContracts';
 import {
   resolvedMagenticOptions,
   resolvedMagenticControllers,
+  resolveDirectSubagents,
   buildPythonAutoGenCardRuntimePayload,
   runCardWithContract,
 } from './runtime';
+
+// C-1 regressed twice because an unrecognised edgeType silently normalised to
+// 'flow' — the one type that grants invocation authority. These lock that shut.
+describe('Edge authority: only an explicit type grants anything', () => {
+  const main = {
+    id: 'card_main_chat', kind: 'agent', runtimeType: 'assistant_agent',
+    runtimeBinding: 'main_chat', title: 'Main',
+  };
+  const hermes = {
+    id: 'card_hermes_steward', kind: 'agent', runtimeType: 'assistant_agent',
+    runtimeBinding: 'hermes_steward', title: 'Hermes',
+  };
+  const mag = { id: 'card_magentic', kind: 'agent', runtimeType: 'magentic_one', title: 'Mag One' };
+  const worker = {
+    id: 'card_research_agent', kind: 'agent', runtimeType: 'assistant_agent',
+    runtimeBinding: 'research_agent', title: 'Research',
+  };
+  const cards = [main, hermes, mag, worker];
+
+  const edge = (source: string, target: string, edgeType: unknown) => ({
+    id: `e_${source}_${target}`, source, target, edgeType,
+  });
+
+  it.each([
+    ['a typo', 'floww'],
+    ['a legacy label', 'reports_to'],
+    ['empty string', ''],
+    ['undefined', undefined],
+    ['null', null],
+    ['an object', { nope: true }],
+  ])('an unknown edge type (%s) from Main creates NO doorway', (_label, badType) => {
+    const doorways = resolveDirectSubagents(main.id, cards, [edge(main.id, hermes.id, badType)]);
+    expect(doorways).toEqual([]);
+  });
+
+  it('an explicit flow edge from Main DOES create a doorway (Main -> Hermes Call)', () => {
+    const doorways = resolveDirectSubagents(main.id, cards, [edge(main.id, hermes.id, 'flow')]);
+    expect(doorways.map((d: any) => d.id)).toEqual(['card_hermes_steward']);
+  });
+
+  it('an unknown edge type never becomes a Mag One worker plug', () => {
+    const workers = resolvedMagenticOptions(mag.id, cards, [edge(worker.id, mag.id, 'magentic_optionn')]);
+    expect(workers).toEqual([]);
+  });
+
+  it('one invalid edge does not silently alter valid topology around it', () => {
+    const edges = [
+      edge(main.id, hermes.id, 'flow'),              // valid Call
+      edge(main.id, mag.id, 'magentic_control'),     // valid Control plug
+      edge(worker.id, mag.id, 'magentic_option'),    // valid Worker plug
+      edge(worker.id, main.id, 'garbage'),           // invalid: must be inert
+    ];
+    expect(resolveDirectSubagents(main.id, cards, edges).map((d: any) => d.id))
+      .toEqual(['card_hermes_steward']);
+    expect(resolvedMagenticOptions(mag.id, cards, edges).map((w: any) => w.id))
+      .toEqual(['card_research_agent']);
+    expect(resolvedMagenticControllers(mag.id, cards, edges).map((c: any) => c.id))
+      .toEqual(['card_main_chat']);
+  });
+
+  it('the repaired Main -> Hermes Call survives a reload of the persisted shape', () => {
+    // Exactly what the live deck holds after the C-1 repair.
+    const persisted = [
+      { id: 'edge_main_chat_magentic_control', source: 'card_main_chat', target: 'card_magentic', edgeType: 'magentic_control' },
+      { id: 'edge_yt562bl6', source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
+      { id: 'edge_k0psgj4i', source: 'card_research_agent', target: 'card_magentic', edgeType: 'magentic_option' },
+    ];
+    expect(resolveDirectSubagents('card_main_chat', cards, persisted).map((d: any) => d.id))
+      .toContain('card_hermes_steward');
+    // Hermes stays structurally excluded from the worker roster regardless.
+    expect(resolvedMagenticOptions('card_magentic', cards, persisted).map((w: any) => w.id))
+      .not.toContain('card_hermes_steward');
+  });
+});
 
 describe('Canonical Cards Runtime', () => {
   it('normal chat submit is planning only: no coding-intent participant gate, no coder dispatch', async () => {

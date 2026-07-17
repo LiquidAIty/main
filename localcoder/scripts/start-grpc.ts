@@ -92,18 +92,16 @@ async function main() {
   const { hydrateGithubModelsTokenFromSecureStorage } = await import('../src/utils/githubModelsCredentials.js')
   hydrateGithubModelsTokenFromSecureStorage()
 
-  const { buildStartupEnvFromProfile, applyProfileEnvToProcessEnv } = await import('../src/utils/providerProfile.js')
-  const { getProviderValidationError, validateProviderEnvOrExit } = await import('../src/utils/providerValidation.js')
-  const startupEnv = await buildStartupEnvFromProfile({ processEnv: process.env })
-  if (startupEnv !== process.env) {
-    const startupProfileError = await getProviderValidationError(startupEnv)
-    if (startupProfileError) {
-      console.warn(`Warning: ignoring saved provider profile. ${startupProfileError}`)
-    } else {
-      applyProfileEnvToProcessEnv(process.env, startupEnv)
-    }
-  }
+  // CONFIGURATION AUTHORITY: apps/backend/.env owns the provider endpoint and
+  // credentials; the saved card owns model/role/tools (passed per request over
+  // gRPC). The CLI's `.openclaude-profile.json` is deliberately NOT read here —
+  // it is a second authority for the same values, and it only failed to hijack
+  // this path by luck of ordering (applyOpenRouterCompatibleEnv happened to run
+  // after it). A profile written for one provider must never silently redirect
+  // the product's Main chat. The user's local profile file is untouched and the
+  // interactive CLI keeps using it through its own entrypoint.
   applyOpenRouterCompatibleEnv()
+  const { validateProviderEnvOrExit } = await import('../src/utils/providerValidation.js')
   await validateProviderEnvOrExit()
 
   // ROLE-AWARE SESSION CONTEXT BOUNDARY: every session this server hosts is a

@@ -37,17 +37,24 @@ def _assertion(assertion_id="claim-1", **overrides):
 
 
 class FakeDriver:
-    def __init__(self, *, vector=None, fulltext=None, exact=None, fail=False):
+    # corpus_size defaults non-zero: every pre-existing test describes a PREPARED
+    # corpus, so the readiness probe must be transparent to them.
+    def __init__(self, *, vector=None, fulltext=None, exact=None, fail=False, corpus_size=7):
         self.vector = vector or []
         self.fulltext = fulltext or []
         self.exact = exact or []
         self.fail = fail
+        self.corpus_size = corpus_size
         self.calls = []
 
     def execute_query(self, cypher, parameters_=None, database_=None, **kwargs):
         params = dict(parameters_ or {})
         params.update(kwargs)
         self.calls.append((cypher, params))
+        # Answered before `fail`: a channel-level outage must still reach the
+        # channel, which is exactly what the runtime-failure test asserts.
+        if "corpus_size" in cypher:
+            return _result([{"corpus_size": self.corpus_size}])
         if self.fail:
             raise RuntimeError("schema unavailable")
         if "db.index.vector.queryNodes" in cypher:
@@ -109,6 +116,9 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(result.retrieval_state, "empty")
         self.assertEqual(result.assertions, [])
         self.assertIn("no evidence found", result.retrieval_notes)
+        # A prepared corpus that simply did not match stays retryable.
+        self.assertTrue(result.retryable)
+
 
     def test_runtime_failure_is_not_returned_as_empty(self):
         with self.assertRaisesRegex(hr.HybridRetrievalError, "retrieval query failed"):
@@ -125,7 +135,11 @@ class ContractTests(unittest.TestCase):
         driver = FakeDriver()
         request = _request(prior_assertion_ids=["seen"], prior_source_refs=["doc-seen"])
         hr.retrieve_knowgraph_context(request, driver=driver, embed_fn=fake_embed)
-        for _cypher, params in driver.calls:
+        # The readiness probe is a scope COUNT, not a retrieval channel, so it
+        # carries projectId only. Every actual channel still gets the full scope.
+        channels = [(c, p) for c, p in driver.calls if "corpus_size" not in c]
+        self.assertTrue(channels)
+        for _cypher, params in channels:
             self.assertEqual(params["projectId"], PROJECT)
             self.assertEqual(params["priorIds"], ["seen"])
             self.assertEqual(params["priorRefs"], ["doc-seen"])
@@ -135,6 +149,69 @@ class ContractTests(unittest.TestCase):
             hr.retrieve_knowgraph_context(
                 _request(), driver=FakeDriver(), embed_fn=lambda _texts: [[0.1] * 3]
             )
+
+
+class CorpusReadinessTests(unittest.TestCase):
+    """PL-7: an unpopulated assertion corpus is UNAVAILABLE, not 'no evidence'."""
+
+    def test_zero_assertion_nodes_returns_typed_unavailable_not_empty(self):
+        result = hr.retrieve_knowgraph_context(
+            _request(), driver=FakeDriver(corpus_size=0), embed_fn=fake_embed
+        )
+        self.assertEqual(result.retrieval_state, hr.CORPUS_UNPREPARED_STATE)
+        self.assertNotEqual(result.retrieval_state, "empty")
+        self.assertEqual(result.assertions, [])
+
+    def test_unprepared_corpus_never_requests_an_embedding(self):
+        def exploding_embed(_texts):
+            raise AssertionError("embedding must not be requested for an unprepared corpus")
+
+        result = hr.retrieve_knowgraph_context(
+            _request(), driver=FakeDriver(corpus_size=0), embed_fn=exploding_embed
+        )
+        self.assertEqual(result.retrieval_state, hr.CORPUS_UNPREPARED_STATE)
+
+    def test_unprepared_corpus_runs_no_retrieval_channel(self):
+        driver = FakeDriver(corpus_size=0)
+        hr.retrieve_knowgraph_context(_request(), driver=driver, embed_fn=fake_embed)
+        # Exactly one query: the readiness COUNT. No vector/fulltext/exact channel.
+        self.assertEqual(len(driver.calls), 1)
+        self.assertIn("corpus_size", driver.calls[0][0])
+        self.assertFalse(any("queryNodes" in cypher for cypher, _ in driver.calls))
+
+    def test_unprepared_corpus_tells_the_caller_not_to_retry(self):
+        result = hr.retrieve_knowgraph_context(
+            _request(), driver=FakeDriver(corpus_size=0), embed_fn=fake_embed
+        )
+        self.assertFalse(result.retryable)
+        self.assertFalse(result.to_dict()["retryable"])
+        notes = " ".join(result.retrieval_notes)
+        self.assertIn(hr.CORPUS_UNPREPARED_ERROR, notes)
+        self.assertIn("Do not retry", notes)
+
+    def test_unprepared_notes_are_bounded_and_actionable(self):
+        result = hr.retrieve_knowgraph_context(
+            _request(), driver=FakeDriver(corpus_size=0), embed_fn=fake_embed
+        )
+        notes = " ".join(result.retrieval_notes)
+        self.assertIn(f":{hr.ASSERTION_LABEL}", notes)
+        self.assertIn("matching_nodes=0", notes)
+        self.assertIn(PROJECT, notes)
+        self.assertIn("remediation", notes)
+        # Bounded: a diagnosis, not a schema dump into the model's context.
+        self.assertLess(len(notes), 600)
+
+    def test_readiness_probe_is_scoped_to_the_requested_project(self):
+        driver = FakeDriver(corpus_size=0)
+        hr.retrieve_knowgraph_context(_request(), driver=driver, embed_fn=fake_embed)
+        _cypher, params = driver.calls[0]
+        self.assertEqual(params["projectId"], PROJECT)
+
+    def test_readiness_probe_is_not_trust_filtered(self):
+        # A corpus whose rows are all untrusted/superseded is PREPARED; that is a
+        # real "empty" answer, so readiness must not apply the trust filter.
+        self.assertNotIn("ka.trusted", hr._CORPUS_READINESS_CYPHER)
+        self.assertNotIn("superseded", hr._CORPUS_READINESS_CYPHER)
 
 
 class LuceneTests(unittest.TestCase):

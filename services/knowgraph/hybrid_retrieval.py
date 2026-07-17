@@ -17,6 +17,14 @@ from urllib.parse import urlparse
 
 CHUNK_VECTOR_INDEX = "chunk_embedding_idx"
 ASSERTION_FULLTEXT_INDEX = "knowledge_assertion_fulltext_idx"
+# Every retrieval channel matches this one label. A scope holding zero of them
+# cannot answer ANY query, so an empty result there would be a lie: it reads as
+# "no evidence found" when the truth is "this corpus was never populated". That
+# distinction is the difference between an agent concluding something and an
+# agent retrying a query that can never succeed.
+ASSERTION_LABEL = "KnowledgeAssertion"
+CORPUS_UNPREPARED_STATE = "corpus_unprepared"
+CORPUS_UNPREPARED_ERROR = "knowgraph_corpus_unprepared"
 EMBEDDING_MODEL = "openai/text-embedding-3-large"
 EMBEDDING_DIMENSIONS = 3072
 EMBEDDING_BATCH_SIZE = 32
@@ -62,9 +70,14 @@ class KnowGraphRetrievalResult:
     excluded_as_seen: list[str]
     retrieval_notes: list[str]
     omitted_neighbor_count: int = 0
+    # False only when re-running the same query is structurally pointless (an
+    # unprepared corpus). A genuine empty result stays retryable: new anchors or
+    # a new query against a populated corpus can still find evidence.
+    retryable: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "retryable": self.retryable,
             "project_id": self.project_id,
             "anchors": self.anchors,
             "retrieval_state": self.retrieval_state,
@@ -360,6 +373,58 @@ def _connect_live():
     return skill_ingest._connect(config), config
 
 
+_CORPUS_READINESS_CYPHER = f"""
+MATCH (ka:{ASSERTION_LABEL})
+WHERE ka.project_id = $projectId
+RETURN count(ka) AS corpus_size
+"""
+
+
+def _assertion_corpus_size(driver: Any, project_id: str, database: str | None) -> int:
+    """Scope-level readiness probe: how many assertion nodes exist at all.
+
+    Deliberately NOT trust-filtered. A populated corpus whose rows are all
+    untrusted/superseded is a real "empty" answer; a corpus of zero is an
+    unprepared retrieval path that no query can satisfy.
+    """
+    try:
+        result = driver.execute_query(
+            _CORPUS_READINESS_CYPHER,
+            parameters_={"projectId": _clean(project_id)},
+            database_=database,
+        )
+    except Exception as exc:
+        raise HybridRetrievalError(f"KnowGraph corpus readiness check failed: {exc}") from exc
+    rows = _records(result)
+    if not rows:
+        return 0
+    return int(_row_get(rows[0], "corpus_size") or 0)
+
+
+def _corpus_unprepared_result(request: KnowGraphRetrievalRequest) -> KnowGraphRetrievalResult:
+    """Typed unavailable result — bounded, and explicitly not retryable."""
+    return KnowGraphRetrievalResult(
+        project_id=request.project_id,
+        anchors=list(request.anchors),
+        retrieval_state=CORPUS_UNPREPARED_STATE,
+        retrieval_modes={"vector": False, "fulltext": False, "exact": False},
+        assertions=[],
+        evidence=[],
+        relations=[],
+        contradictions=[],
+        uncertainties=[],
+        next_anchor_suggestions=[],
+        excluded_as_seen=[],
+        retrieval_notes=[
+            f"{CORPUS_UNPREPARED_ERROR}: KnowGraph retrieval is unavailable because the "
+            "assertion corpus has not been populated. Do not retry this query.",
+            f"expected_corpus=:{ASSERTION_LABEL} matching_nodes=0 scope={_clean(request.project_id)}",
+            "remediation: populate the assertion corpus through the KnowGraph enrichment writer",
+        ],
+        retryable=False,
+    )
+
+
 def retrieve_knowgraph_context(
     request: KnowGraphRetrievalRequest,
     *,
@@ -376,26 +441,33 @@ def retrieve_knowgraph_context(
 
     max_results = _safe_int(request.max_results, 1, MAX_RESULTS_CEILING)
     over_fetch = min(MAX_RESULTS_CEILING, max(max_results * 3, max_results + 6))
-    embed = embed_fn or openrouter_embed
-    try:
-        vectors = embed([query_text])
-    except HybridRetrievalError:
-        raise
-    except Exception as exc:
-        raise HybridRetrievalError(f"OpenRouter query embedding failed: {exc}") from exc
-    if not vectors or len(vectors[0]) != EMBEDDING_DIMENSIONS:
-        observed = len(vectors[0]) if vectors and vectors[0] else 0
-        raise HybridRetrievalError(
-            f"query embedding dimension mismatch: expected {EMBEDDING_DIMENSIONS}, observed {observed}"
-        )
-
     owns_driver = driver is None
     if owns_driver:
         driver, config = _connect_live()
         database = config["database"]
 
-    params = _channel_params(request, over_fetch)
     try:
+        # Readiness BEFORE the embedding. The corpus check is one cheap COUNT
+        # against the graph we are already connected to, so an unprepared scope
+        # costs zero provider tokens instead of paying to embed a query that
+        # cannot match anything.
+        if _assertion_corpus_size(driver, request.project_id, database) == 0:
+            return _corpus_unprepared_result(request)
+
+        embed = embed_fn or openrouter_embed
+        try:
+            vectors = embed([query_text])
+        except HybridRetrievalError:
+            raise
+        except Exception as exc:
+            raise HybridRetrievalError(f"OpenRouter query embedding failed: {exc}") from exc
+        if not vectors or len(vectors[0]) != EMBEDDING_DIMENSIONS:
+            observed = len(vectors[0]) if vectors and vectors[0] else 0
+            raise HybridRetrievalError(
+                f"query embedding dimension mismatch: expected {EMBEDDING_DIMENSIONS}, observed {observed}"
+            )
+
+        params = _channel_params(request, over_fetch)
         vector_params = dict(params, topK=over_fetch, queryVector=vectors[0])
         vector_rows = _run_channel(driver, VECTOR_CYPHER, vector_params, database)
         lucene = build_lucene_query(request.anchors, request.query)
