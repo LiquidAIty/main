@@ -87,16 +87,21 @@ export default function TurboFlowEdge(props: EdgeProps) {
   const isActive = Boolean(edgeData.motion === "active" || edgeData.isActive);
   const isMagenticWorker = edgeData.edgeType === "magentic_option";
   const isMagenticControl = edgeData.edgeType === "magentic_control";
+  // An unrecognised persisted edge authorises nothing at runtime — render it
+  // visibly inert (muted, dashed), never as a Call.
+  const isInvalid = edgeData.edgeType === "invalid";
   // Turbo shell motion is the primary visual signal. Edges stay secondary.
-  const stroke = isSelected
-    ? GRAPH_THEME.accent.primary
-    : isActive
-      ? GRAPH_THEME.accent.solar
-      : isMagenticControl
-        ? "#52DCEB"
-        : isMagenticWorker
-          ? "#22B8C7"
-        : "#E7A18B";
+  const stroke = isInvalid
+    ? "#8A7F78"
+    : isSelected
+      ? GRAPH_THEME.accent.primary
+      : isActive
+        ? GRAPH_THEME.accent.solar
+        : isMagenticControl
+          ? "#52DCEB"
+          : isMagenticWorker
+            ? "#22B8C7"
+            : "#E7A18B";
   const edgeOpacity = isSelected
     ? Math.max(0.95, Math.min(1, opacity))
     : isActive
@@ -113,7 +118,7 @@ export default function TurboFlowEdge(props: EdgeProps) {
         opacity: edgeOpacity,
         strokeLinecap: "round",
         strokeLinejoin: "round",
-        strokeDasharray: isMagenticControl ? "7 4" : undefined,
+        strokeDasharray: isInvalid ? "3 5" : isMagenticControl ? "7 4" : undefined,
       }}
     />
   );

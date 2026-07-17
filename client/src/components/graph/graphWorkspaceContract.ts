@@ -47,36 +47,8 @@ export const GRAPH_TEXT = {
   bodyPx: 12,
 } as const;
 
-function clamp(x: number, a: number, b: number) {
-  return Math.min(b, Math.max(a, x));
-}
-
-export function normalizeGraphZoom(zoom: number): number {
-  if (!Number.isFinite(zoom)) return 0.5;
-  return clamp(
-    (zoom - GRAPH_WORKSPACE.minZoom) / (GRAPH_WORKSPACE.focusMaxZoom - GRAPH_WORKSPACE.minZoom),
-    0,
-    1,
-  );
-}
-
 export function getGraphMajorGridGap(): number {
   return GRAPH_WORKSPACE.worldGridGap * GRAPH_WORKSPACE.worldGridMajorGapMultiplier;
-}
-
-export function resolveKnowledgeSubstrateRhythm(zoom: number): {
-  minorOpacity: number;
-  majorOpacity: number;
-  minorLineWidth: number;
-  majorLineWidth: number;
-} {
-  const depth = normalizeGraphZoom(zoom);
-  return {
-    minorOpacity: 0.01 + depth * 0.11,
-    majorOpacity: 0.085 + depth * 0.082,
-    minorLineWidth: GRAPH_WORKSPACE.worldGridLineWidth * (0.92 - depth * 0.1),
-    majorLineWidth: GRAPH_WORKSPACE.worldGridLineWidth * (1.06 - depth * 0.06),
-  };
 }
 
 export function buildUndirectedNeighborMap(

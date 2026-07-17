@@ -332,7 +332,6 @@ export type DeckExecutionOutput = {
   workspaceContext?: any;
   workspaceObjectContext?: any;
   validationSummary?: any;
-  executionPlanSummary?: any;
 };
 
 export type RuntimeScope = {

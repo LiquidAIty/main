@@ -64,10 +64,6 @@ export function isLegacyUaCard(
   );
 }
 
-export function isAssistLikeRuntimeType(runtimeType: AgentCardRuntimeType | null): boolean {
-  return runtimeType === 'assistant_agent' || runtimeType === 'local_coder';
-}
-
 export function normalizeRuntimeOptions(
   value: unknown,
 ): AgentCardRuntimeOptions | null {
@@ -76,11 +72,17 @@ export function normalizeRuntimeOptions(
 }
 
 
+/** Recognise ONLY the three real edge types — mirrors the backend contract
+ * (decks/store.ts). Anything else is 'invalid': visible on the canvas but
+ * authorising nothing. The old default returned 'flow' (invocation authority)
+ * for typos and corrupt data, which is how Main→Hermes delegation silently
+ * died twice (C-1). */
 export function normalizeDeckEdgeType(value: unknown): DeckEdgeType {
   const type = safeText(value).trim().toLowerCase();
   if (type === 'magentic_option') return 'magentic_option';
   if (type === 'magentic_control') return 'magentic_control';
-  return 'flow';
+  if (type === 'flow') return 'flow';
+  return 'invalid';
 }
 
 

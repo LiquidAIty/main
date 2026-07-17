@@ -622,11 +622,6 @@ export type DeckRun = {
     warnings: string[];
   };
   events?: DeckRuntimeEvent[];
-  executionPlanSummary: {
-    startCardIds: string[];
-    simpleOrderCardIds: string[];
-    expandedStepIds: string[];
-  };
 };
 
 export type DeckRunResponse = {

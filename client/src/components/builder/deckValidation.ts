@@ -1,5 +1,9 @@
+// Structural DECK DOCUMENT integrity only. The browser validates the document
+// (ids, edge references, duplicates); it never derives execution order, entry
+// points, or orchestration — Main is the front door by runtime binding and
+// Mag One selects workers off live bus edges. The old start-card/entry-point
+// derivation was PlanFlow residue and was removed.
 import type {
-  AgentCardInstance,
   DeckDocument,
   DeckEdge,
   DeckEdgeExecutionMode,
@@ -8,6 +12,7 @@ import type {
   DeckEdgeRole,
   DeckEdgeType,
 } from '../../types/agentgraph';
+import { normalizeDeckEdgeType } from '../../features/agentbuilder/deck/deckPrimitives';
 
 export type DeckValidationIssueLevel = 'error' | 'warning';
 
@@ -16,8 +21,7 @@ export type DeckValidationIssueCode =
   | 'duplicate_card_id'
   | 'invalid_edge_reference'
   | 'duplicate_edge'
-  | 'orphan_card'
-  | 'missing_start_card';
+  | 'orphan_card';
 
 export type DeckValidationIssue = {
   level: DeckValidationIssueLevel;
@@ -27,16 +31,11 @@ export type DeckValidationIssue = {
   edgeId?: string;
 };
 
-export type DeckValidationOptions = {
-  enforceStartCard?: boolean;
-};
-
 export type DeckValidationResult = {
   ok: boolean;
   errors: DeckValidationIssue[];
   warnings: DeckValidationIssue[];
   summary: {
-    startCardIds: string[];
     orphanCardIds: string[];
     invalidEdgeIds: string[];
     duplicateEdgeIds: string[];
@@ -118,13 +117,6 @@ export function buildDefaultDeckEdgeMetadata(
 export function sanitizeDeckEdges(value: unknown): DeckEdge[] {
   if (!Array.isArray(value)) return [];
 
-  const normalizeEdgeType = (edgeType: unknown): DeckEdge['edgeType'] =>
-    String(edgeType || '').trim().toLowerCase() === 'magentic_option'
-      ? 'magentic_option'
-      : String(edgeType || '').trim().toLowerCase() === 'magentic_control'
-        ? 'magentic_control'
-        : 'flow';
-
   return value
     .filter(
       (edge): edge is DeckEdge =>
@@ -144,24 +136,11 @@ export function sanitizeDeckEdges(value: unknown): DeckEdge[] {
         sourceHandle: typeof (edge as DeckEdge).sourceHandle === 'string' ? (edge as DeckEdge).sourceHandle : null,
         target: String(edge.target || '').trim(),
         targetHandle: typeof (edge as DeckEdge).targetHandle === 'string' ? (edge as DeckEdge).targetHandle : null,
-        edgeType: normalizeEdgeType((edge as DeckEdge).edgeType),
+        edgeType: normalizeDeckEdgeType((edge as DeckEdge).edgeType),
         ...(metadata ? { metadata } : {}),
       };
     })
     .filter((edge) => edge.id && edge.source && edge.target);
-}
-
-function isRunnableNode(node: AgentCardInstance | undefined | null): boolean {
-  return Boolean(node && !String(node.parentGraphId || '').trim());
-}
-
-function normalizeEdgeType(value: unknown): DeckEdgeType {
-  const normalized = String(value || '').trim().toLowerCase();
-  return normalized === 'magentic_option'
-    ? 'magentic_option'
-    : normalized === 'magentic_control'
-      ? 'magentic_control'
-      : 'flow';
 }
 
 export function buildDeckEdgeIdentityKey(
@@ -172,22 +151,17 @@ export function buildDeckEdgeIdentityKey(
     String(edge.sourceHandle ?? '').trim(),
     String(edge.target || '').trim(),
     String(edge.targetHandle ?? '').trim(),
-    normalizeEdgeType(edge.edgeType),
+    normalizeDeckEdgeType(edge.edgeType),
   ].join('::');
 }
 
-export function validateDeckDocument(
-  document: DeckDocument,
-  options: DeckValidationOptions = {},
-): DeckValidationResult {
+export function validateDeckDocument(document: DeckDocument): DeckValidationResult {
   const errors: DeckValidationIssue[] = [];
   const warnings: DeckValidationIssue[] = [];
   const nodeIdSet = new Set<string>();
-  const validEdges: DeckEdge[] = [];
   const invalidEdgeIds: string[] = [];
   const duplicateEdgeIds: string[] = [];
   const connectedCardIds = new Set<string>();
-  const nodeMap = new Map<string, AgentCardInstance>();
 
   document.nodes.forEach((node) => {
     const nodeId = String(node.id || '').trim();
@@ -209,7 +183,6 @@ export function validateDeckDocument(
       return;
     }
     nodeIdSet.add(nodeId);
-    nodeMap.set(nodeId, node);
   });
 
   const edgeIdentityMap = new Map<string, string>();
@@ -248,31 +221,9 @@ export function validateDeckDocument(
     }
 
     edgeIdentityMap.set(edgeKey, edge.id);
-    validEdges.push(edge);
     connectedCardIds.add(sourceId);
     connectedCardIds.add(targetId);
   });
-
-  const incomingCounts = new Map<string, number>();
-  document.nodes
-    .filter((node) => isRunnableNode(node))
-    .forEach((node) => incomingCounts.set(node.id, 0));
-  const callableTargets = new Set<string>();
-  validEdges.forEach((edge) => {
-    if (edge.edgeType === 'magentic_option') {
-      callableTargets.add(edge.target);
-    }
-    const sourceNode = nodeMap.get(edge.source);
-    const targetNode = nodeMap.get(edge.target);
-    if (edge.edgeType !== 'flow') return;
-    if (!isRunnableNode(sourceNode) || !isRunnableNode(targetNode)) return;
-    incomingCounts.set(edge.target, (incomingCounts.get(edge.target) || 0) + 1);
-  });
-
-  const startCardIds = document.nodes
-    .filter((node) => isRunnableNode(node))
-    .map((node) => String(node.id || '').trim())
-    .filter((nodeId) => nodeId && !callableTargets.has(nodeId) && (incomingCounts.get(nodeId) || 0) === 0);
 
   const orphanCardIds = document.nodes
     .map((node) => String(node.id || '').trim())
@@ -287,21 +238,11 @@ export function validateDeckDocument(
     });
   });
 
-  const runnableNodeCount = document.nodes.filter((node) => isRunnableNode(node)).length;
-  if (options.enforceStartCard && runnableNodeCount > 0 && startCardIds.length === 0) {
-    errors.push({
-      level: 'error',
-      code: 'missing_start_card',
-      message: 'No entry/start card was found for this deck.',
-    });
-  }
-
   return {
     ok: errors.length === 0,
     errors,
     warnings,
     summary: {
-      startCardIds,
       orphanCardIds,
       invalidEdgeIds,
       duplicateEdgeIds,

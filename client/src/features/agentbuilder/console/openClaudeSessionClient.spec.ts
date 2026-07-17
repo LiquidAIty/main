@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { listSessionConversations, SessionStreamError, streamSession } from './openClaudeSessionClient';
+import { SessionStreamError, streamSession } from './openClaudeSessionClient';
 import { EMPTY_HERMES_TERMINAL_STATE, reduceHermesTerminalEvent } from '../../../components/hermes/HermesConsole';
 
 function sseResponse(frames: string[]): Response {
@@ -137,21 +137,5 @@ describe('streamSession', () => {
       message: 'hello',
       onEvent: vi.fn(),
     })).resolves.toEqual({ finalText: '' });
-  });
-});
-
-describe('listSessionConversations', () => {
-  it('preserves named conversation identity for selection', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-      conversations: [
-        { conversationId: 'research-thread', title: 'Research thread', updatedAt: '2026-07-15T00:00:00Z' },
-        { conversationId: 'main', title: 'Main' },
-      ],
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
-
-    await expect(listSessionConversations({ projectId: 'project-1' })).resolves.toEqual([
-      { conversationId: 'research-thread', title: 'Research thread', updatedAt: '2026-07-15T00:00:00Z' },
-      { conversationId: 'main', title: 'Main', updatedAt: undefined },
-    ]);
   });
 });

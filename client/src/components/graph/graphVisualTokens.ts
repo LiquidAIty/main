@@ -86,16 +86,6 @@ export const GRAPH_THEME = {
     selected: '#37ADAA',
     hover: '#F5F7FA',
   },
-  // Where a node's MEANING came from — distinct from graph TYPE (think/know above).
-  // Lets the graph tell repository facts, sourced evidence, and project reasoning
-  // apart. Reuses existing accent colors (no new palette). Values map the ThinkGraph
-  // node `source` property (codegraph_grounded | knowgraph_grounded | main_authored).
-  grounding: {
-    code: '#F2A64A', // CodeGraph-grounded repository fact (accent.solar)
-    know: '#A7B0BA', // KnowGraph-grounded sourced evidence (accent.know)
-    main: '#37ADAA', // Main-authored ThinkGraph reasoning (accent.think)
-    unknown: '#6E5FAE', // ungrounded / unknown source (accent.memory)
-  },
   edgeMotion: {
     idleDash: '22 18',
     activeDash: '16 12',
@@ -206,39 +196,6 @@ export const GRAPH_THEME = {
   },
 } as const;
 
-/**
- * Map a graph node's grounding source to its authority color so repository facts,
- * sourced evidence, and project reasoning are visually distinct. Reuses existing
- * GRAPH_THEME tokens (no new palette). `source` comes from the ThinkGraph node
- * `source` property; unknown/empty falls back to the neutral "unknown" token.
- */
-export function graphGroundingColor(source?: string | null): string {
-  switch (String(source || '').trim().toLowerCase()) {
-    case 'codegraph_grounded':
-      return GRAPH_THEME.grounding.code;
-    case 'knowgraph_grounded':
-      return GRAPH_THEME.grounding.know;
-    case 'main_authored':
-      return GRAPH_THEME.grounding.main;
-    default:
-      return GRAPH_THEME.grounding.unknown;
-  }
-}
-
-/** Human-readable label for a grounding source, for legends and Inspector rows. */
-export function graphGroundingLabel(source?: string | null): string {
-  switch (String(source || '').trim().toLowerCase()) {
-    case 'codegraph_grounded':
-      return 'Repository fact (CodeGraph)';
-    case 'knowgraph_grounded':
-      return 'Sourced evidence (KnowGraph)';
-    case 'main_authored':
-      return 'Project reasoning (Main)';
-    default:
-      return 'Ungrounded';
-  }
-}
-
 export function graphPillButtonStyle(overrides?: CSSProperties): CSSProperties {
   return {
     padding: '7px 10px',
@@ -323,15 +280,6 @@ export function graphCompanionPanelStyle(
   return {
     borderLeft: `1px solid ${GRAPH_THEME.drawer.panelBorder}`,
     background: GRAPH_THEME.drawer.panelBackground,
-    ...overrides,
-  };
-}
-
-export function graphCompanionTabRailStyle(
-  overrides?: CSSProperties,
-): CSSProperties {
-  return {
-    background: 'transparent',
     ...overrides,
   };
 }

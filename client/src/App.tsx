@@ -1,6 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import TradingUI from "./pages/tradingui";
-import DetailedMode from "./pages/detailedmode";
 import Login from "./pages/login";
 import Signup from "./pages/signup";
 import AgentBuilder from "./pages/agentbuilder";
@@ -16,7 +15,6 @@ export default function App() {
         <Route path="/tradingui" element={<TradingUI />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
-        <Route path="/detailed" element={<DetailedMode />} />
         {/* Dev-only telemetry dashboard: registered only in the dev build; the
             backing /api/dev/agent-harness routes also 403 in production. */}
         {import.meta.env.DEV ? <Route path="/dev/agent-runs" element={<DevAgentRuns />} /> : null}

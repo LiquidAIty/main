@@ -6,9 +6,7 @@ import type { AgentCardInstance, DeckDocument, DeckRun, DeckRuntimeEvent } from 
 // tests the real modules directly.
 import { INITIAL_DECK } from '../features/agentbuilder/deck/deckSeed';
 import {
-  buildQuickAddDeckMutation,
   buildSingleCardRunDocument,
-  filterAuthoringCompatibleEdges,
   hydrateDeckDocument,
   resolveProjectDeckLoadResult,
   resolveProjectDeckPayload,
@@ -17,8 +15,6 @@ import {
   buildDeckRuntimeVisualState,
   buildReloadStateFromDeckRuns,
 } from '../components/builder/deckRunState';
-import { findDeckNodePreset, getDeckQuickAddActions } from '../components/builder/deckPresets';
-import { buildExecutionPlan } from '../components/builder/deckExecution';
 
 function createCard(
   id: string,
@@ -51,132 +47,6 @@ function createDeck(nodes: AgentCardInstance[]): DeckDocument {
 }
 
 describe('agentbuilder authoring flow', () => {
-  it('surfaces contextual quick-add actions for the current runtime model', () => {
-    expect(getDeckQuickAddActions(null)).toEqual([]);
-    expect(getDeckQuickAddActions(createCard('card_magentic', 'magentic_one'))).toEqual([]);
-    expect(getDeckQuickAddActions(createCard('card_graph', 'graph_flow'))).toEqual([]);
-    expect(
-      getDeckQuickAddActions(createCard('card_graph_step_1', 'assistant_agent', { parentGraphId: 'card_graph' })),
-    ).toEqual([]);
-    expect(getDeckQuickAddActions(createCard('card_assist', 'assistant_agent'))).toEqual([]);
-  });
-
-  it('creates top-level Assist and Local Coder cards from project-level quick add presets', () => {
-    const assistPreset = findDeckNodePreset('assist');
-    const localCoderPreset = findDeckNodePreset('local_coder');
-    if (!assistPreset || !localCoderPreset) {
-      throw new Error('missing_presets');
-    }
-
-    const emptyDeck = createDeck([]);
-    const assistMutation = buildQuickAddDeckMutation(emptyDeck, assistPreset, null);
-    const localCoderMutation = buildQuickAddDeckMutation(emptyDeck, localCoderPreset, null);
-
-    expect(assistMutation.nextNode.runtimeType).toBe('assistant_agent');
-    expect(assistMutation.nextNode.runtimeBinding).toBe('assist');
-    expect(assistMutation.nextNode.parentGraphId).toBeNull();
-    expect(assistMutation.nextEdge).toBeNull();
-
-    expect(localCoderMutation.nextNode.runtimeType).toBe('local_coder');
-    expect(localCoderMutation.nextNode.runtimeBinding).toBe('local_coder');
-    expect(localCoderMutation.nextNode.parentGraphId).toBeNull();
-    expect(localCoderMutation.nextEdge).toBeNull();
-  });
-
-  it('creates blue callable edges from Magentic to top-level Assist heads', () => {
-    const magentic = createCard('card_magentic', 'magentic_one');
-    const deck = createDeck([magentic]);
-    const assistPreset = findDeckNodePreset('assist');
-    if (!assistPreset) {
-      throw new Error('missing_presets');
-    }
-
-    const assistMutation = buildQuickAddDeckMutation(deck, assistPreset, magentic.id);
-
-    expect(assistMutation.nextNode.parentGraphId).toBeNull();
-    expect(assistMutation.nextEdge?.edgeType).toBe('magentic_option');
-    expect(assistMutation.nextEdge?.source).toBe(magentic.id);
-    expect(assistMutation.nextEdge?.target).toBe(assistMutation.nextNode.id);
-    expect(assistMutation.nextEdge?.metadata).toMatchObject({
-      role: 'callable_route',
-      legacyCompatibility: null,
-    });
-  });
-
-  it('keeps the compatibility workflow path available when an existing graph card is selected', () => {
-    const graph = createCard('card_graph', 'graph_flow');
-    const deck = createDeck([graph]);
-    const assistPreset = findDeckNodePreset('assist');
-    if (!assistPreset) {
-      throw new Error('missing_assist_preset');
-    }
-
-    const firstStepMutation = buildQuickAddDeckMutation(deck, assistPreset, graph.id);
-
-    expect(firstStepMutation.nextNode.runtimeType).toBe('assistant_agent');
-    expect(firstStepMutation.nextNode.parentGraphId).toBe(graph.id);
-    expect(firstStepMutation.nextNode.title).toBe('Assist 1');
-    expect(firstStepMutation.nextEdge).toBeNull();
-
-    const secondStepMutation = buildQuickAddDeckMutation(
-      firstStepMutation.nextDeck,
-      assistPreset,
-      firstStepMutation.nextNode.id,
-    );
-
-    expect(secondStepMutation.nextNode.parentGraphId).toBe(graph.id);
-    expect(secondStepMutation.nextNode.title).toBe('Assist 2');
-    expect(secondStepMutation.nextEdge?.edgeType).toBe('flow');
-    expect(secondStepMutation.nextEdge?.source).toBe(firstStepMutation.nextNode.id);
-    expect(secondStepMutation.nextEdge?.target).toBe(secondStepMutation.nextNode.id);
-    expect(secondStepMutation.nextEdge?.metadata).toMatchObject({
-      role: 'graph_execution',
-      executionMode: 'required',
-      legacyCompatibility: true,
-    });
-  });
-
-  it('creates top-level Assist workflow steps with orange execution edges', () => {
-    const assist = createCard('card_assist', 'assistant_agent');
-    const deck = createDeck([assist]);
-    const assistPreset = findDeckNodePreset('assist');
-    if (!assistPreset) {
-      throw new Error('missing_assist_preset');
-    }
-
-    const nextAssistMutation = buildQuickAddDeckMutation(deck, assistPreset, assist.id);
-
-    expect(nextAssistMutation.nextNode.runtimeType).toBe('assistant_agent');
-    expect(nextAssistMutation.nextNode.parentGraphId).toBeNull();
-    expect(nextAssistMutation.nextEdge?.edgeType).toBe('flow');
-    expect(nextAssistMutation.nextEdge?.source).toBe(assist.id);
-    expect(nextAssistMutation.nextEdge?.target).toBe(nextAssistMutation.nextNode.id);
-    expect(nextAssistMutation.nextEdge?.metadata).toMatchObject({
-      role: 'graph_execution',
-      executionMode: 'required',
-      legacyCompatibility: null,
-    });
-  });
-
-  it('keeps top-level execution truth separate from graph-owned internal steps', () => {
-    const magentic = createCard('card_magentic', 'magentic_one');
-    const graph = createCard('card_graph', 'graph_flow');
-    const graphStep = createCard('card_graph_step_1', 'assistant_agent', {
-      parentGraphId: graph.id,
-      title: 'Assist 1',
-    });
-    const deck: DeckDocument = {
-      ...createDeck([magentic, graph, graphStep]),
-      edges: [
-        { id: 'edge_magentic_graph', source: magentic.id, target: graph.id, edgeType: 'magentic_option' },
-      ],
-    };
-
-    const executionPlan = buildExecutionPlan(deck);
-    expect(executionPlan.startCardIds).toEqual(['card_magentic']);
-    expect(executionPlan.simpleOrderCardIds).toEqual(['card_magentic']);
-  });
-
   it('ships the default example using the real magentic-led agent graph', () => {
     expect(INITIAL_DECK.nodes.map((node) => node.title)).toEqual([
       'Main Chat / Harness',
@@ -656,111 +526,34 @@ describe('agentbuilder authoring flow', () => {
     expect(rehydrated.nodes.map((node) => node.id)).not.toContain('card_worldsignals_agent');
   });
 
-  it('drops edges that become invalid after graph ownership changes', () => {
-    const magentic = createCard('card_magentic', 'magentic_one');
-    const graph = createCard('card_graph', 'graph_flow');
-    const stepA = createCard('card_graph_step_1', 'assistant_agent', {
-      parentGraphId: graph.id,
-      title: 'Assist 1',
-    });
-    const stepB = createCard('card_graph_step_2', 'assistant_agent', {
-      parentGraphId: graph.id,
-      title: 'Assist 2',
-    });
 
-    const nextNodes = [magentic, graph, { ...stepA, parentGraphId: null }, stepB];
-    const nextEdges = filterAuthoringCompatibleEdges(nextNodes, [
-      { id: 'edge_magentic_graph', source: magentic.id, target: graph.id, edgeType: 'magentic_option' },
-      { id: 'edge_step_chain', source: stepA.id, target: stepB.id, edgeType: 'flow' },
-    ]);
+  // The retired authoring-compatibility filter silently DROPPED saved edges that
+  // did not fit the graph_flow/parentGraphId model — real user intent, deleted on
+  // load. Hydration now keeps every edge whose endpoints still exist, whatever its
+  // type: an unrecognised type is classified 'invalid' (inert but visible), never
+  // silently removed. (Edges orphaned by a retired card are covered above.)
+  it('preserves every persisted edge through hydration, including an unrecognised type', () => {
+    const savedDeck: DeckDocument = {
+      id: 'deck_builder',
+      name: 'Saved Edge Deck',
+      promptTemplates: [],
+      version: 2,
+      nodes: [
+        createCard('card_a', 'assistant_agent', { title: 'A' }),
+        createCard('card_b', 'assistant_agent', { title: 'B' }),
+      ],
+      edges: [
+        { id: 'edge_call', source: 'card_a', target: 'card_b', edgeType: 'flow' },
+        // A typo'd/legacy type: preserved and visible, but authorises nothing.
+        { id: 'edge_typo', source: 'card_b', target: 'card_a', edgeType: 'reports_to' as never },
+      ],
+    };
 
-    expect(nextEdges).toEqual([
-      { id: 'edge_magentic_graph', source: magentic.id, target: graph.id, edgeType: 'magentic_option' },
-    ]);
-  });
+    const rehydrated = hydrateDeckDocument(JSON.parse(JSON.stringify(savedDeck)));
 
-  it('keeps top-level Assist workflow edges when both endpoints stay top-level', () => {
-    const assistA = createCard('assist_a', 'assistant_agent');
-    const assistB = createCard('assist_b', 'assistant_agent');
-
-    const nextEdges = filterAuthoringCompatibleEdges([assistA, assistB], [
-      { id: 'edge_assist_a_b', source: assistA.id, target: assistB.id, edgeType: 'flow' },
-    ]);
-
-    expect(nextEdges).toEqual([
-      { id: 'edge_assist_a_b', source: assistA.id, target: assistB.id, edgeType: 'flow' },
-    ]);
-  });
-
-  it('preserves saved legacy graph branch topology during editor-side compatibility filtering', () => {
-    const graph = createCard('card_graph', 'graph_flow');
-    const stepA = createCard('card_graph_step_a', 'assistant_agent', {
-      parentGraphId: graph.id,
-      title: 'Assist A',
-    });
-    const stepB = createCard('card_graph_step_b', 'assistant_agent', {
-      parentGraphId: graph.id,
-      title: 'Assist B',
-    });
-    const stepC = createCard('card_graph_step_c', 'assistant_agent', {
-      parentGraphId: graph.id,
-      title: 'Assist C',
-    });
-    const stepD = createCard('card_graph_step_d', 'assistant_agent', {
-      parentGraphId: graph.id,
-      title: 'Assist D',
-    });
-
-    const nextEdges = filterAuthoringCompatibleEdges([graph, stepA, stepB, stepC, stepD], [
-      { id: 'edge_graph_a', source: graph.id, target: stepA.id, edgeType: 'flow' },
-      { id: 'edge_a_b', source: stepA.id, target: stepB.id, edgeType: 'flow' },
-      { id: 'edge_a_c', source: stepA.id, target: stepC.id, edgeType: 'flow' },
-      { id: 'edge_b_d', source: stepB.id, target: stepD.id, edgeType: 'flow' },
-      { id: 'edge_c_d', source: stepC.id, target: stepD.id, edgeType: 'flow' },
-    ]);
-
-    expect(nextEdges.map((edge) => edge.id)).toEqual([
-      'edge_graph_a',
-      'edge_a_b',
-      'edge_a_c',
-      'edge_b_d',
-      'edge_c_d',
-    ]);
-  });
-
-  it('does not strip unrelated edge metadata during card-editor compatibility filtering', () => {
-    const assistA = createCard('assist_a', 'assistant_agent');
-    const assistB = createCard('assist_b', 'assistant_agent');
-
-    const nextEdges = filterAuthoringCompatibleEdges([assistA, assistB], [
-      {
-        id: 'edge_assist_a_b',
-        source: assistA.id,
-        target: assistB.id,
-        edgeType: 'flow',
-        metadata: {
-          role: 'graph_execution',
-          executionMode: 'conditional',
-          conditionLabel: 'Only when gaps remain',
-          priority: 3,
-        },
-      },
-    ]);
-
-    expect(nextEdges).toEqual([
-      {
-        id: 'edge_assist_a_b',
-        source: assistA.id,
-        target: assistB.id,
-        edgeType: 'flow',
-        metadata: {
-          role: 'graph_execution',
-          executionMode: 'conditional',
-          conditionLabel: 'Only when gaps remain',
-          priority: 3,
-        },
-      },
-    ]);
+    expect(rehydrated.edges.map((edge) => edge.id)).toEqual(['edge_call', 'edge_typo']);
+    expect(rehydrated.edges.find((edge) => edge.id === 'edge_call')?.edgeType).toBe('flow');
+    expect(rehydrated.edges.find((edge) => edge.id === 'edge_typo')?.edgeType).toBe('invalid');
   });
 
   it('does not let fallback override real saved edge metadata', () => {
@@ -830,40 +623,30 @@ describe('agentbuilder authoring flow', () => {
     });
   });
 
-  it('keeps downstream top-level Assist workflow cards in selected-card runs', () => {
+  // A selected-card run scopes to EXACTLY the selected card. The backend gate
+  // (isSingleAssistRunDocument) accepts one top-level node and refuses any
+  // document carrying the Mag One card, so the old flow-traversal scope
+  // (which shipped the whole downstream chain) produced documents the route
+  // rejected. Identity/prompt/model/tools still resolve server-side from the
+  // SAVED deck — this document only names the card.
+  it('scopes a selected-card run to exactly the selected card', () => {
     const magentic = createCard('magentic', 'magentic_one');
     const assistA = createCard('assist_a', 'assistant_agent');
     const assistB = createCard('assist_b', 'assistant_agent');
-    const graph = createCard('graph', 'graph_flow');
-    const graphStep = createCard('graph_step', 'assistant_agent', { parentGraphId: graph.id });
 
     const document: DeckDocument = {
-      ...createDeck([magentic, assistA, assistB, graph, graphStep]),
+      ...createDeck([magentic, assistA, assistB]),
       edges: [
         { id: 'edge_magentic_assist', source: magentic.id, target: assistA.id, edgeType: 'magentic_option' },
         { id: 'edge_assist_chain', source: assistA.id, target: assistB.id, edgeType: 'flow' },
-        { id: 'edge_magentic_graph', source: magentic.id, target: graph.id, edgeType: 'magentic_option' },
       ],
     };
 
     const assistRunDocument = buildSingleCardRunDocument(document, assistA.id);
-    const magenticRunDocument = buildSingleCardRunDocument(document, magentic.id);
 
-    expect(assistRunDocument?.nodes.map((node) => node.id)).toEqual(['assist_a', 'assist_b']);
-    expect(assistRunDocument?.edges.map((edge) => edge.id)).toEqual(['edge_assist_chain']);
-
-    expect(magenticRunDocument?.nodes.map((node) => node.id)).toEqual([
-      'magentic',
-      'assist_a',
-      'assist_b',
-      'graph',
-      'graph_step',
-    ]);
-    expect(magenticRunDocument?.edges.map((edge) => edge.id)).toEqual([
-      'edge_magentic_assist',
-      'edge_assist_chain',
-      'edge_magentic_graph',
-    ]);
+    expect(assistRunDocument?.nodes.map((node) => node.id)).toEqual(['assist_a']);
+    expect(assistRunDocument?.edges).toEqual([]);
+    expect(buildSingleCardRunDocument(document, 'missing_card')).toBeNull();
   });
 
   it('hydrates reload-time chat without turning ordinary run history into a plan', () => {
@@ -908,11 +691,6 @@ describe('agentbuilder authoring flow', () => {
           status: 'running',
         },
       ],
-      executionPlanSummary: {
-        startCardIds: ['card_magentic'],
-        simpleOrderCardIds: ['card_magentic'],
-        expandedStepIds: ['card_magentic::single'],
-      },
     };
 
     const continuity = buildReloadStateFromDeckRuns([latestRun], latestRun);
@@ -995,25 +773,17 @@ describe('agentbuilder authoring flow', () => {
       },
     ];
 
+    // Card/edge activity is the ONLY visual state the canvas consumes (the
+    // runtime glow); the run completed, so nothing is left active.
     expect(buildDeckRuntimeVisualState(events)).toEqual({
       activeCardIds: [],
       activeEdgeIds: [],
-      swarmProgressByCardId: {},
-      reasoningLines: [
-        'Merged upstream outputs for Assist A.',
-        'Assignment: Magentic-One assigned work to Assist A.',
-      ],
-      teamLines: [
-        'Progress: Assist A started.',
-        'Assignment: Magentic-One assigned work to Assist A.',
-        'Actual assistant message from Assist A.',
-        'Progress: Assist A swarm worker 2 of 5 completed.',
-        'Progress: Assist A completed.',
-      ],
-      reportLines: [
-        'Result: Assist A: Prepared the next research summary.',
-        'Result: Deck Admin completed.',
-      ],
+    });
+
+    // Mid-run (before completion events) the started card and its edges glow.
+    expect(buildDeckRuntimeVisualState(events.slice(0, 4))).toEqual({
+      activeCardIds: ['assist_a'],
+      activeEdgeIds: ['edge_a_b', 'edge_magentic_assist'],
     });
   });
 });

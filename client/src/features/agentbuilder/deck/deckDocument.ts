@@ -1,41 +1,25 @@
-// Deck document logic: normalization, hydration, legacy upgrade, quick-add
-// mutations, single-card-run scoping, and the Coder controller card
-// normalization. Extracted verbatim from pages/agentbuilder.tsx
-// (decomposition pass 2026-07-08). Behavior and saved-deck compatibility
-// unchanged.
+// Deck document logic: normalization, hydration, legacy upgrade,
+// single-card-run scoping, and the Coder controller card normalization.
 import type {
   AgentCardInstance,
   DeckDocument,
   DeckEdge,
-  DeckEdgeType,
   PromptTemplate,
 } from '../../../types/agentgraph';
-import {
-  findDeckNodePreset,
-  getAssistStarterRecipe,
-  type AssistStarterRecipe,
-  type DeckNodePreset,
-} from '../../../components/builder/deckPresets';
-import {
-  buildDefaultDeckEdgeMetadata,
-  sanitizeDeckEdges,
-} from '../../../components/builder/deckValidation';
+import { sanitizeDeckEdges } from '../../../components/builder/deckValidation';
 import {
   cleanOptionalText,
   cloneDeckDocument,
-  isAssistLikeRuntimeType,
   isLegacyUaCard,
   LOCAL_CODER_CONTROLLER_MODEL_KEY,
   LOCAL_CODER_CONTROLLER_PROVIDER,
   LOCAL_CODER_CONTROLLER_TOOLS,
   MAGENTIC_ONE_DEFAULT_MODEL_KEY,
   MAGENTIC_ONE_DEFAULT_PROVIDER,
-  normalizeDeckEdgeType,
   normalizeRuntimeBinding,
   normalizeRuntimeOptions,
   normalizeRuntimeType,
   safeText,
-  uid,
 } from './deckPrimitives';
 import {
   BASELINE_OPTIONAL_CARD_IDS,
@@ -131,201 +115,23 @@ export function resolveLocalCoderControllerConsoleConfig(
 }
 
 
-export function isTopLevelCanvasCard(
-  node: AgentCardInstance | null | undefined,
-): node is AgentCardInstance {
-  return Boolean(node && !cleanOptionalText(node.parentGraphId));
-}
-
-export function isAssistCanvasCard(
-  node: AgentCardInstance | null | undefined,
-): node is AgentCardInstance {
-  return Boolean(node && isAssistLikeRuntimeType(normalizeRuntimeType(node.runtimeType)));
-}
-
-export function isVisibleAssistFlowPair(
-  sourceNode: AgentCardInstance | null | undefined,
-  targetNode: AgentCardInstance | null | undefined,
-): boolean {
-  if (!isAssistCanvasCard(sourceNode) || !isAssistCanvasCard(targetNode))
-    return false;
-
-  const sourceGraphId = cleanOptionalText(sourceNode.parentGraphId);
-  const targetGraphId = cleanOptionalText(targetNode.parentGraphId);
-
-  if (!sourceGraphId && !targetGraphId) {
-    return true;
-  }
-
-  return Boolean(sourceGraphId && sourceGraphId === targetGraphId);
-}
-
-export function collectVisibleAssistFlowIds(
-  document: DeckDocument,
-  startNodeId: string,
-): Set<string> {
-  const nodeMap = new Map(
-    document.nodes.map((node) => [node.id, node] as const),
-  );
-  const visited = new Set<string>();
-  const queue = [startNodeId];
-
-  while (queue.length > 0) {
-    const nodeId = queue.shift();
-    if (!nodeId || visited.has(nodeId)) continue;
-    visited.add(nodeId);
-
-    document.edges.forEach((edge) => {
-      if (normalizeDeckEdgeType(edge.edgeType) !== 'flow') return;
-      const sourceNode = nodeMap.get(edge.source);
-      const targetNode = nodeMap.get(edge.target);
-      if (!isVisibleAssistFlowPair(sourceNode, targetNode)) return;
-
-      if (edge.source === nodeId && !visited.has(edge.target)) {
-        queue.push(edge.target);
-      }
-      if (edge.target === nodeId && !visited.has(edge.source)) {
-        queue.push(edge.source);
-      }
-    });
-  }
-
-  return visited;
-}
-
-export function collectGraphScopedNodeIds(
-  document: DeckDocument,
-  graphOwnerId: string,
-): Set<string> {
-  const scopedNodeIds = new Set<string>([graphOwnerId]);
-  document.nodes.forEach((node) => {
-    if (cleanOptionalText(node.parentGraphId) === graphOwnerId) {
-      scopedNodeIds.add(node.id);
-    }
-  });
-  return scopedNodeIds;
-}
-
-export function buildSingleCardRunNodeScope(
-  document: DeckDocument,
-  selectedNode: AgentCardInstance,
-): Set<string> {
-  const nodeMap = new Map(
-    document.nodes.map((node) => [node.id, node] as const),
-  );
-  const relatedNodeIds = new Set<string>();
-  const selectedNodeId = selectedNode.id;
-  const selectedRuntimeType = normalizeRuntimeType(selectedNode.runtimeType);
-  const selectedParentGraphId = cleanOptionalText(selectedNode.parentGraphId);
-
-  if (selectedParentGraphId) {
-    return collectGraphScopedNodeIds(document, selectedParentGraphId);
-  }
-
-  if (
-    selectedRuntimeType === 'magentic_one' &&
-    isTopLevelCanvasCard(selectedNode)
-  ) {
-    relatedNodeIds.add(selectedNodeId);
-
-    document.edges.forEach((edge) => {
-      if (
-        edge.source !== selectedNodeId ||
-        normalizeDeckEdgeType(edge.edgeType) !== 'magentic_option'
-      ) {
-        return;
-      }
-
-      const targetNode = nodeMap.get(edge.target);
-      if (!targetNode) return;
-
-      const targetRuntimeType = normalizeRuntimeType(targetNode.runtimeType);
-      if (
-        targetRuntimeType === 'graph_flow' &&
-        isTopLevelCanvasCard(targetNode)
-      ) {
-        collectGraphScopedNodeIds(document, targetNode.id).forEach((nodeId) => {
-          relatedNodeIds.add(nodeId);
-        });
-        return;
-      }
-
-      collectVisibleAssistFlowIds(document, targetNode.id).forEach((nodeId) => {
-        relatedNodeIds.add(nodeId);
-      });
-    });
-
-    return relatedNodeIds;
-  }
-
-  if (
-    selectedRuntimeType === 'graph_flow' &&
-    isTopLevelCanvasCard(selectedNode)
-  ) {
-    return collectGraphScopedNodeIds(document, selectedNodeId);
-  }
-
-  if (isAssistCanvasCard(selectedNode) && isTopLevelCanvasCard(selectedNode)) {
-    return collectVisibleAssistFlowIds(document, selectedNodeId);
-  }
-
-  relatedNodeIds.add(selectedNodeId);
-  return relatedNodeIds;
-}
-
+/** Scope a deck document down to the ONE selected card for a Single Assist
+ * run. The backend (`isSingleAssistRunDocument`) accepts exactly one top-level
+ * node — the old flow-traversal scope produced multi-node documents the route
+ * refused. Card identity/prompt/model/tools resolve server-side from the
+ * SAVED deck; this document only names the card. */
 export function buildSingleCardRunDocument(
   document: DeckDocument,
   cardId: string,
 ): DeckDocument | null {
   const selectedNode = document.nodes.find((node) => node.id === cardId);
   if (!selectedNode) return null;
-  const relatedNodeIds = buildSingleCardRunNodeScope(document, selectedNode);
 
   return {
     ...document,
-    nodes: document.nodes.filter((node) => relatedNodeIds.has(node.id)),
-    edges: document.edges.filter(
-      (edge) =>
-        relatedNodeIds.has(edge.source) && relatedNodeIds.has(edge.target),
-    ),
+    nodes: [selectedNode],
+    edges: [],
   };
-}
-
-
-export function filterAuthoringCompatibleEdges(
-  nodes: AgentCardInstance[],
-  edges: DeckEdge[],
-): DeckEdge[] {
-  const nodeMap = new Map(nodes.map((node) => [node.id, node] as const));
-
-  return edges
-    .filter((edge) => {
-      const sourceNode = nodeMap.get(edge.source);
-      const targetNode = nodeMap.get(edge.target);
-      if (!sourceNode || !targetNode) return false;
-
-      const edgeType = normalizeDeckEdgeType(edge.edgeType);
-      if (edgeType === 'magentic_option') {
-        return (
-          normalizeRuntimeType(sourceNode.runtimeType) === 'magentic_one' &&
-          isTopLevelCanvasCard(sourceNode) &&
-          isTopLevelCanvasCard(targetNode) &&
-          ['assistant_agent', 'local_coder', 'graph_flow'].includes(
-            normalizeRuntimeType(targetNode.runtimeType) || '',
-          )
-        );
-      }
-
-      if (
-        normalizeRuntimeType(sourceNode.runtimeType) === 'graph_flow' &&
-        cleanOptionalText(targetNode.parentGraphId) === sourceNode.id
-      ) {
-        return true;
-      }
-
-      return isVisibleAssistFlowPair(sourceNode, targetNode);
-    })
-    .map((edge) => cloneDeckDocument(edge));
 }
 
 export function normalizeDeckNodes(value: unknown): AgentCardInstance[] {
@@ -424,263 +230,6 @@ export function normalizeDeckEdges(value: unknown): DeckEdge[] {
         !REMOVED_DEFAULT_EDGE_IDS.has(safeText(edge.id).trim()),
     ),
   );
-}
-
-export function slugifyDeckIdPart(value: string): string {
-  return (
-    safeText(value)
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '') || 'card'
-  );
-}
-
-export function buildDeckNodeFromPreset(
-  preset: DeckNodePreset,
-  promptTemplates: PromptTemplate[],
-  position: { x: number; y: number },
-  options: {
-    title?: string;
-    parentGraphId?: string | null;
-  } = {},
-): AgentCardInstance {
-  const promptTemplateContent = preset.promptTemplateId
-    ? promptTemplates.find(
-        (template) => template.id === preset.promptTemplateId,
-      )?.content ||
-      INITIAL_PROMPT_TEMPLATES.find(
-        (template) => template.id === preset.promptTemplateId,
-      )?.content ||
-      ''
-    : '';
-  const slug = slugifyDeckIdPart(preset.key);
-
-  return {
-    id: `card_${slug}_${uid()}`,
-    kind: 'agent',
-    templateId: preset.templateId,
-    prompt: promptTemplateContent,
-    runtimeBinding: preset.runtimeBinding,
-    runtimeType: preset.runtimeType,
-    runtimeOptions: null,
-    parentGraphId: cleanOptionalText(options.parentGraphId),
-    title: options.title || preset.title,
-    subtitle: preset.subtitle,
-    position,
-    status: 'ready',
-    cloneConfig: { enabled: false, seeds: [] },
-  };
-}
-
-export function getNextGraphScopedAssistTitle(
-  deck: DeckDocument,
-  graphOwnerId: string,
-): string {
-  const assistCount = deck.nodes.filter(
-    (node) =>
-      cleanOptionalText(node.parentGraphId) === graphOwnerId &&
-      isAssistLikeRuntimeType(normalizeRuntimeType(node.runtimeType)),
-  ).length;
-  return `Assist ${assistCount + 1}`;
-}
-
-export function resolveQuickAddParentGraphId(
-  preset: DeckNodePreset,
-  anchorNode: AgentCardInstance | null,
-): string | null {
-  if (
-    (preset.runtimeType !== 'assistant_agent' &&
-      preset.runtimeType !== 'local_coder') ||
-    !anchorNode
-  ) {
-    return null;
-  }
-
-  const anchorParentGraphId = cleanOptionalText(anchorNode.parentGraphId);
-  if (anchorParentGraphId) {
-    return anchorParentGraphId;
-  }
-
-  if (
-    normalizeRuntimeType(anchorNode.runtimeType) === 'graph_flow' &&
-    isTopLevelCanvasCard(anchorNode)
-  ) {
-    return anchorNode.id;
-  }
-
-  return null;
-}
-
-export function resolveQuickAddEdge(
-  anchorNode: AgentCardInstance | null,
-  nextNode: AgentCardInstance,
-): DeckEdge | null {
-  if (!anchorNode) return null;
-
-  const anchorRuntimeType = normalizeRuntimeType(anchorNode.runtimeType);
-  const nextRuntimeType = normalizeRuntimeType(nextNode.runtimeType);
-  let edgeType: DeckEdgeType | null = null;
-
-  if (
-    anchorRuntimeType === 'magentic_one' &&
-    isTopLevelCanvasCard(anchorNode) &&
-    isTopLevelCanvasCard(nextNode) &&
-    (nextRuntimeType === 'assistant_agent' ||
-      nextRuntimeType === 'local_coder' ||
-      nextRuntimeType === 'graph_flow')
-  ) {
-    edgeType = 'magentic_option';
-  } else if (isVisibleAssistFlowPair(anchorNode, nextNode)) {
-    edgeType = 'flow';
-  }
-
-  if (!edgeType) return null;
-
-  const legacyCompatibility = Boolean(
-    anchorRuntimeType === 'graph_flow' ||
-    nextRuntimeType === 'graph_flow' ||
-    cleanOptionalText(anchorNode.parentGraphId) ||
-    cleanOptionalText(nextNode.parentGraphId),
-  );
-
-  return {
-    id: `edge_${slugifyDeckIdPart(anchorNode.id)}_${slugifyDeckIdPart(nextNode.id)}_${uid()}`,
-    source: anchorNode.id,
-    target: nextNode.id,
-    edgeType,
-    metadata: buildDefaultDeckEdgeMetadata(edgeType, { legacyCompatibility }),
-  };
-}
-
-export function getSuggestedDeckNodePosition(
-  deck: DeckDocument,
-  preset: DeckNodePreset,
-  anchorNode: AgentCardInstance | null,
-): { x: number; y: number } {
-  if (anchorNode) {
-    const outgoingCount = deck.edges.filter(
-      (edge) => edge.source === anchorNode.id,
-    ).length;
-    return {
-      x: anchorNode.position.x + 320,
-      y: anchorNode.position.y + outgoingCount * 180,
-    };
-  }
-
-  const rightMostX = deck.nodes.reduce(
-    (max, node) => Math.max(max, node.position.x),
-    -220,
-  );
-  const nextColumnX = rightMostX + 320;
-  const visibleTopLevelAgentXs = deck.nodes
-    .filter(
-      (node) =>
-        !cleanOptionalText(node.parentGraphId) &&
-        normalizeRuntimeType(node.runtimeType) !== 'magentic_one',
-    )
-    .map((node) => node.position.x);
-  const wrappedColumnX =
-    nextColumnX > 1040 && visibleTopLevelAgentXs.length > 0
-      ? Math.min(...visibleTopLevelAgentXs)
-      : nextColumnX;
-  const occupiedInNextColumn = deck.nodes.filter(
-    (node) => Math.abs(node.position.x - wrappedColumnX) < 72,
-  ).length;
-  return {
-    x: wrappedColumnX,
-    y: (wrappedColumnX === nextColumnX ? 40 : 140) + occupiedInNextColumn * 180,
-  };
-}
-
-export function buildQuickAddDeckMutation(
-  deck: DeckDocument,
-  preset: DeckNodePreset,
-  anchorNodeId: string | null,
-): {
-  nextDeck: DeckDocument;
-  nextNode: AgentCardInstance;
-  nextEdge: DeckEdge | null;
-} {
-  const anchorNode =
-    deck.nodes.find((node) => node.id === anchorNodeId) || null;
-  const nextParentGraphId = resolveQuickAddParentGraphId(preset, anchorNode);
-  const nextTitle =
-    nextParentGraphId &&
-    (preset.runtimeType === 'assistant_agent' ||
-      preset.runtimeType === 'local_coder')
-      ? getNextGraphScopedAssistTitle(deck, nextParentGraphId)
-      : preset.title;
-  const nextNode = buildDeckNodeFromPreset(
-    preset,
-    deck.promptTemplates,
-    getSuggestedDeckNodePosition(deck, preset, anchorNode),
-    {
-      title: nextTitle,
-      parentGraphId: nextParentGraphId,
-    },
-  );
-  const nextEdge = resolveQuickAddEdge(anchorNode, nextNode);
-
-  return {
-    nextDeck: {
-      ...deck,
-      version: deck.version + 1,
-      nodes: [...deck.nodes, nextNode],
-      edges: nextEdge ? [...deck.edges, nextEdge] : [...deck.edges],
-    },
-    nextNode,
-    nextEdge,
-  };
-}
-
-export type AssistStarterDeckMutation = {
-  nextDeck: DeckDocument;
-  createdNodes: AgentCardInstance[];
-  createdEdges: DeckEdge[];
-  focusNodeId: string | null;
-  recipe: AssistStarterRecipe;
-};
-
-export function buildAssistStarterDeckMutation(
-  deck: DeckDocument,
-  anchorNodeId: string | null,
-): AssistStarterDeckMutation | null {
-  const anchorNode =
-    deck.nodes.find((node) => node.id === anchorNodeId) || null;
-  const recipe = getAssistStarterRecipe(anchorNode);
-  if (!recipe) return null;
-
-  let workingDeck = deck;
-  let workingAnchorId = anchorNodeId;
-  const createdNodes: AgentCardInstance[] = [];
-  const createdEdges: DeckEdge[] = [];
-
-  recipe.presetKeys.forEach((presetKey) => {
-    const preset = findDeckNodePreset(presetKey);
-    if (!preset) return;
-
-    const mutation = buildQuickAddDeckMutation(
-      workingDeck,
-      preset,
-      workingAnchorId,
-    );
-    workingDeck = mutation.nextDeck;
-    workingAnchorId = mutation.nextNode.id;
-    createdNodes.push(mutation.nextNode);
-    if (mutation.nextEdge) {
-      createdEdges.push(mutation.nextEdge);
-    }
-  });
-
-  return {
-    nextDeck: workingDeck,
-    createdNodes,
-    createdEdges,
-    focusNodeId:
-      createdNodes[recipe.focusNodeIndex]?.id || createdNodes[0]?.id || null,
-    recipe,
-  };
 }
 
 export function formatBuilderStatusMessage(
@@ -817,8 +366,17 @@ export function seedCurrentSystemCardsIntoLegacyDeck(
       .map((template) => cloneDeckDocument(template)),
   ];
 
-  // Preserve persisted edge state exactly; never infer/merge seed edges during hydration.
-  const nextEdges = filterAuthoringCompatibleEdges(upgradedNodes, deck.edges);
+  // Preserve persisted edge state; never infer/merge seed edges during hydration.
+  // The retired authoring-compatibility filter also dropped edges that simply
+  // didn't fit the graph_flow/parentGraphId model — that deleted real user
+  // intent. The ONLY edges dropped here are ones this upgrade itself orphaned by
+  // retiring their endpoint card; an edge to a node that no longer exists is a
+  // dangling reference, not a decision. Edge TYPE is never judged: an
+  // unrecognised type is classified 'invalid' (visible, authorises nothing).
+  const upgradedNodeIds = new Set(upgradedNodes.map((node) => node.id));
+  const nextEdges = deck.edges
+    .filter((edge) => upgradedNodeIds.has(edge.source) && upgradedNodeIds.has(edge.target))
+    .map((edge) => cloneDeckDocument(edge));
 
   return {
     ...deck,

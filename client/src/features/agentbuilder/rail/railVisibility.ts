@@ -10,61 +10,29 @@ import type {
 import { shouldShowOpenClaudeConsoleRail } from '../console/consoleVisibility';
 import {
   normalizeDeckEdgeType,
+  normalizeRuntimeBinding,
   normalizeRuntimeType,
   safeText,
 } from '../deck/deckPrimitives';
 
-export function isTradingWorkbenchCard(card: AgentCardInstance | null | undefined): boolean {
-  if (!card) return false;
-  return (
-    safeText(card.id).trim() === 'card_trading_workbench' ||
-    safeText(card.templateId).trim() === 'template_trading_workbench'
-  );
+// Card identity comes from the SAVED runtime binding — never an id/template/
+// title string match. A user who renames a card, or a deck that seeds a second
+// one, keeps working; the old matchers silently didn't.
+function hasRuntimeBinding(
+  card: AgentCardInstance | null | undefined,
+  binding: 'trading_agent' | 'worldsignals_agent',
+): boolean {
+  return Boolean(card && normalizeRuntimeBinding(card.runtimeBinding) === binding);
 }
 
-export type WorkbenchSurfaceId = 'trading';
-
-export type WorkbenchCardDescriptor = {
-  id: WorkbenchSurfaceId;
-  title: string;
-  openLabel: string;
-  disabledCopy: string;
-  matches: (card: AgentCardInstance | null | undefined) => boolean;
-};
-
-export const WORKBENCH_CARD_DESCRIPTORS: readonly WorkbenchCardDescriptor[] = [
-  {
-    id: 'trading',
-    title: 'Trading Agent',
-    openLabel: 'Open Trading Workspace',
-    disabledCopy:
-      'Trading is staged as a selectable workbench card. Runtime is disabled until the dedicated trading bridge exists.',
-    matches: isTradingWorkbenchCard,
-  },
-] as const;
-
-export function resolveWorkbenchDescriptor(
-  card: AgentCardInstance | null | undefined,
-): WorkbenchCardDescriptor | null {
-  if (!card) return null;
-  return (
-    WORKBENCH_CARD_DESCRIPTORS.find((descriptor) => descriptor.matches(card)) ??
-    null
-  );
+export function isTradingAgentCard(card: AgentCardInstance | null | undefined): boolean {
+  return hasRuntimeBinding(card, 'trading_agent');
 }
 
 export function isWorldSignalsAgentCard(
   card: AgentCardInstance | null | undefined,
 ): boolean {
-  if (!card) return false;
-  const id = safeText(card.id).trim().toLowerCase();
-  const templateId = safeText(card.templateId).trim().toLowerCase();
-  const title = safeText(card.title).trim().toLowerCase();
-  return (
-    id === 'card_worldsignals_agent' ||
-    templateId === 'template_worldsignals_agent' ||
-    title === 'worldsignals agent'
-  );
+  return hasRuntimeBinding(card, 'worldsignals_agent');
 }
 
 export type ProgressiveRailVisibility = {
@@ -136,32 +104,15 @@ export function isHermesConnectedToMainChat(
   );
 }
 
-export function isWorldSignalsAgentActive(
+/** A card's surface is reachable when the card is bus-connected — bus
+ * connectivity is the only activation signal (PLAN.md §4). */
+function isBusConnectedCard(
   nodes: readonly AgentCardInstance[],
   edges: readonly DeckEdge[],
+  predicate: (card: AgentCardInstance) => boolean,
 ): boolean {
   const busConnected = buildBusConnectedCardIds(nodes, edges);
-  return nodes.some(
-    (node) => busConnected.has(node.id) && isWorldSignalsAgentCard(node),
-  );
-}
-
-export function isTradingWorkbenchActive(
-  nodes: readonly AgentCardInstance[],
-  edges: readonly DeckEdge[],
-): boolean {
-  return isWorkbenchSurfaceActive(nodes, edges, isTradingWorkbenchCard);
-}
-
-export function isWorkbenchSurfaceActive(
-  nodes: readonly AgentCardInstance[],
-  edges: readonly DeckEdge[],
-  predicate: (card: AgentCardInstance | null | undefined) => boolean,
-): boolean {
-  const busConnected = buildBusConnectedCardIds(nodes, edges);
-  return nodes.some(
-    (node) => busConnected.has(node.id) && predicate(node),
-  );
+  return nodes.some((node) => busConnected.has(node.id) && predicate(node));
 }
 
 export function deriveVisibleRailItems({
@@ -178,10 +129,10 @@ export function deriveVisibleRailItems({
     showKnowledge: hermesConnectedToMainChat,
     showWorldsignal:
       workspaceView === 'worldsignal' ||
-      isWorldSignalsAgentActive(deck.nodes, deck.edges),
+      isBusConnectedCard(deck.nodes, deck.edges, isWorldSignalsAgentCard),
     showTrading:
       workspaceView === 'trading' ||
-      isTradingWorkbenchActive(deck.nodes, deck.edges),
+      isBusConnectedCard(deck.nodes, deck.edges, isTradingAgentCard),
     showOpenClaudeConsole: shouldShowOpenClaudeConsoleRail({
       cards: deck.nodes,
       edges: deck.edges,

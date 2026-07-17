@@ -5,9 +5,74 @@ import { forceCollide, forceX, forceY } from 'd3-force';
 import { GraphTab as CbmGraphTab } from '../../vendor/codebase-memory-ui/src/components/GraphTab';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
-import type { GraphProjectionV1 } from './KnowledgeGraphFramework';
 import { AskMainAction, type GraphObjectRef } from './GraphObjectContext';
 import './nativeAuthorityGraphSurface.css';
+
+// The server-owned graph projection contract rendered by the native surfaces.
+// (Moved here from the retired KnowledgeGraphFramework renderer.)
+export type GraphProjectionNode = {
+  id: string;
+  canonicalId?: string;
+  label: string;
+  title?: string;
+  type?: string;
+  labels?: string[];
+  authority?: string;
+  projectId?: string;
+  conversationId?: string;
+  episodeId?: string;
+  jobId?: string;
+  runId?: string;
+  goalId?: string;
+  memoryType?: string;
+  currentState?: string;
+  createdAt?: string;
+  validFrom?: string;
+  validTo?: string | null;
+  ingestedAt?: string;
+  updatedAt?: string;
+  mentionCount: number;
+  lastMentionedAt?: string;
+  properties?: Record<string, unknown>;
+  provenance?: Record<string, unknown>;
+  provenanceCount?: number;
+  degree?: number;
+  cardId?: string;
+  correlationId?: string;
+  codeGraphRef?: string;
+  knowGraphRef?: string;
+  artifactRef?: string;
+  promptRef?: string;
+  trustState?: string;
+  qualityState?: string;
+  productionPath?: string;
+  retrievalReason?: string;
+};
+
+export type GraphProjectionEdge = {
+  id: string;
+  source: string;
+  target: string;
+  predicate: string;
+  mentionCount: number;
+  lastMentionedAt?: string;
+  properties?: Record<string, unknown>;
+  provenance?: Record<string, unknown>;
+  provenanceCount?: number;
+  validFrom?: string;
+  validTo?: string | null;
+};
+
+export type GraphProjectionV1 = {
+  schemaVersion: string;
+  authority?: string;
+  projectId: string;
+  revision?: string;
+  embedding?: Record<string, unknown>;
+  counts?: { nodes: number; edges: number };
+  nodes: GraphProjectionNode[];
+  edges: GraphProjectionEdge[];
+};
 
 export function NativeCodeGraphSurface({
   project,

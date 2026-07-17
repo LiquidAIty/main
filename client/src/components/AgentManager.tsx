@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import KnowledgeGraphFramework from './knowledge/KnowledgeGraphFramework';
-import KnowledgeGraphErrorBoundary from './knowledge/KnowledgeGraphErrorBoundary';
 import GlassInspectorSection from './graph/GlassInspectorSection';
 
 import type {
@@ -1050,29 +1048,6 @@ export function AgentManager({
     return (
       <div className={formScopeClassName} style={{ display: 'grid', gap: 8 }}>
         <style>{scopedFocusStyles}</style>
-        <div data-testid="agent-memory-graph" style={{ height: 260, minHeight: 260 }}>
-          <KnowledgeGraphErrorBoundary
-            fallback={
-              <div
-                style={{
-                  height: 260,
-                  minHeight: 260,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: GRAPH_THEME.drawer.inputMuted,
-                  fontSize: 12,
-                  ...graphDrawerSectionStyle({ borderRadius: 8 }),
-                }}
-              >
-                Knowledge preview unavailable.
-              </div>
-            }
-          >
-            <KnowledgeGraphFramework projection={undefined} minHeight={260} showInspector={false} />
-          </KnowledgeGraphErrorBoundary>
-        </div>
-
         <details
           data-testid="agent-knowledge-advanced"
           style={{

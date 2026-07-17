@@ -45,12 +45,9 @@ import useAgentBuilderProject from '../features/agentbuilder/state/useAgentBuild
 import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgentBuilderProjectReset';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import useAgentBuilderThinkGraphProjection from '../features/agentbuilder/state/useAgentBuilderThinkGraphProjection';
-import useAgentBuilderHermesReport from '../features/agentbuilder/state/useAgentBuilderHermesReport';
-import TradingCanvasSurface from '../features/trading/TradingCanvasSurface';
+import TradingUI from './tradingui';
 import type { LinkRef } from '../components/builder/deckContinuityTypes';
 import { resolveDeckWorkspaceRoot } from '../features/agentbuilder/state/deckWorkspaceRoot';
-import { buildExecutionPlan } from '../components/builder/deckExecution';
-import DeckExecutionPathSummary from '../components/builder/DeckExecutionPathSummary';
 import {
   GRAPH_THEME,
   graphDrawerButtonStyle,
@@ -86,7 +83,6 @@ import {
 import {
   buildProjectlessDeckDocument,
   buildSingleCardRunDocument,
-  filterAuthoringCompatibleEdges,
   formatBuilderStatusMessage,
   hydrateDeckDocument,
   resolveLocalCoderControllerConsoleConfig,
@@ -96,7 +92,6 @@ import {
   deriveVisibleRailItems,
   isHermesConnectedToMainChat,
   isWorldSignalsAgentCard,
-  resolveWorkbenchDescriptor,
 } from '../features/agentbuilder/rail/railVisibility';
 import {
   BuilderRailMoonOrb,
@@ -535,7 +530,6 @@ export default function AgentBuilder(): React.ReactElement {
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
     useState<KnowledgeSurfaceKind>('unified');
   const conversationId = 'main';
-  const [thinkGraphFocusIds, setThinkGraphFocusIds] = useState<string[]>([]);
   const [activeProjection, setActiveProjection] = useState<UnifiedProjectionIdentity | null>(null);
   const [pendingGraphObjectRef, setPendingGraphObjectRef] = useState<GraphObjectRef | null>(null);
   const [composerFocusRequest, setComposerFocusRequest] = useState(0);
@@ -560,11 +554,6 @@ export default function AgentBuilder(): React.ReactElement {
   const thinkGraphProjection = useAgentBuilderThinkGraphProjection({
     activeProject,
     knowledgeGraphKind,
-    workspaceView,
-  });
-  const hermesReport = useAgentBuilderHermesReport({
-    projectId: activeProject,
-    conversationId,
     workspaceView,
   });
 
@@ -900,10 +889,6 @@ export default function AgentBuilder(): React.ReactElement {
     () => deck.nodes.find((node) => node.id === selectedCardId) || null,
     [deck.nodes, selectedCardId],
   );
-  const selectedWorkbenchDescriptor = useMemo(
-    () => resolveWorkbenchDescriptor(selectedCard),
-    [selectedCard],
-  );
   const selectedTemplate = useMemo(
     () => resolveAgentTemplate(selectedCard, INITIAL_AGENT_TEMPLATES),
     [selectedCard],
@@ -1056,11 +1041,7 @@ export default function AgentBuilder(): React.ReactElement {
     tab,
     workspaceView,
   ]);
-  const deckValidation = useMemo(
-    () => validateDeckDocument(deck, { enforceStartCard: true }),
-    [deck],
-  );
-  const deckExecutionPlan = useMemo(() => buildExecutionPlan(deck), [deck]);
+  const deckValidation = useMemo(() => validateDeckDocument(deck), [deck]);
 
   const deckPersistFingerprint = useMemo(
     () => (BUILDER_DEV ? JSON.stringify(deck) : ''),
@@ -1215,7 +1196,6 @@ export default function AgentBuilder(): React.ReactElement {
       canvasProjectId,
       deck,
       deckExecutionAbortRef,
-      deckExecutionPlan,
       deckId: BUILDER_DECK_ID,
       deckRevision,
       deckRunInput,
@@ -1349,11 +1329,13 @@ export default function AgentBuilder(): React.ReactElement {
             : node,
         );
 
+        // Edges are never silently dropped on a card-config save: an edge that
+        // no longer matches a runtime shape is classified 'invalid' by the
+        // normalizers and stays visible-but-inert.
         return {
           ...currentDeck,
           version: currentDeck.version + 1,
           nodes: nextNodes,
-          edges: filterAuthoringCompatibleEdges(nextNodes, currentDeck.edges),
         };
       });
     },
@@ -1436,28 +1418,6 @@ export default function AgentBuilder(): React.ReactElement {
           const showCardIdentityFields = tab === BUILDER_NODE_TABS[0];
           return (
             <>
-              {selectedWorkbenchDescriptor ? (
-                <div
-                  style={graphDrawerSectionStyle({
-                    padding: '10px 12px',
-                    marginBottom: 10,
-                    color: GRAPH_THEME.drawer.inputMuted,
-                  })}
-                >
-                  <div style={{ marginBottom: 8 }}>
-                    {selectedWorkbenchDescriptor.disabledCopy}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      showWorkbenchWorkspace(selectedWorkbenchDescriptor.id)
-                    }
-                    style={graphDrawerButtonStyle({})}
-                  >
-                    {selectedWorkbenchDescriptor.openLabel}
-                  </button>
-                </div>
-              ) : null}
               <Suspense
                 fallback={
                   <div
@@ -1483,10 +1443,7 @@ export default function AgentBuilder(): React.ReactElement {
                   onRunPromptTest={handleRunSelectedCard}
                   promptTestBusy={cardRunBusy}
                   promptTestDisabled={
-                    Boolean(selectedWorkbenchDescriptor) ||
-                    cardRunBusy ||
-                    deckLoadBusy ||
-                    !canvasProjectId
+                    cardRunBusy || deckLoadBusy || !canvasProjectId
                   }
                   localConfig={selectedCardConfig}
                   cardName={
@@ -1523,11 +1480,6 @@ export default function AgentBuilder(): React.ReactElement {
       if (tab === 'Plan') {
         return (
           <>
-            <DeckExecutionPathSummary
-              deck={deck}
-              executionPlan={deckExecutionPlan}
-              colors={C}
-            />
             <div
               style={graphDrawerSectionStyle({
                 padding: '12px 14px',
@@ -1931,14 +1883,6 @@ export default function AgentBuilder(): React.ReactElement {
               ...(activeProjection.knowgraphScope ? { knowgraphScope: activeProjection.knowgraphScope } : {}),
             }
           : {}),
-        ...(thinkGraphFocusIds.length > 0 && trimmed.length <= 2_000
-          ? {
-              investigationContext: {
-                focusNodeIds: thinkGraphFocusIds,
-                requestedOutcome: trimmed,
-              },
-            }
-          : {}),
         ...(sentGraphObjectRef ? { selectedGraphObjectRefs: [sentGraphObjectRef] } : {}),
         onEvent: (event) => {
           setHermesTerminal((current) => reduceHermesTerminalEvent(current, event));
@@ -1976,7 +1920,7 @@ export default function AgentBuilder(): React.ReactElement {
           appendAssistantText('Chat request failed before the stream opened. Route: /api/coder/openclaude/session/chat.');
         });
     },
-    [activeProjection, canvasProjectId, conversationId, nativeSessionBusy, pendingGraphObjectRef, thinkGraphFocusIds, workspaceView],
+    [activeProjection, canvasProjectId, conversationId, nativeSessionBusy, pendingGraphObjectRef, workspaceView],
   );
 
   const renderChatSurface = (
@@ -2035,10 +1979,8 @@ export default function AgentBuilder(): React.ReactElement {
             ? chatPanelWidth
             : null
         }
-        executionPlan={deckExecutionPlan}
         activeCardIds={runtimeVisualState.activeCardIds}
         activeEdgeIds={runtimeVisualState.activeEdgeIds}
-        swarmProgressByCardId={runtimeVisualState.swarmProgressByCardId}
         selectedCardId={selectedCardId}
         selectedEdgeId={selectedEdgeId}
         onSelectCard={handleSelectCard}
@@ -2187,14 +2129,10 @@ export default function AgentBuilder(): React.ReactElement {
     );
   }, [closeObjectDrawer]);
 
-  const showWorkbenchWorkspace = useCallback((surface: 'trading') => {
-    closeObjectDrawer();
-    setWorkspaceView(surface);
-  }, [closeObjectDrawer]);
-
   const showTradingWorkspace = useCallback(() => {
-    showWorkbenchWorkspace('trading');
-  }, [showWorkbenchWorkspace]);
+    closeObjectDrawer();
+    setWorkspaceView('trading');
+  }, [closeObjectDrawer]);
 
   const showWorldsignalWorkspace = useCallback(() => {
     closeObjectDrawer();
@@ -2285,7 +2223,7 @@ export default function AgentBuilder(): React.ReactElement {
           surfaceRole: 'companion',
         })
       }
-      tradingSurface={<TradingCanvasSurface />}
+      tradingSurface={<TradingUI />}
       uaSurface={null}
       worldsignalSurface={
         <WorldSignalSurface

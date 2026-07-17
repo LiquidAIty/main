@@ -8,12 +8,6 @@ export type GuardedRequestOptions<T> = {
   fetcher: (signal: AbortSignal) => Promise<T>;
 };
 
-export type CachedGraphPayload = {
-  updatedAt: number;
-  cypher: string;
-  graphResult: any[];
-};
-
 const requestGuardInFlight = new Map<string, Promise<any>>();
 const requestGuardCache = new Map<string, { expiresAt: number; value: any }>();
 const requestGuardSeq = new Map<string, number>();
@@ -34,29 +28,6 @@ export async function safeJson(res: Response): Promise<any | null> {
     console.warn("[safeJson] invalid JSON", { status: res.status, url: res.url, error: err?.message || err });
     return null;
   }
-}
-
-export async function readJsonAndText(res: Response): Promise<{ data: any | null; text: string }> {
-  let text = "";
-  try {
-    text = await res.text();
-  } catch {
-    return { data: null, text: "" };
-  }
-  if (!text) return { data: null, text: "" };
-  try {
-    return { data: JSON.parse(text), text };
-  } catch {
-    return { data: null, text };
-  }
-}
-
-export function formatRequestErrorLine(endpoint: string, status: number, bodyPreview: string): string {
-  const compactBody = String(bodyPreview || "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 200);
-  return `${endpoint} | ${status} | ${compactBody || "no response body"}`;
 }
 
 function makeAbortError() {
@@ -147,33 +118,4 @@ export function nextRequestSequence(requestType: string): number {
 
 export function isLatestRequestSequence(requestType: string, sequence: number): boolean {
   return (requestGuardSeq.get(requestType) || 0) === sequence;
-}
-
-export function readCachedGraphPayload(cacheKey: string): CachedGraphPayload | null {
-  try {
-    const raw = window.localStorage.getItem(cacheKey);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return null;
-    return {
-      updatedAt: Number(parsed.updatedAt) || 0,
-      cypher: typeof parsed.cypher === "string" ? parsed.cypher : "",
-      graphResult: Array.isArray(parsed.graphResult) ? parsed.graphResult : [],
-    };
-  } catch {
-    return null;
-  }
-}
-
-export function writeCachedGraphPayload(cacheKey: string, payload: CachedGraphPayload): void {
-  try {
-    window.localStorage.setItem(cacheKey, JSON.stringify(payload));
-  } catch {
-    // best-effort cache
-  }
-}
-
-export function isCachedGraphFresh(payload: CachedGraphPayload | null, ttlMs: number): boolean {
-  if (!payload?.updatedAt) return false;
-  return Date.now() - payload.updatedAt <= ttlMs;
 }

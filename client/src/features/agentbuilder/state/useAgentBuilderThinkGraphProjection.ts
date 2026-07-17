@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-import type { GraphProjectionV1 } from '../../../components/knowledge/KnowledgeGraphFramework';
+import type { GraphProjectionV1 } from '../../../components/knowledge/NativeAuthorityGraphSurface';
 
 export type ThinkGraphProjectionState = {
   status: 'idle' | 'loading' | 'ready' | 'error';

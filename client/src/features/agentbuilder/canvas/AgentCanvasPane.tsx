@@ -1,7 +1,6 @@
 import type { CSSProperties, Dispatch, SetStateAction } from 'react';
 
-import AgentBoard from './AgentBoard';
-import type { DeckExecutionPlan } from '../../../components/builder/deckExecution';
+import BuilderCanvas from '../../../components/builder/BuilderCanvas';
 import type { DeckDocument } from '../../../types/agentgraph';
 
 type AgentCanvasPaneProps = {
@@ -14,10 +13,8 @@ type AgentCanvasPaneProps = {
     detail?: Record<string, unknown>,
   ) => void;
   presentationViewportKey?: string | number | null;
-  executionPlan: Pick<DeckExecutionPlan, 'simpleOrderCardIds' | 'startCardIds'> | null;
   activeCardIds: string[];
   activeEdgeIds: string[];
-  swarmProgressByCardId: Record<string, { completed: number; total: number }>;
   selectedCardId: string | null;
   selectedEdgeId: string | null;
   onSelectCard: (cardId: string | null) => void;
@@ -34,10 +31,8 @@ export default function AgentCanvasPane({
   setDocument,
   onPersistGraphMutation,
   presentationViewportKey = null,
-  executionPlan,
   activeCardIds,
   activeEdgeIds,
-  swarmProgressByCardId,
   selectedCardId,
   selectedEdgeId,
   onSelectCard,
@@ -51,15 +46,13 @@ export default function AgentCanvasPane({
       data-testid={`${surfaceRole}-surface-canvas`}
       style={shellStyle}
     >
-      <AgentBoard
+      <BuilderCanvas
         document={document}
         setDocument={setDocument}
         onPersistGraphMutation={onPersistGraphMutation}
         presentationViewportKey={presentationViewportKey}
-        executionPlan={executionPlan}
         activeCardIds={activeCardIds}
         activeEdgeIds={activeEdgeIds}
-        swarmProgressByCardId={swarmProgressByCardId}
         selectedCardId={selectedCardId}
         selectedEdgeId={selectedEdgeId}
         onSelectCard={onSelectCard}

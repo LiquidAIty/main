@@ -12,23 +12,6 @@ import {
   type AgentManagerLocalConfig,
 } from './AgentManager';
 
-vi.mock('./knowledge/KnowledgeGraphFramework', () => ({
-  default: function KnowledgeGraphFrameworkMock(props: {
-    projection?: unknown;
-    minHeight?: number;
-  }) {
-    return React.createElement('div', {
-      'data-testid': 'cytoscape-graph',
-      'data-node-count': Array.isArray((props.projection as any)?.nodes)
-        ? (props.projection as any).nodes.length
-        : 0,
-      'data-edge-count': Array.isArray((props.projection as any)?.edges)
-        ? (props.projection as any).edges.length
-        : 0,
-    });
-  },
-}));
-
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const mountedRoots: Array<() => void> = [];
@@ -360,7 +343,7 @@ describe('AgentManager runtime editor', () => {
     );
   });
 
-  it('renders a blank Cytoscape memory surface in the Knowledge tab and keeps config secondary', () => {
+  it('renders the Knowledge tab as honest config only — no placeholder graph surface', () => {
     const localConfig = createLocalConfig('assistant_agent', {
       knowledge_sources: ['docs://source-a', 'docs://source-b'],
       response_format: { type: 'json_schema', schema: { type: 'object', properties: { ok: { type: 'boolean' } } } },
@@ -370,13 +353,9 @@ describe('AgentManager runtime editor', () => {
       localConfig,
     });
 
-    const memoryGraph = container.querySelector('[data-testid="agent-memory-graph"]');
+    // The permanently-empty "memory graph" box was a fake affordance and is gone.
+    expect(container.querySelector('[data-testid="agent-memory-graph"]')).toBeNull();
     const advanced = container.querySelector('[data-testid="agent-knowledge-advanced"]') as HTMLDetailsElement | null;
-    const cytoscapeGraph = container.querySelector('[data-testid="cytoscape-graph"]');
-    expect(memoryGraph).toBeTruthy();
-    expect(cytoscapeGraph).toBeTruthy();
-    expect(cytoscapeGraph?.getAttribute('data-node-count')).toBe('0');
-    expect(cytoscapeGraph?.getAttribute('data-edge-count')).toBe('0');
     expect(advanced).toBeTruthy();
     expect(advanced?.open).toBe(false);
 

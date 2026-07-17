@@ -12,13 +12,11 @@ type DeckRunStreamResult = DeckRunResponse & {
   run?: DeckRun;
 };
 
+// Live-run canvas activity only: which cards/edges glow while a run streams.
+// (The old reasoning/team/report line buffers had no renderer and were removed.)
 type DeckRuntimeVisualState = {
   activeCardIds: string[];
   activeEdgeIds: string[];
-  swarmProgressByCardId: Record<string, { completed: number; total: number }>;
-  reasoningLines: string[];
-  teamLines: string[];
-  reportLines: string[];
 };
 
 const EMPTY_PROJECT_STATE = {
@@ -44,30 +42,14 @@ function cleanOptionalText(value: unknown): string | null {
   return text || null;
 }
 
-function prefixRuntimeLine(label: string, value: string): string {
-  const text = safeText(value).trim();
-  return text ? `${label}: ${text}` : "";
-}
-
 export function buildDeckRuntimeVisualState(
   events: DeckRuntimeEvent[] | null | undefined,
 ): DeckRuntimeVisualState {
   const activeCardIds = new Set<string>();
   const activeEdgeIds = new Set<string>();
   const activeEdgeIdsByCard = new Map<string, string[]>();
-  const swarmProgressByCardId: Record<string, { completed: number; total: number }> = {};
-  const reasoningLines: string[] = [];
-  const teamLines: string[] = [];
-  const reportLines: string[] = [];
 
   (Array.isArray(events) ? events : []).forEach((event) => {
-    const cardTitle = safeText(event.cardTitle || event.cardId || "Card").trim() || "Card";
-    if (event.kind === "message" || event.type === "message") {
-      const content = safeText(event.content || "").trim();
-      if (content) teamLines.push(content);
-      return;
-    }
-
     if (event.kind === "step_started") {
       if (event.cardId) {
         activeCardIds.add(event.cardId);
@@ -75,31 +57,10 @@ export function buildDeckRuntimeVisualState(
         activeEdgeIdsByCard.set(event.cardId, edgeIds);
         edgeIds.forEach((edgeId) => activeEdgeIds.add(edgeId));
       }
-      if (Array.isArray(event.notes)) {
-        event.notes
-          .map((note) => safeText(note).trim())
-          .filter(Boolean)
-          .forEach((note) => reasoningLines.push(note));
-      }
-      const line = prefixRuntimeLine(
-        "Progress",
-        safeText(event.progressText || event.text || `${cardTitle} started.`),
-      );
-      if (line) teamLines.push(line);
       return;
     }
 
     if (event.kind === "magentic_assignment") {
-      const assignmentLine = prefixRuntimeLine("Assignment", safeText(event.text || ""));
-      if (assignmentLine) {
-        reasoningLines.push(assignmentLine);
-        teamLines.push(assignmentLine);
-      }
-      const progressLine = prefixRuntimeLine("Progress", safeText(event.progressText || ""));
-      if (progressLine) {
-        reasoningLines.push(progressLine);
-        teamLines.push(progressLine);
-      }
       if (event.cardId && Array.isArray(event.edgeIds)) {
         event.edgeIds.filter(Boolean).forEach((edgeId) => activeEdgeIds.add(edgeId));
       }
@@ -108,15 +69,7 @@ export function buildDeckRuntimeVisualState(
 
     if (event.kind === "swarm_progress") {
       const cardId = cleanOptionalText(event.cardId);
-      if (cardId && event.completedWorkers && event.totalWorkers) {
-        swarmProgressByCardId[cardId] = {
-          completed: event.completedWorkers,
-          total: event.totalWorkers,
-        };
-        activeCardIds.add(cardId);
-      }
-      const line = prefixRuntimeLine("Progress", safeText(event.progressText || event.text || ""));
-      if (line) teamLines.push(line);
+      if (cardId) activeCardIds.add(cardId);
       return;
     }
 
@@ -127,80 +80,19 @@ export function buildDeckRuntimeVisualState(
         const edgeIds = activeEdgeIdsByCard.get(cardId) || [];
         edgeIds.forEach((edgeId) => activeEdgeIds.delete(edgeId));
         activeEdgeIdsByCard.delete(cardId);
-        delete swarmProgressByCardId[cardId];
       }
-      const line = prefixRuntimeLine("Progress", safeText(event.progressText || event.text || ""));
-      if (line) teamLines.push(line);
-      if (event.kind === "step_completed") {
-        const reportText = safeText(event.outputSummary || line).trim();
-        if (reportText) reportLines.push(prefixRuntimeLine("Result", `${cardTitle}: ${reportText}`));
-      } else if (line) {
-        reportLines.push(prefixRuntimeLine("Result", `${cardTitle}: ${line}`));
-      }
-      return;
-    }
-
-    if (event.kind === "magentic_trace") {
-      if (Array.isArray(event.blackboardEntries)) {
-        event.blackboardEntries.forEach((entry: any) => {
-          if (entry && entry.content) {
-            reasoningLines.push(prefixRuntimeLine("Blackboard", entry.content));
-          } else {
-            reasoningLines.push(prefixRuntimeLine("Blackboard", JSON.stringify(entry)));
-          }
-        });
-      }
-
-      if (Array.isArray(event.reportBacks)) {
-        event.reportBacks.forEach((entry: any) => {
-          if (entry && entry.summary) {
-            reportLines.push(prefixRuntimeLine("Report", entry.summary));
-          } else {
-            reportLines.push(prefixRuntimeLine("Report", JSON.stringify(entry)));
-          }
-        });
-      }
-
-      if (Array.isArray(event.transcript)) {
-        event.transcript.slice(-3).forEach((msg: any) => {
-          if (msg && msg.content) {
-            teamLines.push(prefixRuntimeLine("Transcript", msg.content));
-          } else {
-            teamLines.push(prefixRuntimeLine("Transcript", JSON.stringify(msg)));
-          }
-        });
-      }
-
-      if (event.metrics && typeof event.metrics === "object") {
-        reasoningLines.push(prefixRuntimeLine("Metrics", JSON.stringify(event.metrics)));
-      }
-
       return;
     }
 
     if (event.kind === "run_completed") {
       activeCardIds.clear();
       activeEdgeIds.clear();
-      Object.keys(swarmProgressByCardId).forEach((cardId) => delete swarmProgressByCardId[cardId]);
-      const line = prefixRuntimeLine(
-        event.status === "running" ? "Waiting" : "Result",
-        safeText(event.progressText || event.text || ""),
-      );
-      if (line) reportLines.push(line);
-      return;
     }
-
-    const line = prefixRuntimeLine("Progress", safeText(event.progressText || event.text || ""));
-    if (line) teamLines.push(line);
   });
 
   return {
     activeCardIds: Array.from(activeCardIds),
     activeEdgeIds: Array.from(activeEdgeIds),
-    swarmProgressByCardId,
-    reasoningLines,
-    teamLines,
-    reportLines,
   };
 }
 

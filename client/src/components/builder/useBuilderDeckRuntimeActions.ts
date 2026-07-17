@@ -56,7 +56,6 @@ export function useBuilderDeckRuntimeActions({
   canvasProjectId,
   deck,
   deckExecutionAbortRef,
-  deckExecutionPlan,
   deckId,
   deckRevision,
   deckRunInput,
@@ -89,11 +88,6 @@ export function useBuilderDeckRuntimeActions({
   canvasProjectId: string;
   deck: DeckDocument;
   deckExecutionAbortRef: MutableRefObject<AbortController | null>;
-  deckExecutionPlan: {
-    startCardIds: string[];
-    simpleOrderCardIds: string[];
-    expandedSteps: Array<{ executionId: string }>;
-  };
   deckId: string;
   deckRevision: string | null;
   deckRunInput: string;
@@ -432,11 +426,6 @@ export function useBuilderDeckRuntimeActions({
           errors: deckValidation.errors.map((issue) => issue.message),
           warnings: deckValidation.warnings.map((issue) => issue.message),
         },
-        executionPlanSummary: {
-          startCardIds: deckExecutionPlan.startCardIds,
-          simpleOrderCardIds: deckExecutionPlan.simpleOrderCardIds,
-          expandedStepIds: deckExecutionPlan.expandedSteps.map((step) => step.executionId),
-        },
       });
       setDeckStatusMessage(missingProjectError);
       if (options?.propagateError) {
@@ -548,11 +537,6 @@ export function useBuilderDeckRuntimeActions({
           errors: deckValidation.errors.map((issue) => issue.message),
           warnings: deckValidation.warnings.map((issue) => issue.message),
         },
-        executionPlanSummary: {
-          startCardIds: deckExecutionPlan.startCardIds,
-          simpleOrderCardIds: deckExecutionPlan.simpleOrderCardIds,
-          expandedStepIds: deckExecutionPlan.expandedSteps.map((step) => step.executionId),
-        },
       });
       setLiveDeckEvents([]);
       setDeckStatusMessage(friendlyError);
@@ -575,7 +559,6 @@ export function useBuilderDeckRuntimeActions({
     canvasProjectId,
     deck,
     deckExecutionAbortRef,
-    deckExecutionPlan,
     deckId,
     deckRunInput,
     deckValidation,

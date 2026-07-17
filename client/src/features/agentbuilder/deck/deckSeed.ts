@@ -45,38 +45,6 @@ ${parts.ioSchema}
 ${parts.memoryPolicy}`;
 }
 
-export function buildSpecialistGraphProposalPrompt(parts: {
-  role: string;
-  goal: string;
-  proposalTarget: 'CodeGraph' | 'ThinkGraph' | 'KnowGraph' | 'PlanSurface';
-  proposalGuidance: string;
-}): string {
-  return buildSeedPromptTemplate({
-    role: parts.role,
-    goal: parts.goal,
-    constraints: [
-      'You are a LiquidAIty-native Agent Canvas specialist, not a separate plugin or dashboard.',
-      'Magentic-One is the conductor. Stay within the assigned card role and return useful output to the visible deck runtime.',
-      'Do not mutate CodeGraph, ThinkGraph, KnowGraph, Plan Surface, Apache AGE, Neo4j, files, or database state.',
-      'When graph or plan changes would be useful, return proposals only.',
-      'Do not claim a proposal has been written or persisted.',
-    ].join('\n'),
-    ioSchema: [
-      'Output: concise analysis for the user.',
-      'When useful, append one JSON object that contains graphWriteProposals.',
-      'Each graphWriteProposals item must use this exact shape:',
-      '{"target":"CodeGraph|ThinkGraph|KnowGraph|PlanSurface","operation":"upsert_node|upsert_edge|annotate_node|link_plan_step|create_plan_step|flag_uncertainty","confidence":0.0,"reason":"plain reason","payload":{}}',
-      `Default proposal target: ${parts.proposalTarget}.`,
-      parts.proposalGuidance,
-    ].join('\n'),
-    memoryPolicy: [
-      'Use only current input, visible deck context, and explicitly provided source snippets or graph snapshots.',
-      'Treat model-generated structure as provisional unless source-grounded evidence is included in the payload.',
-      'KnowGraph proposals require source/evidence fields in payload; otherwise target ThinkGraph.',
-    ].join('\n'),
-  });
-}
-
 export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
   {
     id: 'prompt_magentic',

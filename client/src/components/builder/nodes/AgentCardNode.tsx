@@ -4,9 +4,6 @@ import { GRAPH_THEME, graphGlassCardStyle } from '../../graph/graphVisualTokens'
 import { GRAPH_TEXT } from '../../graph/graphWorkspaceContract';
 
 type AgentCardNodeData = AgentCardInstance & {
-  executionOrder?: number | null;
-  isStartCard?: boolean;
-  isCallableHead?: boolean;
   assistStructureMode?: 'single' | 'seq' | 'branch' | 'merge' | 'branch_merge' | null;
   swarmBadge?: string | null;
   isRuntimeActive?: boolean;
