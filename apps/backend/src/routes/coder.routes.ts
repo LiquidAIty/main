@@ -9,6 +9,7 @@ import {
   type ConsoleMode,
 } from '../coder/openclaude/console/consoleSession';
 import { runConfiguredCard, resolveCardModelStrict } from '../cards/runtime';
+import { resolveProductChatWorkingDirectory } from '../coder/workspaceRoot';
 import {
   describeConnectedAgents,
   runMagOne,
@@ -824,9 +825,14 @@ router.post('/openclaude/session/chat', async (req, res) => {
   // Edit mode) — decides which card doorways this turn exposes. Never inferred
   // from message content.
   const mode = req.body?.mode === 'canvas' ? ('canvas' as const) : ('chat' as const);
-  const workingDirectory = String(
-    req.body?.workingDirectory || process.env.LIQUIDAITY_GRPC_CWD || 'C:/Projects/main',
-  );
+  // A PRODUCT chat session's cwd is a neutral out-of-repo directory, NOT the
+  // repo root: a repo-root cwd makes the engine walk up and inject the repo's
+  // developer memory (AGENTS.md/CLAUDE.md, ~8.4k tokens — M-1) into Main/Hermes
+  // chat. They use MCP tools, not the filesystem, so the neutral cwd loses no
+  // capability. An explicit client-supplied workingDirectory still wins; the
+  // Coder keeps the real repo root (spawned separately via resolveRepoRoot).
+  const workingDirectory =
+    String(req.body?.workingDirectory || '').trim() || resolveProductChatWorkingDirectory();
   if (!projectId || !message) {
     return res.status(400).json({ ok: false, error: 'projectId_and_message_required' });
   }

@@ -3,6 +3,7 @@ import {
   ensureWorldsignalSidecarRunning,
   worldSignalsRuntimeUrls,
 } from '../services/worldsignalSidecar';
+import { resolveEmbedBundleFreshness } from '../services/worldsignalsEmbedFreshness';
 
 const router = Router();
 
@@ -26,10 +27,14 @@ router.get('/health', async (_req, res) => {
 
   await ensureWorldsignalSidecarRunning();
   const backend = await reachable(`${worldSignalsRuntimeUrls.backend}/api/health`);
+  // WS-7: report the embed bundle's freshness honestly (missing / stale / fresh)
+  // so a vendor source edit that was never rebuilt is visible, not silently served.
+  const embedBundle = resolveEmbedBundleFreshness();
   return res.json({
     enabled: true,
     status: backend ? 'ok' : 'offline',
     backend: { reachable: backend, url: worldSignalsRuntimeUrls.backend },
+    embedBundle: { status: embedBundle.status, message: embedBundle.message },
     ...(backend ? {} : { error: 'worldsignals_backend_unavailable' }),
   });
 });
