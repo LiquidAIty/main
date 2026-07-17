@@ -233,7 +233,6 @@ export function groupEventsIntoRuns(events: AgentTelemetryEvent[]): RunGroup[] {
 const MODE_COLORS: Record<string, string> = {
   real_model_call: '#7dd3a0',
   dry_run: '#8ab8ff',
-  simulated_probe: '#c9a7ff',
   blocked: '#ff9d8a',
 };
 

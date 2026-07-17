@@ -42,7 +42,13 @@ export type AgentTelemetryStage =
  * though no model ran); dry_run resolved config without executing; blocked
  * means gating refused the call.
  */
-export type AgentTelemetryMode = 'real_model_call' | 'dry_run' | 'simulated_probe' | 'blocked';
+// 'simulated_probe' removed: it had zero producers and zero consumers repo-wide.
+// A mode nothing ever records is not a capability, it is a false affordance —
+// it invites readers to believe simulated runs are distinguishable in telemetry
+// when no such run is ever tagged. Double Agent stand-in work is real traffic
+// through real doorways, so it is honestly recorded as 'real_model_call' or
+// 'dry_run' by the boundary that actually executed it.
+export type AgentTelemetryMode = 'real_model_call' | 'dry_run' | 'blocked';
 
 export type AgentTelemetryStatus = 'started' | 'completed' | 'failed' | 'blocked';
 

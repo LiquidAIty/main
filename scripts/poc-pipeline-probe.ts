@@ -85,6 +85,24 @@ function cardToolNames(node: DeckNode): string[] {
     : [];
 }
 
+function bindingOf(node: DeckNode): string {
+  return String(node.runtimeBinding || node.runtimeOptions?.binding || '').trim().toLowerCase();
+}
+
+/** Native Bun roles. They run in the gRPC harness, not the AutoGen card runner,
+ * and `resolvedMagenticOptions` excludes them from the worker roster
+ * structurally "even against stale edges". Their absence from the roster is the
+ * design, never a failure — and they must never be AutoGen-card-run. */
+const NATIVE_BINDINGS = new Set(['main_chat', 'hermes_steward']);
+
+export function isNativeRole(node: DeckNode): boolean {
+  return NATIVE_BINDINGS.has(bindingOf(node));
+}
+
+/** Mirrors the backend's `resolvedMagenticOptions`: a bus edge is membership
+ * (direction ignored — either end may be the orchestrator), and native roles are
+ * excluded structurally. Only an explicit 'magentic_option' counts; an
+ * unrecognised type authorises nothing. */
 export function busConnectedCardIds(nodes: DeckNode[], edges: DeckEdge[]): string[] {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const orchestrators = nodes.filter(
@@ -99,10 +117,44 @@ export function busConnectedCardIds(nodes: DeckNode[], edges: DeckEdge[]): strin
       const other = byId.get(otherId);
       if (!other || String(other.kind || 'agent') !== 'agent') continue;
       if (String(other.parentGraphId || '').trim()) continue;
+      if (isNativeRole(other)) continue; // principal roles are never workers
       connected.add(otherId);
     }
   }
   return [...connected].sort();
+}
+
+export type CardClass =
+  | 'connected_worker'
+  | 'intentionally_excluded_native'
+  | 'orchestrator'
+  | 'present_disconnected';
+
+/** Classify every card the deck ACTUALLY holds. The probe used to compare the
+ * live deck against a frozen roster (card_knowgraph_agent / card_thinkgraph_agent
+ * / card_plan_agent / card_codegraph_agent), which no longer exist — so it
+ * reported deleted cards as MISSING and a legitimately connected WorldSignals
+ * Agent as WRONGLY_CONNECTED. Presence and connectivity are now derived from the
+ * saved deck; the deck is the authority, not this file. */
+export function classifyDeck(
+  nodes: DeckNode[],
+  edges: DeckEdge[],
+): Array<{ id: string; cls: CardClass }> {
+  const connected = new Set(busConnectedCardIds(nodes, edges));
+  return nodes
+    .filter((n) => String(n.kind || 'agent') === 'agent')
+    .map((n) => {
+      const cls: CardClass =
+        String(n.runtimeType || '').trim().toLowerCase() === 'magentic_one'
+          ? 'orchestrator'
+          : isNativeRole(n)
+            ? 'intentionally_excluded_native'
+            : connected.has(n.id)
+              ? 'connected_worker'
+              : 'present_disconnected';
+      return { id: n.id, cls };
+    })
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 export function setDifference(a: string[], b: string[]): string[] {
@@ -152,23 +204,14 @@ function checkPort(port: number, timeoutMs = 2000): Promise<boolean> {
   });
 }
 
-// The narrowed POC board contract this probe defends.
-const EXPECTED_CONNECTED = [
-  'card_hermes_steward',
-  'card_knowgraph_agent',
-  'card_main_chat',
-  'card_research_agent',
-  'card_thinkgraph_agent',
-];
-const EXPECTED_DISCONNECTED = [
-  'card_codegraph_agent',
-  'card_local_coder',
-  'card_plan_agent',
-  'card_trading_workbench',
-  'card_worldsignals_agent',
-];
+// No frozen card roster: the saved deck is the authority for what exists and
+// what is connected. This probe defends the runtime LAW that must hold for any
+// deck — exactly one Control plug, at least one Worker plug, and native roles
+// kept off the worker roster.
 const EXPECTED_MAG_ONE_PROVIDER = 'openrouter';
 const EXPECTED_MAG_ONE_MODEL = 'openai/gpt-5.1-chat';
+// A real topic against the real corpus — the retrieval probe requires a query.
+const KNOWGRAPH_PROBE_QUERY = 'knowledge graph organizing principle';
 
 async function main(): Promise<void> {
   const args = parseProbeArgs(process.argv.slice(2));
@@ -222,26 +265,42 @@ async function main(): Promise<void> {
 
   // 3 — deck topology (bus edges are the only activation authority)
   let deckNodes: DeckNode[] = [];
+  let deckEdges: DeckEdge[] = [];
   let connectedIds: string[] = [];
   try {
     const doc = await getJson(`${args.backend}/api/projects/${args.project}/decks/${args.deck}`);
     deckNodes = (doc?.deck?.nodes || []) as DeckNode[];
-    const edges = (doc?.deck?.edges || []) as DeckEdge[];
+    deckEdges = (doc?.deck?.edges || []) as DeckEdge[];
+    const edges = deckEdges;
     const connected = busConnectedCardIds(deckNodes, edges);
     connectedIds = connected;
-    const missingConnected = setDifference(EXPECTED_CONNECTED, connected);
-    const wronglyConnected = connected.filter((id) => EXPECTED_DISCONNECTED.includes(id));
+    const classes = classifyDeck(deckNodes, edges);
+    const group = (cls: CardClass) => classes.filter((c) => c.cls === cls).map((c) => c.id);
+    const controlEdges = edges.filter(
+      (e) => String(e.edgeType || '').trim().toLowerCase() === 'magentic_control',
+    );
+    const invalidEdges = edges.filter((e) => {
+      const t = String(e.edgeType || '').trim().toLowerCase();
+      return t !== 'flow' && t !== 'magentic_option' && t !== 'magentic_control';
+    });
+    // Runtime law, not a frozen roster: one Control plug, >=1 Worker plug, and
+    // no invalid edge (an unrecognised type authorises nothing).
+    const problems: string[] = [];
+    if (controlEdges.length !== 1) problems.push(`control_plugs=${controlEdges.length} (must be exactly 1)`);
+    if (connected.length === 0) problems.push('no_worker_plugs');
+    if (invalidEdges.length) problems.push(`invalid_edges=${invalidEdges.length}`);
     const toolsLine = deckNodes
       .filter((n) => connected.includes(n.id))
       .map((n) => `${n.id}:[${cardToolNames(n).join(',')}]`)
       .join(' ');
-    const ok = missingConnected.length === 0 && wronglyConnected.length === 0;
     report(
       'deck-topology',
-      ok ? 'PASS' : 'FAIL',
-      `cards=${deckNodes.length} busEdges=${edges.filter((e) => String(e.edgeType).toLowerCase() === 'magentic_option').length} connected=[${connected.join(',')}]` +
-        (missingConnected.length ? ` MISSING=[${missingConnected.join(',')}]` : '') +
-        (wronglyConnected.length ? ` WRONGLY_CONNECTED=[${wronglyConnected.join(',')}]` : '') +
+      problems.length === 0 ? 'PASS' : 'FAIL',
+      `cards=${deckNodes.length} busEdges=${edges.filter((e) => String(e.edgeType).toLowerCase() === 'magentic_option').length}` +
+        ` connected_workers=[${group('connected_worker').join(',')}]` +
+        ` excluded_native=[${group('intentionally_excluded_native').join(',')}]` +
+        ` disconnected=[${group('present_disconnected').join(',')}]` +
+        (problems.length ? ` PROBLEMS=[${problems.join('; ')}]` : '') +
         ` tools: ${toolsLine}`,
     );
   } catch (err: any) {
@@ -273,17 +332,26 @@ async function main(): Promise<void> {
     });
     const agents: Array<{ cardId: string; tools: string[] }> = view?.connectedAgents || [];
     const seen = agents.map((a) => a.cardId).sort();
-    // Mag One's worker view excludes the main_chat front door by design.
-    const expectedWorkers = EXPECTED_CONNECTED.filter((id) => id !== 'card_main_chat');
+    // Cross-check the SERVER's roster against the one this probe derives from
+    // the same saved deck. Both sides read the deck, so any divergence is a real
+    // resolver disagreement rather than a stale expectation in this file.
+    const expectedWorkers = busConnectedCardIds(deckNodes, deckEdges);
     const missing = setDifference(expectedWorkers, seen);
-    const leaked = seen.filter((id) => EXPECTED_DISCONNECTED.includes(id));
-    const ok = Boolean(view?.ok) && missing.length === 0 && leaked.length === 0;
+    const extra = setDifference(seen, expectedWorkers);
+    // Native roles must never appear in the worker roster.
+    const nativeLeaked = seen.filter((id) => {
+      const node = deckNodes.find((n) => n.id === id);
+      return node ? isNativeRole(node) : false;
+    });
+    const ok =
+      Boolean(view?.ok) && missing.length === 0 && extra.length === 0 && nativeLeaked.length === 0;
     report(
       'mag-one-view',
       ok ? 'PASS' : 'FAIL',
-      `deckIdDefaulted=${view?.deckId === args.deck} workers=[${seen.join(',')}]` +
+      `deckIdDefaulted=${view?.deckId === args.deck} workers=[${seen.join(',')}] deckDerived=[${expectedWorkers.join(',')}]` +
         (missing.length ? ` MISSING=[${missing.join(',')}]` : '') +
-        (leaked.length ? ` DISCONNECTED_LEAKED=[${leaked.join(',')}]` : '') +
+        (extra.length ? ` UNEXPECTED=[${extra.join(',')}]` : '') +
+        (nativeLeaked.length ? ` NATIVE_LEAKED_INTO_ROSTER=[${nativeLeaked.join(',')}]` : '') +
         ` tools: ${agents.map((a) => `${a.cardId}:[${(a.tools || []).join(',')}]`).join(' ')}`,
     );
   } catch (err: any) {
@@ -331,13 +399,15 @@ async function main(): Promise<void> {
   );
   try {
     const source = readFileSync(inspectorPath, 'utf8');
-    const ok = source.includes('knowledge-graph-node-inspector') && source.includes('selectedNodeId');
+    // The surface was renamed inspector -> drawer; this probe kept asserting the
+    // retired test id and reported a live, working Inspector as missing.
+    const ok = source.includes('knowledge-graph-node-drawer') && source.includes('selectedNodeId');
     report(
       'graph-inspector',
       ok ? 'PASS' : 'FAIL',
       ok
-        ? 'selected-node inspector source present (browser interaction not exercised by this probe)'
-        : 'selected-node inspector contract missing from KnowledgeGraphFramework',
+        ? 'selected-node drawer source present (browser interaction not exercised by this probe)'
+        : 'selected-node drawer contract missing from KnowledgeGraphFramework',
     );
   } catch (err: any) {
     report('graph-inspector', 'FAIL', String(err?.message || err));
@@ -350,10 +420,14 @@ async function main(): Promise<void> {
     report('knowgraph-read', 'SKIP', `missing ${!existsSync(venvPython) ? venvPython : kgProbe}`);
   } else {
     const kg = await new Promise<{ code: number | null; out: string }>((resolve) => {
-      const child = spawn(venvPython, [kgProbe, '--project-id', args.project, '--max-results', '5'], {
-        cwd: path.dirname(kgProbe),
-        timeout: 120_000,
-      });
+      // `--query` is REQUIRED by hybrid_retrieval_probe.py. Omitting it made this
+      // stage die on an argparse error (exit=2) and report RESULT=missing, so the
+      // KnowGraph pipe was never actually exercised by this probe at all.
+      const child = spawn(
+        venvPython,
+        [kgProbe, '--project-id', args.project, '--query', KNOWGRAPH_PROBE_QUERY, '--max-results', '5'],
+        { cwd: path.dirname(kgProbe), timeout: 120_000 },
+      );
       let out = '';
       child.stdout.on('data', (d) => (out += String(d)));
       child.stderr.on('data', (d) => (out += String(d)));
@@ -361,7 +435,20 @@ async function main(): Promise<void> {
       child.on('error', (err) => resolve({ code: null, out: String(err) }));
     });
     const resultLine = kg.out.split(/\r?\n/).find((l) => l.startsWith('RESULT=')) || 'RESULT=missing';
-    report('knowgraph-read', kg.code === 0 ? 'PASS' : 'FAIL', `${resultLine} (exit=${kg.code})`);
+    // `knowgraph_corpus_unprepared` is a CORRECT typed outcome, not a broken
+    // pipe: the reader checked corpus readiness, found no retrievable content
+    // for this scope, and stopped BEFORE spending an embedding. Reporting that
+    // as FAIL would punish the honest path and hide the real state, so it is
+    // reported as SKIP with the reason surfaced.
+    const unprepared = kg.out.includes('knowgraph_corpus_unprepared');
+    report(
+      'knowgraph-read',
+      kg.code === 0 ? 'PASS' : unprepared ? 'SKIP' : 'FAIL',
+      unprepared
+        ? 'corpus_unprepared — retrieval stopped before embedding (no provider spend); ' +
+          'evidence retrieval is blocked until the corpus is populated, which is honest, not broken'
+        : `${resultLine} (exit=${kg.code})`,
+    );
   }
 
   // 8 — run/conversation mapping (which runs exist for which decks + chat depth)

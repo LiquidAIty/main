@@ -16,6 +16,11 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
     // Mirror of the Python host's own surface test (test_thinkgraph_card_tools
     // TestPythonMcpHost) — one host, with native Hermes living in LocalCoder
     // rather than a second model-facing preflight tool.
+    //
+    // This list froze at 19 while the host legitimately grew to 34: the
+    // WorldSignals channel (5), the clean-room analysis engine (7), the Hermes
+    // report surface (2), and web_search. Each is a documented, additive
+    // capability — the failure was this expectation, not the host.
     expect(names).toEqual([
       'canvas.inspect',
       'canvas.upsert_wire',
@@ -27,14 +32,29 @@ describe('Python Agent MCP host — real stdio discovery + calls', () => {
       'codegraph.status',
       'hermes.memory_read',
       'hermes.memory_write',
+      'hermes.read_report',
+      'hermes.write_report',
       'knowgraph.ingest',
       'knowgraph.query',
+      'knowgraph_analyze_scope',
+      'knowgraph_compare_providers',
+      'knowgraph_create_analysis_view',
+      'knowgraph_get_analysis',
+      'knowgraph_get_gaps',
+      'knowgraph_get_gateways',
+      'knowgraph_get_topics',
       'mag_one.describe_connected_agents',
       'read_model_results',
       'run_coder_subagent',
       'run_mag_one',
       'thinkgraph.get_graph_slice',
       'thinkgraph.submit_update',
+      'web_search',
+      'worldsignals.batch',
+      'worldsignals.capabilities',
+      'worldsignals.command',
+      'worldsignals.poll',
+      'worldsignals.stream_events',
       'write_mag_one_instructions',
     ]);
     // The obsolete pair front door, the model-facing write tool, and the old

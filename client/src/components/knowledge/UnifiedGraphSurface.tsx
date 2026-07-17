@@ -138,9 +138,14 @@ export default function UnifiedGraphSurface({
   const [cameraCommand, setCameraCommand] = useState<{ action: 'zoom_in' | 'zoom_out' | 'fit_view'; token: number }>({ action: 'fit_view', token: 0 });
 
   useEffect(() => {
-    onSelectedObjectChange?.(selected ? {
+    // A node without a source_id has no canonical identity, so it cannot be
+    // published as a selected graph object — a ref carrying an undefined
+    // canonicalId is unresolvable by every downstream consumer. Report no
+    // selection instead of an unusable one.
+    const canonicalId = selected?.source_id;
+    onSelectedObjectChange?.(selected && canonicalId ? {
       authority: selected.authority as GraphAuthority,
-      canonicalId: selected.source_id,
+      canonicalId,
       selectedThrough: 'unified',
       sourceAuthority: selected.authority as GraphAuthority,
       projectionId: payload?.projectionId,
@@ -244,7 +249,10 @@ export default function UnifiedGraphSurface({
           <h3 style={{ margin: '0 0 8px', color: GRAPH_THEME.surface.text }}>{displayLabel(selected)}</h3>
           <div style={{ color: GRAPH_THEME.surface.mutedText, fontSize: 11 }}>{selected.authority} · {selected.label}</div>
           <div style={{ color: GRAPH_THEME.surface.mutedText, fontFamily: 'monospace', fontSize: 10, marginTop: 6, overflowWrap: 'anywhere' }}>{selected.source_id}</div>
-          <AskMainAction reference={{ authority: selected.authority as GraphAuthority, canonicalId: selected.source_id, selectedThrough: 'unified', sourceAuthority: selected.authority as GraphAuthority, projectionId: payload?.projectionId, displayLabel: displayLabel(selected) }} onAskMain={onAskMain} />
+          {/* Same rule as the selection effect: without a canonical id there is
+              nothing Main could resolve, so offer no action rather than send an
+              unresolvable reference. */}
+          {selected.source_id ? <AskMainAction reference={{ authority: selected.authority as GraphAuthority, canonicalId: selected.source_id, selectedThrough: 'unified', sourceAuthority: selected.authority as GraphAuthority, projectionId: payload?.projectionId, displayLabel: displayLabel(selected) }} onAskMain={onAskMain} /> : null}
           {onOpenAuthority && selected.authority ? <button type="button" onClick={() => onOpenAuthority(selected.authority as Layer)} style={graphDrawerButtonStyle({ width: '100%', marginTop: 10 })}>Open {selected.authority}</button> : null}
         </section> : null}
         <section>

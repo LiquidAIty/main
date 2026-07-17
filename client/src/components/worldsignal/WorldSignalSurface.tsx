@@ -101,11 +101,14 @@ function loadEmbedModule(): Promise<WorldSignalsEmbedModule> {
     const script = document.createElement('script');
     script.type = 'module';
     const done = '__worldSignalsEmbedDone';
-    (window as Record<string, unknown>)[done] = (mod: WorldSignalsEmbedModule) => {
+    // `as unknown as` (the same double-step line 99 already uses): Window has no
+    // index signature, so a direct cast is a TS2352 error, not a lint nit.
+    const globals = window as unknown as Record<string, unknown>;
+    globals[done] = (mod: WorldSignalsEmbedModule) => {
       w.__worldSignalsEmbed = mod;
       resolve(mod);
     };
-    (window as Record<string, unknown>)[`${done}Err`] = (message: string) =>
+    globals[`${done}Err`] = (message: string) =>
       reject(new Error(message || 'worldsignals_embed_load_failed'));
     script.textContent =
       `import(${JSON.stringify(EMBED_MODULE_URL)})` +

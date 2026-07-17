@@ -1,18 +1,22 @@
 import { OpenClaudeAdapter } from '../adapter';
 import type {
-  OpenClaudeAccess,
-  OpenClaudeMode,
   OpenClaudeRunRequest,
-  OpenClaudeRunResult,
   OpenClaudeTerminalLaunchResult,
 } from '../contracts';
 import { resolveOpenClaudeProviderTarget } from '../provider/openai53';
-import { runOpenClaudeHeadless } from './headless';
-import { runOpenClaudeTerminal } from './terminal';
 
-const DEFAULT_MODE: OpenClaudeMode = 'headless';
-const DEFAULT_ACCESS: OpenClaudeAccess = 'patch';
-
+/**
+ * Terminal LAUNCH METADATA only — this class does not execute the coder.
+ *
+ * Removed: `run()` plus its `runOpenClaudeHeadless` / `runOpenClaudeTerminal`
+ * wrappers. Both wrappers hardcoded `ok:false` (`coder_packet_required_use_
+ * localcoder_run` / `terminal_launch_not_executed_use_localcoder_run`), and
+ * `run()` had zero live callers — only its own spec. It was the residue of the
+ * collapse to the real Console PTY runtime, and a permanently-failing `run()`
+ * with `DEFAULT_MODE='headless'` reads like a headless execution path exists.
+ * It does not: `coder/execution/coderConsoleRuntime.ts` is the one runtime, and
+ * `coderRouter.runHeadlessCoderReality` is a separate admin inspection socket.
+ */
 export class OpenClaudeRuntimeService {
   constructor(private readonly adapter = new OpenClaudeAdapter()) {}
 
@@ -82,76 +86,6 @@ export class OpenClaudeRuntimeService {
     };
   }
 
-  async run(request: OpenClaudeRunRequest): Promise<OpenClaudeRunResult> {
-    const task = String(request.task || '').trim();
-    if (!task) {
-      return {
-        ok: false,
-        mode: request.mode || DEFAULT_MODE,
-        access: request.access || DEFAULT_ACCESS,
-        state: 'error',
-        error: 'task_required',
-        provider: null,
-        model: '',
-        responseId: null,
-        terminal: {
-          available: false,
-          used: false,
-          envOwner: 'backend',
-          runtimeOwner: 'backend',
-          launchCommand: null,
-        },
-      };
-    }
-
-    const install = this.adapter.getInstallInfo();
-    if (!install.installed) {
-      return {
-        ok: false,
-        mode: request.mode || DEFAULT_MODE,
-        access: request.access || DEFAULT_ACCESS,
-        state: 'error',
-        error: 'openclaude_not_installed',
-        provider: null,
-        model: '',
-        responseId: null,
-        terminal: {
-          available: false,
-          used: false,
-          envOwner: 'backend',
-          runtimeOwner: 'backend',
-          launchCommand: null,
-        },
-      };
-    }
-
-    try {
-      const mode = request.mode || DEFAULT_MODE;
-      const result =
-        mode === 'terminal'
-          ? await runOpenClaudeTerminal(this.adapter, request)
-          : await runOpenClaudeHeadless(request);
-      return result;
-    } catch (err: unknown) {
-      return {
-        ok: false,
-        mode: request.mode || DEFAULT_MODE,
-        access: request.access || DEFAULT_ACCESS,
-        state: 'error',
-        error: err instanceof Error ? err.message : 'openclaude_runtime_failed',
-        provider: request.provider || null,
-        model: request.providerModelId || '',
-        responseId: null,
-        terminal: {
-          available: install.terminalEntrypoint !== null,
-          used: false,
-          envOwner: 'backend',
-          runtimeOwner: 'backend',
-          launchCommand: null,
-        },
-      };
-    }
-  }
 }
 
 export const openClaudeRuntimeService = new OpenClaudeRuntimeService();
