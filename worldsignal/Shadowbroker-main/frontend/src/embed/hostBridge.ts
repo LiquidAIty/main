@@ -21,13 +21,34 @@ export type WorldSignalsFlyToInput = {
   zoom?: number;
 };
 
+export type WorldSignalsInspectorSection =
+  | 'overview'
+  | 'selection'
+  | 'markets'
+  | 'layers'
+  | 'research'
+  | 'watches'
+  | 'timeline'
+  | 'knowgraph';
+
+export type WorldSignalsLayerStateRef = {
+  profileId: string;
+  profileVersion: number;
+  enabledLayerIds: string[];
+  availableLayerIds: string[];
+};
+
 type HostListeners = {
   onSelectionChange?: (selection: WorldSignalsSelectionRef | null) => void;
   onReady?: () => void;
+  onInspectorSectionRequest?: (section: WorldSignalsInspectorSection) => void;
+  onLayerStateChange?: (state: WorldSignalsLayerStateRef) => void;
 };
 
 type AppCommands = {
   flyTo?: (input: WorldSignalsFlyToInput) => void;
+  getLayerState?: () => WorldSignalsLayerStateRef;
+  setLayerEnabled?: (layerId: string, enabled: boolean) => void;
 };
 
 const listeners: HostListeners = {};
@@ -39,6 +60,8 @@ export function registerHostListeners(next: HostListeners): () => void {
   return () => {
     listeners.onSelectionChange = undefined;
     listeners.onReady = undefined;
+    listeners.onInspectorSectionRequest = undefined;
+    listeners.onLayerStateChange = undefined;
   };
 }
 
@@ -57,12 +80,14 @@ export function registerAppCommand<K extends keyof AppCommands>(
 export function invokeAppCommand<K extends keyof AppCommands>(
   name: K,
   ...args: Parameters<NonNullable<AppCommands[K]>>
-): void {
+): ReturnType<NonNullable<AppCommands[K]>> {
   const handler = commands[name];
   if (!handler) {
     throw new Error(`worldsignals_command_unavailable: ${String(name)} (app not mounted)`);
   }
-  (handler as (...a: unknown[]) => void)(...args);
+  return (handler as (...a: unknown[]) => unknown)(...args) as ReturnType<
+    NonNullable<AppCommands[K]>
+  >;
 }
 
 /** App side. */
@@ -73,4 +98,14 @@ export function emitSelectionChange(selection: WorldSignalsSelectionRef | null):
 /** App side. */
 export function emitReady(): void {
   listeners.onReady?.();
+}
+
+/** App side: a vendor control asks the host to open an Inspector section. */
+export function emitInspectorSectionRequest(section: WorldSignalsInspectorSection): void {
+  listeners.onInspectorSectionRequest?.(section);
+}
+
+/** App side: layer enable/disable changed (from either side). */
+export function emitLayerStateChange(state: WorldSignalsLayerStateRef): void {
+  listeners.onLayerStateChange?.(state);
 }

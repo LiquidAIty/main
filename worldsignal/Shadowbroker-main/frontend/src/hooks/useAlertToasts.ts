@@ -11,6 +11,7 @@
  * a toast goes away.
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { IS_EMBEDDED } from '@/lib/api';
 import { useDataKey } from './useDataStore';
 import type { NewsArticle } from '@/types/dashboard';
 
@@ -38,6 +39,9 @@ export function useAlertToasts() {
 
   // Watch for new high-severity articles
   useEffect(() => {
+    // Embedded in a host (LiquidAIty): no auto-popping news alert toasts. News
+    // stays available in its panel; it just doesn't shove popups at the user.
+    if (IS_EMBEDDED) return;
     if (!news || !Array.isArray(news)) return;
 
     const newToasts: ToastItem[] = [];

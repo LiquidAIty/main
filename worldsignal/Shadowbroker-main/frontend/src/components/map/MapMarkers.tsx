@@ -446,7 +446,7 @@ export function ThreatMarkers({
                   </button>
                 )}
                 <div style={{ fontSize: '14px', letterSpacing: '1.5px', textTransform: 'uppercase' as const }}>
-                  !! ALERT LVL {score} !!
+                  SIGNAL {score}/10
                 </div>
                 <div
                   style={{

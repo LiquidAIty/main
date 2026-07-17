@@ -1,6 +1,6 @@
 'use client';
 
-import { API_BASE, ASSET_BASE } from '@/lib/api';
+import { API_BASE, ASSET_BASE, IS_EMBEDDED } from '@/lib/api';
 import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import Map, {
   Source,
@@ -1640,6 +1640,10 @@ const MaplibreViewer = ({
   }, [selectedEntity, data, getSelectedEntityLiveCoords, interpTick]);
 
   const spreadAlerts = useMemo(() => {
+    // Embedded in a host (LiquidAIty): no automatic alert boxes spread across the
+    // map. News stays available in its panel; it does not shove popups at the
+    // user. Standalone mode keeps the spread behavior.
+    if (IS_EMBEDDED) return [];
     if (!data?.news) return [];
     // Limit visible alerts by zoom: at low zoom show only top threats,
     // at high zoom show more. Prevents map clutter with dozens of boxes.
@@ -6121,7 +6125,7 @@ const MaplibreViewer = ({
                   </div>
                   <div className="flex items-center gap-3">
                     <span className={`text-[14px] ${threatColor} font-bold ${rs >= 8 ? 'animate-pulse' : ''}`}>
-                      ALERT LVL: {rs}/10
+                      SIGNAL {rs}/10
                     </span>
                     <button
                       onClick={() => onEntityClick?.(null)}

@@ -58,8 +58,39 @@ import {
   checkBackendSentinelStatus,
 } from '@/lib/sentinelHub';
 import { useTranslation } from '@/i18n';
+import { IS_EMBEDDED } from '@/lib/api';
 import { emitReady, emitSelectionChange, registerAppCommand } from '@/embed/hostBridge';
 import { LocateBar } from './LocateBar';
+
+// world_intelligence_default_v1 — the mainstream embedded default profile.
+// When WorldSignals is embedded in LiquidAIty it must open as a live-world
+// intelligence surface (aviation, maritime, satellites, weather, environment,
+// infrastructure, energy, news, markets), NOT a conflict/recon console. These
+// specialist layers stay fully implemented and available in standalone mode;
+// they are simply OFF in the embedded default and can be turned on deliberately.
+const WORLD_INTELLIGENCE_DEFAULT_V1_SPECIALIST_OFF: Partial<ActiveLayers> = {
+  military: false,
+  military_bases: false,
+  ships_military: false,
+  gps_jamming: false,
+  ukraine_alerts: false,
+  ukraine_frontline: false,
+  global_incidents: false,
+  telegram_osint: false,
+  kiwisdr: false,
+  psk_reporter: false,
+  satnogs: false,
+  tinygs: false,
+  scanners: false,
+  sigint_meshtastic: false,
+  sigint_aprs: false,
+  shodan_overlay: false,
+  cyber_threats: false,
+  malware_c2: false,
+  crowdthreat: false,
+  gt_risk: false,
+  ai_intel: false,
+};
 import { SentinelInfoModal } from './SentinelInfoModal';
 import SarAoiEditorModal from '@/components/SarAoiEditorModal';
 
@@ -193,7 +224,8 @@ export default function Dashboard() {
     });
   }, []);
 
-  const [activeLayers, setActiveLayers] = useState<ActiveLayers>({
+  const [activeLayers, setActiveLayers] = useState<ActiveLayers>(() => {
+    const base: ActiveLayers = {
     // Aircraft — all ON
     flights: true,
     private: true,
@@ -260,6 +292,11 @@ export default function Dashboard() {
     ai_intel: true,
     // SAR (Synthetic Aperture Radar)
     sar: true,
+    };
+    // Embedded (LiquidAIty): apply the mainstream world_intelligence_default_v1
+    // profile — specialist conflict/recon/SIGINT layers off. Standalone keeps the
+    // full default above.
+    return IS_EMBEDDED ? { ...base, ...WORLD_INTELLIGENCE_DEFAULT_V1_SPECIALIST_OFF } : base;
   });
   const regionLat =
     selectedEntity?.type === 'region_dossier' ? selectedEntity.extra?.lat : undefined;

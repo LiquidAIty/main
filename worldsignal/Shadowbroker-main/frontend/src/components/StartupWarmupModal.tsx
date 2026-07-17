@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Database, Clock, X } from 'lucide-react';
+import { IS_EMBEDDED } from '@/lib/api';
 
 const CURRENT_VERSION = '0.9.83';
 const STORAGE_KEY = `shadowbroker_startup_warmup_notice_v${CURRENT_VERSION}`;
@@ -95,6 +96,9 @@ export function useStartupWarmupNotice() {
   const [showWarmupNotice, setShowWarmupNotice] = useState(false);
 
   useEffect(() => {
+    // Embedded in a host (LiquidAIty): no standalone startup theater. The panel
+    // shows its own small contained loading state instead.
+    if (IS_EMBEDDED) return;
     try {
       setShowWarmupNotice(localStorage.getItem(STORAGE_KEY) !== 'true');
     } catch {
