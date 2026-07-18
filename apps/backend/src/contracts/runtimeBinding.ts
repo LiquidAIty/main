@@ -1,6 +1,6 @@
 import type { RuntimeBinding } from '../types';
 
-export const RUNTIME_BINDINGS = [
+const RUNTIME_BINDINGS = [
   'assist',
   'local_coder',
   'main_chat',
@@ -23,7 +23,7 @@ const SYSTEM_CARD_RUNTIME_BINDINGS: Record<string, RuntimeBinding> = {
   card_hermes_steward: 'hermes_steward',
 };
 
-export function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
+function normalizeRuntimeBinding(value: unknown): RuntimeBinding | null {
   const normalized = String(value || '').trim().toLowerCase();
   return RUNTIME_BINDINGS.includes(normalized as RuntimeBinding)
     ? (normalized as RuntimeBinding)

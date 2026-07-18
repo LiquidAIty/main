@@ -55,7 +55,6 @@ import {
   graphCompanionTabButtonStyle,
   graphCompanionTabGroupStyle,
   graphDrawerSectionStyle,
-  graphGlassPillStyle,
 } from '../components/graph/graphVisualTokens';
 import RightGlassDrawer from '../components/graph/RightGlassDrawer';
 import type { UnifiedProjectionIdentity } from '../components/knowledge/UnifiedGraphSurface';
@@ -90,7 +89,6 @@ import {
 } from '../features/agentbuilder/deck/deckDocument';
 import {
   deriveVisibleRailItems,
-  isHermesConnectedToMainChat,
   isWorldSignalsAgentCard,
 } from '../features/agentbuilder/rail/railVisibility';
 import {
@@ -448,10 +446,6 @@ export default function AgentBuilder(): React.ReactElement {
         workspaceView,
       }),
     [deck, workspaceView],
-  );
-  const hermesConnectedToMainChat = useMemo(
-    () => isHermesConnectedToMainChat(deck.nodes, deck.edges),
-    [deck],
   );
   const {
     objectDrawerOpen,

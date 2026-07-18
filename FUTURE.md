@@ -30,7 +30,7 @@ part of the active research loop until its own pass wires it in.
 - **Coder / LocalCoder / OpenClaude (parked code executor)** — vendored `localcoder/` (gRPC Harness
   engine), `card_local_coder` (disconnected), Code Console UI, `coder-workspace/` job folders,
   `.openclaude-profile.json` (consumed by localcoder provider profile). Deferred: Coder terminal
-  canvas, connected-agent rail entries, workspace capability grants, [RENAME.md](./RENAME.md) pass.
+  canvas, connected-agent rail entries, workspace capability grants.
 - **CodeGraph view (wired but dormant)** — `client/src/components/codegraph/*` renders through the
   vendored `client/src/vendor/codebase-memory-ui` server via the vite `/rpc` + `/api/layout` proxies
   to `127.0.0.1:9749`; that server must be running or the proxies log ECONNREFUSED (harmless).

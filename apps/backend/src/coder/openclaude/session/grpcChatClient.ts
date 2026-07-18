@@ -131,7 +131,7 @@ export function deriveSessionId(projectId: string, conversationId: string): stri
  *  - anything else            → explicit 'unknown:<agentType>' — never
  *                               silently attributed to a card.
  */
-export function resolveInvokingCardId(
+function resolveInvokingCardId(
   agentType: string,
   doorwayCardIds: readonly string[],
   parentCardId: string,
@@ -217,7 +217,7 @@ export function resolveHarnessTimeoutDeadline(
  * REAL per-card MCP grant (enforced as the child's allowed_tools / the
  * parent's pool filter). No card selection → no MCP tools; never a hidden
  * default grant. */
-export function cardMcpToolGrants(card: any): string[] {
+function cardMcpToolGrants(card: any): string[] {
   const raw = Array.isArray(card?.runtimeOptions?.tools) ? card.runtimeOptions.tools : [];
   const known = new Set(HARNESS_MCP_TOOL_SPECS.map((spec) => spec.name));
   return raw
@@ -241,7 +241,7 @@ export function cardMcpToolGrants(card: any): string[] {
  * authority). This is what the main-chat model reads to decide when to delegate —
  * it must state the sub-agent's REAL capability so the model routes the work here
  * instead of substituting a conceptual answer. Not a prompt copy; one honest line. */
-export function doorwayWhenToUse(binding: string, title: string): string {
+function doorwayWhenToUse(binding: string, title: string): string {
   if (binding === 'local_coder') {
     return (
       'Delegate here to run real coding work in the Coder workspace: read-only source ' +
@@ -428,7 +428,7 @@ export type MainChatRuntimeConfig = {
 /** The saved card's assigned native tools (runtimeOptions.nativeTools).
  * Pure transport: verbatim strings, no name validation here — the engine owns
  * its native registry and reports grant names missing from the pool. */
-export function cardNativeToolGrants(card: any): string[] {
+function cardNativeToolGrants(card: any): string[] {
   const raw = Array.isArray(card?.runtimeOptions?.nativeTools) ? card.runtimeOptions.nativeTools : [];
   return raw.map((tool: unknown) => String(tool || '').trim()).filter(Boolean);
 }
@@ -444,25 +444,6 @@ function resolveMainChatCardFromDeck(nodes: any[]): { ok: true; card: any } | { 
   );
   if (matches.length !== 1) return { ok: false };
   return { ok: true, card: matches[0] };
-}
-
-/** The saved OpenClaude Chat parent card's visible prompt content, verbatim.
- * It is sent as append_system_prompt on top of the locked vendored base prompt,
- * never replacing it. Zero or multiple main_chat cards yields no saved prompt
- * rather than guessing which card is the parent. */
-export async function resolveMainChatSystemPrompt(sessionId: string): Promise<string | null> {
-  const parsed = parseSessionId(sessionId);
-  if (!parsed) return null;
-  try {
-    const doc = await getDeckDocument(parsed.projectId, BUILDER_DECK_ID);
-    const nodes: any[] = Array.isArray((doc?.deck as any)?.nodes) ? (doc!.deck as any).nodes : [];
-    const resolution = resolveMainChatCardFromDeck(nodes);
-    if (!resolution.ok) return null;
-    const prompt = String(resolution.card?.prompt || '').trim();
-    return prompt || null;
-  } catch (error: any) {
-    throw new Error(`main_chat_runtime_config_failed:${String(error?.message || error)}`);
-  }
 }
 
 export async function resolveMainChatRuntimeConfig(

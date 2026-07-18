@@ -6,7 +6,7 @@ export type McpServersConfig = Record<string,
   | { transport?: "sse" | "http"; url: string; headers?: Record<string,string>; automaticSSEFallback?: boolean; reconnect?: { enabled?: boolean; maxAttempts?: number; delayMs?: number } }
 >;
 
-export function resolveEnvPlaceholders<T>(obj: T): T {
+function resolveEnvPlaceholders<T>(obj: T): T {
   if (obj === null || typeof obj !== "object") return obj;
   if (Array.isArray(obj)) return obj.map(resolveEnvPlaceholders) as unknown as T;
   const out: any = {};

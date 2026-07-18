@@ -1443,5 +1443,3 @@ export function AgentManager({
     </div>
   );
 }
-
-export default AgentManager;

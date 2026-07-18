@@ -76,3 +76,8 @@ client/public/worldsignals/
 
 # Upstream LFS model was not distributed with the source archive
 /worldsignal/Shadowbroker-main/backend/data/drishx/rf_model.pickle
+
+# Python caches
+.pytest_cache/
+.ruff_cache/
+

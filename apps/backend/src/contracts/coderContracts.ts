@@ -3,9 +3,9 @@ import { z } from 'zod';
 const nonEmptyText = z.string().trim().min(1);
 const textList = z.array(nonEmptyText);
 
-export const coderWriteModeSchema = z.enum(['read-only', 'edit']);
+const coderWriteModeSchema = z.enum(['read-only', 'edit']);
 
-export const coderPacketSchema = z.object({
+const coderPacketSchema = z.object({
   id: nonEmptyText,
   projectId: nonEmptyText,
   repoPath: nonEmptyText,
@@ -29,20 +29,20 @@ export const coderPacketSchema = z.object({
   providerModelId: nonEmptyText.optional(),
 }).strict();
 
-export const coderReportStatusSchema = z.enum([
+const coderReportStatusSchema = z.enum([
   'succeeded',
   'partial',
   'blocked',
   'failed',
 ]);
 
-export const specComparisonItemSchema = z.object({
+const specComparisonItemSchema = z.object({
   requirement: nonEmptyText,
   status: z.enum(['satisfied', 'changed', 'incomplete', 'blocked']),
   evidence: nonEmptyText,
 }).strict();
 
-export const proofResultSchema = z.object({
+const proofResultSchema = z.object({
   command: nonEmptyText,
   status: z.enum(['passed', 'failed', 'blocked']),
   output: z.string(),
@@ -72,7 +72,7 @@ export type CoderReport = z.infer<typeof coderReportSchema>;
 // (CodeGraphViewContract fields mirrored from client/src/components/codegraph/types.ts)
 // + evidence — NOT a CoderReport. The view only references canonical CodeGraph node
 // IDs / files / symbols; Coder annotations stay in the audit body, never rewriting facts.
-export const codeGraphViewContractSchema = z.object({
+const codeGraphViewContractSchema = z.object({
   projectId: z.string().nullable().optional(),
   focusPaths: z.array(z.string()).optional(),
   focusSymbols: z.array(z.string()).optional(),
@@ -145,7 +145,7 @@ export const coderAuditResultJsonSchema = {
   },
 } as const;
 
-export const codingRunStatusSchema = z.enum([
+const codingRunStatusSchema = z.enum([
   'requested',
   'planned',
   'awaiting_approval',
@@ -157,7 +157,7 @@ export const codingRunStatusSchema = z.enum([
   'blocked',
 ]);
 
-export const codingRunLifecycleSchema = z.object({
+const codingRunLifecycleSchema = z.object({
   id: nonEmptyText,
   projectId: nonEmptyText,
   targetRoot: nonEmptyText,
@@ -179,8 +179,7 @@ export const codingRunLifecycleSchema = z.object({
   completedAt: z.string().nullable(),
 }).strict();
 
-export type CodingRunStatus = z.infer<typeof codingRunStatusSchema>;
-export type CodingRunLifecycle = z.infer<typeof codingRunLifecycleSchema>;
+type CodingRunLifecycle = z.infer<typeof codingRunLifecycleSchema>;
 
 export const coderReportJsonSchema = {
   type: 'object',
