@@ -9,7 +9,6 @@ import { AskMainAction, type GraphObjectRef } from './GraphObjectContext';
 import './nativeAuthorityGraphSurface.css';
 
 // The server-owned graph projection contract rendered by the native surfaces.
-// (Moved here from the retired KnowledgeGraphFramework renderer.)
 export type GraphProjectionNode = {
   id: string;
   canonicalId?: string;

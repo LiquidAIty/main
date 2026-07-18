@@ -1,7 +1,6 @@
-// Generic scoped Cypher-over-AGE runner. ThinkGraph moved to the Engraphis-v2
-// Python authority (thinkGraphStore.ts never reads/writes AGE); the sole live
-// caller of this file is kg.routes.ts's project-scoped KnowGraph canvas-read
-// path (runKgQuery enforces `$projectId` scoping before calling in).
+// Generic scoped Cypher-over-AGE runner. The sole live caller of this file is
+// kg.routes.ts's project-scoped KnowGraph canvas-read path (runKgQuery enforces
+// `$projectId` scoping before calling in).
 import { pool } from '../db/pool';
 
 async function ensureAgeExtension() {

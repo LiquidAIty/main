@@ -18,6 +18,9 @@ db/thinkgraph-engraphis-v2.sqlite*
 
 # Dependency folders
 node_modules/
+
+# Build artifacts
+*.tsbuildinfo
 **/node_modules/
 .pnp
 .pnp.js

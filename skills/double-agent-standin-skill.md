@@ -8,9 +8,9 @@
 ## When to use
 
 The recursive campaign where **LiquidAIty uses its own graphs to study and improve its own
-knowledge-graph code** (episodes KG-01…KG-08 over the imported O'Reilly book). Each rung of an
+knowledge-graph code** (episodes KG-01…KG-08 over real imported source material). Each rung of an
 episode is a **job**: an external stand-in plays a real product position AND inspects that
-boundary for leaks. Dev-only, **$0** (Opus + Sonnet stand-ins over the real *free* doorways —
+boundary for leaks. Dev-only, **$0** (external stand-ins over the real *free* doorways —
 CBM, mcp-bridge transport, KnowGraph deterministic retrieval, conversation/graph writers). No
 paid product-model call is ever required to conduct an episode.
 
@@ -20,7 +20,7 @@ The leak inspection rides along; it never becomes the Goal unless Main deliberat
 ## The two roles — BOTH happen in every job
 
 - **ROLE 1 — Product position.** Do the real work that position performs, through its real
-  doorway. Main plans; Coder/CodeGraph inspects via CBM; Hermes selects book evidence + writes
+  doorway. Main plans; Coder/CodeGraph inspects via CBM; Hermes selects source evidence + writes
   memory/report; KnowGraph retrieves trusted Claims; Mag One produces a task ledger; Coder
   implements real code; Reviewer reviews the exact result.
 - **ROLE 2 — Embedded double agent.** While doing Role 1, inspect the boundary from inside and
@@ -33,7 +33,7 @@ The leak inspection rides along; it never becomes the Goal unless Main deliberat
 | Main | front door / orchestrator | conversation store + `thinkgraph_submit_update` | plan, Goal, Questions, Decision, closure |
 | Coder/CodeGraph | code inspector | **CBM** (`search_graph`/`get_code_snippet`/`search_code`) | CodeFindings (+ freshness) |
 | Hermes | memory/report | real ThinkGraph read + `hermes_memory_write` / report writer | evidence selection + recommendation |
-| KnowGraph | research/retrieval | real hybrid retrieval over existing book scope | trusted-Claim evidence packet |
+| KnowGraph | research/retrieval | real hybrid retrieval over existing project scope | trusted-Claim evidence packet |
 | Mag One | worker orchestrator | job folder `handoff/<id>/prompt.md` | task ledger / approved prompt |
 | Coder-impl | implementer | rung-4 job claim → real edit + `returns/<id>/` | CoderReport + real files |
 | Reviewer | reviewer | read returns + ThinkGraph ReviewResult | review verdict |
@@ -102,7 +102,7 @@ before moving up the chain. Log the prompt fix as a `ProcessLeak: authority/exec
 
 ## Two end-of-episode verdicts (separate, both required)
 
-- **KG episode verdict** — accepted | needs-revision | rejected. Basis: Question quality, book
+- **KG episode verdict** — accepted | needs-revision | rejected. Basis: Question quality, source
   grounding, CodeGraph accuracy, ThinkGraph reasoning, implementation quality, DB proof,
   retrieval proof, visual result, Hermes review, Main explanation.
 - **Process/double-agent verdict** — leaks found, severity, money/token risk, wrong boundaries,
@@ -114,7 +114,7 @@ produce a poor KG result. Report both honestly.
 
 ## Guardrails
 
-No book re-import · no paid calls · no duplicate fan-out for mere confirmation · no manufactured
+No re-import of source material · no paid calls · no duplicate fan-out for mere confirmation · no manufactured
 graph state · never call direct-seed data product-runtime proof · no fake Mag One completion ·
 never report success when the expected visible graph result is absent · don't let leak-hunting
 derail the KG Question.
