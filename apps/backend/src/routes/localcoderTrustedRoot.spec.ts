@@ -1,6 +1,10 @@
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
+import express from 'express';
 import { describe, expect, it, vi } from 'vitest';
+// Static imports: NodeNext ESM rejects extensionless dynamic import('./coder.routes')
+// after the '.routes' infix strip. vitest hoists vi.mock() above these.
+import router from './coder.routes';
 
 // Capture the repoPath the edit-scope gate is called with. The gate is invoked
 // as this.cbmScopeGate(packet.repoPath), so it observes exactly the root the
@@ -21,8 +25,6 @@ vi.mock('../services/graphContext/cbmScopeGate', () => ({
 }));
 
 async function createServer(): Promise<{ server: Server; baseUrl: string }> {
-  const express = (await import('express')).default;
-  const router = (await import('./coder.routes')).default;
   const app = express();
   app.use(express.json());
   app.use('/api/coder', router);

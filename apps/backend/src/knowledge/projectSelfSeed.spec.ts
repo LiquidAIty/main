@@ -22,11 +22,17 @@ describe('project self-seed', () => {
     for (const truth of seed.truths) {
       expect(truth.id).toMatch(/^truth\./);
       expect(truth.statement.trim().length).toBeGreaterThan(0);
-      expect(truth.scope.trim().length).toBeGreaterThan(0);
-      expect(truth.status.trim().length).toBeGreaterThan(0);
+      // scope/status/sourceRef are optional on SeedTruth but every curated
+      // truth sets them — prove presence before .trim() so a future truth
+      // that omits one fails loudly here instead of throwing on undefined.
+      expect(truth.scope).toBeDefined();
+      expect(truth.scope!.trim().length).toBeGreaterThan(0);
+      expect(truth.status).toBeDefined();
+      expect(truth.status!.trim().length).toBeGreaterThan(0);
       expect(truth.confidence).toBeGreaterThan(0);
       expect(truth.confidence).toBeLessThanOrEqual(1);
-      expect(truth.sourceRef.trim().length).toBeGreaterThan(0);
+      expect(truth.sourceRef).toBeDefined();
+      expect(truth.sourceRef!.trim().length).toBeGreaterThan(0);
     }
     // Ids are the join key for later ingestion — duplicates would silently merge.
     expect(new Set(seed.truths.map((t) => t.id)).size).toBe(seed.truths.length);

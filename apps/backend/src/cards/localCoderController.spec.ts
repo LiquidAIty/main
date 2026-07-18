@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeLocalCoderControllerCard } from './localCoderController';
+import { normalizeLocalCoderControllerCard, type CardLike } from './localCoderController';
 
 describe('normalizeLocalCoderControllerCard', () => {
   it('keeps the card-selected provider and model (card authority — no override, no blacklist)', () => {
-    const normalized = normalizeLocalCoderControllerCard({
+    const card: CardLike = {
       id: 'card_local_coder',
       templateId: 'template_local_coder',
       runtimeBinding: 'local_coder',
@@ -14,7 +14,8 @@ describe('normalizeLocalCoderControllerCard', () => {
         modelKey: 'z-ai/glm-5.2',
         tools: [],
       },
-    });
+    };
+    const normalized = normalizeLocalCoderControllerCard(card);
 
     expect(normalized.runtimeType).toBe('local_coder');
     expect(normalized.runtimeBinding).toBe('local_coder');
@@ -24,11 +25,12 @@ describe('normalizeLocalCoderControllerCard', () => {
   });
 
   it('normalizes identity and injects run_local_coder even when the card omits them', () => {
-    const normalized = normalizeLocalCoderControllerCard({
+    const card: CardLike = {
       id: 'card_local_coder',
       templateId: 'template_local_coder',
       runtimeOptions: { provider: 'openai', modelKey: 'gpt-4o-mini' },
-    });
+    };
+    const normalized = normalizeLocalCoderControllerCard(card);
 
     expect(normalized.runtimeType).toBe('local_coder');
     expect(normalized.runtimeBinding).toBe('local_coder');
@@ -39,9 +41,9 @@ describe('normalizeLocalCoderControllerCard', () => {
   });
 
   it('does not rewrite unrelated cards', () => {
-    const card = {
-      id: 'card_thinkgraph_agent',
-      runtimeBinding: 'thinkgraph_agent',
+    const card: CardLike = {
+      id: 'card_research_agent',
+      runtimeBinding: 'research_agent',
       runtimeType: 'assistant_agent',
       runtimeOptions: { modelKey: 'gpt-5-mini', tools: [] },
     };

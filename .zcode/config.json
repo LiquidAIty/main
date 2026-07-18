@@ -1,0 +1,17 @@
+{
+  "mcp": {
+    "servers": {
+      "codebase-memory": {
+        "type": "stdio",
+        "command": "C:\\cbm\\codebase-memory-mcp.exe",
+        "args": [],
+        "env": {
+          "CODEBASE_ROOT": "C:\\Projects\\main",
+          "TMP": "C:\\tmp",
+          "TEMP": "C:\\tmp",
+          "COMSPEC": "C:\\cbm\\cmdsh.exe"
+        }
+      }
+    }
+  }
+}

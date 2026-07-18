@@ -2,6 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { join as pathJoin } from 'node:path';
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+// Static import: NodeNext ESM requires an explicit extension on relative
+// dynamic import('../../../services/agentTelemetry'); static imports resolve
+// without it and read the same module-scope state (the telemetry ring buffer).
+import { clearAgentEvents, listAgentEvents } from '../../../services/agentTelemetry';
+// Type-only import of the canonical runCard signature so the vi.fn mocks below
+// capture the real 4-arg call shape (card, effectiveAgent, input, context) —
+// otherwise mock.calls is typed as [][] and tuple indexing fails truthfully.
+import type { runCardWithContract } from '../../../cards/runtime';
 import {
   describeConnectedAgents,
   runMagOne,
@@ -83,7 +91,12 @@ describe('describeConnectedAgents (mag_one.describe_connected_agents)', () => {
 
 describe('runMagOne — canonical job-folder handoff', () => {
   it('uses job identity and passes no semantic task through TypeScript', async () => {
-    const runCard = vi.fn(async () => ({ output: 'Mission complete.', status: 'success' }));
+    const runCard = vi.fn<typeof runCardWithContract>(async () => ({
+      output: 'Mission complete.',
+      status: 'success',
+      startedAt: '2026-07-01T00:00:00.000Z',
+      endedAt: '2026-07-01T00:00:01.000Z',
+    }));
     const result = await runMagOne(
       { projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main', jobId: 'job_abc' },
       deps({ runCard: runCard as any }),
@@ -178,9 +191,11 @@ describe('runMagOne — Coder job-folder handoff (jobId)', () => {
   });
 
   it('runs from a jobId with the server-forced workspace root (never a client path) and empty inline task', async () => {
-    const runCard = vi.fn(async () => ({
+    const runCard = vi.fn<typeof runCardWithContract>(async () => ({
       output: 'done',
       status: 'success',
+      startedAt: '2026-07-01T00:00:00.000Z',
+      endedAt: '2026-07-01T00:00:01.000Z',
       jobHandoffResult: {
         returnsDir: 'returns/job_abc/',
         returnedFiles: ['returns/job_abc/proposed/example.patch'],
@@ -213,7 +228,12 @@ describe('runMagOne — Coder job-folder handoff (jobId)', () => {
   });
 
   it('uses the on-disk file as the only semantic contract', async () => {
-    const runCard = vi.fn(async () => ({ output: 'ok', status: 'success' }));
+    const runCard = vi.fn<typeof runCardWithContract>(async () => ({
+      output: 'ok',
+      status: 'success',
+      startedAt: '2026-07-01T00:00:00.000Z',
+      endedAt: '2026-07-01T00:00:01.000Z',
+    }));
     await runMagOne(
       { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_x' },
       deps({ runCard: runCard as any }),
@@ -291,7 +311,6 @@ describe('runMagOne — Coder job-folder handoff (jobId)', () => {
 
 describe('runMagOne — dev telemetry at the dispatch boundary', () => {
   it('records started + completed events with participants and real calledAgents', async () => {
-    const { clearAgentEvents, listAgentEvents } = await import('../../../services/agentTelemetry');
     clearAgentEvents();
     const runCard = vi.fn(async () => ({
       status: 'success',
@@ -324,7 +343,6 @@ describe('runMagOne — dev telemetry at the dispatch boundary', () => {
   });
 
   it('records a failed dispatch event when the run throws', async () => {
-    const { clearAgentEvents, listAgentEvents } = await import('../../../services/agentTelemetry');
     clearAgentEvents();
     const result = await runMagOne(
       { projectId: 'project-1', deckId: 'deck_builder', jobId: 'job_telemetry' },

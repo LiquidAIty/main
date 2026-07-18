@@ -4,7 +4,11 @@
 // completed-job review is now a single scaffold + one MCP tool.)
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
+import express from 'express';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+// Static imports: NodeNext ESM rejects extensionless dynamic import('./coder.routes')
+// after the '.routes' infix strip. vitest hoists vi.mock() above these.
+import router from './coder.routes';
 
 const thinkGraphStoreMocks = vi.hoisted(() => ({
   applyThinkGraphPatch: vi.fn(),
@@ -54,8 +58,6 @@ vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
 }));
 
 async function createApiServer(): Promise<{ server: Server; baseUrl: string }> {
-  const express = (await import('express')).default;
-  const router = (await import('./coder.routes')).default;
   const app = express();
   app.use(express.json());
   app.use('/api/coder', router);

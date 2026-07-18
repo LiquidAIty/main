@@ -4,7 +4,12 @@
 // projection — and fails honestly when the Python authority is unavailable.
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
+import express from 'express';
 import { describe, expect, it, vi } from 'vitest';
+// Static imports: under NodeNext, dynamic import('./thinkgraph.routes') fails
+// ESM resolution after the '.routes' infix strip. vitest hoists vi.mock()
+// above these imports, so module mocking still applies.
+import router from './thinkgraph.routes';
 
 const clientMocks = vi.hoisted(() => ({
   fetchThinkGraphProjection: vi.fn<(projectId: string, limit?: number) => Promise<unknown>>(),
@@ -15,8 +20,6 @@ vi.mock('../services/autogen/autogenOrchestratorClient', () => ({
 }));
 
 async function createApiServer(): Promise<{ server: Server; baseUrl: string }> {
-  const express = (await import('express')).default;
-  const router = (await import('./thinkgraph.routes')).default;
   const app = express();
   app.use(express.json());
   app.use('/api/thinkgraph', router);

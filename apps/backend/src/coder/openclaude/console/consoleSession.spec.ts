@@ -7,6 +7,7 @@ import {
   redactConsoleSecrets,
   resolveConsoleProviderEnv,
   type ConsoleChild,
+  type ConsoleSpawn,
 } from './consoleSession';
 
 class FakeChild extends EventEmitter implements ConsoleChild {
@@ -60,7 +61,7 @@ function managerWith(
     maxBufferChars: number;
   }> = {},
 ) {
-  const spawnProcess = vi.fn(() => child as unknown as ConsoleChild);
+  const spawnProcess = vi.fn<ConsoleSpawn>(() => child as unknown as ConsoleChild);
   const manager = new OpenClaudeConsoleSessionManager({
     workspaceRoot: tmpdir(),
     env: overrides.env || { OPENAI_API_KEY: 'sk-secretkey1234567890', OPENAI_MODEL: 'gpt-5.3-codex' },
@@ -278,7 +279,7 @@ describe('OpenClaudeConsoleSessionManager', () => {
 
   it('uses the PTY spawn and reports pty transport for interactive sessions', () => {
     const ptyChild = new FakePtyChild();
-    const ptySpawn = vi.fn(() => ptyChild as unknown as ConsoleChild);
+    const ptySpawn = vi.fn<ConsoleSpawn>(() => ptyChild as unknown as ConsoleChild);
     const manager = new OpenClaudeConsoleSessionManager({
       workspaceRoot: tmpdir(),
       env: { OPENAI_MODEL: 'gpt-5.3-codex' },
@@ -359,7 +360,7 @@ describe('resolveConsoleProviderEnv', () => {
 describe('OpenClaudeConsoleSessionManager OpenRouter routing', () => {
   it('uses the controller card OpenAI GPT-5.1 model even when the process has stale OpenRouter Kimi env', () => {
     const child = new FakeChild();
-    const spawnProcess = vi.fn(() => child as unknown as ConsoleChild);
+    const spawnProcess = vi.fn<ConsoleSpawn>(() => child as unknown as ConsoleChild);
     const manager = new OpenClaudeConsoleSessionManager({
       workspaceRoot: tmpdir(),
       env: {
@@ -392,7 +393,7 @@ describe('OpenClaudeConsoleSessionManager OpenRouter routing', () => {
 
   it('points the child at OpenRouter when explicitly requested and reports the resolved provider/model', () => {
     const child = new FakeChild();
-    const spawnProcess = vi.fn(() => child as unknown as ConsoleChild);
+    const spawnProcess = vi.fn<ConsoleSpawn>(() => child as unknown as ConsoleChild);
     const manager = new OpenClaudeConsoleSessionManager({
       workspaceRoot: tmpdir(),
       env: {

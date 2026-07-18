@@ -1,6 +1,10 @@
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
+import express from 'express';
 import { describe, expect, it, vi } from 'vitest';
+// Static imports: NodeNext ESM rejects extensionless dynamic import('./coder.routes')
+// after the '.routes' infix strip. vitest hoists vi.mock() above these.
+import router, { resolveHermesProjectId } from './coder.routes';
 
 const planningMocks = vi.hoisted(() => ({
   packet: {
@@ -75,10 +79,27 @@ const mcpClientMocks = vi.hoisted(() => ({
   callPythonAgentMcpTool: vi.fn(async () => ({ ok: true })),
 }));
 
+// Shape mirrors what coder.routes.ts consumes from the unified model-context
+// response (graphViews array, modelContext text, measurements object or null).
+// Typing the mock return stops TS from narrowing measurements to literal `null`
+// and graphViews to `never[]`, which would reject the richer override values.
+type UnifiedModelContextResult = {
+  ok: boolean;
+  projectionId?: string;
+  graphViews: Record<string, unknown>[];
+  modelContext: string;
+  measurements: { characters: number; estimatedTokens: number } | null;
+};
+
 const graphViewMocks = vi.hoisted(() => ({
   persistGraphViewOnPython: vi.fn(async (view: unknown) => ({ ok: true, view })),
   fetchGraphViewsFromPython: vi.fn(async () => ({ ok: true, views: [] })),
-  fetchUnifiedModelContext: vi.fn(async () => ({ ok: true, graphViews: [], modelContext: '', measurements: null })),
+  fetchUnifiedModelContext: vi.fn<() => Promise<UnifiedModelContextResult>>(async () => ({
+    ok: true,
+    graphViews: [],
+    modelContext: '',
+    measurements: null,
+  })),
   fetchDoorwayContext: vi.fn(async () => ({ ok: true, views: [], modelContext: '' })),
 }));
 
@@ -115,8 +136,6 @@ vi.mock('../db/pool', () => ({
 }));
 
 async function createApiServer(): Promise<{ server: Server; baseUrl: string }> {
-  const express = (await import('express')).default;
-  const router = (await import('./coder.routes')).default;
   const app = express();
   app.use(express.json());
   app.use('/api/coder', router);
@@ -475,7 +494,6 @@ describe('Hermes memory project authority', () => {
   it('accepts the real ag_catalog project id and returns that exact identity', async () => {
     const projectId = '20ac92da-01fd-4cf6-97cc-0672421e751a';
     dbMocks.query.mockResolvedValueOnce({ rows: [{ id: projectId }] });
-    const { resolveHermesProjectId } = await import('./coder.routes');
     await expect(resolveHermesProjectId(projectId)).resolves.toBe(projectId);
     expect(dbMocks.query).toHaveBeenLastCalledWith(
       expect.stringContaining('FROM ag_catalog.projects'),
@@ -486,7 +504,6 @@ describe('Hermes memory project authority', () => {
   it('fails visibly for an unknown project and never guesses a legacy identity', async () => {
     const unknown = '00000000-0000-0000-0000-000000000404';
     dbMocks.query.mockResolvedValueOnce({ rows: [] });
-    const { resolveHermesProjectId } = await import('./coder.routes');
     await expect(resolveHermesProjectId(unknown)).rejects.toThrow(`hermes_project_not_found: ${unknown}`);
   });
 });

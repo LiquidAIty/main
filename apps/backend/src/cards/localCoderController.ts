@@ -2,7 +2,7 @@ import type { AgentCardInstance } from '../types';
 
 export const LOCAL_CODER_CONTROLLER_TOOLS = ['run_local_coder'] as const;
 
-type CardLike = Partial<
+export type CardLike = Partial<
   Pick<
     AgentCardInstance,
     'id' | 'templateId' | 'runtimeBinding' | 'runtimeType' | 'runtimeOptions'

@@ -7,6 +7,7 @@
 // real ring buffer.
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
+import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const deckStoreMocks = vi.hoisted(() => ({
@@ -45,7 +46,9 @@ import {
   resetAgentTelemetryForTest,
 } from '../services/agentTelemetry';
 import { flushCoderReports, resetCoderReportsForTest } from '../services/coderReportEvidence';
-import { describeCardFromDeck, parsePipelineProbeOutput } from './dev.routes';
+// Static imports: NodeNext ESM rejects extensionless dynamic import('./dev.routes')
+// after the '.routes' infix strip. vitest hoists vi.mock() above these.
+import router, { describeCardFromDeck, parsePipelineProbeOutput } from './dev.routes';
 
 const DECK = {
   nodes: [
@@ -95,8 +98,6 @@ const CONNECTED_VIEW = {
 };
 
 async function createApiServer(): Promise<{ server: Server; baseUrl: string }> {
-  const express = (await import('express')).default;
-  const router = (await import('./dev.routes')).default;
   const app = express();
   app.use(express.json());
   app.use('/api/dev', router);

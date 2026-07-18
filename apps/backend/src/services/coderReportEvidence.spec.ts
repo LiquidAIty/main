@@ -56,6 +56,7 @@ function event(partial: Partial<AgentTelemetryEvent>): AgentTelemetryEvent {
     status: 'completed',
     errorSummary: null,
     durationMs: 100,
+    contextChars: null,
     tools: [],
     graphReads: [],
     graphWrites: [],
