@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { waitForBackendReady } from "./backendReadiness";
 import {
   guardedRequest,
   isAbortLikeError,
@@ -145,6 +146,10 @@ export function useBuilderProjects({
         workspaceView,
         seq,
       });
+
+      // Backend readiness gate: hold the projects-list fetch until the backend
+      // is listening so the dev startup window doesn't spam ECONNREFUSED.
+      await waitForBackendReady({ signal: controller.signal });
 
       const endpoint = projectsApi;
       const payload = await guardedRequest({

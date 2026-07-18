@@ -47,6 +47,12 @@ async function main(): Promise<void> {
   // one gRPC server comes up).
   if (owned.length > 0) await new Promise((r) => setTimeout(r, 1500));
   console.log('[fresh] starting one clean stack: npm run dev:all');
+  // Windows requires shell:true for npm: npm is npm.cmd (a batch shim), and
+  // Node 24+ refuses to spawn .cmd/.bat without shell (CVE-2024-27980 fix).
+  // spawn('npm.cmd', [], {shell:false}) throws EINVAL. The DEP0190 warning
+  // fires because args + shell:true concatenates unescaped, but these args are
+  // static literals (no user input) so the security risk is theoretical.
+  // Non-Windows uses shell:false. This is the minimum-honest form.
   const child = spawn('npm', ['run', 'dev:all'], {
     cwd: repoRoot,
     stdio: 'inherit',

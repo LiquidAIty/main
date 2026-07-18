@@ -40,10 +40,11 @@ async function main(): Promise<void> {
     return;
   }
   console.log(`[dev] OpenClaude gRPC: starting on port ${GRPC_PORT}...`);
+  // shell:false — bun resolves on PATH directly; args are static literals.
+  // Dropping shell:true clears DEP0190 without changing cwd/stdio/ownership.
   const child = spawn('bun', ['run', 'scripts/start-grpc.ts'], {
     cwd: 'localcoder',
     stdio: 'inherit',
-    shell: process.platform === 'win32',
   });
   child.on('error', (err) => {
     console.error(`[dev] OpenClaude gRPC: failed to spawn bun — ${err.message}`);

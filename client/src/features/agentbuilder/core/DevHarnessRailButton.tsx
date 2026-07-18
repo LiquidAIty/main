@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { waitForBackendReady } from '../../../components/builder/backendReadiness';
 
 /**
  * Dev-only rail icon for the agent test harness (/dev/agent-runs).
@@ -30,9 +31,11 @@ export function latestProbeAgeMs(events: ProbeEvent[], nowMs: number): number | 
   return nowMs - Math.max(...timestamps);
 }
 
-async function fetchProbeEventsFromBackend(): Promise<ProbeEvent[] | null> {
+async function fetchProbeEventsFromBackend(signal?: AbortSignal): Promise<ProbeEvent[] | null> {
   try {
-    const response = await fetch('/api/dev/agent-harness/events?limit=100');
+    const ready = await waitForBackendReady({ signal });
+    if (!ready || signal?.aborted) return null;
+    const response = await fetch('/api/dev/agent-harness/events?limit=100', { signal });
     const payload = await response.json();
     if (!response.ok || payload?.ok !== true || !Array.isArray(payload.events)) return null;
     return payload.events as ProbeEvent[];
@@ -45,7 +48,7 @@ export type DevHarnessRailButtonProps = {
   dimColor: string;
   activeColor: string;
   /** Injectable for tests; defaults to the real telemetry endpoint. */
-  fetchProbeEvents?: () => Promise<ProbeEvent[] | null>;
+  fetchProbeEvents?: (signal?: AbortSignal) => Promise<ProbeEvent[] | null>;
   openDashboard?: () => void;
 };
 
@@ -59,8 +62,9 @@ export default function DevHarnessRailButton({
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     const poll = async () => {
-      const events = await fetchProbeEvents();
+      const events = await fetchProbeEvents(controller.signal);
       if (cancelled || events === null) return;
       setProbeAgeMs(latestProbeAgeMs(events, Date.now()));
     };
@@ -68,6 +72,7 @@ export default function DevHarnessRailButton({
     const timer = setInterval(() => void poll(), POLL_MS);
     return () => {
       cancelled = true;
+      controller.abort();
       clearInterval(timer);
     };
   }, [fetchProbeEvents]);

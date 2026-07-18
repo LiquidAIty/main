@@ -107,6 +107,7 @@ import {
 import {
   isAbortLikeError,
 } from '../components/builder/requestGuards';
+import { waitForBackendReady } from '../components/builder/backendReadiness';
 import {
   useBuilderDeckRuntimeActions,
 } from '../components/builder/useBuilderDeckRuntimeActions';
@@ -560,9 +561,13 @@ export default function AgentBuilder(): React.ReactElement {
     setHermesTerminal(EMPTY_HERMES_TERMINAL_STATE);
     const ctrl = new AbortController();
     let cancelled = false;
-    void loadSessionHistory({ projectId: pid, conversationId, signal: ctrl.signal })
+    waitForBackendReady({ signal: ctrl.signal })
+      .then((ready) => {
+        if (cancelled || !ready) return;
+        return loadSessionHistory({ projectId: pid, conversationId, signal: ctrl.signal });
+      })
       .then((history) => {
-        if (cancelled) return;
+        if (cancelled || !history) return;
         setMessages(history);
       })
       .catch(() => {

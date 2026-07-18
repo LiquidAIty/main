@@ -54,10 +54,14 @@ async function isHealthy(port: number): Promise<boolean> {
 
 function startService(svc: (typeof SERVICES)[ServiceName]): void {
   console.log(`[dev] ${svc.label}: starting on port ${svc.port}...`);
+  // shell:false — the venv python is a relative path resolved against cwd
+  // (svc.cwd). Both services/knowgraph/.venv/Scripts/python.exe and
+  // apps/python-models/.venv/Scripts/python.exe exist on disk. Forward slashes
+  // work cross-platform in Node's spawn. Dropping shell:true clears DEP0190.
   const child = spawn(
-    '.venv\\Scripts\\python.exe',
+    '.venv/Scripts/python.exe',
     ['-X', 'utf8', '-m', 'uvicorn', svc.appModule, '--host', '127.0.0.1', '--port', String(svc.port)],
-    { cwd: svc.cwd, stdio: 'inherit', shell: process.platform === 'win32' },
+    { cwd: svc.cwd, stdio: 'inherit' },
   );
   child.on('error', (err) => {
     console.error(`[dev] ${svc.label}: failed to spawn uvicorn — ${err.message}`);
