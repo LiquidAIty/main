@@ -354,3 +354,37 @@ def read_return_artifact(folder: JobFolder | ReturnsFolder, rel_path: str) -> di
         return {**meta, "kind": "text", "content": text}
     # Binary or oversized: reference only.
     return {**meta, "kind": "binary" if is_binary else "reference"}
+
+
+# ── Card workspace authority ──────────────────────────────────────────────
+# Cards own durable workspaces. Runs live beneath their card.
+# Canonical: <workspace>/cards/<card-id>/runs/<run-id>/
+
+
+def resolve_card_workspace(workspace_root: str, card_id: str) -> str:
+    """<workspace>/cards/<card-id>/ — the one durable card workspace."""
+    cid = str(card_id or "").strip()
+    if not _valid_job_id(cid):
+        raise ValueError(f"card_id_invalid: {card_id!r}")
+    target = os.path.join(workspace_root, "cards", cid)
+    if not _within(workspace_root, target):
+        raise ValueError(f"card_workspace_escapes: {target!r}")
+    os.makedirs(target, exist_ok=True)
+    return target
+
+
+def resolve_card_run_dir(workspace_root: str, card_id: str, run_id: str) -> str:
+    """<workspace>/cards/<card-id>/runs/<run-id>/"""
+    cw = resolve_card_workspace(workspace_root, card_id)
+    rid = str(run_id or "").strip()
+    if not _valid_job_id(rid):
+        raise ValueError(f"run_id_invalid: {run_id!r}")
+    target = os.path.join(cw, "runs", rid)
+    if not _within(workspace_root, target):
+        raise ValueError(f"card_run_dir_escapes: {target!r}")
+    os.makedirs(target, exist_ok=True)
+    return target
+
+
+def resolve_card_run_manifest_path(workspace_root: str, card_id: str, run_id: str) -> str:
+    return os.path.join(resolve_card_run_dir(workspace_root, card_id, run_id), "manifest.json")

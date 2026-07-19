@@ -1019,7 +1019,7 @@ router.post('/openclaude/session/chat', async (req, res) => {
       investigationContext,
       graphViews,
       graphContext,
-    }, (event) => {
+    }, async (event) => {
       if (turnFinished) return;
       if (event.kind === 'tool_start' && event.toolName.startsWith('mcp__liquidaity__')) {
         liquidaityCallByToolUse.set(event.toolUseId, {
@@ -1078,6 +1078,23 @@ router.post('/openclaude/session/chat', async (req, res) => {
         try {
           const input = JSON.parse(event.argsJson || '{}') as Record<string, unknown>;
           if (input.subagent_type === 'card_hermes_steward') {
+            // Canvas authority gate: Hermes requires a hermes_observe edge
+            // from an authorized card in the saved deck. Prompt text cannot
+            // bypass missing topology. Disconnected = no spawn.
+            // Deck is loaded lazily; a missing/unreadable deck means no authority.
+            let hermesEdge: any = null;
+            try {
+              const chk = await getDeckDocument(projectId, BUILDER_DECK_ID);
+              hermesEdge = (chk?.deck as any)?.edges?.find(
+                (e: any) => e.edgeType === 'hermes_observe' && e.target === 'card_hermes_steward',
+              );
+            } catch { /* deck unreadable = no authority */ }
+            if (!hermesEdge) {
+              logHarnessTrace(
+                `[harness] hermes blocked corr=${correlationId} reason=no_hermes_observe_edge`,
+              );
+              return; // skip this tool_start — no spawn without authority
+            }
             // Both legitimate invocation forms are recorded: prompt omitted =
             // full native parent-context inheritance; prompt present = a
             // scoped task from Main Chat. The form is real event metadata.
@@ -1123,6 +1140,11 @@ router.post('/openclaude/session/chat', async (req, res) => {
           durationMs: Date.now() - (hermesStartedAt.get(event.toolUseId) ?? Date.now()),
           metadata: { toolUseId: event.toolUseId },
         });
+        // hermes_postflight is NOT emitted here. It requires:
+        // 1) real completed source run, 2) readable run manifest,
+        // 3) actual Hermes invocation, 4) review result, 5) Hermes-owned
+        // review artifact, 6) artifact readback, 7) event ref to that artifact.
+        // Until all seven are met, the stage chip is honestly absent.
       }
       // Backend trace of the REAL event (only when it carries lifecycle signal),
       // then the unchanged SSE forward to the browser.

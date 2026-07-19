@@ -25,7 +25,7 @@ export type AgentCardRuntimeType =
 // 'invalid' is a real persisted classification, not an error case: an edge whose
 // type we do not recognise must stay visible and inert. Folding it into 'flow'
 // (the old default) silently handed invocation authority to malformed data.
-export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'invalid';
+export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'hermes_observe' | 'invalid';
 
 export type DeckEdgeRole =
   | 'graph_execution'
@@ -641,3 +641,45 @@ export type {
   SeedTruth,
   SeedTruthScope,
 } from './knowledgeSeed';
+
+// ── Card run manifest ────────────────────────────────────────────────────
+// One per run, stored at <card-workspace>/runs/<run-id>/manifest.json.
+// Atomic write; never duplicate artifact contents.
+
+export type RunArtifactEntry = {
+  artifactId: string;
+  relativePath: string;
+  artifactType: 'report' | 'code' | 'patch' | 'image' | 'research' | 'manifest' | 'test_output' | 'review' | 'unknown';
+  mime?: string | null;
+  bytes: number;
+  hash?: string | null;
+  createdAt: string;
+  producerCardId: string;
+  evidenceRole?: 'output' | 'proof' | 'reference' | 'review' | null;
+  summary?: string | null;
+  accepted?: boolean | null;
+};
+
+export type RunManifest = {
+  schemaVersion: 1;
+  projectId: string;
+  deckId?: string | null;
+  conversationId?: string | null;
+  cardId: string;
+  runId: string;
+  parentRunId?: string | null;
+  runtime?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  initiatingRequestRef?: string | null;
+  startedAt: string;
+  completedAt?: string | null;
+  status: 'running' | 'completed' | 'failed' | 'blocked';
+  artifacts: RunArtifactEntry[];
+  childRunIds: string[];
+  toolEvidenceRefs: string[];
+  graphEvidenceRefs: string[];
+  testEvidenceRefs: string[];
+  errorSummary?: string | null;
+  manifestHash?: string | null;
+};

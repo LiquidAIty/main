@@ -28,6 +28,8 @@ Before planning code work, before editing, and before claiming what a file does,
 
 Do not start with broad grep.
 Do not start with random file opening.
+
+**Skills:** See `skills/codebasedmemoryskill.md` for CBM tool reference. See `skills/ai-native-runtime-awareness.md` for the runtime awareness fabric (event pipeline, Hermes observer, postflight review, evidence tiers).
 Do not guess from memory.
 Do not claim code behavior without direct reads.
 Do not treat stale graph memory as proof.

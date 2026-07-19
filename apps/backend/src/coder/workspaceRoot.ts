@@ -30,6 +30,16 @@ export function resolveCoderWorkspaceRoot(): string {
   return root;
 }
 
+/** Project-scoped workspace: <workspace>/<projectId>/cards/<cardId>/runs/<runId>/.
+ * Two projects never share card artifacts. Callers that pass projectId get
+ * isolation; callers without it get the legacy un-scoped root for non-artifact
+ * paths (handoff, episodes, dev-telemetry). */
+export function resolveProjectWorkspaceRoot(projectId: string): string {
+  const root = path.join(resolveCoderWorkspaceRoot(), 'projects', sanitizeId(projectId));
+  mkdirSync(root, { recursive: true });
+  return root;
+}
+
 /**
  * The working directory for a PRODUCT chat session (Main / Hermes over gRPC).
  *
@@ -55,4 +65,46 @@ export function resolveProductChatWorkingDirectory(): string {
     // best effort — the engine re-validates the directory at session start
   }
   return dir;
+}
+
+// ── Card workspace authority ────────────────────────────────────────────
+// Cards own durable workspaces. Runs live beneath their card. One authority.
+
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function sanitizeId(id: string): string {
+  const trimmed = String(id || '').trim();
+  if (!trimmed || trimmed === '.' || trimmed === '..') throw new Error(`card_workspace_id_invalid: ${id}`);
+  if (trimmed.includes('/') || trimmed.includes('\\') || trimmed.includes(path.sep)) throw new Error(`card_workspace_id_separator: ${id}`);
+  if (!SAFE_ID.test(trimmed)) throw new Error(`card_workspace_id_unsafe: ${id}`);
+  return trimmed;
+}
+
+function withinWorkspace(root: string, target: string): boolean {
+  const r = path.resolve(root);
+  const t = path.resolve(target);
+  return t === r || t.startsWith(r + path.sep);
+}
+
+/** <project-workspace>/cards/<card-id>/ — the one durable card workspace. */
+export function resolveCardWorkspace(projectId: string, cardId: string): string {
+  const root = resolveProjectWorkspaceRoot(projectId);
+  const dir = path.join(root, 'cards', sanitizeId(cardId));
+  if (!withinWorkspace(root, dir)) throw new Error(`card_workspace_escapes: ${cardId}`);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/** <project-workspace>/cards/<card-id>/runs/<run-id>/ — one run beneath its owning card. */
+export function resolveCardRunDir(projectId: string, cardId: string, runId: string): string {
+  const cw = resolveCardWorkspace(projectId, cardId);
+  const dir = path.join(cw, 'runs', sanitizeId(runId));
+  if (!withinWorkspace(cw, dir)) throw new Error(`card_run_escapes: ${runId}`);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/** <project-workspace>/cards/<card-id>/runs/<run-id>/manifest.json */
+export function resolveCardRunManifestPath(projectId: string, cardId: string, runId: string): string {
+  return path.join(resolveCardRunDir(projectId, cardId, runId), 'manifest.json');
 }
