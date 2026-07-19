@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveCardRunDir, resolveCardRunManifestPath } from '../coder/workspaceRoot';
 import type { RunArtifactEntry, RunManifest } from '../types';
