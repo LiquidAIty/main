@@ -61,8 +61,8 @@ raw_value.
 
 ## Query Patterns
 
-@query id=issuer-evidence-case-loop.test "apps/python-models/.venv/Scripts/python.exe -m pytest services/knowgraph/test_issuer_case_loop.py -q"
-@query id=issuer-evidence-case-loop.smoke "PYTHONPATH=apps/python-models/app/python_models;services/knowgraph apps/python-models/.venv/Scripts/python.exe services/knowgraph/issuer_case_loop.py RDW RKLB"
+@query id=issuer-evidence-case-loop.test [ARCHIVED — implementations deleted in fb300e0e; skill retained as architectural intent]
+@query id=issuer-evidence-case-loop.smoke [ARCHIVED — implementations deleted in fb300e0e; skill retained as architectural intent]
 
 ## Failure Modes Seen
 

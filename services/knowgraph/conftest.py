@@ -4,8 +4,7 @@ This is TEST setup only — NOT request-path or service-path code. It guarantees
 ``app`` package (``apps/python-models/app``, now a regular package) is importable and resolved
 BEFORE pytest's per-module path prepends run, by adding ``apps/python-models`` to ``sys.path`` and
 importing the ``app.python_models`` package once at collection start. Caching the package here (with
-its correct ``__path__``) means the production importer
-(``issuer_case_loop.import_app_python_models_module``) is a plain ``importlib.import_module`` with
+its correct ``__path__``) means the production importer is a plain ``importlib.import_module`` with
 NO sys.path mutation and NO sys.modules purge — it simply returns the already-resolved package.
 
 Without this, pytest (import-mode=prepend) inserts ``services/knowgraph`` at ``sys.path[0]`` for

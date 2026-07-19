@@ -96,8 +96,9 @@ the real `app.python_models` once so pytest's per-module prepend can't reshadow 
 
 ## Query Patterns
 
-@query id=catalyst-research-case.test "apps/python-models/.venv/Scripts/python.exe -m pytest services/knowgraph/test_catalyst_research_case.py services/knowgraph/test_issuer_case_loop.py services/knowgraph/test_seed_atlas_source.py -q"
-@query id=catalyst-research-case.smoke "set PYTHONPATH=apps/python-models;services/knowgraph & set SEED_ATLAS_PATH=<workbook> & apps/python-models/.venv/Scripts/python.exe -m catalyst_research_case RDW RKLB"
+@query id=catalyst-research-case.test [ARCHIVED — implementations deleted in fb300e0e; skill retained as architectural intent]
+@query id=catalyst-research-case.smoke [ARCHIVED — implementations deleted in fb300e0e; skill retained as architectural intent]
+@query id=catalyst-research-case.current "apps/python-models/.venv/Scripts/python.exe -m pytest services/knowgraph/test_seed_atlas_source.py -q"
 
 ## Guardrails (added by hardening)
 
