@@ -85,6 +85,7 @@ function normalizeEdgeType(value: unknown): DeckEdgeType {
   if (type === 'magentic_option') return 'magentic_option';
   if (type === 'magentic_control') return 'magentic_control';
   if (type === 'flow') return 'flow';
+  if (type === 'hermes_observe') return 'hermes_observe';
   return 'invalid';
 }
 

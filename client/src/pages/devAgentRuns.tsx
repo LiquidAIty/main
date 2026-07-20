@@ -1,11 +1,11 @@
 import { Fragment, useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 
 /**
- * /dev/agent-runs — the Hermes Dev Observatory (DEV-ONLY).
+ * /dev/agent-runs — Agent Runtime Observatory (DEV-ONLY).
  *
- * Hermes' developer brain view over the agent system: what actually ran, what
- * is actually wired, and whether coding-agent claims are actually supported.
- * Five tabs, all fed by real backend state (never invented):
+ * Deterministic developer inspection surface over the agent system: what
+ * actually ran, what is actually wired, and whether coding-agent claims are
+ * actually supported. Five tabs, all fed by real backend state (never invented):
  *
  *  - Runs:          telemetry events grouped into runs; stage chips make a
  *                   missing preflight/postflight visible; click an event for
@@ -430,7 +430,7 @@ export default function DevAgentRuns({
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-        <h1 style={{ fontSize: 16, margin: 0 }}>Hermes Dev Observatory</h1>
+        <h1 style={{ fontSize: 16, margin: 0 }}>Runtime Observatory</h1>
         {TABS.map(({ id, label }) => (
           <button
             key={id}

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// Hermes Dev Observatory: honest empty/unreachable states, run grouping with
+// Agent Runtime Observatory: honest empty/unreachable states, run grouping with
 // pipeline stage chips, event JSON expansion, RAM-vs-disk source labels, the
 // System topology tab, the Cards tab (saved vs resolved config + drift
 // inline), the Coder Reports tab (claim-by-claim verification), and the Drift

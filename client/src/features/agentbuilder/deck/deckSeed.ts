@@ -582,8 +582,9 @@ export const INITIAL_DECK: DeckDocument = {
   //   flow             ORANGE  source parent → target native subagent
   //   magentic_option  BLUE    side worker slot on the Mag One bus
   //   magentic_control BLUE    dedicated top control input (submit final prompt)
+  //   hermes_observe   GREEN   observation authority: any card → Hermes steward
   edges: [
-    { id: 'edge_main_chat_hermes', source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
+    { id: 'edge_main_chat_hermes', source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'hermes_observe' },
     { id: 'edge_main_chat_coder', source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' },
     { id: 'edge_hermes_search', source: 'card_hermes_steward', target: 'card_research_agent', edgeType: 'flow' },
     { id: 'edge_hermes_worldsignals', source: 'card_hermes_steward', target: 'card_worldsignals_agent', edgeType: 'flow' },

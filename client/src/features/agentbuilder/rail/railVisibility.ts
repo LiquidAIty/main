@@ -97,10 +97,12 @@ export function isHermesConnectedToMainChat(
   );
   if (mainChatIds.size === 0 || hermesIds.size === 0) return false;
   return edges.some(
-    (edge) =>
-      normalizeDeckEdgeType(edge.edgeType) === 'flow' &&
-      ((mainChatIds.has(edge.source) && hermesIds.has(edge.target)) ||
-        (hermesIds.has(edge.source) && mainChatIds.has(edge.target))),
+    (edge) => {
+      const type = normalizeDeckEdgeType(edge.edgeType);
+      if (type !== 'flow' && type !== 'hermes_observe') return false;
+      return (mainChatIds.has(edge.source) && hermesIds.has(edge.target)) ||
+        (hermesIds.has(edge.source) && mainChatIds.has(edge.target));
+    },
   );
 }
 

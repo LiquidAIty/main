@@ -67,18 +67,29 @@ describe('Edge authority: only an explicit type grants anything', () => {
       .toEqual(['card_main_chat']);
   });
 
-  it('the repaired Main -> Hermes Call survives a reload of the persisted shape', () => {
-    // Exactly what the live deck holds after the C-1 repair.
+  it('the Main → Hermes hermes_observe edge authorizes observation but excludes from direct subagents (flow-only)', () => {
+    // hermes_observe grants observation authority without making Hermes a direct-invocation subagent.
     const persisted = [
       { id: 'edge_main_chat_magentic_control', source: 'card_main_chat', target: 'card_magentic', edgeType: 'magentic_control' },
-      { id: 'edge_yt562bl6', source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
+      { id: 'edge_yt562bl6', source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'hermes_observe' },
       { id: 'edge_k0psgj4i', source: 'card_research_agent', target: 'card_magentic', edgeType: 'magentic_option' },
     ];
+    // Hermes is authorized by hermes_observe but NOT a direct subagent (resolveDirectSubagents requires 'flow')
     expect(resolveDirectSubagents('card_main_chat', cards, persisted).map((d: any) => d.id))
-      .toContain('card_hermes_steward');
+      .not.toContain('card_hermes_steward');
     // Hermes stays structurally excluded from the worker roster regardless.
     expect(resolvedMagenticOptions('card_magentic', cards, persisted).map((w: any) => w.id))
       .not.toContain('card_hermes_steward');
+  });
+
+  it('the Main → Hermes hermes_observe edge satisfies the canvas authority gate', () => {
+    const persisted = [
+      { id: 'edge_yt562bl6', source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'hermes_observe' },
+    ];
+    const gateMatch = persisted.find(
+      (e) => e.edgeType === 'hermes_observe' && e.target === 'card_hermes_steward',
+    );
+    expect(gateMatch).toBeDefined();
   });
 });
 
